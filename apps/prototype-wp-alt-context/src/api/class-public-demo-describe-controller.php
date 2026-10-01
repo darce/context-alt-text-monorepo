@@ -109,7 +109,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 					),
 					'idempotency_key' => array(
 						'type'        => 'string',
-						'required'    => false,
+						'required'    => true,
 						'minLength'   => self::IDEMPOTENCY_KEY_MIN_LENGTH,
 						'maxLength'   => self::IDEMPOTENCY_KEY_MAX_LENGTH,
 						'pattern'     => '^[A-Za-z0-9_-]+$',
@@ -177,13 +177,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 			return $idempotency_key;
 		}
 
-		// rg-015 [P06]: a caller that sent no key gets no dedupe field on the
-		// wire. The local replay transient still needs a unique bucket, so mint
-		// one for local use only — it is never forwarded as the backend's
-		// dedupe key, because a server-minted key changes on every attempt and
-		// would advertise a guarantee the caller cannot rely on.
-		$local_bucket_key     = '' !== $idempotency_key ? $idempotency_key : wp_generate_uuid4();
-		$idempotency_key_name = $this->idempotency_transient_key( $client_key, $local_bucket_key );
+		$idempotency_key_name = $this->idempotency_transient_key( $client_key, $idempotency_key );
 		$idempotency_lock_name = self::IDEMPOTENCY_LOCK_PREFIX . hash( 'sha256', $idempotency_key_name );
 		$idempotency_lock = $this->acquire_lock( $idempotency_lock_name, 5 );
 		if ( false === $idempotency_lock ) {
@@ -244,9 +238,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 
 			$pipeline_request = new WP_REST_Request( 'POST', '/acx/v1/recognition/describe/runs' );
 			$pipeline_request->set_param( 'media_ids', array( $media_id ) );
-			if ( '' !== $idempotency_key ) {
-				$pipeline_request->set_param( 'idempotency_key', $idempotency_key );
-			}
+			$pipeline_request->set_param( 'idempotency_key', $idempotency_key );
 			// Persist uncertainty before dispatch: a timeout or worker death can
 			// hide backend acceptance and must never turn into an expired free slot.
 			if ( ! $this->mark_submission_started() ) {
@@ -269,6 +261,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 					'describe_run_attachment_unreadable',
 					'describe_run_payload_too_large',
 					'invalid_idempotency_key',
+					'idempotency_key_required',
 				), true ) ) {
 					// These local validation failures precede the transport call.
 					// Unrecognized errors (including HTTP errors) remain uncertain.
@@ -280,6 +273,9 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 						// again later": that tells a client with a broken key
 						// generator to retry forever.
 						return $this->invalid_idempotency_key_error();
+					}
+					if ( 'idempotency_key_required' === $response->get_error_code() ) {
+						return $this->required_idempotency_key_error();
 					}
 				}
 				return $this->translated_pipeline_error( $response );
@@ -429,17 +425,17 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 	}
 
 	/**
-	 * The caller's retry token, or '' when the caller sent none.
+	 * The caller's retry token, or an error when the caller sent none.
 	 *
 	 * rg-015 [P06]: every value this returns comes from the request. A missing
 	 * key is not back-filled with a server-minted uuid — that would put a fresh
 	 * dedupe key on the wire for every attempt, so retries would never dedupe
 	 * while the field claimed they would. An over-long key is not rewritten
 	 * into a digest either: the caller's key and the stored key would differ,
-	 * and two spellings of one token would become two paid runs. Both cases now
-	 * fail closed or omit the field instead of inventing one.
+	 * and two spellings of one token would become two paid runs. Missing and
+	 * malformed keys fail closed instead of inventing one.
 	 *
-	 * @return string|WP_Error Validated key ('' when absent), or a 422 WP_Error.
+	 * @return string|WP_Error Validated key, or a 400/422 WP_Error.
 	 */
 	private function request_idempotency_key( WP_REST_Request $request ): string|WP_Error {
 		$raw = $request->get_param( 'idempotency_key' );
@@ -450,7 +446,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 			}
 		}
 		if ( null === $raw ) {
-			return '';
+			return $this->required_idempotency_key_error();
 		}
 		if ( ! is_string( $raw ) ) {
 			return $this->invalid_idempotency_key_error();
@@ -467,6 +463,17 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		}
 
 		return $normalized;
+	}
+
+	private function required_idempotency_key_error(): WP_Error {
+		return new WP_Error(
+			'idempotency_key_required',
+			'idempotency_key is required for describe run submissions.',
+			array(
+				'status' => 400,
+				'field'  => 'idempotency_key',
+			)
+		);
 	}
 
 	private function invalid_idempotency_key_error(): WP_Error {

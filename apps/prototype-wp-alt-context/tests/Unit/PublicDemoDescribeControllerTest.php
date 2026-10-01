@@ -16,6 +16,7 @@ final class PublicDemoDescribeControllerTest extends TestCase
 {
     private DescribeController $pipeline;
     private PublicDemoDescribeController $controller;
+    private int $requestKeySequence = 0;
 
     protected function setUp(): void
     {
@@ -137,6 +138,7 @@ final class PublicDemoDescribeControllerTest extends TestCase
         }
         self::assertSame('/public/demo/describe', $GLOBALS['__ac_rest_routes'][0]['route']);
         self::assertSame('/public/demo/describe/runs/(?P<run_id>[^/]+)', $GLOBALS['__ac_rest_routes'][1]['route']);
+        self::assertTrue($GLOBALS['__ac_rest_routes'][0]['args']['args']['idempotency_key']['required'] ?? false);
     }
 
     public function testDisabledFlagFailsClosed(): void
@@ -643,6 +645,52 @@ final class PublicDemoDescribeControllerTest extends TestCase
         }
     }
 
+    public function testMissingIdempotencyKeyIsRejectedBeforeAnySharedBudgetIsSpent(): void
+    {
+        $this->enable([41]);
+        $this->setOption('acx_public_demo_daily_cap', 1);
+        $request = new WP_REST_Request('POST', '', ['media_id' => 41]);
+        $request->set_header('X-WP-Nonce', 'nonce-wp_rest');
+
+        $rejected = $this->controller->submit($request);
+
+        self::assertInstanceOf(WP_Error::class, $rejected);
+        self::assertSame('idempotency_key_required', $rejected->get_error_code());
+        self::assertSame(400, $rejected->get_error_data()['status'] ?? null);
+        self::assertSame('idempotency_key', $rejected->get_error_data()['field'] ?? null);
+        self::assertSame([], $this->pipeline->submissions);
+        self::assertArrayNotHasKey('acx_public_demo_inflight', $GLOBALS['__ac_options']);
+        self::assertArrayNotHasKey('acx_public_demo_daily_usage', $GLOBALS['__ac_options']);
+        self::assertSame([], array_filter(
+            array_keys($GLOBALS['__ac_transients']),
+            static fn (string $key): bool => str_starts_with($key, 'acx_public_demo_idempotency_')
+        ));
+    }
+
+    public function testPipelineMissingKeyFailureReleasesPendingReservationAndInflightSlot(): void
+    {
+        $this->enable([41]);
+        $key = 'defensive-required-key';
+        $this->pipeline->submitResult = new WP_Error(
+            'idempotency_key_required',
+            'idempotency_key is required for describe run submissions.',
+            ['status' => 400, 'field' => 'idempotency_key']
+        );
+
+        $result = $this->controller->submit($this->authorizedRequest('POST', [
+            'media_id' => 41,
+            'idempotency_key' => $key,
+        ]));
+
+        self::assertInstanceOf(WP_Error::class, $result);
+        self::assertSame('idempotency_key_required', $result->get_error_code());
+        self::assertSame(400, $result->get_error_data()['status'] ?? null);
+        self::assertSame('idempotency_key', $result->get_error_data()['field'] ?? null);
+        self::assertCount(1, $this->pipeline->submissions);
+        self::assertArrayNotHasKey('acx_public_demo_inflight', $GLOBALS['__ac_options']);
+        self::assertArrayNotHasKey($this->idempotencyMappingKey($key), $GLOBALS['__ac_transients']);
+    }
+
     /**
      * GUIDEDFIX-2 [P06]: rg-015 — an over-long key is rejected, never rewritten
      * into a sha256 digest. Rewriting made the caller's key and the stored
@@ -666,15 +714,11 @@ final class PublicDemoDescribeControllerTest extends TestCase
     }
 
     /**
-     * GUIDEDFIX-2 [P06]: rg-015 — every idempotency_key that reaches the wire
-     * comes from the request. Exercises the real DescribeController transport
-     * so the multipart body is the actual bytes the backend would receive.
-     *
-     * A caller that sends a key gets that key forwarded verbatim; a caller that
-     * sends none gets the field omitted, not a server-minted uuid that changes
-     * on every attempt and so advertises a dedupe guarantee it cannot keep.
+     * GUIDEDFIX-2 [P06]: every idempotency_key that reaches the wire comes
+     * from the request. Exercises the real DescribeController transport so
+     * the multipart body is the actual bytes the backend would receive.
      */
-    public function testPublicSubmitForwardsTheClientKeyVerbatimAndOmitsItWhenAbsent(): void
+    public function testPublicSubmitForwardsTheClientKeyVerbatim(): void
     {
         $this->enable([41]);
         $this->setOption('acx_recognition_url', 'http://localhost:8000');
@@ -698,20 +742,6 @@ final class PublicDemoDescribeControllerTest extends TestCase
             self::assertMatchesRegularExpression(
                 '/name="idempotency_key"\r\n\r\n' . preg_quote($key, '/') . '\r\n/',
                 (string) $this->getHttpCalls()[0]['args']['body']
-            );
-
-            unset($GLOBALS['__ac_options']['acx_public_demo_inflight']);
-            $this->queueHttpResponse([
-                'response' => ['code' => 202, 'message' => 'Accepted'],
-                'body' => '{"run_id":"public-wire-2","status":"pending","phase":"queued","completed":0,"failed":0,"skipped":0,"total":1,"cancel_requested":false,"gpu_state":"ready"}',
-            ]);
-            $withoutKey = new PublicDemoDescribeController(new DescribeController());
-            $second = $withoutKey->submit($this->authorizedRequest('POST', ['media_id' => 41]));
-            self::assertInstanceOf(WP_REST_Response::class, $second);
-            self::assertSame(202, $second->get_status());
-            self::assertStringNotContainsString(
-                'name="idempotency_key"',
-                (string) $this->getHttpCalls()[1]['args']['body']
             );
         } finally {
             unlink($file);
@@ -1332,6 +1362,16 @@ PHP];
     {
         $request = new WP_REST_Request($method, '', $params);
         $request->set_header('X-WP-Nonce', 'nonce-wp_rest');
+        if (
+            'POST' === strtoupper($method)
+            && !array_key_exists('idempotency_key', $params)
+            && null === $idempotencyKey
+        ) {
+            // Most submit tests exercise valid work; missing-key coverage
+            // builds a raw request so it can deliberately omit this header.
+            ++$this->requestKeySequence;
+            $idempotencyKey = 'demo-test-key-' . str_pad((string) $this->requestKeySequence, 6, '0', STR_PAD_LEFT);
+        }
         if (null !== $idempotencyKey) {
             $request->set_header('Idempotency-Key', $idempotencyKey);
         }

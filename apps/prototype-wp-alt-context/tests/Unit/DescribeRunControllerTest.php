@@ -54,6 +54,22 @@ class DescribeRunControllerTest extends TestCase
         parent::tearDown();
     }
 
+    public function testSubmitRouteRequiresIdempotencyKey(): void
+    {
+        $this->controller->register_routes();
+
+        $route = null;
+        foreach ($GLOBALS['__ac_rest_routes'] as $definition) {
+            if ('/recognition/describe/runs' === ($definition['route'] ?? null)) {
+                $route = $definition;
+                break;
+            }
+        }
+
+        $this->assertIsArray($route);
+        $this->assertTrue($route['args']['args']['idempotency_key']['required'] ?? false);
+    }
+
     private function plantAttachment(int $id, string $bytes, string $extension = 'jpg'): string
     {
         $path = $this->tempDir . "/{$id}.{$extension}";

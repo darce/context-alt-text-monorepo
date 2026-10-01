@@ -26,7 +26,7 @@ import json
 import logging
 import os
 import uuid
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
 from contextlib import suppress
 from datetime import UTC, datetime
 
@@ -82,7 +82,7 @@ _DEFAULT_ALLOWED_MIME_TYPES: frozenset[str] = frozenset({"image/jpeg", "image/pn
 _IMAGE_KEY_PREFIX = "image_"
 _MAX_IMAGE_PARTS = 5
 _MAX_MULTIPART_FILES = _MAX_IMAGE_PARTS + 1  # JSON request envelope may itself be an UploadFile.
-_MULTIPART_PARSE_TIMEOUT_S = 10.0
+_MULTIPART_IDLE_TIMEOUT_S = 10.0
 _TOO_MANY_IMAGE_PARTS_DETAIL = f"multipart submission accepts at most {_MAX_IMAGE_PARTS} image parts"
 _INVALID_MULTIPART_DETAIL = "invalid multipart form"
 
@@ -139,14 +139,23 @@ async def _parse_multipart_form(request: Request) -> FormData:
             detail="content-type must be multipart/form-data",
         )
 
+    async def _stream_with_idle_timeout() -> AsyncIterator[bytes]:
+        stream = request.stream().__aiter__()
+        while True:
+            try:
+                async with asyncio.timeout(_MULTIPART_IDLE_TIMEOUT_S):
+                    chunk = await anext(stream)
+            except StopAsyncIteration:
+                return
+            yield chunk
+
     parser = _ClosingMultiPartParser(
         request.headers,
-        request.stream(),
+        _stream_with_idle_timeout(),
         max_files=_MAX_MULTIPART_FILES,
     )
     try:
-        async with asyncio.timeout(_MULTIPART_PARSE_TIMEOUT_S):
-            return await parser.parse()
+        return await parser.parse()
     except TimeoutError as exc:
         raise HTTPException(
             status_code=status.HTTP_408_REQUEST_TIMEOUT,

@@ -1,0 +1,57 @@
+{
+  "lane": "a1h-pshell2",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": ".venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 2.09s."
+    },
+    {
+      "command": "apps/app-portal: npm test -- --run",
+      "result": "not_run",
+      "detail": "Vitest runs outside this sandbox; node_modules are not provisioned here."
+    },
+    {
+      "command": "apps/app-portal: npm run typecheck",
+      "result": "not_run",
+      "detail": "TypeScript checking runs outside this sandbox; node_modules are not provisioned here."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16088,
+      "finding_id": "APP1-INTEGRATION-RV01",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/app-portal/src/App.tsx:225-230 calls fetchPortalMe for account identity; apps/app-portal/src/api/portalMe.ts:171-183 issues the relative resolvedPath request with `redirect: 'error'` and rejects a response unless isPortalMeResponse accepts its final URL at :64-92. apps/app-portal/src/__tests__/integration-identity-fixwave.test.tsx:128-139 asserts the relative path and redirect option, :160-175 asserts foreign or wrong-path responses become outage, and :202-220 asserts redirected identity does not render private keys or tenant data.",
+      "guard_test": "apps/app-portal/src/__tests__/integration-identity-fixwave.test.tsx::does not mount private modules when /portal/me is redirected"
+    },
+    {
+      "db_id": 16054,
+      "finding_id": "APP1-BROWSER-RV01",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/app-portal/src/App.tsx:33-35 stores both userId and sessionId in AccountOwner, :70-72 requires both to match, and :160-168 switches a mismatched account to loading before selecting the display account. apps/app-portal/src/__tests__/identity-isolation.test.tsx:116-150 asserts that replacing only the Clerk session clears tenant A before the replacement lookup settles; :73-114 covers changing the user. The test title says 'clears tenant A when only the Clerk session id is replaced'.",
+      "guard_test": "apps/app-portal/src/__tests__/identity-isolation.test.tsx::clears tenant A when only the Clerk session id is replaced"
+    },
+    {
+      "db_id": 16090,
+      "finding_id": "APP1-INTEGRATION-RV03",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/app-portal/src/App.tsx:104-110 checks `path === route || path.startsWith(`${route}/`)` and uses exact path matching for billing. apps/app-portal/src/__tests__/integration-identity-fixwave.test.tsx:224-243 asserts crafted /keys-old, /usage-preview, /billing-malformed, and /billing/returnevil paths render Account without private modules; :245-263 asserts /claim-anything does not mount the claim screen. The route test states 'does not mount a real module for crafted %s'.",
+      "guard_test": "apps/app-portal/src/__tests__/integration-identity-fixwave.test.tsx::does not mount a real module for crafted %s"
+    },
+    {
+      "db_id": 16057,
+      "finding_id": "APP1-BROWSER-RV04",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/app-portal/src/App.tsx:353-355 passes userMenu and onSignOut to the backend OutageScreen. apps/app-portal/src/screens/OutageScreen.tsx:19-34 renders the signed-in chrome and 'Sign out' button when both are present. apps/app-portal/src/__tests__/backend-authority.test.tsx:175-190 drives a token failure into signed-in outage and asserts the enabled sign-out button alongside retry.",
+      "guard_test": "apps/app-portal/src/__tests__/backend-authority.test.tsx::surfaces getToken rejection as a signed-in outage with retry and sign-out [RLSE-04]"
+    }
+  ],
+  "new_findings": [],
+  "summary": "HOLDS 4, PARTIAL 0, NOT_FIXED 0; new findings high 0, medium 0, low 0; lane pytest 26 passed; portal Vitest and TypeScript checks not_run."
+}

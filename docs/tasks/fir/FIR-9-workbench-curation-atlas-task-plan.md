@@ -6,12 +6,12 @@
 > - **Author**: Grok 4.5 (xAI)
 > - **Project**: `apps/prototype-description-service` + `apps/prototype-wp-alt-context`
 > - **Task ID**: `FIR-9`
-> - **Plan version**: `v4`
+> - **Plan version**: `v6`
 > - **Target Branch**: `feature/fir-9`
 > - **Epic**: [E22 Commercial Face Identity Replacement](../../epics/v0.5.0/commercial-face-identity-replacement-epic.md) (`Epic Short ID`: FIR)
 > - **Depends on**: live cluster + member embeddings with `embedding_model` provenance (FIR-2/FIR-4 path); Workbench mutation surfaces (`useClusterMutations`, `ClusterReviewPanel`) already shipping
 > - **Review Coverage Target**: 2 _(intent only; live coverage via handoff DB — never paste findings here)_
-> - **Changelog**: **v4** — replace private `cv_runtime_version` with the shared `numeric_runtime_fingerprint()` object in persisted atlas params and stale-run checks. **v3** — Workbench placement rationale (NAV-05/VIZ-15/NAV-06) + S3 Roster-coordination lens (assignment color + Needs-assignment deep-link). **v2** — disposition schema + single write route; non-vacuous EMB-01 guard; deterministic build-time queue; thumb-join lifecycle; envelope/path pins (FIR9R1-01..08).
+> - **Changelog**: **v6** — persist and compare the canonical `numeric_runtime_fingerprint().as_payload()` shape; regression proof covers both an identical-payload fresh run and a changed-payload stale run. **v5** — make list-time stale checks and the Slice 2 acceptance checklist compare both `embedding_model` and the persisted `numeric_runtime_fingerprint`; require a same-model/different-fingerprint stale regression case. **v4** — replace private `cv_runtime_version` with the shared `numeric_runtime_fingerprint()` object in persisted atlas params and stale-run checks. **v3** — Workbench placement rationale (NAV-05/VIZ-15/NAV-06) + S3 Roster-coordination lens (assignment color + Needs-assignment deep-link). **v2** — disposition schema + single write route; non-vacuous EMB-01 guard; deterministic build-time queue; thumb-join lifecycle; envelope/path pins (FIR9R1-01..08).
 
 ## Objective
 
@@ -44,7 +44,7 @@ Operators curate merges/splits via Workbench review queues without a global geom
 - **EVAL-10**: Golden-150 sealed eval split is **never read or altered by this tooling**. If the atlas accelerates Golden-150 **labeling**, labeling may use the full corpus view; sealed eval registration/freeze discipline (owned by the eval harness / VLM-6 + FIR-5 coordination) is out of scope and remains untouched.
 - **MLDATA-03/04**: labels applied after queue review keep lineage (who/when/what source). Existing mutation paths already write `audit_events` (`db/models/observability.py:AuditEvent`, table `audit_events` in `001_identity_schema.py`). **This task adds no new label-write path.** Labels flow only through the existing cluster mutation APIs; the atlas disposition POST is queue bookkeeping only (no label semantics).
 - **AUDIT-13**: queue completion is reported (`reviewed` / `skipped` / `remaining` per atlas run) by reading `identity_atlas_queue_dispositions` so nonresponse is visible, not silently replaced.
-- **EMB-01**: one atlas run = one `(tenant_id, embedding_model)` pair. Never mix models in one projection. After FIR-6 flip, prior-model runs remain listable and marked `stale` relative to the active model (computed at **list** time — no background job).
+- **EMB-01**: one atlas run = one `(tenant_id, embedding_model)` pair. Never mix models in one projection. At **list** time, mark a run `stale` when either its model differs from the active model or its persisted `numeric_runtime_fingerprint` differs from the current embedding-producing runtime fingerprint; no background job. This includes a runtime change with the same `embedding_model`.
 - **Multi-tenancy**: artifacts tenant-scoped; batch job uses admin-session BYPASS pattern with **explicit** `--tenant-id`; HTTP filters by tenant.
 - **Privacy**: HTTP serves coords + cluster ids + thumb refs only — **no raw embeddings**. Atlas data is biometric-adjacent derived state; same retention/purge story as clusters.
 - **CPU / ARM**: `umap-learn` (BSD-3) + numba/llvmlite via optional `[atlas]` extra; aarch64 wheel smoke required; **no TensorFlow**.
@@ -64,7 +64,7 @@ Operators curate merges/splits via Workbench review queues without a global geom
 
 - **Atlas run**: one persisted projection + score artifact for a single `(tenant_id, embedding_model)` with backed `status` ∈ {`building`, `complete`, `failed`}.
 - **Atlas point**: one face/identity row with `(x, y)` display coords, HIGH-D `uncertainty` JSON, and build-time `queue_rank` — never the raw vector.
-- **Stale run**: run whose **`(embedding_model, numeric_runtime_fingerprint)`** differs from the current pair — active model id (`active_embedding_model_id()` in `recognition/application/embedding/manifest.py:71`) and the complete embedding-producing runtime fingerprint returned by `recognition.infrastructure.face_pipeline.numeric_runtime_fingerprint()`. Persist the four-field object (`opencv_version`, `opencv_major`, `onnxruntime_version`, `numpy_version`) in `identity_atlas_runs.params.numeric_runtime_fingerprint`; compare the full object at list time with the current fingerprint. A mismatch makes the run stale; no background job is required. Keying only on `embedding_model` can carry `similarity_threshold` / `suggestion_floor` bands across a CVUP-1 runtime change even though embeddings change without a model-id change.
+- **Stale run**: run whose **`(embedding_model, numeric_runtime_fingerprint)`** differs from the current pair — active model id (`active_embedding_model_id()` in `recognition/application/embedding/manifest.py:71`) and the complete embedding-producing runtime fingerprint returned by `recognition.infrastructure.face_pipeline.numeric_runtime_fingerprint()`. Persist `numeric_runtime_fingerprint().as_payload()` in `identity_atlas_runs.params.numeric_runtime_fingerprint`, and compare it at list time with a fresh `numeric_runtime_fingerprint().as_payload()` value. This canonical JSON shape contains the full `versions` mapping and `comparison_token`; compare payload to payload by value, never the serialized payload to the raw dataclass object or to a four-field projection. A mismatch makes the run stale; an identical payload with the same model remains fresh. Keying only on `embedding_model` can carry `similarity_threshold` / `suggestion_floor` bands across a CVUP-1 runtime change even though embeddings change without a model-id change.
 - **Queue mix**: ordered list = uncertainty slice + diversity slice + random calibration slice (HITL active-learning practice), **materialized at build time** into `queue_rank`.
 - **Disposition**: `reviewed` | `skipped` row in `identity_atlas_queue_dispositions` (AUDIT-13 bookkeeping only).
 - **DIAGNOSTIC display**: UI that must not drive automated accept/merge thresholds.
@@ -271,7 +271,7 @@ Tenant query: admin list/points/queue take `tenant_id` as **required query param
       params,
       point_count,
       created_at,
-      stale                 # run.embedding_model != active_embedding_model_id()  (manifest.py:71)
+      stale                 # model differs OR persisted as_payload() != current as_payload()
     }
   ],
   active_embedding_model   # from active_embedding_model_id()
@@ -304,7 +304,7 @@ Tenant query: admin list/points/queue take `tenant_id` as **required query param
 
 **Tenant mirror** (Workbench): same relative paths under `/recognition/atlas/...` (`/recognition/atlas/runs`, `…/runs/{run_id}/points`, `…/runs/{run_id}/queue`, `POST …/dispositions`) with `require_auth` + `assert_tenant_match`. Disposition mutation on tenant surface still only touches disposition rows, not clusters.
 
-**Stale marking**: computed at **LIST** time only — `run.embedding_model != active_embedding_model_id()` (`manifest.py:71`). No background job. UI renders a stale badge with **color + icon** (sr-004).
+**Stale marking**: computed at **LIST** time only — stale when `run.embedding_model != active_embedding_model_id()` (`manifest.py:71`) **or** `run.params.numeric_runtime_fingerprint` differs by value from a freshly computed `numeric_runtime_fingerprint().as_payload()`. Both the stored value and live value use this same JSON-ready representation; do not compare the stored mapping directly to the accessor's dataclass object or project only four fields. No background job. UI renders a stale badge with **color + icon** (sr-004).
 
 ### 4. Workbench UI — `apps/prototype-wp-alt-context/js/admin/pages/workbench/`
 
@@ -396,7 +396,7 @@ atlas = [
   - Tenant mirror: wrong tenant → 403 via `assert_tenant_match`; envelope `total` matches DB count (rg-015).
   - Response JSON never contains embedding arrays (negative assertion).
   - Disposition POST increments completion counters derived from the dispositions table; never calls cluster mutation services.
-  - Stale flag: list marks run stale when model ≠ `active_embedding_model_id()`.
+  - Stale flag: list marks a run stale when model ≠ `active_embedding_model_id()` or its persisted canonical `as_payload()` differs from the current `as_payload()`. Include a same-model run with an identical payload and assert `stale=false`, plus a same-model run with one changed payload version and assert `stale=true`; retain model-mismatch coverage. This pair fails if the stored mapping is compared directly with the raw accessor object (which would mark every run stale).
 - **Frontend**: `npm test` for zero-state, Canvas2D scatter props from fixture points, **mutation spy: no cluster-mutation calls**; disposition POST expected; stale badge color+icon; token classes present; `ATLAS_RUN_STATUS` matches schema enum only.
 - **aarch64 smoke**: import `umap` with `[atlas]` installed (document command; run on A1 or CI arm where available).
 - **Gate**: `make check-remote` per slice close.
@@ -524,11 +524,12 @@ Merge order: `backend-atlas` then `frontend-atlas`, then S4 docs on the feature 
 - [ ] Implement pinned paths: `GET /admin/atlas/runs`, `GET …/runs/{run_id}/points`, `GET …/runs/{run_id}/queue`, `POST …/runs/{run_id}/dispositions`.
 - [ ] Envelopes: runs `{items, active_embedding_model}`; points `{items, limit, offset, total}` with SQL COUNT; queue `{items ordered by queue_rank, completion: {reviewed, skipped, remaining}}`.
 - [ ] Points GET: JOIN `media_identities` for `media_url` + bbox; thumb via shared helper wrapping `build_face_thumb_path` (`blob_url.py:76`) — not private `_face_thumb_*` imports.
-- [ ] Mark `stale` at list time when `run.embedding_model != active_embedding_model_id()` (`manifest.py:71`); no background job.
+- [ ] Mark `stale` at list time when `run.embedding_model != active_embedding_model_id()` (`manifest.py:71`) **or** persisted `params.numeric_runtime_fingerprint` differs by value from a fresh `numeric_runtime_fingerprint().as_payload()`; persist and compare this same canonical payload shape, not the dataclass or a four-field projection; no background job.
+- [ ] Regression test: with `embedding_model` unchanged, an identical persisted/current `as_payload()` reports `stale=false`; changing one component in the payload (for example `versions.numpy`) reports `stale=true` and does not carry the old run's similarity bands as fresh. Keep separate model-mismatch coverage.
 - [ ] Mount admin router under `/admin` inside `admin_enabled` block in `api/main.py`.
 - [ ] Mount tenant mirror under `/recognition/atlas/...` with `require_auth` + `assert_tenant_match`.
 - [ ] Disposition POST is the **single** atlas write route (bookkeeping only; no label semantics); `require_admin_header` on admin side.
-- [ ] Tests: auth matrix, tenant isolation, envelope `total`, no embedding keys, stale flag, disposition rows drive completion, cascade.
+- [ ] Tests: auth matrix, tenant isolation, envelope `total`, no embedding keys, stale flag for model mismatch, identical-payload fresh case, and same-model changed-payload stale case; disposition rows drive completion; cascade.
 - [ ] `make check-remote` green for S2.
 
 ### Checklist for Slice 3: Workbench atlas UI + queue surface

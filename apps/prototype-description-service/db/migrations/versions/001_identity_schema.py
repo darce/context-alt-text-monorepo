@@ -870,6 +870,8 @@ def _heal_portal_tenant_invitation_tenant_nullable(op) -> None:
         return
     if _column_nullable(op, "portal_tenant_invitation", "tenant_id") is False:
         op.execute(sa.text('ALTER TABLE "portal_tenant_invitation" ALTER COLUMN "tenant_id" DROP NOT NULL'))
+
+
 def _ensure_foreign_key_constraint(op, table_name: str, constraint) -> bool:
     """Add an explicitly opted-in composite FK to an existing table."""
     details = next(

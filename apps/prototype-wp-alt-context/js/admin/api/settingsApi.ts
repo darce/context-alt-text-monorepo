@@ -15,6 +15,23 @@ export type UrlRejectionReasonValue = (typeof UrlRejectionReason)[keyof typeof U
 
 export type UrlRejectionSource = 'constant' | 'option' | 'filter';
 
+export const CONTEXT_CATEGORIES = ['attachment', 'post', 'taxonomy_terms', 'product'] as const;
+
+export type ContextCategory = (typeof CONTEXT_CATEGORIES)[number];
+
+export const isContextCategory = (value: unknown): value is ContextCategory =>
+  typeof value === 'string' && (CONTEXT_CATEGORIES as readonly string[]).includes(value);
+
+export const effectiveContextCategories = (value: unknown): ContextCategory[] => {
+  if (!Array.isArray(value)) {
+    return [...CONTEXT_CATEGORIES];
+  }
+
+  return CONTEXT_CATEGORIES.filter((category) =>
+    value.some((entry: unknown) => isContextCategory(entry) && entry === category),
+  );
+};
+
 export interface SettingsResponse {
   url: string;
   url_source: 'constant' | 'option' | 'filter' | 'default';
@@ -50,6 +67,8 @@ export interface SettingsResponse {
   // null value means the service could not be read and must not be defaulted.
   allow_person_names?: boolean | null;
   allow_person_names_error?: string | null;
+  context_categories?: ContextCategory[] | null;
+  context_categories_error?: string | null;
   description_budget: DescriptionBudget;
 }
 
@@ -94,6 +113,7 @@ export interface SaveSettingsPayload {
   alt_style?: AltStyleValue;
   recognition_enabled?: boolean;
   allow_person_names?: boolean;
+  context_categories?: ContextCategory[];
   description_budget?: {
     max_attempts: number;
   };

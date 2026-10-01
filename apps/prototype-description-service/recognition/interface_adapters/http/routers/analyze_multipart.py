@@ -55,6 +55,7 @@ from recognition.interface_adapters.http.deps.object_store import (
     get_object_store_factory_for_request,
 )
 from recognition.interface_adapters.http.deps.usage_admission import (
+    _is_usage_service,
     admit_usage,
     get_usage_admission_service,
 )
@@ -449,7 +450,11 @@ async def _analyze_media_multipart_form(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=("multipart submission must include at least one image_<media_id> part"),
         )
-    operation_id = resolve_analyze_operation_id(header_value=idempotency_key, envelope=envelope)
+    operation_id = resolve_analyze_operation_id(
+        header_value=idempotency_key,
+        envelope=envelope,
+        required=_is_usage_service(usage_admission_service),
+    )
     fingerprint = build_analyze_request_fingerprint(
         tenant_id=tenant_uuid,
         route="analyze_multipart",

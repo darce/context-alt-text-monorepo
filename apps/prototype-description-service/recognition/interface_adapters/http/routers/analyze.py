@@ -49,6 +49,7 @@ from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quo
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 from recognition.interface_adapters.http.deps.tenant_common import normalize_tenant_id
 from recognition.interface_adapters.http.deps.usage_admission import (
+    _is_usage_service,
     admit_usage,
     get_usage_admission_service,
 )
@@ -92,6 +93,7 @@ def resolve_analyze_operation_id(
     *,
     header_value: str | None,
     envelope: Mapping[str, object] | None = None,
+    required: bool = False,
 ) -> str:
     """Prefer Idempotency-Key, then envelope operation_id; never hash media sources."""
     candidates: list[str] = []
@@ -114,6 +116,17 @@ def resolve_analyze_operation_id(
         )
     if unique:
         return unique[0]
+    if required:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "type": "https://context-alt-text.dev/problems/idempotency-key-required",
+                "title": "Idempotency-Key required",
+                "status": status.HTTP_400_BAD_REQUEST,
+                "detail": "Metered analyze requests require Idempotency-Key or an envelope operation_id/idempotency_key",
+                "code": "idempotency_key_required",
+            },
+        )
     return str(uuid.uuid4())
 
 
@@ -562,7 +575,11 @@ async def analyze_media(
         )
 
         envelope = await json_request_envelope(http_request)
-        operation_id = resolve_analyze_operation_id(header_value=idempotency_key, envelope=envelope)
+        operation_id = resolve_analyze_operation_id(
+            header_value=idempotency_key,
+            envelope=envelope,
+            required=_is_usage_service(usage_admission_service),
+        )
         fingerprint = build_analyze_request_fingerprint(
             tenant_id=tenant_uuid,
             route="analyze",

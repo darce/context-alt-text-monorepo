@@ -6,14 +6,19 @@ import ast
 import hashlib
 import json
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
 import pytest
 
 from scripts.bench.preflight import (
+    PRE_RUN_RESET_EVIDENCE_ENV,
+    PRE_RUN_RESET_EVIDENCE_MAX_AGE,
     PreflightError,
     preflight_stack,
+    pre_run_reset_evidence_sha256,
+    validate_pre_run_reset_evidence,
     write_preflight_json,
 )
 from scripts.bench.stack_pair import StackEndpoint, load_stack_pair
@@ -105,6 +110,45 @@ def _transport(ready: dict | int, health: dict | int) -> httpx.MockTransport:
         return httpx.Response(404, json={"detail": "no"})
 
     return httpx.MockTransport(handler)
+
+
+def _reset_evidence(*, rows_empty: bool = True) -> dict[str, dict[str, object]]:
+    completed_at = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+    return {
+        stack["stack_id"]: {
+            "reset_attested_by": "bench operator",
+            "reset_reference": "FIR23-STACK runbook §reset",
+            "reset_completed_at": completed_at,
+            "prior_run_identity_rows_empty": rows_empty,
+        }
+        for stack in (INSIGHTFACE_STACK, FIR_STACK)
+    }
+
+
+def test_pre_run_reset_evidence_rejects_stale_timestamp(tmp_path: Path) -> None:
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    evidence = _reset_evidence()
+    stale_at = (datetime.now(UTC) - PRE_RUN_RESET_EVIDENCE_MAX_AGE - timedelta(seconds=1)).isoformat()
+    for record in evidence.values():
+        record["reset_completed_at"] = stale_at
+
+    with pytest.raises(PreflightError) as exc:
+        validate_pre_run_reset_evidence(pair, evidence)
+
+    assert exc.value.code == "pre_run_reset_unverified"
+
+
+def test_pre_run_reset_evidence_rejects_future_timestamp(tmp_path: Path) -> None:
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    evidence = _reset_evidence()
+    future_at = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+    for record in evidence.values():
+        record["reset_completed_at"] = future_at
+
+    with pytest.raises(PreflightError) as exc:
+        validate_pre_run_reset_evidence(pair, evidence)
+
+    assert exc.value.code == "pre_run_reset_unverified"
 
 
 def test_preflight_ok_real_shapes() -> None:
@@ -412,6 +456,7 @@ def test_run_pair_defaults_to_fail_closed_preflight(tmp_path: Path) -> None:
                 "acx-dev-insightface": _transport(500, _health("insightface")),
                 "acx-dev-fir": _transport(_ready(128), _health("face_pipeline")),
             },
+            pre_run_reset_by_stack=_reset_evidence(),
         )
     assert exc.value.code == "preflight_endpoint_missing"
     assert not list((tmp_path / "out-default").rglob("items.jsonl"))
@@ -427,6 +472,12 @@ def test_cli_run_fail_closed_aborts_before_media_write(
     manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
     pair_path = write_pair(tmp_path / "pair.yaml")
     out = tmp_path / "cli-out"
+    evidence_path = tmp_path / "reset-evidence.json"
+    evidence_path.write_text(
+        json.dumps({"pre_run_reset_by_stack": _reset_evidence()}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(PRE_RUN_RESET_EVIDENCE_ENV, str(evidence_path))
 
     def boom(*_a, **_k):
         raise PreflightError("preflight_endpoint_missing", "cli seam")
@@ -461,6 +512,17 @@ def test_run_pair_persists_preflight_json(tmp_path: Path) -> None:
             "acx-dev-insightface": _transport(_ready(512), _health("insightface")),
             "acx-dev-fir": _transport(_ready(128), _health("face_pipeline")),
         },
+        pre_run_reset_by_stack=_reset_evidence(),
+    )
+    run_doc = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert set(run_doc["pre_run_reset_by_stack"]) == {"acx-dev-insightface", "acx-dev-fir"}
+    expected_digest = hashlib.sha256(
+        json.dumps(run_doc["pre_run_reset_by_stack"], sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    assert run_doc["pre_run_reset_evidence_sha256"] == expected_digest
+    assert all(
+        record["prior_run_identity_rows_empty"] is True
+        for record in run_doc["pre_run_reset_by_stack"].values()
     )
     for stack_id, dim, profile in (
         ("acx-dev-insightface", 512, "insightface"),
@@ -471,6 +533,221 @@ def test_run_pair_persists_preflight_json(tmp_path: Path) -> None:
         assert doc["opencv_major_source"] == "service_reported"
         assert doc["resolved_pgvector_dim"] == dim
         assert doc["resolved_profile"] == profile
+
+
+def test_fresh_reset_evidence_passes_once_and_reuse_is_refused(tmp_path: Path) -> None:
+    from scripts.bench import driver
+    from scripts.bench.tests.conftest import FakeClient, write_hashed_manifest, write_pair
+
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    output_root = tmp_path / "results"
+    evidence = _reset_evidence()
+    first_clients = {
+        "acx-dev-insightface": FakeClient(),
+        "acx-dev-fir": FakeClient(),
+    }
+
+    driver.run_pair(
+        pair,
+        manifest_path=manifest,
+        images_dir=images,
+        out_dir=output_root / "run-1",
+        clients=first_clients,
+        skip_preflight=True,
+        pre_run_reset_by_stack=evidence,
+    )
+    assert first_clients["acx-dev-insightface"].analyze_calls
+    first_run_doc = json.loads((output_root / "run-1" / "run.json").read_text(encoding="utf-8"))
+    assert first_run_doc["pre_run_reset_evidence_sha256"] == pre_run_reset_evidence_sha256(
+        first_run_doc["pre_run_reset_by_stack"]
+    )
+
+    second_clients = {
+        "acx-dev-insightface": FakeClient(),
+        "acx-dev-fir": FakeClient(),
+    }
+    with pytest.raises(PreflightError) as exc:
+        driver.run_pair(
+            pair,
+            manifest_path=manifest,
+            images_dir=images,
+            out_dir=output_root / "run-2",
+            clients=second_clients,
+            skip_preflight=True,
+            pre_run_reset_by_stack=evidence,
+        )
+
+    assert exc.value.code == "pre_run_reset_unverified"
+    assert not second_clients["acx-dev-insightface"].analyze_calls
+    assert not (output_root / "run-2" / "run.json").exists()
+
+
+def test_run_pair_resumes_same_reset_evidence_after_age_bound(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.bench import driver, preflight
+    from scripts.bench.tests.conftest import FakeClient, write_hashed_manifest, write_pair
+
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = tmp_path / "results" / "run-1"
+    evidence = _reset_evidence()
+    first_clients = {stack_id: FakeClient() for stack_id in pair.allowlist_ids}
+    driver.run_pair(
+        pair,
+        manifest_path=manifest,
+        images_dir=images,
+        out_dir=out,
+        clients=first_clients,
+        skip_preflight=True,
+        pre_run_reset_by_stack=evidence,
+    )
+    first_doc = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    first_digest = first_doc["pre_run_reset_evidence_sha256"]
+    frozen_now = datetime.now(UTC) + PRE_RUN_RESET_EVIDENCE_MAX_AGE + timedelta(seconds=1)
+
+    class FrozenDateTime:
+        @staticmethod
+        def now(tz: object = UTC) -> datetime:
+            return frozen_now
+
+        @staticmethod
+        def fromisoformat(value: str) -> datetime:
+            return datetime.fromisoformat(value)
+
+    monkeypatch.setattr(preflight, "datetime", FrozenDateTime)
+
+    def unexpected_evidence_stamp(_root: Path, key: str, _value: object) -> None:
+        if key in {"pre_run_reset_by_stack", "pre_run_reset_evidence_sha256"}:
+            pytest.fail("resume must preserve the reset evidence already recorded for the run")
+
+    monkeypatch.setattr(driver, "_stamp_run_field", unexpected_evidence_stamp)
+    resumed_clients = {stack_id: FakeClient() for stack_id in pair.allowlist_ids}
+    driver.run_pair(
+        pair,
+        manifest_path=manifest,
+        images_dir=images,
+        out_dir=out,
+        clients=resumed_clients,
+        skip_preflight=True,
+        pre_run_reset_by_stack=evidence,
+    )
+
+    resumed_doc = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert resumed_doc["pre_run_reset_evidence_sha256"] == first_digest
+    assert resumed_doc["pre_run_reset_by_stack"] == first_doc["pre_run_reset_by_stack"]
+
+
+def test_run_pair_refuses_different_reset_evidence_for_existing_run(tmp_path: Path) -> None:
+    from scripts.bench import driver
+    from scripts.bench.tests.conftest import FakeClient, write_hashed_manifest, write_pair
+
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = tmp_path / "results" / "run-1"
+    evidence = _reset_evidence()
+    first_clients = {stack_id: FakeClient() for stack_id in pair.allowlist_ids}
+    driver.run_pair(
+        pair,
+        manifest_path=manifest,
+        images_dir=images,
+        out_dir=out,
+        clients=first_clients,
+        skip_preflight=True,
+        pre_run_reset_by_stack=evidence,
+    )
+    first_doc = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    changed_evidence = {stack_id: dict(record) for stack_id, record in evidence.items()}
+    changed_evidence["acx-dev-fir"]["reset_reference"] = "a different reset record"
+    resumed_clients = {stack_id: FakeClient() for stack_id in pair.allowlist_ids}
+
+    with pytest.raises(PreflightError) as exc:
+        driver.run_pair(
+            pair,
+            manifest_path=manifest,
+            images_dir=images,
+            out_dir=out,
+            clients=resumed_clients,
+            skip_preflight=True,
+            pre_run_reset_by_stack=changed_evidence,
+        )
+
+    assert exc.value.code == "pre_run_reset_unverified"
+    assert not resumed_clients["acx-dev-insightface"].analyze_calls
+    current_doc = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert current_doc["pre_run_reset_evidence_sha256"] == first_doc["pre_run_reset_evidence_sha256"]
+    assert current_doc["pre_run_reset_by_stack"] == first_doc["pre_run_reset_by_stack"]
+
+
+def test_run_pair_refuses_stale_reset_evidence_for_new_run(tmp_path: Path) -> None:
+    from scripts.bench import driver
+    from scripts.bench.tests.conftest import FakeClient, write_hashed_manifest, write_pair
+
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = tmp_path / "results" / "run-1"
+    evidence = _reset_evidence()
+    stale_at = (datetime.now(UTC) - PRE_RUN_RESET_EVIDENCE_MAX_AGE - timedelta(seconds=1)).isoformat()
+    for record in evidence.values():
+        record["reset_completed_at"] = stale_at
+    clients = {stack_id: FakeClient() for stack_id in pair.allowlist_ids}
+
+    with pytest.raises(PreflightError) as exc:
+        driver.run_pair(
+            pair,
+            manifest_path=manifest,
+            images_dir=images,
+            out_dir=out,
+            clients=clients,
+            skip_preflight=True,
+            pre_run_reset_by_stack=evidence,
+        )
+
+    assert exc.value.code == "pre_run_reset_unverified"
+    assert not clients["acx-dev-insightface"].analyze_calls
+    assert not (out / "run.json").exists()
+
+
+@pytest.mark.parametrize("invalid_kind", ["missing_stack", "nonempty_rows", "skipped_preflight"])
+def test_run_pair_refuses_without_reset_and_empty_state_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_kind: str,
+) -> None:
+    from scripts.bench import driver
+    from scripts.bench.tests.conftest import write_hashed_manifest, write_pair
+
+    monkeypatch.delenv(PRE_RUN_RESET_EVIDENCE_ENV, raising=False)
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    evidence = _reset_evidence()
+    if invalid_kind == "missing_stack":
+        del evidence["acx-dev-fir"]
+    elif invalid_kind == "nonempty_rows":
+        evidence["acx-dev-fir"]["prior_run_identity_rows_empty"] = False
+
+    def unexpected_ingest(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("run_leg must not be entered without reset and empty-state evidence")
+
+    monkeypatch.setattr(driver, "run_leg", unexpected_ingest)
+    with pytest.raises(PreflightError) as exc:
+        driver.run_pair(
+            pair,
+            manifest_path=manifest,
+            images_dir=images,
+            out_dir=tmp_path / f"out-{invalid_kind}",
+            pre_run_reset_by_stack=(None if invalid_kind == "skipped_preflight" else evidence),
+            skip_preflight=invalid_kind == "skipped_preflight",
+        )
+    assert exc.value.code == "pre_run_reset_unverified"
+    assert not (tmp_path / f"out-{invalid_kind}" / "run.json").exists()
 
 
 def test_run_pair_preflights_when_not_skipped(tmp_path: Path) -> None:
@@ -495,6 +772,7 @@ def test_run_pair_preflights_when_not_skipped(tmp_path: Path) -> None:
                 "acx-dev-insightface": _transport(500, _health("insightface")),
                 "acx-dev-fir": _transport(_ready(128), _health("face_pipeline")),
             },
+            pre_run_reset_by_stack=_reset_evidence(),
         )
     assert exc.value.code == "preflight_endpoint_missing"
     assert not list((tmp_path / "out").rglob("items.jsonl"))

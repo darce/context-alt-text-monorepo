@@ -75,6 +75,46 @@ def cluster_gate_admits(items: list[Any], item_max_attempts: int = 2) -> bool:
     return evaluate_cluster_gate(items, item_max_attempts=item_max_attempts).admits
 
 
+def _refuse_reused_reset_evidence(
+    output_root: Path,
+    evidence_sha256: str,
+    *,
+    current_run_path: Path | None = None,
+) -> None:
+    """Refuse evidence recorded by another run, while allowing its own resume."""
+    from scripts.bench.preflight import PreflightError
+
+    if not output_root.exists():
+        return
+    current_path = current_run_path.resolve() if current_run_path is not None else None
+    for record_path in sorted(output_root.rglob("run.json")):
+        try:
+            run_doc = json.loads(record_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise PreflightError(
+                "pre_run_reset_unverified",
+                f"cannot verify prior run record {record_path}",
+            ) from exc
+        if not isinstance(run_doc, dict):
+            raise PreflightError(
+                "pre_run_reset_unverified",
+                f"cannot verify prior run record {record_path}",
+            )
+        recorded_digest = run_doc.get("pre_run_reset_evidence_sha256")
+        if current_path is not None and record_path.resolve() == current_path:
+            if recorded_digest != evidence_sha256:
+                raise PreflightError(
+                    "pre_run_reset_unverified",
+                    f"run {record_path.parent} was started with different or missing reset evidence",
+                )
+            continue
+        if recorded_digest == evidence_sha256:
+            raise PreflightError(
+                "pre_run_reset_unverified",
+                f"reset evidence was already used by a run under output root {output_root}",
+            )
+
+
 def init_run_dir(run_dir: Path | str, pair: StackPairConfig, manifest_path: Path | str) -> Path:
     root = Path(run_dir)
     root.mkdir(parents=True, exist_ok=True)
@@ -360,6 +400,7 @@ def run_pair(
     clients: dict[str, Any] | None = None,
     skip_preflight: bool = False,
     preflight_transports: dict[str, Any] | None = None,
+    pre_run_reset_by_stack: dict[str, Any] | None = None,
 ) -> Path:
     # Load without images_dir first so floor/superset fail before any media I/O.
     # Deliberate metadata-only load (VLM6-PANEL6L-rvM-01 / OBS-04): only
@@ -386,14 +427,46 @@ def run_pair(
             {e.media_id for e in manifest.entries},
             {e.media_id for e in baseline.entries},
         )
+    from scripts.bench.preflight import (
+        load_pre_run_reset_evidence,
+        preflight_pair,
+        pre_run_reset_evidence_sha256,
+        validate_pre_run_reset_evidence,
+    )
+
+    # This gate is independent of the optional health preflight switch: skipping
+    # health checks must never permit ingest against an unattested scratch tenant.
+    out_dir_path = Path(out_dir)
+    run_record_path = out_dir_path / "run.json"
+    is_resume = run_record_path.exists()
+    reset_evidence = (
+        validate_pre_run_reset_evidence(
+            pair,
+            pre_run_reset_by_stack,
+            enforce_freshness=not is_resume,
+        )
+        if pre_run_reset_by_stack is not None
+        else load_pre_run_reset_evidence(pair, enforce_freshness=not is_resume)
+    )
+    reset_evidence_sha256 = pre_run_reset_evidence_sha256(reset_evidence)
+    _refuse_reused_reset_evidence(
+        out_dir_path.parent,
+        reset_evidence_sha256,
+        current_run_path=run_record_path if is_resume else None,
+    )
     preflight_results = None
     if not skip_preflight:
-        from scripts.bench.preflight import preflight_pair
-
         keys = {s.stack_id: os.environ.get(s.api_key_env, "") for s in pair.stacks}
         # Abort before any media/run-dir writes; persist after init.
-        preflight_results = preflight_pair(pair, transports=preflight_transports, api_keys=keys)
-    root = init_run_dir(out_dir, pair, manifest_path)
+        preflight_results = preflight_pair(
+            pair,
+            transports=preflight_transports,
+            api_keys=keys,
+        )
+    root = out_dir_path if is_resume else init_run_dir(out_dir_path, pair, manifest_path)
+    if not is_resume:
+        _stamp_run_field(root, "pre_run_reset_by_stack", reset_evidence)
+        _stamp_run_field(root, "pre_run_reset_evidence_sha256", reset_evidence_sha256)
     if preflight_results is not None:
         from scripts.bench.preflight import write_preflight_json
 

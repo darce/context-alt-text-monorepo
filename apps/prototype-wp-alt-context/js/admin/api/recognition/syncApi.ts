@@ -136,6 +136,7 @@ export const resetMirror = async (): Promise<SyncTriggerResponse> => {
   const endpoint = getEndpoint('recognitionSyncResetMirror');
   return fetchRequiredApi<SyncTriggerResponse>(endpoint, {
     method: 'POST',
+    body: { confirm: true },
     restNonce: getConfig().nonce,
     signal: createRecognitionTimeoutSignal(30_000),
   });

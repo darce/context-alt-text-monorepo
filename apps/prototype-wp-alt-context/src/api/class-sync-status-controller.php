@@ -40,6 +40,7 @@ use function is_array;
 use function is_string;
 use function max;
 use function method_exists;
+use function rest_sanitize_boolean;
 use function sprintf;
 use function trim;
 
@@ -164,6 +165,22 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 	}
 
 	public function reset_mirror( WP_REST_Request $request ): WP_REST_Response {
+		$json_params = $request->get_json_params();
+		$body_params = $request->get_body_params();
+		$confirmation = is_array( $json_params ) ? ( $json_params['confirm'] ?? null ) : null;
+		if ( null === $confirmation ) {
+			$confirmation = $body_params['confirm'] ?? null;
+		}
+		if ( true !== rest_sanitize_boolean( $confirmation ) ) {
+			return new WP_REST_Response(
+				array(
+					'code'    => 'acx_reset_mirror_confirmation_required',
+					'message' => 'Reset confirmation is required.',
+				),
+				400
+			);
+		}
+
 		$tenant_id = $this->get_tenant_id();
 
 		try {

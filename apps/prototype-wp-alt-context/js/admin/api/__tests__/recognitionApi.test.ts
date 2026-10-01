@@ -15,6 +15,7 @@ import {
   listRecognitionClusters,
   mergeCluster,
   purgeTenantData,
+  resetMirror,
   pinRepresentative,
   revertMergeCluster,
   cancelScanJob,
@@ -43,6 +44,7 @@ const mockConfig = {
     retentionPolicy: 'https://example.com/retentionPolicy',
     retentionExport: 'https://example.com/retentionExport',
     retentionPurge: 'https://example.com/retentionPurge',
+    recognitionSyncResetMirror: 'https://example.com/acx/v1/recognition/sync/reset-mirror',
   } as Record<string, string>,
   devMode: false,
 };
@@ -74,6 +76,7 @@ describe('recognitionApi', () => {
       retentionPolicy: 'https://example.com/retentionPolicy',
       retentionExport: 'https://example.com/retentionExport',
       retentionPurge: 'https://example.com/retentionPurge',
+      recognitionSyncResetMirror: 'https://example.com/acx/v1/recognition/sync/reset-mirror',
     };
   });
 
@@ -1010,6 +1013,27 @@ describe('recognitionApi', () => {
       expect.any(String),
       expect.objectContaining({
         method: 'POST',
+        restNonce: 'nonce-123',
+      }),
+    );
+  });
+
+  it('posts mirror reset confirmation to the reset-mirror endpoint', async () => {
+    fetchApiMock.mockResolvedValue({
+      synced: true,
+      reason: 'ok',
+      last_snapshot_version: 1,
+      last_synced_at: '2026-02-18 10:00:00',
+      is_stale: false,
+    });
+
+    await resetMirror();
+
+    expect(fetchApiMock).toHaveBeenCalledWith(
+      expect.stringContaining('/acx/v1/recognition/sync/reset-mirror'),
+      expect.objectContaining({
+        method: 'POST',
+        body: { confirm: true },
         restNonce: 'nonce-123',
       }),
     );

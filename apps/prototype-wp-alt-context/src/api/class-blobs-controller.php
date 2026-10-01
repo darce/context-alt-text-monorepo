@@ -23,12 +23,11 @@ use function in_array;
 use function is_string;
 use function is_wp_error;
 use function nocache_headers;
-use function parse_url;
+use function preg_match;
 use function register_rest_route;
 use function remove_filter;
 use function rest_get_server;
 use function sprintf;
-use function sanitize_text_field;
 use function status_header;
 use function str_contains;
 use function strlen;
@@ -42,8 +41,6 @@ use function wp_remote_retrieve_body;
 use function wp_remote_retrieve_header;
 use function wp_remote_retrieve_response_code;
 use function wp_set_current_user;
-use function wp_unslash;
-use const PHP_URL_PATH;
 
 /**
  * Streaming proxy for recognition-service blob bytes.
@@ -72,12 +69,9 @@ class BlobsController extends AbstractRecognitionProxyController {
 		'application/octet-stream',
 	);
 
-	private const ROUTE_PREFIXES = array(
-		'/wp-json/acx/v1/recognition/blobs/',
-		'/wp-json/acx/v1/recognition/face-thumbs/',
-	);
+	private const BLOB_ROUTE_PATTERN = '~^/acx/v1/recognition/(?:blobs|face-thumbs)/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/?\z~';
 	private static int $remembered_blob_viewer_id = 0;
-	private static string $remembered_blob_request_path = '';
+	private static string $remembered_blob_route = '';
 
 	public function register_routes(): void {
 		register_rest_route(
@@ -120,16 +114,16 @@ class BlobsController extends AbstractRecognitionProxyController {
 	 */
 	public static function remember_blob_viewer_before_cookie_check( $errors ) {
 		self::$remembered_blob_viewer_id      = 0;
-		self::$remembered_blob_request_path   = '';
-		$request_path                        = self::blob_request_path();
-		if ( null === $request_path ) {
+		self::$remembered_blob_route          = '';
+		$route                                = self::blob_request_route();
+		if ( null === $route ) {
 			return $errors;
 		}
 
 		$viewer_id = get_current_user_id();
 		if ( $viewer_id > 0 ) {
-			self::$remembered_blob_viewer_id    = $viewer_id;
-			self::$remembered_blob_request_path = $request_path;
+			self::$remembered_blob_viewer_id = $viewer_id;
+			self::$remembered_blob_route     = $route;
 		}
 
 		return $errors;
@@ -137,15 +131,15 @@ class BlobsController extends AbstractRecognitionProxyController {
 
 	/**
 	 * Replace a `rest_cookie_invalid_nonce` error with `null` (auth ok)
-	 * when the request URI targets the blob proxy route. Returns the
+	 * when the dispatched route targets the blob proxy. Returns the
 	 * upstream value untouched in every other case.
 	 *
 	 * @param mixed $errors Prior auth result from upstream filters.
 	 * @return mixed
 	 */
 	public static function maybe_bypass_nonce_for_blob_route( $errors ) {
-		$request_path = self::blob_request_path();
-		if ( null === $request_path ) {
+		$route = self::blob_request_route();
+		if ( null === $route ) {
 			self::clear_remembered_blob_viewer();
 			return $errors;
 		}
@@ -158,7 +152,7 @@ class BlobsController extends AbstractRecognitionProxyController {
 			$errors = null;
 		}
 
-		$viewer_id = self::$remembered_blob_request_path === $request_path
+		$viewer_id = self::$remembered_blob_route === $route
 			? self::$remembered_blob_viewer_id
 			: 0;
 		self::clear_remembered_blob_viewer();
@@ -169,28 +163,20 @@ class BlobsController extends AbstractRecognitionProxyController {
 		return $errors;
 	}
 
-	private static function blob_request_path(): ?string {
-		$request_uri = isset( $_SERVER['REQUEST_URI'] )
-			? sanitize_text_field( wp_unslash( (string) $_SERVER['REQUEST_URI'] ) )
-			: '';
-		if ( '' === $request_uri ) {
+	private static function blob_request_route(): ?string {
+		global $wp;
+
+		$route = isset( $wp->query_vars['rest_route'] ) ? $wp->query_vars['rest_route'] : null;
+		if ( ! is_string( $route ) || 1 !== preg_match( self::BLOB_ROUTE_PATTERN, $route ) ) {
 			return null;
 		}
-		$path = parse_url( $request_uri, PHP_URL_PATH );
-		if ( ! is_string( $path ) || '' === $path ) {
-			return null;
-		}
-		foreach ( self::ROUTE_PREFIXES as $route_prefix ) {
-			if ( str_contains( $path, $route_prefix ) ) {
-				return $path;
-			}
-		}
-		return null;
+
+		return $route;
 	}
 
 	private static function clear_remembered_blob_viewer(): void {
 		self::$remembered_blob_viewer_id    = 0;
-		self::$remembered_blob_request_path = '';
+		self::$remembered_blob_route        = '';
 	}
 
 	/**

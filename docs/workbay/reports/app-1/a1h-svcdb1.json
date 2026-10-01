@@ -1,0 +1,73 @@
+{
+  "lane": "a1h-svcdb1",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/test_identity_schema_migration.py recognition/tests/unit/test_app1_billing_recovery_contracts.py recognition/tests/unit/test_app1_billing_recovery_verifier.py recognition/tests/unit/test_app1_checkout_attempt_repository.py scene/tests/test_describe_async_repository.py",
+      "result": "not_run",
+      "detail": "uv stopped before pytest: failed to remove /home/gate/workbay-sandbox/.venv-lane-feature-app-1-a1h-svcdb1-acfb21eb/lib/python3.12/site-packages/../../../bin/alembic: Read-only file system (os error 30). Retried with --no-sync."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/test_identity_schema_migration.py recognition/tests/unit/test_app1_billing_recovery_contracts.py recognition/tests/unit/test_app1_billing_recovery_verifier.py recognition/tests/unit/test_app1_checkout_attempt_repository.py scene/tests/test_describe_async_repository.py",
+      "result": "not_run",
+      "detail": "Pytest reached scene/tests/test_describe_async_repository.py::test_create_single_run_then_provisional_then_final (line 128), emitted 'Timeout (0:04:00)!' with the aiosqlite worker stack, and marked the case failed; the session was interrupted with exit 130 after it remained stalled."
+    },
+    {
+      "command": "pytest -q recognition/tests/integration/test_app1_billing_namespace_migrate_postgres.py recognition/tests/integration/test_app1_billing_namespace_postgres.py recognition/tests/integration/test_app1_billing_reconcile_fixwave_postgres.py recognition/tests/integration/test_app1_billing_reconcile_postgres.py recognition/tests/integration/test_app1_billing_recovery_postgres.py recognition/tests/integration/test_app1_billing_recovery_verifier_postgres.py recognition/tests/integration/test_app1_checkout_attempt_persistence.py recognition/tests/integration/test_app1_claim_onboarding_postgres.py",
+      "result": "not_run",
+      "detail": "Requires the PostgreSQL scratch database supplied by pg_empty_engine; this sandbox has none. Inspected relevant assertions for TEST-15."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 15991,
+      "finding_id": "APP1-LEDGER-RV04",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/db/migrations/versions/001_identity_schema.py:417 - 'Old writers omit operation_id/request_fingerprint/fence_token and do not update usage_admission_global_state'; the upgrade gate rejects existing nullable/missing identity columns without the drained-writer GUC before contraction at :568-578 and is called at :1178. docs/runbooks/app1-usage-schema-upgrade.md:31-47 documents the stop, drain, env flag, and upgraded-writer sequence.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/schema/test_identity_schema_heal_pg.py::test_heal_refuses_existing_usage_identity_contract_until_writers_drained"
+    },
+    {
+      "db_id": 15990,
+      "finding_id": "APP1-LEDGER-RV03",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/db/migrations/versions/001_identity_schema.py:743-745 - the seed 'LOCK TABLE usage_admission_global_state IN EXCLUSIVE MODE' then locks reservations; :811-835 recomputes current-period committed/reserved cost and reserved queue counts/bytes while leaving stop/config/epoch fields untouched. test_heal_upgrades_existing_usage_reservation_rows_and_seeds_global_state asserts the seed from a pre-existing row; test_heal_reconciles_global_counters_from_current_period_chargeable_and_reserved asserts (8, 3, 1, 7, 42, true, 'keep-me', 3).",
+      "guard_test": "apps/prototype-description-service/recognition/tests/schema/test_identity_schema_heal_pg.py::test_heal_upgrades_existing_usage_reservation_rows_and_seeds_global_state; apps/prototype-description-service/recognition/tests/schema/test_identity_schema_heal_pg.py::test_heal_reconciles_global_counters_from_current_period_chargeable_and_reserved"
+    },
+    {
+      "db_id": 15967,
+      "finding_id": "APP1-SCHEMA-RV02",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/db/migrations/versions/001_identity_schema.py:634-645 - the migration sets transaction-local app.bypass_rls and restores the previous value in finally; :648-654 wraps the reservation backfill, and :738 wraps singleton reconciliation. The usage RLS policy admits only tenant context or this bypass at :3447-3448.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/schema/test_identity_schema_heal_pg.py::test_sync_schema_backfills_usage_reservation_under_forced_rls_without_role_bypass"
+    },
+    {
+      "db_id": 15484,
+      "finding_id": "W2RECO-a759eea27bcc891d-H-c22a6fe9a01240054d94ab2a",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/portal_identity_repository.py:122 - 'issuer/subject resolution and invitation redemption establish the tenant'; get_by_issuer_subject and claim both enter _pre_auth_rls_bypass at :150 and :172, which enables and then disables the bypass. Existing tests assert the enable/disable pair for lookup and invitation claim.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_portal_identity_onboarding.py::test_pre_auth_lookup_resets_rls_context_on_success_and_failure; apps/prototype-description-service/recognition/tests/unit/test_app1_portal_identity_onboarding.py::test_valid_invitation_derives_tenant_and_accepts_once"
+    },
+    {
+      "db_id": 16061,
+      "finding_id": "APP1-RECONCILE-PG01",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/tests/integration/test_app1_billing_reconcile_postgres.py:344-353 - the tenant-bound call now explicitly expects ValueError, rolls back that read transaction, then a fresh operator repository asserts BillingWorkLeaseConflictError for the finished lease. billing_repository.py:565-574 enforces that operator scope cannot run on a tenant-bound session.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/integration/test_app1_billing_reconcile_postgres.py::test_postgres_real_repo_claim_commit_before_get_apply_finish"
+    },
+    {
+      "db_id": 15462,
+      "finding_id": "APP1-W0-L0-03",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/usage_repository.py:453-472 - reserve selects the tenant entitlement with FOR UPDATE before the allowance sum at :507 and insertion at :535-557. The unit guard checks lock ordering and compiles the executed entitlement query with FOR UPDATE; the concurrent allowance test asserts only one reservation is admitted.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_usage_admission_service.py::test_reservation_path_locks_entitlement_before_check_and_insert"
+    }
+  ],
+  "new_findings": [],
+  "summary": "All six listed corrections hold at this snapshot and no new findings were identified. PostgreSQL proofs were inspected but not run because the sandbox lacks the scratch database; the lane command then hit the documented aiosqlite timeout at scene/tests/test_describe_async_repository.py:128."
+}

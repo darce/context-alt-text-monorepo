@@ -1,0 +1,86 @@
+{
+  "lane": "drfu-13",
+  "base": "df2b8d08d6b5b2d8b7c6067ef0bf9acd16db7059",
+  "results": [
+    {
+      "db_id": 1284,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-wp-alt-context/src/sovereign/repositories/class-cluster-snapshot-merger.php:152-166 gates cluster data on incoming snapshot_version >= stored version and advances snapshot_version monotonically; apps/prototype-wp-alt-context/src/sovereign/repositories/class-identity-member-snapshot-merger.php:147-153 applies the equivalent projection_version gate to member fields.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No remediation is indicated; both projection mergers reject stale data columns."
+    },
+    {
+      "db_id": 1290,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-wp-alt-context/src/api/services/class-cluster-membership-service.php:353-358 adjusts source and target counts inside the transaction; apps/prototype-wp-alt-context/src/sovereign/repositories/class-cluster-curation-writer.php:173-201 performs each update as identity_count = GREATEST(0, identity_count + delta).",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No remediation is indicated; atomic relative deltas replace the reported absolute read-modify-write."
+    },
+    {
+      "db_id": 1607,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/docker-compose.admin.yml:1-17 publishes the API only on 127.0.0.1 for Tailscale Serve, while apps/prototype-description-service/Caddyfile:6-11 denies /admin on the public production vhost; apps/prototype-description-service/recognition/config/security.py:173-198 requires an explicit production tailnet-bound acknowledgement.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No remediation is indicated; deployment now provides a loopback tailnet route and denies the public route."
+    },
+    {
+      "db_id": 6297,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:123 resolves fractional floors from n_entries; :645-647 supplies len(manifest.entries), and :905 compares accepted_set_size against resolved_floor_count. scripts/bench/tests/test_attrition_floor.py:21-23 asserts 0.90 × 150 resolves to 135.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No remediation is indicated; the fractional denominator is the loaded manifest size and is tested."
+    },
+    {
+      "db_id": 6300,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/driver.py:230-248 decodes dimensions when ingest has no successful prior record and stores them; scripts/bench/corpus.py:101-109 uses Pillow and rejects non-positive dimensions, while scripts/bench/tests/test_resume.py:101-116 rejects a zero-dimension stored record.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No remediation is indicated; dimensions are decoded and checked on ingest and resume."
+    },
+    {
+      "db_id": 6301,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/export_map.py:317-327 applies Hungarian pairs to optimistic GT-name assignment and :339-405 collects matched names into a deduplicated per-media list; scripts/eval_harness/face_metrics.py:1017-1047 scores deduplicated per-media name sets, so the described 2x2 full-matching tie retains the same set and counts. docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:418 disclaims unique pairing and specifies deterministic solver selection for a fixed matrix; apps/prototype-description-service/uv.lock:3076-3077 pins SciPy 1.18.0.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No remediation is indicated; the stated tie does not change the aggregate name set, and the solver choice is fixed for the pinned implementation and input matrix."
+    },
+    {
+      "db_id": 6365,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/export_map.py:441-475 constructs detection rows from the same IoU match before the frame-specific identification branch; scripts/bench/tests/test_e2e_frame.py:108-124 asserts equal detection rows and distinguishes the e2e/native identification results.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No remediation is indicated; detection is deliberately frame-invariant and the frame switch only changes identification rows."
+    },
+    {
+      "db_id": 15173,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-wp-alt-context/src/api/services/class-cluster-person-bind-service.php:119-128 routes a second cluster for the person through merge_into_person_survivor; :227-265 invokes ClusterMergeService with the survivor as target. tests/Unit/ClusterPersonBindServiceTest.php:88-123 asserts the merge and absence of cluster_person_bound and cluster_label_updated outbox rows.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No remediation is indicated; binding to an existing person merges into its survivor cluster without replaying a duplicate label."
+    }
+  ]
+}

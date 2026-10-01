@@ -1,0 +1,3788 @@
+{
+ "counts": {
+  "close_confirmed": 91,
+  "close_unrefuted_low": 145,
+  "defer_operator": 15,
+  "defer_unsure": 7,
+  "fix_live": 107,
+  "fix_refuted": 12
+ },
+ "dispositions": {
+  "10000": {
+   "action": "fix_refuted",
+   "drfu": "REFUTED",
+   "dup": null,
+   "finding_id": "FIR-ORCH-BR-20",
+   "lane": "dadj-09",
+   "severity": "low",
+   "task": "FIR-ORCH",
+   "verdict": "FIXED"
+  },
+  "10001": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR-ORCH-BR-21",
+   "lane": "dadj-12",
+   "severity": "low",
+   "task": "FIR-ORCH",
+   "verdict": "FIXED"
+  },
+  "10002": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR-ORCH-BR-22",
+   "lane": "dadj-09",
+   "severity": "medium",
+   "task": "FIR-ORCH",
+   "verdict": "LIVE"
+  },
+  "10003": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR-ORCH-BR-23",
+   "lane": "dadj-09",
+   "severity": "low",
+   "task": "FIR-ORCH",
+   "verdict": "FIXED"
+  },
+  "10004": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR-ORCH-BR-24",
+   "lane": "dadj-22",
+   "severity": "low",
+   "task": "FIR-ORCH",
+   "verdict": "FIXED"
+  },
+  "10005": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR-ORCH-BR-25",
+   "lane": "dadj-22",
+   "severity": "low",
+   "task": "FIR-ORCH",
+   "verdict": "OBSOLETE"
+  },
+  "10006": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR-ORCH-BR-26",
+   "lane": "dadj-18",
+   "severity": "low",
+   "task": "FIR-ORCH",
+   "verdict": "FIXED"
+  },
+  "10007": {
+   "action": "defer_operator",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR-ORCH-BR-27",
+   "lane": "dadj-26",
+   "severity": "medium",
+   "task": "FIR-ORCH",
+   "verdict": "OPERATOR"
+  },
+  "10008": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR-ORCH-BR-28",
+   "lane": "dadj-18",
+   "severity": "low",
+   "task": "FIR-ORCH",
+   "verdict": "FIXED"
+  },
+  "10009": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR-ORCH-BR-29",
+   "lane": "dadj-22",
+   "severity": "low",
+   "task": "FIR-ORCH",
+   "verdict": "FIXED"
+  },
+  "10010": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR-ORCH-BR-30",
+   "lane": "dadj-22",
+   "severity": "low",
+   "task": "FIR-ORCH",
+   "verdict": "FIXED"
+  },
+  "10011": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR-ORCH-BR-31",
+   "lane": "dadj-10",
+   "severity": "low",
+   "task": "FIR-ORCH",
+   "verdict": "OBSOLETE"
+  },
+  "10012": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR-ORCH-BR-32",
+   "lane": "dadj-09",
+   "severity": "low",
+   "task": "FIR-ORCH",
+   "verdict": "FIXED"
+  },
+  "10021": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR-ORCH-R10-V1",
+   "lane": "dadj-09",
+   "severity": "low",
+   "task": "FIR-ORCH",
+   "verdict": "FIXED"
+  },
+  "10022": {
+   "action": "defer_unsure",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR-ORCH-R10-V3",
+   "lane": "dadj-09",
+   "severity": "low",
+   "task": "FIR-ORCH",
+   "verdict": "UNSURE"
+  },
+  "10023": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR-ORCH-R10-V2",
+   "lane": "dadj-12",
+   "severity": "low",
+   "task": "FIR-ORCH",
+   "verdict": "FIXED"
+  },
+  "10038": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "DEMO-UX-1-AUTH-03",
+   "lane": "dadj-22",
+   "severity": "low",
+   "task": "DEMO-UX-1",
+   "verdict": "FIXED"
+  },
+  "10073": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "D-22",
+   "lane": "dadj-13",
+   "severity": "medium",
+   "task": "DEMO-UX-1",
+   "verdict": "LIVE"
+  },
+  "10074": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "D-23",
+   "lane": "dadj-13",
+   "severity": "medium",
+   "task": "DEMO-UX-1",
+   "verdict": "FIXED"
+  },
+  "10161": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "DEMOLIVE-1-BR-01",
+   "lane": "dadj-10",
+   "severity": "high",
+   "task": "DEMOLIVE-1",
+   "verdict": "LIVE"
+  },
+  "10162": {
+   "action": "defer_operator",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "DEMOLIVE-1-BR-02",
+   "lane": "dadj-10",
+   "severity": "high",
+   "task": "DEMOLIVE-1",
+   "verdict": "OPERATOR"
+  },
+  "10163": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "DEMOLIVE-1-BR-03",
+   "lane": "dadj-13",
+   "severity": "high",
+   "task": "DEMOLIVE-1",
+   "verdict": "FIXED"
+  },
+  "10164": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "DEMOLIVE-1-BR-04",
+   "lane": "dadj-26",
+   "severity": "low",
+   "task": "DEMOLIVE-1",
+   "verdict": "FIXED"
+  },
+  "10165": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "DEMOLIVE-1-BR-05",
+   "lane": "dadj-23",
+   "severity": "medium",
+   "task": "DEMOLIVE-1",
+   "verdict": "FIXED"
+  },
+  "10166": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "DEMOLIVE-1-BR-06",
+   "lane": "dadj-13",
+   "severity": "high",
+   "task": "DEMOLIVE-1",
+   "verdict": "LIVE"
+  },
+  "11299": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "D1-RR-01",
+   "lane": "dadj-27",
+   "severity": "high",
+   "task": "MAINT-branch-landing-20260904",
+   "verdict": "LIVE"
+  },
+  "11300": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "D1-RR-02",
+   "lane": "dadj-27",
+   "severity": "medium",
+   "task": "MAINT-branch-landing-20260904",
+   "verdict": "LIVE"
+  },
+  "11301": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "D1-RR-03",
+   "lane": "dadj-27",
+   "severity": "low",
+   "task": "MAINT-branch-landing-20260904",
+   "verdict": "LIVE"
+  },
+  "11302": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "D1-RR-04",
+   "lane": "dadj-27",
+   "severity": "medium",
+   "task": "MAINT-branch-landing-20260904",
+   "verdict": "LIVE"
+  },
+  "11303": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "D2-RR-01",
+   "lane": "dadj-25",
+   "severity": "low",
+   "task": "MAINT-branch-landing-20260904",
+   "verdict": "FIXED"
+  },
+  "11304": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "D2-RR-02",
+   "lane": "dadj-25",
+   "severity": "medium",
+   "task": "MAINT-branch-landing-20260904",
+   "verdict": "LIVE"
+  },
+  "11305": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "D2-RR-03",
+   "lane": "dadj-18",
+   "severity": "low",
+   "task": "MAINT-branch-landing-20260904",
+   "verdict": "FIXED"
+  },
+  "11306": {
+   "action": "defer_unsure",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "D5-RR-01",
+   "lane": "dadj-27",
+   "severity": "medium",
+   "task": "MAINT-branch-landing-20260904",
+   "verdict": "UNSURE"
+  },
+  "11307": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "D5-RR-02",
+   "lane": "dadj-27",
+   "severity": "low",
+   "task": "MAINT-branch-landing-20260904",
+   "verdict": "FIXED"
+  },
+  "11308": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "D5-RR-03",
+   "lane": "dadj-27",
+   "severity": "low",
+   "task": "MAINT-branch-landing-20260904",
+   "verdict": "OBSOLETE"
+  },
+  "11309": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "D5-RR-04",
+   "lane": "dadj-27",
+   "severity": "low",
+   "task": "MAINT-branch-landing-20260904",
+   "verdict": "FIXED"
+  },
+  "11559": {
+   "action": "defer_unsure",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "MAINT-CODEX-LUNA-20260905-RCA-001",
+   "lane": "dadj-13",
+   "severity": "high",
+   "task": "MAINT-CODEX-LUNA-20260905",
+   "verdict": "UNSURE"
+  },
+  "11766": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "DEMOGATE-1-BR-04",
+   "lane": "dadj-13",
+   "severity": "low",
+   "task": "DEMOGATE-1",
+   "verdict": "FIXED"
+  },
+  "11846": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "MAINT-ORCHW2-01",
+   "lane": "dadj-26",
+   "severity": "low",
+   "task": "MAINT-orch-wave2-20260907",
+   "verdict": "OBSOLETE"
+  },
+  "11855": {
+   "action": "defer_operator",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "MAINT-ORCHW2-02",
+   "lane": "dadj-27",
+   "severity": "medium",
+   "task": "MAINT-orch-wave2-20260907",
+   "verdict": "OPERATOR"
+  },
+  "1284": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "COR-1",
+   "lane": "dadj-23",
+   "severity": "high",
+   "task": "MAINT-wpac-defect-review-20260614",
+   "verdict": "FIXED"
+  },
+  "1285": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "COR-2",
+   "lane": "dadj-05",
+   "severity": "medium",
+   "task": "MAINT-wpac-defect-review-20260614",
+   "verdict": "FIXED"
+  },
+  "1289": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "BND-1",
+   "lane": "dadj-25",
+   "severity": "medium",
+   "task": "MAINT-wpac-defect-review-20260614",
+   "verdict": "FIXED"
+  },
+  "1290": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "CON-1",
+   "lane": "dadj-23",
+   "severity": "medium",
+   "task": "MAINT-wpac-defect-review-20260614",
+   "verdict": "FIXED"
+  },
+  "1292": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "CON-3",
+   "lane": "dadj-05",
+   "severity": "medium",
+   "task": "MAINT-wpac-defect-review-20260614",
+   "verdict": "FIXED"
+  },
+  "1294": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "CON-5",
+   "lane": "dadj-25",
+   "severity": "medium",
+   "task": "MAINT-wpac-defect-review-20260614",
+   "verdict": "LIVE"
+  },
+  "1295": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TST-1",
+   "lane": "dadj-27",
+   "severity": "low",
+   "task": "MAINT-wpac-defect-review-20260614",
+   "verdict": "FIXED"
+  },
+  "1296": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TST-2",
+   "lane": "dadj-27",
+   "severity": "high",
+   "task": "MAINT-wpac-defect-review-20260614",
+   "verdict": "LIVE"
+  },
+  "13716": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "GUIDEDEPLOY-1-HARM-01",
+   "lane": "dadj-26",
+   "severity": "low",
+   "task": "GUIDEDEPLOY-1",
+   "verdict": "FIXED"
+  },
+  "13717": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "GUIDEDEPLOY-1-HARM-02",
+   "lane": "dadj-26",
+   "severity": "low",
+   "task": "GUIDEDEPLOY-1",
+   "verdict": "FIXED"
+  },
+  "13721": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "GUIDEDEPLOY-1-GPUEVID-02",
+   "lane": "dadj-26",
+   "severity": "low",
+   "task": "GUIDEDEPLOY-1",
+   "verdict": "FIXED"
+  },
+  "13723": {
+   "action": "defer_unsure",
+   "drfu": "UNSURE",
+   "dup": null,
+   "finding_id": "GPUEVID-04",
+   "lane": "dadj-10",
+   "severity": "high",
+   "task": "GUIDEDEPLOY-1",
+   "verdict": "FIXED"
+  },
+  "15168": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "REL0024-M-01",
+   "lane": "dadj-23",
+   "severity": "medium",
+   "task": "MAINT-RELEASE-0024-20260918",
+   "verdict": "FIXED"
+  },
+  "15169": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "REL0024-M-02",
+   "lane": "dadj-13",
+   "severity": "medium",
+   "task": "MAINT-RELEASE-0024-20260918",
+   "verdict": "FIXED"
+  },
+  "15170": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "REL0024-L-03",
+   "lane": "dadj-13",
+   "severity": "low",
+   "task": "MAINT-RELEASE-0024-20260918",
+   "verdict": "FIXED"
+  },
+  "15171": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "REL0024-M-04",
+   "lane": "dadj-13",
+   "severity": "medium",
+   "task": "MAINT-RELEASE-0024-20260918",
+   "verdict": "FIXED"
+  },
+  "15172": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "REL0024-M-05",
+   "lane": "dadj-25",
+   "severity": "medium",
+   "task": "MAINT-RELEASE-0024-20260918",
+   "verdict": "FIXED"
+  },
+  "15173": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "REL0024-H-06",
+   "lane": "dadj-23",
+   "severity": "medium",
+   "task": "MAINT-RELEASE-0024-20260918",
+   "verdict": "FIXED"
+  },
+  "15174": {
+   "action": "defer_operator",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "REL0024-M-07",
+   "lane": "dadj-23",
+   "severity": "medium",
+   "task": "MAINT-RELEASE-0024-20260918",
+   "verdict": "OPERATOR"
+  },
+  "15175": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "REL0024-M-08",
+   "lane": "dadj-10",
+   "severity": "medium",
+   "task": "MAINT-RELEASE-0024-20260918",
+   "verdict": "FIXED"
+  },
+  "15176": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "REL0024-M-09",
+   "lane": "dadj-10",
+   "severity": "medium",
+   "task": "MAINT-RELEASE-0024-20260918",
+   "verdict": "LIVE"
+  },
+  "15177": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "REL0024-L-10",
+   "lane": "dadj-25",
+   "severity": "low",
+   "task": "MAINT-RELEASE-0024-20260918",
+   "verdict": "FIXED"
+  },
+  "15178": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "REL0024-M-11",
+   "lane": "dadj-25",
+   "severity": "medium",
+   "task": "MAINT-RELEASE-0024-20260918",
+   "verdict": "FIXED"
+  },
+  "15190": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TRIAGE0918-M-02",
+   "lane": "dadj-10",
+   "severity": "medium",
+   "task": "MAINT-demo-identity-gpu-triage-20260918",
+   "verdict": "FIXED"
+  },
+  "15191": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TRIAGE0918-M-03",
+   "lane": "dadj-12",
+   "severity": "low",
+   "task": "MAINT-demo-identity-gpu-triage-20260918",
+   "verdict": "FIXED"
+  },
+  "15199": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TRIAGE0918-M-11",
+   "lane": "dadj-25",
+   "severity": "medium",
+   "task": "MAINT-demo-identity-gpu-triage-20260918",
+   "verdict": "FIXED"
+  },
+  "15200": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TRIAGE0918-M-12",
+   "lane": "dadj-22",
+   "severity": "low",
+   "task": "MAINT-demo-identity-gpu-triage-20260918",
+   "verdict": "FIXED"
+  },
+  "15201": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TRIAGE0918-M-13",
+   "lane": "dadj-25",
+   "severity": "high",
+   "task": "MAINT-demo-identity-gpu-triage-20260918",
+   "verdict": "FIXED"
+  },
+  "15394": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIRWAV-c3929b4b29345528-L-c1647a7410802487d6e44559",
+   "lane": "dadj-12",
+   "severity": "medium",
+   "task": "FIRWAVE-90",
+   "verdict": "LIVE"
+  },
+  "15395": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIRCAP-c09a25c08383c7f9-L-cc5a7b28af8fe65bf094e67f",
+   "lane": "dadj-28",
+   "severity": "low",
+   "task": "FIRCAP-90",
+   "verdict": "LIVE"
+  },
+  "15396": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIRCAP-c09a25c08383c7f9-M-2613d296d5262f0137956d20",
+   "lane": "dadj-28",
+   "severity": "medium",
+   "task": "FIRCAP-90",
+   "verdict": "LIVE"
+  },
+  "15397": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIRCAP-c09a25c08383c7f9-M-e9992fa4ed58ac84a174e037",
+   "lane": "dadj-28",
+   "severity": "medium",
+   "task": "FIRCAP-90",
+   "verdict": "LIVE"
+  },
+  "1607": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "tenant-admin-PA-01-tailscale-greenfield",
+   "lane": "dadj-12",
+   "severity": "medium",
+   "task": "MAINT-tenant-admin-scope-20260621",
+   "verdict": "FIXED"
+  },
+  "1608": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "tenant-admin-PA-02-no-admin-auth-primitive",
+   "lane": "dadj-10",
+   "severity": "high",
+   "task": "MAINT-tenant-admin-scope-20260621",
+   "verdict": "FIXED"
+  },
+  "1609": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "tenant-admin-PA-03-thin-wrap-overstated",
+   "lane": "dadj-22",
+   "severity": "low",
+   "task": "MAINT-tenant-admin-scope-20260621",
+   "verdict": "FIXED"
+  },
+  "1610": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "tenant-admin-PA-04-audit-net-new",
+   "lane": "dadj-12",
+   "severity": "medium",
+   "task": "MAINT-tenant-admin-scope-20260621",
+   "verdict": "FIXED"
+  },
+  "1611": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "tenant-admin-PA-05-br02-dsn-guard-skip",
+   "lane": "dadj-22",
+   "severity": "low",
+   "task": "MAINT-tenant-admin-scope-20260621",
+   "verdict": "FIXED"
+  },
+  "1612": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "tenant-admin-PA-06-no-artifact-open-qs",
+   "lane": "dadj-28",
+   "severity": "low",
+   "task": "MAINT-tenant-admin-scope-20260621",
+   "verdict": "FIXED"
+  },
+  "16197": {
+   "action": "defer_operator",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TRIAGE0918-H-14",
+   "lane": "dadj-10",
+   "severity": "high",
+   "task": "MAINT-demo-identity-gpu-triage-20260918",
+   "verdict": "OPERATOR"
+  },
+  "16199": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TRIAGE0918-L-01",
+   "lane": "dadj-26",
+   "severity": "medium",
+   "task": "MAINT-demo-identity-gpu-triage-20260918",
+   "verdict": "LIVE"
+  },
+  "16200": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TRIAGE0918-M-14",
+   "lane": "dadj-26",
+   "severity": "medium",
+   "task": "MAINT-demo-identity-gpu-triage-20260918",
+   "verdict": "LIVE"
+  },
+  "16201": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TRIAGE0918-M-15",
+   "lane": "dadj-26",
+   "severity": "low",
+   "task": "MAINT-demo-identity-gpu-triage-20260918",
+   "verdict": "FIXED"
+  },
+  "16206": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TRIAGE0918-M-16",
+   "lane": "dadj-10",
+   "severity": "medium",
+   "task": "MAINT-demo-identity-gpu-triage-20260918",
+   "verdict": "LIVE"
+  },
+  "2726": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "SECREV-F01",
+   "lane": "dadj-23",
+   "severity": "high",
+   "task": "SECREV-1",
+   "verdict": "LIVE"
+  },
+  "2727": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "SECREV-F02",
+   "lane": "dadj-25",
+   "severity": "high",
+   "task": "SECREV-1",
+   "verdict": "LIVE"
+  },
+  "2728": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "SECREV-F03",
+   "lane": "dadj-25",
+   "severity": "high",
+   "task": "SECREV-1",
+   "verdict": "LIVE"
+  },
+  "2729": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "SECREV-F04",
+   "lane": "dadj-23",
+   "severity": "medium",
+   "task": "SECREV-1",
+   "verdict": "LIVE"
+  },
+  "2730": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "SECREV-F05",
+   "lane": "dadj-23",
+   "severity": "high",
+   "task": "SECREV-1",
+   "verdict": "LIVE"
+  },
+  "2731": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "SECREV-F06",
+   "lane": "dadj-23",
+   "severity": "medium",
+   "task": "SECREV-1",
+   "verdict": "FIXED"
+  },
+  "2732": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "SECREV-F07",
+   "lane": "dadj-23",
+   "severity": "medium",
+   "task": "SECREV-1",
+   "verdict": "LIVE"
+  },
+  "2733": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "SECREV-F08",
+   "lane": "dadj-25",
+   "severity": "low",
+   "task": "SECREV-1",
+   "verdict": "LIVE"
+  },
+  "2734": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "SECREV-F09",
+   "lane": "dadj-23",
+   "severity": "high",
+   "task": "SECREV-1",
+   "verdict": "LIVE"
+  },
+  "2735": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "SECREV-F10",
+   "lane": "dadj-25",
+   "severity": "low",
+   "task": "SECREV-1",
+   "verdict": "NOT_DEFECT"
+  },
+  "2736": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "SECREV-F11",
+   "lane": "dadj-23",
+   "severity": "low",
+   "task": "SECREV-1",
+   "verdict": "NOT_DEFECT"
+  },
+  "2737": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "SECREV-F12",
+   "lane": "dadj-23",
+   "severity": "low",
+   "task": "SECREV-1",
+   "verdict": "NOT_DEFECT"
+  },
+  "2738": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "SECREV-F13",
+   "lane": "dadj-25",
+   "severity": "low",
+   "task": "SECREV-1",
+   "verdict": "FIXED"
+  },
+  "5227": {
+   "action": "defer_operator",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIRTRAIN-01",
+   "lane": "dadj-05",
+   "severity": "medium",
+   "task": "MAINT-fir-training-feasibility-20260727",
+   "verdict": "OPERATOR"
+  },
+  "5232": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIRTRAIN-06",
+   "lane": "dadj-09",
+   "severity": "low",
+   "task": "MAINT-fir-training-feasibility-20260727",
+   "verdict": "FIXED"
+  },
+  "5233": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIRTRAIN-07",
+   "lane": "dadj-18",
+   "severity": "high",
+   "task": "MAINT-fir-training-feasibility-20260727",
+   "verdict": "LIVE"
+  },
+  "5234": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIRTRAIN-08",
+   "lane": "dadj-18",
+   "severity": "low",
+   "task": "MAINT-fir-training-feasibility-20260727",
+   "verdict": "FIXED"
+  },
+  "5235": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIRTRAIN-09",
+   "lane": "dadj-15",
+   "severity": "medium",
+   "task": "MAINT-fir-training-feasibility-20260727",
+   "verdict": "LIVE"
+  },
+  "5236": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIRTRAIN-10",
+   "lane": "dadj-22",
+   "severity": "medium",
+   "task": "MAINT-fir-training-feasibility-20260727",
+   "verdict": "LIVE"
+  },
+  "5237": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIRTRAIN-11",
+   "lane": "dadj-18",
+   "severity": "low",
+   "task": "MAINT-fir-training-feasibility-20260727",
+   "verdict": "FIXED"
+  },
+  "5238": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIRTRAIN-12",
+   "lane": "dadj-18",
+   "severity": "low",
+   "task": "MAINT-fir-training-feasibility-20260727",
+   "verdict": "OBSOLETE"
+  },
+  "5239": {
+   "action": "defer_operator",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "GT2-01",
+   "lane": "dadj-12",
+   "severity": "medium",
+   "task": "MAINT-fir-training-feasibility-20260727",
+   "verdict": "OPERATOR"
+  },
+  "5240": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "GT2-02",
+   "lane": "dadj-12",
+   "severity": "medium",
+   "task": "MAINT-fir-training-feasibility-20260727",
+   "verdict": "LIVE"
+  },
+  "5241": {
+   "action": "defer_operator",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "GT2-03",
+   "lane": "dadj-05",
+   "severity": "medium",
+   "task": "MAINT-fir-training-feasibility-20260727",
+   "verdict": "OPERATOR"
+  },
+  "5242": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "GT2-04",
+   "lane": "dadj-22",
+   "severity": "low",
+   "task": "MAINT-fir-training-feasibility-20260727",
+   "verdict": "NOT_DEFECT"
+  },
+  "5243": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "GT2-05",
+   "lane": "dadj-05",
+   "severity": "medium",
+   "task": "MAINT-fir-training-feasibility-20260727",
+   "verdict": "OBSOLETE"
+  },
+  "5244": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "GT2-06",
+   "lane": "dadj-22",
+   "severity": "low",
+   "task": "MAINT-fir-training-feasibility-20260727",
+   "verdict": "FIXED"
+  },
+  "5245": {
+   "action": "defer_operator",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "GT2-07",
+   "lane": "dadj-05",
+   "severity": "medium",
+   "task": "MAINT-fir-training-feasibility-20260727",
+   "verdict": "OPERATOR"
+  },
+  "5246": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "GT2-08",
+   "lane": "dadj-18",
+   "severity": "medium",
+   "task": "MAINT-fir-training-feasibility-20260727",
+   "verdict": "LIVE"
+  },
+  "5247": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "GT2-09",
+   "lane": "dadj-18",
+   "severity": "low",
+   "task": "MAINT-fir-training-feasibility-20260727",
+   "verdict": "OBSOLETE"
+  },
+  "5248": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "GT2-10",
+   "lane": "dadj-18",
+   "severity": "low",
+   "task": "MAINT-fir-training-feasibility-20260727",
+   "verdict": "FIXED"
+  },
+  "5249": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "GT2-11",
+   "lane": "dadj-18",
+   "severity": "low",
+   "task": "MAINT-fir-training-feasibility-20260727",
+   "verdict": "OBSOLETE"
+  },
+  "5250": {
+   "action": "defer_operator",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "GT2-12",
+   "lane": "dadj-05",
+   "severity": "medium",
+   "task": "MAINT-fir-training-feasibility-20260727",
+   "verdict": "OPERATOR"
+  },
+  "5598": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "CVUP1-LC-07",
+   "lane": "dadj-10",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "5599": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "F23-04V",
+   "lane": "dadj-13",
+   "severity": "high",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5600": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "F23-06V",
+   "lane": "dadj-26",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5601": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "F23-07V",
+   "lane": "dadj-22",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5603": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "VLM6-CX-04",
+   "lane": "dadj-09",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5604": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "VLM6-CX-05",
+   "lane": "dadj-09",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5605": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "VLM6-CX-06",
+   "lane": "dadj-22",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "5606": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "VLM6-CX-07",
+   "lane": "dadj-09",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5607": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "VLM6-CX-08",
+   "lane": "dadj-09",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "5608": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "VLM6-CX-09",
+   "lane": "dadj-09",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5609": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "MBM-C1",
+   "lane": "dadj-05",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "5610": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "MBM-C2",
+   "lane": "dadj-28",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "5611": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "MBM-C3",
+   "lane": "dadj-28",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "NOT_DEFECT"
+  },
+  "5612": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "MBM-C4",
+   "lane": "dadj-28",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "OBSOLETE"
+  },
+  "5613": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "MBM-C5",
+   "lane": "dadj-28",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "NOT_DEFECT"
+  },
+  "5614": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "MBM-C6",
+   "lane": "dadj-28",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "5615": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "MBM-C7",
+   "lane": "dadj-05",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5618": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "F9S-01V",
+   "lane": "dadj-12",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "NOT_DEFECT"
+  },
+  "5623": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "MBD-04V",
+   "lane": "dadj-28",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "OBSOLETE"
+  },
+  "5678": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "CDX-P-01",
+   "lane": "dadj-15",
+   "severity": "high",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "5680": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "CDX-P-03",
+   "lane": "dadj-15",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "5681": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "CDX-P-04",
+   "lane": "dadj-15",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5682": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "CDX-P-05",
+   "lane": "dadj-15",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5683": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "CDX-P-06",
+   "lane": "dadj-15",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "5696": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8-P-01",
+   "lane": "dadj-01",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "5697": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8-P-02",
+   "lane": "dadj-01",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5698": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8-P-03",
+   "lane": "dadj-01",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5699": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8-P-04",
+   "lane": "dadj-01",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "5700": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8-P-05",
+   "lane": "dadj-01",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5701": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8-P-06",
+   "lane": "dadj-01",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5702": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8-P-07",
+   "lane": "dadj-01",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5730": {
+   "action": "fix_refuted",
+   "drfu": "REFUTED",
+   "dup": null,
+   "finding_id": "HARM-01",
+   "lane": "dadj-10",
+   "severity": "high",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5731": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "HARM-02",
+   "lane": "dadj-12",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "5734": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "HARM-05",
+   "lane": "dadj-15",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5735": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "HARM-06",
+   "lane": "dadj-18",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5736": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "HARM-07",
+   "lane": "dadj-18",
+   "severity": "high",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "5737": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "HARM-08",
+   "lane": "dadj-16",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "5738": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "HARM-09",
+   "lane": "dadj-15",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5739": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "HARM-10",
+   "lane": "dadj-18",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "5740": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "HARM-11",
+   "lane": "dadj-28",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "5770": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "HARM-01-R",
+   "lane": "dadj-16",
+   "severity": "high",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "5771": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "HARM-02-R",
+   "lane": "dadj-10",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "5879": {
+   "action": "defer_operator",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "MAINT-CODEX-HOOK-BR-02",
+   "lane": "dadj-12",
+   "severity": "medium",
+   "task": "MAINT-codex-hook-cwd-20260729",
+   "verdict": "OPERATOR"
+  },
+  "5881": {
+   "action": "defer_operator",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "MAINT-CODEX-HOOK-BR-04",
+   "lane": "dadj-12",
+   "severity": "medium",
+   "task": "MAINT-codex-hook-cwd-20260729",
+   "verdict": "OPERATOR"
+  },
+  "5883": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "MAINT-CODEX-HOOK-BR-06",
+   "lane": "dadj-26",
+   "severity": "high",
+   "task": "MAINT-codex-hook-cwd-20260729",
+   "verdict": "LIVE"
+  },
+  "5884": {
+   "action": "defer_unsure",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "MAINT-CODEX-HOOK-BR-07",
+   "lane": "dadj-26",
+   "severity": "low",
+   "task": "MAINT-codex-hook-cwd-20260729",
+   "verdict": "UNSURE"
+  },
+  "5927": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8R-B-01",
+   "lane": "dadj-01",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5928": {
+   "action": "fix_refuted",
+   "drfu": "REFUTED",
+   "dup": null,
+   "finding_id": "FIR8R-B-02",
+   "lane": "dadj-01",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5929": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8R-B-03",
+   "lane": "dadj-01",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "OBSOLETE"
+  },
+  "5930": {
+   "action": "fix_refuted",
+   "drfu": "REFUTED",
+   "dup": 5699,
+   "finding_id": "FIR8R-B-04",
+   "lane": "dadj-01",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "DUPLICATE"
+  },
+  "5932": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8R-B-06",
+   "lane": "dadj-01",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5933": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8R-B-07",
+   "lane": "dadj-01",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5934": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8R-B-08",
+   "lane": "dadj-01",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5953": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8R-D-04",
+   "lane": "dadj-03",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "NOT_DEFECT"
+  },
+  "5956": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8R-D-07",
+   "lane": "dadj-03",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5962": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8R-E-05",
+   "lane": "dadj-03",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5964": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8R-E-07",
+   "lane": "dadj-03",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "5965": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8R-E-08",
+   "lane": "dadj-03",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6051": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V65-A-03",
+   "lane": "dadj-13",
+   "severity": "high",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6052": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V65-A-04",
+   "lane": "dadj-13",
+   "severity": "high",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6053": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V65-A-05",
+   "lane": "dadj-13",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6055": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V65-A-07",
+   "lane": "dadj-13",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6067": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V65-C-05",
+   "lane": "dadj-03",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "OBSOLETE"
+  },
+  "6078": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V65-D-01",
+   "lane": "dadj-03",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6079": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V65-D-02",
+   "lane": "dadj-03",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6083": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V65-D-06",
+   "lane": "dadj-03",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6085": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V65-D-08",
+   "lane": "dadj-03",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6090": {
+   "action": "fix_refuted",
+   "drfu": "REFUTED",
+   "dup": null,
+   "finding_id": "FIR8V65-E-03",
+   "lane": "dadj-03",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6092": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V65-E-05",
+   "lane": "dadj-03",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6098": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V65-LC-03",
+   "lane": "dadj-03",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6225": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-A-02",
+   "lane": "dadj-03",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6226": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-A-03",
+   "lane": "dadj-06",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6227": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-A-04",
+   "lane": "dadj-06",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "OBSOLETE"
+  },
+  "6228": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-A-05",
+   "lane": "dadj-06",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6229": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-A-06",
+   "lane": "dadj-06",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6230": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-A-07",
+   "lane": "dadj-06",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6231": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-A-08",
+   "lane": "dadj-06",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6232": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-A-09",
+   "lane": "dadj-06",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6233": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-A-10",
+   "lane": "dadj-09",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6234": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-A-11",
+   "lane": "dadj-06",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6235": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-A-12",
+   "lane": "dadj-06",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6236": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-B-01",
+   "lane": "dadj-06",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6237": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-B-02",
+   "lane": "dadj-06",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6238": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-B-03",
+   "lane": "dadj-06",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6239": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-B-04",
+   "lane": "dadj-06",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6240": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-B-05",
+   "lane": "dadj-04",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6241": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-B-06",
+   "lane": "dadj-04",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6242": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-B-07",
+   "lane": "dadj-04",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6243": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-B-08",
+   "lane": "dadj-04",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6244": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-B-09",
+   "lane": "dadj-04",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6245": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-B-10",
+   "lane": "dadj-04",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6246": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-B-11",
+   "lane": "dadj-04",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "OBSOLETE"
+  },
+  "6247": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-B-12",
+   "lane": "dadj-09",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "NOT_DEFECT"
+  },
+  "6248": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-C-01",
+   "lane": "dadj-04",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6249": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-C-02",
+   "lane": "dadj-04",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6250": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-C-03",
+   "lane": "dadj-04",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6251": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-C-04",
+   "lane": "dadj-04",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6252": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-C-05",
+   "lane": "dadj-19",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6253": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-C-06",
+   "lane": "dadj-19",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6254": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-C-07",
+   "lane": "dadj-19",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6255": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-C-08",
+   "lane": "dadj-19",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6256": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-C-09",
+   "lane": "dadj-19",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6257": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-C-10",
+   "lane": "dadj-19",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "NOT_DEFECT"
+  },
+  "6258": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-C-11",
+   "lane": "dadj-19",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6259": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-C-12",
+   "lane": "dadj-19",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6261": {
+   "action": "fix_refuted",
+   "drfu": "REFUTED",
+   "dup": null,
+   "finding_id": "FIR8V66-CDX-02",
+   "lane": "dadj-19",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6262": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-CDX-03",
+   "lane": "dadj-19",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6263": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": 6249,
+   "finding_id": "FIR8V66-CDX-04",
+   "lane": "dadj-04",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "DUPLICATE"
+  },
+  "6264": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-CDX-05",
+   "lane": "dadj-19",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6265": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-CDX-06",
+   "lane": "dadj-19",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6266": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-CDX-07",
+   "lane": "dadj-07",
+   "severity": "high",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6267": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-CDX-08",
+   "lane": "dadj-22",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6268": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-CDX-09",
+   "lane": "dadj-07",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "NOT_DEFECT"
+  },
+  "6269": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-CDX-10",
+   "lane": "dadj-07",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6270": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-CDX-11",
+   "lane": "dadj-07",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6271": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-COORD-01",
+   "lane": "dadj-07",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "NOT_DEFECT"
+  },
+  "6272": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-COORD-02",
+   "lane": "dadj-07",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6273": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-D-01",
+   "lane": "dadj-07",
+   "severity": "high",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6274": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-D-02",
+   "lane": "dadj-07",
+   "severity": "high",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6275": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-D-03",
+   "lane": "dadj-07",
+   "severity": "high",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6276": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-D-04",
+   "lane": "dadj-07",
+   "severity": "high",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6277": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-D-05",
+   "lane": "dadj-07",
+   "severity": "high",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6278": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-D-06",
+   "lane": "dadj-07",
+   "severity": "high",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6279": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-D-07",
+   "lane": "dadj-07",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6280": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-D-08",
+   "lane": "dadj-07",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6281": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-D-09",
+   "lane": "dadj-20",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6282": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-D-10",
+   "lane": "dadj-20",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6283": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-D-11",
+   "lane": "dadj-20",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "NOT_DEFECT"
+  },
+  "6284": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-D-12",
+   "lane": "dadj-20",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6285": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-E-01",
+   "lane": "dadj-20",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6286": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": 6249,
+   "finding_id": "FIR8V66-E-02",
+   "lane": "dadj-04",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "DUPLICATE"
+  },
+  "6287": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-E-03",
+   "lane": "dadj-20",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6288": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-E-04",
+   "lane": "dadj-20",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6289": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-E-05",
+   "lane": "dadj-20",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6290": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-E-06",
+   "lane": "dadj-20",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6291": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": 6253,
+   "finding_id": "FIR8V66-E-07",
+   "lane": "dadj-19",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "DUPLICATE"
+  },
+  "6292": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-E-08",
+   "lane": "dadj-20",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6293": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-E-09",
+   "lane": "dadj-20",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6294": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-E-10",
+   "lane": "dadj-20",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6295": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-E-11",
+   "lane": "dadj-20",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6296": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-E-12",
+   "lane": "dadj-20",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6297": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-LC-01",
+   "lane": "dadj-21",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6298": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": 6243,
+   "finding_id": "FIR8V66-LC-02",
+   "lane": "dadj-04",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "DUPLICATE"
+  },
+  "6299": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-LC-03",
+   "lane": "dadj-21",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6300": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-LC-04",
+   "lane": "dadj-21",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6301": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "FIR8V66-LC-05",
+   "lane": "dadj-21",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6302": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-LC-06",
+   "lane": "dadj-21",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6303": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-LC-07",
+   "lane": "dadj-21",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6304": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-LC-08",
+   "lane": "dadj-21",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6305": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-LC-09",
+   "lane": "dadj-21",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6306": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-LC-10",
+   "lane": "dadj-21",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6307": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-LC-11",
+   "lane": "dadj-21",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6308": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-LC-12",
+   "lane": "dadj-21",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6309": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-LC-13",
+   "lane": "dadj-21",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6310": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-LC-14",
+   "lane": "dadj-21",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6311": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-LC-15",
+   "lane": "dadj-21",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "FIXED"
+  },
+  "6312": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-LC-16",
+   "lane": "dadj-16",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6313": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FIR8V66-LC-17",
+   "lane": "dadj-16",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "6314": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": 6237,
+   "finding_id": "FIR8V66-LC-18",
+   "lane": "dadj-06",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "DUPLICATE"
+  },
+  "6332": {
+   "action": "fix_refuted",
+   "drfu": "REFUTED",
+   "dup": 6346,
+   "finding_id": "STAT-01",
+   "lane": "dadj-14",
+   "severity": "medium",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "DUPLICATE"
+  },
+  "6333": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "STAT-02",
+   "lane": "dadj-02",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "NOT_DEFECT"
+  },
+  "6334": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "STAT-03",
+   "lane": "dadj-02",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "NOT_DEFECT"
+  },
+  "6335": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "STAT-04",
+   "lane": "dadj-02",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6336": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "STAT-05",
+   "lane": "dadj-11",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6337": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "STAT-06",
+   "lane": "dadj-11",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6338": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "STAT-07",
+   "lane": "dadj-11",
+   "severity": "medium",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6339": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "STAT-08",
+   "lane": "dadj-11",
+   "severity": "medium",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6340": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "STAT-09",
+   "lane": "dadj-11",
+   "severity": "medium",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6341": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "STAT-10",
+   "lane": "dadj-11",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "NOT_DEFECT"
+  },
+  "6342": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "STAT-11",
+   "lane": "dadj-11",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "NOT_DEFECT"
+  },
+  "6343": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "STAT-12",
+   "lane": "dadj-11",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6344": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "IMPL-01",
+   "lane": "dadj-14",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6345": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "IMPL-02",
+   "lane": "dadj-14",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6346": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "IMPL-03",
+   "lane": "dadj-14",
+   "severity": "medium",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6347": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "IMPL-04",
+   "lane": "dadj-14",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6348": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "IMPL-05",
+   "lane": "dadj-14",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6349": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "IMPL-06",
+   "lane": "dadj-14",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6350": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "IMPL-07",
+   "lane": "dadj-14",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6351": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "IMPL-08",
+   "lane": "dadj-14",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "NOT_DEFECT"
+  },
+  "6352": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "IMPL-09",
+   "lane": "dadj-14",
+   "severity": "high",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6353": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "IMPL-10",
+   "lane": "dadj-14",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6354": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "IMPL-11",
+   "lane": "dadj-14",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6355": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "IMPL-12",
+   "lane": "dadj-14",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6356": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "IMPL-13",
+   "lane": "dadj-08",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "NOT_DEFECT"
+  },
+  "6357": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "IMPL-14",
+   "lane": "dadj-08",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "NOT_DEFECT"
+  },
+  "6358": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "IMPL-15",
+   "lane": "dadj-08",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6359": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": 6253,
+   "finding_id": "TEST-01",
+   "lane": "dadj-19",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "DUPLICATE"
+  },
+  "6360": {
+   "action": "fix_refuted",
+   "drfu": "REFUTED",
+   "dup": null,
+   "finding_id": "TEST-02",
+   "lane": "dadj-11",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6361": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TEST-03",
+   "lane": "dadj-11",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6362": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "TEST-04",
+   "lane": "dadj-11",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6363": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TEST-05",
+   "lane": "dadj-11",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6364": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "TEST-06",
+   "lane": "dadj-11",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6365": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "TEST-07",
+   "lane": "dadj-24",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "NOT_DEFECT"
+  },
+  "6366": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TEST-08",
+   "lane": "dadj-24",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6367": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TEST-09",
+   "lane": "dadj-24",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6368": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TEST-10",
+   "lane": "dadj-24",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6369": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TEST-11",
+   "lane": "dadj-24",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6370": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TEST-12",
+   "lane": "dadj-24",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6371": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TEST-13",
+   "lane": "dadj-24",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6372": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TEST-14",
+   "lane": "dadj-24",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6373": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TEST-15",
+   "lane": "dadj-24",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6374": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TEST-16",
+   "lane": "dadj-24",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6375": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "PROV-01",
+   "lane": "dadj-02",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6376": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "PROV-02",
+   "lane": "dadj-02",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6377": {
+   "action": "fix_refuted",
+   "drfu": "REFUTED",
+   "dup": null,
+   "finding_id": "PROV-03",
+   "lane": "dadj-02",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6378": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "PROV-04",
+   "lane": "dadj-02",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6379": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "PROV-05",
+   "lane": "dadj-02",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6380": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "PROV-06",
+   "lane": "dadj-02",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6381": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "PROV-07",
+   "lane": "dadj-02",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "NOT_DEFECT"
+  },
+  "6382": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "PROV-08",
+   "lane": "dadj-02",
+   "severity": "medium",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6383": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "PROV-09",
+   "lane": "dadj-02",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "NOT_DEFECT"
+  },
+  "6384": {
+   "action": "fix_refuted",
+   "drfu": "REFUTED",
+   "dup": null,
+   "finding_id": "PROV-10",
+   "lane": "dadj-02",
+   "severity": "medium",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6385": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "XSRF-01",
+   "lane": "dadj-24",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6386": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "XSRF-02",
+   "lane": "dadj-24",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6387": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": 6334,
+   "finding_id": "XSRF-03",
+   "lane": "dadj-02",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "DUPLICATE"
+  },
+  "6388": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "XSRF-04",
+   "lane": "dadj-24",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "NOT_DEFECT"
+  },
+  "6389": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": 6339,
+   "finding_id": "XSRF-05",
+   "lane": "dadj-11",
+   "severity": "medium",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "DUPLICATE"
+  },
+  "6390": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "XSRF-06",
+   "lane": "dadj-24",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6391": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": 6356,
+   "finding_id": "XSRF-07",
+   "lane": "dadj-08",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "DUPLICATE"
+  },
+  "6392": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "GRND-01",
+   "lane": "dadj-17",
+   "severity": "high",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6393": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "GRND-02",
+   "lane": "dadj-17",
+   "severity": "high",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6394": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "GRND-03",
+   "lane": "dadj-17",
+   "severity": "medium",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6395": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "GRND-04",
+   "lane": "dadj-17",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6396": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "GRND-05",
+   "lane": "dadj-17",
+   "severity": "medium",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6397": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "GRND-06",
+   "lane": "dadj-17",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6398": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "GRND-07",
+   "lane": "dadj-17",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "OBSOLETE"
+  },
+  "6399": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "GRND-08",
+   "lane": "dadj-17",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6400": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "GRND-09",
+   "lane": "dadj-17",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6401": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "GRND-10",
+   "lane": "dadj-17",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "NOT_DEFECT"
+  },
+  "6402": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "LCG-01",
+   "lane": "dadj-08",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "NOT_DEFECT"
+  },
+  "6403": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "LCG-02",
+   "lane": "dadj-08",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "NOT_DEFECT"
+  },
+  "6404": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "LCG-03",
+   "lane": "dadj-08",
+   "severity": "high",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6405": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "LCG-04",
+   "lane": "dadj-08",
+   "severity": "medium",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6406": {
+   "action": "fix_refuted",
+   "drfu": "REFUTED",
+   "dup": null,
+   "finding_id": "LCG-05",
+   "lane": "dadj-08",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "NOT_DEFECT"
+  },
+  "6407": {
+   "action": "defer_operator",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "LCG-06",
+   "lane": "dadj-08",
+   "severity": "medium",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "OPERATOR"
+  },
+  "6408": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "LCG-07",
+   "lane": "dadj-08",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6409": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "LCG-08",
+   "lane": "dadj-08",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "NOT_DEFECT"
+  },
+  "6410": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "LCG-09",
+   "lane": "dadj-08",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "NOT_DEFECT"
+  },
+  "6411": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "LCG-10",
+   "lane": "dadj-08",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6412": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "CDXG-01",
+   "lane": "dadj-16",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6413": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "CDXG-02",
+   "lane": "dadj-16",
+   "severity": "medium",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6414": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "CDXG-03",
+   "lane": "dadj-16",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6415": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "CDXG-04",
+   "lane": "dadj-16",
+   "severity": "medium",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6416": {
+   "action": "fix_refuted",
+   "drfu": "REFUTED",
+   "dup": null,
+   "finding_id": "CDXG-05",
+   "lane": "dadj-16",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6417": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "CDXG-06",
+   "lane": "dadj-16",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6418": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "CDXG-07",
+   "lane": "dadj-16",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6419": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "CDXG-08",
+   "lane": "dadj-16",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6420": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "CDXG-09",
+   "lane": "dadj-16",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6421": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "CDXG-10",
+   "lane": "dadj-16",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "OBSOLETE"
+  },
+  "6422": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "CDXG-11",
+   "lane": "dadj-17",
+   "severity": "low",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "FIXED"
+  },
+  "6423": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "CDXG-12",
+   "lane": "dadj-17",
+   "severity": "high",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6424": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "CDXG-13",
+   "lane": "dadj-17",
+   "severity": "high",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6425": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "CDXG-14",
+   "lane": "dadj-17",
+   "severity": "high",
+   "task": "MAINT-fir8-v67-gate-20260730",
+   "verdict": "LIVE"
+  },
+  "6429": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "HARM-03-R",
+   "lane": "dadj-05",
+   "severity": "low",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "OBSOLETE"
+  },
+  "6430": {
+   "action": "defer_unsure",
+   "drfu": "UNSURE",
+   "dup": 9077,
+   "finding_id": "HARM-12",
+   "lane": "dadj-05",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "DUPLICATE"
+  },
+  "6431": {
+   "action": "defer_operator",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "HARM-04-R",
+   "lane": "dadj-12",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "OPERATOR"
+  },
+  "6502": {
+   "action": "defer_operator",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "FL30-C-01",
+   "lane": "dadj-12",
+   "severity": "medium",
+   "task": "MAINT-flock30-gate-20260730",
+   "verdict": "OPERATOR"
+  },
+  "7062": {
+   "action": "close_unrefuted_low",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "TOOL-1-BR-02",
+   "lane": "dadj-26",
+   "severity": "low",
+   "task": "TOOL-1",
+   "verdict": "OBSOLETE"
+  },
+  "9077": {
+   "action": "fix_live",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "HARM-12-MAT",
+   "lane": "dadj-05",
+   "severity": "medium",
+   "task": "MAINT-fir-review-parallel-20260729",
+   "verdict": "LIVE"
+  },
+  "9612": {
+   "action": "close_confirmed",
+   "drfu": "CONFIRMED",
+   "dup": null,
+   "finding_id": "UXW2-ORCH-01",
+   "lane": "dadj-26",
+   "severity": "low",
+   "task": "MAINT-uxui-wave2-orch-20260818",
+   "verdict": "FIXED"
+  },
+  "9642": {
+   "action": "defer_unsure",
+   "drfu": null,
+   "dup": null,
+   "finding_id": "UXW2-ORCH-02",
+   "lane": "dadj-27",
+   "severity": "medium",
+   "task": "MAINT-uxui-wave2-orch-20260818",
+   "verdict": "UNSURE"
+  }
+ },
+ "notes": {
+  "6292": "fix_files not present on main (new file to create in the fix lane): apps/prototype-description-service/scripts/bench/tests/fixtures/stack-pair.example.yaml",
+  "15201": "severity high closing verdict with no drfu result; action close_unrefuted_low is held, not closed; needs a refutation pass"
+ },
+ "precedence": "a drfu outcome overrides the dadj verdict for the same db_id: REFUTED on a closing verdict means the defect is still live and routes to a fix lane; UNSURE defers; CONFIRMED (or no drfu result on a low-severity closing) closes.",
+ "schema": "debtadj-1-dispositions/v1"
+}

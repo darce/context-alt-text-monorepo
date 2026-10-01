@@ -15,6 +15,9 @@ from time import time_ns
 
 import pytest
 
+# Guards onnxruntime >= 1.29 telemetry, which writes `:memory:.ses` into cwd.
+os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
+
 _RECEIPT_DIRECTORY = Path("/tmp")
 _RECEIPT_PREFIX = "prototype-description-service-pytest-collection-scope"
 _LEGACY_RECEIPT_PATH = _RECEIPT_DIRECTORY / ("prototype-description-service-pytest-collection-scope.json")

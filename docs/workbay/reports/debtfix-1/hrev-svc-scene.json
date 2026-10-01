@@ -1,0 +1,72 @@
+{
+  "lane": "hrev-svc-scene",
+  "base": "57eb151417a52df980219cc5faac0338f7ecdcb3",
+  "executed": [
+    {
+      "command": "Resolve lane root and run $lane_root/.venv/bin/python -c \"import scene as module; print(module.__file__)\" from apps/prototype-description-service",
+      "result": "pass",
+      "detail": "Imported /home/gate/workbay-sandbox/feature-debtfix-1-hrev-svc-scene-e4a25ff8/apps/prototype-description-service/scene/__init__.py, inside the lane worktree."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal scene/tests/test_describe_load.py scene/tests/test_description_profiles.py scene/tests/test_gpu_remote_adapter.py scene/tests/test_settings.py",
+      "result": "fail",
+      "detail": "uv failed before pytest: error: failed to remove .../site-packages/../../../bin/alembic: Read-only file system (os error 30)."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal scene/tests/test_describe_load.py scene/tests/test_description_profiles.py scene/tests/test_gpu_remote_adapter.py scene/tests/test_settings.py",
+      "result": "fail",
+      "detail": "First reported failure: scene/tests/test_describe_load.py::test_load_snapshot_counts_single_runs_only_across_tenants; pytest emitted Timeout (0:04:00)! with the test stack at test_describe_load.py:202 and aiosqlite/core.py:59, then F. The process remained stalled and was interrupted (exit 130), so no final pytest summary was produced."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -c pyproject.toml ../../scripts/deploy/tests/test_preflight_gpu_env.py -k real_run_worker",
+      "result": "pass",
+      "detail": "1 passed, 263 deselected in 12.65s; PytestConfigWarning: Unknown config option collection_scope_receipt."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q scene/tests/test_describe_load.py::test_dump_load_snapshot_reseeds_revision_after_database_counter_reset scene/tests/test_gpu_remote_adapter.py::test_gpu_remote_adapter_grounding_flag_defaults_on scene/tests/test_settings.py::test_description_settings_defaults scene/tests/test_description_profiles.py::test_settings_default_profile_is_florence_small",
+      "result": "not_run",
+      "detail": "The first selected async SQLite test produced no result for about 90s and was interrupted (exit 130); pytest did not reach a summary."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q scene/tests/test_gpu_remote_adapter.py::test_gpu_remote_adapter_grounding_flag_defaults_on scene/tests/test_settings.py::test_description_settings_defaults scene/tests/test_description_profiles.py::test_settings_default_profile_is_florence_small",
+      "result": "pass",
+      "detail": "3 passed in 0.88s."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 17034,
+      "finding_id": "FXCTXD-333d40015e001cc3-H-ffa4c94a49ef57bc20c98140",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-wp-alt-context/src/api/services/class-describe-media-service.php:979 - product context assigns only bounded `name`; docs/workbay/contracts/image-description-api.md:160 says product name only.",
+      "guard_test": "apps/prototype-wp-alt-context/tests/Unit/DescribeMediaServiceTest.php::testBuildsBoundedContextPackFromAttachmentParentTermsAndProductNameByDefault (asserts product.name and absence of sku/price)"
+    },
+    {
+      "db_id": 17033,
+      "finding_id": "FXCTXD-333d40015e001cc3-H-a583a5fb98bc19d5342cd368",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-wp-alt-context/src/api/services/class-describe-media-service.php:998-1027 - missing option returns all categories; malformed values log the rejected option and return attachment only; the builder gates each category through `allowed_categories`. Contract lines 175-185 state the same policy.",
+      "guard_test": "apps/prototype-wp-alt-context/tests/Unit/DescribeMediaServiceTest.php::testContextCategoryPolicySendsOnlyExplicitlyAllowedCategory; apps/prototype-wp-alt-context/tests/Unit/DescribeMediaServiceTest.php::testMalformedContextCategoryPolicyFailsClosedToAttachmentOnlyAndLogsValue"
+    },
+    {
+      "db_id": 16804,
+      "finding_id": "DADJ-15176",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scene/infrastructure/vlm/gpu_remote_adapter.py:419 - unset `ACX_GPU_GROUNDING_ENABLED` defaults true; line 499 performs the follow-up. The guard asserts two calls and a returned person phrase box.",
+      "guard_test": "apps/prototype-description-service/scene/tests/test_gpu_remote_adapter.py::test_gpu_remote_adapter_grounding_flag_defaults_on"
+    },
+    {
+      "db_id": 16803,
+      "finding_id": "DADJ-16206",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scene/application/describe_load.py:262 - allocation raises a reset counter to `minimum_revision` before incrementing; line 569 supplies the host-published revision. The test seeds 41 and asserts 42.",
+      "guard_test": "apps/prototype-description-service/scene/tests/test_describe_load.py::test_dump_load_snapshot_reseeds_revision_after_database_counter_reset"
+    }
+  ],
+  "new_findings": [],
+  "summary": "All four listed findings hold on code and guard assertions. The grounding/profile focused checks and deploy check passed; the broad service suite timed out in an async SQLite test, and the revision reseed guard did not complete in a focused run, so full service verification is blocked."
+}

@@ -209,7 +209,9 @@ async def admit_usage(
     """Reserve before dispatch and leave HTTP 202 as RESERVED.
 
     Handler success is not terminal settlement. Queue refusal and dispatch
-    exceptions release once. G2/G3 call ``commit_fenced`` / ``release_fenced``.
+    exceptions release once. Cancellation leaves the ticket RESERVED: dispatched
+    compute may still finish, so only evidence-based recovery can settle it.
+    G2/G3 call ``commit_fenced`` / ``release_fenced``.
     """
     # Direct unit callers may invoke a FastAPI route without resolving its
     # Depends default.  The real dependency has already validated the service
@@ -259,7 +261,7 @@ async def admit_usage(
 
     try:
         yield ticket
-    except BaseException:
+    except Exception:
         try:
             await service.release(ticket)
         except BaseException:

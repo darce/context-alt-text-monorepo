@@ -148,8 +148,10 @@ export const useDescribeMedia = () => {
   const mutation = useMutation<VisualFactsResponse, Error, DescribeMediaMutationInput>({
     mutationFn: async (input: DescribeMediaMutationInput) => {
       lastInputRef.current = input;
-      const idempotencyKey = actionIdempotencyKeyRef.current ?? createDescribeIdempotencyKey();
-      actionIdempotencyKeyRef.current = idempotencyKey;
+      const idempotencyKey = actionIdempotencyKeyRef.current;
+      if (idempotencyKey === null) {
+        throw new Error('Describe action idempotency key was not initialized.');
+      }
       try {
         return await describeWithLease(input, leaseOperationIdRef.current, idempotencyKey);
       } catch (error) {

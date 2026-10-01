@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Api;
 
 require_once __DIR__ . '/class-alt-style.php';
+require_once __DIR__ . '/class-context-category-policy.php';
 require_once __DIR__ . '/../settings/class-recognition-policy.php';
 require_once __DIR__ . '/class-probe-outcome.php';
 require_once __DIR__ . '/class-abstract-recognition-proxy-controller.php';
@@ -189,10 +190,11 @@ class SettingsController {
 	}
 
 	public function get_settings( WP_REST_Request $request ): WP_REST_Response {
-		$snapshot          = $this->endpoint_resolver->resolve_settings_snapshot();
-		$key_resolution    = $this->resolve_key_source();
-		$tenant_resolution = TenantIdentity::resolve();
-		$naming_resolution = $this->resolve_naming_agreement();
+		$snapshot           = $this->endpoint_resolver->resolve_settings_snapshot();
+		$key_resolution     = $this->resolve_key_source();
+		$tenant_resolution  = TenantIdentity::resolve();
+		$naming_resolution  = $this->resolve_naming_agreement();
+		$context_categories = ContextCategoryPolicy::resolve();
 
 		return new WP_REST_Response(
 			array(
@@ -217,6 +219,8 @@ class SettingsController {
 				'tenant_id_source'          => $tenant_resolution['source'],
 				'tenant_paired'             => TenantIdentity::is_paired(),
 				'alt_style'                 => AltStyle::current(),
+				'context_categories'        => $context_categories['categories'],
+				'context_categories_error'  => $context_categories['error'],
 				'recognition_enabled'       => RecognitionPolicy::enabled(),
 				'allow_person_names'        => $naming_resolution['value'],
 				'allow_person_names_error'  => $naming_resolution['error'],
@@ -373,6 +377,24 @@ class SettingsController {
 			}
 
 			$saved[] = 'allow_person_names';
+		}
+
+		if ( array_key_exists( 'context_categories', $body ) ) {
+			if ( ! ContextCategoryPolicy::is_valid_list( $body['context_categories'] ) ) {
+				return new WP_Error(
+					'invalid_context_categories',
+					'context_categories must be a list of unique values from: attachment, post, taxonomy_terms, product.',
+					array( 'status' => 400 )
+				);
+			}
+
+			$context_categories_to_save = ContextCategoryPolicy::canonical( $body['context_categories'] );
+			update_option( ContextCategoryPolicy::OPTION_NAME, $context_categories_to_save );
+			if ( $this->option_matches_intended( ContextCategoryPolicy::OPTION_NAME, $context_categories_to_save ) ) {
+				$saved[] = 'context_categories';
+			} else {
+				$failed[] = 'context_categories';
+			}
 		}
 
 		if ( isset( $body['description_budget'] ) && is_array( $body['description_budget'] ) ) {

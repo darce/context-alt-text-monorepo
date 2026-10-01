@@ -8,7 +8,13 @@ from pathlib import Path
 from scripts.bench.driver import init_run_dir
 from scripts.bench.score_report import score_head_to_head
 from scripts.bench.stack_pair import load_stack_pair
-from scripts.bench.tests.conftest import golden_entry, valid_pair_dict, write_pair, write_stub_preflight
+from scripts.bench.tests.conftest import (
+    bench_test_lineage,
+    golden_entry,
+    valid_pair_dict,
+    write_pair,
+    write_stub_preflight,
+)
 
 PRIMARY = "detection_recall@frame_e2e/label_map_primary"
 SECONDARY_PREC = "detection_precision@frame_e2e/label_map_primary"
@@ -17,8 +23,13 @@ A_STACK = "acx-dev-insightface"
 B_STACK = "acx-dev-fir"
 
 
-def _box(name: str = "Alice Q") -> dict:
-    return {"x": 0.5, "y": 0.5, "w": 0.2, "h": 0.2, "name": name, "source": "iptc"}
+def _box(name: str = "Alice Q", *, capture_session_id: str | None = None) -> dict:
+    box = {"x": 0.5, "y": 0.5, "w": 0.2, "h": 0.2, "name": name, "source": "iptc"}
+    if capture_session_id is not None:
+        lineage = bench_test_lineage(name=name)
+        lineage["capture_session_id"] = capture_session_id
+        box["lineage"] = lineage
+    return box
 
 
 def _pred(media_id: int, *, label: str = "Alice Q", miss: bool = False) -> dict:
@@ -72,6 +83,19 @@ def _write_leg(run_dir: Path, stack_id: str, identities: list[dict], media_ids: 
     (leg / "items.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
     (leg / "cluster_job.json").write_text(json.dumps({"status": "completed"}), encoding="utf-8")
     (leg / "exports" / "media_identities.json").write_text(json.dumps(identities), encoding="utf-8")
+    (leg / "exports" / "media_identity_results.json").write_text(
+        json.dumps(
+            [
+                {
+                    "media_id": mid,
+                    "query_succeeded": True,
+                    "rows": [row for row in identities if row.get("media_id") == mid],
+                }
+                for mid in media_ids
+            ]
+        ),
+        encoding="utf-8",
+    )
     (leg / "exports" / "clusters.json").write_text(
         json.dumps([{"id": "c1", "label": "Alice Q", "is_auto_label": False}]),
         encoding="utf-8",
@@ -211,7 +235,13 @@ def test_detection_excludes_boxless_from_precision(tmp_path: Path) -> None:
 def test_discordant_pair_widens_ci_through_score_path(tmp_path: Path) -> None:
     mids = [1, 2, 3, 4, 5, 6]
     entries = [
-        golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[_box()]) for i in mids
+        golden_entry(
+            i,
+            face_count=1,
+            present_identities=["Alice Q"],
+            face_boxes=[_box(capture_session_id=f"capture-{i}")],
+        )
+        for i in mids
     ]
     run_dir = _init(tmp_path, mids, entries)
     a_ids = [_pred(i) for i in (1, 2, 3)] + [_pred(i, miss=True) for i in (4, 5, 6)]
@@ -352,7 +382,13 @@ def test_holm_p_couples_to_cell_with_distinct_magnitudes(tmp_path: Path) -> None
     """Distinct per-secondary p so a family permutation cannot preserve coupling."""
     mids = [1, 2, 3, 4, 5, 6]
     entries = [
-        golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[_box()]) for i in mids
+        golden_entry(
+            i,
+            face_count=1,
+            present_identities=["Alice Q"],
+            face_boxes=[_box(capture_session_id=f"capture-{i}")],
+        )
+        for i in mids
     ]
     run_dir = _init(tmp_path, mids, entries)
     a_ids = [_pred(i) for i in mids]
@@ -443,7 +479,13 @@ def test_partial_bootstrap_score_path_demotes_would_be_confirmatory(tmp_path: Pa
 
     mids = [1, 2, 3, 4]
     entries = [
-        golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[_box()]) for i in mids
+        golden_entry(
+            i,
+            face_count=1,
+            present_identities=["Alice Q"],
+            face_boxes=[_box(capture_session_id=f"capture-{i}")],
+        )
+        for i in mids
     ]
     run_dir = _init(tmp_path, mids, entries)
     _write_leg(run_dir, A_STACK, [_pred(i) for i in (1, 2, 3)], mids)

@@ -281,7 +281,7 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 						'minLength'   => self::IDEMPOTENCY_KEY_MIN_LENGTH,
 						'maxLength'   => self::IDEMPOTENCY_KEY_MAX_LENGTH,
 						'pattern'     => '^[A-Za-z0-9_-]+$',
-						'description' => 'Client-generated retry key (16-128 chars, [A-Za-z0-9_-]) forwarded to the backend for run dedupe.',
+						'description' => 'Required client-generated retry key (16-128 chars, [A-Za-z0-9_-]) forwarded to the backend for run dedupe.',
 					),
 				),
 			)
@@ -377,9 +377,9 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	}
 
 	public function submit_describe_run( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		// GUIDEDFIX-2: validate the optional idempotency key at the boundary,
-		// before any backend call. Absent stays legal (no-dedupe); present-but-
-		// invalid is a hard 400 naming the constraint.
+		// Require and validate the client-generated idempotency key at the
+		// boundary, before any backend call. Never downgrade a retryable submit
+		// to an unkeyed request.
 		$idempotency_key = $this->validate_idempotency_key( $request );
 		if ( is_wp_error( $idempotency_key ) ) {
 			return $idempotency_key;
@@ -440,11 +440,9 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			'media_ids'           => wp_json_encode( $readable_ids ),
 			'recognition_enabled' => RecognitionPolicy::enabled() ? 'true' : 'false',
 		);
-		// GUIDEDFIX-2: forward the validated key so the backend can dedupe on
-		// (tenant_id, idempotency_key). Absent stays absent — never invent one.
-		if ( '' !== $idempotency_key ) {
-			$multipart_body['idempotency_key'] = $idempotency_key;
-		}
+		// Forward the validated client key so the backend can dedupe on
+		// (tenant_id, idempotency_key). Never invent a key in the proxy.
+		$multipart_body['idempotency_key'] = $idempotency_key;
 		foreach ( $file_parts as $media_id => $file_part ) {
 			$multipart_body[ 'image_' . $media_id ] = $file_part;
 		}
@@ -1530,13 +1528,13 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	}
 
 	/**
-	 * GUIDEDFIX-2: validate the optional client-supplied `idempotency_key`.
+	 * GUIDEDFIX-2: validate the required client-supplied `idempotency_key`.
 	 *
 	 * Mirrors `scene/domain/describe_run.py::normalize_idempotency_key` exactly:
-	 * absent (the field was not sent) is legal and returns '' (forward nothing —
-	 * the backend treats absent as no-dedupe), while a present-but-empty or
-	 * malformed token fails closed. Silently dropping a bad token would
-	 * downgrade a dedupe request into a non-deduped accept, which is the exact
+	 * absent (the field was not sent) fails with `idempotency_key_required`, while
+	 * a present-but-empty or malformed token fails closed. Silently dropping a
+	 * malformed token would downgrade a dedupe request into a non-deduped accept,
+	 * which is the exact
 	 * double-spend the field exists to prevent.
 	 *
 	 * The key is trimmed before every check so a padded token is the same token
@@ -1545,12 +1543,19 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	 * schema-driven consumers see it, and this helper owns the trim/empty
 	 * semantics plus the error envelope for direct in-process callers.
 	 *
-	 * @return string|WP_Error Validated key ('' when absent), or a 422 WP_Error.
+	 * @return string|WP_Error Validated key, or a WP_Error for a missing/invalid key.
 	 */
 	private function validate_idempotency_key( WP_REST_Request $request ): string|WP_Error {
 		$raw = $request->get_param( 'idempotency_key' );
 		if ( null === $raw ) {
-			return '';
+			return new WP_Error(
+				'idempotency_key_required',
+				'idempotency_key is required for describe run submissions.',
+				array(
+					'status' => 400,
+					'field'  => 'idempotency_key',
+				)
+			);
 		}
 
 		if ( ! is_string( $raw ) ) {

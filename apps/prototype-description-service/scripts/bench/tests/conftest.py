@@ -36,7 +36,7 @@ INSIGHTFACE_STACK = {
 FIR_STACK = {
     "stack_id": "acx-dev-fir",
     "role": "face_pipeline_candidate",
-    "base_url": "https://fir.api.altcontext.com",
+    "base_url": "https://fir.dev.api.altcontext.com",
     "expected_profile": "face_pipeline",
     "expected_pgvector_dim": 128,
     "opencv_major": 5,
@@ -350,7 +350,7 @@ def write_stub_preflight(run_dir: Path, stack_id: str) -> Path:
         json.dumps(
             {
                 "stack_id": stack_id,
-                "base_url": "https://dev.api.altcontext.com" if insight else "https://fir.api.altcontext.com",
+                "base_url": "https://dev.api.altcontext.com" if insight else "https://fir.dev.api.altcontext.com",
                 "expected_profile": profile,
                 "expected_pgvector_dim": 512 if insight else 128,
                 "resolved_profile": profile,

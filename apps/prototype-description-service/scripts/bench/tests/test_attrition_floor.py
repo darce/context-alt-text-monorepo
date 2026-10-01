@@ -112,6 +112,105 @@ def test_unqueried_media_id_is_join_attrition(tmp_path: Path) -> None:
     assert accepted.attrition_join >= 1
 
 
+def test_attrition_keeps_all_failed_conditions_by_leg(tmp_path: Path) -> None:
+    run_dir = _two_leg_run(tmp_path, media_ids=[1, 2], zero_export=set())
+    stack_a = "acx-dev-insightface"
+    path_a = run_dir / "legs" / stack_a / "items.jsonl"
+    records_a = [json.loads(line) for line in path_a.read_text().splitlines() if line.strip()]
+    for record in records_a:
+        if record.get("manifest_media_id") == 2:
+            if record.get("phase") == "ingest":
+                record["terminal_ingest_outcome"] = "failure"
+            elif record.get("phase") == "analyze":
+                record["outcome"] = "failed"
+    path_a.write_text("\n".join(json.dumps(record) for record in records_a) + "\n", encoding="utf-8")
+    export_a = run_dir / "legs" / stack_a / "exports" / "media_identities.json"
+    export_rows_a = json.loads(export_a.read_text(encoding="utf-8"))
+    export_a.write_text(
+        json.dumps([row for row in export_rows_a if row.get("media_id") != 2]),
+        encoding="utf-8",
+    )
+
+    stack_b = "acx-dev-fir"
+    path_b = run_dir / "legs" / stack_b / "items.jsonl"
+    records_b = [json.loads(line) for line in path_b.read_text().splitlines() if line.strip()]
+    records_b = [
+        record
+        for record in records_b
+        if not (record.get("manifest_media_id") == 2 and record.get("phase") == "ingest")
+    ]
+    path_b.write_text("\n".join(json.dumps(record) for record in records_b) + "\n", encoding="utf-8")
+
+    accepted = compute_accepted_set(run_dir)
+    assert 2 not in accepted.manifest_media_ids
+    assert accepted.attrition_failures_by_media[2] == {
+        stack_a: ["ingest", "analyze"],
+        stack_b: ["roster"],
+    }
+
+    from scripts.bench.score_report import write_attrition
+    from scripts.bench.corpus import ItemOutcomeStore, load_bench_manifest
+
+    manifest = load_bench_manifest(
+        run_dir / "manifest.json",
+        None,
+        metadata_only=True,
+        skip_hash_verification=True,
+        hash_skip_reason="attrition regression is metadata-only",
+    )
+    records_by = {
+        path.name: ItemOutcomeStore(path / "items.jsonl").read_all()
+        for path in (run_dir / "legs").iterdir()
+        if path.is_dir()
+    }
+    write_attrition(run_dir, accepted, manifest, records_by)
+    missing = json.loads((run_dir / "score" / "attrition.json").read_text())["missing"]
+    row = next(row for row in missing if row["manifest_media_id"] == 2)
+    assert row["phase"] == "ingest"
+    assert row["failed_conditions_by_stack"] == accepted.attrition_failures_by_media[2]
+
+
+def test_attrition_records_post_accept_detection_exclusion(tmp_path: Path) -> None:
+    run_dir = _two_leg_run(tmp_path, media_ids=[1], zero_export=set())
+    accepted = compute_accepted_set(run_dir)
+    assert accepted.manifest_media_ids == [1]
+    assert accepted.detection_scoring_set == []
+    from scripts.bench.score_report import write_attrition
+    from scripts.bench.corpus import ItemOutcomeStore, load_bench_manifest
+
+    manifest = load_bench_manifest(
+        run_dir / "manifest.json",
+        None,
+        metadata_only=True,
+        skip_hash_verification=True,
+        hash_skip_reason="attrition regression is metadata-only",
+    )
+    records_by = {
+        path.name: ItemOutcomeStore(path / "items.jsonl").read_all()
+        for path in (run_dir / "legs").iterdir()
+        if path.is_dir()
+    }
+    write_attrition(run_dir, accepted, manifest, records_by)
+    payload = json.loads((run_dir / "score" / "attrition.json").read_text())
+    assert payload["post_accept_exclusions"] == [
+        {"manifest_media_id": 1, "reason": "entry_not_detection_exhaustive"}
+    ]
+
+
+def test_attrition_written_before_cluster_gate_refusal(tmp_path: Path, monkeypatch) -> None:
+    run_dir = _two_leg_run(tmp_path, media_ids=[1, 2], zero_export=set())
+    cluster_path = run_dir / "legs" / "acx-dev-fir" / "cluster_job.json"
+    cluster_path.write_text(json.dumps({"status": "failed"}), encoding="utf-8")
+    monkeypatch.setattr("scripts.bench.score_report._require_prov01_preflights", lambda root, stacks: True)
+
+    with pytest.raises(BenchError) as exc:
+        score_head_to_head(run_dir)
+
+    assert exc.value.code == "cluster_gate_refused"
+    assert (run_dir / "score" / "accepted_set.json").is_file()
+    assert (run_dir / "score" / "attrition.json").is_file()
+
+
 def test_analyze_failure_is_not_ingest_attrition(tmp_path: Path) -> None:
     run_dir = _two_leg_run(tmp_path, media_ids=[1, 2], zero_export=set())
     # Mark media 2 analyze-failed on both legs after a successful ingest row.
@@ -343,7 +442,7 @@ def _write_leg(run_dir: Path, stack_id: str, ok_ids: list[int], *, zero_export: 
                 "stack_id": stack_id,
                 "base_url": "https://dev.api.altcontext.com"
                 if "insight" in stack_id
-                else "https://fir.api.altcontext.com",
+                else "https://fir.dev.api.altcontext.com",
                 "expected_profile": "insightface" if "insight" in stack_id else "face_pipeline",
                 "expected_pgvector_dim": 512 if "insight" in stack_id else 128,
                 "resolved_profile": "insightface" if "insight" in stack_id else "face_pipeline",

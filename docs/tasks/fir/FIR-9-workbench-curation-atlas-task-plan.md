@@ -6,12 +6,12 @@
 > - **Author**: Grok 4.5 (xAI)
 > - **Project**: `apps/prototype-description-service` + `apps/prototype-wp-alt-context`
 > - **Task ID**: `FIR-9`
-> - **Plan version**: `v3`
+> - **Plan version**: `v4`
 > - **Target Branch**: `feature/fir-9`
 > - **Epic**: [E22 Commercial Face Identity Replacement](../../epics/v0.5.0/commercial-face-identity-replacement-epic.md) (`Epic Short ID`: FIR)
 > - **Depends on**: live cluster + member embeddings with `embedding_model` provenance (FIR-2/FIR-4 path); Workbench mutation surfaces (`useClusterMutations`, `ClusterReviewPanel`) already shipping
 > - **Review Coverage Target**: 2 _(intent only; live coverage via handoff DB — never paste findings here)_
-> - **Changelog**: **v3** — Workbench placement rationale (NAV-05/VIZ-15/NAV-06) + S3 Roster-coordination lens (assignment color + Needs-assignment deep-link). **v2** — disposition schema + single write route; non-vacuous EMB-01 guard; deterministic build-time queue; thumb-join lifecycle; envelope/path pins (FIR9R1-01..08).
+> - **Changelog**: **v4** — replace private `cv_runtime_version` with the shared `numeric_runtime_fingerprint()` object in persisted atlas params and stale-run checks. **v3** — Workbench placement rationale (NAV-05/VIZ-15/NAV-06) + S3 Roster-coordination lens (assignment color + Needs-assignment deep-link). **v2** — disposition schema + single write route; non-vacuous EMB-01 guard; deterministic build-time queue; thumb-join lifecycle; envelope/path pins (FIR9R1-01..08).
 
 ## Objective
 
@@ -64,7 +64,7 @@ Operators curate merges/splits via Workbench review queues without a global geom
 
 - **Atlas run**: one persisted projection + score artifact for a single `(tenant_id, embedding_model)` with backed `status` ∈ {`building`, `complete`, `failed`}.
 - **Atlas point**: one face/identity row with `(x, y)` display coords, HIGH-D `uncertainty` JSON, and build-time `queue_rank` — never the raw vector.
-- **Stale run**: run whose **`(embedding_model, cv_runtime_version)`** ≠ the current pair — active model id (`active_embedding_model_id()` in `recognition/application/embedding/manifest.py:71`) **and** the OpenCV major version the embeddings were produced under. Computed at list time; no background job. <span>**Amended 2026-07-28 (QA v8 re-gate):** keying on `embedding_model` alone marks a pre-CVUP-1 run FRESH, because CVUP-1 (OpenCV 4.x → 5.x) changes the embeddings without changing the model id. That also silently carries the `similarity_threshold` / `suggestion_floor` bands across the upgrade boundary, where they are not valid. This plan version-pins the projection stack (`umap-learn`, `numba`, `llvmlite`) and must equally pin the embedding-producing stack — add `cv_runtime_version` to the run-row `params` JSON next to the umap hyperparameters.</span>
+- **Stale run**: run whose **`(embedding_model, numeric_runtime_fingerprint)`** differs from the current pair — active model id (`active_embedding_model_id()` in `recognition/application/embedding/manifest.py:71`) and the complete embedding-producing runtime fingerprint returned by `recognition.infrastructure.face_pipeline.numeric_runtime_fingerprint()`. Persist the four-field object (`opencv_version`, `opencv_major`, `onnxruntime_version`, `numpy_version`) in `identity_atlas_runs.params.numeric_runtime_fingerprint`; compare the full object at list time with the current fingerprint. A mismatch makes the run stale; no background job is required. Keying only on `embedding_model` can carry `similarity_threshold` / `suggestion_floor` bands across a CVUP-1 runtime change even though embeddings change without a model-id change.
 - **Queue mix**: ordered list = uncertainty slice + diversity slice + random calibration slice (HITL active-learning practice), **materialized at build time** into `queue_rank`.
 - **Disposition**: `reviewed` | `skipped` row in `identity_atlas_queue_dispositions` (AUDIT-13 bookkeeping only).
 - **DIAGNOSTIC display**: UI that must not drive automated accept/merge thresholds.
@@ -199,7 +199,7 @@ identity_atlas_runs
   embedding_model TEXT NOT NULL
   status TEXT NOT NULL            # backed enum: building | complete | failed (sr-007)
   params JSONB NOT NULL          # umap knobs, package_versions, score_recipe, random_state,
-                                 # centroids_mv_refreshed_at
+                                 # centroids_mv_refreshed_at, numeric_runtime_fingerprint
   point_count INT NOT NULL
   created_at TIMESTAMPTZ NOT NULL
   # NOTE: no reviewed_count/skipped_count columns — AUDIT-13 reads dispositions table

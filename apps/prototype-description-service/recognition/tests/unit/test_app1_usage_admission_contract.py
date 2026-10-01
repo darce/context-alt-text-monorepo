@@ -19,13 +19,16 @@ from recognition.application.services.usage_admission_service import (
     UsageAdmissionUnavailableError,
     UsageFingerprintConflictError,
 )
+from recognition.infrastructure.repositories.usage_repository import ExpiredUsageReservationError
 from recognition.interface_adapters.http.deps.usage_admission import admit_usage, get_usage_admission_service
 from recognition.tests.unit.test_app1_usage_admission_wiring import TENANT_ID, _FakeAdmission
 
 CONTRACT_PATH = Path(__file__).resolve().parents[5] / "docs/workbay/contracts/usage-admission-errors.json"
+CONTRACT_API_PATH = CONTRACT_PATH.with_name("usage-admission-api.md")
 CONTRACT_CASES = (
     (402, "allowance_exhausted", "when_period_known"),
     (409, "usage_fingerprint_conflict", "never"),
+    (409, "usage_reservation_expired", "never"),
     (503, "usage_admission_stopped", "never"),
     (503, "usage_admission_limited", "never"),
     (503, "usage_admission_unavailable", "never"),
@@ -117,7 +120,16 @@ async def test_usage_admission_errors_match_contract_fixture() -> None:
         (row["status"], row["error"], row["retry_after"])
         for row in fixture
     }
+    fixture_order = tuple((row["status"], row["error"], row["retry_after"]) for row in fixture)
     expected_rows = set(CONTRACT_CASES)
+    api_rows = []
+    for line in CONTRACT_API_PATH.read_text(encoding="utf-8").splitlines():
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) == 6 and cells[0].isdigit():
+            error = cells[1].split("`", 2)[1]
+            api_rows.append((int(cells[0]), error))
+    assert fixture_order == CONTRACT_CASES
+    assert api_rows == [(status, error) for status, error, _retry_after in CONTRACT_CASES]
 
     exhausted = AllowanceExceededError(
         period_end=datetime.now(UTC) + timedelta(hours=1),
@@ -126,10 +138,11 @@ async def test_usage_admission_errors_match_contract_fixture() -> None:
         (exhausted, CONTRACT_CASES[0], True),
         (AllowanceExceededError(), CONTRACT_CASES[0], False),
         (UsageFingerprintConflictError("changed fingerprint"), CONTRACT_CASES[1], True),
-        (UsageAdmissionStoppedError("operator stop"), CONTRACT_CASES[2], True),
-        (GlobalUsageLimitExceededError("queue limit"), CONTRACT_CASES[3], True),
-        (UsageAdmissionUnavailableError("global state missing"), CONTRACT_CASES[4], True),
-        (UsageAdmissionTimeoutError("reservation timed out"), CONTRACT_CASES[5], True),
+        (ExpiredUsageReservationError("idempotency key belongs to an expired reservation"), CONTRACT_CASES[2], True),
+        (UsageAdmissionStoppedError("operator stop"), CONTRACT_CASES[3], True),
+        (GlobalUsageLimitExceededError("queue limit"), CONTRACT_CASES[4], True),
+        (UsageAdmissionUnavailableError("global state missing"), CONTRACT_CASES[5], True),
+        (UsageAdmissionTimeoutError("reservation timed out"), CONTRACT_CASES[6], True),
     )
 
     exercised_rows: set[tuple[int, str, str]] = set()
@@ -153,7 +166,7 @@ async def test_usage_admission_errors_match_contract_fixture() -> None:
                 get_usage_admission_service(request)
             else:
                 get_usage_admission_service(request, session)
-        expected = CONTRACT_CASES[6]
+        expected = CONTRACT_CASES[7]
         _assert_fixture_row(_row_from_exception(exc_info.value), expected)
         exercised_rows.add(expected)
 

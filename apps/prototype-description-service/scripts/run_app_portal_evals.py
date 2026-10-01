@@ -695,18 +695,10 @@ def _junit_case_matches_declared(declared: str, case: JunitCase) -> bool:
     )
 
 
-def _match_junit_cases(declared: str | None, available: list[JunitCase]) -> list[JunitCase]:
+def _match_junit_cases(declared: str | None, available: Sequence[JunitCase]) -> list[JunitCase]:
     if not declared:
         return []
-    matched: list[JunitCase] = []
-    remaining: list[JunitCase] = []
-    for case in available:
-        if _junit_case_matches_declared(declared, case):
-            matched.append(case)
-        else:
-            remaining.append(case)
-    available[:] = remaining
-    return matched
+    return [case for case in available if _junit_case_matches_declared(declared, case)]
 
 
 def _aggregate_junit_outcomes(matched: Sequence[JunitCase]) -> CaseLedgerStatus:
@@ -1024,7 +1016,6 @@ def _run_group(
     junit = _read_junit(xml_path)
     stale_junit = ran_pytest and _junit_is_stale(junit, started_at=started_at)
     usable_junit = ran_pytest and junit.report_found and junit.report_error is None and not stale_junit
-    unmatched = list(junit.cases) if usable_junit else []
     output_tail, output_tail_bytes, output_tail_truncated, tail_error = _read_capped_tail(log_path)
     threshold_failures = int(manifest.threshold["max_failures"])
     threshold_skipped = int(manifest.threshold["max_skipped"])
@@ -1053,7 +1044,7 @@ def _run_group(
     for case in cases:
         required = case.case_id in required_case_ids
         label = "required case" if required else "declared case"
-        matched = _match_junit_cases(case.test, unmatched) if case.test and usable_junit else []
+        matched = _match_junit_cases(case.test, junit.cases) if case.test and usable_junit else []
         needs_artifact = case.additional_evidence_required or case.artifact is not None
         if case.test is None:
             test_status = CaseLedgerStatus.NOT_RUN

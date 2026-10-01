@@ -92,10 +92,7 @@ async def _seed_stale_reservations(
 ) -> list[SeededReservation]:
     assert len(tenant_ids) == len(counts)
     seeded: list[SeededReservation] = []
-    # Place this test's rows ahead of ordinary stale fixtures in the shared
-    # migrated database. The bounded sweeps below can then process only these
-    # rows, even when another test left recent reservations behind.
-    reserved_at = datetime(1970, 1, 1, tzinfo=UTC)
+    reserved_at = datetime.now(tz=UTC) - timedelta(minutes=10)
     ordinal = 0
     for tenant_id, count in zip(tenant_ids, counts, strict=True):
         async with session_factory() as session:
@@ -155,29 +152,20 @@ def _assert_unset(value: str | None, *, name: str) -> None:
     assert value in (None, "", "false"), f"{name} leaked on the session: {value!r}"
 
 
-async def _release_seeded_reservations(
-    session_factory: async_sessionmaker[AsyncSession],
-    seeded: list[SeededReservation],
-) -> None:
-    by_tenant: dict[UUID, list[SeededReservation]] = {}
-    for reservation in seeded:
-        by_tenant.setdefault(reservation.tenant_id, []).append(reservation)
-
-    for tenant_id, reservations in by_tenant.items():
-        async with session_factory() as session:
-            await set_tenant_context(session, tenant_id)
-            service = UsageSettlementService(session)
-            for reservation in reservations:
-                result = await service.recover_job(
-                    tenant_id=reservation.tenant_id,
-                    job_id=reservation.job_id,
-                    allow_missing_job_release=True,
-                )
-                assert result.outcome in {
-                    SettlementOutcome.RELEASED,
-                    SettlementOutcome.ALREADY_SETTLED,
-                }
-            await session.commit()
+async def _cleanup_stale_reservations(session_factory: async_sessionmaker[AsyncSession]) -> None:
+    async with session_factory() as session:
+        tenant_setting, bypass_setting = await _session_settings(session)
+        _assert_unset(tenant_setting, name="app.current_tenant before cleanup sweep")
+        _assert_unset(bypass_setting, name="app.bypass_rls before cleanup sweep")
+        await UsageSettlementService(session).sweep_stale_reservations(
+            stale_after_seconds=60,
+            max_batches=10,
+            batch_size=100,
+        )
+        tenant_setting, bypass_setting = await _session_settings(session)
+        _assert_unset(tenant_setting, name="app.current_tenant after cleanup sweep")
+        _assert_unset(bypass_setting, name="app.bypass_rls after cleanup sweep")
+        await session.commit()
 
 
 def _counter_delta(
@@ -228,8 +216,8 @@ async def test_background_sweep_recovers_across_tenants_and_commits_under_forced
     _assert_forced_rls_nonprivileged(pg_migrated_engine)
     engine = create_async_engine(_async_url(pg_migrated_engine), pool_pre_ping=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
-    seeded: list[SeededReservation] = []
     try:
+        await _cleanup_stale_reservations(session_factory)
         counters_before = await _read_global_counters(session_factory)
         tenant_ids = await _prepare_tenants(session_factory)
         seeded = await _seed_stale_reservations(session_factory, tenant_ids, [3, 2], label="complete-sweep")
@@ -247,8 +235,8 @@ async def test_background_sweep_recovers_across_tenants_and_commits_under_forced
             _assert_unset(bypass_setting, name="app.bypass_rls before background sweep")
             report = await UsageSettlementService(session).sweep_stale_reservations(
                 stale_after_seconds=60,
-                max_batches=count,
-                batch_size=1,
+                max_batches=5,
+                batch_size=2,
             )
             tenant_setting, bypass_setting = await _session_settings(session)
             _assert_unset(tenant_setting, name="app.current_tenant after background sweep")
@@ -271,7 +259,6 @@ async def test_background_sweep_recovers_across_tenants_and_commits_under_forced
         )
         assert await _read_global_counters(session_factory) == counters_before
     finally:
-        await _release_seeded_reservations(session_factory, seeded)
         await engine.dispose()
 
 
@@ -283,8 +270,8 @@ async def test_sweep_failure_resets_bypass_and_caller_rollback_discards_prior_se
     _assert_forced_rls_nonprivileged(pg_migrated_engine)
     engine = create_async_engine(_async_url(pg_migrated_engine), pool_pre_ping=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
-    seeded: list[SeededReservation] = []
     try:
+        await _cleanup_stale_reservations(session_factory)
         counters_before = await _read_global_counters(session_factory)
         tenant_ids = await _prepare_tenants(session_factory)
         seeded = await _seed_stale_reservations(session_factory, tenant_ids, [3, 1], label="failing-sweep")
@@ -317,7 +304,7 @@ async def test_sweep_failure_resets_bypass_and_caller_rollback_discards_prior_se
                 await service.sweep_stale_reservations(
                     stale_after_seconds=60,
                     max_batches=5,
-                    batch_size=count,
+                    batch_size=4,
                 )
             assert successfully_settled == [(first.job_id, SettlementOutcome.RELEASED)]
             tenant_setting, bypass_setting = await _session_settings(session)
@@ -333,7 +320,7 @@ async def test_sweep_failure_resets_bypass_and_caller_rollback_discards_prior_se
             expected_status=UsageReservationStatus.RESERVED,
         )
         assert await _read_global_counters(session_factory) == counters_reserved
-        await _release_seeded_reservations(session_factory, seeded)
+        await _cleanup_stale_reservations(session_factory)
         await _assert_tenant_rows(
             session_factory,
             tenant_ids,
@@ -342,5 +329,4 @@ async def test_sweep_failure_resets_bypass_and_caller_rollback_discards_prior_se
         )
         assert await _read_global_counters(session_factory) == counters_before
     finally:
-        await _release_seeded_reservations(session_factory, seeded)
         await engine.dispose()

@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { scanFacesBatched } from '../scanApi';
+import { scanFaces, scanFacesBatched } from '../scanApi';
 import type { AnalyzeResponse } from '../types';
 import type { HTTPOptions } from '../../../utils/http';
 
 interface ScanRequestBody {
   media_ids: number[];
+  idempotency_key?: string;
   batch_index?: number;
   submitted_total?: number;
 }
@@ -76,6 +77,8 @@ describe('scanFacesBatched chunk size', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(result.jobs).toHaveLength(1);
     expect(getRequestBody(0)).toEqual(expect.objectContaining({ media_ids: [1, 2, 3, 4, 5] }));
+    expect(getRequestBody(0).idempotency_key).toBe(`${result.batchRunId}-b0`);
+    expect(getRequestBody(0).idempotency_key).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
   });
 
   it('chunks into batches of 5 when total exceeds the cap', async () => {
@@ -83,7 +86,41 @@ describe('scanFacesBatched chunk size', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(getRequestBody(0)).toEqual(expect.objectContaining({ media_ids: [1, 2, 3, 4, 5] }));
     expect(getRequestBody(1)).toEqual(expect.objectContaining({ media_ids: [6, 7, 8, 9, 10] }));
+    expect(getRequestBody(0).idempotency_key).toBe(`${result.batchRunId}-b0`);
+    expect(getRequestBody(1).idempotency_key).toBe(`${result.batchRunId}-b1`);
+    expect(getRequestBody(1).idempotency_key).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
+    expect(getRequestBody(0).idempotency_key).not.toBe(getRequestBody(1).idempotency_key);
     expect(result.jobs).toHaveLength(2);
+  });
+
+  it('reuses the operation key when a failed chunk is retried', async () => {
+    const request = { mediaIds: [1, 2], batchRunId: 'batch-retry-action-123', batchIndex: 2 };
+    fetchMock.mockRejectedValueOnce(new Error('response lost'));
+
+    await expect(scanFaces(request)).rejects.toThrow('response lost');
+    await scanFaces(request);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(getRequestBody(0).idempotency_key).toBe('batch-retry-action-123-b2');
+    expect(getRequestBody(1).idempotency_key).toBe(getRequestBody(0).idempotency_key);
+  });
+
+  it('uses distinct operation keys for separate actions with identical media', async () => {
+    const first = await scanFacesBatched({ mediaIds: [1, 2] });
+    const second = await scanFacesBatched({ mediaIds: [1, 2] });
+
+    expect(getRequestBody(0).idempotency_key).toBe(`${first.batchRunId}-b0`);
+    expect(getRequestBody(1).idempotency_key).toBe(`${second.batchRunId}-b0`);
+    expect(getRequestBody(0).idempotency_key).not.toBe(getRequestBody(1).idempotency_key);
+  });
+
+  it('mints an operation key for each direct scan action without a batch run ID', async () => {
+    await scanFaces({ mediaIds: [1, 2] });
+    await scanFaces({ mediaIds: [1, 2] });
+
+    expect(getRequestBody(0).idempotency_key).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
+    expect(getRequestBody(1).idempotency_key).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
+    expect(getRequestBody(0).idempotency_key).not.toBe(getRequestBody(1).idempotency_key);
   });
 
   it('chunks at 5 even when configured maxMediaPerBatch is higher', async () => {

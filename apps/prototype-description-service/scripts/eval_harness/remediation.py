@@ -119,7 +119,8 @@ V3_IDENTITY_CLAIM_DROP_RATIONALE = (
     "(FIR-11 Slice 1)"
 )
 
-V3_SOURCE_SHA256 = "fbd9d5b7ae546b6f364b8e1dcdd07f9c6ece0411034905636886446919b5cd9d"
+# Re-frozen after the derived-tag calibration correction; old digest fbd9d5b7ae546b6f364b8e1dcdd07f9c6ece0411034905636886446919b5cd9d.
+V3_SOURCE_SHA256 = "154eb2b735f947e5ce670886bb848fc2749aad5e952a448a4f1b75f3125abe7e"
 
 
 # ---------------------------------------------------------------------------

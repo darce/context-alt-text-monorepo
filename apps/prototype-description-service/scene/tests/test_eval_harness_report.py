@@ -786,6 +786,8 @@ def test_public_fail_closed_missing_entry():
     # Unknown media stays in failures so the public artifact fails loud.
     assert any(f.get("media_id") == 999 for f in scored["failures"])
     assert scored["counts"]["failed"] >= 1
+    # Its absent item-level model stamps do not block the known run provenance.
+    assert scored["provenance"]["model"]["model_ids"] == ["seeded-fixtures"]
 
 
 def test_public_fail_closed_missing_provenance():
@@ -2985,6 +2987,9 @@ def test_public_provenance_allow_list_drops_unknown_keys():  # VLM6-R3-01 / R4-0
     # Allowed keys still present.
     assert "head_sha" in prov
     assert "manifest_sha256" in prov
+    # Mixed item model IDs remain reportable, with an absolute weight path reduced
+    # to its public-safe basename at the provenance boundary.
+    assert prov["model"]["model_ids"] == ["Qwen3-VL-27B-Q4_K_M.gguf", "seeded-fixtures"]
 
 
 def test_public_validates_record_kind_before_audience_branch():  # VLM6-R3-04

@@ -8,12 +8,12 @@
       "task": "DEBTFIX-1",
       "verdict": "LIVE",
       "duplicate_of": null,
-      "evidence": "infra/oci/demo/seed/README.md:10 - the clustering corpus is documented as 100 celebs01 images under editorial/fair-use with takedown on request; infra/oci/demo/seed/select-clustering-seed.sh:31,79 - each selected file receives only the prose LICENSE_NOTE in the README provenance table; infra/oci/demo/seed/import.sh:41 - import invokes wp media import without structured rights metadata; apps/prototype-description-service/db/models/identity.py:143-145 - MediaIdentity stores identity type, media ID, and URL but no source, basis, or notice/consent status, so the recognition identity cannot be gated on a recognized basis.",
+      "evidence": "infra/oci/demo/seed/README.md:10-13 - the clustering corpus is documented as 100 celebs01 images under editorial/fair-use with takedown on request; infra/oci/demo/seed/select-clustering-seed.sh:31,79 - each selected file receives only the prose LICENSE_NOTE in the README provenance table; infra/oci/demo/seed/import.sh:41 - import invokes wp media import without structured rights metadata; apps/prototype-description-service/recognition/application/scan/service.py:770-789 - new MediaIdentity rows are created with tenant/media/embedding fields and no rights or consent data; apps/prototype-description-service/recognition/application/orchestration/clustering/discovery_pipeline.py:204-210 - representative identities are selected by tenant and embedding_model only, with no basis gate.",
       "severity": "high",
       "fix_files": [
         "infra/oci/demo/seed/select-clustering-seed.sh",
-        "infra/oci/demo/seed/import.sh",
-        "apps/prototype-description-service/db/models/identity.py"
+        "apps/prototype-description-service/db/models/identity.py",
+        "apps/prototype-description-service/recognition/application/scan/service.py"
       ],
       "test_file": "",
       "size": "L",

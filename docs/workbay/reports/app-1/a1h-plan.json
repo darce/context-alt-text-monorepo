@@ -1,0 +1,44 @@
+{
+  "lane": "a1h-plan",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "python3 -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed on both runs (2.66s initial; 4.12s post-write)."
+    },
+    {
+      "command": "python3 -m json.tool docs/workbay/reports/app-1/a1h-plan.json >/dev/null",
+      "result": "pass",
+      "detail": "Valid JSON."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 15845,
+      "finding_id": "APP1-CONT-P02",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "docs/plans/0002-app-altcontext-launch-continuation-task-plan.md:36 says “15 high-cost paths without a per-run work/byte cap are marked GAP”; :231 says “Exact endpoint/worker ownership ... remain P outputs.” docs/assessments/current/app-1-s0-route-metering-inventory.md:97 names the async handler, :99 names multipart, and :100 names run; all three are METERED. The inventory now classifies routes and U owns inventoried paths, but terminal worker completion ownership is still unresolved in the plan.",
+      "guard_test": "apps/prototype-description-service/scene/tests/test_app1_usage_scene_census.py::test_three_compute_posts_reserve_before_dispatch"
+    },
+    {
+      "db_id": 15844,
+      "finding_id": "APP1-CONT-P01",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "docs/plans/0002-app-altcontext-launch-continuation-task-plan.md:149 says “bounded provider enumeration”; :151 requires recovery for “provider subscriptions without a local subscription projection.” apps/prototype-description-service/scripts/billing_reconcile.py:1197 defines _reconcile_remote_orphans; the recovery tests assert the bounded page cap at :327 and persisted cursor resume at :353.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_reconcile_recovery.py::test_orphan_page_bound_is_50_and_stops_at_20_pages"
+    },
+    {
+      "db_id": 15847,
+      "finding_id": "APP1-CONT-P04",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "docs/plans/0002-app-altcontext-launch-continuation-task-plan.md:28 says the billing spec “now exists”; docs/specs/app-portal-account-billing-spec.md:369 records the tenant-scoped idempotency amendment. docs/assessments/current/app-1-s0-e16-7-disposition-matrix.md:3 says “Finding rows below are rechecked against current feature source.” The spec and crosswalk corrections are present, but no assertion would fail if these plan and crosswalk source claims regressed.",
+      "guard_test": ""
+    }
+  ],
+  "new_findings": [],
+  "summary": "The plan now records provider orphan enumeration and current usage classifications, including remaining cost gaps. P01 holds; P02 remains partial because terminal worker ownership is still a planning output, and P04 has no regression guard for its source crosswalk. No new findings were identified."
+}

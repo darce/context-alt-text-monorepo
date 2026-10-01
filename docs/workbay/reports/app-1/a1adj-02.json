@@ -1,0 +1,36 @@
+{
+  "lane": "a1adj-02",
+  "base": "8b9b9770644f8ad88ce1788a1be5d995abe5071f",
+  "results": [
+    {
+      "db_id": 17000,
+      "finding_id": "FAOPFR-f7f4b75a806147e2-M-b284b510fd67c9ab3915940f",
+      "task": "APP-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/guided/__tests__/GuidedLiveDescriptionPanel.test.tsx:202; apps/prototype-wp-alt-context/js/admin/pages/guided/__tests__/GuidedA11y.test.tsx:574 - both assert submit(mediaId, generated idempotency key); apps/prototype-wp-alt-context/js/admin/guidedPrototype/useGuidedLiveDescription.ts:345 calls client.submit(mediaId, idempotencyKey).",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "apps/prototype-wp-alt-context/js/admin/pages/guided/__tests__/GuidedLiveDescriptionPanel.test.tsx",
+      "size": "S",
+      "related": [],
+      "fix_hint": "No further fix is needed; both guided submit assertions now include the generated idempotency key."
+    },
+    {
+      "db_id": 16999,
+      "finding_id": "FAOPFR-f7f4b75a806147e2-M-b23460750cd3b4318c5ff3de",
+      "task": "APP-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-wp-alt-context/js/admin/hooks/useActivityStatus.ts:411-435 caches the unfinished ID promise by idempotency key and submits that list; apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useActivityStatus.test.ts:704-741 changes the refetched list from [51] to [52] but asserts both same-key retry submits use [51], then a new action submits [52] with a new key.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-wp-alt-context/js/admin/hooks/useActivityStatus.ts"
+      ],
+      "test_file": "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useActivityStatus.test.ts",
+      "size": "M",
+      "related": [],
+      "fix_hint": "The first unfinished-ID snapshot is reused for mutation retries carrying the same key."
+    }
+  ]
+}

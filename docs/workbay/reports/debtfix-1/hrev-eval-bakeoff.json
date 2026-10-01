@@ -1,0 +1,33 @@
+{
+  "lane": "hrev-eval-bakeoff",
+  "base": "57eb151417a52df980219cc5faac0338f7ecdcb3",
+  "executed": [
+    {
+      "command": "PYTHONPATH=apps/prototype-description-service .venv/bin/python -c \"import scene as module; print(module.__file__)\"",
+      "result": "pass",
+      "detail": "scene resolved inside this lane at apps/prototype-description-service/scene/__init__.py"
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal scene/tests/test_eval_harness_bakeoff.py scene/tests/test_eval_harness_cli.py",
+      "result": "fail",
+      "detail": "uv sync could not remove the shared alembic executable: Read-only file system (os error 30); reran with --no-sync"
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal scene/tests/test_eval_harness_bakeoff.py scene/tests/test_eval_harness_cli.py",
+      "result": "pass",
+      "detail": "213 passed, 2 xfailed, 218 warnings in 382.26s; the xfails are the two documented selection-half omissions"
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16799,
+      "finding_id": "DADJ-10002",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff.py:285 requires at least two named identities; :290 pins mcm-planecrash.jpg. Lines 379-383 assert both on the reported corpus, and lines 386-404 scratch-drop both carriers and require each guard to fail.",
+      "guard_test": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff.py::test_reported_discriminating_class_guards_go_red_on_scratch_drop"
+    }
+  ],
+  "new_findings": [],
+  "summary": "DADJ-10002 holds: the two-name stranger criterion and exact context-conflict case are guarded on the reported corpus, and the bakeoff/CLI suite passes with two documented xfails."
+}

@@ -1590,14 +1590,60 @@ def test_gpu_adapter_reason_fails_fast_before_demand(monkeypatch, tmp_path):
         "endpoint_resolution_pending",
         kind=DescriptionAdapterKind.GPU,
     )
+    adapter_calls = []
+    original_describe = adapter.describe
+
+    def track_describe(*args, **kwargs):
+        adapter_calls.append((args, kwargs))
+        return original_describe(*args, **kwargs)
+
+    monkeypatch.setattr(adapter, "describe", track_describe)
     with _client(adapter=adapter) as client:
-        response = _post(client, TENANT_ID)
+        operation_id = "adapter-reason-first-use-operation"
+        response = _post(
+            client,
+            TENANT_ID,
+            extra_data={"operation_id": operation_id},
+        )
+        assert response.status_code == 503, response.text
+        detail = response.json()["detail"]
+        assert detail["code"] == "description_service_unavailable"
+        assert detail["reason"] == "endpoint_resolution_pending"
+        assert detail["operation_id"] == operation_id
+        assert _lease_state(client, operation_id) == "completed"
+        assert _active_lease_count(client) == 0
+        assert adapter_calls == []
+
+
+def test_gpu_adapter_reason_keyless_fails_fast_before_demand(monkeypatch, tmp_path):
+    from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
+
+    _gpu_env(monkeypatch, tmp_path, state="stopped")
+    adapter = UnavailableDescriptionAdapter(
+        "endpoint_resolution_pending",
+        kind=DescriptionAdapterKind.GPU,
+    )
+    adapter_calls = []
+    original_describe = adapter.describe
+
+    def track_describe(*args, **kwargs):
+        adapter_calls.append((args, kwargs))
+        return original_describe(*args, **kwargs)
+
+    monkeypatch.setattr(adapter, "describe", track_describe)
+    with _client(adapter=adapter) as client:
+        response = _post(
+            client,
+            TENANT_ID,
+            extra_data={"operation_id": None},
+        )
         assert response.status_code == 503, response.text
         detail = response.json()["detail"]
         assert detail["code"] == "description_service_unavailable"
         assert detail["reason"] == "endpoint_resolution_pending"
         assert detail["operation_id"] is None
         assert _lease_rows(client) == []
+        assert adapter_calls == []
 
 
 def test_gpu_ready_warm_request_has_no_startup(monkeypatch, tmp_path):

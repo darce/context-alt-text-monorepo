@@ -1,0 +1,111 @@
+{
+  "lane": "dfadj3-05",
+  "base": "aa48716a0aa82de54d7357231192aa1940873cb2",
+  "results": [
+    {
+      "db_id": 16815,
+      "finding_id": "DADJ-10166",
+      "task": "DEBTFIX-1",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "infra/oci/demo/seed/README.md:10-13 - the clustering corpus is documented as 100 celebs01 images under editorial/fair-use with takedown on request; infra/oci/demo/seed/select-clustering-seed.sh:31,79 - each selected file receives only the prose LICENSE_NOTE in the README provenance table; infra/oci/demo/seed/import.sh:41 - import invokes wp media import without structured rights metadata; apps/prototype-description-service/recognition/application/scan/service.py:770-789 - new MediaIdentity rows are created with tenant/media/embedding fields and no rights or consent data; apps/prototype-description-service/recognition/application/orchestration/clustering/discovery_pipeline.py:204-210 - representative identities are selected by tenant and embedding_model only, with no basis gate.",
+      "severity": "high",
+      "fix_files": [
+        "infra/oci/demo/seed/select-clustering-seed.sh",
+        "apps/prototype-description-service/db/models/identity.py",
+        "apps/prototype-description-service/recognition/application/scan/service.py"
+      ],
+      "test_file": "",
+      "size": "L",
+      "related": [],
+      "fix_hint": "Persist source, lawful basis, and notice/consent state per imported record, then reject null or unrecognized bases before identities enter discovery or matching."
+    },
+    {
+      "db_id": 16879,
+      "finding_id": "DADJ-16199",
+      "task": "DEBTFIX-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "scripts/deploy/preflight-gpu-env.sh:1034-1035 - the demo tenant check validates an RFC 4122 UUID and rejects placeholders without special-casing the canonical UUID; scripts/deploy/tests/test_preflight_gpu_env.py:768-776 - the regression test supplies 00000000-0000-4000-8000-000000000001 and asserts preflight succeeds.",
+      "severity": "low",
+      "fix_files": [
+        "scripts/deploy/preflight-gpu-env.sh"
+      ],
+      "test_file": "scripts/deploy/tests/test_preflight_gpu_env.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Keep the RFC 4122 validation and acceptance test for the documented demo tenant UUID."
+    },
+    {
+      "db_id": 16880,
+      "finding_id": "DADJ-16200",
+      "task": "DEBTFIX-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "scripts/deploy/recognition-service.sh:4069-4074 - canonical API health polling defaults to eight attempts with five-second sleeps; scripts/deploy/tests/test_probe_budgets.py:187-210 - the default-budget test clears overrides and requires eight probes plus the 8x5s budget, which would fail with the old five-attempt window.",
+      "severity": "low",
+      "fix_files": [
+        "scripts/deploy/recognition-service.sh"
+      ],
+      "test_file": "scripts/deploy/tests/test_probe_budgets.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Keep the eight-attempt canonical health default and its slow-startup regression test."
+    },
+    {
+      "db_id": 16882,
+      "finding_id": "DADJ-11300",
+      "task": "DEBTFIX-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "scripts/lint_ratchet.py:307-309 - the Ruff location regex treats optional :cell N metadata separately from the path; scripts/test_lint_ratchet.py:389-402 - a relative notebook location from stderr is asserted to produce notebooks/example.ipynb without cell metadata.",
+      "severity": "low",
+      "fix_files": [
+        "scripts/lint_ratchet.py"
+      ],
+      "test_file": "scripts/test_lint_ratchet.py",
+      "size": "S",
+      "related": [
+        16884
+      ],
+      "fix_hint": "Keep the non-greedy notebook-aware location parser and its relative-path regression assertion."
+    },
+    {
+      "db_id": 16883,
+      "finding_id": "DADJ-11301",
+      "task": "DEBTFIX-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "scripts/lint_ratchet.py:379-383 - unexpected Ruff exits join stdout and stderr before raising RatchetError; scripts/test_lint_ratchet.py:460-469 - an exit-2 stdout-only parse diagnostic is injected and its text is asserted in the error.",
+      "severity": "low",
+      "fix_files": [
+        "scripts/lint_ratchet.py"
+      ],
+      "test_file": "scripts/test_lint_ratchet.py",
+      "size": "S",
+      "related": [
+        16884
+      ],
+      "fix_hint": "Keep collecting both process output streams and the stdout-only exit-2 diagnostic test."
+    },
+    {
+      "db_id": 16884,
+      "finding_id": "DADJ-11302",
+      "task": "DEBTFIX-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "scripts/test_lint_ratchet.py:389-402 - a relative notebook path from stderr is checked against the normalized per-file inventory; scripts/test_lint_ratchet.py:405-416 - legacy Would reformat output has an exact inventory assertion; scripts/test_lint_ratchet.py:419-435 - a newline filename that leaves a partial parse must raise; scripts/test_lint_ratchet.py:460-469 - a stdout-only exit-2 diagnostic must survive in RatchetError. These fixtures discriminate the parser and diagnostic regressions described.",
+      "severity": "low",
+      "fix_files": [
+        "scripts/test_lint_ratchet.py"
+      ],
+      "test_file": "scripts/test_lint_ratchet.py",
+      "size": "M",
+      "related": [
+        16882,
+        16883
+      ],
+      "fix_hint": "Keep focused fixtures for relative notebook paths, stderr, legacy output, partial inventories, and stdout-only exit diagnostics."
+    }
+  ]
+}

@@ -32,7 +32,8 @@ usage() {
 Usage: scripts/deploy/app-portal.sh [--dry-run|--apply]
 
 Default: print the plan and mutate nothing.
---apply requires a real FRONTEND_DIST (index.html + assets) and a live Caddyfile.
+--apply requires a real FRONTEND_DIST (index.html + assets), a live Caddyfile,
+a reload mechanism, and APP_HEALTH_CMD to verify the serving edge and portal API.
 
 Environment:
   APP_HOSTNAME         public vhost (default app.altcontext.com)
@@ -47,7 +48,8 @@ Environment:
   APP_APPROVED_ROOTS   colon-separated host dest roots (default /opt/acx-backend)
   APP_DEPLOY_LOCK_WAIT seconds to wait for another deploy (default 30)
   APP_RELOAD_CMD       optional absolute executable run after host promote
-  APP_HEALTH_CMD       optional absolute executable run after reload
+  APP_HEALTH_CMD       required for --apply: absolute executable checking live
+                       frontend and portal upstream after reload (nonzero on failure)
 EOF
 }
 
@@ -629,7 +631,7 @@ $(list_live_hosts | sed 's/^/    /')
   stage Caddyfile, static root, and overlay; validate before activation
   durable activation journal precedes atomic Caddyfile, www, and overlay promotion
   failure trap or next run restores snapshots and reloads rollback
-  retain rollback under ${APP_ROOT}/rollback
+  retain only the latest successful apply's rollback set under ${APP_ROOT}/rollback
   render overlay APP_WWW=${APP_WWW} -> /srv/app-portal
   env ownership: Clerk/Polar stay in /opt/acx-backend/prod/.env; VITE_CLERK_* is baked into FRONTEND_DIST
 EOF
@@ -707,8 +709,8 @@ reload_caddy() {
     caddy reload --config "$CADDYFILE" --adapter caddyfile 9>&-
     return $?
   fi
-  echo "reload skipped: set APP_RELOAD_CMD or install caddy; host files are activated, edge process not reloaded"
-  return 0
+  echo "ERROR: reload unavailable: set APP_RELOAD_CMD or install caddy" >&2
+  return 1
 }
 
 default_health() {
@@ -721,11 +723,25 @@ default_health() {
 }
 
 run_health() {
-  if [ -n "$APP_HEALTH_CMD" ]; then
-    "$APP_HEALTH_CMD" 9>&-
-    return $?
+  default_health || return 1
+  if [ -z "$APP_HEALTH_CMD" ]; then
+    echo "ERROR: APP_HEALTH_CMD is required to check the live frontend and portal upstream" >&2
+    return 1
   fi
-  default_health
+  "$APP_HEALTH_CMD" 9>&-
+}
+
+reclaim_rollback_snapshots() {
+  # Called only after the activation journal is cleared; keep the current set
+  # and leave operator files alone. Never prune recovery's active snapshots.
+  local _snapshot _stamp
+  for _snapshot in "$ROLLBACK_DIR"/Caddyfile.* "$ROLLBACK_DIR"/www.* "$ROLLBACK_DIR"/docker-compose.app.yml.*; do
+    _stamp="${_snapshot##*.}"
+    case "$_stamp" in ''|*[!0-9]*) continue ;; esac
+    [ "$_stamp" != "$ts" ] || continue
+    rm -rf -- "$_snapshot" || return 1
+  done
+  sync_path "$ROLLBACK_DIR"
 }
 
 if [ "$APPLY" -eq 1 ]; then
@@ -773,6 +789,10 @@ if [ -L "$CADDYFILE" ] || [ ! -f "$CADDYFILE" ]; then
   refuse "CADDYFILE must be a regular file: ${CADDYFILE}"
 fi
 validate_frontend
+if [ -z "$APP_RELOAD_CMD" ] && ! command -v caddy >/dev/null 2>&1; then
+  refuse "reload unavailable: set APP_RELOAD_CMD or install caddy before --apply"
+fi
+[ -n "$APP_HEALTH_CMD" ] || refuse "APP_HEALTH_CMD is required to check the live frontend and portal upstream"
 
 STAGED_CADDY="${STAGING_DIR}/Caddyfile"
 STAGED_WWW="${STAGING_DIR}/www"
@@ -798,8 +818,13 @@ if ! validate_staged_caddy "$STAGED_CADDY"; then
   exit 4
 fi
 
+guard_dest_path ROLLBACK_DIR "$ROLLBACK_DIR" dir
 mkdir -p "$ROLLBACK_DIR"
 ts="$(date +%s)"
+# Separate snapshots even for deployments in the same second (or clock rollback).
+while [ -e "${ROLLBACK_DIR}/Caddyfile.${ts}" ] || [ -e "${ROLLBACK_DIR}/www.${ts}" ] || [ -e "${ROLLBACK_DIR}/docker-compose.app.yml.${ts}" ]; do
+  ts=$((ts + 1))
+done
 ROLLBACK_CADDY="${ROLLBACK_DIR}/Caddyfile.${ts}"
 ROLLBACK_WWW="${ROLLBACK_DIR}/www.${ts}"
 ROLLBACK_OVERLAY="${ROLLBACK_DIR}/docker-compose.app.yml.${ts}"
@@ -864,6 +889,10 @@ fi
 
 clear_activation_journal
 trap - ERR INT TERM
+if ! reclaim_rollback_snapshots; then
+  echo "ERROR: activation succeeded but rollback snapshot reclamation failed" >&2
+  exit 6
+fi
 
 echo "applied: ${APP_HOSTNAME} -> ${APP_UPSTREAM}; frontend ${APP_WWW}; overlay ${OVERLAY_DEST}; rollback ${ROLLBACK_CADDY}; reload=ok health=ok"
 echo "next: apply compose overlay so Caddy mounts ${APP_WWW} at /srv/app-portal; recreate Caddy if the bind-mount inode diverged; do not ship this vhost via the shared repo Caddyfile from this lane"

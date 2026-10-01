@@ -157,7 +157,7 @@ then supersedes it with GPU final when the GPU endpoint succeeds.
 | `request.context_pack.attachment` | bounded attachment title/caption/description/alt text/filename collected from the attachment post and `_wp_attachment_image_alt` |
 | `request.context_pack.post` | bounded parent post title/excerpt/type/status; included only when the parent post is public (`publish`) |
 | `request.context_pack.taxonomy_terms` | up to 20 public category/tag/product terms for the public parent post |
-| `request.context_pack.product` | bounded Woo-style product name/SKU/price when the public parent post type is `product` |
+| `request.context_pack.product` | bounded product name only when the public parent post type is `product` |
 | every response field | **passed through from the backend payload** |
 | `alt_text_write` (response field, WP-only) | local write result added only when `write_alt=true`; never sent by the backend scene route |
 
@@ -165,6 +165,32 @@ then supersedes it with GPU final when the GPU endpoint succeeds.
 
 WordPress owns source collection and privacy filtering. The backend validates
 the typed object and owns whether/how an adapter applies it.
+
+The outbound category policy below applies to `attachment`, `post`,
+`taxonomy_terms`, and `product`; each category remains subject to its existing
+eligibility rules.
+
+#### Outbound category policy
+
+The `acx_description_context_categories` WordPress option controls which of
+those four context categories the plugin sends:
+
+- When the option is absent, all four categories are eligible, subject to
+  their existing rules (for example, `post` is included only for a public
+  parent).
+- When the option is an array containing only known category names, only those
+  categories are sent. An empty array sends none of the four.
+- When the option is present but is not an array of known category names, the
+  plugin fails closed and sends only `attachment`. It writes one telemetry log
+  line naming the rejected value.
+
+Operators can set the option with WP-CLI, for example:
+`wp option update acx_description_context_categories '["attachment","post"]' --format=json`.
+
+The `identity` field is governed separately by the person-name policy
+(`acx_description_allow_person_names` plus the tenant binding) and is not
+controlled by this category option. Image bytes are the recognition input
+itself and are always sent.
 
 - Top-level request keys remain `tenant_id`, `media_id`, and `context_pack` for
   new callers; legacy `context` remains accepted by the backend for older

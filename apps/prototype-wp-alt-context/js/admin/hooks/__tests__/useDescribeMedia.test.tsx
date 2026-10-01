@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SUGGEST_WARMING_HARD_CEILING_MS, suggestWarmingCeilingMs, useDescribeMedia } from '../useDescribeMedia';
 import * as describeApi from '../../api/describeApi';
+import * as describeIdempotencyKeyApi from '../../api/describeIdempotencyKey';
 import type { VisualFactsResponse } from '../../api/describeApi';
 import suggestStates from '../../pages/workbench/__tests__/fixtures/gpuflow-suggest-states.json';
 import { HTTPError } from '../../utils/http';
@@ -69,6 +70,38 @@ describe('useDescribeMedia', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(describeMediaMock).toHaveBeenCalledWith(42, { idempotencyKey: expect.any(String) });
     expect(result.current.data).toEqual(sample);
+  });
+
+  it('uses the shared idempotency-key helper for describe actions', async () => {
+    const sharedIdempotencyKey = 'describe-shared-key_123456';
+    const createIdempotencyKeySpy = vi
+      .spyOn(describeIdempotencyKeyApi, 'createDescribeIdempotencyKey')
+      .mockReturnValue(sharedIdempotencyKey);
+    describeMediaMock.mockResolvedValue(sample);
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    try {
+      result.current.mutate(42);
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(createIdempotencyKeySpy).toHaveBeenCalledTimes(1);
+      expect(describeMediaMock).toHaveBeenCalledWith(42, {
+        idempotencyKey: sharedIdempotencyKey,
+      });
+      expect(idempotencyKeyForCall(0)).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
+    } finally {
+      createIdempotencyKeySpy.mockRestore();
+    }
+  });
+
+  it('fails with the invariant message when a mutation runs after its action key is cleared', async () => {
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    const mutationPromise = result.current.mutateAsync(42);
+    result.current.reset();
+
+    await expect(mutationPromise).rejects.toThrow('Describe action idempotency key was not initialized.');
+    expect(describeMediaMock).not.toHaveBeenCalled();
   });
 
   it('passes write intent options through to describeMedia', async () => {

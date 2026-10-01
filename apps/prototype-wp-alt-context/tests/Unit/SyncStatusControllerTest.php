@@ -310,6 +310,7 @@ class SyncStatusControllerTest extends TestCase
 
         $controller = new SyncStatusController($syncRepo, $syncJob);
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/reset-mirror');
+        $request->set_body_params(['confirm' => true]);
         $response = $controller->reset_mirror($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
@@ -336,6 +337,25 @@ class SyncStatusControllerTest extends TestCase
         );
         $this->assertContains('COMMIT', $wpdb->queries);
         $this->assertNotContains('ROLLBACK', $wpdb->queries);
+    }
+
+    public function testResetMirrorRequiresConfirmationInRequestBody(): void
+    {
+        global $wpdb;
+
+        $controller = new SyncStatusController(new NullSyncStateRepository());
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/reset-mirror');
+        $request->set_param('confirm', true);
+
+        $response = $controller->reset_mirror($request);
+
+        $this->assertSame(400, $response->get_status());
+        $this->assertSame('acx_reset_mirror_confirmation_required', $response->get_data()['code']);
+        $this->assertNotContains('START TRANSACTION', $wpdb->queries);
+        $this->assertSame([], array_values(array_filter(
+            $wpdb->queries,
+            static fn(string $query): bool => str_starts_with($query, 'DELETE FROM ')
+        )));
     }
 
     public function testResetMirrorRollsBackWhenProjectionTableDeleteFails(): void
@@ -367,6 +387,7 @@ class SyncStatusControllerTest extends TestCase
 
         $controller = new SyncStatusController($syncRepo);
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/reset-mirror');
+        $request->set_body_params(['confirm' => true]);
         $response = $controller->reset_mirror($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
@@ -404,7 +425,9 @@ class SyncStatusControllerTest extends TestCase
             }
         };
 
-        $response = $controller->reset_mirror(new WP_REST_Request('POST', '/acx/v1/recognition/sync/reset-mirror'));
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/reset-mirror');
+        $request->set_body_params(['confirm' => true]);
+        $response = $controller->reset_mirror($request);
 
         $this->assertSame(200, $response->get_status());
         $this->assertSame(
@@ -433,7 +456,9 @@ class SyncStatusControllerTest extends TestCase
             }
         };
 
-        $controller->reset_mirror(new WP_REST_Request('POST', '/acx/v1/recognition/sync/reset-mirror'));
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/reset-mirror');
+        $request->set_body_params(['confirm' => true]);
+        $controller->reset_mirror($request);
 
         $identityMembersDelete = $wpdb->prepare(
             'DELETE FROM %i WHERE cluster_uuid IN ( SELECT cluster_uuid FROM %i WHERE tenant_id = %s )',
@@ -465,7 +490,9 @@ class SyncStatusControllerTest extends TestCase
             }
         };
 
-        $controller->reset_mirror(new WP_REST_Request('POST', '/acx/v1/recognition/sync/reset-mirror'));
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/reset-mirror');
+        $request->set_body_params(['confirm' => true]);
+        $controller->reset_mirror($request);
 
         $deleteQueries = array_values(array_filter(
             $wpdb->queries,
@@ -595,6 +622,7 @@ class SyncStatusControllerTest extends TestCase
 
         $controller = new SyncStatusController($syncRepo, $syncJob);
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/reset-mirror');
+        $request->set_body_params(['confirm' => true]);
         $response = $controller->reset_mirror($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);

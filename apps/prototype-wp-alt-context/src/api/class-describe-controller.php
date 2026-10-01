@@ -276,12 +276,8 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 						'description' => 'Attachment ids to describe in bulk.',
 					),
 					'idempotency_key' => array(
-						'type'        => 'string',
-						'required'    => true,
-						'minLength'   => self::IDEMPOTENCY_KEY_MIN_LENGTH,
-						'maxLength'   => self::IDEMPOTENCY_KEY_MAX_LENGTH,
-						'pattern'     => '^[A-Za-z0-9_-]+$',
-						'description' => 'Required client-generated retry key (16-128 chars, [A-Za-z0-9_-]) forwarded to the backend for run dedupe.',
+						'required'    => false,
+						'description' => 'Required client-generated retry key (16-128 chars, [A-Za-z0-9_-]) in the JSON or form body, forwarded to the backend for run dedupe.',
 					),
 				),
 			)
@@ -1538,15 +1534,23 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	 * double-spend the field exists to prevent.
 	 *
 	 * The key is trimmed before every check so a padded token is the same token
-	 * through the proxy as it is direct to the backend; the route schema
-	 * declares the same 16..128 / [A-Za-z0-9_-] constraint so generated docs and
-	 * schema-driven consumers see it, and this helper owns the trim/empty
-	 * semantics plus the error envelope for direct in-process callers.
+	 * through the proxy as it is direct to the backend. The route schema
+	 * documents this required body field without validating it before this
+	 * callback, so this helper owns the format checks and typed errors for both
+	 * REST callers and direct in-process callers.
 	 *
 	 * @return string|WP_Error Validated key, or a WP_Error for a missing/invalid key.
 	 */
 	private function validate_idempotency_key( WP_REST_Request $request ): string|WP_Error {
-		$raw = $request->get_param( 'idempotency_key' );
+		$json_params = $request->get_json_params();
+		if ( is_array( $json_params ) && array_key_exists( 'idempotency_key', $json_params ) ) {
+			$raw = $json_params['idempotency_key'];
+		} else {
+			$body_params = $request->get_body_params();
+			$raw         = array_key_exists( 'idempotency_key', $body_params )
+				? $body_params['idempotency_key']
+				: null;
+		}
 		if ( null === $raw ) {
 			return new WP_Error(
 				'idempotency_key_required',

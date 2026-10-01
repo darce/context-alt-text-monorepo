@@ -54,7 +54,7 @@ class DescribeRunControllerTest extends TestCase
         parent::tearDown();
     }
 
-    public function testSubmitRouteRequiresIdempotencyKey(): void
+    public function testSubmitRouteDocumentsRequiredIdempotencyKeyWithoutRequiringItBeforeCallback(): void
     {
         $this->controller->register_routes();
 
@@ -67,7 +67,21 @@ class DescribeRunControllerTest extends TestCase
         }
 
         $this->assertIsArray($route);
-        $this->assertTrue($route['args']['args']['idempotency_key']['required'] ?? false);
+        $key_args = $route['args']['args']['idempotency_key'];
+        $this->assertSame(false, $key_args['required'] ?? null);
+        $this->assertStringContainsString('Required', $key_args['description'] ?? '');
+        $this->assertStringContainsString('JSON or form body', $key_args['description'] ?? '');
+        $this->assertArrayNotHasKey('type', $key_args);
+        $this->assertArrayNotHasKey('minLength', $key_args);
+        $this->assertArrayNotHasKey('maxLength', $key_args);
+        $this->assertArrayNotHasKey('pattern', $key_args);
+    }
+
+    private function setRequestIdempotencyKey(WP_REST_Request $request, string $key): void
+    {
+        $body_params                     = $request->get_body_params();
+        $body_params['idempotency_key'] = $key;
+        $request->set_body_params($body_params);
     }
 
     private function plantAttachment(int $id, string $bytes, string $extension = 'jpg'): string
@@ -92,7 +106,7 @@ class DescribeRunControllerTest extends TestCase
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [101, 202]);
-        $request->set_param('idempotency_key', 'client-test-key-0001');
+        $this->setRequestIdempotencyKey($request, 'client-test-key-0001');
 
         $response = $this->controller->submit_describe_run($request);
 
@@ -152,7 +166,7 @@ class DescribeRunControllerTest extends TestCase
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [101]);
-        $request->set_param('idempotency_key', 'client-test-key-0001');
+        $this->setRequestIdempotencyKey($request, 'client-test-key-0001');
 
         $response = $this->controller->submit_describe_run($request);
 
@@ -170,7 +184,7 @@ class DescribeRunControllerTest extends TestCase
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', $mediaIds);
-        $request->set_param('idempotency_key', 'client-test-key-0001');
+        $this->setRequestIdempotencyKey($request, 'client-test-key-0001');
 
         $response = $this->controller->submit_describe_run($request);
 
@@ -193,7 +207,7 @@ class DescribeRunControllerTest extends TestCase
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [101, 202]);
-        $request->set_param('idempotency_key', 'client-test-key-0001');
+        $this->setRequestIdempotencyKey($request, 'client-test-key-0001');
 
         $response = $this->controller->submit_describe_run($request);
 
@@ -216,7 +230,7 @@ class DescribeRunControllerTest extends TestCase
     {
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [202, 303]);
-        $request->set_param('idempotency_key', 'client-test-key-0001');
+        $this->setRequestIdempotencyKey($request, 'client-test-key-0001');
 
         $response = $this->controller->submit_describe_run($request);
 
@@ -233,7 +247,7 @@ class DescribeRunControllerTest extends TestCase
     {
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', []);
-        $request->set_param('idempotency_key', 'client-test-key-0001');
+        $this->setRequestIdempotencyKey($request, 'client-test-key-0001');
 
         $response = $this->controller->submit_describe_run($request);
 
@@ -380,7 +394,7 @@ class DescribeRunControllerTest extends TestCase
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [101, 202, 101, 202, 101]);
-        $request->set_param('idempotency_key', 'client-test-key-0001');
+        $this->setRequestIdempotencyKey($request, 'client-test-key-0001');
 
         $response = $this->controller->submit_describe_run($request);
 
@@ -401,7 +415,7 @@ class DescribeRunControllerTest extends TestCase
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [101]);
-        $request->set_param('idempotency_key', 'client-test-key-0001');
+        $this->setRequestIdempotencyKey($request, 'client-test-key-0001');
 
         $response = $this->controller->submit_describe_run($request);
 
@@ -420,7 +434,7 @@ class DescribeRunControllerTest extends TestCase
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [1, 2, 3]);
-        $request->set_param('idempotency_key', 'client-test-key-0001');
+        $this->setRequestIdempotencyKey($request, 'client-test-key-0001');
 
         $response = $this->controller->submit_describe_run($request);
 
@@ -446,7 +460,8 @@ class DescribeRunControllerTest extends TestCase
         $key = 'client-retry-key-0001';
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [101]);
-        $request->set_param('idempotency_key', $key);
+        $request->set_param('idempotency_key', 'query-key-must-not-win');
+        $this->setRequestIdempotencyKey($request, $key);
 
         $response = $this->controller->submit_describe_run($request);
 
@@ -466,6 +481,21 @@ class DescribeRunControllerTest extends TestCase
     {
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [101]);
+
+        $response = $this->controller->submit_describe_run($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('idempotency_key_required', $response->get_error_code());
+        $this->assertSame(400, $response->get_error_data()['status'] ?? null);
+        $this->assertSame('idempotency_key', $response->get_error_data()['field'] ?? null);
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testSubmitTreatsQueryStringIdempotencyKeyAsMissing(): void
+    {
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $request->set_param('media_ids', [101]);
+        $request->set_param('idempotency_key', 'query-only-key-0001');
 
         $response = $this->controller->submit_describe_run($request);
 
@@ -496,7 +526,7 @@ class DescribeRunControllerTest extends TestCase
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [101]);
-        $request->set_param('idempotency_key', $key);
+        $this->setRequestIdempotencyKey($request, $key);
 
         $response = $this->controller->submit_describe_run($request);
 
@@ -548,7 +578,7 @@ class DescribeRunControllerTest extends TestCase
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [101]);
-        $request->set_param('idempotency_key', $key);
+        $this->setRequestIdempotencyKey($request, $key);
 
         $response = $this->controller->submit_describe_run($request);
 
@@ -589,7 +619,7 @@ class DescribeRunControllerTest extends TestCase
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [101]);
-        $request->set_param('idempotency_key', "  ABCDEFGHIJKLMNOP \n");
+        $this->setRequestIdempotencyKey($request, "  ABCDEFGHIJKLMNOP \n");
 
         $response = $this->controller->submit_describe_run($request);
 
@@ -625,7 +655,7 @@ class DescribeRunControllerTest extends TestCase
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [101]);
-        $request->set_param('idempotency_key', 'client-retry-key-0002');
+        $this->setRequestIdempotencyKey($request, 'client-retry-key-0002');
 
         $response = $this->controller->submit_describe_run($request);
 
@@ -662,7 +692,7 @@ class DescribeRunControllerTest extends TestCase
         ]);
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [101]);
-        $request->set_param('idempotency_key', $key);
+        $this->setRequestIdempotencyKey($request, $key);
         $first = $this->controller->submit_describe_run($request);
         $this->assertNotInstanceOf(\WP_Error::class, $first);
         $this->assertSame(202, $first->get_status());
@@ -674,7 +704,7 @@ class DescribeRunControllerTest extends TestCase
         ]);
         $retryRequest = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $retryRequest->set_param('media_ids', [101]);
-        $retryRequest->set_param('idempotency_key', $key);
+        $this->setRequestIdempotencyKey($retryRequest, $key);
         $second = $this->controller->submit_describe_run($retryRequest);
 
         $this->assertNotInstanceOf(\WP_Error::class, $second);
@@ -715,7 +745,7 @@ class DescribeRunControllerTest extends TestCase
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [101]);
-        $request->set_param('idempotency_key', 'client-test-key-0001');
+        $this->setRequestIdempotencyKey($request, 'client-test-key-0001');
 
         $response = $this->controller->submit_describe_run($request);
 
@@ -3413,7 +3443,7 @@ class DescribeRunControllerTest extends TestCase
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [101]);
-        $request->set_param('idempotency_key', 'client-test-key-0001');
+        $this->setRequestIdempotencyKey($request, 'client-test-key-0001');
         $response = $this->controller->submit_describe_run($request);
 
         $this->assertInstanceOf(\WP_Error::class, $response);
@@ -3454,7 +3484,7 @@ class DescribeRunControllerTest extends TestCase
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [101]);
-        $request->set_param('idempotency_key', 'client-test-key-0001');
+        $this->setRequestIdempotencyKey($request, 'client-test-key-0001');
         $response = $this->controller->submit_describe_run($request);
         $this->assertNotInstanceOf(\WP_Error::class, $response);
 
@@ -3505,7 +3535,7 @@ class DescribeRunControllerTest extends TestCase
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [101]);
-        $request->set_param('idempotency_key', 'client-test-key-0001');
+        $this->setRequestIdempotencyKey($request, 'client-test-key-0001');
         $response = $this->controller->submit_describe_run($request);
         $this->assertNotInstanceOf(\WP_Error::class, $response);
 
@@ -3553,7 +3583,7 @@ class DescribeRunControllerTest extends TestCase
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [101]);
-        $request->set_param('idempotency_key', 'client-test-key-0001');
+        $this->setRequestIdempotencyKey($request, 'client-test-key-0001');
         $response = $this->controller->submit_describe_run($request);
         $this->assertNotInstanceOf(\WP_Error::class, $response);
 
@@ -3621,7 +3651,7 @@ class DescribeRunControllerTest extends TestCase
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [101]);
-        $request->set_param('idempotency_key', 'client-test-key-0001');
+        $this->setRequestIdempotencyKey($request, 'client-test-key-0001');
         $response = $this->controller->submit_describe_run($request);
 
         // Membership write succeeded; submit still 202 — authorization retained.
@@ -3663,7 +3693,7 @@ class DescribeRunControllerTest extends TestCase
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [101]);
-        $request->set_param('idempotency_key', 'client-test-key-0001');
+        $this->setRequestIdempotencyKey($request, 'client-test-key-0001');
         $response = $this->controller->submit_describe_run($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
@@ -3779,7 +3809,7 @@ class DescribeRunControllerTest extends TestCase
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [101]);
-        $request->set_param('idempotency_key', 'client-test-key-0001');
+        $this->setRequestIdempotencyKey($request, 'client-test-key-0001');
         $response = $this->controller->submit_describe_run($request);
 
         $this->assertNotInstanceOf(\WP_Error::class, $response);
@@ -3812,7 +3842,7 @@ class DescribeRunControllerTest extends TestCase
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [101]);
-        $request->set_param('idempotency_key', 'client-test-key-0001');
+        $this->setRequestIdempotencyKey($request, 'client-test-key-0001');
         $response = $this->controller->submit_describe_run($request);
         $this->assertNotInstanceOf(\WP_Error::class, $response);
 
@@ -3864,7 +3894,7 @@ class DescribeRunControllerTest extends TestCase
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [101, 202]);
-        $request->set_param('idempotency_key', 'client-test-key-0001');
+        $this->setRequestIdempotencyKey($request, 'client-test-key-0001');
         $response = $this->controller->submit_describe_run($request);
 
         $this->assertNotInstanceOf(\WP_Error::class, $response);

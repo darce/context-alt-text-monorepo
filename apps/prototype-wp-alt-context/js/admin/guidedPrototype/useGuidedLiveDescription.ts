@@ -18,6 +18,7 @@ import {
   isGpuState,
   submitBulkDescribeRun,
 } from '../api/describeApi';
+import { createDescribeIdempotencyKey } from '../api/describeIdempotencyKey';
 import type { DescribeRunItemsResponse, DescribeRunResponse } from '../api/describeApi';
 import { parseWpErrorPayload } from '../api/wpErrorMessage';
 import { isFrozenPollFailure } from '../hooks/useDescribeRunProgress';
@@ -86,7 +87,7 @@ export interface GuidedLiveDescriptionClient {
   // Both the submit response and every status poll carry `deadline_seconds` on
   // the shared contract, so both are typed by it rather than by a local
   // intersection that a schema rename could not break (rg-015).
-  submit: (mediaId: number) => Promise<DescribeRunResponse>;
+  submit: (mediaId: number, idempotencyKey: string) => Promise<DescribeRunResponse>;
   poll: (runId: string) => Promise<DescribeRunResponse>;
   items: (runId: string) => Promise<DescribeRunItemsResponse>;
   cancel: (runId: string) => Promise<unknown>;
@@ -95,7 +96,8 @@ export interface GuidedLiveDescriptionClient {
 const defaultClient: GuidedLiveDescriptionClient = {
   // The payload builder is the single place that decides what leaves the
   // browser, so the route never sees anything the guided screen invented.
-  submit: (mediaId) => submitBulkDescribeRun(guidedLiveRequestPayload(mediaId).media_ids),
+  submit: (mediaId, idempotencyKey) =>
+    submitBulkDescribeRun(guidedLiveRequestPayload(mediaId).media_ids, idempotencyKey),
   poll: fetchBulkDescribeRun,
   items: fetchDescribeRunItems,
   cancel: cancelBulkDescribeRun,
@@ -312,6 +314,7 @@ export const useGuidedLiveDescription = ({
       return;
     }
     requestInFlightRef.current = true;
+    const idempotencyKey = createDescribeIdempotencyKey();
     // A timed-out run is stopped on screen only; the server may still be
     // burning GPU on it. Retrying without cancelling first is how one learner
     // gesture ends up paying for two live runs.
@@ -339,7 +342,7 @@ export const useGuidedLiveDescription = ({
           // whole path exists to prevent.
           return undefined;
         }
-        return client.submit(mediaId);
+        return client.submit(mediaId, idempotencyKey);
       })
       .then((run) => {
         if (run === undefined) {

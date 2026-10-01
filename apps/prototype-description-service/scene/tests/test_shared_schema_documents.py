@@ -111,11 +111,17 @@ def test_success(name):
         "description_service_error",
         "operation_mismatch",
         "operation_expired",
+        "missing_operation_id",
+        "invalid_operation_id",
     ],
 )
 def test_typed_errors(code):
     detail = dict(
-        code=code, message="Description service status", operation_id="opaque operation", startup_id=None, timing=TIMING
+        code=code,
+        message="Description service status",
+        operation_id=None if code in {"missing_operation_id", "invalid_operation_id"} else "opaque operation",
+        startup_id=None,
+        timing=TIMING,
     )
     if code == "description_service_starting":
         detail["startup_budget_seconds"] = 510
@@ -129,6 +135,17 @@ def test_typed_errors(code):
     detail["warmup_eta_seconds"] = 4
     assert v.is_valid({"detail": detail}) == (code == "description_service_starting")
     assert not v.is_valid(detail)
+
+
+def test_typed_errors_reject_unknown_code():
+    detail = dict(
+        code="unknown_operation_error",
+        message="Unknown operation error",
+        operation_id=None,
+        startup_id=None,
+        timing=TIMING,
+    )
+    assert not validator("scene-describe-multipart").is_valid({"detail": detail})
 
 
 def test_health_detailed_adapter_readiness_document():

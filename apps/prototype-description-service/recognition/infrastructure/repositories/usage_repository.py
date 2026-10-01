@@ -56,7 +56,7 @@ class InvalidUsageRequestError(ValueError):
 
 
 class ExpiredUsageReservationError(InvalidUsageRequestError):
-    """The idempotency key identifies an expired reservation."""
+    """The operation or idempotency key identifies an expired reservation."""
 
 
 class AllowanceExceededError(UsageAdmissionError):
@@ -279,10 +279,16 @@ class SqlAlchemyUsageRepository:
         return reservation
 
     def _replay_or_conflict(self, existing: UsageReservation, request_fingerprint: str) -> UsageReservation:
+        self._reject_expired_reservation(existing)
         stored = existing.request_fingerprint or existing.idempotency_key
         if stored != request_fingerprint:
             raise UsageFingerprintConflictError("usage operation reused with a different request fingerprint")
         return existing
+
+    @staticmethod
+    def _reject_expired_reservation(existing: UsageReservation) -> None:
+        if existing.status == UsageReservationStatus.EXPIRED:
+            raise ExpiredUsageReservationError("operation or idempotency key belongs to an expired reservation")
 
     async def _lock_global_state(self) -> GlobalUsageAdmissionState:
         stmt = (
@@ -418,8 +424,6 @@ class SqlAlchemyUsageRepository:
         bound_job_id = job_id or uuid4().hex
         existing = await self._get_by_idempotency_key(tenant_id, normalized_key)
         if existing is not None:
-            if existing.status == UsageReservationStatus.EXPIRED:
-                raise ExpiredUsageReservationError("idempotency key belongs to an expired reservation")
             # A stale RESERVED retry can be returned here, but _settle applies
             # this same lease before charging it, so replay cannot extend it.
             return self._replay_or_conflict(existing, normalized_fingerprint)
@@ -468,8 +472,6 @@ class SqlAlchemyUsageRepository:
         if existing is None:
             existing = await self._get_by_idempotency_key(tenant_id, normalized_key)
         if existing is not None:
-            if existing.status == UsageReservationStatus.EXPIRED:
-                raise ExpiredUsageReservationError("idempotency key belongs to an expired reservation")
             return self._replay_or_conflict(existing, normalized_fingerprint)
 
         lease_cutoff = datetime.now(tz=UTC) - USAGE_RESERVATION_LEASE

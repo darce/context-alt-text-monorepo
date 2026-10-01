@@ -16,19 +16,20 @@
 # Portable to bash 3.2 (macOS) and bash 5 (VM): no mapfile / associative arrays.
 #
 # Usage:
-#   SRC=/path/to/celebs01 PERSONS=20 PER_PERSON=5 \
+#   SRC=/path/to/celebs01 PERSONS=20 PER_PERSON=5 README=/path/to/README.md \
 #     bash infra/oci/demo/seed/select-clustering-seed.sh
+# The README rights note is derived from BASIS, SOURCE and NOTICE; LICENSE_NOTE
+# is rejected so its claim cannot diverge from the rights ledger.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SEED_DIR="$SCRIPT_DIR"
-README="$SEED_DIR/README.md"
+README="${README:-$SEED_DIR/README.md}"
 SRC="${SRC:-/Users/daniel/Development/altcontext-marketing-monorepo/static/input-images/celebs01}"
 PERSONS="${PERSONS:-20}"
 PER_PERSON="${PER_PERSON:-5}"
 OUT="${OUT:-$SEED_DIR/media}"
 MANIFEST="${MANIFEST:-$SEED_DIR/clustering-manifest.txt}"
-LICENSE_NOTE="${LICENSE_NOTE:-celebs01 — editorial/fair-use demo (takedown on request)}"
 RIGHTS="${RIGHTS:-$SEED_DIR/clustering-rights.tsv}"
 BASIS="${BASIS:-editorial_fair_use}"
 NOTICE="${NOTICE:-takedown_on_request}"
@@ -44,6 +45,24 @@ case "$NOTICE" in
   takedown_on_request|attribution_required|none) ;;
   *) echo "ERROR: unrecognized NOTICE: $NOTICE" >&2; exit 2 ;;
 esac
+if [ "${LICENSE_NOTE+x}" = x ]; then
+  echo "ERROR: LICENSE_NOTE is derived from BASIS, SOURCE and NOTICE" >&2
+  exit 2
+fi
+case "$BASIS" in
+  editorial_fair_use) BASIS_LABEL='editorial/fair-use' ;;
+  cc_by) BASIS_LABEL='CC BY 4.0' ;;
+  cc_by_sa) BASIS_LABEL='CC BY-SA 4.0' ;;
+  public_domain) BASIS_LABEL='public domain' ;;
+  eu_reuse) BASIS_LABEL='EU reuse licence' ;;
+  generated) BASIS_LABEL='generated' ;;
+esac
+case "$NOTICE" in
+  takedown_on_request) NOTICE_LABEL='takedown on request' ;;
+  attribution_required) NOTICE_LABEL='attribution required' ;;
+  none) NOTICE_LABEL='no notice' ;;
+esac
+LICENSE_NOTE="$SOURCE — $BASIS_LABEL demo ($NOTICE_LABEL)"
 
 [ -d "$SRC" ] || { echo "ERROR: SRC not found: $SRC" >&2; exit 2; }
 mkdir -p "$OUT"

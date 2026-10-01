@@ -6,6 +6,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+from scripts.bench import score_report as score_report_module
 from scripts.bench.driver import init_run_dir, run_pair
 from scripts.bench.score_report import LICENSE_BANNER, score_head_to_head
 from scripts.bench.stack_pair import load_stack_pair
@@ -25,7 +26,7 @@ def _fresh_reset_evidence() -> dict[str, dict[str, object]]:
     }
 
 
-def test_mocked_e2e_writes_full_report_dir(tmp_path: Path) -> None:
+def test_mocked_e2e_writes_full_report_dir(tmp_path: Path, monkeypatch) -> None:
     images = tmp_path / "images"
     manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1, 2])
     pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
@@ -47,6 +48,19 @@ def test_mocked_e2e_writes_full_report_dir(tmp_path: Path) -> None:
 
     for stack_id in clients:
         write_stub_preflight(out, stack_id)
+
+    strict_calls: list[dict[str, object] | None] = []
+    strict_detection_pr = score_report_module.detection_pr_strict
+
+    def observe_strict_detection_pr(items, *, annotation_mode=None, run_manifest=None):
+        strict_calls.append(run_manifest)
+        return strict_detection_pr(
+            items,
+            annotation_mode=annotation_mode,
+            run_manifest=run_manifest,
+        )
+
+    monkeypatch.setattr(score_report_module, "detection_pr_strict", observe_strict_detection_pr)
     report = score_head_to_head(out)
     assert report.exists()
     accepted = json.loads((out / "score" / "accepted_set.json").read_text())
@@ -65,6 +79,11 @@ def test_mocked_e2e_writes_full_report_dir(tmp_path: Path) -> None:
     assert "acx-dev-fir" in encoded
     html = (out / "score" / "report.html").read_text()
     assert "INTERNAL BENCH ONLY" in html
+    assert "end-to-end embeddable-face yield among public exports" in html
+    assert "Faces without embeddings are omitted from public export rows" in html
+    assert "not detector-only recall" in html
+    assert strict_calls
+    assert all(call == {"iou_threshold": 0.5} for call in strict_calls)
     tiers = {c.get("tier") for c in cells if isinstance(c, dict) and "tier" in c}
     assert tiers & {"CONFIRMATORY", "DIRECTIONAL", "DIAGNOSTIC"}
     primary = [

@@ -993,7 +993,7 @@ final class ClustersReadCharacterizationScenarios
         $GLOBALS['__ac_http_queue'] = [];
         $GLOBALS['__ac_http_calls'] = [];
         $GLOBALS['__ac_options']['acx_recognition_url'] = 'http://localhost:8000';
-        $GLOBALS['__ac_options']['acx_recognition_api_key'] = 'test-key';
+        $GLOBALS['__ac_options']['acx_recognition_api_key'] = \AltContext\Api\RecognitionApiKeyStore::encrypt('test-key');
     }
 
     private static function proxyFallbackController(): ClustersController

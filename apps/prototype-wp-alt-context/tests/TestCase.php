@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace AltContext\Tests;
 
+require_once __DIR__ . '/../src/api/class-recognition-api-key-store.php';
+
+use AltContext\Api\RecognitionApiKeyStore;
 use PHPUnit\Framework\TestCase as PHPUnitTestCase;
 
 /**
@@ -112,6 +115,11 @@ abstract class TestCase extends PHPUnitTestCase
      */
     protected function setOption(string $key, mixed $value): void
     {
+        // Tests seed the at-rest form production writes.
+        if (RecognitionApiKeyStore::OPTION_NAME === $key && is_string($value) && '' !== $value && !\str_starts_with($value, RecognitionApiKeyStore::PREFIX)) {
+            $value = RecognitionApiKeyStore::encrypt($value);
+        }
+
         $GLOBALS['__ac_options'][$key] = $value;
         $alloptions = wp_cache_get('alloptions', 'options');
         if (is_array($alloptions) && array_key_exists($key, $alloptions)) {

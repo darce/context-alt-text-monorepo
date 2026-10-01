@@ -255,7 +255,8 @@ export function BillingScreen({
         onNavigateToReturn(result.attempt_id);
         return;
       }
-      if (result.status === 'ambiguous') {
+      // Only known terminal failures permit starting a new payment attempt.
+      if (result.status !== 'failed' && result.status !== 'expired' && result.status !== 'canceled') {
         inFlightRef.current = false;
         setBusy(false);
         setRetry(true);

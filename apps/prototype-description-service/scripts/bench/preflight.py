@@ -46,6 +46,7 @@ def load_pre_run_reset_evidence(
     pair: StackPairConfig,
     *,
     path: Path | str | None = None,
+    enforce_freshness: bool = True,
 ) -> dict[str, dict[str, Any]]:
     """Load JSON with per-stack reset attestations and fail closed if absent.
 
@@ -69,12 +70,18 @@ def load_pre_run_reset_evidence(
         ) from exc
     if not isinstance(document, dict):
         raise PreflightError("pre_run_reset_unverified", "reset evidence JSON must be an object")
-    return validate_pre_run_reset_evidence(pair, document.get("pre_run_reset_by_stack"))
+    return validate_pre_run_reset_evidence(
+        pair,
+        document.get("pre_run_reset_by_stack"),
+        enforce_freshness=enforce_freshness,
+    )
 
 
 def validate_pre_run_reset_evidence(
     pair: StackPairConfig,
     evidence: Any,
+    *,
+    enforce_freshness: bool = True,
 ) -> dict[str, dict[str, Any]]:
     """Require timestamped, per-configured-stack evidence for reset and empty identity tables.
 
@@ -129,7 +136,7 @@ def validate_pre_run_reset_evidence(
                 "pre_run_reset_unverified",
                 f"reset_completed_at must be timezone-aware and not in the future for {endpoint.stack_id!r}",
             )
-        if now - parsed_at.astimezone(UTC) > PRE_RUN_RESET_EVIDENCE_MAX_AGE:
+        if enforce_freshness and now - parsed_at.astimezone(UTC) > PRE_RUN_RESET_EVIDENCE_MAX_AGE:
             raise PreflightError(
                 "pre_run_reset_unverified",
                 f"reset_completed_at is older than {PRE_RUN_RESET_EVIDENCE_MAX_AGE} for {endpoint.stack_id!r}",

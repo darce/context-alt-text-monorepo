@@ -47,7 +47,7 @@ Before every `run`, follow the FIR23-STACK runbook's stack-scoped tenant reset p
 }
 ```
 
-Replace the sample names and timestamp with the values from the reset you just completed; do not copy the sample time. Save the document as `/secure/bench/pre-run-reset.json`, then run `export ACX_BENCH_PRE_RUN_RESET_EVIDENCE_FILE=/secure/bench/pre-run-reset.json` in the shell used for the CLI command. The document must contain exactly one attestation per configured stack. Each timestamp must be timezone-aware, no more than one hour old, and not in the future. The harness stores a stable digest of the validated evidence in `run.json`; the same evidence digest can authorize only one run among the run directories under the `--out` parent directory. Perform and attest a new reset for each subsequent run.
+Replace the sample names and timestamp with the values from the reset you just completed; do not copy the sample time. Save the document as `/secure/bench/pre-run-reset.json`, then run `export ACX_BENCH_PRE_RUN_RESET_EVIDENCE_FILE=/secure/bench/pre-run-reset.json` in the shell used for the CLI command. The document must contain exactly one attestation per configured stack. Each timestamp must be timezone-aware, no more than one hour old, and not in the future. The harness stores a stable digest of the validated evidence in `run.json`; the same evidence digest can authorize only one run among the run directories under the `--out` parent directory. Perform and attest a new reset for each subsequent run. A failed invocation can be resumed with the same `--out` path and evidence; the one-hour freshness limit applies when that run is first created.
 
 ### Fail-closed codes operators hit on the live path
 

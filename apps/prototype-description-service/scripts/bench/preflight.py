@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,8 @@ _DIM_TOKEN = re.compile(r"pgvector_dimension=(\d+)")
 _RUNTIME_FINGERPRINT_TOKEN = re.compile(r"(?:^|;\s*)numeric_runtime_fingerprint=(\{.*\})$")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 PRE_RUN_RESET_EVIDENCE_ENV = "ACX_BENCH_PRE_RUN_RESET_EVIDENCE_FILE"
+# Keep a reset attestation close to its run so tenant state cannot drift.
+PRE_RUN_RESET_EVIDENCE_MAX_AGE = timedelta(hours=1)
 
 
 class PreflightError(BenchError):
@@ -87,6 +90,7 @@ def validate_pre_run_reset_evidence(
         )
 
     validated: dict[str, dict[str, Any]] = {}
+    now = datetime.now(UTC)
     for endpoint in pair.stacks:
         record = evidence.get(endpoint.stack_id)
         if not isinstance(record, dict):
@@ -120,10 +124,15 @@ def validate_pre_run_reset_evidence(
                 "pre_run_reset_unverified",
                 f"reset_completed_at is not an ISO-8601 timestamp for {endpoint.stack_id!r}",
             ) from exc
-        if parsed_at.tzinfo is None or parsed_at.utcoffset() is None or parsed_at.astimezone(UTC) > datetime.now(UTC):
+        if parsed_at.tzinfo is None or parsed_at.utcoffset() is None or parsed_at.astimezone(UTC) > now:
             raise PreflightError(
                 "pre_run_reset_unverified",
                 f"reset_completed_at must be timezone-aware and not in the future for {endpoint.stack_id!r}",
+            )
+        if now - parsed_at.astimezone(UTC) > PRE_RUN_RESET_EVIDENCE_MAX_AGE:
+            raise PreflightError(
+                "pre_run_reset_unverified",
+                f"reset_completed_at is older than {PRE_RUN_RESET_EVIDENCE_MAX_AGE} for {endpoint.stack_id!r}",
             )
         if rows_empty is not True:
             raise PreflightError(
@@ -137,6 +146,12 @@ def validate_pre_run_reset_evidence(
             "prior_run_identity_rows_empty": True,
         }
     return validated
+
+
+def pre_run_reset_evidence_sha256(evidence: dict[str, dict[str, Any]]) -> str:
+    """Return a stable digest for validated per-stack reset evidence."""
+    encoded = json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def preflight_stack(

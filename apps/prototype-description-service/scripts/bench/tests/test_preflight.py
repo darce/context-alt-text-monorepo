@@ -14,8 +14,11 @@ import pytest
 
 from scripts.bench.preflight import (
     PRE_RUN_RESET_EVIDENCE_ENV,
+    PRE_RUN_RESET_EVIDENCE_MAX_AGE,
     PreflightError,
     preflight_stack,
+    pre_run_reset_evidence_sha256,
+    validate_pre_run_reset_evidence,
     write_preflight_json,
 )
 from scripts.bench.stack_pair import StackEndpoint, load_stack_pair
@@ -120,6 +123,32 @@ def _reset_evidence(*, rows_empty: bool = True) -> dict[str, dict[str, object]]:
         }
         for stack in (INSIGHTFACE_STACK, FIR_STACK)
     }
+
+
+def test_pre_run_reset_evidence_rejects_stale_timestamp(tmp_path: Path) -> None:
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    evidence = _reset_evidence()
+    stale_at = (datetime.now(UTC) - PRE_RUN_RESET_EVIDENCE_MAX_AGE - timedelta(seconds=1)).isoformat()
+    for record in evidence.values():
+        record["reset_completed_at"] = stale_at
+
+    with pytest.raises(PreflightError) as exc:
+        validate_pre_run_reset_evidence(pair, evidence)
+
+    assert exc.value.code == "pre_run_reset_unverified"
+
+
+def test_pre_run_reset_evidence_rejects_future_timestamp(tmp_path: Path) -> None:
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    evidence = _reset_evidence()
+    future_at = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+    for record in evidence.values():
+        record["reset_completed_at"] = future_at
+
+    with pytest.raises(PreflightError) as exc:
+        validate_pre_run_reset_evidence(pair, evidence)
+
+    assert exc.value.code == "pre_run_reset_unverified"
 
 
 def test_preflight_ok_real_shapes() -> None:
@@ -487,6 +516,10 @@ def test_run_pair_persists_preflight_json(tmp_path: Path) -> None:
     )
     run_doc = json.loads((out / "run.json").read_text(encoding="utf-8"))
     assert set(run_doc["pre_run_reset_by_stack"]) == {"acx-dev-insightface", "acx-dev-fir"}
+    expected_digest = hashlib.sha256(
+        json.dumps(run_doc["pre_run_reset_by_stack"], sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    assert run_doc["pre_run_reset_evidence_sha256"] == expected_digest
     assert all(
         record["prior_run_identity_rows_empty"] is True
         for record in run_doc["pre_run_reset_by_stack"].values()
@@ -500,6 +533,55 @@ def test_run_pair_persists_preflight_json(tmp_path: Path) -> None:
         assert doc["opencv_major_source"] == "service_reported"
         assert doc["resolved_pgvector_dim"] == dim
         assert doc["resolved_profile"] == profile
+
+
+def test_fresh_reset_evidence_passes_once_and_reuse_is_refused(tmp_path: Path) -> None:
+    from scripts.bench import driver
+    from scripts.bench.tests.conftest import FakeClient, write_hashed_manifest, write_pair
+
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    output_root = tmp_path / "results"
+    evidence = _reset_evidence()
+    first_clients = {
+        "acx-dev-insightface": FakeClient(),
+        "acx-dev-fir": FakeClient(),
+    }
+
+    driver.run_pair(
+        pair,
+        manifest_path=manifest,
+        images_dir=images,
+        out_dir=output_root / "run-1",
+        clients=first_clients,
+        skip_preflight=True,
+        pre_run_reset_by_stack=evidence,
+    )
+    assert first_clients["acx-dev-insightface"].analyze_calls
+    first_run_doc = json.loads((output_root / "run-1" / "run.json").read_text(encoding="utf-8"))
+    assert first_run_doc["pre_run_reset_evidence_sha256"] == pre_run_reset_evidence_sha256(
+        first_run_doc["pre_run_reset_by_stack"]
+    )
+
+    second_clients = {
+        "acx-dev-insightface": FakeClient(),
+        "acx-dev-fir": FakeClient(),
+    }
+    with pytest.raises(PreflightError) as exc:
+        driver.run_pair(
+            pair,
+            manifest_path=manifest,
+            images_dir=images,
+            out_dir=output_root / "run-2",
+            clients=second_clients,
+            skip_preflight=True,
+            pre_run_reset_by_stack=evidence,
+        )
+
+    assert exc.value.code == "pre_run_reset_unverified"
+    assert not second_clients["acx-dev-insightface"].analyze_calls
+    assert not (output_root / "run-2" / "run.json").exists()
 
 
 @pytest.mark.parametrize("invalid_kind", ["missing_stack", "nonempty_rows", "skipped_preflight"])

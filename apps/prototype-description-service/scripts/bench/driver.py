@@ -75,6 +75,32 @@ def cluster_gate_admits(items: list[Any], item_max_attempts: int = 2) -> bool:
     return evaluate_cluster_gate(items, item_max_attempts=item_max_attempts).admits
 
 
+def _refuse_reused_reset_evidence(output_root: Path, evidence_sha256: str) -> None:
+    """Refuse a reset attestation already recorded by any run under this output root."""
+    from scripts.bench.preflight import PreflightError
+
+    if not output_root.exists():
+        return
+    for record_path in sorted(output_root.rglob("run.json")):
+        try:
+            run_doc = json.loads(record_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise PreflightError(
+                "pre_run_reset_unverified",
+                f"cannot verify prior run record {record_path}",
+            ) from exc
+        if not isinstance(run_doc, dict):
+            raise PreflightError(
+                "pre_run_reset_unverified",
+                f"cannot verify prior run record {record_path}",
+            )
+        if run_doc.get("pre_run_reset_evidence_sha256") == evidence_sha256:
+            raise PreflightError(
+                "pre_run_reset_unverified",
+                f"reset evidence was already used by a run under output root {output_root}",
+            )
+
+
 def init_run_dir(run_dir: Path | str, pair: StackPairConfig, manifest_path: Path | str) -> Path:
     root = Path(run_dir)
     root.mkdir(parents=True, exist_ok=True)
@@ -390,6 +416,7 @@ def run_pair(
     from scripts.bench.preflight import (
         load_pre_run_reset_evidence,
         preflight_pair,
+        pre_run_reset_evidence_sha256,
         validate_pre_run_reset_evidence,
     )
 
@@ -400,6 +427,8 @@ def run_pair(
         if pre_run_reset_by_stack is not None
         else load_pre_run_reset_evidence(pair)
     )
+    reset_evidence_sha256 = pre_run_reset_evidence_sha256(reset_evidence)
+    _refuse_reused_reset_evidence(Path(out_dir).parent, reset_evidence_sha256)
     preflight_results = None
     if not skip_preflight:
         keys = {s.stack_id: os.environ.get(s.api_key_env, "") for s in pair.stacks}
@@ -411,6 +440,7 @@ def run_pair(
         )
     root = init_run_dir(out_dir, pair, manifest_path)
     _stamp_run_field(root, "pre_run_reset_by_stack", reset_evidence)
+    _stamp_run_field(root, "pre_run_reset_evidence_sha256", reset_evidence_sha256)
     if preflight_results is not None:
         from scripts.bench.preflight import write_preflight_json
 

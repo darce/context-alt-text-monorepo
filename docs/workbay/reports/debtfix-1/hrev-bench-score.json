@@ -1,0 +1,102 @@
+{
+  "lane": "hrev-bench-score",
+  "base": "57eb151417a52df980219cc5faac0338f7ecdcb3",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal scripts/bench/tests/test_score_head_to_head.py scripts/bench/tests/test_score_matcher_delegation.py scripts/bench/tests/test_dag_score.py scripts/bench/tests/test_detection_localization.py scripts/bench/tests/test_precision_precondition.py scripts/bench/tests/test_attrition_floor.py scripts/bench/tests/test_cluster_gate.py",
+      "result": "fail",
+      "detail": "uv stopped before pytest: could not remove shared alembic entry because the filesystem is read-only (os error 30)."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal scripts/bench/tests/test_score_head_to_head.py scripts/bench/tests/test_score_matcher_delegation.py scripts/bench/tests/test_dag_score.py scripts/bench/tests/test_detection_localization.py scripts/bench/tests/test_precision_precondition.py scripts/bench/tests/test_attrition_floor.py scripts/bench/tests/test_cluster_gate.py",
+      "result": "pass",
+      "detail": "134 passed, 100 warnings in 5.84s."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q scripts/bench/tests/test_driver_export_skip.py",
+      "result": "pass",
+      "detail": "1 passed, 2 warnings in 2.41s."
+    },
+    {
+      "command": "lane_root=\"$(git rev-parse --show-toplevel)\"; resolved_python=\"$lane_root/.venv/bin/python\"; cd apps/prototype-description-service; lane_root=\"$(git rev-parse --show-toplevel)\"; resolved_python=\"$lane_root/.venv/bin/python\"; \"$resolved_python\" -c 'import scripts.bench.score_report as module; print(module.__file__)'",
+      "result": "pass",
+      "detail": "Import resolved to apps/prototype-description-service/scripts/bench/score_report.py in this lane."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16817,
+      "finding_id": "DADJ-6352",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:953-965 - `lineage.capture_session_id` maps a single known session to an occasion and unknown sessions to `image:{entry.media_id}`; manifest.py:908 declares the field. test_precision_precondition.py:567-577,607-608 asserts full-manifest occasion sizes and partial occasion+image resampling.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py::test_score_uses_full_manifest_occasions_and_caps_golden150_tiers"
+    },
+    {
+      "db_id": 16795,
+      "finding_id": "DADJ-6277",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:345-346 - `if not ctx.get(\"exhaustiveness_ok\", True)` returns DIRECTIONAL; 1160-1165 derives detection_entries only from detection_scoring_set. test_score_head_to_head.py:599-612 asserts boxless identification is DIRECTIONAL and 216-232 checks boxless items are excluded from detection precision.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_score_head_to_head.py::test_identification_boxless_corpus_is_directional"
+    },
+    {
+      "db_id": 16945,
+      "finding_id": "DFIX25-aa0f6df908926a78-H-15002fbb697bea56a9cabdbc",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:973-984 - `if pin_path.is_symlink() or not pin_path.is_file()` rejects absent/symlink pins and returns true only for the fixed SHA. test_precision_precondition.py:550-560 renames the source path, verifies the pinned corpus, removes run.json, and asserts the golden150 directional reason at 607-610.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py::test_score_uses_full_manifest_occasions_and_caps_golden150_tiers"
+    },
+    {
+      "db_id": 16835,
+      "finding_id": "DADJ-6396",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/bench/score.py:9-13 imports the shared face_assignment helpers, and 47-74 delegates IoU and assignment through `hungarian_iou_pairs(matrix, threshold=threshold)`. test_score_matcher_delegation.py:12-27 checks threshold delegation and 68-79 locks box results.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_score_matcher_delegation.py::test_hungarian_iou_matches_delegates_matrix_and_threshold"
+    },
+    {
+      "db_id": 16816,
+      "finding_id": "DADJ-6346",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:1159-1165 separates accepted_entries from detection_entries; 1256-1260 uses detection_entries for `detection_recall` and `detection_precision`, while identification uses accepted_entries. test_score_head_to_head.py:216-232 scores a boxless accepted item and asserts detection_scoring_set_size=1 and precision=1.0.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_score_head_to_head.py::test_detection_excludes_boxless_from_precision"
+    },
+    {
+      "db_id": 16808,
+      "finding_id": "DADJ-6340",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:218-234 stamps complete session groups as occasion units and mixed/partial groups as `occasion+image`; 946-968 derives occasions from lineage. test_precision_precondition.py:567-577 observes the complete manifest unit map and 607-608 asserts the partial-unit label.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py::test_score_uses_full_manifest_occasions_and_caps_golden150_tiers"
+    },
+    {
+      "db_id": 16806,
+      "finding_id": "DADJ-6338",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:331-337 classifies superiority, equivalence, or unsupported intervals; 364-368 requires a supported primary_claim_type before CONFIRMATORY. test_precision_precondition.py:184-207 asserts both interval classification and directional demotion for an unsupported primary.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py::test_primary_claim_is_required_for_confirmatory_tier"
+    },
+    {
+      "db_id": 16796,
+      "finding_id": "DADJ-6279",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:630-649 records each failed condition by stack and separates ingest/analyze counts from roster/identity-query attrition; 804-825 writes `failed_conditions_by_stack` alongside a compatibility phase. test_attrition_floor.py:115-170 asserts simultaneous ingest, analyze, and roster failures on both legs are all retained.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_attrition_floor.py::test_attrition_keeps_all_failed_conditions_by_leg"
+    },
+    {
+      "db_id": 16947,
+      "finding_id": "DFIX27-125770cd5a551edf-M-b447d44bd2fa6fc1e5718fc3",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/bench/export_map.py:27-33 includes `media_identity_results.json` in LEG_EXPORT_REQUIRED_FILES; driver.py:387-390 re-exports when a required file is missing. test_driver_export_skip.py:15-69 starts with the three legacy payload files, asserts the per-media query reruns, and checks the new file and digests.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_driver_export_skip.py::test_legacy_exports_are_rebuilt_with_identity_results_and_digests"
+    }
+  ],
+  "new_findings": [],
+  "summary": "Findings: HOLDS=9, PARTIAL=0, NOT_FIXED=0, STILL_LIVE=0, NOW_FIXED=0; new findings: high=0, medium=0, low=0; verification passed (134 lane tests and 1 legacy-export regression test)."
+}

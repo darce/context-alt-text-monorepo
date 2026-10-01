@@ -473,6 +473,11 @@ def test_runbook_documents_later_integration_and_env_ownership() -> None:
     assert "symlink" in text.lower()
     assert "APP_APPROVED_ROOTS" in text
     assert "`/portal` plus `/portal/*`" in text or "path /portal /portal/*" in text
+    assert "APP_HEALTH_CMD=/usr/local/bin/app-portal-health-check" in text
+    assert "https://app.altcontext.com/" in text
+    assert "https://api.altcontext.com/ready" in text
+    assert "local artifact checks" not in text
+    assert "If reload is skipped" not in text
     assert "reload" in text.lower()
     assert "health" in text.lower()
     assert "atomic" in text.lower() or "rename" in text.lower()
@@ -658,6 +663,21 @@ def test_successful_applies_reclaim_old_snapshot_sets(tmp_path: Path) -> None:
         (rollback / f"docker-compose.app.yml.{stamp}").write_text("old overlay")
     unrelated = rollback / "operator-notes"
     unrelated.write_text("keep")
+    operator_caddy = rollback / "Caddyfile.operator-copy.1"
+    operator_caddy.write_text("operator caddy copy")
+    operator_www = rollback / "www.backup.2"
+    operator_www.mkdir()
+    (operator_www / "keep.txt").write_text("operator frontend copy")
+    operator_overlay = rollback / "docker-compose.app.yml.local.3"
+    operator_overlay.write_text("operator overlay copy")
+    operator_caddy_suffix = rollback / "Caddyfile.4.bak"
+    operator_caddy_suffix.write_text("operator caddy backup")
+    wrong_caddy_type = rollback / "Caddyfile.9001"
+    wrong_caddy_type.mkdir()
+    wrong_www_type = rollback / "www.9002"
+    wrong_www_type.write_text("operator file")
+    wrong_overlay_type = rollback / "docker-compose.app.yml.9003"
+    wrong_overlay_type.mkdir()
     _prior_www(tmp_path)
     (app_root / "docker-compose.app.yml").write_text("services: {}\n")
     for _ in range(3):
@@ -673,13 +693,25 @@ def test_successful_applies_reclaim_old_snapshot_sets(tmp_path: Path) -> None:
         prior_contents = prior_index.read_bytes() if prior_index.exists() else None
         result = _run(tmp_path, args=["--apply"], live_caddy=live)
         assert result.returncode == 0, result.stdout + result.stderr
-        caddy_backups = list(rollback.glob("Caddyfile.*"))
+        caddy_backups = [
+            p for p in rollback.glob("Caddyfile.*")
+            if re.fullmatch(r"Caddyfile\.\d+", p.name) and p.is_file()
+        ]
         assert len(caddy_backups) == 1
         stamp = caddy_backups[0].name.split(".")[-1]
         assert caddy_backups[0].read_bytes() == before
         assert {p.name for p in rollback.iterdir()} == {
-            f"Caddyfile.{stamp}", f"www.{stamp}", f"docker-compose.app.yml.{stamp}", "operator-notes"
+            f"Caddyfile.{stamp}", f"www.{stamp}", f"docker-compose.app.yml.{stamp}", "operator-notes",
+            "Caddyfile.operator-copy.1", "www.backup.2", "docker-compose.app.yml.local.3",
+            "Caddyfile.4.bak", "Caddyfile.9001", "www.9002", "docker-compose.app.yml.9003",
         }
+        assert operator_caddy.read_text() == "operator caddy copy"
+        assert (operator_www / "keep.txt").read_text() == "operator frontend copy"
+        assert operator_overlay.read_text() == "operator overlay copy"
+        assert operator_caddy_suffix.read_text() == "operator caddy backup"
+        assert wrong_caddy_type.is_dir()
+        assert wrong_www_type.read_text() == "operator file"
+        assert wrong_overlay_type.is_dir()
         if prior_contents is not None:
             assert (rollback / f"www.{stamp}" / "index.html").read_bytes() == prior_contents
         assert unrelated.read_text() == "keep"

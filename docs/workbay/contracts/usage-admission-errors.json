@@ -10,6 +10,11 @@
     "retry_after": "never"
   },
   {
+    "status": 409,
+    "error": "usage_reservation_expired",
+    "retry_after": "never"
+  },
+  {
     "status": 503,
     "error": "usage_admission_stopped",
     "retry_after": "never"

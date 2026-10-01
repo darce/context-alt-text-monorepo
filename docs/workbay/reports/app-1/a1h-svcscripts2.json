@@ -1,0 +1,72 @@
+{
+  "lane": "a1h-svcscripts2",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_dw2_runappport_1.py recognition/tests/unit/test_dw2_runappport_2.py recognition/tests/unit/test_run_app_portal_evals.py",
+      "result": "not_run",
+      "detail": "uv stopped before pytest: error: failed to remove file `/home/gate/workbay-sandbox/.venv-lane-feature-app-1-a1h-svcscripts2-58b332c2/lib/python3.12/site-packages/../../../bin/alembic`: Read-only file system (os error 30). Retried with --no-sync as instructed."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_dw2_runappport_1.py recognition/tests/unit/test_dw2_runappport_2.py recognition/tests/unit/test_run_app_portal_evals.py",
+      "result": "pass",
+      "detail": "55 passed in 1.77s."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 15942,
+      "finding_id": "APP1-EVAL-RV-03",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/run_app_portal_evals.py:866 - `if junit.is_junit_document or junit.report_error` routes evidence-only JUnit through `_junit_threshold_reasons` before verification; the test assertion confirms the failed testcase makes status 1 and the ledger failed.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_run_app_portal_evals.py::test_evidence_only_junit_failure_cannot_bypass_threshold"
+    },
+    {
+      "db_id": 15941,
+      "finding_id": "APP1-EVAL-RV-02",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/run_app_portal_evals.py:1214 - `full_suite = list(selected) == list(available_groups)` and line 1318 fail release mode when it is false; tests confirm partial release selection exits 1 and an explicit slice is not release evidence.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_run_app_portal_evals.py::test_release_mode_partial_selection_cannot_report_a_release_pass; test_explicit_slice_run_may_exit_clean_but_is_not_release_evidence"
+    },
+    {
+      "db_id": 15940,
+      "finding_id": "APP1-EVAL-RV-01",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/run_app_portal_evals.py:887 - artifacts that are neither recognized JUnit nor typed provenance fall through to `_unverified_artifact`; the test asserts arbitrary nonempty text is present but unverified and yields status 1.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_run_app_portal_evals.py::test_arbitrary_nonempty_artifact_is_unverified_not_proof"
+    },
+    {
+      "db_id": 15944,
+      "finding_id": "APP1-EVAL-RV-06",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/run_app_portal_evals.py:1083 - `if not artifact.present: ledger_status = CaseLedgerStatus.FAILED`; the test asserts the passing testcase's ledger is demoted when its required artifact is missing.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_run_app_portal_evals.py::test_missing_required_artifact_demotes_passing_ledger_status"
+    },
+    {
+      "db_id": 15943,
+      "finding_id": "APP1-EVAL-RV-04",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/run_app_portal_evals.py:681 - `_junit_case_matches_declared` uses the declared base identity against every JUnit candidate, and line 704 aggregates all matches; tests assert both parameter instances are recorded and any failing instance fails the declaration.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_run_app_portal_evals.py::test_parametrized_junit_instances_match_declared_base_node; test_any_parametrized_instance_failure_blocks_declared_base_node"
+    }
+  ],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "apps/prototype-description-service/scripts/run_app_portal_evals.py",
+      "line": 1214,
+      "title": "Treat reordered all-group selection as a full suite",
+      "defect": "`full_suite` compares selected groups by list order even though `_selected_groups` preserves caller order and group selection is otherwise membership based.",
+      "failure_scenario": "With manifest groups `deterministic` then `browser`, invoking release mode with `groups=[\"browser\", \"deterministic\"]` executes both groups but sets `full_suite` false, returns status 1, and records `release_evidence` false.",
+      "fix": "Compare selected and available group membership as sets, or normalize selected groups to manifest order before computing `full_suite`.",
+      "test_file": "apps/prototype-description-service/recognition/tests/unit/test_run_app_portal_evals.py",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "All five prior corrections hold and the required suite passes (55 tests); one medium release-mode selection-order defect remains because an explicit all-group selection in a different order is rejected as partial."
+}

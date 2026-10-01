@@ -24,6 +24,7 @@ from recognition.application.services.usage_admission_service import (
     UsageFingerprintConflictError,
 )
 from recognition.domain.portal_contracts import UsageAdmissionService, UsageTicket
+from recognition.infrastructure.repositories.usage_repository import ExpiredUsageReservationError
 from recognition.interface_adapters.http.deps.session import get_optional_session, get_session
 
 logger = logging.getLogger(__name__)
@@ -234,6 +235,11 @@ async def admit_usage(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"error": "usage_fingerprint_conflict"},
+        ) from exc
+    except ExpiredUsageReservationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "usage_reservation_expired"},
         ) from exc
     except UsageAdmissionStoppedError as exc:
         raise _admission_unavailable("usage_admission_stopped") from exc

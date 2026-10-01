@@ -7,6 +7,7 @@ namespace AltContext\Api;
 require_once __DIR__ . '/interface-recognition-route-controller.php';
 require_once __DIR__ . '/class-recognition-circuit-keys.php';
 require_once __DIR__ . '/class-recognition-endpoint-resolver.php';
+require_once __DIR__ . '/class-recognition-api-key-store.php';
 require_once __DIR__ . '/class-recognition-proxy-policy.php';
 require_once __DIR__ . '/class-tenant-identity.php';
 require_once __DIR__ . '/class-blob-url-rewriter.php';
@@ -328,7 +329,7 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			return $filter_api_key;
 		}
 
-		return trim( (string) get_option( 'acx_recognition_api_key', '' ) );
+		return trim( RecognitionApiKeyStore::decrypt( get_option( RecognitionApiKeyStore::OPTION_NAME, '' ) ) ?? '' );
 	}
 
 	private function get_recognition_api_key_from_constant(): string {

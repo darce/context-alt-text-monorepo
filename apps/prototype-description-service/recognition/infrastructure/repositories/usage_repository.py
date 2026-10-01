@@ -389,7 +389,19 @@ class SqlAlchemyUsageRepository:
         global_state.queue_depth = max(0, int(global_state.queue_depth) - 1)
         global_state.queue_bytes = max(0, int(global_state.queue_bytes) - queue_bytes)
         if target_status is UsageReservationStatus.RELEASED or target_status is UsageReservationStatus.EXPIRED:
-            global_state.daily_cost_units = max(0, int(global_state.daily_cost_units) - cost_units)
+            # A rollover already discarded prior-day costs. Only refund work
+            # admitted within the daily period this counter currently tracks.
+            reserved_at = reservation.reserved_at
+            period_start = global_state.period_start
+            period_end = global_state.period_end
+            if reserved_at.tzinfo is None:
+                reserved_at = reserved_at.replace(tzinfo=UTC)
+            if period_start.tzinfo is None:
+                period_start = period_start.replace(tzinfo=UTC)
+            if period_end.tzinfo is None:
+                period_end = period_end.replace(tzinfo=UTC)
+            if period_start <= reserved_at < period_end:
+                global_state.daily_cost_units = max(0, int(global_state.daily_cost_units) - cost_units)
         global_state.updated_at = now
 
     async def reserve(

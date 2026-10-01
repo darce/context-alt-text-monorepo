@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
-use function array_is_list;
 use function get_option;
 use function in_array;
 use function is_array;
@@ -34,7 +33,7 @@ final class ContextCategoryPolicy {
 	 * @param mixed $value Candidate value.
 	 */
 	public static function is_valid_list( mixed $value ): bool {
-		if ( ! is_array( $value ) || ! array_is_list( $value ) ) {
+		if ( ! is_array( $value ) || array_values( $value ) !== $value ) {
 			return false;
 		}
 

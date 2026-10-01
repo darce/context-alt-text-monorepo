@@ -367,7 +367,12 @@ def _opencv_distribution_versions() -> tuple[tuple[str, str], ...]:
     """Return exact installed OpenCV wheel versions keyed by distribution name."""
     from importlib.metadata import PackageNotFoundError
 
-    distributions = ("opencv-python", "opencv-python-headless", "opencv-contrib-python")
+    distributions = (
+        "opencv-python",
+        "opencv-python-headless",
+        "opencv-contrib-python",
+        "opencv-contrib-python-headless",
+    )
     versions: list[tuple[str, str]] = []
     for distribution in distributions:
         try:

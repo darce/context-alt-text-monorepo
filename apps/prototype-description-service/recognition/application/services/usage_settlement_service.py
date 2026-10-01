@@ -25,6 +25,7 @@ from sqlalchemy.orm import noload
 
 from db.models import IdentityScanJob, UsageReservation
 from db.models.scene import DescribeDemandLease, DescribeOperation, DescribeRun
+from db.tenant_context import disable_rls_bypass, enable_rls_bypass
 from recognition.application.services.usage_admission_service import (
     ReservationNotFoundError,
     UsageAdmissionService,
@@ -656,6 +657,27 @@ class UsageSettlementService:
         no_progress_limit: int = 3,
     ) -> SweepReport:
         """Bounded stale scan. Active jobs are never released. [rg-007]"""
+        # The scan and recovery lookups span tenants in a background session.
+        # Keep maintenance visibility through settlement, including later batches.
+        await enable_rls_bypass(self._session)
+        try:
+            return await self._sweep_stale_reservations(
+                stale_after_seconds=stale_after_seconds,
+                max_batches=max_batches,
+                batch_size=batch_size,
+                no_progress_limit=no_progress_limit,
+            )
+        finally:
+            await disable_rls_bypass(self._session)
+
+    async def _sweep_stale_reservations(
+        self,
+        *,
+        stale_after_seconds: float,
+        max_batches: int,
+        batch_size: int,
+        no_progress_limit: int,
+    ) -> SweepReport:
         report = SweepReport()
         report.notes.append(MISSING_GENERATION_FENCE_CONTRACT)
         repo = SqlAlchemyUsageRepository(self._session)

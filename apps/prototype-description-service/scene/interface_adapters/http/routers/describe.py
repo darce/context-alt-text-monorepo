@@ -331,9 +331,11 @@ def _optional_operation_id(form: FormData) -> str | None:
         text = str(raw)
     stripped = text.strip()
     if not stripped or len(stripped) > 128:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            "operation_id must be a non-empty string of at most 128 characters",
+        raise _typed_describe_error(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            code="invalid_operation_id",
+            message="operation_id must be a non-empty string of at most 128 characters",
+            timing=_untimed_with_elapsed(0),
         )
     return stripped
 
@@ -351,12 +353,26 @@ def _multipart_request_digest(*, media_id: int, image_bytes: bytes, context: Map
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _usage_operation_id(*candidates: str | None) -> str:
+def _usage_operation_id(*candidates: str | None, metered: bool = False) -> str:
     for candidate in candidates:
         if isinstance(candidate, str):
             stripped = candidate.strip()
+            if metered and len(stripped) > 128:
+                raise _typed_describe_error(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    code="invalid_operation_id",
+                    message="operation_id must be at most 128 characters",
+                    timing=_untimed_with_elapsed(0),
+                )
             if stripped and len(stripped) <= 128:
                 return stripped
+    if metered:
+        raise _typed_describe_error(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code="missing_operation_id",
+            message="operation_id is required for metered requests",
+            timing=_untimed_with_elapsed(0),
+        )
     return uuid.uuid4().hex
 
 
@@ -1454,17 +1470,19 @@ async def describe_image_multipart(
         recognition_enabled=recognition_enabled,
         tier=envelope.tier,
     )
+    metered = cached_row is None and not unavailable_fast_path
+    # Validate the caller key before operation persistence can mint one.
+    usage_operation_id = _usage_operation_id(submission.operation_id, metered=metered)
     op, operation_id = await _accept_operation(
         session=session,
         tenant_uuid=tenant_uuid,
         digest=digest,
-        operation_id=submission.operation_id,
+        operation_id=usage_operation_id if metered else submission.operation_id,
         gpu_compute=gpu_compute,
         server_start=server_start,
     )
-    usage_operation_id = operation_id or _usage_operation_id(submission.operation_id)
+    usage_operation_id = operation_id or usage_operation_id
     job_id = str(uuid.uuid4())
-    metered = cached_row is None and not unavailable_fast_path
     pending_error: Exception | None = None
     async with _maybe_admit_usage(
         usage_admission_service,
@@ -1857,7 +1875,7 @@ async def enqueue_describe_image(
 
     image_len = len(submission.image_bytes)
     envelope = submission.envelope
-    operation_id = _usage_operation_id(submission.operation_id)
+    operation_id = _usage_operation_id(submission.operation_id, metered=True)
     usage_fingerprint = _scene_usage_fingerprint(
         route_mode=DescribeUsageRouteMode.ASYNC,
         media_ids=[envelope.media_id],

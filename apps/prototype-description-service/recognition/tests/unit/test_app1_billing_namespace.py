@@ -618,20 +618,43 @@ def test_work_lease_type_exposes_frozen_fields() -> None:
         )
 
 
-def test_mapping_command_defaults_to_dry_run() -> None:
+@pytest.mark.parametrize("apply", [False, True])
+def test_mapping_command_defaults_to_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path, apply: bool) -> None:
     import importlib.util
+    import json
     from pathlib import Path
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
 
     path = Path(__file__).resolve().parents[3] / "scripts" / "billing_namespace_migrate.py"
     spec = importlib.util.spec_from_file_location("billing_namespace_migrate", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    parser = module.argparse.ArgumentParser(description="probe")
-    # The module parser is built in main; inspect the source contract:
-    assert "--apply" in path.read_text(encoding="utf-8")
-    assert "dry-run" in path.read_text(encoding="utf-8").lower() or "Default is dry-run" in module.__doc__
-    _ = parser
+    mapping = {"evidence": "verified rows", "operator_identity": "test-operator", "inbox": [], "projection": []}
+    mapping_path = tmp_path / "mapping.json"
+    mapping_path.write_text(json.dumps(mapping), encoding="utf-8")
+    engine = MagicMock()
+    connection = engine.connect.return_value.__enter__.return_value
+    connection.dialect.name = "postgresql"
+    transaction = connection.begin.return_value
+    run = MagicMock(return_value={"mapped_inbox": 0, "mapped_projection": 0})
+    monkeypatch.setattr(module, "get_database_settings", lambda: SimpleNamespace(postgres_sync_dsn="unused"))
+    monkeypatch.setattr(module, "create_engine", lambda dsn: engine)
+    monkeypatch.setattr(module, "run", run)
+
+    argv = ["--mapping", str(mapping_path)]
+    if apply:
+        argv.append("--apply")
+    assert module.main(argv) == 0
+    run.assert_called_once_with(connection, mapping, apply=apply)
+    if apply:
+        transaction.commit.assert_called_once_with()
+        transaction.rollback.assert_not_called()
+    else:
+        transaction.rollback.assert_called_once_with()
+        transaction.commit.assert_not_called()
+    engine.dispose.assert_called_once_with()
 
 
 def test_known_item_lease_model_pk_is_namespace_kind_remote() -> None:

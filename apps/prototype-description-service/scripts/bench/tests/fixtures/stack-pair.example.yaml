@@ -17,7 +17,7 @@ stacks:
     tenant_id_env: ACX_BENCH_DEV_TENANT_ID
   - stack_id: acx-dev-fir
     role: face_pipeline_candidate
-    base_url: https://fir.api.altcontext.com
+    base_url: https://fir.dev.api.altcontext.com
     expected_profile: face_pipeline
     expected_pgvector_dim: 128
     opencv_major: 5

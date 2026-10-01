@@ -13,9 +13,21 @@ from scripts.bench.stack_pair import (
     load_stack_pair,
     validate_stack_pair_config,
 )
-from scripts.bench.tests.conftest import FIR_STACK, INSIGHTFACE_STACK, valid_pair_dict, write_pair
+from scripts.bench.tests.conftest import (
+    FIR_STACK,
+    INSIGHTFACE_STACK,
+    valid_pair_dict as _valid_pair_dict,
+    write_pair,
+)
 
 PRIMARY = "detection_recall@frame_e2e/label_map_primary"
+
+
+def valid_pair_dict(**overrides: object):
+    payload = _valid_pair_dict(**overrides)
+    if "stacks" not in overrides:
+        payload["stacks"][1]["base_url"] = "https://fir.dev.api.altcontext.com"
+    return payload
 
 
 def _load(tmp_path: Path, **overrides: object):
@@ -25,6 +37,14 @@ def _load(tmp_path: Path, **overrides: object):
 def test_valid_pair_loads(tmp_path: Path) -> None:
     pair = _load(tmp_path)
     assert {s.stack_id for s in pair.stacks} == {"acx-dev-insightface", "acx-dev-fir"}
+    assert pair.stacks[1].base_url == "https://fir.dev.api.altcontext.com"
+
+
+def test_example_pair_uses_current_fir_ingress() -> None:
+    fixture_path = Path(__file__).parent / "fixtures" / "stack-pair.example.yaml"
+    pair = load_stack_pair(fixture_path)
+    fir = next(stack for stack in pair.stacks if stack.stack_id == "acx-dev-fir")
+    assert fir.base_url == "https://fir.dev.api.altcontext.com"
 
 
 def test_unknown_stack_id_fails(tmp_path: Path) -> None:
@@ -38,6 +58,21 @@ def test_unknown_stack_id_fails(tmp_path: Path) -> None:
 def test_unknown_base_url_fails(tmp_path: Path) -> None:
     stacks = [dict(INSIGHTFACE_STACK), dict(FIR_STACK)]
     stacks[0]["base_url"] = "https://evil.example.com"
+    with pytest.raises(BenchError) as exc:
+        _load(tmp_path, stacks=stacks)
+    assert exc.value.code == "base_url_not_allowlisted"
+
+
+def test_http_base_url_rejected(tmp_path: Path) -> None:
+    stacks = [dict(INSIGHTFACE_STACK), dict(FIR_STACK)]
+    stacks[0]["base_url"] = "http://dev.api.altcontext.com"
+    with pytest.raises(BenchError) as exc:
+        _load(tmp_path, stacks=stacks)
+    assert exc.value.code == "base_url_invalid"
+
+
+def test_old_fir_ingress_is_not_allowlisted(tmp_path: Path) -> None:
+    stacks = [dict(INSIGHTFACE_STACK), dict(FIR_STACK)]
     with pytest.raises(BenchError) as exc:
         _load(tmp_path, stacks=stacks)
     assert exc.value.code == "base_url_not_allowlisted"

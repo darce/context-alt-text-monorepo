@@ -122,7 +122,12 @@ def test_submit_persists_recognition_enabled_false(monkeypatch):
     _no_worker(monkeypatch)
     with _client() as (client, sf):
         files = [("image_70", ("70.png", b"\x89PNG\r\n\x1a\n", "image/png"))]
-        data = {"tenant_id": str(TENANT_ID), "media_ids": json.dumps([70]), "recognition_enabled": "false"}
+        data = {
+            "tenant_id": str(TENANT_ID),
+            "media_ids": json.dumps([70]),
+            "recognition_enabled": "false",
+            "idempotency_key": uuid.uuid4().hex,
+        }
         response = client.post("/scene/describe/run", data=data, files=files)
         assert response.status_code == 202, response.text
         body = response.json()
@@ -143,7 +148,12 @@ def test_submit_rejects_non_bool_recognition_enabled(monkeypatch, raw):
     _no_worker(monkeypatch)
     with _client() as (client, _):
         files = [("image_70", ("70.png", b"\x89PNG\r\n\x1a\n", "image/png"))]
-        data = {"tenant_id": str(TENANT_ID), "media_ids": json.dumps([70]), "recognition_enabled": raw}
+        data = {
+            "tenant_id": str(TENANT_ID),
+            "media_ids": json.dumps([70]),
+            "recognition_enabled": raw,
+            "idempotency_key": uuid.uuid4().hex,
+        }
         response = client.post("/scene/describe/run", data=data, files=files)
         assert response.status_code == 422, response.text
         assert "recognition_enabled" in response.text
@@ -156,7 +166,12 @@ def test_submit_accepts_case_insensitive_true_false_recognition_enabled(monkeypa
     _no_worker(monkeypatch)
     with _client() as (client, sf):
         files = [("image_70", ("70.png", b"\x89PNG\r\n\x1a\n", "image/png"))]
-        data = {"tenant_id": str(TENANT_ID), "media_ids": json.dumps([70]), "recognition_enabled": raw}
+        data = {
+            "tenant_id": str(TENANT_ID),
+            "media_ids": json.dumps([70]),
+            "recognition_enabled": raw,
+            "idempotency_key": uuid.uuid4().hex,
+        }
         response = client.post("/scene/describe/run", data=data, files=files)
         assert response.status_code == 202, response.text
         body = response.json()
@@ -683,7 +698,7 @@ def _demo_run_client(*, recognition_quota: int = 5, non_demo: bool = False):
 
 def _submit_run(client, tenant_id: str, media_ids: list[int]):
     files = [(f"image_{m}", (f"{m}.png", b"\x89PNG\r\n\x1a\n", "image/png")) for m in media_ids]
-    data = {"tenant_id": str(tenant_id), "media_ids": json.dumps(media_ids)}
+    data = {"tenant_id": str(tenant_id), "media_ids": json.dumps(media_ids), "idempotency_key": uuid.uuid4().hex}
     return client.post("/scene/describe/run", data=data, files=files or None)
 
 
@@ -709,7 +724,7 @@ def test_demo_quota_run_empty_media_ids_422_no_consume(monkeypatch):
         # Explicit empty JSON array; no image parts.
         resp = client.post(
             "/scene/describe/run",
-            data={"tenant_id": str(tenant_id), "media_ids": "[]"},
+            data={"tenant_id": str(tenant_id), "media_ids": "[]", "idempotency_key": uuid.uuid4().hex},
         )
         assert resp.status_code == 422, resp.text
         assert "'media_ids' must be non-empty" in resp.text
@@ -828,7 +843,7 @@ def test_submit_bounds_image_reads(monkeypatch, media_ids, part_ids, part_size, 
     with _client() as (client, _):
         response = client.post(
             "/scene/describe/run",
-            data={"tenant_id": str(TENANT_ID), "media_ids": json.dumps(media_ids)},
+            data={"tenant_id": str(TENANT_ID), "media_ids": json.dumps(media_ids), "idempotency_key": uuid.uuid4().hex},
             files=[(f"image_{i}", (f"{i}.png", b"x" * part_size, "image/png")) for i in part_ids],
         )
     assert response.status_code == expected, response.text

@@ -83,6 +83,7 @@ class DescribeRunErrorCode(StrEnum):
     same name: one retry token may only ever name one accepted payload.
     """
 
+    IDEMPOTENCY_KEY_REQUIRED = "idempotency_key_required"
     INVALID_IDEMPOTENCY_KEY = "invalid_idempotency_key"
     IDEMPOTENCY_CONFLICT = "idempotency_conflict"
 
@@ -97,11 +98,14 @@ _IDEMPOTENCY_KEY_CHARSET = re.compile(r"\A[A-Za-z0-9_-]+\Z")
 
 
 class InvalidIdempotencyKeyError(ValueError):
-    """A present-but-malformed ``idempotency_key``. Absence is never an error."""
+    """A supplied but malformed ``idempotency_key``."""
 
 
 def normalize_idempotency_key(raw: object) -> str | None:
     """Validate the caller's retry token; ``None`` means the field was absent.
+
+    The route must then require either this key or a caller-supplied operation
+    id before accepting a metered run.
 
     A present-but-empty or malformed token fails closed rather than degrading to
     a non-deduped accept: silently dropping a bad token is exactly the

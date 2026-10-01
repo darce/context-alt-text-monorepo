@@ -401,7 +401,7 @@ def _parse_media_ids(raw: object) -> list[int]:
 
 
 def _parse_idempotency_key(raw: object) -> str | None:
-    """Caller retry token; omitted → None (today's non-deduped accept)."""
+    """Parse an optional retry token; the route checks for a caller operation id if absent."""
     try:
         return normalize_idempotency_key(raw)
     except InvalidIdempotencyKeyError as exc:
@@ -515,6 +515,15 @@ async def create_describe_run(
     recognition_enabled = _parse_recognition_enabled(form.get("recognition_enabled"))
     idempotency_key = _parse_idempotency_key(form.get("idempotency_key"))
     caller_operation_id = _optional_operation_id(form)
+    if idempotency_key is None and caller_operation_id is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            {
+                "code": DescribeRunErrorCode.IDEMPOTENCY_KEY_REQUIRED.value,
+                "message": "a caller-supplied idempotency_key or operation_id is required",
+                "field": "idempotency_key",
+            },
+        )
     settings = DescriptionSettings()
 
     if not media_ids:

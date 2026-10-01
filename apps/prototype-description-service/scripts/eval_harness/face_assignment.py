@@ -108,6 +108,22 @@ def iou_pixel_corner(a: Sequence[float], b: Sequence[float]) -> float:
     return float(inter / union)
 
 
+def hungarian_iou_pairs(
+    iou_matrix: np.ndarray,
+    *,
+    threshold: float = IOU_MATCH_THRESHOLD,
+) -> list[tuple[int, int, float]]:
+    """Return thresholded Hungarian matches as ``(row, col, IoU)`` triples."""
+    if iou_matrix.shape[0] == 0 or iou_matrix.shape[1] == 0:
+        return []
+    row_ind, col_ind = linear_sum_assignment(-iou_matrix)
+    return [
+        (int(row), int(col), float(iou_matrix[row, col]))
+        for row, col in zip(row_ind, col_ind, strict=True)
+        if iou_matrix[row, col] >= threshold
+    ]
+
+
 @dataclass(frozen=True)
 class AssociationPair:
     det_index: int
@@ -283,11 +299,12 @@ def associate_detections(
             candidate_pairs.append((best_i, complete_indices[0], best_iou))
     else:
         # ≥2 complete GT: Hungarian maximize total IoU (cost = -IoU). GRPH-07.
-        row_ind, col_ind = linear_sum_assignment(-iou_matrix)
-        for r, c in zip(row_ind, col_ind, strict=True):
-            iou_val = float(iou_matrix[r, c])
-            if iou_val >= iou_threshold:
-                candidate_pairs.append((int(r), complete_indices[int(c)], iou_val))
+        candidate_pairs.extend(
+            (det_index, complete_indices[gt_col], iou)
+            for det_index, gt_col, iou in hungarian_iou_pairs(
+                iou_matrix, threshold=iou_threshold
+            )
+        )
 
     matched_det = {p[0] for p in candidate_pairs}
     matched_gt = {p[1] for p in candidate_pairs}
@@ -1054,6 +1071,7 @@ __all__ = [
     "gt_box_name",
     "gt_normalized_centre_to_pixel_corner",
     "iou_pixel_corner",
+    "hungarian_iou_pairs",
     "associate_detections",
     "mean_prototype",
     "matched_named_by_identity",

@@ -15,6 +15,7 @@ import {
   type DescribeRunStatus,
   type GpuState,
 } from '../api/describeApi';
+import { createDescribeIdempotencyKey } from '../api/describeIdempotencyKey';
 import type { GpuIntentAction, GpuIntentStatus, GpuStatusResponse } from '../api/gpuApi';
 import { toDescriptionHistoryRun, toWorkbench } from '../navigation/appLinks';
 import { useActiveDescribeRun } from './activeDescribeRun';
@@ -72,6 +73,8 @@ const FINISHED_DESCRIBE_ITEM_STATUSES: ReadonlySet<string> = new Set(
 type WarmupResubmitResult =
   | { kind: 'exhausted' }
   | { kind: 'submitted'; response: DescribeRunResponse };
+
+type WarmupResubmitAction = { runId: string; idempotencyKey: string };
 
 const unfinishedMediaIdsFromItems = (items: readonly DescribeRunItem[]): number[] =>
   items
@@ -405,14 +408,30 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
     mutationFn: cancelBulkDescribeRun,
   });
   const resubmitInFlightRef = useRef(false);
-  const resubmitMutation = useMutation<WarmupResubmitResult, Error, string>({
-    mutationFn: async (runId) => {
-      const itemsResponse = await fetchDescribeRunItems(runId);
-      const unfinishedIds = unfinishedMediaIdsFromItems(itemsResponse.items);
+  const resubmitMediaIdsByKeyRef = useRef(new Map<string, Promise<number[]>>());
+  const resubmitMutation = useMutation<WarmupResubmitResult, Error, WarmupResubmitAction>({
+    mutationFn: async ({ runId, idempotencyKey }) => {
+      let unfinishedIdsPromise = resubmitMediaIdsByKeyRef.current.get(idempotencyKey);
+      if (unfinishedIdsPromise === undefined) {
+        unfinishedIdsPromise = fetchDescribeRunItems(runId).then(({ items }) =>
+          unfinishedMediaIdsFromItems(items),
+        );
+        resubmitMediaIdsByKeyRef.current.set(idempotencyKey, unfinishedIdsPromise);
+      }
+      let unfinishedIds: number[];
+      try {
+        unfinishedIds = await unfinishedIdsPromise;
+      } catch (error) {
+        // A failed item fetch sent no submit request, so a mutation retry may fetch again.
+        if (resubmitMediaIdsByKeyRef.current.get(idempotencyKey) === unfinishedIdsPromise) {
+          resubmitMediaIdsByKeyRef.current.delete(idempotencyKey);
+        }
+        throw error;
+      }
       if (unfinishedIds.length === 0) {
         return { kind: 'exhausted' };
       }
-      const response = await submitBulkDescribeRun(unfinishedIds);
+      const response = await submitBulkDescribeRun(unfinishedIds, idempotencyKey);
       return { kind: 'submitted', response };
     },
     onSuccess: (result) => {
@@ -420,7 +439,8 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
         persistRunContext(result.response);
       }
     },
-    onSettled: () => {
+    onSettled: (_result, _error, variables) => {
+      resubmitMediaIdsByKeyRef.current.delete(variables.idempotencyKey);
       resubmitInFlightRef.current = false;
     },
   });
@@ -530,7 +550,7 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
             return;
           }
           resubmitInFlightRef.current = true;
-          resubmitMutation.mutate(runId);
+          resubmitMutation.mutate({ runId, idempotencyKey: createDescribeIdempotencyKey() });
         };
       }
       return () => {

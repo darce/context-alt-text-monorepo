@@ -200,8 +200,8 @@ describe('GuidedLiveDescriptionPanel', () => {
       await settle(1000);
 
       expect(client.submit).toHaveBeenCalledTimes(1);
-      expect(client.submit).toHaveBeenCalledWith(MEDIA_ID);
-      expect(client.submit.mock.calls[0]).toEqual([MEDIA_ID]);
+      expect(client.submit).toHaveBeenCalledWith(MEDIA_ID, expect.stringMatching(/^[A-Za-z0-9_-]{16,128}$/));
+      expect(client.submit.mock.calls[0]?.[0]).toBe(MEDIA_ID);
       expect(client.calls.map((entry) => entry.op)).toEqual(expect.arrayContaining(['submit', 'poll', 'items']));
       expect(client.calls.every((entry) => entry.op === 'submit' || entry.op === 'poll' || entry.op === 'items')).toBe(
         true,
@@ -367,6 +367,11 @@ describe('GuidedLiveDescriptionPanel', () => {
 
       await press(retryButton());
       expect(client.submit).toHaveBeenCalledTimes(2);
+      const firstRequestKey = client.submit.mock.calls[0]?.[1];
+      const retryRequestKey = client.submit.mock.calls[1]?.[1];
+      expect(firstRequestKey).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
+      expect(retryRequestKey).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
+      expect(retryRequestKey).not.toBe(firstRequestKey);
     });
 
     it('names an empty description with live.no_result', async () => {

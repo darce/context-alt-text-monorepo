@@ -156,7 +156,7 @@ describe('useBulkDescribe', () => {
     resetConfigCache();
   });
 
-  it('submits media ids and captures the run id', async () => {
+  it('submits media ids with an action key and captures the run id', async () => {
     submitBulkDescribeRunMock.mockResolvedValue(runResponse({ run_id: 'run-1', status: 'pending' }));
     fetchBulkDescribeRunMock.mockResolvedValue(
       runResponse({ run_id: 'run-1', status: 'running', phase: 'describing' }),
@@ -166,9 +166,40 @@ describe('useBulkDescribe', () => {
     result.current.submit.mutate([101, 202]);
 
     await waitFor(() => expect(result.current.submit.isSuccess).toBe(true));
-    expect(submitBulkDescribeRunMock).toHaveBeenCalledWith([101, 202]);
+    expect(submitBulkDescribeRunMock).toHaveBeenCalledWith(
+      [101, 202],
+      expect.stringMatching(/^[A-Za-z0-9_-]{16,128}$/),
+    );
     expect(result.current.submit.data?.run_id).toBe('run-1');
     await waitFor(() => expect(result.current.runId).toBe('run-1'));
+  });
+
+  it('reuses one key across an automatic retry and creates a new key for a new submit', async () => {
+    queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: 1, retryDelay: 0 },
+      },
+    });
+    wrapper = createQueryWrapper(queryClient);
+    submitBulkDescribeRunMock
+      .mockRejectedValueOnce(new Error('temporary submit failure'))
+      .mockResolvedValue(runResponse({ run_id: 'run-retried', status: 'pending' }));
+
+    const { result } = renderHook(() => useBulkDescribe(), { wrapper });
+    result.current.submit.mutate([101, 202]);
+
+    await waitFor(() => expect(submitBulkDescribeRunMock).toHaveBeenCalledTimes(2));
+    const firstActionKey = submitBulkDescribeRunMock.mock.calls[0]?.[1];
+    expect(firstActionKey).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
+    expect(submitBulkDescribeRunMock.mock.calls[1]?.[1]).toBe(firstActionKey);
+
+    result.current.submit.mutate([101, 202]);
+
+    await waitFor(() => expect(submitBulkDescribeRunMock).toHaveBeenCalledTimes(3));
+    const nextActionKey = submitBulkDescribeRunMock.mock.calls[2]?.[1];
+    expect(nextActionKey).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
+    expect(nextActionKey).not.toBe(firstActionKey);
   });
 
   it('polls run status and reflects backend eta_seconds + progress fraction', async () => {

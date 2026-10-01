@@ -277,7 +277,7 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 					),
 					'idempotency_key' => array(
 						'type'        => 'string',
-						'required'    => false,
+						'required'    => true,
 						'minLength'   => self::IDEMPOTENCY_KEY_MIN_LENGTH,
 						'maxLength'   => self::IDEMPOTENCY_KEY_MAX_LENGTH,
 						'pattern'     => '^[A-Za-z0-9_-]+$',

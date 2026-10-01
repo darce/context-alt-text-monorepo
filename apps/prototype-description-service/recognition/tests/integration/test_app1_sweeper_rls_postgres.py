@@ -152,22 +152,6 @@ def _assert_unset(value: str | None, *, name: str) -> None:
     assert value in (None, "", "false"), f"{name} leaked on the session: {value!r}"
 
 
-async def _cleanup_stale_reservations(session_factory: async_sessionmaker[AsyncSession]) -> None:
-    async with session_factory() as session:
-        tenant_setting, bypass_setting = await _session_settings(session)
-        _assert_unset(tenant_setting, name="app.current_tenant before cleanup sweep")
-        _assert_unset(bypass_setting, name="app.bypass_rls before cleanup sweep")
-        await UsageSettlementService(session).sweep_stale_reservations(
-            stale_after_seconds=60,
-            max_batches=10,
-            batch_size=100,
-        )
-        tenant_setting, bypass_setting = await _session_settings(session)
-        _assert_unset(tenant_setting, name="app.current_tenant after cleanup sweep")
-        _assert_unset(bypass_setting, name="app.bypass_rls after cleanup sweep")
-        await session.commit()
-
-
 async def _release_seeded_reservations(
     session_factory: async_sessionmaker[AsyncSession],
     seeded: list[SeededReservation],
@@ -232,13 +216,13 @@ async def _assert_tenant_rows(
 
 
 @pytest.mark.asyncio
-async def test_background_sweep_recovers_across_tenants_and_commits_under_forced_rls(pg_migrated_engine) -> None:
-    _assert_forced_rls_nonprivileged(pg_migrated_engine)
-    engine = create_async_engine(_async_url(pg_migrated_engine), pool_pre_ping=True)
+async def test_background_sweep_recovers_across_tenants_and_commits_under_forced_rls(
+    pg_isolated_migrated_engine,
+) -> None:
+    _assert_forced_rls_nonprivileged(pg_isolated_migrated_engine)
+    engine = create_async_engine(_async_url(pg_isolated_migrated_engine), pool_pre_ping=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     try:
-        # The sweeper under test scans every tenant, so its exact counts need no stale rows left by earlier tests; reservations stale past the threshold are abandoned under the sweeper's own contract.
-        await _cleanup_stale_reservations(session_factory)
         counters_before = await _read_global_counters(session_factory)
         tenant_ids = await _prepare_tenants(session_factory)
         seeded = await _seed_stale_reservations(session_factory, tenant_ids, [3, 2], label="complete-sweep")
@@ -285,15 +269,13 @@ async def test_background_sweep_recovers_across_tenants_and_commits_under_forced
 
 @pytest.mark.asyncio
 async def test_sweep_failure_resets_bypass_and_caller_rollback_discards_prior_settlements(
-    pg_migrated_engine,
+    pg_isolated_migrated_engine,
     monkeypatch,
 ) -> None:
-    _assert_forced_rls_nonprivileged(pg_migrated_engine)
-    engine = create_async_engine(_async_url(pg_migrated_engine), pool_pre_ping=True)
+    _assert_forced_rls_nonprivileged(pg_isolated_migrated_engine)
+    engine = create_async_engine(_async_url(pg_isolated_migrated_engine), pool_pre_ping=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     try:
-        # The sweeper under test scans every tenant, so its exact counts need no stale rows left by earlier tests; reservations stale past the threshold are abandoned under the sweeper's own contract.
-        await _cleanup_stale_reservations(session_factory)
         counters_before = await _read_global_counters(session_factory)
         tenant_ids = await _prepare_tenants(session_factory)
         seeded = await _seed_stale_reservations(session_factory, tenant_ids, [3, 1], label="failing-sweep")

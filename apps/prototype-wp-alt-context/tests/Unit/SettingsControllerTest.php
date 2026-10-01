@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\ProbeOutcome;
+use AltContext\Api\RecognitionApiKeyStore;
 use AltContext\Api\RecognitionEndpointResolver;
 use AltContext\Api\SettingsController;
 use AltContext\Api\Services\DescriptionBudgetService;
@@ -239,7 +240,7 @@ class SettingsControllerTest extends TestCase
         $this->assertSame('http://host.docker.internal:8000', $data['url_rejection_value']);
     }
 
-    public function testGetSettingsReturnsOptionSourceWhenOptionSet(): void
+    public function testGetSettingsReturnsDecryptedOptionSourceWhenOptionSet(): void
     {
         $this->setUserCapability('manage_options', true);
         $this->setOption('acx_recognition_url', 'https://api.example.com');
@@ -260,12 +261,30 @@ class SettingsControllerTest extends TestCase
         $this->assertSame('****1234', $data['api_key_last4']);
         $this->assertSame('option', $data['key_source']);
         $this->assertStringContainsString(
-            'plaintext WordPress options compatibility fallback',
+            'stored encrypted with a key derived from the site\'s auth salt',
             $data['api_key_storage_notice']
         );
     }
 
-    public function testGetSettingsPrefersEnvironmentApiKeyOverPlaintextOption(): void
+    public function testGetSettingsReportsUnreadableStoredApiKey(): void
+    {
+        update_option(
+            RecognitionApiKeyStore::OPTION_NAME,
+            RecognitionApiKeyStore::PREFIX . 'not-valid-ciphertext'
+        );
+
+        $data = $this->controller
+            ->get_settings(new WP_REST_Request('GET', '/acx/v1/settings'))
+            ->get_data();
+
+        $this->assertFalse($data['api_key_set']);
+        $this->assertSame('', $data['api_key_last4']);
+        $this->assertSame('unreadable', $data['key_source']);
+        $this->assertStringContainsString('cannot be read', $data['api_key_storage_notice']);
+        $this->assertStringContainsString('must be re-entered', $data['api_key_storage_notice']);
+    }
+
+    public function testGetSettingsPrefersEnvironmentApiKeyOverEncryptedOption(): void
     {
         putenv('ACX_RECOGNITION_API_KEY=environment-key-12345678');
         $this->setOption('acx_recognition_api_key', 'legacy-plain-key-9999');
@@ -490,7 +509,10 @@ class SettingsControllerTest extends TestCase
 
         $this->assertFalse(get_option('acx_recognition_source', false));
         $this->assertSame('https://new-api.example.com', get_option('acx_recognition_url'));
-        $this->assertSame('new-key-12345678', get_option('acx_recognition_api_key'));
+        $storedKey = get_option(RecognitionApiKeyStore::OPTION_NAME);
+        $this->assertStringStartsWith(RecognitionApiKeyStore::PREFIX, $storedKey);
+        $this->assertNotSame('new-key-12345678', $storedKey);
+        $this->assertSame('new-key-12345678', RecognitionApiKeyStore::decrypt($storedKey));
     }
 
     public function testSaveSettingsDoesNotStorePlaintextShadowOfEnvironmentKey(): void
@@ -506,7 +528,9 @@ class SettingsControllerTest extends TestCase
 
         $this->assertSame('error', $data['result']);
         $this->assertContains('api_key', $data['failed']);
-        $this->assertSame('legacy-plain-key', get_option('acx_recognition_api_key'));
+        $storedKey = get_option(RecognitionApiKeyStore::OPTION_NAME);
+        $this->assertNotSame('legacy-plain-key', $storedKey);
+        $this->assertSame('legacy-plain-key', RecognitionApiKeyStore::decrypt($storedKey));
     }
 
     public function testRateLimitsDescribeAnalyzeAndBulkRunRequestsTogether(): void
@@ -1122,7 +1146,9 @@ class SettingsControllerTest extends TestCase
         $this->assertContains('recognition_enabled', $data['saved']);
         $this->assertArrayNotHasKey('failed', $data);
         $this->assertSame('https://stable.example.com', get_option('acx_recognition_url'));
-        $this->assertSame('stable-key-1234', get_option('acx_recognition_api_key'));
+        $storedKey = get_option(RecognitionApiKeyStore::OPTION_NAME);
+        $this->assertNotSame('stable-key-1234', $storedKey);
+        $this->assertSame('stable-key-1234', RecognitionApiKeyStore::decrypt($storedKey));
         $this->assertSame('alt_only', get_option('acx_alt_style'));
         $this->assertSame(10, get_option('acx_description_budget_max_attempts'));
         $this->assertSame('0', get_option('acx_recognition_enabled'));

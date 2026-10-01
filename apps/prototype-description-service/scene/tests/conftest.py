@@ -17,3 +17,5 @@ from __future__ import annotations
 import os
 
 os.environ["RECOGNITION_RUNTIME_MODE"] = "test"
+# The default is now image-grounded, and this test environment omits the [vlm] extra.
+os.environ.setdefault("ACX_DESCRIPTION_ADAPTER", "seeded")

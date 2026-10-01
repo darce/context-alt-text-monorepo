@@ -12,7 +12,7 @@ import re
 import time as _time
 import uuid
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import asyncpg
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, status
@@ -68,6 +68,11 @@ from recognition.interface_adapters.http.schemas.responses import (
 from recognition.shared.db.dialect import is_postgres
 
 logger = logging.getLogger(__name__)
+
+# A process that dies after claiming inline work leaves the job RUNNING. A
+# replay may reclaim it after this bounded lease, using started_at as the lease
+# timestamp without adding a schema column.
+INLINE_PROCESSING_LEASE = timedelta(minutes=30)
 
 # SEC-01 / API-05: fixed client-facing text for server faults. The exception body
 # stays server-side in the log record; 501 would tell the caller the endpoint does
@@ -434,11 +439,13 @@ async def _prepare_tenant_context(
 
 
 async def _dispatch_persisted_analysis(**kwargs) -> None:
-    """Serialize dispatch and atomically populate a committed, empty job.
+    """Serialize dispatch, populate the queue, and claim any inline run.
 
     Both the original request and replays use this guard: a retry can arrive
-    before the original background task starts. Queue population must commit
-    as one transaction so another dispatcher cannot repeat a partial batch.
+    before the original background task starts. Queue population and the inline
+    claim commit together, so a replay cannot repeat a partial batch or start a
+    second inline processor. A stale inline claim can be recovered after its
+    lease expires.
     """
     from db.models import IdentityScanJob, IdentityScanJobItem
     from db.tenant_context import set_tenant_context
@@ -451,6 +458,7 @@ async def _dispatch_persisted_analysis(**kwargs) -> None:
         session_factory = async_session_factory
     job_id = uuid.UUID(kwargs["job_id"])
     tenant_id = uuid.UUID(kwargs["tenant_id"])
+    should_process_inline = False
     async with session_factory() as session:
         await set_tenant_context(session, tenant_id)
         job = await session.scalar(
@@ -458,22 +466,41 @@ async def _dispatch_persisted_analysis(**kwargs) -> None:
             .where(IdentityScanJob.id == job_id, IdentityScanJob.tenant_id == tenant_id)
             .with_for_update()
         )
-        if job is None or job.status != JobStatus.PENDING:
+        if job is None:
             return
+        inline_processing = bool(kwargs["inline_processing"])
+        now = datetime.now(tz=UTC)
+        is_pending = job.status == JobStatus.PENDING
+        is_stale_inline_claim = (
+            inline_processing
+            and job.status == JobStatus.RUNNING
+            and job.started_at is not None
+            and job.started_at <= now - INLINE_PROCESSING_LEASE
+        )
+        if not is_pending and not is_stale_inline_claim:
+            return
+
         existing_item = await session.scalar(
             select(IdentityScanJobItem.id).where(IdentityScanJobItem.job_id == job_id).limit(1)
         )
-        if existing_item is not None:
+        if existing_item is None and not is_pending:
             return
-        queue = ScanQueueService(SqlAlchemyScanQueueRepository(session))
-        await queue.populate_scan_job_items(
-            job_id=job_id,
-            tenant_id=tenant_id,
-            media_items=kwargs["media_items"],
-            correlation_id=kwargs.get("correlation_id"),
-        )
+        if existing_item is None:
+            queue = ScanQueueService(SqlAlchemyScanQueueRepository(session))
+            await queue.populate_scan_job_items(
+                job_id=job_id,
+                tenant_id=tenant_id,
+                media_items=kwargs["media_items"],
+                correlation_id=kwargs.get("correlation_id"),
+            )
+        if inline_processing:
+            # The row lock serializes contenders. Commit the transition before
+            # releasing it so only this dispatcher can enter the processor.
+            job.status = JobStatus.RUNNING
+            job.started_at = now
+            should_process_inline = True
         await session.commit()
-    if kwargs["inline_processing"]:
+    if should_process_inline:
         await process_scan_job_inline(
             tenant_id=kwargs["tenant_id"],
             job_id=kwargs["job_id"],

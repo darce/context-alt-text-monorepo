@@ -1390,22 +1390,25 @@ def test_gpu_unavailable_retry_terminalizes_existing_operation(monkeypatch, tmp_
         assert adapter.calls == 0
 
 
-def test_gpu_unavailable_retry_unknown_operation_is_mismatch(monkeypatch, tmp_path):
+def test_gpu_unavailable_first_use_accepts_and_terminalizes_operation(monkeypatch, tmp_path):
     _gpu_env(monkeypatch, tmp_path, state="stopped")
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://8.8.8.8:8000")
     adapter = _UnavailableGpuAdapter()
     with _client(adapter=adapter) as client:
-        monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://8.8.8.8:8000")
+        operation_id = "unavailable-first-use-operation"
         response = _post(
             client,
             TENANT_ID,
             request_body={"tenant_id": TENANT_ID, "media_id": 42, "tier": "gpu"},
-            extra_data={"operation_id": "unknown-operation-id"},
+            extra_data={"operation_id": operation_id},
         )
-        assert response.status_code == 409, response.text
+        assert response.status_code == 503, response.text
         detail = response.json()["detail"]
-        assert detail["code"] == "operation_mismatch"
-        assert detail["operation_id"] is None
-        assert _lease_rows(client) == []
+        assert detail["code"] == "description_service_unavailable"
+        assert detail["reason"] == "endpoint_not_private"
+        assert detail["operation_id"] == operation_id
+        assert _lease_state(client, operation_id) == "completed"
+        assert _active_lease_count(client) == 0
         assert adapter.calls == 0
 
 
@@ -2085,15 +2088,29 @@ def test_gpu_cache_hit_mismatch_is_409(monkeypatch, tmp_path):
     _gpu_env(monkeypatch, tmp_path, state="ready")
     adapter = _GpuAdapter()
     with _client(adapter=adapter) as client:
-        first = _post(client, TENANT_ID)
+        operation_id = "gpu-cache-original-operation"
+        first = _post(client, TENANT_ID, extra_data={"operation_id": operation_id})
         assert first.status_code == 200, first.text
-        mismatch = _post(client, TENANT_ID, extra_data={"operation_id": "not-this-operation"})
+        assert first.json()["operation_id"] == operation_id
+        mismatch = _post(
+            client,
+            TENANT_ID,
+            body=b"different-image-bytes-payload",
+            extra_data={"operation_id": operation_id},
+        )
         assert mismatch.status_code == 409, mismatch.text
         detail = mismatch.json()["detail"]
         assert detail["code"] == "operation_mismatch"
         assert detail["operation_id"] is None
         assert "startup_id" in detail
         assert "timing" in detail
+        assert adapter.calls == 1
+
+        new_operation_id = "gpu-cache-independent-operation"
+        cached = _post(client, TENANT_ID, extra_data={"operation_id": new_operation_id})
+        assert cached.status_code == 200, cached.text
+        assert cached.json()["cached"] is True
+        assert cached.json()["operation_id"] == new_operation_id
         assert adapter.calls == 1
 
 
@@ -2205,16 +2222,25 @@ def test_oversized_operation_id_is_422():
         assert _lease_rows(client) == []
 
 
-def test_unknown_max_length_operation_id_is_409_with_null_id(monkeypatch, tmp_path):
+def test_max_length_operation_id_is_accepted_then_mismatched_with_null_id(monkeypatch, tmp_path):
     _gpu_env(monkeypatch, tmp_path, state="ready")
     adapter = _GpuAdapter()
     with _client(adapter=adapter) as client:
-        response = _post(client, TENANT_ID, extra_data={"operation_id": "a" * 128})
-        assert response.status_code == 409, response.text
-        detail = response.json()["detail"]
+        operation_id = "a" * 128
+        first = _post(client, TENANT_ID, extra_data={"operation_id": operation_id})
+        assert first.status_code == 200, first.text
+        assert first.json()["operation_id"] == operation_id
+        mismatch = _post(
+            client,
+            TENANT_ID,
+            body=b"different-image-bytes-payload",
+            extra_data={"operation_id": operation_id},
+        )
+        assert mismatch.status_code == 409, mismatch.text
+        detail = mismatch.json()["detail"]
         assert detail["code"] == "operation_mismatch"
         assert detail["operation_id"] is None
-        assert adapter.calls == 0
+        assert adapter.calls == 1
 
 
 def test_gpu_quota_http_exception_after_accept_releases_lease(monkeypatch, tmp_path):

@@ -255,6 +255,73 @@ describe('BillingScreen checkout and manage [RLSE-04][NAV-11][CARD-15]', () => {
     expect(checkout).toHaveBeenCalledTimes(1);
   });
 
+  it.each([CHECKOUT_URL, null])('preserves an unrecognized pending status on retry (URL: %s)', async (checkoutUrl) => {
+    const user = userEvent.setup();
+    hostedNavigation.open = vi.fn();
+    const onNavigateToReturn = vi.fn();
+    const keys: string[] = [];
+    const request = vi.fn(async (_path: string, init?: RequestInit) => {
+      const key = new Headers(init?.headers).get('Idempotency-Key');
+      if (key === null) {
+        throw new Error('Missing checkout idempotency key');
+      }
+      keys.push(key);
+      return jsonResponse(
+        200,
+        keys.length === 1
+          ? { ...PENDING_CHECKOUT, status: 'provider_waiting', checkout_url: checkoutUrl }
+          : { ...PENDING_CHECKOUT, replayed: true },
+      );
+    });
+    render(
+      <BillingScreen
+        client={createPortalBillingClient(request)}
+        publicPlanCode={PLAN}
+        paymentsEnabled
+        onNavigateToReturn={onNavigateToReturn}
+        onNavigateToUsage={vi.fn()}
+      />,
+    );
+
+    await confirmCheckout(user);
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/still being confirmed/i));
+    expect(screen.getByRole('status')).toHaveTextContent(ATTEMPT_ID);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(hostedNavigation.open).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: /try billing again|try again/i }));
+    await waitFor(() => expect(onNavigateToReturn).toHaveBeenCalledWith(ATTEMPT_ID));
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(keys[0]).toMatch(/^[0-9a-f]{64}$/);
+    expect(keys[1]).toBe(keys[0]);
+    expect(hostedNavigation.open).toHaveBeenCalledWith(CHECKOUT_URL);
+  });
+
+  it.each(['failed', 'expired', 'canceled'])('rotates the key after a terminal %s checkout', async (status) => {
+    const user = userEvent.setup();
+    const keys: string[] = [];
+    const checkout = vi.fn(async (_input: { plan_code: string }, key: string) => {
+      keys.push(key);
+      return { ...PENDING_CHECKOUT, status, checkout_url: null };
+    });
+    render(
+      <BillingScreen
+        client={{ checkout, manage: vi.fn() }}
+        publicPlanCode={PLAN}
+        paymentsEnabled
+        onNavigateToReturn={vi.fn()}
+        onNavigateToUsage={vi.fn()}
+      />,
+    );
+
+    await confirmCheckout(user);
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/start a new checkout/i));
+    await confirmCheckout(user);
+    await waitFor(() => expect(checkout).toHaveBeenCalledTimes(2));
+    expect(keys[0]).toMatch(/^[0-9a-f]{64}$/);
+    expect(keys[1]).toMatch(/^[0-9a-f]{64}$/);
+    expect(keys[1]).not.toBe(keys[0]);
+  });
+
   it('does not treat succeeded null checkout_url as a payment grant', async () => {
     const user = userEvent.setup();
     hostedNavigation.open = vi.fn();

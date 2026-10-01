@@ -308,7 +308,6 @@ def run_leg(
                             "outcome": "failed",
                             "error_code": "analyze_completed_with_errors",
                             "attempt": analyze_attempt,
-                            "terminal_ingest_outcome": "success",
                         }
                     )
                     terminal = analyze_attempt >= pair.item_max_attempts
@@ -327,7 +326,6 @@ def run_leg(
                         "outcome": "ok",
                         "error_code": None,
                         "attempt": analyze_attempt,
-                        "terminal_ingest_outcome": "success",
                     }
                 )
                 outcomes.append(AnalyzeOutcome(entry.media_id, "ok", analyze_attempt, True))
@@ -344,7 +342,7 @@ def run_leg(
                         "outcome": "failed",
                         "error_code": exc.code,
                         "attempt": failure_attempt,
-                        "terminal_ingest_outcome": exc.code if ingest_failed else "success",
+                        **({"terminal_ingest_outcome": exc.code} if ingest_failed else {}),
                     }
                 )
                 terminal = failure_attempt >= pair.item_max_attempts
@@ -361,7 +359,11 @@ def run_leg(
                         "outcome": "failed",
                         "error_code": "ingest_failed" if not ingest_ready else "analyze_failed",
                         "attempt": failure_attempt,
-                        "terminal_ingest_outcome": "ingest_failed" if not ingest_ready else "success",
+                        **(
+                            {"terminal_ingest_outcome": "ingest_failed"}
+                            if not ingest_ready
+                            else {}
+                        ),
                     }
                 )
                 terminal = failure_attempt >= pair.item_max_attempts

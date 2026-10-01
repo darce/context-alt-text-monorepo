@@ -146,6 +146,74 @@ def _adjudicated_gt_box() -> dict[str, object]:
     }
 
 
+def _load_review_manifest(
+    tmp_path: Path,
+    *,
+    review_record_id: str = "review-2026-17",
+    record_changes: dict[str, object] | None = None,
+) -> object:
+    raw = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    raw["entries"][0]["face_boxes"][0]["adjudication_source"] = (
+        f"human_adjudicated:{review_record_id}"
+    )
+    record: dict[str, object] = {
+        "record_id": "review-2026-17",
+        "media_id": 1,
+        "box_index": 0,
+        "reviewer_id": "independent-reviewer",
+        "reviewer_kind": "human",
+        "review_method": "independent_blind_review",
+        "decision": "confirmed",
+        "reviewed_at": "2026-08-18T12:30:00Z",
+    }
+    if record_changes:
+        record.update(record_changes)
+    raw["adjudication_records"] = [record]
+    dest = tmp_path / "review-evidence.json"
+    dest.write_text(json.dumps(raw), encoding="utf-8")
+    return load_bench_manifest(
+        dest,
+        None,
+        metadata_only=True,
+        skip_hash_verification=True,
+        hash_skip_reason="review evidence resolves from pinned manifest metadata",
+    )
+
+
+def test_adjudication_reference_resolves_to_independent_human_review(tmp_path: Path) -> None:
+    manifest = _load_review_manifest(tmp_path)
+
+    assert manifest.entries[0].face_boxes[0].adjudication_source == (
+        "human_adjudicated:review-2026-17"
+    )
+
+
+def test_adjudication_reference_refuses_missing_record(tmp_path: Path) -> None:
+    with pytest.raises(ManifestError, match="human adjudication record .* is missing"):
+        _load_review_manifest(tmp_path, review_record_id="fabricated-review-id")
+
+
+def test_adjudication_reference_refuses_original_labeler_as_reviewer(tmp_path: Path) -> None:
+    with pytest.raises(ManifestError, match="not independent of the original labeler"):
+        _load_review_manifest(tmp_path, record_changes={"reviewer_id": "bench-test"})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("reviewer_kind", "automated"),
+        ("review_method", "proposal_assisted"),
+        ("decision", "rejected"),
+        ("reviewed_at", "2026-08-18T12:30:00"),
+    ],
+)
+def test_adjudication_evidence_schema_rejects_unqualified_review(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    with pytest.raises(ManifestError, match=field):
+        _load_review_manifest(tmp_path, record_changes={field: value})
+
+
 @pytest.mark.parametrize("source", ["buffalo", "future_source"])
 def test_face_box_source_schema_rejects_unsupported_source(source: str) -> None:
     raw = _adjudicated_gt_box()

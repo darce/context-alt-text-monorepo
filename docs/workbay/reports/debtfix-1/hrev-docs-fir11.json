@@ -1,0 +1,83 @@
+{
+  "lane": "hrev-docs-fir11",
+  "base": "57eb151417a52df980219cc5faac0338f7ecdcb3",
+  "executed": [
+    {
+      "command": "python3 -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 2.15s"
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16818,
+      "finding_id": "DADJ-5678",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "docs/tasks/fir/FIR-11-gate-corpus-remediation-and-fir-rebaseline-task-plan.md:374 - says \"only after Slice 3 publishes its de-novo labels and bias evidence\"; docs/tasks/fir/FIR-7-occlusion-adapters-task-plan.md:89 - still says \"post-Slice-2 manifest\".",
+      "guard_test": ""
+    },
+    {
+      "db_id": 16898,
+      "finding_id": "DFIX03-9806a688f4e6db9b-M-90d58cae942290cc45d0f020",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "docs/tasks/fir/FIR-11-gate-corpus-remediation-and-fir-rebaseline-task-plan.md:250 - specifies \"DEFF_full = sum(m_j^2) / sum(m_j)\" and the maximum identity-size fallback; unequal sizes may exceed the mean. The named test_power_sizing.py guard is absent from this snapshot.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 16820,
+      "finding_id": "DADJ-5683",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "docs/tasks/fir/FIR-11-gate-corpus-remediation-and-fir-rebaseline-task-plan.md:251 - says \"Use one frozen, detector-only SCRFD-10G reference checkpoint\" and sends identical boxes/crops to both legs. No SCRFD reference-detector implementation or corresponding guard test is present in the eval-harness seam.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 16819,
+      "finding_id": "DADJ-5680",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "docs/tasks/fir/FIR-11-gate-corpus-remediation-and-fir-rebaseline-task-plan.md:252 - defines the endpoint on \"identical Product-B inputs\" and an all-subject denominator. No corresponding detector-selection guard test is present in the eval-harness seam.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 16890,
+      "finding_id": "DADJ-15397",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "docs/research/fir-capacity-worker-audit-2026-09-19.md:10 - says plans \"specify measurement and fail-closed release gates\" and outcomes \"depend on implemented tooling and executed evidence\"; no assertion guards this document claim.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 16889,
+      "finding_id": "DADJ-15396",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "docs/research/fir-capacity-worker-audit-2026-09-19.md:74-76 - says \"blank `derived_from_model` is accepted\" and no production caller enforces the policy; scripts/train/occlusion/license_policy.py:6410 - empty tags return PASS. Direct policy tests cover row behavior, but no test guards the stated lack of production enforcement.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 16888,
+      "finding_id": "DADJ-15395",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "docs/research/fir-capacity-worker-audit-2026-09-19.md:67-69 - distinguishes required training fields from the additional positive `photo_clearance` on occluder assets; the training-row test passes without `photo_clearance`, while the occluder test rejects its absence.",
+      "guard_test": "scripts/train/occlusion/test_license_policy.py::test_clean_training_data_row_still_reports_training_data; scripts/train/occlusion/test_license_policy.py::test_cleared_dcface_still_fails_occluder_without_photo_clearance"
+    }
+  ],
+  "new_findings": [
+    {
+      "severity": "high",
+      "file": "docs/tasks/fir/FIR-7-occlusion-adapters-task-plan.md",
+      "line": 89,
+      "title": "FIR-7 still freezes its baseline before Slice 3 evidence",
+      "defect": "FIR-7 Edge 3 and its lane dependency still authorize Slice 0a after FIR-11 Slices 1-2 and explicitly freeze against the post-Slice-2 manifest (lines 84, 89, 475). FIR-11 now requires post-Slice-3 labels (FIR-11 plan:374), but incorrectly says the FIR-7 plan is absent (FIR-11 plan:371), so the consumer-side precondition was not updated.",
+      "failure_scenario": "FIR-11 Slices 1-2 land while Slice 3 has not published de-novo labels or bias evidence; FIR-7 proceeds to Slice 0a on the post-Slice-2 manifest and burns its irreversible baseline/K touch on merge-only labels, which cannot be re-sealed.",
+      "fix": "Update FIR-7 Edge 3, the fir7-0a dependency row, and its Slice 0a checklist to require FIR-11 Slices 1-3 and the post-Slice-3 manifest before freeze; add a preflight assertion that rejects an earlier manifest/commit.",
+      "test_file": "apps/prototype-description-service/scripts/eval_harness/tests/test_fir7_baseline_slice3_gate.py",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "The lane test passed (26 tests); rechecks: 1 HOLDS and 6 PARTIAL. One high integration finding remains: FIR-7 can still burn its baseline on post-Slice-2 merge-only labels before FIR-11 Slice 3 evidence exists."
+}

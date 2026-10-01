@@ -298,6 +298,21 @@ def test_model_provenance_surfaced():  # HARM-01
     assert "seeded" in md and "NOT a caption-model baseline" in md
 
 
+@pytest.mark.parametrize(
+    ("stamp_key", "run_value", "item_value"),
+    [("seed", 17, 42), ("prompt_variant", "baseline", "variant-a")],
+)
+def test_model_provenance_rejects_item_stamp_conflicting_with_run(stamp_key, run_value, item_value):
+    record = _run_record()
+    record["provenance"][stamp_key] = run_value
+    for item in record["items"]:
+        if not item.get("error"):
+            item["describe"][stamp_key] = item_value
+
+    with pytest.raises(ReportError, match=stamp_key):
+        score_run_record(record, _manifest_entries())
+
+
 def test_cache_hit_reads_contract_cached_field():  # HARM-02
     per_image = {p["media_id"]: p for p in score_run_record(_run_record(), _manifest_entries())["per_image"]}
     assert per_image[1]["cache_hit"] is False

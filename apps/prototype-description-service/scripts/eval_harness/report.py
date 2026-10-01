@@ -1513,6 +1513,14 @@ def _model_provenance(
                 f"run record mixes {item_key} values {sorted(values)}; refusing aggregate score",
                 invariant="model_provenance_refuses_mixed_values",
             )
+        if provenance_key is not None and provenance_key in run_provenance and values:
+            item_value = next(iter(values.values()))
+            if _canonical(item_value) != _canonical(run_provenance[provenance_key]):
+                raise ReportError(
+                    f"run record {item_key} stamp disagrees with run provenance.{provenance_key}; "
+                    "refusing aggregate score",
+                    invariant="model_provenance_refuses_mixed_values",
+                )
         out[output_key] = [values[key] for key in sorted(values)]
     return out
 

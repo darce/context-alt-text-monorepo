@@ -146,15 +146,18 @@ def _adjudicated_gt_box() -> dict[str, object]:
     }
 
 
-def test_face_box_source_schema_rejects_buffalo_provenance() -> None:
+@pytest.mark.parametrize("source", ["buffalo", "future_source"])
+def test_face_box_source_schema_rejects_unsupported_source(source: str) -> None:
     raw = _adjudicated_gt_box()
-    raw["source"] = "buffalo"
+    raw["source"] = source
     with pytest.raises(ValueError):
         FaceBox.model_validate(raw)
 
 
-@pytest.mark.parametrize("source", ["buffalo", None])
-def test_strict_detection_refuses_missing_or_buffalo_gt_source(source: str | None) -> None:
+@pytest.mark.parametrize("source", ["buffalo", "future_source", None])
+def test_strict_detection_refuses_missing_or_unsupported_gt_source(
+    source: str | None,
+) -> None:
     """TEST-15: raw report mappings cannot bypass the independent GT source gate."""
     box = _adjudicated_gt_box()
     if source is None:
@@ -172,9 +175,12 @@ def test_strict_detection_refuses_missing_or_buffalo_gt_source(source: str | Non
     assert exc.value.invariant == ScoreInvariant.DETECTION_REQUIRES_INDEPENDENT_GT_SOURCE
 
 
-def test_strict_detection_accepts_supported_independent_gt_source() -> None:
+@pytest.mark.parametrize("source", ["iptc", "operator"])
+def test_strict_detection_accepts_supported_independent_gt_source(source: str) -> None:
+    box = _adjudicated_gt_box()
+    box["source"] = source
     result = detection_pr_strict(
-        [_strict_detection_row(_adjudicated_gt_box())],
+        [_strict_detection_row(box)],
         annotation_mode=AnnotationMode.EXHAUSTIVE,
         run_manifest={"iou_threshold": 0.5},
     )

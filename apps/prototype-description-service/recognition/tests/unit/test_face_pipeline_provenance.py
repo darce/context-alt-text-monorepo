@@ -747,6 +747,26 @@ def test_opencv_distribution_version_requires_an_installed_wheel(
         prov._opencv_distribution_versions()
 
 
+def test_opencv_contrib_headless_is_detected_as_the_only_installed_wheel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The contrib headless distribution alone is enough to fingerprint OpenCV."""
+    from importlib.metadata import PackageNotFoundError
+
+    from recognition.infrastructure.face_pipeline import provenance as prov
+
+    def distribution_version(distribution: str) -> str:
+        if distribution == "opencv-contrib-python-headless":
+            return "5.0.0.93"
+        raise PackageNotFoundError(distribution)
+
+    monkeypatch.setattr(prov, "_distribution_version", distribution_version)
+
+    assert prov._opencv_distribution_versions() == (
+        ("opencv-contrib-python-headless", "5.0.0.93"),
+    )
+
+
 def test_comparability_token_partitions_on_cluster_runtime_changes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

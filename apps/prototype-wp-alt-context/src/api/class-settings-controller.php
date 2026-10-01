@@ -87,6 +87,9 @@ class SettingsController {
 	) {
 		$this->endpoint_resolver          = $endpoint_resolver ?? new RecognitionEndpointResolver();
 		$this->description_budget_service = $description_budget_service ?? new DescriptionBudgetService();
+		// The proxy controllers resolve keys through this shared filter, so make
+		// the environment fallback available outside the Settings REST endpoint too.
+		add_filter( 'acx_recognition_api_key', array( $this, 'provide_environment_api_key' ), PHP_INT_MAX, 1 );
 	}
 
 	public function register_routes(): void {
@@ -116,10 +119,73 @@ class SettingsController {
 				'permission_callback' => array( $this, 'can_manage_settings' ),
 			)
 		);
+
+		// Rate-limit the spend-bearing routes before they enter describe/analyze
+		// services. The shared counter prevents switching endpoints to bypass a
+		// per-user burst limit.
+		add_filter( 'rest_pre_dispatch', array( $this, 'rate_limit_recognition_requests' ), 10, 3 );
 	}
 
 	public function can_manage_settings(): bool {
 		return current_user_can( 'manage_options' );
+	}
+
+	/**
+	 * Provide the deploy-time environment key to all recognition proxy callers.
+	 *
+	 * @param mixed $configured Existing key supplied by an earlier filter.
+	 * @return mixed
+	 */
+	public function provide_environment_api_key( $configured ) {
+		$environment = getenv( 'ACX_RECOGNITION_API_KEY' );
+		if ( is_string( $environment ) && '' !== trim( $environment ) ) {
+			return trim( $environment );
+		}
+
+		return $configured;
+	}
+
+	/**
+	 * @param mixed           $pre_dispatch Existing short-circuit result.
+	 * @param mixed           $server        REST server (unused).
+	 * @param WP_REST_Request $request       Current REST request.
+	 * @return mixed
+	 */
+	public function rate_limit_recognition_requests( $pre_dispatch, $server, WP_REST_Request $request ) {
+		if (
+			null !== $pre_dispatch
+			|| 'POST' !== strtoupper( $request->get_method() )
+			|| ! current_user_can( 'manage_options' )
+		) {
+			return $pre_dispatch;
+		}
+
+		$spend_routes = array(
+			'/acx/v1/recognition/describe',
+			'/acx/v1/recognition/analyze',
+			'/acx/v1/recognition/describe/runs',
+		);
+		if ( ! in_array( $request->get_route(), $spend_routes, true ) ) {
+			return $pre_dispatch;
+		}
+
+		$limit = $this->description_budget_service->check_request_rate_limit( (int) get_current_user_id() );
+		if ( $limit['allowed'] ?? false ) {
+			return $pre_dispatch;
+		}
+
+		$data = array(
+			'status' => (int) ( $limit['status'] ?? 429 ),
+		);
+		if ( isset( $limit['retry_after'] ) ) {
+			$data['retry_after'] = (int) $limit['retry_after'];
+		}
+
+		return new WP_Error(
+			(string) ( $limit['code'] ?? 'recognition_rate_limit_exceeded' ),
+			(string) ( $limit['message'] ?? 'Recognition request rate limit exceeded.' ),
+			$data
+		);
 	}
 
 	public function get_settings( WP_REST_Request $request ): WP_REST_Response {
@@ -144,8 +210,8 @@ class SettingsController {
 				'api_key_last4'             => $this->mask_key( $key_resolution['value'] ),
 				'key_source'                => $key_resolution['source'],
 				'api_key_storage_notice'    => 'option' === $key_resolution['source']
-					? 'This key is stored in the WordPress options database as plaintext. '
-						. 'Set ACX_RECOGNITION_API_KEY or the acx_recognition_api_key filter instead.'
+					? 'This key uses the plaintext WordPress options compatibility fallback. '
+						. 'Prefer the ACX_RECOGNITION_API_KEY PHP constant or environment variable, or the acx_recognition_api_key filter.'
 					: null,
 				'tenant_id'                 => $tenant_resolution['value'],
 				'tenant_id_source'          => $tenant_resolution['source'],
@@ -197,13 +263,19 @@ class SettingsController {
 
 		if ( isset( $body['api_key'] ) && is_string( $body['api_key'] ) ) {
 			$key = trim( $body['api_key'] );
-			// Compatibility fallback: WordPress options store this key as plaintext.
-			// Deployments should use ACX_RECOGNITION_API_KEY or the filter instead.
-			update_option( 'acx_recognition_api_key', $key );
-			if ( $this->option_matches_intended( 'acx_recognition_api_key', $key ) ) {
-				$saved[] = 'api_key';
-			} else {
+			$key_resolution = $this->resolve_key_source();
+			if ( in_array( $key_resolution['source'], array( 'constant', 'filter' ), true ) ) {
+				// Do not create a plaintext shadow copy of a deployment-managed key.
 				$failed[] = 'api_key';
+			} else {
+				// Backward-compatible fallback only: this option is plaintext in the
+				// WordPress database. Prefer a constant, environment variable, or filter.
+				update_option( 'acx_recognition_api_key', $key );
+				if ( $this->option_matches_intended( 'acx_recognition_api_key', $key ) ) {
+					$saved[] = 'api_key';
+				} else {
+					$failed[] = 'api_key';
+				}
 			}
 		}
 
@@ -404,7 +476,7 @@ class SettingsController {
 	 */
 	private function get_description_budget_payload(): array {
 		return array(
-			'max_attempts'  => (int) get_option( 'acx_description_budget_max_attempts', -1 ),
+			'max_attempts'  => (int) get_option( 'acx_description_budget_max_attempts', DescriptionBudgetService::DEFAULT_MAX_ATTEMPTS ),
 			'usage'         => $this->description_budget_service->usage_summary(),
 			'recent_errors' => $this->description_budget_service->recent_errors( 5 ),
 		);
@@ -993,17 +1065,23 @@ class SettingsController {
 	 * @return array{value: string, source: string}
 	 */
 	private function resolve_key_source(): array {
-		// E15-12-RR-01: code-managed sources (constant, filter) MUST win over
-		// operator-saved options. The pre-fix order resolved option before
+		// E15-12-RR-01: deployment-managed sources (constant, environment,
+		// filter) MUST win over operator-saved options. The pre-fix order resolved option before
 		// filter, mirroring the BR-07 URL bug: a stale saved key kept routing
 		// recognition auth even after an operator wired a filter to inject a
 		// deploy-time key, and the key field surfaced as option-owned/editable
 		// instead of code-managed/read-only. Precedence is now: constant ->
-		// filter -> option -> default, matching resolve_url_source() and the
-		// documented selector contract.
+		// environment -> filter -> option -> default. Environment variables are
+		// grouped under the existing 'constant' selector value to preserve the
+		// Settings API's source contract for deployment-managed keys.
 		$constant = $this->get_constant_value( 'ACX_RECOGNITION_API_KEY' );
 		if ( '' !== $constant ) {
 			return array( 'value' => $constant, 'source' => 'constant' );
+		}
+
+		$environment = getenv( 'ACX_RECOGNITION_API_KEY' );
+		if ( is_string( $environment ) && '' !== trim( $environment ) ) {
+			return array( 'value' => trim( $environment ), 'source' => 'constant' );
 		}
 
 		$filter = trim( (string) apply_filters( 'acx_recognition_api_key', '' ) );

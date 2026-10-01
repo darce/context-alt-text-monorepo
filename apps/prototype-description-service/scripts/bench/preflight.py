@@ -1,8 +1,9 @@
-"""Own authenticated GETs against /ready and /health/detailed."""
+"""Check stack readiness and the operator-attested pre-run reset state."""
 
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -16,6 +17,7 @@ from scripts.bench.stack_pair import BenchError, StackEndpoint, StackPairConfig
 _DIM_TOKEN = re.compile(r"pgvector_dimension=(\d+)")
 _RUNTIME_FINGERPRINT_TOKEN = re.compile(r"(?:^|;\s*)numeric_runtime_fingerprint=(\{.*\})$")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+PRE_RUN_RESET_EVIDENCE_ENV = "ACX_BENCH_PRE_RUN_RESET_EVIDENCE_FILE"
 
 
 class PreflightError(BenchError):
@@ -35,6 +37,106 @@ class PreflightResult:
     checked_at: str
     ready_excerpt: dict[str, Any]
     health_detailed_excerpt: dict[str, Any]
+
+
+def load_pre_run_reset_evidence(
+    pair: StackPairConfig,
+    *,
+    path: Path | str | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Load JSON with per-stack reset attestations and fail closed if absent.
+
+    The document contains ``pre_run_reset_by_stack`` keyed by configured
+    ``stack_id``. Each record requires ``reset_attested_by``,
+    ``reset_reference``, timezone-aware ``reset_completed_at``, and
+    ``prior_run_identity_rows_empty: true``.
+    """
+    evidence_path = str(path) if path is not None else os.environ.get(PRE_RUN_RESET_EVIDENCE_ENV, "")
+    if not evidence_path:
+        raise PreflightError(
+            "pre_run_reset_unverified",
+            f"set {PRE_RUN_RESET_EVIDENCE_ENV} to a JSON file with pre_run_reset_by_stack evidence",
+        )
+    try:
+        document = json.loads(Path(evidence_path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise PreflightError(
+            "pre_run_reset_unverified",
+            f"could not read reset evidence JSON from {evidence_path!r}",
+        ) from exc
+    if not isinstance(document, dict):
+        raise PreflightError("pre_run_reset_unverified", "reset evidence JSON must be an object")
+    return validate_pre_run_reset_evidence(pair, document.get("pre_run_reset_by_stack"))
+
+
+def validate_pre_run_reset_evidence(
+    pair: StackPairConfig,
+    evidence: Any,
+) -> dict[str, dict[str, Any]]:
+    """Require timestamped, per-configured-stack evidence for reset and empty identity tables.
+
+    The stack-scoped DB reset and table-count check belong to the FIR23-STACK
+    runbook/operator. This harness validates and records that attestation; it
+    does not connect to a database or infer emptiness from silence.
+    """
+    expected_ids = pair.allowlist_ids
+    if not isinstance(evidence, dict) or set(evidence) != expected_ids:
+        raise PreflightError(
+            "pre_run_reset_unverified",
+            "reset evidence must contain exactly one entry for each configured stack",
+        )
+
+    validated: dict[str, dict[str, Any]] = {}
+    for endpoint in pair.stacks:
+        record = evidence.get(endpoint.stack_id)
+        if not isinstance(record, dict):
+            raise PreflightError(
+                "pre_run_reset_unverified",
+                f"reset evidence missing for configured stack {endpoint.stack_id!r}",
+            )
+        attested_by = record.get("reset_attested_by")
+        reference = record.get("reset_reference")
+        completed_at = record.get("reset_completed_at")
+        rows_empty = record.get("prior_run_identity_rows_empty")
+        if not isinstance(attested_by, str) or not attested_by.strip():
+            raise PreflightError(
+                "pre_run_reset_unverified",
+                f"reset_attested_by is required for {endpoint.stack_id!r}",
+            )
+        if not isinstance(reference, str) or not reference.strip():
+            raise PreflightError(
+                "pre_run_reset_unverified",
+                f"reset_reference to the documented stack-scoped reset is required for {endpoint.stack_id!r}",
+            )
+        if not isinstance(completed_at, str) or not completed_at.strip():
+            raise PreflightError(
+                "pre_run_reset_unverified",
+                f"reset_completed_at is required for {endpoint.stack_id!r}",
+            )
+        try:
+            parsed_at = datetime.fromisoformat(completed_at.strip().replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise PreflightError(
+                "pre_run_reset_unverified",
+                f"reset_completed_at is not an ISO-8601 timestamp for {endpoint.stack_id!r}",
+            ) from exc
+        if parsed_at.tzinfo is None or parsed_at.utcoffset() is None or parsed_at.astimezone(UTC) > datetime.now(UTC):
+            raise PreflightError(
+                "pre_run_reset_unverified",
+                f"reset_completed_at must be timezone-aware and not in the future for {endpoint.stack_id!r}",
+            )
+        if rows_empty is not True:
+            raise PreflightError(
+                "pre_run_reset_unverified",
+                f"prior-run media-identity, cluster, and membership rows are not attested empty for {endpoint.stack_id!r}",
+            )
+        validated[endpoint.stack_id] = {
+            "reset_attested_by": attested_by.strip(),
+            "reset_reference": reference.strip(),
+            "reset_completed_at": completed_at.strip(),
+            "prior_run_identity_rows_empty": True,
+        }
+    return validated
 
 
 def preflight_stack(

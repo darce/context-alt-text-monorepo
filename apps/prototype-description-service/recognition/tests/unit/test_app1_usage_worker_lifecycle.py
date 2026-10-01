@@ -138,7 +138,6 @@ async def test_stalled_settlement_uses_exact_ids_past_older_active_batch() -> No
                     items=[(index + 1, f"http://example.test/{index}.jpg")],
                 )
                 ticket = await _reserve_job(session, tenant.id, key=f"op-active-{index}", job_id=job_id)
-                _age_reservation(await session.get(UsageReservation, ticket.reservation_id), seconds=5000 - index)
                 active_tickets.append(ticket)
 
             stalled_id = await repo.create_job(tenant_id=tenant.id, media_ids=[99])
@@ -164,6 +163,11 @@ async def test_stalled_settlement_uses_exact_ids_past_older_active_batch() -> No
                 )
             )
             stalled_ticket = await _reserve_job(session, tenant.id, key="op-stalled", job_id=stalled_id)
+            # Admission expires RESERVED rows older than the 30-minute lease on the
+            # next reserve. Age this older active batch only after every reserve so
+            # exact-id settlement is what the status assertion measures.
+            for index, ticket in enumerate(active_tickets):
+                _age_reservation(await session.get(UsageReservation, ticket.reservation_id), seconds=5000 - index)
             _age_reservation(await session.get(UsageReservation, stalled_ticket.reservation_id), seconds=60)
             await session.flush()
 

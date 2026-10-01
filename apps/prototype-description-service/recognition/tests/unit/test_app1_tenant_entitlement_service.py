@@ -248,6 +248,10 @@ async def test_beta_to_paid_upgrade_applies_paid_allowance_and_starts_a_clean_pe
                 tenant_id=tenant_id,
                 period_start=period_start,
                 idempotency_key="already-used",
+                operation_id="already-used",
+                request_fingerprint="fp-already-used",
+                fence_token="fence-already-used",
+                queue_bytes=0,
                 status=UsageReservationStatus.COMMITTED,
                 cost_units=3,
             )

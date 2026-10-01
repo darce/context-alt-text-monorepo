@@ -1,0 +1,105 @@
+{
+  "lane": "a1h-svcdb2",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_billing_namespace.py recognition/tests/unit/test_app1_billing_recovery_contracts.py recognition/tests/unit/test_app1_checkout_attempt_repository.py recognition/tests/unit/test_app1_checkout_service.py recognition/tests/unit/test_app1_gate3_daily_settle.py recognition/tests/unit/test_app1_portal_checkout_router.py",
+      "result": "not_run",
+      "detail": "uv failed before collection: failed to remove alembic in the managed environment (read-only filesystem); retrying with --no-sync."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_billing_namespace.py recognition/tests/unit/test_app1_billing_recovery_contracts.py recognition/tests/unit/test_app1_checkout_attempt_repository.py recognition/tests/unit/test_app1_checkout_service.py recognition/tests/unit/test_app1_gate3_daily_settle.py recognition/tests/unit/test_app1_portal_checkout_router.py",
+      "result": "fail",
+      "detail": "Timeout (0:04:00)! at recognition/tests/unit/test_app1_portal_checkout_router.py:327 in test_first_checkout_persists_before_provider_and_returns_pending, blocked in TestClient.__enter__. Pytest showed 81% progress; the process was interrupted after the timeout dump (exit 130), so no final summary was produced."
+    },
+    {
+      "command": "PostgreSQL integration tests listed in the brief (eight files)",
+      "result": "not_run",
+      "detail": "The sandbox lacks PostgreSQL; tests were inspected for assertions and not invoked."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 15966,
+      "finding_id": "APP1-SCHEMA-RV01",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/db/models/portal_billing.py:276-281 - the provider constraint uses 'provider', 'environment', 'seller_account', and 'idempotency_key'; tenant_id is excluded. The client key index remains tenant-scoped at :284-291.",
+      "guard_test": "recognition/tests/unit/test_app1_checkout_attempt_repository.py::test_checkout_uniques_distinguish_tenant_scoped_client_key_from_seller_wide_provider_key"
+    },
+    {
+      "db_id": 15541,
+      "finding_id": "GXPLAN-e71025f7c0c5b190-H-47e519c0c5cf13e804e43ecb",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/api/main.py:656-659 - 'install_portal_composition(app, settings=recognition_settings)' runs before the portal and webhook routers are included.",
+      "guard_test": "recognition/tests/unit/test_app1_app_mount.py::test_enabled_mount_resolves_real_portal_and_billing_composition"
+    },
+    {
+      "db_id": 15460,
+      "finding_id": "APP1-W0-L0-01",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/domain/portal_contracts.py:156-158 - 'if self.status is not BillingSubscriptionStatus.NONE and not self.provider_customer_id' rejects missing customer IDs; portal_billing.py:213 marks the column NOT NULL.",
+      "guard_test": "recognition/tests/unit/test_app1_portal_contracts.py::test_billing_state_requires_customer_for_persistable_status"
+    },
+    {
+      "db_id": 17047,
+      "finding_id": "FAUS1R-e10f9362b256d264-M-cda3a5ef8ea7db7e8332949f",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "recognition/tests/conftest.py:514 - the fixture docstring says 'Fresh migrated scratch DB per test'; test_app1_sweeper_rls_postgres.py:323-334 verifies rollback preserves RESERVED rows and cleanup releases them.",
+      "guard_test": "recognition/tests/integration/test_app1_sweeper_rls_postgres.py::test_sweep_failure_resets_bypass_and_caller_rollback_discards_prior_settlements"
+    },
+    {
+      "db_id": 17051,
+      "finding_id": "FAUS1R-e10f9362b256d264-M-24b0f07197843fe9063d8dc5",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "recognition/tests/conftest.py:514 - the fixture docstring says 'Fresh migrated scratch DB per test'; test_app1_sweeper_rls_postgres.py:249-265 asserts the sweep releases exactly seeded rows and restores counters.",
+      "guard_test": "recognition/tests/integration/test_app1_sweeper_rls_postgres.py::test_background_sweep_recovers_across_tenants_and_commits_under_forced_rls"
+    },
+    {
+      "db_id": 17049,
+      "finding_id": "FAUS1R-e10f9362b256d264-M-c54c0621ec829ef87c02e856",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "recognition/tests/conftest.py:514 - the fixture docstring says 'Fresh migrated scratch DB per test'; both global sweep tests use it, and the successful proof asserts the counter delta returns to baseline at test_app1_sweeper_rls_postgres.py:265.",
+      "guard_test": "recognition/tests/integration/test_app1_sweeper_rls_postgres.py::test_background_sweep_recovers_across_tenants_and_commits_under_forced_rls"
+    },
+    {
+      "db_id": 15465,
+      "finding_id": "APP1-W0-L0-06",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/db/models/portal_billing.py:159-162 - the CHECK contains 'status IN ('reserved', 'committed', 'released', 'expired')'; the contract test asserts every enum value appears in the SQL.",
+      "guard_test": "recognition/tests/unit/test_app1_portal_contracts.py::test_usage_and_billing_tables_reject_out_of_enum_and_non_positive_writes"
+    },
+    {
+      "db_id": 15464,
+      "finding_id": "APP1-W0-L0-05",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/db/models/portal_billing.py:157 - the CHECK expression is 'cost_units > 0'; the contract test asserts the named constraint and expression.",
+      "guard_test": "recognition/tests/unit/test_app1_portal_contracts.py::test_usage_and_billing_tables_reject_out_of_enum_and_non_positive_writes"
+    },
+    {
+      "db_id": 15463,
+      "finding_id": "APP1-W0-L0-04",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/usage_repository.py:471-477 selects the locked entitlement and :537 stores 'period_start=entitlement.period_start'. No inspected test asserts persisted reservation period_start; the lock-order test does not cover this assignment.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 15461,
+      "finding_id": "APP1-W0-L0-02",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "apps/prototype-description-service/db/models/portal_billing.py:97-98 uses 'UniqueConstraint(\"issuer\", \"subject\")'; recognition/infrastructure/repositories/portal_identity_repository.py:207-219 calls 'self._session.add(identity)' and refuses IntegrityError. Existing owner-conflict tests use an in-memory repository, so none guards a SQL upsert transferring tenant_id.",
+      "guard_test": ""
+    }
+  ],
+  "new_findings": [],
+  "summary": "Eight HOLDS, two PARTIAL, zero NOT_FIXED; new findings high/medium/low: 0/0/0; unit suite FAIL timed out at 81%, and PostgreSQL integration tests are not_run."
+}

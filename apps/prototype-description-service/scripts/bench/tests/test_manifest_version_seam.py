@@ -10,7 +10,13 @@ import pytest
 from scripts.bench.corpus import load_bench_manifest, non_exhaustive_ids
 from scripts.bench.score_report import CrossbenchTier, assign_tier, stranger_faces_for
 from scripts.bench.stack_pair import BenchError
-from scripts.eval_harness.manifest import ManifestError
+from scripts.eval_harness.face_metrics import ImageDetection, detection_pr_strict
+from scripts.eval_harness.manifest import (
+    AnnotationMode,
+    FaceBox,
+    ManifestError,
+    ScoreInvariant,
+)
 
 FIXTURE = Path(__file__).parent / "fixtures" / "v3_boxed_detection.json"
 
@@ -103,6 +109,84 @@ def test_detection_cell_directional_when_non_exhaustive_dropped() -> None:
     )
     assert tier is CrossbenchTier.DIRECTIONAL
     assert reason == "detection_exhaustiveness_unasserted"
+
+
+def _strict_detection_row(gt_box: dict[str, object]) -> ImageDetection:
+    return ImageDetection(
+        image="source-test.jpg",
+        pred_faces=1,
+        labeled_faces=1,
+        detections_bbox_px=((40.0, 40.0, 20.0, 20.0),),
+        gt_boxes=(gt_box,),
+        image_size=(100, 100),
+        detection_frame_size=(100, 100),
+    )
+
+
+def _adjudicated_gt_box() -> dict[str, object]:
+    return {
+        "x": 0.5,
+        "y": 0.5,
+        "w": 0.2,
+        "h": 0.2,
+        "name": "Alice Q",
+        "source": "iptc",
+        "lineage": {
+            "labeler_id": "bench-test",
+            "batch_id": "source-test",
+            "capture_session_id": "source-test-session",
+            "pass_index": 0,
+            "labeled_at": "2026-08-16T00:00:00Z",
+            "tool_version": "bench-test",
+            "label_source": "operator_blind",
+            "saw_machine_proposals": False,
+            "decision": "named",
+            "confidence": "high",
+        },
+    }
+
+
+@pytest.mark.parametrize("source", ["buffalo", "future_source"])
+def test_face_box_source_schema_rejects_unsupported_source(source: str) -> None:
+    raw = _adjudicated_gt_box()
+    raw["source"] = source
+    with pytest.raises(ValueError):
+        FaceBox.model_validate(raw)
+
+
+@pytest.mark.parametrize("source", ["buffalo", "future_source", None])
+def test_strict_detection_refuses_missing_or_unsupported_gt_source(
+    source: str | None,
+) -> None:
+    """TEST-15: raw report mappings cannot bypass the independent GT source gate."""
+    box = _adjudicated_gt_box()
+    if source is None:
+        del box["source"]
+    else:
+        box["source"] = source
+
+    with pytest.raises(ManifestError) as exc:
+        detection_pr_strict(
+            [_strict_detection_row(box)],
+            annotation_mode=AnnotationMode.EXHAUSTIVE,
+            run_manifest={"iou_threshold": 0.5},
+        )
+
+    assert exc.value.invariant == ScoreInvariant.DETECTION_REQUIRES_INDEPENDENT_GT_SOURCE
+
+
+@pytest.mark.parametrize("source", ["iptc", "operator"])
+def test_strict_detection_accepts_supported_independent_gt_source(source: str) -> None:
+    box = _adjudicated_gt_box()
+    box["source"] = source
+    result = detection_pr_strict(
+        [_strict_detection_row(box)],
+        annotation_mode=AnnotationMode.EXHAUSTIVE,
+        run_manifest={"iou_threshold": 0.5},
+    )
+    assert result.true_positives == 1
+    assert result.false_positives == 0
+    assert result.false_negatives == 0
 
 
 def test_identification_cell_directional_when_non_exhaustive() -> None:

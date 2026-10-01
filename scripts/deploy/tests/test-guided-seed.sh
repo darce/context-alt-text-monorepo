@@ -53,6 +53,14 @@ bash -n "$SELECT" && pass "selector parses (bash -n)" || fail "selector has a sy
 OUT="$OUT" MANIFEST="$MANIFEST" README="$README" RIGHTS="$RIGHTS" bash "$SELECT" >/dev/null \
   && pass "selector exits 0 against the bundled assets" || fail "selector exited non-zero"
 
+if rights_mode=$(stat -c %a "$RIGHTS" 2>/dev/null); then
+  :
+else
+  rights_mode=$(stat -f %Lp "$RIGHTS" 2>/dev/null || echo unknown)
+fi
+[ "$rights_mode" = "644" ] && pass "generated rights ledger has mode 644" \
+  || fail "generated rights ledger has mode $rights_mode, expected 644"
+
 for f in katy_perry_1.jpg katy_perry_2.jpg katy_perry_3.jpg justin_trudeau_1.jpg justin_trudeau_2.jpg tribeca_press_1.jpg coachella_press_1.webp; do
   [ -f "$OUT/$f" ] && pass "copied $f" || fail "missing $OUT/$f"
 done

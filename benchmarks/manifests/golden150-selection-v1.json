@@ -71,7 +71,7 @@
    "sunglasses": 12
   },
   "slice_tags_derived": {
-   "profile": 99
+   "profile": 112
   },
   "detected_faces_total": 610,
   "with_detected_faces": 149
@@ -188,7 +188,9 @@
     "blur",
     "occlusion_other"
    ],
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "detected_face_count": 6
   },
@@ -246,7 +248,9 @@
     "profile",
     "low_res"
    ],
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "detected_face_count": 9
   },
@@ -300,7 +304,9 @@
     "profile",
     "low_res"
    ],
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "detected_face_count": 8
   },
@@ -318,7 +324,9 @@
     "profile",
     "low_res"
    ],
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "detected_face_count": 10
   },
@@ -520,7 +528,9 @@
     "profile",
     "blur"
    ],
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "detected_face_count": 2
   },
@@ -656,7 +666,9 @@
    "slice_tags": [
     "occlusion_other"
    ],
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "detected_face_count": 3
   },
@@ -784,7 +796,9 @@
    "slice_tags": [
     "sunglasses"
    ],
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "detected_face_count": 2
   },
@@ -800,7 +814,9 @@
    "slice_tags": [
     "occlusion_other"
    ],
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "detected_face_count": 1
   },
@@ -832,7 +848,9 @@
    "slice_tags": [
     "masked"
    ],
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "detected_face_count": 3
   },
@@ -928,7 +946,9 @@
    "slice_tags": [
     "blur"
    ],
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "detected_face_count": 1
   },
@@ -1303,7 +1323,9 @@
    "slice_tags": [
     "low_res"
    ],
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "detected_face_count": 1
   },
@@ -1351,7 +1373,9 @@
    "slice_tags": [
     "profile"
    ],
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "detected_face_count": 6
   },
@@ -2213,7 +2237,9 @@
     "profile",
     "low_res"
    ],
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "detected_face_count": 9
   },

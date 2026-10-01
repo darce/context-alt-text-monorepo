@@ -240,7 +240,7 @@ CLI config **validates against this table at load** ([rg-008]) and **refuses unk
 
 - The stack-pair `opencv_major` remains a required expected value (currently 5); it is compared with the service-reported `opencv_major` and is not used as provenance. A missing or unparseable expected value raises **`opencv_major_unattested`**; a mismatch raises **`opencv_major_drift`**; a service major other than 5 raises **`opencv_major_unsupported`**. Missing, malformed, incomplete, or internally inconsistent service fingerprints raise **`opencv_runtime_unreported`**. None of these failures writes a partial `preflight.json`.
 - Never call `cv2.__version__` in the CLI process. The CLI runs on the operator laptop; its `cv2` is not the stack's `cv2`. The service fingerprint is the source for the remote stack.
-- Preserve the full authenticated health response in `preflight.json.health_detailed_excerpt`, including the fingerprint JSON in `model_cache.detail`. Also write the derived top-level `opencv_major` int and `opencv_major_source: service_reported`; the major must agree with the canonical object. The report validates the complete object and refuses to score when the two legs' `opencv_version` values differ.
+- Preserve the full authenticated health response in `preflight.json.health_detailed_excerpt`, including the fingerprint JSON in `model_cache.detail`. Also write the derived top-level `opencv_major` int and `opencv_major_source: service_reported`; the major must agree with the canonical object. The report rejects scoring with `preflight_invalid` when any field of the two legs' fingerprint objects (`opencv_version`, `opencv_major`, `onnxruntime_version`, `numpy_version`) differs. The scoring code change enforcing this comparison ships in a separate lane.
 
 ### Stable error codes (normative)
 
@@ -281,7 +281,7 @@ CLI config **validates against this table at load** ([rg-008]) and **refuses unk
 | `bootstrap_status_missing` | `assign_tier` raises when a named confirmatory-eligible cell's ctx omits the `bootstrap_status` key (malformed ctx; not a demoted-partial). Unreachable on the production score path, which stamps the key unconditionally. | repair the caller that built ctx; do not treat this code as a demotion reason. |
 | `export_envelope_invalid` | a persisted export is not a **bare JSON array**, a dict export is missing the required `media_identities` / `clusters` key, or an array row is not an object. Object envelopes (`{"data": [...]}`) are rejected — there is no second accepted shape | persist the live-stack array as-is; do not wrap rows in a pagination object and do not drop non-object rows. |
 | `preflight_missing` | `score` found a leg directory without `preflight.json` | Rerun the preflight command from the [Operator flow](#operator-flow) with the run directory, or copy the PROV-01 artifact into each `legs/<stack_id>/`. |
-| `preflight_invalid` | `score` found unreadable JSON, missing PROV-01 keys, mismatched profile/dimension/stack identity, or an invalid/inconsistent runtime fingerprint. `frames.json` stamps `preflight_present: true` only after value validation succeeds. | Rerun preflight from the [Operator flow](#operator-flow) and ensure the health response includes a valid service fingerprint; do not patch the artifact by hand. |
+| `preflight_invalid` | `score` found unreadable JSON, missing PROV-01 keys, mismatched profile/dimension/stack identity, an invalid/inconsistent runtime fingerprint, or any differing fingerprint field between legs. `frames.json` stamps `preflight_present: true` only after value validation succeeds. | Align both stack runtimes, rerun preflight, and ensure the health responses contain the same valid service fingerprint; do not patch artifacts by hand. |
 | `leg_outcome_unreadable` | `leg_outcome.json` exists but is unreadable or not JSON | delete or rewrite the latch; a torn file raises `leg_outcome_unreadable` and aborts the run — it is not treated as absence. |
 
 **Provenance counters (not failure codes):** `degenerate_box_dropped` counts boxes whose clamped area is zero after the [localization pin](#b-constructing-metric-inputs) componentwise clamp; they are dropped from the assignment matrix and stamped in provenance. `zero_detection_media_count` counts accepted-set media whose export yielded zero face rows (roster-present, `pred_faces = 0`). `ingest_asymmetric_media` counts media present in one leg's `items.jsonl` but not the other (excluded from `accepted_set`). These counters are not stable error codes and do not abort the run.
@@ -979,7 +979,7 @@ This is the **complete** [PROV-01] inventory. Partial restatements elsewhere are
 - `checked_at`
 - `ready_excerpt`, `health_detailed_excerpt` (redact secrets)
 
-The parsed service object is persisted in `numeric_runtime_fingerprint`, and the raw source remains available in `health_detailed_excerpt`. The flat `opencv_major` is the object's derived integer and `opencv_major_source` is always `service_reported`; neither can be supplied by operator attestation. Missing or inconsistent fingerprint data fails preflight without writing a partial artifact. Scoring revalidates the object and refuses different `opencv_version` values across legs.
+The parsed service object is persisted in `numeric_runtime_fingerprint`, and the raw source remains available in `health_detailed_excerpt`. The flat `opencv_major` is the object's derived integer and `opencv_major_source` is always `service_reported`; neither can be supplied by operator attestation. Missing or inconsistent fingerprint data fails preflight without writing a partial artifact. Scoring revalidates the complete objects and rejects a score with `preflight_invalid` if any field differs across legs (`opencv_version`, `opencv_major`, `onnxruntime_version`, `numpy_version`).
 
 **Per-item** (each `legs/<stack_id>/items.jsonl` record; see [media identity join](#d-media-identity-join)):
 - `manifest_media_id`, `stack_media_id` (int)
@@ -1197,18 +1197,62 @@ uv run --extra dev pytest scene/tests/test_eval_harness_face_metrics.py
 9. **Failure routing** — stack health / dim wrong in compose → FIR23-STACK; CLI logic / scoring → FIR-8; embedding-export needs → optional upstream task (not FIR-8).
 10. **Verification checklist** — both preflights green; report path exists; both frames present; license_notice present; both stacks were reset before ingest and are reset again during teardown.
 
-Copy-paste block (from the repository root; set `BENCH_STACK_PAIR_CONFIG`, credential variables, and `BENCH_IMAGES_DIR` as described under Prerequisites):
+Run the following four blocks in order from the repository root, in the same shell. The first block changes to `apps/prototype-description-service`; if a block fails, stop and do not run the later blocks. Do not run the `run` block until the separate fresh-state gate block has passed.
+
+**(a) Variables and preflight**
 
 ```sh
+set -eu
+repo_root="$(pwd -P)"
+images_dir="${BENCH_IMAGES_DIR:?Set BENCH_IMAGES_DIR to the Golden corpus root}"
+case "$images_dir" in
+  /*) ;;
+  *)
+    printf '%s\n' "BENCH_IMAGES_DIR must be an absolute path; got: $images_dir" >&2
+    exit 1
+    ;;
+esac
+run_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+run_dir="../../benchmarks/results/crossbench-${run_stamp}"
 cd apps/prototype-description-service
 config_path="${BENCH_STACK_PAIR_CONFIG:-scripts/bench/tests/fixtures/stack-pair.example.yaml}"
 manifest_path="../../benchmarks/manifests/corpus-manifest-v3.json"
-images_dir="${BENCH_IMAGES_DIR:?Set BENCH_IMAGES_DIR to the Golden corpus root}"
-run_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-run_dir="../../benchmarks/results/crossbench-${run_stamp}"
-
 uv run --extra dev python -m scripts.bench.cross_stack_bench preflight --config "$config_path" --out "$run_dir"
+```
+
+**(b) Stop for the fresh-state gate** — Do not continue until the documented stack-scoped reset has been completed for both configured bench stacks, both scratch tenants have been verified empty, and the reset evidence file exists. Record the operator attestation, reset reference, and completion time as required by [Operator flow, step 4 — Fresh-state gate](#operator-flow). The bench README has no reset-evidence JSON-shape section at this commit, so use this runbook section for the reset instructions. Relative evidence paths are resolved from the repository root.
+
+```sh
+set -eu
+printf '%s\n' "STOP: Do not continue until both stacks have been reset and verified empty, and the reset evidence file exists." \
+  "Set ACX_BENCH_PRE_RUN_RESET_EVIDENCE_FILE to the reset evidence file path."
+if [ -z "${ACX_BENCH_PRE_RUN_RESET_EVIDENCE_FILE:-}" ]; then
+  printf '%s\n' 'Set ACX_BENCH_PRE_RUN_RESET_EVIDENCE_FILE to the reset evidence file path.' >&2
+  exit 1
+fi
+evidence_file="$ACX_BENCH_PRE_RUN_RESET_EVIDENCE_FILE"
+case "$evidence_file" in
+  /*) ;;
+  *) evidence_file="$repo_root/$evidence_file" ;;
+esac
+if [ ! -f "$evidence_file" ]; then
+  printf '%s\n' "Reset evidence file does not exist: $evidence_file" >&2
+  exit 1
+fi
+printf '%s\n' "Reset evidence file exists: $evidence_file"
+```
+
+**(c) Run**
+
+```sh
+set -eu
 uv run --extra dev python -m scripts.bench.cross_stack_bench run --config "$config_path" --manifest "$manifest_path" --images-dir "$images_dir" --out "$run_dir"
+```
+
+**(d) Status and score**
+
+```sh
+set -eu
 uv run --extra dev python -m scripts.bench.cross_stack_bench status --run-dir "$run_dir"
 uv run --extra dev python -m scripts.bench.cross_stack_bench score --run-dir "$run_dir"
 ```
@@ -1325,7 +1369,7 @@ Single-lane work. No multi-agent lane split required.
 | Production-shaped guard without DB counts API | Weaker than v5 marker rail | Named stack allowlist + operator attestation; escalate if FIR23-STACK adds a count diagnostic |
 | Insightface NC misuse | License | Runbook + report `license_notice`; stack must not sit on product ingress |
 | No public embeddings | Purity sweeps impossible on cross-stack path | Explicit OOS; optional upstream diagnostic ask |
-| **Service runtime fingerprint unavailable or malformed** | A missing or inconsistent health marker prevents reliable provenance for an evaluated stack | Preflight fails closed with `opencv_runtime_unreported`; valid four-field fingerprints are preserved in `health_detailed_excerpt`, the derived major is cross-checked, and score refuses OpenCV version drift between legs. |
+| **Service runtime fingerprint unavailable or malformed** | A missing or inconsistent health marker prevents reliable provenance for an evaluated stack | Preflight fails closed with `opencv_runtime_unreported`; valid four-field fingerprints are preserved in `health_detailed_excerpt`, the derived major is cross-checked, and score refuses any field mismatch between legs (`opencv_version`, `opencv_major`, `onnxruntime_version`, `numpy_version`) with `preflight_invalid`. |
 | **Golden150 cannot power a small head-to-head gap** | Even at full corpus, the image-level bootstrap interval on Δ may stay wider than δ, so the honest output is "no resolvable difference" rather than a winner | Precision precondition fails such cells closed to DIRECTIONAL rather than reporting them as gate-eligible. If the operator needs a resolvable answer at δ = 10pp, the corpus must grow — that is a **corpus decision, not a scoring-code decision**, and FIR-8 must not paper over it |
 | **Detection FP eligibility depends on a boxed exhaustive corpus** | FIR-8 can be fully implemented and merged while its headline number stays unavailable until production media carry complete `face_boxes` | Exhaustiveness is FIR-8's own assertion (not an FIR-11 flag); detection unit tests use `v3_boxed_detection.json`; non-exhaustive detection cells are **DIRECTIONAL** with reason `detection_exhaustiveness_unasserted`. FIR-11 Slice 2 may later supply a larger boxed corpus but is not a code-path dependency. Do **not** let a box-less DIRECTIONAL number get quoted as the head-to-head result |
 | **IoU threshold is a single fixed 0.5** | A stack whose boxes are systematically tighter or looser than GT is penalised by the threshold, not by its detection quality | Matching uses existing `IOU_MATCH_THRESHOLD` (0.5) at `scripts/eval_harness/face_assignment.py:29` (detection pin and optimistic label map share that one threshold — do not re-declare). Report the matched-vs-count gap per leg so a threshold artifact is visible as a *both-legs* shift; a sweep over IoU is a stretch goal, not a gate input |

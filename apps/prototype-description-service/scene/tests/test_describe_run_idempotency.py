@@ -248,16 +248,17 @@ def test_malformed_idempotency_key_is_rejected_422(monkeypatch, bad_key):
         assert _run_rows(sf, TENANT_A) == 0
 
 
-def test_omitted_idempotency_key_keeps_todays_non_deduped_behaviour(monkeypatch):
+def test_omitted_idempotency_key_is_rejected_before_reservation(monkeypatch):
     calls = _count_enqueues(monkeypatch)
     with _app() as (app, sf), TestClient(app) as client:
-        first = _submit(client, [70], key=None)
-        second = _submit(client, [70], key=None)
-        assert first.status_code == 202, first.text
-        assert second.status_code == 202, second.text
-        assert first.json()["run_id"] != second.json()["run_id"]
-        assert len(calls) == 2
-        assert _run_rows(sf, TENANT_A) == 2
+        response = _submit(client, [70], key=None)
+        assert response.status_code == 400, response.text
+        detail = response.json()["detail"]
+        assert detail["code"] == "idempotency_key_required"
+        assert detail["field"] == "idempotency_key"
+        assert app.state.usage_admission_service.reserves == []
+        assert calls == []
+        assert _run_rows(sf, TENANT_A) == 0
 
 
 def test_concurrent_submits_with_one_key_produce_exactly_one_run(monkeypatch):

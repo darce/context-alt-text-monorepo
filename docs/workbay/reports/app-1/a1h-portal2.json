@@ -1,0 +1,77 @@
+{
+  "lane": "a1h-portal2",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/api/test_demo_quota_clustering_routes.py recognition/tests/unit/test_app1_operator_usage_census.py recognition/tests/unit/test_app1_portal_identity_onboarding.py recognition/tests/unit/test_app1_portal_identity_service.py scene/tests/test_gpu_router.py",
+      "result": "not_run",
+      "detail": "uv failed before tests started: error: failed to remove file /home/gate/workbay-sandbox/.venv-lane-feature-app-1-a1h-portal2-0e736df1/lib/python3.12/site-packages/../../../bin/alembic: Read-only file system (os error 30); retried with --no-sync."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/api/test_demo_quota_clustering_routes.py recognition/tests/unit/test_app1_operator_usage_census.py recognition/tests/unit/test_app1_portal_identity_onboarding.py recognition/tests/unit/test_app1_portal_identity_service.py scene/tests/test_gpu_router.py",
+      "result": "not_run",
+      "detail": "Pytest hit the lane-described aiosqlite fixture sandbox timeout before completing: Timeout (0:04:00)!; stack entered recognition/tests/api/test_demo_quota_clustering_routes.py:77 in _clustering_demo_client for test_demo_quota_clustering_jobs_charges_one_unit. Stopped the run per lane guidance (exit 130)."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q recognition/tests/integration/test_app1_claim_onboarding_postgres.py recognition/tests/integration/test_app1_operator_entitlement_postgres.py",
+      "result": "not_run",
+      "detail": "Per lane brief, PostgreSQL integration cases require a database unavailable in this sandbox. Reviewed claim onboarding assertions including two-token race acceptance and operator entitlement tenant isolation."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 15981,
+      "finding_id": "APP1-CLAIM-RV01",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/portal_identity_repository.py:404 — ‘if tenant_id is None’ creates and adds a Tenant before adding/flushing the identity; lines 380-394 accept and bind the invitation. The unit test asserts one tenant and matching identity/invitation tenant IDs.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_portal_identity_onboarding.py::test_claim_onboarding_pending_invitation_creates_tenant_and_accepts"
+    },
+    {
+      "db_id": 15983,
+      "finding_id": "APP1-CLAIM-RV03",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/portal_identity_repository.py:345 — ‘except IntegrityError’ recovers the raced identity and calls _accept_current_for_identity for the currently locked invitation; that helper updates accepted_at and accepted_by_identity_id at lines 429-448. The guard checks the second token was accepted for the raced identity.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_portal_identity_onboarding.py::test_claim_onboarding_two_token_same_identity_race_accepts_current_token"
+    },
+    {
+      "db_id": 15982,
+      "finding_id": "APP1-CLAIM-RV02",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/portal_identity_repository.py:98 — ‘func.lower(func.trim(...)) == normalized_email’ is used in the conditional acceptance update at lines 511-519. The guard asserts mixed-case acceptance and that compiled SQL contains lower() and trim().",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_portal_identity_onboarding.py::test_claim_onboarding_accepts_mixed_case_invited_email"
+    },
+    {
+      "db_id": 15473,
+      "finding_id": "APP1-W1-S2-03",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/portal_identity_repository.py:373 — ‘except Exception: await self._rollback_after_failure()’ rolls back failures from identity creation/flush; the retry guard asserts rollback, an unaccepted invitation after timeout, then a successful retry.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_portal_identity_onboarding.py::test_claim_onboarding_flush_failure_rolls_back_and_can_retry"
+    },
+    {
+      "db_id": 15472,
+      "finding_id": "APP1-W1-S2-02",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/portal_identity_repository.py:150 — get_by_issuer_subject executes its query inside _pre_auth_rls_bypass. The guard asserts bypass enable/reset around successful lookup and reset after a database error.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_portal_identity_onboarding.py::test_pre_auth_lookup_resets_rls_context_on_success_and_failure"
+    }
+  ],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "apps/prototype-description-service/recognition/interface_adapters/http/deps/operator_authorization.py",
+      "line": 45,
+      "title": "Clustering job authorization bypasses the dedicated pool",
+      "defect": "The operator entitlement repository defaults to get_optional_session, which creates a session from the business async_session_factory. The clustering jobs route injects get_clustering_session but passes no session-bound entitlement repository to the authorization gate, so the gate uses the business pool before its clustering-pool transaction.",
+      "failure_scenario": "If the business pool is saturated while the dedicated clustering pool remains available, get_optional_session can yield None after its connection probe fails; authorize_operator_control then returns 503 and paid clustering jobs cannot use the available clustering pool.",
+      "fix": "Use a cluster-specific, separately scoped entitlement session on the dedicated pool, or move the entitlement read into the route-owned clustering transaction; add a route test where the business session is unavailable while the clustering session is available.",
+      "test_file": "apps/prototype-description-service/recognition/tests/unit/test_app1_operator_usage_census.py",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "All five recorded claim findings still hold as fixed with targeted unit assertions. The lane suite stopped at the aiosqlite fixture timeout and PostgreSQL integration tests were not run per brief; a medium clustering-pool isolation gap remains in the new operator entitlement dependency."
+}

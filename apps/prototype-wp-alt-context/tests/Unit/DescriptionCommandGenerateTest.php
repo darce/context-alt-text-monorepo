@@ -156,12 +156,41 @@ class DescriptionCommandGenerateTest extends TestCase
 
         $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
         $this->assertSame([305, 305], $service->requestedMediaIds);
+        $this->assertCount(2, $service->requestedKeys);
+        $this->assertNotNull($service->requestedKeys[0]);
+        $this->assertSame($service->requestedKeys[0], $service->requestedKeys[1]);
         $this->assertSame([7], $slept);
         $this->assertSame('dry_run', $payload['rows'][0]['status']);
         $this->assertSame('A recovered GPU draft.', $payload['rows'][0]['alt_text_draft']);
         $this->assertSame(0, $payload['failed'] ?? null);
         $this->assertSame(1, $payload['dry_run'] ?? null);
         $this->assertEmpty(\WP_CLI::$messages['success']);
+    }
+
+    public function testGenerateMintsADifferentCallerKeyForEachMedia(): void
+    {
+        $candidates = new FixedCandidateService([314, 315]);
+        $service = new RecordingDescribeService([
+            314 => new WP_REST_Response([
+                'media_id' => 314,
+                'alt_text_draft' => 'A first draft.',
+                'adapter' => 'seeded',
+            ]),
+            315 => new WP_REST_Response([
+                'media_id' => 315,
+                'alt_text_draft' => 'A second draft.',
+                'adapter' => 'seeded',
+            ]),
+        ]);
+        $command = new DescriptionCommand($candidates, $service);
+
+        $command->__invoke(['generate'], ['limit' => '2', 'format' => 'json']);
+
+        $this->assertSame([314, 315], $service->requestedMediaIds);
+        $this->assertCount(2, $service->requestedKeys);
+        $this->assertNotNull($service->requestedKeys[0]);
+        $this->assertNotNull($service->requestedKeys[1]);
+        $this->assertNotSame($service->requestedKeys[0], $service->requestedKeys[1]);
     }
 
     public function testGenerateStartingGpuStopsAfterMaxAttemptsAndPrintsTypedError(): void
@@ -2226,6 +2255,9 @@ class RecordingDescribeService extends DescribeMediaService
     /** @var int[] */
     public array $requestedMediaIds = [];
 
+    /** @var list<string|null> */
+    public array $requestedKeys = [];
+
     /**
      * @param array<int, WP_REST_Response|WP_Error|list<WP_REST_Response|WP_Error>> $responses
      */
@@ -2237,6 +2269,8 @@ class RecordingDescribeService extends DescribeMediaService
     {
         $mediaId = (int) $request->get_param('media_id');
         $this->requestedMediaIds[] = $mediaId;
+        $key = $request->get_body_params()['idempotency_key'] ?? null;
+        $this->requestedKeys[] = is_string($key) ? $key : null;
 
         if (!array_key_exists($mediaId, $this->responses)) {
             return new WP_REST_Response(

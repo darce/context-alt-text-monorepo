@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { QueryClient } from '@tanstack/react-query';
+import { QueryClient } from '@tanstack/react-query';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -656,7 +656,10 @@ describe('useActivityStatus', () => {
 
     await waitFor(() => expect(submitBulkDescribeRunMock).toHaveBeenCalledTimes(1));
     expect(fetchDescribeRunItemsMock).toHaveBeenCalledWith('run-old');
-    expect(submitBulkDescribeRunMock).toHaveBeenCalledWith([13, 14]);
+    expect(submitBulkDescribeRunMock).toHaveBeenCalledWith(
+      [13, 14],
+      expect.stringMatching(/^[A-Za-z0-9_-]{16,128}$/),
+    );
     await waitFor(() => expect(getDescribeRunContext()?.id).toBe('run-new'));
     await waitFor(() => expect(result.current.status.runId).toBe('run-new'));
   });
@@ -692,7 +695,52 @@ describe('useActivityStatus', () => {
     });
 
     await waitFor(() => expect(submitBulkDescribeRunMock).toHaveBeenCalledTimes(1));
-    expect(submitBulkDescribeRunMock).toHaveBeenCalledWith([21]);
+    expect(submitBulkDescribeRunMock).toHaveBeenCalledWith(
+      [21],
+      expect.stringMatching(/^[A-Za-z0-9_-]{16,128}$/),
+    );
+  });
+
+  it('reuses the key across a mutation retry and mints a new key for another Retry action', async () => {
+    seedWarmupTimeoutRun('run-1');
+    fetchDescribeRunItemsMock.mockResolvedValue(
+      itemsResponse('run-1', [describeItem(51, 'failed')]),
+    );
+    submitBulkDescribeRunMock
+      .mockRejectedValueOnce(new Error('temporary submit failure'))
+      .mockRejectedValueOnce(new Error('temporary submit failure'))
+      .mockResolvedValue(describeRun({ run_id: 'run-new', status: DESCRIBE_RUN_STATUS.PENDING }));
+
+    queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: 1, retryDelay: 0 },
+      },
+    });
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
+
+    await waitFor(() => expect(result.current.status.reason).toBe(ACTIVITY_REASON.GPU_WARMUP_TIMEOUT));
+    act(() => {
+      result.current.actions.onRetry?.();
+    });
+
+    await waitFor(() => expect(submitBulkDescribeRunMock).toHaveBeenCalledTimes(2));
+    const firstActionKey = submitBulkDescribeRunMock.mock.calls[0]?.[1];
+    expect(firstActionKey).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
+    expect(submitBulkDescribeRunMock.mock.calls[1]?.[1]).toBe(firstActionKey);
+    await waitFor(() => {
+      const mutations = queryClient.getMutationCache().getAll();
+      expect(mutations[mutations.length - 1]?.state.status).toBe('error');
+    });
+
+    act(() => {
+      result.current.actions.onRetry?.();
+    });
+
+    await waitFor(() => expect(submitBulkDescribeRunMock).toHaveBeenCalledTimes(3));
+    const nextActionKey = submitBulkDescribeRunMock.mock.calls[2]?.[1];
+    expect(nextActionKey).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
+    expect(nextActionKey).not.toBe(firstActionKey);
   });
 
   it('keeps Retry available after a warmup-timeout resubmit failure', async () => {

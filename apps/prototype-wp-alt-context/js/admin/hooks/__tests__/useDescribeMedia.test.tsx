@@ -19,6 +19,14 @@ vi.mock('../../api/describeApi', async (importOriginal) => {
 
 const describeMediaMock = vi.mocked(describeApi.describeMedia);
 
+const idempotencyKeyForCall = (callIndex: number): string => {
+  const idempotencyKey = describeMediaMock.mock.calls[callIndex]?.[1]?.idempotencyKey;
+  if (typeof idempotencyKey !== 'string') {
+    throw new Error(`Expected describeMedia call ${callIndex + 1} to include an idempotency key.`);
+  }
+  return idempotencyKey;
+};
+
 const describeErrorFromFixture = (fixture: { status: number; detail: object }): Error =>
   new Error(`Request to .../describe failed (${fixture.status}): ${JSON.stringify({ detail: fixture.detail })}`);
 
@@ -59,7 +67,7 @@ describe('useDescribeMedia', () => {
     result.current.mutate(42);
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(describeMediaMock).toHaveBeenCalledWith(42);
+    expect(describeMediaMock).toHaveBeenCalledWith(42, { idempotencyKey: expect.any(String) });
     expect(result.current.data).toEqual(sample);
   });
 
@@ -73,7 +81,11 @@ describe('useDescribeMedia', () => {
     result.current.mutate({ mediaId: 42, writeAlt: true });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(describeMediaMock).toHaveBeenCalledWith(42, { writeAlt: true, force: false });
+    expect(describeMediaMock).toHaveBeenCalledWith(42, {
+      writeAlt: true,
+      force: false,
+      idempotencyKey: expect.any(String),
+    });
     expect(result.current.data?.alt_text_write?.status).toBe('written');
   });
 
@@ -101,12 +113,15 @@ describe('useDescribeMedia', () => {
       operationId: 'op-lease-1',
       warmupEtaSeconds: 12,
     });
-    expect(describeMediaMock).toHaveBeenCalledWith(42);
+    expect(describeMediaMock).toHaveBeenCalledWith(42, { idempotencyKey: expect.any(String) });
 
     result.current.retry();
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
+    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, {
+      operationId: 'op-lease-1',
+      idempotencyKey: expect.any(String),
+    });
     expect(result.current.warming).toBeNull();
     expect(result.current.timing).toEqual((suggestStates.success_with_timing as VisualFactsResponse).timing);
   });
@@ -156,8 +171,12 @@ describe('useDescribeMedia', () => {
     result.current.retry();
 
     await waitFor(() => expect(result.current.isError).toBe(true));
-    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
-    expect(describeMediaMock).toHaveBeenNthCalledWith(3, 42);
+    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, {
+      operationId: 'op-lease-1',
+      idempotencyKey: expect.any(String),
+    });
+    expect(describeMediaMock).toHaveBeenNthCalledWith(3, 42, { idempotencyKey: expect.any(String) });
+    expect(idempotencyKeyForCall(2)).toBe(idempotencyKeyForCall(1));
     expect(describeMediaMock).toHaveBeenCalledTimes(3);
     expect(result.current.warming).toBeNull();
     expect(describeApi.resolveDescribeErrorCode(result.current.error)).toBe(
@@ -178,7 +197,7 @@ describe('useDescribeMedia', () => {
     result.current.retry();
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(describeMediaMock).toHaveBeenNthCalledWith(3, 42);
+    expect(describeMediaMock).toHaveBeenNthCalledWith(3, 42, { idempotencyKey: expect.any(String) });
     expect(result.current.warming).toBeNull();
     expect(result.current.timing).toBeNull();
   });
@@ -287,6 +306,7 @@ describe('useDescribeMedia warming auto-retry', () => {
       warmupEtaSeconds: 12,
     });
     expect(describeMediaMock).toHaveBeenCalledTimes(1);
+    const actionIdempotencyKey = idempotencyKeyForCall(0);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(11_999);
@@ -297,7 +317,10 @@ describe('useDescribeMedia warming auto-retry', () => {
       await vi.advanceTimersByTimeAsync(1);
     });
     await flushMicrotasks();
-    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
+    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, {
+      operationId: 'op-lease-1',
+      idempotencyKey: actionIdempotencyKey,
+    });
     expect(result.current.isSuccess).toBe(true);
     expect(result.current.warming).toBeNull();
     expect(result.current.warmingTimedOut).toBe(false);
@@ -319,12 +342,16 @@ describe('useDescribeMedia warming auto-retry', () => {
     });
     await flushMicrotasks();
     expect(describeMediaMock).toHaveBeenCalledTimes(1);
+    const actionIdempotencyKey = idempotencyKeyForCall(0);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(12_000);
     });
     await flushMicrotasks();
-    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
+    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, {
+      operationId: 'op-lease-1',
+      idempotencyKey: actionIdempotencyKey,
+    });
     expect(result.current.warming).not.toBeNull();
     expect(result.current.warmingTimedOut).toBe(false);
 
@@ -332,7 +359,10 @@ describe('useDescribeMedia warming auto-retry', () => {
       await vi.advanceTimersByTimeAsync(12_000);
     });
     await flushMicrotasks();
-    expect(describeMediaMock).toHaveBeenNthCalledWith(3, 42, { operationId: 'op-lease-1' });
+    expect(describeMediaMock).toHaveBeenNthCalledWith(3, 42, {
+      operationId: 'op-lease-1',
+      idempotencyKey: actionIdempotencyKey,
+    });
     expect(result.current.isSuccess).toBe(true);
   });
 
@@ -374,7 +404,7 @@ describe('useDescribeMedia warming auto-retry', () => {
       result.current.retry();
     });
     await flushMicrotasks();
-    expect(describeMediaMock).toHaveBeenLastCalledWith(42);
+    expect(describeMediaMock).toHaveBeenLastCalledWith(42, { idempotencyKey: expect.any(String) });
     expect(result.current.warmingTimedOut).toBe(false);
   });
 
@@ -419,7 +449,10 @@ describe('useDescribeMedia warming auto-retry', () => {
       await vi.advanceTimersByTimeAsync(1);
     });
     await flushMicrotasks();
-    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
+    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, {
+      operationId: 'op-lease-1',
+      idempotencyKey: expect.any(String),
+    });
   });
 
   it('uses parsed Retry-After when the warmup ETA is absent', async () => {
@@ -444,7 +477,10 @@ describe('useDescribeMedia warming auto-retry', () => {
       await vi.advanceTimersByTimeAsync(1);
     });
     await flushMicrotasks();
-    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
+    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, {
+      operationId: 'op-lease-1',
+      idempotencyKey: expect.any(String),
+    });
   });
 
   it('starts a fresh operation from timeout retry (no operation_id)', async () => {
@@ -472,7 +508,7 @@ describe('useDescribeMedia warming auto-retry', () => {
       result.current.mutate(42);
     });
     await flushMicrotasks();
-    expect(describeMediaMock).toHaveBeenLastCalledWith(42);
+    expect(describeMediaMock).toHaveBeenLastCalledWith(42, { idempotencyKey: expect.any(String) });
     expect(result.current.isSuccess).toBe(true);
     expect(result.current.warmingTimedOut).toBe(false);
   });

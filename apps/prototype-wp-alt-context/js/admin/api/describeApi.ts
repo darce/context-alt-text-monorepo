@@ -1444,13 +1444,13 @@ export const parseDescribeRunResponse = (payload: unknown): DescribeRunResponse 
 
 export const submitBulkDescribeRun = async (
   mediaIds: number[],
-  idempotencyKey?: string,
+  idempotencyKey: string,
 ): Promise<DescribeRunSubmitResponse> => {
   const payload = await fetchRequiredApi<unknown>(getEndpoint('recognitionDescribeRuns'), {
     method: 'POST',
     body: {
       media_ids: mediaIds,
-      ...(idempotencyKey !== undefined ? { idempotency_key: idempotencyKey } : {}),
+      idempotency_key: idempotencyKey,
     },
     restNonce: getConfig().nonce,
     // WP loads attachment bytes and forwards a multipart body under the proxy's

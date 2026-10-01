@@ -10,6 +10,7 @@ require_once __DIR__ . '/../settings/class-recognition-policy.php';
 require_once __DIR__ . '/class-probe-outcome.php';
 require_once __DIR__ . '/class-abstract-recognition-proxy-controller.php';
 require_once __DIR__ . '/class-recognition-endpoint-resolver.php';
+require_once __DIR__ . '/class-recognition-api-key-store.php';
 require_once __DIR__ . '/class-tenant-identity.php';
 require_once __DIR__ . '/services/class-description-budget-service.php';
 require_once __DIR__ . '/services/class-tenant-local-rekey-service.php';
@@ -211,10 +212,12 @@ class SettingsController {
 				'api_key_set'               => '' !== $key_resolution['value'],
 				'api_key_last4'             => $this->mask_key( $key_resolution['value'] ),
 				'key_source'                => $key_resolution['source'],
-				'api_key_storage_notice'    => 'option' === $key_resolution['source']
-					? 'This key uses the plaintext WordPress options compatibility fallback. '
-						. 'Prefer the ACX_RECOGNITION_API_KEY PHP constant or environment variable, or the acx_recognition_api_key filter.'
-					: null,
+				'api_key_storage_notice'    => match ( $key_resolution['source'] ) {
+					'option' => 'This key is stored encrypted with a key derived from the site\'s auth salt. '
+						. 'Prefer the ACX_RECOGNITION_API_KEY PHP constant or environment variable, or the acx_recognition_api_key filter.',
+					'unreadable' => 'The stored key cannot be read, for example after the site salts changed, and must be re-entered.',
+					default => null,
+				},
 				'tenant_id'                 => $tenant_resolution['value'],
 				'tenant_id_source'          => $tenant_resolution['source'],
 				'tenant_paired'             => TenantIdentity::is_paired(),
@@ -272,10 +275,26 @@ class SettingsController {
 				// Do not create a plaintext shadow copy of a deployment-managed key.
 				$failed[] = 'api_key';
 			} else {
-				// Backward-compatible fallback only: this option is plaintext in the
-				// WordPress database. Prefer a constant, environment variable, or filter.
-				update_option( 'acx_recognition_api_key', $key );
-				if ( $this->option_matches_intended( 'acx_recognition_api_key', $key ) ) {
+				if ( ! RecognitionApiKeyStore::is_available() ) {
+					return new WP_Error(
+						'api_key_encryption_unavailable',
+						'The key was not saved; use the ACX_RECOGNITION_API_KEY constant or environment variable.',
+						array( 'status' => 500 )
+					);
+				}
+
+				try {
+					$encrypted_key = RecognitionApiKeyStore::encrypt( $key );
+				} catch ( \Throwable $error ) {
+					return new WP_Error(
+						'api_key_encryption_unavailable',
+						'The key was not saved; use the ACX_RECOGNITION_API_KEY constant or environment variable.',
+						array( 'status' => 500 )
+					);
+				}
+
+				update_option( RecognitionApiKeyStore::OPTION_NAME, $encrypted_key );
+				if ( $this->option_matches_intended( RecognitionApiKeyStore::OPTION_NAME, $key ) ) {
 					$saved[] = 'api_key';
 				} else {
 					$failed[] = 'api_key';
@@ -477,6 +496,9 @@ class SettingsController {
 	private function option_matches_intended( string $option, $intended ): bool {
 		// null default: missing option is distinguishable from stored empty string.
 		$stored = get_option( $option, null );
+		if ( RecognitionApiKeyStore::OPTION_NAME === $option ) {
+			return RecognitionApiKeyStore::decrypt( $stored ) === $intended;
+		}
 		if ( is_int( $intended ) ) {
 			return is_numeric( $stored ) && (int) $stored === $intended;
 		}
@@ -1111,9 +1133,15 @@ class SettingsController {
 			return array( 'value' => $filter, 'source' => 'filter' );
 		}
 
-		$option = trim( (string) get_option( 'acx_recognition_api_key', '' ) );
-		if ( '' !== $option ) {
-			return array( 'value' => $option, 'source' => 'option' );
+		$stored_option = get_option( RecognitionApiKeyStore::OPTION_NAME, '' );
+		if ( null !== $stored_option && false !== $stored_option && '' !== $stored_option ) {
+			$option = RecognitionApiKeyStore::decrypt( $stored_option );
+			if ( null === $option ) {
+				return array( 'value' => '', 'source' => 'unreadable' );
+			}
+			if ( '' !== trim( $option ) ) {
+				return array( 'value' => $option, 'source' => 'option' );
+			}
 		}
 
 		return array( 'value' => '', 'source' => 'default' );

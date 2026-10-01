@@ -18,6 +18,7 @@ from scripts.bench.stack_pair import BenchError, StackEndpoint, StackPairConfig
 _DIM_TOKEN = re.compile(r"pgvector_dimension=(\d+)")
 _RUNTIME_FINGERPRINT_TOKEN = re.compile(r"(?:^|;\s*)numeric_runtime_fingerprint=(\{.*\})$")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+_COMPARISON_TOKEN = re.compile(r"[0-9a-f]{64}")
 PRE_RUN_RESET_EVIDENCE_ENV = "ACX_BENCH_PRE_RUN_RESET_EVIDENCE_FILE"
 # Keep a reset attestation close to its run so tenant state cannot drift.
 PRE_RUN_RESET_EVIDENCE_MAX_AGE = timedelta(hours=1)
@@ -326,11 +327,23 @@ def _parse_numeric_runtime_fingerprint(body: dict[str, Any]) -> dict[str, Any]:
         raise PreflightError("opencv_runtime_unreported", "numeric runtime fingerprint is invalid JSON") from exc
     if not isinstance(fingerprint, dict):
         raise PreflightError("opencv_runtime_unreported", "numeric runtime fingerprint must be an object")
-    required = ("opencv_version", "opencv_major", "onnxruntime_version", "numpy_version")
+    version_keys = (
+        "opencv_version",
+        "onnxruntime_version",
+        "numpy_version",
+        "scipy_version",
+        "pillow_version",
+        "hdbscan_version",
+        "pgvector_version",
+    )
+    required = (*version_keys, "opencv_major", "comparison_token")
     if any(key not in fingerprint for key in required):
         raise PreflightError("opencv_runtime_unreported", "numeric runtime fingerprint is incomplete")
-    if any(not isinstance(fingerprint[key], str) or not fingerprint[key] for key in required if key != "opencv_major"):
+    if any(not isinstance(fingerprint[key], str) or not fingerprint[key] for key in version_keys):
         raise PreflightError("opencv_runtime_unreported", "numeric runtime fingerprint has an invalid version")
+    comparison_token = fingerprint["comparison_token"]
+    if not isinstance(comparison_token, str) or _COMPARISON_TOKEN.fullmatch(comparison_token) is None:
+        raise PreflightError("opencv_runtime_unreported", "numeric runtime fingerprint has an invalid comparison token")
     major = fingerprint["opencv_major"]
     if type(major) is not int or major <= 0:
         raise PreflightError("opencv_runtime_unreported", "numeric runtime fingerprint has an invalid OpenCV major")

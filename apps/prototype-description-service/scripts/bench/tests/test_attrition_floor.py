@@ -145,7 +145,7 @@ def test_attrition_keeps_all_failed_conditions_by_leg(tmp_path: Path) -> None:
     assert 2 not in accepted.manifest_media_ids
     assert accepted.attrition_failures_by_media[2] == {
         stack_a: ["ingest", "analyze"],
-        stack_b: ["roster"],
+        stack_b: ["ingest", "roster"],
     }
 
     from scripts.bench.score_report import write_attrition
@@ -264,7 +264,7 @@ def test_analyze_failure_is_not_ingest_attrition(tmp_path: Path) -> None:
     _ = attrition
 
 
-def test_join_attrition_when_ingest_row_missing(tmp_path: Path) -> None:
+def test_missing_ingest_row_is_ingest_attrition(tmp_path: Path) -> None:
     run_dir = _two_leg_run(tmp_path, media_ids=[1, 2], zero_export=set())
     for stack in ("acx-dev-insightface", "acx-dev-fir"):
         path = run_dir / "legs" / stack / "items.jsonl"
@@ -273,7 +273,12 @@ def test_join_attrition_when_ingest_row_missing(tmp_path: Path) -> None:
         path.write_text("\n".join(json.dumps(r) for r in recs) + "\n", encoding="utf-8")
     accepted = compute_accepted_set(run_dir)
     assert 2 not in accepted.manifest_media_ids
-    assert accepted.attrition_join >= 1
+    assert accepted.attrition_ingest_analyze == 1
+    assert accepted.attrition_join == 0
+    assert accepted.attrition_failures_by_media[2] == {
+        "acx-dev-insightface": ["ingest", "roster"],
+        "acx-dev-fir": ["ingest", "roster"],
+    }
     from scripts.bench.score_report import write_attrition
     from scripts.bench.corpus import ItemOutcomeStore, load_bench_manifest
 
@@ -292,7 +297,7 @@ def test_join_attrition_when_ingest_row_missing(tmp_path: Path) -> None:
     write_attrition(run_dir, accepted, manifest, records_by)
     payload = json.loads((run_dir / "score" / "attrition.json").read_text())
     missing = {row["manifest_media_id"]: row["phase"] for row in payload["missing"]}
-    assert missing.get(2) == "roster"
+    assert missing.get(2) == "ingest"
 
 
 def test_baseline_superset_checked_false_unless_run_asserted(tmp_path: Path) -> None:

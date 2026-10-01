@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 import uuid
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import numpy as np
@@ -15,6 +17,36 @@ from recognition.application.settings.clustering import ClusteringSettings
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import ClusterRepository, MemberRepository
+
+
+def test_centroid_sql_quality_weights_and_caps_each_media_item_once() -> None:
+    """The materialized view weights quality, then averages one vector per media item."""
+    migration = (
+        Path(__file__).resolve().parents[3]
+        / "db"
+        / "migrations"
+        / "versions"
+        / "001_identity_schema.py"
+    )
+    migration_source = migration.read_text(encoding="utf-8")
+    view_match = re.search(
+        r"CREATE MATERIALIZED VIEW IF NOT EXISTS mv_identity_cluster_centroids AS"
+        r"(?P<query>.*?)\n\s*\"\"\"",
+        migration_source,
+        flags=re.DOTALL,
+    )
+
+    assert view_match is not None, "centroid materialized view SQL must be present"
+    query = view_match.group("query")
+
+    assert "GREATEST(0.0, LEAST(1.0, COALESCE(mr.quality_score, 1.0)))" in query
+    assert re.search(
+        r"media_embeddings AS \(.*?GROUP BY cluster_id, tenant_id, media_id",
+        query,
+        flags=re.DOTALL,
+    )
+    assert "SUM(unit_embedding * quality_weight) / SUM(quality_weight)" in query
+    assert "AVG(me.media_embedding)" in query
 
 
 @pytest.fixture

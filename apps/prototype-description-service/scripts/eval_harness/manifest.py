@@ -502,10 +502,11 @@ class LabelSource(StrEnum):
 
 
 class FaceBoxSource(StrEnum):
-    """Supported region metadata sources for independently checked GT boxes."""
+    """Supported sources for independently checked ground-truth regions."""
 
     IPTC = "iptc"
     MWG = "mwg"
+    OPERATOR = "operator"  # Human-drawn regions are independent of detector proposals.
 
 
 class LabelDecision(StrEnum):
@@ -883,7 +884,8 @@ class LabelLineage(BaseModel):
 
 class FaceBox(BaseModel):
     """A ground-truth face region: normalized centre (x, y) + size (w, h) in 0..1, an
-    optional confirmed identity name, and a supported region source (iptc | mwg).
+    optional confirmed identity name, and a supported region source (iptc | mwg |
+    operator, where operator means human-drawn).
 
     Persisted for ALL curated faces — named people AND anonymous strangers
     (``name=None``) — so a face-detection bake-off (FIR-1) has box-level ground truth,

@@ -152,7 +152,7 @@ def _submit(client, media_ids, *, tenant=TENANT_ID, images_for=None):
     """Multipart submit: tenant_id + media_ids JSON + one image_<id> file part each."""
     parts = media_ids if images_for is None else images_for
     files = [(f"image_{m}", (f"{m}.png", b"\x89PNG\r\n\x1a\n", "image/png")) for m in parts]
-    data = {"tenant_id": str(tenant), "media_ids": json.dumps(media_ids)}
+    data = {"tenant_id": str(tenant), "media_ids": json.dumps(media_ids), "idempotency_key": uuid.uuid4().hex}
     return client.post("/scene/describe/run", data=data, files=files)
 
 
@@ -443,7 +443,7 @@ def test_submit_rejects_oversized_image_part(monkeypatch):
     monkeypatch.setenv("ACX_DESCRIPTION_MAX_IMAGE_BYTES", "10")
     with _client() as (client, _):
         files = [("image_1", ("1.png", b"x" * 64, "image/png"))]
-        data = {"tenant_id": str(TENANT_ID), "media_ids": json.dumps([1])}
+        data = {"tenant_id": str(TENANT_ID), "media_ids": json.dumps([1]), "idempotency_key": uuid.uuid4().hex}
         resp = client.post("/scene/describe/run", data=data, files=files)
     assert resp.status_code == 413, resp.text
 
@@ -451,7 +451,7 @@ def test_submit_rejects_oversized_image_part(monkeypatch):
 def test_submit_rejects_unsupported_content_type():
     with _client() as (client, _):
         files = [("image_1", ("1.bin", b"payload", "application/octet-stream"))]
-        data = {"tenant_id": str(TENANT_ID), "media_ids": json.dumps([1])}
+        data = {"tenant_id": str(TENANT_ID), "media_ids": json.dumps([1]), "idempotency_key": uuid.uuid4().hex}
         resp = client.post("/scene/describe/run", data=data, files=files)
     assert resp.status_code == 415, resp.text
 

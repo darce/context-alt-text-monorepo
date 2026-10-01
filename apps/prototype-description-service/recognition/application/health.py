@@ -148,12 +148,12 @@ def sha256_model_bundle(paths: Sequence[Path], *, cache_dir: Path) -> str | None
 
 
 def _with_numeric_runtime_fingerprint(result: CheckResult) -> CheckResult:
-    """Expose the canonical numeric-runtime stamp on detailed model health.
+    """Expose every numeric-relevant distribution on detailed model health.
 
     /health/detailed already includes ``model_cache.detail``. Keeping the
     machine-readable fingerprint there lets remote benchmark preflight attest
-    the service's installed stack without importing runtime packages on the
-    operator's machine.
+    the service's full numeric-relevant installed stack without importing
+    runtime packages on the operator's machine.
     """
     try:
         from recognition.infrastructure.face_pipeline import numeric_runtime_fingerprint
@@ -164,6 +164,11 @@ def _with_numeric_runtime_fingerprint(result: CheckResult) -> CheckResult:
             "opencv_major": fingerprint.opencv_major,
             "onnxruntime_version": fingerprint.onnxruntime_version,
             "numpy_version": fingerprint.numpy_version,
+            "scipy_version": fingerprint.scipy_version,
+            "pillow_version": fingerprint.pillow_version,
+            "hdbscan_version": fingerprint.hdbscan_version,
+            "pgvector_version": fingerprint.pgvector_version,
+            "comparison_token": fingerprint.comparability_token,
         }
         encoded = json.dumps(values, sort_keys=True, separators=(",", ":"))
         detail = f"{result.detail}; numeric_runtime_fingerprint={encoded}"

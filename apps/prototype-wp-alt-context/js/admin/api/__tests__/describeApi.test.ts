@@ -28,6 +28,7 @@ import {
   resolveDescribeErrorMessage,
   type DescriptionCandidateRow,
   type DescribeRunItemsResponse,
+  submitBulkDescribeRun,
 } from '../describeApi';
 
 const mockConfig = {
@@ -186,6 +187,15 @@ describe('describeApi', () => {
       body: { media_id: 42, write_alt: true, force: true },
       restNonce: 'nonce-xyz',
     });
+  });
+
+  it('POSTs the originator idempotency key for a single describe action', async () => {
+    fetchApiMock.mockResolvedValue(sampleResponse);
+
+    await describeMedia(42, { idempotencyKey: 'single-action-key-0001' });
+
+    const [, options] = fetchApiMock.mock.calls[0];
+    expect(options?.body).toEqual({ media_id: 42, idempotency_key: 'single-action-key-0001' });
   });
 
   it('rejects a describe response that omits a required contract field', async () => {
@@ -844,6 +854,22 @@ describe('parseDescribeRunResponse GPUFLOW timing', () => {
         timing: { ...GPUFLOW_RUN_ITEMS_FIXTURE.run.timing, items_timed: 2.5 },
       }),
     ).toThrow(/response\.timing\.items_timed/);
+  });
+});
+
+describe('submitBulkDescribeRun idempotency', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('POSTs the originator idempotency key with the run media ids', async () => {
+    fetchApiMock.mockResolvedValue(GPUFLOW_RUN_ITEMS_FIXTURE.run);
+
+    await submitBulkDescribeRun([101, 202], 'run-action-key-0001');
+
+    const [endpoint, options] = fetchApiMock.mock.calls[0];
+    expect(endpoint).toBe('https://example.com/acx/v1/recognition/describe/runs');
+    expect(options?.body).toEqual({ media_ids: [101, 202], idempotency_key: 'run-action-key-0001' });
   });
 });
 

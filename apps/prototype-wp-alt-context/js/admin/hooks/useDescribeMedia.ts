@@ -11,6 +11,7 @@ import {
   type DescribeOperationTiming,
   type VisualFactsResponse,
 } from '../api/describeApi';
+import { createDescribeIdempotencyKey } from '../api/describeIdempotencyKey';
 import { clampRetryAfterMs } from '../utils/retryAfter';
 
 export type DescribeMediaMutationInput =
@@ -65,12 +66,10 @@ const mediaIdOf = (input: DescribeMediaMutationInput): number => (typeof input =
 const writeOptionsOf = (input: DescribeMediaMutationInput): DescribeMediaWriteOptions =>
   typeof input === 'number' ? {} : { writeAlt: input.writeAlt, force: input.force ?? false };
 
-const createDescribeIdempotencyKey = (): string => {
-  if (typeof globalThis.crypto?.randomUUID === 'function') {
-    return globalThis.crypto.randomUUID();
+const assertDescribeActionIdempotencyKey: (value: string | null) => asserts value is string = (value) => {
+  if (value === null) {
+    throw new Error('Describe action idempotency key was not initialized.');
   }
-
-  return `describe-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
 };
 
 const isMismatchOrExpired = (code: string | null): boolean =>
@@ -149,9 +148,7 @@ export const useDescribeMedia = () => {
     mutationFn: async (input: DescribeMediaMutationInput) => {
       lastInputRef.current = input;
       const idempotencyKey = actionIdempotencyKeyRef.current;
-      if (idempotencyKey === null) {
-        throw new Error('Describe action idempotency key was not initialized.');
-      }
+      assertDescribeActionIdempotencyKey(idempotencyKey);
       try {
         return await describeWithLease(input, leaseOperationIdRef.current, idempotencyKey);
       } catch (error) {

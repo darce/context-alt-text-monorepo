@@ -1,0 +1,82 @@
+{
+  "lane": "a1h-portal1",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/api/test_app1_read_route_census.py recognition/tests/api/test_demo_quota_clustering_routes.py recognition/tests/unit/test_app1_billing_namespace.py recognition/tests/unit/test_app1_billing_provider.py recognition/tests/unit/test_app1_billing_reconcile.py recognition/tests/unit/test_app1_billing_reconcile_fixwave.py",
+      "result": "not_run",
+      "detail": "uv stopped before pytest: failed to remove the lane environment's alembic entry with Read-only file system (os error 30)."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/api/test_app1_read_route_census.py recognition/tests/api/test_demo_quota_clustering_routes.py recognition/tests/unit/test_app1_billing_namespace.py recognition/tests/unit/test_app1_billing_provider.py recognition/tests/unit/test_app1_billing_reconcile.py recognition/tests/unit/test_app1_billing_reconcile_fixwave.py",
+      "result": "fail",
+      "detail": "pytest emitted Timeout (0:04:00)! in test_app1_read_route_census.py::test_missing_api_key_denied_under_production_auth, blocked at test_app1_read_route_census.py:213 during client.get; interrupted before a suite summary."
+    },
+    {
+      "command": "pytest -p no:cacheprovider -q recognition/tests/integration/test_app1_billing_namespace_postgres.py",
+      "result": "not_run",
+      "detail": "PostgreSQL is unavailable in this sandbox per the brief; inspected assertions at test_postgres_namespace_isolation_legacy_fail_closed_leases_and_rls and related tests."
+    },
+    {
+      "command": "pytest -p no:cacheprovider -q recognition/tests/integration/test_app1_billing_reconcile_fixwave_postgres.py",
+      "result": "not_run",
+      "detail": "PostgreSQL is unavailable in this sandbox per the brief; inspected assertions for checkout lookup closure, projection mismatch, and missing event position."
+    },
+    {
+      "command": "pytest -p no:cacheprovider -q recognition/tests/integration/test_app1_billing_reconcile_postgres.py",
+      "result": "not_run",
+      "detail": "PostgreSQL is unavailable in this sandbox per the brief; inspected assertions for commit-before-provider, stale leases, and namespace isolation."
+    },
+    {
+      "command": "pytest -p no:cacheprovider -q recognition/tests/integration/test_app1_billing_recovery_postgres.py",
+      "result": "not_run",
+      "detail": "PostgreSQL is unavailable in this sandbox per the brief; inspected assertions for recovery fencing, page idempotency, and bypass restoration."
+    },
+    {
+      "command": "pytest -p no:cacheprovider -q recognition/tests/integration/test_app1_claim_onboarding_postgres.py",
+      "result": "not_run",
+      "detail": "PostgreSQL is unavailable in this sandbox per the brief; inspected assertions for atomic invitation, identity, grant, audit, replay, rollback, concurrency, and tenant isolation."
+    },
+    {
+      "command": "pytest -p no:cacheprovider -q recognition/tests/integration/test_app1_operator_entitlement_postgres.py",
+      "result": "not_run",
+      "detail": "PostgreSQL is unavailable in this sandbox per the brief; inspected the beta-versus-paid and tenant-separation assertions."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 15582,
+      "finding_id": "HG-56",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "recognition/domain/portal_contracts.py:173 declares invitation_token: str and line 175 documents single-use invitation redemption. The implementation signature test covers SqlAlchemyPortalIdentityService, but no test asserts the Protocol signature itself.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 15471,
+      "finding_id": "APP1-W1-S2-01",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "recognition/application/services/portal_identity_service.py:146 requires invitation_token and line 161 forwards it to repository.claim; recognition/infrastructure/repositories/portal_identity_repository.py:168 hashes the token and lines 200-204 derive tenant_id from the invitation. No caller-supplied tenant id controls the binding.",
+      "guard_test": "recognition/tests/unit/test_app1_portal_claim_router.py::test_claim_onboarding_is_a_compatible_extension_of_claim_tenant (asserts tenant_id is absent from the concrete claim signature); recognition/tests/unit/test_app1_portal_identity_service.py::test_unknown_invitation_token_is_refused_without_a_claim"
+    },
+    {
+      "db_id": 15466,
+      "finding_id": "APP1-W0-L0-07",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "recognition/domain/portal_contracts.py:381 requires provider idempotency_key and line 382 carries attempt_id; recognition/interface_adapters/http/routers/portal.py:847 reads the client key and passes it through replay/create. CheckoutService stores and reuses the attempt key for provider calls.",
+      "guard_test": "recognition/tests/unit/test_app1_portal_checkout_router.py::test_idempotent_replay_does_not_call_provider_again; recognition/tests/unit/test_app1_checkout_service.py::test_same_client_key_and_fingerprint_replays_without_second_vendor_call; recognition/tests/unit/test_app1_billing_provider.py::test_h5_checkout_idempotency_key_is_caller_owned_not_url_hash"
+    },
+    {
+      "db_id": 15469,
+      "finding_id": "APP1-W0-L0-10",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "recognition/domain/portal_contracts.py:191 still types grant_beta period_start as datetime without runtime awareness validation. The concrete path normalizes a naive value as UTC at recognition/application/services/tenant_entitlement_service.py:55-58 before persistence, so the stated session-local shift is avoided, but contract rejection and a red guard test are absent.",
+      "guard_test": ""
+    }
+  ],
+  "new_findings": [],
+  "summary": "Rechecked 2 HOLDS and 2 PARTIAL; no new findings. The prescribed suite failed on a 4-minute timeout in test_missing_api_key_denied_under_production_auth and was interrupted; all six PostgreSQL integration cases were not run because this sandbox has no database."
+}

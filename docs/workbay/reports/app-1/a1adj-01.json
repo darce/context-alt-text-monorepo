@@ -1,0 +1,56 @@
+{
+  "lane": "a1adj-01",
+  "base": "8b9b9770644f8ad88ce1788a1be5d995abe5071f",
+  "results": [
+    {
+      "db_id": 16993,
+      "finding_id": "FAOPPD-5b7dfdb81cb08389-H-3ba315d597f6e47df384ac24",
+      "task": "APP-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-wp-alt-context/js/admin/api/describeApi.ts:1453 - POST body includes `idempotency_key: idempotencyKey`; apps/prototype-wp-alt-context/js/admin/api/__tests__/describeApi.test.ts:872 - assertion requires media_ids and the originator key in the body; apps/prototype-wp-alt-context/js/admin/hooks/useBulkDescribe.ts:128 - creates a key per action; apps/prototype-wp-alt-context/js/admin/hooks/useActivityStatus.ts:434 - warmup resubmission passes its key.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-wp-alt-context/js/admin/api/describeApi.ts",
+        "apps/prototype-wp-alt-context/js/admin/hooks/useBulkDescribe.ts",
+        "apps/prototype-wp-alt-context/js/admin/hooks/useActivityStatus.ts"
+      ],
+      "test_file": "apps/prototype-wp-alt-context/js/admin/api/__tests__/describeApi.test.ts",
+      "size": "M",
+      "related": [],
+      "fix_hint": "Keep the bulk helper's key parameter required and preserve the generated action key for retries and warmup resubmissions."
+    },
+    {
+      "db_id": 16989,
+      "finding_id": "FAOPPD-5b7dfdb81cb08389-H-7b9fe976dc2a15f6c3f736d7",
+      "task": "APP-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-wp-alt-context/src/api/class-public-demo-describe-controller.php:171 - validates the request key before reserve_daily_capacity at :216; apps/prototype-wp-alt-context/tests/Unit/PublicDemoDescribeControllerTest.php:702 - missing-key request leaves `acx_public_demo_inflight` unset; :703 - it also leaves `acx_public_demo_daily_usage` unset.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-wp-alt-context/src/api/class-public-demo-describe-controller.php"
+      ],
+      "test_file": "apps/prototype-wp-alt-context/tests/Unit/PublicDemoDescribeControllerTest.php",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Keep idempotency validation before all shared-capacity reservations and retain cleanup for defensive pipeline validation errors."
+    },
+    {
+      "db_id": 16994,
+      "finding_id": "FAOPPD-5b7dfdb81cb08389-M-2fe90cb7417ec13e035e9816",
+      "task": "APP-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-wp-alt-context/src/api/class-public-demo-describe-controller.php:111 - route schema sets `required` to false; :457 - callback falls back to the `Idempotency-Key` header; apps/prototype-wp-alt-context/tests/Unit/PublicDemoDescribeControllerTest.php:145 - asserts the argument remains optional; :164 - header-only request forwards the key unchanged.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-wp-alt-context/src/api/class-public-demo-describe-controller.php"
+      ],
+      "test_file": "apps/prototype-wp-alt-context/tests/Unit/PublicDemoDescribeControllerTest.php",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Keep the REST argument optional and resolve a body key first with the Idempotency-Key header as fallback."
+    }
+  ]
+}

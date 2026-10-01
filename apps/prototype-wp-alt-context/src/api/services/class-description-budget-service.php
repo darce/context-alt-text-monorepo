@@ -12,6 +12,9 @@ use function get_option;
 
 class DescriptionBudgetService {
 	private const MAX_ATTEMPTS_OPTION = 'acx_description_budget_max_attempts';
+	public const DEFAULT_MAX_ATTEMPTS = 1000;
+	private const REQUEST_RATE_LIMIT = 30;
+	private const REQUEST_RATE_WINDOW_SECONDS = 60;
 
 	private DescriptionUsageRepository $repository;
 
@@ -23,7 +26,7 @@ class DescriptionBudgetService {
 	 * @return array<string,mixed>
 	 */
 	public function check_budget(): array {
-		$limit = (int) get_option( self::MAX_ATTEMPTS_OPTION, -1 );
+		$limit = (int) get_option( self::MAX_ATTEMPTS_OPTION, self::DEFAULT_MAX_ATTEMPTS );
 		if ( $limit < 0 ) {
 			return array(
 				'allowed' => true,
@@ -48,6 +51,91 @@ class DescriptionBudgetService {
 			'limit'   => $limit,
 			'used'    => $used,
 		);
+	}
+
+	/**
+	 * Enforce a per-user fixed-window limit for expensive recognition requests.
+	 *
+	 * The counter update runs under a MySQL named lock so concurrent requests
+	 * cannot lose increments and exceed the configured burst limit.
+	 *
+	 * @return array<string,mixed>
+	 */
+	public function check_request_rate_limit( int $user_id ): array {
+		if ( $user_id <= 0 ) {
+			return array(
+				'allowed' => false,
+				'code'    => 'recognition_rate_limit_unavailable',
+				'message' => 'Recognition request rate limit could not identify the caller.',
+				'status'  => 503,
+			);
+		}
+
+		$window_number = intdiv( time(), self::REQUEST_RATE_WINDOW_SECONDS );
+		$transient_key = 'acx_recognition_rate_' . md5( $user_id . ':' . $window_number );
+		$lock_name     = 'acx_rl_' . md5( $transient_key );
+		if ( ! $this->acquire_rate_limit_lock( $lock_name ) ) {
+			return array(
+				'allowed' => false,
+				'code'    => 'recognition_rate_limit_unavailable',
+				'message' => 'Recognition request rate limit is temporarily unavailable.',
+				'status'  => 503,
+			);
+		}
+
+		try {
+			$used        = (int) get_transient( $transient_key );
+			$window_ends = ( $window_number + 1 ) * self::REQUEST_RATE_WINDOW_SECONDS;
+			$retry_after = max( 1, $window_ends - time() );
+
+			if ( $used >= self::REQUEST_RATE_LIMIT ) {
+				return array(
+					'allowed'     => false,
+					'code'        => 'recognition_rate_limit_exceeded',
+					'message'     => 'Recognition request rate limit exceeded.',
+					'status'      => 429,
+					'limit'       => self::REQUEST_RATE_LIMIT,
+					'used'        => $used,
+					'retry_after' => $retry_after,
+				);
+			}
+
+			if ( ! set_transient( $transient_key, $used + 1, $retry_after ) ) {
+				return array(
+					'allowed' => false,
+					'code'    => 'recognition_rate_limit_unavailable',
+					'message' => 'Recognition request rate limit could not be recorded.',
+					'status'  => 503,
+				);
+			}
+
+			return array(
+				'allowed' => true,
+				'limit'   => self::REQUEST_RATE_LIMIT,
+				'used'    => $used + 1,
+			);
+		} finally {
+			$this->release_rate_limit_lock( $lock_name );
+		}
+	}
+
+	private function acquire_rate_limit_lock( string $lock_name ): bool {
+		global $wpdb;
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_var' ) || ! method_exists( $wpdb, 'prepare' ) ) {
+			return false;
+		}
+
+		$acquired = $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s, %d)', $lock_name, 1 ) );
+		return '1' === (string) $acquired;
+	}
+
+	private function release_rate_limit_lock( string $lock_name ): void {
+		global $wpdb;
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_var' ) || ! method_exists( $wpdb, 'prepare' ) ) {
+			return;
+		}
+
+		$wpdb->get_var( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
 	}
 
 	/**

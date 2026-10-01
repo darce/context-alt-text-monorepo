@@ -108,12 +108,8 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 						'description' => 'One attachment ID from the configured public demo allowlist.',
 					),
 					'idempotency_key' => array(
-						'type'        => 'string',
-						'required'    => true,
-						'minLength'   => self::IDEMPOTENCY_KEY_MIN_LENGTH,
-						'maxLength'   => self::IDEMPOTENCY_KEY_MAX_LENGTH,
-						'pattern'     => '^[A-Za-z0-9_-]+$',
-						'description' => 'Client-generated key (16-128 chars, [A-Za-z0-9_-]) for retrying one user-initiated trigger.',
+						'required'    => false,
+						'description' => 'Required client-generated key (16-128 chars, [A-Za-z0-9_-]) in the JSON or form body, or the Idempotency-Key header, for retrying one user-initiated trigger.',
 					),
 				),
 			)
@@ -238,7 +234,12 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 
 			$pipeline_request = new WP_REST_Request( 'POST', '/acx/v1/recognition/describe/runs' );
 			$pipeline_request->set_param( 'media_ids', array( $media_id ) );
-			$pipeline_request->set_param( 'idempotency_key', $idempotency_key );
+			$pipeline_request->set_body_params(
+				array_merge(
+					$pipeline_request->get_body_params(),
+					array( 'idempotency_key' => $idempotency_key )
+				)
+			);
 			// Persist uncertainty before dispatch: a timeout or worker death can
 			// hide backend acceptance and must never turn into an expired free slot.
 			if ( ! $this->mark_submission_started() ) {
@@ -438,8 +439,21 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 	 * @return string|WP_Error Validated key, or a 400/422 WP_Error.
 	 */
 	private function request_idempotency_key( WP_REST_Request $request ): string|WP_Error {
-		$raw = $request->get_param( 'idempotency_key' );
-		if ( null === $raw || ( is_string( $raw ) && '' === trim( $raw ) ) ) {
+		$has_body_key = false;
+		$raw          = null;
+		$json_params  = $request->get_json_params();
+		if ( is_array( $json_params ) && array_key_exists( 'idempotency_key', $json_params ) ) {
+			$raw          = $json_params['idempotency_key'];
+			$has_body_key = true;
+		} else {
+			$body_params = $request->get_body_params();
+			if ( array_key_exists( 'idempotency_key', $body_params ) ) {
+				$raw          = $body_params['idempotency_key'];
+				$has_body_key = true;
+			}
+		}
+
+		if ( ! $has_body_key ) {
 			$header = $request->get_header( 'Idempotency-Key' );
 			if ( is_string( $header ) && '' !== trim( $header ) ) {
 				$raw = $header;
@@ -452,7 +466,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 			return $this->invalid_idempotency_key_error();
 		}
 
-		$normalized = trim( sanitize_text_field( $raw ) );
+		$normalized = trim( $raw );
 		$length     = strlen( $normalized );
 		if (
 			$length < self::IDEMPOTENCY_KEY_MIN_LENGTH

@@ -17,6 +17,7 @@ from scripts.bench.corpus import ItemOutcomeStore, is_detection_exhaustive, load
 from scripts.bench.export_map import _unwrap_rows, load_leg_exports, require_cluster_success, to_face_metric_inputs
 from scripts.bench.stack_pair import (
     BenchError,
+    HOLM_FAMILY_ENDPOINTS,
     ROOT_KEYS,
     StackPairConfig,
     _parse_stack,
@@ -124,6 +125,7 @@ class AcceptedSet:
     baseline_superset_checked: bool = False
     computed_at: str = ""
     join_by_stack: dict[str, dict[int, dict[str, Any]]] = field(default_factory=dict)
+    attrition_failures_by_media: dict[int, dict[str, list[str]]] = field(default_factory=dict)
 
 
 def resolve_floor_count(accepted_set_floor: float | int, n_entries: int) -> int:
@@ -315,6 +317,15 @@ def holm_bonferroni(
     return out
 
 
+def _primary_claim_type(ci_lower: float, ci_upper: float, equivalence_margin: float) -> str | None:
+    """Classify a primary interval as superiority, equivalence, or unsupported."""
+    if ci_lower > 0.0 or ci_upper < 0.0:
+        return "superiority"
+    if ci_lower >= -equivalence_margin and ci_upper <= equivalence_margin:
+        return "equivalence"
+    return None
+
+
 def assign_tier(cell: str, ctx: dict[str, Any]) -> tuple[CrossbenchTier, str | None]:
     if ctx.get("count_only"):
         return CrossbenchTier.DIAGNOSTIC, None
@@ -333,8 +344,18 @@ def assign_tier(cell: str, ctx: dict[str, Any]) -> tuple[CrossbenchTier, str | N
         return CrossbenchTier.DIRECTIONAL, "frame_fir5_native"
     if ctx.get("golden150_provenance"):
         return CrossbenchTier.DIRECTIONAL, "golden150_bias_bound_pending"
-    confirmatory_eligible = bool(ctx.get("primary") or ctx.get("holm_significant", False))
-    if confirmatory_eligible:
+    if ctx.get("primary"):
+        if "bootstrap_status" not in ctx:
+            raise BenchError(
+                "bootstrap_status_missing",
+                "named confirmatory-eligible cell missing bootstrap_status",
+            )
+        if str(ctx["bootstrap_status"]) != "ok":
+            return CrossbenchTier.DIRECTIONAL, "bootstrap_status"
+        if ctx.get("primary_claim_type") not in {"superiority", "equivalence"}:
+            return CrossbenchTier.DIRECTIONAL, "primary_claim_unsupported"
+        return CrossbenchTier.CONFIRMATORY, None
+    if ctx.get("holm_significant", False):
         if "bootstrap_status" not in ctx:
             raise BenchError(
                 "bootstrap_status_missing",
@@ -589,11 +610,11 @@ def compute_accepted_set(run_dir: Path | str) -> AcceptedSet:
     attrition_ia = 0
     attrition_join = 0
     ingest_asym = 0
+    attrition_failures_by_media: dict[int, dict[str, list[str]]] = {}
     for entry in manifest.entries:
         mid = entry.media_id
         ok_both = True
-        ia_fail = False
-        join_fail = False
+        failed_by_stack: dict[str, list[str]] = {}
         present = []
         for stack_id in stacks:
             recs = records_by[stack_id]
@@ -601,25 +622,32 @@ def compute_accepted_set(run_dir: Path | str) -> AcceptedSet:
             present.append(in_roster)
             ingest_ok = _terminal_ingest_ok(recs, mid, entry=entry)
             analyze = _analyze_ok(recs, mid, entry=entry)
+            failures: list[str] = []
             if not ingest_ok or analyze is None:
-                ia_fail = True
+                if not ingest_ok:
+                    failures.append("ingest")
+                if analyze is None:
+                    failures.append("analyze")
                 ok_both = False
             if not in_roster:
-                join_fail = True
+                failures.append("roster")
                 ok_both = False
             elif analyze is not None and not _media_identity_query_succeeded(
                 identity_results_by_stack[stack_id], analyze.get("stack_media_id")
             ):
-                join_fail = True
+                failures.append("identity_query")
                 ok_both = False
+            failed_by_stack[stack_id] = failures
         if present.count(True) == 1:
             ingest_asym += 1
         if ok_both:
             accepted.append(entry)
         else:
-            if ia_fail:
+            attrition_failures_by_media[mid] = failed_by_stack
+            all_failures = {failure for failures in failed_by_stack.values() for failure in failures}
+            if all_failures & {"ingest", "analyze"}:
                 attrition_ia += 1
-            elif join_fail:
+            elif all_failures & {"roster", "identity_query"}:
                 attrition_join += 1
 
     # Document-level mode wins (sr-007): entry-level box/count match is not
@@ -676,6 +704,7 @@ def compute_accepted_set(run_dir: Path | str) -> AcceptedSet:
         baseline_superset_checked=_baseline_superset_checked(root, pair),
         computed_at=datetime.now(timezone.utc).isoformat(),
         join_by_stack=join_by,
+        attrition_failures_by_media=attrition_failures_by_media,
     )
 
 
@@ -749,20 +778,35 @@ def write_attrition(run_dir: Path, accepted: AcceptedSet, manifest: GoldenManife
     for entry in manifest.entries:
         if entry.media_id in accepted_ids:
             continue
-        phase = "analyze"
-        for stack_id in stacks:
-            recs = records_by[stack_id]
-            if not _terminal_ingest_ok(recs, entry.media_id, entry=entry):
-                phase = "ingest"
-                break
-            if _analyze_ok(recs, entry.media_id, entry=entry) is None:
-                phase = "analyze"
-                break
-            ingest_roster = _ingest_roster(recs, manifest)
-            if entry.media_id not in ingest_roster:
-                phase = "roster"
-                break
-        missing.append({"manifest_media_id": entry.media_id, "phase": phase})
+        failed_by_stack = accepted.attrition_failures_by_media.get(entry.media_id)
+        if not failed_by_stack:
+            raise BenchError(
+                "attrition_reason_missing",
+                f"missing accepted-set failure details for manifest_media_id={entry.media_id}",
+            )
+        all_failures = {failure for failures in failed_by_stack.values() for failure in failures}
+        # Keep the single phase field for older readers, with a declared
+        # precedence; failed_conditions_by_stack carries every failed check.
+        phase = next(
+            (
+                candidate
+                for candidate in ("ingest", "analyze", "roster", "identity_query")
+                if candidate in all_failures
+            ),
+            None,
+        )
+        if phase is None:
+            raise BenchError(
+                "attrition_reason_missing",
+                f"empty accepted-set failure details for manifest_media_id={entry.media_id}",
+            )
+        missing.append(
+            {
+                "manifest_media_id": entry.media_id,
+                "phase": "join" if phase == "identity_query" else phase,
+                "failed_conditions_by_stack": failed_by_stack,
+            }
+        )
     one_sided = {}
     for stack_id, recs in records_by.items():
         ids = []
@@ -775,8 +819,22 @@ def write_attrition(run_dir: Path, accepted: AcceptedSet, manifest: GoldenManife
             ):
                 ids.append(entry.media_id)
         one_sided[stack_id] = ids
+    detection_ids = set(accepted.detection_scoring_set)
+    post_accept_exclusions = [
+        {
+            "manifest_media_id": entry.media_id,
+            "reason": (
+                "entry_not_detection_exhaustive"
+                if not is_detection_exhaustive(entry)
+                else "detection_scoring_refused"
+            ),
+        }
+        for entry in manifest.entries
+        if entry.media_id in accepted_ids and entry.media_id not in detection_ids
+    ]
     payload = {
         "missing": missing,
+        "post_accept_exclusions": post_accept_exclusions,
         "one_sided": one_sided,
         "attrition_ingest_analyze": accepted.attrition_ingest_analyze,
         "attrition_join": accepted.attrition_join,
@@ -1019,9 +1077,6 @@ def score_head_to_head(run_dir: Path | str) -> Path:
     manifest = _load_manifest_from_run(root)
     pair = _load_pair(root)
     stacks = _declared_stack_ids(root, pair)
-    preflight_present = _require_prov01_preflights(root, stacks)
-    for stack_id in stacks:
-        require_cluster_success(root, stack_id)
     (root / "score").mkdir(parents=True, exist_ok=True)
 
     accepted = compute_accepted_set(root)
@@ -1030,6 +1085,12 @@ def score_head_to_head(run_dir: Path | str) -> Path:
         stack_id: ItemOutcomeStore(root / "legs" / stack_id / "items.jsonl").read_all() for stack_id in stacks
     }
     write_attrition(root, accepted, manifest, records_by)
+
+    # Preserve accepted-set diagnostics even when a later scoring precondition
+    # refuses the run.
+    for stack_id in stacks:
+        require_cluster_success(root, stack_id)
+    preflight_present = _require_prov01_preflights(root, stacks)
 
     # Differential attrition: |one-sided-A − one-sided-B| / |manifest|
     one_sided_counts = []
@@ -1078,6 +1139,7 @@ def score_head_to_head(run_dir: Path | str) -> Path:
     counts_by: dict[str, dict[str, list[ImageCounts]]] = {cell: {s: [] for s in stacks} for cell in named}
     counts_media_ids_by_cell: dict[str, list[int]] = {}
     cells: list[dict[str, Any]] = []
+    localization_dropped_by_stack = {stack_id: 0 for stack_id in stacks}
 
     for stack_id in stacks:
         export = load_leg_exports(root, stack_id)
@@ -1099,13 +1161,21 @@ def score_head_to_head(run_dir: Path | str) -> Path:
             for label_key, label_name in (("primary", LABEL_MAP_PRIMARY), ("optimistic", LABEL_MAP_OPTIMISTIC)):
                 ident: list[Any] = []
                 if accepted_manifest is not None:
+                    localization_counts = (
+                        {"degenerate_box_dropped": 0}
+                        if frame_key == "e2e" and label_key == "primary"
+                        else None
+                    )
                     _, ident = to_face_metric_inputs(
                         export_payload,
                         accepted_manifest,
                         join,
                         label_key,
                         frame=frame_key,  # type: ignore[arg-type]
+                        localization_counts=localization_counts,
                     )
+                    if localization_counts is not None:
+                        localization_dropped_by_stack[stack_id] = localization_counts["degenerate_box_dropped"]
                 det: list[Any] = []
                 if detection_manifest is not None and not detection_refused:
                     det, _ = to_face_metric_inputs(
@@ -1266,17 +1336,39 @@ def score_head_to_head(run_dir: Path | str) -> Path:
 
     holm: dict[str, dict[str, Any]] = {}
     declared_secondaries = list(pair.secondary_endpoints)
+    holm_family = [cell_name for cell_name in declared_secondaries if cell_name in HOLM_FAMILY_ENDPOINTS]
     holm_missing: set[str] = set()
-    if declared_secondaries:
+    if holm_family:
         padded: list[tuple[str, float]] = []
-        for cell_name in declared_secondaries:
+        for cell_name in holm_family:
             interval = intervals.get(cell_name)
             if interval is None or interval.p_value is None:
                 padded.append((cell_name, 1.0))
                 holm_missing.add(cell_name)
             else:
                 padded.append((cell_name, float(interval.p_value)))
-        holm = holm_bonferroni(padded, family_size=len(declared_secondaries))
+        holm = holm_bonferroni(padded, family_size=len(holm_family))
+
+    primary_interval = intervals.get(pair.primary_endpoint)
+    primary_claim_type: str | None = None
+    primary_claim_direction: str | None = None
+    primary_ci_lower: float | None = None
+    primary_ci_upper: float | None = None
+    if (
+        primary_interval is not None
+        and primary_interval.bootstrap_status == "ok"
+        and primary_interval.ci_lower is not None
+        and primary_interval.ci_upper is not None
+    ):
+        primary_ci_lower = primary_interval.ci_lower
+        primary_ci_upper = primary_interval.ci_upper
+        primary_claim_type = _primary_claim_type(
+            primary_interval.ci_lower,
+            primary_interval.ci_upper,
+            pair.head_to_head_delta,
+        )
+        if primary_claim_type == "superiority":
+            primary_claim_direction = stacks[0] if primary_interval.ci_lower > 0.0 else stacks[1]
 
     for cell in cells:
         if cell.get("count_only") or cell.pop("_refused", False):
@@ -1310,11 +1402,15 @@ def score_head_to_head(run_dir: Path | str) -> Path:
             "count_only": False,
             "bootstrap_status": boot_status,
             "golden150_provenance": golden150_provenance,
+            "primary_claim_type": primary_claim_type if name == pair.primary_endpoint else None,
         }
         cell.pop("_is_detection", None)
         tier, reason = assign_tier(name, ctx)
         cell["tier"] = tier.value
         cell["reason"] = reason
+        if name == pair.primary_endpoint:
+            cell["primary_claim_type"] = primary_claim_type or "unsupported"
+            cell["primary_claim_direction"] = primary_claim_direction
         if interval is not None:
             cell["bootstrap_resamples"] = interval.bootstrap_resamples
             cell["bootstrap_seed"] = interval.bootstrap_seed
@@ -1365,6 +1461,18 @@ def score_head_to_head(run_dir: Path | str) -> Path:
     frames = {
         "license_banner": LICENSE_BANNER,
         "cells": cells,
+        "primary_claim": {
+            "endpoint": pair.primary_endpoint,
+            "claim_type": primary_claim_type or "unsupported",
+            "direction": primary_claim_direction,
+            "equivalence_margin": pair.head_to_head_delta,
+            "ci_lower": primary_ci_lower,
+            "ci_upper": primary_ci_upper,
+        },
+        "holm_family": holm_family,
+        "holm_family_size": len(holm_family),
+        "degenerate_box_dropped": localization_dropped_by_stack,
+        "degenerate_box_dropped_scope": "accepted manifest; frame_e2e/label_map_primary localization pass, once per stack",
         "accepted_set_size": accepted.accepted_set_size,
         "detection_scoring_set_size": accepted.detection_scoring_set_size,
         "resolved_floor_count": accepted.resolved_floor_count,

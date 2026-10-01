@@ -5,6 +5,7 @@ from __future__ import annotations
 from scripts.bench.score_report import (
     BOOTSTRAP_RESAMPLES,
     CrossbenchTier,
+    _primary_claim_type,
     assign_tier,
     bootstrap_paired_delta,
     holm_bonferroni,
@@ -153,10 +154,57 @@ def test_assign_tier_primary_emits_confirmatory() -> None:
         "exhaustiveness_ok": True,
         "count_only": False,
         "bootstrap_status": "ok",
+        "primary_claim_type": "equivalence",
     }
     tier, reason = assign_tier("detection_recall@frame_e2e/label_map_primary", ctx)
     assert tier is CrossbenchTier.CONFIRMATORY
     assert reason is None
+
+
+def test_assign_tier_superiority_claim_emits_confirmatory() -> None:
+    ctx = {
+        "named": True,
+        "primary": True,
+        "optimistic": False,
+        "native_frame": False,
+        "floor_ok": True,
+        "ci_half_width": 0.02,
+        "head_to_head_delta": 0.10,
+        "holm_significant": False,
+        "exhaustiveness_ok": True,
+        "count_only": False,
+        "bootstrap_status": "ok",
+        "primary_claim_type": "superiority",
+    }
+    tier, reason = assign_tier("detection_recall@frame_e2e/label_map_primary", ctx)
+    assert tier is CrossbenchTier.CONFIRMATORY
+    assert reason is None
+
+
+def test_primary_claim_classifies_superiority_equivalence_and_unsupported() -> None:
+    assert _primary_claim_type(0.02, 0.07, 0.10) == "superiority"
+    assert _primary_claim_type(-0.04, 0.03, 0.10) == "equivalence"
+    assert _primary_claim_type(-0.12, 0.02, 0.10) is None
+
+
+def test_primary_claim_is_required_for_confirmatory_tier() -> None:
+    ctx = {
+        "named": True,
+        "primary": True,
+        "optimistic": False,
+        "native_frame": False,
+        "floor_ok": True,
+        "ci_half_width": 0.0,
+        "head_to_head_delta": 0.10,
+        "holm_significant": False,
+        "exhaustiveness_ok": True,
+        "count_only": False,
+        "bootstrap_status": "ok",
+        "primary_claim_type": None,
+    }
+    tier, reason = assign_tier("detection_recall@frame_e2e/label_map_primary", ctx)
+    assert tier is CrossbenchTier.DIRECTIONAL
+    assert reason == "primary_claim_unsupported"
 
 
 def test_assign_tier_holm_secondary_emits_confirmatory() -> None:
@@ -425,11 +473,17 @@ def test_score_uses_full_manifest_occasions_and_caps_golden150_tiers(
     for media_id in range(1, 7):
         entry = golden_entry(
             media_id,
-            face_count=1,
+            face_count=2,
             present_identities=["Alice Q"],
-            face_boxes=[_box()],
+            face_boxes=[
+                _box(),
+                {"x": 0.0, "y": 0.0, "w": 0.0, "h": 0.0, "name": None, "source": "iptc"},
+            ],
         )
         entry["face_boxes"][0]["lineage"]["capture_session_id"] = (
+            session_a if media_id <= 3 else session_b
+        )
+        entry["face_boxes"][1]["lineage"]["capture_session_id"] = (
             session_a if media_id <= 3 else session_b
         )
         entries.append(entry)
@@ -441,6 +495,7 @@ def test_score_uses_full_manifest_occasions_and_caps_golden150_tiers(
         "detection_precision@frame_e2e/label_map_primary",
         "identification_recall@frame_e2e/label_map_primary",
         "identification_precision@frame_e2e/label_map_primary",
+        "identification_recall@frame_e2e/label_map_optimistic",
         NATIVE_ID,
     ]
     pair = load_stack_pair(
@@ -522,9 +577,33 @@ def test_score_uses_full_manifest_occasions_and_caps_golden150_tiers(
     }
 
     frames = json.loads((run_dir / "score" / "frames.json").read_text(encoding="utf-8"))
+    assert frames["primary_claim"]["claim_type"] == "equivalence"
+    assert frames["primary_claim"]["direction"] is None
+    assert frames["degenerate_box_dropped"] == {A_STACK: 4, B_STACK: 4}
+    expected_holm_family = [
+        "detection_precision@frame_e2e/label_map_primary",
+        "identification_recall@frame_e2e/label_map_primary",
+        "identification_precision@frame_e2e/label_map_primary",
+    ]
+    assert frames["holm_family"] == expected_holm_family
+    assert frames["holm_family_size"] == len(expected_holm_family)
+    for endpoint in expected_holm_family:
+        endpoint_cells = [cell for cell in frames["cells"] if cell.get("cell") == endpoint]
+        assert len(endpoint_cells) == 2
+        for cell in endpoint_cells:
+            expected_threshold = 0.05 / (len(expected_holm_family) - cell["holm_rank"] + 1)
+            assert cell["holm_threshold"] == expected_threshold
+    directional_secondaries = [
+        cell for cell in frames["cells"]
+        if cell.get("cell") in {NATIVE_ID, "identification_recall@frame_e2e/label_map_optimistic"}
+    ]
+    assert len(directional_secondaries) == 4
+    assert all("holm_rank" not in cell for cell in directional_secondaries)
     primary_cells = [cell for cell in frames["cells"] if cell.get("cell") == PRIMARY]
     assert len(primary_cells) == 2
     for cell in primary_cells:
+        assert cell["primary_claim_type"] == "equivalence"
+        assert cell["primary_claim_direction"] is None
         assert cell["resampling_unit"] == "occasion+image"
         assert cell["partial_occasions"] == 1
         assert cell["tier"] == CrossbenchTier.DIRECTIONAL.value

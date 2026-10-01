@@ -363,6 +363,22 @@ def _opencv_version() -> str:
     return str(cv2.__version__)
 
 
+def _opencv_distribution_versions() -> tuple[tuple[str, str], ...]:
+    """Return exact installed OpenCV wheel versions keyed by distribution name."""
+    from importlib.metadata import PackageNotFoundError
+
+    distributions = ("opencv-python", "opencv-python-headless", "opencv-contrib-python")
+    versions: list[tuple[str, str]] = []
+    for distribution in distributions:
+        try:
+            versions.append((distribution, _distribution_version(distribution)))
+        except PackageNotFoundError:
+            continue
+    if not versions:
+        raise RuntimeError("no installed OpenCV distribution found in package metadata")
+    return tuple(sorted(versions))
+
+
 def _onnxruntime_version() -> str:
     """Live onnxruntime version string (lazy import; never hardcode)."""
     import onnxruntime  # type: ignore[import-untyped]
@@ -425,19 +441,26 @@ class NumericRuntimeFingerprint:
     pillow_version: str
     hdbscan_version: str
     pgvector_version: str
+    opencv_distribution_versions: tuple[tuple[str, str], ...] | None = None
 
     @property
     def resolved_versions(self) -> dict[str, str]:
         """Exact resolved dependency versions, keyed by distribution name."""
-        return {
+        versions = {
             "hdbscan": self.hdbscan_version,
             "numpy": self.numpy_version,
             "onnxruntime": self.onnxruntime_version,
-            "opencv-python": self.opencv_version,
             "pgvector": self.pgvector_version,
             "pillow": self.pillow_version,
             "scipy": self.scipy_version,
         }
+        # Keep construction backwards-compatible for callers that build a
+        # fingerprint directly; live snapshots always pass the metadata result.
+        opencv_distributions = self.opencv_distribution_versions
+        if opencv_distributions is None:
+            opencv_distributions = (("opencv-python", self.opencv_version),)
+        versions.update(opencv_distributions)
+        return versions
 
     @property
     def comparability_token(self) -> str:
@@ -519,6 +542,7 @@ def numeric_runtime_fingerprint() -> NumericRuntimeFingerprint:
         pillow_version=_pillow_version(),
         hdbscan_version=_hdbscan_version(),
         pgvector_version=_pgvector_version(),
+        opencv_distribution_versions=_opencv_distribution_versions(),
     )
 
 

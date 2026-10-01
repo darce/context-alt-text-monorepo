@@ -2078,4 +2078,88 @@ class SettingsControllerTest extends TestCase
             ),
         ];
     }
+
+    public function testGetSettingsReturnsNullContextCategoriesWhenOptionIsAbsent(): void
+    {
+        $this->setUserCapability('manage_options', true);
+
+        $response = $this->controller->get_settings(new WP_REST_Request('GET', '/acx/v1/settings'));
+        $data = $response->get_data();
+
+        $this->assertArrayHasKey('context_categories', $data);
+        $this->assertNull($data['context_categories']);
+        $this->assertNull($data['context_categories_error']);
+    }
+
+    public function testGetSettingsReturnsCanonicalContextCategorySubset(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_description_context_categories', array( 'product', 'attachment' ));
+
+        $response = $this->controller->get_settings(new WP_REST_Request('GET', '/acx/v1/settings'));
+        $data = $response->get_data();
+
+        $this->assertSame(array( 'attachment', 'product' ), $data['context_categories']);
+        $this->assertNull($data['context_categories_error']);
+    }
+
+    public function testGetSettingsFailsClosedForMalformedContextCategories(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_description_context_categories', array( 'attachment', 'unknown' ));
+
+        $response = $this->controller->get_settings(new WP_REST_Request('GET', '/acx/v1/settings'));
+        $data = $response->get_data();
+
+        $this->assertSame(array( 'attachment' ), $data['context_categories']);
+        $this->assertStringContainsString('invalid', $data['context_categories_error']);
+        $this->assertStringContainsString('only attachment details are sent', $data['context_categories_error']);
+    }
+
+    public function testSaveSettingsWritesCanonicalContextCategorySubset(): void
+    {
+        $this->setUserCapability('manage_options', true);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params(['context_categories' => ['product', 'attachment']]);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertContains('context_categories', $response->get_data()['saved']);
+        $this->assertSame(
+            array( 'attachment', 'product' ),
+            get_option('acx_description_context_categories')
+        );
+    }
+
+    public function testSaveSettingsAcceptsEmptyContextCategoryList(): void
+    {
+        $this->setUserCapability('manage_options', true);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params(['context_categories' => []]);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertContains('context_categories', $response->get_data()['saved']);
+        $this->assertSame(array(), get_option('acx_description_context_categories'));
+    }
+
+    public function testSaveSettingsRejectsInvalidContextCategoriesWithoutChangingOption(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_description_context_categories', array( 'post' ));
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params(['context_categories' => ['post', 'unknown']]);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_context_categories', $response->get_error_code());
+        $this->assertSame(400, $response->get_error_data()['status']);
+        $this->assertSame(array( 'post' ), get_option('acx_description_context_categories'));
+    }
 }

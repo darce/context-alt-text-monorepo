@@ -4,7 +4,7 @@ Date: 2026-09-22 UTC. Status: accepted planning direction; implementation and re
 
 ## Recommendation
 
-Build AltContext’s self-service account, API-key and usage experience now. Use hosted checkout behind the existing small billing-provider boundary. Keep Polar provisional for sandbox integration. Compare Polar, Paddle and direct Stripe before paid launch; choose the legal seller and production provider after incorporation when feasible. Existing free-beta users retain their tenant and API keys when paid billing is enabled.
+Build AltContext’s self-service account, API-key and usage experience now. Use hosted checkout behind the existing small billing-provider boundary. Use direct Stripe for sandbox integration, as selected by the processor decision; this supersedes the earlier provisional Polar recommendation. Confirm the legal seller after incorporation when feasible and verify production readiness before paid launch. Existing free-beta users retain their tenant and API keys when paid billing is enabled.
 
 Prefer one real sandbox integration plus a deterministic test adapter. Do not build a general multi-provider billing framework or a second production adapter merely to demonstrate portability. Record the exit design now and verify it before the paid-launch decision. Switching before the first live payment avoids migration of an active billing book.
 

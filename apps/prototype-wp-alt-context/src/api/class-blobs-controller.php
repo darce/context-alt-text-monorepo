@@ -38,10 +38,11 @@ use function substr;
 use function time;
 use function trim;
 use function untrailingslashit;
-use function wp_unslash;
 use function wp_remote_retrieve_body;
 use function wp_remote_retrieve_header;
 use function wp_remote_retrieve_response_code;
+use function wp_set_current_user;
+use function wp_unslash;
 use const PHP_URL_PATH;
 
 /**
@@ -75,6 +76,8 @@ class BlobsController extends AbstractRecognitionProxyController {
 		'/wp-json/acx/v1/recognition/blobs/',
 		'/wp-json/acx/v1/recognition/face-thumbs/',
 	);
+	private static int $remembered_blob_viewer_id = 0;
+	private static string $remembered_blob_request_path = '';
 
 	public function register_routes(): void {
 		register_rest_route(
@@ -97,16 +100,39 @@ class BlobsController extends AbstractRecognitionProxyController {
 			)
 		);
 
-		// `<img>` requests can't carry an X-WP-Nonce header. WP REST's
-		// rest_cookie_check_errors fires on rest_authentication_errors
-		// before the route's permission_callback and rejects every
-		// cookie-authed request without a nonce as 403
-		// rest_cookie_invalid_nonce — short-circuiting our HMAC token
-		// check. Clear that error specifically for the blob route so
-		// verify_blob_token can run. Priority 200 runs after the cookie
-		// check (priority 100); the bypass is scoped to the blob route
-		// path so the rest of WP REST stays nonce-protected.
+		// `<img>` requests can't carry an X-WP-Nonce header. Remember the
+		// cookie-authenticated viewer before rest_cookie_check_errors runs
+		// at priority 100, since its no-nonce path clears the current user
+		// and returns success. At priority 200, restore that viewer only
+		// for this token-protected route; also bypass its invalid-nonce
+		// error so verify_blob_token can validate the HMAC. Other REST routes
+		// keep the standard cookie+nonce behavior.
+		add_filter( 'rest_authentication_errors', array( self::class, 'remember_blob_viewer_before_cookie_check' ), 99 );
 		add_filter( 'rest_authentication_errors', array( self::class, 'maybe_bypass_nonce_for_blob_route' ), 200 );
+	}
+
+	/**
+	 * Remember the authenticated viewer before REST cookie auth clears it
+	 * for an image request with no nonce.
+	 *
+	 * @param mixed $errors Prior auth result from upstream filters.
+	 * @return mixed
+	 */
+	public static function remember_blob_viewer_before_cookie_check( $errors ) {
+		self::$remembered_blob_viewer_id      = 0;
+		self::$remembered_blob_request_path   = '';
+		$request_path                        = self::blob_request_path();
+		if ( null === $request_path ) {
+			return $errors;
+		}
+
+		$viewer_id = get_current_user_id();
+		if ( $viewer_id > 0 ) {
+			self::$remembered_blob_viewer_id    = $viewer_id;
+			self::$remembered_blob_request_path = $request_path;
+		}
+
+		return $errors;
 	}
 
 	/**
@@ -118,28 +144,53 @@ class BlobsController extends AbstractRecognitionProxyController {
 	 * @return mixed
 	 */
 	public static function maybe_bypass_nonce_for_blob_route( $errors ) {
-		if ( ! ( $errors instanceof WP_Error ) ) {
+		$request_path = self::blob_request_path();
+		if ( null === $request_path ) {
+			self::clear_remembered_blob_viewer();
 			return $errors;
 		}
-		if ( 'rest_cookie_invalid_nonce' !== $errors->get_error_code() ) {
-			return $errors;
+
+		if ( $errors instanceof WP_Error ) {
+			if ( 'rest_cookie_invalid_nonce' !== $errors->get_error_code() ) {
+				self::clear_remembered_blob_viewer();
+				return $errors;
+			}
+			$errors = null;
 		}
+
+		$viewer_id = self::$remembered_blob_request_path === $request_path
+			? self::$remembered_blob_viewer_id
+			: 0;
+		self::clear_remembered_blob_viewer();
+		if ( $viewer_id > 0 && get_current_user_id() <= 0 ) {
+			wp_set_current_user( $viewer_id );
+		}
+
+		return $errors;
+	}
+
+	private static function blob_request_path(): ?string {
 		$request_uri = isset( $_SERVER['REQUEST_URI'] )
 			? sanitize_text_field( wp_unslash( (string) $_SERVER['REQUEST_URI'] ) )
 			: '';
 		if ( '' === $request_uri ) {
-			return $errors;
+			return null;
 		}
 		$path = parse_url( $request_uri, PHP_URL_PATH );
 		if ( ! is_string( $path ) || '' === $path ) {
-			return $errors;
+			return null;
 		}
 		foreach ( self::ROUTE_PREFIXES as $route_prefix ) {
 			if ( str_contains( $path, $route_prefix ) ) {
-				return null;
+				return $path;
 			}
 		}
-		return $errors;
+		return null;
+	}
+
+	private static function clear_remembered_blob_viewer(): void {
+		self::$remembered_blob_viewer_id    = 0;
+		self::$remembered_blob_request_path = '';
 	}
 
 	/**

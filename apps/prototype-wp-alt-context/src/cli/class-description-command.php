@@ -40,6 +40,7 @@ use function sleep;
 use function sprintf;
 use function trim;
 use function update_post_meta;
+use function wp_generate_uuid4;
 use function wp_json_encode;
 
 class DescriptionCommand extends \WP_CLI_Command {
@@ -493,6 +494,8 @@ class DescriptionCommand extends \WP_CLI_Command {
 		// get_param() never reads; media_id must go through set_param().
 		$request = new WP_REST_Request( 'POST', '/acx/v1/recognition/describe' );
 		$request->set_param( 'media_id', $media_id );
+		// Keep one caller key on the request across every startup retry.
+		$request->set_body_params( array( 'idempotency_key' => wp_generate_uuid4() ) );
 
 		$result = new \WP_Error( 'describe_request_failed', 'Describe request failed.' );
 		$waited = 0;

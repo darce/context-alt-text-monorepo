@@ -1,0 +1,70 @@
+{
+  "lane": "dfh-blockers",
+  "base": "366f9f65ef6cfe2cf43bc8cb9214b2c224a705db",
+  "results": [
+    {
+      "blocker_id": 1088,
+      "test": "scripts/eval_harness/tests/test_manifest_invariants.py::test_golden150_draft_fails_naming_all_six_unprovenanced_paths",
+      "outcome": "FAIL",
+      "class": "CODE",
+      "evidence": "Observed at HEAD df96dc40356498816b9659b63ce7c75837cca15b: isolated -x -vv fails in load_legacy_manifest with 369 FaceBox.source validation errors for historical source='detector' (benchmarks/manifests/golden150-draft-20260723.json:267). apps/prototype-description-service/scripts/eval_harness/manifest.py:513-515 allows only iptc, mwg, operator and :948 applies that enum to the shared model; the loader docstring at :1749 says this frozen v2 draft can load. Requested base 366f9f65ef6cfe2cf43bc8cb9214b2c224a705db is not present in this worktree.",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/eval_harness/manifest.py"
+      ],
+      "fix_hint": "Allow the v2 reader to preserve historical detector values without counting them as independent ground-truth regions."
+    },
+    {
+      "blocker_id": 1088,
+      "test": "scripts/eval_harness/tests/test_manifest_invariants.py::test_corpus646_retag_loads_as_roster_only",
+      "outcome": "FAIL",
+      "class": "TEST",
+      "evidence": "Observed at HEAD df96dc40356498816b9659b63ce7c75837cca15b: isolated -x -vv fails at test_manifest_invariants.py:441 while loading the checked-in corpus646 manifest; the fixture contains source='workbench' (apps/prototype-description-service/scripts/eval_harness/corpus646-interleave-manifest-20260716.json:330), rejected by apps/prototype-description-service/scripts/eval_harness/manifest.py:513-515 and :948 before roster-only assertions run. Requested base 366f9f65ef6cfe2cf43bc8cb9214b2c224a705db is not present in this worktree.",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/eval_harness/corpus646-interleave-manifest-20260716.json"
+      ],
+      "fix_hint": "Retag the fixture's workbench box-source values to schema-supported sources before asserting v3 loading."
+    },
+    {
+      "blocker_id": 1088,
+      "test": "scripts/eval_harness/tests/test_manifest_invariants.py::test_in_tree_boxed_corpus_cannot_flip_to_exhaustive_on_sentinel",
+      "outcome": "FAIL",
+      "class": "TEST",
+      "evidence": "Observed at HEAD df96dc40356498816b9659b63ce7c75837cca15b: isolated -x -vv reports an expected capture_session match but receives a schema error for source='workbench'; test_manifest_invariants.py:478 calls load_manifest on apps/prototype-description-service/scripts/eval_harness/refetch6-manifest-20260716.json:36, whose source is excluded by apps/prototype-description-service/scripts/eval_harness/manifest.py:513-515 and :948. The fixture fails validation before the sentinel invariant is exercised. Requested base 366f9f65ef6cfe2cf43bc8cb9214b2c224a705db is not present in this worktree.",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/eval_harness/refetch6-manifest-20260716.json",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py"
+      ],
+      "fix_hint": "Make the refetch6 fixture schema-valid while retaining its unknown-session sentinel before asserting the exhaustive-mode rejection."
+    },
+    {
+      "blocker_id": 1088,
+      "test": "scripts/eval_harness/tests/test_r6d2_legacy_import_session.py::test_refetch6_flipped_to_exhaustive_is_rejected",
+      "outcome": "FAIL",
+      "class": "TEST",
+      "evidence": "Observed at HEAD df96dc40356498816b9659b63ce7c75837cca15b: isolated -x -vv reports an expected capture_session match but receives a schema error for source='workbench'; test_r6d2_legacy_import_session.py:92 calls load_manifest on apps/prototype-description-service/scripts/eval_harness/refetch6-manifest-20260716.json:36, whose source is rejected by apps/prototype-description-service/scripts/eval_harness/manifest.py:513-515 and :948 before the sentinel invariant is exercised. Requested base 366f9f65ef6cfe2cf43bc8cb9214b2c224a705db is not present in this worktree.",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/eval_harness/refetch6-manifest-20260716.json",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d2_legacy_import_session.py"
+      ],
+      "fix_hint": "Make the refetch6 fixture schema-valid while preserving its unknown-session sentinel so this test reaches the intended invariant."
+    },
+    {
+      "blocker_id": 1087,
+      "test": "scene/tests/test_eval_harness_cli.py::test_cmd_score_non_ascii_run_record_path_under_c_locale",
+      "outcome": "PASS",
+      "class": "",
+      "evidence": "At HEAD df96dc40356498816b9659b63ce7c75837cca15b, the focused lane-interpreter run passed; test_cmd_score_raw_utf8_run_record_under_c_locale also passed in its own focused run. Requested base 366f9f65ef6cfe2cf43bc8cb9214b2c224a705db is not present in this worktree.",
+      "fix_files": [],
+      "fix_hint": ""
+    },
+    {
+      "blocker_id": 1086,
+      "test": "scripts/bench/tests/test_preflight.py::test_write_preflight_json_round_trips_prov01_keys",
+      "outcome": "PASS",
+      "class": "",
+      "evidence": "At HEAD df96dc40356498816b9659b63ce7c75837cca15b, the focused lane-interpreter run passed. Requested base 366f9f65ef6cfe2cf43bc8cb9214b2c224a705db is not present in this worktree.",
+      "fix_files": [],
+      "fix_hint": ""
+    }
+  ]
+}

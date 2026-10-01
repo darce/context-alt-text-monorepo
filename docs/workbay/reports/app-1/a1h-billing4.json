@@ -1,0 +1,97 @@
+{
+  "lane": "a1h-billing4",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_app_mount.py recognition/tests/unit/test_app1_billing_webhook_router.py recognition/tests/unit/test_app1_checkout_attempt_repository.py recognition/tests/unit/test_app1_checkout_service.py recognition/tests/unit/test_app1_portal_checkout_router.py recognition/tests/unit/test_app1_portal_composition.py",
+      "result": "not_run",
+      "detail": "uv could not remove the shared alembic executable: Read-only file system (os error 30); pytest did not start."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_app_mount.py recognition/tests/unit/test_app1_billing_webhook_router.py recognition/tests/unit/test_app1_checkout_attempt_repository.py recognition/tests/unit/test_app1_checkout_service.py recognition/tests/unit/test_app1_portal_checkout_router.py recognition/tests/unit/test_app1_portal_composition.py",
+      "result": "not_run",
+      "detail": "The retry emitted pytest timeout traces ending with `Timeout (0:04:00)!`, followed by `F` and `.`, but did not produce a final summary; it was interrupted after continuing to hang (exit 130). The first error line was `Timeout (0:04:00)!`."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q recognition/tests/integration/test_app1_billing_reconcile_fixwave_postgres.py recognition/tests/integration/test_app1_checkout_attempt_persistence.py",
+      "result": "not_run",
+      "detail": "Postgres-backed tests require a database unavailable in this sandbox; read the tests for TEST-15, including `test_postgres_rv08_missing_event_position_quarantines_without_entitlement` and `test_postgres_heal_and_rls_isolate_checkout_attempts`."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 15547,
+      "finding_id": "GXPLAN-e71025f7c0c5b190-H-a88b876e3da19bdb8d1058ca",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "apps/prototype-description-service/recognition/interface_adapters/http/routers/billing_webhooks.py:451-452 says `if not isinstance(event_position, str) or not event_position: return None`; :315-316 logs `inbox row remains pending`. But apps/prototype-description-service/scripts/billing_reconcile.py:877-878 raises `UnsupportedWebhook` when tenant context is absent, and :719 marks it `DISCARDED`; no test covers malformed recognized events or numeric domain timestamps specifically.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 15540,
+      "finding_id": "GXPLAN-e71025f7c0c5b190-H-3373692a961ca66384419d68",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/interface_adapters/http/routers/billing_webhooks.py:312 says `leaving entitlement work to the worker`, and :315-316 returns `SKIPPED` while the inbox remains pending; apps/prototype-description-service/scripts/billing_reconcile.py:606-609 calls `_apply_billing_state` before `_mark(...PROCESSED...)`.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_webhook_router.py::test_valid_signature_is_checked_over_exact_raw_body; apps/prototype-description-service/recognition/tests/unit/test_app1_billing_reconcile.py::test_projected_event_applies_entitlement_before_processed_marker"
+    },
+    {
+      "db_id": 15529,
+      "finding_id": "APP1-HG-22",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/interface_adapters/http/routers/billing_webhooks.py:486 returns `_provider_billing_status(provider_status)` and :487-489 catches `ValueError` as `projection_skipped`; unknown statuses stay pending for reconciliation.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_webhook_router.py::test_subscription_updated_uses_provider_status_vocabulary; apps/prototype-description-service/recognition/tests/unit/test_app1_billing_webhook_router.py::test_unknown_subscription_status_stays_pending_and_is_logged"
+    },
+    {
+      "db_id": 15528,
+      "finding_id": "APP1-HG-21",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/interface_adapters/http/routers/billing_webhooks.py:530-533 reads only `provider_subscription_id` or `subscription_id`; :318-323 loads the existing subscription pointer for non-subscription events instead of using the refund object's `id`.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_webhook_router.py::test_refund_event_does_not_store_or_clobber_provider_subscription_id"
+    },
+    {
+      "db_id": 15521,
+      "finding_id": "APP1-HG-03",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/interface_adapters/http/routers/billing_webhooks.py:312 says entitlement work is left `to the worker`, while :315-316 keeps unprojected inbox work pending; apps/prototype-description-service/scripts/billing_reconcile.py:606-609 applies projection state before `_mark(...PROCESSED...)`.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_webhook_router.py::test_valid_signature_is_checked_over_exact_raw_body; apps/prototype-description-service/recognition/tests/unit/test_app1_billing_reconcile.py::test_projected_event_applies_entitlement_before_processed_marker"
+    },
+    {
+      "db_id": 15519,
+      "finding_id": "APP1-HG-01",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/api/main.py:657-660 calls `install_portal_composition` before including the webhook router; apps/prototype-description-service/recognition/interface_adapters/http/deps/portal_composition.py:578-580 assigns `app.state.billing_provider` and `app.state.billing_repository`.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_app_mount.py::test_enabled_mount_resolves_real_portal_and_billing_composition"
+    },
+    {
+      "db_id": 15579,
+      "finding_id": "HG-53",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/interface_adapters/http/routers/billing_webhooks.py:367 checks `if applied is not True`; :378-382 acknowledges only `if superseded`, otherwise returns `FAILED` and leaves the inbox retryable.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_webhook_router.py::test_redelivered_superseded_event_is_acknowledged_instead_of_retried_forever; apps/prototype-description-service/recognition/tests/unit/test_app1_billing_webhook_router.py::test_projection_that_does_not_apply_is_not_acknowledged"
+    },
+    {
+      "db_id": 15539,
+      "finding_id": "APP1-HG-47",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/interface_adapters/http/routers/billing_webhooks.py:109 calls `await repository.session.commit()`; :235-236 awaits that commit before returning the accepted response, and :112-115 maps commit errors to 503.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_webhook_router.py::test_commit_failure_is_not_acknowledged_as_accepted"
+    },
+    {
+      "db_id": 15536,
+      "finding_id": "APP1-HG-44",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/interface_adapters/http/routers/billing_webhooks.py:329-334 loads `bound_customer_id`; :339-341 compares it with the event customer and returns `FAILED` on mismatch, preserving the prior projection.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_webhook_router.py::test_foreign_customer_cannot_repoint_another_tenants_projection"
+    }
+  ],
+  "new_findings": [],
+  "summary": "Rechecks: HOLDS 8, PARTIAL 1, NOT_FIXED 0; new findings H/M/L 0/0/0; lane suite timed out at 4m without a summary and Postgres tests were not run."
+}

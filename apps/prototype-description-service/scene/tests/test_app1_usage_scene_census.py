@@ -220,11 +220,20 @@ def _census_client(admission: _FakeAdmission | None, monkeypatch, *, install_adm
             os.unlink(path)
 
 
-def _multipart(operation_id: str | None = None, *, body: bytes = PNG, decorative: bool = False, media_id: int = 42):
-    envelope = {"tenant_id": str(TENANT_ID), "media_id": media_id}
+def _multipart(
+    operation_id=_UNSET,
+    *,
+    body: bytes = PNG,
+    decorative: bool = False,
+    media_id: int = 42,
+    tenant_id: UUID = TENANT_ID,
+):
+    envelope = {"tenant_id": str(tenant_id), "media_id": media_id}
     if decorative:
         envelope["decorative"] = True
     data = {"request": json.dumps(envelope)}
+    if operation_id is _UNSET:
+        operation_id = uuid4().hex
     if operation_id is not None:
         data["operation_id"] = operation_id
     files = {f"image_{media_id}": ("x.jpg", body, "image/jpeg")}
@@ -467,7 +476,7 @@ def test_decorative_and_cache_paths_stay_free(monkeypatch):
     with _census_client(admission, monkeypatch) as (client, _sf):
         decorative = _post_multipart(client, decorative=True)
         first = _post_multipart(client)
-        cached = _post_multipart(client)
+        cached = _post_multipart(client, operation_id=None)
 
     assert decorative.status_code == 204, decorative.text
     assert first.status_code == 200, first.text

@@ -187,6 +187,7 @@ def _post_describe_bounded(app, *, timeout_s: float = 8.0):
     blocks that call hangs in ``TestClient.__enter__`` until the job timeout.
     """
     payload = {
+        "operation_id": "context-pack-describe-action",
         "request": json.dumps(
             {"tenant_id": TENANT_ID, "media_id": 7, "context_pack": _context_pack()}
         )

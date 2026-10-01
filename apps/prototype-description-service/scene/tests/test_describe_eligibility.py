@@ -277,6 +277,7 @@ def test_non_decorative_unaffected():
         r = client.post(
             "/scene/describe/multipart",
             data={
+                "operation_id": "eligibility-non-decorative-action",
                 "request": json.dumps(
                     {
                         "tenant_id": TENANT_ID,

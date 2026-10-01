@@ -15,6 +15,7 @@ from typing import Any
 
 from scripts.bench.corpus import ItemOutcomeStore, is_detection_exhaustive, load_bench_manifest
 from scripts.bench.export_map import _unwrap_rows, load_leg_exports, require_cluster_success, to_face_metric_inputs
+from scripts.bench.score import IOU_MATCH_THRESHOLD
 from scripts.bench.stack_pair import (
     BenchError,
     HOLM_FAMILY_ENDPOINTS,
@@ -24,7 +25,7 @@ from scripts.bench.stack_pair import (
     load_stack_pair,
     validate_stack_pair_config,
 )
-from scripts.eval_harness.face_metrics import detection_pr, identification_pr
+from scripts.eval_harness.face_metrics import detection_pr, detection_pr_strict, identification_pr
 from scripts.eval_harness.manifest import (
     AnnotationMode,
     GoldenEntry,
@@ -1109,6 +1110,58 @@ def _preflight_opencv_version(doc: dict[str, Any], stack_id: str) -> str:
     return str(_preflight_runtime_fingerprint(doc, stack_id)["opencv_version"])
 
 
+def _strict_detection_inputs(
+    detections: list[Any],
+    manifest: GoldenManifest,
+    export_payload: dict[str, Any],
+    join: dict[int, dict[str, Any]],
+) -> list[Any]:
+    """Restore the geometry required by strict scoring from public exports."""
+    rows_by_stack_mid: dict[int, list[dict[str, Any]]] = {}
+    for row in _unwrap_rows(export_payload["media_identities"], what="media_identities"):
+        mid = row.get("media_id")
+        if isinstance(mid, int):
+            rows_by_stack_mid.setdefault(mid, []).append(row)
+    entry_by_path = {entry.path: entry for entry in manifest.entries}
+    strict_inputs: list[Any] = []
+    for detection in detections:
+        entry = entry_by_path.get(detection.image)
+        if entry is None:
+            continue
+        info = join.get(entry.media_id)
+        if info is None:
+            continue
+        stack_mid = info.get("stack_media_id")
+        if not isinstance(stack_mid, int):
+            continue
+        image_size = (info["image_width"], info["image_height"])
+        export_rows = sorted(
+            rows_by_stack_mid.get(stack_mid, []),
+            key=lambda row: str(row.get("identity_id", "")),
+        )
+        boxes = tuple(
+            (
+                float(row["bbox"]["x"]),
+                float(row["bbox"]["y"]),
+                float(row["bbox"]["width"]),
+                float(row["bbox"]["height"]),
+            )
+            for row in export_rows
+        )
+        strict_inputs.append(
+            type(detection)(
+                image=detection.image,
+                pred_faces=detection.pred_faces,
+                labeled_faces=detection.labeled_faces,
+                detections_bbox_px=boxes,
+                gt_boxes=tuple(entry.face_boxes),
+                image_size=image_size,
+                detection_frame_size=image_size,
+            )
+        )
+    return strict_inputs
+
+
 def score_head_to_head(run_dir: Path | str) -> Path:
     root = Path(run_dir)
     manifest = _load_manifest_from_run(root)
@@ -1226,7 +1279,17 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                     det_matched = None
                     det_count = None
                 else:
-                    det_matched = detection_pr(det, annotation_mode=detection_mode)
+                    det_matched = detection_pr_strict(
+                        _strict_detection_inputs(det, detection_manifest, export_payload, join),
+                        annotation_mode=detection_mode,
+                        run_manifest={
+                            "iou_threshold": (
+                                manifest.iou_threshold
+                                if manifest.iou_threshold is not None
+                                else IOU_MATCH_THRESHOLD
+                            )
+                        },
+                    )
                     det_count = detection_pr(
                         [
                             type(d)(image=d.image, pred_faces=d.pred_faces, labeled_faces=d.labeled_faces)
@@ -1535,6 +1598,8 @@ def score_head_to_head(run_dir: Path | str) -> Path:
     html = [
         "<!DOCTYPE html><html><head><meta charset='utf-8'><title>FIR-8 crossbench</title></head><body>",
         f"<h1>Cross-stack bench</h1><p>{LICENSE_BANNER}</p>",
+        "<p>Detection precision/recall measures end-to-end embeddable-face yield among public exports. "
+        "Faces without embeddings are omitted from public export rows, so these values are not detector-only recall.</p>",
         f"<p>accepted_set_size={accepted.accepted_set_size} resolved_floor_count={accepted.resolved_floor_count}</p>",
         "<table border='1'><tr><th>cell</th><th>stack</th><th>tier</th><th>value</th><th>reason</th></tr>",
     ]

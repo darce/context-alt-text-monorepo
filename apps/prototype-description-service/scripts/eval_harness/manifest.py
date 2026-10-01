@@ -515,6 +515,13 @@ class FaceBoxSource(StrEnum):
     OPERATOR = "operator"  # Human-drawn regions are independent of detector proposals.
 
 
+class HistoricalFaceBoxSource(StrEnum):
+    """Recorded legacy region sources that are not independent ground truth."""
+
+    DETECTOR = "detector"
+    WORKBENCH = "workbench"
+
+
 class LabelDecision(StrEnum):
     """What the labeler decided about the face. ``inconclusive`` is a decision,
     not a confidence — the face is present but identity cannot be determined.
@@ -945,7 +952,7 @@ class FaceBox(BaseModel):
     w: float
     h: float
     name: str | None = None
-    source: FaceBoxSource
+    source: FaceBoxSource | HistoricalFaceBoxSource
     lineage: LabelLineage | None = None
     # Separate from the region source (iptc/mwg/operator): this source marker
     # resolves to a HumanAdjudicationRecord before scoring.

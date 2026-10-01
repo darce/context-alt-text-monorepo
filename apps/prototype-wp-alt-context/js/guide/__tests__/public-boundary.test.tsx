@@ -277,6 +277,8 @@ describe('public recorded walkthrough boundary', () => {
     const footer = document.querySelector('.acx-guided-page__provenance-footer');
     expect(mediaList).not.toBeNull();
     expect(footer).not.toBeNull();
+    if (!mediaList) throw new Error('Expected the public guide media list to render');
+    if (!footer) throw new Error('Expected the public guide provenance footer to render');
 
     for (const imageKey of PUBLIC_IMAGE_KEYS) {
       const photoStep = screen.getByTestId(`guided-photo-step-${imageKey}`);
@@ -294,7 +296,7 @@ describe('public recorded walkthrough boundary', () => {
     const renderedIds = Array.from(document.querySelectorAll('[id]'), (element) => element.id);
     expect(new Set(renderedIds).size).toBe(renderedIds.length);
 
-    expect(mediaList?.compareDocumentPosition(footer as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(mediaList.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('shows scored match strength while keeping the cluster anchor score hidden', () => {

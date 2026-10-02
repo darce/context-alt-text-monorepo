@@ -149,6 +149,7 @@ export function ClaimScreen({ client, onClaimed }: ClaimScreenProps) {
   const tokenRef = useRef<HTMLInputElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
   const statusRef = useRef<HTMLDivElement>(null);
+  const currentStep = preview || busy ? 2 : 1;
 
   useEffect(() => {
     epochRef.current += 1;
@@ -231,6 +232,36 @@ export function ClaimScreen({ client, onClaimed }: ClaimScreenProps) {
         <p className="acx-lede">AltContext onboarding</p>
         <h1>Claim your invited account</h1>
       </header>
+      <ol
+        aria-label="Claim steps"
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 'var(--acx-space-lg)',
+          margin: 'var(--acx-space-md) 0',
+          paddingInlineStart: '1.5rem',
+          fontSize: 'var(--acx-text-sm)',
+        }}
+      >
+        <li
+          aria-current={currentStep === 1 ? 'step' : undefined}
+          style={{
+            color: currentStep === 1 ? 'var(--acx-color-accent)' : 'var(--acx-color-text-secondary)',
+            fontWeight: currentStep === 1 ? 'var(--acx-font-weight-semibold)' : 'var(--acx-font-weight-normal)',
+          }}
+        >
+          Step 1 of 2: Enter invitation
+        </li>
+        <li
+          aria-current={currentStep === 2 ? 'step' : undefined}
+          style={{
+            color: currentStep === 2 ? 'var(--acx-color-accent)' : 'var(--acx-color-text-secondary)',
+            fontWeight: currentStep === 2 ? 'var(--acx-font-weight-semibold)' : 'var(--acx-font-weight-normal)',
+          }}
+        >
+          Step 2 of 2: Confirm access
+        </li>
+      </ol>
       <form
         aria-label="Claim invitation"
         aria-busy={busy}

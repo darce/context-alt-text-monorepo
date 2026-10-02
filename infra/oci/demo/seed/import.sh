@@ -4,6 +4,9 @@
 # Usage:
 #   cd /opt/acx-backend/demo && ./seed/import.sh
 #   DEMO_DIR=/opt/acx-backend/demo infra/oci/demo/seed/import.sh
+# Exit status 3 means one or more media files were refused. guided-rights.tsv
+# intentionally lists an unrecorded row, so its matching media must be absent
+# for this importer to exit 0.
 
 set -euo pipefail
 
@@ -201,6 +204,7 @@ fi
 echo "==> Importing ${#media_files[@]} seed media file(s)"
 imported_count=0
 refused_count=0
+refused_files=()
 for path in "${media_files[@]}"; do
   filename="${path##*/}"
   rights_result="$(find_rights_rows "$filename")"
@@ -215,6 +219,7 @@ for path in "${media_files[@]}"; do
     *)
       echo "REFUSED: $filename has unrecognised rights basis '$rights_basis'" >&2
       refused_count=$((refused_count + 1))
+      refused_files+=("$filename")
       continue
       ;;
   esac
@@ -252,3 +257,8 @@ for path in "${media_files[@]}"; do
 done
 
 echo "==> Seed import complete: imported=${imported_count} refused=${refused_count}"
+if ((refused_count > 0)); then
+  echo "==> Refused seed media: ${refused_files[*]}"
+  echo "NOTE: guided-rights.tsv intentionally contains an unrecorded row; its matching media must be absent for exit status 0."
+  exit 3
+fi

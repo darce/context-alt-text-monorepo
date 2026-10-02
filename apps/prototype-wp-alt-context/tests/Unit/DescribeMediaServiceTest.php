@@ -1220,9 +1220,10 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertArrayHasKey('identity', $contextPack);
     }
 
-    public function testMalformedContextCategoryPolicyFailsClosedToAttachmentOnlyAndLogsValue(): void
+    public function testMalformedContextCategoryPolicyFailsClosedWithoutLoggingOptionValue(): void
     {
-        $contextPack = $this->dispatchedProductContextPackForCategories(array('attachment', 'unknown'));
+        $sentinel = 'SECRET_SENTINEL_DFG_CATLOG';
+        $contextPack = $this->dispatchedProductContextPackForCategories($sentinel);
 
         $this->assertArrayHasKey('attachment', $contextPack);
         $this->assertArrayNotHasKey('post', $contextPack);
@@ -1230,8 +1231,11 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertArrayNotHasKey('product', $contextPack);
         $this->assertArrayHasKey('identity', $contextPack);
         $this->assertCount(1, $this->getErrorLog());
-        $this->assertStringContainsString('acx_description_context_categories', $this->getErrorLog()[0]);
-        $this->assertStringContainsString("'unknown'", $this->getErrorLog()[0]);
+        $logLine = $this->getErrorLog()[0];
+        $this->assertStringContainsString('acx_description_context_categories', $logLine);
+        $this->assertStringContainsString('type=string', $logLine);
+        $this->assertStringContainsString('size=' . strlen($sentinel), $logLine);
+        $this->assertStringNotContainsString($sentinel, $logLine);
     }
 
     public function testContextPackExcludesNonPublicParentPostContent(): void

@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPortalKeyClient, type PortalKeyMetadataResponse, type PortalKeyPageResponse } from '../api/portalKeys';
 import { KeysScreen } from '../screens/KeysScreen';
 
@@ -65,6 +65,15 @@ function renderKeys(request: PortalRequest) {
 }
 
 describe('KeysScreen fresh secret reveal through the real key client', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-01T00:00:00Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('shows a fresh create secret with copy, then removes it when the dialog closes', async () => {
     const user = userEvent.setup();
     const request = requestForIssue(issue(KEY_A, CREATED_SECRET));
@@ -103,6 +112,15 @@ describe('KeysScreen fresh secret reveal through the real key client', () => {
     await user.click(within(dialog).getByRole('button', { name: /close secret/i }));
     expect(screen.queryByText(ROTATED_SECRET)).not.toBeInTheDocument();
     expect(screen.queryByRole('dialog', { name: /copy this api secret once/i })).not.toBeInTheDocument();
+  });
+
+  it('does not offer rotation after the key expires', async () => {
+    vi.setSystemTime(new Date('2026-12-02T00:00:00Z'));
+    const request = requestForIssue(issue(KEY_B, ROTATED_SECRET), [metadata(KEY_A)]);
+    renderKeys(request);
+
+    expect(await screen.findByText(/status: expired/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /rotate key/i })).not.toBeInTheDocument();
   });
 
   it('does not show a replayed response secret or offer copy', async () => {

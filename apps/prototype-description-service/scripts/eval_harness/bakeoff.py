@@ -766,9 +766,19 @@ class BakeoffClient(RemoteSceneClient):
         return system
 
     def _prompt_fingerprint(self) -> str:
-        """Hash the selected prompt templates and task switches for attribution."""
+        """Hash prompt templates and task switches for attribution."""
         templates: dict[str, Any] = {
             "system": self._system_prompt(),
+            "user_messages": {
+                "user_with_context": self._user_text({"fingerprint_context": "context placeholder"}),
+                "user_without_context": self._user_text({}),
+                "pass1": self._pass1_user_text(),
+                "weave_with_context": self._weave_user_text(
+                    "facts placeholder", {"fingerprint_context": "context placeholder"}
+                ),
+                "weave_without_context": self._weave_user_text("facts placeholder", {}),
+                "compress": self._compress_user_text("description placeholder"),
+            },
             "prompt_variant": self.prompt_variant,
             "task_version": _TASK_VERSION,
             "no_think": self.no_think,

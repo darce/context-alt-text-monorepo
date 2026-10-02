@@ -176,6 +176,49 @@ async def test_failed_sweep_is_logged_and_next_scan_cycle_runs(monkeypatch, capl
     assert "[worker] usage reservation sweep failed" in caplog.text
 
 
+@pytest.mark.asyncio
+async def test_nonzero_sweep_report_warns_and_commits(monkeypatch, caplog) -> None:
+    monotonic_now = 0.0
+    probe_calls: list[int] = []
+    sessions = _SessionFactory()
+    worker = ScanWorker(
+        ScanWorkerConfig(
+            postgres_dsn="sqlite+aiosqlite:///:memory:",
+            poll_interval_seconds=1,
+            usage_sweep_interval_seconds=10,
+        ),
+        clock=lambda: monotonic_now,
+    )
+    _stub_scan_cycle(monkeypatch, worker, sessions, probe_calls)
+    report = SimpleNamespace(
+        exit_code=1,
+        rejected=2,
+        fail_closed=1,
+        no_progress_cycles=3,
+    )
+
+    async def stalled_sweep(self, **kwargs):
+        return report
+
+    monkeypatch.setattr(UsageSettlementService, "sweep_stale_reservations", stalled_sweep)
+
+    async def stop_after_cycle(seconds: float) -> None:
+        raise _StopLoop
+
+    monkeypatch.setattr(scan_worker_module.asyncio, "sleep", stop_after_cycle)
+    try:
+        with pytest.raises(_StopLoop):
+            await worker.run_forever()
+    finally:
+        await worker.__aexit__(None, None, None)
+
+    assert len(probe_calls) == 1
+    assert sessions.sessions[0].commits == 1
+    assert sessions.sessions[0].rollbacks == 0
+    assert "[worker] usage reservation sweep returned nonzero" in caplog.text
+    assert "exit_code=1 rejected=2 fail_closed=1 no_progress_cycles=3" in caplog.text
+
+
 @pytest.mark.parametrize("interval", ["invalid", "0", "-1"])
 def test_invalid_usage_sweep_interval_refuses_worker_start(monkeypatch, interval: str) -> None:
     monkeypatch.setenv("RECOGNITION_USAGE_SWEEP_INTERVAL_S", interval)

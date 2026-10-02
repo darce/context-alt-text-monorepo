@@ -1473,6 +1473,10 @@ async def describe_image_multipart(
     metered = cached_row is None and not unavailable_fast_path
     # Validate the caller key before operation persistence can mint one.
     usage_operation_id = _usage_operation_id(submission.operation_id, metered=metered)
+    if metered:
+        # Do not persist a GPU demand lease when the required admission service
+        # is absent; a 503 retry would otherwise keep renewing that lease.
+        _require_metered_admission(usage_admission_service)
     op, operation_id = await _accept_operation(
         session=session,
         tenant_uuid=tenant_uuid,

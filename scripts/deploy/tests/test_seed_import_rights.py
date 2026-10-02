@@ -134,13 +134,13 @@ def test_recognised_rights_import_every_file_and_write_both_meta_values(tmp_path
 
 
 def test_unrecorded_basis_is_named_and_refused_while_other_media_imports(tmp_path: Path) -> None:
-    rows = [
-        ("alpha.jpg", "unrecorded", "Basis not known"),
-        ("beta.webp", "cc_by_sa", "Wikimedia source beta"),
+    rows = [("beta.webp", "cc_by_sa", "Wikimedia source beta")]
+    guided_rows = [
+        "alpha.jpg\tTest subject\tunrecorded\tBasis not known\tattribution_required\t2026-09-01"
     ]
-    result, commands = _run_import(tmp_path, ["alpha.jpg", "beta.webp"], rows)
+    result, commands = _run_import(tmp_path, ["alpha.jpg", "beta.webp"], rows, guided_rows=guided_rows)
 
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.returncode == 3, result.stdout + result.stderr
     imports = _media_imports(commands)
     assert len(imports) == 1
     assert "wp media import /seed/beta.webp --porcelain" in imports[0]
@@ -148,6 +148,8 @@ def test_unrecorded_basis_is_named_and_refused_while_other_media_imports(tmp_pat
     assert "unrecognised rights basis 'unrecorded'" in result.stderr
     assert len(_meta_updates(commands)) == 2
     assert "imported=1 refused=1" in result.stdout
+    assert "Refused seed media: alpha.jpg" in result.stdout
+    assert "guided-rights.tsv intentionally contains an unrecorded row" in result.stdout
 
 
 def test_empty_basis_fails_validation_before_import(tmp_path: Path) -> None:

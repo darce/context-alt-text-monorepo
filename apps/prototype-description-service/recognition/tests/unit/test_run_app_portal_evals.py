@@ -735,13 +735,11 @@ def test_explicit_slice_run_may_exit_clean_but_is_not_release_evidence(tmp_path:
 
 def test_evidence_only_junit_failure_cannot_bypass_threshold(tmp_path: Path) -> None:
     artifact = tmp_path / "failed-evidence.xml"
-    artifact.write_text(
-        _junit_for_nodes(
-            ["recognition/tests/api/test_portal_1.py::test_case_1"],
-            failed=["recognition/tests/api/test_portal_1.py::test_case_1"],
-        ),
-        encoding="utf-8",
+    xml_text = _junit_for_nodes(
+        ["recognition/tests/api/test_portal_1.py::test_case_1"],
+        failed=["recognition/tests/api/test_portal_1.py::test_case_1"],
     )
+    artifact.write_text(xml_text, encoding="utf-8")
     payload = _manifest_payload(tmp_path)
     payload["cases"][0].pop("test")
     payload["cases"][0]["artifact"] = str(artifact)
@@ -749,6 +747,9 @@ def test_evidence_only_junit_failure_cannot_bypass_threshold(tmp_path: Path) -> 
     manifest_path = _write_manifest(tmp_path, payload)
     calls: list[tuple[list[str], dict[str, Any]]] = []
 
+    artifact.with_suffix(".xml.provenance.json").write_text(
+        json.dumps(_typed_provenance()), encoding="utf-8"
+    )
     status = runner.run_evals(
         manifest_path,
         out_dir=tmp_path / "out",
@@ -761,6 +762,109 @@ def test_evidence_only_junit_failure_cannot_bypass_threshold(tmp_path: Path) -> 
     group = _last_evidence(tmp_path)["groups"][0]
     assert group["case_ledger"][0]["status"] == "failed"
     assert any("max_failures" in reason or "failure" in reason for reason in group["failure_reasons"])
+
+
+def test_stale_evidence_only_junit_is_unverified_and_fails_release(tmp_path: Path) -> None:
+    artifact = tmp_path / "old-passing-evidence.xml"
+    artifact.write_text(
+        _junit_for_nodes(["recognition/tests/api/test_portal_1.py::test_case_1"]),
+        encoding="utf-8",
+    )
+    past = time.time() - 3600
+    os.utime(artifact, (past, past))
+    payload = _manifest_payload(tmp_path)
+    payload["cases"][0].pop("test")
+    payload["cases"][0]["artifact"] = str(artifact)
+    payload["cases"][0]["additional_evidence_required"] = True
+    manifest_path = _write_manifest(tmp_path, payload)
+
+    status = runner.run_evals(
+        manifest_path,
+        out_dir=tmp_path / "out",
+        command_runner=_fake_runner_by_test(calls=[]),
+    )
+
+    evidence = _last_evidence(tmp_path)
+    group = evidence["groups"][0]
+    ledger = group["case_ledger"][0]
+    assert status == 1
+    assert evidence["full_suite"] is True
+    assert evidence["disposition"] == "release"
+    assert ledger["status"] == "unverified"
+    assert ledger["additional_evidence_verified"] is False
+    assert evidence["release_gate_results"]["beta"]["status"] == "failed"
+    assert any("unverified" in reason for reason in evidence["release_gate_results"]["beta"]["reasons"])
+    assert any("stale JUnit" in reason and str(artifact) in reason for reason in group["failure_reasons"])
+
+
+@pytest.mark.parametrize("provenance_sha", [_FAKE_BY_TEST_SHA, "c" * 40])
+@pytest.mark.parametrize("commanded", [False, True])
+def test_preexisting_junit_requires_current_head_provenance_for_evidence_only(
+    tmp_path: Path, provenance_sha: str, commanded: bool
+) -> None:
+    artifact = tmp_path / "preexisting-evidence.xml"
+    artifact.write_text(
+        _junit_for_nodes(["recognition/tests/api/test_portal_1.py::test_case_1"]),
+        encoding="utf-8",
+    )
+    past = time.time() - 3600
+    os.utime(artifact, (past, past))
+    artifact.with_suffix(".xml.provenance.json").write_text(
+        json.dumps(_typed_provenance(git_sha=provenance_sha)), encoding="utf-8"
+    )
+    payload = _manifest_payload(tmp_path)
+    if not commanded:
+        payload["cases"][0].pop("test")
+    payload["cases"][0]["artifact"] = str(artifact)
+    payload["cases"][0]["additional_evidence_required"] = True
+    manifest_path = _write_manifest(tmp_path, payload)
+    calls: list[tuple[list[str], dict[str, Any]]] = []
+
+    status = runner.run_evals(
+        manifest_path,
+        out_dir=tmp_path / "out",
+        command_runner=_fake_runner_by_test(calls=calls),
+    )
+
+    evidence = _last_evidence(tmp_path)
+    group = evidence["groups"][0]
+    ledger = group["case_ledger"][0]
+    verified = not commanded and provenance_sha == _FAKE_BY_TEST_SHA
+    assert status == (0 if verified else 1)
+    assert ledger["status"] == ("passed" if verified else "unverified")
+    assert ledger["additional_evidence_verified"] is verified
+    if not commanded:
+        assert evidence["release_gate_results"]["beta"]["status"] == ("passed" if verified else "failed")
+    pytest_calls = [call for call in calls if call[0][:3] == [runner.sys.executable, "-m", "pytest"]]
+    assert len(pytest_calls) == int(commanded)
+    if not verified:
+        assert any(str(artifact) in reason for reason in group["failure_reasons"])
+
+
+
+def test_commanded_junit_artifact_written_during_run_is_verified(tmp_path: Path) -> None:
+    artifact = tmp_path / "current-evidence.xml"
+    payload = _manifest_payload(tmp_path)
+    payload["cases"][0]["artifact"] = str(artifact)
+    payload["cases"][0]["additional_evidence_required"] = True
+    manifest_path = _write_manifest(tmp_path, payload)
+
+    def write_reports(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        xml_path = Path(next(arg.split("=", 1)[1] for arg in command if arg.startswith("--junitxml=")))
+        _write_command_junit(command, xml_path)
+        artifact.write_bytes(xml_path.read_bytes())
+        return SimpleNamespace(returncode=0, stdout=None, stderr=None)
+
+    status = runner.run_evals(
+        manifest_path,
+        out_dir=tmp_path / "out",
+        command_runner=_git_ok_then(write_reports),
+    )
+
+    ledger = _last_evidence(tmp_path)["groups"][0]["case_ledger"][0]
+    assert status == 0
+    assert ledger["status"] == "passed"
+    assert ledger["additional_evidence_verified"] is True
 
 
 def test_parametrized_junit_instances_match_declared_base_node(tmp_path: Path) -> None:

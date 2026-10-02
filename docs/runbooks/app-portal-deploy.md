@@ -58,7 +58,9 @@ scripts/deploy/app-portal.sh --dry-run
 
 Prints the plan, lists live Caddy hosts, and exits 0 without writing. Unsafe
 path/upstream/hostname values are still refused **before** any render, copy,
-`rm`, or `mv`.
+`rm`, or `mv`. If `CADDY_COMPOSE` is not installed yet, dry-run prints the plan
+and reports its absence. `--apply` requires a regular Compose file before lock
+creation, interrupted recovery, or staging.
 
 ## Path and symlink safety
 

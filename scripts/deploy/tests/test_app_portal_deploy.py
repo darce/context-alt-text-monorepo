@@ -494,6 +494,35 @@ def test_explicit_dry_run_does_not_copy_frontend(tmp_path: Path) -> None:
     assert _log(tmp_path) == ""
 
 
+@pytest.mark.parametrize("apply", [False, True])
+def test_missing_compose_plans_but_refuses_apply_without_mutation(tmp_path: Path, apply: bool) -> None:
+    backend = tmp_path / "opt" / "acx-backend"
+    live = backend / "Caddyfile"
+    _write_live_caddy(live)
+    _write_caddy_compose(backend / "docker-compose.caddy.yml")
+    missing = backend / "not-installed" / "docker-compose.caddy.yml"
+    before = _tree_files(tmp_path / "opt")
+    live_before = live.read_bytes()
+    result = _run(tmp_path, args=["--apply" if apply else "--dry-run"],
+                  live_caddy=live, extra_env={"CADDY_COMPOSE": str(missing)})
+    output = result.stdout + result.stderr
+    if apply:
+        assert result.returncode != 0, output
+        assert "CADDY_COMPOSE" in result.stderr
+        assert "applied:" not in result.stdout
+    else:
+        assert result.returncode == 0, output
+        assert "plan:" in result.stdout
+        assert f"CADDY_COMPOSE is absent: {missing}" in result.stdout
+        assert "dry-run: no files changed" in result.stdout
+    assert live.read_bytes() == live_before
+    assert _tree_files(tmp_path / "opt") == before
+    for name in ("staging", "rollback", "www", "activation.journal", "activation.journal.lock"):
+        assert not (backend / "app" / name).exists()
+    assert not missing.exists()
+    assert _log(tmp_path) == ""
+
+
 def test_apply_refuses_missing_frontend(tmp_path: Path) -> None:
     live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
     _write_live_caddy(live)

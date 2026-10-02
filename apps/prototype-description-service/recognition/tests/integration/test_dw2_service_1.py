@@ -26,6 +26,7 @@ from recognition.application.scan.service import (
     _persist_lock_key,
     _release_in_process_persist_waiter,
 )
+from recognition.domain.job import JobStatus
 
 _DIM = int(scan_service._DB_SETTINGS.pgvector_dimension)
 
@@ -65,9 +66,14 @@ class _Session:
         return SimpleNamespace(
             processed_media=0,
             identities_detected=0,
-            status=None,
+            status=JobStatus.RUNNING,
+            error_message=None,
             completed_at=None,
         )
+
+    async def scalar(self, statement: object) -> object:
+        self.executed.append(str(statement))
+        return await self.get(None, None)
 
     async def commit(self) -> None:
         self.committed = True

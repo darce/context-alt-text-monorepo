@@ -535,6 +535,26 @@ def test_full_suite_run_is_labeled_full_suite(tmp_path: Path) -> None:
     assert evidence["selected_groups"] == ["first", "second"]
 
 
+def test_reordered_full_group_selection_is_labeled_full_suite(tmp_path: Path) -> None:
+    payload = _manifest_payload(tmp_path, groups=("deterministic", "browser"))
+    manifest_path = _write_manifest(tmp_path, payload)
+
+    status = runner.run_evals(
+        manifest_path,
+        groups=["browser", "deterministic"],
+        out_dir=tmp_path / "out",
+        command_runner=_fake_runner_by_test(calls=[]),
+    )
+
+    evidence = _last_evidence(tmp_path)
+    assert status == 0
+    assert evidence["full_suite"] is True
+    assert evidence["disposition"] == "release"
+    assert evidence["release_evidence"] is True
+    assert evidence["selected_groups"] == ["browser", "deterministic"]
+    assert [group["group"] for group in evidence["groups"]] == ["browser", "deterministic"]
+
+
 def test_missing_required_artifact_fails_without_greening(tmp_path: Path) -> None:
     payload = _manifest_payload(tmp_path)
     payload["cases"][0]["additional_evidence_required"] = True

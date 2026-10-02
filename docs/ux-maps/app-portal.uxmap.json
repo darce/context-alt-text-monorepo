@@ -264,7 +264,7 @@
       "kind": "screen",
       "title": "Onboarding › Claim invitation",
       "purpose": "PLANNED-UI verified-identity claim. A signed-in Clerk person with a verified, non-empty email may enter one invitation_token to POST /portal/onboarding/claim before a tenant exists. The final single-use mutation stays behind a preview/confirmation; the browser never selects tenant_id, stores the raw token, or calls Polar. First success is 201 with replayed false; the same bound identity may receive 200 replayed true. Backend keeps unknown, expired, or email-mismatched invitations non-enumerating as 403 not_admitted. Serves claim-tenant-access (DOM-03, HAI-01).",
-      "route": "/onboarding/claim",
+      "route": "/claim",
       "job_entry": true,
       "deep_link": true,
       "url_params": [],
@@ -596,7 +596,7 @@
     {
       "id": "open-claim",
       "verb": "Claim invitation",
-      "target": "/onboarding/claim",
+      "target": "/claim",
       "hierarchy": "secondary",
       "costly": false,
       "irreversible": false,

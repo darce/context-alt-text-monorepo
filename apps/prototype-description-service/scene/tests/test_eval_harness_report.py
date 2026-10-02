@@ -2966,7 +2966,9 @@ def test_public_provenance_allow_list_drops_unknown_keys():  # VLM6-R3-01 / R4-0
         "sha256": "a" * 64,
     }
     record["provenance"]["totally_unknown_future_key"] = "should-never-publish"
-    record["items"][0]["describe"]["model_id"] = "/Users/daniel/models/Qwen3-VL-27B-Q4_K_M.gguf"
+    model_id = "/Users/daniel/models/Qwen3-VL-27B-Q4_K_M.gguf"
+    for item in record["items"]:
+        item["describe"]["model_id"] = model_id
     json_doc, md = build_reports(record, entries, audience=Audience.PUBLIC)
     scored = json.loads(json_doc)
     prov = scored["provenance"]
@@ -2987,9 +2989,17 @@ def test_public_provenance_allow_list_drops_unknown_keys():  # VLM6-R3-01 / R4-0
     # Allowed keys still present.
     assert "head_sha" in prov
     assert "manifest_sha256" in prov
-    # Mixed item model IDs remain reportable, with an absolute weight path reduced
-    # to its public-safe basename at the provenance boundary.
-    assert prov["model"]["model_ids"] == ["Qwen3-VL-27B-Q4_K_M.gguf", "seeded-fixtures"]
+    # A homogeneous absolute weight path is reduced to its public-safe basename
+    # at the provenance boundary.
+    assert prov["model"]["model_ids"] == ["Qwen3-VL-27B-Q4_K_M.gguf"]
+
+
+def test_public_refuses_mixed_model_ids():
+    record, entries = _audience_fixtures()
+    record["items"][1]["describe"]["model_id"] = "/models/other-model.gguf"
+
+    with pytest.raises(ReportError, match="mixes model_id"):
+        build_reports(record, entries, audience=Audience.PUBLIC)
 
 
 def test_public_validates_record_kind_before_audience_branch():  # VLM6-R3-04

@@ -117,9 +117,17 @@ function paymentsFromConfig(config: PortalRuntimeConfig): { paymentsEnabled: boo
   };
 }
 
-function SessionEscape({ userMenu, onSignOut }: { userMenu: ReactNode; onSignOut: () => void }) {
+function SessionEscape({
+  userMenu,
+  onSignOut,
+  inert = false,
+}: {
+  userMenu: ReactNode;
+  onSignOut: () => void;
+  inert?: boolean;
+}) {
   return (
-    <div className="acx-session-bar">
+    <div className="acx-session-bar" inert={inert || undefined}>
       {userMenu}
       <button type="button" className="acx-btn" onClick={onSignOut}>
         Sign out
@@ -147,6 +155,13 @@ function PortalShell({
   const { user } = useUser();
   const navigate = useNavigate();
   const location = useLocation();
+
+  useEffect(() => {
+    if (location.search || location.hash) {
+      navigate({ pathname: location.pathname, search: '', hash: '' }, { replace: true });
+    }
+  }, [location.hash, location.pathname, location.search, navigate]);
+
   const [clerkTimedOut, setClerkTimedOut] = useState(false);
   const [account, setAccount] = useState<AccountView>({ status: 'idle' });
   const [logout, setLogout] = useState<LogoutView>('idle');
@@ -291,7 +306,11 @@ function PortalShell({
   const path = location.pathname;
   const wrapPrivate = (node: ReactNode) => (
     <div className="acx-private-shell">
-      <SessionEscape userMenu={userMenu} onSignOut={signOutNow} />
+      <SessionEscape
+        userMenu={userMenu}
+        onSignOut={signOutNow}
+        inert={matchesPortalSegment(path, '/keys/wordpress')}
+      />
       {node}
     </div>
   );

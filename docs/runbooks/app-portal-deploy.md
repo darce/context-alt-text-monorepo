@@ -131,7 +131,11 @@ overrides.
    `docker compose ... up -d --force-recreate --no-deps caddy`. This recreates
    only Caddy after the directory swap so its bind mount serves the new
    `APP_WWW` at `/srv/app-portal`, even when Compose configuration is unchanged.
-   Caddy briefly restarts before frontend health runs.
+   Caddy briefly restarts before frontend health runs. After each recreation,
+   including rollback and interrupted recovery, the script probes the container
+   admin endpoint up to 10 times (one-second request timeout and one-second
+   pauses) before reload. Exhaustion fails activation into rollback; if rollback
+   also fails, the journal is retained for retry.
 8. Defaults to reloading Caddy in the composed service with
    `docker compose -f "$CADDY_COMPOSE"` and adds `-f "$OVERLAY_DEST"` when the
    overlay exists, then runs `exec -T caddy caddy reload --config
@@ -157,8 +161,11 @@ used as `APP_HOSTNAME`. The shared repo file
 
 `--apply` requires Docker Compose and the configured `CADDY_COMPOSE` file to
 apply the overlay and reload the Caddy service. `APP_RELOAD_CMD` can explicitly
-override the reload command. A reload failure during activation restores the
-rollback artifacts and prevents the `applied:` message.
+override the reload command. `CADDY_COMPOSE` must be outside staging, rollback,
+`APP_WWW`, `APP_WWW.prev`, and the activation destinations (Caddyfile, overlay,
+journal, and lock); conflicting paths are refused before mutation. A reload
+failure during activation restores the rollback artifacts and prevents the
+`applied:` message.
 
 ## After apply (verify edge + API configuration)
 

@@ -15,6 +15,7 @@ app.altcontext.com {
 	}
 
 	handle {
+		header Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self' https://clerk.altcontext.com https://challenges.cloudflare.com https://*.protect.clerk.com; connect-src 'self' https://clerk.altcontext.com https://*.protect.clerk.com:*; img-src 'self' https://img.clerk.com; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; frame-src https://challenges.cloudflare.com https://*.protect.clerk.com; form-action 'self' https://clerk.altcontext.com;"
 		root * __APP_FRONTEND_ROOT__
 		encode gzip
 		try_files {path} /index.html

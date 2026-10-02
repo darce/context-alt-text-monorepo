@@ -23,9 +23,11 @@ import pathlib
 import re
 
 import pytest
+from sqlalchemy import UniqueConstraint
 
 import db.models  # noqa: F401  (registers every ORM table on Base.metadata)
 from db.base import Base
+from recognition.domain.portal_contracts import DEFAULT_ENTITLEMENT_STATUS
 from recognition.application.health import IDENTITY_VECTOR_COLUMNS as HEALTH_VECTOR_COLUMNS
 
 MIGRATION = importlib.import_module("db.migrations.versions.001_identity_schema")
@@ -143,6 +145,49 @@ def test_tenant_and_raw_sql_tables_are_subsets_of_expected() -> None:
     expected = set(MIGRATION.EXPECTED_SCHEMA_TABLES)
     assert set(MIGRATION.TENANT_TABLES) <= expected, sorted(set(MIGRATION.TENANT_TABLES) - expected)
     assert set(MIGRATION.RAW_SQL_TABLES) <= expected, sorted(set(MIGRATION.RAW_SQL_TABLES) - expected)
+
+
+def test_portal_identity_owner_conflicts_are_rejected_without_upsert_transfer() -> None:
+    """The global identity key rejects a claimant owned by another tenant."""
+    identity = Base.metadata.tables["portal_identity"]
+    unique_keys = {
+        tuple(constraint.columns.keys())
+        for constraint in identity.constraints
+        if isinstance(constraint, UniqueConstraint)
+    }
+    assert ("tenant_id",) in unique_keys
+    assert ("issuer", "subject") in unique_keys
+
+    migration_source = inspect.getsource(MIGRATION.ensure_tables)
+    assert 'sa.UniqueConstraint("tenant_id", name="uq_portal_identity_tenant_id")' in migration_source
+    assert (
+        'sa.UniqueConstraint("issuer", "subject", name="uq_portal_identity_issuer_subject")'
+        in migration_source
+    )
+
+    # `add` lets the database enforce the natural-key uniqueness; the repository
+    # turns that IntegrityError into a refused claim. An upsert could instead
+    # update tenant_id on the existing issuer/subject row.
+    repository = importlib.import_module("recognition.infrastructure.repositories.portal_identity_repository")
+    claim_source = inspect.getsource(repository.SqlAlchemyPortalIdentityRepository.claim)
+    assert "self._session.add(identity)" in claim_source
+    assert "except IntegrityError as exc:" in claim_source
+    assert "raise PortalIdentityClaimRefused(_CLAIM_REFUSAL_MESSAGE) from exc" in claim_source
+    assert "on_conflict_do_update" not in claim_source
+
+
+def test_tenant_entitlement_expired_default_matches_model_migration_and_contract() -> None:
+    """Absent entitlement state stays closed on every schema creation path."""
+    status_default = Base.metadata.tables["tenant_entitlement"].c.status.server_default
+    assert status_default is not None
+    assert str(status_default.arg) == f"'{DEFAULT_ENTITLEMENT_STATUS.value}'"
+    assert DEFAULT_ENTITLEMENT_STATUS.value == "expired"
+
+    migration_source = inspect.getsource(MIGRATION.ensure_tables)
+    assert (
+        'sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("\'expired\'"))'
+        in migration_source
+    )
 
 
 _SQL_COMMENT = re.compile(r"--[^\n]*")

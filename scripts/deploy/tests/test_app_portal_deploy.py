@@ -158,7 +158,9 @@ def _run(
     app_root.mkdir(parents=True, exist_ok=True)
     backend_root = tmp_path / "opt" / "acx-backend"
     backend_root.mkdir(parents=True, exist_ok=True)
-    caddy_compose = _write_caddy_compose(backend_root / "docker-compose.caddy.yml")
+    caddy_compose = backend_root / "docker-compose.caddy.yml"
+    if not caddy_compose.exists():
+        _write_caddy_compose(caddy_compose)
     compose_marker = tmp_path / "compose-applied"
 
     if include_caddy:
@@ -620,6 +622,70 @@ def _prior_www(tmp_path: Path) -> Path:
     www.mkdir(parents=True, exist_ok=True)
     (www / "keep.txt").write_text("active\n", encoding="utf-8")
     return www
+
+
+def test_apply_health_checks_selected_hostname(tmp_path: Path) -> None:
+    health = tmp_path / "app-portal-health-check"
+    _write_executable(health, SCRIPT.read_text(encoding="utf-8"))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    curl_log = tmp_path / "curl.log"
+    _write_executable(
+        bin_dir / "curl",
+        "#!/usr/bin/env bash\n"
+        'for url in "$@"; do :; done\n'
+        'printf "%s\\n" "$url" >> "$CURL_LOG"\n'
+        '[ "$url" = "https://preview.altcontext.com/" ] && exit 22\n'
+        "exit 0\n",
+    )
+    result = _run(
+        tmp_path,
+        args=["--apply"],
+        hostname="preview.altcontext.com",
+        extra_env={"APP_HEALTH_CMD": str(health), "CURL_LOG": str(curl_log)},
+    )
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert curl_log.read_text(encoding="utf-8").splitlines() == [
+        "https://preview.altcontext.com/", "https://api.altcontext.com/ready",
+    ]
+    assert "applied:" not in result.stdout
+
+
+def test_recovery_refuses_changed_base_compose_without_mutation(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    hook = tmp_path / "interrupt.sh"
+    hook.write_text(
+        "sync() {\n"
+        '  /bin/sync "$@" || return $?\n'
+        '  if [ "${@: -1}" = "$CADDYFILE" ]; then kill -KILL "$BASHPID"; fi\n'
+        "}\n",
+        encoding="utf-8",
+    )
+    interrupted = _run(tmp_path, args=["--apply"], extra_env={"BASH_ENV": str(hook)})
+    assert interrupted.returncode == -9, interrupted.stdout + interrupted.stderr
+    app_root = live.parent / "app"
+    journal = app_root / "activation.journal"
+    before_caddy = live.read_bytes()
+    before_journal = journal.read_bytes()
+    before_log = _log(tmp_path)
+    alternate = _write_caddy_compose(live.parent / "alternate-compose.yml")
+    result = _run(
+        tmp_path, args=["--apply"], live_caddy=live,
+        extra_env={"BASH_ENV": "", "CADDY_COMPOSE": str(alternate)},
+    )
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "journal paths do not match" in result.stderr
+    assert live.read_bytes() == before_caddy
+    assert journal.read_bytes() == before_journal
+    assert _log(tmp_path) == before_log
+    assert f"caddy_compose={live.parent / 'docker-compose.caddy.yml'}\n" in journal.read_text()
+
+
+def test_runbook_first_deploy_rollback_uses_base_only_compose() -> None:
+    rollback = RUNBOOK.read_text(encoding="utf-8").split("## Rollback", 1)[1]
+    assert "no prior overlay" in rollback
+    assert "docker compose -f docker-compose.caddy.yml up -d" in rollback
+    assert "docker compose -f docker-compose.caddy.yml exec -T caddy" in rollback
 
 
 def test_apply_refuses_filesystem_root_paths(tmp_path: Path) -> None:

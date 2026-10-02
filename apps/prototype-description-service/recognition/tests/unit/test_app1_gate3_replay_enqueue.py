@@ -15,8 +15,8 @@ from starlette.requests import Request
 
 from db.models import IdentityScanJob, IdentityScanJobItem
 from recognition.application.scan import service as scan_service_module
-from recognition.application.scan.service import ScanService
 from recognition.application.scan.scan_queue_service import ScanQueueService
+from recognition.application.scan.service import ScanService
 from recognition.domain.job import JobStatus
 from recognition.interface_adapters.http.routers import analyze
 from recognition.interface_adapters.http.schemas.requests import AnalyzeRequest
@@ -29,13 +29,19 @@ async def test_save_job_results_refreshes_retained_job_after_external_failure(
     # Real ORM identity maps, using synchronous SQLite to avoid threaded drivers.
     engine = create_engine("sqlite:///:memory:")
     IdentityScanJob.metadata.create_all(
-        engine, tables=[IdentityScanJob.__table__, IdentityScanJobItem.__table__],
+        engine,
+        tables=[IdentityScanJob.__table__, IdentityScanJobItem.__table__],
     )
     tenant_id = uuid.uuid4()
     job_id = uuid.uuid4()
     retained_job = IdentityScanJob(
-        id=job_id, tenant_id=tenant_id, status=JobStatus.RUNNING,
-        media_ids=[1], total_media=1, processed_media=0, identities_detected=0,
+        id=job_id,
+        tenant_id=tenant_id,
+        status=JobStatus.RUNNING,
+        media_ids=[1],
+        total_media=1,
+        processed_media=0,
+        identities_detected=0,
         error_message="inline:retained-owner",
     )
     with Session(engine, expire_on_commit=False) as orm_session:
@@ -57,8 +63,11 @@ async def test_save_job_results_refreshes_retained_job_after_external_failure(
         emit = MagicMock()
         monkeypatch.setattr(scan_service_module, "_emit_scan_media_reconciled", emit)
         result = await service.save_job_results(
-            job_id=job_id, tenant_id=str(tenant_id), media_ids=["1"],
-            media_sources=None, detections=[],
+            job_id=job_id,
+            tenant_id=str(tenant_id),
+            media_ids=["1"],
+            media_sources=None,
+            detections=[],
         )
 
         assert result is retained_job
@@ -133,9 +142,7 @@ def persisted_queue(monkeypatch):
             pass
 
         async def create_scan_job_record(self, **kwargs):
-            state.jobs.append(
-                SimpleNamespace(id=kwargs["job_id"], status=JobStatus.PENDING, started_at=None)
-            )
+            state.jobs.append(SimpleNamespace(id=kwargs["job_id"], status=JobStatus.PENDING, started_at=None))
             return kwargs["job_id"]
 
         async def populate_scan_job_items(self, **kwargs):
@@ -215,9 +222,7 @@ async def test_replay_does_not_restart_progressed_job(persisted_queue, monkeypat
     await submit(tenant, session, admission, tasks)
     await tasks()
     assert state.items == (
-        [(222222, "22222222-2222-2222-2222-222222222222")]
-        if job_status == JobStatus.RUNNING
-        else []
+        [(222222, "22222222-2222-2222-2222-222222222222")] if job_status == JobStatus.RUNNING else []
     )
     processor.assert_not_awaited()
 
@@ -436,8 +441,11 @@ async def test_terminal_heartbeat_preserves_post_commit_reconcile_events(monkeyp
 
     async def processor(**kwargs):
         await service.save_job_results(
-            job_id=job_id, tenant_id=tenant_id, media_ids=["1", "2"],
-            media_sources=None, detections=[],
+            job_id=job_id,
+            tenant_id=tenant_id,
+            media_ids=["1", "2"],
+            media_sources=None,
+            detections=[],
         )
 
     async def renewal(**kwargs):
@@ -451,13 +459,20 @@ async def test_terminal_heartbeat_preserves_post_commit_reconcile_events(monkeyp
     monkeypatch.setattr(analyze, "_renew_inline_processing_lease", renewal)
     cleanup = AsyncMock()
     monkeypatch.setattr(analyze, "_clear_inline_processing_owner", cleanup)
-    await asyncio.wait_for(analyze._process_inline_with_lease(
-        kwargs={
-            "session_factory": object(), "tenant_id": tenant_id, "job_id": str(job_id),
-            "media_ids": ["1", "2"], "media_sources": [], "adapter_provider": None,
-        },
-        owner_token="inline:commit-test",
-    ), timeout=1)
+    await asyncio.wait_for(
+        analyze._process_inline_with_lease(
+            kwargs={
+                "session_factory": object(),
+                "tenant_id": tenant_id,
+                "job_id": str(job_id),
+                "media_ids": ["1", "2"],
+                "media_sources": [],
+                "adapter_provider": None,
+            },
+            owner_token="inline:commit-test",
+        ),
+        timeout=1,
+    )
 
     assert emit_reconciled.call_count == 2
     assert [call.kwargs["media_id"] for call in emit_reconciled.call_args_list] == [1, 2]
@@ -470,6 +485,24 @@ async def test_terminal_heartbeat_and_shutdown_preserve_reconcile_events(monkeyp
     committed = asyncio.Event()
     resume_commit = asyncio.Event()
     commit_finished = asyncio.Event()
+    heartbeat_cancelled = asyncio.Event()
+    shutdown_cancelled = asyncio.Event()
+    original_shield = asyncio.shield
+
+    def observe_shield(task):
+        future = original_shield(task)
+
+        def signal_cancellation(done):
+            if done.cancelled():
+                if heartbeat_cancelled.is_set():
+                    shutdown_cancelled.set()
+                else:
+                    heartbeat_cancelled.set()
+
+        future.add_done_callback(signal_cancellation)
+        return future
+
+    monkeypatch.setattr(asyncio, "shield", observe_shield)
     job_id = uuid.uuid4()
     tenant_id = str(uuid.uuid4())
     job = SimpleNamespace(status=JobStatus.RUNNING, error_message="inline:shutdown-test")
@@ -491,8 +524,11 @@ async def test_terminal_heartbeat_and_shutdown_preserve_reconcile_events(monkeyp
     async def processor(**kwargs):
         processor_tasks.append(asyncio.current_task())
         await service.save_job_results(
-            job_id=job_id, tenant_id=tenant_id, media_ids=["1", "2"],
-            media_sources=None, detections=[],
+            job_id=job_id,
+            tenant_id=tenant_id,
+            media_ids=["1", "2"],
+            media_sources=None,
+            detections=[],
         )
 
     async def renewal(**kwargs):
@@ -504,26 +540,23 @@ async def test_terminal_heartbeat_and_shutdown_preserve_reconcile_events(monkeyp
     monkeypatch.setattr(analyze, "_renew_inline_processing_lease", renewal)
     cleanup = AsyncMock()
     monkeypatch.setattr(analyze, "_clear_inline_processing_owner", cleanup)
-    processing = asyncio.create_task(analyze._process_inline_with_lease(
-        kwargs={
-            "session_factory": object(), "tenant_id": tenant_id, "job_id": str(job_id),
-            "media_ids": ["1", "2"], "media_sources": [], "adapter_provider": None,
-        },
-        owner_token="inline:shutdown-test",
-    ))
+    processing = asyncio.create_task(
+        analyze._process_inline_with_lease(
+            kwargs={
+                "session_factory": object(),
+                "tenant_id": tenant_id,
+                "job_id": str(job_id),
+                "media_ids": ["1", "2"],
+                "media_sources": [],
+                "adapter_provider": None,
+            },
+            owner_token="inline:shutdown-test",
+        )
+    )
 
-    async def wait_for_heartbeat_cancellation():
-        await committed.wait()
-        while processor_tasks[0].cancelling() == 0:
-            await asyncio.sleep(0)
-        # Let the processor enter its cancellation drain before shutdown.
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
-
-    await asyncio.wait_for(wait_for_heartbeat_cancellation(), timeout=1)
+    await asyncio.wait_for(heartbeat_cancelled.wait(), timeout=1)
     processing.cancel()
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    await asyncio.wait_for(shutdown_cancelled.wait(), timeout=1)
     resume_commit.set()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(processing, timeout=1)
@@ -551,17 +584,27 @@ async def test_reclaimed_inline_owner_cannot_persist_running_job(monkeypatch):
     monkeypatch.setattr(scan_service_module, "_emit_scan_media_reconciled", emit_reconciled)
 
     async def processor(**kwargs):
-        assert await service.save_job_results(
-            job_id=job_id, tenant_id=tenant_id, media_ids=["1"],
-            media_sources=None, detections=[],
-        ) is job
+        assert (
+            await service.save_job_results(
+                job_id=job_id,
+                tenant_id=tenant_id,
+                media_ids=["1"],
+                media_sources=None,
+                detections=[],
+            )
+            is job
+        )
 
     monkeypatch.setattr(analyze, "process_scan_job_inline", processor)
     monkeypatch.setattr(analyze, "_clear_inline_processing_owner", AsyncMock())
     await analyze._process_inline_with_lease(
         kwargs={
-            "session_factory": object(), "tenant_id": tenant_id, "job_id": str(job_id),
-            "media_ids": ["1"], "media_sources": [], "adapter_provider": None,
+            "session_factory": object(),
+            "tenant_id": tenant_id,
+            "job_id": str(job_id),
+            "media_ids": ["1"],
+            "media_sources": [],
+            "adapter_provider": None,
         },
         owner_token="inline:old-owner",
     )

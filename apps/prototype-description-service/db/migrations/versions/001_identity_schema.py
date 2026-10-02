@@ -2795,12 +2795,19 @@ def _matview_create_privilege_gaps(op) -> list[str]:
                 "  SELECT 1 FROM pg_proc p "
                 "  WHERE p.proname = 'l2_normalize' "
                 "    AND has_function_privilege(current_user, p.oid, 'EXECUTE')"
+                "), "
+                "EXISTS ("
+                "  SELECT 1 FROM pg_proc p "
+                "  WHERE p.proname = 'array_fill' "
+                "    AND p.pronamespace = 'pg_catalog'::regnamespace "
+                "    AND p.pronargs = 2 "
+                "    AND has_function_privilege(current_user, p.oid, 'EXECUTE')"
                 ")"
             )
         )
         .one()
     )
-    schema_name, schema_create, sel_clusters, sel_members, sel_media, exec_l2 = row
+    schema_name, schema_create, sel_clusters, sel_members, sel_media, exec_l2, exec_array_fill = row
     gaps: list[str] = []
     if not schema_create:
         gaps.append(f"CREATE on schema {schema_name}")
@@ -2812,6 +2819,8 @@ def _matview_create_privilege_gaps(op) -> list[str]:
         gaps.append("SELECT on media_identities")
     if not exec_l2:
         gaps.append("EXECUTE on l2_normalize")
+    if not exec_array_fill:
+        gaps.append("EXECUTE on array_fill")
     return gaps
 
 
@@ -3083,7 +3092,14 @@ def ensure_matview(op) -> None:
                 CASE
                     WHEN SUM(quality_weight) > 0 THEN
                         (
-                            SUM(unit_embedding * quality_weight) / SUM(quality_weight)
+                            SUM(
+                                unit_embedding
+                                * array_fill(quality_weight::real, ARRAY[{EMBEDDING_DIMENSION}])::vector
+                            )
+                            * array_fill(
+                                (1.0 / SUM(quality_weight))::real,
+                                ARRAY[{EMBEDDING_DIMENSION}]
+                            )::vector
                         )::vector({EMBEDDING_DIMENSION})
                     ELSE NULL
                 END AS media_embedding

@@ -10,6 +10,8 @@ unreachable (fixture in ``recognition/tests/conftest.py``).
 from __future__ import annotations
 
 import importlib
+import math
+import uuid
 
 import pytest
 from sqlalchemy import text
@@ -71,3 +73,76 @@ def test_matview_centroid_carries_vector_typmod(pg_migrated_engine) -> None:
     assert typmod == MIGRATION.EMBEDDING_DIMENSION, (
         f"centroid typmod={typmod!r}, expected vector({MIGRATION.EMBEDDING_DIMENSION})"
     )
+
+
+def test_matview_builds_weighted_centroid_with_vector_operators(pg_migrated_engine) -> None:
+    dimension = MIGRATION.EMBEDDING_DIMENSION
+    tenant_id = uuid.uuid4()
+    cluster_id = uuid.uuid4()
+    media_id = 74821
+    identity_ids = [uuid.uuid4(), uuid.uuid4()]
+    weights = [0.25, 0.75]
+
+    with pg_migrated_engine.connect() as conn:
+        transaction = conn.begin()
+        try:
+            conn.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
+            conn.execute(
+                text("INSERT INTO tenants (id, site_url) VALUES (:tenant_id, :site_url)"),
+                {"tenant_id": tenant_id, "site_url": f"https://centroid-{tenant_id}.test"},
+            )
+            conn.execute(
+                text("INSERT INTO identity_clusters (id, tenant_id) VALUES (:cluster_id, :tenant_id)"),
+                {"cluster_id": cluster_id, "tenant_id": tenant_id},
+            )
+
+            insert_identity = text(
+                f"""INSERT INTO media_identities (
+                    id, tenant_id, media_id, media_url, bbox_x, bbox_y, bbox_width, bbox_height,
+                    confidence, embedding, embedding_model, quality_score
+                ) VALUES (
+                    :identity_id, :tenant_id, :media_id, :media_url, :bbox_x, 0, 10, 10,
+                    1.0, CAST(:embedding AS vector({dimension})), 'centroid-test', :quality_score
+                )"""
+            )
+            for axis, (identity_id, weight) in enumerate(zip(identity_ids, weights, strict=True)):
+                coordinates = ["0"] * dimension
+                coordinates[axis] = "1"
+                conn.execute(
+                    insert_identity,
+                    {
+                        "identity_id": identity_id,
+                        "tenant_id": tenant_id,
+                        "media_id": media_id,
+                        "media_url": "https://centroid.test/image",
+                        "bbox_x": axis * 10,
+                        "embedding": f"[{','.join(coordinates)}]",
+                        "quality_score": weight,
+                    },
+                )
+                conn.execute(
+                    text(
+                        "INSERT INTO identity_members "
+                        "(id, tenant_id, cluster_id, identity_id, similarity) "
+                        "VALUES (:id, :tenant_id, :cluster_id, :identity_id, 1.0)"
+                    ),
+                    {
+                        "id": uuid.uuid4(),
+                        "tenant_id": tenant_id,
+                        "cluster_id": cluster_id,
+                        "identity_id": identity_id,
+                    },
+                )
+
+            conn.execute(text("REFRESH MATERIALIZED VIEW mv_identity_cluster_centroids"))
+            centroid_text = conn.execute(
+                text("SELECT centroid::text FROM mv_identity_cluster_centroids WHERE cluster_id=:cluster_id"),
+                {"cluster_id": cluster_id},
+            ).scalar_one()
+            centroid = [float(value) for value in centroid_text.strip("[]").split(",")]
+        finally:
+            transaction.rollback()
+
+    magnitude = math.hypot(*weights)
+    expected = [weights[0] / magnitude, weights[1] / magnitude, *([0.0] * (dimension - 2))]
+    assert centroid == pytest.approx(expected, abs=1e-5)

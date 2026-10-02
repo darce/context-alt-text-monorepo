@@ -45,7 +45,17 @@ def test_centroid_sql_quality_weights_and_caps_each_media_item_once() -> None:
         query,
         flags=re.DOTALL,
     )
-    assert "SUM(unit_embedding * quality_weight) / SUM(quality_weight)" in query
+    assert re.search(
+        r"SUM\s*\(\s*unit_embedding\s*\*\s*array_fill\(quality_weight::real,\s*"
+        r"ARRAY\[\{EMBEDDING_DIMENSION\}\]\)::vector\s*\)",
+        query,
+    )
+    assert re.search(
+        r"\)\s*\*\s*array_fill\(\s*\(1\.0 / SUM\(quality_weight\)\)::real,\s*"
+        r"ARRAY\[\{EMBEDDING_DIMENSION\}\]\s*\)::vector",
+        query,
+    )
+    assert not re.search(r"unit_embedding\s*\*\s*quality_weight\b", query)
     assert "AVG(me.media_embedding)" in query
 
 

@@ -17,6 +17,22 @@ set -euo pipefail
 export LC_ALL=C
 export LANG=C
 
+# The runbook installs a copy under this name for live frontend/API checks.
+if [ "${0##*/}" = "app-portal-health-check" ]; then
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "ERROR: curl is required for app-portal-health-check" >&2
+    exit 1
+  fi
+  health_status=0
+  for health_url in "https://${APP_HOSTNAME:-app.altcontext.com}/" "https://api.altcontext.com/ready"; do
+    if ! curl --fail --silent --show-error --location --max-time 15 --output /dev/null "$health_url"; then
+      echo "ERROR: health check failed: ${health_url}" >&2
+      health_status=1
+    fi
+  done
+  exit "$health_status"
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
@@ -33,13 +49,15 @@ Usage: scripts/deploy/app-portal.sh [--dry-run|--apply]
 
 Default: print the plan and mutate nothing.
 --apply requires a real FRONTEND_DIST (index.html + assets), a live Caddyfile,
-a reload mechanism, and APP_HEALTH_CMD to verify the serving edge and portal API.
+a Docker Compose file/client, jq, a reload mechanism, and APP_HEALTH_CMD to verify
+the serving edge and portal API.
 
 Environment:
   APP_HOSTNAME         public vhost (default app.altcontext.com)
   APP_UPSTREAM         portal reverse_proxy target (default prod-api:8000)
   APP_ROOT             staging/rollback root (default /opt/acx-backend/app)
   APP_WWW              host static root (default $APP_ROOT/www)
+  CADDY_COMPOSE        base Caddy compose file (default in APP_ROOT's parent)
   APP_FRONTEND_ROOT    path inside Caddy (must be /srv/app-portal)
   CADDYFILE            live edge config (default /opt/acx-backend/Caddyfile)
   FRONTEND_DIST        built SPA directory (required for --apply)
@@ -326,6 +344,9 @@ APP_APPROVED_ROOTS="$_approved_normalized"
 [ -n "$APP_APPROVED_ROOTS" ] || refuse "APP_APPROVED_ROOTS is empty"
 
 guard_dest_path APP_ROOT "$APP_ROOT" dir
+if [ -z "${CADDY_COMPOSE:-}" ]; then
+  CADDY_COMPOSE="${APP_ROOT%/*}/docker-compose.caddy.yml"
+fi
 guard_dest_path APP_WWW "$APP_WWW" dir
 if [ "$APP_WWW" = "$APP_ROOT" ]; then
   refuse "APP_WWW must not equal APP_ROOT"
@@ -366,9 +387,16 @@ case "$CADDYFILE" in
 esac
 guard_source_path APP_SNIPPET "$APP_SNIPPET" file
 guard_source_path APP_OVERLAY "$APP_OVERLAY" file
-if [ -n "${FRONTEND_DIST}" ]; then
-  guard_source_path FRONTEND_DIST "$FRONTEND_DIST" dir
-fi
+# Planning needs a safe path, but the host Compose file may not be installed yet.
+guard_source_path CADDY_COMPOSE "$CADDY_COMPOSE" path
+# Guards above require absolute paths without dot or symlink components, so
+# these normalized paths identify the actual filesystem destinations.
+for _activation_path in "$STAGING_DIR" "$ROLLBACK_DIR" "$APP_WWW" "${APP_WWW}.prev" \
+  "$CADDYFILE" "$OVERLAY_DEST" "$ACTIVATION_JOURNAL" "$DEPLOY_LOCK"; do
+  if paths_overlap "$CADDY_COMPOSE" "$_activation_path"; then
+    refuse "CADDY_COMPOSE collides with activation paths"
+  fi
+done
 if [ -n "$APP_RELOAD_CMD" ]; then
   guard_source_path APP_RELOAD_CMD "$APP_RELOAD_CMD" exec
 fi
@@ -397,6 +425,7 @@ validate_frontend() {
   if [ -z "${FRONTEND_DIST}" ]; then
     refuse "FRONTEND_DIST is required for --apply"
   fi
+  guard_source_path FRONTEND_DIST "$FRONTEND_DIST" dir
   if [ ! -d "$FRONTEND_DIST" ]; then
     refuse "FRONTEND_DIST is not a directory: ${FRONTEND_DIST}"
   fi
@@ -461,8 +490,8 @@ write_activation_journal() {
   _tmp="${ACTIVATION_JOURNAL}.new.$$"
   if ! (
     umask 077
-    printf 'version=1\nphase=%s\ncaddyfile=%s\napp_www=%s\noverlay=%s\nrollback_caddy=%s\nrollback_www=%s\nrollback_overlay=%s\n' \
-      "$_phase" "$CADDYFILE" "$APP_WWW" "$OVERLAY_DEST" \
+    printf 'version=2\nphase=%s\ncaddyfile=%s\napp_www=%s\noverlay=%s\ncaddy_compose=%s\nrollback_caddy=%s\nrollback_www=%s\nrollback_overlay=%s\n' \
+      "$_phase" "$CADDYFILE" "$APP_WWW" "$OVERLAY_DEST" "$CADDY_COMPOSE" \
       "$ROLLBACK_CADDY" "$ROLLBACK_WWW" "$ROLLBACK_OVERLAY" > "$_tmp"
   ); then
     rm -f "$_tmp"
@@ -476,7 +505,8 @@ write_activation_journal() {
     rm -f "$_tmp"
     return 1
   fi
-  sync_path "$APP_ROOT"
+  sync_path "$APP_ROOT" || return 1
+  JOURNAL_PHASE="$_phase"
 }
 
 read_journal_field() {
@@ -493,7 +523,7 @@ load_activation_journal() {
     return 1
   fi
   exec 3< "$ACTIVATION_JOURNAL" || return 1
-  IFS= read -r _journal_line <&3 && [ "$_journal_line" = "version=1" ] || {
+  IFS= read -r _journal_line <&3 && [ "$_journal_line" = "version=2" ] || {
     exec 3<&-
     echo "ERROR: unsupported activation journal: ${ACTIVATION_JOURNAL}" >&2
     return 1
@@ -506,6 +536,8 @@ load_activation_journal() {
   JOURNAL_WWW="$JOURNAL_VALUE"
   read_journal_field overlay || { exec 3<&-; return 1; }
   JOURNAL_OVERLAY="$JOURNAL_VALUE"
+  read_journal_field caddy_compose || { exec 3<&-; return 1; }
+  JOURNAL_CADDY_COMPOSE="$JOURNAL_VALUE"
   read_journal_field rollback_caddy || { exec 3<&-; return 1; }
   ROLLBACK_CADDY="$JOURNAL_VALUE"
   read_journal_field rollback_www || { exec 3<&-; return 1; }
@@ -523,7 +555,7 @@ load_activation_journal() {
     prepared|caddy_promoted|www_promoted|overlay_promoted) ;;
     *) echo "ERROR: invalid activation journal phase: ${JOURNAL_PHASE}" >&2; return 1 ;;
   esac
-  if [ "$JOURNAL_CADDYFILE" != "$CADDYFILE" ] || [ "$JOURNAL_WWW" != "$APP_WWW" ] || [ "$JOURNAL_OVERLAY" != "$OVERLAY_DEST" ]; then
+  if [ "$JOURNAL_CADDYFILE" != "$CADDYFILE" ] || [ "$JOURNAL_WWW" != "$APP_WWW" ] || [ "$JOURNAL_OVERLAY" != "$OVERLAY_DEST" ] || [ "$JOURNAL_CADDY_COMPOSE" != "$CADDY_COMPOSE" ]; then
     echo "ERROR: activation journal paths do not match this deploy configuration" >&2
     return 1
   fi
@@ -586,6 +618,12 @@ restore_from_rollback() {
     echo "ERROR: could not finish activation rollback cleanup" >&2
     return 1
   fi
+  # Restoring www replaces its directory even when activation stopped before
+  # overlay promotion. Recreate Caddy after restoration to refresh its mount.
+  if ! apply_caddy_compose; then
+    echo "ERROR: compose rollback failed; activation journal retained for retry" >&2
+    return 1
+  fi
   if ! reload_caddy; then
     echo "ERROR: rollback reload failed; activation journal retained for retry" >&2
     return 1
@@ -619,6 +657,7 @@ plan:
   APP_UPSTREAM=$APP_UPSTREAM
   APP_ROOT=$APP_ROOT
   APP_WWW=$APP_WWW
+  CADDY_COMPOSE=$CADDY_COMPOSE
   APP_FRONTEND_ROOT=$APP_FRONTEND_ROOT
   CADDYFILE=$CADDYFILE
   FRONTEND_DIST=${FRONTEND_DIST:-}
@@ -630,11 +669,15 @@ plan:
 $(list_live_hosts | sed 's/^/    /')
   stage Caddyfile, static root, and overlay; validate before activation
   durable activation journal precedes atomic Caddyfile, www, and overlay promotion
-  failure trap or next run restores snapshots and reloads rollback
+  apply the Caddy compose overlay before reload and live health checking
+  failure trap or next run restores snapshots, reapplies compose, and reloads rollback
   retain only the latest successful apply's rollback set under ${APP_ROOT}/rollback
   render overlay APP_WWW=${APP_WWW} -> /srv/app-portal
   env ownership: Clerk/Polar stay in /opt/acx-backend/prod/.env; VITE_CLERK_* is baked into FRONTEND_DIST
 EOF
+  if [ ! -f "$CADDY_COMPOSE" ]; then
+    echo "CADDY_COMPOSE is absent: ${CADDY_COMPOSE} (required for --apply)"
+  fi
 }
 
 strip_app_vhost() {
@@ -705,11 +748,58 @@ reload_caddy() {
     "$APP_RELOAD_CMD" 9>&-
     return $?
   fi
-  if command -v caddy >/dev/null 2>&1; then
-    caddy reload --config "$CADDYFILE" --adapter caddyfile 9>&-
-    return $?
+  if [ -f "$OVERLAY_DEST" ]; then
+    docker compose -f "$CADDY_COMPOSE" -f "$OVERLAY_DEST" exec -T caddy \
+      caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 9>&-
+  else
+    docker compose -f "$CADDY_COMPOSE" exec -T caddy \
+      caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 9>&-
   fi
-  echo "ERROR: reload unavailable: set APP_RELOAD_CMD or install caddy" >&2
+}
+
+verify_caddyfile_binding() {
+  local _source
+  # Compose resolves relative bind sources. Parse its model, never raw YAML.
+  # The same mount must survive base-only rollback and every selected overlay.
+  if ! _source=$(docker compose -f "$CADDY_COMPOSE" "$@" config --format json 9>&- |
+    jq -er '[.services.caddy.volumes[]? | select(.target == "/etc/caddy/Caddyfile")] |
+      if length == 1 and .[0].type == "bind" then .[0].source | select(type == "string")
+      else error("expected one Caddyfile bind mount") end'); then
+    refuse "cannot resolve Caddy bind source for /etc/caddy/Caddyfile; expected CADDYFILE=${CADDYFILE}"
+  fi
+  [ "$_source" = "$CADDYFILE" ] ||
+    refuse "Caddy bind source ${_source} for /etc/caddy/Caddyfile does not match CADDYFILE=${CADDYFILE}"
+}
+
+apply_caddy_compose() {
+  # A bind mount pins the directory inode; unchanged Compose configuration
+  # cannot detect the www swap. Recreate only Caddy after every replacement.
+  if [ -f "$OVERLAY_DEST" ]; then
+    docker compose -f "$CADDY_COMPOSE" -f "$OVERLAY_DEST" up -d --force-recreate --no-deps caddy || return 1
+  else
+    docker compose -f "$CADDY_COMPOSE" up -d --force-recreate --no-deps caddy || return 1
+  fi
+  wait_for_caddy_admin
+}
+
+wait_for_caddy_admin() {
+  local _attempt
+  local -a _compose=(docker compose -f "$CADDY_COMPOSE")
+  if [ -f "$OVERLAY_DEST" ]; then
+    _compose+=(-f "$OVERLAY_DEST")
+  fi
+  # Compose returns before Caddy is ready. BusyBox wget ships in caddy:2-alpine;
+  # probe inside the service because its admin port is not published on the host.
+  for _attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if "${_compose[@]}" exec -T caddy wget -q -T 1 -O /dev/null \
+      http://127.0.0.1:2019/config/ 9>&-; then
+      return 0
+    fi
+    if [ "$_attempt" -lt 10 ]; then
+      sleep 1
+    fi
+  done
+  echo "ERROR: Caddy admin endpoint not ready after 10 attempts" >&2
   return 1
 }
 
@@ -728,7 +818,7 @@ run_health() {
     echo "ERROR: APP_HEALTH_CMD is required to check the live frontend and portal upstream" >&2
     return 1
   fi
-  "$APP_HEALTH_CMD" 9>&-
+  APP_HOSTNAME="$APP_HOSTNAME" "$APP_HEALTH_CMD" 9>&-
 }
 
 reclaim_rollback_snapshots() {
@@ -762,6 +852,8 @@ reclaim_rollback_snapshots() {
 }
 
 if [ "$APPLY" -eq 1 ]; then
+  # Refuse before creating the lock or performing recovery/staging mutations.
+  guard_source_path CADDY_COMPOSE "$CADDY_COMPOSE" file
   APP_DEPLOY_LOCK_WAIT="${APP_DEPLOY_LOCK_WAIT:-30}"
   case "$APP_DEPLOY_LOCK_WAIT" in
     ''|*[!0-9]*) refuse "APP_DEPLOY_LOCK_WAIT must be a non-negative integer" ;;
@@ -777,6 +869,22 @@ if [ "$APPLY" -eq 1 ]; then
     exec 9>&-
     refuse "could not acquire deployment lock ${DEPLOY_LOCK} within ${APP_DEPLOY_LOCK_WAIT}s"
   fi
+  # No staging, journal recovery, or live changes before the binding gate.
+  # Preserve journal path validation before contacting a different project.
+  if [ -e "$ACTIVATION_JOURNAL" ] || [ -L "$ACTIVATION_JOURNAL" ]; then
+    load_activation_journal || refuse "could not inspect interrupted activation journal ${ACTIVATION_JOURNAL}"
+  elif [ -n "${FRONTEND_DIST}" ]; then
+    # Without recovery work, reject unsafe source paths before contacting Compose.
+    guard_source_path FRONTEND_DIST "$FRONTEND_DIST" dir
+  fi
+  command -v docker >/dev/null 2>&1 || refuse "docker compose is required to apply the Caddy overlay and reload Caddy"
+  docker compose version >/dev/null 2>&1 || refuse "docker compose is unavailable; cannot apply the Caddy overlay or reload Caddy"
+  command -v jq >/dev/null 2>&1 || refuse "jq is required to verify the Caddyfile bind source"
+  verify_caddyfile_binding
+  if [ -f "$OVERLAY_DEST" ]; then
+    verify_caddyfile_binding -f "$OVERLAY_DEST"
+  fi
+  render_overlay | verify_caddyfile_binding -f -
 fi
 
 if [ -e "$ACTIVATION_JOURNAL" ] || [ -L "$ACTIVATION_JOURNAL" ]; then
@@ -792,6 +900,13 @@ if [ -e "$ACTIVATION_JOURNAL" ] || [ -L "$ACTIVATION_JOURNAL" ]; then
   fi
 fi
 
+# Recovery must not depend on the replacement build being available or valid.
+if [ "$APPLY" -eq 1 ]; then
+  validate_frontend
+elif [ -n "${FRONTEND_DIST}" ]; then
+  guard_source_path FRONTEND_DIST "$FRONTEND_DIST" dir
+fi
+
 print_plan
 
 if [ "$APPLY" -ne 1 ]; then
@@ -801,13 +916,10 @@ fi
 
 [ -f "$APP_SNIPPET" ] || refuse "APP_SNIPPET is missing: ${APP_SNIPPET}"
 [ -f "$APP_OVERLAY" ] || refuse "APP_OVERLAY is missing: ${APP_OVERLAY}"
+[ -f "$CADDY_COMPOSE" ] || refuse "CADDY_COMPOSE is missing: ${CADDY_COMPOSE}"
 [ -f "$CADDYFILE" ] || refuse "CADDYFILE is missing: ${CADDYFILE}"
 if [ -L "$CADDYFILE" ] || [ ! -f "$CADDYFILE" ]; then
   refuse "CADDYFILE must be a regular file: ${CADDYFILE}"
-fi
-validate_frontend
-if [ -z "$APP_RELOAD_CMD" ] && ! command -v caddy >/dev/null 2>&1; then
-  refuse "reload unavailable: set APP_RELOAD_CMD or install caddy before --apply"
 fi
 [ -n "$APP_HEALTH_CMD" ] || refuse "APP_HEALTH_CMD is required to check the live frontend and portal upstream"
 
@@ -897,6 +1009,9 @@ fi
 write_activation_journal overlay_promoted
 rm -rf "$STAGING_DIR"
 
+if ! apply_caddy_compose; then
+  activation_fail "docker compose failed while applying the app portal mount"
+fi
 if ! reload_caddy; then
   activation_fail "caddy reload failed after host promote"
 fi
@@ -912,4 +1027,4 @@ if ! reclaim_rollback_snapshots; then
 fi
 
 echo "applied: ${APP_HOSTNAME} -> ${APP_UPSTREAM}; frontend ${APP_WWW}; overlay ${OVERLAY_DEST}; rollback ${ROLLBACK_CADDY}; reload=ok health=ok"
-echo "next: apply compose overlay so Caddy mounts ${APP_WWW} at /srv/app-portal; recreate Caddy if the bind-mount inode diverged; do not ship this vhost via the shared repo Caddyfile from this lane"
+echo "next: verify Caddy mounts ${APP_WWW} at /srv/app-portal; do not ship this vhost via the shared repo Caddyfile from this lane"

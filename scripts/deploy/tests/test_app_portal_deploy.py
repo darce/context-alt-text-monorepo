@@ -5,12 +5,16 @@ Filesystem-only: stub caddy/docker on PATH. Never SSH to the OCI host.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
+import shutil
 import stat
 import subprocess
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "scripts" / "deploy" / "app-portal.sh"
@@ -61,40 +65,139 @@ def _write_live_caddy(path: Path, body: str | None = None) -> None:
     path.write_text(body if body is not None else LIVE_CADDY_SRC.read_text(encoding="utf-8"), encoding="utf-8")
 
 
-def _caddy_stub(log_path: str, *, fail: bool = False, fail_on: str | None = None) -> str:
+def _write_caddy_compose(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("services:\n  caddy:\n    image: caddy:2\n", encoding="utf-8")
+    return path
+
+
+def _caddy_stub(log_path: str, *, fail: bool = False) -> str:
     exit_code = 1 if fail else 0
-    fail_on_lit = fail_on or ""
     return (
         "#!/usr/bin/env bash\n"
         "set -u\n"
         f"printf 'caddy' >> {log_path}\n"
         f"printf ' %q' \"$@\" >> {log_path}\n"
         f"printf '\\n' >> {log_path}\n"
-        "cmd=\n"
-        'for a in "$@"; do\n'
-        '  case "$a" in\n'
-        '    validate|reload|adapt) cmd="$a" ;;\n'
-        "  esac\n"
-        "done\n"
         f"if [ {exit_code} -ne 0 ]; then\n"
-        "  exit 1\n"
-        "fi\n"
-        f'if [ -n "{fail_on_lit}" ] && [ "$cmd" = "{fail_on_lit}" ]; then\n'
         "  exit 1\n"
         "fi\n"
         "exit 0\n"
     )
 
 
-def _docker_stub(log_path: str) -> str:
+def _docker_stub(
+    log_path: str, compose_marker: str, *, fail_first_reload: bool = False,
+    mount_root: Path | None = None, readiness_polls: int = 0,
+    compose_config: str | None = None,
+    compose_overlay_config: str | None = None,
+) -> str:
+    if compose_config is None:
+        compose_config = json.dumps({"services": {"caddy": {"volumes": [{
+            "type": "bind", "source": str(Path(compose_marker).parent / "opt/acx-backend/Caddyfile"),
+            "target": "/etc/caddy/Caddyfile",
+        }]}}})
+    compose_marker_quoted = shlex.quote(compose_marker)
+    reload_failure_marker = shlex.quote(f"{compose_marker}.failed-first-reload")
+    failure_rule = (
+        f'  if [ "$compose_reload" -eq 1 ] && [ ! -e {reload_failure_marker} ]; then\n'
+        f'    : > {reload_failure_marker}\n'
+        "    exit 1\n"
+        "  fi\n"
+        if fail_first_reload else ""
+    )
+    readiness_state = shlex.quote(f"{compose_marker}.readiness")
+    startup_state = shlex.quote(f"{compose_marker}.startups")
+    readiness_rule = (
+        '  if [ "$compose_up" -eq 1 ]; then\n'
+        f'    startup=$(cat {startup_state} 2>/dev/null || echo 0)\n'
+        f'    echo "$((startup + 1))" > {startup_state}\n'
+        f'    polls={readiness_polls}\n'
+        # An exhausted first startup still allows rollback to become ready.
+        '    [ "$startup" -eq 0 ] || polls=2\n'
+        f'    echo "$polls" > {readiness_state}\n'
+        '  fi\n'
+        '  if [ "$compose_probe" -eq 1 ]; then\n'
+        f'    polls=$(cat {readiness_state})\n'
+        '    if [ "$polls" -gt 0 ]; then\n'
+        f'      echo "$((polls - 1))" > {readiness_state}\n'
+        '      exit 1\n'
+        '    fi\n'
+        '  fi\n'
+        '  if [ "$compose_reload" -eq 1 ]; then\n'
+        f'    polls=$(cat {readiness_state} 2>/dev/null || echo 0)\n'
+        '    [ "$polls" -eq 0 ] || exit 1\n'
+        '  fi\n'
+    ) if readiness_polls else ""
+    # Model a bind mount that retains the original directory after a host swap.
+    # Only creating/recreating the service captures the new frontend contents.
+    mount_rule = ""
+    if mount_root is not None:
+        source = shlex.quote(str(mount_root / "index.html"))
+        snapshot = shlex.quote(f"{compose_marker}.mounted-index")
+        mount_rule = (
+            '  if [ "$compose_up" -eq 1 ] && '
+            f'{{ [ "$compose_recreate" -eq 1 ] || [ ! -e {snapshot} ]; }}; then\n'
+            f'    cp {source} {snapshot} || exit 1\n'
+            "  fi\n"
+            '  if [ "$compose_reload" -eq 1 ]; then\n'
+            f"    printf 'mounted-index %q\\n' \"$(cat {snapshot})\" >> {log_path}\n"
+            "  fi\n"
+        )
     return (
         "#!/usr/bin/env bash\n"
         "set -u\n"
         f"printf 'docker' >> {log_path}\n"
         f"printf ' %q' \"$@\" >> {log_path}\n"
         f"printf '\\n' >> {log_path}\n"
-        "exit 0\n"
+        'if [ "${1:-}" = "compose" ]; then\n'
+        "  compose_up=0\n"
+        "  compose_probe=0\n"
+        "  compose_reload=0\n"
+        "  compose_recreate=0\n"
+        "  compose_config_request=0\n"
+        f"  resolved_config={shlex.quote(compose_config)}\n"
+        '  for arg in "$@"; do\n'
+        '    [ "$arg" != "config" ] || compose_config_request=1\n'
+        + (f'    case "$arg" in -|*/docker-compose.app.yml) resolved_config={shlex.quote(compose_overlay_config)} ;; esac\n'
+           if compose_overlay_config is not None else "")
+        + '    [ "$arg" != "-" ] || cat >/dev/null\n'
+        '    [ "$arg" = "wget" ] && compose_probe=1\n'
+        '    [ "$arg" = "up" ] && compose_up=1\n'
+        '    [ "$arg" = "reload" ] && compose_reload=1\n'
+        '    [ "$arg" = "--force-recreate" ] && compose_recreate=1\n'
+        "  done\n"
+        '  if [ "$compose_config_request" -eq 1 ]; then\n'
+        '    printf "%s\\n" "$resolved_config"\n'
+        '    exit 0\n'
+        '  fi\n'
+        f'  [ "$compose_up" -eq 0 ] || : > {compose_marker_quoted}\n'
+        + readiness_rule + mount_rule + failure_rule
+        + "fi\n"
+        + "exit 0\n"
     )
+
+
+def _expected_compose_reload(backend_root: Path, overlay: Path | None = None) -> list[str]:
+    argv = ["docker", "compose", "-f", str(backend_root / "docker-compose.caddy.yml")]
+    if overlay is not None:
+        argv.extend(["-f", str(overlay)])
+    argv.extend(
+        [
+            "exec", "-T", "caddy", "caddy", "reload", "--config",
+            "/etc/caddy/Caddyfile", "--adapter", "caddyfile",
+        ]
+    )
+    return argv
+
+
+def _compose_reload_calls(tmp_path: Path) -> list[list[str]]:
+    calls = []
+    for line in _log(tmp_path).splitlines():
+        argv = shlex.split(line)
+        if argv[:2] == ["docker", "compose"] and "exec" in argv and "reload" in argv:
+            calls.append(argv)
+    return calls
 
 
 def _run(
@@ -107,10 +210,14 @@ def _run(
     upstream: str | None = "prod-api:8000",
     hostname: str | None = "app.altcontext.com",
     caddy_fail: bool = False,
-    caddy_fail_on: str | None = None,
+    docker_fail_first_reload: bool = False,
     fail_mv_dest: Path | None = None,
     include_caddy: bool = True,
     include_docker: bool = True,
+    model_mount: bool = False,
+    readiness_polls: int = 0,
+    compose_config: str | None = None,
+    compose_overlay_config: str | None = None,
     timeout: int = 20,
 ) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
@@ -121,14 +228,31 @@ def _run(
     app_root.mkdir(parents=True, exist_ok=True)
     backend_root = tmp_path / "opt" / "acx-backend"
     backend_root.mkdir(parents=True, exist_ok=True)
+    caddy_compose = backend_root / "docker-compose.caddy.yml"
+    if not caddy_compose.exists():
+        _write_caddy_compose(caddy_compose)
+    compose_marker = tmp_path / "compose-applied"
 
     if include_caddy:
         _write_executable(
             bin_dir / "caddy",
-            _caddy_stub(log_path, fail=caddy_fail, fail_on=caddy_fail_on),
+            _caddy_stub(log_path, fail=caddy_fail),
         )
     if include_docker:
-        _write_executable(bin_dir / "docker", _docker_stub(log_path))
+        _write_executable(
+            bin_dir / "docker",
+            _docker_stub(
+                log_path,
+                str(compose_marker),
+                fail_first_reload=docker_fail_first_reload,
+                mount_root=app_root / "www" if model_mount else None,
+                readiness_polls=readiness_polls,
+                compose_config=compose_config,
+                compose_overlay_config=compose_overlay_config,
+            ),
+        )
+    if readiness_polls:
+        _write_executable(bin_dir / "sleep", "#!/bin/sh\nexit 0\n")
     health = bin_dir / "health-check"
     _write_executable(health, "#!/usr/bin/env bash\nexit 0\n")
     if fail_mv_dest is not None:
@@ -168,6 +292,7 @@ def _run(
     env["LANG"] = "C"
     env["APP_ROOT"] = str(app_root)
     env["APP_WWW"] = str(app_root / "www")
+    env["CADDY_COMPOSE"] = str(caddy_compose)
     env.pop("DRY_RUN", None)
     env.pop("APP_PORTAL_APPLY", None)
     env.pop("FRONTEND_DIST", None)
@@ -219,6 +344,122 @@ def _tree_files(root: Path) -> set[str]:
     return {str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()}
 
 
+def _mounted_indexes(tmp_path: Path) -> list[str]:
+    return [
+        shlex.split(line)[1] for line in _log(tmp_path).splitlines()
+        if line.startswith("mounted-index ")
+    ]
+
+
+def _assert_caddy_recreated(tmp_path: Path, count: int) -> None:
+    calls = [
+        shlex.split(line) for line in _log(tmp_path).splitlines()
+        if line.startswith("docker compose ") and " up -d" in line
+    ]
+    assert len(calls) == count
+    assert all(call[-5:] == ["up", "-d", "--force-recreate", "--no-deps", "caddy"] for call in calls)
+
+
+def test_second_apply_and_rollback_refresh_container_mount(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    frontend = _write_frontend(tmp_path, index="first frontend")
+    first = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=frontend, model_mount=True)
+    assert first.returncode == 0, first.stdout + first.stderr
+    (frontend / "index.html").write_text("second frontend")
+    second = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=frontend, model_mount=True)
+    assert second.returncode == 0, second.stdout + second.stderr
+    (frontend / "index.html").write_text("failed frontend")
+    failed = _run(
+        tmp_path, args=["--apply"], live_caddy=live, frontend=frontend,
+        model_mount=True, docker_fail_first_reload=True,
+    )
+    assert failed.returncode != 0
+    assert _mounted_indexes(tmp_path) == [
+        "first frontend", "second frontend", "failed frontend", "second frontend",
+    ]
+    assert (live.parent / "app" / "www" / "index.html").read_text() == "second frontend"
+    assert not (live.parent / "app" / "activation.journal").exists()
+    _assert_caddy_recreated(tmp_path, 4)
+
+
+@pytest.mark.parametrize("invalid_frontend", ["unset", "empty_index", "deleted_directory"])
+def test_recovery_precedes_replacement_frontend_validation(tmp_path: Path, invalid_frontend: str) -> None:
+    from test_app_portal_activation_journal import _interrupt_after_caddy
+
+    live = tmp_path / "opt/acx-backend/Caddyfile"
+    original_caddy, www, app_root, overlay, original_overlay = _interrupt_after_caddy(tmp_path, live)
+    journal = app_root / "activation.journal"
+    assert journal.is_file()
+    assert live.read_text() != original_caddy
+    frontend = None if invalid_frontend == "unset" else _write_frontend(tmp_path, index="")
+    if invalid_frontend == "deleted_directory":
+        shutil.rmtree(frontend)
+        assert not frontend.exists()
+    before_log = _log(tmp_path)
+
+    result = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=frontend,
+                  extra_env={"BASH_ENV": ""})
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "FRONTEND_DIST" in result.stderr
+    assert "applied:" not in result.stdout
+    assert live.read_text() == original_caddy
+    assert (www / "keep.txt").read_text() == "active\n"
+    assert not (www / "index.html").exists()
+    assert overlay.read_text() == original_overlay
+    assert not journal.exists()
+    calls = _log(tmp_path)[len(before_log):]
+    assert " up -d --force-recreate --no-deps caddy" in calls
+    assert " reload " in calls
+    assert " validate " not in calls
+
+    # A retry still rejects the build, without repeating completed recovery.
+    before_retry_log = _log(tmp_path)
+    retry = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=frontend,
+                 extra_env={"BASH_ENV": ""})
+    assert retry.returncode != 0, retry.stdout + retry.stderr
+    assert live.read_text() == original_caddy
+    assert not journal.exists()
+    retry_calls = _log(tmp_path)[len(before_retry_log):]
+    assert " up " not in retry_calls and " reload " not in retry_calls
+
+
+@pytest.mark.parametrize("phase", ["prepared", "caddy_promoted", "www_promoted", "overlay_promoted"])
+def test_recovery_refreshes_container_mount_after_restore(tmp_path: Path, phase: str) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    frontend = _write_frontend(tmp_path, index="original frontend")
+    first = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=frontend, model_mount=True)
+    assert first.returncode == 0, first.stdout + first.stderr
+    (frontend / "index.html").write_text("replacement frontend")
+    hook = tmp_path / "interrupt.sh"
+    _write_executable(
+        hook,
+        "sync() {\n"
+        '  /bin/sync "$@" || return $?\n'
+        '  if [ "${@: -1}" = "$APP_ROOT" ] && [ -f "$ACTIVATION_JOURNAL" ] && '
+        f'grep -qx "phase={phase}" "$ACTIVATION_JOURNAL"; then\n'
+        '    kill -KILL "$BASHPID"\n'
+        "  fi\n}\n",
+    )
+    interrupted = _run(
+        tmp_path, args=["--apply"], live_caddy=live, frontend=frontend,
+        model_mount=True, extra_env={"BASH_ENV": str(hook)},
+    )
+    assert interrupted.returncode == -9, interrupted.stdout + interrupted.stderr
+    prior_probes = _log(tmp_path).count(" wget ")
+    recovered = _run(
+        tmp_path, args=["--apply"], live_caddy=live, frontend=frontend,
+        model_mount=True, readiness_polls=2, extra_env={"BASH_ENV": ""},
+    )
+    assert recovered.returncode == 0, recovered.stdout + recovered.stderr
+    assert _log(tmp_path).count(" wget ") - prior_probes == 6
+    # Recovery must recreate after copying the snapshot, before the next apply.
+    assert _mounted_indexes(tmp_path) == [
+        "original frontend", "original frontend", "replacement frontend",
+    ]
+    _assert_caddy_recreated(tmp_path, 3)
+
+
 def test_owned_artifacts_exist() -> None:
     assert SCRIPT.is_file(), f"missing {SCRIPT}"
     assert SNIPPET.is_file(), f"missing {SNIPPET}"
@@ -230,6 +471,7 @@ def test_owned_artifacts_exist() -> None:
 def test_default_is_dry_run_and_side_effect_free(tmp_path: Path) -> None:
     caddy_path = tmp_path / "opt" / "acx-backend" / "Caddyfile"
     _write_live_caddy(caddy_path)
+    _write_caddy_compose(caddy_path.parent / "docker-compose.caddy.yml")
     before = caddy_path.read_text(encoding="utf-8")
     before_files = _tree_files(tmp_path / "opt")
     result = _run(tmp_path, live_caddy=caddy_path)
@@ -252,6 +494,35 @@ def test_explicit_dry_run_does_not_copy_frontend(tmp_path: Path) -> None:
     assert _log(tmp_path) == ""
 
 
+@pytest.mark.parametrize("apply", [False, True])
+def test_missing_compose_plans_but_refuses_apply_without_mutation(tmp_path: Path, apply: bool) -> None:
+    backend = tmp_path / "opt" / "acx-backend"
+    live = backend / "Caddyfile"
+    _write_live_caddy(live)
+    _write_caddy_compose(backend / "docker-compose.caddy.yml")
+    missing = backend / "not-installed" / "docker-compose.caddy.yml"
+    before = _tree_files(tmp_path / "opt")
+    live_before = live.read_bytes()
+    result = _run(tmp_path, args=["--apply" if apply else "--dry-run"],
+                  live_caddy=live, extra_env={"CADDY_COMPOSE": str(missing)})
+    output = result.stdout + result.stderr
+    if apply:
+        assert result.returncode != 0, output
+        assert "CADDY_COMPOSE" in result.stderr
+        assert "applied:" not in result.stdout
+    else:
+        assert result.returncode == 0, output
+        assert "plan:" in result.stdout
+        assert f"CADDY_COMPOSE is absent: {missing}" in result.stdout
+        assert "dry-run: no files changed" in result.stdout
+    assert live.read_bytes() == live_before
+    assert _tree_files(tmp_path / "opt") == before
+    for name in ("staging", "rollback", "www", "activation.journal", "activation.journal.lock"):
+        assert not (backend / "app" / name).exists()
+    assert not missing.exists()
+    assert _log(tmp_path) == ""
+
+
 def test_apply_refuses_missing_frontend(tmp_path: Path) -> None:
     live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
     _write_live_caddy(live)
@@ -261,7 +532,15 @@ def test_apply_refuses_missing_frontend(tmp_path: Path) -> None:
     assert result.returncode != 0, output
     assert "FRONTEND_DIST" in output
     assert live.read_text(encoding="utf-8") == before
-    assert _log(tmp_path) == ""
+    # Binding checks precede build validation; permit only these read-only calls.
+    compose = ["docker", "compose", "-f", str(live.parent / "docker-compose.caddy.yml")]
+    assert [shlex.split(line) for line in _log(tmp_path).splitlines()] == [
+        ["docker", "compose", "version"],
+        [*compose, "config", "--format", "json"],
+        [*compose, "-f", "-", "config", "--format", "json"],
+    ]
+    assert not (live.parent / "app/staging").exists()
+    assert not (live.parent / "app/activation.journal").exists()
 
 
 def test_apply_refuses_empty_index(tmp_path: Path) -> None:
@@ -377,7 +656,10 @@ def test_apply_merges_vhost_preserves_existing_hosts_and_copies_frontend(tmp_pat
     log = _log(tmp_path)
     assert "caddy" in log
     assert "validate" in log
-    assert "reload" in log
+    assert not any(line.startswith("caddy reload ") for line in log.splitlines())
+    assert _compose_reload_calls(tmp_path) == [
+        _expected_compose_reload(tmp_path / "opt" / "acx-backend", overlay_dest)
+    ]
     assert "ssh" not in log
     rollback_dir = tmp_path / "opt" / "acx-backend" / "app" / "rollback"
     assert rollback_dir.is_dir()
@@ -386,6 +668,45 @@ def test_apply_merges_vhost_preserves_existing_hosts_and_copies_frontend(tmp_pat
     rollback_text = backups[0].read_text(encoding="utf-8")
     assert "app.altcontext.com {" not in rollback_text
     assert "api.altcontext.com {" in rollback_text
+
+
+def test_apply_mounts_static_root_before_live_health_check(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    marker = tmp_path / "compose-applied"
+    log_path = shlex.quote(str(tmp_path / "commands.log"))
+    health = tmp_path / "bin" / "health-requires-compose"
+    health.parent.mkdir()
+    _write_executable(
+        health,
+        "#!/usr/bin/env bash\n"
+        f"[ -f {shlex.quote(str(marker))} ] || exit 1\n"
+        f"printf 'health\\n' >> {log_path}\n",
+    )
+
+    result = _run(
+        tmp_path,
+        args=["--apply"],
+        live_caddy=live,
+        extra_env={"APP_HEALTH_CMD": str(health)},
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    log_lines = _log(tmp_path).splitlines()
+    compose_index = next(i for i, line in enumerate(log_lines) if line.startswith("docker compose ") and " up -d" in line)
+    reload_index = next(
+        i for i, line in enumerate(log_lines)
+        if line.startswith("docker compose ") and " exec -T caddy caddy reload " in line
+    )
+    health_index = log_lines.index("health")
+    assert "docker-compose.caddy.yml" in log_lines[compose_index]
+    assert "docker-compose.app.yml" in log_lines[compose_index]
+    assert compose_index < reload_index < health_index
+    overlay = tmp_path / "opt" / "acx-backend" / "app" / "docker-compose.app.yml"
+    assert shlex.split(log_lines[reload_index]) == _expected_compose_reload(
+        tmp_path / "opt" / "acx-backend", overlay
+    )
+    assert not any(line.startswith("caddy reload ") for line in log_lines)
 
 
 def test_apply_failed_validation_leaves_live_config_and_www_intact(tmp_path: Path) -> None:
@@ -474,6 +795,8 @@ def test_runbook_documents_later_integration_and_env_ownership() -> None:
     assert "APP_APPROVED_ROOTS" in text
     assert "`/portal` plus `/portal/*`" in text or "path /portal /portal/*" in text
     assert "APP_HEALTH_CMD=/usr/local/bin/app-portal-health-check" in text
+    assert "sudo install -m 0755 scripts/deploy/app-portal.sh /usr/local/bin/app-portal-health-check" in text
+    assert "before frontend health runs" in text.lower()
     assert "https://app.altcontext.com/" in text
     assert "https://api.altcontext.com/ready" in text
     assert "local artifact checks" not in text
@@ -487,11 +810,111 @@ def test_runbook_documents_later_integration_and_env_ownership() -> None:
         assert marker.lower() not in lowered, marker
 
 
+def test_checked_in_health_check_covers_both_https_endpoints(tmp_path: Path) -> None:
+    health = tmp_path / "app-portal-health-check"
+    _write_executable(health, SCRIPT.read_text(encoding="utf-8"))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    curl_log = tmp_path / "curl.log"
+    curl = bin_dir / "curl"
+    _write_executable(
+        curl,
+        "#!/usr/bin/env bash\n"
+        'for url in "$@"; do :; done\n'
+        'printf "%s\\n" "$url" >> "$CURL_LOG"\n'
+        '[ "$url" = "${CURL_FAIL_URL:-}" ] && exit 22\n'
+        "exit 0\n",
+    )
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
+    env["CURL_LOG"] = str(curl_log)
+
+    success = subprocess.run([str(health)], env=env, text=True, capture_output=True, check=False)
+    assert success.returncode == 0, success.stdout + success.stderr
+    assert curl_log.read_text(encoding="utf-8").splitlines() == [
+        "https://app.altcontext.com/",
+        "https://api.altcontext.com/ready",
+    ]
+
+    curl_log.unlink()
+    failing_env = {**env, "CURL_FAIL_URL": "https://api.altcontext.com/ready"}
+    failure = subprocess.run([str(health)], env=failing_env, text=True, capture_output=True, check=False)
+    assert failure.returncode != 0, failure.stdout + failure.stderr
+    assert curl_log.read_text(encoding="utf-8").splitlines() == [
+        "https://app.altcontext.com/",
+        "https://api.altcontext.com/ready",
+    ]
+
+
 def _prior_www(tmp_path: Path) -> Path:
     www = tmp_path / "opt" / "acx-backend" / "app" / "www"
     www.mkdir(parents=True, exist_ok=True)
     (www / "keep.txt").write_text("active\n", encoding="utf-8")
     return www
+
+
+def test_apply_health_checks_selected_hostname(tmp_path: Path) -> None:
+    health = tmp_path / "app-portal-health-check"
+    _write_executable(health, SCRIPT.read_text(encoding="utf-8"))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    curl_log = tmp_path / "curl.log"
+    _write_executable(
+        bin_dir / "curl",
+        "#!/usr/bin/env bash\n"
+        'for url in "$@"; do :; done\n'
+        'printf "%s\\n" "$url" >> "$CURL_LOG"\n'
+        '[ "$url" = "https://preview.altcontext.com/" ] && exit 22\n'
+        "exit 0\n",
+    )
+    result = _run(
+        tmp_path,
+        args=["--apply"],
+        hostname="preview.altcontext.com",
+        extra_env={"APP_HEALTH_CMD": str(health), "CURL_LOG": str(curl_log)},
+    )
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert curl_log.read_text(encoding="utf-8").splitlines() == [
+        "https://preview.altcontext.com/", "https://api.altcontext.com/ready",
+    ]
+    assert "applied:" not in result.stdout
+
+
+def test_recovery_refuses_changed_base_compose_without_mutation(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    hook = tmp_path / "interrupt.sh"
+    hook.write_text(
+        "sync() {\n"
+        '  /bin/sync "$@" || return $?\n'
+        '  if [ "${@: -1}" = "$CADDYFILE" ]; then kill -KILL "$BASHPID"; fi\n'
+        "}\n",
+        encoding="utf-8",
+    )
+    interrupted = _run(tmp_path, args=["--apply"], extra_env={"BASH_ENV": str(hook)})
+    assert interrupted.returncode == -9, interrupted.stdout + interrupted.stderr
+    app_root = live.parent / "app"
+    journal = app_root / "activation.journal"
+    before_caddy = live.read_bytes()
+    before_journal = journal.read_bytes()
+    before_log = _log(tmp_path)
+    alternate = _write_caddy_compose(live.parent / "alternate-compose.yml")
+    result = _run(
+        tmp_path, args=["--apply"], live_caddy=live,
+        extra_env={"BASH_ENV": "", "CADDY_COMPOSE": str(alternate)},
+    )
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "journal paths do not match" in result.stderr
+    assert live.read_bytes() == before_caddy
+    assert journal.read_bytes() == before_journal
+    assert _log(tmp_path) == before_log
+    assert f"caddy_compose={live.parent / 'docker-compose.caddy.yml'}\n" in journal.read_text()
+
+
+def test_runbook_first_deploy_rollback_uses_base_only_compose() -> None:
+    rollback = RUNBOOK.read_text(encoding="utf-8").split("## Rollback", 1)[1]
+    assert "no prior overlay" in rollback
+    assert "docker compose -f docker-compose.caddy.yml up -d" in rollback
+    assert "docker compose -f docker-compose.caddy.yml exec -T caddy" in rollback
 
 
 def test_apply_refuses_filesystem_root_paths(tmp_path: Path) -> None:
@@ -599,7 +1022,12 @@ def test_apply_failed_reload_restores_caddy_www_and_overlay(tmp_path: Path) -> N
     www = _prior_www(tmp_path)
     overlay_dest = tmp_path / "opt" / "acx-backend" / "app" / "docker-compose.app.yml"
     overlay_dest.write_text("services: {}\n", encoding="utf-8")
-    result = _run(tmp_path, args=["--apply"], live_caddy=live, caddy_fail_on="reload")
+    result = _run(
+        tmp_path,
+        args=["--apply"],
+        live_caddy=live,
+        docker_fail_first_reload=True,
+    )
     output = result.stdout + result.stderr
     assert result.returncode != 0, output
     assert "reload" in output.lower(), output
@@ -608,23 +1036,51 @@ def test_apply_failed_reload_restores_caddy_www_and_overlay(tmp_path: Path) -> N
     assert (www / "keep.txt").read_text(encoding="utf-8") == "active\n"
     assert not (www / "index.html").exists()
     assert overlay_dest.read_text(encoding="utf-8") == "services: {}\n"
+    expected_reload = _expected_compose_reload(tmp_path / "opt" / "acx-backend", overlay_dest)
+    assert _compose_reload_calls(tmp_path) == [expected_reload, expected_reload]
+    assert not any(line.startswith("caddy reload ") for line in _log(tmp_path).splitlines())
     for host in EXISTING_HOSTS:
         assert host in live.read_text(encoding="utf-8")
 
 
-def test_apply_without_reload_mechanism_refuses_before_promotion(tmp_path: Path) -> None:
+def test_first_apply_reload_failure_rolls_back_with_base_compose(tmp_path: Path) -> None:
     live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
     _write_live_caddy(live)
-    before = live.read_bytes()
-    www = _prior_www(tmp_path)
-    result = _run(tmp_path, args=["--apply"], live_caddy=live, include_caddy=False)
+    before = live.read_text(encoding="utf-8")
+    app_root = tmp_path / "opt" / "acx-backend" / "app"
+    overlay_dest = app_root / "docker-compose.app.yml"
+    www = app_root / "www"
+
+    result = _run(
+        tmp_path,
+        args=["--apply"],
+        live_caddy=live,
+        include_caddy=False,
+        docker_fail_first_reload=True,
+    )
     output = result.stdout + result.stderr
     assert result.returncode != 0, output
-    assert "reload" in output.lower(), output
-    assert "applied:" not in output
-    assert live.read_bytes() == before
-    assert (www / "keep.txt").read_text() == "active\n"
-    assert not (www / "index.html").exists()
+    assert live.read_text(encoding="utf-8") == before
+    assert not overlay_dest.exists()
+    assert not www.exists()
+    assert _compose_reload_calls(tmp_path) == [
+        _expected_compose_reload(tmp_path / "opt" / "acx-backend", overlay_dest),
+        _expected_compose_reload(tmp_path / "opt" / "acx-backend"),
+    ]
+
+
+def test_apply_default_reload_uses_compose_without_host_caddy(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    result = _run(tmp_path, args=["--apply"], live_caddy=live, include_caddy=False)
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    overlay = tmp_path / "opt" / "acx-backend" / "app" / "docker-compose.app.yml"
+    assert _compose_reload_calls(tmp_path) == [
+        _expected_compose_reload(tmp_path / "opt" / "acx-backend", overlay)
+    ]
+    assert any(line.startswith("docker run ") and "validate" in line for line in _log(tmp_path).splitlines())
+    assert not any(line.startswith("caddy ") for line in _log(tmp_path).splitlines())
 
 
 def test_apply_requires_explicit_live_health_check(tmp_path: Path) -> None:
@@ -650,6 +1106,7 @@ def test_docker_validation_with_explicit_reload_succeeds(tmp_path: Path) -> None
     assert result.returncode == 0, result.stdout + result.stderr
     assert "docker run" in _log(tmp_path)
     assert marker.exists()
+    assert _compose_reload_calls(tmp_path) == []
 
 
 def test_successful_applies_reclaim_old_snapshot_sets(tmp_path: Path) -> None:
@@ -761,6 +1218,8 @@ def test_apply_failed_health_restores_caddy_www_and_overlay(tmp_path: Path) -> N
     assert not (www / "index.html").exists()
     assert overlay_dest.read_text(encoding="utf-8") == "services: {}\n"
     assert old_snapshot.read_text() == "previous recovery config"
+    compose_up_lines = [line for line in _log(tmp_path).splitlines() if " compose " in line and " up -d" in line]
+    assert len(compose_up_lines) == 2, _log(tmp_path)
     current_backups = [p for p in rollback.glob("Caddyfile.*") if p != old_snapshot]
     assert len(current_backups) == 1
     assert current_backups[0].read_text() == before
@@ -798,6 +1257,7 @@ def test_apply_failed_overlay_promote_restores_prior_www_and_caddy(tmp_path: Pat
 def test_dry_run_refuses_symlink_and_root_without_writes(tmp_path: Path) -> None:
     live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
     _write_live_caddy(live)
+    _write_caddy_compose(live.parent / "docker-compose.caddy.yml")
     before_files = _tree_files(tmp_path / "opt")
     result = _run(tmp_path, extra_env={"APP_FRONTEND_ROOT": "/"})
     output = result.stdout + result.stderr
@@ -805,3 +1265,121 @@ def test_dry_run_refuses_symlink_and_root_without_writes(tmp_path: Path) -> None
     assert "root" in output.lower() or "APP_FRONTEND_ROOT" in output
     assert _tree_files(tmp_path / "opt") == before_files
     assert _log(tmp_path) == ""
+
+
+@pytest.mark.parametrize("polls,fail_reload", [(2, False), (2, True), (10, False)])
+def test_recreation_waits_for_admin_and_exhaustion_rolls_back(
+    tmp_path: Path, polls: int, fail_reload: bool,
+) -> None:
+    result = _run(tmp_path, args=["--apply"], readiness_polls=polls,
+                  docker_fail_first_reload=fail_reload)
+    assert (result.returncode == 0) == (polls == 2 and not fail_reload), result.stdout + result.stderr
+    calls = [shlex.split(line) for line in _log(tmp_path).splitlines()]
+    probes = [call for call in calls if "wget" in call]
+    assert len(probes) == (6 if fail_reload else 3 if polls == 2 else 13)
+    assert all(call[-1] == "http://127.0.0.1:2019/config/" for call in probes)
+    assert len(_compose_reload_calls(tmp_path)) == (2 if fail_reload else 1)
+    app_root = tmp_path / "opt" / "acx-backend" / "app"
+    assert not (app_root / "activation.journal").exists()
+    if polls == 10 or fail_reload:
+        assert "applied:" not in result.stdout
+        assert not (app_root / "www").exists()
+        assert not (app_root / "docker-compose.app.yml").exists()
+
+
+@pytest.mark.parametrize("relative", [
+    "app/staging/base.yml", "app/rollback/base.yml", "app/www/base.yml",
+    "app/www.prev/base.yml", "Caddyfile", "app/docker-compose.app.yml",
+    "app/activation.journal", "app/activation.journal.lock",
+])
+def test_base_compose_refuses_activation_paths_without_mutation(tmp_path: Path, relative: str) -> None:
+    source = tmp_path / "opt" / "acx-backend" / relative
+    _write_caddy_compose(source)
+    before = source.read_bytes()
+    result = _run(tmp_path, args=["--apply"], live_caddy=source if relative == "Caddyfile" else "",
+                  extra_env={"CADDY_COMPOSE": str(source)})
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "CADDY_COMPOSE collides with activation paths" in result.stderr
+    assert source.read_bytes() == before
+    assert not _log(tmp_path)
+
+
+@pytest.mark.parametrize("pending", [False, True])
+def test_caddyfile_bind_mismatch_refused_before_mutation(tmp_path: Path, pending: bool) -> None:
+    from test_app_portal_activation_journal import _interrupt_after_caddy, _tree_snapshot
+
+    backend = tmp_path / "opt/acx-backend"
+    live = backend / "SelectedCaddyfile"
+    if pending:
+        # Create a valid pending activation using the default binding first.
+        live = backend / "Caddyfile"
+        _interrupt_after_caddy(tmp_path, live)
+    else:
+        _write_live_caddy(live)
+        _prior_www(tmp_path)
+    app_root = backend / "app"
+    staging = app_root / "staging"
+    staging.mkdir(exist_ok=True)
+    (staging / "keep.txt").write_text("do not change\n")
+    _write_caddy_compose(backend / "docker-compose.caddy.yml")
+    before = _tree_snapshot(backend)
+    other = backend / "OtherCaddyfile"
+    config = json.dumps({"services": {"caddy": {"volumes": [{
+        "type": "bind", "source": str(other), "target": "/etc/caddy/Caddyfile",
+    }]}}})
+    before_log = _log(tmp_path)
+    result = _run(tmp_path, args=["--apply"], live_caddy=live,
+                  compose_config=config, extra_env={"BASH_ENV": ""})
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert str(other) in result.stderr and str(live) in result.stderr
+    assert "applied:" not in result.stdout
+    after = _tree_snapshot(backend)
+    # Lock creation is allowed; no staging, journal, or live artifact may change.
+    after.pop("app/activation.journal.lock", None)
+    before.pop("app/activation.journal.lock", None)
+    # Creating the lock may update the parent directory metadata.
+    assert {k: v for k, v in after.items() if k != "app"} == {
+        k: v for k, v in before.items() if k != "app"
+    }
+    calls = _log(tmp_path)[len(before_log):]
+    assert " up " not in calls and " exec " not in calls and " validate " not in calls
+
+
+@pytest.mark.parametrize("config", ["not json", "{}", '{"services":{"caddy":{"volumes":[]}}}',
+    '{"services":{"caddy":{"volumes":[{"type":"volume","source":"config","target":"/etc/caddy/Caddyfile"}]}}}',
+])
+def test_caddyfile_binding_requires_resolved_bind(tmp_path: Path, config: str) -> None:
+    result = _run(tmp_path, args=["--apply"], compose_config=config)
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "cannot resolve Caddy bind source" in result.stderr
+    assert not (tmp_path / "opt/acx-backend/app/staging").exists()
+    assert " up " not in _log(tmp_path)
+
+
+@pytest.mark.parametrize("installed", [False, True])
+def test_overlay_caddyfile_bind_override_refused(tmp_path: Path, installed: bool) -> None:
+    backend = tmp_path / "opt/acx-backend"
+    if installed:
+        app_root = backend / "app"
+        app_root.mkdir(parents=True)
+        (app_root / "docker-compose.app.yml").write_text("services: {}\n")
+    other = backend / "OtherCaddyfile"
+    config = json.dumps({"services": {"caddy": {"volumes": [{
+        "type": "bind", "source": str(other), "target": "/etc/caddy/Caddyfile",
+    }]}}})
+    result = _run(tmp_path, args=["--apply"], compose_overlay_config=config)
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert str(other) in result.stderr and str(backend / "Caddyfile") in result.stderr
+    assert not (backend / "app/staging").exists()
+    assert " up " not in _log(tmp_path)
+
+
+def test_selected_caddyfile_matching_compose_binding_applies(tmp_path: Path) -> None:
+    live = tmp_path / "opt/acx-backend/SelectedCaddyfile"
+    config = json.dumps({"services": {"caddy": {"volumes": [{
+        "type": "bind", "source": str(live), "target": "/etc/caddy/Caddyfile",
+    }]}}})
+    result = _run(tmp_path, args=["--apply"], live_caddy=live, compose_config=config)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "applied:" in result.stdout
+    assert len(_compose_reload_calls(tmp_path)) == 1

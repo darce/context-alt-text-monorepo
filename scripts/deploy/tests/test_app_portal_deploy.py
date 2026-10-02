@@ -86,7 +86,7 @@ def _caddy_stub(log_path: str, *, fail: bool = False) -> str:
 
 def _docker_stub(
     log_path: str, compose_marker: str, *, fail_first_reload: bool = False,
-    mount_root: Path | None = None,
+    mount_root: Path | None = None, readiness_polls: int = 0,
 ) -> str:
     compose_marker_quoted = shlex.quote(compose_marker)
     reload_failure_marker = shlex.quote(f"{compose_marker}.failed-first-reload")
@@ -97,6 +97,29 @@ def _docker_stub(
         "  fi\n"
         if fail_first_reload else ""
     )
+    readiness_state = shlex.quote(f"{compose_marker}.readiness")
+    startup_state = shlex.quote(f"{compose_marker}.startups")
+    readiness_rule = (
+        '  if [ "$compose_up" -eq 1 ]; then\n'
+        f'    startup=$(cat {startup_state} 2>/dev/null || echo 0)\n'
+        f'    echo "$((startup + 1))" > {startup_state}\n'
+        f'    polls={readiness_polls}\n'
+        # An exhausted first startup still allows rollback to become ready.
+        '    [ "$startup" -eq 0 ] || polls=2\n'
+        f'    echo "$polls" > {readiness_state}\n'
+        '  fi\n'
+        '  if [ "$compose_probe" -eq 1 ]; then\n'
+        f'    polls=$(cat {readiness_state})\n'
+        '    if [ "$polls" -gt 0 ]; then\n'
+        f'      echo "$((polls - 1))" > {readiness_state}\n'
+        '      exit 1\n'
+        '    fi\n'
+        '  fi\n'
+        '  if [ "$compose_reload" -eq 1 ]; then\n'
+        f'    polls=$(cat {readiness_state} 2>/dev/null || echo 0)\n'
+        '    [ "$polls" -eq 0 ] || exit 1\n'
+        '  fi\n'
+    ) if readiness_polls else ""
     # Model a bind mount that retains the original directory after a host swap.
     # Only creating/recreating the service captures the new frontend contents.
     mount_rule = ""
@@ -120,15 +143,17 @@ def _docker_stub(
         f"printf '\\n' >> {log_path}\n"
         'if [ "${1:-}" = "compose" ]; then\n'
         "  compose_up=0\n"
+        "  compose_probe=0\n"
         "  compose_reload=0\n"
         "  compose_recreate=0\n"
         '  for arg in "$@"; do\n'
+        '    [ "$arg" = "wget" ] && compose_probe=1\n'
         '    [ "$arg" = "up" ] && compose_up=1\n'
         '    [ "$arg" = "reload" ] && compose_reload=1\n'
         '    [ "$arg" = "--force-recreate" ] && compose_recreate=1\n'
         "  done\n"
         f'  [ "$compose_up" -eq 0 ] || : > {compose_marker_quoted}\n'
-        + mount_rule + failure_rule
+        + readiness_rule + mount_rule + failure_rule
         + "fi\n"
         + "exit 0\n"
     )
@@ -171,6 +196,7 @@ def _run(
     include_caddy: bool = True,
     include_docker: bool = True,
     model_mount: bool = False,
+    readiness_polls: int = 0,
     timeout: int = 20,
 ) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
@@ -199,8 +225,11 @@ def _run(
                 str(compose_marker),
                 fail_first_reload=docker_fail_first_reload,
                 mount_root=app_root / "www" if model_mount else None,
+                readiness_polls=readiness_polls,
             ),
         )
+    if readiness_polls:
+        _write_executable(bin_dir / "sleep", "#!/bin/sh\nexit 0\n")
     health = bin_dir / "health-check"
     _write_executable(health, "#!/usr/bin/env bash\nexit 0\n")
     if fail_mv_dest is not None:
@@ -352,11 +381,13 @@ def test_recovery_refreshes_container_mount_after_restore(tmp_path: Path, phase:
         model_mount=True, extra_env={"BASH_ENV": str(hook)},
     )
     assert interrupted.returncode == -9, interrupted.stdout + interrupted.stderr
+    prior_probes = _log(tmp_path).count(" wget ")
     recovered = _run(
         tmp_path, args=["--apply"], live_caddy=live, frontend=frontend,
-        model_mount=True, extra_env={"BASH_ENV": ""},
+        model_mount=True, readiness_polls=2, extra_env={"BASH_ENV": ""},
     )
     assert recovered.returncode == 0, recovered.stdout + recovered.stderr
+    assert _log(tmp_path).count(" wget ") - prior_probes == 6
     # Recovery must recreate after copying the snapshot, before the next apply.
     assert _mounted_indexes(tmp_path) == [
         "original frontend", "original frontend", "replacement frontend",
@@ -1132,3 +1163,40 @@ def test_dry_run_refuses_symlink_and_root_without_writes(tmp_path: Path) -> None
     assert "root" in output.lower() or "APP_FRONTEND_ROOT" in output
     assert _tree_files(tmp_path / "opt") == before_files
     assert _log(tmp_path) == ""
+
+
+@pytest.mark.parametrize("polls,fail_reload", [(2, False), (2, True), (10, False)])
+def test_recreation_waits_for_admin_and_exhaustion_rolls_back(
+    tmp_path: Path, polls: int, fail_reload: bool,
+) -> None:
+    result = _run(tmp_path, args=["--apply"], readiness_polls=polls,
+                  docker_fail_first_reload=fail_reload)
+    assert (result.returncode == 0) == (polls == 2 and not fail_reload), result.stdout + result.stderr
+    calls = [shlex.split(line) for line in _log(tmp_path).splitlines()]
+    probes = [call for call in calls if "wget" in call]
+    assert len(probes) == (6 if fail_reload else 3 if polls == 2 else 13)
+    assert all(call[-1] == "http://127.0.0.1:2019/config/" for call in probes)
+    assert len(_compose_reload_calls(tmp_path)) == (2 if fail_reload else 1)
+    app_root = tmp_path / "opt" / "acx-backend" / "app"
+    assert not (app_root / "activation.journal").exists()
+    if polls == 10 or fail_reload:
+        assert "applied:" not in result.stdout
+        assert not (app_root / "www").exists()
+        assert not (app_root / "docker-compose.app.yml").exists()
+
+
+@pytest.mark.parametrize("relative", [
+    "app/staging/base.yml", "app/rollback/base.yml", "app/www/base.yml",
+    "app/www.prev/base.yml", "Caddyfile", "app/docker-compose.app.yml",
+    "app/activation.journal", "app/activation.journal.lock",
+])
+def test_base_compose_refuses_activation_paths_without_mutation(tmp_path: Path, relative: str) -> None:
+    source = tmp_path / "opt" / "acx-backend" / relative
+    _write_caddy_compose(source)
+    before = source.read_bytes()
+    result = _run(tmp_path, args=["--apply"], live_caddy=source if relative == "Caddyfile" else "",
+                  extra_env={"CADDY_COMPOSE": str(source)})
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "CADDY_COMPOSE collides with activation paths" in result.stderr
+    assert source.read_bytes() == before
+    assert not _log(tmp_path)

@@ -388,6 +388,14 @@ esac
 guard_source_path APP_SNIPPET "$APP_SNIPPET" file
 guard_source_path APP_OVERLAY "$APP_OVERLAY" file
 guard_source_path CADDY_COMPOSE "$CADDY_COMPOSE" file
+# Guards above require absolute paths without dot or symlink components, so
+# these normalized paths identify the actual filesystem destinations.
+for _activation_path in "$STAGING_DIR" "$ROLLBACK_DIR" "$APP_WWW" "${APP_WWW}.prev" \
+  "$CADDYFILE" "$OVERLAY_DEST" "$ACTIVATION_JOURNAL" "$DEPLOY_LOCK"; do
+  if paths_overlap "$CADDY_COMPOSE" "$_activation_path"; then
+    refuse "CADDY_COMPOSE collides with activation paths"
+  fi
+done
 if [ -n "${FRONTEND_DIST}" ]; then
   guard_source_path FRONTEND_DIST "$FRONTEND_DIST" dir
 fi
@@ -751,10 +759,32 @@ apply_caddy_compose() {
   # A bind mount pins the directory inode; unchanged Compose configuration
   # cannot detect the www swap. Recreate only Caddy after every replacement.
   if [ -f "$OVERLAY_DEST" ]; then
-    docker compose -f "$CADDY_COMPOSE" -f "$OVERLAY_DEST" up -d --force-recreate --no-deps caddy
+    docker compose -f "$CADDY_COMPOSE" -f "$OVERLAY_DEST" up -d --force-recreate --no-deps caddy || return 1
   else
-    docker compose -f "$CADDY_COMPOSE" up -d --force-recreate --no-deps caddy
+    docker compose -f "$CADDY_COMPOSE" up -d --force-recreate --no-deps caddy || return 1
   fi
+  wait_for_caddy_admin
+}
+
+wait_for_caddy_admin() {
+  local _attempt
+  local -a _compose=(docker compose -f "$CADDY_COMPOSE")
+  if [ -f "$OVERLAY_DEST" ]; then
+    _compose+=(-f "$OVERLAY_DEST")
+  fi
+  # Compose returns before Caddy is ready. BusyBox wget ships in caddy:2-alpine;
+  # probe inside the service because its admin port is not published on the host.
+  for _attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if "${_compose[@]}" exec -T caddy wget -q -T 1 -O /dev/null \
+      http://127.0.0.1:2019/config/ 9>&-; then
+      return 0
+    fi
+    if [ "$_attempt" -lt 10 ]; then
+      sleep 1
+    fi
+  done
+  echo "ERROR: Caddy admin endpoint not ready after 10 attempts" >&2
+  return 1
 }
 
 default_health() {

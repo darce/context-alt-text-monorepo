@@ -181,7 +181,7 @@ function KeysScreenSession({
   const modalOpen = Boolean(secret) || Boolean(revokeDialog);
   const busy = mode === 'loading' || creating || rotating || revoking;
   const actionsLocked = busy || modalOpen;
-  const createLocked = actionsLocked || (createBlocked && Boolean(primary));
+  const createLocked = actionsLocked || createBlocked;
 
   function idempotencyFor(slot: { current: IdempotencySlot | null }, fingerprint: string): string {
     if (slot.current && slot.current.fingerprint === fingerprint) {
@@ -265,7 +265,7 @@ function KeysScreenSession({
   }, [revokeDialog]);
 
   async function handleCreate() {
-    if (createInFlightRef.current || secretHeldRef.current || revokeDialog || (createBlocked && Boolean(primary))) {
+    if (createInFlightRef.current || secretHeldRef.current || revokeDialog || createBlocked) {
       return;
     }
     const fingerprint = JSON.stringify({ lifetime_seconds: lifetimeSeconds });

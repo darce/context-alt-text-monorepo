@@ -302,6 +302,31 @@ describe('APP1-KEYS-RV04 tenant key limit create latch [DATA-03][RES-01]', () =>
     expect(create).toHaveBeenCalledTimes(2);
   });
 
+  it('latches Create when no usable key is visible on the loaded page', async () => {
+    const user = userEvent.setup();
+    const create = vi
+      .fn<PortalKeyClient['create']>()
+      .mockRejectedValueOnce(keyError(409, { detail: 'tenant key limit reached' }));
+    renderKeys(
+      mockClient({
+        list: vi.fn(async () =>
+          page([metadata({ revoked_at: '2026-09-22T00:00:00Z' })], { next_cursor: 'page-2' }),
+        ),
+        create,
+      }),
+    );
+
+    const createButton = screen.getByRole('button', { name: /create api key/i });
+    await waitFor(() => expect(createButton).toBeEnabled());
+    await user.click(createButton);
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(/usable api key already exists/i);
+    });
+    expect(createButton).toBeDisabled();
+    await user.click(createButton);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
   it('does not latch Create on a transient create failure', async () => {
     const user = userEvent.setup();
     const create = vi

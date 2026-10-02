@@ -1459,17 +1459,14 @@ def _selection_metadata_issue(
 def _model_provenance(
     items: list[dict[str, Any]],
     run_provenance: Mapping[str, Any] | None = None,
-    *,
-    allow_mixed_model_ids: bool = False,
 ) -> dict[str, list[Any]]:
     """Adapter/model that actually produced the captions (HARM-01).
 
     Surfaced so a report is never mistaken for a caption-model baseline when it
     actually scored a model-free 'seeded' stub run — every artifact stamped with
-    the adapter/model version (scope Q5). Model IDs may differ in PUBLIC report
-    generation so the render boundary can redact absolute weight paths. Other
-    mixed stamps and missing stamps remain invalid; run-level settings must also
-    agree with every item-level stamp.
+    the adapter/model version (scope Q5). Every model stamp must be homogeneous
+    for all audiences; run-level settings must also agree with every item-level
+    stamp.
     """
     run_provenance = run_provenance or {}
     dimensions = (
@@ -1511,7 +1508,7 @@ def _model_provenance(
                 "refusing aggregate score",
                 invariant="model_provenance_refuses_mixed_values",
             )
-        if len(values) > 1 and not (allow_mixed_model_ids and item_key == "model_id"):
+        if len(values) > 1:
             raise ReportError(
                 f"run record mixes {item_key} values {sorted(values)}; refusing aggregate score",
                 invariant="model_provenance_refuses_mixed_values",
@@ -2118,7 +2115,6 @@ def score_run_record(
     rubric_gate: str = "enforce",
     annotation_mode: AnnotationMode | str | None = None,
     run_manifest: Mapping[str, Any] | None = None,
-    allow_mixed_model_ids: bool = False,
 ) -> dict[str, Any]:
     """Pure scoring: run record + manifest labels -> metrics dict.
 
@@ -2154,7 +2150,6 @@ def score_run_record(
     model_provenance = _model_provenance(
         scored_items,
         run_record["provenance"],
-        allow_mixed_model_ids=allow_mixed_model_ids,
     )
     roster = _corpus_roster(manifest_entries, manifest_roster)
     caption_scores: list[CaptionScores] = []
@@ -3667,7 +3662,6 @@ def build_reports(
         run_manifest=run_manifest,
         rubric_gate=rubric_gate,
         annotation_mode=annotation_mode,
-        allow_mixed_model_ids=audience is Audience.PUBLIC,
     )
     if baseline_run_record is not None:
         _validate_record_kind(baseline_run_record)
@@ -3680,7 +3674,6 @@ def build_reports(
             run_manifest=run_manifest,
             rubric_gate=rubric_gate,
             annotation_mode=annotation_mode,
-            allow_mixed_model_ids=audience is Audience.PUBLIC,
         )
         scored["baseline_delta"] = compare_scored_runs(scored, baseline_scored)
         scored["baseline"] = {

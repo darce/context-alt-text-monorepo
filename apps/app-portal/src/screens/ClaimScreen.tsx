@@ -231,6 +231,36 @@ export function ClaimScreen({ client, onClaimed }: ClaimScreenProps) {
         <p className="acx-lede">AltContext onboarding</p>
         <h1>Claim your invited account</h1>
       </header>
+      <ol
+        aria-label="Claim steps"
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 'var(--acx-space-lg)',
+          margin: 'var(--acx-space-md) 0',
+          paddingInlineStart: '1.5rem',
+          fontSize: 'var(--acx-text-sm)',
+        }}
+      >
+        <li
+          aria-current={preview ? undefined : 'step'}
+          style={{
+            color: preview ? 'var(--acx-color-text-secondary)' : 'var(--acx-color-accent)',
+            fontWeight: preview ? 'var(--acx-font-weight-normal)' : 'var(--acx-font-weight-semibold)',
+          }}
+        >
+          Step 1 of 2: Enter invitation
+        </li>
+        <li
+          aria-current={preview ? 'step' : undefined}
+          style={{
+            color: preview ? 'var(--acx-color-accent)' : 'var(--acx-color-text-secondary)',
+            fontWeight: preview ? 'var(--acx-font-weight-semibold)' : 'var(--acx-font-weight-normal)',
+          }}
+        >
+          Step 2 of 2: Confirm access
+        </li>
+      </ol>
       <form
         aria-label="Claim invitation"
         aria-busy={busy}

@@ -442,12 +442,22 @@ class ScanWorker:
             async with self._session_factory() as session:
                 try:
                     await enable_rls_bypass(session)
-                    await UsageSettlementService(session).sweep_stale_reservations(
+                    report = await UsageSettlementService(session).sweep_stale_reservations(
                         stale_after_seconds=_USAGE_SWEEP_STALE_AFTER_SECONDS,
                         max_batches=_USAGE_SWEEP_MAX_BATCHES,
                         batch_size=_USAGE_SWEEP_BATCH_SIZE,
                         no_progress_limit=_USAGE_SWEEP_NO_PROGRESS_LIMIT,
                     )
+                    exit_code = int(getattr(report, "exit_code", 0))
+                    if exit_code != 0:
+                        logger.warning(
+                            "[worker] usage reservation sweep returned nonzero "
+                            "exit_code=%d rejected=%d fail_closed=%d no_progress_cycles=%d",
+                            exit_code,
+                            int(getattr(report, "rejected", 0)),
+                            int(getattr(report, "fail_closed", 0)),
+                            int(getattr(report, "no_progress_cycles", 0)),
+                        )
                     await session.commit()
                 except Exception:
                     await session.rollback()

@@ -736,12 +736,13 @@ reload_caddy() {
     "$APP_RELOAD_CMD" 9>&-
     return $?
   fi
-  if command -v caddy >/dev/null 2>&1; then
-    caddy reload --config "$CADDYFILE" --adapter caddyfile 9>&-
-    return $?
+  if [ -f "$OVERLAY_DEST" ]; then
+    docker compose -f "$CADDY_COMPOSE" -f "$OVERLAY_DEST" exec -T caddy \
+      caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 9>&-
+  else
+    docker compose -f "$CADDY_COMPOSE" exec -T caddy \
+      caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 9>&-
   fi
-  echo "ERROR: reload unavailable: set APP_RELOAD_CMD or install caddy" >&2
-  return 1
 }
 
 apply_caddy_compose() {
@@ -846,12 +847,9 @@ if [ -L "$CADDYFILE" ] || [ ! -f "$CADDYFILE" ]; then
   refuse "CADDYFILE must be a regular file: ${CADDYFILE}"
 fi
 validate_frontend
-if [ -z "$APP_RELOAD_CMD" ] && ! command -v caddy >/dev/null 2>&1; then
-  refuse "reload unavailable: set APP_RELOAD_CMD or install caddy before --apply"
-fi
 [ -n "$APP_HEALTH_CMD" ] || refuse "APP_HEALTH_CMD is required to check the live frontend and portal upstream"
-command -v docker >/dev/null 2>&1 || refuse "docker compose is required to mount APP_WWW in Caddy before health checking"
-docker compose version >/dev/null 2>&1 || refuse "docker compose is unavailable; cannot mount APP_WWW in Caddy before health checking"
+command -v docker >/dev/null 2>&1 || refuse "docker compose is required to apply the Caddy overlay and reload Caddy"
+docker compose version >/dev/null 2>&1 || refuse "docker compose is unavailable; cannot apply the Caddy overlay or reload Caddy"
 
 STAGED_CADDY="${STAGING_DIR}/Caddyfile"
 STAGED_WWW="${STAGING_DIR}/www"

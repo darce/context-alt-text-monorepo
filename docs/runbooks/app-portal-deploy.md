@@ -105,7 +105,8 @@ scripts/deploy/app-portal.sh --apply
 
 `--apply` mutates host files, applies the rendered compose overlay on the VM,
 then reloads and health-checks under a trap. It does not access the live VM from
-a sandbox; tests inject fake `docker`, `caddy`, and health/reload commands.
+a sandbox; tests inject fake `docker` and Caddy validators plus health/reload
+overrides.
 
 `--apply` then:
 
@@ -126,7 +127,11 @@ a sandbox; tests inject fake `docker`, `caddy`, and health/reload commands.
    `${APP_ROOT%/*}/docker-compose.caddy.yml`) with the rendered overlay using
    `docker compose ... up -d`. This attaches `APP_WWW` at `/srv/app-portal`
    before frontend health runs.
-8. Reloads (`APP_RELOAD_CMD` or `caddy reload --config "$CADDYFILE"`).
+8. Defaults to reloading Caddy in the composed service with
+   `docker compose -f "$CADDY_COMPOSE"` and adds `-f "$OVERLAY_DEST"` when the
+   overlay exists, then runs `exec -T caddy caddy reload --config
+   /etc/caddy/Caddyfile --adapter caddyfile`. First-deploy rollback uses only
+   the base compose file. `APP_RELOAD_CMD` is the explicit override.
 9. Verifies the promoted Caddyfile, frontend, and overlay, then runs the
    required `APP_HEALTH_CMD` against the live frontend and production API.
 10. Any failure at write/move/copy/compose/reload/health restores all three
@@ -137,9 +142,10 @@ Protected hostnames (`api.altcontext.com` and the other live vhosts) cannot be
 used as `APP_HOSTNAME`. The shared repo file
 `apps/prototype-description-service/Caddyfile` is refused as `CADDYFILE`.
 
-`--apply` refuses to proceed if neither `caddy` nor `APP_RELOAD_CMD` provides a
-reload mechanism. A reload failure during activation restores the rollback
-artifacts and prevents the `applied:` message.
+`--apply` requires Docker Compose and the configured `CADDY_COMPOSE` file to
+apply the overlay and reload the Caddy service. `APP_RELOAD_CMD` can explicitly
+override the reload command. A reload failure during activation restores the
+rollback artifacts and prevents the `applied:` message.
 
 ## After apply (verify edge + API configuration)
 
@@ -160,9 +166,11 @@ TLS/network owner. A custom `APP_WWW` is already baked into the published
 overlay; do not compose the `__APP_WWW__` template.
 
 Reload or recreate Caddy if its mounted Caddyfile does not match the host
-configuration. Prefer `docker compose exec caddy caddy reload --config
-/etc/caddy/Caddyfile --adapter caddyfile` when the inode already matches;
-recreate when the mount hash diverges (same check as `sync-demo.sh`). Compare:
+configuration. Use `docker compose -f /opt/acx-backend/docker-compose.caddy.yml
+-f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy caddy reload
+--config /etc/caddy/Caddyfile --adapter caddyfile` when the inode already
+matches; recreate when the mount hash diverges (same check as `sync-demo.sh`).
+Compare:
 
 ```bash
 sha256sum /opt/acx-backend/Caddyfile
@@ -198,6 +206,9 @@ the prior compose overlay and reload Caddy:
 cd /opt/acx-backend
 docker compose -f docker-compose.caddy.yml \
   -f /opt/acx-backend/app/docker-compose.app.yml up -d
+docker compose -f docker-compose.caddy.yml \
+  -f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy \
+  caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 ```
 
 Failed validation never replaces the live files, so rollback is only needed

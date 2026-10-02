@@ -67,32 +67,31 @@ def _write_caddy_compose(path: Path) -> Path:
     return path
 
 
-def _caddy_stub(log_path: str, *, fail: bool = False, fail_on: str | None = None) -> str:
+def _caddy_stub(log_path: str, *, fail: bool = False) -> str:
     exit_code = 1 if fail else 0
-    fail_on_lit = fail_on or ""
     return (
         "#!/usr/bin/env bash\n"
         "set -u\n"
         f"printf 'caddy' >> {log_path}\n"
         f"printf ' %q' \"$@\" >> {log_path}\n"
         f"printf '\\n' >> {log_path}\n"
-        "cmd=\n"
-        'for a in "$@"; do\n'
-        '  case "$a" in\n'
-        '    validate|reload|adapt) cmd="$a" ;;\n'
-        "  esac\n"
-        "done\n"
         f"if [ {exit_code} -ne 0 ]; then\n"
-        "  exit 1\n"
-        "fi\n"
-        f'if [ -n "{fail_on_lit}" ] && [ "$cmd" = "{fail_on_lit}" ]; then\n'
         "  exit 1\n"
         "fi\n"
         "exit 0\n"
     )
 
 
-def _docker_stub(log_path: str, compose_marker: str) -> str:
+def _docker_stub(log_path: str, compose_marker: str, *, fail_first_reload: bool = False) -> str:
+    compose_marker_quoted = shlex.quote(compose_marker)
+    reload_failure_marker = shlex.quote(f"{compose_marker}.failed-first-reload")
+    failure_rule = (
+        f'  if [ "$compose_reload" -eq 1 ] && [ ! -e {reload_failure_marker} ]; then\n'
+        f'    : > {reload_failure_marker}\n'
+        "    exit 1\n"
+        "  fi\n"
+        if fail_first_reload else ""
+    )
     return (
         "#!/usr/bin/env bash\n"
         "set -u\n"
@@ -101,11 +100,38 @@ def _docker_stub(log_path: str, compose_marker: str) -> str:
         f"printf '\\n' >> {log_path}\n"
         'if [ "${1:-}" = "compose" ]; then\n'
         "  compose_up=0\n"
-        '  for arg in "$@"; do [ "$arg" = "up" ] && compose_up=1; done\n'
-        f'  [ "$compose_up" -eq 0 ] || : > {compose_marker}\n'
-        "fi\n"
-        "exit 0\n"
+        "  compose_reload=0\n"
+        '  for arg in "$@"; do\n'
+        '    [ "$arg" = "up" ] && compose_up=1\n'
+        '    [ "$arg" = "reload" ] && compose_reload=1\n'
+        "  done\n"
+        f'  [ "$compose_up" -eq 0 ] || : > {compose_marker_quoted}\n'
+        + failure_rule
+        + "fi\n"
+        + "exit 0\n"
     )
+
+
+def _expected_compose_reload(backend_root: Path, overlay: Path | None = None) -> list[str]:
+    argv = ["docker", "compose", "-f", str(backend_root / "docker-compose.caddy.yml")]
+    if overlay is not None:
+        argv.extend(["-f", str(overlay)])
+    argv.extend(
+        [
+            "exec", "-T", "caddy", "caddy", "reload", "--config",
+            "/etc/caddy/Caddyfile", "--adapter", "caddyfile",
+        ]
+    )
+    return argv
+
+
+def _compose_reload_calls(tmp_path: Path) -> list[list[str]]:
+    calls = []
+    for line in _log(tmp_path).splitlines():
+        argv = shlex.split(line)
+        if argv[:2] == ["docker", "compose"] and "exec" in argv and "reload" in argv:
+            calls.append(argv)
+    return calls
 
 
 def _run(
@@ -118,7 +144,7 @@ def _run(
     upstream: str | None = "prod-api:8000",
     hostname: str | None = "app.altcontext.com",
     caddy_fail: bool = False,
-    caddy_fail_on: str | None = None,
+    docker_fail_first_reload: bool = False,
     fail_mv_dest: Path | None = None,
     include_caddy: bool = True,
     include_docker: bool = True,
@@ -138,10 +164,17 @@ def _run(
     if include_caddy:
         _write_executable(
             bin_dir / "caddy",
-            _caddy_stub(log_path, fail=caddy_fail, fail_on=caddy_fail_on),
+            _caddy_stub(log_path, fail=caddy_fail),
         )
     if include_docker:
-        _write_executable(bin_dir / "docker", _docker_stub(log_path, shlex.quote(str(compose_marker))))
+        _write_executable(
+            bin_dir / "docker",
+            _docker_stub(
+                log_path,
+                str(compose_marker),
+                fail_first_reload=docker_fail_first_reload,
+            ),
+        )
     health = bin_dir / "health-check"
     _write_executable(health, "#!/usr/bin/env bash\nexit 0\n")
     if fail_mv_dest is not None:
@@ -392,7 +425,10 @@ def test_apply_merges_vhost_preserves_existing_hosts_and_copies_frontend(tmp_pat
     log = _log(tmp_path)
     assert "caddy" in log
     assert "validate" in log
-    assert "reload" in log
+    assert not any(line.startswith("caddy reload ") for line in log.splitlines())
+    assert _compose_reload_calls(tmp_path) == [
+        _expected_compose_reload(tmp_path / "opt" / "acx-backend", overlay_dest)
+    ]
     assert "ssh" not in log
     rollback_dir = tmp_path / "opt" / "acx-backend" / "app" / "rollback"
     assert rollback_dir.is_dir()
@@ -427,11 +463,19 @@ def test_apply_mounts_static_root_before_live_health_check(tmp_path: Path) -> No
     assert result.returncode == 0, output
     log_lines = _log(tmp_path).splitlines()
     compose_index = next(i for i, line in enumerate(log_lines) if line.startswith("docker compose ") and " up -d" in line)
-    reload_index = next(i for i, line in enumerate(log_lines) if line.startswith("caddy reload "))
+    reload_index = next(
+        i for i, line in enumerate(log_lines)
+        if line.startswith("docker compose ") and " exec -T caddy caddy reload " in line
+    )
     health_index = log_lines.index("health")
     assert "docker-compose.caddy.yml" in log_lines[compose_index]
     assert "docker-compose.app.yml" in log_lines[compose_index]
     assert compose_index < reload_index < health_index
+    overlay = tmp_path / "opt" / "acx-backend" / "app" / "docker-compose.app.yml"
+    assert shlex.split(log_lines[reload_index]) == _expected_compose_reload(
+        tmp_path / "opt" / "acx-backend", overlay
+    )
+    assert not any(line.startswith("caddy reload ") for line in log_lines)
 
 
 def test_apply_failed_validation_leaves_live_config_and_www_intact(tmp_path: Path) -> None:
@@ -683,7 +727,12 @@ def test_apply_failed_reload_restores_caddy_www_and_overlay(tmp_path: Path) -> N
     www = _prior_www(tmp_path)
     overlay_dest = tmp_path / "opt" / "acx-backend" / "app" / "docker-compose.app.yml"
     overlay_dest.write_text("services: {}\n", encoding="utf-8")
-    result = _run(tmp_path, args=["--apply"], live_caddy=live, caddy_fail_on="reload")
+    result = _run(
+        tmp_path,
+        args=["--apply"],
+        live_caddy=live,
+        docker_fail_first_reload=True,
+    )
     output = result.stdout + result.stderr
     assert result.returncode != 0, output
     assert "reload" in output.lower(), output
@@ -692,23 +741,51 @@ def test_apply_failed_reload_restores_caddy_www_and_overlay(tmp_path: Path) -> N
     assert (www / "keep.txt").read_text(encoding="utf-8") == "active\n"
     assert not (www / "index.html").exists()
     assert overlay_dest.read_text(encoding="utf-8") == "services: {}\n"
+    expected_reload = _expected_compose_reload(tmp_path / "opt" / "acx-backend", overlay_dest)
+    assert _compose_reload_calls(tmp_path) == [expected_reload, expected_reload]
+    assert not any(line.startswith("caddy reload ") for line in _log(tmp_path).splitlines())
     for host in EXISTING_HOSTS:
         assert host in live.read_text(encoding="utf-8")
 
 
-def test_apply_without_reload_mechanism_refuses_before_promotion(tmp_path: Path) -> None:
+def test_first_apply_reload_failure_rolls_back_with_base_compose(tmp_path: Path) -> None:
     live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
     _write_live_caddy(live)
-    before = live.read_bytes()
-    www = _prior_www(tmp_path)
-    result = _run(tmp_path, args=["--apply"], live_caddy=live, include_caddy=False)
+    before = live.read_text(encoding="utf-8")
+    app_root = tmp_path / "opt" / "acx-backend" / "app"
+    overlay_dest = app_root / "docker-compose.app.yml"
+    www = app_root / "www"
+
+    result = _run(
+        tmp_path,
+        args=["--apply"],
+        live_caddy=live,
+        include_caddy=False,
+        docker_fail_first_reload=True,
+    )
     output = result.stdout + result.stderr
     assert result.returncode != 0, output
-    assert "reload" in output.lower(), output
-    assert "applied:" not in output
-    assert live.read_bytes() == before
-    assert (www / "keep.txt").read_text() == "active\n"
-    assert not (www / "index.html").exists()
+    assert live.read_text(encoding="utf-8") == before
+    assert not overlay_dest.exists()
+    assert not www.exists()
+    assert _compose_reload_calls(tmp_path) == [
+        _expected_compose_reload(tmp_path / "opt" / "acx-backend", overlay_dest),
+        _expected_compose_reload(tmp_path / "opt" / "acx-backend"),
+    ]
+
+
+def test_apply_default_reload_uses_compose_without_host_caddy(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    result = _run(tmp_path, args=["--apply"], live_caddy=live, include_caddy=False)
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    overlay = tmp_path / "opt" / "acx-backend" / "app" / "docker-compose.app.yml"
+    assert _compose_reload_calls(tmp_path) == [
+        _expected_compose_reload(tmp_path / "opt" / "acx-backend", overlay)
+    ]
+    assert any(line.startswith("docker run ") and "validate" in line for line in _log(tmp_path).splitlines())
+    assert not any(line.startswith("caddy ") for line in _log(tmp_path).splitlines())
 
 
 def test_apply_requires_explicit_live_health_check(tmp_path: Path) -> None:
@@ -734,6 +811,7 @@ def test_docker_validation_with_explicit_reload_succeeds(tmp_path: Path) -> None
     assert result.returncode == 0, result.stdout + result.stderr
     assert "docker run" in _log(tmp_path)
     assert marker.exists()
+    assert _compose_reload_calls(tmp_path) == []
 
 
 def test_successful_applies_reclaim_old_snapshot_sets(tmp_path: Path) -> None:

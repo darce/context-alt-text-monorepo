@@ -298,6 +298,21 @@ def test_model_provenance_surfaced():  # HARM-01
     assert "seeded" in md and "NOT a caption-model baseline" in md
 
 
+@pytest.mark.parametrize(
+    ("stamp_key", "run_value", "item_value"),
+    [("seed", 17, 42), ("prompt_variant", "baseline", "variant-a")],
+)
+def test_model_provenance_rejects_item_stamp_conflicting_with_run(stamp_key, run_value, item_value):
+    record = _run_record()
+    record["provenance"][stamp_key] = run_value
+    for item in record["items"]:
+        if not item.get("error"):
+            item["describe"][stamp_key] = item_value
+
+    with pytest.raises(ReportError, match=stamp_key):
+        score_run_record(record, _manifest_entries())
+
+
 def test_cache_hit_reads_contract_cached_field():  # HARM-02
     per_image = {p["media_id"]: p for p in score_run_record(_run_record(), _manifest_entries())["per_image"]}
     assert per_image[1]["cache_hit"] is False
@@ -771,6 +786,8 @@ def test_public_fail_closed_missing_entry():
     # Unknown media stays in failures so the public artifact fails loud.
     assert any(f.get("media_id") == 999 for f in scored["failures"])
     assert scored["counts"]["failed"] >= 1
+    # Its absent item-level model stamps do not block the known run provenance.
+    assert scored["provenance"]["model"]["model_ids"] == ["seeded-fixtures"]
 
 
 def test_public_fail_closed_missing_provenance():
@@ -2949,7 +2966,9 @@ def test_public_provenance_allow_list_drops_unknown_keys():  # VLM6-R3-01 / R4-0
         "sha256": "a" * 64,
     }
     record["provenance"]["totally_unknown_future_key"] = "should-never-publish"
-    record["items"][0]["describe"]["model_id"] = "/Users/daniel/models/Qwen3-VL-27B-Q4_K_M.gguf"
+    model_id = "/Users/daniel/models/Qwen3-VL-27B-Q4_K_M.gguf"
+    for item in record["items"]:
+        item["describe"]["model_id"] = model_id
     json_doc, md = build_reports(record, entries, audience=Audience.PUBLIC)
     scored = json.loads(json_doc)
     prov = scored["provenance"]
@@ -2970,6 +2989,17 @@ def test_public_provenance_allow_list_drops_unknown_keys():  # VLM6-R3-01 / R4-0
     # Allowed keys still present.
     assert "head_sha" in prov
     assert "manifest_sha256" in prov
+    # A homogeneous absolute weight path is reduced to its public-safe basename
+    # at the provenance boundary.
+    assert prov["model"]["model_ids"] == ["Qwen3-VL-27B-Q4_K_M.gguf"]
+
+
+def test_public_refuses_mixed_model_ids():
+    record, entries = _audience_fixtures()
+    record["items"][1]["describe"]["model_id"] = "/models/other-model.gguf"
+
+    with pytest.raises(ReportError, match="mixes model_id"):
+        build_reports(record, entries, audience=Audience.PUBLIC)
 
 
 def test_public_validates_record_kind_before_audience_branch():  # VLM6-R3-04

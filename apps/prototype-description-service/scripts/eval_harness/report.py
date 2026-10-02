@@ -1464,9 +1464,9 @@ def _model_provenance(
 
     Surfaced so a report is never mistaken for a caption-model baseline when it
     actually scored a model-free 'seeded' stub run — every artifact stamped with
-    the adapter/model version (scope Q5). Per-item model and run-configuration
-    stamps must be homogeneous: combining them into one aggregate score would
-    erase which treatment produced each caption.
+    the adapter/model version (scope Q5). Every model stamp must be homogeneous
+    for all audiences; run-level settings must also agree with every item-level
+    stamp.
     """
     run_provenance = run_provenance or {}
     dimensions = (
@@ -1513,6 +1513,14 @@ def _model_provenance(
                 f"run record mixes {item_key} values {sorted(values)}; refusing aggregate score",
                 invariant="model_provenance_refuses_mixed_values",
             )
+        if provenance_key is not None and provenance_key in run_provenance and values:
+            run_value = _canonical(run_provenance[provenance_key])
+            if any(_canonical(item_value) != run_value for item_value in values.values()):
+                raise ReportError(
+                    f"run record {item_key} stamp disagrees with run provenance.{provenance_key}; "
+                    "refusing aggregate score",
+                    invariant="model_provenance_refuses_mixed_values",
+                )
         out[output_key] = [values[key] for key in sorted(values)]
     return out
 
@@ -2135,8 +2143,14 @@ def score_run_record(
     eval_mode = str(run_record["provenance"].get("eval_mode", "standard"))
     if eval_mode not in EVAL_MODES:
         raise ReportError(f"unknown eval_mode {eval_mode!r} in run-record provenance; expected one of {EVAL_MODES}")
-    model_provenance = _model_provenance(run_record["items"], run_record["provenance"])
     entries = _entry_index(manifest_entries)
+    # Provenance for this score only includes joined items; unknown media is
+    # reported below as a named failure, not as missing model metadata.
+    scored_items = [item for item in run_record["items"] if int(item["media_id"]) in entries]
+    model_provenance = _model_provenance(
+        scored_items,
+        run_record["provenance"],
+    )
     roster = _corpus_roster(manifest_entries, manifest_roster)
     caption_scores: list[CaptionScores] = []
     long_scores: list[CaptionScores] = []

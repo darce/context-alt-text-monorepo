@@ -7,7 +7,7 @@ import json
 import os
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -116,29 +116,10 @@ def _refuse_reused_reset_evidence(
 
 
 def _stack_pair_snapshot(pair: StackPairConfig) -> dict[str, Any]:
-    return {
-        "head_to_head_delta": pair.head_to_head_delta,
-        "bootstrap_seed": pair.bootstrap_seed,
-        "primary_endpoint": pair.primary_endpoint,
-        "secondary_endpoints": list(pair.secondary_endpoints),
-        "accepted_set_floor": pair.accepted_set_floor,
-        "max_differential_attrition": pair.max_differential_attrition,
-        "allow_private_source": pair.allow_private_source,
-        "baseline_manifest_path": pair.baseline_manifest_path,
-        "stacks": [
-            {
-                "stack_id": s.stack_id,
-                "role": s.role,
-                "base_url": s.base_url,
-                "expected_profile": s.expected_profile,
-                "expected_pgvector_dim": s.expected_pgvector_dim,
-                "opencv_major": s.opencv_major,
-                "api_key_env": s.api_key_env,
-                "tenant_id_env": s.tenant_id_env,
-            }
-            for s in pair.stacks
-        ],
-    }
+    # FLOW-01: pin every config field, including future behavior settings.
+    # No exclusions: credential fields hold env-var names, not secret values.
+    # Normalize tuples to lists to match the persisted JSON on resume.
+    return json.loads(json.dumps(asdict(pair)))
 
 
 def _validate_resume_inputs(root: Path, pair: StackPairConfig, manifest_path: Path | str) -> None:

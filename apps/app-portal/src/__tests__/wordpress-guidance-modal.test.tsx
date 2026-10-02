@@ -111,5 +111,20 @@ describe('WordPress guidance modal [A11Y-11]', () => {
       expect(screen.getByRole('heading', { name: /api keys/i })).toBeInTheDocument();
     });
     expect(dialog).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('heading', { name: /api keys/i })).toHaveFocus());
+  });
+
+  it.each(['Close', 'Back to API keys'])('returns focus to the keys heading after %s', async (action) => {
+    const user = userEvent.setup();
+    signInVerified();
+    renderPortal({ path: '/keys/wordpress', fetchImpl: portalFetch() as unknown as typeof fetch });
+
+    await screen.findByRole('dialog', { name: /wordpress test connection guidance/i });
+    await user.click(screen.getByRole('button', { name: action, exact: true }));
+
+    const heading = await screen.findByRole('heading', { name: /api keys/i });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(document.querySelector('.acx-session-bar')).not.toHaveAttribute('inert');
   });
 });

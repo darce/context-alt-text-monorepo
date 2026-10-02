@@ -38,7 +38,7 @@ HTTPS `app.altcontext.com` (Caddy ACME, same edge as `api.altcontext.com`):
 
 | Surface | Owner | Names |
 | --- | --- | --- |
-| This deploy script | app-host lane | `APP_HOSTNAME`, `APP_UPSTREAM`, `APP_ROOT`, `APP_WWW`, `APP_FRONTEND_ROOT`, `CADDYFILE`, `FRONTEND_DIST`, `APP_APPROVED_ROOTS`, `APP_RELOAD_CMD`, `APP_HEALTH_CMD` |
+| This deploy script | app-host lane | `APP_HOSTNAME`, `APP_UPSTREAM`, `APP_ROOT`, `APP_WWW`, `CADDY_COMPOSE`, `APP_FRONTEND_ROOT`, `CADDYFILE`, `FRONTEND_DIST`, `APP_APPROVED_ROOTS`, `APP_RELOAD_CMD`, `APP_HEALTH_CMD` |
 | Prod API process | backend/portal composition | `RECOGNITION_PORTAL_ENABLED=1` and Clerk/Polar keys in `/opt/acx-backend/prod/.env` (mode 0600) |
 | Frontend build | later `apps/app-portal` build | `VITE_CLERK_PUBLISHABLE_KEY`, `VITE_CLERK_FAPI` baked by `configure_clerk_production.py` |
 
@@ -82,11 +82,18 @@ There is no committed `apps/app-portal` in this tree. Do **not** generate a
 placeholder `index.html`. `--apply` refuses a missing dist, empty `index.html`,
 or empty `assets/`.
 
-Before applying, install `/usr/local/bin/app-portal-health-check` as a regular
-executable. It must return zero only when the live frontend at
+The checked-in `scripts/deploy/app-portal.sh` also provides the health-check
+implementation when installed under the name `app-portal-health-check`. Install
+that versioned script as a regular executable on the VM:
+
+```bash
+sudo install -m 0755 scripts/deploy/app-portal.sh /usr/local/bin/app-portal-health-check
+```
+
+It returns zero only when both the live frontend at
 `https://app.altcontext.com/` and the production API readiness endpoint at
-`https://api.altcontext.com/ready` both return successful HTTP responses; it
-must return nonzero if either check fails.
+`https://api.altcontext.com/ready` return successful HTTP responses. It returns
+nonzero if either check fails.
 
 ```bash
 FRONTEND_DIST=/absolute/path/to/real/dist \
@@ -96,9 +103,9 @@ APP_HEALTH_CMD=/usr/local/bin/app-portal-health-check \
 scripts/deploy/app-portal.sh --apply
 ```
 
-`--apply` is **not** staging-only. It mutates host files, then reloads and
-health-checks under a trap. It does **not** run live VM `docker compose` from a
-sandbox; tests inject fake `caddy` / `APP_RELOAD_CMD` / `APP_HEALTH_CMD`.
+`--apply` mutates host files, applies the rendered compose overlay on the VM,
+then reloads and health-checks under a trap. It does not access the live VM from
+a sandbox; tests inject fake `docker`, `caddy`, and health/reload commands.
 
 `--apply` then:
 
@@ -115,11 +122,16 @@ sandbox; tests inject fake `caddy` / `APP_RELOAD_CMD` / `APP_HEALTH_CMD`.
      (same bind-mount inode rule as `sync-demo.sh` / GUIDEDEPLOY-1-BR-04).
    - www: atomic rename of the staged directory onto `APP_WWW`.
    - overlay: atomic rename onto `${APP_ROOT}/docker-compose.app.yml`.
-7. Reload (`APP_RELOAD_CMD` or `caddy reload --config "$CADDYFILE"`).
-8. Verifies the promoted Caddyfile, frontend, and overlay, then runs the
+7. Applies the base Caddy compose file (default
+   `${APP_ROOT%/*}/docker-compose.caddy.yml`) with the rendered overlay using
+   `docker compose ... up -d`. This attaches `APP_WWW` at `/srv/app-portal`
+   before frontend health runs.
+8. Reloads (`APP_RELOAD_CMD` or `caddy reload --config "$CADDYFILE"`).
+9. Verifies the promoted Caddyfile, frontend, and overlay, then runs the
    required `APP_HEALTH_CMD` against the live frontend and production API.
-9. Any failure at write/move/copy/reload/health restores the three rollback
-   artifacts, attempts a rollback reload, and **does not** print `applied:`.
+10. Any failure at write/move/copy/compose/reload/health restores all three
+    rollback artifacts, reapplies the restored compose state, attempts a
+    rollback reload, and **does not** print `applied:`.
 
 Protected hostnames (`api.altcontext.com` and the other live vhosts) cannot be
 used as `APP_HOSTNAME`. The shared repo file
@@ -129,57 +141,67 @@ used as `APP_HOSTNAME`. The shared repo file
 reload mechanism. A reload failure during activation restores the rollback
 artifacts and prevents the `applied:` message.
 
-## Later integration (mounts + edge reload)
+## After apply (verify edge + API configuration)
 
-`--apply` does not recreate the Caddy container. After a successful apply:
+`--apply` applies the **rendered** static mount (not the repo template) to the
+existing Caddy compose configuration before health checking. After a successful
+apply, confirm the mount is present:
 
-1. Overlay the **rendered** static mount (not the repo template) onto the
-   existing compose file (do not replace it):
+```bash
+cd /opt/acx-backend
+docker compose -f docker-compose.caddy.yml \
+  -f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy \
+  sh -c 'test -s /srv/app-portal/index.html && test -d /srv/app-portal/assets'
+```
 
-   ```bash
-   cd /opt/acx-backend
-   docker compose -f docker-compose.caddy.yml \
-     -f /opt/acx-backend/app/docker-compose.app.yml up -d
-   ```
+The mount exposes the chosen `APP_WWW` (default `/opt/acx-backend/app/www`) at
+`/srv/app-portal` inside `caddy`. `docker-compose.caddy.yml` remains the
+TLS/network owner. A custom `APP_WWW` is already baked into the published
+overlay; do not compose the `__APP_WWW__` template.
 
-   That bind-mounts the chosen `APP_WWW` (default `/opt/acx-backend/app/www`)
-   → `/srv/app-portal` inside `caddy`. `docker-compose.caddy.yml` remains the
-   TLS/network owner. A custom `APP_WWW` is already baked into the published
-   overlay; do not compose the `__APP_WWW__` template.
+Reload or recreate Caddy if its mounted Caddyfile does not match the host
+configuration. Prefer `docker compose exec caddy caddy reload --config
+/etc/caddy/Caddyfile --adapter caddyfile` when the inode already matches;
+recreate when the mount hash diverges (same check as `sync-demo.sh`). Compare:
 
-2. Reload or recreate Caddy so it sees both the merged Caddyfile inode and the
-   new volume. Prefer `docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile` when the inode already matches; recreate when
-   the mount hash diverges (same check as `sync-demo.sh`). Compare:
+```bash
+sha256sum /opt/acx-backend/Caddyfile
+docker compose -f docker-compose.caddy.yml exec -T caddy \
+  sha256sum /etc/caddy/Caddyfile
+```
 
-   ```bash
-   sha256sum /opt/acx-backend/Caddyfile
-   docker compose -f docker-compose.caddy.yml exec -T caddy \
-     sha256sum /etc/caddy/Caddyfile
-   ```
+Enable the portal router in `/opt/acx-backend/prod/.env`:
+`RECOGNITION_PORTAL_ENABLED=1`, plus the Clerk issuer/JWKS/audience/authorized
+parties already documented in `docs/runbooks/clerk-production-auth.md`. Restart
+the prod API unit after those env changes. Polar webhook URL stays on
+`https://api.altcontext.com/billing/webhooks/polar`, not the app host.
 
-3. Enable the portal router in `/opt/acx-backend/prod/.env`:
-   `RECOGNITION_PORTAL_ENABLED=1`, plus the Clerk issuer/JWKS/audience/authorized
-   parties already documented in `docs/runbooks/clerk-production-auth.md`. Restart
-   the prod API unit after those env changes. Polar webhook URL stays on
-   `https://api.altcontext.com/billing/webhooks/polar`, not the app host.
+DNS: operator A-record `app.altcontext.com` → `129.213.40.111`. Caddy issues
+the cert once that name resolves here.
 
-4. DNS: operator A-record `app.altcontext.com` → `129.213.40.111`. Caddy issues
-   the cert once that name resolves here.
-
-5. **Re-apply after a shared-edge promote.** `sync-demo.sh` and recognition
-   deploy ship the git `Caddyfile` wholesale to `/opt/acx-backend/Caddyfile`.
-   That would drop this vhost. Re-run `scripts/deploy/app-portal.sh --apply`
-   after those promotes until a later shared-Caddyfile owner absorbs the snippet
-   (not this lane; [GRPH-09]).
+**Re-apply after a shared-edge promote.** `sync-demo.sh` and recognition deploy
+ship the git `Caddyfile` wholesale to `/opt/acx-backend/Caddyfile`. That would
+drop this vhost. Re-run `scripts/deploy/app-portal.sh --apply` after those
+promotes until a later shared-Caddyfile owner absorbs the snippet (not this
+lane; [GRPH-09]).
 
 ## Rollback
 
 `/opt/acx-backend/app/rollback/Caddyfile.<ts>` plus `www.<ts>` and
 `docker-compose.app.yml.<ts>` are the pre-activation copies. Automatic restore
-runs on promote/reload/health failure. Manual restore: write the Caddyfile back
-**in place** (`cat rollback > Caddyfile`), restore www/overlay, then reload
-Caddy. Failed validation never replaces the live files, so rollback is only
-needed after activation has started.
+runs on promote/compose/reload/health failure and reapplies the restored compose
+state before the rollback reload. Manual restore: write the Caddyfile back
+**in place** (`cat rollback > Caddyfile`), restore www/overlay, then reapply
+the prior compose overlay and reload Caddy:
+
+```bash
+cd /opt/acx-backend
+docker compose -f docker-compose.caddy.yml \
+  -f /opt/acx-backend/app/docker-compose.app.yml up -d
+```
+
+Failed validation never replaces the live files, so rollback is only needed
+after activation has started.
 
 ## Out of scope
 

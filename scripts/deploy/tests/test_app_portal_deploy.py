@@ -61,6 +61,12 @@ def _write_live_caddy(path: Path, body: str | None = None) -> None:
     path.write_text(body if body is not None else LIVE_CADDY_SRC.read_text(encoding="utf-8"), encoding="utf-8")
 
 
+def _write_caddy_compose(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("services:\n  caddy:\n    image: caddy:2\n", encoding="utf-8")
+    return path
+
+
 def _caddy_stub(log_path: str, *, fail: bool = False, fail_on: str | None = None) -> str:
     exit_code = 1 if fail else 0
     fail_on_lit = fail_on or ""
@@ -86,13 +92,18 @@ def _caddy_stub(log_path: str, *, fail: bool = False, fail_on: str | None = None
     )
 
 
-def _docker_stub(log_path: str) -> str:
+def _docker_stub(log_path: str, compose_marker: str) -> str:
     return (
         "#!/usr/bin/env bash\n"
         "set -u\n"
         f"printf 'docker' >> {log_path}\n"
         f"printf ' %q' \"$@\" >> {log_path}\n"
         f"printf '\\n' >> {log_path}\n"
+        'if [ "${1:-}" = "compose" ]; then\n'
+        "  compose_up=0\n"
+        '  for arg in "$@"; do [ "$arg" = "up" ] && compose_up=1; done\n'
+        f'  [ "$compose_up" -eq 0 ] || : > {compose_marker}\n'
+        "fi\n"
         "exit 0\n"
     )
 
@@ -121,6 +132,8 @@ def _run(
     app_root.mkdir(parents=True, exist_ok=True)
     backend_root = tmp_path / "opt" / "acx-backend"
     backend_root.mkdir(parents=True, exist_ok=True)
+    caddy_compose = _write_caddy_compose(backend_root / "docker-compose.caddy.yml")
+    compose_marker = tmp_path / "compose-applied"
 
     if include_caddy:
         _write_executable(
@@ -128,7 +141,7 @@ def _run(
             _caddy_stub(log_path, fail=caddy_fail, fail_on=caddy_fail_on),
         )
     if include_docker:
-        _write_executable(bin_dir / "docker", _docker_stub(log_path))
+        _write_executable(bin_dir / "docker", _docker_stub(log_path, shlex.quote(str(compose_marker))))
     health = bin_dir / "health-check"
     _write_executable(health, "#!/usr/bin/env bash\nexit 0\n")
     if fail_mv_dest is not None:
@@ -168,6 +181,7 @@ def _run(
     env["LANG"] = "C"
     env["APP_ROOT"] = str(app_root)
     env["APP_WWW"] = str(app_root / "www")
+    env["CADDY_COMPOSE"] = str(caddy_compose)
     env.pop("DRY_RUN", None)
     env.pop("APP_PORTAL_APPLY", None)
     env.pop("FRONTEND_DIST", None)
@@ -230,6 +244,7 @@ def test_owned_artifacts_exist() -> None:
 def test_default_is_dry_run_and_side_effect_free(tmp_path: Path) -> None:
     caddy_path = tmp_path / "opt" / "acx-backend" / "Caddyfile"
     _write_live_caddy(caddy_path)
+    _write_caddy_compose(caddy_path.parent / "docker-compose.caddy.yml")
     before = caddy_path.read_text(encoding="utf-8")
     before_files = _tree_files(tmp_path / "opt")
     result = _run(tmp_path, live_caddy=caddy_path)
@@ -388,6 +403,37 @@ def test_apply_merges_vhost_preserves_existing_hosts_and_copies_frontend(tmp_pat
     assert "api.altcontext.com {" in rollback_text
 
 
+def test_apply_mounts_static_root_before_live_health_check(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    marker = tmp_path / "compose-applied"
+    log_path = shlex.quote(str(tmp_path / "commands.log"))
+    health = tmp_path / "bin" / "health-requires-compose"
+    health.parent.mkdir()
+    _write_executable(
+        health,
+        "#!/usr/bin/env bash\n"
+        f"[ -f {shlex.quote(str(marker))} ] || exit 1\n"
+        f"printf 'health\\n' >> {log_path}\n",
+    )
+
+    result = _run(
+        tmp_path,
+        args=["--apply"],
+        live_caddy=live,
+        extra_env={"APP_HEALTH_CMD": str(health)},
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    log_lines = _log(tmp_path).splitlines()
+    compose_index = next(i for i, line in enumerate(log_lines) if line.startswith("docker compose ") and " up -d" in line)
+    reload_index = next(i for i, line in enumerate(log_lines) if line.startswith("caddy reload "))
+    health_index = log_lines.index("health")
+    assert "docker-compose.caddy.yml" in log_lines[compose_index]
+    assert "docker-compose.app.yml" in log_lines[compose_index]
+    assert compose_index < reload_index < health_index
+
+
 def test_apply_failed_validation_leaves_live_config_and_www_intact(tmp_path: Path) -> None:
     live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
     _write_live_caddy(live)
@@ -474,6 +520,8 @@ def test_runbook_documents_later_integration_and_env_ownership() -> None:
     assert "APP_APPROVED_ROOTS" in text
     assert "`/portal` plus `/portal/*`" in text or "path /portal /portal/*" in text
     assert "APP_HEALTH_CMD=/usr/local/bin/app-portal-health-check" in text
+    assert "sudo install -m 0755 scripts/deploy/app-portal.sh /usr/local/bin/app-portal-health-check" in text
+    assert "before frontend health runs" in text.lower()
     assert "https://app.altcontext.com/" in text
     assert "https://api.altcontext.com/ready" in text
     assert "local artifact checks" not in text
@@ -485,6 +533,42 @@ def test_runbook_documents_later_integration_and_env_ownership() -> None:
     lowered = text.lower()
     for marker in SECRET_MARKERS:
         assert marker.lower() not in lowered, marker
+
+
+def test_checked_in_health_check_covers_both_https_endpoints(tmp_path: Path) -> None:
+    health = tmp_path / "app-portal-health-check"
+    _write_executable(health, SCRIPT.read_text(encoding="utf-8"))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    curl_log = tmp_path / "curl.log"
+    curl = bin_dir / "curl"
+    _write_executable(
+        curl,
+        "#!/usr/bin/env bash\n"
+        'for url in "$@"; do :; done\n'
+        'printf "%s\\n" "$url" >> "$CURL_LOG"\n'
+        '[ "$url" = "${CURL_FAIL_URL:-}" ] && exit 22\n'
+        "exit 0\n",
+    )
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
+    env["CURL_LOG"] = str(curl_log)
+
+    success = subprocess.run([str(health)], env=env, text=True, capture_output=True, check=False)
+    assert success.returncode == 0, success.stdout + success.stderr
+    assert curl_log.read_text(encoding="utf-8").splitlines() == [
+        "https://app.altcontext.com/",
+        "https://api.altcontext.com/ready",
+    ]
+
+    curl_log.unlink()
+    failing_env = {**env, "CURL_FAIL_URL": "https://api.altcontext.com/ready"}
+    failure = subprocess.run([str(health)], env=failing_env, text=True, capture_output=True, check=False)
+    assert failure.returncode != 0, failure.stdout + failure.stderr
+    assert curl_log.read_text(encoding="utf-8").splitlines() == [
+        "https://app.altcontext.com/",
+        "https://api.altcontext.com/ready",
+    ]
 
 
 def _prior_www(tmp_path: Path) -> Path:
@@ -761,6 +845,8 @@ def test_apply_failed_health_restores_caddy_www_and_overlay(tmp_path: Path) -> N
     assert not (www / "index.html").exists()
     assert overlay_dest.read_text(encoding="utf-8") == "services: {}\n"
     assert old_snapshot.read_text() == "previous recovery config"
+    compose_up_lines = [line for line in _log(tmp_path).splitlines() if " compose " in line and " up -d" in line]
+    assert len(compose_up_lines) == 2, _log(tmp_path)
     current_backups = [p for p in rollback.glob("Caddyfile.*") if p != old_snapshot]
     assert len(current_backups) == 1
     assert current_backups[0].read_text() == before
@@ -798,6 +884,7 @@ def test_apply_failed_overlay_promote_restores_prior_www_and_caddy(tmp_path: Pat
 def test_dry_run_refuses_symlink_and_root_without_writes(tmp_path: Path) -> None:
     live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
     _write_live_caddy(live)
+    _write_caddy_compose(live.parent / "docker-compose.caddy.yml")
     before_files = _tree_files(tmp_path / "opt")
     result = _run(tmp_path, extra_env={"APP_FRONTEND_ROOT": "/"})
     output = result.stdout + result.stderr

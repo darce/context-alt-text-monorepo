@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -309,6 +310,18 @@ def _inbox_uniques(conn) -> set[str]:
             )
         )
     }
+
+
+def test_billing_namespace_runbook_uses_api_heal_context() -> None:
+    runbook = (Path(__file__).resolve().parents[5] / "docs/runbooks/app1-billing-namespace-upgrade.md").read_text()
+    normalized = "\n".join(line.strip() for line in runbook.splitlines())
+
+    assert (
+        "cd /opt/acx-backend/prod\n"
+        "docker compose -f docker-compose.env.yml -f docker-compose.admin.yml run --rm "
+        "-e ACX_BILLING_NAMESPACE_WRITERS_DRAINED=1 api python -m scripts.sync_identity_schema"
+    ) in normalized
+    assert "SELECT set_config('app.billing_namespace_writers_drained', 'true', true);" not in runbook
 
 
 def test_existing_unique_drop_requires_drain_and_rolls_back(pg_empty_engine) -> None:

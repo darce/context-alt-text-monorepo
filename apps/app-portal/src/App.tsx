@@ -117,9 +117,17 @@ function paymentsFromConfig(config: PortalRuntimeConfig): { paymentsEnabled: boo
   };
 }
 
-function SessionEscape({ userMenu, onSignOut }: { userMenu: ReactNode; onSignOut: () => void }) {
+function SessionEscape({
+  userMenu,
+  onSignOut,
+  inert = false,
+}: {
+  userMenu: ReactNode;
+  onSignOut: () => void;
+  inert?: boolean;
+}) {
   return (
-    <div className="acx-session-bar">
+    <div className="acx-session-bar" inert={inert || undefined}>
       {userMenu}
       <button type="button" className="acx-btn" onClick={onSignOut}>
         Sign out
@@ -147,6 +155,19 @@ function PortalShell({
   const { user } = useUser();
   const navigate = useNavigate();
   const location = useLocation();
+  const privateShellRef = useRef<HTMLDivElement>(null);
+  const restoreKeysFocusRef = useRef(false);
+
+  useEffect(() => {
+    // Clerk owns the sign-in/up callback URLs; leave their verification data intact.
+    const portalRoute =
+      matchesExactPortalPath(location.pathname, '/') ||
+      ['/keys', '/usage', '/billing', '/claim'].some((route) => matchesPortalSegment(location.pathname, route));
+    if (portalRoute && (location.search || location.hash)) {
+      navigate({ pathname: location.pathname, search: '', hash: '' }, { replace: true });
+    }
+  }, [location.hash, location.pathname, location.search, navigate]);
+
   const [clerkTimedOut, setClerkTimedOut] = useState(false);
   const [account, setAccount] = useState<AccountView>({ status: 'idle' });
   const [logout, setLogout] = useState<LogoutView>('idle');
@@ -166,6 +187,19 @@ function PortalShell({
     setReturnAttemptId(null);
   }
   const displayAccount = ownedAccount(account, activeOwner);
+
+  useEffect(() => {
+    if (!restoreKeysFocusRef.current || !matchesExactPortalPath(location.pathname, '/keys')) {
+      return;
+    }
+    // The keys screen is remounted, and its guidance trigger may no longer exist.
+    const heading = privateShellRef.current?.querySelector<HTMLHeadingElement>('h1');
+    if (heading) {
+      heading.tabIndex = -1;
+      heading.focus();
+      restoreKeysFocusRef.current = false;
+    }
+  }, [location.pathname, displayAccount.status]);
 
   epochRef.current = fetchEpoch;
   ownerRef.current = activeOwner;
@@ -289,9 +323,17 @@ function PortalShell({
   const signOutNow = () => void handleSignOut();
   const userMenu = <UserButton />;
   const path = location.pathname;
+  const dismissWordPressGuidance = () => {
+    restoreKeysFocusRef.current = true;
+    navigate('/keys');
+  };
   const wrapPrivate = (node: ReactNode) => (
-    <div className="acx-private-shell">
-      <SessionEscape userMenu={userMenu} onSignOut={signOutNow} />
+    <div ref={privateShellRef} className="acx-private-shell">
+      <SessionEscape
+        userMenu={userMenu}
+        onSignOut={signOutNow}
+        inert={matchesPortalSegment(path, '/keys/wordpress')}
+      />
       {node}
     </div>
   );
@@ -383,7 +425,7 @@ function PortalShell({
   }
   if (matchesPortalSegment(path, '/keys/wordpress')) {
     return wrapPrivate(
-      <WordPressTestConnectionGuidance onClose={() => navigate('/keys')} onReturnToKeys={() => navigate('/keys')} />,
+      <WordPressTestConnectionGuidance onClose={dismissWordPressGuidance} onReturnToKeys={dismissWordPressGuidance} />,
     );
   }
   if (matchesPortalSegment(path, '/keys') && keyClient) {

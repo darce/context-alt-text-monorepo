@@ -1,0 +1,24 @@
+{
+  "lane": "a1h-pscreen3",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "<lane_root>/.venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 2.17s"
+    },
+    {
+      "command": "npm --prefix apps/app-portal test",
+      "result": "not_run",
+      "detail": "Vitest is unavailable in this sandbox; root and apps/app-portal node_modules are absent. The package script runs vitest run."
+    },
+    {
+      "command": "npm --prefix apps/app-portal run typecheck",
+      "result": "not_run",
+      "detail": "TypeScript is unavailable in this sandbox; root and apps/app-portal node_modules are absent. The package script runs tsc --noEmit."
+    }
+  ],
+  "rechecked": [],
+  "new_findings": [],
+  "summary": "Reviewed the six portal screens and their App.tsx branches. App.tsx:353-355 supplies the backend outage screen with the signed-in user menu and sign-out callback, and OutageScreen.tsx:17-29 renders them with retry; backend-authority.test.tsx:158-172 asserts outage retry, sign-out, user menu, and recovery. Claim access is limited to the not-admitted branch, while the unverified-email branch omits it. No findings were identified. The lane pytest passed; portal Vitest and typecheck were not run because dependencies are absent."
+}

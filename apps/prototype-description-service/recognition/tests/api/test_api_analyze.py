@@ -19,6 +19,7 @@ from recognition.domain.job import Job, JobStatus, JobType, ProjectionStatus
 from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.routers import analyze as analyze_router
+from recognition.interface_adapters.http.schemas.responses import JobStatusResponse
 from recognition.tests.api.conftest import FakeSession
 
 
@@ -41,6 +42,38 @@ class _NoopRetentionPolicyService:
             "actor": actor,
             "disposed_counts": {},
         }
+
+
+class _CancelScanQueue:
+    def __init__(self, *, job_id: uuid.UUID) -> None:
+        self.cancel_calls: list[uuid.UUID] = []
+        self.job_statuses = {job_id: "pending"}
+
+    async def cancel_scan_job(self, *, job_id: uuid.UUID) -> int:
+        self.cancel_calls.append(job_id)
+        self.job_statuses[job_id] = "failed"
+        return 0
+
+
+def _patch_cancel_response_and_settlement(monkeypatch, settlement_calls: list[dict[str, object]]) -> None:
+    from recognition.application.services import usage_settlement_service
+
+    async def _settle(_session, *, tenant_id, job_id):
+        settlement_calls.append({"tenant_id": tenant_id, "job_id": job_id})
+
+    async def _to_response(job, **_kwargs):
+        return JobStatusResponse(
+            id=job.id,
+            type=job.type,
+            status=job.status,
+            progress=None,
+            started_at=datetime.now(tz=UTC),
+            finished_at=None,
+            message=job.message,
+        )
+
+    monkeypatch.setattr(usage_settlement_service, "settle_usage_job", _settle)
+    monkeypatch.setattr(analyze_router, "_job_to_response", _to_response)
 
 
 def test_analyze_creates_job(api_client, tenant_id, fake_scan_queue_service) -> None:
@@ -632,6 +665,74 @@ def test_acknowledge_projection_rejects_wrong_tenant_claim(monkeypatch, tenant_i
 
     assert resp.status_code == 403
     assert resp.json()["detail"] == "tenant mismatch"
+
+
+@pytest.mark.asyncio
+async def test_cancel_job_rejects_wrong_tenant_claim_before_cancel_and_settlement(monkeypatch) -> None:
+    tenant_a = uuid.uuid4()
+    tenant_b = uuid.uuid4()
+    job_id = uuid.uuid4()
+    session = FakeSession()
+    persisted_job = IdentityScanJob(
+        id=job_id,
+        tenant_id=tenant_b,
+        status=JobStatus.PENDING.value,
+        media_ids=[],
+        total_media=1,
+        processed_media=0,
+    )
+    session.set_get_result(model_class=IdentityScanJob, pk=job_id, value=persisted_job)
+    queue = _CancelScanQueue(job_id=job_id)
+    settlement_calls: list[dict[str, object]] = []
+    _patch_cancel_response_and_settlement(monkeypatch, settlement_calls)
+    with pytest.raises(HTTPException) as exc_info:
+        await analyze_router.cancel_job(
+            job_id=str(job_id),
+            tenant_id=str(tenant_b),
+            auth=SimpleNamespace(tenant_claim=str(tenant_a)),
+            job_service=SimpleNamespace(),
+            session=session,
+            scan_queue=queue,
+        )
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "tenant mismatch"
+    assert queue.cancel_calls == []
+    assert settlement_calls == []
+    assert persisted_job.status == JobStatus.PENDING.value
+    assert session.flush_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_cancel_job_succeeds_when_tenant_claim_matches(monkeypatch) -> None:
+    tenant_b = uuid.uuid4()
+    job_id = uuid.uuid4()
+    session = FakeSession()
+    persisted_job = IdentityScanJob(
+        id=job_id,
+        tenant_id=tenant_b,
+        status=JobStatus.PENDING.value,
+        media_ids=[],
+        total_media=1,
+        processed_media=0,
+    )
+    session.set_get_result(model_class=IdentityScanJob, pk=job_id, value=persisted_job)
+    queue = _CancelScanQueue(job_id=job_id)
+    settlement_calls: list[dict[str, object]] = []
+    _patch_cancel_response_and_settlement(monkeypatch, settlement_calls)
+    response = await analyze_router.cancel_job(
+        job_id=str(job_id),
+        tenant_id=str(tenant_b),
+        auth=SimpleNamespace(tenant_claim=str(tenant_b)),
+        job_service=SimpleNamespace(),
+        session=session,
+        scan_queue=queue,
+    )
+
+    assert response.id == str(job_id)
+    assert queue.cancel_calls == [job_id]
+    assert queue.job_statuses[job_id] == "failed"
+    assert settlement_calls == [{"tenant_id": tenant_b, "job_id": str(job_id)}]
 
 
 @pytest.mark.asyncio

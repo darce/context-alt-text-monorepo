@@ -94,17 +94,26 @@ class _FakeAdmission:
 class _CountingScanQueue:
     def __init__(self) -> None:
         self.create_calls: list[dict[str, object]] = []
+        self.cancelled_jobs: list[object] = []
+        self.job_statuses: dict[object, str] = {}
 
     async def create_scan_job_record(self, *, tenant_id, total, created_by_user_id=None, job_id=None):
+        persisted_job_id = job_id if job_id is not None else uuid4()
         self.create_calls.append(
             {
                 "tenant_id": tenant_id,
                 "total": total,
-                "job_id": job_id,
+                "job_id": persisted_job_id,
                 "created_by_user_id": created_by_user_id,
             }
         )
-        return job_id if job_id is not None else uuid4()
+        self.job_statuses[persisted_job_id] = "pending"
+        return persisted_job_id
+
+    async def cancel_scan_job(self, *, job_id) -> int:
+        self.cancelled_jobs.append(job_id)
+        self.job_statuses[job_id] = "failed"
+        return 0
 
 
 class _FakeObjectStore:
@@ -406,7 +415,7 @@ async def test_queue_refusal_before_dispatch_releases() -> None:
 
 
 @pytest.mark.asyncio
-async def test_committed_job_does_not_release_when_response_fails() -> None:
+async def test_dispatch_registration_failure_releases_and_fails_committed_job() -> None:
     admission = _FakeAdmission()
     job_id = uuid4()
     queue = _CountingScanQueue()
@@ -415,17 +424,62 @@ async def test_committed_job_does_not_release_when_response_fails() -> None:
         def add_task(self, *_args, **_kwargs) -> None:
             raise RuntimeError("response failed")
 
+    with pytest.raises(HTTPException) as exc_info:
+        async with admit_usage(
+            admission,
+            tenant_id=TENANT_ID,
+            idempotency_key="persist-op",
+            job_id=str(job_id),
+            cost_units=1,
+            operation_id="persist-op",
+            request_fingerprint="fp",
+        ):
+            await analyze_router._schedule_analysis(
+                background_tasks=_BoomBackground(),
+                session=None,
+                scan_queue=queue,
+                tenant_uuid=TENANT_ID,
+                media_items=[(1, "https://example.test/a.jpg")],
+                media_ids=[MEDIA_ID],
+                media_sources=["https://example.test/a.jpg"],
+                inline_processing=False,
+                auth=None,
+                job_id=job_id,
+            )
+
+    assert exc_info.value.status_code == 503
+    assert len(queue.create_calls) == 1
+    assert queue.cancelled_jobs == [job_id]
+    assert queue.job_statuses[job_id] == "failed"
+    assert len(admission.releases) == 1
+    assert admission.commits == []
+
+
+@pytest.mark.asyncio
+async def test_registered_dispatch_keeps_reservation_when_response_delivery_fails() -> None:
+    admission = _FakeAdmission()
+    job_id = uuid4()
+    queue = _CountingScanQueue()
+
+    class _RegisteredBackground:
+        def __init__(self) -> None:
+            self.tasks: list[tuple[object, dict[str, object]]] = []
+
+        def add_task(self, task, **kwargs) -> None:
+            self.tasks.append((task, kwargs))
+
+    background = _RegisteredBackground()
     async with admit_usage(
         admission,
         tenant_id=TENANT_ID,
-        idempotency_key="persist-op",
+        idempotency_key="response-op",
         job_id=str(job_id),
         cost_units=1,
-        operation_id="persist-op",
+        operation_id="response-op",
         request_fingerprint="fp",
     ):
         response = await analyze_router._schedule_analysis(
-            background_tasks=_BoomBackground(),
+            background_tasks=background,
             session=None,
             scan_queue=queue,
             tenant_uuid=TENANT_ID,
@@ -437,8 +491,13 @@ async def test_committed_job_does_not_release_when_response_fails() -> None:
             job_id=job_id,
         )
 
+    # Response delivery happens after the handler and its admission scope return.
+    with pytest.raises(RuntimeError, match="response delivery failed"):
+        raise RuntimeError("response delivery failed")
+
     assert response.id == str(job_id)
-    assert len(queue.create_calls) == 1
+    assert len(background.tasks) == 1
+    assert queue.cancelled_jobs == []
     assert admission.releases == []
     assert admission.commits == []
 

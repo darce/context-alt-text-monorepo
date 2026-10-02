@@ -1,20 +1,41 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
+import httpx
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
 from recognition.domain.portal_contracts import UsageTicket
 from recognition.interface_adapters.http.deps import auth as auth_deps
-from recognition.interface_adapters.http.deps import get_optional_session, get_persisted_cluster_job_service
+from recognition.interface_adapters.http.deps import (
+    get_cluster_service_builder,
+    get_optional_session,
+)
+from recognition.interface_adapters.http.deps import services as service_deps
 from roster.application.curation_sync_service import CurationSyncResult
 from roster.interface_adapters.http import curation_router
 
 TENANT_ID = "c1ca4f2b-6d49-4d1f-8529-5f5a99ad8c17"
+OTHER_TENANT_ID = "11111111-1111-1111-1111-111111111111"
 AUTH_HEADERS = {"X-Api-Key": "verified-api-key"}
+
+
+class _SyncTestClient:
+    def __init__(self, app: FastAPI) -> None:
+        self.app = app
+
+    def post(self, *args, **kwargs) -> httpx.Response:  # noqa: ANN002, ANN003
+        async def _post() -> httpx.Response:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=self.app),
+                base_url="http://testserver",
+            ) as client:
+                return await client.post(*args, **kwargs)
+
+        return asyncio.run(_post())
 
 
 class _FakeAdmission:
@@ -78,7 +99,11 @@ def _configure_auth(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(auth_deps, "_lookup_api_key", _lookup_api_key)
 
 
-def _build_client(monkeypatch) -> tuple[TestClient, _FakeAdmission]:  # noqa: ANN001
+def _build_client(
+    monkeypatch,
+    *,
+    override_job_service: bool = True,
+) -> tuple[_SyncTestClient, _FakeAdmission]:  # noqa: ANN001
     _configure_auth(monkeypatch)
     app = FastAPI()
     app.include_router(curation_router.router, prefix="/roster")
@@ -102,10 +127,11 @@ def _build_client(monkeypatch) -> tuple[TestClient, _FakeAdmission]:  # noqa: AN
         {
             curation_router.get_session: _session_override,
             get_optional_session: _no_session,
-            get_persisted_cluster_job_service: _job_service_override,
         }
     )
-    return TestClient(app), admission
+    if override_job_service:
+        app.dependency_overrides[curation_router.get_curation_sync_job_service] = _job_service_override
+    return _SyncTestClient(app), admission
 
 
 def _payload(operation_type: str, *, idempotency_key: str = "idem-1") -> dict[str, object]:
@@ -150,6 +176,65 @@ def test_curation_sync_router_passes_authenticated_tenant_and_returns_acknowledg
     assert captured["operation_type"] == "cluster_person_bound"
     assert len(admission.reserves) == 1
     assert admission.reserves[0]["tenant_id"] == UUID(TENANT_ID)
+
+
+def test_curation_sync_preflight_uses_authenticated_tenant_with_forged_tenant_inputs(monkeypatch) -> None:
+    cluster_tenant_lookups: list[str] = []
+
+    class _Session:
+        async def execute(self, *_args, **_kwargs):  # noqa: ANN002, ANN003
+            return None
+
+    async def _authenticated_tenant_override():
+        return auth_deps.AuthContext(
+            token="verified-api-key",
+            tenant_claim=TENANT_ID,
+            api_key_id="key-a",
+            enabled=True,
+        )
+
+    async def _session_override():
+        return _Session()
+
+    async def _cluster_service_builder_override():
+        async def _build(tenant_id: str):
+            cluster_tenant_lookups.append(tenant_id)
+            return object()
+
+        return _build
+
+    async def _fake_apply(self, tenant_id: str, operation):  # noqa: ANN001, ARG001
+        assert tenant_id == TENANT_ID
+        return CurationSyncResult(status="acknowledged", backend_version=23)
+
+    monkeypatch.setattr(curation_router.CurationSyncService, "apply", _fake_apply)
+    monkeypatch.setattr(service_deps, "set_tenant_context", _tenant_context_noop)
+    client, _admission = _build_client(monkeypatch, override_job_service=False)
+    client.app.dependency_overrides.update(
+        {
+            auth_deps.require_auth: _authenticated_tenant_override,
+            get_optional_session: _session_override,
+            get_cluster_service_builder: _cluster_service_builder_override,
+        }
+    )
+
+    response = client.post(
+        f"/roster/curation/sync?tenant_id={OTHER_TENANT_ID}",
+        headers={**AUTH_HEADERS, "X-Tenant-ID": str(OTHER_TENANT_ID)},
+        json=_payload("cluster_person_bound"),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "acknowledged",
+        "backend_version": 23,
+        "idempotency_key": "idem-1",
+    }
+    assert cluster_tenant_lookups == [TENANT_ID]
+
+
+async def _tenant_context_noop(_session, _tenant_id) -> None:  # noqa: ANN001
+    return None
 
 
 def test_curation_sync_router_maps_conflict_to_409(monkeypatch) -> None:

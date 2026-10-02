@@ -12,7 +12,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from recognition.application.services.usage_admission_service import AllowanceExceededError
 from recognition.domain.portal_contracts import UsageTicket
 from recognition.interface_adapters.http.deps import auth as auth_deps
-from recognition.interface_adapters.http.deps import get_optional_session, get_persisted_cluster_job_service
+from recognition.interface_adapters.http.deps import get_optional_session
 from roster.application.curation_sync_service import CurationSyncResult
 from roster.interface_adapters.http import curation_router
 
@@ -129,7 +129,7 @@ def _build_client(
         {
             curation_router.get_session: _session_override,
             get_optional_session: _no_session,
-            get_persisted_cluster_job_service: _job_service_override,
+            curation_router.get_curation_sync_job_service: _job_service_override,
         }
     )
     if override_auth:

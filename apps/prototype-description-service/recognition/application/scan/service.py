@@ -547,11 +547,15 @@ class ScanService:
         # Once committing, finish the post-commit events even on cancellation,
         # and join the task before the caller closes its session.
         finalization = asyncio.create_task(commit_and_emit())
-        try:
-            await asyncio.shield(finalization)
-        except asyncio.CancelledError:
-            await finalization
-            raise
+        cancelled = False
+        while not finalization.done():
+            try:
+                await asyncio.shield(finalization)
+            except asyncio.CancelledError:
+                cancelled = True
+        finalization.result()
+        if cancelled:
+            raise asyncio.CancelledError
         return scan_job
 
     async def process_scan_job(

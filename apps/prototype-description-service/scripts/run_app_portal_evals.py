@@ -1211,7 +1211,7 @@ def run_evals(
     group_results: list[dict[str, Any]] = []
     worst_status = 0
     available_groups = manifest.groups
-    full_suite = list(selected) == list(available_groups)
+    full_suite = set(selected) == set(available_groups)
     required_case_ids = _required_case_ids_for_selection(manifest, selected)
     for group in selected:
         xml_path, log_path = group_artifacts[group]

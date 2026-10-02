@@ -8,6 +8,7 @@ clustering admission/recovery, or cluster revert.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
@@ -59,11 +60,17 @@ class _ClusteringOperatorEntitlementRepository:
     async def get(self, tenant_id: UUID, *, for_update: bool = False) -> Any:
         session = clustering_async_session_factory()
         try:
-            await set_tenant_context(session, tenant_id)
+            await asyncio.wait_for(
+                set_tenant_context(session, tenant_id),
+                timeout=_READ_TIMEOUT_S,
+            )
             repository = _repository_from_session(session)
             row = await repository.get(tenant_id, for_update=for_update)
             await session.commit()
             return row
+        except TimeoutError as exc:
+            await _rollback(session)
+            raise _unavailable() from exc
         except BaseException:
             await _rollback(session)
             raise
@@ -195,10 +202,16 @@ async def authorize_operator_control(
 
     try:
         if lookup_session is not None:
-            await set_tenant_context(lookup_session, tenant_uuid)
+            await asyncio.wait_for(
+                set_tenant_context(lookup_session, tenant_uuid),
+                timeout=_READ_TIMEOUT_S,
+            )
         row = await getter(tenant_uuid)
     except HTTPException:
         raise
+    except TimeoutError as exc:
+        await _rollback(lookup_session)
+        raise _unavailable() from exc
     except TenantEntitlementTimeoutError as exc:
         await _rollback(lookup_session)
         raise _unavailable() from exc

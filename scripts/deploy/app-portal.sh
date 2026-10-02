@@ -611,11 +611,11 @@ restore_from_rollback() {
     echo "ERROR: could not finish activation rollback cleanup" >&2
     return 1
   fi
-  if [ "${JOURNAL_PHASE:-}" = "overlay_promoted" ]; then
-    if ! apply_caddy_compose; then
-      echo "ERROR: compose rollback failed; activation journal retained for retry" >&2
-      return 1
-    fi
+  # Restoring www replaces its directory even when activation stopped before
+  # overlay promotion. Recreate Caddy after restoration to refresh its mount.
+  if ! apply_caddy_compose; then
+    echo "ERROR: compose rollback failed; activation journal retained for retry" >&2
+    return 1
   fi
   if ! reload_caddy; then
     echo "ERROR: rollback reload failed; activation journal retained for retry" >&2
@@ -748,10 +748,12 @@ reload_caddy() {
 }
 
 apply_caddy_compose() {
+  # A bind mount pins the directory inode; unchanged Compose configuration
+  # cannot detect the www swap. Recreate only Caddy after every replacement.
   if [ -f "$OVERLAY_DEST" ]; then
-    docker compose -f "$CADDY_COMPOSE" -f "$OVERLAY_DEST" up -d
+    docker compose -f "$CADDY_COMPOSE" -f "$OVERLAY_DEST" up -d --force-recreate --no-deps caddy
   else
-    docker compose -f "$CADDY_COMPOSE" up -d
+    docker compose -f "$CADDY_COMPOSE" up -d --force-recreate --no-deps caddy
   fi
 }
 

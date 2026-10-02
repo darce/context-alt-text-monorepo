@@ -128,8 +128,10 @@ overrides.
    - overlay: atomic rename onto `${APP_ROOT}/docker-compose.app.yml`.
 7. Applies the base Caddy compose file (default
    `${APP_ROOT%/*}/docker-compose.caddy.yml`) with the rendered overlay using
-   `docker compose ... up -d`. This attaches `APP_WWW` at `/srv/app-portal`
-   before frontend health runs.
+   `docker compose ... up -d --force-recreate --no-deps caddy`. This recreates
+   only Caddy after the directory swap so its bind mount serves the new
+   `APP_WWW` at `/srv/app-portal`, even when Compose configuration is unchanged.
+   Caddy briefly restarts before frontend health runs.
 8. Defaults to reloading Caddy in the composed service with
    `docker compose -f "$CADDY_COMPOSE"` and adds `-f "$OVERLAY_DEST"` when the
    overlay exists, then runs `exec -T caddy caddy reload --config
@@ -138,8 +140,11 @@ overrides.
 9. Verifies the promoted Caddyfile, frontend, and overlay, then runs the
    required `APP_HEALTH_CMD` against the live frontend and production API.
 10. Any failure at write/move/copy/compose/reload/health restores all three
-    rollback artifacts, reapplies the restored compose state, attempts a
+    rollback artifacts, recreates Caddy with the restored compose state, attempts a
     rollback reload, and **does not** print `applied:`.
+
+Interrupted recovery also recreates Caddy after restoring the frontend snapshot,
+including interruptions before overlay promotion, to refresh the directory mount.
 
 Interrupted-activation journals record `CADDY_COMPOSE` alongside the artifact
 paths. Recovery refuses a changed path before restoring files or invoking
@@ -214,7 +219,7 @@ overlay snapshot was restored:
 ```bash
 cd /opt/acx-backend
 docker compose -f docker-compose.caddy.yml \
-  -f /opt/acx-backend/app/docker-compose.app.yml up -d
+  -f /opt/acx-backend/app/docker-compose.app.yml up -d --force-recreate --no-deps caddy
 docker compose -f docker-compose.caddy.yml \
   -f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy \
   caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
@@ -227,7 +232,7 @@ compose file alone:
 
 ```bash
 cd /opt/acx-backend
-docker compose -f docker-compose.caddy.yml up -d
+docker compose -f docker-compose.caddy.yml up -d --force-recreate --no-deps caddy
 docker compose -f docker-compose.caddy.yml exec -T caddy \
   caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 ```

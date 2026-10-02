@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -748,7 +749,8 @@ def test_evidence_only_junit_failure_cannot_bypass_threshold(tmp_path: Path) -> 
     calls: list[tuple[list[str], dict[str, Any]]] = []
 
     artifact.with_suffix(".xml.provenance.json").write_text(
-        json.dumps(_typed_provenance()), encoding="utf-8"
+        json.dumps({**_typed_provenance(), "artifact_digest": hashlib.sha256(artifact.read_bytes()).hexdigest()}),
+        encoding="utf-8",
     )
     status = runner.run_evals(
         manifest_path,
@@ -810,13 +812,18 @@ def test_preexisting_junit_requires_current_head_provenance_for_evidence_only(
     past = time.time() - 3600
     os.utime(artifact, (past, past))
     artifact.with_suffix(".xml.provenance.json").write_text(
-        json.dumps(_typed_provenance(git_sha=provenance_sha)), encoding="utf-8"
+        json.dumps({
+            **_typed_provenance(git_sha=provenance_sha),
+            "artifact_digest": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+        }),
+        encoding="utf-8",
     )
     payload = _manifest_payload(tmp_path)
     if not commanded:
         payload["cases"][0].pop("test")
     payload["cases"][0]["artifact"] = str(artifact)
     payload["cases"][0]["additional_evidence_required"] = True
+    payload["release_gates"]["beta"]["require_sandbox_and_operational_evidence"] = True
     manifest_path = _write_manifest(tmp_path, payload)
     calls: list[tuple[list[str], dict[str, Any]]] = []
 
@@ -833,8 +840,10 @@ def test_preexisting_junit_requires_current_head_provenance_for_evidence_only(
     assert status == (0 if verified else 1)
     assert ledger["status"] == ("passed" if verified else "unverified")
     assert ledger["additional_evidence_verified"] is verified
-    if not commanded:
-        assert evidence["release_gate_results"]["beta"]["status"] == ("passed" if verified else "failed")
+    gate = evidence["release_gate_results"]["beta"]
+    assert gate["status"] == ("passed" if verified else "failed")
+    if commanded:
+        assert any("SC-1" in reason and str(artifact) in reason for reason in gate["reasons"])
     pytest_calls = [call for call in calls if call[0][:3] == [runner.sys.executable, "-m", "pytest"]]
     assert len(pytest_calls) == int(commanded)
     if not verified:
@@ -847,6 +856,7 @@ def test_commanded_junit_artifact_written_during_run_is_verified(tmp_path: Path)
     payload = _manifest_payload(tmp_path)
     payload["cases"][0]["artifact"] = str(artifact)
     payload["cases"][0]["additional_evidence_required"] = True
+    payload["release_gates"]["beta"]["require_sandbox_and_operational_evidence"] = True
     manifest_path = _write_manifest(tmp_path, payload)
 
     def write_reports(command: list[str], **kwargs: Any) -> SimpleNamespace:
@@ -865,6 +875,50 @@ def test_commanded_junit_artifact_written_during_run_is_verified(tmp_path: Path)
     assert status == 0
     assert ledger["status"] == "passed"
     assert ledger["additional_evidence_verified"] is True
+    assert _last_evidence(tmp_path)["release_gate_results"]["beta"]["status"] == "passed"
+
+
+@pytest.mark.parametrize("digest_field", ["digest", "artifact_digest"])
+@pytest.mark.parametrize("digest_kind", ["matching", "zero", "other_file", "missing"])
+def test_evidence_only_junit_sidecar_must_identify_report_bytes(
+    tmp_path: Path, digest_field: str, digest_kind: str
+) -> None:
+    artifact = tmp_path / "preexisting-evidence.xml"
+    artifact.write_text(
+        _junit_for_nodes(["recognition/tests/api/test_portal_1.py::test_case_1"]), encoding="utf-8"
+    )
+    past = time.time() - 3600
+    os.utime(artifact, (past, past))
+    provenance = _typed_provenance()
+    if digest_kind == "matching":
+        provenance[digest_field] = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    elif digest_kind == "zero":
+        provenance[digest_field] = "0" * 64
+    elif digest_kind == "other_file":
+        other = tmp_path / "other.xml"
+        other.write_text(_junit(cases=2), encoding="utf-8")
+        provenance[digest_field] = hashlib.sha256(other.read_bytes()).hexdigest()
+    artifact.with_suffix(".xml.provenance.json").write_text(json.dumps(provenance), encoding="utf-8")
+    payload = _manifest_payload(tmp_path)
+    payload["cases"][0].pop("test")
+    payload["cases"][0]["artifact"] = str(artifact)
+    payload["cases"][0]["additional_evidence_required"] = True
+
+    status = runner.run_evals(
+        _write_manifest(tmp_path, payload),
+        out_dir=tmp_path / "out",
+        command_runner=_fake_runner_by_test(calls=[]),
+    )
+
+    evidence = _last_evidence(tmp_path)
+    group = evidence["groups"][0]
+    verified = digest_kind == "matching"
+    assert status == (0 if verified else 1)
+    assert group["case_ledger"][0]["additional_evidence_verified"] is verified
+    assert group["case_ledger"][0]["status"] == ("passed" if verified else "unverified")
+    assert evidence["release_gate_results"]["beta"]["status"] == ("passed" if verified else "failed")
+    if not verified:
+        assert any(str(artifact) in reason for reason in group["failure_reasons"])
 
 
 def test_parametrized_junit_instances_match_declared_base_node(tmp_path: Path) -> None:

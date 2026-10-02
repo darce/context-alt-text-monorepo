@@ -114,7 +114,6 @@ export const GuidedOutcome = ({
   }
 
   const applied = allOutcomes.some((value) => value === GUIDED_OUTCOME.APPLIED);
-  const publicScope = scope === 'public';
 
   return (
     <section className="acx-guided-outcome" data-testid="demo-outcome" aria-labelledby="acx-guided-outcome-title">
@@ -122,7 +121,7 @@ export const GuidedOutcome = ({
       {applied ? (
         <p>{guidedCopy('apply.success')}</p>
       ) : (
-        <p>{guidedCopy(publicScope ? 'outcome.kept_body.public' : 'outcome.kept_body')}</p>
+        <p>{guidedCopy('outcome.kept_body')}</p>
       )}
       {imageSummaries.length > 0 ? (
         <ul data-testid="guided-outcome-summaries">
@@ -138,12 +137,6 @@ export const GuidedOutcome = ({
             </li>
           ))}
         </ul>
-      ) : null}
-      {publicScope ? (
-        <>
-          <p>{guidedCopy('outcome.scope.public')}</p>
-          <p>{guidedCopy('outcome.next_batch.public')}</p>
-        </>
       ) : null}
       <button type="button" className="acx-button acx-button--secondary" onClick={onReturn}>
         {guidedCopy('outcome.return')}

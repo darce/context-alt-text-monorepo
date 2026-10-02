@@ -49,7 +49,7 @@ Usage: scripts/deploy/app-portal.sh [--dry-run|--apply]
 
 Default: print the plan and mutate nothing.
 --apply requires a real FRONTEND_DIST (index.html + assets), a live Caddyfile,
-a Docker Compose file/client, a reload mechanism, and APP_HEALTH_CMD to verify
+a Docker Compose file/client, jq, a reload mechanism, and APP_HEALTH_CMD to verify
 the serving edge and portal API.
 
 Environment:
@@ -755,6 +755,20 @@ reload_caddy() {
   fi
 }
 
+verify_caddyfile_binding() {
+  local _source
+  # Compose resolves relative bind sources. Parse its model, never raw YAML.
+  # The same mount must survive base-only rollback and every selected overlay.
+  if ! _source=$(docker compose -f "$CADDY_COMPOSE" "$@" config --format json 9>&- |
+    jq -er '[.services.caddy.volumes[]? | select(.target == "/etc/caddy/Caddyfile")] |
+      if length == 1 and .[0].type == "bind" then .[0].source | select(type == "string")
+      else error("expected one Caddyfile bind mount") end'); then
+    refuse "cannot resolve Caddy bind source for /etc/caddy/Caddyfile; expected CADDYFILE=${CADDYFILE}"
+  fi
+  [ "$_source" = "$CADDYFILE" ] ||
+    refuse "Caddy bind source ${_source} for /etc/caddy/Caddyfile does not match CADDYFILE=${CADDYFILE}"
+}
+
 apply_caddy_compose() {
   # A bind mount pins the directory inode; unchanged Compose configuration
   # cannot detect the www swap. Recreate only Caddy after every replacement.
@@ -851,6 +865,20 @@ if [ "$APPLY" -eq 1 ]; then
     exec 9>&-
     refuse "could not acquire deployment lock ${DEPLOY_LOCK} within ${APP_DEPLOY_LOCK_WAIT}s"
   fi
+  # No staging, journal recovery, or live changes before the binding gate.
+  # Preserve journal path validation before contacting a different project.
+  if [ -e "$ACTIVATION_JOURNAL" ] || [ -L "$ACTIVATION_JOURNAL" ]; then
+    load_activation_journal || refuse "could not inspect interrupted activation journal ${ACTIVATION_JOURNAL}"
+  fi
+  validate_frontend
+  command -v docker >/dev/null 2>&1 || refuse "docker compose is required to apply the Caddy overlay and reload Caddy"
+  docker compose version >/dev/null 2>&1 || refuse "docker compose is unavailable; cannot apply the Caddy overlay or reload Caddy"
+  command -v jq >/dev/null 2>&1 || refuse "jq is required to verify the Caddyfile bind source"
+  verify_caddyfile_binding
+  if [ -f "$OVERLAY_DEST" ]; then
+    verify_caddyfile_binding -f "$OVERLAY_DEST"
+  fi
+  render_overlay | verify_caddyfile_binding -f -
 fi
 
 if [ -e "$ACTIVATION_JOURNAL" ] || [ -L "$ACTIVATION_JOURNAL" ]; then
@@ -880,10 +908,7 @@ fi
 if [ -L "$CADDYFILE" ] || [ ! -f "$CADDYFILE" ]; then
   refuse "CADDYFILE must be a regular file: ${CADDYFILE}"
 fi
-validate_frontend
 [ -n "$APP_HEALTH_CMD" ] || refuse "APP_HEALTH_CMD is required to check the live frontend and portal upstream"
-command -v docker >/dev/null 2>&1 || refuse "docker compose is required to apply the Caddy overlay and reload Caddy"
-docker compose version >/dev/null 2>&1 || refuse "docker compose is unavailable; cannot apply the Caddy overlay or reload Caddy"
 
 STAGED_CADDY="${STAGING_DIR}/Caddyfile"
 STAGED_WWW="${STAGING_DIR}/www"

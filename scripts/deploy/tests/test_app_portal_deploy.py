@@ -5,6 +5,7 @@ Filesystem-only: stub caddy/docker on PATH. Never SSH to the OCI host.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
@@ -87,7 +88,14 @@ def _caddy_stub(log_path: str, *, fail: bool = False) -> str:
 def _docker_stub(
     log_path: str, compose_marker: str, *, fail_first_reload: bool = False,
     mount_root: Path | None = None, readiness_polls: int = 0,
+    compose_config: str | None = None,
+    compose_overlay_config: str | None = None,
 ) -> str:
+    if compose_config is None:
+        compose_config = json.dumps({"services": {"caddy": {"volumes": [{
+            "type": "bind", "source": str(Path(compose_marker).parent / "opt/acx-backend/Caddyfile"),
+            "target": "/etc/caddy/Caddyfile",
+        }]}}})
     compose_marker_quoted = shlex.quote(compose_marker)
     reload_failure_marker = shlex.quote(f"{compose_marker}.failed-first-reload")
     failure_rule = (
@@ -146,12 +154,22 @@ def _docker_stub(
         "  compose_probe=0\n"
         "  compose_reload=0\n"
         "  compose_recreate=0\n"
+        "  compose_config_request=0\n"
+        f"  resolved_config={shlex.quote(compose_config)}\n"
         '  for arg in "$@"; do\n'
+        '    [ "$arg" != "config" ] || compose_config_request=1\n'
+        + (f'    case "$arg" in -|*/docker-compose.app.yml) resolved_config={shlex.quote(compose_overlay_config)} ;; esac\n'
+           if compose_overlay_config is not None else "")
+        + '    [ "$arg" != "-" ] || cat >/dev/null\n'
         '    [ "$arg" = "wget" ] && compose_probe=1\n'
         '    [ "$arg" = "up" ] && compose_up=1\n'
         '    [ "$arg" = "reload" ] && compose_reload=1\n'
         '    [ "$arg" = "--force-recreate" ] && compose_recreate=1\n'
         "  done\n"
+        '  if [ "$compose_config_request" -eq 1 ]; then\n'
+        '    printf "%s\\n" "$resolved_config"\n'
+        '    exit 0\n'
+        '  fi\n'
         f'  [ "$compose_up" -eq 0 ] || : > {compose_marker_quoted}\n'
         + readiness_rule + mount_rule + failure_rule
         + "fi\n"
@@ -197,6 +215,8 @@ def _run(
     include_docker: bool = True,
     model_mount: bool = False,
     readiness_polls: int = 0,
+    compose_config: str | None = None,
+    compose_overlay_config: str | None = None,
     timeout: int = 20,
 ) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
@@ -226,6 +246,8 @@ def _run(
                 fail_first_reload=docker_fail_first_reload,
                 mount_root=app_root / "www" if model_mount else None,
                 readiness_polls=readiness_polls,
+                compose_config=compose_config,
+                compose_overlay_config=compose_overlay_config,
             ),
         )
     if readiness_polls:
@@ -1200,3 +1222,84 @@ def test_base_compose_refuses_activation_paths_without_mutation(tmp_path: Path, 
     assert "CADDY_COMPOSE collides with activation paths" in result.stderr
     assert source.read_bytes() == before
     assert not _log(tmp_path)
+
+
+@pytest.mark.parametrize("pending", [False, True])
+def test_caddyfile_bind_mismatch_refused_before_mutation(tmp_path: Path, pending: bool) -> None:
+    from test_app_portal_activation_journal import _interrupt_after_caddy, _tree_snapshot
+
+    backend = tmp_path / "opt/acx-backend"
+    live = backend / "SelectedCaddyfile"
+    if pending:
+        # Create a valid pending activation using the default binding first.
+        live = backend / "Caddyfile"
+        _interrupt_after_caddy(tmp_path, live)
+    else:
+        _write_live_caddy(live)
+        _prior_www(tmp_path)
+    app_root = backend / "app"
+    staging = app_root / "staging"
+    staging.mkdir(exist_ok=True)
+    (staging / "keep.txt").write_text("do not change\n")
+    _write_caddy_compose(backend / "docker-compose.caddy.yml")
+    before = _tree_snapshot(backend)
+    other = backend / "OtherCaddyfile"
+    config = json.dumps({"services": {"caddy": {"volumes": [{
+        "type": "bind", "source": str(other), "target": "/etc/caddy/Caddyfile",
+    }]}}})
+    before_log = _log(tmp_path)
+    result = _run(tmp_path, args=["--apply"], live_caddy=live,
+                  compose_config=config, extra_env={"BASH_ENV": ""})
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert str(other) in result.stderr and str(live) in result.stderr
+    assert "applied:" not in result.stdout
+    after = _tree_snapshot(backend)
+    # Lock creation is allowed; no staging, journal, or live artifact may change.
+    after.pop("app/activation.journal.lock", None)
+    before.pop("app/activation.journal.lock", None)
+    # Creating the lock may update the parent directory metadata.
+    assert {k: v for k, v in after.items() if k != "app"} == {
+        k: v for k, v in before.items() if k != "app"
+    }
+    calls = _log(tmp_path)[len(before_log):]
+    assert " up " not in calls and " exec " not in calls and " validate " not in calls
+
+
+@pytest.mark.parametrize("config", ["not json", "{}", '{"services":{"caddy":{"volumes":[]}}}',
+    '{"services":{"caddy":{"volumes":[{"type":"volume","source":"config","target":"/etc/caddy/Caddyfile"}]}}}',
+])
+def test_caddyfile_binding_requires_resolved_bind(tmp_path: Path, config: str) -> None:
+    result = _run(tmp_path, args=["--apply"], compose_config=config)
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "cannot resolve Caddy bind source" in result.stderr
+    assert not (tmp_path / "opt/acx-backend/app/staging").exists()
+    assert " up " not in _log(tmp_path)
+
+
+@pytest.mark.parametrize("installed", [False, True])
+def test_overlay_caddyfile_bind_override_refused(tmp_path: Path, installed: bool) -> None:
+    backend = tmp_path / "opt/acx-backend"
+    if installed:
+        app_root = backend / "app"
+        app_root.mkdir(parents=True)
+        (app_root / "docker-compose.app.yml").write_text("services: {}\n")
+    other = backend / "OtherCaddyfile"
+    config = json.dumps({"services": {"caddy": {"volumes": [{
+        "type": "bind", "source": str(other), "target": "/etc/caddy/Caddyfile",
+    }]}}})
+    result = _run(tmp_path, args=["--apply"], compose_overlay_config=config)
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert str(other) in result.stderr and str(backend / "Caddyfile") in result.stderr
+    assert not (backend / "app/staging").exists()
+    assert " up " not in _log(tmp_path)
+
+
+def test_selected_caddyfile_matching_compose_binding_applies(tmp_path: Path) -> None:
+    live = tmp_path / "opt/acx-backend/SelectedCaddyfile"
+    config = json.dumps({"services": {"caddy": {"volumes": [{
+        "type": "bind", "source": str(live), "target": "/etc/caddy/Caddyfile",
+    }]}}})
+    result = _run(tmp_path, args=["--apply"], live_caddy=live, compose_config=config)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "applied:" in result.stdout
+    assert len(_compose_reload_calls(tmp_path)) == 1

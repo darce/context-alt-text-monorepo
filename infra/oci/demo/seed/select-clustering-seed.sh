@@ -37,6 +37,31 @@ SOURCE="${SOURCE:-celebs01}"
 ADDED="${ADDED:-2026-06-13}"
 STRIP='s#.*/##; s/_[0-9]+\.(jpg|jpeg|png|JPG|JPEG|PNG)$//'
 
+# Match import.sh's Gregorian date validation before creating or changing outputs.
+if [[ ! "$ADDED" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  echo "ERROR: invalid ADDED date '$ADDED' (expected a real Gregorian YYYY-MM-DD)" >&2
+  exit 2
+fi
+added_year=$((10#${ADDED:0:4}))
+added_month=$((10#${ADDED:5:2}))
+added_day=$((10#${ADDED:8:2}))
+case "$added_month" in
+  1|3|5|7|8|10|12) added_days_in_month=31 ;;
+  4|6|9|11) added_days_in_month=30 ;;
+  2)
+    if ((added_year % 400 == 0 || (added_year % 4 == 0 && added_year % 100 != 0))); then
+      added_days_in_month=29
+    else
+      added_days_in_month=28
+    fi
+    ;;
+  *) added_days_in_month=0 ;;
+esac
+if ((added_month < 1 || added_month > 12 || added_day < 1 || added_day > added_days_in_month)); then
+  echo "ERROR: invalid ADDED date '$ADDED' (expected a real Gregorian YYYY-MM-DD)" >&2
+  exit 2
+fi
+
 case "$BASIS" in
   editorial_fair_use|cc_by|cc_by_sa|public_domain|eu_reuse|generated) ;;
   *) echo "ERROR: unrecognized BASIS: $BASIS" >&2; exit 2 ;;
@@ -123,6 +148,7 @@ tmp_rights="$(mktemp "${RIGHTS}.tmp.XXXXXX")"
   printf 'file\tsubject\tbasis\tsource\tnotice\tadded\n'
   LC_ALL=C sort -t "$(printf '\t')" -k1,1 "$tmp_rights_rows"
 } > "$tmp_rights"
+chmod 0644 "$tmp_rights"
 mv "$tmp_rights" "$RIGHTS"
 tmp_rights=''
 echo "==> Wrote rights ledger to $RIGHTS ($total rows)"

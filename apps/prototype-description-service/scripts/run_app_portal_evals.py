@@ -856,8 +856,8 @@ def _artifact_evidence(
                 evidence_type=EvidenceType.MISSING,
                 reason=f"required case {case.case_id} required artifact is empty: {resolved}",
             )
-        digest = _sha256_file(resolved)
         raw = resolved.read_bytes()
+        digest = hashlib.sha256(raw).hexdigest()
     except OSError as exc:
         return ArtifactEvidence(
             present=False,
@@ -875,20 +875,24 @@ def _artifact_evidence(
             stale = _junit_is_stale(junit, started_at=started_at, timestamp_tolerance_seconds=0)
             if case.test is None:
                 # Evidence-only cases execute no producer. Their reports need a
-                # <report>.provenance.json sidecar using the existing HEAD schema.
+                # <report>.provenance.json sidecar binding HEAD to these report bytes.
                 provenance_path = resolved.with_name(resolved.name + ".provenance.json")
                 try:
                     provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
                 except (OSError, UnicodeError, json.JSONDecodeError):
                     provenance = None
-                provenance_verified = isinstance(provenance, Mapping) and _provenance_json_evidence(
-                    case.case_id, provenance, head_sha=head_sha, digest=digest
-                ).verified
+                provenance_verified = (
+                    isinstance(provenance, Mapping)
+                    and (provenance.get("digest") or provenance.get("artifact_digest")) == digest
+                    and _provenance_json_evidence(
+                        case.case_id, provenance, head_sha=head_sha, digest=digest
+                    ).verified
+                )
                 if not provenance_verified:
                     description = "stale JUnit" if stale else "JUnit"
                     reasons.append(
                         f"required case {case.case_id} {description} artifact {resolved} "
-                        f"requires valid current HEAD provenance at {provenance_path}"
+                        f"requires valid current HEAD provenance with matching report digest at {provenance_path}"
                     )
                 # Use the unverified ledger outcome for reports without provenance;
                 # valid provenance leaves JUnit threshold failures as failed.
@@ -1322,6 +1326,11 @@ def run_evals(
                         reasons.append(
                             f"release gate {gate_name!r} required case {case_id!r} "
                             f"additional evidence artifact is missing, empty, or not a regular file: {artifact_path}"
+                        )
+                    elif not group_case_evidence_verified.get(case_id, False):
+                        reasons.append(
+                            f"release gate {gate_name!r} required case {case_id!r} "
+                            f"additional evidence artifact is unverified: {artifact_path}"
                         )
                 continue
             if artifact_path is None:

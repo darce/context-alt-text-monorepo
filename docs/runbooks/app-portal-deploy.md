@@ -113,7 +113,12 @@ overrides.
 
 `--apply` then:
 
-1. Validates paths, `FRONTEND_DIST`, and `APP_UPSTREAM`.
+1. Validates paths, `FRONTEND_DIST`, and `APP_UPSTREAM`. Before staging or
+   interrupted recovery changes, resolves Compose configuration as JSON and
+   uses `jq` to require the Caddy service's `/etc/caddy/Caddyfile` bind source
+   to equal the absolute `CADDYFILE`. Checks the base-only configuration,
+   any installed overlay, and the rendered replacement overlay. A mismatch
+   names both paths and leaves staging, the journal, and live files untouched.
 2. Stages a merged Caddyfile, a complete www tree, and an overlay with
    `__APP_WWW__` rendered to the selected `APP_WWW`. Existing `api.*`,
    `demo.altcontext.com`, `129-213-40-111.sslip.io`, and `dl.darce.xyz` stay.
@@ -159,7 +164,7 @@ Protected hostnames (`api.altcontext.com` and the other live vhosts) cannot be
 used as `APP_HOSTNAME`. The shared repo file
 `apps/prototype-description-service/Caddyfile` is refused as `CADDYFILE`.
 
-`--apply` requires Docker Compose and the configured `CADDY_COMPOSE` file to
+`--apply` requires Docker Compose, `jq`, and the configured `CADDY_COMPOSE` file to
 apply the overlay and reload the Caddy service. `APP_RELOAD_CMD` can explicitly
 override the reload command. `CADDY_COMPOSE` must be outside staging, rollback,
 `APP_WWW`, `APP_WWW.prev`, and the activation destinations (Caddyfile, overlay,

@@ -355,14 +355,12 @@ describe('useGuidedLiveDescription', () => {
     });
 
     it('reuses the pending action key when retrying a failed submit for the same media', async () => {
-      let submitAttempt = 0;
       const client = stubClient({
-        submit: vi.fn<GuidedLiveDescriptionClient['submit']>(() => {
-          submitAttempt += 1;
-          return submitAttempt === 1
-            ? Promise.reject(new Error('response lost'))
-            : Promise.resolve(runResponse());
-        }),
+        submit: vi
+          .fn<GuidedLiveDescriptionClient['submit']>()
+          .mockRejectedValueOnce(new Error('response lost'))
+          .mockRejectedValueOnce(new Error('response lost again'))
+          .mockResolvedValue(runResponse()),
       });
       const { result } = mount(client);
 
@@ -375,6 +373,44 @@ describe('useGuidedLiveDescription', () => {
       const firstActionKey = client.submit.mock.calls[0]?.[1];
       expect(firstActionKey).toMatch(IDEMPOTENCY_KEY_PATTERN);
       expect(client.submit.mock.calls[1]?.[1]).toBe(firstActionKey);
+
+      expect(result.current.state.reason).toBe('submit_failed');
+      await press(() => result.current.request());
+      expect(client.submit).toHaveBeenCalledTimes(3);
+      expect(client.submit.mock.calls[2]?.[1]).toBe(firstActionKey);
+    });
+
+    it('mints a new action key while a run disclosed by a submit error is being cancelled', async () => {
+      let rejectSubmit!: (error: unknown) => void;
+      const client = stubClient({
+        submit: vi
+          .fn<GuidedLiveDescriptionClient['submit']>()
+          .mockImplementationOnce(() =>
+            new Promise<DescribeRunResponse>((_resolve, reject) => {
+              rejectSubmit = reject;
+            }),
+          )
+          .mockResolvedValue(runResponse({ run_id: 'run-fresh' })),
+        // Leave cancellation in flight: the retry must not replay this run.
+        cancel: vi.fn<GuidedLiveDescriptionClient['cancel']>(() => new Promise(() => {})),
+      });
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      // Commit the waiting render first to isolate key retirement from the
+      // separate batched-rejection retry-guard regression above (TEST-15).
+      await press(() => rejectSubmit({ data: { run_id: 'run-stranded' } }));
+      expect(result.current.state.reason).toBe('submit_failed');
+      expect(client.cancel).toHaveBeenCalledWith('run-stranded');
+
+      await press(() => result.current.request());
+
+      expect(client.submit).toHaveBeenCalledTimes(2);
+      const firstActionKey = client.submit.mock.calls[0]?.[1];
+      expect(firstActionKey).toMatch(IDEMPOTENCY_KEY_PATTERN);
+      expect(client.submit.mock.calls[1]?.[1]).toMatch(IDEMPOTENCY_KEY_PATTERN);
+      expect(client.submit.mock.calls[1]?.[1]).not.toBe(firstActionKey);
+      expect(result.current.state.runId).toBe('run-fresh');
     });
 
     it('mints a new action key when retrying with a different media item', async () => {

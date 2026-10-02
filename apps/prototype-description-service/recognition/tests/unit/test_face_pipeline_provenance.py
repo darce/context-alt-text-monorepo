@@ -700,7 +700,6 @@ def test_opencv_wheel_build_change_partitions_comparability_token(
 
     installed = {
         "opencv-python": "5.0.0.93",
-        "opencv-python-headless": "5.0.0.93",
     }
 
     def distribution_version(distribution: str) -> str:
@@ -720,15 +719,48 @@ def test_opencv_wheel_build_change_partitions_comparability_token(
 
     baseline = prov.numeric_runtime_fingerprint()
     installed["opencv-python"] = "5.0.0.94"
-    installed["opencv-python-headless"] = "5.0.0.94"
     changed = prov.numeric_runtime_fingerprint()
 
     assert baseline.opencv_version == changed.opencv_version == "5.0.0"
     assert baseline.resolved_versions["opencv-python"] == "5.0.0.93"
-    assert baseline.resolved_versions["opencv-python-headless"] == "5.0.0.93"
     assert changed.resolved_versions["opencv-python"] == "5.0.0.94"
-    assert changed.resolved_versions["opencv-python-headless"] == "5.0.0.94"
     assert changed.comparability_token != baseline.comparability_token
+
+
+def test_multiple_same_version_opencv_wheels_allow_runtime_fingerprint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The supported bench runtime's matching wheel versions remain comparable."""
+    from importlib.metadata import PackageNotFoundError
+
+    from recognition.infrastructure.face_pipeline import provenance as prov
+
+    installed = {
+        "opencv-python": "5.0.0.93",
+        "opencv-python-headless": "5.0.0.93",
+    }
+
+    def distribution_version(distribution: str) -> str:
+        try:
+            return installed[distribution]
+        except KeyError as exc:
+            raise PackageNotFoundError(distribution) from exc
+
+    monkeypatch.setattr(prov, "_distribution_version", distribution_version)
+    monkeypatch.setattr(prov, "_opencv_version", lambda: "5.0.0")
+    monkeypatch.setattr(prov, "_onnxruntime_version", lambda: "1.28.0")
+    monkeypatch.setattr(prov, "_numpy_version", lambda: "2.5.1")
+    monkeypatch.setattr(prov, "_scipy_version", lambda: "1.18.0")
+    monkeypatch.setattr(prov, "_pillow_version", lambda: "12.3.0")
+    monkeypatch.setattr(prov, "_hdbscan_version", lambda: "0.8.44")
+    monkeypatch.setattr(prov, "_pgvector_version", lambda: "0.5.0")
+
+    fingerprint = prov.numeric_runtime_fingerprint()
+
+    assert fingerprint.opencv_version == "5.0.0"
+    assert fingerprint.resolved_versions["opencv-python"] == "5.0.0.93"
+    assert fingerprint.resolved_versions["opencv-python-headless"] == "5.0.0.93"
+    assert fingerprint.comparability_token
 
 
 def test_conflicting_opencv_wheel_versions_reject_runtime_fingerprint(

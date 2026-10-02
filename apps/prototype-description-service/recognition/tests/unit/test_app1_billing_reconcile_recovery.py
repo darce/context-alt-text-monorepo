@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
+import scripts.billing_reconcile as billing_reconcile
 
 from recognition.domain.portal_contracts import (
     RECONCILIATION_MAX_PAGES_PER_RUN,
@@ -358,7 +359,7 @@ async def test_cursor_resumes_on_the_next_bounded_run() -> None:
         pages[cursor] = _page(
             (_state(_TENANT_ID, subscription_id=f"sub-{index}", position=_POSITION + timedelta(seconds=index)),),
             next_cursor=next_cursor,
-            exhausted=False,
+            exhausted=index == RECONCILIATION_MAX_PAGES_PER_RUN,
         )
         cursor = next_cursor
     provider = _EnumProvider(pages)
@@ -374,6 +375,116 @@ async def test_cursor_resumes_on_the_next_bounded_run() -> None:
     second = await _run_orphans(provider, recovery, repository)
     assert second.exit_code == 0
     assert provider.enumerate_calls[RECONCILIATION_MAX_PAGES_PER_RUN]["cursor"] == persisted
+
+
+@pytest.mark.asyncio
+async def test_orphan_failure_after_an_item_commits_is_unresolved() -> None:
+    first = _state(_TENANT_ID, subscription_id="sub-first")
+    second = _state(
+        _TENANT_ID,
+        subscription_id="sub-second",
+        position=_POSITION + timedelta(seconds=1),
+    )
+    provider = _EnumProvider({None: _page((first, second))})
+    recovery = _Recovery()
+    repository = _billing_repo()
+    original_upsert = repository.upsert_projection
+    write_count = 0
+
+    async def fail_second_projection_write(**kwargs: object) -> bool:
+        nonlocal write_count
+        write_count += 1
+        if write_count == 2:
+            raise RuntimeError("simulated second projection write failure")
+        return await original_upsert(**kwargs)
+
+    repository.upsert_projection = fail_second_projection_write
+
+    report = await _run_orphans(provider, recovery, repository)
+
+    assert recovery.completes == ["sub-first"]
+    assert report.unresolved_failures > 0
+    assert report.exit_code == 1
+
+
+@pytest.mark.asyncio
+async def test_known_projection_scan_rotates_between_bounded_runs(monkeypatch) -> None:
+    projection_count = RECONCILIATION_PAGE_LIMIT * RECONCILIATION_MAX_PAGES_PER_RUN + 205
+    tenant_ids = [UUID(int=index) for index in range(1, projection_count + 1)]
+    repository = _billing_repo(tenants=set(tenant_ids))
+    repository.known = [
+        SimpleNamespace(
+            tenant_id=tenant_id,
+            provider="fake",
+            provider_customer_id=f"cus-{index}",
+            provider_subscription_id=f"sub-{index}",
+            status=BillingSubscriptionStatus.ACTIVE.value,
+            current_period_end=_POSITION + timedelta(days=30),
+            past_due_since=None,
+            last_event_id=f"event-{index}",
+            updated_at=_POSITION - timedelta(days=1),
+            environment="sandbox",
+            seller_account=_SELLER,
+        )
+        for index, tenant_id in enumerate(tenant_ids, start=1)
+    ]
+
+    class _ProjectionProvider:
+        environment = "sandbox"
+        seller_account = _SELLER
+
+        async def retrieve_state(
+            self,
+            *,
+            provider_customer_id: str,
+            provider_subscription_id: str | None,
+            request_timeout: float,
+        ) -> dict[str, object]:
+            return {
+                "provider_customer_id": provider_customer_id,
+                "provider_subscription_id": provider_subscription_id,
+                "status": BillingSubscriptionStatus.ACTIVE.value,
+                "current_period_end": _POSITION + timedelta(days=30),
+                "past_due_since": None,
+                "event_position": _POSITION,
+            }
+
+    pivots = iter((100, 1000))
+    monkeypatch.setattr(billing_reconcile.random, "getrandbits", lambda _bits: next(pivots))
+    provider = _ProjectionProvider()
+
+    await reconcile(
+        repository,
+        provider,
+        entitlement_service=repository.entitlement_service,
+        config=_config(),
+        clock=_Clock(),
+        sleeper=_no_sleep,
+    )
+    first_run = {
+        str(claim["remote_id"])
+        for claim in repository.claims
+        if claim["kind"] == "projection"
+    }
+    first_run_claim_count = len(repository.claims)
+
+    await reconcile(
+        repository,
+        provider,
+        entitlement_service=repository.entitlement_service,
+        config=_config(),
+        clock=_Clock(),
+        sleeper=_no_sleep,
+    )
+    second_run = {
+        str(claim["remote_id"])
+        for claim in repository.claims[first_run_claim_count:]
+        if claim["kind"] == "projection"
+    }
+
+    assert len(first_run) == RECONCILIATION_PAGE_LIMIT * RECONCILIATION_MAX_PAGES_PER_RUN
+    assert second_run != first_run
+    assert second_run - first_run
 
 
 @pytest.mark.asyncio

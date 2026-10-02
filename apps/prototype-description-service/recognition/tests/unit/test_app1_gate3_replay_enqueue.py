@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import BackgroundTasks
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 from starlette.requests import Request
 
 from db.models import IdentityScanJob, IdentityScanJobItem
@@ -18,6 +20,62 @@ from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.domain.job import JobStatus
 from recognition.interface_adapters.http.routers import analyze
 from recognition.interface_adapters.http.schemas.requests import AnalyzeRequest
+
+
+@pytest.mark.asyncio
+async def test_save_job_results_refreshes_retained_job_after_external_failure(
+    monkeypatch,
+):
+    # Real ORM identity maps, using synchronous SQLite to avoid threaded drivers.
+    engine = create_engine("sqlite:///:memory:")
+    IdentityScanJob.metadata.create_all(
+        engine, tables=[IdentityScanJob.__table__, IdentityScanJobItem.__table__],
+    )
+    tenant_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    retained_job = IdentityScanJob(
+        id=job_id, tenant_id=tenant_id, status=JobStatus.RUNNING,
+        media_ids=[1], total_media=1, processed_media=0, identities_detected=0,
+        error_message="inline:retained-owner",
+    )
+    with Session(engine, expire_on_commit=False) as orm_session:
+        orm_session.add(retained_job)
+        orm_session.commit()
+        with Session(engine) as other_session:
+            job = other_session.get(IdentityScanJob, job_id)
+            job.status = JobStatus.FAILED
+            job.error_message = "stalled job"
+            other_session.commit()
+
+        assert retained_job.status == JobStatus.RUNNING
+        session = MagicMock()
+        session.scalar = AsyncMock(side_effect=orm_session.scalar)
+        session.commit = AsyncMock(side_effect=orm_session.commit)
+        service = ScanService(session=session)
+        persist = AsyncMock(return_value=SimpleNamespace(total=1))
+        monkeypatch.setattr(service, "_persist_identities", persist)
+        emit = MagicMock()
+        monkeypatch.setattr(scan_service_module, "_emit_scan_media_reconciled", emit)
+        result = await service.save_job_results(
+            job_id=job_id, tenant_id=str(tenant_id), media_ids=["1"],
+            media_sources=None, detections=[],
+        )
+
+        assert result is retained_job
+        assert retained_job.status == JobStatus.FAILED
+        assert retained_job.error_message == "stalled job"
+        assert retained_job.completed_at is None
+        assert retained_job.processed_media == 0
+        assert retained_job.identities_detected == 0
+        persist.assert_not_awaited()
+        emit.assert_not_called()
+        session.commit.assert_not_awaited()
+        assert session.scalar.await_args.args[0]._for_update_arg is not None
+    with Session(engine) as verification_session:
+        persisted = verification_session.get(IdentityScanJob, job_id)
+        assert persisted.status == JobStatus.FAILED
+        assert persisted.completed_at is None
+    engine.dispose()
 
 
 class Admission:

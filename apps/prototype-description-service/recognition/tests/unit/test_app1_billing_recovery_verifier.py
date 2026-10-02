@@ -45,6 +45,7 @@ def _with_operator(
     kwargs["rls_state"] = {**kwargs["rls_state"], **dict.fromkeys(tables, (True, True))}
     kwargs["policy_names"] = set(kwargs["policy_names"]) | {(table, f"operator_scope_{table}") for table in tables}
     kwargs["operator_policy_bodies"] = {(table, f"operator_scope_{table}"): (approved, approved) for table in tables}
+    kwargs["operator_policy_permissiveness"] = {(table, f"operator_scope_{table}"): True for table in tables}
     return kwargs
 
 

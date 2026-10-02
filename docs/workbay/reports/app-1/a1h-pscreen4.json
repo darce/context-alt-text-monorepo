@@ -1,0 +1,36 @@
+{
+  "lane": "a1h-pscreen4",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "<lane_root>/.venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 5.93s"
+    },
+    {
+      "command": "npm test -- src/__tests__/usage-journey.test.tsx (apps/app-portal)",
+      "result": "not_run",
+      "detail": "Frontend Vitest runs outside this sandbox; no node_modules are available here per review instructions."
+    },
+    {
+      "command": "npm run typecheck (apps/app-portal)",
+      "result": "not_run",
+      "detail": "Frontend TypeScript check runs outside this sandbox; no node_modules are available here per review instructions."
+    }
+  ],
+  "rechecked": [],
+  "new_findings": [
+    {
+      "severity": "low",
+      "file": "apps/app-portal/src/screens/UsageScreen.tsx",
+      "line": 89,
+      "title": "Past-due usage is presented with a Ready status tone",
+      "defect": "A positive-remaining past_due response falls through to mode default, which maps to the ok tone. StatusMessage renders that tone as acx-status-ok with a Ready icon title, contradicting the grace-only status copy.",
+      "failure_scenario": "GET /portal/usage returns status='past_due' and remaining=2; the message says remaining access follows backend grace only, while the status indicator is green/Ready.",
+      "fix": "Map past_due responses to the info tone and extend the past-due journey assertion to require the info status class.",
+      "test_file": "apps/app-portal/src/__tests__/usage-journey.test.tsx",
+      "urgency": "next_wave"
+    }
+  ],
+  "summary": "The App route supplies UsageScreen an owner-bound client and a session/tenant-derived key, and its identity-change test covers clearing prior usage and ignoring late prior-session results. Rechecked: HOLDS 0, PARTIAL 0, NOT_FIXED 0; new findings: high 0, medium 0, low 1; manifest overlap suite 26 passed; frontend Vitest/typecheck not_run per sandbox instructions."
+}

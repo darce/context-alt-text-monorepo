@@ -9,13 +9,73 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import BackgroundTasks
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 from starlette.requests import Request
 
 from db.models import IdentityScanJob, IdentityScanJobItem
+from recognition.application.scan import service as scan_service_module
+from recognition.application.scan.service import ScanService
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.domain.job import JobStatus
 from recognition.interface_adapters.http.routers import analyze
 from recognition.interface_adapters.http.schemas.requests import AnalyzeRequest
+
+
+@pytest.mark.asyncio
+async def test_save_job_results_refreshes_retained_job_after_external_failure(
+    monkeypatch,
+):
+    # Real ORM identity maps, using synchronous SQLite to avoid threaded drivers.
+    engine = create_engine("sqlite:///:memory:")
+    IdentityScanJob.metadata.create_all(
+        engine, tables=[IdentityScanJob.__table__, IdentityScanJobItem.__table__],
+    )
+    tenant_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    retained_job = IdentityScanJob(
+        id=job_id, tenant_id=tenant_id, status=JobStatus.RUNNING,
+        media_ids=[1], total_media=1, processed_media=0, identities_detected=0,
+        error_message="inline:retained-owner",
+    )
+    with Session(engine, expire_on_commit=False) as orm_session:
+        orm_session.add(retained_job)
+        orm_session.commit()
+        with Session(engine) as other_session:
+            job = other_session.get(IdentityScanJob, job_id)
+            job.status = JobStatus.FAILED
+            job.error_message = "stalled job"
+            other_session.commit()
+
+        assert retained_job.status == JobStatus.RUNNING
+        session = MagicMock()
+        session.scalar = AsyncMock(side_effect=orm_session.scalar)
+        session.commit = AsyncMock(side_effect=orm_session.commit)
+        service = ScanService(session=session)
+        persist = AsyncMock(return_value=SimpleNamespace(total=1))
+        monkeypatch.setattr(service, "_persist_identities", persist)
+        emit = MagicMock()
+        monkeypatch.setattr(scan_service_module, "_emit_scan_media_reconciled", emit)
+        result = await service.save_job_results(
+            job_id=job_id, tenant_id=str(tenant_id), media_ids=["1"],
+            media_sources=None, detections=[],
+        )
+
+        assert result is retained_job
+        assert retained_job.status == JobStatus.FAILED
+        assert retained_job.error_message == "stalled job"
+        assert retained_job.completed_at is None
+        assert retained_job.processed_media == 0
+        assert retained_job.identities_detected == 0
+        persist.assert_not_awaited()
+        emit.assert_not_called()
+        session.commit.assert_not_awaited()
+        assert session.scalar.await_args.args[0]._for_update_arg is not None
+    with Session(engine) as verification_session:
+        persisted = verification_session.get(IdentityScanJob, job_id)
+        assert persisted.status == JobStatus.FAILED
+        assert persisted.completed_at is None
+    engine.dispose()
 
 
 class Admission:
@@ -264,3 +324,250 @@ async def test_fenced_inline_processor_cannot_renew_reclaimed_lease(persisted_qu
     assert renewed is False
     assert job.started_at == stale_lease
     session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_terminal_inline_lease_cancels_processor_before_persistence(monkeypatch):
+    monkeypatch.setattr(analyze, "INLINE_PROCESSING_HEARTBEAT_INTERVAL", timedelta(milliseconds=1))
+    processor_started = asyncio.Event()
+    renewal_attempted = asyncio.Event()
+    processor_cancelled = asyncio.Event()
+    persistence_steps = []
+    processor_tasks = []
+
+    async def blocked_processor(**kwargs):
+        processor_tasks.append(asyncio.current_task())
+        processor_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            processor_cancelled.set()
+            raise
+        persistence_steps.append("persisted")
+
+    async def terminal_renewal(**kwargs):
+        renewal_attempted.set()
+        return None
+
+    monkeypatch.setattr(analyze, "process_scan_job_inline", blocked_processor)
+    monkeypatch.setattr(analyze, "_renew_inline_processing_lease", terminal_renewal)
+    monkeypatch.setattr(analyze, "_clear_inline_processing_owner", AsyncMock())
+    kwargs = {
+        "session_factory": object(),
+        "tenant_id": "11111111-1111-1111-1111-111111111111",
+        "job_id": "22222222-2222-2222-2222-222222222222",
+        "media_ids": [],
+        "media_sources": [],
+        "adapter_provider": None,
+    }
+
+    processing = asyncio.create_task(
+        analyze._process_inline_with_lease(kwargs=kwargs, owner_token="inline:terminal-test")
+    )
+    await asyncio.wait_for(processor_started.wait(), timeout=1)
+    await asyncio.wait_for(renewal_attempted.wait(), timeout=1)
+    await asyncio.wait_for(processing, timeout=0.5)
+
+    await asyncio.wait_for(processor_cancelled.wait(), timeout=1)
+    assert processor_tasks[0].cancelled()
+    assert persistence_steps == []
+
+
+@pytest.mark.asyncio
+async def test_save_job_results_preserves_failed_job_without_persisting(monkeypatch):
+    job_id = uuid.uuid4()
+    tenant_id = "11111111-1111-1111-1111-111111111111"
+    job = SimpleNamespace(
+        id=job_id,
+        status=JobStatus.FAILED,
+        completed_at=None,
+        processed_media=0,
+        identities_detected=0,
+    )
+    session = MagicMock()
+    session.scalar = AsyncMock(return_value=job)
+    session.get = AsyncMock(return_value=job)
+    session.commit = AsyncMock()
+    service = ScanService(session=session)
+    persist_identities = AsyncMock(return_value=SimpleNamespace(total=1))
+    monkeypatch.setattr(service, "_persist_identities", persist_identities)
+    emit_reconciled = MagicMock()
+    monkeypatch.setattr(scan_service_module, "_emit_scan_media_reconciled", emit_reconciled)
+
+    result = await service.save_job_results(
+        job_id=job_id,
+        tenant_id=tenant_id,
+        media_ids=["22222222-2222-2222-2222-222222222222"],
+        media_sources=None,
+        detections=[],
+    )
+
+    assert result is job
+    assert job.status == JobStatus.FAILED
+    assert job.completed_at is None
+    session.scalar.assert_awaited_once()
+    assert session.scalar.await_args.args[0]._for_update_arg is not None
+    persist_identities.assert_not_awaited()
+    session.commit.assert_not_awaited()
+    emit_reconciled.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_terminal_heartbeat_preserves_post_commit_reconcile_events(monkeypatch):
+    monkeypatch.setattr(analyze, "INLINE_PROCESSING_HEARTBEAT_INTERVAL", timedelta(milliseconds=1))
+    committed = asyncio.Event()
+    resume_commit = asyncio.Event()
+    job_id = uuid.uuid4()
+    tenant_id = str(uuid.uuid4())
+    job = SimpleNamespace(status=JobStatus.RUNNING, error_message="inline:commit-test")
+    session = MagicMock()
+    session.scalar = AsyncMock(return_value=job)
+
+    async def commit():
+        # Model the database exposing COMPLETED before commit() returns to Python.
+        committed.set()
+        await resume_commit.wait()
+
+    session.commit = AsyncMock(side_effect=commit)
+    service = ScanService(session=session)
+    monkeypatch.setattr(service, "_persist_identities", AsyncMock(return_value=SimpleNamespace(total=0)))
+    emit_reconciled = MagicMock()
+    monkeypatch.setattr(scan_service_module, "_emit_scan_media_reconciled", emit_reconciled)
+
+    async def processor(**kwargs):
+        await service.save_job_results(
+            job_id=job_id, tenant_id=tenant_id, media_ids=["1", "2"],
+            media_sources=None, detections=[],
+        )
+
+    async def renewal(**kwargs):
+        await committed.wait()
+        assert job.status == JobStatus.COMPLETED
+        # Resume only after the heartbeat has cancelled the processor.
+        asyncio.get_running_loop().call_later(0.01, resume_commit.set)
+        return None
+
+    monkeypatch.setattr(analyze, "process_scan_job_inline", processor)
+    monkeypatch.setattr(analyze, "_renew_inline_processing_lease", renewal)
+    cleanup = AsyncMock()
+    monkeypatch.setattr(analyze, "_clear_inline_processing_owner", cleanup)
+    await asyncio.wait_for(analyze._process_inline_with_lease(
+        kwargs={
+            "session_factory": object(), "tenant_id": tenant_id, "job_id": str(job_id),
+            "media_ids": ["1", "2"], "media_sources": [], "adapter_provider": None,
+        },
+        owner_token="inline:commit-test",
+    ), timeout=1)
+
+    assert emit_reconciled.call_count == 2
+    assert [call.kwargs["media_id"] for call in emit_reconciled.call_args_list] == [1, 2]
+    cleanup.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_terminal_heartbeat_and_shutdown_preserve_reconcile_events(monkeypatch):
+    monkeypatch.setattr(analyze, "INLINE_PROCESSING_HEARTBEAT_INTERVAL", timedelta(milliseconds=1))
+    committed = asyncio.Event()
+    resume_commit = asyncio.Event()
+    commit_finished = asyncio.Event()
+    job_id = uuid.uuid4()
+    tenant_id = str(uuid.uuid4())
+    job = SimpleNamespace(status=JobStatus.RUNNING, error_message="inline:shutdown-test")
+    session = MagicMock()
+    session.scalar = AsyncMock(return_value=job)
+
+    async def commit():
+        committed.set()
+        await resume_commit.wait()
+        commit_finished.set()
+
+    session.commit = AsyncMock(side_effect=commit)
+    service = ScanService(session=session)
+    monkeypatch.setattr(service, "_persist_identities", AsyncMock(return_value=SimpleNamespace(total=0)))
+    emit_reconciled = MagicMock()
+    monkeypatch.setattr(scan_service_module, "_emit_scan_media_reconciled", emit_reconciled)
+    processor_tasks = []
+
+    async def processor(**kwargs):
+        processor_tasks.append(asyncio.current_task())
+        await service.save_job_results(
+            job_id=job_id, tenant_id=tenant_id, media_ids=["1", "2"],
+            media_sources=None, detections=[],
+        )
+
+    async def renewal(**kwargs):
+        await committed.wait()
+        assert job.status == JobStatus.COMPLETED
+        return None
+
+    monkeypatch.setattr(analyze, "process_scan_job_inline", processor)
+    monkeypatch.setattr(analyze, "_renew_inline_processing_lease", renewal)
+    cleanup = AsyncMock()
+    monkeypatch.setattr(analyze, "_clear_inline_processing_owner", cleanup)
+    processing = asyncio.create_task(analyze._process_inline_with_lease(
+        kwargs={
+            "session_factory": object(), "tenant_id": tenant_id, "job_id": str(job_id),
+            "media_ids": ["1", "2"], "media_sources": [], "adapter_provider": None,
+        },
+        owner_token="inline:shutdown-test",
+    ))
+
+    async def wait_for_heartbeat_cancellation():
+        await committed.wait()
+        while processor_tasks[0].cancelling() == 0:
+            await asyncio.sleep(0)
+        # Let the processor enter its cancellation drain before shutdown.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+    await asyncio.wait_for(wait_for_heartbeat_cancellation(), timeout=1)
+    processing.cancel()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    resume_commit.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(processing, timeout=1)
+
+    assert processor_tasks[0].cancelling() >= 2
+    assert processor_tasks[0].cancelled()
+    session.commit.assert_awaited_once()
+    assert commit_finished.is_set()
+    assert [call.kwargs["media_id"] for call in emit_reconciled.call_args_list] == [1, 2]
+    cleanup.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_reclaimed_inline_owner_cannot_persist_running_job(monkeypatch):
+    job_id = uuid.uuid4()
+    tenant_id = str(uuid.uuid4())
+    job = SimpleNamespace(status=JobStatus.RUNNING, error_message="inline:new-owner", completed_at=None)
+    session = MagicMock()
+    session.scalar = AsyncMock(return_value=job)
+    session.commit = AsyncMock()
+    service = ScanService(session=session)
+    persist_identities = AsyncMock(return_value=SimpleNamespace(total=0))
+    monkeypatch.setattr(service, "_persist_identities", persist_identities)
+    emit_reconciled = MagicMock()
+    monkeypatch.setattr(scan_service_module, "_emit_scan_media_reconciled", emit_reconciled)
+
+    async def processor(**kwargs):
+        assert await service.save_job_results(
+            job_id=job_id, tenant_id=tenant_id, media_ids=["1"],
+            media_sources=None, detections=[],
+        ) is job
+
+    monkeypatch.setattr(analyze, "process_scan_job_inline", processor)
+    monkeypatch.setattr(analyze, "_clear_inline_processing_owner", AsyncMock())
+    await analyze._process_inline_with_lease(
+        kwargs={
+            "session_factory": object(), "tenant_id": tenant_id, "job_id": str(job_id),
+            "media_ids": ["1"], "media_sources": [], "adapter_provider": None,
+        },
+        owner_token="inline:old-owner",
+    )
+
+    assert job.status == JobStatus.RUNNING
+    assert job.completed_at is None
+    persist_identities.assert_not_awaited()
+    session.commit.assert_not_awaited()
+    emit_reconciled.assert_not_called()

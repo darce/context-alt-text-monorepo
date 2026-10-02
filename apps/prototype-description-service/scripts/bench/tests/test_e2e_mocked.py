@@ -29,6 +29,9 @@ def _fresh_reset_evidence() -> dict[str, dict[str, object]]:
 def test_mocked_e2e_writes_full_report_dir(tmp_path: Path, monkeypatch) -> None:
     images = tmp_path / "images"
     manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1, 2])
+    manifest_payload = json.loads(manifest.read_text())
+    manifest_payload["iou_threshold"] = 0.75
+    manifest.write_text(json.dumps(manifest_payload), encoding="utf-8")
     pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
     out = tmp_path / "out"
     clients = {
@@ -44,6 +47,12 @@ def test_mocked_e2e_writes_full_report_dir(tmp_path: Path, monkeypatch) -> None:
         skip_preflight=True,
         pre_run_reset_by_stack=_fresh_reset_evidence(),
     )
+    for stack_id in clients:
+        identities_path = out / "legs" / stack_id / "exports" / "media_identities.json"
+        identities = json.loads(identities_path.read_text())
+        for identity in identities:
+            identity["bbox"]["x"] = 2
+        identities_path.write_text(json.dumps(identities), encoding="utf-8")
     from scripts.bench.tests.conftest import write_stub_preflight
 
     for stack_id in clients:
@@ -51,6 +60,8 @@ def test_mocked_e2e_writes_full_report_dir(tmp_path: Path, monkeypatch) -> None:
 
     strict_calls: list[dict[str, object] | None] = []
     strict_detection_pr = score_report_module.detection_pr_strict
+    bootstrap_inputs: list[tuple[list[object], list[object]]] = []
+    bootstrap_paired_delta = score_report_module.bootstrap_paired_delta
 
     def observe_strict_detection_pr(items, *, annotation_mode=None, run_manifest=None):
         strict_calls.append(run_manifest)
@@ -60,7 +71,13 @@ def test_mocked_e2e_writes_full_report_dir(tmp_path: Path, monkeypatch) -> None:
             run_manifest=run_manifest,
         )
 
+    def observe_bootstrap_paired_delta(a, b, seed, **kwargs):
+        if kwargs.get("cell") == "detection_recall@frame_e2e/label_map_primary":
+            bootstrap_inputs.append((list(a), list(b)))
+        return bootstrap_paired_delta(a, b, seed, **kwargs)
+
     monkeypatch.setattr(score_report_module, "detection_pr_strict", observe_strict_detection_pr)
+    monkeypatch.setattr(score_report_module, "bootstrap_paired_delta", observe_bootstrap_paired_delta)
     report = score_head_to_head(out)
     assert report.exists()
     accepted = json.loads((out / "score" / "accepted_set.json").read_text())
@@ -83,7 +100,10 @@ def test_mocked_e2e_writes_full_report_dir(tmp_path: Path, monkeypatch) -> None:
     assert "Faces without embeddings are omitted from public export rows" in html
     assert "not detector-only recall" in html
     assert strict_calls
-    assert all(call == {"iou_threshold": 0.5} for call in strict_calls)
+    assert all(call == {"iou_threshold": 0.75} for call in strict_calls)
+    assert len(bootstrap_inputs) == 1
+    for series in bootstrap_inputs[0]:
+        assert [(item.tp, item.fp, item.fn) for item in series] == [(0, 1, 1), (0, 1, 1)]
     tiers = {c.get("tier") for c in cells if isinstance(c, dict) and "tier" in c}
     assert tiers & {"CONFIRMATORY", "DIRECTIONAL", "DIAGNOSTIC"}
     primary = [
@@ -91,10 +111,11 @@ def test_mocked_e2e_writes_full_report_dir(tmp_path: Path, monkeypatch) -> None:
     ]
     assert primary
     for cell in primary:
-        assert cell["value"] == 1.0
-        assert cell["true_positives"] == 2
-        assert cell["false_negatives"] == 0
-        assert cell["precision"] == 1.0
+        assert cell["value"] == 0.0
+        assert cell["true_positives"] == 0
+        assert cell["false_positives"] == 2
+        assert cell["false_negatives"] == 2
+        assert cell["precision"] == 0.0
         assert cell["ci_half_width"] == 0.0
         assert cell["p_value"] == 1.0
     native_id = [

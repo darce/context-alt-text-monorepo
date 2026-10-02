@@ -930,6 +930,20 @@ def _detection_counts(item: Any) -> ImageCounts:
     return ImageCounts(matched, max(item.pred_faces - matched, 0), max(item.labeled_faces - matched, 0))
 
 
+def _strict_detection_counts(
+    item: Any,
+    *,
+    annotation_mode: AnnotationMode,
+    run_manifest: dict[str, float],
+) -> ImageCounts:
+    result = detection_pr_strict(
+        [item],
+        annotation_mode=annotation_mode,
+        run_manifest=run_manifest,
+    )
+    return ImageCounts(result.true_positives, result.false_positives, result.false_negatives)
+
+
 def _ident_counts(item: Any) -> ImageCounts | None:
     if not item.recognition_enabled:
         return None
@@ -1127,13 +1141,22 @@ def _strict_detection_inputs(
     for detection in detections:
         entry = entry_by_path.get(detection.image)
         if entry is None:
-            continue
+            raise BenchError(
+                "manifest_entry_missing",
+                f"strict detection path {detection.image!r} has no manifest entry",
+            )
         info = join.get(entry.media_id)
         if info is None:
-            continue
+            raise BenchError(
+                "join_row_missing",
+                f"strict detection path {detection.image!r} media_id={entry.media_id} has no join row",
+            )
         stack_mid = info.get("stack_media_id")
         if not isinstance(stack_mid, int):
-            continue
+            raise BenchError(
+                "join_row_missing",
+                f"strict detection path {detection.image!r} media_id={entry.media_id} join row has no stack_media_id",
+            )
         image_size = (info["image_width"], info["image_height"])
         export_rows = sorted(
             rows_by_stack_mid.get(stack_mid, []),
@@ -1278,18 +1301,31 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                 if detection_refused:
                     det_matched = None
                     det_count = None
+                    strict_detection_counts_by_path: dict[str, ImageCounts] = {}
                 else:
-                    det_matched = detection_pr_strict(
-                        _strict_detection_inputs(det, detection_manifest, export_payload, join),
-                        annotation_mode=detection_mode,
-                        run_manifest={
-                            "iou_threshold": (
-                                manifest.iou_threshold
-                                if manifest.iou_threshold is not None
-                                else IOU_MATCH_THRESHOLD
-                            )
-                        },
+                    strict_detection_inputs = _strict_detection_inputs(
+                        det, detection_manifest, export_payload, join
                     )
+                    detection_run_manifest = {
+                        "iou_threshold": (
+                            manifest.iou_threshold
+                            if manifest.iou_threshold is not None
+                            else IOU_MATCH_THRESHOLD
+                        )
+                    }
+                    det_matched = detection_pr_strict(
+                        strict_detection_inputs,
+                        annotation_mode=detection_mode,
+                        run_manifest=detection_run_manifest,
+                    )
+                    strict_detection_counts_by_path = {
+                        row.image: _strict_detection_counts(
+                            row,
+                            annotation_mode=detection_mode,
+                            run_manifest=detection_run_manifest,
+                        )
+                        for row in strict_detection_inputs
+                    }
                     det_count = detection_pr(
                         [
                             type(d)(image=d.image, pred_faces=d.pred_faces, labeled_faces=d.labeled_faces)
@@ -1352,7 +1388,13 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                                         "join_row_missing",
                                         f"detection population media_id={entry.media_id} has no metric row",
                                     )
-                                series.append(_detection_counts(row))
+                                strict_counts = strict_detection_counts_by_path.get(row.image)
+                                if strict_counts is None:
+                                    raise BenchError(
+                                        "join_row_missing",
+                                        f"detection path {row.image!r} has no strict metric row",
+                                    )
+                                series.append(strict_counts)
                                 series_media_ids.append(entry.media_id)
                             else:
                                 row = ident_by_mid.get(entry.media_id)

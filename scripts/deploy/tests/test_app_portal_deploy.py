@@ -810,7 +810,7 @@ def test_runbook_documents_later_integration_and_env_ownership() -> None:
         assert marker.lower() not in lowered, marker
 
 
-def test_checked_in_health_check_covers_both_https_endpoints(tmp_path: Path) -> None:
+def test_checked_in_health_check_covers_root_ready_and_portal_api(tmp_path: Path) -> None:
     health = tmp_path / "app-portal-health-check"
     _write_executable(health, SCRIPT.read_text(encoding="utf-8"))
     bin_dir = tmp_path / "bin"
@@ -822,6 +822,7 @@ def test_checked_in_health_check_covers_both_https_endpoints(tmp_path: Path) -> 
         "#!/usr/bin/env bash\n"
         'for url in "$@"; do :; done\n'
         'printf "%s\\n" "$url" >> "$CURL_LOG"\n'
+        'if [ "$url" = "https://app.altcontext.com/portal/me" ]; then printf "%s" "${CURL_PORTAL_STATUS:-401}"; fi\n'
         '[ "$url" = "${CURL_FAIL_URL:-}" ] && exit 22\n'
         "exit 0\n",
     )
@@ -834,7 +835,30 @@ def test_checked_in_health_check_covers_both_https_endpoints(tmp_path: Path) -> 
     assert curl_log.read_text(encoding="utf-8").splitlines() == [
         "https://app.altcontext.com/",
         "https://api.altcontext.com/ready",
+        "https://app.altcontext.com/portal/me",
     ]
+
+    curl_log.unlink()
+    portal_missing_env = {**env, "CURL_PORTAL_STATUS": "404"}
+    portal_missing = subprocess.run(
+        [str(health)], env=portal_missing_env, text=True, capture_output=True, check=False,
+    )
+    portal_url = "https://app.altcontext.com/portal/me"
+    assert portal_missing.returncode != 0, portal_missing.stdout + portal_missing.stderr
+    assert portal_url in portal_missing.stderr
+    assert curl_log.read_text(encoding="utf-8").splitlines() == [
+        "https://app.altcontext.com/",
+        "https://api.altcontext.com/ready",
+        portal_url,
+    ]
+
+    curl_log.unlink()
+    spa_fallback_env = {**env, "CURL_PORTAL_STATUS": "200"}
+    spa_fallback = subprocess.run(
+        [str(health)], env=spa_fallback_env, text=True, capture_output=True, check=False,
+    )
+    assert spa_fallback.returncode != 0, spa_fallback.stdout + spa_fallback.stderr
+    assert portal_url in spa_fallback.stderr
 
     curl_log.unlink()
     failing_env = {**env, "CURL_FAIL_URL": "https://api.altcontext.com/ready"}
@@ -843,6 +867,7 @@ def test_checked_in_health_check_covers_both_https_endpoints(tmp_path: Path) -> 
     assert curl_log.read_text(encoding="utf-8").splitlines() == [
         "https://app.altcontext.com/",
         "https://api.altcontext.com/ready",
+        portal_url,
     ]
 
 
@@ -864,6 +889,7 @@ def test_apply_health_checks_selected_hostname(tmp_path: Path) -> None:
         "#!/usr/bin/env bash\n"
         'for url in "$@"; do :; done\n'
         'printf "%s\\n" "$url" >> "$CURL_LOG"\n'
+        'if [ "$url" = "https://preview.altcontext.com/portal/me" ]; then printf "401"; fi\n'
         '[ "$url" = "https://preview.altcontext.com/" ] && exit 22\n'
         "exit 0\n",
     )
@@ -875,7 +901,9 @@ def test_apply_health_checks_selected_hostname(tmp_path: Path) -> None:
     )
     assert result.returncode != 0, result.stdout + result.stderr
     assert curl_log.read_text(encoding="utf-8").splitlines() == [
-        "https://preview.altcontext.com/", "https://api.altcontext.com/ready",
+        "https://preview.altcontext.com/",
+        "https://api.altcontext.com/ready",
+        "https://preview.altcontext.com/portal/me",
     ]
     assert "applied:" not in result.stdout
 

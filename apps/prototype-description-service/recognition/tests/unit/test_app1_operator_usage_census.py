@@ -417,8 +417,20 @@ def test_operator_usage_census_matches_mounted_routes() -> None:
     gpu_paths = _mounted_routes(gpu_routes.router, "/scene")
     admission_paths = _mounted_routes(clusters_admission_module.router, "/recognition")
     revert_paths = _mounted_routes(cluster_revert_module.router, "/recognition")
-    mounted = {(method, path) for method, path, _auth, _policy in OPERATOR_USAGE_CENSUS}
-    assert mounted <= (gpu_paths | admission_paths | revert_paths)
+    mounted_routes = gpu_paths | admission_paths | revert_paths
+    census_routes = {(method, path) for method, path, _auth, _policy in OPERATOR_USAGE_CENSUS}
+    assert census_routes <= mounted_routes
+
+    mutation_methods = {"POST", "PUT", "PATCH", "DELETE"}
+    mounted_mutations = {(method, path) for method, path in mounted_routes if method in mutation_methods}
+    census_mutations = {(method, path) for method, path in census_routes if method in mutation_methods}
+    missing_mutations = sorted(mounted_mutations - census_mutations)
+    extra_mutations = sorted(census_mutations - mounted_mutations)
+    assert mounted_mutations == census_mutations, (
+        f"operator usage census mutation mismatch; missing from census: {missing_mutations}; "
+        f"not mounted: {extra_mutations}"
+    )
+
     assert ("POST", "/scene/gpu/intent") in gpu_paths
     assert ("GET", "/scene/gpu/status") in gpu_paths
     assert ("POST", "/recognition/clustering/jobs") in admission_paths

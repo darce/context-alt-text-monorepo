@@ -145,8 +145,8 @@ the prompt; expect HTTP 200 and a key-canonical `tenant_id`:
 
 ```bash
 read -rsp 'Tenant API key: ' API_KEY; printf '\n'
-curl --fail --silent --show-error --write-out '%{http_code}\n' \
-  --header "Authorization: Bearer ${API_KEY}" \
+printf 'header = "Authorization: Bearer %s"\n' "$API_KEY" | \
+  curl --config - --fail --silent --show-error --write-out '%{http_code}\n' \
   https://api.altcontext.com/recognition/tenant/whoami
 ```
 

@@ -327,8 +327,8 @@ describe('SamePersonPrompt', () => {
 
   it('does not show the prompt again after remount before a decision', async () => {
     const store = new Map<string, string>();
-    getItemSpy.mockImplementation((key) => store.get(String(key)) ?? null);
-    setItemSpy.mockImplementation((key, value) => {
+    getItemSpy.mockImplementation((key: string) => store.get(String(key)) ?? null);
+    setItemSpy.mockImplementation((key: string, value: string) => {
       store.set(String(key), String(value));
     });
     const { unmount } = renderPrompt();

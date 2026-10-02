@@ -16,7 +16,7 @@ import {
   useUpdateRetentionPolicy,
 } from '../../hooks/useRetentionStatus';
 import { createMockMutation, createMockQuery } from '../../test-utils/mockHooks';
-import type { ExportJobStatusResponse } from '../../api/recognition/types/retention';
+import type { ExportJobStatusResponse, RetentionStatusResponse } from '../../api/recognition/types/retention';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -476,7 +476,13 @@ describe('RetentionSection', () => {
       expected: 'Cause: error code ECONNRESET',
     },
   ])('shows safe query error copy with Retry: $expected', ({ error, expected }) => {
-    mockedUseRetentionStatus.mockReturnValue(createMockQuery({ isError: true, error, refetch }));
+    mockedUseRetentionStatus.mockReturnValue(
+      createMockQuery<RetentionStatusResponse, Error>({
+        isError: true,
+        ...(error === null ? {} : { error }),
+        refetch,
+      }),
+    );
     const { container } = render(<RetentionSection />);
     expect(screen.getByRole('heading', { name: 'Recognition service unavailable' })).toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent(expected);

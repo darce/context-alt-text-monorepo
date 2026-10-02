@@ -2178,7 +2178,13 @@ def test_score_run_record_count_only_output_is_unchanged():
             {
                 "media_id": 1,
                 "path": "legacy.jpg",
-                "describe": {"alt_text_draft": "A photo.", "visual_facts": {"objects": []}},
+                "describe": {
+                    "alt_text_draft": "A photo.",
+                    "visual_facts": {"objects": []},
+                    "adapter": "seeded",
+                    "model_id": "seeded-fixtures",
+                    "model_version": "1",
+                },
                 "identities": [],
                 "face_count": 2,
                 "error": None,

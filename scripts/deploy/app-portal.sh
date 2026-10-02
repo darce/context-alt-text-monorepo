@@ -30,6 +30,14 @@ if [ "${0##*/}" = "app-portal-health-check" ]; then
       health_status=1
     fi
   done
+  portal_health_url="https://${APP_HOSTNAME:-app.altcontext.com}/portal/me"
+  if ! portal_status="$(curl --silent --show-error --location --max-time 15 --output /dev/null --write-out '%{http_code}' "$portal_health_url")"; then
+    echo "ERROR: health check failed: ${portal_health_url}" >&2
+    health_status=1
+  elif [ "$portal_status" != "401" ]; then
+    echo "ERROR: health check failed: ${portal_health_url} (expected HTTP 401 from portal API, got ${portal_status:-no status})" >&2
+    health_status=1
+  fi
   exit "$health_status"
 fi
 

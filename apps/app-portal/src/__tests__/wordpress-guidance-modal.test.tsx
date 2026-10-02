@@ -120,7 +120,7 @@ describe('WordPress guidance modal [A11Y-11]', () => {
     renderPortal({ path: '/keys/wordpress', fetchImpl: portalFetch() as unknown as typeof fetch });
 
     await screen.findByRole('dialog', { name: /wordpress test connection guidance/i });
-    await user.click(screen.getByRole('button', { name: action, exact: true }));
+    await user.click(screen.getByRole('button', { name: action }));
 
     const heading = await screen.findByRole('heading', { name: /api keys/i });
     await waitFor(() => expect(heading).toHaveFocus());

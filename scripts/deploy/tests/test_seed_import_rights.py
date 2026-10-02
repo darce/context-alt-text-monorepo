@@ -24,6 +24,7 @@ def _run_import(
     raw_rows: Sequence[str] = (),
     guided_rows: Sequence[str] = (),
     fail_meta_id: str | None = None,
+    fail_meta_key: str | None = None,
     import_id_override: str | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     demo_dir = tmp_path / "demo"
@@ -59,7 +60,7 @@ def _run_import(
         "#!/usr/bin/env bash\n"
         "set -e\n"
         "printf '%s\\n' \"$*\" >> \"$DOCKER_LOG\"\n"
-        "if [[ -n \"$FAIL_META_ID\" ]] && [[ \" $* \" == *\" wp post meta update $FAIL_META_ID \"* ]]; then exit 29; fi\n"
+        "if [[ -n \"$FAIL_META_ID\" ]] && [[ \" $* \" == *\" wp post meta update $FAIL_META_ID \"* ]] && { [[ -z \"$FAIL_META_KEY\" ]] || [[ \" $* \" == *\" wp post meta update $FAIL_META_ID $FAIL_META_KEY \"* ]]; }; then exit 29; fi\n"
         "if [[ \" $* \" == *\" wp media import \"* ]]; then\n"
         "  if [[ -n \"$IMPORT_ID_OVERRIDE\" ]]; then printf '%s\\n' \"$IMPORT_ID_OVERRIDE\"; exit 0; fi\n"
         "  count=0\n"
@@ -81,6 +82,7 @@ def _run_import(
             "DOCKER_LOG": str(docker_log),
             "DOCKER_COUNT": str(docker_count),
             "FAIL_META_ID": fail_meta_id or "",
+            "FAIL_META_KEY": fail_meta_key or "",
             "IMPORT_ID_OVERRIDE": import_id_override or "",
             "PATH": f"{bin_dir}:{env['PATH']}",
         }
@@ -267,12 +269,24 @@ def test_same_file_in_both_ledgers_fails_validation_before_import(tmp_path: Path
     assert not _media_imports(commands)
 
 
-def test_metadata_failure_deletes_attachment_and_stops_importing(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "fail_meta_key",
+    ["acx_seed_rights_basis", "acx_seed_rights_source"],
+)
+def test_metadata_failure_deletes_attachment_and_stops_importing(
+    tmp_path: Path, fail_meta_key: str
+) -> None:
     rows = [
         ("alpha.jpg", "cc_by", "Wikimedia source alpha"),
         ("beta.webp", "public_domain", "Wikimedia source beta"),
     ]
-    result, commands = _run_import(tmp_path, ["alpha.jpg", "beta.webp"], rows, fail_meta_id="7001")
+    result, commands = _run_import(
+        tmp_path,
+        ["alpha.jpg", "beta.webp"],
+        rows,
+        fail_meta_id="7001",
+        fail_meta_key=fail_meta_key,
+    )
 
     assert result.returncode == 1
     assert "alpha.jpg" in result.stderr
@@ -280,7 +294,7 @@ def test_metadata_failure_deletes_attachment_and_stops_importing(tmp_path: Path)
     assert len(imports) == 1
     failed_update_index = next(
         index for index, command in enumerate(commands)
-        if "wp post meta update 7001" in command
+        if f"wp post meta update 7001 {fail_meta_key}" in command
     )
     delete_index = next(
         index for index, command in enumerate(commands)

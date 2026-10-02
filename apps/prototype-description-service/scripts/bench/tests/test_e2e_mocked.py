@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from scripts.bench import score_report as score_report_module
 from scripts.bench.driver import init_run_dir, run_pair
 from scripts.bench.score_report import LICENSE_BANNER, score_head_to_head
-from scripts.bench.stack_pair import load_stack_pair
+from scripts.bench.stack_pair import BenchError, load_stack_pair
 from scripts.bench.tests.conftest import FakeClient, write_hashed_manifest, write_pair
 
 
@@ -53,6 +56,10 @@ def test_mocked_e2e_writes_full_report_dir(tmp_path: Path, monkeypatch) -> None:
         for identity in identities:
             identity["bbox"]["x"] = 2
         identities_path.write_text(json.dumps(identities), encoding="utf-8")
+        export_digests_path = identities_path.parent / "export_sha256.json"
+        export_digests = json.loads(export_digests_path.read_text(encoding="utf-8"))
+        export_digests[identities_path.name] = hashlib.sha256(identities_path.read_bytes()).hexdigest()
+        export_digests_path.write_text(json.dumps(export_digests), encoding="utf-8")
     from scripts.bench.tests.conftest import write_stub_preflight
 
     for stack_id in clients:
@@ -130,10 +137,40 @@ def test_mocked_e2e_writes_full_report_dir(tmp_path: Path, monkeypatch) -> None:
     assert report.suffix == ".html"
 
 
+def test_score_refuses_v3_manifest_without_ratified_iou_threshold(tmp_path: Path) -> None:
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1, 2])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = tmp_path / "out"
+    clients = {
+        "acx-dev-insightface": FakeClient(),
+        "acx-dev-fir": FakeClient(),
+    }
+    run_pair(
+        pair,
+        manifest_path=manifest,
+        images_dir=images,
+        out_dir=out,
+        clients=clients,
+        skip_preflight=True,
+        pre_run_reset_by_stack=_fresh_reset_evidence(),
+    )
+    from scripts.bench.tests.conftest import write_stub_preflight
+
+    for stack_id in clients:
+        write_stub_preflight(out, stack_id)
+
+    with pytest.raises(BenchError, match=str(out / "manifest.json")) as exc:
+        score_head_to_head(out)
+
+    assert exc.value.code == "manifest_iou_threshold_missing"
+
+
 def test_empty_detection_population_emits_directional_cells(tmp_path: Path) -> None:
     images = tmp_path / "images"
     manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1, 2])
     payload = json.loads(manifest.read_text())
+    payload["iou_threshold"] = 0.5
     for entry in payload["entries"]:
         entry["face_count"] = 0
         entry["face_boxes"] = []

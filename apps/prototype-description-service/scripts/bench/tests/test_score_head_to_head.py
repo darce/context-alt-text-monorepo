@@ -54,6 +54,7 @@ def _write_manifest(
 ) -> Path:
     body = {
         "manifest_version": 3,
+        "iou_threshold": 0.5,
         "annotation_mode": annotation_mode,
         "roster": roster or ["Alice Q"],
         "entries": entries,

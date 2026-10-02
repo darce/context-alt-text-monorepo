@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import inspect
 
 from scripts import verify_identity_schema as verify
 
@@ -161,7 +160,71 @@ def test_tenant_policy_gap_is_preserved_when_operator_scope_is_healthy() -> None
     assert report["policy_gaps"] == ["export_jobs"]
 
 
-def test_collect_and_validate_requests_operator_scope_tables_for_rls() -> None:
-    source = inspect.getsource(verify.collect_and_validate)
-    assert "OPERATOR_SCOPE_TABLES" in source
-    assert "qual" in source and "with_check" in source
+def test_collect_and_validate_rejects_permissive_recovery_policy_from_catalog(monkeypatch) -> None:
+    class _Result:
+        def __init__(self, rows=(), *, scalar=None):
+            self.rows = list(rows)
+            self.scalar = scalar
+
+        def __iter__(self):
+            return iter(self.rows)
+
+        def all(self):
+            return self.rows
+
+        def scalar_one_or_none(self):
+            return self.scalar
+
+        def one_or_none(self):
+            return self.rows[0] if self.rows else None
+
+    class _Inspector:
+        def get_table_names(self):
+            return list(verify.EXPECTED_TABLES)
+
+    operator_policy_rows = [
+        (
+            table,
+            f"operator_scope_{table}",
+            "PERMISSIVE",
+            "true" if table == CURSOR else BYPASS_RLS_EXPR,
+            "true" if table == CURSOR else BYPASS_RLS_EXPR,
+        )
+        for table in verify.OPERATOR_SCOPE_TABLES
+    ]
+    policy_rows = [
+        (table, f"tenant_isolation_{table}", "PERMISSIVE", BYPASS_RLS_EXPR, BYPASS_RLS_EXPR)
+        for table in verify.TENANT_TABLES
+    ] + operator_policy_rows
+
+    class _Connection:
+        def execute(self, statement, params=None):
+            query = str(statement)
+            if "SELECT version_num FROM alembic_version" in query:
+                return _Result(scalar=verify.EXPECTED_REVISION)
+            if "relrowsecurity" in query:
+                return _Result((table, True, True) for table in verify.TENANT_TABLES + verify.OPERATOR_SCOPE_TABLES)
+            if "FROM pg_policies" in query:
+                return _Result(policy_rows)
+            if "SELECT c.relname, c.relkind" in query:
+                return _Result((table, "r") for table in verify.EXPECTED_TABLES)
+            if "pg_get_userbyid" in query:
+                return _Result([("m", "owner", True, '"current_user"')])
+            raise AssertionError(f"unexpected catalog query: {query}")
+
+    monkeypatch.setattr(verify, "inspect", lambda connection: _Inspector())
+    monkeypatch.setattr(
+        verify,
+        "_collect_vector_typmods",
+        lambda connection: dict.fromkeys(verify.IDENTITY_VECTOR_COLUMNS, verify.EMBEDDING_DIMENSION),
+    )
+    monkeypatch.setattr(verify, "_collect_column_gaps", lambda connection, expected_columns: ({}, {}))
+    monkeypatch.setattr(verify, "_collect_unique_constraint_gaps", lambda connection, table_names: [])
+    monkeypatch.setattr(verify, "_collect_matview_create_privilege_gaps", lambda connection: [])
+    monkeypatch.setattr(verify, "_collect_matview_vanished_grantees", lambda connection: [])
+
+    report = verify.collect_and_validate(_Connection())
+
+    assert report["ok"] is False
+    assert report["policy_gaps"] == [CURSOR]
+    assert LEASE not in report["policy_gaps"]

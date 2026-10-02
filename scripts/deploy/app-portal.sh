@@ -24,7 +24,7 @@ if [ "${0##*/}" = "app-portal-health-check" ]; then
     exit 1
   fi
   health_status=0
-  for health_url in "https://app.altcontext.com/" "https://api.altcontext.com/ready"; do
+  for health_url in "https://${APP_HOSTNAME:-app.altcontext.com}/" "https://api.altcontext.com/ready"; do
     if ! curl --fail --silent --show-error --location --max-time 15 --output /dev/null "$health_url"; then
       echo "ERROR: health check failed: ${health_url}" >&2
       health_status=1
@@ -483,8 +483,8 @@ write_activation_journal() {
   _tmp="${ACTIVATION_JOURNAL}.new.$$"
   if ! (
     umask 077
-    printf 'version=1\nphase=%s\ncaddyfile=%s\napp_www=%s\noverlay=%s\nrollback_caddy=%s\nrollback_www=%s\nrollback_overlay=%s\n' \
-      "$_phase" "$CADDYFILE" "$APP_WWW" "$OVERLAY_DEST" \
+    printf 'version=2\nphase=%s\ncaddyfile=%s\napp_www=%s\noverlay=%s\ncaddy_compose=%s\nrollback_caddy=%s\nrollback_www=%s\nrollback_overlay=%s\n' \
+      "$_phase" "$CADDYFILE" "$APP_WWW" "$OVERLAY_DEST" "$CADDY_COMPOSE" \
       "$ROLLBACK_CADDY" "$ROLLBACK_WWW" "$ROLLBACK_OVERLAY" > "$_tmp"
   ); then
     rm -f "$_tmp"
@@ -516,7 +516,7 @@ load_activation_journal() {
     return 1
   fi
   exec 3< "$ACTIVATION_JOURNAL" || return 1
-  IFS= read -r _journal_line <&3 && [ "$_journal_line" = "version=1" ] || {
+  IFS= read -r _journal_line <&3 && [ "$_journal_line" = "version=2" ] || {
     exec 3<&-
     echo "ERROR: unsupported activation journal: ${ACTIVATION_JOURNAL}" >&2
     return 1
@@ -529,6 +529,8 @@ load_activation_journal() {
   JOURNAL_WWW="$JOURNAL_VALUE"
   read_journal_field overlay || { exec 3<&-; return 1; }
   JOURNAL_OVERLAY="$JOURNAL_VALUE"
+  read_journal_field caddy_compose || { exec 3<&-; return 1; }
+  JOURNAL_CADDY_COMPOSE="$JOURNAL_VALUE"
   read_journal_field rollback_caddy || { exec 3<&-; return 1; }
   ROLLBACK_CADDY="$JOURNAL_VALUE"
   read_journal_field rollback_www || { exec 3<&-; return 1; }
@@ -546,7 +548,7 @@ load_activation_journal() {
     prepared|caddy_promoted|www_promoted|overlay_promoted) ;;
     *) echo "ERROR: invalid activation journal phase: ${JOURNAL_PHASE}" >&2; return 1 ;;
   esac
-  if [ "$JOURNAL_CADDYFILE" != "$CADDYFILE" ] || [ "$JOURNAL_WWW" != "$APP_WWW" ] || [ "$JOURNAL_OVERLAY" != "$OVERLAY_DEST" ]; then
+  if [ "$JOURNAL_CADDYFILE" != "$CADDYFILE" ] || [ "$JOURNAL_WWW" != "$APP_WWW" ] || [ "$JOURNAL_OVERLAY" != "$OVERLAY_DEST" ] || [ "$JOURNAL_CADDY_COMPOSE" != "$CADDY_COMPOSE" ]; then
     echo "ERROR: activation journal paths do not match this deploy configuration" >&2
     return 1
   fi
@@ -768,7 +770,7 @@ run_health() {
     echo "ERROR: APP_HEALTH_CMD is required to check the live frontend and portal upstream" >&2
     return 1
   fi
-  "$APP_HEALTH_CMD" 9>&-
+  APP_HOSTNAME="$APP_HOSTNAME" "$APP_HEALTH_CMD" 9>&-
 }
 
 reclaim_rollback_snapshots() {

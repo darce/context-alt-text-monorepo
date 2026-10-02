@@ -94,6 +94,9 @@ It returns zero only when both the live frontend at
 `https://app.altcontext.com/` and the production API readiness endpoint at
 `https://api.altcontext.com/ready` return successful HTTP responses. It returns
 nonzero if either check fails.
+The deploy script passes the selected `APP_HOSTNAME` to the checker; hostname
+overrides probe that frontend instead. Standalone checks default to
+`app.altcontext.com` unless `APP_HOSTNAME` is set.
 
 ```bash
 FRONTEND_DIST=/absolute/path/to/real/dist \
@@ -137,6 +140,11 @@ overrides.
 10. Any failure at write/move/copy/compose/reload/health restores all three
     rollback artifacts, reapplies the restored compose state, attempts a
     rollback reload, and **does not** print `applied:`.
+
+Interrupted-activation journals record `CADDY_COMPOSE` alongside the artifact
+paths. Recovery refuses a changed path before restoring files or invoking
+Compose; rerun with the original deployment paths. Version 1 journals lack this
+path and are refused rather than recovered against an unverified Compose project.
 
 Protected hostnames (`api.altcontext.com` and the other live vhosts) cannot be
 used as `APP_HOSTNAME`. The shared repo file
@@ -200,7 +208,8 @@ lane; [GRPH-09]).
 runs on promote/compose/reload/health failure and reapplies the restored compose
 state before the rollback reload. Manual restore: write the Caddyfile back
 **in place** (`cat rollback > Caddyfile`), restore www/overlay, then reapply
-the prior compose overlay and reload Caddy:
+the prior compose overlay and reload Caddy. Use these commands only when a prior
+overlay snapshot was restored:
 
 ```bash
 cd /opt/acx-backend
@@ -208,6 +217,18 @@ docker compose -f docker-compose.caddy.yml \
   -f /opt/acx-backend/app/docker-compose.app.yml up -d
 docker compose -f docker-compose.caddy.yml \
   -f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy \
+  caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+```
+
+If there was no prior overlay (first deployment), remove the newly installed
+`/opt/acx-backend/app/docker-compose.app.yml` and frontend directory instead of
+restoring absent snapshots. After restoring the Caddyfile in place, use the base
+compose file alone:
+
+```bash
+cd /opt/acx-backend
+docker compose -f docker-compose.caddy.yml up -d
+docker compose -f docker-compose.caddy.yml exec -T caddy \
   caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 ```
 

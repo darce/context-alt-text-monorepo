@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
 import recognition.worker.scan_worker as scan_worker_module
-from recognition.application.services.usage_settlement_service import UsageSettlementService
+from recognition.application.services.usage_settlement_service import (
+    SweepReport,
+    UsageSettlementService,
+)
 from recognition.worker.scan_worker import ScanWorker, ScanWorkerConfig
 from scripts.usage_reservation_sweeper import (
     DEFAULT_BATCH_SIZE,
@@ -101,7 +102,7 @@ async def test_worker_sweeps_first_cycle_then_waits_for_interval(monkeypatch) ->
 
     async def sweep(self, **kwargs):
         sweep_calls.append((monotonic_now, kwargs))
-        return SimpleNamespace()
+        return SweepReport()
 
     monkeypatch.setattr(UsageSettlementService, "sweep_stale_reservations", sweep)
 
@@ -190,7 +191,7 @@ async def test_nonzero_sweep_report_warns_and_commits(monkeypatch, caplog) -> No
         clock=lambda: monotonic_now,
     )
     _stub_scan_cycle(monkeypatch, worker, sessions, probe_calls)
-    report = SimpleNamespace(
+    report = SweepReport(
         exit_code=1,
         rejected=2,
         fail_closed=1,
@@ -217,6 +218,38 @@ async def test_nonzero_sweep_report_warns_and_commits(monkeypatch, caplog) -> No
     assert sessions.sessions[0].rollbacks == 0
     assert "[worker] usage reservation sweep returned nonzero" in caplog.text
     assert "exit_code=1 rejected=2 fail_closed=1 no_progress_cycles=3" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_invalid_sweep_report_is_logged_and_rolled_back(monkeypatch, caplog) -> None:
+    sessions = _SessionFactory()
+    worker = ScanWorker(
+        ScanWorkerConfig(
+            postgres_dsn="sqlite+aiosqlite:///:memory:",
+            poll_interval_seconds=1,
+            usage_sweep_interval_seconds=10,
+        )
+    )
+    monkeypatch.setattr(worker, "_session_factory", sessions)
+
+    async def no_rls_bypass(session) -> None:
+        return None
+
+    async def invalid_sweep(self, **kwargs):
+        return object()
+
+    monkeypatch.setattr(scan_worker_module, "enable_rls_bypass", no_rls_bypass)
+    monkeypatch.setattr(UsageSettlementService, "sweep_stale_reservations", invalid_sweep)
+    try:
+        await worker._sweep_stale_usage_reservations_if_due()
+    finally:
+        await worker.__aexit__(None, None, None)
+
+    assert len(sessions.sessions) == 1
+    assert sessions.sessions[0].commits == 0
+    assert sessions.sessions[0].rollbacks == 1
+    assert "[worker] usage reservation sweep failed" in caplog.text
+    assert "AttributeError" in caplog.text
 
 
 @pytest.mark.parametrize("interval", ["invalid", "0", "-1"])

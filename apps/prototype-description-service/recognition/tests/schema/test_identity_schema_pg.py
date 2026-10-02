@@ -104,13 +104,20 @@ def test_matview_centroid_carries_vector_typmod(pg_migrated_engine) -> None:
     )
 
 
-def test_matview_builds_weighted_centroid_with_vector_operators(pg_migrated_engine) -> None:
+@pytest.mark.parametrize(
+    "weights,separate_clusters",
+    [([0.25, 0.75], False), ([1e-39, 0.75], True)],
+    ids=["weighted-media", "tiny-positive-single-member"],
+)
+def test_matview_builds_weighted_centroid_with_vector_operators(
+    pg_migrated_engine, weights, separate_clusters
+) -> None:
     dimension = MIGRATION.EMBEDDING_DIMENSION
     tenant_id = uuid.uuid4()
-    cluster_id = uuid.uuid4()
+    cluster_ids = [uuid.uuid4()]
+    cluster_ids.append(uuid.uuid4() if separate_clusters else cluster_ids[0])
     media_id = 74821
     identity_ids = [uuid.uuid4(), uuid.uuid4()]
-    weights = [0.25, 0.75]
 
     with pg_migrated_engine.connect() as conn:
         transaction = conn.begin()
@@ -120,10 +127,11 @@ def test_matview_builds_weighted_centroid_with_vector_operators(pg_migrated_engi
                 text("INSERT INTO tenants (id, site_url) VALUES (:tenant_id, :site_url)"),
                 {"tenant_id": tenant_id, "site_url": f"https://centroid-{tenant_id}.test"},
             )
-            conn.execute(
-                text("INSERT INTO identity_clusters (id, tenant_id) VALUES (:cluster_id, :tenant_id)"),
-                {"cluster_id": cluster_id, "tenant_id": tenant_id},
-            )
+            for cluster_id in dict.fromkeys(cluster_ids):
+                conn.execute(
+                    text("INSERT INTO identity_clusters (id, tenant_id) VALUES (:cluster_id, :tenant_id)"),
+                    {"cluster_id": cluster_id, "tenant_id": tenant_id},
+                )
 
             insert_identity = text(
                 f"""INSERT INTO media_identities (
@@ -142,7 +150,7 @@ def test_matview_builds_weighted_centroid_with_vector_operators(pg_migrated_engi
                     {
                         "identity_id": identity_id,
                         "tenant_id": tenant_id,
-                        "media_id": media_id,
+                        "media_id": media_id + axis if separate_clusters else media_id,
                         "media_url": "https://centroid.test/image",
                         "bbox_x": axis * 10,
                         "embedding": f"[{','.join(coordinates)}]",
@@ -158,20 +166,30 @@ def test_matview_builds_weighted_centroid_with_vector_operators(pg_migrated_engi
                     {
                         "id": uuid.uuid4(),
                         "tenant_id": tenant_id,
-                        "cluster_id": cluster_id,
+                        "cluster_id": cluster_ids[axis],
                         "identity_id": identity_id,
                     },
                 )
 
-            conn.execute(text("REFRESH MATERIALIZED VIEW mv_identity_cluster_centroids"))
-            centroid_text = conn.execute(
-                text("SELECT centroid::text FROM mv_identity_cluster_centroids WHERE cluster_id=:cluster_id"),
-                {"cluster_id": cluster_id},
-            ).scalar_one()
-            centroid = [float(value) for value in centroid_text.strip("[]").split(",")]
+            # Exercise creation with populated data as well as refresh: either used
+            # to fail for a positive weight whose reciprocal exceeds real's range.
+            conn.execute(text("DROP MATERIALIZED VIEW mv_identity_cluster_centroids"))
+            MIGRATION.repair_centroids_matview(conn)
+            magnitude = math.hypot(*weights)
+            for refresh in (False, True):
+                if refresh:
+                    conn.execute(text("REFRESH MATERIALIZED VIEW mv_identity_cluster_centroids"))
+                for axis, cluster_id in enumerate(dict.fromkeys(cluster_ids)):
+                    centroid_text = conn.execute(
+                        text("SELECT centroid::text FROM mv_identity_cluster_centroids WHERE cluster_id=:cluster_id"),
+                        {"cluster_id": cluster_id},
+                    ).scalar_one()
+                    centroid = [float(value) for value in centroid_text.strip("[]").split(",")]
+                    if separate_clusters:
+                        expected = [0.0] * dimension
+                        expected[axis] = 1.0
+                    else:
+                        expected = [weights[0] / magnitude, weights[1] / magnitude, *([0.0] * (dimension - 2))]
+                    assert centroid == pytest.approx(expected, abs=1e-5)
         finally:
             transaction.rollback()
-
-    magnitude = math.hypot(*weights)
-    expected = [weights[0] / magnitude, weights[1] / magnitude, *([0.0] * (dimension - 2))]
-    assert centroid == pytest.approx(expected, abs=1e-5)

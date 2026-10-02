@@ -17,7 +17,7 @@ depends_on = None
 
 # Sole root: PGVECTOR_DIM → DatabaseSettings.pgvector_dimension (no bare 512).
 EMBEDDING_DIMENSION = int(get_database_settings().pgvector_dimension)
-CENTROID_DEFINITION_VERSION = "centroid-definition:v2-vector-quality-weighting"
+CENTROID_DEFINITION_VERSION = "centroid-definition:v3-normalized-quality-weighting"
 SAFE_TENANT_EXPR = "NULLIF(current_setting('app.current_tenant', true), '')::uuid"
 BYPASS_RLS_EXPR = "COALESCE(NULLIF(current_setting('app.bypass_rls', true), ''), 'false')::boolean"
 
@@ -3096,6 +3096,14 @@ def ensure_matview(op) -> None:
               ON cm.cluster_id = mr.cluster_id
              AND cm.embedding_model = mr.embedding_model
         ),
+        media_weight_totals AS (
+            SELECT
+                normalized_embeddings.*,
+                SUM(quality_weight) OVER (
+                    PARTITION BY cluster_id, tenant_id, media_id
+                ) AS media_quality_total
+            FROM normalized_embeddings
+        ),
         -- One source media item contributes at most one quality-weighted
         -- representative, so repeated detections from that item cannot
         -- outvote representatives from other media items.
@@ -3107,18 +3115,19 @@ def ensure_matview(op) -> None:
                 CASE
                     WHEN SUM(quality_weight) > 0 THEN
                         (
+                            -- Divide in double precision first: even tiny positive
+                            -- totals yield factors in [0, 1] safe to cast to real.
                             SUM(
                                 unit_embedding
-                                * array_fill(quality_weight::real, ARRAY[{EMBEDDING_DIMENSION}])::vector
+                                * array_fill(
+                                    (quality_weight / NULLIF(media_quality_total, 0))::real,
+                                    ARRAY[{EMBEDDING_DIMENSION}]
+                                )::vector
                             )
-                            * array_fill(
-                                (1.0 / SUM(quality_weight))::real,
-                                ARRAY[{EMBEDDING_DIMENSION}]
-                            )::vector
                         )::vector({EMBEDDING_DIMENSION})
                     ELSE NULL
                 END AS media_embedding
-            FROM normalized_embeddings
+            FROM media_weight_totals
             GROUP BY cluster_id, tenant_id, media_id
         ),
         cluster_member_stats AS (

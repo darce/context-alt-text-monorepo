@@ -314,6 +314,18 @@ async def test_reservation_path_locks_entitlement_before_check_and_insert() -> N
 @pytest.mark.asyncio
 async def test_reserve_returns_same_ticket_for_retry(database) -> None:
     session_factory, tenant_id, _period_start = database
+    entitlement_period_start = datetime.now(tz=UTC) - timedelta(days=3)
+    async with session_factory() as session:
+        await session.execute(
+            update(TenantEntitlement)
+            .where(TenantEntitlement.tenant_id == tenant_id)
+            .values(
+                period_start=entitlement_period_start,
+                period_end=entitlement_period_start + timedelta(days=30),
+            )
+        )
+        await session.commit()
+
     async with session_factory() as session:
         service = UsageAdmissionService(session)
 
@@ -346,6 +358,7 @@ async def test_reserve_returns_same_ticket_for_retry(database) -> None:
         )
         assert len(rows) == 1
         assert rows[0].id == first.reservation_id
+        assert rows[0].period_start.replace(tzinfo=UTC) == entitlement_period_start
 
 
 @pytest.mark.asyncio
@@ -535,6 +548,69 @@ async def test_global_daily_cost_limit_is_enforced(database) -> None:
                 idempotency_key="second",
                 job_id=None,
                 cost_units=1,
+            )
+
+
+@pytest.mark.parametrize(
+    ("global_limits", "first_queue_bytes", "second_queue_bytes"),
+    [
+        pytest.param(
+            {"daily_cost_limit": 10, "inflight_limit": 1, "queue_limit": 10, "queue_byte_limit": 10},
+            0,
+            0,
+            id="inflight-units",
+        ),
+        pytest.param(
+            {"daily_cost_limit": 10, "inflight_limit": 10, "queue_limit": 1, "queue_byte_limit": 10},
+            0,
+            0,
+            id="queue-depth",
+        ),
+        pytest.param(
+            {"daily_cost_limit": 10, "inflight_limit": 10, "queue_limit": 10, "queue_byte_limit": 4},
+            4,
+            1,
+            id="queue-bytes",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_global_inflight_and_queue_capacity_limits_are_enforced(
+    database,
+    global_limits: dict[str, int],
+    first_queue_bytes: int,
+    second_queue_bytes: int,
+) -> None:
+    session_factory, tenant_id, _period_start = database
+    async with session_factory() as session:
+        await session.execute(
+            update(TenantEntitlement).where(TenantEntitlement.tenant_id == tenant_id).values(allowance_jobs=8)
+        )
+        await session.execute(
+            update(GlobalUsageAdmissionState)
+            .where(GlobalUsageAdmissionState.id == GLOBAL_USAGE_ADMISSION_STATE_ID)
+            .values(**global_limits)
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        await UsageAdmissionService(session).reserve(
+            tenant_id,
+            idempotency_key="first",
+            job_id=None,
+            cost_units=1,
+            queue_bytes=first_queue_bytes,
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        with pytest.raises(GlobalUsageLimitExceededError):
+            await UsageAdmissionService(session).reserve(
+                tenant_id,
+                idempotency_key="second",
+                job_id=None,
+                cost_units=1,
+                queue_bytes=second_queue_bytes,
             )
 
 

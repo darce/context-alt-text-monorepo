@@ -700,7 +700,6 @@ def test_opencv_wheel_build_change_partitions_comparability_token(
 
     installed = {
         "opencv-python": "5.0.0.93",
-        "opencv-python-headless": "5.0.0.93",
     }
 
     def distribution_version(distribution: str) -> str:
@@ -720,15 +719,40 @@ def test_opencv_wheel_build_change_partitions_comparability_token(
 
     baseline = prov.numeric_runtime_fingerprint()
     installed["opencv-python"] = "5.0.0.94"
-    installed["opencv-python-headless"] = "5.0.0.94"
     changed = prov.numeric_runtime_fingerprint()
 
     assert baseline.opencv_version == changed.opencv_version == "5.0.0"
     assert baseline.resolved_versions["opencv-python"] == "5.0.0.93"
-    assert baseline.resolved_versions["opencv-python-headless"] == "5.0.0.93"
     assert changed.resolved_versions["opencv-python"] == "5.0.0.94"
-    assert changed.resolved_versions["opencv-python-headless"] == "5.0.0.94"
     assert changed.comparability_token != baseline.comparability_token
+
+
+def test_multiple_same_version_opencv_wheels_reject_runtime_fingerprint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Multiple installed OpenCV distributions are ambiguous even at one version."""
+    from importlib.metadata import PackageNotFoundError
+
+    from recognition.infrastructure.face_pipeline import provenance as prov
+
+    installed = {
+        "opencv-python": "5.0.0.93",
+        "opencv-python-headless": "5.0.0.93",
+    }
+
+    def distribution_version(distribution: str) -> str:
+        try:
+            return installed[distribution]
+        except KeyError as exc:
+            raise PackageNotFoundError(distribution) from exc
+
+    monkeypatch.setattr(prov, "_distribution_version", distribution_version)
+
+    with pytest.raises(RuntimeError, match="ambiguous installed OpenCV distributions") as exc_info:
+        prov._opencv_distribution_versions()
+
+    assert "opencv-python=5.0.0.93" in str(exc_info.value)
+    assert "opencv-python-headless=5.0.0.93" in str(exc_info.value)
 
 
 def test_conflicting_opencv_wheel_versions_reject_runtime_fingerprint(
@@ -759,7 +783,7 @@ def test_conflicting_opencv_wheel_versions_reject_runtime_fingerprint(
     monkeypatch.setattr(prov, "_hdbscan_version", lambda: "0.8.44")
     monkeypatch.setattr(prov, "_pgvector_version", lambda: "0.5.0")
 
-    with pytest.raises(RuntimeError, match="conflicting OpenCV distribution versions") as exc_info:
+    with pytest.raises(RuntimeError, match="ambiguous installed OpenCV distributions") as exc_info:
         prov.numeric_runtime_fingerprint()
 
     assert "opencv-python=5.0.0.93" in str(exc_info.value)

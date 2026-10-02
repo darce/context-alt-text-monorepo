@@ -218,7 +218,7 @@ function KeysScreenSession({
           : 'Metadata only; raw secrets appear once after issue.',
       );
       setStatusTone('info');
-      if (!append) {
+      if (!append && !currentUsableKey(result.data, Date.now())) {
         setCreateBlocked(false);
       }
     } catch (error) {

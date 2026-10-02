@@ -8,7 +8,7 @@ import { getDegradedDebtLinks, isSyncOffline, shouldShowDegradedBanner } from '.
 
 const closedHealth: SyncHealthResponse = {
   breaker: { state: 'closed', base_url: 'http://localhost:8000', opened_at: null },
-  outbox: { pending: 0, failed: 0 },
+  outbox: { state: 'ok', pending: 0, failed: 0, dead_lettered: 0, oldest_age_seconds: 0 },
   conflicts: { open: 0 },
   replays: { failed: null, source: 'unavailable_local' },
   last_pull: { at: '2026-06-11T12:00:00Z', ok: true },
@@ -48,7 +48,7 @@ describe('getDegradedDebtLinks', () => {
     expect(
       getDegradedDebtLinks({
         ...closedHealth,
-        outbox: { pending: 0, failed: 2 },
+        outbox: { state: 'ok', pending: 0, failed: 2, dead_lettered: 0, oldest_age_seconds: 0 },
         conflicts: { open: 3 },
       }),
     ).toEqual({
@@ -127,7 +127,7 @@ describe('DegradedModeBannerView', () => {
         health={{
           ...closedHealth,
           breaker: { ...closedHealth.breaker, state: 'open' },
-          outbox: { pending: 0, failed: 1 },
+          outbox: { state: 'ok', pending: 0, failed: 1, dead_lettered: 0, oldest_age_seconds: 0 },
           conflicts: { open: 2 },
         }}
       />,

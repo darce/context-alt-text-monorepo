@@ -12,6 +12,8 @@ import stat
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "scripts" / "deploy" / "app-portal.sh"
 SNIPPET = REPO_ROOT / "infra" / "oci" / "app" / "Caddyfile.app"
@@ -82,7 +84,10 @@ def _caddy_stub(log_path: str, *, fail: bool = False) -> str:
     )
 
 
-def _docker_stub(log_path: str, compose_marker: str, *, fail_first_reload: bool = False) -> str:
+def _docker_stub(
+    log_path: str, compose_marker: str, *, fail_first_reload: bool = False,
+    mount_root: Path | None = None,
+) -> str:
     compose_marker_quoted = shlex.quote(compose_marker)
     reload_failure_marker = shlex.quote(f"{compose_marker}.failed-first-reload")
     failure_rule = (
@@ -92,6 +97,21 @@ def _docker_stub(log_path: str, compose_marker: str, *, fail_first_reload: bool 
         "  fi\n"
         if fail_first_reload else ""
     )
+    # Model a bind mount that retains the original directory after a host swap.
+    # Only creating/recreating the service captures the new frontend contents.
+    mount_rule = ""
+    if mount_root is not None:
+        source = shlex.quote(str(mount_root / "index.html"))
+        snapshot = shlex.quote(f"{compose_marker}.mounted-index")
+        mount_rule = (
+            '  if [ "$compose_up" -eq 1 ] && '
+            f'{{ [ "$compose_recreate" -eq 1 ] || [ ! -e {snapshot} ]; }}; then\n'
+            f'    cp {source} {snapshot} || exit 1\n'
+            "  fi\n"
+            '  if [ "$compose_reload" -eq 1 ]; then\n'
+            f"    printf 'mounted-index %q\\n' \"$(cat {snapshot})\" >> {log_path}\n"
+            "  fi\n"
+        )
     return (
         "#!/usr/bin/env bash\n"
         "set -u\n"
@@ -101,12 +121,14 @@ def _docker_stub(log_path: str, compose_marker: str, *, fail_first_reload: bool 
         'if [ "${1:-}" = "compose" ]; then\n'
         "  compose_up=0\n"
         "  compose_reload=0\n"
+        "  compose_recreate=0\n"
         '  for arg in "$@"; do\n'
         '    [ "$arg" = "up" ] && compose_up=1\n'
         '    [ "$arg" = "reload" ] && compose_reload=1\n'
+        '    [ "$arg" = "--force-recreate" ] && compose_recreate=1\n'
         "  done\n"
         f'  [ "$compose_up" -eq 0 ] || : > {compose_marker_quoted}\n'
-        + failure_rule
+        + mount_rule + failure_rule
         + "fi\n"
         + "exit 0\n"
     )
@@ -148,6 +170,7 @@ def _run(
     fail_mv_dest: Path | None = None,
     include_caddy: bool = True,
     include_docker: bool = True,
+    model_mount: bool = False,
     timeout: int = 20,
 ) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
@@ -175,6 +198,7 @@ def _run(
                 log_path,
                 str(compose_marker),
                 fail_first_reload=docker_fail_first_reload,
+                mount_root=app_root / "www" if model_mount else None,
             ),
         )
     health = bin_dir / "health-check"
@@ -266,6 +290,78 @@ def _tree_files(root: Path) -> set[str]:
     if not root.exists():
         return set()
     return {str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()}
+
+
+def _mounted_indexes(tmp_path: Path) -> list[str]:
+    return [
+        shlex.split(line)[1] for line in _log(tmp_path).splitlines()
+        if line.startswith("mounted-index ")
+    ]
+
+
+def _assert_caddy_recreated(tmp_path: Path, count: int) -> None:
+    calls = [
+        shlex.split(line) for line in _log(tmp_path).splitlines()
+        if line.startswith("docker compose ") and " up -d" in line
+    ]
+    assert len(calls) == count
+    assert all(call[-5:] == ["up", "-d", "--force-recreate", "--no-deps", "caddy"] for call in calls)
+
+
+def test_second_apply_and_rollback_refresh_container_mount(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    frontend = _write_frontend(tmp_path, index="first frontend")
+    first = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=frontend, model_mount=True)
+    assert first.returncode == 0, first.stdout + first.stderr
+    (frontend / "index.html").write_text("second frontend")
+    second = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=frontend, model_mount=True)
+    assert second.returncode == 0, second.stdout + second.stderr
+    (frontend / "index.html").write_text("failed frontend")
+    failed = _run(
+        tmp_path, args=["--apply"], live_caddy=live, frontend=frontend,
+        model_mount=True, docker_fail_first_reload=True,
+    )
+    assert failed.returncode != 0
+    assert _mounted_indexes(tmp_path) == [
+        "first frontend", "second frontend", "failed frontend", "second frontend",
+    ]
+    assert (live.parent / "app" / "www" / "index.html").read_text() == "second frontend"
+    assert not (live.parent / "app" / "activation.journal").exists()
+    _assert_caddy_recreated(tmp_path, 4)
+
+
+@pytest.mark.parametrize("phase", ["prepared", "caddy_promoted", "www_promoted", "overlay_promoted"])
+def test_recovery_refreshes_container_mount_after_restore(tmp_path: Path, phase: str) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    frontend = _write_frontend(tmp_path, index="original frontend")
+    first = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=frontend, model_mount=True)
+    assert first.returncode == 0, first.stdout + first.stderr
+    (frontend / "index.html").write_text("replacement frontend")
+    hook = tmp_path / "interrupt.sh"
+    _write_executable(
+        hook,
+        "sync() {\n"
+        '  /bin/sync "$@" || return $?\n'
+        '  if [ "${@: -1}" = "$APP_ROOT" ] && [ -f "$ACTIVATION_JOURNAL" ] && '
+        f'grep -qx "phase={phase}" "$ACTIVATION_JOURNAL"; then\n'
+        '    kill -KILL "$BASHPID"\n'
+        "  fi\n}\n",
+    )
+    interrupted = _run(
+        tmp_path, args=["--apply"], live_caddy=live, frontend=frontend,
+        model_mount=True, extra_env={"BASH_ENV": str(hook)},
+    )
+    assert interrupted.returncode == -9, interrupted.stdout + interrupted.stderr
+    recovered = _run(
+        tmp_path, args=["--apply"], live_caddy=live, frontend=frontend,
+        model_mount=True, extra_env={"BASH_ENV": ""},
+    )
+    assert recovered.returncode == 0, recovered.stdout + recovered.stderr
+    # Recovery must recreate after copying the snapshot, before the next apply.
+    assert _mounted_indexes(tmp_path) == [
+        "original frontend", "original frontend", "replacement frontend",
+    ]
+    _assert_caddy_recreated(tmp_path, 3)
 
 
 def test_owned_artifacts_exist() -> None:

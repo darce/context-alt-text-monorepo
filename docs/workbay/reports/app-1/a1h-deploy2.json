@@ -1,0 +1,36 @@
+{
+  "lane": "a1h-deploy2",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "lane_root=\"$(git rev-parse --show-toplevel)\"; resolved_python=\"$lane_root/.venv/bin/python\"; \"$resolved_python\" -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 9.09s"
+    },
+    {
+      "command": "lane_root=\"$(git rev-parse --show-toplevel)\"; resolved_python=\"$lane_root/.venv/bin/python\"; \"$resolved_python\" -m pytest scripts/deploy/tests/test_app_portal_deploy.py -q",
+      "result": "pass",
+      "detail": "33 passed in 14.68s"
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 15987,
+      "finding_id": "APP1-HOST-RV04",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "infra/oci/app/Caddyfile.app:12 - `@portal path /portal /portal/*` restricts proxying to the exact route and slash-delimited descendants. scripts/deploy/tests/test_app_portal_deploy.py:430-432 asserts this matcher and rejects `handle /portal*`.",
+      "guard_test": "scripts/deploy/tests/test_app_portal_deploy.py::test_snippet_denies_admin_and_unrelated_api_surfaces"
+    },
+    {
+      "db_id": 15986,
+      "finding_id": "APP1-HOST-RV03",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "infra/oci/app/docker-compose.app.yml:14 - `__APP_WWW__:/srv/app-portal:ro` makes the host source renderable while keeping the container root fixed. scripts/deploy/app-portal.sh:680-684 substitutes the selected APP_WWW. scripts/deploy/tests/test_app_portal_deploy.py:589-592 asserts the placeholder and rejects the old hardcoded mount.",
+      "guard_test": "scripts/deploy/tests/test_app_portal_deploy.py::test_overlay_template_uses_www_placeholder"
+    }
+  ],
+  "new_findings": [],
+  "summary": "Both supplied corrections hold: the Caddy API matcher is limited to /portal and its descendants, and the compose overlay renders the selected APP_WWW at the fixed /srv/app-portal container root. Their regression assertions are present, both the lane check and deployment tests pass, and no new defects were found at the reviewed files or deploy seam."
+}

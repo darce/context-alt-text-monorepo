@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -14,11 +16,13 @@ from starlette.requests import Request
 from recognition.application.services.usage_admission_service import (
     AllowanceExceededError,
     GlobalUsageLimitExceededError,
+    UsageAdmissionService,
     UsageAdmissionStoppedError,
     UsageAdmissionTimeoutError,
     UsageAdmissionUnavailableError,
     UsageFingerprintConflictError,
 )
+from recognition.domain.portal_contracts import UsageReservationStatus, UsageTicket
 from recognition.infrastructure.repositories.usage_repository import ExpiredUsageReservationError
 from recognition.interface_adapters.http.deps.usage_admission import admit_usage, get_usage_admission_service
 from recognition.tests.unit.test_app1_usage_admission_wiring import TENANT_ID, _FakeAdmission
@@ -44,6 +48,21 @@ class _RollbackProbe:
 
     async def rollback(self) -> None:
         self.calls += 1
+
+
+async def _never_return(*_args: object, **_kwargs: object) -> None:
+    await asyncio.Event().wait()
+
+
+class _HangingUsageRepository:
+    reserve = _never_return
+    commit = _never_return
+    release = _never_return
+    assert_fence_current = _never_return
+    begin_recovery = _never_return
+    complete_recovery = _never_return
+    commit_fenced = _never_return
+    release_fenced = _never_return
 
 
 def _error_from_exception(exc: HTTPException) -> str:
@@ -171,3 +190,37 @@ async def test_usage_admission_errors_match_contract_fixture() -> None:
         exercised_rows.add(expected)
 
     assert fixture_rows == exercised_rows == expected_rows
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operation",
+    (
+        "assert_fence_current",
+        "begin_recovery",
+        "complete_recovery",
+        "commit_fenced",
+        "release_fenced",
+    ),
+)
+async def test_fence_and_recovery_repository_calls_use_operation_timeout(operation: str) -> None:
+    service = UsageAdmissionService(_HangingUsageRepository(), timeout_s=0.01)
+    ticket = UsageTicket(
+        reservation_id=UUID("11111111-1111-1111-1111-111111111111"),
+        tenant_id=UUID("22222222-2222-2222-2222-222222222222"),
+        idempotency_key="timeout-contract",
+        cost_units=1,
+        fence_token="fence-1",
+    )
+    calls = {
+        "assert_fence_current": lambda: service.assert_fence_current(ticket, fence_token="fence-1"),
+        "begin_recovery": lambda: service.begin_recovery(ticket),
+        "complete_recovery": lambda: service.complete_recovery(
+            object(), target_status=UsageReservationStatus.COMMITTED
+        ),
+        "commit_fenced": lambda: service.commit_fenced(ticket, fence_token="fence-1"),
+        "release_fenced": lambda: service.release_fenced(ticket, fence_token="fence-1"),
+    }
+
+    with pytest.raises(UsageAdmissionTimeoutError, match=operation):
+        await asyncio.wait_for(calls[operation](), timeout=0.5)

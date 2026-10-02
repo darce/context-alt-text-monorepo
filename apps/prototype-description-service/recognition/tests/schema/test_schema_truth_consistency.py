@@ -170,10 +170,12 @@ def test_portal_identity_owner_conflicts_are_rejected_without_upsert_transfer() 
     # update tenant_id on the existing issuer/subject row.
     repository = importlib.import_module("recognition.infrastructure.repositories.portal_identity_repository")
     claim_source = inspect.getsource(repository.SqlAlchemyPortalIdentityRepository.claim)
+    repository_source = inspect.getsource(repository.SqlAlchemyPortalIdentityRepository)
     assert "self._session.add(identity)" in claim_source
     assert "except IntegrityError as exc:" in claim_source
     assert "raise PortalIdentityClaimRefused(_CLAIM_REFUSAL_MESSAGE) from exc" in claim_source
-    assert "on_conflict_do_update" not in claim_source
+    assert "on_conflict_do_update" not in repository_source
+    assert re.search(r"\bON\s+CONFLICT\b[\s\S]*?\bDO\s+UPDATE\b", repository_source, re.IGNORECASE) is None
 
 
 def test_tenant_entitlement_expired_default_matches_model_migration_and_contract() -> None:
@@ -184,10 +186,17 @@ def test_tenant_entitlement_expired_default_matches_model_migration_and_contract
     assert DEFAULT_ENTITLEMENT_STATUS.value == "expired"
 
     migration_source = inspect.getsource(MIGRATION.ensure_tables)
-    assert (
-        'sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("\'expired\'"))'
-        in migration_source
+    entitlement_definition = re.search(
+        r'_ensure_table\(\s*op,\s*"tenant_entitlement",(.*?)\n    \)',
+        migration_source,
+        re.DOTALL,
     )
+    assert entitlement_definition is not None
+    expected_status_default = f"'{DEFAULT_ENTITLEMENT_STATUS.value}'"
+    expected_migration_default = (
+        f'sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("{expected_status_default}"))'
+    )
+    assert expected_migration_default in entitlement_definition.group(1)
 
 
 _SQL_COMMENT = re.compile(r"--[^\n]*")

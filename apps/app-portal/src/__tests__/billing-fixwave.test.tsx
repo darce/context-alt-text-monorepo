@@ -120,10 +120,12 @@ describe('APP1-CLAIMUI-RV03 preview retry reset [RES-01][RES-02][NAV-11]', () =>
     await waitFor(() =>
       expect(screen.getByRole('status')).toHaveTextContent(/billing portal is temporarily unavailable/i),
     );
-    expect(screen.getByRole('button', { name: /try billing again/i })).toBeInTheDocument();
+    const retryButton = screen.getByRole('button', { name: /try billing again/i });
+    expect(retryButton).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /continue to checkout/i }));
     expect(screen.getByRole('button', { name: /confirm hosted checkout/i })).toBeInTheDocument();
+    expect(retryButton).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /try billing again/i })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /confirm hosted checkout/i }));
@@ -152,10 +154,12 @@ describe('APP1-CLAIMUI-RV03 preview retry reset [RES-01][RES-02][NAV-11]', () =>
     await user.click(screen.getByRole('button', { name: /continue to checkout/i }));
     await user.click(screen.getByRole('button', { name: /confirm hosted checkout/i }));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/checkout is temporarily unavailable/i));
-    expect(screen.getByRole('button', { name: /try billing again/i })).toBeInTheDocument();
+    const retryButton = screen.getByRole('button', { name: /try billing again/i });
+    expect(retryButton).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /continue to checkout/i }));
     expect(screen.getByRole('button', { name: /confirm hosted checkout/i })).toBeInTheDocument();
+    expect(retryButton).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /try billing again/i })).not.toBeInTheDocument();
     expect(checkout).toHaveBeenCalledTimes(1);
   });

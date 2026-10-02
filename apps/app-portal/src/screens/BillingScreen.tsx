@@ -163,7 +163,6 @@ export function BillingScreen({
   const checkoutEnabled = paymentsEnabled && Boolean(publicPlanCode);
   const [preview, setPreview] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [retry, setRetry] = useState(false);
   const [retryKind, setRetryKind] = useState<'checkout' | 'manage' | null>(null);
   const [status, setStatus] = useState<{ tone: StatusTone; message: string }>(() =>
     !paymentsEnabled
@@ -185,7 +184,6 @@ export function BillingScreen({
     completedRef.current = false;
     setPreview(false);
     setBusy(false);
-    setRetry(false);
     setRetryKind(null);
     setStatus(
       !paymentsEnabled
@@ -223,7 +221,7 @@ export function BillingScreen({
     inFlightRef.current = true;
     setPreview(false);
     setBusy(true);
-    setRetry(false);
+    setRetryKind(null);
     setStatus({ tone: 'info', message: 'Starting hosted checkout…' });
     statusRef.current?.focus();
     try {
@@ -259,7 +257,6 @@ export function BillingScreen({
       if (result.status !== 'failed' && result.status !== 'expired' && result.status !== 'canceled') {
         inFlightRef.current = false;
         setBusy(false);
-        setRetry(true);
         setRetryKind('checkout');
         setStatus({
           tone: 'error',
@@ -288,7 +285,6 @@ export function BillingScreen({
       const copy = billingCopy(parsed);
       inFlightRef.current = false;
       setBusy(false);
-      setRetry(copy.retry);
       setRetryKind(copy.retry ? 'checkout' : null);
       setStatus({ tone: copy.tone, message: copy.message });
       statusRef.current?.focus();
@@ -302,7 +298,7 @@ export function BillingScreen({
     const epoch = epochRef.current;
     inFlightRef.current = true;
     setBusy(true);
-    setRetry(false);
+    setRetryKind(null);
     setStatus({ tone: 'info', message: 'Opening billing portal…' });
     try {
       const result = await client.manage();
@@ -319,7 +315,6 @@ export function BillingScreen({
       const copy = billingCopy(asBillingError(error));
       inFlightRef.current = false;
       setBusy(false);
-      setRetry(copy.retry);
       setRetryKind(copy.retry ? 'manage' : null);
       setStatus({ tone: copy.tone, message: copy.message });
       statusRef.current?.focus();
@@ -331,7 +326,6 @@ export function BillingScreen({
       return;
     }
     setPreview(true);
-    setRetry(false);
     setRetryKind(null);
     setStatus({
       tone: 'info',
@@ -383,7 +377,7 @@ export function BillingScreen({
         >
           Manage billing
         </button>
-        {retry ? (
+        {retryKind ? (
           <button
             type="button"
             className="acx-btn"

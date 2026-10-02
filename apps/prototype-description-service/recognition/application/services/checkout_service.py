@@ -7,6 +7,7 @@ reconciliation; retries must not mint a second vendor mutation.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import secrets
@@ -35,6 +36,7 @@ from recognition.infrastructure.repositories.checkout_attempt_repository import 
 
 _ALLOWED_PROVIDERS = frozenset({"polar", "fake"})
 _ALLOWED_ENVIRONMENTS = frozenset({"sandbox", "live"})
+_BILLING_PROVIDER_TIMEOUT_S = 10.0
 _RESUME_PROVIDER = frozenset({CheckoutAttemptStatus.CREATED})
 _REFUSE_VENDOR = frozenset({CheckoutAttemptStatus.PROVIDER_REQUESTED, CheckoutAttemptStatus.AMBIGUOUS})
 _REPLAY_STATUSES = frozenset(
@@ -325,13 +327,16 @@ class CheckoutService:
         await self._repository.mark_provider_requested(attempt.tenant_id, attempt.id)
         await self._commit()
         try:
-            session = await self._create_provider_session(
-                tenant_id=attempt.tenant_id,
-                plan_code=plan_code,
-                success_url=success_url,
-                cancel_url=cancel_url,
-                idempotency_key=attempt.idempotency_key,
-                attempt_id=attempt.id,
+            session = await asyncio.wait_for(
+                self._create_provider_session(
+                    tenant_id=attempt.tenant_id,
+                    plan_code=plan_code,
+                    success_url=success_url,
+                    cancel_url=cancel_url,
+                    idempotency_key=attempt.idempotency_key,
+                    attempt_id=attempt.id,
+                ),
+                timeout=_BILLING_PROVIDER_TIMEOUT_S,
             )
         except Exception as exc:
             await self._record_provider_failure(attempt.tenant_id, attempt.id, exc)

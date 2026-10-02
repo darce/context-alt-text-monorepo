@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -65,6 +66,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_KEY_PAGE_LIMIT = 25
 MAX_KEY_PAGE_LIMIT = 100
 MAX_KEY_LOOKUP_PAGES: Final[int] = 100
+_BILLING_PROVIDER_TIMEOUT_S = 10.0
 NO_STORE_HEADERS = {"Cache-Control": "no-store"}
 _SAFE_RETURN_PATH = re.compile(r"^/[A-Za-z0-9/_-]*$")
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._:-]{64,128}$")
@@ -901,7 +903,10 @@ async def portal_billing_manage(
     if not callable(create_portal_session):
         raise _billing_http_error(status.HTTP_503_SERVICE_UNAVAILABLE, "billing_portal_unavailable")
     try:
-        portal_url = await create_portal_session(tenant_id=principal.tenant_id, return_url=return_url)
+        portal_url = await asyncio.wait_for(
+            create_portal_session(tenant_id=principal.tenant_id, return_url=return_url),
+            timeout=_BILLING_PROVIDER_TIMEOUT_S,
+        )
     except Exception:
         raise _billing_http_error(status.HTTP_503_SERVICE_UNAVAILABLE, "billing_portal_unavailable") from None
     if not isinstance(portal_url, str) or not portal_url:

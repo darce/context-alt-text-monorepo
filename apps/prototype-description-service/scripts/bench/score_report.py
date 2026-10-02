@@ -15,7 +15,6 @@ from typing import Any
 
 from scripts.bench.corpus import ItemOutcomeStore, is_detection_exhaustive, load_bench_manifest
 from scripts.bench.export_map import _unwrap_rows, load_leg_exports, require_cluster_success, to_face_metric_inputs
-from scripts.bench.score import IOU_MATCH_THRESHOLD
 from scripts.bench.stack_pair import (
     BenchError,
     HOLM_FAMILY_ENDPOINTS,
@@ -1308,13 +1307,12 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                         if detection_manifest is not None
                         else []
                     )
-                    detection_run_manifest = {
-                        "iou_threshold": (
-                            manifest.iou_threshold
-                            if manifest.iou_threshold is not None
-                            else IOU_MATCH_THRESHOLD
+                    if manifest.iou_threshold is None:
+                        raise BenchError(
+                            "manifest_iou_threshold_missing",
+                            f"{root / 'manifest.json'} is missing a ratified iou_threshold",
                         )
-                    }
+                    detection_run_manifest = {"iou_threshold": manifest.iou_threshold}
                     det_matched = detection_pr_strict(
                         strict_detection_inputs,
                         annotation_mode=detection_mode,

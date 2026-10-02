@@ -301,6 +301,28 @@ def test_model_provenance_surfaced():  # HARM-01
     assert "seeded" in md and "NOT a caption-model baseline" in md
 
 
+@pytest.mark.parametrize("stamp_key", ["adapter", "model_id", "model_version"])
+def test_markdown_renders_null_model_stamp_without_changing_json(stamp_key):
+    record = _run_record()
+    for item in record["items"]:
+        if not item.get("error"):
+            item["describe"][stamp_key] = None
+
+    json_doc, md = build_reports(record, _manifest_entries())
+    output_key = {
+        "adapter": "adapters",
+        "model_id": "model_ids",
+        "model_version": "model_versions",
+    }[stamp_key]
+    assert json.loads(json_doc)["provenance"]["model"][output_key] == [None]
+    expected = {
+        "adapter": "adapter(s): `unknown`",
+        "model_id": "model(s): `unknown`",
+        "model_version": "version(s): `unknown`",
+    }[stamp_key]
+    assert expected in md
+
+
 def test_model_provenance_rejects_complete_run_without_any_stamps():
     record = _run_record()
     model_stamp_keys = (

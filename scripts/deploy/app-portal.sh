@@ -396,9 +396,6 @@ for _activation_path in "$STAGING_DIR" "$ROLLBACK_DIR" "$APP_WWW" "${APP_WWW}.pr
     refuse "CADDY_COMPOSE collides with activation paths"
   fi
 done
-if [ -n "${FRONTEND_DIST}" ]; then
-  guard_source_path FRONTEND_DIST "$FRONTEND_DIST" dir
-fi
 if [ -n "$APP_RELOAD_CMD" ]; then
   guard_source_path APP_RELOAD_CMD "$APP_RELOAD_CMD" exec
 fi
@@ -427,6 +424,7 @@ validate_frontend() {
   if [ -z "${FRONTEND_DIST}" ]; then
     refuse "FRONTEND_DIST is required for --apply"
   fi
+  guard_source_path FRONTEND_DIST "$FRONTEND_DIST" dir
   if [ ! -d "$FRONTEND_DIST" ]; then
     refuse "FRONTEND_DIST is not a directory: ${FRONTEND_DIST}"
   fi
@@ -869,6 +867,9 @@ if [ "$APPLY" -eq 1 ]; then
   # Preserve journal path validation before contacting a different project.
   if [ -e "$ACTIVATION_JOURNAL" ] || [ -L "$ACTIVATION_JOURNAL" ]; then
     load_activation_journal || refuse "could not inspect interrupted activation journal ${ACTIVATION_JOURNAL}"
+  elif [ -n "${FRONTEND_DIST}" ]; then
+    # Without recovery work, reject unsafe source paths before contacting Compose.
+    guard_source_path FRONTEND_DIST "$FRONTEND_DIST" dir
   fi
   command -v docker >/dev/null 2>&1 || refuse "docker compose is required to apply the Caddy overlay and reload Caddy"
   docker compose version >/dev/null 2>&1 || refuse "docker compose is unavailable; cannot apply the Caddy overlay or reload Caddy"
@@ -896,6 +897,8 @@ fi
 # Recovery must not depend on the replacement build being available or valid.
 if [ "$APPLY" -eq 1 ]; then
   validate_frontend
+elif [ -n "${FRONTEND_DIST}" ]; then
+  guard_source_path FRONTEND_DIST "$FRONTEND_DIST" dir
 fi
 
 print_plan

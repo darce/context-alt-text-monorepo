@@ -495,6 +495,9 @@ def _write_run_meta(run_dir: Path, tmp_path: Path, media_ids: list[int]) -> None
     from scripts.bench.tests.conftest import write_manifest
 
     manifest = write_manifest(tmp_path / "manifest.json", media_ids, roster=["Alice Q"])
+    manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
+    manifest_payload["iou_threshold"] = 0.5
+    manifest.write_text(json.dumps(manifest_payload), encoding="utf-8")
     pair = load_stack_pair(write_pair(tmp_path / "pair.yaml", valid_pair_dict(accepted_set_floor=0.5)))
     from scripts.bench.driver import init_run_dir
 

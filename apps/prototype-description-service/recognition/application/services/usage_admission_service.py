@@ -271,7 +271,11 @@ class UsageAdmissionService:
         assert_fence_current = getattr(self._repository, "assert_fence_current", None)
         if not callable(assert_fence_current):
             raise UsageAdmissionUnavailableError("usage repository does not expose fence assertion")
-        await assert_fence_current(ticket, fence_token=fence_token.strip())
+        await _with_operation_timeout(
+            assert_fence_current(ticket, fence_token=fence_token.strip()),
+            timeout_s=self._timeout_s,
+            operation="assert_fence_current",
+        )
 
     async def begin_recovery(self, ticket: UsageTicket) -> Any:
         """Lock ledger identity for trusted terminal recovery. No new work is minted."""
@@ -279,7 +283,11 @@ class UsageAdmissionService:
         begin_recovery = getattr(self._repository, "begin_recovery", None)
         if not callable(begin_recovery):
             raise UsageAdmissionUnavailableError("usage repository does not support trusted recovery")
-        return await begin_recovery(ticket)
+        return await _with_operation_timeout(
+            begin_recovery(ticket),
+            timeout_s=self._timeout_s,
+            operation="begin_recovery",
+        )
 
     async def complete_recovery(self, reservation: Any, *, target_status: UsageReservationStatus) -> bool:
         """Re-fence to the current epoch and settle one already-locked reservation."""
@@ -288,7 +296,13 @@ class UsageAdmissionService:
         complete_recovery = getattr(self._repository, "complete_recovery", None)
         if not callable(complete_recovery):
             raise UsageAdmissionUnavailableError("usage repository does not support trusted recovery")
-        return bool(await complete_recovery(reservation, target_status=target_status))
+        return bool(
+            await _with_operation_timeout(
+                complete_recovery(reservation, target_status=target_status),
+                timeout_s=self._timeout_s,
+                operation="complete_recovery",
+            )
+        )
 
 
 # Explicit implementation aliases are useful to dependency-wiring code while

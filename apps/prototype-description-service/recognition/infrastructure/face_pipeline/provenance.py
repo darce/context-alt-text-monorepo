@@ -381,9 +381,10 @@ def _opencv_distribution_versions() -> tuple[tuple[str, str], ...]:
             continue
     if not versions:
         raise RuntimeError("no installed OpenCV distribution found in package metadata")
-    if len(versions) > 1:
+    installed_versions = {version for _, version in versions}
+    if len(installed_versions) > 1:
         conflicts = ", ".join(f"{distribution}={version}" for distribution, version in sorted(versions))
-        raise RuntimeError(f"ambiguous installed OpenCV distributions: {conflicts}")
+        raise RuntimeError(f"conflicting OpenCV distribution versions: {conflicts}")
     return tuple(sorted(versions))
 
 

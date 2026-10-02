@@ -241,7 +241,7 @@ async def test_terminate_stalled_jobs_with_identities_returns_job_and_tenant() -
             )
             await session.flush()
             count = queue.terminate_stalled_jobs
-            assert count.__annotations__.get("return") in {"int", int} or True
+            assert count.__annotations__["return"] == "int"
             identities = await queue.terminate_stalled_jobs_with_identities(
                 stale_after_seconds=600,
                 now=datetime.now(tz=UTC),

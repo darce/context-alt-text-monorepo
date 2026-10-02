@@ -328,8 +328,15 @@ def test_failure_atomicity_leaves_destination_unchanged(
     backend.write_text(original, encoding="utf-8")
     os.chmod(backend, 0o600)
 
+    real_replace = cli.os.replace
+    replace_calls = 0
+
     def boom(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
-        raise OSError("injected replace failure")
+        nonlocal replace_calls
+        replace_calls += 1
+        if replace_calls == 1:
+            raise OSError("injected replace failure")
+        real_replace(src, dst)
 
     monkeypatch.setattr(cli.os, "replace", boom)
     code, _out, err = _run(
@@ -346,6 +353,7 @@ def test_failure_atomicity_leaves_destination_unchanged(
     )
     assert code == 1
     assert "atomic write failed" in err
+    assert replace_calls == 2
     assert backend.read_text(encoding="utf-8") == original
     leftovers = list(tmp_path.glob(".env.*.tmp"))
     assert leftovers == []
@@ -509,6 +517,57 @@ def test_second_write_failure_does_not_leave_partial_config(
     assert frontend.read_text(encoding="utf-8") == frontend_original
     assert "sk_live_" not in out
     assert "sk_live_" not in err
+
+
+@pytest.mark.parametrize("existing", [True, False])
+def test_second_directory_fsync_failure_does_not_leave_partial_config(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing: bool
+) -> None:
+    key_file = _write_key(tmp_path / "pk", _pk_live())
+    backend = tmp_path / "backend.env"
+    frontend = tmp_path / "frontend.env"
+    originals = {backend: "KEEP_BACKEND=yes\n", frontend: "VITE_PUBLIC_OK=keep-me\n"}
+    if existing:
+        for path, content in originals.items():
+            path.write_text(content, encoding="utf-8")
+            path.chmod(0o600)
+
+    real_fsync = cli.os.fsync
+    directory_syncs = 0
+
+    def fail_second_directory_sync(fd: int) -> None:
+        nonlocal directory_syncs
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            directory_syncs += 1
+            if directory_syncs == 2:
+                # The frontend replacement must already have happened.
+                assert "VITE_CLERK_PUBLISHABLE_KEY=" in frontend.read_text(encoding="utf-8")
+                raise OSError("injected second directory fsync failure")
+        real_fsync(fd)
+
+    monkeypatch.setattr(cli.os, "fsync", fail_second_directory_sync)
+    code, _out, err = _run(
+        cli,
+        [
+            "--apply",
+            "--publishable-key-file",
+            str(key_file),
+            "--audience",
+            AUDIENCE,
+            "--backend-env",
+            str(backend),
+            "--frontend-env",
+            str(frontend),
+        ],
+    )
+    assert directory_syncs >= 2
+    assert code == 1
+    assert "atomic write failed" in err
+    for path, content in originals.items():
+        if existing:
+            assert path.read_text(encoding="utf-8") == content
+        else:
+            assert not path.exists()
 
 
 def test_fetch_jwks_enforces_total_deadline_on_slow_trickle(cli: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:

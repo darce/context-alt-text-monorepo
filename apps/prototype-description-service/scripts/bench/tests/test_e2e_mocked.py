@@ -128,3 +128,52 @@ def test_mocked_e2e_writes_full_report_dir(tmp_path: Path, monkeypatch) -> None:
         assert cell.get("ci_half_width") is None
         assert "holm_significant" not in cell or cell.get("holm_significant") in {None, False}
     assert report.suffix == ".html"
+
+
+def test_empty_detection_population_emits_directional_cells(tmp_path: Path) -> None:
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1, 2])
+    payload = json.loads(manifest.read_text())
+    for entry in payload["entries"]:
+        entry["face_count"] = 0
+        entry["face_boxes"] = []
+        entry["present_identities"] = []
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = tmp_path / "out"
+    clients = {
+        "acx-dev-insightface": FakeClient(),
+        "acx-dev-fir": FakeClient(),
+    }
+    run_pair(
+        pair,
+        manifest_path=manifest,
+        images_dir=images,
+        out_dir=out,
+        clients=clients,
+        skip_preflight=True,
+        pre_run_reset_by_stack=_fresh_reset_evidence(),
+    )
+    from scripts.bench.tests.conftest import write_stub_preflight
+
+    for stack_id in clients:
+        write_stub_preflight(out, stack_id)
+
+    assert score_head_to_head(out).exists()
+    accepted = json.loads((out / "score" / "accepted_set.json").read_text())
+    assert accepted["accepted_set_size"] == 2
+    assert accepted["detection_scoring_set_size"] == 0
+    frames = json.loads((out / "score" / "frames.json").read_text())
+    primary = [
+        cell for cell in frames["cells"]
+        if cell["cell"] == "detection_recall@frame_e2e/label_map_primary"
+    ]
+    assert len(primary) == 2
+    for cell in primary:
+        assert cell["tier"] == "DIRECTIONAL"
+        assert cell["true_positives"] == 0
+        assert cell["false_positives"] == 0
+        assert cell["false_negatives"] == 0
+        assert cell["ci_half_width"] is None
+        assert cell["p_value"] is None
+        assert cell["primary_claim_type"] == "unsupported"

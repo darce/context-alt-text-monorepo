@@ -1303,8 +1303,10 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                     det_count = None
                     strict_detection_counts_by_path: dict[str, ImageCounts] = {}
                 else:
-                    strict_detection_inputs = _strict_detection_inputs(
-                        det, detection_manifest, export_payload, join
+                    strict_detection_inputs = (
+                        _strict_detection_inputs(det, detection_manifest, export_payload, join)
+                        if detection_manifest is not None
+                        else []
                     )
                     detection_run_manifest = {
                         "iou_threshold": (

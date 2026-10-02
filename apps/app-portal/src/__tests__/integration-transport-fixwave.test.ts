@@ -141,6 +141,34 @@ describe('APP-1 integration transport fix wave [RES-02][RLSE-04][DATA-03]', () =
     await expect(pending).resolves.toEqual(usage());
   });
 
+  it('cancels a streamed response when accumulated bytes exceed the limit [RES-05]', async () => {
+    let cancelled = 0;
+    const fetchImpl = vi.fn(async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array(2 * 1024 * 1024));
+            controller.enqueue(new Uint8Array(1));
+          },
+          cancel() {
+            cancelled += 1;
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    const request = createPortalRequest({
+      getToken: async () => 'session-jwt',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      timeoutMs: 8_000,
+      owner: OWNER_A,
+      currentOwner: () => OWNER_A,
+    });
+
+    await expect(request('/portal/usage')).rejects.toThrow('portal response exceeds maximum size');
+    expect(cancelled).toBeGreaterThan(0);
+  });
+
   it('cancels a stalled body when the owner abort signal fires [RES-02]', async () => {
     const controller = new AbortController();
     const fetchImpl = vi.fn(async () => stalledJsonResponse());

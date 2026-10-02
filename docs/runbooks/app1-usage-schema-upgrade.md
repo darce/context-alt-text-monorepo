@@ -49,7 +49,9 @@ modern row as legacy just because `operation_id` equals `idempotency_key`.
 4. Run the heal with the drained-writer contract:
 
    ```bash
-   ACX_USAGE_SCHEMA_WRITERS_DRAINED=1 python -m scripts.sync_identity_schema
+   cd /opt/acx-backend/prod
+   docker compose -f docker-compose.env.yml -f docker-compose.admin.yml \
+     run --rm -e ACX_USAGE_SCHEMA_WRITERS_DRAINED=1 api python -m scripts.sync_identity_schema
    ```
 
    Equivalent session GUC (already inside the heal transaction):

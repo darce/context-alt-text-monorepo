@@ -155,9 +155,15 @@ function PortalShell({
   const { user } = useUser();
   const navigate = useNavigate();
   const location = useLocation();
+  const privateShellRef = useRef<HTMLDivElement>(null);
+  const restoreKeysFocusRef = useRef(false);
 
   useEffect(() => {
-    if (location.search || location.hash) {
+    // Clerk owns the sign-in/up callback URLs; leave their verification data intact.
+    const portalRoute =
+      matchesExactPortalPath(location.pathname, '/') ||
+      ['/keys', '/usage', '/billing', '/claim'].some((route) => matchesPortalSegment(location.pathname, route));
+    if (portalRoute && (location.search || location.hash)) {
       navigate({ pathname: location.pathname, search: '', hash: '' }, { replace: true });
     }
   }, [location.hash, location.pathname, location.search, navigate]);
@@ -181,6 +187,19 @@ function PortalShell({
     setReturnAttemptId(null);
   }
   const displayAccount = ownedAccount(account, activeOwner);
+
+  useEffect(() => {
+    if (!restoreKeysFocusRef.current || !matchesExactPortalPath(location.pathname, '/keys')) {
+      return;
+    }
+    // The keys screen is remounted, and its guidance trigger may no longer exist.
+    const heading = privateShellRef.current?.querySelector<HTMLHeadingElement>('h1');
+    if (heading) {
+      heading.tabIndex = -1;
+      heading.focus();
+      restoreKeysFocusRef.current = false;
+    }
+  }, [location.pathname, displayAccount.status]);
 
   epochRef.current = fetchEpoch;
   ownerRef.current = activeOwner;
@@ -304,8 +323,12 @@ function PortalShell({
   const signOutNow = () => void handleSignOut();
   const userMenu = <UserButton />;
   const path = location.pathname;
+  const dismissWordPressGuidance = () => {
+    restoreKeysFocusRef.current = true;
+    navigate('/keys');
+  };
   const wrapPrivate = (node: ReactNode) => (
-    <div className="acx-private-shell">
+    <div ref={privateShellRef} className="acx-private-shell">
       <SessionEscape
         userMenu={userMenu}
         onSignOut={signOutNow}
@@ -402,7 +425,7 @@ function PortalShell({
   }
   if (matchesPortalSegment(path, '/keys/wordpress')) {
     return wrapPrivate(
-      <WordPressTestConnectionGuidance onClose={() => navigate('/keys')} onReturnToKeys={() => navigate('/keys')} />,
+      <WordPressTestConnectionGuidance onClose={dismissWordPressGuidance} onReturnToKeys={dismissWordPressGuidance} />,
     );
   }
   if (matchesPortalSegment(path, '/keys') && keyClient) {

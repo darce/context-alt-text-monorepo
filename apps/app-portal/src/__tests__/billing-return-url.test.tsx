@@ -96,6 +96,28 @@ afterEach(() => {
 });
 
 describe('billing return URL cleanup [WEB-44]', () => {
+  it.each(['/sign-in', '/sign-in/verify', '/sign-up', '/sign-up/verify'])(
+    'preserves Clerk callback query and fragment data on %s',
+    async (pathname) => {
+      const search = '?__clerk_ticket=verification-ticket&__clerk_status=verified';
+      const hash = '#verification-callback';
+      renderPortalAt(`${pathname}${search}${hash}`);
+
+      expect(
+        await screen.findByRole('form', {
+          name: pathname.startsWith('/sign-in') ? 'Secure account sign-in' : 'Secure account setup',
+        }),
+      ).toBeInTheDocument();
+      await waitFor(() => {
+        expect(JSON.parse(screen.getByTestId('router-location').textContent ?? '{}')).toEqual({
+          pathname,
+          search,
+          hash,
+        });
+      });
+    },
+  );
+
   it('replaces billing return query and fragment values while preserving the route', async () => {
     signInVerified();
     renderPortalAt(`/billing/return?attempt_id=${ATTEMPT_ID}&invitation=${INVITATION}#raw_key=${RAW_KEY}`);

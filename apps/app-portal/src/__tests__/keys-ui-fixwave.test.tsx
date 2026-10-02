@@ -304,27 +304,110 @@ describe('APP1-KEYS-RV04 tenant key limit create latch [DATA-03][RES-01]', () =>
 
   it('latches Create when no usable key is visible on the loaded page', async () => {
     const user = userEvent.setup();
+    const list = vi
+      .fn<PortalKeyClient['list']>()
+      .mockResolvedValueOnce(
+        page([metadata({ revoked_at: '2026-09-22T00:00:00Z' })], { next_cursor: 'page-2' }),
+      )
+      .mockResolvedValueOnce(page([]));
     const create = vi
       .fn<PortalKeyClient['create']>()
       .mockRejectedValueOnce(keyError(409, { detail: 'tenant key limit reached' }));
-    renderKeys(
-      mockClient({
-        list: vi.fn(async () =>
-          page([metadata({ revoked_at: '2026-09-22T00:00:00Z' })], { next_cursor: 'page-2' }),
-        ),
-        create,
-      }),
-    );
+    renderKeys(mockClient({ list, create }));
 
     const createButton = screen.getByRole('button', { name: /create api key/i });
     await waitFor(() => expect(createButton).toBeEnabled());
     await user.click(createButton);
-    await waitFor(() => {
-      expect(screen.getByRole('status')).toHaveTextContent(/usable api key already exists/i);
-    });
+    const refreshButton = await screen.findByRole('button', { name: /refresh keys/i });
+    expect(refreshButton).toBeEnabled();
+    expect(screen.getByText(/tenant key limit reached/i)).toBeInTheDocument();
     expect(createButton).toBeDisabled();
+
+    await user.click(refreshButton);
+    await waitFor(() => expect(createButton).toBeEnabled());
+    expect(list).toHaveBeenNthCalledWith(2, undefined);
+  });
+
+  it('keeps Create blocked after a refresh still returns a usable key, until it is revoked', async () => {
+    const user = userEvent.setup();
+    const list = vi
+      .fn<PortalKeyClient['list']>()
+      .mockResolvedValueOnce(page([]))
+      .mockResolvedValueOnce(page([metadata({ id: KEY_B })]))
+      .mockResolvedValueOnce(
+        page([metadata({ id: KEY_B, revoked_at: '2026-09-22T00:00:00Z' })]),
+      );
+    const create = vi
+      .fn<PortalKeyClient['create']>()
+      .mockRejectedValueOnce(keyError(409, { detail: 'tenant key limit reached' }));
+    renderKeys(mockClient({ list, create }));
+
+    const createButton = screen.getByRole('button', { name: /create api key/i });
+    await waitFor(() => expect(createButton).toBeEnabled());
+    await user.click(createButton);
+    await user.click(await screen.findByRole('button', { name: /refresh keys/i }));
+
+    await screen.findByText(new RegExp(KEY_B));
+    expect(list).toHaveBeenNthCalledWith(2, undefined);
+    expect(createButton).toBeDisabled();
+    const refreshButton = screen.getByRole('button', { name: /refresh keys/i });
+    expect(refreshButton).toBeEnabled();
     await user.click(createButton);
     expect(create).toHaveBeenCalledTimes(1);
+
+    await user.click(refreshButton);
+    await waitFor(() => expect(createButton).toBeEnabled());
+    expect(list).toHaveBeenNthCalledWith(3, undefined);
+    expect(screen.queryByRole('button', { name: /refresh keys/i })).not.toBeInTheDocument();
+  });
+
+  it('keeps Create blocked and shows the list error when a limit refresh fails', async () => {
+    const user = userEvent.setup();
+    const list = vi
+      .fn<PortalKeyClient['list']>()
+      .mockResolvedValueOnce(page([]))
+      .mockRejectedValueOnce(keyError(503, { detail: 'portal key service unavailable' }));
+    const create = vi
+      .fn<PortalKeyClient['create']>()
+      .mockRejectedValueOnce(keyError(409, { detail: 'tenant key limit reached' }));
+    renderKeys(mockClient({ list, create }));
+
+    const createButton = screen.getByRole('button', { name: /create api key/i });
+    await waitFor(() => expect(createButton).toBeEnabled());
+    await user.click(createButton);
+    const refreshButton = await screen.findByRole('button', { name: /refresh keys/i });
+    await user.click(refreshButton);
+
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(/temporarily unavailable/i);
+    });
+    expect(createButton).toBeDisabled();
+    expect(screen.getByRole('button', { name: /try again/i })).toBeEnabled();
+  });
+
+  it('keeps Create blocked when loading another page after a tenant key limit', async () => {
+    const user = userEvent.setup();
+    const list = vi
+      .fn<PortalKeyClient['list']>()
+      .mockResolvedValueOnce(
+        page([metadata({ revoked_at: '2026-09-22T00:00:00Z' })], { next_cursor: 'page-2' }),
+      )
+      .mockResolvedValueOnce(page([metadata({ id: KEY_B })]));
+    const create = vi
+      .fn<PortalKeyClient['create']>()
+      .mockRejectedValueOnce(keyError(409, { detail: 'tenant key limit reached' }));
+    renderKeys(mockClient({ list, create }));
+
+    const createButton = screen.getByRole('button', { name: /create api key/i });
+    await waitFor(() => expect(createButton).toBeEnabled());
+    await user.click(createButton);
+    await screen.findByRole('button', { name: /refresh keys/i });
+    await user.click(screen.getByRole('button', { name: /load more keys/i }));
+
+    await screen.findByText(new RegExp(KEY_B));
+    expect(list).toHaveBeenNthCalledWith(2, { cursor: 'page-2' });
+    expect(createButton).toBeDisabled();
+    expect(screen.getByRole('button', { name: /refresh keys/i })).toBeEnabled();
   });
 
   it('does not latch Create on a transient create failure', async () => {

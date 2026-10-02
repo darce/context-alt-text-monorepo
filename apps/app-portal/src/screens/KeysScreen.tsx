@@ -218,7 +218,7 @@ function KeysScreenSession({
           : 'Metadata only; raw secrets appear once after issue.',
       );
       setStatusTone('info');
-      if (!append) {
+      if (!append && !currentUsableKey(result.data, Date.now())) {
         setCreateBlocked(false);
       }
     } catch (error) {
@@ -412,6 +412,19 @@ function KeysScreenSession({
           >
             Create API key
           </button>
+          {createBlocked ? (
+            <>
+              <span className="acx-status acx-status-error">Tenant key limit reached.</span>
+              <button
+                type="button"
+                className="acx-btn"
+                onClick={() => void loadKeys()}
+                disabled={actionsLocked}
+              >
+                Refresh keys
+              </button>
+            </>
+          ) : null}
         </div>
         {mode === 'loading' && !page ? <p>Loading API key metadata…</p> : null}
         {rows.length > 0 ? (

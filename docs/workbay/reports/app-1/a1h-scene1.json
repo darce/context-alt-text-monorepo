@@ -1,0 +1,38 @@
+{
+  "lane": "a1h-scene1",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "resolved_python=\"$lane_root/.venv/bin/python\"; \"$resolved_python\" -c \"import scene.application.describe_run_repository as module; print(module.__file__)\"",
+      "result": "pass",
+      "detail": "Import resolved inside this lane: /home/gate/workbay-sandbox/feature-app-1-a1h-scene1-0282d068/apps/prototype-description-service/scene/application/describe_run_repository.py."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal scene/tests/test_describe_async_repository.py scene/tests/test_describe_async_worker.py scene/tests/test_describe_route.py scene/tests/test_describe_run_idempotency.py scene/tests/test_describe_run_quota.py scene/tests/test_describe_run_reclaim.py",
+      "result": "fail",
+      "detail": "uv failed before pytest while removing /home/gate/workbay-sandbox/.venv-lane-feature-app-1-a1h-scene1-0282d068/lib/python3.12/site-packages/../../../bin/alembic: Read-only file system (os error 30)."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal scene/tests/test_describe_async_repository.py scene/tests/test_describe_async_worker.py scene/tests/test_describe_route.py scene/tests/test_describe_run_idempotency.py scene/tests/test_describe_run_quota.py scene/tests/test_describe_run_reclaim.py",
+      "result": "not_run",
+      "detail": "At 0:04:00 pytest-timeout emitted `Timeout (0:04:00)!`; the traceback was in aiosqlite/core.py:59 (_connection_worker_thread) while running scene/tests/test_describe_async_repository.py:128 (test_create_single_run_then_provisional_then_final). The session was stopped after this sandbox fixture timeout, per lane instructions."
+    },
+    {
+      "command": "pytest recognition/tests/integration/test_app1_usage_worker_postgres.py::test_postgres_worker_usage_lifecycle",
+      "result": "not_run",
+      "detail": "The sandbox has no PostgreSQL database. The integration test file was read for its lifecycle assertions."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16019,
+      "finding_id": "APP1-WORKER-RV04",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scene/application/describe_run_repository.py:772 - invokes recovery for each reclaimed tenant/job; apps/prototype-description-service/scene/application/describe_run_repository.py:777 - detects unsafe recovery outcomes; apps/prototype-description-service/scene/application/describe_run_repository.py:782 - raises so the startup wrapper at apps/prototype-description-service/scene/application/describe_run_repository.py:854 cannot commit them.",
+      "guard_test": "apps/prototype-description-service/scene/tests/test_describe_run_reclaim.py::test_startup_reclaim_releases_queued_and_charges_started_run"
+    }
+  ],
+  "new_findings": [],
+  "summary": "The listed restart-settlement defect is corrected: startup reclaim releases queued reservations and commits started-run reservations, with assertions that would fail if recovery were removed. The selected suite could not complete because an aiosqlite test timed out in this sandbox; PostgreSQL integration coverage was unavailable. No new seam defect was found."
+}

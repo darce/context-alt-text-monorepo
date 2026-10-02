@@ -71,9 +71,9 @@ const stubClient = (over: Partial<GuidedLiveDescriptionClient> = {}): RecordingC
 
   return {
     calls,
-    submit: vi.fn<GuidedLiveDescriptionClient['submit']>((mediaId) => {
-      calls.push({ op: 'submit', args: [mediaId] });
-      return submitImpl(mediaId);
+    submit: vi.fn<GuidedLiveDescriptionClient['submit']>((mediaId, idempotencyKey) => {
+      calls.push({ op: 'submit', args: [mediaId, idempotencyKey] });
+      return submitImpl(mediaId, idempotencyKey);
     }),
     poll: vi.fn<GuidedLiveDescriptionClient['poll']>((runId) => {
       calls.push({ op: 'poll', args: [runId] });

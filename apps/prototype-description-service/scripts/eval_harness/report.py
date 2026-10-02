@@ -1522,6 +1522,13 @@ def _model_provenance(
                     invariant="model_provenance_refuses_mixed_values",
                 )
         out[output_key] = [values[key] for key in sorted(values)]
+    if successful_items and not any(out.values()):
+        missing_keys = ", ".join(item_key for _, item_key, _ in dimensions)
+        raise ReportError(
+            "run record has no model provenance stamps; "
+            f"missing {missing_keys} from item descriptions and run provenance; refusing aggregate score",
+            invariant="model_provenance_refuses_empty_stamps",
+        )
     return out
 
 

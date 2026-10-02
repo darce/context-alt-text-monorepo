@@ -49,6 +49,7 @@ type LogoutView = 'idle' | 'loading' | 'error';
 
 const CLERK_LOAD_TIMEOUT_MS = 8_000;
 const PORTAL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const BILLING_RETURN_ATTEMPT_STORAGE_PREFIX = 'app-portal:billing-return-attempt:';
 
 function isEmailVerified(user: ReturnType<typeof useUser>['user']): boolean {
   const status = user?.primaryEmailAddress?.verification?.status;
@@ -99,6 +100,53 @@ function readAttemptId(value: string | null | undefined): string | null {
     return null;
   }
   return value;
+}
+
+function billingReturnAttemptStorageKey(tenantId: string): string {
+  return `${BILLING_RETURN_ATTEMPT_STORAGE_PREFIX}${tenantId}`;
+}
+
+function storeBillingReturnAttemptId(tenantId: string, value: string | null | undefined): string | null {
+  const key = billingReturnAttemptStorageKey(tenantId);
+  const attemptId = readAttemptId(value);
+  try {
+    if (attemptId) {
+      window.sessionStorage.setItem(key, attemptId);
+    } else {
+      window.sessionStorage.removeItem(key);
+    }
+  } catch {
+    // Keep the in-memory route recovery available if browser storage is unavailable.
+  }
+  return attemptId;
+}
+
+function readStoredBillingReturnAttemptId(tenantId: string): string | null {
+  const key = billingReturnAttemptStorageKey(tenantId);
+  try {
+    const storedAttemptId = window.sessionStorage.getItem(key);
+    return readAttemptId(storedAttemptId);
+  } catch {
+    return null;
+  }
+}
+
+function clearStoredBillingReturnAttemptIds(): void {
+  try {
+    const storage = window.sessionStorage;
+    const keys: string[] = [];
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (key?.startsWith(BILLING_RETURN_ATTEMPT_STORAGE_PREFIX)) {
+        keys.push(key);
+      }
+    }
+    for (const key of keys) {
+      storage.removeItem(key);
+    }
+  } catch {
+    // Storage cleanup should not prevent sign-out or routing.
+  }
 }
 
 function matchesPortalSegment(path: string, route: string): boolean {
@@ -245,6 +293,12 @@ function PortalShell({
   }, []);
 
   useEffect(() => {
+    if (isLoaded && !isSignedIn) {
+      clearStoredBillingReturnAttemptIds();
+    }
+  }, [isLoaded, isSignedIn]);
+
+  useEffect(() => {
     if (!isLoaded || !isSignedIn || logout !== 'idle' || !activeOwner) {
       return;
     }
@@ -293,6 +347,7 @@ function PortalShell({
   }, [fetchEpoch, fetchImpl, isLoaded, isSignedIn, logout, portalMeTimeoutMs, sessionId, user, userId]);
 
   const handleSignOut = useCallback(async () => {
+    clearStoredBillingReturnAttemptIds();
     setReturnAttemptId(null);
     setAccount({ status: 'idle' });
     setLogout('loading');
@@ -455,7 +510,7 @@ function PortalShell({
         client={billingClient}
         publicPlanCode={publicPlanCode}
         paymentsEnabled={paymentsEnabled}
-        attemptId={returnAttemptId}
+        attemptId={returnAttemptId ?? readStoredBillingReturnAttemptId(displayAccount.tenantId)}
         onNavigateToBilling={() => navigate('/billing')}
         onNavigateToUsage={() => navigate('/usage')}
       />,
@@ -469,7 +524,7 @@ function PortalShell({
         paymentsEnabled={paymentsEnabled}
         cancellationNotice={{ onRetry: () => navigate('/billing') }}
         onNavigateToReturn={(attemptId) => {
-          setReturnAttemptId(readAttemptId(attemptId));
+          setReturnAttemptId(storeBillingReturnAttemptId(displayAccount.tenantId, attemptId));
           navigate('/billing/return');
         }}
         onNavigateToUsage={() => navigate('/usage')}
@@ -483,7 +538,7 @@ function PortalShell({
         publicPlanCode={publicPlanCode}
         paymentsEnabled={paymentsEnabled}
         onNavigateToReturn={(attemptId) => {
-          setReturnAttemptId(readAttemptId(attemptId));
+          setReturnAttemptId(storeBillingReturnAttemptId(displayAccount.tenantId, attemptId));
           navigate('/billing/return');
         }}
         onNavigateToUsage={() => navigate('/usage')}

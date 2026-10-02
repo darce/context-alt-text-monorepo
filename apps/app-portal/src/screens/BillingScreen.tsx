@@ -363,6 +363,23 @@ export function BillingScreen({
         <h1>Billing</h1>
       </header>
       {publicPlanCode ? <p>Plan: {publicPlanCode}</p> : <p>Plan: not configured</p>}
+      {preview ? (
+        <ol
+          aria-label="Checkout steps"
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 'var(--acx-space-md)',
+            margin: 'var(--acx-space-md) 0',
+            paddingInlineStart: 'var(--acx-space-lg)',
+          }}
+        >
+          <li aria-current="step" style={{ fontWeight: 'var(--acx-font-weight-semibold)' }}>
+            Step 1 of 2: review plan
+          </li>
+          <li>Step 2 of 2: pay with the provider</li>
+        </ol>
+      ) : null}
       <div ref={statusRef} tabIndex={-1}>
         <StatusMessage tone={status.tone}>{status.message}</StatusMessage>
       </div>

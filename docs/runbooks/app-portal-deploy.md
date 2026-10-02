@@ -113,12 +113,17 @@ overrides.
 
 `--apply` then:
 
-1. Validates paths, `FRONTEND_DIST`, and `APP_UPSTREAM`. Before staging or
+1. Validates paths and `APP_UPSTREAM`. Before staging or
    interrupted recovery changes, resolves Compose configuration as JSON and
    uses `jq` to require the Caddy service's `/etc/caddy/Caddyfile` bind source
    to equal the absolute `CADDYFILE`. Checks the base-only configuration,
    any installed overlay, and the rendered replacement overlay. A mismatch
    names both paths and leaves staging, the journal, and live files untouched.
+   Then recovers any interrupted activation by restoring its snapshots,
+   reapplying its Compose state, reloading Caddy, and clearing the journal.
+   Recovery requires no replacement frontend build. Only after recovery does
+   it validate `FRONTEND_DIST`; an unavailable or invalid build exits nonzero
+   with the restored live state intact.
 2. Stages a merged Caddyfile, a complete www tree, and an overlay with
    `__APP_WWW__` rendered to the selected `APP_WWW`. Existing `api.*`,
    `demo.altcontext.com`, `129-213-40-111.sslip.io`, and `dl.darce.xyz` stay.

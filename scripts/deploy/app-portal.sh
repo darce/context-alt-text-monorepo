@@ -870,7 +870,6 @@ if [ "$APPLY" -eq 1 ]; then
   if [ -e "$ACTIVATION_JOURNAL" ] || [ -L "$ACTIVATION_JOURNAL" ]; then
     load_activation_journal || refuse "could not inspect interrupted activation journal ${ACTIVATION_JOURNAL}"
   fi
-  validate_frontend
   command -v docker >/dev/null 2>&1 || refuse "docker compose is required to apply the Caddy overlay and reload Caddy"
   docker compose version >/dev/null 2>&1 || refuse "docker compose is unavailable; cannot apply the Caddy overlay or reload Caddy"
   command -v jq >/dev/null 2>&1 || refuse "jq is required to verify the Caddyfile bind source"
@@ -892,6 +891,11 @@ if [ -e "$ACTIVATION_JOURNAL" ] || [ -L "$ACTIVATION_JOURNAL" ]; then
     fi
     echo "recovery pending: journal=${ACTIVATION_JOURNAL} phase=${JOURNAL_PHASE}; rerun with --apply"
   fi
+fi
+
+# Recovery must not depend on the replacement build being available or valid.
+if [ "$APPLY" -eq 1 ]; then
+  validate_frontend
 fi
 
 print_plan

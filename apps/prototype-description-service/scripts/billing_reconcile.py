@@ -511,7 +511,10 @@ class BillingReconciliationWorker:
                 unresolved.add("known_projections")
             recovery_progress = False
             if self._recovery_repository is not None:
+                failed_before = report.failed
                 recovery_progress = await self._reconcile_remote_orphans(report, dry_run=dry_run)
+                if report.failed > failed_before:
+                    unresolved.add("remote_orphans")
                 failed_before = report.failed
                 recovery_progress = (
                     await self._reconcile_ambiguous_checkouts(report, dry_run=dry_run) or recovery_progress
@@ -1096,9 +1099,13 @@ class BillingReconciliationWorker:
 
     async def _reconcile_known_projections(self, report: ReconcileReport, *, dry_run: bool) -> bool:
         progressed = False
-        after: UUID | None = None
+        # Rotate the bounded keyset scan and wrap once to cover the full tenant-ID ring.
+        start_after = UUID(int=random.getrandbits(128))
+        after: UUID | None = start_after
+        wrapped = False
+        pages_scanned = 0
         provider_name = provider_code(self._provider)
-        for _ in range(RECONCILIATION_MAX_PAGES_PER_RUN):
+        while pages_scanned < RECONCILIATION_MAX_PAGES_PER_RUN:
             try:
                 rows = await _maybe_await(
                     self._repository.list_known_projections(
@@ -1116,9 +1123,16 @@ class BillingReconciliationWorker:
                 return progressed
             bounded = list(rows)[:RECONCILIATION_PAGE_LIMIT]
             if not bounded:
-                return progressed
+                if wrapped:
+                    return progressed
+                after = None
+                wrapped = True
+                continue
+            pages_scanned += 1
             for projection in bounded:
                 tenant_id = _projection_value(projection, "tenant_id")
+                if wrapped and isinstance(tenant_id, UUID) and tenant_id > start_after:
+                    return progressed
                 if isinstance(tenant_id, UUID):
                     after = tenant_id
                 if projection_is_legacy_null(projection) or not projection_in_namespace(
@@ -1131,7 +1145,10 @@ class BillingReconciliationWorker:
                 outcome = await self._reconcile_known_projection(projection, report)
                 progressed = progressed or outcome
             if len(bounded) < RECONCILIATION_PAGE_LIMIT:
-                return progressed
+                if wrapped:
+                    return progressed
+                after = None
+                wrapped = True
         report.failed += 1
         return progressed
 

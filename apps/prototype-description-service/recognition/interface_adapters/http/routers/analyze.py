@@ -522,7 +522,9 @@ async def _process_inline_with_lease(*, kwargs: dict, owner_token: str) -> None:
                 owner_token=owner_token,
             )
             if lease_state is None:
-                break
+                processor.cancel()
+                await asyncio.gather(processor, return_exceptions=True)
+                return
             if not lease_state:
                 processor.cancel()
                 await asyncio.gather(processor, return_exceptions=True)

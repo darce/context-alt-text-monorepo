@@ -15,6 +15,7 @@ export type CreatePortalRequestOptions = {
 };
 
 const DEFAULT_TIMEOUT_MS = 8_000;
+const MAX_BUFFERED_RESPONSE_BYTES = 2 * 1024 * 1024;
 const PORTAL_PATH_RE = /^\/portal\/[A-Za-z0-9/_-]+$/;
 
 function abortError(): DOMException {
@@ -102,6 +103,10 @@ async function readBoundedBody(
         break;
       }
       if (outcome.value) {
+        if (outcome.value.byteLength > MAX_BUFFERED_RESPONSE_BYTES - total) {
+          cancelReader();
+          throw new RangeError('portal response exceeds maximum size');
+        }
         chunks.push(outcome.value);
         total += outcome.value.byteLength;
       }

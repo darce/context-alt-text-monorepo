@@ -381,6 +381,45 @@ def test_second_apply_and_rollback_refresh_container_mount(tmp_path: Path) -> No
     _assert_caddy_recreated(tmp_path, 4)
 
 
+@pytest.mark.parametrize("invalid_frontend", ["unset", "empty_index"])
+def test_recovery_precedes_replacement_frontend_validation(tmp_path: Path, invalid_frontend: str) -> None:
+    from test_app_portal_activation_journal import _interrupt_after_caddy
+
+    live = tmp_path / "opt/acx-backend/Caddyfile"
+    original_caddy, www, app_root, overlay, original_overlay = _interrupt_after_caddy(tmp_path, live)
+    journal = app_root / "activation.journal"
+    assert journal.is_file()
+    assert live.read_text() != original_caddy
+    frontend = None if invalid_frontend == "unset" else _write_frontend(tmp_path, index="")
+    before_log = _log(tmp_path)
+
+    result = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=frontend,
+                  extra_env={"BASH_ENV": ""})
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "FRONTEND_DIST" in result.stderr
+    assert "applied:" not in result.stdout
+    assert live.read_text() == original_caddy
+    assert (www / "keep.txt").read_text() == "active\n"
+    assert not (www / "index.html").exists()
+    assert overlay.read_text() == original_overlay
+    assert not journal.exists()
+    calls = _log(tmp_path)[len(before_log):]
+    assert " up -d --force-recreate --no-deps caddy" in calls
+    assert " reload " in calls
+    assert " validate " not in calls
+
+    # A retry still rejects the build, without repeating completed recovery.
+    before_retry_log = _log(tmp_path)
+    retry = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=frontend,
+                 extra_env={"BASH_ENV": ""})
+    assert retry.returncode != 0, retry.stdout + retry.stderr
+    assert live.read_text() == original_caddy
+    assert not journal.exists()
+    retry_calls = _log(tmp_path)[len(before_retry_log):]
+    assert " up " not in retry_calls and " reload " not in retry_calls
+
+
 @pytest.mark.parametrize("phase", ["prepared", "caddy_promoted", "www_promoted", "overlay_promoted"])
 def test_recovery_refreshes_container_mount_after_restore(tmp_path: Path, phase: str) -> None:
     live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
@@ -460,7 +499,15 @@ def test_apply_refuses_missing_frontend(tmp_path: Path) -> None:
     assert result.returncode != 0, output
     assert "FRONTEND_DIST" in output
     assert live.read_text(encoding="utf-8") == before
-    assert _log(tmp_path) == ""
+    # Binding checks precede build validation; permit only these read-only calls.
+    compose = ["docker", "compose", "-f", str(live.parent / "docker-compose.caddy.yml")]
+    assert [shlex.split(line) for line in _log(tmp_path).splitlines()] == [
+        ["docker", "compose", "version"],
+        [*compose, "config", "--format", "json"],
+        [*compose, "-f", "-", "config", "--format", "json"],
+    ]
+    assert not (live.parent / "app/staging").exists()
+    assert not (live.parent / "app/activation.journal").exists()
 
 
 def test_apply_refuses_empty_index(tmp_path: Path) -> None:

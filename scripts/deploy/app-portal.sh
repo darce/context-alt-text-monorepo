@@ -387,7 +387,8 @@ case "$CADDYFILE" in
 esac
 guard_source_path APP_SNIPPET "$APP_SNIPPET" file
 guard_source_path APP_OVERLAY "$APP_OVERLAY" file
-guard_source_path CADDY_COMPOSE "$CADDY_COMPOSE" file
+# Planning needs a safe path, but the host Compose file may not be installed yet.
+guard_source_path CADDY_COMPOSE "$CADDY_COMPOSE" path
 # Guards above require absolute paths without dot or symlink components, so
 # these normalized paths identify the actual filesystem destinations.
 for _activation_path in "$STAGING_DIR" "$ROLLBACK_DIR" "$APP_WWW" "${APP_WWW}.prev" \
@@ -674,6 +675,9 @@ $(list_live_hosts | sed 's/^/    /')
   render overlay APP_WWW=${APP_WWW} -> /srv/app-portal
   env ownership: Clerk/Polar stay in /opt/acx-backend/prod/.env; VITE_CLERK_* is baked into FRONTEND_DIST
 EOF
+  if [ ! -f "$CADDY_COMPOSE" ]; then
+    echo "CADDY_COMPOSE is absent: ${CADDY_COMPOSE} (required for --apply)"
+  fi
 }
 
 strip_app_vhost() {
@@ -848,6 +852,8 @@ reclaim_rollback_snapshots() {
 }
 
 if [ "$APPLY" -eq 1 ]; then
+  # Refuse before creating the lock or performing recovery/staging mutations.
+  guard_source_path CADDY_COMPOSE "$CADDY_COMPOSE" file
   APP_DEPLOY_LOCK_WAIT="${APP_DEPLOY_LOCK_WAIT:-30}"
   case "$APP_DEPLOY_LOCK_WAIT" in
     ''|*[!0-9]*) refuse "APP_DEPLOY_LOCK_WAIT must be a non-negative integer" ;;

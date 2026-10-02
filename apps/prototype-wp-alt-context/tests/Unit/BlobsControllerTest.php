@@ -80,15 +80,16 @@ class BlobsControllerTest extends TestCase
 
     public function testSignedBlobUrlExpiresWithinFiveMinutes(): void
     {
-        $now = time();
+        $before = time();
         $url = BlobUrlRewriter::rewrite_string('/recognition/blobs/job-x/private-media');
+        $after = time();
         $parts = parse_url($url);
         $query = [];
         parse_str($parts['query'] ?? '', $query);
 
-        $this->assertGreaterThan($now, (int) ($query['expires'] ?? 0));
+        $this->assertGreaterThan($before, (int) ($query['expires'] ?? 0));
         $this->assertLessThanOrEqual(
-            $now + 300,
+            $after + 300,
             (int) ($query['expires'] ?? 0),
             'Signed blob URLs should expire within five minutes.'
         );

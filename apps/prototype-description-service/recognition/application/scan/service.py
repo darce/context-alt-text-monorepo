@@ -10,6 +10,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -40,6 +41,12 @@ from recognition.shared.db.dialect import is_postgres
 ObjectStoreFactory = Callable[[str], ObjectStore]
 
 logger = logging.getLogger(__name__)
+
+# Propagated through the inline processor's phase/session boundaries. Other
+# callers retain the RUNNING-only precondition without an inline lease.
+inline_processing_owner: ContextVar[tuple[uuid.UUID, str] | None] = ContextVar(
+    "inline_processing_owner", default=None
+)
 
 _DB_SETTINGS = get_database_settings()
 
@@ -463,6 +470,13 @@ class ScanService:
             )
             return scan_job
 
+        inline_owner = inline_processing_owner.get()
+        if inline_owner is not None and (
+            inline_owner[0] != job_id or scan_job.error_message != inline_owner[1]
+        ):
+            logger.warning("Skipping scan result persistence for job %s with lost inline owner", job_id)
+            return scan_job
+
         # Group detections by media_id to process them per image for ID recycling
         detections_by_media: dict[int, list[FaceDetection]] = {}
         source_to_media_id_int = {s: _extract_media_id(str(m)) for s, m in source_to_media_id.items()}
@@ -514,18 +528,29 @@ class ScanService:
         scan_job.identities_detected = total_persisted
         scan_job.status = JobStatus.COMPLETED
         scan_job.completed_at = datetime.now(tz=UTC)
-        await self._session.commit()
 
-        for mid_int, result, dets, persist_ms in pending_events:
-            _emit_scan_media_reconciled(
-                media_id=mid_int,
-                tenant_id=str(tenant_uuid),
-                job_id=str(job_id),
-                result=result,
-                detections=dets,
-                persist_ms=persist_ms,
-                get_profile=self._face_pipeline_profile_cached,
-            )
+        async def commit_and_emit() -> None:
+            await self._session.commit()
+            for mid_int, result, dets, persist_ms in pending_events:
+                _emit_scan_media_reconciled(
+                    media_id=mid_int,
+                    tenant_id=str(tenant_uuid),
+                    job_id=str(job_id),
+                    result=result,
+                    detections=dets,
+                    persist_ms=persist_ms,
+                    get_profile=self._face_pipeline_profile_cached,
+                )
+
+        # COMPLETED can become visible to the heartbeat before commit() resumes.
+        # Once committing, finish the post-commit events even on cancellation,
+        # and join the task before the caller closes its session.
+        finalization = asyncio.create_task(commit_and_emit())
+        try:
+            await asyncio.shield(finalization)
+        except asyncio.CancelledError:
+            await finalization
+            raise
         return scan_job
 
     async def process_scan_job(

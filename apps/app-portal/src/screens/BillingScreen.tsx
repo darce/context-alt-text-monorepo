@@ -6,6 +6,7 @@ export type BillingScreenProps = {
   client: PortalBillingClient;
   publicPlanCode: string | null;
   paymentsEnabled: boolean;
+  cancellationNotice?: { onRetry: () => void };
   onNavigateToReturn: (attemptId: string) => void;
   onNavigateToUsage: () => void;
 };
@@ -157,6 +158,7 @@ export function BillingScreen({
   client,
   publicPlanCode,
   paymentsEnabled,
+  cancellationNotice,
   onNavigateToReturn,
   onNavigateToUsage,
 }: BillingScreenProps) {
@@ -333,6 +335,26 @@ export function BillingScreen({
     });
     window.setTimeout(() => confirmRef.current?.focus(), 0);
   };
+
+  if (cancellationNotice) {
+    return (
+      <main className="acx-portal">
+        <header>
+          <p className="acx-lede">Account</p>
+          <h1>Billing</h1>
+        </header>
+        <StatusMessage tone="info">Checkout was cancelled.</StatusMessage>
+        <div className="acx-portal-actions">
+          <button type="button" className="acx-btn acx-btn-primary" onClick={cancellationNotice.onRetry}>
+            Try checkout again
+          </button>
+          <button type="button" className="acx-btn" onClick={onNavigateToUsage}>
+            View usage
+          </button>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="acx-portal">

@@ -461,6 +461,21 @@ function PortalShell({
       />,
     );
   }
+  if (matchesExactPortalPath(path, '/billing/cancel') && billingClient) {
+    return wrapPrivate(
+      <BillingScreen
+        client={billingClient}
+        publicPlanCode={publicPlanCode}
+        paymentsEnabled={paymentsEnabled}
+        cancellationNotice={{ onRetry: () => navigate('/billing') }}
+        onNavigateToReturn={(attemptId) => {
+          setReturnAttemptId(readAttemptId(attemptId));
+          navigate('/billing/return');
+        }}
+        onNavigateToUsage={() => navigate('/usage')}
+      />,
+    );
+  }
   if (matchesExactPortalPath(path, '/billing') && billingClient) {
     return wrapPrivate(
       <BillingScreen

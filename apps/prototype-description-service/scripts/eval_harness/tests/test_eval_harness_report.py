@@ -19,6 +19,8 @@ from scripts.eval_harness.cli import _extract_detection_boxes, _extract_identiti
 from scripts.eval_harness.manifest import ManifestError, ScoreInvariant, compute_corpus_coverage_gaps
 from scripts.eval_harness.report import Audience, ReportError, build_reports, score_run_record
 
+_TEST_MODEL_STAMPS = {"adapter": "seeded", "model_id": "seeded-fixtures", "model_version": "1"}
+
 _LINEAGE = {
     "labeler_id": "test-labeler",
     "batch_id": "test-batch",
@@ -545,7 +547,11 @@ def test_overshoot_markdown_names_fp() -> None:
             {
                 "media_id": 1,
                 "path": "mock_images/alice.jpg",
-                "describe": {"alt_text_draft": "Alice Example.", "visual_facts": {"objects": []}},
+                "describe": {
+                    "alt_text_draft": "Alice Example.",
+                    "visual_facts": {"objects": []},
+                    **_TEST_MODEL_STAMPS,
+                },
                 "identities": [{"name": "Alice Example", "unpositioned": True}],
                 "face_count": 3,
                 "error": None,
@@ -584,7 +590,11 @@ def test_stranger_faces_are_not_detection_fps() -> None:
             {
                 "media_id": 1,
                 "path": "mock_images/group.jpg",
-                "describe": {"alt_text_draft": "Muted and friends.", "visual_facts": {"objects": []}},
+                "describe": {
+                    "alt_text_draft": "Muted and friends.",
+                    "visual_facts": {"objects": []},
+                    **_TEST_MODEL_STAMPS,
+                },
                 "identities": [{"name": "Muted Yarrow", "unpositioned": True}],
                 "face_count": 3,
                 "error": None,
@@ -652,7 +662,11 @@ def test_strict_detection_uses_wire_boxes_for_unrecognized_faces() -> None:
             {
                 "media_id": 1,
                 "path": "mock_images/group.jpg",
-                "describe": {"alt_text_draft": "Alice Example and a friend.", "visual_facts": {"objects": []}},
+                "describe": {
+                    "alt_text_draft": "Alice Example and a friend.",
+                    "visual_facts": {"objects": []},
+                    **_TEST_MODEL_STAMPS,
+                },
                 "identities": identities,
                 "detection_boxes": detection_boxes,
                 "face_count": face_count,

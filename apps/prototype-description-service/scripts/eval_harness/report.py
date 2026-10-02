@@ -1522,6 +1522,13 @@ def _model_provenance(
                     invariant="model_provenance_refuses_mixed_values",
                 )
         out[output_key] = [values[key] for key in sorted(values)]
+    if successful_items and not any(out.values()):
+        missing_keys = ", ".join(item_key for _, item_key, _ in dimensions)
+        raise ReportError(
+            "run record has no model provenance stamps; "
+            f"missing {missing_keys} from item descriptions and run provenance; refusing aggregate score",
+            invariant="model_provenance_refuses_empty_stamps",
+        )
     return out
 
 
@@ -3115,14 +3122,18 @@ def _markdown(scored: dict[str, Any]) -> str:
     cap = scored["caption"]
     det = scored["faces"]["detection"]
     ident = scored["faces"]["identification"]
-    adapters = ", ".join(model.get("adapters", [])) or "unknown"
-    model_ids = ", ".join(model.get("model_ids", [])) or "unknown"
+    def _format_model_stamp(value: Any) -> str:
+        return "unknown" if value is None else str(value)
+
+    adapters = ", ".join(_format_model_stamp(value) for value in model.get("adapters", [])) or "unknown"
+    model_ids = ", ".join(_format_model_stamp(value) for value in model.get("model_ids", [])) or "unknown"
+    model_versions = ", ".join(_format_model_stamp(value) for value in model.get("model_versions", [])) or "unknown"
     lines = [
         "# Caption + Face Eval Report",
         "",
         f"- schema: `{scored['schema']}` kind: `{scored.get('kind', 'report')}`",
         f"- adapter(s): `{adapters}` model(s): `{model_ids}` version(s): "
-        f"`{', '.join(model.get('model_versions', [])) or 'unknown'}`",
+        f"`{model_versions}`",
         f"- head_sha: `{_fmt_prov(prov.get('head_sha'))}`",
         f"- base_url: {_fmt_prov(prov.get('base_url'))}",
         f"- fetch manifest_sha256: `{_fmt_prov(prov.get('manifest_sha256'))}`",

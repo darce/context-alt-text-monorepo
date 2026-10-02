@@ -39,6 +39,9 @@ from scripts.eval_harness.report import (
 from scripts.eval_harness.schema import DocKind
 
 
+_TEST_MODEL_STAMPS = {"adapter": "seeded", "model_id": "seeded-fixtures", "model_version": "1"}
+
+
 def _run_record() -> dict:
     return {
         "schema": "acx-eval/v1",
@@ -298,6 +301,56 @@ def test_model_provenance_surfaced():  # HARM-01
     assert "seeded" in md and "NOT a caption-model baseline" in md
 
 
+@pytest.mark.parametrize("stamp_key", ["adapter", "model_id", "model_version"])
+def test_markdown_renders_null_model_stamp_without_changing_json(stamp_key):
+    record = _run_record()
+    for item in record["items"]:
+        if not item.get("error"):
+            item["describe"][stamp_key] = None
+
+    json_doc, md = build_reports(record, _manifest_entries())
+    output_key = {
+        "adapter": "adapters",
+        "model_id": "model_ids",
+        "model_version": "model_versions",
+    }[stamp_key]
+    assert json.loads(json_doc)["provenance"]["model"][output_key] == [None]
+    expected = {
+        "adapter": "adapter(s): `unknown`",
+        "model_id": "model(s): `unknown`",
+        "model_version": "version(s): `unknown`",
+    }[stamp_key]
+    assert expected in md
+
+
+def test_model_provenance_rejects_complete_run_without_any_stamps():
+    record = _run_record()
+    model_stamp_keys = (
+        "adapter",
+        "model_id",
+        "model_version",
+        "model_revision",
+        "seed",
+        "prompt_variant",
+        "prompt_version",
+        "prompt_sha256",
+        "task_version",
+        "decoding_contract",
+    )
+    for item in record["items"]:
+        if item.get("error"):
+            item["error"] = None
+            item["describe"] = {
+                "alt_text_draft": "A glacier under a clear sky.",
+                "visual_facts": {"caption": "a glacier under a clear sky", "objects": ["glacier"]},
+            }
+        for key in model_stamp_keys:
+            item["describe"].pop(key, None)
+
+    with pytest.raises(ReportError, match=r"no model provenance stamps.*adapter.*model_id.*prompt_version"):
+        score_run_record(record, _manifest_entries())
+
+
 @pytest.mark.parametrize(
     ("stamp_key", "run_value", "item_value"),
     [("seed", 17, 42), ("prompt_variant", "baseline", "variant-a")],
@@ -336,7 +389,11 @@ def test_detection_uses_face_count_and_counts_stranger_true_rejection():  # S3-0
             {  # group photo: 1 roster person correctly named + 2 strangers, no wrong name
                 "media_id": 1,
                 "path": "mock_images/group.jpg",
-                "describe": {"alt_text_draft": "Muted and friends.", "visual_facts": {"objects": []}},
+                "describe": {
+                    "alt_text_draft": "Muted and friends.",
+                    "visual_facts": {"objects": []},
+                    **_TEST_MODEL_STAMPS,
+                },
                 "identities": [
                     {
                         "name": "Muted Yarrow",
@@ -988,7 +1045,11 @@ def test_overshoot_markdown_names_fp() -> None:
             {
                 "media_id": 1,
                 "path": "mock_images/alice.jpg",
-                "describe": {"alt_text_draft": "Alice Example.", "visual_facts": {"objects": []}},
+                "describe": {
+                    "alt_text_draft": "Alice Example.",
+                    "visual_facts": {"objects": []},
+                    **_TEST_MODEL_STAMPS,
+                },
                 "identities": [
                     {
                         "name": "Alice Example",
@@ -3111,6 +3172,7 @@ def test_score_run_record_positional_uses_centre_x_not_corner_x():  # VLM6-B-03
                 "describe": {
                     "alt_text_draft": "Narrow Left stands left of Wide Right.",
                     "visual_facts": {"objects": []},
+                    **_TEST_MODEL_STAMPS,
                 },
                 # Corner-x order (Wide first) — centre-x order is Narrow first.
                 "identities": [
@@ -3193,6 +3255,7 @@ def test_score_run_record_positional_vacuity_signal_on_real_golden():  # VLM6-B-
                 "describe": {
                     "alt_text_draft": cap,
                     "visual_facts": {"objects": []},
+                    **_TEST_MODEL_STAMPS,
                 },
                 "identities": [
                     {
@@ -3258,6 +3321,7 @@ def _two_image_measurable_pass_pair() -> tuple[dict, list[dict]]:
                 "describe": {
                     "alt_text_draft": f"{left} stands left of {right} by a {scene}.",
                     "visual_facts": {"objects": []},
+                    **_TEST_MODEL_STAMPS,
                 },
                 "identities": [
                     {
@@ -3442,6 +3506,7 @@ def test_score_verdict_not_ready_when_positional_and_placement_vacuous():  # VLM
                 "describe": {
                     "alt_text_draft": "Alice Example relaxes by a pool.",
                     "visual_facts": {"objects": []},
+                    **_TEST_MODEL_STAMPS,
                 },
                 "identities": [
                     {
@@ -3459,6 +3524,7 @@ def test_score_verdict_not_ready_when_positional_and_placement_vacuous():  # VLM
                 "describe": {
                     "alt_text_draft": "Bob Builder on a beach.",
                     "visual_facts": {"objects": []},
+                    **_TEST_MODEL_STAMPS,
                 },
                 "identities": [
                     {
@@ -3551,6 +3617,7 @@ def test_score_verdict_blocks_pass_on_vacuous_placement_alone():  # VLM6-B-07
                 "describe": {
                     "alt_text_draft": "Alice Example and Bob Builder by a pool.",
                     "visual_facts": {"objects": []},
+                    **_TEST_MODEL_STAMPS,
                 },
                 "identities": [
                     {
@@ -4490,7 +4557,12 @@ def test_face_identity_ordering_matches_caption_on_same_corpus():  # wG1
             "media_id": e["media_id"],
             "path": e["path"],
             "model_id": "x",
-            "describe": {"alt_text_draft": "placeholder"},
+            "describe": {
+                "alt_text_draft": "placeholder",
+                "adapter": "seeded",
+                "model_id": "x",
+                "model_version": "1",
+            },
             "identities": [],
             "face_count": e["face_count"],
             "identity_ordering": "positional",

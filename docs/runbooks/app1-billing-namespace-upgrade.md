@@ -87,17 +87,15 @@ already belong to another namespace fail closed before a paid grant.
    unmapped rows are accepted as quarantined:
 
    ```bash
-   ACX_BILLING_NAMESPACE_WRITERS_DRAINED=1 python -m scripts.sync_identity_schema
+   cd /opt/acx-backend/prod
+   docker compose -f docker-compose.env.yml -f docker-compose.admin.yml run --rm -e ACX_BILLING_NAMESPACE_WRITERS_DRAINED=1 api python -m scripts.sync_identity_schema
    ```
 
-   Equivalent session GUC (transaction-local):
-
-   ```sql
-   SELECT set_config('app.billing_namespace_writers_drained', 'true', true);
-   ```
-
-   Heal never `ALTER ROLE ... BYPASSRLS`. Rolling back the heal transaction
-   restores the old unique if the drain step is aborted.
+   The api container runs the heal from the backend image. The environment
+   flag is read by the migration during the heal transaction; a GUC set in a
+   separate SQL session does not reach it. Heal never `ALTER ROLE ...
+   BYPASSRLS`. Rolling back the heal transaction restores the old unique if
+   the drain step is aborted.
 
 6. Start only upgraded writers. Bound `BillingRepository(session,
    environment=..., seller_account=...)` is required for paid authority.

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -49,6 +49,57 @@ from recognition.tests.unit.test_app1_billing_provider import (
     FakeResponse,
     _provider,
 )
+
+
+class _FakeMigrationQueryResult:
+    def __init__(
+        self,
+        *,
+        scalar: object = None,
+        rows: tuple[tuple[object, ...], ...] = (),
+    ) -> None:
+        self._scalar = scalar
+        self._rows = rows
+
+    def scalar(self) -> object:
+        return self._scalar
+
+    def __iter__(self) -> Iterator[tuple[object, ...]]:
+        return iter(self._rows)
+
+
+class _FakePostgresMigrationOp:
+    def __init__(
+        self,
+        *,
+        relkinds: dict[str, str],
+        usage_columns: set[str],
+        writers_drained_setting: str | None,
+    ) -> None:
+        self.dialect = type("Dialect", (), {"name": "postgresql"})()
+        self.relkinds = relkinds
+        self.usage_columns = usage_columns
+        self.writers_drained_setting = writers_drained_setting
+
+    def get_bind(self) -> _FakePostgresMigrationOp:
+        return self
+
+    def execute(
+        self,
+        statement: object,
+        parameters: dict[str, object] | None = None,
+    ) -> _FakeMigrationQueryResult:
+        sql = str(statement)
+        params = parameters or {}
+        if "SELECT c.relkind FROM pg_class c" in sql:
+            return _FakeMigrationQueryResult(scalar=self.relkinds.get(str(params["name"])))
+        if "SELECT column_name FROM information_schema.columns" in sql:
+            return _FakeMigrationQueryResult(rows=tuple((column,) for column in self.usage_columns))
+        if "SELECT is_nullable FROM information_schema.columns" in sql:
+            return _FakeMigrationQueryResult(scalar="NO")
+        if "SELECT current_setting(:name, true)" in sql:
+            return _FakeMigrationQueryResult(scalar=self.writers_drained_setting)
+        raise AssertionError(f"unexpected migration query: {sql}")
 
 
 class _AsyncTransactionFacade:
@@ -252,6 +303,52 @@ def test_migration_lists_recovery_tables_and_preserves_usage_drain_helpers() -> 
     assert migration.USAGE_SCHEMA_WRITERS_DRAINED_ENV == "ACX_USAGE_SCHEMA_WRITERS_DRAINED"
     assert callable(migration._heal_portal_tenant_invitation_tenant_nullable)
     assert callable(migration._refuse_undrained_existing_usage_upgrade)
+    ensure_tables_source = inspect.getsource(migration.ensure_tables)
+    guard_call = ensure_tables_source.index("_refuse_undrained_existing_usage_upgrade(op)")
+    reservation_table = ensure_tables_source.index('"usage_reservation",')
+    assert guard_call < reservation_table
+
+
+def test_usage_upgrade_guard_refuses_existing_table_without_drained_writers() -> None:
+    import importlib
+
+    migration = importlib.import_module("db.migrations.versions.001_identity_schema")
+    op = _FakePostgresMigrationOp(
+        relkinds={"usage_reservation": "r"},
+        usage_columns={"operation_id", "request_fingerprint", "fence_token", "queue_bytes"},
+        writers_drained_setting=None,
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        migration._refuse_undrained_existing_usage_upgrade(op)
+
+    assert str(exc_info.value) == migration._USAGE_SCHEMA_DRAIN_REQUIRED
+
+
+def test_usage_upgrade_guard_allows_existing_table_after_writers_are_drained() -> None:
+    import importlib
+
+    migration = importlib.import_module("db.migrations.versions.001_identity_schema")
+    op = _FakePostgresMigrationOp(
+        relkinds={"usage_reservation": "r"},
+        usage_columns={"operation_id", "request_fingerprint", "fence_token", "queue_bytes"},
+        writers_drained_setting="1",
+    )
+
+    migration._refuse_undrained_existing_usage_upgrade(op)
+
+
+def test_usage_upgrade_guard_allows_fresh_database_without_reservation_table() -> None:
+    import importlib
+
+    migration = importlib.import_module("db.migrations.versions.001_identity_schema")
+    op = _FakePostgresMigrationOp(
+        relkinds={},
+        usage_columns=set(),
+        writers_drained_setting=None,
+    )
+
+    migration._refuse_undrained_existing_usage_upgrade(op)
 
 
 @pytest.mark.asyncio

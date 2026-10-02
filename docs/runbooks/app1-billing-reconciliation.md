@@ -10,7 +10,14 @@ Rules used: DDIA ch7/8/11 (lease, fence, commit-before-GET); Release It ch4/5
 
 ## What it does
 
-`python -m scripts.billing_reconcile --once` drains, in one bounded cycle:
+From the service deployment directory (for example, `/opt/acx-backend/prod`),
+run the worker in the API container, following the existing compose pattern:
+
+```sh
+docker compose -f docker-compose.env.yml exec -T api python -m scripts.billing_reconcile --once
+```
+
+The worker drains, in one bounded cycle:
 
 1. Known webhook inbox rows (N1 `claim` / commit / GET / `lock` / write / `finish`).
 2. Known projections in the configured seller namespace (same N1 fence).
@@ -58,8 +65,11 @@ is not debt recovery.
 
 ## Audited retry
 
+From the same service deployment directory, run the retry worker in the API
+container:
+
 ```bash
-python -m scripts.billing_reconcile_retry \
+docker compose -f docker-compose.env.yml exec -T api python -m scripts.billing_reconcile_retry \
   --remote-id sub-x \
   --environment sandbox \
   --seller-account "$POLAR_ORGANIZATION_ID" \

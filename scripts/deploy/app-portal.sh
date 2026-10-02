@@ -17,6 +17,22 @@ set -euo pipefail
 export LC_ALL=C
 export LANG=C
 
+# The runbook installs a copy under this name for live frontend/API checks.
+if [ "${0##*/}" = "app-portal-health-check" ]; then
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "ERROR: curl is required for app-portal-health-check" >&2
+    exit 1
+  fi
+  health_status=0
+  for health_url in "https://app.altcontext.com/" "https://api.altcontext.com/ready"; do
+    if ! curl --fail --silent --show-error --location --max-time 15 --output /dev/null "$health_url"; then
+      echo "ERROR: health check failed: ${health_url}" >&2
+      health_status=1
+    fi
+  done
+  exit "$health_status"
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
@@ -33,13 +49,15 @@ Usage: scripts/deploy/app-portal.sh [--dry-run|--apply]
 
 Default: print the plan and mutate nothing.
 --apply requires a real FRONTEND_DIST (index.html + assets), a live Caddyfile,
-a reload mechanism, and APP_HEALTH_CMD to verify the serving edge and portal API.
+a Docker Compose file/client, a reload mechanism, and APP_HEALTH_CMD to verify
+the serving edge and portal API.
 
 Environment:
   APP_HOSTNAME         public vhost (default app.altcontext.com)
   APP_UPSTREAM         portal reverse_proxy target (default prod-api:8000)
   APP_ROOT             staging/rollback root (default /opt/acx-backend/app)
   APP_WWW              host static root (default $APP_ROOT/www)
+  CADDY_COMPOSE        base Caddy compose file (default in APP_ROOT's parent)
   APP_FRONTEND_ROOT    path inside Caddy (must be /srv/app-portal)
   CADDYFILE            live edge config (default /opt/acx-backend/Caddyfile)
   FRONTEND_DIST        built SPA directory (required for --apply)
@@ -326,6 +344,9 @@ APP_APPROVED_ROOTS="$_approved_normalized"
 [ -n "$APP_APPROVED_ROOTS" ] || refuse "APP_APPROVED_ROOTS is empty"
 
 guard_dest_path APP_ROOT "$APP_ROOT" dir
+if [ -z "${CADDY_COMPOSE:-}" ]; then
+  CADDY_COMPOSE="${APP_ROOT%/*}/docker-compose.caddy.yml"
+fi
 guard_dest_path APP_WWW "$APP_WWW" dir
 if [ "$APP_WWW" = "$APP_ROOT" ]; then
   refuse "APP_WWW must not equal APP_ROOT"
@@ -366,6 +387,7 @@ case "$CADDYFILE" in
 esac
 guard_source_path APP_SNIPPET "$APP_SNIPPET" file
 guard_source_path APP_OVERLAY "$APP_OVERLAY" file
+guard_source_path CADDY_COMPOSE "$CADDY_COMPOSE" file
 if [ -n "${FRONTEND_DIST}" ]; then
   guard_source_path FRONTEND_DIST "$FRONTEND_DIST" dir
 fi
@@ -476,7 +498,8 @@ write_activation_journal() {
     rm -f "$_tmp"
     return 1
   fi
-  sync_path "$APP_ROOT"
+  sync_path "$APP_ROOT" || return 1
+  JOURNAL_PHASE="$_phase"
 }
 
 read_journal_field() {
@@ -586,6 +609,12 @@ restore_from_rollback() {
     echo "ERROR: could not finish activation rollback cleanup" >&2
     return 1
   fi
+  if [ "${JOURNAL_PHASE:-}" = "overlay_promoted" ]; then
+    if ! apply_caddy_compose; then
+      echo "ERROR: compose rollback failed; activation journal retained for retry" >&2
+      return 1
+    fi
+  fi
   if ! reload_caddy; then
     echo "ERROR: rollback reload failed; activation journal retained for retry" >&2
     return 1
@@ -619,6 +648,7 @@ plan:
   APP_UPSTREAM=$APP_UPSTREAM
   APP_ROOT=$APP_ROOT
   APP_WWW=$APP_WWW
+  CADDY_COMPOSE=$CADDY_COMPOSE
   APP_FRONTEND_ROOT=$APP_FRONTEND_ROOT
   CADDYFILE=$CADDYFILE
   FRONTEND_DIST=${FRONTEND_DIST:-}
@@ -630,7 +660,8 @@ plan:
 $(list_live_hosts | sed 's/^/    /')
   stage Caddyfile, static root, and overlay; validate before activation
   durable activation journal precedes atomic Caddyfile, www, and overlay promotion
-  failure trap or next run restores snapshots and reloads rollback
+  apply the Caddy compose overlay before reload and live health checking
+  failure trap or next run restores snapshots, reapplies compose, and reloads rollback
   retain only the latest successful apply's rollback set under ${APP_ROOT}/rollback
   render overlay APP_WWW=${APP_WWW} -> /srv/app-portal
   env ownership: Clerk/Polar stay in /opt/acx-backend/prod/.env; VITE_CLERK_* is baked into FRONTEND_DIST
@@ -711,6 +742,14 @@ reload_caddy() {
   fi
   echo "ERROR: reload unavailable: set APP_RELOAD_CMD or install caddy" >&2
   return 1
+}
+
+apply_caddy_compose() {
+  if [ -f "$OVERLAY_DEST" ]; then
+    docker compose -f "$CADDY_COMPOSE" -f "$OVERLAY_DEST" up -d
+  else
+    docker compose -f "$CADDY_COMPOSE" up -d
+  fi
 }
 
 default_health() {
@@ -801,6 +840,7 @@ fi
 
 [ -f "$APP_SNIPPET" ] || refuse "APP_SNIPPET is missing: ${APP_SNIPPET}"
 [ -f "$APP_OVERLAY" ] || refuse "APP_OVERLAY is missing: ${APP_OVERLAY}"
+[ -f "$CADDY_COMPOSE" ] || refuse "CADDY_COMPOSE is missing: ${CADDY_COMPOSE}"
 [ -f "$CADDYFILE" ] || refuse "CADDYFILE is missing: ${CADDYFILE}"
 if [ -L "$CADDYFILE" ] || [ ! -f "$CADDYFILE" ]; then
   refuse "CADDYFILE must be a regular file: ${CADDYFILE}"
@@ -810,6 +850,8 @@ if [ -z "$APP_RELOAD_CMD" ] && ! command -v caddy >/dev/null 2>&1; then
   refuse "reload unavailable: set APP_RELOAD_CMD or install caddy before --apply"
 fi
 [ -n "$APP_HEALTH_CMD" ] || refuse "APP_HEALTH_CMD is required to check the live frontend and portal upstream"
+command -v docker >/dev/null 2>&1 || refuse "docker compose is required to mount APP_WWW in Caddy before health checking"
+docker compose version >/dev/null 2>&1 || refuse "docker compose is unavailable; cannot mount APP_WWW in Caddy before health checking"
 
 STAGED_CADDY="${STAGING_DIR}/Caddyfile"
 STAGED_WWW="${STAGING_DIR}/www"
@@ -897,6 +939,9 @@ fi
 write_activation_journal overlay_promoted
 rm -rf "$STAGING_DIR"
 
+if ! apply_caddy_compose; then
+  activation_fail "docker compose failed while applying the app portal mount"
+fi
 if ! reload_caddy; then
   activation_fail "caddy reload failed after host promote"
 fi
@@ -912,4 +957,4 @@ if ! reclaim_rollback_snapshots; then
 fi
 
 echo "applied: ${APP_HOSTNAME} -> ${APP_UPSTREAM}; frontend ${APP_WWW}; overlay ${OVERLAY_DEST}; rollback ${ROLLBACK_CADDY}; reload=ok health=ok"
-echo "next: apply compose overlay so Caddy mounts ${APP_WWW} at /srv/app-portal; recreate Caddy if the bind-mount inode diverged; do not ship this vhost via the shared repo Caddyfile from this lane"
+echo "next: verify Caddy mounts ${APP_WWW} at /srv/app-portal; do not ship this vhost via the shared repo Caddyfile from this lane"

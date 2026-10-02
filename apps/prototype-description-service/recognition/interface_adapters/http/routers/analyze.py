@@ -667,25 +667,39 @@ async def _schedule_analysis(
         session_factory = async_sessionmaker(bind=session.bind, expire_on_commit=False)
 
     try:
-        correlation_id = get_correlation_id()
-        background_tasks.add_task(
-            _dispatch_persisted_analysis if isinstance(scan_queue, ScanQueueService) else chain_populate_and_process,
-            tenant_id=str(tenant_uuid),
-            job_id=str(persisted_job_id),
-            media_items=media_items,
-            media_ids=media_ids,
-            media_sources=media_sources,
-            scan_queue=scan_queue if not isinstance(scan_queue, ScanQueueService) else None,
-            session_factory=session_factory,
-            inline_processing=inline_processing,
-            adapter_provider=get_shared_insightface_adapter if inline_processing else None,
-            correlation_id=correlation_id,
-        )
-    except Exception:
+        if not existing_job:
+            correlation_id = get_correlation_id()
+            background_tasks.add_task(
+                _dispatch_persisted_analysis if isinstance(scan_queue, ScanQueueService) else chain_populate_and_process,
+                tenant_id=str(tenant_uuid),
+                job_id=str(persisted_job_id),
+                media_items=media_items,
+                media_ids=media_ids,
+                media_sources=media_sources,
+                scan_queue=scan_queue if not isinstance(scan_queue, ScanQueueService) else None,
+                session_factory=session_factory,
+                inline_processing=inline_processing,
+                adapter_provider=get_shared_insightface_adapter if inline_processing else None,
+                correlation_id=correlation_id,
+            )
+    except Exception as exc:
         logger.exception(
             "Scan dispatch failed after job commit",
             extra={"job_id": str(persisted_job_id), "tenant_id": str(tenant_uuid)},
         )
+        try:
+            await scan_queue.cancel_scan_job(job_id=persisted_job_id)
+            if session is not None:
+                await session.commit()
+        except Exception:
+            logger.exception(
+                "Failed to mark scan job failed after dispatch registration error",
+                extra={"job_id": str(persisted_job_id), "tenant_id": str(tenant_uuid)},
+            )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scan dispatch unavailable",
+        ) from exc
     return queued_analyze_job_response(persisted_job_id, len(media_items))
 
 
@@ -1006,6 +1020,9 @@ async def cancel_job(
     scan_queue=Depends(get_scan_queue_service_optional),
 ) -> JobStatusResponse:
     """Cancel a long-running job."""
+    if auth and auth.tenant_claim and auth.tenant_claim != tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+
     # Prefer canceling persisted scan jobs when a DB session is available.
     if session is not None and scan_queue is not None:
         if tenant_id and is_postgres(session):

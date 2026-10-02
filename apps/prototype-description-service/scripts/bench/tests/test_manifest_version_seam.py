@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts.bench import score_report as score_report_module
 from scripts.bench.corpus import load_bench_manifest, non_exhaustive_ids
 from scripts.bench.score_report import CrossbenchTier, assign_tier, stranger_faces_for
 from scripts.bench.stack_pair import BenchError
@@ -121,6 +122,43 @@ def _strict_detection_row(gt_box: dict[str, object]) -> ImageDetection:
         image_size=(100, 100),
         detection_frame_size=(100, 100),
     )
+
+
+@pytest.mark.parametrize(
+    "missing_part",
+    ["manifest_entry", "join_row", "stack_media_id"],
+)
+def test_strict_detection_inputs_rejects_missing_mapping(missing_part: str) -> None:
+    manifest = load_bench_manifest(
+        FIXTURE,
+        None,
+        require_detection_exhaustiveness=False,
+        metadata_only=True,
+        skip_hash_verification=True,
+        hash_skip_reason="strict input join check is metadata-only",
+    )
+    entry = manifest.entries[0]
+    detection_path = "orphan.jpg" if missing_part == "manifest_entry" else entry.path
+    join: dict[int, dict[str, object]] = {}
+    expected_code = "manifest_entry_missing"
+    if missing_part == "join_row":
+        expected_code = "join_row_missing"
+    elif missing_part == "stack_media_id":
+        join[entry.media_id] = {"image_width": 100, "image_height": 100}
+        expected_code = "join_row_missing"
+
+    with pytest.raises(BenchError) as exc:
+        score_report_module._strict_detection_inputs(
+            [ImageDetection(image=detection_path, pred_faces=0, labeled_faces=0)],
+            manifest,
+            {"media_identities": []},
+            join,
+        )
+
+    assert exc.value.code == expected_code
+    assert detection_path in str(exc.value)
+    if missing_part != "manifest_entry":
+        assert f"media_id={entry.media_id}" in str(exc.value)
 
 
 def _adjudicated_gt_box() -> dict[str, object]:

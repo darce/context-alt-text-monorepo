@@ -21,6 +21,35 @@ MIGRATION = importlib.import_module("db.migrations.versions.001_identity_schema"
 pytestmark = pytest.mark.pg
 
 
+@pytest.mark.parametrize("stale_marker", [None, "centroid-definition:obsolete"])
+def test_matview_definition_rebuild_preserves_owner_and_grants(pg_migrated_engine, stale_marker) -> None:
+    with pg_migrated_engine.connect() as conn:
+        transaction = conn.begin()
+        try:
+            MIGRATION.repair_centroids_matview(conn)
+            conn.execute(text("GRANT SELECT ON mv_identity_cluster_centroids TO PUBLIC"))
+            state_query = text(
+                "SELECT c.oid, c.relowner, c.relacl::text, obj_description(c.oid, 'pg_class') "
+                "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = current_schema() AND c.relname = 'mv_identity_cluster_centroids'"
+            )
+            before = conn.execute(state_query).one()
+            marker_sql = "NULL" if stale_marker is None else "'centroid-definition:obsolete'"
+            conn.execute(text(f"COMMENT ON MATERIALIZED VIEW mv_identity_cluster_centroids IS {marker_sql}"))
+
+            MIGRATION.repair_centroids_matview(conn)
+            rebuilt = conn.execute(state_query).one()
+            assert rebuilt.oid != before.oid, "a stale definition with the right typmod must be rebuilt"
+            assert rebuilt.relowner == before.relowner
+            assert rebuilt.relacl == before.relacl
+            assert rebuilt[3] == MIGRATION.CENTROID_DEFINITION_VERSION
+
+            MIGRATION.repair_centroids_matview(conn)
+            assert conn.execute(state_query).one() == rebuilt, "the current definition must retain its OID"
+        finally:
+            transaction.rollback()
+
+
 def test_upgrade_on_empty_db_creates_expected_tables(pg_migrated_engine) -> None:
     with pg_migrated_engine.connect() as conn:
         names = {row[0] for row in conn.execute(text("SELECT tablename FROM pg_tables WHERE schemaname='public'"))}

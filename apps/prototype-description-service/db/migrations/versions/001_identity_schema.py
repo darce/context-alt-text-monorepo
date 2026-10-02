@@ -17,6 +17,7 @@ depends_on = None
 
 # Sole root: PGVECTOR_DIM → DatabaseSettings.pgvector_dimension (no bare 512).
 EMBEDDING_DIMENSION = int(get_database_settings().pgvector_dimension)
+CENTROID_DEFINITION_VERSION = "centroid-definition:v2-vector-quality-weighting"
 SAFE_TENANT_EXPR = "NULLIF(current_setting('app.current_tenant', true), '')::uuid"
 BYPASS_RLS_EXPR = "COALESCE(NULLIF(current_setting('app.bypass_rls', true), ''), 'false')::boolean"
 
@@ -2963,8 +2964,8 @@ def _matview_stale_cluster_id_index(op) -> bool:
 def ensure_matview(op) -> None:
     """Create the centroid materialized view + indexes; fail loudly on a plain-table impostor.
 
-    A matview whose ``centroid`` column lost its vector typmod (built before the
-    outer cast existed) is derived data, so it is dropped and rebuilt here when
+    A matview with a stale definition marker or wrong ``centroid`` vector typmod
+    is derived data, so it is dropped and rebuilt here when
     the current role can drop it *and* recreate it with owner+grants restored.
     Otherwise the heal raises a named operator action before making any
     destructive change.
@@ -2979,14 +2980,28 @@ def ensure_matview(op) -> None:
     restore: tuple[str, str, tuple[tuple[str, str, bool], ...]] | None = None
     if relkind == "m":
         observed_typmod = _matview_centroid_typmod(op)
+        observed_marker = op.get_bind().execute(
+            sa.text(
+                "SELECT obj_description(c.oid, 'pg_class') FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = current_schema() "
+                "AND c.relname = 'mv_identity_cluster_centroids'"
+            )
+        ).scalar()
+        rebuild_reasons = []
         if observed_typmod != EMBEDDING_DIMENSION:
+            rebuild_reasons.append(f"observed centroid typmod {observed_typmod!r}")
+        if observed_marker != CENTROID_DEFINITION_VERSION:
+            rebuild_reasons.append(f"observed definition marker {observed_marker!r}")
+        if rebuild_reasons:
+            rebuild_reason = "; ".join(rebuild_reasons)
             owner, can_drop = _matview_owner_and_can_drop(op)
             current_role, quoted_role = _current_user_quoted(op)
             if not can_drop:
                 operator_sql = f"ALTER MATERIALIZED VIEW mv_identity_cluster_centroids OWNER TO {quoted_role};"
                 raise RuntimeError(
                     "cannot rebuild mv_identity_cluster_centroids: "
-                    f"observed centroid typmod {observed_typmod!r}; owner role is {owner!r}; "
+                    f"{rebuild_reason}; owner role is {owner!r}; "
                     f"current role is {current_role!r} and cannot DROP the relation. "
                     f"Run {operator_sql} then re-run python -m scripts.sync_identity_schema."
                 )
@@ -2994,7 +3009,7 @@ def ensure_matview(op) -> None:
             if gaps:
                 raise RuntimeError(
                     "cannot rebuild mv_identity_cluster_centroids: "
-                    f"observed centroid typmod {observed_typmod!r}; "
+                    f"{rebuild_reason}; "
                     "current role lacks privileges required to recreate the view: "
                     f"{', '.join(gaps)}. Grant these privileges then re-run "
                     "python -m scripts.sync_identity_schema."
@@ -3004,7 +3019,7 @@ def ensure_matview(op) -> None:
             if missing_roles:
                 raise RuntimeError(
                     "cannot rebuild mv_identity_cluster_centroids: "
-                    f"observed centroid typmod {observed_typmod!r}; "
+                    f"{rebuild_reason}; "
                     "relacl names vanished roles "
                     f"{', '.join(missing_roles)} that cannot receive GRANT. "
                     "Operator action: REVOKE the stale grants or DROP the view as its owner."
@@ -3013,7 +3028,7 @@ def ensure_matview(op) -> None:
             if owner_blockers:
                 raise RuntimeError(
                     "cannot rebuild mv_identity_cluster_centroids: "
-                    f"observed centroid typmod {observed_typmod!r}; "
+                    f"{rebuild_reason}; "
                     f"{'; '.join(owner_blockers)}. "
                     "Operator action: recreate the owner role with CREATE on the schema "
                     "or REASSIGN OWNED."
@@ -3143,6 +3158,11 @@ def ensure_matview(op) -> None:
         WHERE identity_count >= 1;
         """
     )
+    if relkind is None or restore is not None:
+        op.execute(
+            "COMMENT ON MATERIALIZED VIEW mv_identity_cluster_centroids "
+            f"IS '{CENTROID_DEFINITION_VERSION}'"
+        )
 
     op.execute(
         """

@@ -81,9 +81,15 @@ class _Session:
         self.in_txn = False
         self.commits = 0
         self.rollbacks = 0
+        self.cursor_writes = 0
+        self.committed_cursor_writes = 0
 
     def mark_write(self) -> None:
         self.in_txn = True
+
+    def mark_cursor_write(self) -> None:
+        self.cursor_writes += 1
+        self.mark_write()
 
     def in_transaction(self) -> bool:
         return self.in_txn
@@ -93,6 +99,7 @@ class _Session:
 
     async def commit(self) -> None:
         self.commits += 1
+        self.committed_cursor_writes = self.cursor_writes
         self.in_txn = False
 
     async def rollback(self) -> None:
@@ -199,7 +206,7 @@ class _Recovery:
         self.advances.append(
             {"next_cursor": next_cursor, "exhausted": exhausted, "ids": page_remote_ids}
         )
-        self.session.mark_write()
+        self.session.mark_cursor_write()
         return self._lease()
 
     async def record_page_failure(self, lease, *, failure_class: str, now: datetime):
@@ -590,7 +597,9 @@ async def test_enumerate_does_not_hold_a_db_transaction() -> None:
 
     assert provider.enumerate_calls[0]["txn_open"] is False
     assert recovery.session.commits >= 1
-    assert recovery.durable is False or recovery.session.in_txn is False
+    assert recovery.session.cursor_writes == 1
+    assert recovery.session.committed_cursor_writes == recovery.session.cursor_writes
+    assert recovery.session.in_txn is False
 
 
 @pytest.mark.asyncio

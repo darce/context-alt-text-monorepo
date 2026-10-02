@@ -459,6 +459,7 @@ class ScanService:
             select(IdentityScanJob)
             .where(IdentityScanJob.id == job_id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         if scan_job is None:
             raise RuntimeError(f"scan job not found: {job_id}")

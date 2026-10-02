@@ -7,7 +7,7 @@ import json
 import os
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -115,6 +115,44 @@ def _refuse_reused_reset_evidence(
             )
 
 
+def _stack_pair_snapshot(pair: StackPairConfig) -> dict[str, Any]:
+    # FLOW-01: pin every config field, including future behavior settings.
+    # No exclusions: credential fields hold env-var names, not secret values.
+    # Normalize tuples to lists to match the persisted JSON on resume.
+    return json.loads(json.dumps(asdict(pair)))
+
+
+def _validate_resume_inputs(root: Path, pair: StackPairConfig, manifest_path: Path | str) -> None:
+    try:
+        pinned_digest = (root / "manifest.sha").read_text(encoding="ascii").strip()
+        saved_digest = hashlib.sha256((root / "manifest.json").read_bytes()).hexdigest()
+        saved_pair = json.loads((root / "stack_pair.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise BenchError("resume_inputs_unverified", f"cannot read pinned inputs for run {root}") from exc
+
+    if pinned_digest != saved_digest:
+        raise BenchError(
+            "resume_manifest_pin_mismatch",
+            f"run pins manifest sha256 {pinned_digest!r}, but its saved manifest hashes to {saved_digest!r}",
+        )
+    try:
+        current_digest = hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest()
+    except OSError as exc:
+        raise BenchError("resume_inputs_unverified", f"cannot read current manifest {manifest_path}") from exc
+    if pinned_digest != current_digest:
+        raise BenchError(
+            "resume_manifest_mismatch",
+            f"run pins manifest sha256 {pinned_digest!r}, current manifest sha256 is {current_digest!r}",
+        )
+
+    current_pair = _stack_pair_snapshot(pair)
+    if saved_pair != current_pair:
+        raise BenchError(
+            "resume_stack_pair_mismatch",
+            f"run pins stack_pair {saved_pair!r}, current stack_pair is {current_pair!r}",
+        )
+
+
 def init_run_dir(run_dir: Path | str, pair: StackPairConfig, manifest_path: Path | str) -> Path:
     root = Path(run_dir)
     root.mkdir(parents=True, exist_ok=True)
@@ -130,35 +168,12 @@ def init_run_dir(run_dir: Path | str, pair: StackPairConfig, manifest_path: Path
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "bootstrap_seed": pair.bootstrap_seed,
     }
-    redacted = {
-        "head_to_head_delta": pair.head_to_head_delta,
-        "bootstrap_seed": pair.bootstrap_seed,
-        "primary_endpoint": pair.primary_endpoint,
-        "secondary_endpoints": list(pair.secondary_endpoints),
-        "accepted_set_floor": pair.accepted_set_floor,
-        "max_differential_attrition": pair.max_differential_attrition,
-        "allow_private_source": pair.allow_private_source,
-        "baseline_manifest_path": pair.baseline_manifest_path,
-        "stacks": [
-            {
-                "stack_id": s.stack_id,
-                "role": s.role,
-                "base_url": s.base_url,
-                "expected_profile": s.expected_profile,
-                "expected_pgvector_dim": s.expected_pgvector_dim,
-                "opencv_major": s.opencv_major,
-                "api_key_env": s.api_key_env,
-                "tenant_id_env": s.tenant_id_env,
-            }
-            for s in pair.stacks
-        ],
-    }
     digest = hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest()
     (root / "manifest.sha").write_text(digest + "\n", encoding="utf-8")
     (root / "manifest.json").write_bytes(Path(manifest_path).read_bytes())
     run_doc["manifest_path"] = str(Path(manifest_path))
     (root / "run.json").write_text(json.dumps(run_doc, indent=2), encoding="utf-8")
-    (root / "stack_pair.json").write_text(json.dumps(redacted, indent=2), encoding="utf-8")
+    (root / "stack_pair.json").write_text(json.dumps(_stack_pair_snapshot(pair), indent=2), encoding="utf-8")
     for stack in pair.stacks:
         (root / "legs" / stack.stack_id).mkdir(parents=True, exist_ok=True)
     return root
@@ -383,9 +398,7 @@ def run_leg(
             )
             if not decision.admits:
                 return outcomes
-        exports = leg_dir / "exports"
-        needed = LEG_EXPORT_REQUIRED_FILES
-        if not all((exports / name).is_file() for name in needed):
+        if not _leg_complete(root, endpoint.stack_id):
             export_leg(client, root, endpoint.stack_id)
         return outcomes
     finally:
@@ -404,6 +417,12 @@ def run_pair(
     preflight_transports: dict[str, Any] | None = None,
     pre_run_reset_by_stack: dict[str, Any] | None = None,
 ) -> Path:
+    out_dir_path = Path(out_dir)
+    run_record_path = out_dir_path / "run.json"
+    is_resume = run_record_path.exists()
+    if is_resume:
+        _validate_resume_inputs(out_dir_path, pair, manifest_path)
+
     # Load without images_dir first so floor/superset fail before any media I/O.
     # Deliberate metadata-only load (VLM6-PANEL6L-rvM-01 / OBS-04): only
     # entry counts and media_id sets are read here, never image bytes.
@@ -438,9 +457,6 @@ def run_pair(
 
     # This gate is independent of the optional health preflight switch: skipping
     # health checks must never permit ingest against an unattested scratch tenant.
-    out_dir_path = Path(out_dir)
-    run_record_path = out_dir_path / "run.json"
-    is_resume = run_record_path.exists()
     reset_evidence = (
         validate_pre_run_reset_evidence(
             pair,

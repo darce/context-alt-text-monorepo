@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
-import httpx
 import pytest
 
 from scripts.bench.corpus import ItemOutcomeStore
-from scripts.bench.driver import init_run_dir, run_leg
-from scripts.bench.stack_pair import load_stack_pair
+from scripts.bench.driver import _validate_resume_inputs, init_run_dir, run_leg, run_pair
+from scripts.bench.stack_pair import BenchError, load_stack_pair
+from scripts.eval_harness import remote_client as remote_client_module
 from scripts.eval_harness.remote_client import JobPollTimeoutError, RemoteSceneClient
 from scripts.bench.tests.conftest import (
     FakeClient,
@@ -53,28 +56,125 @@ def _seed_terminal_success(items_path: Path, media_id: int, width: int = 16, hei
     )
 
 
-def test_wait_job_obeys_total_budget_separate_from_request_timeout() -> None:
+def test_wait_job_obeys_total_budget_separate_from_request_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = 0
+    clock = [0.0]
+    timeout_s = 0.02
 
-    def pending_job(_request: httpx.Request) -> httpx.Response:
+    def pending_job(*_args: object, **_kwargs: object) -> dict[str, str]:
         nonlocal calls
         calls += 1
-        return httpx.Response(200, json={"status": "processing"})
+        clock[0] += timeout_s / 2
+        return {"status": "processing"}
+
+    monkeypatch.setattr(
+        remote_client_module,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock[0], sleep=lambda _seconds: None),
+    )
 
     client = RemoteSceneClient(
         "https://bench.invalid",
         "key",
         timeout_s=5.0,
-        job_poll_timeout_s=0.025,
-        poll_interval=0.005,
-        transport=httpx.MockTransport(pending_job),
+        job_poll_timeout_s=timeout_s,
+        poll_interval=0,
+        max_poll_attempts=60,
     )
+    client._request_dict = pending_job  # type: ignore[method-assign]
     try:
         with pytest.raises(JobPollTimeoutError):
             client.wait_job("pending")
     finally:
         client.close()
-    assert 0 < calls < 60
+    assert calls < 60
+    assert clock[0] <= timeout_s
+
+
+def test_resume_rejects_changed_manifest_before_running_legs(tmp_path: Path) -> None:
+    images = tmp_path / "images"
+    pinned_manifest = write_hashed_manifest(tmp_path / "manifest-a.json", images, [1])
+    current_manifest = write_hashed_manifest(tmp_path / "manifest-b.json", images, [2])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = init_run_dir(tmp_path / "out-manifest-mismatch", pair, pinned_manifest)
+
+    with pytest.raises(BenchError) as exc:
+        run_pair(
+            pair,
+            manifest_path=current_manifest,
+            images_dir=images,
+            out_dir=out,
+            skip_preflight=True,
+        )
+
+    assert exc.value.code == "resume_manifest_mismatch"
+    assert hashlib.sha256(pinned_manifest.read_bytes()).hexdigest() in str(exc.value)
+    assert hashlib.sha256(current_manifest.read_bytes()).hexdigest() in str(exc.value)
+
+
+def test_resume_rejects_changed_stack_pair_before_running_legs(tmp_path: Path) -> None:
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pinned_pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    current_pair = replace(pinned_pair, head_to_head_delta=pinned_pair.head_to_head_delta + 0.01)
+    out = init_run_dir(tmp_path / "out-pair-mismatch", pinned_pair, manifest)
+
+    with pytest.raises(BenchError) as exc:
+        run_pair(
+            current_pair,
+            manifest_path=manifest,
+            images_dir=images,
+            out_dir=out,
+            skip_preflight=True,
+        )
+
+    assert exc.value.code == "resume_stack_pair_mismatch"
+    assert repr(pinned_pair.head_to_head_delta) in str(exc.value)
+    assert repr(current_pair.head_to_head_delta) in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("item_max_attempts", 3),
+        ("job_poll_timeout_sec", 601),
+        ("wall_clock_timeout_sec", 3601),
+        ("images_dir", "other-images"),
+        ("manifest_sha256", "a" * 64),
+        ("media_url_map_path", "other-media-urls.json"),
+    ],
+)
+def test_resume_rejects_changed_behavior_setting(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pinned_pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    current_pair = replace(pinned_pair, **{field: value})
+    out = init_run_dir(tmp_path / "out", pinned_pair, manifest)
+
+    with pytest.raises(BenchError) as exc:
+        run_pair(
+            current_pair,
+            manifest_path=manifest,
+            images_dir=images,
+            out_dir=out,
+            skip_preflight=True,
+        )
+
+    assert exc.value.code == "resume_stack_pair_mismatch"
+    assert field in str(exc.value)
+    assert repr(value) in str(exc.value)
+
+
+def test_resume_accepts_unchanged_config(tmp_path: Path) -> None:
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", tmp_path / "images", [1])
+    pair_path = write_pair(tmp_path / "pair.yaml")
+    pair = load_stack_pair(pair_path)
+    out = init_run_dir(tmp_path / "out", pair, manifest)
+
+    # Reload to exercise equality after the snapshot's JSON serialization.
+    _validate_resume_inputs(out, load_stack_pair(pair_path), manifest)
 
 
 def test_resume_does_not_repost_terminal_success(tmp_path: Path) -> None:

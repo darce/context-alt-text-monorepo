@@ -115,6 +115,44 @@ def _with_approved_operator_policy(script, kwargs: dict, table: str) -> dict:
     return kwargs
 
 
+def test_operator_scope_approved_restrictive_policy_is_gap() -> None:
+    script = _import_script()
+    table = script.OPERATOR_SCOPE_TABLES[0]
+    kwargs = _with_approved_operator_policy(script, _complete_kwargs(script), table)
+    policy_key = (table, f"operator_scope_{table}")
+    kwargs["operator_policy_permissiveness"][policy_key] = False
+
+    report = script._validate_schema_state(**kwargs)
+
+    assert report["ok"] is False
+    assert report["policy_gaps"] == [table]
+
+
+def test_operator_scope_approved_permissive_policy_stays_clean() -> None:
+    script = _import_script()
+    table = script.OPERATOR_SCOPE_TABLES[0]
+    kwargs = _with_approved_operator_policy(script, _complete_kwargs(script), table)
+
+    report = script._validate_schema_state(**kwargs)
+
+    assert report["ok"] is True
+    assert report["policy_gaps"] == []
+
+
+def test_operator_scope_missing_approved_policy_permissiveness_is_gap() -> None:
+    script = _import_script()
+    table = script.OPERATOR_SCOPE_TABLES[0]
+
+    for permissiveness in (None, {}):
+        kwargs = _with_approved_operator_policy(script, _complete_kwargs(script), table)
+        kwargs["operator_policy_permissiveness"] = permissiveness
+
+        report = script._validate_schema_state(**kwargs)
+
+        assert report["ok"] is False
+        assert report["policy_gaps"] == [table]
+
+
 def test_operator_scope_extra_permissive_policy_is_gap() -> None:
     script = _import_script()
     table = script.OPERATOR_SCOPE_TABLES[0]

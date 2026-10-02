@@ -129,8 +129,8 @@ def _validate_schema_state(
     ``rls_state`` maps table -> (rowsecurity, forcerowsecurity); tables absent
     from the mapping count as RLS gaps. ``policy_names`` is the set of
     (tablename, policyname) pairs present. ``operator_scope_tables`` are checked
-    separately from tenant tables: ENABLE+FORCE RLS and only the approved
-    ``operator_scope_*`` policy may be permissive. Its body must be
+    separately from tenant tables: ENABLE+FORCE RLS and the approved
+    ``operator_scope_*`` policy must be permissive. Its body must be
     ``app.bypass_rls`` only; additional restrictive policies may narrow access.
     ``column_gaps`` maps an existing
     table to the ORM-declared columns absent from it (MAINT-TPR-01 / PA-03).
@@ -165,7 +165,16 @@ def _validate_schema_state(
                 operator_policy_gaps.append(table)
             else:
                 body = None if operator_policy_bodies is None else operator_policy_bodies.get(policy_key)
-                if body is None or not _operator_scope_policy_body_approved(*body):
+                permissive = (
+                    None
+                    if operator_policy_permissiveness is None
+                    else operator_policy_permissiveness.get(policy_key)
+                )
+                if (
+                    body is None
+                    or not _operator_scope_policy_body_approved(*body)
+                    or permissive is not True
+                ):
                     operator_policy_gaps.append(table)
 
             # PostgreSQL ORs permissive policies together. An extra policy is

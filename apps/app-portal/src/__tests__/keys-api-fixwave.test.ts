@@ -100,6 +100,11 @@ describe('APP-1 keys API fix wave [DATA-03][HAI-01][GRPH-09]', () => {
     it('rejects list rows whose expires_at is an arbitrary non-empty string', async () => {
       const client = createPortalKeyClient(async () => jsonResponse(200, page([metadata({ expires_at: 'soon' })])));
       await expect(client.list()).rejects.toMatchObject({ code: 'invalid_portal_key_response' });
+
+      const rolledOverExpiry = createPortalKeyClient(async () =>
+        jsonResponse(200, page([metadata({ expires_at: '2027-02-30T00:00:00Z' })])),
+      );
+      await expect(rolledOverExpiry.list()).rejects.toMatchObject({ code: 'invalid_portal_key_response' });
     });
 
     it('rejects list rows whose revoked_at is not a finite producer ISO datetime', async () => {
@@ -144,6 +149,19 @@ describe('APP-1 keys API fix wave [DATA-03][HAI-01][GRPH-09]', () => {
       await expect(negativeAllowance.read()).rejects.toMatchObject({ code: 'invalid_portal_usage_response' });
     });
 
+    it('rejects count integers outside JavaScript safe integer precision', async () => {
+      const unsafeCount = Number.MAX_SAFE_INTEGER + 1;
+      for (const override of [
+        { used: unsafeCount },
+        { reserved: unsafeCount },
+        { remaining: unsafeCount },
+        { allowance: unsafeCount },
+      ]) {
+        const client = createPortalUsageClient(async () => jsonResponse(200, usage(override)));
+        await expect(client.read()).rejects.toMatchObject({ code: 'invalid_portal_usage_response' });
+      }
+    });
+
     it('preserves null counts as unknown and does not coerce them to zero', async () => {
       const client = createPortalUsageClient(async () =>
         jsonResponse(200, usage({ used: null, reserved: null, remaining: null, allowance: null })),
@@ -168,6 +186,24 @@ describe('APP-1 keys API fix wave [DATA-03][HAI-01][GRPH-09]', () => {
 
       const badAsOf = createPortalUsageClient(async () => jsonResponse(200, usage({ as_of: 'observed-whenever' })));
       await expect(badAsOf.read()).rejects.toMatchObject({ code: 'invalid_portal_usage_response' });
+
+      const rolledOverPeriodStart = createPortalUsageClient(async () =>
+        jsonResponse(200, usage({ period_start: '2026-02-30T00:00:00Z' })),
+      );
+      await expect(rolledOverPeriodStart.read()).rejects.toMatchObject({ code: 'invalid_portal_usage_response' });
+
+      const rolledOverNestedEnd = createPortalUsageClient(async () =>
+        jsonResponse(
+          200,
+          usage({ period: { start: '2026-09-01T00:00:00Z', end: '2026-02-30T00:00:00Z' } }),
+        ),
+      );
+      await expect(rolledOverNestedEnd.read()).rejects.toMatchObject({ code: 'invalid_portal_usage_response' });
+
+      const rolledOverAsOf = createPortalUsageClient(async () =>
+        jsonResponse(200, usage({ as_of: '2026-02-30T00:00:00Z' })),
+      );
+      await expect(rolledOverAsOf.read()).rejects.toMatchObject({ code: 'invalid_portal_usage_response' });
     });
 
     it('accepts producer UTC ISO period/as_of fields and null as_of as unknown', async () => {

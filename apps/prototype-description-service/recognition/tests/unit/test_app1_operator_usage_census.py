@@ -27,6 +27,7 @@ from fastapi import FastAPI
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.portal_contracts import EntitlementStatus, PortalPrincipal, UsageTicket
 from recognition.interface_adapters.http import deps as dependencies
+from recognition.interface_adapters.http.deps import operator_authorization as operator_authorization_module
 from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth, require_write_access
 from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
 from recognition.interface_adapters.http.deps.operator_authorization import (
@@ -261,6 +262,8 @@ async def _cluster_client(
     tenant_id: str = TENANT_ID,
     admission: _FakeAdmission | None = None,
     entitlement_repository: Any | None = None,
+    business_session_available: bool = True,
+    override_entitlement_repository: bool = True,
 ) -> AsyncIterator[tuple[httpx.AsyncClient, _ClusterSpy, FakeJobService, _FakeAdmission, list[dict[str, Any]], Any]]:
     service = admission or _FakeAdmission()
     cluster_spy = _ClusterSpy()
@@ -300,25 +303,32 @@ async def _cluster_client(
         lambda: SimpleNamespace(broadcast=_broadcast),
     )
 
-    async def _yield_session() -> Any:
+    async def _yield_route_session() -> Any:
         yield session
 
-    def _cluster_builder() -> Any:
+    async def _yield_optional_session() -> Any:
+        yield session if business_session_available else None
+
+    async def _cluster_builder() -> Any:
         return _builder
 
     async def _repo() -> Any:
         return repo
+
+    async def _tenant_id() -> str:
+        return tenant_id
 
     app = FastAPI()
     app.include_router(clusters_admission_module.router, prefix="/recognition")
     app.include_router(cluster_revert_module.router, prefix="/recognition")
     app.state.usage_admission_service = service
     _override_auth(app, auth)
-    app.dependency_overrides[get_tenant_id] = lambda: tenant_id
-    app.dependency_overrides[dependencies.get_clustering_session] = _yield_session
-    app.dependency_overrides[dependencies.get_session] = _yield_session
-    app.dependency_overrides[get_optional_session] = _yield_session
-    app.dependency_overrides[get_operator_entitlement_repository] = _repo
+    app.dependency_overrides[get_tenant_id] = _tenant_id
+    app.dependency_overrides[dependencies.get_clustering_session] = _yield_route_session
+    app.dependency_overrides[dependencies.get_session] = _yield_route_session
+    app.dependency_overrides[get_optional_session] = _yield_optional_session
+    if override_entitlement_repository:
+        app.dependency_overrides[get_operator_entitlement_repository] = _repo
     app.dependency_overrides[dependencies.get_cluster_service_builder] = _cluster_builder
     app.dependency_overrides[dependencies.get_cluster_service_builder_clustering] = _cluster_builder
     app.dependency_overrides[dependencies.get_persisted_cluster_job_service_clustering] = _jobs
@@ -572,6 +582,42 @@ async def test_clustering_jobs_preserve_paid_existing_write_role(monkeypatch: py
         assert cluster_spy.calls == [TENANT_ID]
     else:
         assert job_service.repository.jobs
+
+
+@pytest.mark.asyncio
+async def test_clustering_jobs_use_clustering_pool_when_business_session_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clustering_session = _TrackingSession()
+    repo = _paid_repo(session=clustering_session)
+
+    def _clustering_session_factory() -> _TrackingSession:
+        return clustering_session
+
+    def _repo_from_session(session: Any) -> Any:
+        assert session is clustering_session
+        return repo
+
+    monkeypatch.setattr(operator_authorization_module, "clustering_async_session_factory", _clustering_session_factory)
+    monkeypatch.setattr(operator_authorization_module, "_repository_from_session", _repo_from_session)
+
+    async with _cluster_client(
+        monkeypatch,
+        auth=_operator_auth(),
+        entitlement_repository=repo,
+        business_session_available=False,
+        override_entitlement_repository=False,
+    ) as (client, cluster_spy, _job_service, _admission, _revert_calls, _repo):
+        response = await client.post(
+            "/recognition/clustering/jobs",
+            json={"tenant_id": TENANT_ID, "mode": "sync"},
+        )
+
+    assert response.status_code == 202
+    assert repo.gets == [PORTAL_TENANT]
+    assert clustering_session.commit_calls == 1
+    assert clustering_session.close_calls == 1
+    assert cluster_spy.calls == [TENANT_ID]
 
 
 @pytest.mark.asyncio

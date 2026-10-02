@@ -12,6 +12,8 @@ from fastapi import BackgroundTasks
 from starlette.requests import Request
 
 from db.models import IdentityScanJob, IdentityScanJobItem
+from recognition.application.scan import service as scan_service_module
+from recognition.application.scan.service import ScanService
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.domain.job import JobStatus
 from recognition.interface_adapters.http.routers import analyze
@@ -264,3 +266,89 @@ async def test_fenced_inline_processor_cannot_renew_reclaimed_lease(persisted_qu
     assert renewed is False
     assert job.started_at == stale_lease
     session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_terminal_inline_lease_cancels_processor_before_persistence(monkeypatch):
+    monkeypatch.setattr(analyze, "INLINE_PROCESSING_HEARTBEAT_INTERVAL", timedelta(milliseconds=1))
+    processor_started = asyncio.Event()
+    renewal_attempted = asyncio.Event()
+    processor_cancelled = asyncio.Event()
+    persistence_steps = []
+    processor_tasks = []
+
+    async def blocked_processor(**kwargs):
+        processor_tasks.append(asyncio.current_task())
+        processor_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            processor_cancelled.set()
+            raise
+        persistence_steps.append("persisted")
+
+    async def terminal_renewal(**kwargs):
+        renewal_attempted.set()
+        return None
+
+    monkeypatch.setattr(analyze, "process_scan_job_inline", blocked_processor)
+    monkeypatch.setattr(analyze, "_renew_inline_processing_lease", terminal_renewal)
+    monkeypatch.setattr(analyze, "_clear_inline_processing_owner", AsyncMock())
+    kwargs = {
+        "session_factory": object(),
+        "tenant_id": "11111111-1111-1111-1111-111111111111",
+        "job_id": "22222222-2222-2222-2222-222222222222",
+        "media_ids": [],
+        "media_sources": [],
+        "adapter_provider": None,
+    }
+
+    processing = asyncio.create_task(
+        analyze._process_inline_with_lease(kwargs=kwargs, owner_token="inline:terminal-test")
+    )
+    await asyncio.wait_for(processor_started.wait(), timeout=1)
+    await asyncio.wait_for(renewal_attempted.wait(), timeout=1)
+    await asyncio.wait_for(processing, timeout=0.5)
+
+    await asyncio.wait_for(processor_cancelled.wait(), timeout=1)
+    assert processor_tasks[0].cancelled()
+    assert persistence_steps == []
+
+
+@pytest.mark.asyncio
+async def test_save_job_results_preserves_failed_job_without_persisting(monkeypatch):
+    job_id = uuid.uuid4()
+    tenant_id = "11111111-1111-1111-1111-111111111111"
+    job = SimpleNamespace(
+        id=job_id,
+        status=JobStatus.FAILED,
+        completed_at=None,
+        processed_media=0,
+        identities_detected=0,
+    )
+    session = MagicMock()
+    session.scalar = AsyncMock(return_value=job)
+    session.get = AsyncMock(return_value=job)
+    session.commit = AsyncMock()
+    service = ScanService(session=session)
+    persist_identities = AsyncMock(return_value=SimpleNamespace(total=1))
+    monkeypatch.setattr(service, "_persist_identities", persist_identities)
+    emit_reconciled = MagicMock()
+    monkeypatch.setattr(scan_service_module, "_emit_scan_media_reconciled", emit_reconciled)
+
+    result = await service.save_job_results(
+        job_id=job_id,
+        tenant_id=tenant_id,
+        media_ids=["22222222-2222-2222-2222-222222222222"],
+        media_sources=None,
+        detections=[],
+    )
+
+    assert result is job
+    assert job.status == JobStatus.FAILED
+    assert job.completed_at is None
+    session.scalar.assert_awaited_once()
+    assert session.scalar.await_args.args[0]._for_update_arg is not None
+    persist_identities.assert_not_awaited()
+    session.commit.assert_not_awaited()
+    emit_reconciled.assert_not_called()

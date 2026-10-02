@@ -448,9 +448,20 @@ class ScanService:
         source_to_media_id = dict(zip(sources_list, media_ids_list, strict=False))
         tenant_uuid = uuid.UUID(str(tenant_id))
 
-        scan_job = await self._session.get(IdentityScanJob, job_id)
+        scan_job = await self._session.scalar(
+            select(IdentityScanJob)
+            .where(IdentityScanJob.id == job_id)
+            .with_for_update()
+        )
         if scan_job is None:
             raise RuntimeError(f"scan job not found: {job_id}")
+        if scan_job.status != JobStatus.RUNNING:
+            logger.warning(
+                "Skipping scan result persistence for job %s in status %s",
+                job_id,
+                scan_job.status,
+            )
+            return scan_job
 
         # Group detections by media_id to process them per image for ID recycling
         detections_by_media: dict[int, list[FaceDetection]] = {}

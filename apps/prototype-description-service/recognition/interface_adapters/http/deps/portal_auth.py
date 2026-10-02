@@ -641,6 +641,39 @@ def _extract_bearer_token(
     return pieces[1]
 
 
+def _require_bearer_token(
+    authorization: str | None,
+    *,
+    missing_detail: _HttpDetail = "portal authorization required",
+    invalid_detail: _HttpDetail = "invalid portal authorization",
+) -> str:
+    try:
+        return _extract_bearer_token(
+            authorization,
+            missing_detail=missing_detail,
+            invalid_detail=invalid_detail,
+        )
+    except HTTPException:
+        _emit_portal_auth_event("invalid_key")
+        raise
+
+
+async def _require_portal_bearer_token(
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> str:
+    return _require_bearer_token(authorization)
+
+
+async def _require_pretenant_bearer_token(
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> str:
+    return _require_bearer_token(
+        authorization,
+        missing_detail=_INVALID_PORTAL_AUTHORIZATION,
+        invalid_detail=_INVALID_PORTAL_AUTHORIZATION,
+    )
+
+
 def _require_callable_verifier(
     verifier: object,
     *,
@@ -727,6 +760,7 @@ async def _require_portal_principal_impl(
 
 async def require_verified_portal_identity(
     authorization: str | None = Header(default=None, alias="Authorization"),
+    _bearer_token: str = Depends(_require_pretenant_bearer_token),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     verifier: PortalTokenVerifier = Depends(get_portal_token_verifier),
 ) -> PortalTokenClaims:
@@ -760,6 +794,7 @@ async def require_verified_portal_identity(
 
 async def require_portal_principal(
     authorization: str | None = Header(default=None, alias="Authorization"),
+    _bearer_token: str = Depends(_require_portal_bearer_token),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     verifier: PortalTokenVerifier = Depends(get_portal_token_verifier),
     identity_service: PortalIdentityService = Depends(get_portal_identity_service),

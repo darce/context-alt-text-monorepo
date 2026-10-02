@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
+from contextlib import AsyncExitStack
 import inspect
 import json
 from datetime import UTC, datetime, timedelta
@@ -12,7 +14,8 @@ from uuid import UUID, uuid4
 import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.dependencies.utils import get_dependant, solve_dependencies
 from fastapi.testclient import TestClient
 
 from recognition.domain.portal_contracts import PortalPrincipal
@@ -108,6 +111,65 @@ class _IdentityService:
         return self.principal
 
 
+async def _pretenant_claims(
+    token: str,
+    verifier: portal_auth.PortalTokenVerifier,
+    identity_service: _IdentityService,
+) -> portal_auth.PortalTokenClaims:
+    app = FastAPI()
+
+    @app.get("/pretenant")
+    async def pretenant(
+        claims: portal_auth.PortalTokenClaims = Depends(portal_auth.require_verified_portal_identity),
+    ) -> portal_auth.PortalTokenClaims:
+        return claims
+
+    async def provide_verifier() -> portal_auth.PortalTokenVerifier:
+        return verifier
+
+    async def provide_identity_service() -> _IdentityService:
+        return identity_service
+
+    app.dependency_overrides[portal_auth.get_portal_token_verifier] = provide_verifier
+    app.dependency_overrides[portal_auth.get_portal_identity_service] = provide_identity_service
+    request = Request(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/pretenant",
+            "raw_path": b"/pretenant",
+            "query_string": b"",
+            "root_path": "",
+            "headers": [(b"authorization", f"Bearer {token}".encode("ascii"))],
+            "client": ("test", 1234),
+            "server": ("test", 80),
+            "path_params": {},
+            "app": app,
+            "state": {},
+        }
+    )
+    dependant = get_dependant(path="/pretenant", call=pretenant)
+    async with AsyncExitStack() as stack:
+        request.scope["fastapi_inner_astack"] = stack
+        request.scope["fastapi_function_astack"] = stack
+        solved = await solve_dependencies(
+            request=request,
+            dependant=dependant,
+            body=None,
+            background_tasks=None,
+            response=Response(),
+            dependency_overrides_provider=app,
+            async_exit_stack=stack,
+            embed_body_fields=False,
+        )
+        if solved.errors:
+            raise AssertionError(f"pretenant dependency validation failed: {solved.errors}")
+        return await pretenant(**solved.values)
+
+
 @pytest.fixture
 def key_material() -> tuple[rsa.RSAPrivateKey, dict[str, Any]]:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -167,8 +229,7 @@ def test_pretenant_dependency_does_not_take_an_identity_service() -> None:
     assert "identity_service" not in parameters
 
 
-@pytest.mark.asyncio
-async def test_unbound_verified_identity_succeeds_pretenant_but_is_forbidden_on_tenant_route(
+def test_unbound_verified_identity_succeeds_pretenant_but_is_forbidden_on_tenant_route(
     key_material: tuple[rsa.RSAPrivateKey, dict[str, Any]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -180,10 +241,7 @@ async def test_unbound_verified_identity_succeeds_pretenant_but_is_forbidden_on_
     events: list[str] = []
     monkeypatch.setattr(portal_auth, "emit_auth_event", lambda outcome, **kwargs: events.append(outcome))
 
-    claims = await portal_auth.require_verified_portal_identity(
-        authorization=f"Bearer {token}",
-        verifier=verifier,
-    )
+    claims = asyncio.run(_pretenant_claims(token, verifier, identity_service))
 
     assert isinstance(claims, portal_auth.PortalTokenClaims)
     assert claims.subject == SUBJECT
@@ -193,10 +251,12 @@ async def test_unbound_verified_identity_succeeds_pretenant_but_is_forbidden_on_
     assert "success" not in events
 
     with pytest.raises(HTTPException) as raised:
-        await portal_auth.require_portal_principal(
-            authorization=f"Bearer {token}",
-            verifier=verifier,
-            identity_service=identity_service,
+        asyncio.run(
+            portal_auth.require_portal_principal(
+                authorization=f"Bearer {token}",
+                verifier=verifier,
+                identity_service=identity_service,
+            )
         )
 
     assert raised.value.status_code == 403
@@ -317,8 +377,7 @@ async def test_whitespace_email_is_403(
     assert _code(raised.value) == "email_unverified"
 
 
-@pytest.mark.asyncio
-async def test_unverified_email_is_403_without_identity_lookup(
+def test_unverified_email_is_403_without_identity_lookup(
     key_material: tuple[rsa.RSAPrivateKey, dict[str, Any]],
 ) -> None:
     private_key, jwk = key_material
@@ -332,10 +391,7 @@ async def test_unverified_email_is_403_without_identity_lookup(
     identity_service = _IdentityService(_principal())
 
     with pytest.raises(HTTPException) as raised:
-        await portal_auth.require_verified_portal_identity(
-            authorization=f"Bearer {token}",
-            verifier=verifier,
-        )
+        asyncio.run(_pretenant_claims(token, verifier, identity_service))
 
     assert raised.value.status_code == 403
     assert _code(raised.value) == "email_unverified"

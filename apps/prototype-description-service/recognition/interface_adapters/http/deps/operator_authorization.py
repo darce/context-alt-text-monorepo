@@ -8,14 +8,16 @@ clustering admission/recovery, or cluster revert.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.params import Depends as DependsMarker
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from db.session import clustering_async_session_factory
 from db.tenant_context import set_tenant_context
 from recognition.domain.portal_contracts import EntitlementStatus, PortalPrincipal
 from recognition.infrastructure.repositories.tenant_entitlement_repository import (
@@ -41,13 +43,28 @@ _DENIED_OPERATOR_STATUSES = frozenset(
 )
 
 
-def get_operator_entitlement_repository(
+async def get_operator_entitlement_repository(
+    request: Request,
     session: AsyncSession | None = Depends(get_optional_session),
-) -> Any:
-    """Request-scoped repository from the existing session provider. Tests override this seam."""
+) -> AsyncIterator[Any]:
+    """Yield the entitlement repository on the pool used by the protected route."""
+    route = request.scope.get("route")
+    if getattr(route, "name", None) == "create_clustering_job":
+        clustering_session = clustering_async_session_factory()
+        try:
+            yield _repository_from_session(clustering_session)
+            await clustering_session.commit()
+        except BaseException:
+            await clustering_session.rollback()
+            raise
+        finally:
+            await clustering_session.close()
+        return
+
     if session is None or isinstance(session, DependsMarker):
-        return None
-    return _repository_from_session(session)
+        yield None
+        return
+    yield _repository_from_session(session)
 
 
 def _unavailable(*, detail: str = OPERATOR_UNAVAILABLE_DETAIL) -> HTTPException:

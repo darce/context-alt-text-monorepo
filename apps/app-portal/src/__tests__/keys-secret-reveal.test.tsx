@@ -107,7 +107,7 @@ describe('KeysScreen fresh secret reveal through the real key client', () => {
 
   it('does not show a replayed response secret or offer copy', async () => {
     const user = userEvent.setup();
-    const request = requestForIssue(issue(KEY_A, null, true));
+    const request = requestForIssue(issue(KEY_A, REPLAYED_SECRET, true));
     renderKeys(request);
 
     await waitFor(() => {

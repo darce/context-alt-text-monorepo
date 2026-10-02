@@ -33,6 +33,31 @@ README="${README:-$SEED_DIR/README.md}"
 RIGHTS="${RIGHTS:-$SEED_DIR/guided-rights.tsv}"
 ADDED="${ADDED:-2026-09-08}"
 
+# Match import.sh's Gregorian date validation before creating or changing outputs.
+if [[ ! "$ADDED" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  echo "ERROR: invalid ADDED date '$ADDED' (expected a real Gregorian YYYY-MM-DD)" >&2
+  exit 2
+fi
+added_year=$((10#${ADDED:0:4}))
+added_month=$((10#${ADDED:5:2}))
+added_day=$((10#${ADDED:8:2}))
+case "$added_month" in
+  1|3|5|7|8|10|12) added_days_in_month=31 ;;
+  4|6|9|11) added_days_in_month=30 ;;
+  2)
+    if ((added_year % 400 == 0 || (added_year % 4 == 0 && added_year % 100 != 0))); then
+      added_days_in_month=29
+    else
+      added_days_in_month=28
+    fi
+    ;;
+  *) added_days_in_month=0 ;;
+esac
+if ((added_month < 1 || added_month > 12 || added_day < 1 || added_day > added_days_in_month)); then
+  echo "ERROR: invalid ADDED date '$ADDED' (expected a real Gregorian YYYY-MM-DD)" >&2
+  exit 2
+fi
+
 # source_file|target_slug|subject label|source / licence|basis|notice (one row per bundled asset;
 # mirrors js/admin/assets/guided/CREDITS.md — keep the two in sync)
 ROWS='guided-katy-perry-2026.jpg|katy_perry|Katy Perry|Wikimedia Commons, Justin Higuchi — CC BY 4.0|cc_by|attribution_required

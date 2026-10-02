@@ -1,0 +1,24 @@
+{
+  "lane": "a1h-wpphp2",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "lane_root=\"$(git rev-parse --show-toplevel)\"; resolved_python=\"$lane_root/.venv/bin/python\"; \"$resolved_python\" -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 3.13s."
+    },
+    {
+      "command": "php -l apps/prototype-wp-alt-context/src/api/services/class-describe-media-service.php && php -l apps/prototype-wp-alt-context/src/cli/class-description-command.php",
+      "result": "pass",
+      "detail": "No syntax errors detected in either changed PHP file."
+    },
+    {
+      "command": "apps/prototype-wp-alt-context/vendor/bin/phpunit apps/prototype-wp-alt-context/tests/Unit/DescribeMediaServiceTest.php apps/prototype-wp-alt-context/tests/Unit/DescribeRunControllerTest.php apps/prototype-wp-alt-context/tests/Unit/DescriptionCommandGenerateTest.php",
+      "result": "not_run",
+      "detail": "PHPUnit is unavailable in this sandbox: apps/prototype-wp-alt-context/vendor/bin/phpunit is missing."
+    }
+  ],
+  "rechecked": [],
+  "new_findings": [],
+  "summary": "No findings were listed for recheck. The review found no concrete regression at the changed seams: DescribeMediaService validates JSON/form-body keys and forwards the resolved operation_id (class-describe-media-service.php:314-380, 206), DescribeController delegates the REST call to it (class-describe-controller.php:335-336), and DescriptionCommand sets one key before its retry loop (class-description-command.php:498-504), with tests asserting that startup retries retain the same key (DescriptionCommandGenerateTest.php:158-161). The lane check and PHP syntax checks passed; PHPUnit could not run because vendor/bin/phpunit is absent."
+}

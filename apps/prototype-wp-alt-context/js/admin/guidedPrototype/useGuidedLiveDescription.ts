@@ -226,6 +226,7 @@ export const useGuidedLiveDescription = ({
   const generationRef = useRef(0);
   const attemptRef = useRef(0);
   const requestInFlightRef = useRef(false);
+  const pendingIdempotencyRef = useRef<{ mediaId: number; key: string } | null>(null);
   // Set by the tick that crosses the client deadline. Distinct from `waiting`
   // so an in-flight submit that resolves before the queued re-render is not
   // mistaken for a timed-out wait (GR-201).
@@ -314,7 +315,12 @@ export const useGuidedLiveDescription = ({
       return;
     }
     requestInFlightRef.current = true;
-    const idempotencyKey = createDescribeIdempotencyKey();
+    let pendingIdempotency = pendingIdempotencyRef.current;
+    if (pendingIdempotency === null || pendingIdempotency.mediaId !== mediaId) {
+      pendingIdempotency = { mediaId, key: createDescribeIdempotencyKey() };
+      pendingIdempotencyRef.current = pendingIdempotency;
+    }
+    const idempotencyKey = pendingIdempotency.key;
     // A timed-out run is stopped on screen only; the server may still be
     // burning GPU on it. Retrying without cancelling first is how one learner
     // gesture ends up paying for two live runs.
@@ -347,6 +353,9 @@ export const useGuidedLiveDescription = ({
       .then((run) => {
         if (run === undefined) {
           return;
+        }
+        if (pendingIdempotencyRef.current?.key === idempotencyKey) {
+          pendingIdempotencyRef.current = null;
         }
         if (generationRef.current !== generation) {
           // The learner stopped waiting while the submit was in flight. The run
@@ -382,9 +391,17 @@ export const useGuidedLiveDescription = ({
       .catch((error: unknown) => {
         const strandedRunId = strandedRunIdOf(error);
         if (strandedRunId !== null) {
+          // Acceptance consumes the key even when the response is an error.
+          // Replaying it would adopt the run we are now cancelling (API-02).
+          if (pendingIdempotencyRef.current?.key === idempotencyKey) {
+            pendingIdempotencyRef.current = null;
+          }
           void releaseRun(client, strandedRunId, 'submit_failed_after_acceptance');
         }
         if (generationRef.current === generation) {
+          // React may batch requested + failed without rendering waiting=true,
+          // so the waiting layout effect alone cannot unlock a failed submit.
+          requestInFlightRef.current = false;
           dispatch({ kind: 'failed', reason: GUIDED_LIVE_REASON.SUBMIT_FAILED });
         }
       });

@@ -33,6 +33,7 @@ from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quo
 from recognition.interface_adapters.http.deps.operator_authorization import (
     OPERATOR_FORBIDDEN_DETAIL,
     OPERATOR_UNAVAILABLE_DETAIL,
+    get_clustering_operator_entitlement_repository,
     get_operator_entitlement_repository,
 )
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
@@ -100,6 +101,64 @@ class _ClusterSpy:
 
 class _TrackingSession(FakeSession):
     """FakeSession that records rollback for fail-closed outage proof."""
+
+
+class _CheckoutTracker:
+    def __init__(self) -> None:
+        self.active = 0
+        self.maximum_active = 0
+        self.events: list[str] = []
+
+    def acquire(self, name: str) -> None:
+        self.active += 1
+        self.maximum_active = max(self.maximum_active, self.active)
+        self.events.append(f"{name}_open")
+
+    def release(self, name: str) -> None:
+        self.active -= 1
+        self.events.append(f"{name}_close")
+
+
+class _PoolTrackedSession(_TrackingSession):
+    def __init__(self, name: str, tracker: _CheckoutTracker, *, acquire_on_begin: bool = False) -> None:
+        super().__init__()
+        self._name = name
+        self._tracker = tracker
+        self._active = False
+        if not acquire_on_begin:
+            self._acquire()
+
+    def _acquire(self) -> None:
+        assert not self._active
+        self._active = True
+        self._tracker.acquire(self._name)
+
+    def _release(self) -> None:
+        if self._active:
+            self._active = False
+            self._tracker.release(self._name)
+
+    def begin(self) -> Any:
+        transaction = super().begin()
+        session = self
+
+        class _TrackedTransaction:
+            async def __aenter__(self) -> Any:
+                session._acquire()
+                session._tracker.events.append(f"{session._name}_begin")
+                return await transaction.__aenter__()
+
+            async def __aexit__(self, exc_type: Any, exc: Any, traceback: Any) -> bool:
+                try:
+                    return await transaction.__aexit__(exc_type, exc, traceback)
+                finally:
+                    session._release()
+
+        return _TrackedTransaction()
+
+    async def close(self) -> None:
+        self._release()
+        await super().close()
 
 
 class _EntitlementRepo:
@@ -264,12 +323,14 @@ async def _cluster_client(
     entitlement_repository: Any | None = None,
     business_session_available: bool = True,
     override_entitlement_repository: bool = True,
+    route_session: Any | None = None,
+    optional_session_calls: list[None] | None = None,
 ) -> AsyncIterator[tuple[httpx.AsyncClient, _ClusterSpy, FakeJobService, _FakeAdmission, list[dict[str, Any]], Any]]:
     service = admission or _FakeAdmission()
     cluster_spy = _ClusterSpy()
     job_service = FakeJobService()
     revert_calls: list[dict[str, Any]] = []
-    session = _TrackingSession()
+    session = route_session if route_session is not None else _TrackingSession()
     repo = entitlement_repository if entitlement_repository is not None else _paid_repo(session=session)
     if getattr(repo, "session", None) is None:
         repo.session = session
@@ -307,6 +368,8 @@ async def _cluster_client(
         yield session
 
     async def _yield_optional_session() -> Any:
+        if optional_session_calls is not None:
+            optional_session_calls.append(None)
         yield session if business_session_available else None
 
     async def _cluster_builder() -> Any:
@@ -329,6 +392,7 @@ async def _cluster_client(
     app.dependency_overrides[get_optional_session] = _yield_optional_session
     if override_entitlement_repository:
         app.dependency_overrides[get_operator_entitlement_repository] = _repo
+        app.dependency_overrides[get_clustering_operator_entitlement_repository] = _repo
     app.dependency_overrides[dependencies.get_cluster_service_builder] = _cluster_builder
     app.dependency_overrides[dependencies.get_cluster_service_builder_clustering] = _cluster_builder
     app.dependency_overrides[dependencies.get_persisted_cluster_job_service_clustering] = _jobs
@@ -618,6 +682,98 @@ async def test_clustering_jobs_use_clustering_pool_when_business_session_is_unav
     assert clustering_session.commit_calls == 1
     assert clustering_session.close_calls == 1
     assert cluster_spy.calls == [TENANT_ID]
+
+
+@pytest.mark.asyncio
+async def test_clustering_entitlement_checkout_ends_before_route_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracker = _CheckoutTracker()
+    route_session = _PoolTrackedSession("route", tracker, acquire_on_begin=True)
+    clustering_sessions: list[_PoolTrackedSession] = []
+    optional_session_calls: list[None] = []
+
+    def _clustering_session_factory() -> _PoolTrackedSession:
+        session = _PoolTrackedSession("entitlement", tracker)
+        clustering_sessions.append(session)
+        return session
+
+    repo = _EntitlementRepo({PORTAL_TENANT: _entitlement_row()})
+    original_get = repo.get
+
+    async def _get(tenant_id: UUID, *, for_update: bool = False) -> Any:
+        tracker.events.append("entitlement_get")
+        return await original_get(tenant_id, for_update=for_update)
+
+    repo.get = _get
+
+    def _repo_from_session(session: Any) -> Any:
+        assert clustering_sessions == [session]
+        return repo
+
+    async def _set_tenant_context(session: Any, tenant_id: UUID) -> None:
+        assert session is clustering_sessions[0]
+        assert tenant_id == PORTAL_TENANT
+        tracker.events.append("entitlement_tenant_context")
+
+    monkeypatch.setattr(operator_authorization_module, "clustering_async_session_factory", _clustering_session_factory)
+    monkeypatch.setattr(operator_authorization_module, "_repository_from_session", _repo_from_session)
+    monkeypatch.setattr(operator_authorization_module, "set_tenant_context", _set_tenant_context)
+
+    async with _cluster_client(
+        monkeypatch,
+        auth=_operator_auth(),
+        business_session_available=False,
+        override_entitlement_repository=False,
+        route_session=route_session,
+        optional_session_calls=optional_session_calls,
+    ) as (client, _cluster_spy, _job_service, _admission, _revert_calls, _repo):
+        response = await client.post(
+            "/recognition/clustering/jobs",
+            json={"tenant_id": TENANT_ID, "mode": "async"},
+        )
+
+    assert response.status_code == 202
+    assert len(clustering_sessions) == 1
+    assert clustering_sessions[0].commit_calls == 1
+    assert clustering_sessions[0].close_calls == 1
+    assert tracker.events.index("entitlement_close") < tracker.events.index("route_begin")
+    assert tracker.maximum_active == 1
+    assert optional_session_calls == []
+
+
+@pytest.mark.asyncio
+async def test_cluster_revert_entitlement_uses_business_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    business_session = _TrackingSession()
+    repo = _paid_repo(session=business_session)
+    contextual_sessions: list[Any] = []
+
+    def _repo_from_session(session: Any) -> Any:
+        assert session is business_session
+        return repo
+
+    async def _set_tenant_context(session: Any, _tenant_id: UUID) -> None:
+        contextual_sessions.append(session)
+
+    monkeypatch.setattr(operator_authorization_module, "_repository_from_session", _repo_from_session)
+    monkeypatch.setattr(operator_authorization_module, "set_tenant_context", _set_tenant_context)
+
+    async with _cluster_client(
+        monkeypatch,
+        auth=_operator_auth(),
+        override_entitlement_repository=False,
+        route_session=business_session,
+    ) as (client, _cluster_spy, _job_service, _admission, _revert_calls, _repo):
+        response = await client.post(
+            f"/recognition/clusters/{uuid4()}/revert-merge",
+            json={"receipt_id": str(uuid4())},
+        )
+
+    assert response.status_code == 200
+    assert repo.gets == [PORTAL_TENANT]
+    assert contextual_sessions == [business_session]
 
 
 @pytest.mark.asyncio

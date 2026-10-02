@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, status
 from fastapi.params import Depends as DependsMarker
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,27 +44,36 @@ _DENIED_OPERATOR_STATUSES = frozenset(
 
 
 async def get_operator_entitlement_repository(
-    request: Request,
     session: AsyncSession | None = Depends(get_optional_session),
 ) -> AsyncIterator[Any]:
-    """Yield the entitlement repository on the pool used by the protected route."""
-    route = request.scope.get("route")
-    if getattr(route, "name", None) == "create_clustering_job":
-        clustering_session = clustering_async_session_factory()
-        try:
-            yield _repository_from_session(clustering_session)
-            await clustering_session.commit()
-        except BaseException:
-            await clustering_session.rollback()
-            raise
-        finally:
-            await clustering_session.close()
-        return
-
+    """Yield the entitlement repository on the business session."""
     if session is None or isinstance(session, DependsMarker):
         yield None
         return
     yield _repository_from_session(session)
+
+
+class _ClusteringOperatorEntitlementRepository:
+    """Read an entitlement on a short-lived clustering-pool session."""
+
+    async def get(self, tenant_id: UUID, *, for_update: bool = False) -> Any:
+        session = clustering_async_session_factory()
+        try:
+            await set_tenant_context(session, tenant_id)
+            repository = _repository_from_session(session)
+            row = await repository.get(tenant_id, for_update=for_update)
+            await session.commit()
+            return row
+        except BaseException:
+            await _rollback(session)
+            raise
+        finally:
+            await session.close()
+
+
+async def get_clustering_operator_entitlement_repository() -> Any:
+    """Yield a repository that releases its clustering connection after each read."""
+    return _ClusteringOperatorEntitlementRepository()
 
 
 def _unavailable(*, detail: str = OPERATOR_UNAVAILABLE_DETAIL) -> HTTPException:
@@ -237,6 +246,7 @@ __all__ = [
     "OPERATOR_FORBIDDEN_DETAIL",
     "OPERATOR_UNAVAILABLE_DETAIL",
     "authorize_operator_control",
+    "get_clustering_operator_entitlement_repository",
     "get_operator_entitlement_repository",
     "require_operator_authorization",
 ]

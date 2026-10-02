@@ -37,6 +37,7 @@ from recognition.interface_adapters.http.deps.clustering_circuit_breaker import 
 from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
 from recognition.interface_adapters.http.deps.operator_authorization import (
     authorize_operator_control,
+    get_clustering_operator_entitlement_repository,
     get_operator_entitlement_repository,
 )
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
@@ -217,7 +218,7 @@ async def create_clustering_job(
     cluster_service_builder=Depends(get_cluster_service_builder_clustering),
     job_service=Depends(get_persisted_cluster_job_service_clustering),
     _demo_quota: object = Depends(enforce_demo_quota),
-    entitlement_repository: Any = Depends(get_operator_entitlement_repository),
+    entitlement_repository: Any = Depends(get_clustering_operator_entitlement_repository),
 ) -> ClusteringJobStatusResponse:
     """Trigger clustering for unclustered identities."""
     _logger.info("Clustering request: tenant_id=%s, mode=%s", request.tenant_id, request.mode)

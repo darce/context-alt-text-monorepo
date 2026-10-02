@@ -354,6 +354,53 @@ describe('useGuidedLiveDescription', () => {
       expect(result.current.state.reason).toBe('submit_failed');
     });
 
+    it('reuses the pending action key when retrying a failed submit for the same media', async () => {
+      let submitAttempt = 0;
+      const client = stubClient({
+        submit: vi.fn<GuidedLiveDescriptionClient['submit']>(() => {
+          submitAttempt += 1;
+          return submitAttempt === 1
+            ? Promise.reject(new Error('response lost'))
+            : Promise.resolve(runResponse());
+        }),
+      });
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      expect(result.current.state.reason).toBe('submit_failed');
+
+      await press(() => result.current.request());
+
+      expect(client.submit).toHaveBeenCalledTimes(2);
+      const firstActionKey = client.submit.mock.calls[0]?.[1];
+      expect(firstActionKey).toMatch(IDEMPOTENCY_KEY_PATTERN);
+      expect(client.submit.mock.calls[1]?.[1]).toBe(firstActionKey);
+    });
+
+    it('mints a new action key when retrying with a different media item', async () => {
+      const submit = vi
+        .fn<GuidedLiveDescriptionClient['submit']>()
+        .mockRejectedValueOnce(new Error('response lost'))
+        .mockResolvedValue(runResponse());
+      const client = stubClient({ submit });
+      const { result, rerender } = renderHook(
+        ({ mediaId }: { mediaId: number }) => useGuidedLiveDescription({ mediaId, client }),
+        { initialProps: { mediaId: MEDIA_ID } },
+      );
+
+      await press(() => result.current.request());
+      rerender({ mediaId: MEDIA_ID + 1 });
+      await press(() => result.current.request());
+
+      expect(client.submit).toHaveBeenCalledTimes(2);
+      expect(client.submit.mock.calls[0]?.[0]).toBe(MEDIA_ID);
+      expect(client.submit.mock.calls[1]?.[0]).toBe(MEDIA_ID + 1);
+      const firstActionKey = client.submit.mock.calls[0]?.[1];
+      expect(firstActionKey).toMatch(IDEMPOTENCY_KEY_PATTERN);
+      expect(client.submit.mock.calls[1]?.[1]).toMatch(IDEMPOTENCY_KEY_PATTERN);
+      expect(client.submit.mock.calls[1]?.[1]).not.toBe(firstActionKey);
+    });
+
     it('times out at the ceiling and never retries on its own', async () => {
       const client = stubClient();
       const { result } = mount(client);
@@ -860,6 +907,10 @@ describe('useGuidedLiveDescription', () => {
       // the server may still be working on is worth stopping.
       expect(client.cancel).not.toHaveBeenCalled();
       expect(client.submit).toHaveBeenCalledTimes(2);
+      const firstActionKey = client.submit.mock.calls[0]?.[1];
+      expect(firstActionKey).toMatch(IDEMPOTENCY_KEY_PATTERN);
+      expect(client.submit.mock.calls[1]?.[1]).toMatch(IDEMPOTENCY_KEY_PATTERN);
+      expect(client.submit.mock.calls[1]?.[1]).not.toBe(firstActionKey);
     });
 
     it('cancels the timed-out run before a retry starts a second one', async () => {

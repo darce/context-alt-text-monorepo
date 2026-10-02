@@ -149,6 +149,7 @@ export function ClaimScreen({ client, onClaimed }: ClaimScreenProps) {
   const tokenRef = useRef<HTMLInputElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
   const statusRef = useRef<HTMLDivElement>(null);
+  const currentStep = preview || busy ? 2 : 1;
 
   useEffect(() => {
     epochRef.current += 1;
@@ -243,19 +244,19 @@ export function ClaimScreen({ client, onClaimed }: ClaimScreenProps) {
         }}
       >
         <li
-          aria-current={preview ? undefined : 'step'}
+          aria-current={currentStep === 1 ? 'step' : undefined}
           style={{
-            color: preview ? 'var(--acx-color-text-secondary)' : 'var(--acx-color-accent)',
-            fontWeight: preview ? 'var(--acx-font-weight-normal)' : 'var(--acx-font-weight-semibold)',
+            color: currentStep === 1 ? 'var(--acx-color-accent)' : 'var(--acx-color-text-secondary)',
+            fontWeight: currentStep === 1 ? 'var(--acx-font-weight-semibold)' : 'var(--acx-font-weight-normal)',
           }}
         >
           Step 1 of 2: Enter invitation
         </li>
         <li
-          aria-current={preview ? 'step' : undefined}
+          aria-current={currentStep === 2 ? 'step' : undefined}
           style={{
-            color: preview ? 'var(--acx-color-accent)' : 'var(--acx-color-text-secondary)',
-            fontWeight: preview ? 'var(--acx-font-weight-semibold)' : 'var(--acx-font-weight-normal)',
+            color: currentStep === 2 ? 'var(--acx-color-accent)' : 'var(--acx-color-text-secondary)',
+            fontWeight: currentStep === 2 ? 'var(--acx-font-weight-semibold)' : 'var(--acx-font-weight-normal)',
           }}
         >
           Step 2 of 2: Confirm access

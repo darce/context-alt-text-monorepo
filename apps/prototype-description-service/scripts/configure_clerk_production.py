@@ -593,14 +593,13 @@ def _read_existing_env(path: Path) -> str:
 
 def _commit_env_files(planned: Sequence[tuple[Path, str]]) -> None:
     snapshots: list[tuple[Path, str | None]] = []
-    committed = 0
     try:
         for path, content in planned:
             snapshots.append((path, _read_existing_env(path) if path.exists() else None))
+            # A write can fail after replacement, so recover every attempted destination.
             atomic_write_text(path, content)
-            committed += 1
     except BaseException as exc:
-        rollback_error = _rollback_env_files(snapshots[:committed])
+        rollback_error = _rollback_env_files(snapshots)
         if rollback_error is not None:
             raise ClerkConfigError(
                 "partial Clerk env apply; rollback failed and recovery cannot be guaranteed"

@@ -122,7 +122,8 @@ overrides.
    Then recovers any interrupted activation by restoring its snapshots,
    reapplying its Compose state, reloading Caddy, and clearing the journal.
    Recovery requires no replacement frontend build. Only after recovery does
-   it validate `FRONTEND_DIST`; an unavailable or invalid build exits nonzero
+   it validate `FRONTEND_DIST`, including its source-path guards; a deleted
+   build directory or another unavailable or invalid build exits nonzero
    with the restored live state intact.
 2. Stages a merged Caddyfile, a complete www tree, and an overlay with
    `__APP_WWW__` rendered to the selected `APP_WWW`. Existing `api.*`,

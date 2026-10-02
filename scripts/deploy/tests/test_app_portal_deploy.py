@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -381,7 +382,7 @@ def test_second_apply_and_rollback_refresh_container_mount(tmp_path: Path) -> No
     _assert_caddy_recreated(tmp_path, 4)
 
 
-@pytest.mark.parametrize("invalid_frontend", ["unset", "empty_index"])
+@pytest.mark.parametrize("invalid_frontend", ["unset", "empty_index", "deleted_directory"])
 def test_recovery_precedes_replacement_frontend_validation(tmp_path: Path, invalid_frontend: str) -> None:
     from test_app_portal_activation_journal import _interrupt_after_caddy
 
@@ -391,6 +392,9 @@ def test_recovery_precedes_replacement_frontend_validation(tmp_path: Path, inval
     assert journal.is_file()
     assert live.read_text() != original_caddy
     frontend = None if invalid_frontend == "unset" else _write_frontend(tmp_path, index="")
+    if invalid_frontend == "deleted_directory":
+        shutil.rmtree(frontend)
+        assert not frontend.exists()
     before_log = _log(tmp_path)
 
     result = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=frontend,

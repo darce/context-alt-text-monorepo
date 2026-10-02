@@ -192,7 +192,7 @@ class TenantEntitlementService(Protocol):
         period_end: datetime,
         source: str,
     ) -> EntitlementSnapshot:
-        """Grant beta work only through an audited tenant-bound entitlement mutation."""
+        """Grant beta work through an audited mutation; period boundaries must be timezone-aware."""
         ...
 
     async def apply_billing_state(self, tenant_id: UUID, state: BillingState) -> EntitlementSnapshot:

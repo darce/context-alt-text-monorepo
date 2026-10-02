@@ -1,0 +1,24 @@
+{
+  "lane": "a1h-pshell4",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "/home/gate/workbay-sandbox/feature-app-1-a1h-pshell4-1cd5ce21/.venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 2.51s"
+    },
+    {
+      "command": "cd apps/app-portal && npm test",
+      "result": "not_run",
+      "detail": "Vitest was not run: apps/app-portal/node_modules is absent in this sandbox; the dispatch specifies running Vitest outside this sandbox."
+    },
+    {
+      "command": "cd apps/app-portal && npm run typecheck",
+      "result": "not_run",
+      "detail": "TypeScript was not run: apps/app-portal/node_modules is absent in this sandbox; the dispatch specifies running tsc outside this sandbox."
+    }
+  ],
+  "rechecked": [],
+  "new_findings": [],
+  "summary": "The portal configs wire strict TypeScript checking, Vitest setup/cleanup, and the local /portal dev proxy; listed tests assert the key billing, claim, identity, timeout, and CSP contracts. No fixed findings were listed and no new defect was identified. The lane manifest check passed (26 tests); Vitest and typecheck remain not_run because portal dependencies are absent here."
+}

@@ -11,6 +11,7 @@ from contextlib import contextmanager, suppress
 from typing import cast
 from uuid import UUID, uuid4
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Table, select, text
@@ -60,11 +61,17 @@ COMPUTE_POSTS = (
     "/scene/describe/async",
     "/scene/describe/run",
 )
+FREE_POSTS: tuple[str, ...] = ()
 FREE_GETS = (
     "/scene/describe/jobs/{job_id}",
     "/scene/describe/run/{run_id}",
     "/scene/describe/run/{run_id}/items",
 )
+
+
+def _assert_scene_posts_classified(posts: set[str]) -> None:
+    unclassified = posts - set(COMPUTE_POSTS) - set(FREE_POSTS)
+    assert not unclassified, f"unclassified scene POST routes: {', '.join(sorted(unclassified))}"
 
 
 class _Auth:
@@ -273,7 +280,32 @@ def _post_run(
     return client.post("/scene/describe/run", data=data, files=files)
 
 
-def test_usage_fingerprint_covers_route_media_bytes_context_and_tier():
+@pytest.mark.parametrize(
+    ("dimension", "overrides"),
+    (
+        ("route_mode", {"route_mode": DescribeUsageRouteMode.ASYNC}),
+        ("media_ids", {"media_ids": [70, 72]}),
+        ("image_digests", {"image_digests": {70: "aa", 71: "cc", 72: "dd"}}),
+        ("context_hash", {"context_hash": "other-context"}),
+        ("recognition_enabled", {"recognition_enabled": False}),
+        ("tier", {"tier": "cpu"}),
+    ),
+)
+def test_usage_fingerprint_changes_for_each_request_dimension(dimension, overrides):
+    request = {
+        "route_mode": DescribeUsageRouteMode.BULK,
+        "media_ids": [70, 71],
+        "image_digests": {70: "aa", 71: "bb", 72: "dd"},
+        "context_hash": "ctx",
+        "recognition_enabled": True,
+        "tier": "gpu",
+    }
+    first = compute_usage_request_fingerprint(**request)
+    changed = compute_usage_request_fingerprint(**(request | overrides))
+    assert first != changed, f"changing {dimension} must change the usage fingerprint"
+
+
+def test_usage_fingerprint_ignores_media_order():
     first = compute_usage_request_fingerprint(
         route_mode=DescribeUsageRouteMode.BULK,
         media_ids=[71, 70],
@@ -290,26 +322,8 @@ def test_usage_fingerprint_covers_route_media_bytes_context_and_tier():
         recognition_enabled=True,
         tier="gpu",
     )
-    changed_bytes = compute_usage_request_fingerprint(
-        route_mode=DescribeUsageRouteMode.BULK,
-        media_ids=[70, 71],
-        image_digests={70: "aa", 71: "cc"},
-        context_hash="ctx",
-        recognition_enabled=True,
-        tier="gpu",
-    )
-    other_route = compute_usage_request_fingerprint(
-        route_mode=DescribeUsageRouteMode.ASYNC,
-        media_ids=[70, 71],
-        image_digests={70: "aa", 71: "bb"},
-        context_hash="ctx",
-        recognition_enabled=True,
-        tier="gpu",
-    )
     assert first == reordered
     assert len(first) == 64
-    assert first != changed_bytes
-    assert first != other_route
 
 
 def test_route_census_enumerates_compute_posts_and_free_gets():
@@ -322,10 +336,19 @@ def test_route_census_enumerates_compute_posts_and_free_gets():
             posts.add(path)
         if "GET" in methods:
             gets.add(path)
+    _assert_scene_posts_classified(posts)
     for path in COMPUTE_POSTS:
+        assert path in posts
+    for path in FREE_POSTS:
         assert path in posts
     for path in FREE_GETS:
         assert path in gets
+
+
+def test_route_census_rejects_unclassified_post():
+    with pytest.raises(AssertionError) as exc_info:
+        _assert_scene_posts_classified({"/scene/describe/batch"})
+    assert "/scene/describe/batch" in str(exc_info.value)
 
 
 def test_three_compute_posts_reserve_before_dispatch(monkeypatch):

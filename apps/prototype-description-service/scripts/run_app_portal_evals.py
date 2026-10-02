@@ -873,7 +873,27 @@ def _artifact_evidence(
         if junit.is_junit_document or junit.report_error:
             reasons = _junit_threshold_reasons(case.case_id, junit, threshold=threshold)
             stale = _junit_is_stale(junit, started_at=started_at, timestamp_tolerance_seconds=0)
-            if stale:
+            if case.test is None:
+                # Evidence-only cases execute no producer. Their reports need a
+                # <report>.provenance.json sidecar using the existing HEAD schema.
+                provenance_path = resolved.with_name(resolved.name + ".provenance.json")
+                try:
+                    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+                except (OSError, UnicodeError, json.JSONDecodeError):
+                    provenance = None
+                provenance_verified = isinstance(provenance, Mapping) and _provenance_json_evidence(
+                    case.case_id, provenance, head_sha=head_sha, digest=digest
+                ).verified
+                if not provenance_verified:
+                    description = "stale JUnit" if stale else "JUnit"
+                    reasons.append(
+                        f"required case {case.case_id} {description} artifact {resolved} "
+                        f"requires valid current HEAD provenance at {provenance_path}"
+                    )
+                # Use the unverified ledger outcome for reports without provenance;
+                # valid provenance leaves JUnit threshold failures as failed.
+                stale = not provenance_verified
+            elif stale:
                 reasons.append(
                     f"required case {case.case_id} stale JUnit artifact {resolved} is older than the run start"
                 )

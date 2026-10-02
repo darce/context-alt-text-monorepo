@@ -27,7 +27,10 @@ from recognition.domain.portal_contracts import EntitlementStatus
 from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth
-from recognition.interface_adapters.http.deps.operator_authorization import get_operator_entitlement_repository
+from recognition.interface_adapters.http.deps.operator_authorization import (
+    get_clustering_operator_entitlement_repository,
+    get_operator_entitlement_repository,
+)
 
 
 class _PaidOperatorEntitlementRepository:
@@ -139,6 +142,7 @@ def _clustering_demo_client(*, recognition_quota: int = 5, non_demo: bool = Fals
     app.dependency_overrides[dependencies.get_cluster_service_builder_clustering] = cluster_builder
     app.dependency_overrides[dependencies.get_persisted_cluster_job_service_clustering] = job_service_dep
     app.dependency_overrides[get_operator_entitlement_repository] = operator_entitlement_repository_dep
+    app.dependency_overrides[get_clustering_operator_entitlement_repository] = operator_entitlement_repository_dep
 
     try:
         with TestClient(app) as client:

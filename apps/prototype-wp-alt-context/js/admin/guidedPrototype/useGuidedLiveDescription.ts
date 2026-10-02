@@ -391,9 +391,17 @@ export const useGuidedLiveDescription = ({
       .catch((error: unknown) => {
         const strandedRunId = strandedRunIdOf(error);
         if (strandedRunId !== null) {
+          // Acceptance consumes the key even when the response is an error.
+          // Replaying it would adopt the run we are now cancelling (API-02).
+          if (pendingIdempotencyRef.current?.key === idempotencyKey) {
+            pendingIdempotencyRef.current = null;
+          }
           void releaseRun(client, strandedRunId, 'submit_failed_after_acceptance');
         }
         if (generationRef.current === generation) {
+          // React may batch requested + failed without rendering waiting=true,
+          // so the waiting layout effect alone cannot unlock a failed submit.
+          requestInFlightRef.current = false;
           dispatch({ kind: 'failed', reason: GUIDED_LIVE_REASON.SUBMIT_FAILED });
         }
       });

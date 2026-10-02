@@ -1016,11 +1016,21 @@ class DescribeMediaService {
 			}
 		}
 
+		$configured_categories_type = gettype( $configured_categories );
+		$configured_categories_size = is_string( $configured_categories )
+			? strlen( $configured_categories )
+			: ( is_array( $configured_categories ) ? count( $configured_categories ) : null );
+		$size_detail                 = null === $configured_categories_size
+			? ''
+			: sprintf( ' size=%d', $configured_categories_size );
+
 		Telemetry::log_line(
 			sprintf(
-				'[acx] describe media_id=%d rejected acx_description_context_categories value=%s; using attachment only',
+				'[acx] describe media_id=%d rejected %s option type=%s%s; using attachment only',
 				$media_id,
-				var_export( $configured_categories, true )
+				ContextCategoryPolicy::OPTION_NAME,
+				$configured_categories_type,
+				$size_detail
 			)
 		);
 

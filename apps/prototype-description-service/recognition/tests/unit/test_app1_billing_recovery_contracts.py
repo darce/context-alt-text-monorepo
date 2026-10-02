@@ -73,7 +73,7 @@ class _FakePostgresMigrationOp:
         self,
         *,
         relkinds: dict[str, str],
-        usage_columns: set[str],
+        usage_columns: dict[str, bool],
         writers_drained_setting: str | None,
     ) -> None:
         self.dialect = type("Dialect", (), {"name": "postgresql"})()
@@ -96,7 +96,10 @@ class _FakePostgresMigrationOp:
         if "SELECT column_name FROM information_schema.columns" in sql:
             return _FakeMigrationQueryResult(rows=tuple((column,) for column in self.usage_columns))
         if "SELECT is_nullable FROM information_schema.columns" in sql:
-            return _FakeMigrationQueryResult(scalar="NO")
+            nullable = self.usage_columns.get(str(params["c"]))
+            return _FakeMigrationQueryResult(
+                scalar=None if nullable is None else "YES" if nullable else "NO"
+            )
         if "SELECT current_setting(:name, true)" in sql:
             return _FakeMigrationQueryResult(scalar=self.writers_drained_setting)
         raise AssertionError(f"unexpected migration query: {sql}")
@@ -315,7 +318,9 @@ def test_usage_upgrade_guard_refuses_existing_table_without_drained_writers() ->
     migration = importlib.import_module("db.migrations.versions.001_identity_schema")
     op = _FakePostgresMigrationOp(
         relkinds={"usage_reservation": "r"},
-        usage_columns={"operation_id", "request_fingerprint", "fence_token", "queue_bytes"},
+        usage_columns=dict.fromkeys(
+            ("operation_id", "request_fingerprint", "fence_token", "queue_bytes"), False
+        ),
         writers_drained_setting=None,
     )
 
@@ -331,7 +336,9 @@ def test_usage_upgrade_guard_allows_existing_table_after_writers_are_drained() -
     migration = importlib.import_module("db.migrations.versions.001_identity_schema")
     op = _FakePostgresMigrationOp(
         relkinds={"usage_reservation": "r"},
-        usage_columns={"operation_id", "request_fingerprint", "fence_token", "queue_bytes"},
+        usage_columns=dict.fromkeys(
+            ("operation_id", "request_fingerprint", "fence_token", "queue_bytes"), False
+        ),
         writers_drained_setting="1",
     )
 
@@ -344,7 +351,53 @@ def test_usage_upgrade_guard_allows_fresh_database_without_reservation_table() -
     migration = importlib.import_module("db.migrations.versions.001_identity_schema")
     op = _FakePostgresMigrationOp(
         relkinds={},
-        usage_columns=set(),
+        usage_columns={},
+        writers_drained_setting=None,
+    )
+
+    migration._refuse_undrained_existing_usage_upgrade(op)
+
+
+@pytest.mark.parametrize("column", ["operation_id", "request_fingerprint", "fence_token", "queue_bytes"])
+@pytest.mark.parametrize("defect", ["missing", "nullable"])
+def test_usage_upgrade_guard_refuses_incomplete_identity_contract_with_global_state(
+    column: str, defect: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import importlib
+
+    migration = importlib.import_module("db.migrations.versions.001_identity_schema")
+    monkeypatch.delenv(migration.USAGE_SCHEMA_WRITERS_DRAINED_ENV, raising=False)
+    usage_columns = dict.fromkeys(
+        ("operation_id", "request_fingerprint", "fence_token", "queue_bytes"), False
+    )
+    if defect == "missing":
+        del usage_columns[column]
+    else:
+        usage_columns[column] = True
+    op = _FakePostgresMigrationOp(
+        relkinds={"usage_reservation": "r", "usage_admission_global_state": "r"},
+        usage_columns=usage_columns,
+        writers_drained_setting=None,
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        migration._refuse_undrained_existing_usage_upgrade(op)
+
+    assert str(exc_info.value) == migration._USAGE_SCHEMA_DRAIN_REQUIRED
+
+
+def test_usage_upgrade_guard_allows_complete_identity_contract_with_global_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import importlib
+
+    migration = importlib.import_module("db.migrations.versions.001_identity_schema")
+    monkeypatch.delenv(migration.USAGE_SCHEMA_WRITERS_DRAINED_ENV, raising=False)
+    op = _FakePostgresMigrationOp(
+        relkinds={"usage_reservation": "r", "usage_admission_global_state": "r"},
+        usage_columns=dict.fromkeys(
+            ("operation_id", "request_fingerprint", "fence_token", "queue_bytes"), False
+        ),
         writers_drained_setting=None,
     )
 

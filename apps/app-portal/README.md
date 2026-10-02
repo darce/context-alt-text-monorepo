@@ -27,7 +27,7 @@ npm --prefix apps/app-portal run build
 npm --prefix apps/app-portal run dev
 ```
 
-Production output: `apps/app-portal/dist/`. Serve with history fallback to `index.html`. Proxy `/portal` and `/portal/*` to the API host. This README does not claim a live Caddy policy.
+Production output: `apps/app-portal/dist/`. Serve with history fallback to `index.html`. Proxy `/portal` and `/portal/*` to the API host.
 
 ## Clerk
 
@@ -38,9 +38,9 @@ Official React/Vite path (checked 2026-09-22):
 
 `App.tsx` mounts `ClerkProvider`, routed `<SignIn />` / `<SignUp />`, `UserButton`, and `useAuth`. Sign-in and sign-up `forceRedirectUrl` is `/` so query `redirect_url` cannot open-redirect. `GET /portal/me` sends `Authorization: Bearer` only (`credentials: 'omit'`) with a bounded abort. Tenant display uses the server `tenant_id`. Email, Clerk org, and localStorage are not tenant authority.
 
-## Production CSP artifact (not live)
+## Production CSP
 
-`csp/production.csp` is the operator-facing production allowlist for later Caddy integration. It is not applied by this SPA and is not a claim that the host currently sends these headers.
+`csp/production.csp` is the operator-reviewed production allowlist. `infra/oci/app/Caddyfile.app` applies it as a `Content-Security-Policy` header to the SPA `handle` response.
 
 Checked 2026-09-22: https://clerk.com/docs/guides/secure/best-practices/csp-headers
 

@@ -365,14 +365,20 @@ const GuidedImageReviewCard = ({
     draftVersion: draft.draftVersion ?? 0,
     previewedVersion: draft.previewedVersion ?? null,
     draftText: editValue,
+    outcome: draft.outcome ?? GUIDED_OUTCOME.NOT_FINISHED,
   };
+  const legacyState = guidedReviewLegacyState(state);
   const applyEnabled =
     scope === 'public'
       ? draft.draftText !== null &&
-        canApplyImageDraftPublic(guidedReviewLegacyState(state), publicApplyDraft, photo.key)
+        canApplyImageDraftPublic(legacyState, publicApplyDraft, photo.key)
       : guidedReviewCanApply(state, draft, photo.key) && localMatches;
   const namesAnswered = guidedReviewNamesDecided(state, photo.key);
-  const keepEnabled = canKeepCurrentForImage(state, photo.key) && draft.outcome !== GUIDED_OUTCOME.APPLIED;
+  const keepEnabled =
+    canKeepCurrentForImage(
+      { choices: legacyState.choices, photoChoices: legacyState.photoChoices },
+      photo.key,
+    ) && draft.outcome !== GUIDED_OUTCOME.APPLIED;
   const publicReviewWaitingForNames = scope === 'public' && !namesAnswered;
   const undoEnabled = guidedReviewCanUndo(draft);
   const reason =
@@ -458,11 +464,9 @@ const GuidedImageReviewCard = ({
         id={`guided-photo-review-${photo.key}`}
         data-testid={`guided-description-review-${photo.key}`}
         data-image-key={photo.key}
-        aria-label={scope === 'public' ? photo.event : undefined}
-        aria-labelledby={scope === 'admin' ? `${editorId}-title` : undefined}
+        aria-label={photo.event}
         tabIndex={-1}
       >
-        {scope === 'admin' ? <h3 id={`${editorId}-title`}>{photo.event}</h3> : null}
         <p>{guidedCopy('choices.help.public')}</p>
       </article>
     );

@@ -115,22 +115,8 @@ def _refuse_reused_reset_evidence(
             )
 
 
-def init_run_dir(run_dir: Path | str, pair: StackPairConfig, manifest_path: Path | str) -> Path:
-    root = Path(run_dir)
-    root.mkdir(parents=True, exist_ok=True)
-    stamp = root.name
-    run_doc = {
-        "run_stamp": stamp,
-        "cli_sha": _package_sha("scripts/bench"),
-        "harness_sha": _package_sha("scripts/eval_harness"),
-        "license_banner": LICENSE_BANNER,
-        "wall_clock_timeout_sec": pair.wall_clock_timeout_sec,
-        "job_poll_timeout_sec": pair.job_poll_timeout_sec,
-        "phase": "init",
-        "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "bootstrap_seed": pair.bootstrap_seed,
-    }
-    redacted = {
+def _stack_pair_snapshot(pair: StackPairConfig) -> dict[str, Any]:
+    return {
         "head_to_head_delta": pair.head_to_head_delta,
         "bootstrap_seed": pair.bootstrap_seed,
         "primary_endpoint": pair.primary_endpoint,
@@ -153,12 +139,60 @@ def init_run_dir(run_dir: Path | str, pair: StackPairConfig, manifest_path: Path
             for s in pair.stacks
         ],
     }
+
+
+def _validate_resume_inputs(root: Path, pair: StackPairConfig, manifest_path: Path | str) -> None:
+    try:
+        pinned_digest = (root / "manifest.sha").read_text(encoding="ascii").strip()
+        saved_digest = hashlib.sha256((root / "manifest.json").read_bytes()).hexdigest()
+        saved_pair = json.loads((root / "stack_pair.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise BenchError("resume_inputs_unverified", f"cannot read pinned inputs for run {root}") from exc
+
+    if pinned_digest != saved_digest:
+        raise BenchError(
+            "resume_manifest_pin_mismatch",
+            f"run pins manifest sha256 {pinned_digest!r}, but its saved manifest hashes to {saved_digest!r}",
+        )
+    try:
+        current_digest = hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest()
+    except OSError as exc:
+        raise BenchError("resume_inputs_unverified", f"cannot read current manifest {manifest_path}") from exc
+    if pinned_digest != current_digest:
+        raise BenchError(
+            "resume_manifest_mismatch",
+            f"run pins manifest sha256 {pinned_digest!r}, current manifest sha256 is {current_digest!r}",
+        )
+
+    current_pair = _stack_pair_snapshot(pair)
+    if saved_pair != current_pair:
+        raise BenchError(
+            "resume_stack_pair_mismatch",
+            f"run pins stack_pair {saved_pair!r}, current stack_pair is {current_pair!r}",
+        )
+
+
+def init_run_dir(run_dir: Path | str, pair: StackPairConfig, manifest_path: Path | str) -> Path:
+    root = Path(run_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    stamp = root.name
+    run_doc = {
+        "run_stamp": stamp,
+        "cli_sha": _package_sha("scripts/bench"),
+        "harness_sha": _package_sha("scripts/eval_harness"),
+        "license_banner": LICENSE_BANNER,
+        "wall_clock_timeout_sec": pair.wall_clock_timeout_sec,
+        "job_poll_timeout_sec": pair.job_poll_timeout_sec,
+        "phase": "init",
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "bootstrap_seed": pair.bootstrap_seed,
+    }
     digest = hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest()
     (root / "manifest.sha").write_text(digest + "\n", encoding="utf-8")
     (root / "manifest.json").write_bytes(Path(manifest_path).read_bytes())
     run_doc["manifest_path"] = str(Path(manifest_path))
     (root / "run.json").write_text(json.dumps(run_doc, indent=2), encoding="utf-8")
-    (root / "stack_pair.json").write_text(json.dumps(redacted, indent=2), encoding="utf-8")
+    (root / "stack_pair.json").write_text(json.dumps(_stack_pair_snapshot(pair), indent=2), encoding="utf-8")
     for stack in pair.stacks:
         (root / "legs" / stack.stack_id).mkdir(parents=True, exist_ok=True)
     return root
@@ -383,9 +417,7 @@ def run_leg(
             )
             if not decision.admits:
                 return outcomes
-        exports = leg_dir / "exports"
-        needed = LEG_EXPORT_REQUIRED_FILES
-        if not all((exports / name).is_file() for name in needed):
+        if not _leg_complete(root, endpoint.stack_id):
             export_leg(client, root, endpoint.stack_id)
         return outcomes
     finally:
@@ -404,6 +436,12 @@ def run_pair(
     preflight_transports: dict[str, Any] | None = None,
     pre_run_reset_by_stack: dict[str, Any] | None = None,
 ) -> Path:
+    out_dir_path = Path(out_dir)
+    run_record_path = out_dir_path / "run.json"
+    is_resume = run_record_path.exists()
+    if is_resume:
+        _validate_resume_inputs(out_dir_path, pair, manifest_path)
+
     # Load without images_dir first so floor/superset fail before any media I/O.
     # Deliberate metadata-only load (VLM6-PANEL6L-rvM-01 / OBS-04): only
     # entry counts and media_id sets are read here, never image bytes.
@@ -438,9 +476,6 @@ def run_pair(
 
     # This gate is independent of the optional health preflight switch: skipping
     # health checks must never permit ingest against an unattested scratch tenant.
-    out_dir_path = Path(out_dir)
-    run_record_path = out_dir_path / "run.json"
-    is_resume = run_record_path.exists()
     reset_evidence = (
         validate_pre_run_reset_evidence(
             pair,

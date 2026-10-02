@@ -4,6 +4,7 @@ Analyze routes: scan media and poll job status.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -73,6 +74,7 @@ logger = logging.getLogger(__name__)
 # replay may reclaim it after this bounded lease, using started_at as the lease
 # timestamp without adding a schema column.
 INLINE_PROCESSING_LEASE = timedelta(minutes=30)
+INLINE_PROCESSING_HEARTBEAT_INTERVAL = timedelta(minutes=5)
 
 # SEC-01 / API-05: fixed client-facing text for server faults. The exception body
 # stays server-side in the log record; 501 would tell the caller the endpoint does
@@ -438,6 +440,112 @@ async def _prepare_tenant_context(
     return tenant_uuid
 
 
+async def _renew_inline_processing_lease(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    tenant_id: uuid.UUID,
+    job_id: uuid.UUID,
+    owner_token: str,
+) -> bool | None:
+    """Renew an inline claim, returning None once its job reaches a terminal state."""
+    from db.models import IdentityScanJob
+    from db.tenant_context import set_tenant_context
+
+    async with session_factory() as session:
+        await set_tenant_context(session, tenant_id)
+        job = await session.scalar(
+            select(IdentityScanJob)
+            .where(IdentityScanJob.id == job_id, IdentityScanJob.tenant_id == tenant_id)
+            .with_for_update()
+        )
+        if job is None:
+            return False
+        if job.status in TERMINAL_JOB_STATUSES:
+            return None
+        if job.status != JobStatus.RUNNING or job.error_message != owner_token:
+            return False
+        job.started_at = datetime.now(tz=UTC)
+        await session.commit()
+        return True
+
+
+async def _clear_inline_processing_owner(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    tenant_id: uuid.UUID,
+    job_id: uuid.UUID,
+    owner_token: str,
+) -> None:
+    """Clear lease metadata only if this processor still owns the job."""
+    from db.models import IdentityScanJob
+    from db.tenant_context import set_tenant_context
+
+    async with session_factory() as session:
+        await set_tenant_context(session, tenant_id)
+        job = await session.scalar(
+            select(IdentityScanJob)
+            .where(IdentityScanJob.id == job_id, IdentityScanJob.tenant_id == tenant_id)
+            .with_for_update()
+        )
+        if job is not None and job.error_message == owner_token:
+            job.error_message = None
+            await session.commit()
+
+
+async def _process_inline_with_lease(*, kwargs: dict, owner_token: str) -> None:
+    """Run inline work only while this dispatch still holds its fenced lease."""
+    session_factory = kwargs["session_factory"]
+    tenant_id = uuid.UUID(kwargs["tenant_id"])
+    job_id = uuid.UUID(kwargs["job_id"])
+    processor = asyncio.create_task(
+        process_scan_job_inline(
+            tenant_id=kwargs["tenant_id"],
+            job_id=kwargs["job_id"],
+            media_ids=kwargs["media_ids"],
+            media_sources=kwargs["media_sources"],
+            session_factory=session_factory,
+            adapter_provider=kwargs["adapter_provider"],
+        )
+    )
+    try:
+        while not processor.done():
+            done, _ = await asyncio.wait(
+                {processor},
+                timeout=INLINE_PROCESSING_HEARTBEAT_INTERVAL.total_seconds(),
+            )
+            if done:
+                break
+            lease_state = await _renew_inline_processing_lease(
+                session_factory=session_factory,
+                tenant_id=tenant_id,
+                job_id=job_id,
+                owner_token=owner_token,
+            )
+            if lease_state is None:
+                break
+            if not lease_state:
+                processor.cancel()
+                await asyncio.gather(processor, return_exceptions=True)
+                return
+        await processor
+    except BaseException:
+        if not processor.done():
+            processor.cancel()
+            await asyncio.gather(processor, return_exceptions=True)
+        raise
+    finally:
+        try:
+            await _clear_inline_processing_owner(
+                session_factory=session_factory,
+                tenant_id=tenant_id,
+                job_id=job_id,
+                owner_token=owner_token,
+            )
+        except Exception:
+            # The heartbeat remains bounded by its expiry if cleanup loses the DB.
+            logger.exception("failed to clear inline processor owner for job_id=%s", job_id)
+
+
 async def _dispatch_persisted_analysis(**kwargs) -> None:
     """Serialize dispatch, populate the queue, and claim any inline run.
 
@@ -459,6 +567,7 @@ async def _dispatch_persisted_analysis(**kwargs) -> None:
     job_id = uuid.UUID(kwargs["job_id"])
     tenant_id = uuid.UUID(kwargs["tenant_id"])
     should_process_inline = False
+    inline_owner_token: str | None = None
     async with session_factory() as session:
         await set_tenant_context(session, tenant_id)
         job = await session.scalar(
@@ -496,19 +605,16 @@ async def _dispatch_persisted_analysis(**kwargs) -> None:
         if inline_processing:
             # The row lock serializes contenders. Commit the transition before
             # releasing it so only this dispatcher can enter the processor.
+            # error_message carries an opaque fencing token while RUNNING; the
+            # processor replaces it if it fails, and the owner clears it on exit.
             job.status = JobStatus.RUNNING
             job.started_at = now
+            inline_owner_token = f"inline:{uuid.uuid4()}"
+            job.error_message = inline_owner_token
             should_process_inline = True
         await session.commit()
-    if should_process_inline:
-        await process_scan_job_inline(
-            tenant_id=kwargs["tenant_id"],
-            job_id=kwargs["job_id"],
-            media_ids=kwargs["media_ids"],
-            media_sources=kwargs["media_sources"],
-            session_factory=session_factory,
-            adapter_provider=kwargs["adapter_provider"],
-        )
+    if should_process_inline and inline_owner_token is not None:
+        await _process_inline_with_lease(kwargs={**kwargs, "session_factory": session_factory}, owner_token=inline_owner_token)
 
 
 async def _schedule_analysis(

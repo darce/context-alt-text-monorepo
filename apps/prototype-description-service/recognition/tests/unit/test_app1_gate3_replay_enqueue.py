@@ -1,6 +1,8 @@
 """A retry recovers the commit/dispatch gap without duplicating queue work."""
 
+import asyncio
 import json
+import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -193,3 +195,72 @@ async def test_replay_reclaims_expired_inline_lease(persisted_queue, monkeypatch
 
     processor.assert_awaited_once()
     assert state.jobs[0].started_at > datetime.now(tz=UTC) - timedelta(seconds=5)
+
+
+@pytest.mark.asyncio
+async def test_active_inline_replay_renews_lease_without_starting_a_second_processor(persisted_queue, monkeypatch):
+    state, session, tenant = persisted_queue
+    job_id = "44444444-4444-4444-4444-444444444444"
+    await analyze.ScanQueueService().create_scan_job_record(tenant_id=tenant.id, total=1, job_id=job_id)
+    state.items.append((444444, job_id))
+    monkeypatch.setattr(analyze, "INLINE_PROCESSING_LEASE", timedelta(milliseconds=50))
+    monkeypatch.setattr(analyze, "INLINE_PROCESSING_HEARTBEAT_INTERVAL", timedelta(milliseconds=5))
+
+    processor_started = asyncio.Event()
+    finish_processor = asyncio.Event()
+    heartbeat_renewed = asyncio.Event()
+    process_calls = 0
+
+    async def slow_processor(**kwargs):
+        nonlocal process_calls
+        process_calls += 1
+        processor_started.set()
+        await finish_processor.wait()
+
+    renew_lease = analyze._renew_inline_processing_lease
+
+    async def observe_heartbeat(**kwargs):
+        renewed = await renew_lease(**kwargs)
+        if renewed:
+            heartbeat_renewed.set()
+        return renewed
+
+    monkeypatch.setattr(analyze, "process_scan_job_inline", slow_processor)
+    monkeypatch.setattr(analyze, "_renew_inline_processing_lease", observe_heartbeat)
+    kwargs = dispatch_kwargs(state, session, tenant)
+    original_dispatch = asyncio.create_task(analyze._dispatch_persisted_analysis(**kwargs))
+    await asyncio.wait_for(processor_started.wait(), timeout=1)
+    first_started_at = state.jobs[0].started_at
+    await asyncio.wait_for(heartbeat_renewed.wait(), timeout=1)
+    await asyncio.sleep(0.08)
+
+    assert state.jobs[0].started_at > first_started_at
+    await analyze._dispatch_persisted_analysis(**kwargs)
+    assert process_calls == 1
+
+    finish_processor.set()
+    await original_dispatch
+    assert state.jobs[0].error_message is None
+
+
+@pytest.mark.asyncio
+async def test_fenced_inline_processor_cannot_renew_reclaimed_lease(persisted_queue):
+    state, session, tenant = persisted_queue
+    job_id = uuid.UUID("55555555-5555-5555-5555-555555555555")
+    await analyze.ScanQueueService().create_scan_job_record(tenant_id=tenant.id, total=1, job_id=str(job_id))
+    job = state.jobs[0]
+    job.status = JobStatus.RUNNING
+    job.started_at = datetime.now(tz=UTC) - analyze.INLINE_PROCESSING_LEASE - timedelta(seconds=1)
+    job.error_message = "inline:new-owner"
+    stale_lease = job.started_at
+
+    renewed = await analyze._renew_inline_processing_lease(
+        session_factory=lambda: session,
+        tenant_id=uuid.UUID(str(tenant.id)),
+        job_id=job_id,
+        owner_token="inline:old-owner",
+    )
+
+    assert renewed is False
+    assert job.started_at == stale_lease
+    session.commit.assert_not_awaited()

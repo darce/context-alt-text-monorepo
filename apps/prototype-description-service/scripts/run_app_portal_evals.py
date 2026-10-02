@@ -180,6 +180,7 @@ class ArtifactEvidence:
     evidence_type: EvidenceType
     reason: str | None = None
     digest: str | None = None
+    stale: bool = False
 
 
 CommandRunner = Callable[..., Any]
@@ -664,10 +665,15 @@ def _required_case_ids_for_selection(manifest: EvalManifest, selected: Sequence[
     return required
 
 
-def _junit_is_stale(junit: JunitCounts, *, started_at: datetime) -> bool:
+def _junit_is_stale(
+    junit: JunitCounts,
+    *,
+    started_at: datetime,
+    timestamp_tolerance_seconds: float = 1.0,
+) -> bool:
     if not junit.report_found or junit.mtime is None:
         return False
-    return junit.mtime < started_at.timestamp() - 1
+    return junit.mtime < started_at.timestamp() - timestamp_tolerance_seconds
 
 
 def _identity_matches_declared(declared: str, identity: str) -> bool:
@@ -818,6 +824,7 @@ def _artifact_evidence(
     *,
     repository_root: Path,
     head_sha: str,
+    started_at: datetime,
     threshold: Mapping[str, Any],
 ) -> ArtifactEvidence:
     needs_artifact = case.additional_evidence_required or case.artifact is not None
@@ -865,12 +872,18 @@ def _artifact_evidence(
         junit = _read_junit(resolved)
         if junit.is_junit_document or junit.report_error:
             reasons = _junit_threshold_reasons(case.case_id, junit, threshold=threshold)
+            stale = _junit_is_stale(junit, started_at=started_at, timestamp_tolerance_seconds=0)
+            if stale:
+                reasons.append(
+                    f"required case {case.case_id} stale JUnit artifact {resolved} is older than the run start"
+                )
             return ArtifactEvidence(
                 present=True,
                 verified=not reasons,
                 evidence_type=EvidenceType.JUNIT,
                 reason="; ".join(reasons) if reasons else None,
                 digest=digest,
+                stale=stale,
             )
     if stripped.startswith(b"{"):
         try:
@@ -1066,6 +1079,7 @@ def _run_group(
             case,
             repository_root=repository_root,
             head_sha=head_sha,
+            started_at=started_at,
             threshold=manifest.threshold,
         )
         if artifact.reason:
@@ -1075,7 +1089,7 @@ def _run_group(
                 ledger_status = CaseLedgerStatus.PASSED
             elif not artifact.present:
                 ledger_status = CaseLedgerStatus.NOT_RUN
-            elif artifact.evidence_type is EvidenceType.JUNIT:
+            elif artifact.evidence_type is EvidenceType.JUNIT and not artifact.stale:
                 ledger_status = CaseLedgerStatus.FAILED
             else:
                 ledger_status = CaseLedgerStatus.UNVERIFIED
@@ -1236,6 +1250,11 @@ def run_evals(
         for result in group_results
         for ledger in result["case_ledger"]
     }
+    group_case_evidence_verified = {
+        ledger["id"]: ledger["additional_evidence_verified"]
+        for result in group_results
+        for ledger in result["case_ledger"]
+    }
     case_results: dict[str, dict[str, Any]] = {}
     release_gate_failures: list[str] = []
     cases_by_id = {case.case_id: case for case in manifest.cases}
@@ -1294,6 +1313,11 @@ def run_evals(
                 reasons.append(
                     f"release gate {gate_name!r} required evidence-only case "
                     f"{case_id!r} artifact is missing, empty, or not a regular file: {artifact_path}"
+                )
+            elif not group_case_evidence_verified.get(case_id, False):
+                reasons.append(
+                    f"release gate {gate_name!r} required evidence-only case "
+                    f"{case_id!r} artifact is unverified"
                 )
         if gate.get("requires_explicit_live_charge_authorization") and authorization is None:
             reasons.append("explicit live-charge authorization not given")

@@ -497,16 +497,24 @@ async def _process_inline_with_lease(*, kwargs: dict, owner_token: str) -> None:
     session_factory = kwargs["session_factory"]
     tenant_id = uuid.UUID(kwargs["tenant_id"])
     job_id = uuid.UUID(kwargs["job_id"])
-    processor = asyncio.create_task(
-        process_scan_job_inline(
-            tenant_id=kwargs["tenant_id"],
-            job_id=kwargs["job_id"],
-            media_ids=kwargs["media_ids"],
-            media_sources=kwargs["media_sources"],
-            session_factory=session_factory,
-            adapter_provider=kwargs["adapter_provider"],
-        )
-    )
+
+    async def run_processor() -> None:
+        from recognition.application.scan.service import inline_processing_owner
+
+        token = inline_processing_owner.set((job_id, owner_token))
+        try:
+            await process_scan_job_inline(
+                tenant_id=kwargs["tenant_id"],
+                job_id=kwargs["job_id"],
+                media_ids=kwargs["media_ids"],
+                media_sources=kwargs["media_sources"],
+                session_factory=session_factory,
+                adapter_provider=kwargs["adapter_provider"],
+            )
+        finally:
+            inline_processing_owner.reset(token)
+
+    processor = asyncio.create_task(run_processor())
     try:
         while not processor.done():
             done, _ = await asyncio.wait(
@@ -522,7 +530,9 @@ async def _process_inline_with_lease(*, kwargs: dict, owner_token: str) -> None:
                 owner_token=owner_token,
             )
             if lease_state is None:
-                break
+                processor.cancel()
+                await asyncio.gather(processor, return_exceptions=True)
+                return
             if not lease_state:
                 processor.cancel()
                 await asyncio.gather(processor, return_exceptions=True)

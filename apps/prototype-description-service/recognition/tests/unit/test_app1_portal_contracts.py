@@ -6,6 +6,7 @@ import inspect
 from collections.abc import Mapping
 from dataclasses import FrozenInstanceError, is_dataclass
 from datetime import UTC, datetime
+from typing import get_type_hints
 from uuid import UUID, uuid4
 
 import pytest
@@ -14,6 +15,7 @@ from recognition.domain.portal_contracts import (
     DEFAULT_ALLOWANCE_JOBS,
     DEFAULT_ENTITLEMENT_STATUS,
     BillingProvider,
+    BillingReconciliationRepository,
     BillingState,
     BillingSubscriptionStatus,
     CheckoutSession,
@@ -198,6 +200,73 @@ def test_protocols_are_runtime_checkable(protocol, stub) -> None:
     assert isinstance(stub, protocol)
 
 
+def test_protocol_signatures_are_awaitable_and_preserve_parameter_kinds() -> None:
+    positional = inspect.Parameter.POSITIONAL_OR_KEYWORD
+    keyword_only = inspect.Parameter.KEYWORD_ONLY
+    contracts = {
+        PortalIdentityService: {
+            "resolve_principal": (("self", "issuer", "subject"), ()),
+            "claim_tenant": (("self",), ("issuer", "subject", "email", "invitation_token")),
+        },
+        TenantEntitlementService: {
+            "snapshot": (("self", "tenant_id"), ()),
+            "grant_beta": (
+                ("self", "tenant_id"),
+                ("allowance_jobs", "allowance_version", "period_start", "period_end", "source"),
+            ),
+            "apply_billing_state": (("self", "tenant_id", "state"), ()),
+        },
+        UsageAdmissionService: {
+            "reserve": (("self", "tenant_id"), ("idempotency_key", "job_id", "cost_units")),
+            "commit": (("self", "ticket"), ()),
+            "release": (("self", "ticket"), ()),
+        },
+        BillingProvider: {
+            "create_checkout_session": (
+                ("self",),
+                ("tenant_id", "plan_code", "success_url", "cancel_url", "idempotency_key", "attempt_id"),
+            ),
+            "create_portal_session": (("self",), ("tenant_id", "return_url")),
+            "retrieve_state": (("self",), ("provider_customer_id", "provider_subscription_id", "request_timeout")),
+            "retrieve_checkout": (("self",), ("provider_checkout_id", "request_timeout")),
+            "enumerate_subscriptions": (("self",), ("cursor", "limit", "request_timeout")),
+            "verify_webhook": (("self", "raw_body", "headers"), ()),
+            "parse_event": (("self", "raw_body"), ()),
+        },
+        BillingReconciliationRepository: {
+            "acquire_lease": (("self", "key"), ("owner", "lease_ttl", "now")),
+            "heartbeat": (("self", "lease"), ("now", "lease_ttl")),
+            "complete_item": (("self", "lease"), ("remote_id", "now")),
+            "quarantine_item": (("self", "lease"), ("observation", "now")),
+            "advance_cursor": (
+                ("self", "lease"),
+                ("next_cursor", "exhausted", "page_remote_ids", "now"),
+            ),
+            "record_page_failure": (("self", "lease"), ("failure_class", "now")),
+            "audited_retry": (
+                ("self", "lease"),
+                ("remote_id", "operator_identity", "operator_reason", "now"),
+            ),
+            "get_quarantine": (("self", "key", "remote_id"), ()),
+        },
+    }
+
+    for protocol, methods in contracts.items():
+        declared_methods = {
+            name for name, member in vars(protocol).items() if not name.startswith("_") and inspect.isfunction(member)
+        }
+        assert declared_methods == set(methods)
+        for name, (positional_names, keyword_only_names) in methods.items():
+            method = getattr(protocol, name)
+            assert inspect.iscoroutinefunction(method), f"{protocol.__name__}.{name} must be awaitable"
+            actual_parameters = tuple(inspect.signature(method).parameters.values())
+            expected_parameters = tuple(
+                (parameter_name, keyword_only if parameter_name in keyword_only_names else positional)
+                for parameter_name in (*positional_names, *keyword_only_names)
+            )
+            assert tuple((parameter.name, parameter.kind) for parameter in actual_parameters) == expected_parameters
+
+
 def test_stub_omitting_a_required_method_fails_structural_check() -> None:
     class MissingParseEvent:
         async def create_checkout_session(self, **kwargs) -> CheckoutSession:
@@ -242,6 +311,11 @@ def test_billing_provider_requires_attempt_owned_checkout_and_header_verify() ->
     assert "signature" not in verify_params
     assert hasattr(BillingProvider, "retrieve_checkout")
     assert hasattr(BillingProvider, "enumerate_subscriptions")
+
+    identity_params = inspect.signature(PortalIdentityService.claim_tenant).parameters
+    assert identity_params["invitation_token"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert identity_params["invitation_token"].default is inspect.Parameter.empty
+    assert get_type_hints(PortalIdentityService.claim_tenant)["invitation_token"] is str
 
 
 def test_missing_entitlement_is_fail_safe_zero_allowance() -> None:

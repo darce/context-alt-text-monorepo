@@ -465,6 +465,78 @@ async def test_terminal_heartbeat_preserves_post_commit_reconcile_events(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_terminal_heartbeat_and_shutdown_preserve_reconcile_events(monkeypatch):
+    monkeypatch.setattr(analyze, "INLINE_PROCESSING_HEARTBEAT_INTERVAL", timedelta(milliseconds=1))
+    committed = asyncio.Event()
+    resume_commit = asyncio.Event()
+    commit_finished = asyncio.Event()
+    job_id = uuid.uuid4()
+    tenant_id = str(uuid.uuid4())
+    job = SimpleNamespace(status=JobStatus.RUNNING, error_message="inline:shutdown-test")
+    session = MagicMock()
+    session.scalar = AsyncMock(return_value=job)
+
+    async def commit():
+        committed.set()
+        await resume_commit.wait()
+        commit_finished.set()
+
+    session.commit = AsyncMock(side_effect=commit)
+    service = ScanService(session=session)
+    monkeypatch.setattr(service, "_persist_identities", AsyncMock(return_value=SimpleNamespace(total=0)))
+    emit_reconciled = MagicMock()
+    monkeypatch.setattr(scan_service_module, "_emit_scan_media_reconciled", emit_reconciled)
+    processor_tasks = []
+
+    async def processor(**kwargs):
+        processor_tasks.append(asyncio.current_task())
+        await service.save_job_results(
+            job_id=job_id, tenant_id=tenant_id, media_ids=["1", "2"],
+            media_sources=None, detections=[],
+        )
+
+    async def renewal(**kwargs):
+        await committed.wait()
+        assert job.status == JobStatus.COMPLETED
+        return None
+
+    monkeypatch.setattr(analyze, "process_scan_job_inline", processor)
+    monkeypatch.setattr(analyze, "_renew_inline_processing_lease", renewal)
+    cleanup = AsyncMock()
+    monkeypatch.setattr(analyze, "_clear_inline_processing_owner", cleanup)
+    processing = asyncio.create_task(analyze._process_inline_with_lease(
+        kwargs={
+            "session_factory": object(), "tenant_id": tenant_id, "job_id": str(job_id),
+            "media_ids": ["1", "2"], "media_sources": [], "adapter_provider": None,
+        },
+        owner_token="inline:shutdown-test",
+    ))
+
+    async def wait_for_heartbeat_cancellation():
+        await committed.wait()
+        while processor_tasks[0].cancelling() == 0:
+            await asyncio.sleep(0)
+        # Let the processor enter its cancellation drain before shutdown.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+    await asyncio.wait_for(wait_for_heartbeat_cancellation(), timeout=1)
+    processing.cancel()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    resume_commit.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(processing, timeout=1)
+
+    assert processor_tasks[0].cancelling() >= 2
+    assert processor_tasks[0].cancelled()
+    session.commit.assert_awaited_once()
+    assert commit_finished.is_set()
+    assert [call.kwargs["media_id"] for call in emit_reconciled.call_args_list] == [1, 2]
+    cleanup.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_reclaimed_inline_owner_cannot_persist_running_job(monkeypatch):
     job_id = uuid.uuid4()
     tenant_id = str(uuid.uuid4())

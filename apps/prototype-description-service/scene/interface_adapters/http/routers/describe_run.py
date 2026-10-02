@@ -47,6 +47,7 @@ from scene.domain.describe_run import (
     InvalidIdempotencyKeyError,
     RunKind,
     compute_eta_seconds,
+    compute_request_digest,
     describe_job_error,
     normalize_idempotency_key,
 )
@@ -415,7 +416,13 @@ def _parse_idempotency_key(raw: object) -> str | None:
         ) from exc
 
 
-def _replay_or_conflict(run, *, fingerprint: str) -> DescribeRunResponse:
+def _replay_or_conflict(
+    run,
+    *,
+    fingerprint: str,
+    legacy_fingerprint: str | None = None,
+    legacy_image_bytes: Mapping[int, bytes] | None = None,
+) -> DescribeRunResponse:
     """Return the reserved run, or 409 when the token names a different payload.
 
     The replay is deliberately indistinguishable from a first accept (202, same
@@ -425,7 +432,17 @@ def _replay_or_conflict(run, *, fingerprint: str) -> DescribeRunResponse:
     replays; a changed fingerprint (including image bytes) is 409.
     """
     stored = getattr(run, "request_digest", None)
-    if stored and str(stored) != fingerprint:
+    compatible_legacy = False
+    if stored and legacy_fingerprint is not None and legacy_image_bytes is not None:
+        # Legacy digests bound only IDs and recognition; retained bytes keep the
+        # compatibility path from replaying a changed upload.
+        stored_images = {
+            int(item.media_id): bytes(item.image_bytes)
+            for item in (getattr(run, "items", None) or ())
+            if item.image_bytes is not None
+        }
+        compatible_legacy = str(stored) == legacy_fingerprint and stored_images == dict(legacy_image_bytes)
+    if stored and str(stored) != fingerprint and not compatible_legacy:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             {
@@ -565,6 +582,11 @@ async def create_describe_run(
         recognition_enabled=recognition_enabled,
         tier=adapter.kind.value,
     )
+    legacy_fingerprint = compute_request_digest(
+        media_ids=unique_media_ids,
+        recognition_enabled=recognition_enabled,
+    )
+    legacy_image_bytes = {media_id: images[media_id][0] for media_id in unique_media_ids}
     operation_id = _usage_operation_id(idempotency_key, caller_operation_id)
     job_id = uuid.uuid4()
     queue_bytes = sum(len(images[media_id][0]) for media_id in unique_media_ids)
@@ -577,7 +599,12 @@ async def create_describe_run(
     else:
         existing = await _run_by_usage_operation(session, tenant_id=tenant_id, operation_id=operation_id)
     if existing is not None:
-        return _replay_or_conflict(existing, fingerprint=usage_fingerprint)
+        return _replay_or_conflict(
+            existing,
+            fingerprint=usage_fingerprint,
+            legacy_fingerprint=legacy_fingerprint,
+            legacy_image_bytes=legacy_image_bytes,
+        )
     # [S07] Reject an over-quota demo key BEFORE create_run, after proven replay.
     await _reject_when_demo_quota_is_already_spent(auth, session, units=len(unique_media_ids))
     await set_tenant_context(session, tenant_id)
@@ -598,7 +625,12 @@ async def create_describe_run(
         else:
             raced = await _run_by_usage_operation(session, tenant_id=tenant_id, operation_id=operation_id)
         if raced is not None:
-            return _replay_or_conflict(raced, fingerprint=usage_fingerprint)
+            return _replay_or_conflict(
+                raced,
+                fingerprint=usage_fingerprint,
+                legacy_fingerprint=legacy_fingerprint,
+                legacy_image_bytes=legacy_image_bytes,
+            )
 
         try:
             run_id = await repo.create_run(
@@ -635,7 +667,12 @@ async def create_describe_run(
                     status.HTTP_503_SERVICE_UNAVAILABLE,
                     "describe run reservation is uncertain; retry with the same idempotency_key",
                 ) from exc
-            return _replay_or_conflict(winner, fingerprint=usage_fingerprint)
+            return _replay_or_conflict(
+                winner,
+                fingerprint=usage_fingerprint,
+                legacy_fingerprint=legacy_fingerprint,
+                legacy_image_bytes=legacy_image_bytes,
+            )
         except ValueError as exc:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
         await _bind_run_usage(

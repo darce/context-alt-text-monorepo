@@ -43,7 +43,7 @@ from recognition.domain.portal_contracts import UsageTicket
 from recognition.interface_adapters.http.deps import get_optional_session, require_write_access
 from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
 from recognition.interface_adapters.http.deps.usage_admission import get_usage_admission_service
-from scene.domain.describe_run import DescribeUsageRouteMode, compute_usage_request_fingerprint
+from scene.domain.describe_run import DescribeUsageRouteMode, compute_request_digest, compute_usage_request_fingerprint
 from scene.interface_adapters.http.router import router as scene_router
 from scene.interface_adapters.http.routers.describe import AsyncAdmissionGate
 
@@ -517,6 +517,10 @@ class _BoomAdapter:
         raise RuntimeError("adapter exploded after dispatch")
 
 
+class _GpuBoomAdapter(_BoomAdapter):
+    kind = describe_mod.DescriptionAdapterKind.GPU
+
+
 def test_multipart_postcompute_failure_commits_without_release(monkeypatch):
     _BoomAdapter.calls = 0
     admission = _FakeAdmission()
@@ -561,6 +565,51 @@ def test_metered_posts_fail_closed_when_admission_service_missing(monkeypatch):
     assert bulk.status_code == 503, bulk.text
     assert multipart.json()["detail"] == {"error": "usage_admission_unavailable"}
     assert _BoomAdapter.calls == 0
+
+
+def test_gpu_multipart_missing_admission_does_not_keep_demand_lease_active(monkeypatch):
+    _GpuBoomAdapter.calls = 0
+    with _census_client(None, monkeypatch, install_admission=False, adapter=_GpuBoomAdapter()) as (client, sf):
+        first = _post_multipart(client, operation_id=OP_A)
+
+        async def _lease_states():
+            async with sf() as session:
+                leases = list((await session.execute(select(DescribeDemandLease))).scalars())
+                return [lease.state for lease in leases]
+
+        after_first = asyncio.run(_lease_states())
+        retry = _post_multipart(client, operation_id=OP_A)
+        after_retry = asyncio.run(_lease_states())
+
+    assert first.status_code == 503, first.text
+    assert retry.status_code == 503, retry.text
+    assert "active" not in after_first
+    assert after_retry == after_first
+    assert _GpuBoomAdapter.calls == 0
+
+
+def test_legacy_run_digest_replays_identical_bytes_and_conflicts_on_changed_bytes(monkeypatch):
+    admission = _FakeAdmission()
+    with _census_client(admission, monkeypatch) as (client, sf):
+        first = _post_run(client, operation_id=OP_A, media_ids=[70], body=PNG)
+        run_id = UUID(first.json()["run_id"])
+
+        async def _seed_legacy_digest():
+            async with sf() as session:
+                run = await session.get(DescribeRun, run_id)
+                assert run is not None
+                run.request_digest = compute_request_digest(media_ids=[70], recognition_enabled=False)
+                await session.commit()
+
+        asyncio.run(_seed_legacy_digest())
+        replay = _post_run(client, operation_id=OP_A, media_ids=[70], body=PNG)
+        changed = _post_run(client, operation_id=OP_A, media_ids=[70], body=PNG_B)
+
+    assert first.status_code == 202, first.text
+    assert replay.status_code == 202, replay.text
+    assert replay.json()["run_id"] == first.json()["run_id"]
+    assert changed.status_code == 409, changed.text
+    assert len(admission.reserves) == 1
 
 
 @contextmanager

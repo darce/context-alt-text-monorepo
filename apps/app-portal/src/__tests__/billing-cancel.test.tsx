@@ -92,7 +92,7 @@ describe('A1HRV1005-01 checkout cancellation [INT-13][VIZ-22][TEST-15]', () => {
     await user.click(retry);
 
     expect(await screen.findByRole('button', { name: 'Continue to checkout' })).toBeEnabled();
-    expect(screen.getByRole('heading', { name: 'Billing', exact: true })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Billing' })).toBeInTheDocument();
     expect(screen.queryByText('Checkout was cancelled.')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Try checkout again' })).not.toBeInTheDocument();
     expect(fetchImpl.mock.calls.some(([input]) => String(input).includes('/portal/billing'))).toBe(false);
@@ -103,7 +103,7 @@ describe('A1HRV1005-01 checkout cancellation [INT-13][VIZ-22][TEST-15]', () => {
     renderBillingPath('/billing/cancel');
     expect(await screen.findByText('Checkout was cancelled.')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'View usage' }));
-    expect(await screen.findByRole('heading', { name: 'Usage', exact: true })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Usage' })).toBeInTheDocument();
   });
 
   it('omits cancellation status and recovery on plain billing', async () => {

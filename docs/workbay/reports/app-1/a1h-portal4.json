@@ -1,0 +1,80 @@
+{
+  "lane": "a1h-portal4",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "lane_root=\"$(git rev-parse --show-toplevel)\"; resolved_python=\"$lane_root/.venv/bin/python\"; \"$resolved_python\" -c \"import recognition as module; print(module.__file__)\"",
+      "result": "pass",
+      "detail": "Import resolved inside this lane at /home/gate/workbay-sandbox/feature-app-1-a1h-portal4-4a359946/apps/prototype-description-service/recognition/__init__.py."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_app_mount.py recognition/tests/unit/test_app1_operator_usage_census.py recognition/tests/unit/test_app1_portal_auth.py recognition/tests/unit/test_app1_portal_checkout_router.py recognition/tests/unit/test_app1_portal_claim_router.py recognition/tests/unit/test_app1_portal_composition.py",
+      "result": "not_run",
+      "detail": "uv stopped before pytest: read-only filesystem while removing the shared alembic entry. Retried the same suite with --no-sync."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_app_mount.py recognition/tests/unit/test_app1_operator_usage_census.py recognition/tests/unit/test_app1_portal_auth.py recognition/tests/unit/test_app1_portal_checkout_router.py recognition/tests/unit/test_app1_portal_claim_router.py recognition/tests/unit/test_app1_portal_composition.py",
+      "result": "fail",
+      "detail": "Pytest printed Timeout (0:04:00)! and a stack ending at pytest_asyncio/plugin.py:905, followed by partial F............ output. I stopped the stalled process before it produced a test summary."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_portal_router.py",
+      "result": "fail",
+      "detail": "Timeout (0:04:00)! at recognition/tests/unit/test_app1_portal_router.py:226 in test_every_portal_endpoint_requires_authentication while TestClient.__enter__ was blocked; interrupted without a count summary."
+    },
+    {
+      "command": "LC_ALL=C \"$resolved_python\" -m pytest -p no:cacheprovider -q scripts/deploy/tests/test_app_portal_activation_journal.py scripts/deploy/tests/test_app_portal_deploy.py",
+      "result": "pass",
+      "detail": "48 passed in 18.35s."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q recognition/tests/integration/test_app1_checkout_attempt_persistence.py recognition/tests/integration/test_app1_claim_onboarding_postgres.py recognition/tests/integration/test_app1_usage_admission_postgres.py",
+      "result": "not_run",
+      "detail": "Not run per the sandbox brief because PostgreSQL is unavailable. Read the pytest.mark.pg tests and pg_empty_engine fixture; they cover checkout attempt RLS/isolation, claim atomicity and replay, and usage admission concurrency."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16001,
+      "finding_id": "APP1-HTTP-RV02",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/interface_adapters/http/routers/portal.py:849-860 calls replay_existing_checkout before checking the ACTIVE projection; TEST-15 guard assertion at apps/prototype-description-service/recognition/tests/unit/test_app1_portal_checkout_router.py::test_active_subscriber_replays_same_key_and_refuses_new_checkout confirms same-key replay and rejects a new key.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_portal_checkout_router.py::test_active_subscriber_replays_same_key_and_refuses_new_checkout"
+    },
+    {
+      "db_id": 15556,
+      "finding_id": "GXPLAN-e71025f7c0c5b190-M-f003ddb0d94c9a07eb8233ee",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/interface_adapters/http/routers/portal.py:652-676 follows cursor pages in _find_key; TEST-15 guard assertion at apps/prototype-description-service/recognition/tests/unit/test_app1_portal_router.py:493-510 finds a detail row on page two.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_portal_router.py::test_find_key_follows_cursor_to_second_page"
+    },
+    {
+      "db_id": 15538,
+      "finding_id": "APP1-HG-46",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/interface_adapters/http/routers/portal.py:678-699 walks up to MAX_KEY_LOOKUP_PAGES with cursor-cycle checks; rotate and revoke call the shared _find_key at :990-1016. TEST-15 guards at apps/prototype-description-service/recognition/tests/unit/test_app1_portal_router.py::test_find_key_follows_cursor_to_second_page and ::test_last_usable_key_counts_usable_rows_across_pages cover paginated lookup and revocation counting.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_portal_router.py::test_find_key_follows_cursor_to_second_page; apps/prototype-description-service/recognition/tests/unit/test_app1_portal_router.py::test_last_usable_key_counts_usable_rows_across_pages"
+    },
+    {
+      "db_id": 15531,
+      "finding_id": "APP1-HG-24",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/interface_adapters/http/routers/portal.py:1119-1145 marks entitlement-sourced usage authoritative, maps status through EntitlementStatus with invalid values reduced to None, and reads as_of without inventing it. TEST-15 assertions at apps/prototype-description-service/recognition/tests/unit/test_app1_portal_router.py:357-374 cover authoritative provenance, enum membership, and null as_of.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_portal_router.py::test_usage_uses_authoritative_entitlement_provenance_without_inventing_metadata"
+    },
+    {
+      "db_id": 15530,
+      "finding_id": "APP1-HG-23",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/interface_adapters/http/routers/portal.py:954-974 explicitly commits creation before _issue_response builds the secret-bearing response. TEST-15 ordering assertion at apps/prototype-description-service/recognition/tests/unit/test_app1_portal_router.py:473-490 requires create, commit, response order.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_portal_router.py::test_create_commits_before_response_body_is_built"
+    }
+  ],
+  "new_findings": [],
+  "summary": "All five recorded corrections hold and no new defects were found; 48 deployment tests pass, but portal pytest verification timed out before completion."
+}

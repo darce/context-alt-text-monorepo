@@ -358,6 +358,24 @@ async def test_orphan_page_bound_is_50_and_stops_at_20_pages() -> None:
 
 
 @pytest.mark.asyncio
+async def test_orphan_page_with_unchanged_cursor_fails_without_advancing() -> None:
+    cursor = "stuck-cursor"
+    provider = _EnumProvider({cursor: _page((_state(_TENANT_ID),), next_cursor=cursor, exhausted=False)})
+    recovery = _Recovery()
+    recovery.cursor = cursor
+    repository = _billing_repo()
+
+    report = await _run_orphans(provider, recovery, repository)
+
+    assert report.failed >= 1
+    assert report.exit_code == 1
+    assert recovery.cursor == cursor
+    assert recovery.advances == []
+    assert recovery.page_failures
+    assert len(provider.enumerate_calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_cursor_resumes_on_the_next_bounded_run() -> None:
     pages: dict[str | None, EnumerationPage] = {}
     cursor: str | None = None

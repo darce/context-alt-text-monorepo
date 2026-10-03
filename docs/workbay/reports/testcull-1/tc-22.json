@@ -1,0 +1,78 @@
+{
+  "lane": "tc-22",
+  "base": "e56ab004eb3080fd1dac7c602d78835e11fac792",
+  "files": [
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_eval_harness_cli_gate_wire_format.py",
+      "verdict": "REWRITE",
+      "tests_total": 27,
+      "tests_affected": [
+        "test_score_gate_fail_uses_message_encoder_not_path_encoder",
+        "test_score_gate_fail_json_path_slots_go_through_printable_path",
+        "test_main_score_gate_handler_calls_printable_exception_encoder",
+        "test_gate_wire_spawn_uses_canonical_surrogate_argv_enforcer",
+        "test_run_python_bytes_invokes_enforce_surrogate_argv_marker",
+        "test_run_python_bytes_rejects_unmarked_utf8_cafe_argv"
+      ],
+      "reason": "The listed tests pin private AST/helper wiring instead of the observable CLI contract, while the remaining cases exercise real wire output.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_cli_gate_wire_format.py:185 - AST assertions inspect _score_gate_fail helper names; :282 exercises the CLI exception boundary through a subprocess.",
+      "subject": "scripts.eval_harness.cli score-gate and path-text error output",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-16",
+        "TEST-12"
+      ],
+      "replacement": "Assert the score-gate and main-handler behavior through the existing raw-path subprocess CLI cases, and centralize argv-marker enforcement as one shared pytest support seam with a single behavioral check.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_eval_harness_cli_stdio.py",
+      "verdict": "REWRITE",
+      "tests_total": 36,
+      "tests_affected": [
+        "test_stdio_module_uses_imported_c_locale_helpers",
+        "test_run_python_bytes_invokes_imported_assert_child_ascii_locale",
+        "test_c01_autouse_does_not_key_on_under_c_parent_substring",
+        "test_c01_requires_surrogate_argv_marker_registered",
+        "test_c01_under_c_parent_tests_carry_the_marker",
+        "test_c01_unmarked_utf8_cafe_argv_fails_enforcement",
+        "test_c01_marked_rename_skips_when_probe_false",
+        "test_c01_latin1_argv_is_outside_utf8_surrogate_gate",
+        "test_c01_utf8_predicate_source_names_latin1_exclusion",
+        "test_c01_unmarked_utf8_cafe_spawn_fails_enforcement",
+        "test_c01_run_python_bytes_invokes_enforcer_with_exact_argv"
+      ],
+      "reason": "The listed tests inspect private test-runner helper identity, source text, or calls; the rest assert distinct CLI byte output and stdio behavior.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_cli_stdio.py:709 - checks imported helper identity/private names; :779 scans its own source for marker wiring; :517 starts a CLI subprocess and asserts output bytes.",
+      "subject": "scripts.eval_harness.cli path rendering, stdio configuration, and test-runner locale gate",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-16",
+        "TEST-12"
+      ],
+      "replacement": "Expose one shared pytest fixture for the UTF-8-versus-Latin-1 marker policy and test its observable skip/fail result once; keep the existing subprocess assertions for CLI path output.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py",
+      "verdict": "CULL",
+      "tests_total": 84,
+      "tests_affected": [
+        "test_retired_face_count_covers_labeled_is_gone"
+      ],
+      "reason": "This single test guards only the retired private _face_count_covers_labeled helper; the live v3 count rules are already covered through manifest validation.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py:1168 - asserts the retired helper is absent; :237 and :267 assert current boxes_cover_face_count and present_identities_fit_face_count validation.",
+      "subject": "scripts.eval_harness.manifest v3 schema and face-count validation",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-12"
+      ],
+      "replacement": "Retain test_face_count_below_labeled_rejected and test_face_count_below_present_identities_rejected_unboxed/exhaustive as the live public-invariant coverage.",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    }
+  ],
+  "fixtures": []
+}

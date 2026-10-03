@@ -1,0 +1,76 @@
+{
+  "lane": "tc-18",
+  "base": "e56ab004eb3080fd1dac7c602d78835e11fac792",
+  "files": [
+    {
+      "path": "apps/prototype-description-service/recognition/tests/unit/test_fir_release_gates.py",
+      "verdict": "CULL",
+      "tests_total": 49,
+      "tests_affected": [
+        "test_fir4_plan_exists_for_contract_sweep",
+        "test_fir4_plan_no_two_active_dimension_knobs_claim",
+        "test_fir4_plan_no_instruction_to_set_recognition_embedding_dimension",
+        "test_fir4_plan_no_migration_001_hardcodes_512_claim",
+        "test_fir4_plan_no_docker_independently_pip_resolved_claim",
+        "test_fir4_plan_no_completed_image_ort_smoke_claim",
+        "test_fir4_plan_no_stale_dockerfile_pip_install_bench_instruction",
+        "test_fir4_plan_documents_frozen_uv_sync_bench_and_no_build_isolation"
+      ],
+      "reason": "These eight tests pin internal task-plan wording that is not consumed as an executable contract by code or operator workflows.",
+      "evidence": "apps/prototype-description-service/recognition/tests/unit/test_fir_release_gates.py:1024 - `_fir4_plan_text()` reads the internal task plan and the following tests regex-match its prose only.",
+      "subject": "FIR-4 internal task-plan prose",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "No replacement test is needed; maintain task-plan accuracy through task-plan review.",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "scripts/test_acx_backend_image_contract.py",
+      "verdict": "KEEP",
+      "tests_total": 29,
+      "tests_affected": [],
+      "reason": "The file checks live Docker build, deploy, and operator contracts, and the flagged pytest wrappers call assertion helpers that fail on violations.",
+      "evidence": "scripts/test_acx_backend_image_contract.py:90 - `assert_default_target_is_runtime()` asserts the runtime stage is the default; the flagged wrapper tests invoke assertion helpers at lines 192-213.",
+      "subject": "Backend image build and deployment contracts",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/deploy/test_dockerignore_weight_exclusions.py",
+      "verdict": "KEEP",
+      "tests_total": 26,
+      "tests_affected": [],
+      "reason": "The tests protect live Docker and rsync weight exclusions, context-transfer binding, and the deployment script's image-repository selection.",
+      "evidence": "apps/prototype-description-service/recognition/tests/deploy/test_dockerignore_weight_exclusions.py:612 - checks active `.dockerignore` exclusions; line 636 checks the deploy-script rsync; line 950 exercises a real-script mutation.",
+      "subject": "Docker and rsync build-context weight exclusions",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/deploy/test_image_coordinate_doc_parity.py",
+      "verdict": "CULL",
+      "tests_total": 6,
+      "tests_affected": [
+        "test_resolve_image_repo_name_vlm_is_distinct_repository"
+      ],
+      "reason": "This test repeats the default-versus-VLM repository mapping check already made against the same sourced deploy helper by the broader test in the preceding file.",
+      "evidence": "apps/prototype-description-service/recognition/tests/deploy/test_image_coordinate_doc_parity.py:88 - calls the sourced `resolve_image_repo_name`; apps/prototype-description-service/recognition/tests/deploy/test_dockerignore_weight_exclusions.py:696 - probes the same helper for VLM, default, and invalid targets.",
+      "subject": "VLM image repository mapping",
+      "duplicate_of": "apps/prototype-description-service/recognition/tests/deploy/test_dockerignore_weight_exclusions.py::test_image_repo_name_derived_from_build_target",
+      "canon": [
+        "REF-10"
+      ],
+      "replacement": "Retain the broader real-shell mapping test in apps/prototype-description-service/recognition/tests/deploy/test_dockerignore_weight_exclusions.py; keep this file's distinct operator-doc checks.",
+      "est_seconds_saved": 1,
+      "risk": "low"
+    }
+  ],
+  "fixtures": []
+}

@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from fastapi import FastAPI, HTTPException, status
+from fastapi import BackgroundTasks, FastAPI, HTTPException, status
 
 from recognition.application.services.usage_admission_service import UsageFingerprintConflictError
 from recognition.domain.portal_contracts import UsageTicket
@@ -456,49 +456,82 @@ async def test_dispatch_registration_failure_releases_and_fails_committed_job() 
 
 
 @pytest.mark.asyncio
-async def test_registered_dispatch_keeps_reservation_when_response_delivery_fails() -> None:
+async def test_registered_dispatch_keeps_reservation_when_response_delivery_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     admission = _FakeAdmission()
-    job_id = uuid4()
     queue = _CountingScanQueue()
+    app = _json_lifecycle_app(admission, queue, monkeypatch)
+    registered_tasks: list[tuple[object, tuple[object, ...], dict[str, object]]] = []
+    original_add_task = BackgroundTasks.add_task
 
-    class _RegisteredBackground:
-        def __init__(self) -> None:
-            self.tasks: list[tuple[object, dict[str, object]]] = []
+    def _track_add_task(self, task, *args, **kwargs) -> None:
+        registered_tasks.append((task, args, kwargs))
+        original_add_task(self, task, *args, **kwargs)
 
-        def add_task(self, task, **kwargs) -> None:
-            self.tasks.append((task, kwargs))
+    monkeypatch.setattr(BackgroundTasks, "add_task", _track_add_task)
 
-    background = _RegisteredBackground()
-    async with admit_usage(
-        admission,
-        tenant_id=TENANT_ID,
-        idempotency_key="response-op",
-        job_id=str(job_id),
-        cost_units=1,
-        operation_id="response-op",
-        request_fingerprint="fp",
-    ):
-        response = await analyze_router._schedule_analysis(
-            background_tasks=background,
-            session=None,
-            scan_queue=queue,
-            tenant_uuid=TENANT_ID,
-            media_items=[(1, "https://example.test/a.jpg")],
-            media_ids=[MEDIA_ID],
-            media_sources=["https://example.test/a.jpg"],
-            inline_processing=False,
-            auth=None,
-            job_id=job_id,
-        )
+    class _FailResponseStart:
+        def __init__(self, wrapped) -> None:
+            self.wrapped = wrapped
 
-    # Response delivery happens after the handler and its admission scope return.
-    with pytest.raises(RuntimeError, match="response delivery failed"):
-        raise RuntimeError("response delivery failed")
+        async def __call__(self, scope, receive, send) -> None:
+            async def _failing_send(message) -> None:
+                if message["type"] == "http.response.start":
+                    raise RuntimeError("response delivery failed")
+                await send(message)
 
-    assert response.id == str(job_id)
-    assert len(background.tasks) == 1
+            await self.wrapped(scope, receive, _failing_send)
+
+    transport = httpx.ASGITransport(app=_FailResponseStart(app))
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with pytest.raises(RuntimeError, match="response delivery failed"):
+            await client.post(
+                "/recognition/analyze",
+                json={"tenant_id": str(TENANT_ID), "media_ids": [MEDIA_ID]},
+                headers={"Idempotency-Key": "response-op"},
+            )
+
+    assert len(admission.reserves) == 1
+    job_id = queue.create_calls[0]["job_id"]
+    assert len(registered_tasks) == 1
+    assert registered_tasks[0][0] is analyze_router.chain_populate_and_process
+    assert app.state.dispatch_calls == []
     assert queue.cancelled_jobs == []
     assert admission.releases == []
+    assert admission.commits == []
+    assert str(job_id) == admission.reserves[0]["job_id"]
+
+
+@pytest.mark.asyncio
+async def test_multipart_dispatch_registration_failure_returns_503_and_releases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admission = _FakeAdmission()
+    queue = _CountingScanQueue()
+    store = _FakeObjectStore()
+    app = _multipart_lifecycle_app(admission, queue, store, monkeypatch)
+
+    def _fail_add_task(self, *_args, **_kwargs) -> None:
+        raise RuntimeError("dispatch registration failed")
+
+    monkeypatch.setattr(BackgroundTasks, "add_task", _fail_add_task)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/recognition/analyze/multipart",
+            headers={"Idempotency-Key": "multipart-dispatch-failure"},
+            data={"request": json.dumps({"tenant_id": str(TENANT_ID)})},
+            files={"image_1": ("image.png", b"image-bytes", "image/png")},
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Scan dispatch unavailable"
+    assert len(queue.create_calls) == 1
+    job_id = queue.create_calls[0]["job_id"]
+    assert queue.cancelled_jobs == [job_id]
+    assert queue.job_statuses[job_id] == "failed"
+    assert len(admission.releases) == 1
     assert admission.commits == []
 
 
@@ -527,8 +560,9 @@ async def test_multipart_replay_skips_second_persist(monkeypatch: pytest.MonkeyP
     assert second.status_code == 202
     assert first.json()["id"] == second.json()["id"]
     assert len(queue.create_calls) == 1
-    assert len(store.puts) == 1
-    assert len(app.state.dispatch_calls) == 1
+    assert len(store.puts) == 2
+    assert len(app.state.dispatch_calls) == 2
+    assert app.state.dispatch_calls[0]["job_id"] == app.state.dispatch_calls[1]["job_id"]
     assert admission.commits == []
 
 

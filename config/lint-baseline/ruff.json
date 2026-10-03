@@ -278,9 +278,6 @@
       "UP035": 1,
       "W292": 1
     },
-    "scripts/test_cap_owner_summary_doc.py": {
-      "I001": 1
-    },
     "scripts/test_check_harness_sync.py": {
       "E402": 2,
       "I001": 1

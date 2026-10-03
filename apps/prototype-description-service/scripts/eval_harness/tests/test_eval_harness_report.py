@@ -21,7 +21,13 @@ from scripts.eval_harness.build_bakeoff_report import _format_durable_stage_cost
 from scripts.eval_harness.cli import BoundedStallError
 from scripts.eval_harness.cli import _extract_detection_boxes, _extract_identities
 from scripts.eval_harness.manifest import ManifestError, ScoreInvariant, compute_corpus_coverage_gaps
-from scripts.eval_harness.report import Audience, ReportError, build_reports, score_run_record
+from scripts.eval_harness.report import (
+    Audience,
+    ReportError,
+    build_reports,
+    build_score_verdict,
+    score_run_record,
+)
 
 _TEST_MODEL_STAMPS = {
     "adapter": "seeded",
@@ -314,6 +320,67 @@ def test_score_run_record_preserves_homogeneous_model_run_stamps() -> None:
     assert "attribution" not in model
 
 
+def _otherwise_passing_verdict_input() -> dict:
+    return {
+        "counts": {"total": 5, "scored": 5, "failed": 0},
+        "corpus": {},
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "model": {
+                "adapters": ["fixture"],
+                "model_ids": ["fixture-model"],
+                "prompt_versions": ["v1"],
+                "prompt_sha256s": ["f" * 64],
+            },
+        },
+        "caption": {
+            "must_right_defined_images": 5,
+            "easy_wrong_defined_images": 5,
+            "must_right_failed_images": 0,
+            "insertion_rate": 0.0,
+            "mean_gated_score": 1.0,
+        },
+        "faces": {
+            "detection": {"precision": 1.0, "recall": 1.0},
+            "identification": {
+                "evaluated_images": 5,
+                "precision": 1.0,
+                "recall": 1.0,
+                "wrong_names": [],
+                "positional": {
+                    "position_accuracy": 1.0,
+                    "compared_images": 5,
+                    "evaluable": True,
+                },
+            },
+            "identity_ordering": {"positional_images": 5},
+        },
+        "placement": {"claims": 5, "accuracy": 1.0},
+        "hallucination": {
+            "images_with_traps": 5,
+            "fabricated_fact_rate": 0.0,
+            "fabricated_fact_rate_trapped": 0.0,
+        },
+    }
+
+
+def test_score_verdict_requires_complete_producer_identity() -> None:
+    attributed = _otherwise_passing_verdict_input()
+    assert build_score_verdict(attributed)["verdict"] == "pass"
+
+    unattributed = _otherwise_passing_verdict_input()
+    unattributed["provenance"]["model"]["attribution"] = {
+        "status": "unattributed",
+        "missing_dimensions": ["adapter", "model", "prompt identity"],
+    }
+    verdict = build_score_verdict(unattributed)
+
+    assert verdict["verdict"] == "not_ready"
+    assert verdict["reasons"] == [
+        "producer identity incomplete: missing adapter, model, prompt identity"
+    ]
+
+
 @pytest.mark.parametrize("setting", [{"seed": 7}, {"decoding_contract": {"temperature": 0}}])
 def test_score_run_record_marks_settings_only_model_provenance_unattributed(setting: dict) -> None:
     record = _run_record()
@@ -331,6 +398,11 @@ def test_score_run_record_marks_settings_only_model_provenance_unattributed(sett
         "missing_dimensions": ["adapter", "model", "prompt identity"],
     }
     assert "unattributed aggregate metrics**: missing adapter, model, prompt identity" in markdown
+    assert "diagnostic only; report is not adoption-ready" in markdown
+    assert any(
+        reason == "producer identity incomplete: missing adapter, model, prompt identity"
+        for reason in scored["verdict"]["reasons"]
+    )
 
 
 @pytest.mark.parametrize(

@@ -55,20 +55,20 @@
     },
     {
       "path": "apps/prototype-description-service/recognition/tests/deploy/test_image_coordinate_doc_parity.py",
-      "verdict": "CULL",
+      "verdict": "KEEP",
       "tests_total": 6,
       "tests_affected": [
         "test_resolve_image_repo_name_vlm_is_distinct_repository"
       ],
-      "reason": "This test repeats the default-versus-VLM repository mapping check already made against the same sourced deploy helper by the broader test in the preceding file.",
+      "reason": "The broader test at line 696 checks suffix behavior and would accept other/other-vlm; line 88 pins the exact acx-backend and acx-backend-vlm mappings, preserving the unique exact-name assertion.",
       "evidence": "apps/prototype-description-service/recognition/tests/deploy/test_image_coordinate_doc_parity.py:88 - calls the sourced `resolve_image_repo_name`; apps/prototype-description-service/recognition/tests/deploy/test_dockerignore_weight_exclusions.py:696 - probes the same helper for VLM, default, and invalid targets.",
       "subject": "VLM image repository mapping",
-      "duplicate_of": "apps/prototype-description-service/recognition/tests/deploy/test_dockerignore_weight_exclusions.py::test_image_repo_name_derived_from_build_target",
+      "duplicate_of": "",
       "canon": [
         "REF-10"
       ],
-      "replacement": "Retain the broader real-shell mapping test in apps/prototype-description-service/recognition/tests/deploy/test_dockerignore_weight_exclusions.py; keep this file's distinct operator-doc checks.",
-      "est_seconds_saved": 1,
+      "replacement": "Keep test_resolve_image_repo_name_vlm_is_distinct_repository to assert the exact acx-backend and acx-backend-vlm names; the broader real-shell test continues to cover build-target suffix behavior.",
+      "est_seconds_saved": 0,
       "risk": "low"
     }
   ],

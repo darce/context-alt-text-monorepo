@@ -60,15 +60,15 @@
     },
     {
       "path": "apps/prototype-description-service/scene/tests/test_eval_harness_describe_baseline.py",
-      "verdict": "CULL",
+      "verdict": "KEEP",
       "tests_total": 14,
       "tests_affected": ["test_no_hardcoded_operator_uploads_constant"],
-      "reason": "The laptop-specific UPLOADS default was retired and replaced by a fail-closed --uploads/BASELINE_UPLOADS resolver, leaving this conditional getattr(db, 'UPLOADS', None) check with no active assertion.",
+      "reason": "Retain this module-level RH-01 guard: line 294 rejects reintroducing the forbidden /Volumes/Butter UPLOADS value, an invariant the --uploads/BASELINE_UPLOADS resolver tests do not cover.",
       "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_describe_baseline.py:294 - the check skips its assertion when UPLOADS is absent; apps/prototype-description-service/scripts/eval_harness/describe_baseline.py:47 - documents no hardcoded uploads path; apps/prototype-description-service/scripts/eval_harness/describe_baseline.py:99, :104 - resolves only from the CLI value or BASELINE_UPLOADS.",
       "subject": "scripts.eval_harness.describe_baseline uploads-root resolution",
       "duplicate_of": "",
       "canon": ["TEST-11", "TEST-15"],
-      "replacement": "Keep test_resolve_uploads_requires_flag_or_env as the live public guard; remove this probe with the retired default.",
+      "replacement": "Keep test_no_hardcoded_operator_uploads_constant for the module-level RH-01 invariant; test_resolve_uploads_requires_flag_or_env separately guards CLI/env resolution.",
       "est_seconds_saved": 0,
       "risk": "low"
     }

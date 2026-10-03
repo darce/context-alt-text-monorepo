@@ -1459,14 +1459,15 @@ def _selection_metadata_issue(
 def _model_provenance(
     items: list[dict[str, Any]],
     run_provenance: Mapping[str, Any] | None = None,
-) -> dict[str, list[Any]]:
+) -> dict[str, Any]:
     """Adapter/model that actually produced the captions (HARM-01).
 
     Surfaced so a report is never mistaken for a caption-model baseline when it
     actually scored a model-free 'seeded' stub run — every artifact stamped with
     the adapter/model version (scope Q5). Every model stamp must be homogeneous
     for all audiences; run-level settings must also agree with every item-level
-    stamp.
+    stamp. Incomplete identity is explicitly marked unattributed; records with
+    conflicting stamps are refused.
     """
     run_provenance = run_provenance or {}
     dimensions = (
@@ -1478,11 +1479,12 @@ def _model_provenance(
         ("prompt_variants", "prompt_variant", "prompt_variant"),
         ("prompt_versions", "prompt_version", "prompt_version"),
         ("prompt_sha256s", "prompt_sha256", "prompt_sha256"),
+        ("prompt_free_flags", "prompt_free", "prompt_free"),
         ("task_versions", "task_version", "task_version"),
         ("decoding_contracts", "decoding_contract", "decoding_contract"),
     )
     successful_items = [item for item in items if not item.get("error")]
-    out: dict[str, list[Any]] = {}
+    out: dict[str, Any] = {}
 
     def _canonical(value: Any) -> str:
         return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
@@ -1522,13 +1524,31 @@ def _model_provenance(
                     invariant="model_provenance_refuses_mixed_values",
                 )
         out[output_key] = [values[key] for key in sorted(values)]
-    if successful_items and not any(out.values()):
-        missing_keys = ", ".join(item_key for _, item_key, _ in dimensions)
-        raise ReportError(
-            "run record has no model provenance stamps; "
-            f"missing {missing_keys} from item descriptions and run provenance; refusing aggregate score",
-            invariant="model_provenance_refuses_empty_stamps",
-        )
+    # Attribution needs producer identity, not merely any recorded setting such
+    # as a seed. A prompt version or digest identifies the prompt used, unless
+    # the producer explicitly declares the run prompt-free (PROV-01).
+    def _has_text_identity(output_key: str) -> bool:
+        return any(isinstance(value, str) and value.strip() for value in out[output_key])
+
+    missing_identity = []
+    if not _has_text_identity("adapters"):
+        missing_identity.append("adapter")
+    if not _has_text_identity("model_ids"):
+        missing_identity.append("model")
+    if not (
+        _has_text_identity("prompt_versions")
+        or _has_text_identity("prompt_sha256s")
+        or run_provenance.get("prompt_free") is True
+    ):
+        missing_identity.append("prompt identity")
+    if successful_items and missing_identity:
+        # Legacy producers remain scoreable, but their metrics cannot be
+        # attributed to a complete model/prompt identity (PROV-01, OBS-08).
+        # Omit this field for fully stamped records to preserve their bytes.
+        out["attribution"] = {
+            "status": "unattributed",
+            "missing_dimensions": missing_identity,
+        }
     return out
 
 
@@ -2131,22 +2151,27 @@ def score_run_record(
     argument may only narrow the stamp — it cannot widen ``roster_only``
     to exhaustive. ``roster_only``, a missing stamp, and an unrecognised
     token refuse; they never silently score unlabeled non-roster faces as
-    false positives. Identification and caption metrics still run.
+    false positives. Caption metrics still run; strict identification refuses
+    GT boxes without human-adjudicated lineage.
     Face-bakeoff scoring (``score_face_run_record``) raises instead.
     """
     # identity_names lives in this module (VLM6-RH-07) — no lazy cli import.
     _validate_record_kind(run_record)
+    lineage_error = None
     if run_manifest is not None:
         for entry_index, entry in enumerate(manifest_entries):
             for box_index, box in enumerate(entry.get("face_boxes") or []):
                 if not has_human_adjudicated_gt_lineage(box):
-                    raise ManifestError(
+                    lineage_error = ManifestError(
                         "strict detection scoring requires human-adjudicated lineage on every GT box "
                         f"(entry_index={entry_index}, box_index={box_index})",
                         invariant=ScoreInvariant.DETECTION_REQUIRES_HUMAN_ADJUDICATED_GT_LINEAGE,
                         entry_index=entry_index,
                         entry_path=str(entry.get("path", "")),
                     )
+                    break
+            if lineage_error is not None:
+                break
     eval_mode = str(run_record["provenance"].get("eval_mode", "standard"))
     if eval_mode not in EVAL_MODES:
         raise ReportError(f"unknown eval_mode {eval_mode!r} in run-record provenance; expected one of {EVAL_MODES}")
@@ -2547,6 +2572,8 @@ def score_run_record(
                     det = None
                     detection_invariant = DETECTION_EMPTY_OBSERVATIONS_INVARIANT
                 else:
+                    if lineage_error is not None:
+                        raise lineage_error
                     if run_manifest is not None:
                         det = detection_pr_strict(
                             detections,
@@ -2568,9 +2595,15 @@ def score_run_record(
     # Uses positional_items (face_boxes L→R labeled order), not alphabetical
     # present_identities (FL30A-GATE-01). Independent of the boxed-GT refusal
     # below — its own evaluable/status/vacuity_signal covers missing face_boxes.
-    positional = positional_identification(positional_items)
+    positional = positional_identification([] if lineage_error is not None else positional_items)
+    if lineage_error is not None:
+        # No legacy GT box may contribute to the positional gate (PROV-01).
+        positional = replace(positional, vacuity_signal=lineage_error.invariant)
 
-    if not identification_entries:
+    if lineage_error is not None:
+        ident = None
+        identification_invariant = lineage_error.invariant
+    elif not identification_entries:
         ident = None
         identification_invariant = IDENTIFICATION_EMPTY_OBSERVATIONS_INVARIANT
     else:
@@ -2785,6 +2818,8 @@ def score_run_record(
                 {
                     "refused": True,
                     "invariant": detection_invariant,
+                    **({"refusal_invariants": [detection_invariant, lineage_error.invariant]}
+                       if lineage_error is not None else {}),
                     "precision": None,
                     "recall": None,
                     "tp": None,
@@ -2799,7 +2834,7 @@ def score_run_record(
                     "fn": det.false_negatives,
                 }
             ),
-            # A-02 / VLM6-B-10: "positional" is always computed — it has its own
+            # A-02 / VLM6-B-10: "positional" always publishes its own
             # evaluable/status/vacuity_signal/sampling_frame vacuity contract and
             # is independent of the boxed-GT refusal that can null out set-based
             # identification below (EVAL-23: consumers must not treat
@@ -3144,6 +3179,9 @@ def _markdown(scored: dict[str, Any]) -> str:
     ]
     # RF-15: low-sample / chance-floor caveats must be operator-visible, not
     # source-comment-only.
+    if model.get("attribution", {}).get("status") == "unattributed":
+        missing = ", ".join(model["attribution"]["missing_dimensions"])
+        lines.append(f"- **unattributed aggregate metrics**: missing {missing}")
     if prov.get("low_sample_warning"):
         lines.append(f"- ⚠️ **low_sample_warning**: {_fmt_prov(prov.get('low_sample_warning'))}")
     if prov.get("quality_floor_caveat"):
@@ -3373,7 +3411,8 @@ def _markdown(scored: dict[str, Any]) -> str:
         "## Face detection (identity-agnostic)",
         "",
         (
-            f"- REFUSED ({det.get('invariant')}): {refusal_explanation(det.get('invariant'))}"
+            f"- REFUSED ({', '.join(det.get('refusal_invariants') or [det.get('invariant')])}): "
+            f"{refusal_explanation(det.get('invariant'))}"
             if det.get("refused")
             else (
                 f"- precision: {_fmt(det['precision'])} recall: {_fmt(det['recall'])} "

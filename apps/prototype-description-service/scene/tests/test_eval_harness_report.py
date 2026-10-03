@@ -39,7 +39,13 @@ from scripts.eval_harness.report import (
 from scripts.eval_harness.schema import DocKind
 
 
-_TEST_MODEL_STAMPS = {"adapter": "seeded", "model_id": "seeded-fixtures", "model_version": "1"}
+_TEST_MODEL_STAMPS = {
+    "adapter": "seeded",
+    "model_id": "seeded-fixtures",
+    "model_version": "1",
+    "prompt_version": "v1",
+    "prompt_sha256": "f" * 64,
+}
 
 
 def _run_record() -> dict:
@@ -59,9 +65,7 @@ def _run_record() -> dict:
                 "describe": {
                     "alt_text_draft": "Alice Example relaxes by a pool.",
                     "visual_facts": {"caption": "a person by a pool", "objects": ["pool", "person"]},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 "identities": [
@@ -80,9 +84,7 @@ def _run_record() -> dict:
                 "describe": {
                     "alt_text_draft": "A man on a beach.",
                     "visual_facts": {"caption": "a man on a beach", "objects": ["beach"]},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": True,
                 },
                 "identities": [
@@ -298,6 +300,9 @@ def test_model_provenance_surfaced():  # HARM-01
     assert model["adapters"] == ["seeded"]
     assert model["model_ids"] == ["seeded-fixtures"]
     assert model["model_versions"] == ["1"]
+    assert model["prompt_versions"] == ["v1"]
+    assert model["prompt_sha256s"] == ["f" * 64]
+    assert "attribution" not in model
     assert "seeded" in md and "NOT a caption-model baseline" in md
 
 
@@ -323,7 +328,7 @@ def test_markdown_renders_null_model_stamp_without_changing_json(stamp_key):
     assert expected in md
 
 
-def test_model_provenance_rejects_complete_run_without_any_stamps():
+def test_model_provenance_marks_complete_run_without_any_stamps_unattributed():
     record = _run_record()
     model_stamp_keys = (
         "adapter",
@@ -347,8 +352,14 @@ def test_model_provenance_rejects_complete_run_without_any_stamps():
         for key in model_stamp_keys:
             item["describe"].pop(key, None)
 
-    with pytest.raises(ReportError, match=r"no model provenance stamps.*adapter.*model_id.*prompt_version"):
-        score_run_record(record, _manifest_entries())
+    json_doc, markdown = build_reports(record, _manifest_entries())
+    scored = json.loads(json_doc)
+    assert scored["counts"]["scored"] == 3
+    assert scored["provenance"]["model"]["attribution"] == {
+        "status": "unattributed",
+        "missing_dimensions": ["adapter", "model", "prompt identity"],
+    }
+    assert "unattributed aggregate metrics**: missing adapter, model, prompt identity" in markdown
 
 
 @pytest.mark.parametrize(
@@ -728,9 +739,7 @@ def _audience_fixtures() -> tuple[dict, list[dict]]:
                 "describe": {
                     "alt_text_draft": f"{_PUBLIC_NAME} at a podium.",
                     "visual_facts": {"objects": ["podium"]},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 "identities": [
@@ -749,9 +758,7 @@ def _audience_fixtures() -> tuple[dict, list[dict]]:
                 "describe": {
                     "alt_text_draft": f"{_LOCAL_NAME} at a party.",
                     "visual_facts": {"objects": ["cake"]},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 # Wrong name asserted — must never leak into a public report.
@@ -2287,9 +2294,7 @@ def _identity_scoring_pair() -> tuple[dict, list[dict]]:
                 "describe": {
                     "alt_text_draft": "Alice Example relaxes by a pool.",
                     "visual_facts": {"caption": "a person by a pool", "objects": ["pool", "person"]},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 "identities": [_dict_identity("Alice Example", x=10.0)],
@@ -2302,9 +2307,7 @@ def _identity_scoring_pair() -> tuple[dict, list[dict]]:
                 "describe": {
                     "alt_text_draft": "A man on a beach.",
                     "visual_facts": {"caption": "a man on a beach", "objects": ["beach"]},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": True,
                 },
                 "identities": [_dict_identity("Alice Example", x=80.0)],  # wrong name: Bob labeled
@@ -2458,9 +2461,7 @@ def test_positional_alphabetical_present_identities_scored_via_face_boxes():  # 
                 "describe": {
                     "alt_text_draft": "Three people stand together.",
                     "visual_facts": {"caption": "group", "objects": []},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 # Model predicts true L→R: Cam, Amy, Zoe.
@@ -2518,9 +2519,7 @@ def test_positional_genuine_swap_still_counted_with_face_boxes():  # FL30A-GATE-
                 "describe": {
                     "alt_text_draft": "Three people stand together.",
                     "visual_facts": {"caption": "group", "objects": []},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 # Predicted left/mid swap relative to boxes (Cam, Amy, Zoe L→R).
@@ -4259,9 +4258,7 @@ def _ordering_disclosure_pair() -> tuple[dict, list[dict]]:
                 "describe": {
                     "alt_text_draft": "Three people stand together.",
                     "visual_facts": {"caption": "people", "objects": []},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 "identities": [
@@ -4281,9 +4278,7 @@ def _ordering_disclosure_pair() -> tuple[dict, list[dict]]:
                 "describe": {
                     "alt_text_draft": "Two people stand together.",
                     "visual_facts": {"caption": "people", "objects": []},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 "identities": [
@@ -5179,9 +5174,7 @@ def test_order_degraded_excluded_from_positional_scoring():  # RA-01
                 "describe": {
                     "alt_text_draft": "Alice and Bob stand together.",
                     "visual_facts": {"caption": "people", "objects": []},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 "identities": [
@@ -5208,9 +5201,7 @@ def test_order_degraded_excluded_from_positional_scoring():  # RA-01
                 "describe": {
                     "alt_text_draft": "Carol stands alone.",
                     "visual_facts": {"caption": "person", "objects": []},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 "identities": [
@@ -5289,9 +5280,7 @@ def test_empty_string_y_normalized_before_labeled_order_in_report():  # RA-04 bo
                 "describe": {
                     "alt_text_draft": "A person.",
                     "visual_facts": {"caption": "person", "objects": []},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 "identities": [

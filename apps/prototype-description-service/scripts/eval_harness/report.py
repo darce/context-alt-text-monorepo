@@ -1459,14 +1459,15 @@ def _selection_metadata_issue(
 def _model_provenance(
     items: list[dict[str, Any]],
     run_provenance: Mapping[str, Any] | None = None,
-) -> dict[str, list[Any]]:
+) -> dict[str, Any]:
     """Adapter/model that actually produced the captions (HARM-01).
 
     Surfaced so a report is never mistaken for a caption-model baseline when it
     actually scored a model-free 'seeded' stub run — every artifact stamped with
     the adapter/model version (scope Q5). Every model stamp must be homogeneous
     for all audiences; run-level settings must also agree with every item-level
-    stamp.
+    stamp. Incomplete identity is explicitly marked unattributed; records with
+    conflicting stamps are refused.
     """
     run_provenance = run_provenance or {}
     dimensions = (
@@ -1483,7 +1484,7 @@ def _model_provenance(
         ("decoding_contracts", "decoding_contract", "decoding_contract"),
     )
     successful_items = [item for item in items if not item.get("error")]
-    out: dict[str, list[Any]] = {}
+    out: dict[str, Any] = {}
 
     def _canonical(value: Any) -> str:
         return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
@@ -1523,13 +1524,6 @@ def _model_provenance(
                     invariant="model_provenance_refuses_mixed_values",
                 )
         out[output_key] = [values[key] for key in sorted(values)]
-    if successful_items and not any(out.values()):
-        missing_keys = ", ".join(item_key for _, item_key, _ in dimensions)
-        raise ReportError(
-            "run record has no model provenance stamps; "
-            f"missing {missing_keys} from item descriptions and run provenance; refusing aggregate score",
-            invariant="model_provenance_refuses_empty_stamps",
-        )
     # Attribution needs producer identity, not merely any recorded setting such
     # as a seed. A prompt version or digest identifies the prompt used, unless
     # the producer explicitly declares the run prompt-free (PROV-01).
@@ -1548,12 +1542,13 @@ def _model_provenance(
     ):
         missing_identity.append("prompt identity")
     if successful_items and missing_identity:
-        raise ReportError(
-            "run record has incomplete model provenance; "
-            f"missing {', '.join(missing_identity)} from item descriptions and run provenance; "
-            "refusing aggregate score",
-            invariant="model_provenance_refuses_incomplete_identity",
-        )
+        # Legacy producers remain scoreable, but their metrics cannot be
+        # attributed to a complete model/prompt identity (PROV-01, OBS-08).
+        # Omit this field for fully stamped records to preserve their bytes.
+        out["attribution"] = {
+            "status": "unattributed",
+            "missing_dimensions": missing_identity,
+        }
     return out
 
 
@@ -3169,6 +3164,9 @@ def _markdown(scored: dict[str, Any]) -> str:
     ]
     # RF-15: low-sample / chance-floor caveats must be operator-visible, not
     # source-comment-only.
+    if model.get("attribution", {}).get("status") == "unattributed":
+        missing = ", ".join(model["attribution"]["missing_dimensions"])
+        lines.append(f"- **unattributed aggregate metrics**: missing {missing}")
     if prov.get("low_sample_warning"):
         lines.append(f"- ⚠️ **low_sample_warning**: {_fmt_prov(prov.get('low_sample_warning'))}")
     if prov.get("quality_floor_caveat"):

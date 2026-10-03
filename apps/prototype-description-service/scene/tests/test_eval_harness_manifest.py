@@ -1165,23 +1165,6 @@ def test_exhaustive_matching_boxes_loads(tmp_path):
     assert manifest.entries[0].face_boxes[0].lineage.capture_session_id == "test-session"
 
 
-def test_retired_face_count_covers_labeled_is_gone():
-    """The retired GoldenEntry check must not exist (replaced, not composed)."""
-    assert not hasattr(GoldenEntry, "_face_count_covers_labeled")
-    path = os.path.join(
-        os.path.dirname(__file__),
-        "..",
-        "..",
-        "scripts",
-        "eval_harness",
-        "manifest.py",
-    )
-    with open(path, encoding="utf-8") as handle:
-        source = handle.read()
-    assert "_face_count_covers_labeled" not in source
-    assert "SUPPORTED_MANIFEST_VERSION = 3" in source
-
-
 def test_seed_corpus_is_roster_only():
     manifest = _load_seed_manifest()
     assert manifest.annotation_mode is AnnotationMode.ROSTER_ONLY

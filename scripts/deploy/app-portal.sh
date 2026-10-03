@@ -372,6 +372,9 @@ if [ "$APP_FRONTEND_ROOT" != "$DEFAULT_FRONTEND_ROOT" ]; then
 fi
 guard_dest_path CADDYFILE "$CADDYFILE" file
 STAGING_DIR="${APP_ROOT}/staging"
+# Reject staging aliases before lock, recovery, or staging writes can touch
+# files through an unsafe directory component.
+guard_dest_path STAGING_DIR "$STAGING_DIR" dir
 OVERLAY_DEST="${APP_ROOT}/docker-compose.app.yml"
 ROLLBACK_DIR="${APP_ROOT}/rollback"
 ACTIVATION_JOURNAL="${APP_ROOT}/activation.journal"

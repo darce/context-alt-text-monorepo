@@ -743,6 +743,57 @@ def test_apply_staging_caddy_symlink_to_live_preserves_live_config(tmp_path: Pat
     assert live.read_bytes() == before
 
 
+def test_apply_staging_caddy_hardlink_to_live_preserves_active_files(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    before = live.read_bytes()
+    app_root = live.parent / "app"
+    www = app_root / "www"
+    www.mkdir(parents=True)
+    (www / "keep.txt").write_bytes(b"active frontend\n")
+    overlay = app_root / "docker-compose.app.yml"
+    overlay.write_bytes(b"active overlay\n")
+    staged_caddy = app_root / "staging" / "Caddyfile"
+    staged_caddy.parent.mkdir()
+    os.link(live, staged_caddy)
+
+    result = _run(tmp_path, args=["--apply"], live_caddy=live, caddy_fail=True)
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert live.read_bytes() == before
+    assert (www / "keep.txt").read_bytes() == b"active frontend\n"
+    assert sorted(path.name for path in www.iterdir()) == ["keep.txt"]
+    assert overlay.read_bytes() == b"active overlay\n"
+    assert "staged Caddy path is the same file as CADDYFILE" in output, output
+    assert not any("caddy validate" in line for line in _log(tmp_path).splitlines())
+
+
+@pytest.mark.parametrize("target", ["backend", "app"])
+def test_apply_refuses_symlink_staging_directory(tmp_path: Path, target: str) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    before = live.read_bytes()
+    app_root = live.parent / "app"
+    www = app_root / "www"
+    www.mkdir(parents=True)
+    (www / "keep.txt").write_bytes(b"active frontend\n")
+    overlay = app_root / "docker-compose.app.yml"
+    overlay.write_bytes(b"active overlay\n")
+    staging = app_root / "staging"
+    staging.symlink_to(live.parent if target == "backend" else app_root, target_is_directory=True)
+
+    result = _run(tmp_path, args=["--apply"], live_caddy=live, caddy_fail=True)
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert live.read_bytes() == before
+    assert (www / "keep.txt").read_bytes() == b"active frontend\n"
+    assert sorted(path.name for path in www.iterdir()) == ["keep.txt"]
+    assert overlay.read_bytes() == b"active overlay\n"
+    assert "STAGING_DIR rejects symlink component" in output, output
+    assert staging.is_symlink()
+    assert not any("caddy validate" in line for line in _log(tmp_path).splitlines())
+
+
 def test_apply_is_idempotent_for_existing_app_vhost(tmp_path: Path) -> None:
     live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
     _write_live_caddy(live)

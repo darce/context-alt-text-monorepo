@@ -159,6 +159,11 @@ def _validate_resume_inputs(
     return manifest_bytes, pinned_digest
 
 
+def _has_leg_state(root: Path) -> bool:
+    legs_root = root / "legs"
+    return legs_root.is_dir() and any(path.is_file() for path in legs_root.rglob("*"))
+
+
 def _load_manifest_bytes(manifest_bytes: bytes) -> GoldenManifest:
     """Parse the exact input snapshot whose digest is used by this run."""
     with tempfile.TemporaryDirectory(prefix="bench-manifest-") as temp_dir:
@@ -449,6 +454,13 @@ def run_pair(
     out_dir_path = Path(out_dir)
     run_record_path = out_dir_path / "run.json"
     is_resume = run_record_path.exists()
+    if not is_resume and _has_leg_state(out_dir_path):
+        # FLOW-17: reject orphaned results before pinning a new manifest over them.
+        raise BenchError(
+            "run_record_missing_with_leg_state",
+            f"run.json is missing but {out_dir_path} contains leg state; "
+            "clear the output directory before starting a fresh run",
+        )
     if is_resume:
         manifest_bytes, manifest_digest = _validate_resume_inputs(out_dir_path, pair, manifest_path)
     else:

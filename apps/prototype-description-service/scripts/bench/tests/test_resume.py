@@ -82,6 +82,14 @@ def _stamp_reset_evidence(out: Path, evidence: dict[str, dict[str, object]]) -> 
     )
 
 
+def _file_snapshot(root: Path) -> dict[str, bytes]:
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+
+
 def test_wait_job_obeys_total_budget_separate_from_request_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = 0
     clock = [0.0]
@@ -239,7 +247,10 @@ def test_missing_run_record_refuses_existing_leg_state(
             completed_leg = completed_legs / endpoint.stack_id
             stack_leg.rename(completed_leg)
             stack_leg.symlink_to(completed_leg, target_is_directory=True)
+        target_snapshot = _file_snapshot(completed_legs)
     (out / "run.json").unlink()
+    clients = {endpoint.stack_id: FakeClient() for endpoint in pair.stacks}
+    output_snapshot = _file_snapshot(out)
 
     with pytest.raises(BenchError) as exc:
         run_pair(
@@ -252,8 +263,15 @@ def test_missing_run_record_refuses_existing_leg_state(
             pre_run_reset_by_stack=_reset_evidence(pair),
         )
 
-    assert exc.value.code == "run_record_missing_with_leg_state"
-    assert "clear the output directory" in str(exc.value)
+    assert exc.value.code == (
+        "leg_state_symlink" if symlink_stack_dirs else "run_record_missing_with_leg_state"
+    )
+    if not symlink_stack_dirs:
+        assert "clear the output directory" in str(exc.value)
+    assert _file_snapshot(out) == output_snapshot
+    if symlink_stack_dirs:
+        assert _file_snapshot(completed_legs) == target_snapshot
+    assert all(not client.analyze_calls and not client.cluster_calls for client in clients.values())
     assert not (out / "run.json").exists()
     assert (out / "manifest.json").read_bytes() == pinned_manifest
     assert (out / "manifest.sha").read_bytes() == manifest_pin
@@ -263,6 +281,69 @@ def test_missing_run_record_refuses_existing_leg_state(
         assert (
             out / "legs" / stack_id / "exports" / "export_sha256.json"
         ).read_bytes() == exports[stack_id]
+
+
+@pytest.mark.parametrize("resume", [False, True], ids=["fresh", "resume"])
+@pytest.mark.parametrize("linked_root", [False, True], ids=["stack-link", "root-link"])
+def test_run_pair_refuses_linked_leg_state_before_any_write(
+    tmp_path: Path, resume: bool, linked_root: bool
+) -> None:
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = init_run_dir(tmp_path / "out", pair, manifest)
+    if not resume:
+        (out / "run.json").unlink()
+    else:
+        # Link refusal must take precedence even over a resume-input mismatch.
+        manifest.write_bytes(manifest.read_bytes() + b"\n")
+    linked_path = out / "legs"
+    if not linked_root:
+        linked_path /= pair.stacks[0].stack_id
+    target = tmp_path / "linked-target"
+    linked_path.rename(target)
+    (target / "sentinel.txt").write_bytes(b"existing leg state")
+    linked_path.symlink_to(target, target_is_directory=True)
+    output_snapshot = _file_snapshot(out)
+    target_snapshot = _file_snapshot(target)
+    clients = {endpoint.stack_id: FakeClient() for endpoint in pair.stacks}
+
+    with pytest.raises(BenchError) as exc:
+        run_pair(
+            pair,
+            manifest_path=manifest,
+            images_dir=images,
+            out_dir=out,
+            clients=clients,
+            pre_run_reset_by_stack=_reset_evidence(pair),
+        )
+
+    assert exc.value.code == "leg_state_symlink"
+    assert _file_snapshot(out) == output_snapshot
+    assert _file_snapshot(target) == target_snapshot
+    assert all(not client.analyze_calls and not client.cluster_calls for client in clients.values())
+
+
+def test_fresh_run_accepts_empty_regular_stack_directories(tmp_path: Path) -> None:
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = tmp_path / "out"
+    for endpoint in pair.stacks:
+        (out / "legs" / endpoint.stack_id).mkdir(parents=True)
+    clients = {endpoint.stack_id: FakeClient() for endpoint in pair.stacks}
+
+    assert run_pair(
+        pair,
+        manifest_path=manifest,
+        images_dir=images,
+        out_dir=out,
+        clients=clients,
+        skip_preflight=True,
+        pre_run_reset_by_stack=_reset_evidence(pair),
+    ) == out
+    assert json.loads((out / "run.json").read_text())["phase"] == "done"
+    assert all(client.analyze_calls for client in clients.values())
 
 
 def test_resume_accepts_unchanged_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

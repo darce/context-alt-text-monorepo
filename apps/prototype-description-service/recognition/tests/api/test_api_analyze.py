@@ -6,6 +6,7 @@ import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import Depends, FastAPI, HTTPException
@@ -689,7 +690,7 @@ async def test_cancel_job_rejects_wrong_tenant_claim_before_cancel_and_settlemen
         await analyze_router.cancel_job(
             job_id=str(job_id),
             tenant_id=str(tenant_b),
-            auth=SimpleNamespace(tenant_claim=str(tenant_a)),
+            auth=SimpleNamespace(enabled=True, tenant_claim=str(tenant_a)),
             job_service=SimpleNamespace(),
             session=session,
             scan_queue=queue,
@@ -701,6 +702,77 @@ async def test_cancel_job_rejects_wrong_tenant_claim_before_cancel_and_settlemen
     assert settlement_calls == []
     assert persisted_job.status == JobStatus.PENDING.value
     assert session.flush_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_cancel_job_rejects_other_tenant_before_persisted_cancel(monkeypatch) -> None:
+    tenant_a = uuid.uuid4()
+    tenant_b = uuid.uuid4()
+    job_id = uuid.uuid4()
+    session = FakeSession()
+    persisted_job = IdentityScanJob(
+        id=job_id,
+        tenant_id=tenant_b,
+        status=JobStatus.PENDING.value,
+        media_ids=[],
+        total_media=1,
+        processed_media=0,
+    )
+    session.set_get_result(model_class=IdentityScanJob, pk=job_id, value=persisted_job)
+    queue = _CancelScanQueue(job_id=job_id)
+    settlement_calls: list[dict[str, object]] = []
+    _patch_cancel_response_and_settlement(monkeypatch, settlement_calls)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await analyze_router.cancel_job(
+            job_id=str(job_id),
+            tenant_id=str(tenant_a),
+            x_tenant_id=str(tenant_a),
+            auth=SimpleNamespace(enabled=True, tenant_claim=str(tenant_a)),
+            job_service=SimpleNamespace(),
+            session=session,
+            scan_queue=queue,
+        )
+
+    assert exc_info.value.status_code == 404
+    assert queue.cancel_calls == []
+    assert settlement_calls == []
+    assert persisted_job.status == JobStatus.PENDING.value
+    assert session.flush_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_cancel_job_rejects_other_tenant_before_in_memory_cancel() -> None:
+    tenant_a = uuid.uuid4()
+    tenant_b = uuid.uuid4()
+    job_id = uuid.uuid4()
+    job = Job(
+        id=str(job_id),
+        type=JobType.ANALYZE,
+        tenant_id=str(tenant_b),
+        status=JobStatus.PENDING,
+        progress_completed=0,
+        progress_total=1,
+    )
+    job_service = SimpleNamespace(
+        get_job_status=AsyncMock(return_value=job),
+        cancel_job=AsyncMock(return_value=job),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await analyze_router.cancel_job(
+            job_id=str(job_id),
+            tenant_id=str(tenant_a),
+            x_tenant_id=str(tenant_a),
+            auth=SimpleNamespace(enabled=True, tenant_claim=str(tenant_a)),
+            job_service=job_service,
+            session=None,
+            scan_queue=None,
+        )
+
+    assert exc_info.value.status_code == 404
+    job_service.get_job_status.assert_awaited_once_with(str(job_id))
+    job_service.cancel_job.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -722,8 +794,9 @@ async def test_cancel_job_succeeds_when_tenant_claim_matches(monkeypatch) -> Non
     _patch_cancel_response_and_settlement(monkeypatch, settlement_calls)
     response = await analyze_router.cancel_job(
         job_id=str(job_id),
-        tenant_id=str(tenant_b),
-        auth=SimpleNamespace(tenant_claim=str(tenant_b)),
+        tenant_id=None,
+        x_tenant_id=str(tenant_b),
+        auth=SimpleNamespace(enabled=True, tenant_claim=str(tenant_b)),
         job_service=SimpleNamespace(),
         session=session,
         scan_queue=queue,

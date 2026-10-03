@@ -159,10 +159,20 @@ def _validate_resume_inputs(
     return manifest_bytes, pinned_digest
 
 
+def _refuse_linked_leg_state(root: Path) -> None:
+    legs_root = root / "legs"
+    if legs_root.is_symlink() or (
+        legs_root.is_dir() and any(path.is_symlink() for path in legs_root.iterdir())
+    ):
+        raise BenchError(
+            "leg_state_symlink",
+            f"{legs_root} contains linked leg state; use regular leg directories",
+        )
+
+
 def _has_leg_state(root: Path) -> bool:
     legs_root = root / "legs"
-    # Treat any prior legs entry as state, including a stack directory symlink.
-    return legs_root.is_dir() and any(legs_root.iterdir())
+    return legs_root.is_dir() and any(path.is_file() for path in legs_root.rglob("*"))
 
 
 def _load_manifest_bytes(manifest_bytes: bytes) -> GoldenManifest:
@@ -453,6 +463,8 @@ def run_pair(
     pre_run_reset_by_stack: dict[str, Any] | None = None,
 ) -> Path:
     out_dir_path = Path(out_dir)
+    # FLOW-17: refuse linked outputs before validating or mutating run pins.
+    _refuse_linked_leg_state(out_dir_path)
     run_record_path = out_dir_path / "run.json"
     is_resume = run_record_path.exists()
     if not is_resume and _has_leg_state(out_dir_path):

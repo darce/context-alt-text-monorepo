@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import re
+import select
+import shlex
 import shutil
 import signal
 import socket
@@ -210,6 +212,10 @@ for a in "$@"; do
   prev="$a"
 done
 printf '%s\n' "$*" >>"${state}/curl.log"
+if [[ -n "${FAKE_CURL_READY_FIFO:-}" && "$url" == *"/health" && ! -e "${FAKE_CURL_READY_SENT:-}" ]]; then
+  : >"${FAKE_CURL_READY_SENT}"
+  printf 'health-curl-ready\n' >"${FAKE_CURL_READY_FIFO}"
+fi
 if [[ -n "${FAKE_CURL_STDERR:-}" ]]; then
   printf '%s\n' "${FAKE_CURL_STDERR}" >&2
 fi
@@ -297,19 +303,25 @@ def _function_body(name: str) -> str:
     return source[start:]
 
 
-def _sanitize_deploy_diagnostic_src() -> str:
-    source = SCRIPT.read_text()
-    start = source.index("sanitize_deploy_diagnostic() {")
-    end = source.index("\n}\n", start)
-    return source[start : end + 2]
-
-
-def _boot_smoke_heredoc() -> str:
-    source = SCRIPT.read_text()
-    start = source.index("<<'SMOKE'")
-    start = source.index("\n", start) + 1
-    end = source.index("\nSMOKE\n", start)
-    return _sanitize_deploy_diagnostic_src() + "\n" + source[start:end]
+def _boot_smoke_payload() -> str:
+    """Emit the same sanitizer declaration and shared body used by do_boot_smoke."""
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'set -euo pipefail; source "$1"; declare -f sanitize_deploy_diagnostic; '
+            'cat "$SCRIPT_DIR/lib/recognition-boot-smoke.sh"',
+            "boot-smoke-payload",
+            str(SCRIPT),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=SCRIPT.parents[2],
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"could not emit boot-smoke payload: {result.stderr}")
+    return result.stdout
 
 
 def _path_without_timeout(prepend: Path, tmp_path: Path) -> str:
@@ -452,7 +464,7 @@ def _run_boot_smoke(
     del attempts  # LR-04: wrapper/body no longer take a dead attempts positional.
     state, remote, env = _prepare_smoke_env(tmp_path, extra_env, hide_timeout=hide_timeout)
     smoke = tmp_path / "boot-smoke.sh"
-    smoke.write_text(_boot_smoke_heredoc())
+    smoke.write_text(_boot_smoke_payload())
     args = [
         "dev",
         "iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:" + ("a" * 64),
@@ -674,7 +686,7 @@ def test_boot_smoke_has_outer_deadlines_and_curl_request_timeout() -> None:
     assert "repair_blob_volume_ownership() {" not in body
     assert "do_restart() {" not in body
     assert "capture_failure_evidence() {" not in body
-    smoke = _boot_smoke_heredoc()
+    smoke = _boot_smoke_payload()
     assert "curl -sS --max-time" in smoke
     assert "--write-out" in smoke
     assert "last_health_body" in smoke
@@ -1546,7 +1558,7 @@ def test_sanitizer_sed_defined_once() -> None:
     assert result.stdout.strip() == "1"
     source = SCRIPT.read_text()
     assert source.count("sanitize_deploy_diagnostic() {") == 1
-    heredoc = _boot_smoke_heredoc()
+    heredoc = _boot_smoke_payload()
     assert "sanitize_deploy_diagnostic" in heredoc
     smoke_only = heredoc[heredoc.index("set -euo pipefail") :]
     assert "sanitize_deploy_diagnostic() {" not in smoke_only
@@ -1956,10 +1968,28 @@ def test_do_boot_smoke_wrap_payload_includes_sanitizer_and_parses(tmp_path: Path
     result = _run_do_boot_smoke_wrapper(tmp_path, unread_fifo=True)
     payload = (tmp_path / "smoke-wrap").read_text()
     assert result.returncode == 0, result.stderr
+    assert payload == _boot_smoke_payload()
     assert "sanitize_deploy_diagnostic ()" in payload or "sanitize_deploy_diagnostic()" in payload
     assert "set -euo pipefail" in payload
     parsed = subprocess.run(["bash", "-n"], input=payload, text=True, capture_output=True, check=False)
     assert parsed.returncode == 0, parsed.stderr
+
+
+@pytest.mark.parametrize("payload_state", ["missing", "empty"])
+def test_do_boot_smoke_unavailable_payload_fails_closed(tmp_path: Path, payload_state: str) -> None:
+    """The SSH gate refuses a missing or empty local body before connecting."""
+    deploy_dir = tmp_path / "deploy-assets"
+    lib_dir = deploy_dir / "lib"
+    lib_dir.mkdir(parents=True)
+    if payload_state == "empty":
+        (lib_dir / "recognition-boot-smoke.sh").write_text("")
+    result = _run_do_boot_smoke_wrapper(
+        tmp_path,
+        extra_script=f"SCRIPT_DIR={shlex.quote(str(deploy_dir))}",
+    )
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "boot smoke payload unavailable" in result.stderr
+    assert not (tmp_path / "smoke-wrap").exists()
 
 
 def test_do_boot_smoke_passes_pg_ready_budget_as_eighth_arg(tmp_path: Path) -> None:
@@ -2100,8 +2130,14 @@ def test_short_hex_container_id_is_rejected(tmp_path: Path) -> None:
 def test_boot_smoke_trap_handles_term_and_int(tmp_path: Path) -> None:
     """GR-37: SIGTERM the smoke process group; trap still rm -f both containers."""
     state, remote, env = _prepare_smoke_env(tmp_path, {"FAKE_HEALTH_CODE": "000"})
+    ready_fifo = tmp_path / "health-curl-ready.fifo"
+    ready_sent = tmp_path / "health-curl-ready.sent"
+    os.mkfifo(ready_fifo)
+    ready_fd = os.open(ready_fifo, os.O_RDWR | os.O_NONBLOCK)
+    env["FAKE_CURL_READY_FIFO"] = str(ready_fifo)
+    env["FAKE_CURL_READY_SENT"] = str(ready_sent)
     smoke = tmp_path / "boot-smoke.sh"
-    smoke.write_text(_boot_smoke_heredoc())
+    smoke.write_text(_boot_smoke_payload())
     image = "iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:" + ("a" * 64)
     proc = subprocess.Popen(
         [
@@ -2121,17 +2157,19 @@ def test_boot_smoke_trap_handles_term_and_int(tmp_path: Path) -> None:
         env=env,
         start_new_session=True,
     )
-    deadline = time.monotonic() + 8
-    while time.monotonic() < deadline:
-        if (state / "docker.log").exists() and "run " in (state / "docker.log").read_text():
-            break
-        if proc.poll() is not None:
-            break
-        time.sleep(0.05)
-    time.sleep(1)
-    if proc.poll() is None:
+    try:
+        readable, _, _ = select.select([ready_fd], [], [], 8)
+        assert readable, "health curl did not report readiness before timeout"
+        assert os.read(ready_fd, 64) == b"health-curl-ready\n"
+        assert ready_sent.exists()
+        assert proc.poll() is None, "smoke process exited before the synchronized signal"
         os.killpg(proc.pid, signal.SIGTERM)
-    stdout, stderr = proc.communicate(timeout=10)
+        stdout, stderr = proc.communicate(timeout=10)
+    finally:
+        if proc.poll() is None:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate(timeout=10)
+        os.close(ready_fd)
     combined = (stdout or "") + (stderr or "")
     assert proc.returncode in (143, 124), combined
     log = (state / "docker.log").read_text()
@@ -2178,7 +2216,7 @@ def test_boot_smoke_trap_still_rms_when_logs_hang(tmp_path: Path) -> None:
         budget_s=2,
         poll_s=1,
         pg_budget=1,
-        extra_env={"FAKE_LOGS_SLEEP": "5", "FAKE_HEALTH_CODE": "000"},
+        extra_env={"FAKE_LOGS_SLEEP": "30", "FAKE_HEALTH_CODE": "000"},
         # GR-262: outer KILL grace is 1s; timeout -k 1 on logs needs wrap > health+2+1.
         wrap_deadline=12,
     )
@@ -2187,6 +2225,10 @@ def test_boot_smoke_trap_still_rms_when_logs_hang(tmp_path: Path) -> None:
     assert re.search(r"rm -f acx-smoke-pg-dev-\d+", log), log
     assert "volume rm -f" in log
     assert result.returncode != 0
+    state = Path(result._fake_state)  # type: ignore[attr-defined]
+    logs_started = float((state / "logs_started").read_text().strip())
+    first_rm = float((state / "first_rm").read_text().strip())
+    assert first_rm - logs_started < 3.5, first_rm - logs_started
 
 
 def test_boot_smoke_pg_exec_per_call_timeout(tmp_path: Path) -> None:
@@ -2522,6 +2564,7 @@ def test_boot_smoke_owned_net_rm_on_create_timeout(tmp_path: Path) -> None:
     assert result.returncode != 0, combined
     assert "network create" in log, log
     assert "acx.smoke.owner=" in log, log
+    assert "smoke setup timed out" in combined, combined
     assert "network rm acx-dev-net" in log, log
     state = Path(result._fake_state)  # type: ignore[attr-defined]
     assert (state / "network_rm").read_text().strip() == "acx-dev-net"

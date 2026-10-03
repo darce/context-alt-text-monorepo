@@ -112,6 +112,7 @@ def build_zero_rule_run_record(
             "eval_mode": "standard",
             "baseline_arm": BASELINE_ARM,
             "baseline_rule": BASELINE_RULE,
+            "prompt_free": True,
         },
         "items": items,
     }

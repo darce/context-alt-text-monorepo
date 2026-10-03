@@ -1478,6 +1478,7 @@ def _model_provenance(
         ("prompt_variants", "prompt_variant", "prompt_variant"),
         ("prompt_versions", "prompt_version", "prompt_version"),
         ("prompt_sha256s", "prompt_sha256", "prompt_sha256"),
+        ("prompt_free_flags", "prompt_free", "prompt_free"),
         ("task_versions", "task_version", "task_version"),
         ("decoding_contracts", "decoding_contract", "decoding_contract"),
     )
@@ -1530,7 +1531,8 @@ def _model_provenance(
             invariant="model_provenance_refuses_empty_stamps",
         )
     # Attribution needs producer identity, not merely any recorded setting such
-    # as a seed. A prompt version or digest identifies the prompt used.
+    # as a seed. A prompt version or digest identifies the prompt used, unless
+    # the producer explicitly declares the run prompt-free (PROV-01).
     def _has_text_identity(output_key: str) -> bool:
         return any(isinstance(value, str) and value.strip() for value in out[output_key])
 
@@ -1539,7 +1541,11 @@ def _model_provenance(
         missing_identity.append("adapter")
     if not _has_text_identity("model_ids"):
         missing_identity.append("model")
-    if not (_has_text_identity("prompt_versions") or _has_text_identity("prompt_sha256s")):
+    if not (
+        _has_text_identity("prompt_versions")
+        or _has_text_identity("prompt_sha256s")
+        or run_provenance.get("prompt_free") is True
+    ):
         missing_identity.append("prompt identity")
     if successful_items and missing_identity:
         raise ReportError(

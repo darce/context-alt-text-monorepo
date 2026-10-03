@@ -313,15 +313,75 @@ def test_score_run_record_preserves_homogeneous_model_run_stamps() -> None:
     assert model["decoding_contracts"] == [decoding]
 
 
-def test_score_run_record_refuses_seed_only_model_provenance() -> None:
+@pytest.mark.parametrize("setting", [{"seed": 7}, {"decoding_contract": {"temperature": 0}}])
+def test_score_run_record_refuses_settings_only_model_provenance(setting: dict) -> None:
     record = _run_record()
     for item in record["items"][:2]:
         describe = item["describe"]
         for field in ("adapter", "model_id", "model_version", "prompt_version", "prompt_sha256"):
             describe.pop(field, None)
-        describe["seed"] = 7
+        describe.update(setting)
 
     with pytest.raises(ReportError, match="missing adapter, model, prompt identity"):
+        score_run_record(record, _manifest_entries())
+
+
+@pytest.mark.parametrize(
+    ("fields", "missing"),
+    [(("adapter",), "adapter"), (("model_id",), "model"),
+     (("prompt_version", "prompt_sha256"), "prompt identity")],
+)
+def test_score_run_record_refuses_each_missing_identity(fields: tuple, missing: str) -> None:
+    record = _run_record()
+    for item in record["items"][:2]:
+        for field in fields:
+            item["describe"].pop(field)
+    with pytest.raises(ReportError, match=f"missing {missing} from"):
+        score_run_record(record, _manifest_entries())
+
+
+@pytest.mark.parametrize("declaration", [None, False, "true", 1])
+def test_prompt_free_requires_explicit_boolean_run_declaration(declaration: object) -> None:
+    record = _run_record()
+    for item in record["items"][:2]:
+        item["describe"].pop("prompt_version")
+        item["describe"].pop("prompt_sha256")
+        item["describe"]["prompt_variant"] = "v1"
+    if declaration is not None:
+        record["provenance"]["prompt_free"] = declaration
+    with pytest.raises(ReportError, match="missing prompt identity"):
+        score_run_record(record, _manifest_entries())
+
+
+def test_zero_rule_prompt_free_record_scores_and_builds_reports() -> None:
+    from scripts.eval_harness.zero_rule_baseline import (
+        build_zero_rule_run_record, load_held_out_manifest, stamped_entries,
+    )
+
+    manifest = load_held_out_manifest()
+    record = build_zero_rule_run_record(manifest, started_at="t", head_sha=None)
+    assert record["provenance"]["prompt_free"] is True
+    entries = stamped_entries(manifest)
+    scored = score_run_record(record, entries)
+    assert scored["counts"]["scored"] == len(entries)
+    assert scored["provenance"]["model"]["prompt_free_flags"] == [True]
+    report, markdown = build_reports(record, entries)
+    assert json.loads(report)["counts"]["scored"] == len(entries)
+    assert markdown
+
+    record["provenance"].pop("prompt_free")
+    with pytest.raises(ReportError, match="missing prompt identity"):
+        build_reports(record, entries)
+
+
+@pytest.mark.parametrize("field", ["adapter", "model_id"])
+def test_prompt_free_does_not_exempt_producer_identity(field: str) -> None:
+    record = _run_record()
+    record["provenance"]["prompt_free"] = True
+    for item in record["items"][:2]:
+        for missing in (field, "prompt_version", "prompt_sha256"):
+            item["describe"].pop(missing)
+    with pytest.raises(ReportError, match="incomplete model provenance"):
         score_run_record(record, _manifest_entries())
 
 
@@ -479,7 +539,8 @@ def test_bakeoff_report_surfaces_durable_stage_costs() -> None:
     assert formatted == "candidate [inference=unknown, model_load=$0.250000]"
 
 
-def test_bakeoff_report_main_renders_saved_stage_costs(tmp_path) -> None:
+@pytest.mark.parametrize("saved_costs", [True, False])
+def test_bakeoff_report_main_renders_saved_stage_costs(tmp_path, saved_costs: bool) -> None:
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(json.dumps({"entries": [{"media_id": 7, "path": "images/sample.jpg"}]}))
     run_path = tmp_path / "run.json"
@@ -491,7 +552,7 @@ def test_bakeoff_report_main_renders_saved_stage_costs(tmp_path) -> None:
                         "model_load": {"status": "estimated", "amount_usd": 0.25},
                         "inference": {"status": "unknown", "amount_usd": None},
                     }
-                },
+                } if saved_costs else {},
                 "items": [{"media_id": 7, "describe": {"alt_text_draft": "A sample caption."}}],
             }
         )
@@ -509,7 +570,10 @@ def test_bakeoff_report_main_renders_saved_stage_costs(tmp_path) -> None:
 
     assert exit_code == 0
     report_html = report_path.read_text()
-    assert "durable stage costs: candidate [inference=unknown, model_load=$0.250000]" in report_html
+    if saved_costs:
+        assert "durable stage costs: candidate [inference=unknown, model_load=$0.250000]" in report_html
+    else:
+        assert "durable stage costs:" not in report_html
 
 
 def test_live_score_stamps_mapping_corpus_coverage_audit() -> None:

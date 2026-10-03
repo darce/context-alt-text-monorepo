@@ -86,6 +86,55 @@ preflight_remote_face_pipeline_models dev-fir
     )
 
 
+@pytest.mark.parametrize(
+    "raw,secret",
+    [
+        ("password: |\n  hunter2secretYAML\nother: safe\n", "hunter2secretYAML"),
+        ("client_secret: >-\n  hunter2secretFolded\n  still-secret\nnext: safe\n", "hunter2secretFolded"),
+        ("client_secret: >-\n  hunter2secretFolded\n  still-secret\nnext: safe\n", "still-secret"),
+    ],
+)
+def test_redacts_yaml_secret_block_contents(raw: str, secret: str) -> None:
+    output = _run_sanitizer(raw)
+    assert secret not in output, output
+    assert "diagnostic: next: safe" in output or "diagnostic: other: safe" in output
+
+
+@pytest.mark.parametrize(
+    "raw,secret",
+    [
+        ("curl -u acx:hunter2secretCURLU https://example.invalid\n", "hunter2secretCURLU"),
+        ("wget --user=acx:hunter2secretWGET https://example.invalid\n", "hunter2secretWGET"),
+        ("curl -u 'acx:hunter2 secretCURLSPACE' https://example.invalid\n", "secretCURLSPACE"),
+        ('wget --user="acx:hunter2 secretWGETSPACE" https://example.invalid\n', "secretWGETSPACE"),
+    ],
+)
+def test_redacts_curl_and_wget_user_credentials(raw: str, secret: str) -> None:
+    output = _run_sanitizer(raw)
+    assert secret not in output, output
+    assert "[REDACTED]" in output
+
+
+def test_redacts_unquoted_values_through_whitespace() -> None:
+    output = _run_sanitizer('{"SECRET":abc}def "TOKEN":abc,def tail=visible\n')
+    assert "}def" not in output, output
+    assert ",def" not in output, output
+    assert "tail=visible" in output, output
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{\n  "password":\n    "hunter2secretJSON",\n  "safe": "visible"\n}\n',
+        '{\n  "password"\n  :\n    "hunter2secretJSON",\n  "safe": "visible"\n}\n',
+    ],
+)
+def test_redacts_json_secret_scalar_on_following_line(raw: str) -> None:
+    output = _run_sanitizer(raw)
+    assert "hunter2secretJSON" not in output, output
+    assert "visible" in output, output
+
+
 SANITIZER_CASES = [
     ('{"access_token":"abc.DEF-123"}', "abc.DEF-123"),
     ('{"api_key": "abc123"}', "abc123"),

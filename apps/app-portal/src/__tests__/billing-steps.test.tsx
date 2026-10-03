@@ -159,7 +159,7 @@ describe('billing checkout steps and return recovery [NAV-09][INT-13]', () => {
     expect(screen.getByText('Step 2 of 2: pay with the provider')).toBeInTheDocument();
   });
 
-  it('keeps hosted checkout current while the request is pending and returns to review after failure', async () => {
+  it.each(['failed', 'expired', 'canceled', 'unknown'])('restores the plan summary after a pending checkout resolves %s', async (status) => {
     const user = userEvent.setup();
     let resolveCheckout!: (response: Awaited<ReturnType<PortalBillingClient['checkout']>>) => void;
     const pendingCheckout = new Promise<Awaited<ReturnType<PortalBillingClient['checkout']>>>((resolve) => {
@@ -192,15 +192,60 @@ describe('billing checkout steps and return recovery [NAV-09][INT-13]', () => {
       resolveCheckout({
         attempt_id: ATTEMPT_ID,
         checkout_url: null,
-        status: 'failed',
+        status,
         replayed: false,
       });
     });
 
-    await waitFor(() =>
-      expect(screen.getByRole('listitem', { current: 'step' })).toHaveTextContent(
-        'Step 1 of 2: review plan',
-      ),
+    expect(screen.queryByRole('list', { name: 'Checkout steps' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /continue to checkout/i })).toBeEnabled();
+    expect(client.checkout).toHaveBeenCalledTimes(1);
+  });
+
+  it('restores the plan summary and clears retry intent on preview after a pending checkout rejects', async () => {
+    const user = userEvent.setup();
+    let rejectCheckout!: (error: Error) => void;
+    const pendingCheckout = new Promise<Awaited<ReturnType<PortalBillingClient['checkout']>>>((_, reject) => {
+      rejectCheckout = reject;
+    });
+    const client: PortalBillingClient = {
+      checkout: vi.fn(() => pendingCheckout),
+      manage: vi.fn(async () => ({ portal_url: 'https://pay.example.test/portal' })),
+    };
+
+    render(
+      <BillingScreen
+        client={client}
+        publicPlanCode={PLAN}
+        paymentsEnabled
+        onNavigateToReturn={vi.fn()}
+        onNavigateToUsage={vi.fn()}
+      />,
     );
+
+    await user.click(screen.getByRole('button', { name: /continue to checkout/i }));
+    await user.click(screen.getByRole('button', { name: /confirm hosted checkout/i }));
+
+    expect(screen.getByRole('list', { name: 'Checkout steps' })).toBeInTheDocument();
+    expect(screen.getByRole('listitem', { current: 'step' })).toHaveTextContent(
+      'Step 2 of 2: pay with the provider',
+    );
+
+    await act(async () => {
+      rejectCheckout(Object.assign(new Error('checkout_unavailable'), {
+        status: 503,
+        code: 'checkout_unavailable',
+      }));
+    });
+
+    expect(screen.queryByRole('list', { name: 'Checkout steps' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /continue to checkout/i })).toBeEnabled();
+    expect(client.checkout).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: /try billing again/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /continue to checkout/i }));
+    expect(screen.getByRole('button', { name: /confirm hosted checkout/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /try billing again/i })).not.toBeInTheDocument();
+    expect(client.checkout).toHaveBeenCalledTimes(1);
   });
 });

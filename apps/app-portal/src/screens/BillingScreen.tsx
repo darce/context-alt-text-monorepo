@@ -294,6 +294,9 @@ export function BillingScreen({
       statusRef.current?.focus();
     } finally {
       if (epoch === epochRef.current) {
+        if (!completedRef.current) {
+          setPreview(false);
+        }
         setCheckoutStarting(false);
       }
     }

@@ -263,19 +263,29 @@ def test_concatenated_pass_preserves_case_shape(mapping):
     assert "AmberFalcon" in out, "mixed case must fall back to the alias's own casing"
 
 
-def test_concatenated_pass_reaches_embedded_alnum_runs(mapping):
-    # BR-22 inverted this test. The previous assertions pinned NBL/NBR around
-    # the concatenated form -- which is the bug. A handle like
-    # `<prefix><first><last>_<id>` is a longer alnum run, and the joined
-    # form (>= 8 letters of a real name) is identifying inside it. An
-    # anchored-only compile of the same alternation cannot match this
-    # fixture; `_inside_hex_run` is now the sha256 protection, proven
-    # separately.
-    passes = pz._Passes(mapping, identities=_UNIT_NONPERSONAL)
-    out, counts, _u = passes.rewrite("xnylphraveldrithx and nylphraveldrith9", ".json")
-    assert counts["concat"] == 2
-    assert "nylphraveldrith" not in out.lower()
-    assert "amberfalcon" in out.lower()
+def test_concatenated_pass_reaches_embedded_alnum_runs(mapping, tmp_path, monkeypatch, capsys):
+    body = json.dumps({"joined": ["xnylphraveldrithx", "nylphraveldrith9"]}) + "\n"
+    rel = _COMMAND_DATA_REL.replace(".md", ".json")
+    repo, _private, _files = _prepare_command_env(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        entries=mapping["entries"],
+        files={rel: body},
+        include_roster=True,
+    )
+    assert _run_fixture_verify() == 1
+    verify_before = capsys.readouterr().out
+    assert "concat': 2" in verify_before
+
+    assert _run_fixture_apply() == 0
+    apply_out = capsys.readouterr().out
+    assert "concat=2" in apply_out
+    rewritten = (repo / rel).read_text(encoding="utf-8")
+    assert rewritten == '{"joined": ["xamberfalconx", "amberfalcon9"]}\n'
+    assert "nylphraveldrith" not in rewritten
+
+    assert _run_fixture_verify() == 0
+    assert "in-scope residue: 0 files" in capsys.readouterr().out
 
 
 def test_concatenated_form_is_built_when_the_alias_has_fewer_tokens():
@@ -847,12 +857,21 @@ def test_concat_exclusion_line_reports_zero_as_a_measurement():
     )
 
 
-def test_apply_and_verify_both_emit_concat_exclusions():
-    src = _SCRIPT.read_text(encoding="utf-8")
-    apply_src = src[src.index("def cmd_apply") : src.index("def cmd_verify")]
-    verify_src = src[src.index("def cmd_verify") : src.index("def main")]
-    assert "_concat_exclusion_line" in apply_src
-    assert "_concat_exclusion_line" in verify_src
+def test_apply_and_verify_both_emit_concat_exclusions(tmp_path, monkeypatch, capsys):
+    entries = [
+        _command_entry("Qorvex", "Cobalt Harbor"),
+        _command_entry("Veldrun Zyllnex", "Marbled Quarry"),
+    ]
+    outputs = _run_exclusion_measurement_commands(tmp_path, monkeypatch, entries, capsys)
+    expected = {
+        "concat exclusions:": "concat exclusions: 1 dropped (1× single-token name; no concatenation exists)",
+        "ambiguous family exclusions:": "ambiguous family exclusions: 0 dropped",
+        "adjacent exclusions:": "adjacent exclusions: 0 dropped",
+    }
+    for output in outputs:
+        _assert_exclusion_measurements(output, expected)
+        for entry in entries:
+            assert entry["real_name"].lower() not in output.lower()
 
 
 # --- PRIV-1-BR-19: the shipped map must not reuse a real name token as a
@@ -920,15 +939,41 @@ def test_map_vocab_guard_matches_whole_tokens_not_substrings():
     pz._assert_map_vocab_disjoint(_map(("Qorvith Velmoth", "Marbled Quarry"), ("Nyl Qorv", "Nylphra Ridgeway")))
 
 
-def test_apply_and_verify_both_recheck_the_shipped_map_vocabulary():
-    # `plan` is the only other caller of a disjointness check, and it cannot
-    # run post-apply: it reads the roster, which `apply` has pseudonymized.
-    # The two commands that *do* run against a shipped map must carry it.
-    src = _SCRIPT.read_text(encoding="utf-8")
-    apply_src = src[src.index("def cmd_apply") : src.index("def cmd_verify")]
-    verify_src = src[src.index("def cmd_verify") : src.index("def main")]
-    assert "_assert_map_vocab_disjoint" in apply_src
-    assert "_assert_map_vocab_disjoint" in verify_src
+def test_apply_and_verify_both_recheck_the_shipped_map_vocabulary(tmp_path, monkeypatch, capsys):
+    collision = [
+        _command_entry("Nylphra Velmoth", "Marbled Quarry"),
+        _command_entry("Nyl Qorv", "Nylphra Ridgeway"),
+    ]
+    fixture_files = {_COMMAND_DATA_REL: "unrelated fixture payload\n"}
+    repo, _private, _files = _prepare_command_env(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        entries=collision,
+        files=fixture_files,
+    )
+    before = {path.relative_to(repo): path.read_bytes() for path in repo.rglob("*") if path.is_file()}
+    for command in (_run_fixture_apply, _run_fixture_verify):
+        with pytest.raises(SystemExit) as excinfo:
+            command()
+        assert "nylphra (1 alias, 1 real name)" in str(excinfo.value)
+    after = {path.relative_to(repo): path.read_bytes() for path in repo.rglob("*") if path.is_file()}
+    assert after == before
+
+    disjoint = [
+        _command_entry("Nylphra Velmoth", "Marbled Quarry"),
+        _command_entry("Nyl Qorv", "Burnished Ridgeway"),
+    ]
+    (tmp_path / "disjoint").mkdir()
+    _prepare_command_env(
+        tmp_path=tmp_path / "disjoint",
+        monkeypatch=monkeypatch,
+        entries=disjoint,
+        files=fixture_files,
+    )
+    assert _run_fixture_apply() == 0
+    capsys.readouterr()
+    assert _run_fixture_verify() == 0
+    assert "in-scope residue: 0 files" in capsys.readouterr().out
 # --- wordlist fail-fast and pin, PRIV-1-BR-20 + PRIV-1-BR-26 --------------
 
 
@@ -1048,24 +1093,73 @@ def test_build_map_records_wordlist_block(tmp_path, monkeypatch):
     assert rec["sha256"] == hashlib.sha256(Path(rec["path"]).read_bytes()).hexdigest()
 
 
-def test_apply_and_verify_emit_wordlist_and_ambiguous_stem_measurements():
-    src = _SCRIPT.read_text(encoding="utf-8")
-    apply_src = src[src.index("def cmd_apply") : src.index("def cmd_verify")]
-    verify_src = src[src.index("def cmd_verify") : src.index("def main")]
-    plan_src = src[src.index("def build_map") : src.index("def load_map")]
-    assert "_wordlist_line" in apply_src
-    assert "_wordlist_line" in verify_src
-    assert "_ambiguous_stem_line" in apply_src
-    assert "_ambiguous_stem_line" in verify_src
-    # Both commands pin it, not just verify. `apply`'s rewrite decisions read
-    # the same wordlist -- the given-name pass excludes dictionary words -- so a
-    # list that drifted since `plan` makes apply rewrite a different token set
-    # than the map's recorded provenance describes, and nothing downstream can
-    # see it: the map still carries the old digest, and verify re-derives its
-    # residue pattern from the same drifted list (CARD-08/CARD-11).
-    assert "_assert_wordlist_pin" in verify_src
-    assert "_assert_wordlist_pin" in apply_src
-    assert "wordlist" in plan_src
+def test_apply_and_verify_emit_wordlist_and_ambiguous_stem_measurements(tmp_path, monkeypatch, capsys):
+    _plan_repo, _plan_private, wl = _prepare_plan_env(tmp_path, monkeypatch)
+    assert pz.cmd_plan(type("Args", (), {"force": False, "pin_wordlist": False})()) == 0
+    capsys.readouterr()
+    planned = json.loads(pz.ALIAS_MAP.read_text(encoding="utf-8"))
+    raw = wl.read_bytes()
+    expected_words = {line.strip().lower() for line in raw.decode(errors="ignore").splitlines() if line.strip()}
+    assert planned["wordlist"]["path"] == str(wl)
+    assert planned["wordlist"]["sha256"] == hashlib.sha256(raw).hexdigest()
+    assert planned["wordlist"]["count"] == len(expected_words)
+
+    entries = [dict(entry) for entry in _AMBIGUOUS_STEM_MAPPING["entries"]]
+    entries.append(_command_entry("Qorvex Qorvex", "Teal Harbor"))
+    contents = {
+        "docs/shared-stem.md": "photos/brook-pool-04.jpg\n",
+        "docs/repeated-token-stem.md": "photos/qorvex-pool-04.jpg\n",
+    }
+    repo, private, prepared = _prepare_command_env(
+        tmp_path=tmp_path / "apply-verify",
+        monkeypatch=monkeypatch,
+        entries=entries,
+        files=contents,
+        include_roster=True,
+    )
+    capsys.readouterr()
+    verify_before = _run_fixture_verify()
+    before_out = capsys.readouterr().out
+    assert verify_before == 1
+    assert f"wordlist: {len(expected_words)} words (sha256 {hashlib.sha256(raw).hexdigest()[:12]}..)" in before_out
+    assert "ambiguous media stems: 1 left unresolved (token maps to >1 identity)" in before_out
+    assert "RESIDUE docs/shared-stem.md" in before_out
+    assert "{'media': 1}" in before_out
+    assert "Brook" not in before_out and "Qorvex" not in before_out
+
+    data_path = repo / "docs/shared-stem.md"
+    before_apply = {path.relative_to(repo): path.read_bytes() for path in repo.rglob("*") if path.is_file()}
+    raw_original = wl.read_bytes()
+    wl.write_bytes(raw_original + b"driftword\n")
+    _reset_wordlist()
+    with pytest.raises(SystemExit, match="wordlist sha256 mismatch"):
+        _run_fixture_apply()
+    after_failed_apply = {path.relative_to(repo): path.read_bytes() for path in repo.rglob("*") if path.is_file()}
+    assert after_failed_apply == before_apply
+    with pytest.raises(SystemExit, match="wordlist sha256 mismatch"):
+        _run_fixture_verify()
+    wl.write_bytes(raw_original)
+    _reset_wordlist()
+
+    apply_rc = _run_fixture_apply()
+    apply_out = capsys.readouterr().out
+    assert apply_rc == 0
+    assert f"wordlist: {len(expected_words)} words (sha256 {hashlib.sha256(raw).hexdigest()[:12]}..)" in apply_out
+    assert "ambiguous media stems: 1 left unresolved (token maps to >1 identity)" in apply_out
+    assert "docs/shared-stem.md" in apply_out and "media=1" in apply_out
+    assert "brook" not in data_path.read_text(encoding="utf-8").lower()
+
+    verify_after = _run_fixture_verify()
+    after_out = capsys.readouterr().out
+    assert verify_after == 0
+    assert f"wordlist: {len(expected_words)} words (sha256 {hashlib.sha256(raw).hexdigest()[:12]}..)" in after_out
+    assert "ambiguous media stems: 0 left unresolved (token maps to >1 identity)" in after_out
+    assert "in-scope residue: 0 files" in after_out
+    assert "Qorvex" not in after_out
+
+    pin_path = private / pz._PIN_RECORD_NAME
+    assert pin_path.is_file()
+    assert json.loads(pin_path.read_text(encoding="utf-8"))["pins"]
 
 
 # --- ambiguous dictionary-word stems, PRIV-1-BR-15 ------------------------
@@ -1404,12 +1498,24 @@ def test_family_exclusion_line_never_names_the_token():
     assert "ambiguous family exclusions:" in line
 
 
-def test_apply_and_verify_both_emit_family_exclusions():
-    src = _SCRIPT.read_text(encoding="utf-8")
-    apply_src = src[src.index("def cmd_apply") : src.index("def cmd_verify")]
-    verify_src = src[src.index("def cmd_verify") : src.index("def main")]
-    assert "_ambiguous_family_exclusion_line" in apply_src
-    assert "_ambiguous_family_exclusion_line" in verify_src
+def test_apply_and_verify_both_emit_family_exclusions(tmp_path, monkeypatch, capsys):
+    entries = [
+        _command_entry("Zyllora Brook", "Amber Falcon"),
+        _command_entry("Veldrun Brook", "Cobalt Falcon"),
+    ]
+    outputs = _run_exclusion_measurement_commands(tmp_path, monkeypatch, entries, capsys)
+    expected = {
+        "concat exclusions:": "concat exclusions: 0 dropped",
+        "ambiguous family exclusions:": (
+            "ambiguous family exclusions: 1 dropped "
+            "(1× shared token already has one alias word)"
+        ),
+        "adjacent exclusions:": "adjacent exclusions: 0 dropped",
+    }
+    for output in outputs:
+        _assert_exclusion_measurements(output, expected)
+        for entry in entries:
+            assert entry["real_name"].lower() not in output.lower()
 
 
 def test_same_stem_gets_the_same_replacement_in_json_and_html():
@@ -1865,12 +1971,20 @@ def test_adjacent_exclusion_line_never_names_the_token():
     assert "adjacent exclusions:" in line
 
 
-def test_apply_and_verify_both_emit_adjacent_exclusions():
-    src = _SCRIPT.read_text(encoding="utf-8")
-    apply_src = src[src.index("def cmd_apply") : src.index("def cmd_verify")]
-    verify_src = src[src.index("def cmd_verify") : src.index("def main")]
-    assert "_adjacent_exclusion_line" in apply_src
-    assert "_adjacent_exclusion_line" in verify_src
+def test_apply_and_verify_both_emit_adjacent_exclusions(tmp_path, monkeypatch, capsys):
+    entry = _command_entry("A Veldrix", "Cobalt Quarry")
+    outputs = _run_exclusion_measurement_commands(tmp_path, monkeypatch, [entry], capsys)
+    expected = {
+        "concat exclusions:": "concat exclusions: 0 dropped",
+        "ambiguous family exclusions:": "ambiguous family exclusions: 0 dropped",
+        "adjacent exclusions:": (
+            "adjacent exclusions: 1 dropped "
+            "(1× single-letter token; letter-anchor cannot separate it from the English article)"
+        ),
+    }
+    for output in outputs:
+        _assert_exclusion_measurements(output, expected)
+        assert entry["real_name"].lower() not in output.lower()
 
 
 # --- PRIV-1-BR-30: the re-parse must share the match pattern's flags ------
@@ -1885,12 +1999,34 @@ def test_apply_and_verify_both_emit_adjacent_exclusions():
 # residue that `apply` can never clear and no counter says why.
 
 
-def test_adjacent_parse_shares_the_match_pattern_flags():
-    assert pz._ADJACENT_PARSE.flags & re.IGNORECASE, (
-        "_ADJACENT_PARSE re-parses text matched by an IGNORECASE pattern; "
-        "without the flag it rejects case-folding non-ASCII letters the "
-        "match accepted."
+@pytest.mark.parametrize(
+    ("fixture_text", "expected"),
+    [
+        ("Qorviſt quarry.\n", "Cobalt quarry.\n"),
+        ("Qorvist K. quarry.\n", "Cobalt K. quarry.\n"),
+    ],
+)
+def test_adjacent_parse_shares_the_match_pattern_flags(tmp_path, monkeypatch, capsys, fixture_text, expected):
+    repo, _private, _files = _prepare_command_env(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        entries=[dict(entry) for entry in _ADJACENT_MAPPING["entries"]],
+        files={_COMMAND_DATA_REL: fixture_text},
+        include_roster=True,
     )
+    assert _run_fixture_verify() == 1
+    before_out = capsys.readouterr().out
+    assert "RESIDUE docs/fixture.md" in before_out
+    assert "adjacent': 1" in before_out
+
+    assert _run_fixture_apply() == 0
+    apply_out = capsys.readouterr().out
+    assert "adjacent=1" in apply_out
+    assert (repo / _COMMAND_DATA_REL).read_text(encoding="utf-8") == expected
+
+    assert _run_fixture_verify() == 0
+    after_out = capsys.readouterr().out
+    assert "in-scope residue: 0 files" in after_out
 
 
 @pytest.mark.parametrize(
@@ -1960,7 +2096,16 @@ def _pin_record(*pairs: tuple[str, str]) -> dict:
     }
 
 
-def _prepare_verify_env(tmp_path, monkeypatch, *, files: dict[str, str], record: dict | None):
+def _prepare_verify_env(
+    tmp_path,
+    monkeypatch,
+    *,
+    files: dict[str, str],
+    record: dict | None,
+    mapping: dict | None = None,
+    roster_rows: list[dict] | None = None,
+    include_roster: bool = False,
+):
     """Minimal private store + roster so `cmd_verify` can run.
 
     `DECLARED_UNSCANNABLE` and `FREE_TEXT_REDACTIONS` are emptied: both
@@ -1968,8 +2113,165 @@ def _prepare_verify_env(tmp_path, monkeypatch, *, files: dict[str, str], record:
     """
     repo = tmp_path / "repo"
     private = tmp_path / "private"
-    repo.mkdir()
-    private.mkdir()
+    repo.mkdir(parents=True)
+    private.mkdir(parents=True)
+    roster = repo / "roster.json"
+    if roster_rows is None:
+        roster_rows = [
+            {"bucket": "personal", "name": "Zyllora Elm", "slug": "zyllora-elm"},
+            {"bucket": "celebs", "name": "Qorvith Zyllnex", "slug": "qorvith_zyllnex"},
+        ]
+    roster.write_text(json.dumps({"identities": roster_rows}, indent=2) + "\n", encoding="utf-8")
+    monkeypatch.setattr(pz, "REPO", repo)
+    monkeypatch.setattr(pz, "ROSTER", roster)
+    monkeypatch.setattr(pz, "PRIVATE", private)
+    monkeypatch.setattr(pz, "ALIAS_MAP", private / "priv1-alias-map.json")
+    monkeypatch.setattr(pz, "MINT_KEY", private / "priv1-mint-key")
+    monkeypatch.setattr(pz, "DECLARED_UNSCANNABLE", {})
+    monkeypatch.setattr(pz, "FREE_TEXT_REDACTIONS", ())
+    pz.MINT_KEY.write_text(("t" * 64) + "\n", encoding="utf-8")
+    if mapping is None:
+        mapping = {
+            "entries": [
+                {
+                    "real_name": "Zyllora Elm",
+                    "alias": "Amber Falcon",
+                    "alias_slug": "amber_falcon",
+                    "original_slug": "zyllora-elm",
+                    "tokens": 2,
+                }
+            ]
+        }
+    else:
+        mapping = json.loads(json.dumps(mapping))
+    mapping.setdefault("schema", "priv1-alias-map/2")
+    mapping["key_fingerprint"] = pz._key_fingerprint()
+    mapping["wordlist"] = pz._wordlist_record()
+    mapping.setdefault("free_text_deny", [])
+    pz.ALIAS_MAP.write_text(json.dumps(mapping, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    tracked = []
+    for rel, body in files.items():
+        path = repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+        tracked.append((path, True))
+    if include_roster:
+        tracked.append((roster, True))
+    monkeypatch.setattr(pz, "_tracked_files", lambda: tracked)
+    if record is not None:
+        (private / "priv1-digest-pins.json").write_text(
+            json.dumps(record, indent=2) + "\n", encoding="utf-8"
+        )
+    pz._nonpersonal_identities.cache_clear()
+    return repo, private
+
+
+_COMMAND_DATA_REL = "docs/fixture.md"
+_COMMAND_PIN_NOTE = "docs/fixture-digests.md"
+
+
+def _command_entry(real: str, alias: str) -> dict:
+    return {
+        "real_name": real,
+        "alias": alias,
+        "alias_slug": alias.lower().replace(" ", "_"),
+        "original_slug": real.lower().replace(" ", "-"),
+        "slug_was_name_derived": True,
+        "tokens": len(real.split()),
+    }
+
+
+def _command_map(entries: list[dict]) -> dict:
+    return {
+        "schema": "priv1-alias-map/2",
+        "key_fingerprint": pz._key_fingerprint(),
+        "entries": [dict(entry) for entry in entries],
+        "wordlist": pz._wordlist_record(),
+        "free_text_deny": [],
+    }
+
+
+def _roster_for_command_entries(entries: list[dict]) -> list[dict]:
+    rows = [
+        {
+            "bucket": "personal",
+            "name": entry["real_name"],
+            "slug": entry["original_slug"],
+        }
+        for entry in entries
+    ]
+    rows.append({"bucket": "celebs", "name": "Qorvith Zyllnex", "slug": "qorvith_zyllnex"})
+    return rows
+
+
+def _prepare_command_env(
+    *,
+    tmp_path,
+    monkeypatch,
+    entries: list[dict],
+    files: dict[str, str],
+    roster_rows: list[dict] | None = None,
+    include_roster: bool = False,
+):
+    content_files = dict(files)
+    pin_lines = [f"sha256: {_pin_digest(body)}" for body in content_files.values()]
+    content_files[_COMMAND_PIN_NOTE] = "\n".join(pin_lines) + ("\n" if pin_lines else "fixture note\n")
+    record = _pin_record(
+        *((rel, _pin_digest(body)) for rel, body in files.items())
+    )
+    return (*_prepare_verify_env(
+        tmp_path,
+        monkeypatch,
+        files=content_files,
+        record=record,
+        mapping=_command_map(entries),
+        roster_rows=roster_rows or _roster_for_command_entries(entries),
+        include_roster=include_roster,
+    ), content_files)
+
+
+def _run_fixture_apply(*, reorder: bool = False) -> int:
+    try:
+        return pz.cmd_apply(type("Args", (), {"dry_run": False, "reorder": reorder, "top": 25})())
+    finally:
+        pz._nonpersonal_identities.cache_clear()
+        _reset_wordlist()
+
+
+def _run_fixture_verify() -> int:
+    try:
+        return pz.cmd_verify(type("Args", (), {"show_out_of_scope": False})())
+    finally:
+        pz._nonpersonal_identities.cache_clear()
+        _reset_wordlist()
+
+
+def _assert_exclusion_measurements(output: str, expected: dict[str, str]) -> None:
+    for label, line in expected.items():
+        assert output.count(label) == 1
+        assert line in output
+
+
+def _run_exclusion_measurement_commands(tmp_path, monkeypatch, entries: list[dict], capsys) -> list[str]:
+    _prepare_command_env(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        entries=entries,
+        files={_COMMAND_DATA_REL: "unrelated fixture payload\n"},
+        include_roster=True,
+    )
+    assert _run_fixture_apply() == 0
+    apply_output = capsys.readouterr().out
+    assert _run_fixture_verify() == 0
+    verify_output = capsys.readouterr().out
+    return [apply_output, verify_output]
+
+
+def _prepare_plan_env(tmp_path, monkeypatch):
+    repo = tmp_path / "plan-repo"
+    private = tmp_path / "plan-private"
+    repo.mkdir(parents=True)
+    private.mkdir(parents=True)
     roster = repo / "roster.json"
     roster.write_text(
         json.dumps(
@@ -1987,38 +2289,10 @@ def _prepare_verify_env(tmp_path, monkeypatch, *, files: dict[str, str], record:
     monkeypatch.setattr(pz, "PRIVATE", private)
     monkeypatch.setattr(pz, "ALIAS_MAP", private / "priv1-alias-map.json")
     monkeypatch.setattr(pz, "MINT_KEY", private / "priv1-mint-key")
-    monkeypatch.setattr(pz, "DECLARED_UNSCANNABLE", {})
-    monkeypatch.setattr(pz, "FREE_TEXT_REDACTIONS", ())
     pz.MINT_KEY.write_text(("t" * 64) + "\n", encoding="utf-8")
-    mapping = {
-        "schema": "priv1-alias-map/2",
-        "key_fingerprint": pz._key_fingerprint(),
-        "entries": [
-            {
-                "real_name": "Zyllora Elm",
-                "alias": "Amber Falcon",
-                "alias_slug": "amber_falcon",
-                "original_slug": "zyllora-elm",
-                "tokens": 2,
-            }
-        ],
-        "wordlist": pz._wordlist_record(),
-        "free_text_deny": [],
-    }
-    pz.ALIAS_MAP.write_text(json.dumps(mapping) + "\n", encoding="utf-8")
-    tracked = []
-    for rel, body in files.items():
-        path = repo / rel
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(body, encoding="utf-8")
-        tracked.append((path, True))
-    monkeypatch.setattr(pz, "_tracked_files", lambda: tracked)
-    if record is not None:
-        (private / "priv1-digest-pins.json").write_text(
-            json.dumps(record, indent=2) + "\n", encoding="utf-8"
-        )
     pz._nonpersonal_identities.cache_clear()
-    return repo, private
+    _reset_wordlist()
+    return repo, private, pz._resolved_wordlist_path()
 
 
 def test_out_of_band_rewrite_of_a_recorded_path_is_stale(tmp_path, monkeypatch):
@@ -2441,12 +2715,50 @@ def test_apply_and_verify_both_emit_digest_pin_measurements():
     assert "stale_pins" in ret_line or "missing_pins" in ret_line
 
 
-def test_plan_does_not_write_a_pin_record():
-    src = _SCRIPT.read_text(encoding="utf-8")
-    plan_src = src[src.index("def cmd_plan(") : src.index("FREE_TEXT_REDACTIONS")]
-    assert "_persist_published_pins" not in plan_src
-    assert "_merge_pin_record" not in plan_src
-    assert "_write_pin_record" not in plan_src
+@pytest.mark.parametrize("mode", ["fresh", "force", "pin-wordlist"])
+@pytest.mark.parametrize("record_exists", [False, True])
+def test_plan_does_not_write_a_pin_record(tmp_path, monkeypatch, capsys, mode, record_exists):
+    _repo, private, _wl = _prepare_plan_env(tmp_path, monkeypatch)
+    pin_path = private / pz._PIN_RECORD_NAME
+
+    if mode == "fresh":
+        entries_before = None
+    else:
+        assert pz.cmd_plan(type("Args", (), {"force": False, "pin_wordlist": False})()) == 0
+        capsys.readouterr()
+        existing_map = json.loads(pz.ALIAS_MAP.read_text(encoding="utf-8"))
+        entries_before = existing_map["entries"]
+        if mode == "pin-wordlist":
+            existing_map.pop("wordlist")
+            pz.ALIAS_MAP.write_text(json.dumps(existing_map, indent=2) + "\n", encoding="utf-8")
+
+    if record_exists:
+        prior_record = json.dumps(
+            _pin_record((_PIN_REL, "ab" * 32)), separators=(",", ":")
+        ).encode() + b"\n"
+        pin_path.write_bytes(prior_record)
+    else:
+        pin_path.unlink(missing_ok=True)
+        prior_record = None
+
+    args = {
+        "fresh": {"force": False, "pin_wordlist": False},
+        "force": {"force": True, "pin_wordlist": False},
+        "pin-wordlist": {"force": False, "pin_wordlist": True},
+    }[mode]
+    assert pz.cmd_plan(type("Args", (), args)()) == 0
+    capsys.readouterr()
+
+    if prior_record is None:
+        assert not pin_path.exists()
+    else:
+        assert pin_path.read_bytes() == prior_record
+    planned = json.loads(pz.ALIAS_MAP.read_text(encoding="utf-8"))
+    pz._validate_map(planned)
+    assert planned["entries"]
+    assert planned["wordlist"] == pz._wordlist_record()
+    if entries_before is not None:
+        assert planned["entries"] == entries_before
 
 
 def test_apply_does_not_persist_under_the_dry_run_name(tmp_path, monkeypatch):
@@ -3075,94 +3387,123 @@ _FAMILY_ADJACENT_MAPPING = {
 }
 
 
-def _family_word_for_velmoth() -> str:
-    return pz._family_words({"velmoth": {"Falcon", "Quarry"}})["velmoth"]
+def _assert_family_adjacent_command_case(tmp_path, monkeypatch, capsys, body: str, expected: str) -> None:
+    repo, _private, _files = _prepare_command_env(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        entries=[dict(entry) for entry in _FAMILY_ADJACENT_MAPPING["entries"]],
+        files={_COMMAND_DATA_REL: body},
+        include_roster=True,
+    )
+    assert _run_fixture_verify() == 1
+    before_out = capsys.readouterr().out
+    assert "RESIDUE docs/fixture.md" in before_out
+    assert "adjacent': 1" in before_out
+
+    assert _run_fixture_apply() == 0
+    apply_out = capsys.readouterr().out
+    assert "adjacent=1" in apply_out
+    assert (repo / _COMMAND_DATA_REL).read_text(encoding="utf-8") == expected
+    assert "Qorvist" not in apply_out
+
+    assert _run_fixture_verify() == 0
+    assert "in-scope residue: 0 files" in capsys.readouterr().out
 
 
-def test_family_word_adjacent_redacts_the_dictionary_given_name():
-    # REV-D-03 / W8-1. Surname is a family-word alias (`harbor` under
-    # the pinned test key), so an adjacent builder that only pairs
-    # against positional alias words (`quarry` / `falcon`) cannot see
-    # the mixed form. Qorvist stays in the wordlist so given-name
-    # cannot steal it. Before the fix the given token survives and
-    # residue reports nothing (TEST-15).
-    family = _family_word_for_velmoth()
-    passes = pz._Passes(_FAMILY_ADJACENT_MAPPING, identities=_UNIT_NONPERSONAL)
-    text = f"Qorvist {family} sat down"
-    out, counts, _u = passes.rewrite(text, ".md")
-    assert "Qorvist" not in out
-    assert "Cobalt" in out
-    assert family.lower() in out.lower()
-    assert counts["adjacent"] == 1
-    assert passes.residue(text, ".md").get("adjacent") == 1
-    assert passes.residue(out, ".md") == {}
+def test_family_word_adjacent_redacts_the_dictionary_given_name(tmp_path, monkeypatch, capsys):
+    _assert_family_adjacent_command_case(
+        tmp_path,
+        monkeypatch,
+        capsys,
+        "Qorvist harbor sat down\n",
+        "Cobalt harbor sat down\n",
+    )
 
 
-def test_family_word_adjacent_with_middle_initial_is_rewritten():
-    family = _family_word_for_velmoth()
-    passes = pz._Passes(_FAMILY_ADJACENT_MAPPING, identities=_UNIT_NONPERSONAL)
-    text = f"Qorvist K. {family} sat down"
-    out, counts, _u = passes.rewrite(text, ".md")
-    assert "Qorvist" not in out
-    assert f"Cobalt K. {family}" in out
-    assert counts["adjacent"] == 1
-    assert passes.residue(text, ".md").get("adjacent") == 1
-    assert passes.residue(out, ".md") == {}
+def test_family_word_adjacent_with_middle_initial_is_rewritten(tmp_path, monkeypatch, capsys):
+    _assert_family_adjacent_command_case(
+        tmp_path,
+        monkeypatch,
+        capsys,
+        "Qorvist K. harbor sat down\n",
+        "Cobalt K. harbor sat down\n",
+    )
 
 
-def test_family_word_adjacent_title_case_is_rewritten():
-    family = _family_word_for_velmoth()
-    passes = pz._Passes(_FAMILY_ADJACENT_MAPPING, identities=_UNIT_NONPERSONAL)
-    titled = family[:1].upper() + family[1:].lower()
-    text = f"Qorvist {titled} sat down"
-    out, counts, _u = passes.rewrite(text, ".md")
-    assert "Qorvist" not in out
-    assert f"Cobalt {titled}" in out
-    assert counts["adjacent"] == 1
-    assert passes.residue(text, ".md").get("adjacent") == 1
+def test_family_word_adjacent_title_case_is_rewritten(tmp_path, monkeypatch, capsys):
+    _assert_family_adjacent_command_case(
+        tmp_path,
+        monkeypatch,
+        capsys,
+        "Qorvist Harbor sat down\n",
+        "Cobalt Harbor sat down\n",
+    )
 
 
-def _name_alpha_roster() -> dict:
-    # Real-name alphabetical: Nylphra then Veldrun. (bucket, slug) order
-    # is the reverse: amber_falcon then zyllora-nylphra.
-    return {
-        "identities": [
-            {"bucket": "personal", "slug": "zyllora-nylphra", "name": "Nylphra Veldrith"},
-            {"bucket": "personal", "slug": "amber_falcon", "name": "Veldrun Qorvex"},
-        ]
+@pytest.mark.parametrize("reorder", [True, False])
+def test_reorder_applies_to_every_roster_bearing_fixture(tmp_path, monkeypatch, capsys, reorder):
+    # The real-name order is Nylphra then Zyllora. The post-scrub slug order
+    # intentionally produces the opposite display-name order.
+    entries = [
+        _command_entry("Nylphra Veldrith", "Alpha Zed"),
+        _command_entry("zyllora elm", "alpha fox"),
+    ]
+    rows = _roster_for_command_entries(entries)
+    body = json.dumps({"identities": rows}, indent=2) + "\n"
+    files = {
+        "docs/corpus-manifest-v3r.json": body,
+        "docs/golden150-draft.json": body,
     }
+    repo, _private, _files = _prepare_command_env(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        entries=entries,
+        files=files,
+        roster_rows=rows,
+        include_roster=True,
+    )
+    assert _run_fixture_apply(reorder=reorder) == 0
+    apply_out = capsys.readouterr().out
+    assert f"roster reordered={reorder}" in apply_out
+    observed = {}
+    for rel in files:
+        identities = json.loads((repo / rel).read_text(encoding="utf-8"))["identities"]
+        slugs = [row["slug"] for row in identities if row["bucket"] == "personal"]
+        names = [row["name"] for row in identities if row["bucket"] == "personal"]
+        observed[rel] = (slugs, names)
+    expected_values = (
+        (["alpha_fox", "alpha_zed"], ["alpha fox", "Alpha Zed"])
+        if reorder
+        else (["alpha_zed", "alpha_fox"], ["Alpha Zed", "alpha fox"])
+    )
+    assert observed == {rel: expected_values for rel in files}
+    if reorder:
+        assert all(names != sorted(names) for _slugs, names in observed.values())
+
+    assert _run_fixture_verify() == 0
+    assert "in-scope residue: 0 files" in capsys.readouterr().out
 
 
-def test_reorder_applies_to_every_roster_bearing_fixture(tmp_path, monkeypatch):
-    # REV-D-07 / W8-2. Two roster-bearing copies, both in real-name
-    # order, must both come out (bucket, slug) ordered.
-    v3r = tmp_path / "corpus-manifest-v3r.json"
-    golden = tmp_path / "golden150-draft.json"
-    body = json.dumps(_name_alpha_roster(), indent=2) + "\n"
-    v3r.write_text(body, encoding="utf-8")
-    golden.write_text(body, encoding="utf-8")
-    monkeypatch.setattr(pz, "ROSTER", tmp_path / "absent-roster.json")
-    assert pz._reorder_roster(object(), files=[(v3r, True), (golden, True)]) is True
-    for path in (v3r, golden):
-        rows = json.loads(path.read_text(encoding="utf-8"))["identities"]
-        slugs = [r["slug"] for r in rows]
-        names = [r["name"] for r in rows]
-        assert slugs == ["amber_falcon", "zyllora-nylphra"]
-        assert names != sorted(names), "came out in real-name alphabetical order"
-
-
-def test_family_word_pass_preserves_source_case():
-    # REV-D-09 / W8-3. `_family_words` stores the noun lowercase; the
-    # given pass must still emit Title / UPPER / lower of the source.
-    passes = pz._Passes(_RARE_SHARED_MAPPING, identities=_UNIT_NONPERSONAL)
-    family = pz._family_words({"velmoth": {"Falcon", "Harbor"}})["velmoth"]
-    title, c_t, _u = passes.rewrite("Velmoth sat down", ".md")
-    upper, c_u, _u = passes.rewrite("VELMOTH sat down", ".md")
-    lower, c_l, _u = passes.rewrite("velmoth sat down", ".md")
-    assert title == family[:1].upper() + family[1:].lower() + " sat down"
-    assert upper == family.upper() + " sat down"
-    assert lower == family.lower() + " sat down"
-    assert c_t["given"] == 1 and c_u["given"] == 1 and c_l["given"] == 1
+def test_family_word_pass_preserves_source_case(tmp_path, monkeypatch, capsys):
+    # For t*64, the shipped family word for velmoth is the fixed literal
+    # `harbor`; expectations do not call the production word builder.
+    body = "Velmoth sat down.\nVELMOTH sat down.\nvelmoth sat down.\n"
+    repo, _private, _files = _prepare_command_env(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        entries=[dict(entry) for entry in _RARE_SHARED_MAPPING["entries"]],
+        files={_COMMAND_DATA_REL: body},
+        include_roster=True,
+    )
+    assert _run_fixture_apply() == 0
+    apply_out = capsys.readouterr().out
+    assert "given=3" in apply_out
+    assert (repo / _COMMAND_DATA_REL).read_text(encoding="utf-8") == (
+        "Harbor sat down.\nHARBOR sat down.\nharbor sat down.\n"
+    )
+    assert "Velmoth" not in apply_out
+    assert _run_fixture_verify() == 0
+    assert "in-scope residue: 0 files" in capsys.readouterr().out
 
 
 def test_given_name_docstring_uses_invented_vocab():

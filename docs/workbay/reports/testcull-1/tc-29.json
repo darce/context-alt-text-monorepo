@@ -23,20 +23,21 @@
     },
     {
       "path": "apps/prototype-description-service/recognition/tests/unit/test_adapter_surface_inventory.py",
-      "verdict": "SPEED",
+      "verdict": "KEEP",
       "tests_total": 3,
       "tests_affected": [
         "test_application_adapter_inventory_stays_bounded",
         "test_only_known_application_seams_make_remote_adapter_calls"
       ],
-      "reason": "Keep the application-boundary guard but move its recursive source scan and AST parsing to a static architecture-lint stage; the third test directly checks the neutral FaceDetection contract.",
-      "evidence": "apps/prototype-description-service/recognition/tests/unit/test_adapter_surface_inventory.py:32,144,153,160,166 - the two inventory tests recursively enumerate application Python files, read or parse them, and compare the results with allowlists.",
+      "reason": "Keep both adapter-boundary guards in the unit suite: they protect the application seams, and the repository has no Python architecture-lint target or CI wiring to preserve them if moved.",
+      "evidence": "apps/prototype-description-service/recognition/tests/unit/test_adapter_surface_inventory.py:32,144,153,160,166 - the two inventory tests recursively enumerate application Python files, read or parse them, and compare the results with allowlists; apps/prototype-description-service/Makefile:313-335 defines the unit and integration stages but no architecture-lint target.",
       "subject": "application adapter-boundary architecture",
       "duplicate_of": "",
       "canon": [
-        "TEST-24"
+        "TEST-24",
+        "TEST-30"
       ],
-      "replacement": "Move the two inventory assertions into a static architecture-lint target and leave test_face_detection_seam_rejects_model_specific_fields in the commit-stage unit suite.",
+      "replacement": "",
       "est_seconds_saved": 0,
       "risk": "medium"
     }

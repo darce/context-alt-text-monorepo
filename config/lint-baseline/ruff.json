@@ -1,7 +1,7 @@
 {
   "tool": "ruff",
   "version": 1,
-  "total": 244,
+  "total": 243,
   "config_guard": {
     "select": [
       "ASYNC",
@@ -277,9 +277,6 @@
     "scripts/smoke_agent_workflows.py": {
       "UP035": 1,
       "W292": 1
-    },
-    "scripts/test_cap_owner_summary_doc.py": {
-      "I001": 1
     },
     "scripts/test_check_harness_sync.py": {
       "E402": 2,

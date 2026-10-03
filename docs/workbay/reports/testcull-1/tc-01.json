@@ -115,20 +115,20 @@
     },
     {
       "path": "apps/prototype-description-service/recognition/tests/integration/test_factor_round_trip.py",
-      "verdict": "SPEED",
+      "verdict": "KEEP",
       "tests_total": 3,
       "tests_affected": [
         "test_factor_round_trip_via_scan_and_repository",
         "test_insightface_path_factors_null",
         "test_factor_update_branch_round_trip"
       ],
-      "reason": "These database-backed scan and ORM hydration round-trips are valuable integration coverage, and the slowest observed test took 299.9 seconds.",
-      "evidence": "apps/prototype-description-service/recognition/tests/integration/test_factor_round_trip.py:76 - runs ScanService, queries persisted factor columns, and hydrates a repository identity; file duration data reports a 299.9-second slowest test.",
+      "reason": "Keep these persistence guards in the default suite: the service treats a 299.9-second run against its 300-second timeout as a pathological hang, and this module has no integration marker, so delaying it would defer the hang failure without routing it to integration.",
+      "evidence": "apps/prototype-description-service/recognition/tests/integration/test_factor_round_trip.py:76 - exercises ScanService persistence and repository hydration; apps/prototype-description-service/pyproject.toml:264-270,307 treats 299.9-second runs as pathological against the 300-second timeout; apps/prototype-description-service/Makefile:313-332 selects stages by markers, and this module has no integration marker.",
       "subject": "Face quality factor persistence and hydration",
       "duplicate_of": "",
-      "canon": ["TEST-24"],
-      "replacement": "Run these DB-backed round-trip tests in the later integration stage while retaining their assertions.",
-      "est_seconds_saved": 300,
+      "canon": ["TEST-24", "TEST-30"],
+      "replacement": "",
+      "est_seconds_saved": 0,
       "risk": "medium"
     },
     {
@@ -147,20 +147,20 @@
     },
     {
       "path": "apps/prototype-description-service/recognition/tests/integration/test_scan_service_pose_quality.py",
-      "verdict": "SPEED",
+      "verdict": "KEEP",
       "tests_total": 3,
       "tests_affected": [
         "test_scan_service_persists_pose_and_landmark_quality",
         "test_scan_service_same_bbox_replay_reuses_existing_media_identity_row",
         "test_scan_service_low_iou_replay_replaces_media_identity_row"
       ],
-      "reason": "These database-backed scan persistence and replay contracts protect live behavior, and the slowest observed test took 299.9 seconds.",
-      "evidence": "apps/prototype-description-service/recognition/tests/integration/test_scan_service_pose_quality.py:58 - runs ScanService and queries persisted pose and landmark fields; file duration data reports a 299.9-second slowest test.",
+      "reason": "Keep these persistence and replay guards in the default suite: the service treats a 299.9-second run against its 300-second timeout as a pathological hang, and this module has no integration marker, so delaying it would defer the hang failure without routing it to integration.",
+      "evidence": "apps/prototype-description-service/recognition/tests/integration/test_scan_service_pose_quality.py:58 - exercises ScanService pose and landmark persistence; apps/prototype-description-service/pyproject.toml:264-270,307 treats 299.9-second runs as pathological against the 300-second timeout; apps/prototype-description-service/Makefile:313-332 selects stages by markers, and this module has no integration marker.",
       "subject": "ScanService pose and landmark quality persistence and replay",
       "duplicate_of": "",
-      "canon": ["TEST-24"],
-      "replacement": "Run these DB-backed scan cases in the later integration stage while retaining their assertions.",
-      "est_seconds_saved": 300,
+      "canon": ["TEST-24", "TEST-30"],
+      "replacement": "",
+      "est_seconds_saved": 0,
       "risk": "medium"
     },
     {

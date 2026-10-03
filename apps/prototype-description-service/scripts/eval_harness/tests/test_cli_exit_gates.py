@@ -127,8 +127,9 @@ def _run_record(
     face_count: int = 3,
     n: int = 1,
     prediction_boxes_by_image: list[list[dict[str, float]]] | None = None,
+    producer_identity: bool = True,
 ) -> dict[str, Any]:
-    return {
+    record = {
         "schema": "acx-eval/v1",
         "kind": "run_record",
         "provenance": {
@@ -183,6 +184,8 @@ def _run_record(
             for i in range(1, n + 1)
         ],
     }
+    # Tests of other exit gates need complete provenance to reach their gate.
+    return _stamp_producer_identity(record) if producer_identity else record
 
 
 def _write_score_inputs(
@@ -351,7 +354,7 @@ def test_score_exits_nonzero_for_unattributed_producer(
         tmp_path,
         mode="exhaustive",
         boxed=True,
-        record=_run_record(face_count=1, n=5),
+        record=_run_record(face_count=1, n=5, producer_identity=False),
         n=5,
     )
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
@@ -372,7 +375,7 @@ def test_score_producer_identity_gate_is_not_skipped_by_rubric_gate(
         tmp_path,
         mode="exhaustive",
         boxed=True,
-        record=_run_record(face_count=1, n=5),
+        record=_run_record(face_count=1, n=5, producer_identity=False),
         n=5,
     )
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
@@ -400,7 +403,7 @@ def test_score_producer_identity_gate_is_not_skipped_by_freeze_certification(
         tmp_path,
         mode="exhaustive",
         boxed=True,
-        record=_run_record(face_count=1, n=5),
+        record=_run_record(face_count=1, n=5, producer_identity=False),
         n=5,
     )
     report_path = rec_path.with_name("run-report.json")
@@ -439,7 +442,7 @@ def test_score_producer_identity_gate_precedes_refusal_consent(
         tmp_path,
         mode="roster_only",
         boxed=False,
-        record=_run_record(face_count=1, n=5),
+        record=_run_record(face_count=1, n=5, producer_identity=False),
         n=5,
     )
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")

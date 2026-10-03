@@ -1,0 +1,225 @@
+{
+  "lane": "tc-14",
+  "base": "e56ab004eb3080fd1dac7c602d78835e11fac792",
+  "files": [
+    {
+      "path": "scripts/test_gpu_spike_bench.py",
+      "verdict": "REWRITE",
+      "tests_total": 60,
+      "tests_affected": [
+        "test_http_client_does_not_follow_redirects"
+      ],
+      "reason": "Rewrite the redirect test to observe the client's request behavior through a public seam; the flagged private-resolution test fails on a raised validator error, the documentation checks protect active evidence, and the 7a test is a live regression guard.",
+      "evidence": "scripts/test_gpu_spike_bench.py:1530 - redirect test inspects private _opener.handlers; :1518 - private-address validation is called and would fail if rejected; :1341 - 7a test asserts withdrawn unsupported configurations.",
+      "subject": "scripts/gpu_spike_bench.py HTTP redirect handling and GPU benchmark evidence",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-16",
+        "TEST-12",
+        "TEST-15"
+      ],
+      "replacement": "Use a local fake HTTP endpoint or injected request seam that returns a redirect and assert no follow-up request is made.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "scripts/test_infra_oci_readme_reset_section.py",
+      "verdict": "KEEP",
+      "tests_total": 5,
+      "tests_affected": [],
+      "reason": "Keep these checks because they pin operator-facing destructive-reset commands, confirmations, safety boundaries, and post-reset verification steps.",
+      "evidence": "scripts/test_infra_oci_readme_reset_section.py:18 - checks make reset-remote and confirmation syntax; :40 - checks the /ready and credential-bootstrap operator steps.",
+      "subject": "infra/oci/README.md destructive remote reset procedure",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "scripts/test_local_remote_reset_doc_crosslink.py",
+      "verdict": "KEEP",
+      "tests_total": 3,
+      "tests_affected": [],
+      "reason": "Keep the cross-links because they help operators discover the sibling reset procedure and choose between local and remote workflows.",
+      "evidence": "scripts/test_local_remote_reset_doc_crosslink.py:19 - checks the local README names and links to remote reset; :27 - checks the remote README points back to local reset.",
+      "subject": "Local and OCI reset operator documentation links",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "scripts/test_localwp_runbook.py",
+      "verdict": "KEEP",
+      "tests_total": 1,
+      "tests_affected": [],
+      "reason": "Keep this check because the runbook documents the operator's LocalWP credential setup, revocation, and verification flow.",
+      "evidence": "scripts/test_localwp_runbook.py:10 - asserts the runbook names local config, API-key create/revoke commands, activation, and fingerprint handling.",
+      "subject": "LocalWP development runbook and secret-management workflow",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "scripts/test_localwp_verify_activation_make.py",
+      "verdict": "SPEED",
+      "tests_total": 5,
+      "tests_affected": [
+        "test_localwp_verify_activation_uses_subsecond_budget_gate"
+      ],
+      "reason": "Keep the activation-budget assertion but replace its two real 1.5-second waits with a fake clock or move this timing integration case to a later pipeline stage.",
+      "evidence": "scripts/test_localwp_verify_activation_make.py:60 - fake wp activation calls time.sleep; :115 - the test sets a 1.5-second delay and invokes make at passing and failing budgets.",
+      "subject": "apps/prototype-wp-alt-context Make target localwp-verify-activation",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-24"
+      ],
+      "replacement": "Inject a clock or activation-duration fake for budget boundary checks; retain one end-to-end make invocation in a slower pipeline if shell integration is needed.",
+      "est_seconds_saved": 3,
+      "risk": "low"
+    },
+    {
+      "path": "scripts/test_maint_archive_stale.py",
+      "verdict": "SPEED",
+      "tests_total": 7,
+      "tests_affected": [
+        "test_archive_stale_maint_scaffolds_then_archives_missing_worktree_row"
+      ],
+      "reason": "Keep the cleanup and archival assertions but move this real-git scaffolding path out of the commit-stage suite because it initializes a repository, creates a worktree, and runs multiple git subprocesses.",
+      "evidence": "scripts/test_maint_archive_stale.py:266 - helper shells out to git; :323 - end-to-end test scaffolds and tears down a real branch/worktree.",
+      "subject": "scripts/maint_archive_stale.py task archival and missing-worktree cleanup",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-24"
+      ],
+      "replacement": "Run the real-git worktree lifecycle case in a later integration stage while retaining isolated-runtime tests for collection, dry-run, and archival behavior in the commit stage.",
+      "est_seconds_saved": 2,
+      "risk": "medium"
+    },
+    {
+      "path": "scripts/test_make_eval_targets.py",
+      "verdict": "SPEED",
+      "tests_total": 8,
+      "tests_affected": [],
+      "reason": "Keep the Make-to-CLI contract checks and cache each target recipe and eval-list output once per test session because multiple parameterized tests rerun make for the same output.",
+      "evidence": "scripts/test_make_eval_targets.py:54 - _make_n starts a make subprocess; :91 and :202 - parametrized target checks independently obtain the same recipes.",
+      "subject": "mk/evals.mk target recipes and scripts.eval_harness CLI argument contracts",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-24"
+      ],
+      "replacement": "Add session-scoped cached make -n recipe output per target and cache eval-list output; keep distinct missing-argument and parser checks.",
+      "est_seconds_saved": 2,
+      "risk": "low"
+    },
+    {
+      "path": "scripts/test_make_reset_remote_target.py",
+      "verdict": "REWRITE",
+      "tests_total": 11,
+      "tests_affected": [
+        "test_deploy_dev_fir_and_reset_targets_exist"
+      ],
+      "reason": "Rewrite the one test that inspects mk/deploy.mk source strings through make -n public target behavior; retain the dry-run safety checks and G3-07 recipe regression.",
+      "evidence": "scripts/test_make_reset_remote_target.py:99 - target and promotion constraints are checked by reading Makefile text; :110 and :162 - neighboring tests exercise the make target surface.",
+      "subject": "mk/deploy.mk dev-fir deploy and reset targets",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-16",
+        "TEST-15"
+      ],
+      "replacement": "Assert make -n deploy-dev-fir and make -n deploy-reset-dev-fir-to-dev produce the safe public recipes, and assert the retired rollback target is unavailable through make.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "scripts/test_ocirv1_vault_readiness.py",
+      "verdict": "MERGE",
+      "tests_total": 31,
+      "tests_affected": [],
+      "reason": "Move this live OCIRV-1 regression suite into the existing test module for scripts/deploy/_vault_put_secret.py and replace its one-second blocking read sleep with an event-controlled fake.",
+      "evidence": "scripts/test_ocirv1_vault_readiness.py:1 - identifies the live Vault read-after-write regression; :340 - test_blocking_read_cannot_overrun_the_outer_deadline calls time.sleep(1); scripts/deploy/tests/test_vault_put_secret.py:1 - existing subject-owned regression module.",
+      "subject": "scripts/deploy/_vault_put_secret.py Vault write/readback and deadline behavior",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-15",
+        "TEST-24"
+      ],
+      "replacement": "Merge into scripts/deploy/tests/test_vault_put_secret.py; retain the live-failure, stale-version, bounded-read, and CLI-wiring checks, and use a releasable threading.Event in place of real sleep for the blocking-read deadline case.",
+      "est_seconds_saved": 1,
+      "risk": "medium"
+    },
+    {
+      "path": "scripts/test_php_characterization_gate.py",
+      "verdict": "SPEED",
+      "tests_total": 7,
+      "tests_affected": [
+        "test_characterization_runner_fails_on_injected_slash_escape_drift"
+      ],
+      "reason": "Keep the injected-drift proof but run it in the later PHP characterization pipeline because it launches the runner once for the mutation and again during cleanup, and the runner starts PHPUnit for three suites.",
+      "evidence": "scripts/test_php_characterization_gate.py:107 - the drift test shells out to the runner; :131 - cleanup reruns it; scripts/consumer-hooks/run-php-characterization.sh:24 - runner executes the three-class PHPUnit filter.",
+      "subject": "scripts/consumer-hooks/run-php-characterization.sh PHP characterization gate",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-24"
+      ],
+      "replacement": "Keep workflow, hook-delegation, and merge-file characterization checks local; run the fixture mutation and full PHPUnit runner proof in the characterization CI job.",
+      "est_seconds_saved": 10,
+      "risk": "medium"
+    },
+    {
+      "path": "scripts/test_remote_gate_guards.py",
+      "verdict": "REWRITE",
+      "tests_total": 13,
+      "tests_affected": [
+        "test_remote_command_string_has_no_backticks",
+        "test_preflight_runs_before_any_gate_target"
+      ],
+      "reason": "Rewrite the two source-structure assertions as behavior checks using fake local commands, while keeping the banned-host scan and all fail-closed shell guard tests.",
+      "evidence": "scripts/test_remote_gate_guards.py:52 - extracts a production source string to check backticks; :61 - compares source offsets for preflight order; :81 - retains the banned private-host pattern guard.",
+      "subject": "scripts/remote_gate.sh remote preflight and unsafe-input guards",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-16",
+        "TEST-12"
+      ],
+      "replacement": "Run remote_gate.sh with temporary fake make/ssh commands and assert preflight refusal prevents any target or remote command; keep test_no_private_host_baked_in as a focused banned-pattern check.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "scripts/test_rg014_external_package_scope.py",
+      "verdict": "MERGE",
+      "tests_total": 1,
+      "tests_affected": [],
+      "reason": "Keep the live standalone-package boundary check but merge this RG-014-named file into the existing root-instruction surface tests.",
+      "evidence": "scripts/test_rg014_external_package_scope.py:16 - asserts CLAUDE.md and the Workbay constitution name the standalone package and reject the deleted monorepo path.",
+      "subject": "Root instruction scope for the standalone workbay-orchestrator-mcp package",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-15"
+      ],
+      "replacement": "Move the test into scripts/test_current_task_demotion_surfaces.py, which already owns checks over the shared CLAUDE.md instruction surface.",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "scripts/test_secrets_inventory_doc.py",
+      "verdict": "KEEP",
+      "tests_total": 5,
+      "tests_affected": [],
+      "reason": "Keep these checks because the security inventory and consolidation scope document current operator-facing auth configuration, reject retired secret paths and claims, and verify that the stale-path matcher remains live.",
+      "evidence": "scripts/test_secrets_inventory_doc.py:38 - checks relative links in both docs; :57 and :73 - rejects retired secret locations and asserts current auth state; :100 - validates the matcher against stale and allowed path examples.",
+      "subject": "Description service secrets inventory and secrets consolidation scope",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    }
+  ],
+  "fixtures": []
+}

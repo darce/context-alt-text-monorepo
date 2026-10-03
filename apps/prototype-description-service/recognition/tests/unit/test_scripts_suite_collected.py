@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import tomllib
 from collections import Counter
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 service_conftest_spec = importlib.util.spec_from_file_location(
     "acx_service_root_conftest", Path(__file__).resolve().parents[3] / "conftest.py"
@@ -12,6 +16,19 @@ if service_conftest_spec is None or service_conftest_spec.loader is None:
     raise ImportError("Could not load the service-root conftest")
 service_conftest = importlib.util.module_from_spec(service_conftest_spec)
 service_conftest_spec.loader.exec_module(service_conftest)
+
+
+def _pytest_ini() -> dict[str, Any]:
+    service_root = Path(__file__).resolve().parents[3]
+    pyproject = tomllib.loads(
+        (service_root / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    return pyproject["tool"]["pytest"]["ini_options"]
+
+
+def test_eval_harness_tests_are_declared_in_default_testpaths() -> None:
+    """Keep the eval-harness test tree in the fast gate's configured roots."""
+    assert "scripts/eval_harness/tests" in _pytest_ini()["testpaths"]
 
 
 def test_nested_collection_cache_is_not_reused_without_xdist(
@@ -84,12 +101,17 @@ def test_nested_collection_does_not_replace_outer_receipt(
     assert any(item.startswith("tests_a/test_a.py::") for item in items), output
 
 
+@pytest.mark.integration
 def test_every_script_test_module_is_collected_once(
-    nested_default_collection: tuple[tuple[str, ...], str],
+    tmp_path: Path, nested_collection_runner
 ) -> None:
-    collected_items, output = nested_default_collection
     project_root = Path(__file__).resolve().parents[3]
     scripts_root = project_root / "recognition" / "tests" / "scripts"
+    collected_items, output = nested_collection_runner(
+        project_root,
+        tmp_path / "nested-recognition-tests-receipt.json",
+        "recognition/tests",
+    )
     expected_modules = {
         path.relative_to(project_root).as_posix()
         for path in scripts_root.rglob("*.py")

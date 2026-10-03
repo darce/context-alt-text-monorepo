@@ -560,10 +560,11 @@ async def test_multipart_replay_skips_second_persist(monkeypatch: pytest.MonkeyP
     assert second.status_code == 202
     assert first.json()["id"] == second.json()["id"]
     assert len(queue.create_calls) == 1
-    assert len(store.puts) == 2
-    assert len(app.state.dispatch_calls) == 2
-    assert app.state.dispatch_calls[0]["job_id"] == app.state.dispatch_calls[1]["job_id"]
+    assert len(store.puts) == 1
+    assert len(app.state.dispatch_calls) == 1
+    assert app.state.dispatch_calls[0]["job_id"] == first.json()["id"]
     assert admission.commits == []
+    assert admission.releases == []
 
 
 @pytest.mark.asyncio

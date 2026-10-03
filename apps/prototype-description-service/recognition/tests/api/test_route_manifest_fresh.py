@@ -163,6 +163,7 @@ def test_route_manifest_records_all_optional_routers_enabled(
     }
 
 
+@pytest.mark.integration
 def test_default_route_manifest_export_does_not_mutate_parent_process(
     public_route_manifest_exports: _PublicRouteManifestExports,
 ) -> None:
@@ -185,6 +186,7 @@ def test_default_route_manifest_export_does_not_mutate_parent_process(
     )
 
 
+@pytest.mark.integration
 def test_default_route_manifest_export_ignores_ambient_description_adapter(
     public_route_manifest_exports: _PublicRouteManifestExports,
 ) -> None:
@@ -198,6 +200,7 @@ def test_route_manifest_export_does_not_expose_in_process_mode() -> None:
     assert "in_process" not in inspect.signature(export_route_manifest).parameters
 
 
+@pytest.mark.integration
 def test_route_manifest_export_ignores_malformed_ambient_database_settings(
     public_route_manifest_exports: _PublicRouteManifestExports,
 ) -> None:

@@ -115,6 +115,18 @@ def _overshoot_record() -> dict:
     }
 
 
+def _stamp_model_identity(record: dict) -> dict:
+    """Make the real-CLI fixture eligible for publication by the consumer."""
+    stamps = {
+        "adapter": "fixture-adapter",
+        "model_id": "fixture-model",
+        "prompt_version": "fixture-prompt",
+    }
+    for item in record["items"]:
+        item["describe"].update(stamps)
+    return record
+
+
 def _failed_item_record() -> dict:
     return {
         "schema": "acx-eval/v1",
@@ -236,7 +248,9 @@ def test_real_cli_refused_does_not_publish_and_exits_3(tmp_path: Path) -> None:
     reached on its own merits, not via a blanket per-refusal skip.
     """
     run_record, manifest, out_json, out_md = _real_inputs(
-        tmp_path, _unboxed_overshoot_record(), manifest_doc=_unboxed_roster_only_manifest()
+        tmp_path,
+        _stamp_model_identity(_unboxed_overshoot_record()),
+        manifest_doc=_unboxed_roster_only_manifest(),
     )
     sentinel = '{"sentinel":"unpublished-refused"}'
     out_json.write_text(sentinel, encoding="utf-8")
@@ -272,7 +286,9 @@ def test_real_cli_refused_allow_refused_publishes_and_still_exits_3(
     VLM6-GATE-INT-01: same non-vacuous 5-entry fixture as that sibling.
     """
     run_record, manifest, out_json, out_md = _real_inputs(
-        tmp_path, _unboxed_overshoot_record(), manifest_doc=_unboxed_roster_only_manifest()
+        tmp_path,
+        _stamp_model_identity(_unboxed_overshoot_record()),
+        manifest_doc=_unboxed_roster_only_manifest(),
     )
     proc = _run_regen(
         [
@@ -485,7 +501,8 @@ def _install_stub_python(repo: Path) -> Path:
         "args = sys.argv\n"
         "if '--run-record' in args:\n"
         "    record = Path(args[args.index('--run-record') + 1])\n"
-        "    (record.parent / f'{record.stem}-report.json').write_text('{}\\n')\n"
+        "    report_json = os.environ.get('STUB_REPORT_JSON', '{}\\n')\n"
+        "    (record.parent / f'{record.stem}-report.json').write_text(report_json)\n"
         "    (record.parent / f'{record.stem}-report.md').write_text('# stub\\n')\n"
         "raise SystemExit(int(os.environ.get('STUB_SCORE_EXIT', '0')))\n",
         encoding="utf-8",
@@ -587,6 +604,111 @@ def test_stub_clean_score_publishes_and_exits_0(tmp_path: Path) -> None:
     combined = proc.stdout + proc.stderr
     assert proc.returncode == 0, combined
     _assert_stub_published(out_json, out_md)
+
+
+@pytest.mark.parametrize(
+    ("score_exit", "allow_refused"),
+    [("0", False), ("3", True)],
+)
+def test_unattributed_stub_report_is_not_published(
+    tmp_path: Path, score_exit: str, allow_refused: bool
+) -> None:
+    repo = _scratch_repo(tmp_path)
+    _install_stub_python(repo)
+    run_record, manifest, out_json, out_md = _stub_paths(repo)
+    unattributed = json.dumps(
+        {
+            "provenance": {
+                "model": {
+                    "attribution": {
+                        "status": "unattributed",
+                        "missing_dimensions": ["adapter", "model", "prompt"],
+                    }
+                }
+            }
+        }
+    )
+    args = [
+        "--run-record",
+        str(run_record),
+        "--manifest",
+        str(manifest),
+        "--out-json",
+        str(out_json),
+        "--out-md",
+        str(out_md),
+    ]
+    if allow_refused:
+        args.append("--allow-refused")
+    proc = _run_regen(
+        args,
+        cwd=repo,
+        env={"STUB_SCORE_EXIT": score_exit, "STUB_REPORT_JSON": unattributed},
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, combined
+    assert "unattributed-producer" in combined
+    assert "adapter" in combined and "model" in combined and "prompt" in combined
+    _assert_not_published(out_json, out_md, None)
+
+
+def test_malformed_stub_report_is_not_published(tmp_path: Path) -> None:
+    repo = _scratch_repo(tmp_path)
+    _install_stub_python(repo)
+    run_record, manifest, out_json, out_md = _stub_paths(repo)
+    proc = _run_regen(
+        [
+            "--run-record",
+            str(run_record),
+            "--manifest",
+            str(manifest),
+            "--out-json",
+            str(out_json),
+            "--out-md",
+            str(out_md),
+        ],
+        cwd=repo,
+        env={"STUB_SCORE_EXIT": "0", "STUB_REPORT_JSON": "not json"},
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, combined
+    assert "cannot read score report JSON" in combined
+    _assert_not_published(out_json, out_md, None)
+
+
+def test_attributed_stub_report_still_publishes_on_clean_exit(tmp_path: Path) -> None:
+    repo = _scratch_repo(tmp_path)
+    _install_stub_python(repo)
+    run_record, manifest, out_json, out_md = _stub_paths(repo)
+    attributed = json.dumps(
+        {
+            "provenance": {
+                "model": {
+                    "adapter": "adapter-v1",
+                    "model": "model-v1",
+                    "prompt": "prompt-v1",
+                }
+            }
+        }
+    )
+    proc = _run_regen(
+        [
+            "--run-record",
+            str(run_record),
+            "--manifest",
+            str(manifest),
+            "--out-json",
+            str(out_json),
+            "--out-md",
+            str(out_md),
+        ],
+        cwd=repo,
+        env={"STUB_SCORE_EXIT": "0", "STUB_REPORT_JSON": attributed},
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 0, combined
+    assert json.loads(out_json.read_text(encoding="utf-8")) == json.loads(attributed)
+    assert out_md.read_text(encoding="utf-8") == _STUB_PUBLISHED_MD
 
 
 def test_allow_refused_is_not_forwarded_to_score_cli(tmp_path: Path) -> None:
@@ -920,7 +1042,7 @@ def test_real_cli_allow_refused_prints_identification_audit_trail(
     # VLM6-GATE-INT-01: unboxed manifest is now 5 entries with real
     # spatial_facts/reference_facts (see _unboxed_roster_only_manifest), so
     # the paired record must be the matching multi-item one.
-    record = _unboxed_overshoot_record()
+    record = _stamp_model_identity(_unboxed_overshoot_record())
     record["provenance"] = {
         **record["provenance"],
         "manifest_sha256": _real_manifest_sha(manifest),

@@ -192,6 +192,65 @@ def test_resume_rejects_changed_behavior_setting(
     assert repr(value) in str(exc.value)
 
 
+def test_missing_run_record_refuses_existing_leg_state(tmp_path: Path) -> None:
+    images = tmp_path / "images"
+    manifest_a = write_hashed_manifest(tmp_path / "manifest-a.json", images, [1])
+    manifest_b = tmp_path / "manifest-b.json"
+    manifest_b_doc = json.loads(manifest_a.read_text(encoding="utf-8"))
+    manifest_b_doc["entries"][0]["path"] = "img_1_b.jpg"
+    (images / "img_1_b.jpg").write_bytes((images / "img_1.jpg").read_bytes())
+    manifest_b.write_text(json.dumps(manifest_b_doc, indent=2), encoding="utf-8")
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = tmp_path / "out-missing-run-record"
+    clients = {endpoint.stack_id: FakeClient() for endpoint in pair.stacks}
+    run_pair(
+        pair,
+        manifest_path=manifest_a,
+        images_dir=images,
+        out_dir=out,
+        clients=clients,
+        skip_preflight=True,
+        pre_run_reset_by_stack=_reset_evidence(pair),
+    )
+
+    pinned_manifest = (out / "manifest.json").read_bytes()
+    manifest_pin = (out / "manifest.sha").read_bytes()
+    journals = {
+        endpoint.stack_id: (out / "legs" / endpoint.stack_id / "items.jsonl").read_bytes()
+        for endpoint in pair.stacks
+    }
+    exports = {
+        endpoint.stack_id: (
+            out / "legs" / endpoint.stack_id / "exports" / "export_sha256.json"
+        ).read_bytes()
+        for endpoint in pair.stacks
+    }
+    (out / "run.json").unlink()
+
+    with pytest.raises(BenchError) as exc:
+        run_pair(
+            pair,
+            manifest_path=manifest_b,
+            images_dir=images,
+            out_dir=out,
+            clients=clients,
+            skip_preflight=True,
+            pre_run_reset_by_stack=_reset_evidence(pair),
+        )
+
+    assert exc.value.code == "run_record_missing_with_leg_state"
+    assert "clear the output directory" in str(exc.value)
+    assert not (out / "run.json").exists()
+    assert (out / "manifest.json").read_bytes() == pinned_manifest
+    assert (out / "manifest.sha").read_bytes() == manifest_pin
+    for endpoint in pair.stacks:
+        stack_id = endpoint.stack_id
+        assert (out / "legs" / stack_id / "items.jsonl").read_bytes() == journals[stack_id]
+        assert (
+            out / "legs" / stack_id / "exports" / "export_sha256.json"
+        ).read_bytes() == exports[stack_id]
+
+
 def test_resume_accepts_unchanged_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     manifest = write_hashed_manifest(tmp_path / "manifest.json", tmp_path / "images", [1])
     pair_path = write_pair(tmp_path / "pair.yaml")

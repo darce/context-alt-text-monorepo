@@ -21,13 +21,16 @@ from typing import Any
 
 import pytest
 from fastapi import HTTPException
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.exc import DBAPIError
 
+from recognition.application.orchestration.job_service import JobService
 from recognition.interface_adapters.http.deps.clustering_circuit_breaker import (
     get_or_create_clustering_circuit_breaker,
 )
 from recognition.interface_adapters.http.routers import clusters_admission as clusters_module
-from recognition.tests.api.conftest import FakeSession
+from recognition.tests.api.conftest import FakeSession, FakeSessionResult
+from recognition.tests.fakes import FakeJobRepository
 
 
 class _PostgresFakeSession(FakeSession):
@@ -40,6 +43,37 @@ class _PostgresFakeSession(FakeSession):
             (),
             {"dialect": type("Dialect", (), {"name": "postgresql"})()},
         )()
+
+
+class _AdmissionDBSession(_PostgresFakeSession):
+    """PostgreSQL session fake that routes responses by the executed SQL."""
+
+    def __init__(
+        self,
+        *,
+        probe_scalar: object | None = None,
+        probe_exception: Exception | None = None,
+        tenant_lock_exception: Exception | None = None,
+    ) -> None:
+        super().__init__()
+        self.probe_scalar = probe_scalar
+        self.probe_exception = probe_exception
+        self.tenant_lock_exception = tenant_lock_exception
+
+    async def execute(self, statement, _params=None):  # noqa: ANN001
+        sql = str(statement)
+        self.execute_calls += 1
+        self.executed_statements.append(sql)
+
+        if "pg_locks" in sql:
+            if self.probe_exception is not None:
+                raise self.probe_exception
+            return FakeSessionResult(scalar_value=self.probe_scalar)
+        if "FOR UPDATE" in sql.upper() and self.tenant_lock_exception is not None:
+            raise self.tenant_lock_exception
+        if "pg_backend_pid()" in sql:
+            return FakeSessionResult(scalar_value=123)
+        return FakeSessionResult()
 
 
 class _FakeOrig:
@@ -64,6 +98,37 @@ def _make_generic_dbapi_error() -> DBAPIError:
         None,
         _FakeOrig("08000"),
     )
+
+
+def _configure_admission_route(api_client, session: _AdmissionDBSession):  # noqa: ANN001
+    """Use a real JobService/repository and the caller-supplied DB session."""
+    repository = FakeJobRepository()
+    job_service = JobService(repository=repository, cluster_service=None, scan_service=None)
+
+    async def session_dependency():
+        yield session
+
+    async def job_service_dependency():
+        return job_service
+
+    api_client.app.dependency_overrides[clusters_module.get_clustering_session] = session_dependency
+    api_client.app.dependency_overrides[
+        clusters_module.get_persisted_cluster_job_service_clustering
+    ] = job_service_dependency
+    breaker = get_or_create_clustering_circuit_breaker(api_client.app)
+    breaker.record_success()
+    return repository, breaker
+
+
+async def _post_async_clustering_job(api_client, tenant_id: str):  # noqa: ANN001
+    async with AsyncClient(
+        transport=ASGITransport(app=api_client.app, raise_app_exceptions=True),
+        base_url="http://testserver",
+    ) as client:
+        return await client.post(
+            "/recognition/clustering/jobs",
+            json={"tenant_id": tenant_id, "mode": "async"},
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -131,32 +196,31 @@ async def test_probe_sql_excludes_reader_lock_modes_br22() -> None:
 
 
 @pytest.mark.asyncio
-async def test_probe_raises_503_retry_after_when_blocker_detected() -> None:
-    session = _PostgresFakeSession()
-    session.queue_execute_result(scalar=1)
+async def test_probe_raises_503_retry_after_when_blocker_detected(api_client, tenant_id) -> None:
+    session = _AdmissionDBSession(probe_scalar=1)
+    repository, _breaker = _configure_admission_route(api_client, session)
 
-    with pytest.raises(HTTPException) as exc_info:
-        await clusters_module._clustering_admission_probe(
-            session,
-            tenant_id="00000000-0000-0000-0000-000000000000",
-            retry_after_seconds=5,
-        )
+    resp = await _post_async_clustering_job(api_client, tenant_id)
 
-    assert exc_info.value.status_code == 503
-    assert exc_info.value.headers == {"Retry-After": "5"}
+    assert resp.status_code == 503
+    assert resp.headers.get("Retry-After") == "5"
+    assert resp.json()["detail"] == "Clustering temporarily unavailable"
+    assert repository.jobs == {}
 
 
 @pytest.mark.asyncio
-async def test_probe_swallows_execute_exception_best_effort() -> None:
-    session = _PostgresFakeSession()
-    session.queue_execute_exception(RuntimeError("pg_stat_activity permission denied"))
-
-    # Must not raise -- a broken probe cannot block legitimate traffic.
-    await clusters_module._clustering_admission_probe(
-        session,
-        tenant_id=str(uuid.uuid4()),
-        retry_after_seconds=5,
+async def test_probe_swallows_execute_exception_best_effort(api_client, tenant_id) -> None:
+    session = _AdmissionDBSession(
+        probe_exception=RuntimeError("pg_stat_activity permission denied")
     )
+    repository, _breaker = _configure_admission_route(api_client, session)
+
+    resp = await _post_async_clustering_job(api_client, tenant_id)
+
+    assert resp.status_code == 202
+    job_id = resp.json()["id"]
+    assert job_id in repository.jobs
+    assert repository.jobs[job_id].tenant_id == tenant_id
 
 
 # ---------------------------------------------------------------------------
@@ -205,45 +269,31 @@ async def test_acquire_lock_postgres_happy_path_narrows_and_restores_timeout() -
 
 
 @pytest.mark.asyncio
-async def test_acquire_lock_query_canceled_raises_503_retry_after() -> None:
-    session = _PostgresFakeSession()
-    session.queue_execute_result(scalar=None)  # SET LOCAL narrow
-    session.queue_execute_exception(_make_query_canceled_dbapi_error())
-    session.queue_execute_result(scalar=None)  # SET LOCAL restore still runs in finally
+async def test_acquire_lock_query_canceled_raises_503_retry_after(api_client, tenant_id) -> None:
+    session = _AdmissionDBSession(tenant_lock_exception=_make_query_canceled_dbapi_error())
+    repository, breaker = _configure_admission_route(api_client, session)
 
-    with pytest.raises(HTTPException) as exc_info:
-        await clusters_module._acquire_tenant_lock_fast_fail(
-            session,
-            tenant_id="00000000-0000-0000-0000-000000000000",
-            lock_timeout_ms=1000,
-            default_timeout="10s",
-            retry_after_seconds=5,
-        )
+    resp = await _post_async_clustering_job(api_client, tenant_id)
 
-    assert exc_info.value.status_code == 503
-    assert exc_info.value.headers == {"Retry-After": "5"}
-    # Restore still issued in finally to keep the session safe.
+    assert resp.status_code == 503
+    assert resp.headers.get("Retry-After") == "5"
+    assert repository.jobs == {}
+    assert breaker.snapshot().failure_count == 1
     assert any("SET LOCAL statement_timeout = '10s'" in stmt for stmt in session.executed_statements)
 
 
 @pytest.mark.asyncio
-async def test_acquire_lock_non_canceled_dbapi_error_is_reraised() -> None:
-    session = _PostgresFakeSession()
-    session.queue_execute_result(scalar=None)  # SET LOCAL narrow
+async def test_acquire_lock_non_canceled_dbapi_error_is_reraised(api_client, tenant_id) -> None:
     generic_error = _make_generic_dbapi_error()
-    session.queue_execute_exception(generic_error)
-    session.queue_execute_result(scalar=None)  # SET LOCAL restore in finally
+    session = _AdmissionDBSession(tenant_lock_exception=generic_error)
+    repository, breaker = _configure_admission_route(api_client, session)
 
     with pytest.raises(DBAPIError) as exc_info:
-        await clusters_module._acquire_tenant_lock_fast_fail(
-            session,
-            tenant_id=str(uuid.uuid4()),
-            lock_timeout_ms=1000,
-            default_timeout="10s",
-            retry_after_seconds=5,
-        )
+        await _post_async_clustering_job(api_client, tenant_id)
 
     assert exc_info.value is generic_error
+    assert breaker.snapshot().failure_count == 0
+    assert repository.jobs == {}
     assert any("SET LOCAL statement_timeout = '10s'" in stmt for stmt in session.executed_statements)
 
 
@@ -252,21 +302,45 @@ async def test_acquire_lock_non_canceled_dbapi_error_is_reraised() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_is_query_canceled_matches_sqlstate_57014() -> None:
-    err = _make_query_canceled_dbapi_error()
-    assert clusters_module._is_query_canceled(err) is True
+@pytest.mark.asyncio
+async def test_is_query_canceled_matches_sqlstate_57014(api_client, tenant_id) -> None:
+    session = _AdmissionDBSession(tenant_lock_exception=_make_query_canceled_dbapi_error())
+    repository, breaker = _configure_admission_route(api_client, session)
+
+    resp = await _post_async_clustering_job(api_client, tenant_id)
+
+    assert resp.status_code == 503
+    assert resp.headers.get("Retry-After") == "5"
+    assert breaker.snapshot().failure_count == 1
+    assert repository.jobs == {}
 
 
-def test_is_query_canceled_rejects_other_sqlstates() -> None:
-    err = _make_generic_dbapi_error()
-    assert clusters_module._is_query_canceled(err) is False
+@pytest.mark.asyncio
+async def test_is_query_canceled_rejects_other_sqlstates(api_client, tenant_id) -> None:
+    generic_error = _make_generic_dbapi_error()
+    session = _AdmissionDBSession(tenant_lock_exception=generic_error)
+    repository, breaker = _configure_admission_route(api_client, session)
+
+    with pytest.raises(DBAPIError) as exc_info:
+        await _post_async_clustering_job(api_client, tenant_id)
+
+    assert exc_info.value is generic_error
+    assert breaker.snapshot().failure_count == 0
+    assert repository.jobs == {}
 
 
-def test_is_query_canceled_handles_missing_orig() -> None:
-    class _BareDBAPIError:
-        orig = None
+@pytest.mark.asyncio
+async def test_is_query_canceled_handles_missing_orig(api_client, tenant_id) -> None:
+    error_without_orig = DBAPIError("SELECT ... FOR UPDATE", None, None)
+    session = _AdmissionDBSession(tenant_lock_exception=error_without_orig)
+    repository, breaker = _configure_admission_route(api_client, session)
 
-    assert clusters_module._is_query_canceled(_BareDBAPIError()) is False
+    with pytest.raises(DBAPIError) as exc_info:
+        await _post_async_clustering_job(api_client, tenant_id)
+
+    assert exc_info.value is error_without_orig
+    assert breaker.snapshot().failure_count == 0
+    assert repository.jobs == {}
 
 
 # ---------------------------------------------------------------------------

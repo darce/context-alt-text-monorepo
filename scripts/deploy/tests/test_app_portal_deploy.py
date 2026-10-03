@@ -226,6 +226,7 @@ def _run(
     caddy_fail: bool = False,
     docker_fail_first_reload: bool = False,
     fail_mv_dest: Path | None = None,
+    corrupt_staged_frontend: bool = False,
     include_caddy: bool = True,
     include_docker: bool = True,
     model_mount: bool = False,
@@ -281,6 +282,16 @@ def _run(
             "  exit 1\n"
             "fi\n"
             'exec /bin/mv "$@"\n',
+        )
+    if corrupt_staged_frontend:
+        _write_executable(
+            bin_dir / "cp",
+            "#!/usr/bin/env bash\n"
+            "set -u\n"
+            '/bin/cp "$@" || exit $?\n'
+            'if [ "${1:-}" = "-a" ] && [ "${2:-}" = "${FRONTEND_DIST}/." ]; then\n'
+            '  printf \'<script type="module" src="/assets/missing.js"></script>\\n\' > "$3/index.html"\n'
+            "fi\n",
         )
 
     if live_caddy is None:
@@ -606,8 +617,9 @@ def test_apply_refuses_missing_assets(tmp_path: Path) -> None:
             "app.css",
         ),
         (
+            '<script type="module" src="/assets/app.js"></script>'
             '<link rel="stylesheet" href="/assets/empty.css">',
-            {"empty.css": ""},
+            {"app.js": "app bundle\n", "empty.css": ""},
             "empty asset",
         ),
         ("<!doctype html><html></html>\n", {"old.css": "old stylesheet\n"}, "no /assets/"),
@@ -648,6 +660,101 @@ def test_apply_refuses_invalid_referenced_assets_without_touching_live_tree(
     assert overlay.read_bytes() == before_overlay
     assert not (app_root / "staging").exists()
     assert not (app_root / "activation.journal").exists()
+
+
+def test_apply_refuses_css_only_frontend_without_touching_live_tree(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    www = _prior_www(tmp_path)
+    live_before = live.read_bytes()
+    www_before = (www / "keep.txt").read_bytes()
+    dist = tmp_path / "css-only-dist"
+    assets = dist / "assets"
+    assets.mkdir(parents=True)
+    (dist / "index.html").write_text(
+        '<link rel="stylesheet" href="/assets/old.css">\n', encoding="utf-8"
+    )
+    (assets / "old.css").write_text("body { color: black; }\n", encoding="utf-8")
+
+    result = _run(tmp_path, args=["--apply"], frontend=dist, live_caddy=live)
+    output = result.stdout + result.stderr
+
+    assert result.returncode != 0, output
+    assert "module" in output.lower(), output
+    assert live.read_bytes() == live_before
+    assert (www / "keep.txt").read_bytes() == www_before
+    assert not (tmp_path / "opt" / "acx-backend" / "app" / "staging").exists()
+
+
+def test_apply_refuses_frontend_symlink_without_touching_live_tree(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    www = _prior_www(tmp_path)
+    overlay = tmp_path / "opt" / "acx-backend" / "app" / "docker-compose.app.yml"
+    overlay.write_text("existing overlay\n", encoding="utf-8")
+    rollback = tmp_path / "opt" / "acx-backend" / "app" / "rollback"
+    rollback.mkdir()
+    (rollback / "operator-notes").write_text("keep\n", encoding="utf-8")
+    live_before = live.read_bytes()
+    www_before = (www / "keep.txt").read_bytes()
+    overlay_before = overlay.read_bytes()
+    rollback_before = _tree_files(rollback)
+
+    dist = _write_frontend(tmp_path)
+    external_asset = tmp_path / "outside.js"
+    external_asset.write_text("console.log('outside');\n", encoding="utf-8")
+    asset = dist / "assets" / "index.js"
+    asset.unlink()
+    asset.symlink_to(external_asset)
+
+    result = _run(tmp_path, args=["--apply"], frontend=dist, live_caddy=live)
+    output = result.stdout + result.stderr
+
+    assert result.returncode != 0, output
+    assert "symlink" in output.lower(), output
+    assert "applied:" not in result.stdout
+    assert live.read_bytes() == live_before
+    assert (www / "keep.txt").read_bytes() == www_before
+    assert overlay.read_bytes() == overlay_before
+    assert _tree_files(rollback) == rollback_before
+    assert not (tmp_path / "opt" / "acx-backend" / "app" / "activation.journal").exists()
+
+
+def test_apply_refuses_invalid_staged_frontend_without_touching_live_or_rollback(
+    tmp_path: Path,
+) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    www = _prior_www(tmp_path)
+    overlay = tmp_path / "opt" / "acx-backend" / "app" / "docker-compose.app.yml"
+    overlay.write_text("existing overlay\n", encoding="utf-8")
+    rollback = tmp_path / "opt" / "acx-backend" / "app" / "rollback"
+    rollback.mkdir()
+    (rollback / "operator-notes").write_text("keep\n", encoding="utf-8")
+    live_before = live.read_bytes()
+    www_before = (www / "keep.txt").read_bytes()
+    overlay_before = overlay.read_bytes()
+    rollback_before = _tree_files(rollback)
+    dist = _write_frontend(tmp_path)
+
+    result = _run(
+        tmp_path,
+        args=["--apply"],
+        frontend=dist,
+        live_caddy=live,
+        corrupt_staged_frontend=True,
+    )
+    output = result.stdout + result.stderr
+
+    assert result.returncode != 0, output
+    assert "missing asset" in output.lower(), output
+    assert "applied:" not in result.stdout
+    assert live.read_bytes() == live_before
+    assert (www / "keep.txt").read_bytes() == www_before
+    assert overlay.read_bytes() == overlay_before
+    assert _tree_files(rollback) == rollback_before
+    assert not (tmp_path / "opt" / "acx-backend" / "app" / "staging").exists()
+    assert not (tmp_path / "opt" / "acx-backend" / "app" / "activation.journal").exists()
 
 
 def test_apply_refuses_path_traversal(tmp_path: Path) -> None:

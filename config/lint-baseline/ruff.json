@@ -1,7 +1,7 @@
 {
   "tool": "ruff",
   "version": 1,
-  "total": 244,
+  "total": 243,
   "config_guard": {
     "select": [
       "ASYNC",

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import subprocess
+import tempfile
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -28,7 +29,7 @@ from scripts.bench.status import (
     ItemOutcome,
     RunPhase,
 )
-from scripts.eval_harness.manifest import load_manifest
+from scripts.eval_harness.manifest import GoldenManifest, load_manifest
 from scripts.eval_harness.remote_client import RemoteSceneClient
 
 LICENSE_BANNER = (
@@ -122,10 +123,13 @@ def _stack_pair_snapshot(pair: StackPairConfig) -> dict[str, Any]:
     return json.loads(json.dumps(asdict(pair)))
 
 
-def _validate_resume_inputs(root: Path, pair: StackPairConfig, manifest_path: Path | str) -> None:
+def _validate_resume_inputs(
+    root: Path, pair: StackPairConfig, manifest_path: Path | str
+) -> tuple[bytes, str]:
     try:
         pinned_digest = (root / "manifest.sha").read_text(encoding="ascii").strip()
-        saved_digest = hashlib.sha256((root / "manifest.json").read_bytes()).hexdigest()
+        manifest_bytes = (root / "manifest.json").read_bytes()
+        saved_digest = hashlib.sha256(manifest_bytes).hexdigest()
         saved_pair = json.loads((root / "stack_pair.json").read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise BenchError("resume_inputs_unverified", f"cannot read pinned inputs for run {root}") from exc
@@ -136,7 +140,8 @@ def _validate_resume_inputs(root: Path, pair: StackPairConfig, manifest_path: Pa
             f"run pins manifest sha256 {pinned_digest!r}, but its saved manifest hashes to {saved_digest!r}",
         )
     try:
-        current_digest = hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest()
+        current_bytes = Path(manifest_path).read_bytes()
+        current_digest = hashlib.sha256(current_bytes).hexdigest()
     except OSError as exc:
         raise BenchError("resume_inputs_unverified", f"cannot read current manifest {manifest_path}") from exc
     if pinned_digest != current_digest:
@@ -151,9 +156,28 @@ def _validate_resume_inputs(root: Path, pair: StackPairConfig, manifest_path: Pa
             "resume_stack_pair_mismatch",
             f"run pins stack_pair {saved_pair!r}, current stack_pair is {current_pair!r}",
         )
+    return manifest_bytes, pinned_digest
 
 
-def init_run_dir(run_dir: Path | str, pair: StackPairConfig, manifest_path: Path | str) -> Path:
+def _load_manifest_bytes(manifest_bytes: bytes) -> GoldenManifest:
+    """Parse the exact input snapshot whose digest is used by this run."""
+    with tempfile.TemporaryDirectory(prefix="bench-manifest-") as temp_dir:
+        snapshot = Path(temp_dir) / "manifest.json"
+        snapshot.write_bytes(manifest_bytes)
+        return load_manifest(
+            str(snapshot),
+            metadata_only=True,
+            skip_hash_verification=True,
+            hash_skip_reason="bench driver reads media ids only",
+        )
+
+
+def init_run_dir(
+    run_dir: Path | str,
+    pair: StackPairConfig,
+    manifest_path: Path | str,
+    manifest_bytes: bytes | None = None,
+) -> Path:
     root = Path(run_dir)
     root.mkdir(parents=True, exist_ok=True)
     stamp = root.name
@@ -168,9 +192,11 @@ def init_run_dir(run_dir: Path | str, pair: StackPairConfig, manifest_path: Path
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "bootstrap_seed": pair.bootstrap_seed,
     }
-    digest = hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest()
+    if manifest_bytes is None:
+        manifest_bytes = Path(manifest_path).read_bytes()
+    digest = hashlib.sha256(manifest_bytes).hexdigest()
     (root / "manifest.sha").write_text(digest + "\n", encoding="utf-8")
-    (root / "manifest.json").write_bytes(Path(manifest_path).read_bytes())
+    (root / "manifest.json").write_bytes(manifest_bytes)
     run_doc["manifest_path"] = str(Path(manifest_path))
     (root / "run.json").write_text(json.dumps(run_doc, indent=2), encoding="utf-8")
     (root / "stack_pair.json").write_text(json.dumps(_stack_pair_snapshot(pair), indent=2), encoding="utf-8")
@@ -223,6 +249,7 @@ def run_leg(
     run_dir: Path | str,
     client: Any | None = None,
     deadline: float | None = None,
+    preloaded_manifest: GoldenManifest | None = None,
 ) -> list[AnalyzeOutcome]:
     assert_named_bench_stack(endpoint, FIR23_STACK_ALLOWLIST)
     root = Path(run_dir)
@@ -233,13 +260,15 @@ def run_leg(
     # resolve_media_bytes, which verifies the manifest sha256 for local files
     # and for the explicitly pinned remote fallback. Strict whole-directory
     # verification would make a missing local file prevent that fallback.
-    manifest = load_bench_manifest(
-        manifest_path,
-        None,
-        metadata_only=True,
-        skip_hash_verification=True,
-        hash_skip_reason="bench ingest resolves each media item with its sha256 pin",
-    )
+    manifest = preloaded_manifest
+    if manifest is None:
+        manifest = load_bench_manifest(
+            manifest_path,
+            None,
+            metadata_only=True,
+            skip_hash_verification=True,
+            hash_skip_reason="bench ingest resolves each media item with its sha256 pin",
+        )
     owned_client = False
     if client is None:
         client = RemoteSceneClient(
@@ -421,22 +450,28 @@ def run_pair(
     run_record_path = out_dir_path / "run.json"
     is_resume = run_record_path.exists()
     if is_resume:
-        _validate_resume_inputs(out_dir_path, pair, manifest_path)
+        manifest_bytes, manifest_digest = _validate_resume_inputs(out_dir_path, pair, manifest_path)
+    else:
+        try:
+            manifest_bytes = Path(manifest_path).read_bytes()
+        except OSError:
+            # Preserve load_manifest's established error for missing or unreadable input.
+            load_manifest(
+                str(manifest_path),
+                metadata_only=True,
+                skip_hash_verification=True,
+                hash_skip_reason="bench driver reads media ids only",
+            )
+            raise
+        manifest_digest = hashlib.sha256(manifest_bytes).hexdigest()
 
     # Load without images_dir first so floor/superset fail before any media I/O.
     # Deliberate metadata-only load (VLM6-PANEL6L-rvM-01 / OBS-04): only
     # entry counts and media_id sets are read here, never image bytes.
-    manifest = load_manifest(
-        str(manifest_path),
-        metadata_only=True,
-        skip_hash_verification=True,
-        hash_skip_reason="bench driver reads media ids only",
-    )
+    manifest = _load_manifest_bytes(manifest_bytes)
     assert_floor_fits_corpus(pair.accepted_set_floor, len(manifest.entries))
-    if pair.manifest_sha256:
-        digest = hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest()
-        if digest != pair.manifest_sha256:
-            raise BenchError("manifest_sha_mismatch", "manifest bytes do not match manifest_sha256")
+    if pair.manifest_sha256 and manifest_digest != pair.manifest_sha256:
+        raise BenchError("manifest_sha_mismatch", "manifest bytes do not match manifest_sha256")
     if pair.baseline_manifest_path:
         baseline = load_manifest(
             str(pair.baseline_manifest_path),
@@ -481,7 +516,11 @@ def run_pair(
             transports=preflight_transports,
             api_keys=keys,
         )
-    root = out_dir_path if is_resume else init_run_dir(out_dir_path, pair, manifest_path)
+    root = (
+        out_dir_path
+        if is_resume
+        else init_run_dir(out_dir_path, pair, manifest_path, manifest_bytes=manifest_bytes)
+    )
     if not is_resume:
         _stamp_run_field(root, "pre_run_reset_by_stack", reset_evidence)
         _stamp_run_field(root, "pre_run_reset_evidence_sha256", reset_evidence_sha256)
@@ -506,6 +545,7 @@ def run_pair(
             run_dir=root,
             client=client,
             deadline=deadline,
+            preloaded_manifest=manifest,
         )
         if not _leg_complete(root, endpoint.stack_id):
             incomplete.append(endpoint.stack_id)

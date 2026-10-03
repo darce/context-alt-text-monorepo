@@ -5,13 +5,16 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from scripts.bench.corpus import ItemOutcomeStore
-from scripts.bench.driver import _validate_resume_inputs, init_run_dir, run_leg, run_pair
+from scripts.bench import driver as driver_module
+from scripts.bench.driver import init_run_dir, run_leg, run_pair
+from scripts.bench.preflight import pre_run_reset_evidence_sha256
 from scripts.bench.stack_pair import BenchError, load_stack_pair
 from scripts.eval_harness import remote_client as remote_client_module
 from scripts.eval_harness.remote_client import JobPollTimeoutError, RemoteSceneClient
@@ -53,6 +56,28 @@ def _seed_terminal_success(items_path: Path, media_id: int, width: int = 16, hei
             "attempt": 1,
             "terminal_ingest_outcome": "success",
         }
+    )
+
+
+def _reset_evidence(pair) -> dict[str, dict[str, object]]:
+    completed_at = datetime.now(UTC).isoformat()
+    return {
+        endpoint.stack_id: {
+            "reset_attested_by": "bench test operator",
+            "reset_reference": "FIR23-STACK runbook reset",
+            "reset_completed_at": completed_at,
+            "prior_run_identity_rows_empty": True,
+        }
+        for endpoint in pair.stacks
+    }
+
+
+def _stamp_reset_evidence(out: Path, evidence: dict[str, dict[str, object]]) -> None:
+    driver_module._stamp_run_field(out, "pre_run_reset_by_stack", evidence)
+    driver_module._stamp_run_field(
+        out,
+        "pre_run_reset_evidence_sha256",
+        pre_run_reset_evidence_sha256(evidence),
     )
 
 
@@ -167,14 +192,78 @@ def test_resume_rejects_changed_behavior_setting(
     assert repr(value) in str(exc.value)
 
 
-def test_resume_accepts_unchanged_config(tmp_path: Path) -> None:
+def test_resume_accepts_unchanged_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     manifest = write_hashed_manifest(tmp_path / "manifest.json", tmp_path / "images", [1])
     pair_path = write_pair(tmp_path / "pair.yaml")
     pair = load_stack_pair(pair_path)
     out = init_run_dir(tmp_path / "out", pair, manifest)
+    evidence = _reset_evidence(pair)
+    _stamp_reset_evidence(out, evidence)
+    reached_legs: list[str] = []
 
-    # Reload to exercise equality after the snapshot's JSON serialization.
-    _validate_resume_inputs(out, load_stack_pair(pair_path), manifest)
+    def stub_leg(endpoint, _pair, **_kwargs) -> None:
+        reached_legs.append(endpoint.stack_id)
+
+    monkeypatch.setattr(driver_module, "run_leg", stub_leg)
+    monkeypatch.setattr(driver_module, "_leg_complete", lambda *_args: True)
+
+    result = run_pair(
+        load_stack_pair(pair_path),
+        manifest_path=manifest,
+        images_dir=tmp_path / "images",
+        out_dir=out,
+        skip_preflight=True,
+        pre_run_reset_by_stack=evidence,
+    )
+
+    assert result == out
+    assert reached_legs == [endpoint.stack_id for endpoint in pair.stacks]
+
+
+def test_resume_uses_pinned_manifest_after_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    images = tmp_path / "images"
+    manifest_a = write_hashed_manifest(tmp_path / "manifest-a.json", images, [1])
+    manifest_b = write_hashed_manifest(tmp_path / "manifest-b.json", images, [2])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = init_run_dir(tmp_path / "out", pair, manifest_a)
+    evidence = _reset_evidence(pair)
+    _stamp_reset_evidence(out, evidence)
+    validated = driver_module._validate_resume_inputs
+    seen_media_ids: list[list[int]] = []
+
+    def validate_then_replace_manifest(root, current_pair, current_manifest):
+        result = validated(root, current_pair, current_manifest)
+        Path(current_manifest).write_bytes(manifest_b.read_bytes())
+        return result
+
+    def capture_leg(_endpoint, _pair, *, manifest_path, preloaded_manifest=None, **_kwargs) -> None:
+        manifest = preloaded_manifest
+        if manifest is None:
+            manifest = driver_module.load_manifest(
+                str(manifest_path),
+                metadata_only=True,
+                skip_hash_verification=True,
+                hash_skip_reason="test captures resumed manifest ids only",
+            )
+        seen_media_ids.append([entry.media_id for entry in manifest.entries])
+
+    monkeypatch.setattr(driver_module, "_validate_resume_inputs", validate_then_replace_manifest)
+    monkeypatch.setattr(driver_module, "run_leg", capture_leg)
+    monkeypatch.setattr(driver_module, "_leg_complete", lambda *_args: True)
+
+    run_pair(
+        pair,
+        manifest_path=manifest_a,
+        images_dir=images,
+        out_dir=out,
+        skip_preflight=True,
+        pre_run_reset_by_stack=evidence,
+    )
+
+    assert pair.manifest_sha256 is None
+    assert seen_media_ids == [[1], [1]]
 
 
 def test_resume_does_not_repost_terminal_success(tmp_path: Path) -> None:

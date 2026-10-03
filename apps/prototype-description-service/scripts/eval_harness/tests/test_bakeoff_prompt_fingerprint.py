@@ -21,7 +21,11 @@ def _new_client() -> BakeoffClient:
 def test_prompt_fingerprint_changes_when_user_message_template_changes(monkeypatch, helper_name: str) -> None:
     baseline = _new_client()
     try:
-        initial_fingerprint = baseline.prompt_sha256
+        initial_configuration = baseline.run_configuration()
+        initial_fingerprint = baseline._prompt_fingerprint()
+        assert (
+            initial_configuration["prompt_sha256"] == initial_fingerprint == baseline.prompt_sha256
+        )
         original_helper = getattr(BakeoffClient, helper_name)
 
         def changed_helper(self, *args, **kwargs):
@@ -30,7 +34,13 @@ def test_prompt_fingerprint_changes_when_user_message_template_changes(monkeypat
         monkeypatch.setattr(BakeoffClient, helper_name, changed_helper)
         changed = _new_client()
         try:
+            changed_configuration = changed.run_configuration()
+            changed_fingerprint = changed._prompt_fingerprint()
             assert changed.prompt_sha256 != initial_fingerprint
+            assert (
+                changed_configuration["prompt_sha256"] == changed_fingerprint == changed.prompt_sha256
+            )
+            assert changed_configuration["prompt_sha256"] != initial_configuration["prompt_sha256"]
         finally:
             changed.close()
     finally:
@@ -43,6 +53,12 @@ def test_prompt_fingerprint_is_stable_for_identical_inputs() -> None:
     try:
         assert first.prompt_sha256 == second.prompt_sha256
         assert first._prompt_fingerprint() == first.prompt_sha256
+        for client in (first, second):
+            assert (
+                client.run_configuration()["prompt_sha256"]
+                == client._prompt_fingerprint()
+                == client.prompt_sha256
+            )
     finally:
         first.close()
         second.close()

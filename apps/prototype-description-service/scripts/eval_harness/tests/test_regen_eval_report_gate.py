@@ -501,7 +501,7 @@ def _install_stub_python(repo: Path) -> Path:
         "args = sys.argv\n"
         "if '--run-record' in args:\n"
         "    record = Path(args[args.index('--run-record') + 1])\n"
-        "    report_json = os.environ.get('STUB_REPORT_JSON', '{}\\n')\n"
+        f"    report_json = os.environ.get('STUB_REPORT_JSON', {_STUB_PUBLISHED_JSON!r})\n"
         "    (record.parent / f'{record.stem}-report.json').write_text(report_json)\n"
         "    (record.parent / f'{record.stem}-report.md').write_text('# stub\\n')\n"
         "raise SystemExit(int(os.environ.get('STUB_SCORE_EXIT', '0')))\n",
@@ -532,7 +532,9 @@ def _install_env_override_stub(tmp_path: Path, *, exit_code: int) -> Path:
     return stub
 
 
-_STUB_PUBLISHED_JSON = "{}\n"
+_STUB_PUBLISHED_JSON = json.dumps(
+    {"provenance": {"model": {"adapter": "fixture", "model": "fixture", "prompt": "fixture"}}}
+) + "\n"
 _STUB_PUBLISHED_MD = "# stub\n"
 
 
@@ -673,6 +675,43 @@ def test_malformed_stub_report_is_not_published(tmp_path: Path) -> None:
     combined = proc.stdout + proc.stderr
     assert proc.returncode != 0, combined
     assert "cannot read score report JSON" in combined
+    _assert_not_published(out_json, out_md, None)
+
+
+@pytest.mark.parametrize(
+    "report",
+    [
+        [],
+        "x",
+        {},
+        {"faces": {}},
+        {"provenance": "invalid"},
+        {"provenance": {}},
+        {"provenance": {"model": "invalid"}},
+        {"provenance": {"model": {"attribution": "invalid"}}},
+        {"provenance": {"model": {"attribution": None}}},
+        {"provenance": {"model": {"attribution": {}}}},
+        {"provenance": {"model": {"attribution": {"status": "attributed"}}}},
+    ],
+)
+def test_malformed_report_envelope_is_not_published(tmp_path: Path, report: object) -> None:
+    """SEC-10/RLSE-02: a clean CLI exit cannot authorize a malformed envelope."""
+    repo = _scratch_repo(tmp_path)
+    _install_stub_python(repo)
+    run_record, manifest, out_json, out_md = _stub_paths(repo)
+    proc = _run_regen(
+        [
+            "--run-record", str(run_record),
+            "--manifest", str(manifest),
+            "--out-json", str(out_json),
+            "--out-md", str(out_md),
+        ],
+        cwd=repo,
+        env={"STUB_SCORE_EXIT": "0", "STUB_REPORT_JSON": json.dumps(report)},
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 2, combined
+    assert "malformed-report" in combined
     _assert_not_published(out_json, out_md, None)
 
 

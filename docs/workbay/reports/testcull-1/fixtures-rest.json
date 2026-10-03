@@ -1,0 +1,21 @@
+{
+  "lane": "tx-fix-rest",
+  "base": "773138f240b3c38511cb26b8e51a0e0253d8f4b1",
+  "scanned": {
+    "fixtures": 54,
+    "data_files": 117
+  },
+  "fixtures": [
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/__tests__/fixtures/uxmap-enums.snapshot.json",
+      "name": "uxmap-enums.snapshot.json",
+      "kind": "data_file",
+      "consumers": 0,
+      "verdict": "CULL",
+      "evidence": "rg -n 'js/admin/__tests__/fixtures/uxmap-enums\\.snapshot\\.json' apps/prototype-wp-alt-context | wc -l = 0; the sole filename reference is uxmap-render-parity.test.ts:120 to a different file under uxmap-render-parity.fixtures, read by that test at :946 and :1612.",
+      "duplicate_of": null,
+      "canon": [],
+      "risk": "low"
+    }
+  ]
+}

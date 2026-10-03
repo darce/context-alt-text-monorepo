@@ -240,6 +240,46 @@ def _unattributed_producer_dimensions(report: Mapping[str, Any]) -> list[str] | 
     return [str(dimension) for dimension in missing if str(dimension).strip()]
 
 
+def _compare_producer_dimensions(report: Mapping[str, Any]) -> list[str] | None:
+    """Validate legacy producer stamps as well as explicit attribution (SEC-10)."""
+    provenance = report.get("provenance")
+    provenance = provenance if isinstance(provenance, Mapping) else {}
+    model = provenance.get("model")
+    model = model if isinstance(model, Mapping) else {}
+    if "attribution" in model:
+        attribution = model["attribution"]
+        if not isinstance(attribution, Mapping) or attribution.get("status") != "unattributed":
+            raise ValueError("malformed producer provenance: attribution")
+        missing = attribution.get("missing_dimensions")
+        if not isinstance(missing, list) or not all(
+            isinstance(value, str) and value.strip() for value in missing
+        ):
+            raise ValueError("malformed producer provenance: attribution.missing_dimensions")
+        return missing
+
+    # Legacy artifacts predate attribution; derive the report producer's rule.
+    keys = ("adapters", "model_ids", "prompt_versions", "prompt_sha256s", "prompt_free_flags")
+    for key in keys:
+        if key in model and not isinstance(model[key], list):
+            raise ValueError(f"malformed producer provenance: {key}")
+
+    def has_text(key: str) -> bool:
+        return any(isinstance(value, str) and value.strip() for value in model.get(key, []))
+
+    missing = []
+    if not has_text("adapters"):
+        missing.append("adapter")
+    if not has_text("model_ids"):
+        missing.append("model")
+    if not (
+        has_text("prompt_versions")
+        or has_text("prompt_sha256s")
+        or any(value is True for value in model.get("prompt_free_flags", []))
+    ):
+        missing.append("prompt identity")
+    return missing or None
+
+
 def _score_schema_error_message(dotted_path: str, expected: str) -> str:
     """Class-unique schema-error exit text (never soft-falls through)."""
     return f"{SCORE_GATE_PREFIX_SCHEMA_ERROR} {dotted_path} missing or not a {expected}"
@@ -2803,7 +2843,13 @@ def _cmd_compare(args: argparse.Namespace) -> None:
         ("baseline", baseline, baseline_path),
         ("candidate", candidate, candidate_path),
     ):
-        missing_dimensions = _unattributed_producer_dimensions(report)
+        try:
+            missing_dimensions = _compare_producer_dimensions(report)
+        except ValueError as exc:
+            sys.exit(
+                f"{COMPARE_PRODUCER_IDENTITY_PREFIX} {role} report: {exc} "
+                f"(see {_printable_path(report_path)})"
+            )
         if missing_dimensions is not None:
             missing_hint = ", ".join(missing_dimensions) or "unspecified"
             sys.exit(

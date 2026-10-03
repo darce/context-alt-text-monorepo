@@ -528,6 +528,71 @@ def test_compare_rejects_unattributed_producer_identity(
     assert "prompt identity" in exc.value.code
 
 
+
+@pytest.mark.parametrize(
+    "role,model,expected",
+    [
+        ("baseline", {}, "adapter, model, prompt identity"),
+        ("candidate", {"model_ids": ["m"], "prompt_versions": ["p"]}, "adapter"),
+        ("baseline", {"adapters": ["a"], "prompt_versions": ["p"]}, "model"),
+        ("candidate", {"adapters": ["a"], "model_ids": ["m"]}, "prompt identity"),
+        ("baseline", {"adapters": "a"}, "malformed producer provenance: adapters"),
+        ("candidate", {"attribution": None}, "malformed producer provenance: attribution"),
+        ("baseline", {"attribution": {"status": "attributed"}}, "malformed producer provenance: attribution"),
+    ],
+)
+def test_compare_rejects_legacy_producer_identity(tmp_path, role, model, expected):
+    from scripts.eval_harness import cli as cli_mod
+    from scene.tests.test_eval_harness_cli import _adoption_compare_report
+
+    reports = {name: _adoption_compare_report() for name in ("baseline", "candidate")}
+    reports[role]["provenance"]["model"] = model
+    paths = {name: tmp_path / f"{name}.json" for name in reports}
+    for name, report in reports.items():
+        paths[name].write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main(["compare", "--baseline", str(paths["baseline"]),
+                      "--candidate", str(paths["candidate"])])
+    message = str(exc.value.code)
+    assert message.startswith(cli_mod.COMPARE_PRODUCER_IDENTITY_PREFIX)
+    assert role in message
+    assert expected in message
+    assert str(paths[role]) in message
+
+
+@pytest.mark.parametrize("prompt", [{"prompt_versions": ["p"]}, {"prompt_free_flags": [True]}])
+def test_compare_accepts_stamped_legacy_producer(tmp_path, prompt):
+    from scripts.eval_harness import cli as cli_mod
+    from scene.tests.test_eval_harness_cli import _adoption_compare_report
+
+    report = _adoption_compare_report()
+    report["provenance"]["model"] = {"adapters": ["a"], "model_ids": ["m"], **prompt}
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps(report), encoding="utf-8")
+    cli_mod.main(["compare", "--baseline", str(path), "--candidate", str(path)])
+
+
+@pytest.mark.parametrize("variant", ["stamped", "no-adapter", "prompt-free", "prompt-sha256"])
+def test_compare_producer_identity_matches_report_contract(variant):
+    from scripts.eval_harness.cli import _compare_producer_dimensions
+    from scripts.eval_harness.report import _model_provenance
+
+    describe = {"adapter": "a", "model_id": "m", "prompt_version": "p"}
+    provenance = {}
+    if variant == "no-adapter":
+        describe.pop("adapter")
+    elif variant == "prompt-free":
+        describe.pop("prompt_version")
+        provenance = {"prompt_free": True}
+    elif variant == "prompt-sha256":
+        describe.pop("prompt_version")
+        describe["prompt_sha256"] = "a" * 64
+    model = _model_provenance([{"describe": describe}], provenance)
+    attribution = model.pop("attribution", None)
+    expected = attribution["missing_dimensions"] if attribution else None
+    assert _compare_producer_dimensions({"provenance": {"model": model}}) == expected
+
+
 def test_score_gate_publishes_geometry_matched_detection_counts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

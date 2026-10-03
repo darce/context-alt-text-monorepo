@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -14,6 +16,7 @@ from conftest import _write_executable
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEPLOY = REPO_ROOT / "scripts/deploy/recognition-service.sh"
 INSTALLER = REPO_ROOT / "scripts/deploy/gpu-lifecycle-install.sh"
+DEPLOYMENTS_FILE = REPO_ROOT / "scripts/deploy/gpu-snapshot-deployments.conf"
 
 
 def _run_lifecycle(
@@ -54,6 +57,11 @@ def _run_lifecycle(
     existing_groups: tuple[str, ...] = (),
     load_snapshots: bool = True,
     extra_empty_load_environments: tuple[str, ...] = (),
+    extra_registry_environment: tuple[str, ...] = (),
+    seed_intent_path_active: bool = False,
+    seed_stale_reaper_units: bool = False,
+    external_failure: str = "",
+    full_remote_install: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir(exist_ok=True)
@@ -63,30 +71,49 @@ def _run_lifecycle(
         seeded.append("acxapi:x:10001:")
     group_db.write_text("".join(f"{line}\n" for line in seeded), encoding="utf-8")
     transport_log = tmp_path / "transport.log"
+    event_log = tmp_path / "events.log"
     expected_systemd = tmp_path / "expected-systemd"
     effective_systemd = tmp_path / "effective-systemd"
     expected_systemd.mkdir(exist_ok=True)
     effective_systemd.mkdir(exist_ok=True)
     # Fresh hosts have no lifecycle units; upgrades retain the old units.
-    for unit in (
-        ()
-        if not previous_release
-        else (
+    seeded_units = (
+        (
             "acx-gpu-start.service",
             "acx-gpu-start.timer",
             "acx-gpu-reap.service",
             "acx-gpu-reap.timer",
         )
-    ):
-        content = (
-            "[Service]\nExecStart=/usr/bin/true\n" if unit.endswith(".service") else "[Timer]\nOnUnitActiveSec=2min\n"
-        )
+        if previous_release
+        else ()
+    )
+    if previous_release and seed_intent_path_active:
+        seeded_units += ("acx-gpu-intent.path",)
+    if seed_stale_reaper_units:
+        seeded_units += ("acx-gpu-idle-reaper.service", "acx-gpu-idle-reaper.timer")
+    for unit in seeded_units:
+        if unit.endswith(".service"):
+            content = "[Service]\nExecStart=/usr/bin/true\n"
+        elif unit.endswith(".path"):
+            content = "[Path]\nPathChanged=/run/acx-write/dev/gpu-intent.json\nUnit=acx-gpu-start.service\n"
+        else:
+            content = "[Timer]\nOnUnitActiveSec=2min\n"
         (expected_systemd / unit).write_text(content, encoding="utf-8")
         (effective_systemd / unit).write_text(content, encoding="utf-8")
     lifecycle_env = tmp_path / "gpu-lifecycle.env"
     lifecycle_env.write_text("MAX_LEASE_SECONDS=3600\n", encoding="utf-8")
+    deployments_file = DEPLOYMENTS_FILE
+    if extra_registry_environment:
+        deployments_file = tmp_path / "gpu-snapshot-deployments.conf"
+        deployments_file.write_text(
+            DEPLOYMENTS_FILE.read_text(encoding="utf-8")
+            + "".join(f"{environment}\n" for environment in extra_registry_environment),
+            encoding="utf-8",
+        )
     fake_host = tmp_path / "host"
     fake_host.mkdir(exist_ok=True)
+    remote_home = tmp_path / "remote-home"
+    remote_home.mkdir(exist_ok=True)
     for directory in (
         "opt-acx-gpu",
         "etc-acx",
@@ -96,6 +123,11 @@ def _run_lifecycle(
         "var-lib-acx-gpu",
     ):
         (fake_host / directory).mkdir(exist_ok=True)
+    intent_path_active = tmp_path / "intent-path.active"
+    intent_path_enabled = tmp_path / "intent-path.enabled"
+    if seed_intent_path_active:
+        intent_path_active.touch()
+        intent_path_enabled.touch()
     if load_snapshots:
         for environment in ("dev", "dev-fir", "staging", "prod"):
             environment_dir = fake_host / "run-acx-write" / environment
@@ -110,6 +142,10 @@ def _run_lifecycle(
         release_root = fake_host / "opt-acx-gpu"
         old_release = release_root / "old release"
         old_release.mkdir()
+        if full_remote_install:
+            old_package = old_release / "infra/oci/gpu_lifecycle"
+            old_package.mkdir(parents=True)
+            (old_package / "prior-release-marker").write_text("old package\n", encoding="utf-8")
         (fake_host / "etc-acx/gpu-lifecycle.env").write_text("MAX_LEASE_SECONDS=3600\n")
         (fake_host / "etc-tmpfiles/acx-gpu.conf").write_text("# old tmpfiles\n")
         if snapshot_kind != "missing":
@@ -150,23 +186,25 @@ done
 printf '\n' >>"$FAKE_TRANSPORT_LOG"
 remote_body=${!#}
 printf '%s\n' "$remote_body" >>"$FAKE_REMOTE_BODY_LOG"
-if [[ "$remote_body" == *"activate_gpu_lifecycle_timers"* ]]; then
+if [ "${FAKE_FULL_REMOTE_INSTALL:-0}" != 1 ] && [[ "$remote_body" != *"activate_gpu_lifecycle_timers"* ]]; then
+  exit 0
+fi
+if [ "${FAKE_REMOTE_STALL:-0}" -gt 0 ]; then
   # A descendant holds the captured pipes, just as a stalled remote body does.
-  if [ "${FAKE_REMOTE_STALL:-0}" -gt 0 ]; then
-    bash -c 'trap "" TERM; sleep "$FAKE_REMOTE_STALL"' &
-    wait "$!"
-  fi
-  case "${FAKE_REMOTE_BODY_MUTATION:-}" in
-    delete_activation_definition)
-      remote_body=$(printf '%s\n' "$remote_body" | sed '/^activate_gpu_lifecycle_timers ()/,/^}$/d')
-      ;;
-    delete_activation_call)
-      remote_body=$(printf '%s\n' "$remote_body" | delete-activation-call)
-      ;;
-  esac
-  # Bash 3.2 bulk substitutions are extremely slow in UTF-8 locales. Rewrite
-  # in one Python pass, matching longer paths before their shared prefixes.
-  remote_body=$(printf '%s\n' "$remote_body" | python3 -c '
+  bash -c 'trap "" TERM; sleep "$FAKE_REMOTE_STALL"' &
+  wait "$!"
+fi
+case "${FAKE_REMOTE_BODY_MUTATION:-}" in
+  delete_activation_definition)
+    remote_body=$(printf '%s\n' "$remote_body" | sed '/^activate_gpu_lifecycle_timers ()/,/^}$/d')
+    ;;
+  delete_activation_call)
+    remote_body=$(printf '%s\n' "$remote_body" | delete-activation-call)
+    ;;
+esac
+# Bash 3.2 bulk substitutions are extremely slow in UTF-8 locales. Rewrite
+# in one Python pass, matching longer paths before their shared prefixes.
+remote_body=$(printf '%s\n' "$remote_body" | python3 -c '
 import os
 import re
 import sys
@@ -184,8 +222,8 @@ paths = {
 pattern = "|".join(re.escape(path) for path in sorted(paths, key=len, reverse=True))
 sys.stdout.write(re.sub(pattern, lambda match: os.environ[paths[match[0]]], sys.stdin.read()))
 ')
-  bash --noprofile --norc -euo pipefail -c "$remote_body"
-fi
+cd "$FAKE_REMOTE_CWD"
+bash --noprofile --norc -euo pipefail -c "$remote_body"
 """,
     )
     _write_executable(
@@ -194,7 +232,17 @@ fi
 set -euo pipefail
 case "${1:-}" in
   chown) exit 0 ;;
+  python3)
+    exec "$@"
+    ;;
   tee)
+    if [ "${FAKE_EXTERNAL_FAILURE:-}" = unit-write ] && [[ "$*" == *acx-gpu-start.service* ]]; then
+      printf 'injected-unit-write-failure\n' >>"$FAKE_EVENT_LOG"
+      exit 74
+    fi
+    printf 'sudo-tee' >>"$FAKE_EVENT_LOG"
+    printf ' <%s>' "$@" >>"$FAKE_EVENT_LOG"
+    printf '\n' >>"$FAKE_EVENT_LOG"
     if [ "${FAKE_PARTIAL_REAPER_WRITE:-0}" = 1 ] && [[ "$*" == *acx-gpu-reap.service* ]]; then
       shift
       for path in "$@"; do printf '[Unit]\\n' >"$path"; done
@@ -205,10 +253,19 @@ case "${1:-}" in
     exec "$@"
     ;;
   cp)
+    printf 'sudo-cp' >>"$FAKE_EVENT_LOG"
+    printf ' <%s>' "$@" >>"$FAKE_EVENT_LOG"
+    printf '\n' >>"$FAKE_EVENT_LOG"
     if [ "${FAKE_SNAPSHOT_COPY_FAILURE:-0}" = 1 ] && [[ "$2" == */acx-gpu.conf ]]; then
       echo 'injected snapshot copy failure' >&2
       exit 74
     fi
+    exec "$@"
+    ;;
+  rm|mv|install|mkdir|chmod)
+    printf 'sudo-%s' "$1" >>"$FAKE_EVENT_LOG"
+    printf ' <%s>' "${@:2}" >>"$FAKE_EVENT_LOG"
+    printf '\n' >>"$FAKE_EVENT_LOG"
     exec "$@"
     ;;
   *) exec "$@" ;;
@@ -222,20 +279,43 @@ set -eu
 printf 'systemctl' >>"$FAKE_TRANSPORT_LOG"
 printf ' <%s>' "$@" >>"$FAKE_TRANSPORT_LOG"
 printf '\n' >>"$FAKE_TRANSPORT_LOG"
+if [ "$1" = disable ] && [ "${2:-}" = --now ] && [ "${3:-}" = acx-gpu-intent.path ]; then
+  printf 'systemctl-disable-intent-path\n' >>"$FAKE_EVENT_LOG"
+  [ -f "$ACX_EFFECTIVE_SYSTEMD_DIR/acx-gpu-intent.path" ] || exit 1
+  rm -f "$FAKE_INTENT_PATH_ACTIVE" "$FAKE_INTENT_PATH_ENABLED"
+  exit 0
+fi
+if [ "$1" = enable ] && [ "${2:-}" = --now ] && [ "${3:-}" = acx-gpu-intent.path ]; then
+  printf 'systemctl-enable-intent-path\n' >>"$FAKE_EVENT_LOG"
+  : >"$FAKE_INTENT_PATH_ACTIVE"
+  : >"$FAKE_INTENT_PATH_ENABLED"
+  exit 0
+fi
+if [ "$1" = disable ] && [ "${2:-}" = --now ] && [[ "${3:-}" == acx-gpu-idle-reaper.* ]]; then
+  printf 'systemctl-disable-stale <%s>\n' "$3" >>"$FAKE_EVENT_LOG"
+  [ -f "$ACX_EFFECTIVE_SYSTEMD_DIR/$3" ] || exit 1
+  exit 0
+fi
+if [ "$1" = daemon-reload ]; then
+  printf 'systemctl-daemon-reload\n' >>"$FAKE_EVENT_LOG"
+fi
 if [ "$1" = start ] && [ "$2" = acx-gpu-reap.service ]; then
   exit "${FAKE_REAPER_RC:-0}"
 fi
 if [ "$1" = disable ] && [ "${3:-}" = acx-gpu-start.timer ]; then
+  printf 'systemctl-disable-start-timer\n' >>"$FAKE_EVENT_LOG"
   [ "${FAKE_FENCE_FAILURE:-}" != timer ] || exit 1
   [ -f "$ACX_EFFECTIVE_SYSTEMD_DIR/acx-gpu-start.timer" ] || exit 1
   rm -f "$FAKE_START_TIMER_ACTIVE"
   exit 0
 fi
 if [ "$1" = enable ] && [ "${3:-}" = acx-gpu-start.timer ]; then
+  printf 'systemctl-enable-start-timer\n' >>"$FAKE_EVENT_LOG"
   : >"$FAKE_START_TIMER_ACTIVE"
   exit 0
 fi
 if [ "$1" = stop ] && [ "${2:-}" = acx-gpu-start.service ]; then
+  printf 'systemctl-stop-start-service\n' >>"$FAKE_EVENT_LOG"
   [ "${FAKE_FENCE_FAILURE:-}" != service ] || exit 1
   [ -f "$ACX_EFFECTIVE_SYSTEMD_DIR/acx-gpu-start.service" ] || exit 5
   rm -f "$FAKE_START_SERVICE_ACTIVE"
@@ -267,6 +347,7 @@ if [ "$1" = show ]; then
   exit 0
 fi
 if [ "$1" = is-active ] && [ "${3:-}" = acx-gpu-start.timer ]; then
+  printf 'systemctl-verify-start-timer\n' >>"$FAKE_EVENT_LOG"
   [ -e "$FAKE_START_TIMER_ACTIVE" ] || exit 3
   exit "${FAKE_VERIFY_RC:-0}"
 fi
@@ -377,6 +458,47 @@ set -eu
 printf 'scp' >>"$FAKE_TRANSPORT_LOG"
 printf ' <%s>' "$@" >>"$FAKE_TRANSPORT_LOG"
 printf '\n' >>"$FAKE_TRANSPORT_LOG"
+if [ "${FAKE_FULL_REMOTE_INSTALL:-0}" != 1 ]; then
+  exit 0
+fi
+if [ "${FAKE_EXTERNAL_FAILURE:-}" = stall ]; then
+  printf 'fake-stalled-scp\n' >>"$FAKE_EVENT_LOG"
+  stall_until=$((SECONDS + 2))
+  while (( SECONDS < stall_until )); do :; done
+  exit 124
+fi
+if [ "${FAKE_EXTERNAL_FAILURE:-}" = copy ]; then
+  printf 'injected-copy-failure\n' >>"$FAKE_EVENT_LOG"
+  exit 74
+fi
+arguments=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -q) shift ;;
+    -o) shift 2 ;;
+    --)
+      shift
+      while [ "$#" -gt 0 ]; do arguments+=("$1"); shift; done
+      ;;
+    *) arguments+=("$1"); shift ;;
+  esac
+done
+destination=${arguments[${#arguments[@]}-1]}
+destination=${destination#*:}
+case "$destination" in
+  /opt/acx-gpu/*) destination="$FAKE_OPT_ACX_GPU/${destination#/opt/acx-gpu/}" ;;
+esac
+mkdir -p "$destination"
+for ((index=0; index<${#arguments[@]}-1; index++)); do
+  source=${arguments[$index]}
+  target="$destination/$(basename "$source")"
+  if [ "${FAKE_EXTERNAL_FAILURE:-}" = import ] && [ "$(basename "$source")" = reaper.py ]; then
+    printf 'this is deliberately invalid python\n' >"$target"
+  else
+    cp "$source" "$target"
+  fi
+  printf 'copy <%s> <%s>\n' "$source" "$target" >>"$FAKE_EVENT_LOG"
+done
 """,
     )
     _write_executable(
@@ -404,6 +526,60 @@ esac
 """,
     )
 
+    _write_executable(
+        fake_bin / "python3",
+        """#!/usr/bin/env bash
+set -u
+if [ "${1:-}" = -c ] && [[ "${2:-}" == *'import infra.oci.gpu_lifecycle.reaper'* ]]; then
+  importing=1
+  printf 'release-import-attempt <%s>\n' "${PYTHONPATH:-}" >>"$FAKE_EVENT_LOG"
+else
+  importing=0
+fi
+if [ "${1:-}" = -c ] && [[ "${2:-}" == *os.replace* ]]; then
+  replacing=1
+  replace_source=${@: -2:1}
+  replace_target=${@: -1}
+else
+  replacing=0
+fi
+"$FAKE_REAL_PYTHON" "$@"
+status=$?
+if [ "$status" -eq 0 ] && [ "$importing" -eq 1 ]; then
+  printf 'release-import-ok <%s>\n' "${PYTHONPATH:-}" >>"$FAKE_EVENT_LOG"
+fi
+if [ "$status" -eq 0 ] && [ "$replacing" -eq 1 ]; then
+  printf 'atomic-replace <%s> <%s>\n' "$replace_source" "$replace_target" >>"$FAKE_EVENT_LOG"
+  if [[ "$replace_target" == */current ]]; then
+    if [ -f "$FAKE_INTENT_PATH_ACTIVE" ]; then
+      printf 'intent-path-active-at-current-switch\n' >>"$FAKE_EVENT_LOG"
+    else
+      printf 'intent-path-inactive-at-current-switch\n' >>"$FAKE_EVENT_LOG"
+    fi
+  fi
+fi
+exit "$status"
+""",
+    )
+    _write_executable(
+        fake_bin / "ln",
+        """#!/usr/bin/env bash
+printf 'ln' >>"$FAKE_EVENT_LOG"
+printf ' <%s>' "$@" >>"$FAKE_EVENT_LOG"
+printf '\n' >>"$FAKE_EVENT_LOG"
+exec "$FAKE_REAL_LN" "$@"
+""",
+    )
+    _write_executable(
+        fake_bin / "rm",
+        """#!/usr/bin/env bash
+printf 'rm' >>"$FAKE_EVENT_LOG"
+printf ' <%s>' "$@" >>"$FAKE_EVENT_LOG"
+printf '\n' >>"$FAKE_EVENT_LOG"
+exec "$FAKE_REAL_RM" "$@"
+""",
+    )
+
     environment = os.environ.copy()
     for name in ("ACX_DEPLOY_GPU_LIFECYCLE", "ACX_GPU_READY_URL"):
         environment.pop(name, None)
@@ -422,6 +598,7 @@ esac
             "FAKE_FENCE_LOAD_STATE": fence_load_state,
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "FAKE_TRANSPORT_LOG": str(transport_log),
+            "FAKE_EVENT_LOG": str(event_log),
             "FAKE_REMOTE_BODY_LOG": str(tmp_path / "remote-body.sh"),
             "FAKE_VERIFY_RC": str(verify_rc),
             "FAKE_REAPER_RC": str(reaper_rc),
@@ -449,6 +626,15 @@ esac
             "ACX_EFFECTIVE_SYSTEMD_DIR": str(effective_systemd),
             "ACX_EXPECTED_ENV_FILE": str(lifecycle_env),
             "ACX_EXPECTED_MAX_LEASE_SECONDS": "3600",
+            "FAKE_INTENT_PATH_ACTIVE": str(intent_path_active),
+            "FAKE_INTENT_PATH_ENABLED": str(intent_path_enabled),
+            "FAKE_EXTERNAL_FAILURE": external_failure,
+            "FAKE_FULL_REMOTE_INSTALL": "1" if full_remote_install else "0",
+            "ACX_GPU_DEPLOYMENTS_FILE": str(deployments_file),
+            "FAKE_REAL_PYTHON": sys.executable,
+            "FAKE_REAL_LN": shutil.which("ln") or "/bin/ln",
+            "FAKE_REAL_RM": shutil.which("rm") or "/bin/rm",
+            "FAKE_REMOTE_CWD": str(remote_home),
         }
     )
     if enabled:

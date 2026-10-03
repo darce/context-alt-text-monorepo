@@ -13,13 +13,14 @@ import pytest
 from sqlalchemy import Table, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+import recognition.worker.scan_worker as scan_worker_module
 import recognition.tests.conftest as _recognition_conftest
 from db.models import UsageReservation
 from db.models.base_imports import Base
 from db.models.jobs import IdentityScanJob, IdentityScanJobItem
 from db.models.portal_billing import GlobalUsageAdmissionState, TenantEntitlement
 from db.models.tenant import Tenant
-from recognition.application.scan.scan_queue_service import ScanQueueService
+from recognition.application.scan.scan_queue_service import ScanQueueService, TerminatedJobIdentity
 from recognition.application.services.usage_admission_service import UsageAdmissionService
 from recognition.domain.job import JobStatus, ScanItemStatus
 from recognition.domain.portal_contracts import (
@@ -119,6 +120,79 @@ async def _reserve_job(session, tenant_id, *, key: str, job_id: uuid.UUID):
         operation_id=key,
         request_fingerprint=f"fp-{key}",
     )
+
+
+@pytest.mark.asyncio
+async def test_run_forever_settles_stalled_identities_returned_by_termination(monkeypatch) -> None:
+    worker = ScanWorker(
+        ScanWorkerConfig(
+            postgres_dsn="sqlite+aiosqlite:///:memory:",
+            claim_batch_size=2,
+            poll_interval_seconds=0,
+        )
+    )
+    identities = [
+        TerminatedJobIdentity(job_id=uuid.uuid4(), tenant_id=uuid.uuid4()),
+        TerminatedJobIdentity(job_id=uuid.uuid4(), tenant_id=uuid.uuid4()),
+    ]
+    settled_batches: list[list[TerminatedJobIdentity]] = []
+    probe_calls = 0
+
+    class _StopLoop(Exception):
+        pass
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def commit(self) -> None:
+            return None
+
+    class _Repository:
+        async def reclaim_stale_items(self, **kwargs) -> int:
+            return 0
+
+    class _Queue:
+        async def terminate_stalled_jobs_with_identities(self, **kwargs):
+            return identities
+
+    async def probe() -> None:
+        nonlocal probe_calls
+        probe_calls += 1
+        if probe_calls == 2:
+            raise _StopLoop
+
+    async def no_op(*args, **kwargs) -> None:
+        return None
+
+    async def capture_settlement(session, terminated: list[TerminatedJobIdentity]):
+        settled_batches.append(list(terminated))
+        return []
+
+    async def skip_to_next_cycle(*, session, now) -> bool:
+        return True
+
+    queue = _Queue()
+    monkeypatch.setattr(worker, "_session_factory", lambda: _Session())
+    monkeypatch.setattr(scan_worker_module, "enable_rls_bypass", no_op)
+    monkeypatch.setattr(scan_worker_module, "SqlAlchemyScanQueueRepository", lambda session: _Repository())
+    monkeypatch.setattr(scan_worker_module, "ScanQueueService", lambda repository: queue)
+    monkeypatch.setattr(worker, "_probe_and_publish_embedding_runtime_capability", probe)
+    monkeypatch.setattr(worker, "_sweep_stale_usage_reservations_if_due", no_op)
+    monkeypatch.setattr(worker, "_refresh_mv_if_needed", no_op)
+    monkeypatch.setattr(worker, "_settle_stalled_usage", capture_settlement)
+    monkeypatch.setattr(worker, "_process_pending_clustering_jobs", skip_to_next_cycle)
+
+    try:
+        with pytest.raises(_StopLoop):
+            await worker.run_forever()
+        assert probe_calls == 2
+        assert settled_batches == [identities]
+    finally:
+        await worker.__aexit__(None, None, None)
 
 
 @pytest.mark.asyncio

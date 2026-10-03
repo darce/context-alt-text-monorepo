@@ -10,7 +10,9 @@ escapes embedded in a hand-crafted ``blob_uri``.
 
 from __future__ import annotations
 
+import os
 import shutil
+import tempfile
 from pathlib import Path
 from typing import BinaryIO
 
@@ -62,7 +64,16 @@ class FilesystemObjectStore:
         job_dir = self._tenant_root / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
         target = job_dir / f"{media_id}.bin"
-        target.write_bytes(bytes(data))
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=job_dir, delete=False) as temporary:
+                temporary_path = Path(temporary.name)
+                temporary.write(bytes(data))
+                temporary.flush()
+            os.replace(temporary_path, target)
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
         return f"{_FILE_SCHEME}{target}"
 
     def open(self, uri: str) -> BinaryIO:

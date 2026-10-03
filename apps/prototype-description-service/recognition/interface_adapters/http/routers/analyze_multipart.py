@@ -508,6 +508,15 @@ async def _persist_and_dispatch_multipart(
     existing_job: bool = False,
 ) -> JobStatusResponse:
     """Persist uploads and enqueue work inside an already-admitted usage scope."""
+    if existing_job:
+        if scan_queue is None and session is not None:
+            scan_queue = get_scan_queue_service_factory(session)
+        # Re-registration is safe only through the persisted, idempotent sink.
+        # Other sinks need neither a new dispatch nor blob staging on replay.
+        if not isinstance(scan_queue, ScanQueueService):
+            media_ids, _, _ = _multipart_usage_inputs(form_data)
+            return _multipart_queued_response(pre_generated_job_id, len(media_ids))
+
     object_store = object_store_factory(canonical_tenant_id)
 
     media_items_list = multipart_to_media_items(
@@ -652,21 +661,25 @@ async def _persist_and_dispatch_multipart(
         persisted_job_id,
     )
 
+    return _multipart_queued_response(persisted_job_id, len(media_items_list))
+
+
+def _multipart_queued_response(job_id: uuid.UUID, total: int) -> JobStatusResponse:
     progress = JobProgressResponse(
         completed=0,
-        total=len(media_items_list),
+        total=total,
         phase=JobPhase.QUEUED,
         images_processed=0,
         faces_found=0,
     )
     return JobStatusResponse(
-        id=str(persisted_job_id),
+        id=str(job_id),
         type=JobType.ANALYZE.value,
         status=JobStatus.PENDING,
         progress=progress,
         started_at=datetime.now(tz=UTC),
         finished_at=None,
-        message=f"Queueing 0/{len(media_items_list)} items",
+        message=f"Queueing 0/{total} items",
     )
 
 

@@ -1,0 +1,45 @@
+{
+  "lane": "tc-29",
+  "base": "e56ab004eb3080fd1dac7c602d78835e11fac792",
+  "files": [
+    {
+      "path": "apps/prototype-description-service/recognition/tests/scripts/test_verify_identity_schema.py",
+      "verdict": "REWRITE",
+      "tests_total": 35,
+      "tests_affected": [
+        "test_collect_matview_create_privilege_gaps_sql_matches_migration"
+      ],
+      "reason": "Rewrite this source-text check as a behavior assertion at the verifier boundary; the other 34 tests exercise live schema-drift classifications.",
+      "evidence": "apps/prototype-description-service/recognition/tests/scripts/test_verify_identity_schema.py:743 - this test uses inspect.getsource() and checks source literals in the verifier and migration rather than observing reported behavior.",
+      "subject": "identity schema verification and repair classification",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-16",
+        "TEST-12"
+      ],
+      "replacement": "Replace the source inspection with a fake-catalog call through collect_and_validate or main that asserts reported privilege gaps and the exit classification.",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/unit/test_adapter_surface_inventory.py",
+      "verdict": "SPEED",
+      "tests_total": 3,
+      "tests_affected": [
+        "test_application_adapter_inventory_stays_bounded",
+        "test_only_known_application_seams_make_remote_adapter_calls"
+      ],
+      "reason": "Keep the application-boundary guard but move its recursive source scan and AST parsing to a static architecture-lint stage; the third test directly checks the neutral FaceDetection contract.",
+      "evidence": "apps/prototype-description-service/recognition/tests/unit/test_adapter_surface_inventory.py:32,144,153,160,166 - the two inventory tests recursively enumerate application Python files, read or parse them, and compare the results with allowlists.",
+      "subject": "application adapter-boundary architecture",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-24"
+      ],
+      "replacement": "Move the two inventory assertions into a static architecture-lint target and leave test_face_detection_seam_rejects_model_specific_fields in the commit-stage unit suite.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    }
+  ],
+  "fixtures": []
+}

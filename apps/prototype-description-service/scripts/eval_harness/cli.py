@@ -635,12 +635,17 @@ def fetch_run_record(
             describe_started = time.monotonic()
             # Billed on attempt (a failed call may still charge); refunded on cache hit.
             paid_calls += 1
-            item["describe"] = client.describe(
+            describe_response = client.describe(
                 image_bytes=image_bytes,
                 filename=image_path.name,
                 media_id=entry.media_id,
                 context_pack=entry.context_pack.model_dump(exclude_none=True),
             )
+            if isinstance(describe_response, dict) and "prompt_version" not in describe_response:
+                prompt_version = describe_response.get("prompt_or_task_version")
+                if prompt_version is not None:
+                    describe_response = {**describe_response, "prompt_version": prompt_version}
+            item["describe"] = describe_response
             item["latency_s"] = round(time.monotonic() - describe_started, 3)
             if isinstance(item["describe"], dict) and item["describe"].get("cached") is True:
                 paid_calls -= 1

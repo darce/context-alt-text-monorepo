@@ -936,6 +936,25 @@ STAGED_WWW="${STAGING_DIR}/www"
 STAGED_OVERLAY="${STAGING_DIR}/docker-compose.app.yml"
 mkdir -p "$APP_ROOT" "$STAGING_DIR"
 
+# Redirection would follow a stale symlink and could truncate the live config
+# before strip_app_vhost reads it. Unlink stale symlinks, and refuse a hardlink
+# (or identical path) to the live file before opening the staged destination.
+if [ -L "$STAGED_CADDY" ]; then
+  if ! rm -f -- "$STAGED_CADDY"; then
+    refuse "cannot remove staged Caddy symlink: ${STAGED_CADDY}"
+  fi
+elif [ -e "$STAGED_CADDY" ]; then
+  if [ "$STAGED_CADDY" -ef "$CADDYFILE" ]; then
+    refuse "staged Caddy path is the same file as CADDYFILE: ${STAGED_CADDY}"
+  fi
+  if [ ! -f "$STAGED_CADDY" ]; then
+    refuse "staged Caddy path is not a regular file: ${STAGED_CADDY}"
+  fi
+  if ! rm -f -- "$STAGED_CADDY"; then
+    refuse "cannot remove stale staged Caddy file: ${STAGED_CADDY}"
+  fi
+fi
+
 {
   strip_app_vhost "$CADDYFILE"
   printf '\n'

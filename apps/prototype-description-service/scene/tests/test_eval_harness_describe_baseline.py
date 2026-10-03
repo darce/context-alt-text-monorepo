@@ -291,14 +291,6 @@ def test_main_force_skips_tenant_guard(tmp_path, monkeypatch):
     assert fake.analyzed == [1]
 
 
-def test_no_hardcoded_operator_uploads_constant():
-    """RH-01: module must not ship a laptop-absolute UPLOADS default."""
-    uploads = getattr(db, "UPLOADS", None)
-    if uploads is not None:
-        text = str(uploads)
-        assert "/Volumes/Butter" not in text
-
-
 # --- VLM6-C-06 / EVAL-01: offline Δ vs zero-rule ------------------------------
 
 

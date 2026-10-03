@@ -1,7 +1,7 @@
 {
   "tool": "ruff",
   "version": 1,
-  "total": 243,
+  "total": 237,
   "config_guard": {
     "select": [
       "ASYNC",
@@ -189,9 +189,6 @@
     "apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py": {
       "I001": 1
     },
-    "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d2_legacy_import_session.py": {
-      "I001": 1
-    },
     "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d3_extract_head_shas.py": {
       "I001": 1
     },
@@ -206,13 +203,6 @@
     },
     "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d4_readme_worked_example.py": {
       "I001": 1
-    },
-    "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e1_parent_mode_fill.py": {
-      "B009": 3
-    },
-    "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py": {
-      "I001": 1,
-      "SIM300": 1
     },
     "apps/prototype-description-service/scripts/eval_harness/tests/test_regen_eval_report_gate.py": {
       "I001": 1

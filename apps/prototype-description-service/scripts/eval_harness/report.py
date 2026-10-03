@@ -1466,8 +1466,8 @@ def _model_provenance(
     actually scored a model-free 'seeded' stub run — every artifact stamped with
     the adapter/model version (scope Q5). Every model stamp must be homogeneous
     for all audiences; run-level settings must also agree with every item-level
-    stamp. Incomplete identity is explicitly marked unattributed; records with
-    conflicting stamps are refused.
+    stamp. Incomplete identity is marked unattributed and can only produce
+    diagnostic metrics; records with conflicting stamps are refused.
     """
     run_provenance = run_provenance or {}
     dimensions = (
@@ -1542,8 +1542,8 @@ def _model_provenance(
     ):
         missing_identity.append("prompt identity")
     if successful_items and missing_identity:
-        # Legacy producers remain scoreable, but their metrics cannot be
-        # attributed to a complete model/prompt identity (PROV-01, OBS-08).
+        # Legacy producers remain scoreable for diagnostics, but incomplete
+        # identity cannot certify an adoption-ready verdict (PROV-01, SEC-10).
         # Omit this field for fully stamped records to preserve their bytes.
         out["attribution"] = {
             "status": "unattributed",
@@ -1943,12 +1943,16 @@ def build_score_verdict(
     ``rubric_gate=skip`` bypasses only the must-right failures reason; a clean
     skip run persists ``pass_ungated`` so it is never readable as a gated pass.
 
-    Category vacuity (VLM6-A-05 / VLM6-B-07 / S2-06): critical scored slices with
-    claim-unit sampling π=0 yield ``not_ready`` (never ``pass``). Quality-floor
-    breaches on measurable critical slices yield ``fail`` (S2-02). Readiness is
-    the weakest category (EVAL-23); AUDIT-07 requires naming the frame.
+    Incomplete producer identity is ``not_ready``: metrics remain visible for
+    diagnostics, while the score CLI's readiness gate refuses adoption (SEC-10,
+    RLSE-02). Category vacuity (VLM6-A-05 / VLM6-B-07 / S2-06): critical scored
+    slices with claim-unit sampling π=0 yield ``not_ready`` (never ``pass``).
+    Quality-floor breaches on measurable critical slices yield ``fail`` (S2-02).
+    Readiness is the weakest category (EVAL-23); AUDIT-07 requires naming the
+    frame.
     """
     reasons: list[str] = []
+    readiness_reasons: list[str] = []
     counts = scored.get("counts") or {}
     # F1d-4 / VLM-6-S2A-P-01: corpus-integrity counts live in scored["corpus"],
     # not counts (counts is the pinned {total, scored, failed} contract shape).
@@ -1956,6 +1960,24 @@ def build_score_verdict(
     caption = scored.get("caption") or {}
     faces = scored.get("faces") or {}
     ident = faces.get("identification") or {}
+
+    provenance = scored.get("provenance") or {}
+    model = provenance.get("model") if isinstance(provenance, Mapping) else None
+    attribution = model.get("attribution") if isinstance(model, Mapping) else None
+    if isinstance(attribution, Mapping) and attribution.get("status") == "unattributed":
+        missing_dimensions = attribution.get("missing_dimensions")
+        if isinstance(missing_dimensions, list) and missing_dimensions:
+            missing = ", ".join(str(dimension) for dimension in missing_dimensions)
+        else:
+            missing = "details unavailable"
+        attribution_reason = f"producer identity incomplete: missing {missing}"
+        if ident.get("refused"):
+            # Preserve the CLI's dedicated refusal/consent path: not_ready
+            # reasons are consumed before that gate, while hard-fail reasons
+            # leave refusal handling in control. The report remains non-PASS.
+            reasons.append(attribution_reason)
+        else:
+            readiness_reasons.append(attribution_reason)
 
     failed = int(counts.get("failed") or 0)
     if failed > 0:
@@ -2029,15 +2051,15 @@ def build_score_verdict(
     reasons.extend(build_score_quality_floor_reasons(scored, scored_n=scored_n))
 
     # Shared vacuity set with compare (S2-01 / S2-06 / EVAL-23 / AUDIT-07).
-    vacuity_reasons = build_score_vacuity_reasons(scored, scored_n=scored_n)
+    readiness_reasons.extend(build_score_vacuity_reasons(scored, scored_n=scored_n))
 
-    # Hard failures win; otherwise vacuity yields not_ready (not adoption pass).
+    # Hard failures win; otherwise a readiness gap yields not_ready (not adoption pass).
     if reasons:
         verdict_value = ScoreVerdict.FAIL.value
-        all_reasons = reasons + vacuity_reasons
-    elif vacuity_reasons:
+        all_reasons = reasons + readiness_reasons
+    elif readiness_reasons:
         verdict_value = ScoreVerdict.NOT_READY.value
-        all_reasons = vacuity_reasons
+        all_reasons = readiness_reasons
     elif rubric_gate == "skip":
         verdict_value = ScoreVerdict.PASS_UNGATED.value
         all_reasons = []
@@ -3181,7 +3203,10 @@ def _markdown(scored: dict[str, Any]) -> str:
     # source-comment-only.
     if model.get("attribution", {}).get("status") == "unattributed":
         missing = ", ".join(model["attribution"]["missing_dimensions"])
-        lines.append(f"- **unattributed aggregate metrics**: missing {missing}")
+        lines.append(
+            f"- **unattributed aggregate metrics**: missing {missing} "
+            "(diagnostic only; report is not adoption-ready)"
+        )
     if prov.get("low_sample_warning"):
         lines.append(f"- ⚠️ **low_sample_warning**: {_fmt_prov(prov.get('low_sample_warning'))}")
     if prov.get("quality_floor_caveat"):

@@ -465,8 +465,6 @@ async def _analyze_media_multipart_form(
         media_sources=usage_media_sources,
         options=fingerprint_options_from_envelope(envelope),
     )
-    replay_dispatch_error: HTTPException | None = None
-    response: JobStatusResponse | None = None
     async with admit_usage(
         usage_admission_service,
         tenant_id=tenant_uuid,
@@ -479,35 +477,19 @@ async def _analyze_media_multipart_form(
     ) as ticket:
         bound_job_id = bound_job_uuid(ticket, pre_generated_job_id)
         replay = is_usage_replay(ticket, pre_generated_job_id)
-        try:
-            response = await _persist_and_dispatch_multipart(
-                form_data=form_data,
-                background_tasks=background_tasks,
-                auth=auth,
-                session=session,
-                scan_queue=scan_queue,
-                object_store_factory=object_store_factory,
-                tenant_uuid=tenant_uuid,
-                canonical_tenant_id=canonical_tenant_id,
-                pre_generated_job_id=bound_job_id,
-                inline_processing=inline_processing,
-                existing_job=replay,
-            )
-        except HTTPException as exc:
-            if (
-                replay
-                and exc.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
-                and exc.detail == _DISPATCH_REGISTRATION_FAILURE_DETAIL
-            ):
-                # Keep a failed replay inside the normal exit of admit_usage.
-                # Its ticket belongs to the original job and must stay RESERVED.
-                replay_dispatch_error = exc
-            else:
-                raise
-
-    if replay_dispatch_error is not None:
-        raise replay_dispatch_error
-    assert response is not None
+        response = await _persist_and_dispatch_multipart(
+            form_data=form_data,
+            background_tasks=background_tasks,
+            auth=auth,
+            session=session,
+            scan_queue=scan_queue,
+            object_store_factory=object_store_factory,
+            tenant_uuid=tenant_uuid,
+            canonical_tenant_id=canonical_tenant_id,
+            pre_generated_job_id=bound_job_id,
+            inline_processing=inline_processing,
+            existing_job=replay,
+        )
     return response
 
 

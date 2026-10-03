@@ -209,7 +209,9 @@ async def admit_usage(
     """Reserve before dispatch and leave HTTP 202 as RESERVED.
 
     Handler success is not terminal settlement. Queue refusal and dispatch
-    exceptions release once. Cancellation leaves the ticket RESERVED: dispatched
+    exceptions release once for the request that acquired the ticket. A replay
+    bound to another job owns no reservation and must never release it.
+    Cancellation leaves the ticket RESERVED: dispatched
     compute may still finish, so only evidence-based recovery can settle it.
     G2/G3 call ``commit_fenced`` / ``release_fenced``.
     """
@@ -262,6 +264,9 @@ async def admit_usage(
     try:
         yield ticket
     except Exception:
+        if ticket.job_id and str(ticket.job_id) != str(job_id):
+            # The original request/worker still owns this reservation (API-02).
+            raise
         try:
             await service.release(ticket)
         except BaseException:

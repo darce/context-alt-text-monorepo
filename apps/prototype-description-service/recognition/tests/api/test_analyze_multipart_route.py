@@ -1217,8 +1217,9 @@ async def test_multipart_cleans_up_blobs_when_dispatch_registration_fails(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure_kind", ["registration", "store_factory"])
 async def test_multipart_replay_dispatch_registration_failure_preserves_original_job(
-    tenant_id: str, monkeypatch: pytest.MonkeyPatch
+    tenant_id: str, monkeypatch: pytest.MonkeyPatch, failure_kind: str
 ) -> None:
     """A failed re-registration must not settle the running replay's job or ticket."""
     from recognition.domain.portal_contracts import UsageTicket
@@ -1324,17 +1325,27 @@ async def test_multipart_replay_dispatch_registration_failure_preserves_original
     original_job_id = queue.calls[0]["job_id"]
     original_blob = store.blobs[(str(original_job_id), "42")]
 
-    with pytest.raises(HTTPException) as exc_info:
+    if failure_kind == "store_factory":
+        def failing_factory(_tenant):
+            raise RuntimeError("replay store unavailable")
+
+        common["object_store_factory"] = failing_factory
+
+    expected_error = HTTPException if failure_kind == "registration" else RuntimeError
+    with pytest.raises(expected_error) as exc_info:
         await mod._analyze_media_multipart_form(
             form_data=_form_data(), background_tasks=_RaisingBackgroundTasks(), **common
         )
 
-    assert exc_info.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
-    assert exc_info.value.detail == "Scan dispatch unavailable"
+    if failure_kind == "registration":
+        assert exc_info.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert exc_info.value.detail == "Scan dispatch unavailable"
+    else:
+        assert str(exc_info.value) == "replay store unavailable"
     assert len(queue.calls) == 1
     assert queue.cancelled_jobs == []
     assert queue.job_statuses[original_job_id] == "pending"
-    assert store.put_jobs == [str(original_job_id), str(original_job_id)]
+    assert store.put_jobs == [str(original_job_id)] * (2 if failure_kind == "registration" else 1)
     assert store.cleanup_jobs == []
     assert store.blobs[(str(original_job_id), "42")] == original_blob
     assert admission.releases == []

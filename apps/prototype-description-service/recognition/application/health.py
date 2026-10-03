@@ -168,6 +168,7 @@ def _with_numeric_runtime_fingerprint(result: CheckResult) -> CheckResult:
             "pillow_version": fingerprint.pillow_version,
             "hdbscan_version": fingerprint.hdbscan_version,
             "pgvector_version": fingerprint.pgvector_version,
+            "opencv_distribution_versions": fingerprint.opencv_distribution_versions,
             "comparison_token": fingerprint.comparability_token,
         }
         encoded = json.dumps(values, sort_keys=True, separators=(",", ":"))

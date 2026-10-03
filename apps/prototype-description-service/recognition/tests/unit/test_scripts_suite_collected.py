@@ -5,6 +5,7 @@ import json
 import tomllib
 from collections import Counter
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -17,14 +18,17 @@ service_conftest = importlib.util.module_from_spec(service_conftest_spec)
 service_conftest_spec.loader.exec_module(service_conftest)
 
 
-def test_recognition_tests_are_declared_in_default_testpaths() -> None:
+def _pytest_ini() -> dict[str, Any]:
     service_root = Path(__file__).resolve().parents[3]
     pyproject = tomllib.loads(
         (service_root / "pyproject.toml").read_text(encoding="utf-8")
     )
-    testpaths = pyproject["tool"]["pytest"]["ini_options"]["testpaths"]
+    return pyproject["tool"]["pytest"]["ini_options"]
 
-    assert "recognition/tests" in testpaths
+
+def test_eval_harness_tests_are_declared_in_default_testpaths() -> None:
+    """Keep the eval-harness test tree in the fast gate's configured roots."""
+    assert "scripts/eval_harness/tests" in _pytest_ini()["testpaths"]
 
 
 def test_nested_collection_cache_is_not_reused_without_xdist(

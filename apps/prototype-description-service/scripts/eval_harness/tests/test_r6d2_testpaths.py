@@ -23,9 +23,10 @@ def _pytest_ini() -> dict[str, Any]:
     return pyproject["tool"]["pytest"]["ini_options"]
 
 
-def test_eval_harness_tests_are_declared_in_default_testpaths() -> None:
-    """Keep the eval-harness test tree in the fast gate's configured roots."""
-    assert "scripts/eval_harness/tests" in _pytest_ini()["testpaths"]
+def test_recognition_tests_are_declared_in_default_testpaths() -> None:
+    """Guard the recognition root from the independently collected eval tree."""
+    testpaths = _pytest_ini()["testpaths"]
+    assert "recognition/tests" in testpaths
 
 
 def test_scripts_remain_excluded_from_broad_pytest_recursion() -> None:
@@ -62,7 +63,6 @@ def test_eval_harness_tests_are_on_default_testpaths(
     nested_default_collection: tuple[tuple[str, ...], str],
 ) -> None:
     """The default gate must collect this tree through pytest's public interface."""
-    project_root = Path(__file__).resolve().parents[3]
     items, output = nested_default_collection
 
     assert any(item.startswith("scripts/eval_harness/tests/") for item in items), output

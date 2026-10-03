@@ -10,6 +10,7 @@ and returns 202 with the matching id. Negative paths assert the 422 / 400
 
 from __future__ import annotations
 
+import io
 import json
 import tempfile
 import uuid
@@ -1132,6 +1133,87 @@ def test_multipart_cleans_up_blobs_when_create_scan_job_record_fails(tmp_path: P
     tenant_root = settings.blob_root / tenant_id
     if tenant_root.exists():
         assert list(tenant_root.iterdir()) == [], f"per-job subdirectory leaked: {list(tenant_root.iterdir())}"
+
+
+@pytest.mark.asyncio
+async def test_multipart_cleans_up_blobs_when_dispatch_registration_fails(
+    tenant_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A committed job whose BackgroundTask cannot be registered must fail
+    and release the blobs staged for that job through the injected store."""
+
+    class _StatusTrackingQueue(_FakeScanQueue):
+        def __init__(self) -> None:
+            super().__init__()
+            self.cancelled_jobs: list[uuid.UUID] = []
+            self.job_statuses: dict[uuid.UUID, str] = {}
+
+        async def create_scan_job_record(self, **kwargs) -> uuid.UUID:
+            job_id = await super().create_scan_job_record(**kwargs)
+            self.job_statuses[job_id] = "pending"
+            return job_id
+
+        async def cancel_scan_job(self, *, job_id: uuid.UUID) -> int:
+            self.cancelled_jobs.append(job_id)
+            self.job_statuses[job_id] = "failed"
+            return 0
+
+    class _RecordingStore:
+        def __init__(self) -> None:
+            self.put_jobs: list[str] = []
+            self.cleanup_jobs: list[str] = []
+
+        def put(self, *, job_id: str, media_id: str, data: bytes) -> str:
+            self.put_jobs.append(job_id)
+            return f"memory://{job_id}/{media_id}"
+
+        def cleanup(self, *, job_id: str) -> None:
+            self.cleanup_jobs.append(job_id)
+
+        def open(self, _uri: str):
+            raise AssertionError("dispatch failure must occur before telemetry reads the blob")
+
+    queue = _StatusTrackingQueue()
+    store = _RecordingStore()
+
+    class _RaisingBackgroundTasks:
+        def add_task(self, *_args, **_kwargs) -> None:
+            raise RuntimeError("simulated BackgroundTasks registration failure")
+
+    monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    form_data = FormData(
+        [
+            ("request", json.dumps({"tenant_id": tenant_id})),
+            (
+                "image_42",
+                UploadFile(
+                    file=io.BytesIO(PNG_BYTES),
+                    filename="a.png",
+                    headers=Headers({"content-type": "image/png"}),
+                ),
+            ),
+        ]
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        await mod._analyze_media_multipart_form(
+            form_data=form_data,
+            background_tasks=_RaisingBackgroundTasks(),
+            auth=AuthContext(token="t", tenant_claim=tenant_id),
+            session=None,
+            scan_queue=queue,
+            object_store_factory=lambda _tenant: store,
+        )
+
+    assert exc_info.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert exc_info.value.detail == "Scan dispatch unavailable"
+    assert len(queue.calls) == 1
+    job_id = queue.calls[0]["job_id"]
+    assert queue.cancelled_jobs == [job_id]
+    assert queue.job_statuses[job_id] == "failed"
+    assert store.put_jobs == [str(job_id)]
+    assert store.cleanup_jobs == [str(job_id)]
 
 
 # ---------------------------------------------------------------------------

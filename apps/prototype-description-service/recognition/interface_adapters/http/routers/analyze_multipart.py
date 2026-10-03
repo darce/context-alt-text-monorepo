@@ -614,6 +614,13 @@ async def _persist_and_dispatch_multipart(
                 "Failed to mark multipart scan job failed after dispatch registration error",
                 extra={"job_id": str(persisted_job_id), "tenant_id": canonical_tenant_id},
             )
+        try:
+            object_store.cleanup(job_id=str(persisted_job_id))
+        except Exception:
+            logger.exception(
+                "Failed to clean multipart blobs after dispatch registration error",
+                extra={"job_id": str(persisted_job_id), "tenant_id": canonical_tenant_id},
+            )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Scan dispatch unavailable",

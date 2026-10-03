@@ -46,12 +46,12 @@
         "test_guard_bites_when_entrypoint_variant_fail_closed_removed",
         "test_guard_bites_when_entrypoint_blob_check_removed"
       ],
-      "reason": "REWRITE the listed source-shape checks as executable entrypoint and import behavior tests, since matching shell text or AST structure can reject equivalent implementations without observing runtime outcomes (TEST-16).",
-      "evidence": "apps/prototype-description-service/recognition/tests/deploy/test_runtime_packaging.py:287 - the entrypoint test reads shell source and asserts command order; :559-616 and :698-804 parse source text for fail-closed and VLM-gate predicates; :642-657 AST-scans logging_config for top-level mkdir calls.",
+      "reason": "REWRITE the listed source-shape checks as executable entrypoint and import behavior tests where outcomes are not already guarded; preserve Dockerfile copy/presence assertions and reuse the existing temp-root entrypoint fixtures and missing-variant mutation for overlapping cases (TEST-16, REF-10).",
+      "evidence": "apps/prototype-description-service/recognition/tests/deploy/test_runtime_packaging.py:287 - the entrypoint test reads shell source and asserts command order; :559-616 and :698-804 parse source text for fail-closed and VLM-gate predicates; :642-657 AST-scans logging_config for top-level mkdir calls; apps/prototype-description-service/recognition/tests/deploy/test_vlm_cache_gate.py:779-815 - existing temp-root entrypoint cases cover missing, invalid, and mismatched baked variants, and the missing-variant mutation.",
       "subject": "docker-entrypoint.sh boot, image-variant and blob-root behavior; api.logging_config import behavior",
       "duplicate_of": "",
-      "canon": ["TEST-16", "TEST-15"],
-      "replacement": "Run docker-entrypoint.sh with a temporary baked-variant file and fake alembic/python/uvicorn commands to assert boot order, VLM gating, and fail-closed exits; import api.logging_config under a nonprivileged identity with a controlled writable log path and assert import succeeds without creating directories. Keep the current negative mutations, but apply them to those executable seams.",
+      "canon": ["TEST-16", "TEST-15", "REF-10"],
+      "replacement": "Reuse and extend apps/prototype-description-service/recognition/tests/deploy/test_vlm_cache_gate.py's _run_entrypoint_fixture for executable boot-order, VLM-gating, and blob-root assertions; retain the Dockerfile module/file-presence checks as packaging contracts. Reuse test_entrypoint_missing_image_variant_fails_closed, test_entrypoint_garbage_image_variant_fails_closed, and test_entrypoint_env_mismatch_fails_closed plus test_entrypoint_variant_gate_mutation_is_observable for baked-variant coverage instead of adding duplicate fixtures or mutations. Keep api.logging_config as a controlled import behavior check, and apply new negative mutations only to the uncovered behavior seams.",
       "est_seconds_saved": 0,
       "risk": "medium"
     }

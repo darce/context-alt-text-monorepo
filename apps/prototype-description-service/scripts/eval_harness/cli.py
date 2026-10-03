@@ -132,6 +132,7 @@ SCORE_GATE_PREFIX_TRUNCATION = "score truncation gate:"
 SCORE_GATE_PREFIX_MANIFEST_MISMATCH = "score manifest-mismatch gate:"
 SCORE_GATE_PREFIX_MANIFEST_DRIFT = "score manifest-drift gate:"
 SCORE_GATE_PREFIX_MANIFEST_RELABEL = "score manifest-relabel gate:"
+SCORE_GATE_PREFIX_PRODUCER_IDENTITY = "score producer-identity gate:"
 SCORE_GATE_PREFIX_EMPTY_RUBRIC = "score empty-rubric gate:"
 SCORE_GATE_PREFIX_MUST_RIGHT_FAILURES = "score must-right failures gate:"
 SCORE_GATE_PREFIX_WRONG_NAME_FLOOR_VACUITY = "score wrong-name floor vacuity gate:"
@@ -157,6 +158,7 @@ SCORE_GATE_PREFIXES: frozenset[str] = frozenset(
         SCORE_GATE_PREFIX_MANIFEST_MISMATCH,
         SCORE_GATE_PREFIX_MANIFEST_DRIFT,
         SCORE_GATE_PREFIX_MANIFEST_RELABEL,
+        SCORE_GATE_PREFIX_PRODUCER_IDENTITY,
         SCORE_GATE_PREFIX_EMPTY_RUBRIC,
         SCORE_GATE_PREFIX_MUST_RIGHT_FAILURES,
         SCORE_GATE_PREFIX_WRONG_NAME_FLOOR_VACUITY,
@@ -221,6 +223,61 @@ def _score_gate_fail(message: str) -> NoReturn:
     # exception boundary. The outer message pass is an EncodedText no-op, and
     # keeps this gate on the message encoder contract (API-11 / OBS-08).
     raise ScoreGateError(_printable_message(_printable_exception_message(message)))
+
+
+def _unattributed_producer_dimensions(report: Mapping[str, Any]) -> list[str] | None:
+    """Return missing producer dimensions when the report marks itself unattributed."""
+    provenance = report.get("provenance")
+    provenance = provenance if isinstance(provenance, Mapping) else {}
+    model = provenance.get("model")
+    model = model if isinstance(model, Mapping) else {}
+    attribution = model.get("attribution")
+    if not isinstance(attribution, Mapping) or attribution.get("status") != "unattributed":
+        return None
+    missing = attribution.get("missing_dimensions")
+    if not isinstance(missing, (list, tuple)):
+        return []
+    return [str(dimension) for dimension in missing if str(dimension).strip()]
+
+
+def _compare_producer_dimensions(report: Mapping[str, Any]) -> list[str] | None:
+    """Validate legacy producer stamps as well as explicit attribution (SEC-10)."""
+    provenance = report.get("provenance")
+    provenance = provenance if isinstance(provenance, Mapping) else {}
+    model = provenance.get("model")
+    model = model if isinstance(model, Mapping) else {}
+    if "attribution" in model:
+        attribution = model["attribution"]
+        if not isinstance(attribution, Mapping) or attribution.get("status") != "unattributed":
+            raise ValueError("malformed producer provenance: attribution")
+        missing = attribution.get("missing_dimensions")
+        if not isinstance(missing, list) or not all(
+            isinstance(value, str) and value.strip() for value in missing
+        ):
+            raise ValueError("malformed producer provenance: attribution.missing_dimensions")
+        return missing
+
+    # Legacy artifacts predate attribution; derive the report producer's rule.
+    keys = ("adapters", "model_ids", "prompt_versions", "prompt_sha256s", "prompt_free_flags")
+    for key in keys:
+        if key in model and not isinstance(model[key], list):
+            raise ValueError(f"malformed producer provenance: {key}")
+
+    def has_text(key: str) -> bool:
+        return any(isinstance(value, str) and value.strip() for value in model.get(key, []))
+
+    missing = []
+    if not has_text("adapters"):
+        missing.append("adapter")
+    if not has_text("model_ids"):
+        missing.append("model")
+    if not (
+        has_text("prompt_versions")
+        or has_text("prompt_sha256s")
+        or any(value is True for value in model.get("prompt_free_flags", []))
+    ):
+        missing.append("prompt identity")
+    return missing or None
 
 
 def _score_schema_error_message(dotted_path: str, expected: str) -> str:
@@ -1877,6 +1934,15 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"verdict={ScoreVerdict.NON_COMPARABLE.value} "
             f"(archival relabel only; not adoption-comparable; see {_printable_path(json_path)})"
         )
+    # Producer identity is measurement provenance, so neither adoption opt-outs
+    # nor consent for refused metric slices can make an unattributed report usable.
+    missing_producer_dimensions = _unattributed_producer_dimensions(scored)
+    if missing_producer_dimensions is not None:
+        missing_hint = ", ".join(missing_producer_dimensions) or "unspecified"
+        _score_gate_fail(
+            f"{SCORE_GATE_PREFIX_PRODUCER_IDENTITY} unattributed producer; "
+            f"missing dimensions: {missing_hint} (see {_printable_path(json_path)})"
+        )
     # fx8 / gx1 / EVAL-13 / TEST-15: under --freeze-certification the exit code
     # means scoring-path byte-stability once measurement integrity has passed.
     # Adoption gates below stay computed and printed (verdict / wrong_name_rate /
@@ -2492,6 +2558,7 @@ _COMPARE_LOWER_IS_BETTER: tuple[tuple[str, ...], ...] = (
 )
 # Baseline verdicts that may anchor an adoption decision (rg-005 / sr-007).
 _COMPARE_ADOPTION_ELIGIBLE_VERDICTS: frozenset[str] = frozenset({ScoreVerdict.PASS.value})
+COMPARE_PRODUCER_IDENTITY_PREFIX = "compare producer-identity gate:"
 # Protocol pins that must match across baseline and candidate (EVAL-13).
 _COMPARE_PROTOCOL_PATHS: tuple[tuple[str, ...], ...] = (
     ("eval_mode",),
@@ -2771,6 +2838,24 @@ def _cmd_compare(args: argparse.Namespace) -> None:
     )
     if proxy_status:
         sys.exit("compare adoption gate: " + "; ".join(proxy_status))
+
+    for role, report, report_path in (
+        ("baseline", baseline, baseline_path),
+        ("candidate", candidate, candidate_path),
+    ):
+        try:
+            missing_dimensions = _compare_producer_dimensions(report)
+        except ValueError as exc:
+            sys.exit(
+                f"{COMPARE_PRODUCER_IDENTITY_PREFIX} {role} report: {exc} "
+                f"(see {_printable_path(report_path)})"
+            )
+        if missing_dimensions is not None:
+            missing_hint = ", ".join(missing_dimensions) or "unspecified"
+            sys.exit(
+                f"{COMPARE_PRODUCER_IDENTITY_PREFIX} {role} report has an unattributed producer "
+                f"(missing dimensions: {missing_hint}; see {_printable_path(report_path)})"
+            )
 
     for role, report in (("baseline", baseline), ("candidate", candidate)):
         verdict = (report.get("verdict") or {}).get("verdict")

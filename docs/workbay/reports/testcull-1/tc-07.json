@@ -117,11 +117,11 @@
         "test_fetch_cli_accepts_explicit_auraface_selection"
       ],
       "reason": "This FIRDV-3 review-round file asserts live provenance, artifact-verification, manifest, and fetch-selection behavior that belongs in subject-focused test modules.",
-      "evidence": "apps/prototype-description-service/recognition/tests/unit/test_firdv3_auraface_space_contract.py:76-149 - checks public provenance metadata; lines 168-245 exercise missing and mismatched artifact rejection; lines 286-374 assert fetch/verify selection.",
+      "evidence": "apps/prototype-description-service/recognition/tests/unit/test_firdv3_auraface_space_contract.py:76-149 - checks public provenance metadata; lines 168-245 exercise missing and mismatched artifact rejection; lines 286-374 assert fetch/verify selection. apps/prototype-description-service/pyproject.toml:334-342 - configured testpaths include recognition/tests but omit scripts/tests.",
       "subject": "AuraFace model provenance, artifact integrity, and operator fetch selection",
       "duplicate_of": "",
-      "canon": ["TEST-16"],
-      "replacement": "Move provenance and artifact cases to recognition/tests/unit/test_face_pipeline_provenance.py, manifest compatibility to recognition/tests/unit/test_embedding_model_provenance.py, and fetch-selection cases to a dedicated scripts/tests/test_fetch_face_pipeline_models.py module; replace test_auraface_preprocessing_is_the_measured_contract's source-text checks with manifest/runtime assertions.",
+      "canon": ["TEST-16", "PROV-01", "TEST-30"],
+      "replacement": "Move provenance and artifact cases to recognition/tests/unit/test_face_pipeline_provenance.py, manifest compatibility to recognition/tests/unit/test_embedding_model_provenance.py, and fetch-selection cases to recognition/tests/unit/test_fetch_face_pipeline_models.py under the configured recognition/tests testpath; replace test_auraface_preprocessing_is_the_measured_contract's source-text checks with manifest/runtime assertions.",
       "est_seconds_saved": 0,
       "risk": "medium"
     },

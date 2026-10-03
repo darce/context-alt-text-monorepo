@@ -300,6 +300,45 @@ def test_ttl_rejects_restart_budget_beyond_default_and_accepts_exact_floor(
     assert exact.returncode == 0, exact.stdout + exact.stderr
 
 
+def test_lease_ttl_covers_restart_probes_and_gpu_gate_timeouts(tmp_path: Path) -> None:
+    budget = {
+        "ACX_CUTOVER_HEALTH_ATTEMPTS": "2",
+        "ACX_CUTOVER_HEALTH_SLEEP": "0",
+        "ACX_CANONICAL_HEALTH_ATTEMPTS": "3",
+        "ACX_CANONICAL_HEALTH_SLEEP": "0",
+        "ACX_VERIFY_ATTEMPTS": "1",
+        "ACX_VERIFY_SLEEP": "0",
+        "ACX_GPU_SNAPSHOT_GATE_ATTEMPTS": "4",
+        "ACX_GPU_SNAPSHOT_GATE_SLEEP": "0",
+    }
+    lease_env = {
+        "ACX_PUSH_TIMEOUT": "1000",
+        "ACX_PULL_TIMEOUT": "1000",
+        "ACX_REMOTE_COMMAND_TIMEOUT": "7",
+        "ACX_GPU_SNAPSHOT_GATE_TIMEOUT_SECONDS": "11",
+    }
+    below = _run_driver(
+        tmp_path / "below",
+        "deploy_env_lease acquire dev",
+        transaction="dw2-transaction",
+        ACX_DEPLOY_LOCK_TTL_SECONDS="3392",
+        **lease_env,
+        **budget,
+    )
+    assert below.returncode != 0, below.stdout + below.stderr
+    assert "3393" in below.stdout + below.stderr
+
+    exact = _run_driver(
+        tmp_path / "exact",
+        "deploy_env_lease acquire dev",
+        transaction="dw2-transaction",
+        ACX_DEPLOY_LOCK_TTL_SECONDS="3393",
+        **lease_env,
+        **budget,
+    )
+    assert exact.returncode == 0, exact.stdout + exact.stderr
+
+
 def test_expired_lease_is_taken_over(tmp_path: Path) -> None:
     path = _lease_path(tmp_path)
     _write_lease(path, "transaction-a", "a@example:123", int(time.time()) - 1)

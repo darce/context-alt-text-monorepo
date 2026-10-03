@@ -220,6 +220,7 @@ async def test_replay_does_not_restart_progressed_job(persisted_queue, monkeypat
         state.items.append((222222, "22222222-2222-2222-2222-222222222222"))
     tasks = BackgroundTasks()
     await submit(tenant, session, admission, tasks)
+    assert len(tasks.tasks) == 1
     await tasks()
     assert state.items == (
         [(222222, "22222222-2222-2222-2222-222222222222")] if job_status == JobStatus.RUNNING else []

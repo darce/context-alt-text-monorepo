@@ -58,6 +58,10 @@ SQLITE_TEST_TABLE_EXCLUSIONS = frozenset(
         # Portal and billing tables are outside this recognition fixture's schema.
         "api_key_rotation_history",
         "billing_checkout_attempt",
+        "billing_known_item_lease",
+        "billing_reconciliation_cursor",
+        "billing_reconciliation_item_progress",
+        "billing_reconciliation_quarantine",
         "billing_subscription_projection",
         "billing_webhook_inbox",
         "export_jobs",

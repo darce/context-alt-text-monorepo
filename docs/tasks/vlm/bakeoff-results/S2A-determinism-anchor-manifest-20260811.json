@@ -1,4 +1,5 @@
 {
+  "adjudication_records": [],
   "annotation_mode": "roster_only",
   "entries": [
     {
@@ -1524,16 +1525,20 @@
     },
     {
       "base_caption": "",
+      "base_caption_optional": false,
       "context_pack": {
         "caption": "",
         "description": "",
         "title": "Caption freeze G-01 mixed-y order_degraded trap"
       },
+      "demographic_cohort": null,
       "difficulty": "easy",
       "domain": "faces",
       "easy_wrong": [],
+      "expected_attachments": [],
       "face_boxes": [
         {
+          "adjudication_source": null,
           "h": 0.2,
           "lineage": {
             "arbitration_of": null,
@@ -1555,6 +1560,7 @@
           "y": 0.1
         },
         {
+          "adjudication_source": null,
           "h": 0.2,
           "lineage": {
             "arbitration_of": null,
@@ -1572,7 +1578,8 @@
           "name": "Hollow Pennant",
           "source": "iptc",
           "w": 0.2,
-          "x": 0.5
+          "x": 0.5,
+          "y": null
         }
       ],
       "face_count": 2,
@@ -1590,22 +1597,30 @@
         "license": "fixture",
         "note": "synthetic caption determinism trap — no real image bytes; TRAP VLM6-R2-G-01 mixed-y order_degraded (labeled_y_missing_images freeze observability / wG3)",
         "publishable": false,
-        "source": "fixture"
+        "source": "fixture",
+        "url": null
       },
-      "sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+      "reference_facts": [],
+      "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "spatial_facts": [],
+      "tags": []
     },
     {
       "base_caption": "",
+      "base_caption_optional": false,
       "context_pack": {
         "caption": "",
         "description": "",
         "title": "Caption freeze G-02 centre-x-tie positional trap"
       },
+      "demographic_cohort": null,
       "difficulty": "easy",
       "domain": "faces",
       "easy_wrong": [],
+      "expected_attachments": [],
       "face_boxes": [
         {
+          "adjudication_source": null,
           "h": 0.2,
           "lineage": {
             "arbitration_of": null,
@@ -1627,6 +1642,7 @@
           "y": 0.1
         },
         {
+          "adjudication_source": null,
           "h": 0.2,
           "lineage": {
             "arbitration_of": null,
@@ -1663,9 +1679,13 @@
         "license": "fixture",
         "note": "synthetic caption determinism trap — no real image bytes; TRAP VLM6-R2-G-02 centre-x-tie positional (positional_images freeze observability)",
         "publishable": false,
-        "source": "fixture"
+        "source": "fixture",
+        "url": null
       },
-      "sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+      "reference_facts": [],
+      "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "spatial_facts": [],
+      "tags": []
     }
   ],
   "manifest_version": 3,
@@ -1680,5 +1700,6 @@
     "Linen Kestrel",
     "Slate Willow",
     "Muted Yarrow"
-  ]
+  ],
+  "roster_cohorts": {}
 }

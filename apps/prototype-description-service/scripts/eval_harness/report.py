@@ -2151,22 +2151,27 @@ def score_run_record(
     argument may only narrow the stamp — it cannot widen ``roster_only``
     to exhaustive. ``roster_only``, a missing stamp, and an unrecognised
     token refuse; they never silently score unlabeled non-roster faces as
-    false positives. Identification and caption metrics still run.
+    false positives. Caption metrics still run; strict identification refuses
+    GT boxes without human-adjudicated lineage.
     Face-bakeoff scoring (``score_face_run_record``) raises instead.
     """
     # identity_names lives in this module (VLM6-RH-07) — no lazy cli import.
     _validate_record_kind(run_record)
+    lineage_error = None
     if run_manifest is not None:
         for entry_index, entry in enumerate(manifest_entries):
             for box_index, box in enumerate(entry.get("face_boxes") or []):
                 if not has_human_adjudicated_gt_lineage(box):
-                    raise ManifestError(
+                    lineage_error = ManifestError(
                         "strict detection scoring requires human-adjudicated lineage on every GT box "
                         f"(entry_index={entry_index}, box_index={box_index})",
                         invariant=ScoreInvariant.DETECTION_REQUIRES_HUMAN_ADJUDICATED_GT_LINEAGE,
                         entry_index=entry_index,
                         entry_path=str(entry.get("path", "")),
                     )
+                    break
+            if lineage_error is not None:
+                break
     eval_mode = str(run_record["provenance"].get("eval_mode", "standard"))
     if eval_mode not in EVAL_MODES:
         raise ReportError(f"unknown eval_mode {eval_mode!r} in run-record provenance; expected one of {EVAL_MODES}")
@@ -2567,6 +2572,8 @@ def score_run_record(
                     det = None
                     detection_invariant = DETECTION_EMPTY_OBSERVATIONS_INVARIANT
                 else:
+                    if lineage_error is not None:
+                        raise lineage_error
                     if run_manifest is not None:
                         det = detection_pr_strict(
                             detections,
@@ -2588,9 +2595,15 @@ def score_run_record(
     # Uses positional_items (face_boxes L→R labeled order), not alphabetical
     # present_identities (FL30A-GATE-01). Independent of the boxed-GT refusal
     # below — its own evaluable/status/vacuity_signal covers missing face_boxes.
-    positional = positional_identification(positional_items)
+    positional = positional_identification([] if lineage_error is not None else positional_items)
+    if lineage_error is not None:
+        # No legacy GT box may contribute to the positional gate (PROV-01).
+        positional = replace(positional, vacuity_signal=lineage_error.invariant)
 
-    if not identification_entries:
+    if lineage_error is not None:
+        ident = None
+        identification_invariant = lineage_error.invariant
+    elif not identification_entries:
         ident = None
         identification_invariant = IDENTIFICATION_EMPTY_OBSERVATIONS_INVARIANT
     else:
@@ -2805,6 +2818,8 @@ def score_run_record(
                 {
                     "refused": True,
                     "invariant": detection_invariant,
+                    **({"refusal_invariants": [detection_invariant, lineage_error.invariant]}
+                       if lineage_error is not None else {}),
                     "precision": None,
                     "recall": None,
                     "tp": None,
@@ -2819,7 +2834,7 @@ def score_run_record(
                     "fn": det.false_negatives,
                 }
             ),
-            # A-02 / VLM6-B-10: "positional" is always computed — it has its own
+            # A-02 / VLM6-B-10: "positional" always publishes its own
             # evaluable/status/vacuity_signal/sampling_frame vacuity contract and
             # is independent of the boxed-GT refusal that can null out set-based
             # identification below (EVAL-23: consumers must not treat
@@ -3396,7 +3411,8 @@ def _markdown(scored: dict[str, Any]) -> str:
         "## Face detection (identity-agnostic)",
         "",
         (
-            f"- REFUSED ({det.get('invariant')}): {refusal_explanation(det.get('invariant'))}"
+            f"- REFUSED ({', '.join(det.get('refusal_invariants') or [det.get('invariant')])}): "
+            f"{refusal_explanation(det.get('invariant'))}"
             if det.get("refused")
             else (
                 f"- precision: {_fmt(det['precision'])} recall: {_fmt(det['recall'])} "

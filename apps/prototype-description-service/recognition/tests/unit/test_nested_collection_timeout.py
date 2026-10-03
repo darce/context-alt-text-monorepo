@@ -70,6 +70,33 @@ def test_nested_collection_subprocess_receives_timeout(
     )
 
 
+def test_serial_nested_collection_rewrites_existing_receipt(tmp_path: Path) -> None:
+    class TempPathFactoryShim:
+        def getbasetemp(self) -> Path:
+            return base_temp
+
+    base_temp = tmp_path / "base"
+    base_temp.mkdir()
+    shared_receipt_path = base_temp.parent / "nested-receipt-probe-receipt.json"
+    run_receipt_path = base_temp / "nested-receipt-probe-receipt.json"
+    for receipt_path in (shared_receipt_path, run_receipt_path):
+        receipt_path.write_text('{"stale": true}\n', encoding="utf-8")
+
+    items, _ = service_conftest._cached_nested_collection(
+        TempPathFactoryShim(),
+        "receipt-probe",
+        "recognition/tests/unit/test_nested_collection_timeout.py",
+    )
+
+    receipt = json.loads(run_receipt_path.read_text(encoding="utf-8"))
+    assert items
+    assert receipt["scope"] == "narrowed"
+    assert receipt["rootdir"] == str(Path(service_conftest.__file__).resolve().parent)
+    assert json.loads(shared_receipt_path.read_text(encoding="utf-8")) == {
+        "stale": True
+    }
+
+
 def test_xdist_timeout_is_cached_as_failure_and_released_lock(
     tmp_path: Path, monkeypatch
 ) -> None:

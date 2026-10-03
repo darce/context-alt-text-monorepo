@@ -23,6 +23,10 @@ def _fingerprint(*, hdbscan_version: str = "0.8.44") -> NumericRuntimeFingerprin
         pillow_version="12.3.0",
         hdbscan_version=hdbscan_version,
         pgvector_version="0.5.0",
+        opencv_distribution_versions=(
+            ("opencv-python", "5.0.0.93"),
+            ("opencv-contrib-python-headless", "5.0.0.93"),
+        ),
     )
 
 
@@ -57,6 +61,7 @@ def test_health_detail_publishes_every_numeric_runtime_version_and_token(
         "pillow_version",
         "hdbscan_version",
         "pgvector_version",
+        "opencv_distribution_versions",
         "comparison_token",
     }
     assert payload == {
@@ -68,9 +73,17 @@ def test_health_detail_publishes_every_numeric_runtime_version_and_token(
         "pillow_version": fingerprint.pillow_version,
         "hdbscan_version": fingerprint.hdbscan_version,
         "pgvector_version": fingerprint.pgvector_version,
+        "opencv_distribution_versions": [
+            list(distribution) for distribution in fingerprint.opencv_distribution_versions
+        ],
         "comparison_token": fingerprint.comparability_token,
     }
     assert payload["comparison_token"] == fingerprint.comparability_token
+    fingerprint_fields = {key: value for key, value in payload.items() if key != "comparison_token"}
+    fingerprint_fields["opencv_distribution_versions"] = tuple(
+        tuple(distribution) for distribution in payload["opencv_distribution_versions"]
+    )
+    assert NumericRuntimeFingerprint(**fingerprint_fields) == fingerprint
     assert result.detail.endswith(encoded)
 
 

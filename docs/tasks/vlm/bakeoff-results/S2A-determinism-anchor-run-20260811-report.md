@@ -4,8 +4,8 @@
 - adapter(s): `seeded` model(s): `seeded-fixtures` version(s): `1`
 - head_sha: `null`
 - base_url: seeded-stub://offline
-- fetch manifest_sha256: `18d7fc6f3b0ef568da93df91694859ed3f2dc4e87cb237fb26375b077edc6eb3`
-- score manifest_sha256: `18d7fc6f3b0ef568da93df91694859ed3f2dc4e87cb237fb26375b077edc6eb3` (matches fetch: true)
+- fetch manifest_sha256: `2368816a2087bbf5831438628316e5741ebb91674d77fa9fbf74b1f64cfa523b`
+- score manifest_sha256: `2368816a2087bbf5831438628316e5741ebb91674d77fa9fbf74b1f64cfa523b` (matches fetch: true)
 - started_at: null
 - images: 39/39 scored, 0 failed
 - quality_floor_caveat: position_accuracy/placement floors are binary-chance (0.5); accuracy at the floor fails the gate
@@ -17,9 +17,9 @@
 - reference_facts=0/39 (threshold=5; below_threshold=true; pi_zero=true) — 0/39 entries populate it (threshold=5) — no trap coverage for fabricated-fact scoring (rate is undefined)
 - spatial_facts=0/39 (threshold=5; below_threshold=true; pi_zero=true) — 0/39 entries populate it (threshold=5) — placement accuracy is vacuous (0 asserted claims)
 - evaluation_status: `unvalidated_proxy`
-- verdict: **fail** (wrong_name_rate=0.000, floor=0.000)
+- verdict: **not_ready** (wrong_name_rate=0.000, floor=0.000)
 - rubric_gate: `skip`
-- verdict reason: quality-floor: position_accuracy=0.0 <= floor=0.5 (critical scored slice total failure; EVAL-04 / S2-02)
+- verdict reason: category-vacuity: positional — claim unit=image with face_boxes L→R order; compared_images=0 status=not_evaluable evaluable=False order_unknown_excluded=0 excluded_images=0 (π=0 on face_boxes; AUDIT-07)
 - verdict reason: category-vacuity: placement — claim unit=asserted spatial_fact; claims=0 accuracy=None abstained=0 images_scored=39 (π=0 on spatial_facts; AUDIT-07)
 - verdict reason: category-vacuity: fabricated_fact — claim unit=image with reference_facts trap; fabricated_fact_rate=None images_with_traps=0 (not measurable; AUDIT-07 / S2-01)
 - verdict reason: category-vacuity: face_detection.precision (None — category not observed; S2-06)
@@ -67,14 +67,14 @@
 
 ## Face detection (identity-agnostic)
 
-- REFUSED (detection_refuses_roster_only): detection P/R is not computed unless annotation_mode is exhaustive
+- REFUSED (detection_refuses_roster_only, detection_requires_human_adjudicated_gt_lineage): detection P/R is not computed unless annotation_mode is exhaustive
 
 ## Face identification (named assertions)
 
-- positional accuracy (L→R order): 0.000 (hits=0 / 2; exact-order images=0/1; swaps=1; status=scored; evaluable=True)
+- positional accuracy (L→R order): null (hits=0 / 0; exact-order images=0/0; swaps=0; status=not_evaluable; evaluable=False)
+- positional vacuity: detection_requires_human_adjudicated_gt_lineage (sampling_frame=box_grounded_LtoR_name_sequences: position i must match; requires face_boxes (labeled_order_known) and centre-ordered predicted names (predicted_left_to_right); when compared_images=0 status=not_evaluable π=0 for box-grounded identity claims (EVAL-23 / AUDIT-07))
 - ⚠ labeled L→R y-missing (order_degraded) on 1 image(s): `mock_images/y-missing-mixed-order.jpg`
-- ⚠ identity order unknown (no face_boxes) on 38 image(s) — positional excluded
-- REFUSED (identification_refuses_unboxed_identity_claims): identification P/R is not computed from identity claims that carry no per-face box lineage
+- REFUSED (detection_requires_human_adjudicated_gt_lineage): detection P/R is not computed from ground-truth boxes without human-adjudicated lineage
 
 ## Per-item failures
 

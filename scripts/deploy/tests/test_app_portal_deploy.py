@@ -727,6 +727,22 @@ def test_apply_failed_validation_leaves_live_config_and_www_intact(tmp_path: Pat
         assert host in live.read_text(encoding="utf-8")
 
 
+def test_apply_staging_caddy_symlink_to_live_preserves_live_config(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    before = live.read_bytes()
+    staged_caddy = live.parent / "app" / "staging" / "Caddyfile"
+    staged_caddy.parent.mkdir(parents=True)
+    staged_caddy.symlink_to(live)
+
+    result = _run(tmp_path, args=["--apply"], live_caddy=live, caddy_fail=True)
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "staged caddy validation failed" in output.lower(), output
+    assert any("caddy validate" in line for line in _log(tmp_path).splitlines())
+    assert live.read_bytes() == before
+
+
 def test_apply_is_idempotent_for_existing_app_vhost(tmp_path: Path) -> None:
     live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
     _write_live_caddy(live)

@@ -164,6 +164,7 @@ export function BillingScreen({
 }: BillingScreenProps) {
   const checkoutEnabled = paymentsEnabled && Boolean(publicPlanCode);
   const [preview, setPreview] = useState(false);
+  const [checkoutStarting, setCheckoutStarting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [retryKind, setRetryKind] = useState<'checkout' | 'manage' | null>(null);
   const [status, setStatus] = useState<{ tone: StatusTone; message: string }>(() =>
@@ -185,6 +186,7 @@ export function BillingScreen({
     inFlightRef.current = false;
     completedRef.current = false;
     setPreview(false);
+    setCheckoutStarting(false);
     setBusy(false);
     setRetryKind(null);
     setStatus(
@@ -221,7 +223,7 @@ export function BillingScreen({
     }
     const epoch = epochRef.current;
     inFlightRef.current = true;
-    setPreview(false);
+    setCheckoutStarting(true);
     setBusy(true);
     setRetryKind(null);
     setStatus({ tone: 'info', message: 'Starting hosted checkout…' });
@@ -290,6 +292,13 @@ export function BillingScreen({
       setRetryKind(copy.retry ? 'checkout' : null);
       setStatus({ tone: copy.tone, message: copy.message });
       statusRef.current?.focus();
+    } finally {
+      if (epoch === epochRef.current) {
+        if (!completedRef.current) {
+          setPreview(false);
+        }
+        setCheckoutStarting(false);
+      }
     }
   };
 
@@ -374,10 +383,18 @@ export function BillingScreen({
             paddingInlineStart: 'var(--acx-space-lg)',
           }}
         >
-          <li aria-current="step" style={{ fontWeight: 'var(--acx-font-weight-semibold)' }}>
+          <li
+            aria-current={checkoutStarting ? undefined : 'step'}
+            style={{ fontWeight: checkoutStarting ? undefined : 'var(--acx-font-weight-semibold)' }}
+          >
             Step 1 of 2: review plan
           </li>
-          <li>Step 2 of 2: pay with the provider</li>
+          <li
+            aria-current={checkoutStarting ? 'step' : undefined}
+            style={{ fontWeight: checkoutStarting ? 'var(--acx-font-weight-semibold)' : undefined }}
+          >
+            Step 2 of 2: pay with the provider
+          </li>
         </ol>
       ) : null}
       <div ref={statusRef} tabIndex={-1}>

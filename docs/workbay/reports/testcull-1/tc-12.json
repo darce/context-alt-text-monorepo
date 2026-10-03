@@ -31,8 +31,8 @@
       "evidence": "apps/prototype-description-service/recognition/tests/api/test_analyze_multipart_route.py:506,551,788,836 directly call _parse_multipart_form, and test_multipart_route_normalizes_content_type_and_owns_spools inspects _rolled; :599 already checks the five-image limit through the route and :903 exercises spool ownership through ASGI.",
       "subject": "Multipart upload route validation, bounded parsing, and temporary-file cleanup",
       "duplicate_of": "",
-      "canon": ["TEST-12", "TEST-16"],
-      "replacement": "Drive sixth-image and seventh-file requests, disconnects, and malformed forms through the public ASGI route; verify spill and closure using filesystem-visible behavior rather than the private _rolled attribute.",
+      "canon": ["TEST-12", "TEST-16", "TEST-03", "PROV-01"],
+      "replacement": "Drive sixth-image and seventh-file requests, disconnects, and malformed forms through the public ASGI route; verify spill and closure using filesystem-visible behavior rather than the private _rolled attribute. Preserve accepted normalized multipart Content-Types and reject unsupported types with 415 before allocating a spool.",
       "est_seconds_saved": 0,
       "risk": "medium"
     },
@@ -157,8 +157,8 @@
       "evidence": "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py:75-279 directly invokes _clustering_admission_probe, _acquire_tenant_lock_fast_fail, and _is_query_canceled and inspects emitted SQL/settings and elapsed time; :310 and :330 already cover breaker behavior through the HTTP route.",
       "subject": "Clustering admission lock-probe behavior, retry responses, and breaker integration",
       "duplicate_of": "",
-      "canon": ["TEST-12", "TEST-16", "TEST-24"],
-      "replacement": "Extract a named admission component and test it through the route with an injected session; use PostgreSQL behavior to verify reader versus blocking locks and move the wall-clock budget check to a performance stage.",
+      "canon": ["TEST-12", "TEST-16", "TEST-24", "TEST-03", "PROV-01"],
+      "replacement": "Extract a named admission component and test it through the route with an injected session; use PostgreSQL behavior to verify reader versus blocking locks and move the wall-clock budget check to a performance stage. Preserve statement_timeout restoration on success and cancellation; map SQLSTATE 57014 to 503 with Retry-After, re-raise other DBAPI errors, and handle missing error origins as non-cancellation.",
       "est_seconds_saved": 0,
       "risk": "high"
     }

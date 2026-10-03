@@ -9,7 +9,8 @@ The score CLI's exit code selects the score outcome (rg-015): exit 0 is a
 clean score, exit 1 is a partial corpus and is never published, and exit 3
 is a refused metric (publish only with ``--allow-refused`` and still exit 3).
 Before publishing, this script also reads and validates the report envelope
-and holds any report whose producer attribution is marked ``unattributed``. Any other
+and holds any report whose producer attribution is marked ``unattributed``
+or whose identity lists are incomplete when attribution is absent. Any other
 nonzero CLI exit is unrecognized and is not swallowed.
 
 The inner interpreter is ``$ACX_EVAL_PYTHON`` when that variable is set
@@ -23,7 +24,7 @@ publication contract above — a code here never inherits meaning from a
 subprocess return value that carried no publication outcome):
 
     0    Clean attributed score, published. The CLI exited 0 and wrote a
-         report whose producer attribution is not marked unattributed.
+         report with complete producer identity.
     1    Partial-corpus score gate. The CLI exited 1 *and wrote a report*;
          held, not published. This is a genuine corpus-quality outcome.
     2    Resolution/environment/usage failure, never a corpus outcome:
@@ -33,14 +34,16 @@ subprocess return value that carried no publication outcome):
          produced *no report at all* regardless of its own exit code
          (crashed before writing one, or exited 0 without writing one).
          A report whose JSON cannot be read or whose provenance/model
-         envelope or attribution block is malformed is also held with this code.
+         envelope, attribution block, or identity lists (when attribution is
+         absent) are malformed is also held with this code.
          The inner subprocess return code is never passed through here —
          no report means no publication meaning to inherit, so a broken
          real interpreter (e.g. missing a dependency, inner exit 1) is
          never confusable with case 1's genuine partial corpus.
     3    Refused metrics (CLI exited 3); held unless ``--allow-refused``.
-    4    Producer attribution is marked ``unattributed``; never published,
-         regardless of the CLI exit code or ``--allow-refused``.
+    4    Producer attribution is marked ``unattributed`` or identity is
+         incomplete when attribution is absent; never published, regardless
+         of the CLI exit code or ``--allow-refused``.
     *    Any other CLI exit *with a report on disk* is unrecognized and
          held, not swallowed.
 
@@ -203,14 +206,44 @@ def classify_report_attribution(report: object) -> ScoreExitDecision | None:
     else:
         model = report["provenance"]["model"]
         if "attribution" not in model:
-            return None
-        attribution = model["attribution"]
-        if not isinstance(attribution, dict):
-            malformed = "provenance.model.attribution must be an object"
-        elif attribution.get("status") != "unattributed":
-            malformed = "provenance.model.attribution.status must be unattributed"
+            # PROV-01/rg-005: derive the producer's identity rule locally;
+            # absence of its warning alone does not establish attribution.
+            identity_keys = (
+                "adapters", "model_ids", "prompt_versions", "prompt_sha256s",
+                "prompt_free_flags",
+            )
+            malformed = next(
+                (f"provenance.model.{key} must be a list" for key in identity_keys
+                 if key in model and not isinstance(model[key], list)),
+                None,
+            )
+            if malformed is None:
+                def has_text(key: str) -> bool:
+                    return any(isinstance(value, str) and value.strip() for value in model.get(key, []))
+
+                dimensions = []
+                if not has_text("adapters"):
+                    dimensions.append("adapter")
+                if not has_text("model_ids"):
+                    dimensions.append("model")
+                if not (
+                    has_text("prompt_versions")
+                    or has_text("prompt_sha256s")
+                    or any(value is True for value in model.get("prompt_free_flags", []))
+                ):
+                    dimensions.append("prompt identity")
+                if not dimensions:
+                    return None
         else:
-            malformed = None
+            attribution = model["attribution"]
+            if not isinstance(attribution, dict):
+                malformed = "provenance.model.attribution must be an object"
+            elif attribution.get("status") != "unattributed":
+                malformed = "provenance.model.attribution.status must be unattributed"
+            else:
+                malformed = None
+                missing = attribution.get("missing_dimensions")
+                dimensions = [str(item) for item in missing] if isinstance(missing, list) else []
 
     if malformed is not None:
         return ScoreExitDecision(
@@ -220,8 +253,6 @@ def classify_report_attribution(report: object) -> ScoreExitDecision | None:
             message=f"{malformed}; not publishing the written report",
         )
 
-    missing = attribution.get("missing_dimensions")
-    dimensions = [str(item) for item in missing] if isinstance(missing, list) else []
     missing_text = ", ".join(dimensions) if dimensions else "not specified"
     return ScoreExitDecision(
         publish=False,

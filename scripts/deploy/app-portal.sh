@@ -432,6 +432,108 @@ assert_rm_safe() {
   esac
 }
 
+# Parse root-absolute assets from browser-loaded src and href attributes.
+frontend_asset_references() {
+  awk '
+    function emit_asset(value, query, fragment, cut_at) {
+      if (substr(value, 1, 8) != "/assets/") return
+      query = index(value, "?")
+      fragment = index(value, "#")
+      cut_at = 0
+      if (query > 0) cut_at = query
+      if (fragment > 0 && (cut_at == 0 || fragment < cut_at)) cut_at = fragment
+      if (cut_at > 0) value = substr(value, 1, cut_at - 1)
+      print value
+    }
+
+    function parse_tag(tag,    i, n, c, start, name, value, quote) {
+      i = 2
+      n = length(tag)
+      if (substr(tag, i, 1) !~ /[A-Za-z]/) return
+      while (i <= n && substr(tag, i, 1) ~ /[A-Za-z0-9:-]/) i++
+      while (i <= n) {
+        c = substr(tag, i, 1)
+        if (c ~ /[[:space:]>]/ || c == "/") {
+          i++
+          continue
+        }
+        start = i
+        while (i <= n && substr(tag, i, 1) !~ /[[:space:]=>]/ && substr(tag, i, 1) != "/") i++
+        if (i == start) {
+          i++
+          continue
+        }
+        name = tolower(substr(tag, start, i - start))
+        while (i <= n && substr(tag, i, 1) ~ /[[:space:]]/) i++
+        value = ""
+        if (substr(tag, i, 1) == "=") {
+          i++
+          while (i <= n && substr(tag, i, 1) ~ /[[:space:]]/) i++
+          c = substr(tag, i, 1)
+          if (c == "\047" || c == "\042") {
+            quote = c
+            i++
+            start = i
+            while (i <= n && substr(tag, i, 1) != quote) i++
+            value = substr(tag, start, i - start)
+            if (i <= n) i++
+          } else {
+            start = i
+            while (i <= n && substr(tag, i, 1) !~ /[[:space:]>]/) i++
+            value = substr(tag, start, i - start)
+          }
+        }
+        if (name == "src" || name == "href") emit_asset(value)
+      }
+    }
+
+    {
+      document = document $0 "\n"
+    }
+
+    END {
+      i = 1
+      n = length(document)
+      while (i <= n) {
+        if (substr(document, i, 4) == "<!--") {
+          comment_end = index(substr(document, i + 4), "-->")
+          if (comment_end == 0) break
+          i += comment_end + 6
+          continue
+        }
+        if (substr(document, i, 1) != "<") {
+          i++
+          continue
+        }
+        next_char = substr(document, i + 1, 1)
+        if (next_char !~ /[A-Za-z]/) {
+          i++
+          continue
+        }
+        quote = ""
+        end = i + 1
+        while (end <= n) {
+          c = substr(document, end, 1)
+          if (quote != "") {
+            if (c == quote) quote = ""
+          } else if (c == "\047" || c == "\042") {
+            quote = c
+          } else if (c == ">") {
+            break
+          }
+          end++
+        }
+        if (end <= n) {
+          parse_tag(substr(document, i, end - i + 1))
+          i = end + 1
+        } else {
+          break
+        }
+      }
+    }
+  ' "$1"
+}
+
 validate_frontend() {
   if [ -z "${FRONTEND_DIST}" ]; then
     refuse "FRONTEND_DIST is required for --apply"
@@ -449,16 +551,26 @@ validate_frontend() {
   if [ ! -d "${FRONTEND_DIST}/assets" ]; then
     refuse "FRONTEND_DIST is missing assets/: ${FRONTEND_DIST}"
   fi
-  _asset_found=0
-  for _asset in "${FRONTEND_DIST}/assets"/*; do
-    if [ -f "$_asset" ]; then
-      _asset_found=1
-      break
-    fi
-  done
-  if [ "$_asset_found" -ne 1 ]; then
-    refuse "FRONTEND_DIST assets/ has no files: ${FRONTEND_DIST}/assets"
+  _asset_refs="$(frontend_asset_references "${FRONTEND_DIST}/index.html")" || \
+    refuse "could not read FRONTEND_DIST index.html: ${FRONTEND_DIST}/index.html"
+  if [ -z "$_asset_refs" ]; then
+    refuse "FRONTEND_DIST index.html has no /assets/ src or href references"
   fi
+  while IFS= read -r _asset_ref; do
+    [ -n "$_asset_ref" ] || continue
+    case "$_asset_ref" in
+      *"/../"*|*"/./"*|*/..|*/.)
+        refuse "FRONTEND_DIST index.html has an unsafe asset reference: ${_asset_ref}"
+        ;;
+    esac
+    _asset="${FRONTEND_DIST}${_asset_ref}"
+    if [ ! -f "$_asset" ]; then
+      refuse "FRONTEND_DIST index.html references missing asset: ${_asset_ref}"
+    fi
+    if [ ! -s "$_asset" ]; then
+      refuse "FRONTEND_DIST index.html references empty asset: ${_asset_ref}"
+    fi
+  done <<< "$_asset_refs"
 }
 
 sync_path() {

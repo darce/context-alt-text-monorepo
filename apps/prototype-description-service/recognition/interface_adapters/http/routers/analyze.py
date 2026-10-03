@@ -667,7 +667,7 @@ async def _schedule_analysis(
         session_factory = async_sessionmaker(bind=session.bind, expire_on_commit=False)
 
     try:
-        if not existing_job:
+        if not existing_job or isinstance(scan_queue, ScanQueueService):
             correlation_id = get_correlation_id()
             background_tasks.add_task(
                 _dispatch_persisted_analysis if isinstance(scan_queue, ScanQueueService) else chain_populate_and_process,
@@ -1013,39 +1013,59 @@ async def stream_job_progress(
 @router.post("/jobs/{job_id}/cancel", response_model=JobStatusResponse)
 async def cancel_job(
     job_id: str,
-    tenant_id: str = Query(default=None),
+    tenant_id: str | None = Query(default=None, alias="tenant_id"),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     auth=Depends(require_write_access),
     job_service=Depends(get_job_service_dependency),
     session=Depends(get_optional_session),
     scan_queue=Depends(get_scan_queue_service_optional),
 ) -> JobStatusResponse:
     """Cancel a long-running job."""
-    if auth and auth.tenant_claim and auth.tenant_claim != tenant_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+    caller_tenant = _poll_tenant_authority(auth, x_tenant_id=x_tenant_id)
+    if tenant_id is not None and caller_tenant is not None:
+        requested_tenant = _canonical_tenant_id(tenant_id)
+        if requested_tenant != caller_tenant:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
     # Prefer canceling persisted scan jobs when a DB session is available.
     if session is not None and scan_queue is not None:
-        if tenant_id and is_postgres(session):
-            tenant_uuid = uuid.UUID(str(tenant_id))
-            await require_tenant_record(session, tenant_uuid)
+        if caller_tenant is not None and is_postgres(session):
+            await require_tenant_record(session, uuid.UUID(caller_tenant))
         job_uuid = uuid.UUID(str(job_id))
-        await scan_queue.cancel_scan_job(job_id=job_uuid)
-        await session.flush()
         from recognition.infrastructure.repositories.job_repository import SqlAlchemyJobRepository
 
         repo = SqlAlchemyJobRepository(session)
-        domain_job = await repo.get(job_id)
-        if domain_job:
-            from recognition.application.services.usage_settlement_service import settle_usage_job
-            from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
+        domain_job = await repo.get(str(job_uuid))
+        if domain_job is None or not _job_is_visible(job=domain_job, caller_tenant=caller_tenant):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
-            await settle_usage_job(
-                session,
-                tenant_id=uuid.UUID(str(domain_job.tenant_id)),
-                job_id=str(job_uuid),
-            )
-            scan_repo = SqlAlchemyScanQueueRepository(session)
-            return await _job_to_response(domain_job, scan_repo=scan_repo)
+        await scan_queue.cancel_scan_job(job_id=job_uuid)
+        await session.flush()
+        domain_job = await repo.get(str(job_uuid))
+        if domain_job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+        if not _job_is_visible(job=domain_job, caller_tenant=caller_tenant):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+        from recognition.application.services.usage_settlement_service import settle_usage_job
+        from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
+
+        await settle_usage_job(
+            session,
+            tenant_id=uuid.UUID(str(domain_job.tenant_id)),
+            job_id=str(job_uuid),
+        )
+        scan_repo = SqlAlchemyScanQueueRepository(session)
+        return await _job_to_response(domain_job, scan_repo=scan_repo)
+
+    job = await job_service.get_job_status(job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if isinstance(job, JobStatusResponse):
+        if caller_tenant is not None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    elif not _job_is_visible(job=job, caller_tenant=caller_tenant):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
     job = await job_service.cancel_job(job_id)
     return await _job_to_response(job)

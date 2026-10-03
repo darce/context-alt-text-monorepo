@@ -5,11 +5,12 @@ Copies the run-record to a temp name whose stem matches the published report
 stem (so the CLI writes ``<stem>-report.json`` / ``.md``), scores it against
 the named manifest, and copies the outputs to the destination paths.
 
-The score CLI's exit code is the publication contract (rg-015): this script
-does not invent a reason. Exit 0 publishes a clean score. Exit 1 is a
-partial corpus and is never published. Exit 3 is a refused metric: publish
-only with ``--allow-refused`` (default off) and still exit 3. Any other
-nonzero exit is unrecognized and is not swallowed.
+The score CLI's exit code selects the score outcome (rg-015): exit 0 is a
+clean score, exit 1 is a partial corpus and is never published, and exit 3
+is a refused metric (publish only with ``--allow-refused`` and still exit 3).
+Before publishing, this script also reads the report JSON and holds any
+report whose producer attribution is marked ``unattributed``. Any other
+nonzero CLI exit is unrecognized and is not swallowed.
 
 The inner interpreter is ``$ACX_EVAL_PYTHON`` when that variable is set
 (must be an executable file; a bad override is an error, not a fall-back).
@@ -21,7 +22,8 @@ This script's own exit codes (FIR-12-BR-70: distinct from the inner CLI's
 publication contract above — a code here never inherits meaning from a
 subprocess return value that carried no publication outcome):
 
-    0    Clean score, published. The CLI exited 0 and wrote a report.
+    0    Clean attributed score, published. The CLI exited 0 and wrote a
+         report whose producer attribution is not marked unattributed.
     1    Partial-corpus score gate. The CLI exited 1 *and wrote a report*;
          held, not published. This is a genuine corpus-quality outcome.
     2    Resolution/environment/usage failure, never a corpus outcome:
@@ -30,11 +32,14 @@ subprocess return value that carried no publication outcome):
          ``EvalPythonError``), or the CLI
          produced *no report at all* regardless of its own exit code
          (crashed before writing one, or exited 0 without writing one).
+         A report whose JSON cannot be read is also held with this code.
          The inner subprocess return code is never passed through here —
          no report means no publication meaning to inherit, so a broken
          real interpreter (e.g. missing a dependency, inner exit 1) is
          never confusable with case 1's genuine partial corpus.
     3    Refused metrics (CLI exited 3); held unless ``--allow-refused``.
+    4    Producer attribution is marked ``unattributed``; never published,
+         regardless of the CLI exit code or ``--allow-refused``.
     *    Any other CLI exit *with a report on disk* is unrecognized and
          held, not swallowed.
 
@@ -66,6 +71,7 @@ EVAL_PYTHON_ENV = "ACX_EVAL_PYTHON"
 # reused (not a passthrough) for every failure that carries no publication
 # meaning. See the module docstring's exit-code table.
 EXIT_RESOLUTION_OR_ENV_FAILURE = 2
+EXIT_UNATTRIBUTED_PRODUCER = 4
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
@@ -181,6 +187,37 @@ def classify_score_exit(returncode: int, *, allow_refused: bool) -> ScoreExitDec
         message=(
             f"CLI exited {returncode} (unrecognized); "
             "not publishing the written report"
+        ),
+    )
+
+
+def classify_report_attribution(report: object) -> ScoreExitDecision | None:
+    """Hold a scored report when its producer attribution is incomplete."""
+    if not isinstance(report, dict):
+        return None
+    provenance = report.get("provenance")
+    if not isinstance(provenance, dict):
+        return None
+    model = provenance.get("model")
+    if not isinstance(model, dict):
+        return None
+    attribution = model.get("attribution")
+    if (
+        not isinstance(attribution, dict)
+        or attribution.get("status") != "unattributed"
+    ):
+        return None
+
+    missing = attribution.get("missing_dimensions")
+    dimensions = [str(item) for item in missing] if isinstance(missing, list) else []
+    missing_text = ", ".join(dimensions) if dimensions else "not specified"
+    return ScoreExitDecision(
+        publish=False,
+        exit_code=EXIT_UNATTRIBUTED_PRODUCER,
+        reason="unattributed-producer",
+        message=(
+            "score report producer is unattributed; missing dimensions: "
+            f"{missing_text}; not publishing the written report"
         ),
     )
 
@@ -448,6 +485,22 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return EXIT_RESOLUTION_OR_ENV_FAILURE
+        try:
+            scored_report = json.loads(tmp_json.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            print(
+                f"cannot read score report JSON {tmp_json}: {exc}; "
+                "not publishing the written report",
+                file=sys.stderr,
+            )
+            return EXIT_RESOLUTION_OR_ENV_FAILURE
+        attribution_decision = classify_report_attribution(scored_report)
+        if attribution_decision is not None:
+            print(
+                f"{attribution_decision.reason}: {attribution_decision.message}",
+                file=sys.stderr,
+            )
+            return attribution_decision.exit_code
         decision = classify_score_exit(
             proc.returncode, allow_refused=args.allow_refused
         )

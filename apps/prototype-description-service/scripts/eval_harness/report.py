@@ -1529,6 +1529,25 @@ def _model_provenance(
             f"missing {missing_keys} from item descriptions and run provenance; refusing aggregate score",
             invariant="model_provenance_refuses_empty_stamps",
         )
+    # Attribution needs producer identity, not merely any recorded setting such
+    # as a seed. A prompt version or digest identifies the prompt used.
+    def _has_text_identity(output_key: str) -> bool:
+        return any(isinstance(value, str) and value.strip() for value in out[output_key])
+
+    missing_identity = []
+    if not _has_text_identity("adapters"):
+        missing_identity.append("adapter")
+    if not _has_text_identity("model_ids"):
+        missing_identity.append("model")
+    if not (_has_text_identity("prompt_versions") or _has_text_identity("prompt_sha256s")):
+        missing_identity.append("prompt identity")
+    if successful_items and missing_identity:
+        raise ReportError(
+            "run record has incomplete model provenance; "
+            f"missing {', '.join(missing_identity)} from item descriptions and run provenance; "
+            "refusing aggregate score",
+            invariant="model_provenance_refuses_incomplete_identity",
+        )
     return out
 
 

@@ -51,12 +51,26 @@ def _write_executable(path: Path, body: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def _write_frontend(root: Path, *, index: str = "<!doctype html><html><body>app</body></html>") -> Path:
+def _frontend_index(label: str) -> str:
+    return (
+        f'<link rel="stylesheet" href="/assets/index.css">'
+        f'<script type="module" src="/assets/index.js"></script><!-- {label} -->'
+    )
+
+
+def _write_frontend(
+    root: Path,
+    *,
+    index: str | None = None,
+) -> Path:
     dist = root / "frontend-dist"
     assets = dist / "assets"
     assets.mkdir(parents=True, exist_ok=True)
+    if index is None:
+        index = _frontend_index("app")
     (dist / "index.html").write_text(index, encoding="utf-8")
     (assets / "index.js").write_text("console.log('app-portal');\n", encoding="utf-8")
+    (assets / "index.css").write_text("body { color: black; }\n", encoding="utf-8")
     return dist
 
 
@@ -362,22 +376,25 @@ def _assert_caddy_recreated(tmp_path: Path, count: int) -> None:
 
 def test_second_apply_and_rollback_refresh_container_mount(tmp_path: Path) -> None:
     live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
-    frontend = _write_frontend(tmp_path, index="first frontend")
+    first_index = _frontend_index("first frontend")
+    frontend = _write_frontend(tmp_path, index=first_index)
     first = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=frontend, model_mount=True)
     assert first.returncode == 0, first.stdout + first.stderr
-    (frontend / "index.html").write_text("second frontend")
+    second_index = _frontend_index("second frontend")
+    (frontend / "index.html").write_text(second_index)
     second = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=frontend, model_mount=True)
     assert second.returncode == 0, second.stdout + second.stderr
-    (frontend / "index.html").write_text("failed frontend")
+    failed_index = _frontend_index("failed frontend")
+    (frontend / "index.html").write_text(failed_index)
     failed = _run(
         tmp_path, args=["--apply"], live_caddy=live, frontend=frontend,
         model_mount=True, docker_fail_first_reload=True,
     )
     assert failed.returncode != 0
     assert _mounted_indexes(tmp_path) == [
-        "first frontend", "second frontend", "failed frontend", "second frontend",
+        first_index, second_index, failed_index, second_index,
     ]
-    assert (live.parent / "app" / "www" / "index.html").read_text() == "second frontend"
+    assert (live.parent / "app" / "www" / "index.html").read_text() == second_index
     assert not (live.parent / "app" / "activation.journal").exists()
     _assert_caddy_recreated(tmp_path, 4)
 
@@ -427,10 +444,12 @@ def test_recovery_precedes_replacement_frontend_validation(tmp_path: Path, inval
 @pytest.mark.parametrize("phase", ["prepared", "caddy_promoted", "www_promoted", "overlay_promoted"])
 def test_recovery_refreshes_container_mount_after_restore(tmp_path: Path, phase: str) -> None:
     live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
-    frontend = _write_frontend(tmp_path, index="original frontend")
+    original_index = _frontend_index("original frontend")
+    frontend = _write_frontend(tmp_path, index=original_index)
     first = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=frontend, model_mount=True)
     assert first.returncode == 0, first.stdout + first.stderr
-    (frontend / "index.html").write_text("replacement frontend")
+    replacement_index = _frontend_index("replacement frontend")
+    (frontend / "index.html").write_text(replacement_index)
     hook = tmp_path / "interrupt.sh"
     _write_executable(
         hook,
@@ -455,7 +474,7 @@ def test_recovery_refreshes_container_mount_after_restore(tmp_path: Path, phase:
     assert _log(tmp_path).count(" wget ") - prior_probes == 6
     # Recovery must recreate after copying the snapshot, before the next apply.
     assert _mounted_indexes(tmp_path) == [
-        "original frontend", "original frontend", "replacement frontend",
+        original_index, original_index, replacement_index,
     ]
     _assert_caddy_recreated(tmp_path, 3)
 
@@ -570,6 +589,65 @@ def test_apply_refuses_missing_assets(tmp_path: Path) -> None:
     assert result.returncode != 0, output
     assert "assets" in output.lower()
     assert live.read_text(encoding="utf-8") == before
+
+
+@pytest.mark.parametrize(
+    ("index", "assets", "expected_error"),
+    [
+        (
+            '<script type="module" src="/assets/app.js"></script>\n',
+            {"old.css": "old stylesheet\n"},
+            "app.js",
+        ),
+        (
+            '<script type="module" src="/assets/ready.js"></script>'
+            '<link rel="stylesheet" href="/assets/app.css">',
+            {"ready.js": "app bundle\n", "old.css": "old stylesheet\n"},
+            "app.css",
+        ),
+        (
+            '<link rel="stylesheet" href="/assets/empty.css">',
+            {"empty.css": ""},
+            "empty asset",
+        ),
+        ("<!doctype html><html></html>\n", {"old.css": "old stylesheet\n"}, "no /assets/"),
+    ],
+)
+def test_apply_refuses_invalid_referenced_assets_without_touching_live_tree(
+    tmp_path: Path, index: str, assets: dict[str, str], expected_error: str
+) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    app_root = tmp_path / "opt" / "acx-backend" / "app"
+    www = app_root / "www"
+    (www / "assets").mkdir(parents=True)
+    (www / "index.html").write_text("existing portal\n", encoding="utf-8")
+    (www / "assets" / "keep.js").write_text("existing asset\n", encoding="utf-8")
+    overlay = app_root / "docker-compose.app.yml"
+    overlay.write_text("existing overlay\n", encoding="utf-8")
+    before_caddy = live.read_bytes()
+    before_index = (www / "index.html").read_bytes()
+    before_asset = (www / "assets" / "keep.js").read_bytes()
+    before_overlay = overlay.read_bytes()
+
+    dist = tmp_path / "partial-dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text(index, encoding="utf-8")
+    for name, contents in assets.items():
+        (dist / "assets" / name).write_text(contents, encoding="utf-8")
+
+    result = _run(tmp_path, args=["--apply"], frontend=dist, live_caddy=live)
+    output = result.stdout + result.stderr
+
+    assert result.returncode != 0, output
+    assert expected_error in output
+    assert "applied:" not in result.stdout
+    assert live.read_bytes() == before_caddy
+    assert (www / "index.html").read_bytes() == before_index
+    assert (www / "assets" / "keep.js").read_bytes() == before_asset
+    assert overlay.read_bytes() == before_overlay
+    assert not (app_root / "staging").exists()
+    assert not (app_root / "activation.journal").exists()
 
 
 def test_apply_refuses_path_traversal(tmp_path: Path) -> None:

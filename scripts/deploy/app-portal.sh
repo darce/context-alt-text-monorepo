@@ -434,23 +434,37 @@ assert_rm_safe() {
 
 # Parse root-absolute assets from browser-loaded src and href attributes.
 frontend_asset_references() {
-  awk '
-    function emit_asset(value, query, fragment, cut_at) {
-      if (substr(value, 1, 8) != "/assets/") return
+  awk -v mode="${2:-assets}" '
+    function strip_url_suffix(value, query, fragment, cut_at) {
       query = index(value, "?")
       fragment = index(value, "#")
       cut_at = 0
       if (query > 0) cut_at = query
       if (fragment > 0 && (cut_at == 0 || fragment < cut_at)) cut_at = fragment
       if (cut_at > 0) value = substr(value, 1, cut_at - 1)
+      return value
+    }
+
+    function emit_asset(value, query, fragment, cut_at) {
+      if (substr(value, 1, 8) != "/assets/") return
+      print strip_url_suffix(value)
+    }
+
+    function emit_module_asset(value) {
+      if (substr(value, 1, 8) != "/assets/") return
+      value = strip_url_suffix(value)
+      if (tolower(substr(value, length(value) - 2)) != ".js") return
       print value
     }
 
-    function parse_tag(tag,    i, n, c, start, name, value, quote) {
+    function parse_tag(tag,    i, n, c, start, name, value, quote, tag_name, script_type, script_src) {
       i = 2
       n = length(tag)
       if (substr(tag, i, 1) !~ /[A-Za-z]/) return
       while (i <= n && substr(tag, i, 1) ~ /[A-Za-z0-9:-]/) i++
+      tag_name = tolower(substr(tag, 2, i - 2))
+      script_type = ""
+      script_src = ""
       while (i <= n) {
         c = substr(tag, i, 1)
         if (c ~ /[[:space:]>]/ || c == "/") {
@@ -483,7 +497,12 @@ frontend_asset_references() {
             value = substr(tag, start, i - start)
           }
         }
-        if (name == "src" || name == "href") emit_asset(value)
+        if (name == "type") script_type = value
+        if (name == "src") script_src = value
+        if (mode == "assets" && (name == "src" || name == "href")) emit_asset(value)
+      }
+      if (mode == "modules" && tag_name == "script" && tolower(script_type) == "module") {
+        emit_module_asset(script_src)
       }
     }
 
@@ -535,40 +554,69 @@ frontend_asset_references() {
 }
 
 validate_frontend() {
-  if [ -z "${FRONTEND_DIST}" ]; then
-    refuse "FRONTEND_DIST is required for --apply"
+  local _frontend_dir="${1:-${FRONTEND_DIST}}"
+  local _symlink_paths _asset_refs _module_refs _asset_ref _asset
+
+  if [ -z "$_frontend_dir" ]; then
+    echo "ERROR: FRONTEND_DIST is required for --apply" >&2
+    return 1
   fi
-  guard_source_path FRONTEND_DIST "$FRONTEND_DIST" dir
-  if [ ! -d "$FRONTEND_DIST" ]; then
-    refuse "FRONTEND_DIST is not a directory: ${FRONTEND_DIST}"
+  if [ -L "$_frontend_dir" ] || [ ! -d "$_frontend_dir" ]; then
+    echo "ERROR: FRONTEND_DIST is not a directory: ${_frontend_dir}" >&2
+    return 1
   fi
-  if [ ! -f "${FRONTEND_DIST}/index.html" ]; then
-    refuse "FRONTEND_DIST is missing index.html: ${FRONTEND_DIST}"
+  if ! _symlink_paths="$(find "$_frontend_dir" -type l -print)"; then
+    echo "ERROR: could not inspect FRONTEND_DIST for symlinks: ${_frontend_dir}" >&2
+    return 1
   fi
-  if [ ! -s "${FRONTEND_DIST}/index.html" ]; then
-    refuse "FRONTEND_DIST index.html is empty: ${FRONTEND_DIST}/index.html"
+  if [ -n "$_symlink_paths" ]; then
+    echo "ERROR: FRONTEND_DIST contains a symlink in the staged tree" >&2
+    return 1
   fi
-  if [ ! -d "${FRONTEND_DIST}/assets" ]; then
-    refuse "FRONTEND_DIST is missing assets/: ${FRONTEND_DIST}"
+  if [ ! -f "${_frontend_dir}/index.html" ]; then
+    echo "ERROR: FRONTEND_DIST is missing index.html: ${_frontend_dir}" >&2
+    return 1
   fi
-  _asset_refs="$(frontend_asset_references "${FRONTEND_DIST}/index.html")" || \
-    refuse "could not read FRONTEND_DIST index.html: ${FRONTEND_DIST}/index.html"
+  if [ ! -s "${_frontend_dir}/index.html" ]; then
+    echo "ERROR: FRONTEND_DIST index.html is empty: ${_frontend_dir}/index.html" >&2
+    return 1
+  fi
+  if [ ! -d "${_frontend_dir}/assets" ]; then
+    echo "ERROR: FRONTEND_DIST is missing assets/: ${_frontend_dir}" >&2
+    return 1
+  fi
+  if ! _asset_refs="$(frontend_asset_references "${_frontend_dir}/index.html" assets)"; then
+    echo "ERROR: could not read FRONTEND_DIST index.html: ${_frontend_dir}/index.html" >&2
+    return 1
+  fi
   if [ -z "$_asset_refs" ]; then
-    refuse "FRONTEND_DIST index.html has no /assets/ src or href references"
+    echo "ERROR: FRONTEND_DIST index.html has no /assets/ src or href references" >&2
+    return 1
+  fi
+  if ! _module_refs="$(frontend_asset_references "${_frontend_dir}/index.html" modules)"; then
+    echo "ERROR: could not read FRONTEND_DIST index.html: ${_frontend_dir}/index.html" >&2
+    return 1
+  fi
+  if [ -z "$_module_refs" ]; then
+    echo "ERROR: FRONTEND_DIST index.html has no /assets/*.js module script entry" >&2
+    return 1
   fi
   while IFS= read -r _asset_ref; do
     [ -n "$_asset_ref" ] || continue
     case "$_asset_ref" in
       *"/../"*|*"/./"*|*/..|*/.)
-        refuse "FRONTEND_DIST index.html has an unsafe asset reference: ${_asset_ref}"
+        echo "ERROR: FRONTEND_DIST index.html has an unsafe asset reference: ${_asset_ref}" >&2
+        return 1
         ;;
     esac
-    _asset="${FRONTEND_DIST}${_asset_ref}"
+    _asset="${_frontend_dir}${_asset_ref}"
     if [ ! -f "$_asset" ]; then
-      refuse "FRONTEND_DIST index.html references missing asset: ${_asset_ref}"
+      echo "ERROR: FRONTEND_DIST index.html references missing asset: ${_asset_ref}" >&2
+      return 1
     fi
     if [ ! -s "$_asset" ]; then
-      refuse "FRONTEND_DIST index.html references empty asset: ${_asset_ref}"
+      echo "ERROR: FRONTEND_DIST index.html references empty asset: ${_asset_ref}" >&2
+      return 1
     fi
   done <<< "$_asset_refs"
 }
@@ -1025,7 +1073,10 @@ fi
 
 # Recovery must not depend on the replacement build being available or valid.
 if [ "$APPLY" -eq 1 ]; then
-  validate_frontend
+  if [ -z "${FRONTEND_DIST}" ]; then
+    refuse "FRONTEND_DIST is required for --apply"
+  fi
+  guard_source_path FRONTEND_DIST "$FRONTEND_DIST" dir
 elif [ -n "${FRONTEND_DIST}" ]; then
   guard_source_path FRONTEND_DIST "$FRONTEND_DIST" dir
 fi
@@ -1081,7 +1132,17 @@ render_overlay > "$STAGED_OVERLAY"
 
 rm -rf "$STAGED_WWW"
 mkdir -p "$STAGED_WWW"
+guard_source_path FRONTEND_DIST "$FRONTEND_DIST" dir
 cp -a "${FRONTEND_DIST}/." "$STAGED_WWW/"
+
+# Validate the private copy that will be promoted; external writers may change
+# FRONTEND_DIST during deploy, but cannot change this staged snapshot.
+if ! validate_frontend "$STAGED_WWW"; then
+  if ! rm -rf -- "$STAGING_DIR"; then
+    echo "ERROR: staged frontend validation failed and staging cleanup failed: ${STAGING_DIR}" >&2
+  fi
+  exit 2
+fi
 
 if ! validate_staged_caddy "$STAGED_CADDY"; then
   echo "ERROR: staged Caddy validation failed; live config left intact: ${CADDYFILE}" >&2

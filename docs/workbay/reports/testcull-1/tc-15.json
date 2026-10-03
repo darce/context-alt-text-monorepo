@@ -89,7 +89,8 @@
       "tests_total": 160,
       "tests_affected": [
         "test_face_score_check_determinism_cross_process",
-        "test_buffalo_non_promotion_no_512d_under_docs_tasks"
+        "test_buffalo_non_promotion_no_512d_under_docs_tasks",
+        "test_identity_names_has_exactly_one_definition"
       ],
       "reason": "Move the three-process determinism check and recursive docs JSON sweep to later determinism and docs-lint stages (TEST-24); separately, rewrite the RH-07 object-identity regression against scoring or CLI behavior while preserving its protection.",
       "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_report.py:1983 - starts a Python subprocess for each of three hash seeds; line 2007 recursively reads docs/tasks JSON; line 3686 asserts CLI/report helper object identity.",
@@ -97,7 +98,9 @@
       "duplicate_of": "",
       "canon": [
         "TEST-24",
-        "TEST-16"
+        "TEST-16",
+        "TEST-03",
+        "PROV-01"
       ],
       "replacement": "Keep cross-process determinism in a later verification stage and move the docs/tasks embedding scan to a docs lint target; rewrite test_identity_names_has_exactly_one_definition to check observable score/CLI behavior instead of object identity.",
       "est_seconds_saved": 1,

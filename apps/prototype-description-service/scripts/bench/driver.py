@@ -161,7 +161,8 @@ def _validate_resume_inputs(
 
 def _has_leg_state(root: Path) -> bool:
     legs_root = root / "legs"
-    return legs_root.is_dir() and any(path.is_file() for path in legs_root.rglob("*"))
+    # Treat any prior legs entry as state, including a stack directory symlink.
+    return legs_root.is_dir() and any(legs_root.iterdir())
 
 
 def _load_manifest_bytes(manifest_bytes: bytes) -> GoldenManifest:

@@ -20,6 +20,7 @@ from scripts.eval_harness import remote_client as remote_client_module
 from scripts.eval_harness.remote_client import JobPollTimeoutError, RemoteSceneClient
 from scripts.bench.tests.conftest import (
     FakeClient,
+    png_bytes,
     write_hashed_manifest,
     write_pair,
 )
@@ -192,13 +193,18 @@ def test_resume_rejects_changed_behavior_setting(
     assert repr(value) in str(exc.value)
 
 
-def test_missing_run_record_refuses_existing_leg_state(tmp_path: Path) -> None:
+@pytest.mark.parametrize("symlink_stack_dirs", [False, True], ids=["regular", "symlinked"])
+def test_missing_run_record_refuses_existing_leg_state(
+    tmp_path: Path, symlink_stack_dirs: bool
+) -> None:
     images = tmp_path / "images"
     manifest_a = write_hashed_manifest(tmp_path / "manifest-a.json", images, [1])
     manifest_b = tmp_path / "manifest-b.json"
     manifest_b_doc = json.loads(manifest_a.read_text(encoding="utf-8"))
+    changed_content = png_bytes(101, 100)
     manifest_b_doc["entries"][0]["path"] = "img_1_b.jpg"
-    (images / "img_1_b.jpg").write_bytes((images / "img_1.jpg").read_bytes())
+    manifest_b_doc["entries"][0]["sha256"] = hashlib.sha256(changed_content).hexdigest()
+    (images / "img_1_b.jpg").write_bytes(changed_content)
     manifest_b.write_text(json.dumps(manifest_b_doc, indent=2), encoding="utf-8")
     pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
     out = tmp_path / "out-missing-run-record"
@@ -225,6 +231,14 @@ def test_missing_run_record_refuses_existing_leg_state(tmp_path: Path) -> None:
         ).read_bytes()
         for endpoint in pair.stacks
     }
+    if symlink_stack_dirs:
+        completed_legs = tmp_path / "completed-run" / "legs"
+        completed_legs.mkdir(parents=True)
+        for endpoint in pair.stacks:
+            stack_leg = out / "legs" / endpoint.stack_id
+            completed_leg = completed_legs / endpoint.stack_id
+            stack_leg.rename(completed_leg)
+            stack_leg.symlink_to(completed_leg, target_is_directory=True)
     (out / "run.json").unlink()
 
     with pytest.raises(BenchError) as exc:

@@ -279,7 +279,19 @@ async def test_acquire_lock_query_canceled_raises_503_retry_after(api_client, te
     assert resp.headers.get("Retry-After") == "5"
     assert repository.jobs == {}
     assert breaker.snapshot().failure_count == 1
-    assert any("SET LOCAL statement_timeout = '10s'" in stmt for stmt in session.executed_statements)
+    narrow_index = next(
+        index
+        for index, stmt in enumerate(session.executed_statements)
+        if "SET LOCAL statement_timeout" in stmt and stmt.endswith("ms'")
+    )
+    lock_index = next(
+        index for index, stmt in enumerate(session.executed_statements) if "FOR UPDATE" in stmt.upper()
+    )
+    assert narrow_index < lock_index
+    assert any(
+        "SET LOCAL statement_timeout = '10s'" in stmt
+        for stmt in session.executed_statements[lock_index + 1 :]
+    )
 
 
 @pytest.mark.asyncio
@@ -294,7 +306,19 @@ async def test_acquire_lock_non_canceled_dbapi_error_is_reraised(api_client, ten
     assert exc_info.value is generic_error
     assert breaker.snapshot().failure_count == 0
     assert repository.jobs == {}
-    assert any("SET LOCAL statement_timeout = '10s'" in stmt for stmt in session.executed_statements)
+    narrow_index = next(
+        index
+        for index, stmt in enumerate(session.executed_statements)
+        if "SET LOCAL statement_timeout" in stmt and stmt.endswith("ms'")
+    )
+    lock_index = next(
+        index for index, stmt in enumerate(session.executed_statements) if "FOR UPDATE" in stmt.upper()
+    )
+    assert narrow_index < lock_index
+    assert any(
+        "SET LOCAL statement_timeout = '10s'" in stmt
+        for stmt in session.executed_statements[lock_index + 1 :]
+    )
 
 
 # ---------------------------------------------------------------------------

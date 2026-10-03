@@ -44,6 +44,14 @@ def _adopt_stdio_encoding_guard(monkeypatch):
         yield
 
 
+_PRODUCER_IDENTITY = {
+    "adapter": "fixture-adapter",
+    "model_id": "fixture-model",
+    "model_version": "fixture-version",
+    "prompt_version": "fixture-prompt-v1",
+}
+
+
 _TEST_LINEAGE_NAMED = {
     "labeler_id": "test-labeler",
     "batch_id": "test-batch",
@@ -881,6 +889,7 @@ def _w1_audience_manifest_and_record(tmp_path, *, inject_wrong_name: bool = Fals
                 "media_id": media_id,
                 "path": path,
                 "describe": {
+                    **_PRODUCER_IDENTITY,
                     "alt_text_draft": f"{name} in the foreground {scene}.",
                     "visual_facts": {"objects": []},
                 },
@@ -923,6 +932,7 @@ def _w1_audience_manifest_and_record(tmp_path, *, inject_wrong_name: bool = Fals
             "media_id": 20,
             "path": _W1_LOCAL_PATH,
             "describe": {
+                **_PRODUCER_IDENTITY,
                 "alt_text_draft": f"{_W1_LOCAL_NAME} in the foreground at a party.",
                 "visual_facts": {"objects": []},
             },
@@ -1182,6 +1192,7 @@ def _wrong_name_everywhere_manifest_and_record(tmp_path):
                         "media_id": 1,
                         "path": "mock_images/alice.jpg",
                         "describe": {
+                            **_PRODUCER_IDENTITY,
                             # Caption keeps must_right; only face identities are wrong.
                             "alt_text_draft": "Alice Example outdoors.",
                             "visual_facts": {"objects": []},
@@ -1201,6 +1212,7 @@ def _wrong_name_everywhere_manifest_and_record(tmp_path):
                         "media_id": 2,
                         "path": "mock_images/bob.jpg",
                         "describe": {
+                            **_PRODUCER_IDENTITY,
                             "alt_text_draft": "Bob Builder on a beach.",
                             "visual_facts": {"objects": []},
                         },
@@ -1311,6 +1323,7 @@ def _clean_score_manifest_and_record(
                 "media_id": idx,
                 "path": path,
                 "describe": {
+                    **_PRODUCER_IDENTITY,
                     "alt_text_draft": f"{name} in the foreground {scene}.",
                     "visual_facts": {"objects": []},
                 },
@@ -1494,6 +1507,7 @@ def test_cli_score_determinism_guard_detects_mutated_persisted_anchor(tmp_path, 
         payload = json.loads(record_path.read_text())
         item = payload["items"][0]
         item["describe"] = {
+            **_PRODUCER_IDENTITY,
             "alt_text_draft": "MUTATED CAPTION FOR DETERMINISM GUARD",
             "visual_facts": {"objects": ["definitely-not-in-baseline"]},
         }
@@ -1593,6 +1607,7 @@ def test_cli_score_determinism_seed_failed_not_anchor_mismatch(tmp_path, monkeyp
         payload = json.loads(record_path.read_text())
         item = payload["items"][0]
         item["describe"] = {
+            **_PRODUCER_IDENTITY,
             "alt_text_draft": "MUTATED CAPTION FOR DETERMINISM GUARD",
             "visual_facts": {"objects": ["definitely-not-in-baseline"]},
         }
@@ -1791,6 +1806,7 @@ def test_cli_score_determinism_guard_survives_sentinel_in_freeform_text(tmp_path
                         "media_id": 1,
                         "path": "mock_images/alice.jpg",
                         "describe": {
+                            **_PRODUCER_IDENTITY,
                             "alt_text_draft": caption,
                             "named_draft": caption,
                             "generic_draft": caption,
@@ -2192,6 +2208,7 @@ def test_cli_score_determinism_public_label_fails_on_mismatch(tmp_path, monkeypa
         for item in payload["items"]:
             if item["media_id"] == 10:
                 item["describe"] = {
+                    **_PRODUCER_IDENTITY,
                     "alt_text_draft": "PUBLIC-ONLY MUTATION FOR DETERMINISM",
                     "visual_facts": {"objects": ["public-divergence"]},
                 }
@@ -2345,6 +2362,7 @@ def test_cli_score_determinism_fail_artifact_carries_baseline_regime(tmp_path, m
         payload = json.loads(record_path.read_text())
         item = payload["items"][0]
         item["describe"] = {
+            **_PRODUCER_IDENTITY,
             "alt_text_draft": "MUTATED CAPTION FOR REGIME ARTIFACT",
             "visual_facts": {"objects": ["regime-probe"]},
         }
@@ -2407,6 +2425,7 @@ def test_f8_determinism_artifact_content_ignores_shared_out_decoy(tmp_path, monk
             payload = json.loads(record_path.read_text())
             item = payload["items"][0]
             item["describe"] = {
+                **_PRODUCER_IDENTITY,
                 "alt_text_draft": "MUTATED CAPTION FOR F8 DECOY CONTROL",
                 "visual_facts": {"objects": ["f8-decoy-probe"]},
             }
@@ -2554,6 +2573,7 @@ def _score_run_record(
                 "media_id": entry["media_id"],
                 "path": entry["path"],
                 "describe": {
+                    **_PRODUCER_IDENTITY,
                     "alt_text_draft": caption_fn(entry),
                     "visual_facts": {"objects": []},
                 },
@@ -2967,6 +2987,7 @@ def _real_golden_good_record() -> tuple[Path, dict]:
                 "media_id": entry["media_id"],
                 "path": entry["path"],
                 "describe": {
+                    **_PRODUCER_IDENTITY,
                     "alt_text_draft": cap,
                     "named_draft": cap,
                     "generic_draft": cap,
@@ -3128,6 +3149,7 @@ def _real_golden_wrong_name_record() -> tuple[Path, dict, list[list[str]]]:
                 "media_id": entry["media_id"],
                 "path": entry["path"],
                 "describe": {
+                    **_PRODUCER_IDENTITY,
                     "alt_text_draft": cap,
                     "named_draft": cap,
                     "generic_draft": cap,
@@ -3286,6 +3308,7 @@ def test_score_recognition_disabled_corpus_fails_wrong_name_floor_vacuity(tmp_pa
                 "media_id": entry["media_id"],
                 "path": entry["path"],
                 "describe": {
+                    **_PRODUCER_IDENTITY,
                     "alt_text_draft": cap,
                     "named_draft": cap,
                     "generic_draft": cap,
@@ -3557,6 +3580,7 @@ def test_score_persisted_verdict_fail_must_right_real_golden(tmp_path, monkeypat
     garbage = "xxxxx yyyyy zzzzz qqqqq"
     for item in record["items"]:
         item["describe"] = {
+            **_PRODUCER_IDENTITY,
             "alt_text_draft": garbage,
             "named_draft": garbage,
             "generic_draft": garbage,
@@ -3666,6 +3690,7 @@ def test_score_persisted_verdict_skip_still_not_ready_on_real_golden(tmp_path, m
     # Seeded-shape captions miss must_right but skip bypasses that gate only.
     for item in record["items"]:
         item["describe"] = {
+            **_PRODUCER_IDENTITY,
             "alt_text_draft": "A human standing outdoors near greenery.",
             "named_draft": "A human standing outdoors near greenery.",
             "generic_draft": "A human standing outdoors near greenery.",
@@ -3804,6 +3829,7 @@ def test_score_rounding_cannot_hide_one_wrong_name_scaled(tmp_path, monkeypatch)
                 "media_id": i + 1,
                 "path": path,
                 "describe": {
+                    **_PRODUCER_IDENTITY,
                     "alt_text_draft": f"{name} outdoors smiling.",
                     "named_draft": f"{name} outdoors smiling.",
                     "generic_draft": f"{name} outdoors smiling.",
@@ -4654,6 +4680,11 @@ def _adoption_compare_report(**overrides):
         "kind": "report",
         "eval_mode": "standard",
         "provenance": {
+            "model": {
+                "adapters": ["fixture-adapter"],
+                "model_ids": ["fixture-model"],
+                "prompt_versions": ["fixture-prompt-v1"],
+            },
             "score_manifest_sha256": "aa" * 32,
             "manifest_sha256": "aa" * 32,
             "manifest_matches_fetch": True,

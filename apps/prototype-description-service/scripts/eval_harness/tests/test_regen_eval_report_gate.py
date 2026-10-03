@@ -115,28 +115,27 @@ def _overshoot_record() -> dict:
     }
 
 
-def _failed_item_record() -> dict:
-    return {
-        "schema": "acx-eval/v1",
-        "kind": "run_record",
-        "provenance": {
-            "manifest_sha256": "0" * 64,
-            "base_url": "x",
-            "head_sha": "f" * 40,
-            "started_at": "t",
-        },
-        "items": [
-            {
-                "media_id": 1,
-                "path": "mock_images/alice.jpg",
-                "describe": None,
-                "identities": [],
-                "face_count": 0,
-                "error": "FileNotFoundError: missing",
-                "latency_s": None,
-            }
-        ],
+def _stamp_model_identity(record: dict) -> dict:
+    """Make the real-CLI fixture eligible for publication by the consumer."""
+    stamps = {
+        "adapter": "fixture-adapter",
+        "model_id": "fixture-model",
+        "prompt_version": "fixture-prompt",
     }
+    for item in record["items"]:
+        item["describe"].update(stamps)
+    return record
+
+
+def _failed_item_record() -> dict:
+    # A successful stamped item supplies real producer identity while the
+    # failed item still exercises the partial-corpus gate (TEST-30).
+    record = _stamp_model_identity(_unboxed_overshoot_record(n=2))
+    record["items"][0].update(
+        describe=None, identities=[], face_count=0,
+        error="FileNotFoundError: missing", latency_s=None,
+    )
+    return record
 
 
 def _write_json(path: Path, payload: dict) -> Path:
@@ -236,7 +235,9 @@ def test_real_cli_refused_does_not_publish_and_exits_3(tmp_path: Path) -> None:
     reached on its own merits, not via a blanket per-refusal skip.
     """
     run_record, manifest, out_json, out_md = _real_inputs(
-        tmp_path, _unboxed_overshoot_record(), manifest_doc=_unboxed_roster_only_manifest()
+        tmp_path,
+        _stamp_model_identity(_unboxed_overshoot_record()),
+        manifest_doc=_unboxed_roster_only_manifest(),
     )
     sentinel = '{"sentinel":"unpublished-refused"}'
     out_json.write_text(sentinel, encoding="utf-8")
@@ -272,7 +273,9 @@ def test_real_cli_refused_allow_refused_publishes_and_still_exits_3(
     VLM6-GATE-INT-01: same non-vacuous 5-entry fixture as that sibling.
     """
     run_record, manifest, out_json, out_md = _real_inputs(
-        tmp_path, _unboxed_overshoot_record(), manifest_doc=_unboxed_roster_only_manifest()
+        tmp_path,
+        _stamp_model_identity(_unboxed_overshoot_record()),
+        manifest_doc=_unboxed_roster_only_manifest(),
     )
     proc = _run_regen(
         [
@@ -306,7 +309,7 @@ def test_real_cli_refused_allow_refused_publishes_and_still_exits_3(
 def test_real_cli_partial_does_not_publish_and_exits_1(tmp_path: Path) -> None:
     """failed>0 is the partial-corpus gate; it is not a refused-metrics exit."""
     run_record, manifest, out_json, out_md = _real_inputs(
-        tmp_path, _failed_item_record()
+        tmp_path, _failed_item_record(), manifest_doc=_unboxed_roster_only_manifest(n=2)
     )
     sentinel = '{"sentinel":"unpublished-partial"}'
     out_json.write_text(sentinel, encoding="utf-8")
@@ -335,7 +338,7 @@ def test_real_cli_partial_does_not_publish_and_exits_1(tmp_path: Path) -> None:
 def test_real_cli_partial_not_overridden_by_allow_refused(tmp_path: Path) -> None:
     """--allow-refused is publisher consent for exit 3 only, not for exit 1."""
     run_record, manifest, out_json, out_md = _real_inputs(
-        tmp_path, _failed_item_record()
+        tmp_path, _failed_item_record(), manifest_doc=_unboxed_roster_only_manifest(n=2)
     )
     proc = _run_regen(
         [
@@ -485,7 +488,8 @@ def _install_stub_python(repo: Path) -> Path:
         "args = sys.argv\n"
         "if '--run-record' in args:\n"
         "    record = Path(args[args.index('--run-record') + 1])\n"
-        "    (record.parent / f'{record.stem}-report.json').write_text('{}\\n')\n"
+        f"    report_json = os.environ.get('STUB_REPORT_JSON', {_STUB_PUBLISHED_JSON!r})\n"
+        "    (record.parent / f'{record.stem}-report.json').write_text(report_json)\n"
         "    (record.parent / f'{record.stem}-report.md').write_text('# stub\\n')\n"
         "raise SystemExit(int(os.environ.get('STUB_SCORE_EXIT', '0')))\n",
         encoding="utf-8",
@@ -515,7 +519,11 @@ def _install_env_override_stub(tmp_path: Path, *, exit_code: int) -> Path:
     return stub
 
 
-_STUB_PUBLISHED_JSON = "{}\n"
+_STUB_PUBLISHED_JSON = json.dumps(
+    {"provenance": {"model": {
+        "adapters": ["fixture"], "model_ids": ["fixture"], "prompt_versions": ["fixture"]
+    }}}
+) + "\n"
 _STUB_PUBLISHED_MD = "# stub\n"
 
 
@@ -587,6 +595,242 @@ def test_stub_clean_score_publishes_and_exits_0(tmp_path: Path) -> None:
     combined = proc.stdout + proc.stderr
     assert proc.returncode == 0, combined
     _assert_stub_published(out_json, out_md)
+
+
+@pytest.mark.parametrize(
+    ("score_exit", "allow_refused"),
+    [("0", False), ("3", True)],
+)
+def test_unattributed_stub_report_is_not_published(
+    tmp_path: Path, score_exit: str, allow_refused: bool
+) -> None:
+    repo = _scratch_repo(tmp_path)
+    _install_stub_python(repo)
+    run_record, manifest, out_json, out_md = _stub_paths(repo)
+    unattributed = json.dumps(
+        {
+            "provenance": {
+                "model": {
+                    "attribution": {
+                        "status": "unattributed",
+                        "missing_dimensions": ["adapter", "model", "prompt"],
+                    }
+                }
+            }
+        }
+    )
+    args = [
+        "--run-record",
+        str(run_record),
+        "--manifest",
+        str(manifest),
+        "--out-json",
+        str(out_json),
+        "--out-md",
+        str(out_md),
+    ]
+    if allow_refused:
+        args.append("--allow-refused")
+    proc = _run_regen(
+        args,
+        cwd=repo,
+        env={"STUB_SCORE_EXIT": score_exit, "STUB_REPORT_JSON": unattributed},
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, combined
+    assert "unattributed-producer" in combined
+    assert "adapter" in combined and "model" in combined and "prompt" in combined
+    _assert_not_published(out_json, out_md, None)
+
+
+def test_malformed_stub_report_is_not_published(tmp_path: Path) -> None:
+    repo = _scratch_repo(tmp_path)
+    _install_stub_python(repo)
+    run_record, manifest, out_json, out_md = _stub_paths(repo)
+    proc = _run_regen(
+        [
+            "--run-record",
+            str(run_record),
+            "--manifest",
+            str(manifest),
+            "--out-json",
+            str(out_json),
+            "--out-md",
+            str(out_md),
+        ],
+        cwd=repo,
+        env={"STUB_SCORE_EXIT": "0", "STUB_REPORT_JSON": "not json"},
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, combined
+    assert "cannot read score report JSON" in combined
+    _assert_not_published(out_json, out_md, None)
+
+
+@pytest.mark.parametrize(
+    "report",
+    [
+        [],
+        "x",
+        {},
+        {"faces": {}},
+        {"provenance": "invalid"},
+        {"provenance": {}},
+        {"provenance": {"model": "invalid"}},
+        {"provenance": {"model": {"attribution": "invalid"}}},
+        {"provenance": {"model": {"attribution": None}}},
+        {"provenance": {"model": {"attribution": {}}}},
+        {"provenance": {"model": {"attribution": {"status": "attributed"}}}},
+    ],
+)
+def test_malformed_report_envelope_is_not_published(tmp_path: Path, report: object) -> None:
+    """SEC-10/RLSE-02: a clean CLI exit cannot authorize a malformed envelope."""
+    repo = _scratch_repo(tmp_path)
+    _install_stub_python(repo)
+    run_record, manifest, out_json, out_md = _stub_paths(repo)
+    proc = _run_regen(
+        [
+            "--run-record", str(run_record),
+            "--manifest", str(manifest),
+            "--out-json", str(out_json),
+            "--out-md", str(out_md),
+        ],
+        cwd=repo,
+        env={"STUB_SCORE_EXIT": "0", "STUB_REPORT_JSON": json.dumps(report)},
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 2, combined
+    assert "malformed-report" in combined
+    _assert_not_published(out_json, out_md, None)
+
+
+@pytest.mark.parametrize(
+    ("model", "exit_code", "dimensions"),
+    [
+        ({}, 4, ["adapter", "model", "prompt identity"]),
+        ({"model_ids": ["model"], "prompt_versions": ["prompt"]}, 4, ["adapter"]),
+        ({"adapters": ["adapter"], "prompt_versions": ["prompt"]}, 4, ["model"]),
+        ({"adapters": ["adapter"], "model_ids": ["model"]}, 4, ["prompt identity"]),
+        ({"adapters": "adapter", "model_ids": ["model"], "prompt_versions": ["prompt"]}, 2, []),
+    ],
+)
+def test_absent_attribution_requires_identity_before_publication(
+    tmp_path: Path, model: dict, exit_code: int, dimensions: list[str]
+) -> None:
+    """SEC-10/RLSE-02: absence of a warning is not proof of identity."""
+    repo = _scratch_repo(tmp_path)
+    _install_stub_python(repo)
+    run_record, manifest, out_json, out_md = _stub_paths(repo)
+    proc = _run_regen(
+        [
+            "--run-record", str(run_record),
+            "--manifest", str(manifest),
+            "--out-json", str(out_json),
+            "--out-md", str(out_md),
+        ],
+        cwd=repo,
+        env={"STUB_SCORE_EXIT": "0", "STUB_REPORT_JSON": json.dumps({"provenance": {"model": model}})},
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == exit_code, combined
+    if dimensions:
+        assert "unattributed-producer" in combined
+        assert f"missing dimensions: {', '.join(dimensions)};" in combined
+    else:
+        assert "malformed-report" in combined
+        assert "adapters must be a list" in combined
+    _assert_not_published(out_json, out_md, None)
+
+
+@pytest.mark.parametrize(
+    ("describe", "run_provenance"),
+    [
+        ({"adapter": "a", "model_id": "m", "prompt_version": "p"}, {}),
+        ({"model_id": "m", "prompt_version": "p"}, {}),
+        ({"adapter": "a", "model_id": "m"}, {"prompt_free": True}),
+        ({"adapter": "a", "model_id": "m", "prompt_sha256": "a" * 64}, {}),
+    ],
+    ids=["fully-stamped", "no-adapter", "prompt-free", "prompt-digest"],
+)
+def test_derived_attribution_matches_producer(describe: dict, run_provenance: dict) -> None:
+    """rg-005: keep the consumer's local identity rule aligned with the producer."""
+    from scripts.eval_harness.report import _model_provenance
+
+    model = _model_provenance([{"path": "image.jpg", "describe": describe}], run_provenance)
+    attribution = model.pop("attribution", None)
+    decision = _load_regen().classify_report_attribution({"provenance": {"model": model}})
+    if attribution is None:
+        assert decision is None
+    else:
+        assert decision is not None
+        assert not decision.publish
+        assert decision.exit_code == 4
+        assert decision.reason == "unattributed-producer"
+        assert attribution["status"] == "unattributed"
+        dimensions = decision.message.split("missing dimensions: ")[1].split(";")[0].split(", ")
+        assert dimensions == attribution["missing_dimensions"]
+
+
+@pytest.mark.parametrize(
+    "key", ["adapters", "model_ids", "prompt_versions", "prompt_sha256s", "prompt_free_flags"]
+)
+@pytest.mark.parametrize("value", [None, "stamp", {}])
+def test_identity_fields_must_be_lists(key: str, value: object) -> None:
+    model = {"adapters": ["a"], "model_ids": ["m"], "prompt_versions": ["p"], key: value}
+    decision = _load_regen().classify_report_attribution({"provenance": {"model": model}})
+    assert decision is not None
+    assert not decision.publish
+    assert decision.exit_code == 2
+    assert decision.reason == "malformed-report"
+    assert f"{key} must be a list" in decision.message
+
+
+def test_blank_identity_and_truthy_prompt_free_do_not_attribute() -> None:
+    model = {
+        "adapters": [None, " "], "model_ids": [0, ""],
+        "prompt_versions": ["\t"], "prompt_sha256s": [False],
+        "prompt_free_flags": [1, "true"],
+    }
+    decision = _load_regen().classify_report_attribution({"provenance": {"model": model}})
+    assert decision is not None
+    assert decision.exit_code == 4
+    assert decision.reason == "unattributed-producer"
+    assert "missing dimensions: adapter, model, prompt identity;" in decision.message
+
+
+def test_attributed_stub_report_still_publishes_on_clean_exit(tmp_path: Path) -> None:
+    repo = _scratch_repo(tmp_path)
+    _install_stub_python(repo)
+    run_record, manifest, out_json, out_md = _stub_paths(repo)
+    attributed = json.dumps(
+        {
+            "provenance": {
+                "model": {
+                    "adapters": ["adapter-v1"],
+                    "model_ids": ["model-v1"],
+                    "prompt_versions": ["prompt-v1"],
+                }
+            }
+        }
+    )
+    proc = _run_regen(
+        [
+            "--run-record",
+            str(run_record),
+            "--manifest",
+            str(manifest),
+            "--out-json",
+            str(out_json),
+            "--out-md",
+            str(out_md),
+        ],
+        cwd=repo,
+        env={"STUB_SCORE_EXIT": "0", "STUB_REPORT_JSON": attributed},
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 0, combined
+    assert json.loads(out_json.read_text(encoding="utf-8")) == json.loads(attributed)
+    assert out_md.read_text(encoding="utf-8") == _STUB_PUBLISHED_MD
 
 
 def test_allow_refused_is_not_forwarded_to_score_cli(tmp_path: Path) -> None:
@@ -727,7 +971,7 @@ def test_env_failures_are_distinguishable_from_genuine_partial_corpus(
     silent_code = _returncode({"ACX_EVAL_PYTHON": str(silent)})
 
     real_run_record, real_manifest, real_out_json, real_out_md = _real_inputs(
-        tmp_path, _failed_item_record()
+        tmp_path, _failed_item_record(), manifest_doc=_unboxed_roster_only_manifest(n=2)
     )
     partial_code = _run_regen(
         [
@@ -853,9 +1097,8 @@ def _unboxed_roster_only_manifest(n: int = 5) -> dict:
     ``placement.claims > 0``; every entry carries a ``reference_facts``
     FALSE-polarity trap the caption never states, giving ``fabricated_fact``
     a real (untripped) rate instead of ``None``. Only used by the
-    "both metrics refused" tests below — the boxed ``_roster_only_manifest``
-    stays a single entry for the tests that target the partial-corpus /
-    failed-item paths instead.
+    "both metrics refused" tests below and, with two entries, by the
+    partial-corpus tests so one successful item supplies producer identity.
     """
     import copy
 
@@ -920,7 +1163,7 @@ def test_real_cli_allow_refused_prints_identification_audit_trail(
     # VLM6-GATE-INT-01: unboxed manifest is now 5 entries with real
     # spatial_facts/reference_facts (see _unboxed_roster_only_manifest), so
     # the paired record must be the matching multi-item one.
-    record = _unboxed_overshoot_record()
+    record = _stamp_model_identity(_unboxed_overshoot_record())
     record["provenance"] = {
         **record["provenance"],
         "manifest_sha256": _real_manifest_sha(manifest),

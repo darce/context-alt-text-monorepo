@@ -33,6 +33,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, status
 from python_multipart.exceptions import FormParserError
 from python_multipart.multipart import parse_options_header
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from starlette.datastructures import FormData, UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
@@ -63,11 +64,12 @@ from recognition.interface_adapters.http.middleware.correlation import (
     get_correlation_id,
 )
 from recognition.interface_adapters.http.routers.analyze import (
+    _dispatch_persisted_analysis,
     bound_job_uuid,
     build_analyze_request_fingerprint,
     fingerprint_options_from_envelope,
+    get_shared_insightface_adapter,
     is_usage_replay,
-    queued_analyze_job_response,
     resolve_analyze_operation_id,
 )
 from recognition.interface_adapters.http.schemas.requests import MediaItem
@@ -473,8 +475,6 @@ async def _analyze_media_multipart_form(
         queue_bytes=queue_bytes,
     ) as ticket:
         bound_job_id = bound_job_uuid(ticket, pre_generated_job_id)
-        if is_usage_replay(ticket, pre_generated_job_id):
-            return queued_analyze_job_response(bound_job_id, len(usage_media_ids))
         return await _persist_and_dispatch_multipart(
             form_data=form_data,
             background_tasks=background_tasks,
@@ -486,6 +486,7 @@ async def _analyze_media_multipart_form(
             canonical_tenant_id=canonical_tenant_id,
             pre_generated_job_id=bound_job_id,
             inline_processing=inline_processing,
+            existing_job=is_usage_replay(ticket, pre_generated_job_id),
         )
 
 
@@ -501,6 +502,7 @@ async def _persist_and_dispatch_multipart(
     canonical_tenant_id: str,
     pre_generated_job_id: uuid.UUID,
     inline_processing: bool,
+    existing_job: bool = False,
 ) -> JobStatusResponse:
     """Persist uploads and enqueue work inside an already-admitted usage scope."""
     object_store = object_store_factory(canonical_tenant_id)
@@ -531,20 +533,23 @@ async def _persist_and_dispatch_multipart(
     # Any failure between here and the scheduled background task must roll
     # them back, otherwise the worker can never discover the orphans (no DB
     # row exists for cleanup-by-job_id to find later).
-    persistence_committed = False
-    try:
-        persisted_job_id = await scan_queue.create_scan_job_record(
-            tenant_id=tenant_uuid,
-            total=len(media_items_list),
-            job_id=pre_generated_job_id,
-            created_by_user_id=getattr(auth, "user_id", None),
-        )
-        if session is not None:
-            await session.commit()
-        persistence_committed = True
-    finally:
-        if not persistence_committed:
-            object_store.cleanup(job_id=str(pre_generated_job_id))
+    if existing_job:
+        persisted_job_id = pre_generated_job_id
+    else:
+        persistence_committed = False
+        try:
+            persisted_job_id = await scan_queue.create_scan_job_record(
+                tenant_id=tenant_uuid,
+                total=len(media_items_list),
+                job_id=pre_generated_job_id,
+                created_by_user_id=getattr(auth, "user_id", None),
+            )
+            if session is not None:
+                await session.commit()
+            persistence_committed = True
+        finally:
+            if not persistence_committed:
+                object_store.cleanup(job_id=str(pre_generated_job_id))
 
     # BR-05: schedule the populate + process pipeline so the scan worker has
     # queue items to claim. Mirror the JSON /analyze flow's dispatch shape.
@@ -562,25 +567,57 @@ async def _persist_and_dispatch_multipart(
     # attribute access leaks here. Slice B (OCI) swaps the factory via
     # app.dependency_overrides[get_object_store_factory_for_request] without
     # touching this route.
+    dispatch_task = chain_populate_and_process
+    dispatch_kwargs = {
+        "tenant_id": str(tenant_uuid),
+        "job_id": str(persisted_job_id),
+        "media_items": media_items_tuples,
+        "media_ids": media_ids,
+        "media_sources": media_sources,
+        "scan_queue": scan_queue if not isinstance(scan_queue, ScanQueueService) else None,
+        "session_factory": session_factory,
+        "inline_processing": inline_processing,
+        "correlation_id": get_correlation_id(),
+        "object_store_factory": object_store_factory,
+    }
+    if isinstance(scan_queue, ScanQueueService):
+        dispatch_task = _dispatch_multipart_persisted_analysis
+        dispatch_kwargs = {
+            "tenant_id": str(tenant_uuid),
+            "job_id": str(persisted_job_id),
+            "media_items": media_items_tuples,
+            "media_ids": media_ids,
+            "media_sources": media_sources,
+            "session_factory": session_factory,
+            "inline_processing": inline_processing,
+            "correlation_id": dispatch_kwargs["correlation_id"],
+            "object_store_factory": object_store_factory,
+            "canonical_tenant_id": canonical_tenant_id,
+        }
+
     try:
         background_tasks.add_task(
-            chain_populate_and_process,
-            tenant_id=str(tenant_uuid),
-            job_id=str(persisted_job_id),
-            media_items=media_items_tuples,
-            media_ids=media_ids,
-            media_sources=media_sources,
-            scan_queue=scan_queue if not isinstance(scan_queue, ScanQueueService) else None,
-            session_factory=session_factory,
-            inline_processing=inline_processing,
-            correlation_id=get_correlation_id(),
-            object_store_factory=object_store_factory,
+            dispatch_task,
+            **dispatch_kwargs,
         )
-    except Exception:
+    except Exception as exc:
         logger.exception(
             "Multipart scan dispatch failed after job commit",
             extra={"job_id": str(persisted_job_id), "tenant_id": canonical_tenant_id},
         )
+        try:
+            await scan_queue.cancel_scan_job(job_id=persisted_job_id)
+            if session is not None:
+                await session.commit()
+        except Exception:
+            logger.exception(
+                "Failed to mark multipart scan job failed after dispatch registration error",
+                extra={"job_id": str(persisted_job_id), "tenant_id": canonical_tenant_id},
+            )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scan dispatch unavailable",
+        ) from exc
 
     # E15-11 S3.1: structured single-line telemetry for the multipart route so
     # transport failures can be triaged without parsing FastAPI access logs.
@@ -620,3 +657,67 @@ async def _persist_and_dispatch_multipart(
         finished_at=None,
         message=f"Queueing 0/{len(media_items_list)} items",
     )
+
+
+async def _dispatch_multipart_persisted_analysis(
+    *,
+    tenant_id: str,
+    job_id: str,
+    media_items: list[tuple[int, str]],
+    media_ids: list[str],
+    media_sources: list[str],
+    session_factory,
+    inline_processing: bool,
+    correlation_id: str | None,
+    object_store_factory: ObjectStoreFactory,
+    canonical_tenant_id: str,
+) -> None:
+    """Dispatch an admitted multipart job idempotently and clean inline blobs."""
+    try:
+        await _dispatch_persisted_analysis(
+            tenant_id=tenant_id,
+            job_id=job_id,
+            media_items=media_items,
+            media_ids=media_ids,
+            media_sources=media_sources,
+            session_factory=session_factory,
+            inline_processing=inline_processing,
+            adapter_provider=get_shared_insightface_adapter if inline_processing else None,
+            correlation_id=correlation_id,
+        )
+    finally:
+        if inline_processing:
+            try:
+                if await _multipart_job_is_terminal(
+                    tenant_id=tenant_id,
+                    job_id=job_id,
+                    session_factory=session_factory,
+                ):
+                    object_store_factory(canonical_tenant_id).cleanup(job_id=job_id)
+            except Exception:
+                logger.exception(
+                    "Failed to clean multipart blobs after inline processing",
+                    extra={"job_id": job_id, "tenant_id": canonical_tenant_id},
+                )
+
+
+async def _multipart_job_is_terminal(*, tenant_id: str, job_id: str, session_factory) -> bool:
+    """Keep multipart blobs while an idempotent dispatcher observes a live job."""
+    from db.models import IdentityScanJob
+    from db.tenant_context import set_tenant_context
+
+    if session_factory is None:
+        from db.session import async_session_factory
+
+        session_factory = async_session_factory
+
+    async with session_factory() as session:
+        tenant_uuid = uuid.UUID(tenant_id)
+        await set_tenant_context(session, tenant_uuid)
+        job_status = await session.scalar(
+            select(IdentityScanJob.status).where(
+                IdentityScanJob.id == uuid.UUID(job_id),
+                IdentityScanJob.tenant_id == tenant_uuid,
+            )
+        )
+    return job_status is not None and job_status not in (JobStatus.PENDING, JobStatus.RUNNING)

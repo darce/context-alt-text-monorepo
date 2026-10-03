@@ -1238,6 +1238,8 @@ class BillingReconciliationWorker:
             for _ in range(RECONCILIATION_MAX_PAGES_PER_RUN):
                 page = await self._enumerate_page(cursor)
                 report.pages += 1
+                if not page.exhausted and (page.next_cursor is None or page.next_cursor == cursor):
+                    raise ReconciliationError("orphan enumeration cursor did not advance")
                 page_ids: list[str] = []
                 for observation in page.observations:
                     quarantined = await self._fence_quarantine(lease, observation)

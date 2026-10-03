@@ -433,6 +433,7 @@ async def _run_staged_item(entry: GoldenEntry, image_bytes: bytes, roster: Seque
             "adapter": response.adapter.value if hasattr(response.adapter, "value") else str(response.adapter),
             "model_id": response.model_id,
             "model_version": response.model_version,
+            "prompt_version": response.prompt_or_task_version,
             "cached": bool(response.cached),
             "attachment_provenance": {"facts": facts},
         },
@@ -487,6 +488,7 @@ async def _run_adhoc_item(entry: GoldenEntry, image_bytes: bytes, roster: Sequen
             "adapter": response.adapter.value if hasattr(response.adapter, "value") else str(response.adapter),
             "model_id": response.model_id,
             "model_version": response.model_version,
+            "prompt_version": response.prompt_or_task_version,
             "cached": bool(response.cached),
             "attachment_provenance": {
                 "facts": _adhoc_claims(entry, roster, response.visual_facts.caption),

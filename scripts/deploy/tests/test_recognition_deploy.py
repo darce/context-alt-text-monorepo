@@ -9,6 +9,7 @@ import shlex
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import threading
@@ -301,6 +302,90 @@ def _function_body(name: str) -> str:
             return source[start : start + consumed]
         consumed += len(line)
     return source[start:]
+
+
+def _render_unit(backend: str) -> str:
+    command = f'''
+source "{SCRIPT}"
+ssh() {{ printf '%s\\n' "{backend}"; }}
+render_unit dev
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=True)
+    return result.stdout
+
+
+def _run_unit_install(
+    tmp_path: Path, backend: str, hook_present: bool
+) -> tuple[subprocess.CompletedProcess[str], str, Path]:
+    remote_commands = tmp_path / "ssh.log"
+    installed_unit = tmp_path / "installed.service"
+    command = f'''
+source "{SCRIPT}"
+REMOTE_COMMANDS="{remote_commands}"
+INSTALLED_UNIT="{installed_unit}"
+BACKEND="{backend}"
+HOOK_PRESENT={1 if hook_present else 0}
+ssh() {{
+  last="${{@: -1}}"
+  printf '%s\\n' "$last" >>"$REMOTE_COMMANDS"
+  if [[ "$last" == *"RECOGNITION_SECRET_BACKEND="* ]]; then
+    printf '%s\\n' "$BACKEND"
+  elif [[ "$last" == test\\ -x\\ * ]]; then
+    [[ "$HOOK_PRESENT" == 1 ]]
+  elif [[ "$last" == *"cat > '/tmp/acx-dev.service'"* ]]; then
+    printf 'unit-install\\n' >>"$REMOTE_COMMANDS"
+    cat >"$INSTALLED_UNIT"
+  else
+    return 91
+  fi
+}}
+install_rendered_unit dev
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+    logged = remote_commands.read_text(encoding="utf-8") if remote_commands.exists() else ""
+    return result, logged, installed_unit
+
+
+def _sticky_shell(tmp_path: Path, command: str) -> str:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    sudo = bin_dir / "sudo"
+    sudo.write_text('#!/bin/sh\nexec "$@"\n', encoding="utf-8")
+    sudo.chmod(0o755)
+    return f'''
+source "{SCRIPT}"
+export PATH="{bin_dir}:$PATH"
+env_to_remote_dir() {{ printf '%s\\n' "{tmp_path}"; }}
+run_with_deadline() {{ shift 2; "$@"; }}
+ssh() {{ bash -c "${{@: -1}}"; }}
+preflight_ssh() {{ :; }}
+ACX_DEPLOY_BACKUP_ROOT="{tmp_path}/deploy-backups"
+ACX_PRIOR_IMAGE_REPO_ENV=dev
+{command}
+'''
+
+
+def _sticky_run(tmp_path: Path, command: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", "-c", _sticky_shell(tmp_path, command)],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+
+def _sticky_claim(tmp_path: Path) -> str:
+    result = _sticky_run(tmp_path, f'image_repo_resource claim "{tmp_path}" "" ""')
+    assert result.returncode == 0, result.stdout + result.stderr
+    return result.stdout.strip()
+
+
+def _sticky_ship(tmp_path: Path, owner: str) -> subprocess.CompletedProcess[str]:
+    return _sticky_run(
+        tmp_path,
+        f'ACX_IMAGE_REPO_OWNER_ID={owner}; ACX_IMAGE_REPO=example.test/shared; ship_remote_image_repo_env "{tmp_path}"',
+    )
 
 
 def _boot_smoke_payload() -> str:
@@ -621,6 +706,75 @@ exit "$rc"
         "topology",
         "iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm",
     ]
+
+
+def test_render_unit_enables_vault_bootstrap_only_for_oci_vault() -> None:
+    vault = _render_unit("oci_vault")
+    assert "\nExecStartPre=/opt/acx-backend/dev/fetch-vault-bootstrap.sh\n" in vault
+    assert "\n# ExecStartPre=/opt/acx-backend/dev/fetch-vault-bootstrap.sh\n" not in vault
+
+    env_backend = _render_unit("env")
+    assert "\n# ExecStartPre=/opt/acx-backend/dev/fetch-vault-bootstrap.sh\n" in env_backend
+
+
+def test_vault_unit_install_refuses_missing_bootstrap_hook(tmp_path: Path) -> None:
+    result, logged, _ = _run_unit_install(tmp_path, "oci_vault", hook_present=False)
+
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "/opt/acx-backend/dev/fetch-vault-bootstrap.sh" in combined, combined
+    assert "infra/oci/vault-instance-principal-runbook.md" in combined, combined
+    assert "unit-install" not in logged, logged
+
+
+def test_vault_unit_install_enables_bootstrap_hook_when_present(tmp_path: Path) -> None:
+    result, logged, installed_unit = _run_unit_install(tmp_path, "oci_vault", hook_present=True)
+
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "unit-install" in logged, logged
+    unit = installed_unit.read_text(encoding="utf-8")
+    assert "\nExecStartPre=/opt/acx-backend/dev/fetch-vault-bootstrap.sh\n" in unit
+
+
+def test_env_unit_install_does_not_probe_vault_hook(tmp_path: Path) -> None:
+    result, logged, installed_unit = _run_unit_install(tmp_path, "env", hook_present=False)
+
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "test -x" not in logged, logged
+    assert "unit-install" in logged, logged
+    unit = installed_unit.read_text(encoding="utf-8")
+    assert "\n# ExecStartPre=/opt/acx-backend/dev/fetch-vault-bootstrap.sh\n" in unit
+
+
+def test_sticky_env_ship_clamps_mode_to_0600(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("SECRET=preserved\n")
+    env_file.chmod(0o644)
+    owner = _sticky_claim(tmp_path)
+    env_file.chmod(0o644)
+    assert stat.S_IMODE(env_file.stat().st_mode) == 0o644
+
+    result = _sticky_ship(tmp_path, owner)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
+
+
+def test_sticky_env_restore_clamps_mode_to_0600(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("SECRET=preserved\nACX_IMAGE_REPO=example.test/prior\n")
+    env_file.chmod(0o644)
+    owner = _sticky_claim(tmp_path)
+    shipped = _sticky_ship(tmp_path, owner)
+    assert shipped.returncode == 0, shipped.stdout + shipped.stderr
+    env_file.chmod(0o644)
+
+    result = _sticky_run(tmp_path, f"ACX_IMAGE_REPO_OWNER_ID={owner}; restore_prior_image_repo_env")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
 
 
 def test_authentication_diagnostics_are_sanitized_and_visibly_prefixed() -> None:

@@ -1,0 +1,171 @@
+{
+  "lane": "tc-04",
+  "base": "e56ab004eb3080fd1dac7c602d78835e11fac792",
+  "files": [
+    {
+      "path": "apps/prototype-description-service/recognition/tests/api/test_dw2_clustersto_1.py",
+      "verdict": "MERGE",
+      "tests_total": 1,
+      "tests_affected": [],
+      "reason": "The live cross-tenant replay-order regression belongs with the cluster API topology tests rather than in a wave-named file.",
+      "evidence": "apps/prototype-description-service/recognition/tests/api/test_dw2_clustersto_1.py:133 - parameterized handler calls assert a foreign tenant gets 403 before any replay lookup.",
+      "subject": "Cluster topology tenant authorization and idempotency replay ordering",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "Merge into apps/prototype-description-service/recognition/tests/api/test_api_clusters.py with the other topology endpoint authorization cases.",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/api/test_dw2_makefile_1.py",
+      "verdict": "MERGE",
+      "tests_total": 3,
+      "tests_affected": [],
+      "reason": "All three live checks cover existing script, Makefile, or route-manifest behavior and belong in those subjects' test modules.",
+      "evidence": "apps/prototype-description-service/recognition/tests/api/test_dw2_makefile_1.py:29 - exercises active-lane discovery; :65 pins the Makefile Python default; :71 shells out to the route-manifest target and checks stale-file rejection.",
+      "subject": "Worktree reaping, repository Makefile configuration, and route-manifest target",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "Merge into scripts/test_worktree_reap.py, scripts/tests/test_makefile_startup_cost.py, and apps/prototype-description-service/recognition/tests/api/test_route_manifest_fresh.py by subject.",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/api/test_dw2_router_1.py",
+      "verdict": "MERGE",
+      "tests_total": 1,
+      "tests_affected": [],
+      "reason": "The live production-app route-registration check belongs with the cluster router composition tests rather than in a wave-named file.",
+      "evidence": "apps/prototype-description-service/recognition/tests/api/test_dw2_router_1.py:20 - asserts both deferred cluster routes appear in the production FastAPI app.",
+      "subject": "Cluster router composition and production route registration",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "Merge into apps/prototype-description-service/recognition/tests/api/test_clusters_router_split.py beside the aggregate router route-surface checks.",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/api/test_observability_runbook.py",
+      "verdict": "KEEP",
+      "tests_total": 5,
+      "tests_affected": [],
+      "reason": "The tests keep the canonical operator runbook's health, metrics, and correlation workflows aligned with the shipped middleware contract.",
+      "evidence": "apps/prototype-description-service/recognition/tests/api/test_observability_runbook.py:49 - checks the operator workflow sections; :67 checks the documented correlation header and metrics endpoints.",
+      "subject": "Published observability runbook and correlation identifiers",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/api/test_retention_api.py",
+      "verdict": "REWRITE",
+      "tests_total": 35,
+      "tests_affected": [
+        "test_export_contract_keys_match_the_real_exporter",
+        "test_fake_export_service_mirrors_the_real_exporter_shape"
+      ],
+      "reason": "These two guards parse a private exporter method's AST to compare literal keys, so they should validate the exported payload through a public service or HTTP contract.",
+      "evidence": "apps/prototype-description-service/recognition/tests/api/test_retention_api.py:888 - getsource plus AST requires one dict-literal return, which the two affected tests use to compare the fake and wire key sets.",
+      "subject": "Tenant export payload and response contract",
+      "duplicate_of": "",
+      "canon": ["TEST-16", "TEST-12"],
+      "replacement": "Exercise TenantExportService.export_tenant_data with a fake data source and validate its returned payload and HTTP/OpenAPI response contract without inspecting source or AST shape.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/api/test_roster_candidates.py",
+      "verdict": "KEEP",
+      "tests_total": 10,
+      "tests_affected": [],
+      "reason": "The tests cover distinct HTTP behavior and a published Python/PHP contract, including tenant isolation, ranking, schema validation, and candidate ordering.",
+      "evidence": "apps/prototype-description-service/recognition/tests/api/test_roster_candidates.py:201 - exercises ranking and foreign-tenant exclusion through the HTTP API; :432 validates the published contract example against the shared schema.",
+      "subject": "Roster-candidate HTTP behavior and shared Python/PHP response contract",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py",
+      "verdict": "REWRITE",
+      "tests_total": 19,
+      "tests_affected": [
+        "test_merge_candidates_has_no_static_band_cut_shim",
+        "test_router_declares_get_merge_candidates_and_has_no_literal_cuts"
+      ],
+      "reason": "The two guards pin module attributes and router source text instead of proving the threshold and response behavior through the public service and route seams.",
+      "evidence": "apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py:148 - checks absence of module globals; :684 - reads router source and checks literal strings and helper names.",
+      "subject": "Merge-candidate band behavior and route response",
+      "duplicate_of": "",
+      "canon": ["TEST-16", "TEST-12"],
+      "replacement": "Keep threshold assertions through list_merge_candidates settings and verify route shape and payload through the exported router/OpenAPI contract; drop absence-of-attribute and source-text checks.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/api/test_route_manifest_fresh.py",
+      "verdict": "SPEED",
+      "tests_total": 10,
+      "tests_affected": [
+        "test_default_route_manifest_export_does_not_mutate_parent_process",
+        "test_default_route_manifest_export_ignores_ambient_description_adapter",
+        "test_route_manifest_export_ignores_malformed_ambient_database_settings"
+      ],
+      "reason": "These checks share a fixture that invokes the real route exporter in subprocesses, with a listed 54.7-second slowest test cost.",
+      "evidence": "apps/prototype-description-service/recognition/tests/api/test_route_manifest_fresh.py:98 - records calls to the real subprocess runner used by the exported public helper; the assignment reports a 54.7-second slowest test.",
+      "subject": "Public route-manifest export process and environment isolation",
+      "duplicate_of": "",
+      "canon": ["TEST-24", "DIAG-04"],
+      "replacement": "Run the process-boundary and ambient-environment matrix in a later pipeline stage; keep the fast route-shape and committed-manifest checks in commit-stage feedback.",
+      "est_seconds_saved": 54.7,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/unit/test_vault_boot_failfast.py",
+      "verdict": "KEEP",
+      "tests_total": 10,
+      "tests_affected": [],
+      "reason": "The environment-backend no-op call can still fail on an unwanted exception, while the other tests assert live typed Vault boot failures before serving.",
+      "evidence": "apps/prototype-description-service/recognition/tests/unit/test_vault_boot_failfast.py:94 - invokes the validator with Vault disabled so an unexpected exception fails the test; :100 asserts the typed unreachable-Vault boot error.",
+      "subject": "OCI Vault fail-fast startup and environment-backend behavior",
+      "duplicate_of": "",
+      "canon": ["TEST-15"],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/api/test_security_contract_correlation.py",
+      "verdict": "KEEP",
+      "tests_total": 5,
+      "tests_affected": [],
+      "reason": "The security contract is published for integrators and the tests align its error, correlation, and CORS identifiers with the shipped middleware.",
+      "evidence": "apps/prototype-description-service/recognition/tests/api/test_security_contract_correlation.py:34 - requires the canonical security contract path; :55 compares the documented identifiers with middleware constants.",
+      "subject": "Published security and correlation contract",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/config/test_required_secrets.py",
+      "verdict": "KEEP",
+      "tests_total": 11,
+      "tests_affected": [],
+      "reason": "The four flagged no-explicit-assert cases verify valid credentials and non-production no-ops by asserting that unexpected validation exceptions do not occur.",
+      "evidence": "apps/prototype-description-service/recognition/tests/config/test_required_secrets.py:45 - runs production validation with a strong password and would fail if it raised; :84 exercises the non-production no-op path.",
+      "subject": "Runtime validation of production database credentials",
+      "duplicate_of": "",
+      "canon": ["TEST-15"],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    }
+  ],
+  "fixtures": []
+}

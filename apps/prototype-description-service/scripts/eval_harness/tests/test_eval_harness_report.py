@@ -311,10 +311,11 @@ def test_score_run_record_preserves_homogeneous_model_run_stamps() -> None:
     assert model["prompt_sha256s"] == ["a" * 64]
     assert model["task_versions"] == ["alt-text-v1"]
     assert model["decoding_contracts"] == [decoding]
+    assert "attribution" not in model
 
 
 @pytest.mark.parametrize("setting", [{"seed": 7}, {"decoding_contract": {"temperature": 0}}])
-def test_score_run_record_refuses_settings_only_model_provenance(setting: dict) -> None:
+def test_score_run_record_marks_settings_only_model_provenance_unattributed(setting: dict) -> None:
     record = _run_record()
     for item in record["items"][:2]:
         describe = item["describe"]
@@ -322,8 +323,14 @@ def test_score_run_record_refuses_settings_only_model_provenance(setting: dict) 
             describe.pop(field, None)
         describe.update(setting)
 
-    with pytest.raises(ReportError, match="missing adapter, model, prompt identity"):
-        score_run_record(record, _manifest_entries())
+    report, markdown = build_reports(record, _manifest_entries())
+    scored = json.loads(report)
+    assert scored["counts"]["scored"] == 2
+    assert scored["provenance"]["model"]["attribution"] == {
+        "status": "unattributed",
+        "missing_dimensions": ["adapter", "model", "prompt identity"],
+    }
+    assert "unattributed aggregate metrics**: missing adapter, model, prompt identity" in markdown
 
 
 @pytest.mark.parametrize(
@@ -331,13 +338,16 @@ def test_score_run_record_refuses_settings_only_model_provenance(setting: dict) 
     [(("adapter",), "adapter"), (("model_id",), "model"),
      (("prompt_version", "prompt_sha256"), "prompt identity")],
 )
-def test_score_run_record_refuses_each_missing_identity(fields: tuple, missing: str) -> None:
+def test_score_run_record_names_each_missing_identity(fields: tuple, missing: str) -> None:
     record = _run_record()
     for item in record["items"][:2]:
         for field in fields:
             item["describe"].pop(field)
-    with pytest.raises(ReportError, match=f"missing {missing} from"):
-        score_run_record(record, _manifest_entries())
+    report, markdown = build_reports(record, _manifest_entries())
+    assert json.loads(report)["provenance"]["model"]["attribution"] == {
+        "status": "unattributed", "missing_dimensions": [missing],
+    }
+    assert f"unattributed aggregate metrics**: missing {missing}" in markdown
 
 
 @pytest.mark.parametrize("declaration", [None, False, "true", 1])
@@ -349,8 +359,10 @@ def test_prompt_free_requires_explicit_boolean_run_declaration(declaration: obje
         item["describe"]["prompt_variant"] = "v1"
     if declaration is not None:
         record["provenance"]["prompt_free"] = declaration
-    with pytest.raises(ReportError, match="missing prompt identity"):
-        score_run_record(record, _manifest_entries())
+    scored = score_run_record(record, _manifest_entries())
+    assert scored["provenance"]["model"]["attribution"] == {
+        "status": "unattributed", "missing_dimensions": ["prompt identity"],
+    }
 
 
 def test_zero_rule_prompt_free_record_scores_and_builds_reports() -> None:
@@ -365,13 +377,17 @@ def test_zero_rule_prompt_free_record_scores_and_builds_reports() -> None:
     scored = score_run_record(record, entries)
     assert scored["counts"]["scored"] == len(entries)
     assert scored["provenance"]["model"]["prompt_free_flags"] == [True]
+    assert "attribution" not in scored["provenance"]["model"]
     report, markdown = build_reports(record, entries)
     assert json.loads(report)["counts"]["scored"] == len(entries)
     assert markdown
 
     record["provenance"].pop("prompt_free")
-    with pytest.raises(ReportError, match="missing prompt identity"):
-        build_reports(record, entries)
+    report, markdown = build_reports(record, entries)
+    assert json.loads(report)["provenance"]["model"]["attribution"] == {
+        "status": "unattributed", "missing_dimensions": ["prompt identity"],
+    }
+    assert "unattributed aggregate metrics**: missing prompt identity" in markdown
 
 
 @pytest.mark.parametrize("field", ["adapter", "model_id"])
@@ -381,8 +397,11 @@ def test_prompt_free_does_not_exempt_producer_identity(field: str) -> None:
     for item in record["items"][:2]:
         for missing in (field, "prompt_version", "prompt_sha256"):
             item["describe"].pop(missing)
-    with pytest.raises(ReportError, match="incomplete model provenance"):
-        score_run_record(record, _manifest_entries())
+    scored = score_run_record(record, _manifest_entries())
+    assert scored["provenance"]["model"]["attribution"] == {
+        "status": "unattributed",
+        "missing_dimensions": ["adapter" if field == "adapter" else "model"],
+    }
 
 
 @pytest.mark.parametrize(

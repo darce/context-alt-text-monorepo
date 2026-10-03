@@ -1,0 +1,557 @@
+{
+  "lane": "ta-priv",
+  "base": "bb149ef9536ac2fdfb9243d8216e34c8b0af07d0",
+  "assignment_base": "773138f240b3c38511cb26b8e51a0e0253d8f4b1",
+  "baseline": {
+    "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal scene/tests/test_priv1_pseudonymize.py --durations=15",
+    "result": "PASS: 186 passed, 0 failed in 2.79s; original sync invocation failed with read-only filesystem while removing alembic; prescribed --no-sync retry passed.",
+    "slowest": [
+      {
+        "test": "test_multi_token_separator_terminates_on_a_hostile_separator_run",
+        "phase": "call",
+        "seconds": 0.1
+      },
+      {
+        "test": "test_absent_wordlist_raises_rather_than_widening_given_name",
+        "phase": "call",
+        "seconds": 0.04
+      },
+      {
+        "test": "test_seed_manifest_slugs_are_protected_literals",
+        "phase": "setup",
+        "seconds": 0.04
+      },
+      {
+        "test": "test_persist_published_pins_is_a_noop_on_dry_run",
+        "phase": "setup",
+        "seconds": 0.04
+      },
+      {
+        "test": "test_repin_and_live_targets_share_one_window_rule[isolated]",
+        "phase": "call",
+        "seconds": 0.04
+      },
+      {
+        "test": "test_every_eligible_entry_yields_a_concatenated_form",
+        "phase": "call",
+        "seconds": 0.04
+      },
+      {
+        "test": "test_apply_and_verify_both_recheck_the_shipped_map_vocabulary",
+        "phase": "call",
+        "seconds": 0.04
+      },
+      {
+        "test": "test_seven_char_concat_digit_adjacent_is_rewritten",
+        "phase": "setup",
+        "seconds": 0.04
+      },
+      {
+        "test": "test_wordlist_sha256_mismatch_fails_verify",
+        "phase": "call",
+        "seconds": 0.04
+      },
+      {
+        "test": "test_apply_returns_nonzero_on_a_stale_pin",
+        "phase": "call",
+        "seconds": 0.04
+      },
+      {
+        "test": "test_one_rewrite_closes_dictionary_given_then_adjacent",
+        "phase": "setup",
+        "seconds": 0.04
+      },
+      {
+        "test": "test_shared_token_with_one_alias_word_is_counted_not_minted",
+        "phase": "call",
+        "seconds": 0.03
+      },
+      {
+        "test": "test_merge_overwrites_a_recorded_digest_for_the_same_path",
+        "phase": "call",
+        "seconds": 0.03
+      },
+      {
+        "test": "test_lowercase_or_unlicensed_dictionary_word_survives_comention",
+        "phase": "call",
+        "seconds": 0.02
+      },
+      {
+        "test": "test_seed_manifest_slugs_are_protected_literals",
+        "phase": "call",
+        "seconds": 0.01
+      }
+    ]
+  },
+  "items": [
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py",
+      "claimed": "REWRITE",
+      "ruling": "CONFIRM",
+      "action": "REWRITE",
+      "tests": [
+        "test_apply_and_verify_both_emit_concat_exclusions",
+        "test_apply_and_verify_both_emit_family_exclusions",
+        "test_apply_and_verify_both_emit_adjacent_exclusions"
+      ],
+      "target": null,
+      "seam": "scripts/privacy/priv1_pseudonymize.py:cmd_apply / cmd_verify",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py"
+          ],
+          "do": "Reuse/extend _prepare_verify_env at apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:1963, write the desired shipped map and matching original/pseudonymized roster to disk, keep wordlist provenance valid, clear nonpersonal caches after each invocation, and seed matching digest records for verify. Parameterize both commands, capture stdout and assert each exclusion label and explicit zero count; include a fixture producing a nonzero exclusion per class and assert count/reason without leaking real tokens. Do not mock formatters or _Passes. Keep the existing test names. Use real map, wordlist, filesystem and transformation logic; replace only the git tracked-file enumeration boundary with fixture paths. Expected suite-time change: small increase from command setup, no measured saving and no wall-clock waits.",
+          "red_proof": "Independently remove each measurement emission from each command: its corresponding parameter must fail. Suppressing only zero reports and dropping nonzero count/reason must also fail.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:850 - slices apply/verify source and checks _concat_exclusion_line spelling.",
+        "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:1407 - slices command bodies and checks _ambiguous_family_exclusion_line spelling.",
+        "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:1868 - slices command bodies and checks _adjacent_exclusion_line spelling.",
+        "scripts/privacy/priv1_pseudonymize.py:2341 - apply emits all three exclusion measurements.",
+        "scripts/privacy/priv1_pseudonymize.py:2433 - verify emits the same exclusion measurements."
+      ],
+      "canon": [
+        "DBG-02",
+        "TEST-12",
+        "TEST-16",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py",
+      "claimed": "REWRITE",
+      "ruling": "CONFIRM",
+      "action": "REWRITE",
+      "tests": [
+        "test_apply_and_verify_both_recheck_the_shipped_map_vocabulary"
+      ],
+      "target": null,
+      "seam": "scripts/privacy/priv1_pseudonymize.py:cmd_apply / cmd_verify",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py"
+          ],
+          "do": "Reuse/extend _prepare_verify_env at apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:1963, write the desired shipped map and matching original/pseudonymized roster to disk, keep wordlist provenance valid, clear nonpersonal caches after each invocation, and seed matching digest records for verify. Use a valid map with an alias token colliding with another entry real-name token; arrange roster coverage so no earlier guard fails. Both commands must raise SystemExit naming collision and counts, and apply must leave fixture bytes unchanged. Include disjoint-map controls reaching command completion. Keep the existing test names. Use real map, wordlist, filesystem and transformation logic; replace only the git tracked-file enumeration boundary with fixture paths. Expected suite-time change: small increase from command setup, no measured saving and no wall-clock waits.",
+          "red_proof": "Remove only the vocabulary check in apply, then only in verify: corresponding collision assertion must fail while disjoint controls pass. Change the guard to consult mint vocabulary rather than the shipped map and demonstrate the collision fixture still fails.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:923 - checks helper name in sliced command bodies.",
+        "scripts/privacy/priv1_pseudonymize.py:2254 - apply checks the loaded map vocabulary.",
+        "scripts/privacy/priv1_pseudonymize.py:2386 - verify checks the loaded map vocabulary.",
+        "scripts/privacy/priv1_pseudonymize.py:440 - map guard compares actual map entries, not current mint vocabulary."
+      ],
+      "canon": [
+        "DBG-02",
+        "TEST-12",
+        "TEST-16",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py",
+      "claimed": "REWRITE",
+      "ruling": "CONFIRM",
+      "action": "REWRITE",
+      "tests": [
+        "test_apply_and_verify_emit_wordlist_and_ambiguous_stem_measurements"
+      ],
+      "target": null,
+      "seam": "scripts/privacy/priv1_pseudonymize.py:cmd_plan / cmd_apply / cmd_verify",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py"
+          ],
+          "do": "Reuse/extend _prepare_verify_env at apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:1963, write the desired shipped map and matching original/pseudonymized roster to disk, keep wordlist provenance valid, clear nonpersonal caches after each invocation, and seed matching digest records for verify. Exercise fresh cmd_plan and inspect emitted map wordlist path, sha256 and word count against independently computed file bytes. Exercise both apply and verify with valid provenance and an ambiguous shared dictionary media stem (existing _AMBIGUOUS_STEM_MAPPING); capture the wordlist count/digest and zero/nonzero unresolved counts. Then alter wordlist bytes, clear its loader cache and require both commands to fail closed with mismatch diagnostics; assert apply files remain untouched. Keep the existing test names. Use real map, wordlist, filesystem and transformation logic; replace only the git tracked-file enumeration boundary with fixture paths. Expected suite-time change: small increase from command setup, no measured saving and no wall-clock waits.",
+          "red_proof": "Remove each command measurement or pin validation separately and remove build_map wordlist provenance: the respective command/artifact assertion must fail. Make ambiguous media stems silently resolve and require the unresolved fixture to fail.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:1051 - checks wordlist/ambiguous formatter names, pin helper names and wordlist text in build_map source.",
+        "scripts/privacy/priv1_pseudonymize.py:1740 - cmd_plan writes the real generated map.",
+        "scripts/privacy/priv1_pseudonymize.py:2255 - apply validates recorded wordlist before rewriting.",
+        "scripts/privacy/priv1_pseudonymize.py:2387 - verify validates recorded wordlist.",
+        "scripts/privacy/priv1_pseudonymize.py:1039 - stdout wordlist count and digest prefix are observable.",
+        "scripts/privacy/priv1_pseudonymize.py:1067 - ambiguous-stem count/reason is observable."
+      ],
+      "canon": [
+        "DBG-02",
+        "TEST-12",
+        "TEST-16",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py",
+      "claimed": "REWRITE",
+      "ruling": "MODIFY",
+      "action": "REWRITE",
+      "tests": [
+        "test_adjacent_parse_shares_the_match_pattern_flags"
+      ],
+      "target": null,
+      "seam": "scripts/privacy/priv1_pseudonymize.py:cmd_apply / cmd_verify",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py"
+          ],
+          "do": "Reuse/extend _prepare_verify_env at apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:1963, write the desired shipped map and matching original/pseudonymized roster to disk, keep wordlist provenance valid, clear nonpersonal caches after each invocation, and seed matching digest records for verify. Replace the flag assertion with command behavior using Qorvi\u017ft quarry and Qorvist \u212a. quarry, the existing _ADJACENT_MAPPING and a covered roster. Verify before apply must report adjacent residue; apply must write Cobalt replacements preserving the middle initial; verify after apply must be clean. Do not introduce a public transformation facade just for tests; keep the existing private behavioral regression unchanged. Keep the existing test names. Use real map, wordlist, filesystem and transformation logic; replace only the git tracked-file enumeration boundary with fixture paths. Expected suite-time change: small increase from command setup, no measured saving and no wall-clock waits.",
+          "red_proof": "Drop IGNORECASE from only _ADJACENT_PARSE: rewritten command guard must fail for both Unicode fixtures (either raised invariant or uncleared residue). Alternative correct parser implementations must pass without inspecting flags.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:1888 - directly pins private _ADJACENT_PARSE.flags.",
+        "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:1903 - existing case-folding behavioral test covers long-s and Kelvin fixtures via private _Passes.",
+        "scripts/privacy/priv1_pseudonymize.py:1343 - parser IGNORECASE flag underlies the actual Unicode invariant."
+      ],
+      "canon": [
+        "DBG-02",
+        "TEST-12",
+        "TEST-16",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py",
+      "claimed": "REWRITE",
+      "ruling": "CONFIRM",
+      "action": "REWRITE",
+      "tests": [
+        "test_plan_does_not_write_a_pin_record"
+      ],
+      "target": null,
+      "seam": "scripts/privacy/priv1_pseudonymize.py:cmd_plan",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py"
+          ],
+          "do": "Use a temporary private store, invented roster and deterministic wordlist/key. Call fresh plan, force plan, and pin-wordlist modes with absent digest record and assert no digest record appears; with an existing record assert its bytes remain identical. Verify map creation/re-pin success so refusal is not mistaken for no-write behavior. Keep the existing test names. Use real map, wordlist, filesystem and transformation logic; replace only the git tracked-file enumeration boundary with fixture paths. Expected suite-time change: small increase from command setup, no measured saving and no wall-clock waits.",
+          "red_proof": "Insert a digest-record write into each successful plan mode separately: corresponding absent-record or unchanged-record assertion must fail. A write routed through a differently named helper must be detected.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:2444 - slices cmd_plan source to forbid three pin-writing helper names.",
+        "scripts/privacy/priv1_pseudonymize.py:1740 - cmd_plan provides observable map/key writes and pin-wordlist mode.",
+        "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:2867 - existing command test invokes plan --pin-wordlist."
+      ],
+      "canon": [
+        "DBG-02",
+        "TEST-12",
+        "TEST-16",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py",
+      "claimed": "REWRITE",
+      "ruling": "REFUTE",
+      "action": "KEEP",
+      "tests": [
+        "test_production_module_has_no_free_text_deny_constant"
+      ],
+      "target": null,
+      "seam": null,
+      "production_change": "none",
+      "steps": [],
+      "pins_to_update": [],
+      "evidence": [
+        "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:2833 - scans all production source for FREE_TEXT_DENY; this is a source-policy guard.",
+        "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:2828 - separate build_map test asserts empty map deny list, a narrower runtime property.",
+        "scripts/privacy/priv1_pseudonymize.py:1784 - FREE_TEXT_REDACTIONS is a distinct legitimate declaration."
+      ],
+      "canon": [
+        "DBG-02",
+        "TEST-12",
+        "TEST-15",
+        "REF-12"
+      ],
+      "risk": "high",
+      "reason": "Command results cannot prove the forbidden declaration is absent, especially an unused or unreachable constant. Replacing this with empty map/output checks loses its red condition; keep the narrow source-policy check. No seam added."
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py",
+      "claimed": "REWRITE",
+      "ruling": "REFUTE",
+      "action": "KEEP",
+      "tests": [
+        "test_given_name_docstring_uses_invented_vocab"
+      ],
+      "target": null,
+      "seam": "scripts/privacy/priv1_pseudonymize.py:_given_name_regex docstring",
+      "production_change": "none",
+      "steps": [],
+      "pins_to_update": [],
+      "evidence": [
+        "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:3168 - scans the function source region for sensitive vocabulary and required invented examples.",
+        "scripts/privacy/priv1_pseudonymize.py:1289 - documentation itself is the protected artifact, not a transformation result."
+      ],
+      "canon": [
+        "DBG-02",
+        "TEST-12",
+        "TEST-15",
+        "REF-12"
+      ],
+      "risk": "high",
+      "reason": "Restoring a forbidden example in documentation need not alter apply/verify output. Exact invented examples could be narrowed in a separate policy decision, but the proposed runtime rewrite cannot preserve this privacy red proof. Keep pending such a decision."
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py",
+      "claimed": "REWRITE",
+      "ruling": "CONFIRM",
+      "action": "REWRITE",
+      "tests": [
+        "test_concatenated_pass_reaches_embedded_alnum_runs"
+      ],
+      "target": null,
+      "seam": "scripts/privacy/priv1_pseudonymize.py:cmd_apply / cmd_verify",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py"
+          ],
+          "do": "Reuse/extend _prepare_verify_env at apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:1963, write the desired shipped map and matching original/pseudonymized roster to disk, keep wordlist provenance valid, clear nonpersonal caches after each invocation, and seed matching digest records for verify. Use existing mapping in a covered roster and a neutral .json filename containing xnylphraveldrithx and nylphraveldrith9. Assert pre-apply verify reports concat=2; apply writes xamberfalconx and amberfalcon9 without real joined tokens and reports 2 concat; post-apply verify is clean. Derive expected strings independently, not by calling builders. Keep the existing test names. Use real map, wordlist, filesystem and transformation logic; replace only the git tracked-file enumeration boundary with fixture paths. Expected suite-time change: small increase from command setup, no measured saving and no wall-clock waits.",
+          "red_proof": "Restore alphanumeric boundary anchors around concatenated names: both embedded occurrences must fail to redact and the artifact/count assertions must turn red.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:266 - constructs private _Passes and asserts rewrite output/count for embedded joined names.",
+        "scripts/privacy/priv1_pseudonymize.py:2280 - apply runs rewrite over tracked file bytes.",
+        "scripts/privacy/priv1_pseudonymize.py:2405 - verify scans text residue."
+      ],
+      "canon": [
+        "DBG-02",
+        "TEST-12",
+        "TEST-16",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py",
+      "claimed": "REWRITE",
+      "ruling": "CONFIRM",
+      "action": "REWRITE",
+      "tests": [
+        "test_family_word_adjacent_redacts_the_dictionary_given_name",
+        "test_family_word_adjacent_with_middle_initial_is_rewritten",
+        "test_family_word_adjacent_title_case_is_rewritten"
+      ],
+      "target": null,
+      "seam": "scripts/privacy/priv1_pseudonymize.py:cmd_apply / cmd_verify",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py"
+          ],
+          "do": "Reuse/extend _prepare_verify_env at apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:1963, write the desired shipped map and matching original/pseudonymized roster to disk, keep wordlist provenance valid, clear nonpersonal caches after each invocation, and seed matching digest records for verify. Use _FAMILY_ADJACENT_MAPPING as real shipped entries, dictionary word Qorvist and a literal independently fixed family alias harbor for key t*64 (confirmed in this lane; expectations must remain literal). Write each current input to a neutral markdown file; require pre-apply adjacent residue/count, exact Cobalt replacement with family token and initial/case preserved, then clean post-apply verify. Do not compute expected family aliases with _family_words. Keep the existing test names. Use real map, wordlist, filesystem and transformation logic; replace only the git tracked-file enumeration boundary with fixture paths. Expected suite-time change: small increase from command setup, no measured saving and no wall-clock waits.",
+          "red_proof": "Remove family-word pairs from adjacent construction while retaining positional alias pairs: all three command fixtures must fail. Independently drop middle-initial handling and title-case matching: corresponding cases must fail.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:3082 - private family-word builder and _Passes check dictionary given token beside family alias.",
+        "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:3101 - same seam protects middle-initial preservation.",
+        "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:3113 - same seam protects title-case family alias.",
+        "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:3077 - current expected family token is computed by production helper, risking coupled expectation."
+      ],
+      "canon": [
+        "DBG-02",
+        "TEST-12",
+        "TEST-16",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py",
+      "claimed": "REWRITE",
+      "ruling": "CONFIRM",
+      "action": "REWRITE",
+      "tests": [
+        "test_reorder_applies_to_every_roster_bearing_fixture"
+      ],
+      "target": null,
+      "seam": "scripts/privacy/priv1_pseudonymize.py:cmd_apply",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py"
+          ],
+          "do": "Reuse/extend _prepare_verify_env at apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:1963, write the desired shipped map and matching original/pseudonymized roster to disk, keep wordlist provenance valid, clear nonpersonal caches after each invocation, and seed matching digest records for verify. Put two tracked JSON roster-bearing fixtures in valid map-covered original-name order with alias slug order deliberately reversed. Run actual cmd_apply with reorder=True and inspect both resulting identity arrays: each must sort by post-scrub (bucket, slug), with names not in original alphabetical order. Add reorder=False control. Fake only git enumeration/mv if a rename is required, not the reorder function. Keep the existing test names. Use real map, wordlist, filesystem and transformation logic; replace only the git tracked-file enumeration boundary with fixture paths. Expected suite-time change: small increase from command setup, no measured saving and no wall-clock waits.",
+          "red_proof": "Restrict _reorder_roster to ROSTER or remove its files_after argument from cmd_apply: both secondary fixture assertions must fail. Disabling reorder must preserve the control order.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:3136 - calls private _reorder_roster with two JSON fixture paths and asserts rendered order.",
+        "scripts/privacy/priv1_pseudonymize.py:2320 - apply passes the post-rewrite file set to roster reorder.",
+        "scripts/privacy/priv1_pseudonymize.py:1897 - reorder covers tracked JSON arrays beyond primary ROSTER."
+      ],
+      "canon": [
+        "DBG-02",
+        "TEST-12",
+        "TEST-16",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py",
+      "claimed": "REWRITE",
+      "ruling": "CONFIRM",
+      "action": "REWRITE",
+      "tests": [
+        "test_family_word_pass_preserves_source_case"
+      ],
+      "target": null,
+      "seam": "scripts/privacy/priv1_pseudonymize.py:cmd_apply",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py"
+          ],
+          "do": "Reuse/extend _prepare_verify_env at apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:1963, write the desired shipped map and matching original/pseudonymized roster to disk, keep wordlist provenance valid, clear nonpersonal caches after each invocation, and seed matching digest records for verify. Use _RARE_SHARED_MAPPING on disk with covered roster and title/upper/lower surname lines in a neutral markdown file. Use confirmed literal expected family token harbor under t*64 (do not call _family_words for assertions), require exact Title/UPPER/lower output and aggregate given=3 in command stdout. Keep the existing test names. Use real map, wordlist, filesystem and transformation logic; replace only the git tracked-file enumeration boundary with fixture paths. Expected suite-time change: small increase from command setup, no measured saving and no wall-clock waits.",
+          "red_proof": "Make shared-family replacement always lowercase or always alias casing: at least title/upper artifact assertions must fail. Remove family-word expansion and require every case to fail.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:3154 - uses _Passes and computes expected family alias with private _family_words.",
+        "scripts/privacy/priv1_pseudonymize.py:1289 - given-name builder installs shared-family words.",
+        "scripts/privacy/priv1_pseudonymize.py:2280 - apply ships the transformed file bytes."
+      ],
+      "canon": [
+        "DBG-02",
+        "TEST-12",
+        "TEST-16",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py",
+      "claimed": "REWRITE",
+      "ruling": "REFUTE",
+      "action": "KEEP",
+      "tests": [
+        "test_rename_with_absent_pre_sha_raises_naming_the_path"
+      ],
+      "target": null,
+      "seam": "scripts/privacy/priv1_pseudonymize.py:cmd_apply",
+      "production_change": "none",
+      "steps": [],
+      "pins_to_update": [],
+      "evidence": [
+        "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:3179 - already invokes public cmd_apply and checks SystemExit path and absent/empty diagnostic.",
+        "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:3195 - fake tracked enumeration represents git boundary, not transformation logic.",
+        "scripts/privacy/priv1_pseudonymize.py:2302 - apply rejects renamed paths lacking pre-rewrite digest before git mv."
+      ],
+      "canon": [
+        "DBG-02",
+        "TEST-12",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high",
+      "reason": "Already a public-command guard with real domain logic. The fake enumeration is an external git seam; there is no private behavior or source pin to rewrite."
+    }
+  ],
+  "notes": [
+    "Report-only ownership: no Python package or pyproject is owned, so package import-origin control is inapplicable. Tests explicitly load the lane-root script by __file__-relative path (test file lines 20-27).",
+    "Actual worktree HEAD differs from dispatch base; evidence and baseline refer to the actual base recorded above.",
+    "All 16 named tests appear exactly once. No production change, facade, move, merge, or pin updates are proposed; all implementation steps affect only the existing test file. Red proofs are required implementation acceptance work, not mutations performed by this report-only lane."
+  ],
+  "verification": {
+    "lane_gate": {
+      "command": "<lane-root>/.venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "PASS: 26 passed, 0 failed in 5.30s"
+    },
+    "script_origin": "Direct script load resolved to this lane worktree/scripts/privacy/priv1_pseudonymize.py; no package import-origin requirement applies to report-only ownership.",
+    "goldens": "With fixed key t*64, family alias for velmoth is harbor for both Falcon/Quarry and Falcon/Harbor sets; confirmed with real builder during adjudication, not prescribed as a runtime expected-value oracle."
+  },
+  "handoff_lines": [
+    "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py [test_apply_and_verify_both_emit_concat_exclusions, test_apply_and_verify_both_emit_family_exclusions, test_apply_and_verify_both_emit_adjacent_exclusions]: CONFIRM -> REWRITE, steps 1 (DBG-02, TEST-12, TEST-16, TEST-15, TEST-19, REF-12)",
+    "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py [test_apply_and_verify_both_recheck_the_shipped_map_vocabulary]: CONFIRM -> REWRITE, steps 1 (DBG-02, TEST-12, TEST-16, TEST-15, TEST-19, REF-12)",
+    "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py [test_apply_and_verify_emit_wordlist_and_ambiguous_stem_measurements]: CONFIRM -> REWRITE, steps 1 (DBG-02, TEST-12, TEST-16, TEST-15, TEST-19, REF-12)",
+    "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py [test_adjacent_parse_shares_the_match_pattern_flags]: MODIFY -> REWRITE, steps 1 (DBG-02, TEST-12, TEST-16, TEST-15, TEST-19, REF-12)",
+    "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py [test_plan_does_not_write_a_pin_record]: CONFIRM -> REWRITE, steps 1 (DBG-02, TEST-12, TEST-16, TEST-15, TEST-19, REF-12)",
+    "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py [test_production_module_has_no_free_text_deny_constant]: REFUTE -> KEEP, steps 0 (DBG-02, TEST-12, TEST-15, REF-12)",
+    "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py [test_given_name_docstring_uses_invented_vocab]: REFUTE -> KEEP, steps 0 (DBG-02, TEST-12, TEST-15, REF-12)",
+    "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py [test_concatenated_pass_reaches_embedded_alnum_runs]: CONFIRM -> REWRITE, steps 1 (DBG-02, TEST-12, TEST-16, TEST-15, TEST-19, REF-12)",
+    "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py [test_family_word_adjacent_redacts_the_dictionary_given_name, test_family_word_adjacent_with_middle_initial_is_rewritten, test_family_word_adjacent_title_case_is_rewritten]: CONFIRM -> REWRITE, steps 1 (DBG-02, TEST-12, TEST-16, TEST-15, TEST-19, REF-12)",
+    "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py [test_reorder_applies_to_every_roster_bearing_fixture]: CONFIRM -> REWRITE, steps 1 (DBG-02, TEST-12, TEST-16, TEST-15, TEST-19, REF-12)",
+    "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py [test_family_word_pass_preserves_source_case]: CONFIRM -> REWRITE, steps 1 (DBG-02, TEST-12, TEST-16, TEST-15, TEST-19, REF-12)",
+    "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py [test_rename_with_absent_pre_sha_raises_naming_the_path]: REFUTE -> KEEP, steps 0 (DBG-02, TEST-12, TEST-15, TEST-19, REF-12)"
+  ],
+  "command_results": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal scene/tests/test_priv1_pseudonymize.py --durations=15",
+      "status": "fail",
+      "counts": "0 tests run: uv sync failed on read-only filesystem"
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal scene/tests/test_priv1_pseudonymize.py --durations=15",
+      "status": "pass",
+      "counts": "186 passed, 0 failed; 2.79s"
+    },
+    {
+      "command": "<lane-root>/.venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "status": "pass",
+      "counts": "26 passed, 0 failed; 5.30s"
+    }
+  ]
+}

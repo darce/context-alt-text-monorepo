@@ -7,7 +7,6 @@ These tests do not need Postgres. Keep pytest.mark.pg off this module so
 from __future__ import annotations
 
 import importlib
-import inspect
 
 import pytest
 import sqlalchemy as sa
@@ -209,11 +208,6 @@ def test_ensure_matview_refuses_rebuild_when_grant_grantee_vanished(
     assert "python -m scripts.sync_identity_schema" not in message
     assert not _issued_drop(op)
     assert not any("CREATE MATERIALIZED VIEW" in sql for sql in op.statements)
-
-
-def test_ensure_matview_preflights_grant_roles_before_drop() -> None:
-    src = inspect.getsource(MIGRATION.ensure_matview)
-    assert src.index("_missing_matview_grant_roles") < src.index("DROP MATERIALIZED VIEW")
 
 
 def test_ensure_matview_refuses_rebuild_when_owner_role_vanished(

@@ -8,8 +8,8 @@ the named manifest, and copies the outputs to the destination paths.
 The score CLI's exit code selects the score outcome (rg-015): exit 0 is a
 clean score, exit 1 is a partial corpus and is never published, and exit 3
 is a refused metric (publish only with ``--allow-refused`` and still exit 3).
-Before publishing, this script also reads the report JSON and holds any
-report whose producer attribution is marked ``unattributed``. Any other
+Before publishing, this script also reads and validates the report envelope
+and holds any report whose producer attribution is marked ``unattributed``. Any other
 nonzero CLI exit is unrecognized and is not swallowed.
 
 The inner interpreter is ``$ACX_EVAL_PYTHON`` when that variable is set
@@ -32,7 +32,8 @@ subprocess return value that carried no publication outcome):
          ``EvalPythonError``), or the CLI
          produced *no report at all* regardless of its own exit code
          (crashed before writing one, or exited 0 without writing one).
-         A report whose JSON cannot be read is also held with this code.
+         A report whose JSON cannot be read or whose provenance/model
+         envelope or attribution block is malformed is also held with this code.
          The inner subprocess return code is never passed through here —
          no report means no publication meaning to inherit, so a broken
          real interpreter (e.g. missing a dependency, inner exit 1) is
@@ -192,21 +193,32 @@ def classify_score_exit(returncode: int, *, allow_refused: bool) -> ScoreExitDec
 
 
 def classify_report_attribution(report: object) -> ScoreExitDecision | None:
-    """Hold a scored report when its producer attribution is incomplete."""
+    """Hold malformed envelopes or incomplete producer attribution (SEC-10)."""
     if not isinstance(report, dict):
-        return None
-    provenance = report.get("provenance")
-    if not isinstance(provenance, dict):
-        return None
-    model = provenance.get("model")
-    if not isinstance(model, dict):
-        return None
-    attribution = model.get("attribution")
-    if (
-        not isinstance(attribution, dict)
-        or attribution.get("status") != "unattributed"
-    ):
-        return None
+        malformed = "report must be an object"
+    elif not isinstance(report.get("provenance"), dict):
+        malformed = "provenance must be an object"
+    elif not isinstance(report["provenance"].get("model"), dict):
+        malformed = "provenance.model must be an object"
+    else:
+        model = report["provenance"]["model"]
+        if "attribution" not in model:
+            return None
+        attribution = model["attribution"]
+        if not isinstance(attribution, dict):
+            malformed = "provenance.model.attribution must be an object"
+        elif attribution.get("status") != "unattributed":
+            malformed = "provenance.model.attribution.status must be unattributed"
+        else:
+            malformed = None
+
+    if malformed is not None:
+        return ScoreExitDecision(
+            publish=False,
+            exit_code=EXIT_RESOLUTION_OR_ENV_FAILURE,
+            reason="malformed-report",
+            message=f"{malformed}; not publishing the written report",
+        )
 
     missing = attribution.get("missing_dimensions")
     dimensions = [str(item) for item in missing] if isinstance(missing, list) else []

@@ -449,6 +449,31 @@ def test_malformed_junit_fails_and_keeps_truthful_partial_evidence(tmp_path: Pat
     assert "parser noise" in group["output_capture"]["tail"]
 
 
+def test_parseable_non_junit_document_cannot_pass_release_gate(tmp_path: Path) -> None:
+    payload = _manifest_payload(tmp_path)
+    manifest_path = _write_manifest(tmp_path, payload)
+
+    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
+        xml_path.write_text(
+            '<results><testcase file="recognition/tests/api/test_portal_1.py" name="test_case_1" /></results>',
+            encoding="utf-8",
+        )
+        kwargs["stdout"].write("pytest completed successfully\n")
+        return SimpleNamespace(returncode=0, stdout=None, stderr=None)
+
+    status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
+
+    evidence = _last_evidence(tmp_path)
+    group = evidence["groups"][0]
+    assert status == 1
+    assert evidence["full_suite"] is True
+    assert evidence["release_gate_results"]["beta"]["status"] == "failed"
+    assert group["case_ledger"][0]["id"] == "SC-1"
+    assert group["case_ledger"][0]["status"] == "not_run"
+    assert any("not a JUnit document" in reason for reason in group["failure_reasons"])
+
+
 def test_missing_junit_fails_and_keeps_partial_evidence(tmp_path: Path) -> None:
     payload = _manifest_payload(tmp_path)
     manifest_path = _write_manifest(tmp_path, payload)

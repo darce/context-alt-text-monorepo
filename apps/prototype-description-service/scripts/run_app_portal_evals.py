@@ -1052,7 +1052,13 @@ def _run_group(
 
     junit = _read_junit(xml_path)
     stale_junit = ran_pytest and _junit_is_stale(junit, started_at=started_at)
-    usable_junit = ran_pytest and junit.report_found and junit.report_error is None and not stale_junit
+    usable_junit = (
+        ran_pytest
+        and junit.report_found
+        and junit.report_error is None
+        and junit.is_junit_document
+        and not stale_junit
+    )
     output_tail, output_tail_bytes, output_tail_truncated, tail_error = _read_capped_tail(log_path)
     threshold_failures = int(manifest.threshold["max_failures"])
     threshold_skipped = int(manifest.threshold["max_skipped"])
@@ -1070,6 +1076,8 @@ def _run_group(
         reasons.append(f"skip count {junit.skip_count} exceeds max_skipped {threshold_skipped}")
     if stale_junit:
         reasons.append(f"stale JUnit report: {xml_path} is older than the run start")
+    if ran_pytest and junit.report_found and junit.report_error is None and not junit.is_junit_document:
+        reasons.append("JUnit report is not a JUnit document")
     if junit.report_error and not evidence_only_group:
         reasons.append(junit.report_error)
     if execution_error:

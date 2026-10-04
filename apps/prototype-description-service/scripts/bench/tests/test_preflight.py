@@ -532,10 +532,14 @@ def test_load_unsupported_opencv_major_is_rejected(tmp_path: Path) -> None:
     assert exc.value.code == "opencv_major_unsupported"
 
 
-def test_run_pair_defaults_to_fail_closed_preflight(tmp_path: Path) -> None:
+def test_run_pair_defaults_to_fail_closed_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from scripts.bench.driver import run_pair
     from scripts.bench.tests.conftest import FakeClient, write_hashed_manifest, write_pair
 
+    monkeypatch.setenv(INSIGHTFACE_STACK["api_key_env"], "test-api-key")
+    monkeypatch.setenv(FIR_STACK["api_key_env"], "test-api-key")
     images = tmp_path / "images"
     manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
     pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
@@ -588,10 +592,12 @@ def test_cli_run_fail_closed_aborts_before_media_write(
     assert not list(out.rglob("items.jsonl"))
 
 
-def test_run_pair_persists_preflight_json(tmp_path: Path) -> None:
+def test_run_pair_persists_preflight_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from scripts.bench.driver import run_pair
     from scripts.bench.tests.conftest import FakeClient, write_hashed_manifest, write_pair
 
+    monkeypatch.setenv(INSIGHTFACE_STACK["api_key_env"], "test-api-key")
+    monkeypatch.setenv(FIR_STACK["api_key_env"], "test-api-key")
     images = tmp_path / "images"
     manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
     pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
@@ -847,10 +853,14 @@ def test_run_pair_refuses_without_reset_and_empty_state_evidence(
     assert not (tmp_path / f"out-{invalid_kind}" / "run.json").exists()
 
 
-def test_run_pair_preflights_when_not_skipped(tmp_path: Path) -> None:
+def test_run_pair_preflights_when_not_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from scripts.bench.driver import run_pair
     from scripts.bench.tests.conftest import FakeClient, write_hashed_manifest, write_pair
 
+    monkeypatch.setenv(INSIGHTFACE_STACK["api_key_env"], "test-api-key")
+    monkeypatch.setenv(FIR_STACK["api_key_env"], "test-api-key")
     images = tmp_path / "images"
     manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
     pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))

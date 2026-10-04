@@ -332,6 +332,7 @@ def test_health_check_exposes_the_shared_runtime_fingerprint(monkeypatch: pytest
             pillow_version="12.3.0",
             hdbscan_version="0.8.44",
             pgvector_version="0.5.0",
+            opencv_distribution_versions=(("opencv-python-headless", "5.0.0.93"),),
             comparability_token="0" * 64,
         ),
     )
@@ -340,6 +341,8 @@ def test_health_check_exposes_the_shared_runtime_fingerprint(monkeypatch: pytest
     )
     assert '"opencv_version":"5.0.0.93"' in result.detail
     assert '"onnxruntime_version":"1.28.0"' in result.detail
+    assert '"opencv_distribution_versions":[["opencv-python-headless","5.0.0.93"]]' in result.detail
+    assert "numeric_runtime_fingerprint_unavailable" not in result.detail
 
 
 def test_model_bundle_sha256_tracks_model_names_and_bytes(tmp_path: Path) -> None:

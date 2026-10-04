@@ -21,7 +21,7 @@ from recognition.tests.unit.test_app1_usage_sweeper import (
 
 
 @pytest.mark.asyncio
-async def test_admission_expiry_releases_global_counters_before_new_reserve(monkeypatch) -> None:
+async def test_sweeper_expiry_releases_global_counters_before_new_reserve(monkeypatch) -> None:
     await _advfix_ledger_h1_expiry_releases_counters(monkeypatch)
 
 
@@ -82,8 +82,8 @@ async def test_sweep_batch_budget_exit_reflects_unresolved_recovery_outcomes(
 
 
 @pytest.mark.asyncio
-async def test_expiry_preserves_incoming_cost_and_bytes() -> None:
-    """Expired rows must not replace the new request's capacity or ledger values."""
+async def test_admission_preserves_stale_holds_and_incoming_cost_and_bytes() -> None:
+    """Admission keeps existing holds and adds the new request's ledger values."""
     now = datetime.now(tz=UTC)
     state = SimpleNamespace(
         period_start=now.replace(hour=0, minute=0, second=0, microsecond=0),
@@ -106,9 +106,9 @@ async def test_expiry_preserves_incoming_cost_and_bytes() -> None:
         allowance_jobs=10,
     )
     used_result = MagicMock()
-    used_result.scalar_one.return_value = 0
+    used_result.scalar_one.return_value = 2
     session = MagicMock()
-    session.execute = AsyncMock(side_effect=[entitlement_result, [(2, 7, state.period_start)], used_result])
+    session.execute = AsyncMock(side_effect=[entitlement_result, used_result])
     session.flush = AsyncMock()
     session.begin_nested.return_value = AsyncMock()
     repo = SqlAlchemyUsageRepository(session)
@@ -126,7 +126,8 @@ async def test_expiry_preserves_incoming_cost_and_bytes() -> None:
 
     assert reservation.cost_units == 1
     assert reservation.queue_bytes == 19
-    assert state.daily_cost_units == 1
-    assert state.inflight_units == 1
-    assert state.queue_depth == 1
-    assert state.queue_bytes == 19
+    assert session.execute.await_count == 2
+    assert state.daily_cost_units == 3
+    assert state.inflight_units == 3
+    assert state.queue_depth == 2
+    assert state.queue_bytes == 26

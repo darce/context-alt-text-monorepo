@@ -226,7 +226,7 @@ async def test_postgres_epoch_advance_old_callback_rejects_and_recovery_settles_
 
 
 @pytest.mark.asyncio
-async def test_postgres_recovery_mismatch_concurrency_and_period_fail_closed(pg_empty_engine) -> None:
+async def test_postgres_recovery_mismatch_concurrency_and_period_rollover(pg_empty_engine) -> None:
     with pg_empty_engine.begin() as conn:
         MIGRATION.heal(conn)
 
@@ -343,6 +343,13 @@ async def test_postgres_recovery_mismatch_concurrency_and_period_fail_closed(pg_
 
         async with session_factory() as session:
             await set_tenant_context(session, tenant_id)
+            other_ticket = await UsageAdmissionService(session).reserve(
+                tenant_id,
+                idempotency_key="pg-rollover-held",
+                job_id=str(uuid4()),
+                cost_units=2,
+                queue_bytes=17,
+            )
             await session.execute(
                 update(GlobalUsageAdmissionState)
                 .where(GlobalUsageAdmissionState.id == GLOBAL_USAGE_ADMISSION_STATE_ID)
@@ -356,15 +363,25 @@ async def test_postgres_recovery_mismatch_concurrency_and_period_fail_closed(pg_
             assert before is not None
             inflight_before = int(before.inflight_units)
             daily_before = int(before.daily_cost_units)
+            depth_before = int(before.queue_depth)
+            bytes_before = int(before.queue_bytes)
+            assert daily_before > 0
+            recovery_at = datetime.now(tz=UTC)
             rolled = await recover_usage_job(session, tenant_id=tenant_id, job_id=str(job_id))
             held = await session.get(UsageReservation, ticket.reservation_id)
+            other_held = await session.get(UsageReservation, other_ticket.reservation_id)
             after = await session.get(GlobalUsageAdmissionState, GLOBAL_USAGE_ADMISSION_STATE_ID)
             await session.commit()
-            assert rolled.outcome is SettlementOutcome.FAIL_CLOSED
-            assert held is not None and held.status == UsageReservationStatus.RESERVED
+            assert rolled.outcome is SettlementOutcome.RELEASED
+            assert held is not None and held.status == UsageReservationStatus.RELEASED
+            assert other_held is not None and other_held.status == UsageReservationStatus.RESERVED
             assert after is not None
-            assert int(after.inflight_units) == inflight_before
-            assert int(after.daily_cost_units) == daily_before
+            assert int(after.inflight_units) == inflight_before - ticket.cost_units == other_ticket.cost_units
+            assert int(after.queue_depth) == depth_before - 1 == 1
+            assert int(after.queue_bytes) == bytes_before == other_held.queue_bytes == 17
+            assert int(after.daily_cost_units) == 0
+            assert after.period_start == recovery_at.replace(hour=0, minute=0, second=0, microsecond=0)
+            assert after.period_end == after.period_start + timedelta(days=1)
             assert int(after.fence_epoch) >= DEFAULT_GLOBAL_FENCE_EPOCH
     finally:
         await engine.dispose()

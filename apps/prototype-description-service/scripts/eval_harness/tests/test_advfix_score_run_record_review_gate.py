@@ -113,7 +113,27 @@ def test_supplied_manifest_requires_confirmed_review() -> None:
     assert exc_info.value.invariant == "adjudication_record_required"
 
 
+def test_default_score_api_requires_confirmed_review() -> None:
+    _manifest_without_review, entries = _manifest(reviewed=False)
+    with pytest.raises(ManifestError) as exc_info:
+        report.score_run_record(_run_record(), entries)
+    assert exc_info.value.invariant == "adjudication_record_required"
+
+
+def test_default_build_reports_api_requires_confirmed_review() -> None:
+    _manifest_without_review, entries = _manifest(reviewed=False)
+    with pytest.raises(ManifestError) as exc_info:
+        report.build_reports(_run_record(), entries)
+    assert exc_info.value.invariant == "adjudication_record_required"
+
+
 def test_supplied_manifest_accepts_confirmed_review() -> None:
     manifest, entries = _manifest(reviewed=True)
     result = report.score_run_record(_run_record(), entries, run_manifest=manifest)
+    assert result["faces"]["detection"]["tp"] == 1
+
+
+def test_review_only_manifest_accepts_confirmed_review() -> None:
+    manifest, entries = _manifest(reviewed=True)
+    result = report.score_run_record(_run_record(), entries, review_manifest=manifest)
     assert result["faces"]["detection"]["tp"] == 1

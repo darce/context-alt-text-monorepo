@@ -32,6 +32,7 @@ use function current_user_can;
 use function delete_option;
 use function defined;
 use function get_option;
+use function hash;
 use function in_array;
 use function intval;
 use function is_array;
@@ -348,51 +349,9 @@ class SettingsController {
 			}
 
 			$allow_person_names = $body['allow_person_names'];
-			// Remove any earlier opt-in before contacting the service, so a failed
-			// request or concurrent describe cannot keep sending names.
-			delete_option( 'acx_description_allow_person_names' );
-			delete_option( 'acx_description_allow_person_names_tenant_id' );
-			$stored_policy = get_option( 'acx_description_allow_person_names', false );
-			if (
-				true === $stored_policy
-				|| 1 === $stored_policy
-				|| '1' === $stored_policy
-				|| 'true' === $stored_policy
-			) {
-				return new WP_Error(
-					'allow_person_names_cache_failed',
-					'Could not safely clear the local person-naming preference.',
-					array( 'status' => 500 )
-				);
-			}
-
-			$sync_response      = $this->request_naming_agreement( 'PUT', $allow_person_names );
-			if ( is_wp_error( $sync_response ) || $sync_response['enabled'] !== $allow_person_names ) {
-				$message = is_wp_error( $sync_response )
-					? $sync_response->get_error_message()
-					: 'Recognition service did not confirm the requested naming agreement.';
-				return new WP_Error(
-					'allow_person_names_sync_failed',
-					$message,
-					array( 'status' => 502 )
-				);
-			}
-			// Cache only an agreement confirmed by the authoritative service. The
-			// describe request uses this tenant-scoped value before sending names.
-			if ( $allow_person_names ) {
-				$tenant_id = TenantIdentity::resolve()['value'];
-				update_option( 'acx_description_allow_person_names', true );
-				update_option( 'acx_description_allow_person_names_tenant_id', $tenant_id );
-				if (
-					! $this->option_matches_intended( 'acx_description_allow_person_names', true )
-					|| ! $this->option_matches_intended( 'acx_description_allow_person_names_tenant_id', $tenant_id )
-				) {
-					return new WP_Error(
-						'allow_person_names_cache_failed',
-						'Could not safely save the local person-naming preference.',
-						array( 'status' => 500 )
-					);
-				}
+			$sync_response = $this->sync_naming_agreement_cache( $allow_person_names );
+			if ( is_wp_error( $sync_response ) ) {
+				return $sync_response;
 			}
 
 			$saved[] = 'allow_person_names';
@@ -463,6 +422,85 @@ class SettingsController {
 		}
 
 		return new WP_REST_Response( $payload, 200 );
+	}
+
+	/**
+	 * Synchronize the authoritative naming policy and its local cache in order
+	 * with other saves for the same tenant.
+	 *
+	 * @return bool|WP_Error
+	 */
+	private function sync_naming_agreement_cache( bool $enabled ): bool|WP_Error {
+		global $wpdb;
+
+		$tenant_id = TenantIdentity::resolve()['value'];
+		// MySQL named locks coordinate PHP workers across hosts sharing this DB.
+		$lock_name = 'acx-naming-policy-' . substr( hash( 'sha256', $tenant_id ), 0, 46 );
+		$lock_result = $wpdb->get_var(
+			$wpdb->prepare( 'SELECT GET_LOCK(%s, %d)', $lock_name, 30 )
+		);
+		if ( 1 !== (int) $lock_result ) {
+			return new WP_Error(
+				'allow_person_names_lock_failed',
+				'Could not obtain a lock for the person-naming preference.',
+				array( 'status' => 503 )
+			);
+		}
+
+		try {
+			// Remove any earlier opt-in before contacting the service, so a failed
+			// request or concurrent describe cannot keep sending names.
+			delete_option( 'acx_description_allow_person_names' );
+			delete_option( 'acx_description_allow_person_names_tenant_id' );
+			$stored_policy = get_option( 'acx_description_allow_person_names', false );
+			if (
+				true === $stored_policy
+				|| 1 === $stored_policy
+				|| '1' === $stored_policy
+				|| 'true' === $stored_policy
+			) {
+				return new WP_Error(
+					'allow_person_names_cache_failed',
+					'Could not safely clear the local person-naming preference.',
+					array( 'status' => 500 )
+				);
+			}
+
+			$sync_response = $this->request_naming_agreement( 'PUT', $enabled, $tenant_id );
+			if ( is_wp_error( $sync_response ) || $sync_response['enabled'] !== $enabled ) {
+				$message = is_wp_error( $sync_response )
+					? $sync_response->get_error_message()
+					: 'Recognition service did not confirm the requested naming agreement.';
+				return new WP_Error(
+					'allow_person_names_sync_failed',
+					$message,
+					array( 'status' => 502 )
+				);
+			}
+
+			// Cache only an agreement confirmed by the authoritative service. The
+			// describe request uses this tenant-scoped value before sending names.
+			if ( $enabled ) {
+				update_option( 'acx_description_allow_person_names', true );
+				update_option( 'acx_description_allow_person_names_tenant_id', $tenant_id );
+				if (
+					! $this->option_matches_intended( 'acx_description_allow_person_names', true )
+					|| ! $this->option_matches_intended( 'acx_description_allow_person_names_tenant_id', $tenant_id )
+				) {
+					return new WP_Error(
+						'allow_person_names_cache_failed',
+						'Could not safely save the local person-naming preference.',
+						array( 'status' => 500 )
+					);
+				}
+			}
+
+			return true;
+		} finally {
+			$wpdb->get_var(
+				$wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name )
+			);
+		}
 	}
 
 	/**
@@ -569,7 +607,7 @@ class SettingsController {
 	 *
 	 * @return array{enabled: bool}|WP_Error
 	 */
-	private function request_naming_agreement( string $method, ?bool $enabled = null ): array|WP_Error {
+	private function request_naming_agreement( string $method, ?bool $enabled = null, ?string $tenant_id = null ): array|WP_Error {
 		$snapshot = $this->endpoint_resolver->resolve_settings_snapshot();
 		$base_url = rtrim( (string) $snapshot['effective_target_url'], '/' );
 		if ( '' === $base_url ) {
@@ -580,13 +618,13 @@ class SettingsController {
 			);
 		}
 
-		$key_resolution    = $this->resolve_key_source();
-		$tenant_resolution = TenantIdentity::resolve();
-		$args              = array(
+		$key_resolution = $this->resolve_key_source();
+		$tenant_id      = $tenant_id ?? TenantIdentity::resolve()['value'];
+		$args           = array(
 			'method'  => $method,
 			'headers' => array(
 				'Content-Type' => 'application/json',
-				'X-Tenant-ID'  => $tenant_resolution['value'],
+				'X-Tenant-ID'  => $tenant_id,
 				'X-API-Key'    => $key_resolution['value'],
 			),
 			'timeout' => 10,

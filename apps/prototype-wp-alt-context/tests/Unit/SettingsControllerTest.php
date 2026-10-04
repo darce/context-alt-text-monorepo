@@ -609,6 +609,130 @@ class SettingsControllerTest extends TestCase
         $this->assertSame($tenantId, get_option('acx_description_allow_person_names_tenant_id'));
     }
 
+    public function testSaveSettingsSerializesNamingPolicyCacheWritesPerTenant(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $tenantId = 'dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $this->setOption('acx_recognition_tenant_id', $tenantId);
+        $this->setOption('acx_recognition_url', 'https://api.example.com');
+        $this->setOption('acx_recognition_api_key', 'test-key');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"enabled":true}',
+        ]);
+
+        $eventsFile = tempnam(sys_get_temp_dir(), 'acx-naming-order-');
+        $this->assertNotFalse($eventsFile);
+        $lockFile = tempnam(sys_get_temp_dir(), 'acx-naming-lock-');
+        $this->assertNotFalse($lockFile);
+        $recordEvent = static function (string $event) use ($eventsFile): void {
+            file_put_contents($eventsFile, $event . "\n", FILE_APPEND | LOCK_EX);
+        };
+        $lockHandles = [];
+        $GLOBALS['wpdb']->onGetVar = static function (string $query) use ($lockFile, &$lockHandles): void {
+            if (str_contains($query, 'GET_LOCK(')) {
+                $lockHandle = fopen($lockFile, 'c');
+                if (false === $lockHandle || ! flock($lockHandle, LOCK_EX)) {
+                    throw new \RuntimeException('Could not acquire the simulated tenant lock.');
+                }
+                $lockHandles[] = $lockHandle;
+            } elseif (str_contains($query, 'RELEASE_LOCK(')) {
+                $lockHandle = array_pop($lockHandles);
+                if (is_resource($lockHandle)) {
+                    flock($lockHandle, LOCK_UN);
+                    fclose($lockHandle);
+                }
+            }
+        };
+        $GLOBALS['wpdb']->onGetVarResolve = static function (string $query): ?string {
+            if (str_contains($query, 'GET_LOCK(') || str_contains($query, 'RELEASE_LOCK(')) {
+                return '1';
+            }
+
+            return null;
+        };
+        $childPid = null;
+
+        // The child save enters after save A's PUT returned but before A writes
+        // its confirmed opt-in. A per-tenant lock must hold B until A's cache
+        // write has been verified, so B's confirmed false cannot be followed by
+        // A's stale true cache write.
+        $GLOBALS['__ac_option_before_update']['acx_description_allow_person_names'] = function () use (
+            $recordEvent,
+            $eventsFile,
+            &$childPid
+        ): void {
+            $pid = pcntl_fork();
+            if (-1 === $pid) {
+                throw new \RuntimeException('Could not fork the naming-policy concurrency test.');
+            }
+
+            if (0 === $pid) {
+                unset($GLOBALS['__ac_option_before_update']['acx_description_allow_person_names']);
+                unset($GLOBALS['__ac_get_option_before_read']['acx_description_allow_person_names']);
+                $GLOBALS['__ac_http_queue'] = [[
+                    'response' => ['code' => 200, 'message' => 'OK'],
+                    'body' => '{"enabled":false}',
+                ]];
+                $recordEvent('B-started');
+
+                $requestB = new WP_REST_Request('POST', '/acx/v1/settings');
+                $requestB->set_body_params(['allow_person_names' => false]);
+                $responseB = $this->controller->save_settings($requestB);
+                $isSaved = $responseB instanceof \WP_REST_Response
+                    && ['allow_person_names'] === ($responseB->get_data()['saved'] ?? null);
+                $recordEvent($isSaved ? 'B-completed' : 'B-failed');
+                exit(0);
+            }
+
+            $childPid = $pid;
+            $deadline = microtime(true) + 1.0;
+            do {
+                $events = file_get_contents($eventsFile);
+                if (is_string($events) && str_contains($events, 'B-completed')) {
+                    break;
+                }
+                usleep(1000);
+            } while (microtime(true) < $deadline);
+        };
+        $GLOBALS['__ac_get_option_before_read']['acx_description_allow_person_names'] = static function () use (
+            $recordEvent
+        ): void {
+            if (true === ($GLOBALS['__ac_options']['acx_description_allow_person_names'] ?? false)) {
+                $recordEvent('A-cache-verified');
+            }
+        };
+
+        try {
+            $requestA = new WP_REST_Request('POST', '/acx/v1/settings');
+            $requestA->set_body_params(['allow_person_names' => true]);
+            $responseA = $this->controller->save_settings($requestA);
+
+            $this->assertInstanceOf(\WP_REST_Response::class, $responseA);
+            $this->assertNotNull($childPid, 'The concurrent save B must have started.');
+            $waitedPid = pcntl_waitpid($childPid, $status);
+            $this->assertSame($childPid, $waitedPid);
+            $this->assertTrue(pcntl_wifexited($status));
+            $this->assertSame(0, pcntl_wexitstatus($status));
+
+            $events = file($eventsFile, FILE_IGNORE_NEW_LINES);
+            $this->assertIsArray($events);
+            $this->assertContains('A-cache-verified', $events);
+            $this->assertContains('B-completed', $events, 'The later false save must succeed.');
+            $this->assertLessThan(
+                array_search('B-completed', $events, true),
+                array_search('A-cache-verified', $events, true),
+                'Save A must finish its cache write before save B can complete.'
+            );
+        } finally {
+            if (is_int($childPid)) {
+                pcntl_waitpid($childPid, $unusedStatus);
+            }
+            unlink($eventsFile);
+            unlink($lockFile);
+        }
+    }
+
     public function testSaveSettingsRejectsNonBooleanAllowPersonNames(): void
     {
         $this->setUserCapability('manage_options', true);

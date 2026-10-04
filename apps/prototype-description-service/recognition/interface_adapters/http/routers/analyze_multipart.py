@@ -48,6 +48,7 @@ from recognition.interface_adapters.http.deps import (
     get_optional_session,
     get_scan_queue_service_factory,
     get_scan_queue_service_optional,
+    require_auth,
     require_write_access,
 )
 from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
@@ -55,6 +56,7 @@ from recognition.interface_adapters.http.deps.object_store import (
     ObjectStoreFactory,
     get_object_store_factory_for_request,
 )
+from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 from recognition.interface_adapters.http.deps.usage_admission import (
     _is_usage_service,
     admit_usage,
@@ -178,6 +180,7 @@ def multipart_to_media_items(
     object_store: ObjectStore,
     job_id: str,
     allowed_mime_types: Iterable[str] | None = None,
+    cleanup_on_failure: bool = True,
 ) -> list[MediaItem]:
     """Convert image parts in ``form_data`` to ``MediaItem``s with blob_uri.
 
@@ -192,9 +195,12 @@ def multipart_to_media_items(
             zero-byte image part, 400 for a key whose ``media_id``
             suffix is not a valid integer, a duplicate ``media_id``, or
             a batch larger than five images.
-        ObjectStoreError: Propagated after cleaning the job prefix so the
-            shared exception handler can produce the standard opaque 500
+        ObjectStoreError: Propagated after cleaning an owned job prefix so
+            the shared exception handler can produce the standard opaque 500
             envelope and correlated server-side traceback.
+
+    ``cleanup_on_failure`` must be false when ``job_id`` belongs to an
+    existing persisted job whose blobs predate this staging attempt.
     """
     allowed = frozenset(allowed_mime_types) if allowed_mime_types is not None else _DEFAULT_ALLOWED_MIME_TYPES
 
@@ -254,16 +260,17 @@ def multipart_to_media_items(
             blob_uri = object_store.put(job_id=job_id, media_id=str(media_id), data=data)
             items.append(MediaItem(media_id=media_id, blob_uri=blob_uri))
     except Exception:
-        try:
-            object_store.cleanup(job_id=job_id)
-        except Exception:
-            logger.exception(
-                "Failed to clean up multipart image writes",
-                extra={
-                    "correlation_id": get_correlation_id(),
-                    "job_id": job_id,
-                },
-            )
+        if cleanup_on_failure:
+            try:
+                object_store.cleanup(job_id=job_id)
+            except Exception:
+                logger.exception(
+                    "Failed to clean up multipart image writes",
+                    extra={
+                        "correlation_id": get_correlation_id(),
+                        "job_id": job_id,
+                    },
+                )
         raise
 
     return items
@@ -274,7 +281,7 @@ def multipart_to_media_items(
 # -----------------------------------------------------------------------------
 
 
-router = APIRouter(tags=["analyze"])
+router = APIRouter(tags=["analyze"], dependencies=[Depends(require_auth), Depends(enforce_rate_limit)])
 
 
 def _extract_request_envelope(form_data: FormData) -> dict:
@@ -523,6 +530,7 @@ async def _persist_and_dispatch_multipart(
         form_data=form_data,
         object_store=object_store,
         job_id=str(pre_generated_job_id),
+        cleanup_on_failure=not existing_job,
     )
     if not media_items_list:
         raise HTTPException(
@@ -532,9 +540,10 @@ async def _persist_and_dispatch_multipart(
 
     if scan_queue is None:
         if session is None:
-            # Blobs were just written for this pre_generated_job_id; roll them
-            # back so a misconfigured deployment does not leak orphans (BR-06).
-            object_store.cleanup(job_id=str(pre_generated_job_id))
+            # A new job has no durable row, so roll back its owned blobs. A
+            # replay's prefix belongs to the existing job and must survive.
+            if not existing_job:
+                object_store.cleanup(job_id=str(pre_generated_job_id))
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Database unavailable",

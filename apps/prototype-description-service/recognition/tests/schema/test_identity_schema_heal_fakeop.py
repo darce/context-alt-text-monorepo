@@ -58,6 +58,7 @@ class _FakeOp:
         current_user: str = "app_role",
         missing_roles: set[str] | None = None,
         owner_schema_create: bool = True,
+        definition_marker: str | None = MIGRATION.CENTROID_DEFINITION_VERSION,
     ) -> None:
         self.statements: list[str] = []
         self.current_user = current_user
@@ -65,6 +66,7 @@ class _FakeOp:
         self.owner_schema_create = owner_schema_create
         self.bypass_rls = ""
         self.setting_writes: list[str] = []
+        self.definition_marker = definition_marker
 
     def get_bind(self):
         op = self
@@ -89,6 +91,8 @@ class _FakeOp:
                     return _FakeScalarResult(_fake_quote_ident(str(ident)))
                 if "select current_user" in sql:
                     return _FakeScalarResult(op.current_user)
+                if "obj_description(c.oid, 'pg_class')" in sql:
+                    return _FakeScalarResult(op.definition_marker)
                 if "from pg_roles" in sql:
                     name = (params or {}).get("name", "")
                     if name in op.missing_roles:
@@ -307,11 +311,23 @@ def test_matview_create_privilege_gaps_tolerates_missing_source_tables() -> None
                             {},
                             Exception('relation "identity_clusters" does not exist'),
                         )
-                    return _FakeScalarResult(("public", True, True, True, True, True))
+                    return _FakeScalarResult(("public", True, True, True, True, True, True))
 
             return _Bind()
 
     assert MIGRATION._matview_create_privilege_gaps(_Op()) == []
+
+
+def test_matview_create_privilege_gaps_reports_missing_array_fill_execute() -> None:
+    class _Op:
+        def get_bind(self):
+            class _Bind:
+                def execute(self, stmt, params=None):  # noqa: ANN001
+                    return _FakeScalarResult(("public", True, True, True, True, True, False))
+
+            return _Bind()
+
+    assert MIGRATION._matview_create_privilege_gaps(_Op()) == ["EXECUTE on array_fill"]
 
 
 def test_matview_nonowner_grants_null_relacl_returns_empty() -> None:

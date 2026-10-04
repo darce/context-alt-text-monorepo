@@ -1777,6 +1777,36 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame([], $this->getHttpCalls());
     }
 
+    public function testJsonIdempotencyKeyWithTrailingNewlineReturns400WithoutRemoteCall(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+
+        $req = new DescribeMediaServicePayloadRequest(['idempotency_key' => "ABCDEFGHIJKLMNOP\n"], []);
+        $req->set_param('media_id', 42);
+
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('invalid_idempotency_key', $result->get_error_code());
+        $this->assertSame(400, $result->get_error_data()['status'] ?? null);
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testFormIdempotencyKeyWithTrailingNewlineReturns400WithoutRemoteCall(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+
+        $req = new DescribeMediaServicePayloadRequest(null, ['idempotency_key' => "ABCDEFGHIJKLMNOP\n"]);
+        $req->set_param('media_id', 42);
+
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('invalid_idempotency_key', $result->get_error_code());
+        $this->assertSame(400, $result->get_error_data()['status'] ?? null);
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
     public function testMalformedOperationIdReturns400WithoutRemoteCall(): void
     {
         $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');

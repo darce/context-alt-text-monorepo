@@ -337,7 +337,7 @@ class DescribeMediaService {
 			if (
 				$key_length < 16
 				|| $key_length > 128
-				|| 1 !== preg_match( '/^[A-Za-z0-9_-]+$/', $idempotency_key )
+				|| 1 !== preg_match( '/^[A-Za-z0-9_-]+\z/', $idempotency_key )
 			) {
 				return new WP_Error(
 					'invalid_idempotency_key',

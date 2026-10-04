@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 # Stored job.status values that are terminal; finalizers must never overwrite them.
 _TERMINAL_JOB_STATUS_VALUES = tuple(status.value for status in TERMINAL_JOB_STATUSES)
+# Keep this aligned with the identity batch returned by ScanQueueService.
+_STALLED_JOB_BATCH_SIZE = 100
 
 
 class SqlAlchemyScanQueueRepository(ScanQueueRepository):
@@ -561,7 +563,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
             IdentityScanJob.started_at.is_not(None),
             IdentityScanJob.started_at < stale_before,
             incomplete_items,
-        )
+        ).order_by(IdentityScanJob.started_at, IdentityScanJob.id).limit(_STALLED_JOB_BATCH_SIZE)
         result = await self._session.execute(stmt)
         stalled_job_ids = list(result.scalars().all())
         if not stalled_job_ids:

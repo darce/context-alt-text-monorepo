@@ -893,11 +893,23 @@ def _subset_manifest(
     """
     if not entries:
         return None
+    referenced_adjudication_record_ids = {
+        box.adjudication_source.removeprefix("human_adjudicated:")
+        for entry in entries
+        for box in entry.face_boxes
+        if box.adjudication_source is not None
+    }
     return GoldenManifest(
         manifest_version=SUPPORTED_MANIFEST_VERSION,
         annotation_mode=manifest.annotation_mode,
+        iou_threshold=manifest.iou_threshold,
         roster=list(manifest.roster),
         entries=entries,
+        adjudication_records=[
+            record
+            for record in manifest.adjudication_records
+            if record.record_id in referenced_adjudication_record_ids
+        ],
         roster_cohorts=dict(manifest.roster_cohorts),
     )
 

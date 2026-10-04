@@ -99,11 +99,30 @@ def _write_v3_manifest(tmp_path, box: dict):
 
 
 def test_face_score_refuses_run_record_that_covers_only_part_of_manifest() -> None:
-    entries = [
-        {**_entry(media_id, box=_box()), "annotation_mode": "exhaustive"}
-        for media_id in range(1, 11)
-    ]
-    manifest = {"annotation_mode": "exhaustive", "roster": ["Alice Example"], "entries": entries}
+    entries = []
+    adjudication_records = []
+    for media_id in range(1, 11):
+        record_id = f"review-{media_id}"
+        box = {**_box(), "adjudication_source": f"human_adjudicated:{record_id}"}
+        entries.append({**_entry(media_id, box=box), "annotation_mode": "exhaustive"})
+        adjudication_records.append(
+            {
+                "record_id": record_id,
+                "media_id": media_id,
+                "box_index": 0,
+                "reviewer_id": "reviewer-1",
+                "reviewer_kind": "human",
+                "review_method": "independent_blind_review",
+                "decision": "confirmed",
+                "reviewed_at": "2026-08-14T01:00:00Z",
+            }
+        )
+    manifest = {
+        "annotation_mode": "exhaustive",
+        "roster": ["Alice Example"],
+        "entries": entries,
+        "adjudication_records": adjudication_records,
+    }
 
     with pytest.raises(ManifestError) as exc_info:
         score_face_run_record(_record([1]), manifest)

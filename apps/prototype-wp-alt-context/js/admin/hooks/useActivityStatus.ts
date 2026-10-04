@@ -79,6 +79,10 @@ type WarmupResubmitResult =
   | { kind: 'submitted'; response: DescribeRunResponse };
 
 type WarmupResubmitAction = { runId: string; tenantId: string | null };
+type HookLocalWarmupResubmitAction = {
+  mediaIds: readonly number[];
+  idempotencyKey: string;
+};
 
 const unfinishedMediaIdsFromItems = (items: readonly DescribeRunItem[]): number[] =>
   items
@@ -412,27 +416,49 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
     mutationFn: cancelBulkDescribeRun,
   });
   const resubmitInFlightRef = useRef(false);
+  const hookLocalResubmitActionsRef = useRef<Map<string, HookLocalWarmupResubmitAction>>(
+    new Map(),
+  );
   const resubmitMutation = useMutation<WarmupResubmitResult, Error, WarmupResubmitAction>({
     mutationFn: async ({ runId, tenantId }) => {
       const scope = { kind: 'warmup_recovery' as const, sourceRunId: runId };
-      let action = getPendingDescribeSubmitAction(scope, tenantId);
+      let action = hookLocalResubmitActionsRef.current.get(runId) ?? null;
       if (action === null) {
-        const { items } = await fetchDescribeRunItems(runId);
-        const unfinishedIds = unfinishedMediaIdsFromItems(items);
-        if (unfinishedIds.length === 0) {
-          return { kind: 'exhausted' };
+        try {
+          action = getPendingDescribeSubmitAction(scope, tenantId);
+        } catch {
+          // Persistence is only a recovery enhancement; continue with an
+          // in-memory action when sessionStorage cannot be read.
         }
-        action = persistPendingDescribeSubmitAction(
-          scope,
-          unfinishedIds,
-          createDescribeIdempotencyKey(),
-          tenantId,
-        );
         if (action === null) {
-          throw new Error('Could not persist the warmup retry action before sending the request.');
+          const { items } = await fetchDescribeRunItems(runId);
+          const unfinishedIds = unfinishedMediaIdsFromItems(items);
+          if (unfinishedIds.length === 0) {
+            return { kind: 'exhausted' };
+          }
+          const idempotencyKey = createDescribeIdempotencyKey();
+          try {
+            action = persistPendingDescribeSubmitAction(
+              scope,
+              unfinishedIds,
+              idempotencyKey,
+              tenantId,
+            );
+          } catch {
+            action = null;
+          }
+          if (action === null) {
+            action = {
+              mediaIds: Object.freeze(
+                [...new Set(unfinishedIds)].sort((left, right) => left - right),
+              ),
+              idempotencyKey,
+            };
+            hookLocalResubmitActionsRef.current.set(runId, action);
+          }
         }
       }
-      const response = await submitBulkDescribeRun(action.mediaIds, action.idempotencyKey);
+      const response = await submitBulkDescribeRun([...action.mediaIds], action.idempotencyKey);
       return { kind: 'submitted', response };
     },
     onSuccess: (result) => {
@@ -442,6 +468,7 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
     },
     onError: (error, variables) => {
       if (isDefinitiveDescribeSubmitRefusal(error)) {
+        hookLocalResubmitActionsRef.current.delete(variables.runId);
         clearPendingDescribeSubmitAction(
           { kind: 'warmup_recovery', sourceRunId: variables.runId },
           variables.tenantId,
@@ -450,6 +477,7 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
     },
     onSettled: (_result, error, variables) => {
       if (error === null) {
+        hookLocalResubmitActionsRef.current.delete(variables.runId);
         clearPendingDescribeSubmitAction(
           { kind: 'warmup_recovery', sourceRunId: variables.runId },
           variables.tenantId,

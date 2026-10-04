@@ -694,6 +694,10 @@ def test_apply_refuses_css_only_frontend_without_touching_live_tree(tmp_path: Pa
             id="template",
         ),
         pytest.param(
+            '<template></template!><script type="module" src="/assets/index.js"></script></template>',
+            id="template-punctuated-close",
+        ),
+        pytest.param(
             '<noscript><script type="module" src="/assets/index.js"></script></noscript>',
             id="noscript",
         ),
@@ -916,8 +920,9 @@ def test_apply_refuses_protected_existing_hostname(tmp_path: Path) -> None:
         '<script type="module" nomodule src="/assets/index.js"></script>',
         '<noscript><textarea>Please enable JavaScript</noscript>'
         '<script type="module" src="/assets/index.js"></script>',
+        '<template!><script type="module" src="/assets/index.js"></script>',
     ],
-    ids=["nomodule", "noscript-raw-text"],
+    ids=["nomodule", "noscript-raw-text", "template-punctuated-open"],
 )
 def test_apply_accepts_active_module_frontend(
     tmp_path: Path, module_markup: str

@@ -641,7 +641,38 @@ frontend_asset_references() {
 
 frontend_module_references() {
   awk '
-    function next_token(    c, quote, value) {
+    function skip_regex_literal(    c, in_class) {
+      position++
+      in_class = 0
+      while (position <= source_length) {
+        c = substr(source, position, 1)
+        if (c == "\n" || c == "\r") break
+        if (c == "\\") {
+          position++
+          if (position > source_length) break
+          c = substr(source, position, 1)
+          if (c == "\n" || c == "\r") break
+          position++
+          continue
+        }
+        if (c == "[" && !in_class) {
+          in_class = 1
+        } else if (c == "]" && in_class) {
+          in_class = 0
+        } else if (c == "/" && !in_class) {
+          position++
+          while (position <= source_length &&
+                 substr(source, position, 1) ~ /[A-Za-z0-9_$]/) position++
+          return 1
+        }
+        position++
+      }
+      failed = 1
+      print "unterminated JavaScript regular expression" > "/dev/stderr"
+      return 0
+    }
+
+    function next_token(    c, quote, value, previous_value, control_header) {
       while (position <= source_length) {
         c = substr(source, position, 1)
         if (c ~ /[ \t\r\n\f]/) {
@@ -672,6 +703,9 @@ frontend_module_references() {
         break
       }
 
+      previous_value = token_value
+      control_header = pending_control_header
+      pending_control_header = 0
       token_line = line
       token_value = ""
       if (position > source_length) {
@@ -679,6 +713,16 @@ frontend_module_references() {
         return
       }
       c = substr(source, position, 1)
+      if (c == "/" && regex_allowed) {
+        if (!skip_regex_literal()) {
+          token_type = "eof"
+          return
+        }
+        token_type = "regex"
+        token_value = ""
+        regex_allowed = 0
+        return
+      }
       if (c == "\047" || c == "\042") {
         quote = c
         position++
@@ -687,6 +731,7 @@ frontend_module_references() {
           if (c == quote) {
             position++
             token_type = "string"
+            regex_allowed = 0
             return
           }
           if (c == "\\") {
@@ -715,6 +760,7 @@ frontend_module_references() {
           if (c == "`") {
             position++
             token_type = "template"
+            regex_allowed = 0
             return
           }
           if (c == "\n") line++
@@ -732,11 +778,54 @@ frontend_module_references() {
           position++
         }
         token_type = "identifier"
+        # Property names are not expression keywords or control headers.
+        pending_control_header = (previous_value != "." &&
+                                  token_value ~ /^(if|while|for|with|switch|catch)$/)
+        regex_allowed = (previous_value != "." &&
+                         token_value ~ /^(return|typeof|throw|case|delete|void|new|in|of|instanceof|yield|await|else|do)$/)
+        return
+      }
+      if (c ~ /[0-9]/ || (c == "." && substr(source, position + 1, 1) ~ /[0-9]/)) {
+        # Consume the whole numeric operand, including exponent signs.
+        while (position <= source_length) {
+          c = substr(source, position, 1)
+          if (c !~ /[A-Za-z0-9_.]/ &&
+              !(c ~ /[+-]/ && substr(source, position - 1, 1) ~ /[eE]/)) break
+          token_value = token_value c
+          position++
+        }
+        token_type = "number"
+        regex_allowed = 0
         return
       }
       token_value = c
       token_type = "punctuation"
       position++
+      if ((c == "+" || c == "-") && substr(source, position, 1) == c) {
+        token_value = c c
+        position++
+        # Prefix ++/-- still expects an operand; postfix ++/-- ends one.
+        return
+      }
+      if (c == "(") {
+        paren_control[++paren_depth] = control_header
+        regex_allowed = 1
+        return
+      }
+      if (c == ")") {
+        # A control header ends before a statement, unlike a call/group.
+        regex_allowed = (paren_depth > 0 && paren_control[paren_depth])
+        if (paren_depth > 0) {
+          delete paren_control[paren_depth]
+          paren_depth--
+        }
+        return
+      }
+      regex_allowed = (c == "(" || c == "," || c == "=" || c == ":" ||
+                       c == "[" || c == "!" || c == "&" || c == "|" ||
+                       c == "?" || c == "{" || c == "}" || c == ";" ||
+                       c == "+" || c == "-" || c == "*" || c == "/" ||
+                       c == "%" || c == "^" || c == "~" || c == "<" || c == ">")
     }
 
     function emit_reference(value, query, fragment, cut_at) {
@@ -758,6 +847,7 @@ frontend_module_references() {
       source_length = length(source)
       position = 1
       line = 1
+      regex_allowed = 1
       while (!failed) {
         next_token()
         if (token_type == "eof") break

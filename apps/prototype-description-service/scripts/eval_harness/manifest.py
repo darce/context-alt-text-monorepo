@@ -1282,21 +1282,50 @@ class GoldenManifest(BaseModel):
 
 
 def require_confirmed_blind_reviews_for_strict_scoring(
-    manifest: GoldenManifest | Mapping[str, object],
+    manifest: object,
+    *,
+    entries: Sequence[Mapping[str, object]] | None = None,
 ) -> None:
     """Reject strict scoring unless each strict-ready GT box has review.
 
     Normal loading keeps optional review references available for historical
     ingestion. Strict scoring entrypoints must call this guard with the loaded
     manifest or its full model-dump before computing detection or identification.
-    The ordinary model validation also confirms every present reference resolves
-    to a second-human confirmed blind review.
+    Lightweight score-time mappings and duck-typed manifests are projected onto
+    the review fields only; unrelated document fields are not a scoring gate.
+    ``entries`` supplies the scorer's flattened GT rather than run metadata.
     """
-    validated = (
-        manifest
-        if isinstance(manifest, GoldenManifest)
-        else GoldenManifest.model_validate(manifest)
-    )
+    if isinstance(manifest, GoldenManifest):
+        manifest._adjudication_references_resolve(require_strict_scoring_reviews=True)
+        return
+    try:
+        if isinstance(manifest, Mapping):
+            raw_entries = entries if entries is not None else manifest.get("entries")
+            raw_records = manifest.get("adjudication_records") or []
+        else:
+            raw_entries = entries if entries is not None else getattr(manifest, "entries", None)
+            raw_records = getattr(manifest, "adjudication_records", None) or []
+        if raw_entries is None:
+            raise ValueError("manifest entries are unavailable")
+        review_entries = []
+        for raw_entry in raw_entries:
+            entry = raw_entry.model_dump() if hasattr(raw_entry, "model_dump") else dict(raw_entry)
+            # This private projection is used only for cross-reference checking,
+            # never as a loaded manifest. Boxes and review records are validated.
+            review_entries.append(
+                GoldenEntry.model_construct(
+                    path=entry["path"],
+                    media_id=entry["media_id"],
+                    face_boxes=[FaceBox.model_validate(box) for box in entry.get("face_boxes") or []],
+                )
+            )
+        records = [HumanAdjudicationRecord.model_validate(record) for record in raw_records]
+        validated = GoldenManifest.model_construct(entries=review_entries, adjudication_records=records)
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        raise ManifestError(
+            "strict scoring cannot read manifest review evidence",
+            invariant="adjudication_record_invalid",
+        ) from exc
     validated._adjudication_references_resolve(require_strict_scoring_reviews=True)
 
 

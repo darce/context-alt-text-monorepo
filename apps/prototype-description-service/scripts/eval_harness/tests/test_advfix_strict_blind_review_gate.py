@@ -4,6 +4,7 @@ import hashlib
 import json
 from datetime import date, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -231,3 +232,56 @@ def test_strict_face_scoring_accepts_confirmed_second_human_review() -> None:
     full_identification = scored["slices"]["full_corpus_identification"]
     assert full_identification["precision"] is not None
     assert full_identification["recall"] is not None
+
+
+@pytest.mark.parametrize("reviewed", [False, True])
+def test_strict_face_scoring_duck_manifest_review_gate(reviewed: bool) -> None:
+    doc, _ = _manifest(reviewed=reviewed)
+    manifest = SimpleNamespace(**doc)
+    if reviewed:
+        scored = report.score_face_run_record(_face_run_record(), manifest)
+        assert scored["detection"]["tp"] == 1
+    else:
+        del manifest.adjudication_records  # absent records mean no review
+        with pytest.raises(ManifestError) as exc_info:
+            report.score_face_run_record(_face_run_record(), manifest)
+        assert exc_info.value.invariant == "adjudication_record_required"
+
+
+def test_strict_scoring_mixed_mode_precedes_missing_review() -> None:
+    doc, entries = _manifest(reviewed=False)
+    entries.append({**entries[0], "media_id": 2, "annotation_mode": "roster_only"})
+    with pytest.raises(report.ReportError) as exc_info:
+        report.score_run_record(_run_record(), entries, run_manifest=doc)
+    assert exc_info.value.invariant == "detection_refuses_mixed_annotation_mode"
+
+
+@pytest.mark.parametrize("manifest", [object(), {"entries": [None]}, {"entries": [], "adjudication_records": [{}]}])
+def test_strict_review_gate_unreadable_input_has_named_error(manifest: object) -> None:
+    from scripts.eval_harness.manifest import require_confirmed_blind_reviews_for_strict_scoring
+
+    with pytest.raises(ManifestError) as exc_info:
+        require_confirmed_blind_reviews_for_strict_scoring(manifest)
+    assert exc_info.value.invariant == "adjudication_record_invalid"
+
+
+@pytest.mark.parametrize("reviewed", [False, True])
+def test_strict_scoring_partial_metadata_uses_scored_gt(reviewed: bool) -> None:
+    doc, entries = _manifest(reviewed=reviewed)
+    metadata = {"iou_threshold": 0.5, "adjudication_records": doc["adjudication_records"]}
+    if reviewed:
+        scored = report.score_run_record(_run_record(), entries, run_manifest=metadata)
+        assert scored["faces"]["detection"]["tp"] == 1
+    else:
+        with pytest.raises(ManifestError) as exc_info:
+            report.score_run_record(_run_record(), entries, run_manifest=metadata)
+        assert exc_info.value.invariant == "adjudication_record_required"
+
+
+@pytest.mark.parametrize("field,value", [("reviewer_id", "operator-1"), ("decision", "rejected"), ("box_index", 1)])
+def test_strict_face_scoring_duck_manifest_rejects_invalid_review(field: str, value: object) -> None:
+    doc, _ = _manifest(reviewed=True)
+    doc["adjudication_records"][0][field] = value
+    with pytest.raises(ManifestError) as exc_info:
+        report.score_face_run_record(_face_run_record(), SimpleNamespace(**doc))
+    assert exc_info.value.invariant == "adjudication_record_invalid"

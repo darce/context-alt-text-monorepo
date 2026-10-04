@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -29,6 +30,109 @@ def _run_sanitizer(text: str) -> str:
         check=True,
     )
     return result.stdout
+
+
+def _run_model_preflight(
+    tmp_path: Path,
+    *,
+    reject_gnu_case_insensitive_sed: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    if reject_gnu_case_insensitive_sed:
+        sed = shutil.which("sed")
+        assert sed is not None
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        wrapper = bin_dir / "sed"
+        wrapper.write_text(
+            f'''#!/usr/bin/env bash
+for arg in "$@"; do
+  case "$arg" in *gI*) echo 'BSD sed: invalid substitution flag' >&2; exit 2 ;; esac
+done
+exec {shlex.quote(sed)} "$@"
+''',
+            encoding="utf-8",
+        )
+        wrapper.chmod(0o755)
+        env["PATH"] = f"{bin_dir}:{env['PATH']}"
+
+    statements = r'''
+GREEN=; YELLOW=; RED=; RESET=
+ssh() {
+  local remote_command="${@: -1}"
+  case "$remote_command" in
+    *ACX_IMAGE_TAG*) printf 'dev-fir\n' ;;
+    *RECOGNITION_FACE_PIPELINE_MODELS_DIR*) printf '/data/cache/models\n' ;;
+    *ACX_MODELS_PATH*) printf '/srv/models\n' ;;
+    *"bash -s"*)
+      cat >/dev/null
+      printf 'DIR_FAIL:/data/cache/models REMOTE_STDOUT_SENTINEL\n'
+      printf 'REMOTE_STDERR_SENTINEL Authorization: BEARER leaked-harm-secret\033[31mremote text\n' >&2
+      return 1
+      ;;
+    *) printf 'unexpected ssh command: %s\n' "$remote_command" >&2; return 99 ;;
+  esac
+}
+preflight_remote_face_pipeline_models dev-fir
+'''
+    command = f"source {shlex.quote(str(SCRIPT))}\n{statements}"
+    return subprocess.run(
+        ["bash", "-c", command],
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+        timeout=30,
+    )
+
+
+@pytest.mark.parametrize(
+    "raw,secret",
+    [
+        ("password: |\n  hunter2secretYAML\nother: safe\n", "hunter2secretYAML"),
+        ("client_secret: >-\n  hunter2secretFolded\n  still-secret\nnext: safe\n", "hunter2secretFolded"),
+        ("client_secret: >-\n  hunter2secretFolded\n  still-secret\nnext: safe\n", "still-secret"),
+    ],
+)
+def test_redacts_yaml_secret_block_contents(raw: str, secret: str) -> None:
+    output = _run_sanitizer(raw)
+    assert secret not in output, output
+    assert "diagnostic: next: safe" in output or "diagnostic: other: safe" in output
+
+
+@pytest.mark.parametrize(
+    "raw,secret",
+    [
+        ("curl -u acx:hunter2secretCURLU https://example.invalid\n", "hunter2secretCURLU"),
+        ("wget --user=acx:hunter2secretWGET https://example.invalid\n", "hunter2secretWGET"),
+        ("curl -u 'acx:hunter2 secretCURLSPACE' https://example.invalid\n", "secretCURLSPACE"),
+        ('wget --user="acx:hunter2 secretWGETSPACE" https://example.invalid\n', "secretWGETSPACE"),
+    ],
+)
+def test_redacts_curl_and_wget_user_credentials(raw: str, secret: str) -> None:
+    output = _run_sanitizer(raw)
+    assert secret not in output, output
+    assert "[REDACTED]" in output
+
+
+def test_redacts_unquoted_values_through_whitespace() -> None:
+    output = _run_sanitizer('{"SECRET":abc}def "TOKEN":abc,def tail=visible\n')
+    assert "}def" not in output, output
+    assert ",def" not in output, output
+    assert "tail=visible" in output, output
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{\n  "password":\n    "hunter2secretJSON",\n  "safe": "visible"\n}\n',
+        '{\n  "password"\n  :\n    "hunter2secretJSON",\n  "safe": "visible"\n}\n',
+    ],
+)
+def test_redacts_json_secret_scalar_on_following_line(raw: str) -> None:
+    output = _run_sanitizer(raw)
+    assert "hunter2secretJSON" not in output, output
+    assert "visible" in output, output
 
 
 SANITIZER_CASES = [
@@ -813,3 +917,26 @@ def test_sanitize_deploy_diagnostic_san_h01_compound_space_separated_cli_secret(
     assert "--pg-secret" in out
     assert "[REDACTED]" in out
     assert out.startswith("diagnostic: ")
+
+
+def test_model_preflight_sanitizes_combined_ssh_diagnostic(tmp_path: Path) -> None:
+    result = _run_model_preflight(tmp_path)
+
+    diagnostic = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "leaked-harm-secret" not in diagnostic
+    assert "\x1b" not in diagnostic
+    assert "diagnostic: DIR_FAIL:/data/cache/models REMOTE_STDOUT_SENTINEL" in diagnostic
+    assert "diagnostic: REMOTE_STDERR_SENTINEL" in diagnostic
+
+
+def test_sanitizer_works_without_gnu_sed_case_insensitive_flag(tmp_path: Path) -> None:
+    result = _run_model_preflight(tmp_path, reject_gnu_case_insensitive_sed=True)
+
+    diagnostic = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "leaked-harm-secret" not in diagnostic
+    assert "[REDACTED]" in diagnostic
+    assert "diagnostic:" in diagnostic
+    assert "diagnostic: DIR_FAIL:/data/cache/models REMOTE_STDOUT_SENTINEL" in diagnostic
+    assert "diagnostic: REMOTE_STDERR_SENTINEL" in diagnostic

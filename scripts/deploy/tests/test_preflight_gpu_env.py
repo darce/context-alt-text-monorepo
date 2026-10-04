@@ -752,7 +752,6 @@ def test_06_recognition_url_shape_is_validated(tmp_path: Path, url: str) -> None
     [
         "tenant-one",
         "00000000-0000-0000-0000-000000000000",
-        "00000000-0000-4000-8000-000000000001",
     ],
 )
 def test_06_tenant_id_must_be_rfc4122_uuid(tmp_path: Path, tenant_id: str) -> None:
@@ -764,6 +763,17 @@ def test_06_tenant_id_must_be_rfc4122_uuid(tmp_path: Path, tenant_id: str) -> No
     assert result.returncode != 0
     assert "ERROR [6] demo ACX_RECOGNITION_TENANT_ID" in result.stderr
     assert tenant_id not in result.stderr
+
+
+def test_06_documented_demo_tenant_id_is_accepted(tmp_path: Path) -> None:
+    demo = valid_demo_env()
+    demo["WORDPRESS_CONFIG_EXTRA"] = wordpress_config(
+        tenant_id="00000000-0000-4000-8000-000000000001"
+    )
+
+    result = run_preflight(tmp_path, demo=demo)
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_06_recognition_placeholder_is_rejected_without_disclosure(tmp_path: Path) -> None:
@@ -2651,6 +2661,9 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
             return run.id
 
         async def get_run(self, **kwargs):
+            return run
+
+        async def get_run_for_update(self, **kwargs):
             return run
 
         async def list_run_items(self, **kwargs):

@@ -7,10 +7,13 @@ import {
   fetchSettings,
   saveSettings,
   testConnection,
+  CONTEXT_CATEGORIES,
+  effectiveContextCategories,
   SettingsSaveResult,
   TestConnectionOutcome,
   type SaveSettingsPayload,
   type SaveSettingsResponse,
+  type ContextCategory,
   type SettingsResponse,
   type TestConnectionResponse,
 } from '../api/settingsApi';
@@ -36,6 +39,7 @@ interface SettingsFormSnapshot {
   descriptionBudgetMaxAttempts: string;
   recognitionEnabled: boolean;
   allowPersonNames: boolean | null;
+  contextCategories: ContextCategory[];
 }
 
 const sectionFromLocation = (search: string, hash: string): string | null => {
@@ -124,6 +128,7 @@ export const SettingsPage = (): React.JSX.Element => {
     descriptionBudgetMaxAttempts: state.descriptionBudgetMaxAttempts,
     recognitionEnabled: state.recognitionEnabled,
     allowPersonNames: state.allowPersonNames,
+    contextCategories: [...state.contextCategories],
   });
 
   const buildSavePayload = (
@@ -153,6 +158,16 @@ export const SettingsPage = (): React.JSX.Element => {
       values.allowPersonNames !== data.allow_person_names
     ) {
       payload.allow_person_names = values.allowPersonNames;
+    }
+    const selectedContextCategories = CONTEXT_CATEGORIES.filter((category) =>
+      values.contextCategories.includes(category),
+    );
+    const loadedContextCategories = effectiveContextCategories(data.context_categories);
+    if (
+      selectedContextCategories.length !== loadedContextCategories.length ||
+      selectedContextCategories.some((category, index) => category !== loadedContextCategories[index])
+    ) {
+      payload.context_categories = selectedContextCategories;
     }
     return payload;
   };
@@ -488,6 +503,7 @@ export const SettingsPage = (): React.JSX.Element => {
           descriptionBudgetMaxAttempts: state.descriptionBudgetMaxAttempts,
           recognitionEnabled: state.recognitionEnabled,
           allowPersonNames: state.allowPersonNames,
+          contextCategories: state.contextCategories,
           urlReadOnly,
           keyReadOnly,
         }}
@@ -507,6 +523,7 @@ export const SettingsPage = (): React.JSX.Element => {
             dispatch({ type: 'setDescriptionBudgetMaxAttempts', value }),
           onRecognitionEnabledChange: (value) => dispatch({ type: 'setRecognitionEnabled', value }),
           onAllowPersonNamesChange: (value) => dispatch({ type: 'setAllowPersonNames', value }),
+          onContextCategoriesChange: (value) => dispatch({ type: 'setContextCategories', value }),
           onSave: handleSave,
           onTest: handleTest,
           onCommitRouting: () => commitRoutingFields(),

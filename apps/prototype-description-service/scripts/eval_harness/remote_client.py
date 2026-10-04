@@ -10,6 +10,7 @@ fetch loop; this client only raises typed errors.
 from __future__ import annotations
 
 import json
+import math
 import time
 from typing import Any
 
@@ -20,6 +21,7 @@ from recognition.domain.job import JobStatus
 _DEFAULT_TIMEOUT_S = 60.0
 _BREAKER_THRESHOLD = 3
 _DEFAULT_MAX_POLL_ATTEMPTS = 60
+_DEFAULT_JOB_POLL_TIMEOUT_S = 120.0
 _CLUSTERS_PAGE_SIZE = 200
 _MAX_CLUSTER_PAGES = 100  # rg-007 stall bound: refuse to page forever if the route ignores offset
 # Cap server-driven Retry-After so a misconfigured CDN cannot hang a run for hours (S8-04).
@@ -61,8 +63,9 @@ class RemoteSceneClient:
         *,
         tenant_id: str = "",
         timeout_s: float = _DEFAULT_TIMEOUT_S,
-        max_poll_attempts: int = _DEFAULT_MAX_POLL_ATTEMPTS,
+        max_poll_attempts: int | None = None,
         poll_interval: float = 2.0,
+        job_poll_timeout_s: float | None = None,
         rate_limit_wait: float = 20.0,
         max_rate_limit_retries: int = 4,
         transport: httpx.BaseTransport | None = None,
@@ -78,8 +81,17 @@ class RemoteSceneClient:
             timeout=httpx.Timeout(timeout_s),
             transport=transport,
         )
+        self._timeout_s = timeout_s
         self._max_poll_attempts = max_poll_attempts
         self._poll_interval = poll_interval
+        self._scale_poll_attempts_to_timeout = job_poll_timeout_s is not None
+        if job_poll_timeout_s is None:
+            job_poll_timeout_s = _DEFAULT_JOB_POLL_TIMEOUT_S
+        if not math.isfinite(job_poll_timeout_s) or job_poll_timeout_s <= 0:
+            raise ValueError("job_poll_timeout_s must be a finite value greater than 0")
+        if max_poll_attempts is not None and max_poll_attempts < 1:
+            raise ValueError("max_poll_attempts must be at least 1")
+        self._job_poll_timeout_s = job_poll_timeout_s
         self._rate_limit_wait = rate_limit_wait
         self._max_rate_limit_retries = max_rate_limit_retries
         self._consecutive_failures = 0
@@ -88,6 +100,7 @@ class RemoteSceneClient:
         self._client.close()
 
     def _request(self, method: str, url: str, **kwargs: Any) -> Any:
+        deadline = kwargs.pop("_deadline", None)
         if self._consecutive_failures >= _BREAKER_THRESHOLD:
             raise CircuitOpenError(
                 f"circuit open after {self._consecutive_failures} consecutive failures; "
@@ -96,6 +109,12 @@ class RemoteSceneClient:
         rate_limit_retries = 0
         while True:
             try:
+                if deadline is not None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise JobPollTimeoutError("job polling deadline expired during request retries")
+                    requested_timeout = kwargs.get("timeout", self._timeout_s)
+                    kwargs["timeout"] = min(float(requested_timeout), remaining)
                 response = self._client.request(method, url, **kwargs)
                 if response.status_code == 429:
                     # Expected under the per-key RPM budget (STANDARD = 60 rpm);
@@ -111,11 +130,21 @@ class RemoteSceneClient:
                             f"{method} {url} failed: 429 rate limit persisted after "
                             f"{self._max_rate_limit_retries} backoff retries"
                         )
-                    time.sleep(self._retry_after_seconds(response.headers.get("Retry-After")))
+                    wait_seconds = self._retry_after_seconds(response.headers.get("Retry-After"))
+                    if deadline is not None:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise JobPollTimeoutError("job polling deadline expired during rate-limit wait")
+                        wait_seconds = min(wait_seconds, remaining)
+                    time.sleep(wait_seconds)
+                    if deadline is not None and time.monotonic() >= deadline:
+                        raise JobPollTimeoutError("job polling deadline expired during rate-limit wait")
                     continue
                 response.raise_for_status()
                 payload = response.json()
             except (httpx.HTTPError, json.JSONDecodeError) as exc:
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise JobPollTimeoutError("job polling deadline expired during request") from exc
                 self._consecutive_failures += 1
                 status_code = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
                 raise RemoteClientError(f"{method} {url} failed: {exc}", status_code=status_code) from exc
@@ -197,17 +226,40 @@ class RemoteSceneClient:
         return job_id
 
     def wait_job(self, job_id: str) -> dict[str, Any]:
-        """Poll GET /recognition/jobs/{job_id} until terminal; bounded attempts."""
-        for attempt in range(1, self._max_poll_attempts + 1):
-            payload = self._request_dict("GET", f"/recognition/jobs/{job_id}")
+        """Poll until terminal within the total job budget and optional poll cap."""
+        deadline = time.monotonic() + self._job_poll_timeout_s
+        max_attempts = self._max_poll_attempts
+        if max_attempts is None:
+            max_attempts = (
+                max(1, math.ceil(self._job_poll_timeout_s / self._poll_interval))
+                if self._scale_poll_attempts_to_timeout and self._poll_interval > 0
+                else _DEFAULT_MAX_POLL_ATTEMPTS
+            )
+        for attempt in range(1, max_attempts + 1):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise JobPollTimeoutError(f"job {job_id} did not finish within {self._job_poll_timeout_s:g}s")
+            payload = self._request_dict(
+                "GET",
+                f"/recognition/jobs/{job_id}",
+                timeout=min(self._timeout_s, remaining),
+                _deadline=deadline,
+            )
+            if time.monotonic() >= deadline:
+                raise JobPollTimeoutError(f"job {job_id} did not finish within {self._job_poll_timeout_s:g}s")
             status = str(payload.get("status", "")).lower()
             if status in _TERMINAL_SUCCESS_STATUSES:
                 return payload
             if status in _TERMINAL_FAILURE_STATUSES:
                 raise RemoteClientError(f"job {job_id} reached terminal status {status!r}")
-            if attempt < self._max_poll_attempts and self._poll_interval > 0:
-                time.sleep(self._poll_interval)
-        raise JobPollTimeoutError(f"job {job_id} not terminal after {self._max_poll_attempts} polls")
+            if attempt < max_attempts and self._poll_interval > 0:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                time.sleep(min(self._poll_interval, remaining))
+        raise JobPollTimeoutError(
+            f"job {job_id} not terminal after {max_attempts} polls or within {self._job_poll_timeout_s:g}s"
+        )
 
     def media_identities(self, media_ids: list[int]) -> Any:
         """GET /recognition/media/identities?media_ids=... (repeated params)."""

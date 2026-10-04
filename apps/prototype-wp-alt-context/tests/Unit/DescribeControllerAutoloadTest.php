@@ -38,7 +38,8 @@ class DescribeControllerAutoloadTest extends TestCase
         self::assertIsString($entrypoint, 'class-describe-controller.php must exist');
 
         $script = sprintf(
-            'require %s; var_export(%s);',
+            "if (!defined('ABSPATH')) { define('ABSPATH', sys_get_temp_dir() . '/'); } "
+                . 'require %s; var_export(%s);',
             var_export($entrypoint, true),
             "class_exists('AltContext\\\\Api\\\\DescribeController')"
             . " && interface_exists('AltContext\\\\Api\\\\DescribeHostInterface')"
@@ -69,7 +70,8 @@ class DescribeControllerAutoloadTest extends TestCase
         self::assertIsString($entrypoint, 'class-description-history-service.php must exist');
 
         $script = sprintf(
-            'require %s; var_export(%s);',
+            "if (!defined('ABSPATH')) { define('ABSPATH', sys_get_temp_dir() . '/'); } "
+                . 'require %s; var_export(%s);',
             var_export($entrypoint, true),
             "class_exists('AltContext\\\\Api\\\\Services\\\\DescriptionHistoryService', false)"
             . " && trait_exists('AltContext\\\\Api\\\\Services\\\\ExpectsMetaAfterCoreTransforms', false)"

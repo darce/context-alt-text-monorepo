@@ -42,6 +42,8 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 # Shared latency schema (VLM6-RH-04). Package import when run inside the monorepo;
 # standalone single-file copies on the batch VM fall back to a local twin so the
@@ -124,6 +126,10 @@ class BoundedStallError(RuntimeError):
     """Aborted after too many consecutive per-item failures (rg-007)."""
 
 
+class OciInstanceIdentityError(RuntimeError):
+    """The OCI metadata service did not provide a usable instance identity."""
+
+
 @dataclass(frozen=True)
 class ModelSpec:
     key: str
@@ -148,6 +154,30 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         model_version="florence-2-large-ft",
     ),
 }
+
+
+OCI_INSTANCE_METADATA_URL = "http://169.254.169.254/opc/v2/instance/"
+
+
+def get_oci_instance_identity() -> dict[str, str]:
+    """Read the authenticated OCI instance metadata identity; refuse local hosts."""
+    request = Request(OCI_INSTANCE_METADATA_URL, headers={"Authorization": "Bearer Oracle"})
+    try:
+        with urlopen(request, timeout=2.0) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, TimeoutError, URLError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise OciInstanceIdentityError(f"OCI instance metadata request failed: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise OciInstanceIdentityError("OCI instance metadata response must be a JSON object")
+
+    instance_id = payload.get("id")
+    region = payload.get("region")
+    shape = payload.get("shape")
+    if not isinstance(instance_id, str) or not instance_id.startswith("ocid1.instance."):
+        raise OciInstanceIdentityError("OCI metadata response has no valid instance OCID")
+    if not isinstance(region, str) or not region.strip() or not isinstance(shape, str) or not shape.strip():
+        raise OciInstanceIdentityError("OCI metadata response must include region and shape")
+    return {"provider": "oci", "instance_id": instance_id, "region": region, "shape": shape}
 
 
 # --------------------------------------------------------------------- corpus
@@ -346,6 +376,7 @@ def run(
     *,
     spec: ModelSpec,
     resolved_revision: str | None,
+    instance_identity: dict[str, str],
     chunk: int = 12,
     limit: int = 0,
     stall_limit: int = DEFAULT_STALL_LIMIT,
@@ -417,6 +448,7 @@ def run(
                 "model_version": spec.model_version,
                 "model_revision": revision,
                 "task": CAPTION_TASK,
+                "oci_instance_identity": dict(instance_identity),
                 "caption": None,
                 "latency_s": None,
                 "error": None,
@@ -519,6 +551,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"no parsable rows in {_printable_path(tsv_path)}", file=sys.stderr)
         return 1
 
+    try:
+        instance_identity = get_oci_instance_identity()
+    except OciInstanceIdentityError as exc:
+        print(f"OCI identity check failed; refusing model load: {exc}", file=sys.stderr)
+        return 1
+
     captioner, resolved = load_captioner(spec)
     try:
         summary = run(
@@ -527,6 +565,7 @@ def main(argv: list[str] | None = None) -> int:
             out_jsonl,
             spec=spec,
             resolved_revision=resolved,
+            instance_identity=instance_identity,
             chunk=args.chunk,
             limit=args.limit,
             stall_limit=args.stall_limit,

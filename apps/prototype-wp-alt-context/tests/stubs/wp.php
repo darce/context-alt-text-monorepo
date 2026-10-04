@@ -61,6 +61,8 @@ if (!class_exists('WP_REST_Request')) {
         private $params;
         /** @var array<string,mixed> */
         private $bodyParams;
+        /** @var string */
+        private $body = '';
         /** @var array<string,string> */
         private $headers;
 
@@ -102,6 +104,16 @@ if (!class_exists('WP_REST_Request')) {
             return $this->headers[strtolower($key)] ?? '';
         }
 
+        public function set_body(string $data): void
+        {
+            $this->body = $data;
+        }
+
+        public function get_body(): string
+        {
+            return $this->body;
+        }
+
         public function get_param(string $key)
         {
             // Check body params first, then URL params (matches WordPress behavior)
@@ -125,10 +137,18 @@ if (!class_exists('WP_REST_Request')) {
         }
 
         /**
+         * Returns decoded raw JSON params for JSON content types, or parsed body params otherwise.
+         *
          * @return array<string,mixed>|null
          */
         public function get_json_params(): ?array
         {
+            if ($this->body !== '' && preg_match('/^application\/json(?:\s*;|$)/i', $this->get_header('content-type'))) {
+                $decoded = json_decode($this->body, true);
+
+                return is_array($decoded) ? $decoded : null;
+            }
+
             return $this->bodyParams ?: null;
         }
 
@@ -1858,6 +1878,14 @@ if (!function_exists('add_option')) {
         }
 
         return true;
+    }
+}
+
+if (!function_exists('wp_salt')) {
+    function wp_salt($scheme = 'auth')
+    {
+        $scheme = (string) $scheme;
+        return $GLOBALS['__ac_wp_salt'][$scheme] ?? 'test-salt-' . $scheme;
     }
 }
 

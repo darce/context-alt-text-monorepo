@@ -136,6 +136,7 @@ class CliCommandAutoloadTest extends TestCase
         }
 
         $script = "<?php\n"
+            . "if (!defined('ABSPATH')) { define('ABSPATH', sys_get_temp_dir() . '/'); }\n"
             . "if (!class_exists('WP_CLI_Command', false)) {\n"
             . "    class WP_CLI_Command {}\n"
             . "}\n"

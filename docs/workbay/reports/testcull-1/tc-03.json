@@ -1,0 +1,158 @@
+{
+  "lane": "tc-03",
+  "base": "e56ab004eb3080fd1dac7c602d78835e11fac792",
+  "files": [
+    {
+      "path": "apps/prototype-description-service/recognition/tests/unit/test_job_status_enum_adoption.py",
+      "verdict": "REWRITE",
+      "tests_total": 5,
+      "tests_affected": [
+        "test_job_repository_uses_centralized_clustering_job_types",
+        "test_scan_worker_uses_centralized_clustering_job_types"
+      ],
+      "reason": "Replace source-token checks with assertions on repository and worker behavior through their public seams while retaining the banned-literal guard and enum contract tests.",
+      "evidence": "apps/prototype-description-service/recognition/tests/unit/test_job_status_enum_adoption.py:67-80 - these tests assert exact source strings and the absence of a tuple literal.",
+      "subject": "clustering job type handling in the repository and scan worker",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-16"
+      ],
+      "replacement": "Exercise repository queries and worker handling with clustering-family JobType values through injected repositories or public job APIs; keep test_clustering_and_scan_paths_use_job_enums as the banned-string guard.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/unit/test_no_face_extra_strings.py",
+      "verdict": "SPEED",
+      "tests_total": 3,
+      "tests_affected": [
+        "test_no_deprecated_face_or_local_extra_strings"
+      ],
+      "reason": "Keep the deprecated-extra guard but run its 34.5-second repository scan as a dedicated later-stage static check to shorten commit feedback (TEST-24, DIAG-04).",
+      "evidence": "apps/prototype-description-service/recognition/tests/unit/test_no_face_extra_strings.py:88-143 - the test walks the configured repository roots, reads text files, and fails on deprecated extra patterns; observed duration is 34.5 seconds.",
+      "subject": "deprecated face/local install-extra strings across live surfaces",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-24",
+        "DIAG-04"
+      ],
+      "replacement": "Keep the exact pattern guard in a dedicated static-lint target scheduled after commit checks; retain the focused pyproject and Dockerfile contract tests in the fast suite.",
+      "est_seconds_saved": 34.5,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/unit/test_no_raw_secret_reads.py",
+      "verdict": "SPEED",
+      "tests_total": 3,
+      "tests_affected": [
+        "test_no_raw_secret_env_reads_outside_provider"
+      ],
+      "reason": "Preserve the AST guard for raw secret reads but move its 11.3-second production-tree scan to a dedicated later-stage static check (TEST-24, DIAG-04).",
+      "evidence": "apps/prototype-description-service/recognition/tests/unit/test_no_raw_secret_reads.py:129-146 - the test walks production Python directories, parses source, and asserts no forbidden environment reads; observed duration is 11.3 seconds.",
+      "subject": "exclusive secret environment access through SecretProvider",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-24",
+        "DIAG-04"
+      ],
+      "replacement": "Run the AST scan as a dedicated static-lint target after commit checks while retaining the source-directory and provider-boundary contract tests in the fast suite.",
+      "est_seconds_saved": 11.3,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/unit/test_representative_selector.py",
+      "verdict": "REWRITE",
+      "tests_total": 7,
+      "tests_affected": [
+        "test_select_diverse_representatives_seeds_highest_confidence_first",
+        "test_select_diverse_representatives_prefers_unoccluded_over_higher_confidence"
+      ],
+      "reason": "Move the two FPS assertions off the private helper to the representative-persistence seam and consolidate the highest-confidence case already covered by the same helper in test_diverse_representative_selection.py.",
+      "evidence": "apps/prototype-description-service/recognition/tests/unit/test_representative_selector.py:196-212 - both tests call _select_diverse_representatives directly; test_diverse_representative_selection.py:73-89 checks first-pick ranking through that same helper.",
+      "subject": "representative FPS selection and C4 ranking",
+      "duplicate_of": "apps/prototype-description-service/recognition/tests/unit/test_diverse_representative_selection.py::TestSelectDiverseRepresentatives::test_first_selection_is_highest_confidence",
+      "canon": [
+        "TEST-12",
+        "TEST-16",
+        "REF-10"
+      ],
+      "replacement": "Exercise the unique unoccluded-first C4 outcome through AssignmentWriter's public representative-persistence behavior; rely on the existing first-selection test for the duplicated highest-confidence assertion.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/unit/test_scripts_suite_collected.py",
+      "verdict": "SPEED",
+      "tests_total": 3,
+      "tests_affected": [
+        "test_nested_collection_does_not_replace_outer_receipt",
+        "test_every_script_test_module_is_collected_once"
+      ],
+      "reason": "Keep the receipt-isolation and collection-completeness checks but move their nested pytest subprocesses out of commit feedback, where the slowest observed case costs 64.4 seconds (TEST-24).",
+      "evidence": "apps/prototype-description-service/recognition/tests/unit/test_scripts_suite_collected.py:68-84,87-122 - the tests run nested collection and inspect receipts/items; conftest.py:175-205 invokes pytest in a subprocess; observed slowest duration is 64.4 seconds.",
+      "subject": "nested pytest collection caching, receipt isolation, and script-suite collection",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-24"
+      ],
+      "replacement": "Run both nested-collection integration checks in a later pipeline stage; inject the receipt directory instead of rewriting conftest source, and leave the monkeypatched cache unit test in the fast suite.",
+      "est_seconds_saved": 64.4,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/unit/test_start_prototype_local_script.py",
+      "verdict": "KEEP",
+      "tests_total": 2,
+      "tests_affected": [
+        "test_start_prototype_local_uses_project_python_when_offline",
+        "test_make_serve_preserves_skip_install_fast_path"
+      ],
+      "reason": "Keep these operational contract checks because they verify offline startup selects the project interpreter and the public make serve target preserves its skip-install path.",
+      "evidence": "apps/prototype-description-service/recognition/tests/unit/test_start_prototype_local_script.py:27-88 - one test runs the copied startup script against a stub project Python and the other expands make serve to assert SKIP_INSTALL=1.",
+      "subject": "offline prototype startup and make serve behavior",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_conftest_eval_harness_selection.py",
+      "verdict": "SPEED",
+      "tests_total": 1,
+      "tests_affected": [
+        "test_eval_harness_collection_is_deselected_by_default_and_selected_explicitly"
+      ],
+      "reason": "Keep the default, path, and marker selection contract but move its three nested pytest collection runs to a later plugin-integration stage; the observed test costs 18 seconds (TEST-24).",
+      "evidence": "apps/prototype-description-service/scene/tests/test_conftest_eval_harness_selection.py:13-74 - _collect launches pytest and the test invokes it three times to assert deselection and explicit selection; observed duration is 18.0 seconds.",
+      "subject": "pytest eval-harness collection selection",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-24"
+      ],
+      "replacement": "Keep the full subprocess integration check in a later pipeline stage and cover hook selection predicates with focused fake-config/item tests in the fast suite.",
+      "est_seconds_saved": 18,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_describe_baseline.py",
+      "verdict": "KEEP",
+      "tests_total": 2,
+      "tests_affected": [
+        "test_write_report_total_cost_includes_failed_describe_attempts",
+        "test_write_report_total_cost_excludes_pre_describe_failures"
+      ],
+      "reason": "Keep both regression tests because generated JSON and Markdown reports assert the live billing contract for failed describe attempts and pre-describe failures (TEST-15).",
+      "evidence": "apps/prototype-description-service/scene/tests/test_describe_baseline.py:40-105 - the tests write reports and assert paid-call totals and cost fields; describe_baseline.py:374-451 emits those JSON and Markdown fields.",
+      "subject": "describe-baseline report cost accounting",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-15"
+      ],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    }
+  ],
+  "fixtures": []
+}

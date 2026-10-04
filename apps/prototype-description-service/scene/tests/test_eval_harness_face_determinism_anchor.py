@@ -98,14 +98,17 @@ _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-face-report.md"
 # come from" (N is trap MEDIA, not FN share; rg-015). Media 9 note dropped
 # the stale "1 of 4" denominator. Manifest digest unchanged (corpus body
 # identical); run/report/md moved. Digests from sha256sum of generator output.
+# Regenerated 2026-10-03 (DEBTFIX-1 / DATA-03): the canonical manifest model dump
+# now includes adjudication_records and per-box adjudication_source defaults.
+# The persisted manifest bytes and scored metrics are unchanged; provenance hashes moved.
 _FROZEN_DIGESTS = {
     # VLM6-DELTA-08: regenerated for FIR-11 v3 (annotation_mode=exhaustive,
     # real capture_session_id on every box — the exhaustive gate refuses the
     # legacy_import_lineage unknown-occasion sentinel, S2R6-01).
     _MANIFEST.name: "4877a9124972471ab186896a56a66ca0b7a292645aa69c54b65bb91d0a1b7087",
-    _RUN.name: "fc999079cd523f2d84736a55de6dc1c4161ec310e04b6f735acab7f5d1f5306e",
-    _REPORT_JSON.name: "51f7c397dc7c53b7f5745a961623897b08aa89cdfc9d3ca531a6022509db91de",
-    _REPORT_MD.name: "b89146d6aae686b42d12d51c8d6c552645ac4373f468c2463473d46401b4badc",
+    _RUN.name: "e078c1840a183618f97c2082eb11e94c1af96f0302d0ffb5cc53e55336664630",
+    _REPORT_JSON.name: "b7ff1a96bf0750f8cd0ed9c230006d7bbe0cf980a80b8601c017cf7c5d67a73b",
+    _REPORT_MD.name: "3c70ecbf47ff4a33a1589c2ebcc6af9f59db8f5bcf256775da69c4f369a73302",
 }
 
 
@@ -247,9 +250,10 @@ def test_face_generator_regenerates_byte_identical_committed_anchor(tmp_path: Pa
     # Metadata-only: synthetic face anchor has no image files; sha over metadata only.
     expected_sha = _manifest_sha(load_manifest(str(_MANIFEST), skip_hash_verification=True))
     assert manifest_sha == expected_sha
-    # Prefix of generation-time sha over the wF4 extended corpus (HARM-05 + G-01 trap).
+    # DATA-03 fields are included in the canonical model-dump sha even when their
+    # defaults are empty/null; the generated manifest bytes stay unchanged.
     # Not a digest pin — full digest lives in _FROZEN_DIGESTS[_MANIFEST.name].
-    assert manifest_sha.startswith("3c5223fc")
+    assert manifest_sha.startswith("47fdf116")
     assert man_path.read_bytes() == _MANIFEST.read_bytes()
     assert run_path.read_bytes() == _RUN.read_bytes()
     # wI2 regenerated report freezes from the generator; man+run remain wF4 pins.
@@ -385,7 +389,10 @@ def test_labeled_y_missing_constant_zero_goes_red_on_extended_corpus(
             "media_id": e["media_id"],
             "path": e["path"],
             "model_id": "synthetic-face-anchor",
-            "describe": {"alt_text_draft": "placeholder"},
+            "describe": {
+                "alt_text_draft": "placeholder",
+                "model_id": "synthetic-face-anchor",
+            },
             "identities": [],
             "face_count": e["face_count"],
             "identity_ordering": "positional",

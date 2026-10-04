@@ -91,8 +91,8 @@ class SovereignProjectionIntegrationTest extends TestCase
     /**
      * Verifies that user-curated labels survive a subsequent snapshot projection.
      *
-     * The SQL uses `IF(is_user_confirmed = 1, label, VALUES(label))` so that once
-     * a cluster is user-confirmed the snapshot cannot overwrite the label.
+     * The user-confirmed guard preserves curated labels; otherwise the inner
+     * snapshot-version gate applies labels only from current or newer snapshots.
      */
     public function testSnapshotPreservesUserCuratedLabelsOnSubsequentProjection(): void
     {
@@ -159,9 +159,9 @@ class SovereignProjectionIntegrationTest extends TestCase
         $queries = $wpdb->queries;
         $clusterInsert = $this->findQueryContaining($queries, 'INSERT INTO `wp_acx_clusters`');
 
-        // The ON DUPLICATE KEY UPDATE guard must preserve the user-curated label.
+        // The ON DUPLICATE KEY UPDATE guard preserves user curation and version-gates incoming labels.
         $this->assertStringContainsString(
-            'label = IF(is_user_confirmed = 1, label, VALUES(label))',
+            'label = IF(is_user_confirmed = 1, label, IF(VALUES(snapshot_version) >= snapshot_version, VALUES(label), label))',
             $clusterInsert,
             'Cluster upsert must guard user-curated labels with is_user_confirmed check'
         );
@@ -172,9 +172,9 @@ class SovereignProjectionIntegrationTest extends TestCase
         $this->assertStringContainsString("'Machine Label'", $clusterInsert);
         $this->assertStringContainsString("'cluster-curated'", $clusterInsert);
 
-        // Curation state is also guarded.
+        // Curation state is guarded against user edits and older snapshots.
         $this->assertStringContainsString(
-            'IF(is_user_confirmed = 1, curation_state, VALUES(curation_state))',
+            'curation_state = IF(is_user_confirmed = 1, curation_state, IF(VALUES(snapshot_version) >= snapshot_version, VALUES(curation_state), curation_state))',
             $clusterInsert,
             'Curation state must also be preserved for user-confirmed clusters'
         );

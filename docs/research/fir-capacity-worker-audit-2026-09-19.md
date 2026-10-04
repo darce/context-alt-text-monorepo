@@ -6,8 +6,9 @@ This is a repository-record audit only. No OCI tenancy, GPU, private corpus, or
 media was contacted. “Recorded” below means a dated repo snapshot; it is not a
 live capacity assertion. The short answer is: a 512-D head is not a four-times
 accuracy promise; FIR-7’s own-weight path is designed around a 24-GB A10, but
-is not currently executable in this checkout; and the existing FIR plans can
-guarantee measurement and fail-closed release conditions, not improvement.
+is not currently executable in this checkout; and the existing FIR plans
+specify measurement and fail-closed release gates. Those outcomes depend on
+implemented tooling and executed evidence, not the plans alone.
 
 ## Recorded hardware and feasibility boundary
 
@@ -63,13 +64,18 @@ a 4× accuracy gain, and the 512-D campaign is explicitly not authorised.
 It registers named commercial-ingest entries for YuNet/SFace and the proposed
 BlazeFace, RT-DETR, D-FINE, and PP-PicoDet alternatives; denies Ultralytics;
 keeps DCFace operator-cleared only with its clearance decision; leaves Vec2Face
-pending; and requires registered source/license/photo-clearance fields for
-training rows and occluder assets. `audit_provenance_row`,
+pending; and requires training rows to carry source, `derived_from_model`, and
+license fields. Occluder-asset rows additionally require positive
+`photo_clearance`. `audit_provenance_row`,
 `audit_derived_from_model`, `audit_source`, `audit_model_ingest`,
 `audit_occluder_asset`, and `audit_synthetic_source` fail closed on NC model
 lineage, research-only sources, unknown/unregistered identities, uncleared
-assets, and missing clearance. This blocks buffalo outputs from becoming
-training data, but cannot prove model quality or training completion.
+assets, and missing clearance. At policy level, this rejects correctly tagged
+buffalo outputs, but blank `derived_from_model` is accepted and
+`generator_lineage` is informational. No training/data pipeline or production
+caller currently enforces the policy, so it does not prevent untagged outputs
+from entering training data. The policy also cannot prove model quality or
+training completion.
 
 The configured witness smoke in `test_license_policy.py`,
 `TestGate31OperatorOwnedSourcePassWitnesses`, covers exact PASS tokens

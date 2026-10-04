@@ -93,6 +93,47 @@ class DescribeMediaServiceTest extends TestCase
     /**
      * @return array<string,mixed>
      */
+    private function dispatchedProductContextPackForCategories(mixed $categories): array
+    {
+        $this->setOption('acx_description_context_categories', $categories);
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0fake-jpeg-bytes", 'jpg');
+        $GLOBALS['__ac_posts'][42]->post_parent = 77;
+        $GLOBALS['__ac_posts'][77] = (object) array(
+            'ID'           => 77,
+            'post_title'   => 'Trail jackets for spring',
+            'post_excerpt' => 'Lightweight red jackets for spring hikes.',
+            'post_type'    => 'product',
+            'post_status'  => 'publish',
+        );
+        $this->setPostMeta(77, '_sku', 'JKT-RED-1');
+        $this->setPostMeta(77, '_price', '129.00');
+
+        $term = wp_insert_term('Jackets', 'product_cat', array('slug' => 'jackets'));
+        wp_set_object_terms(77, array($term['term_id']), 'product_cat');
+
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $result = $this->controller->describe_media($req);
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+
+        $body = $this->getHttpCalls()[0]['args']['body'];
+        $this->assertIsString($body);
+        $this->assertSame(1, preg_match('/name="request".*?\r\n\r\n(\{.*?\})\r\n/s', $body, $matches));
+        $envelope = json_decode($matches[1], true);
+        $this->assertIsArray($envelope);
+        $this->assertIsArray($envelope['context_pack'] ?? null);
+
+        return $envelope['context_pack'];
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
     private function validBackendBody(int $media_id): array
     {
         return array(
@@ -120,11 +161,17 @@ class DescribeMediaServiceTest extends TestCase
      * @param array<int,array<string,mixed>> $identityRows
      * @return array<string,mixed>
      */
-    private function describeEnvelopeWithIdentityRows(array $identityRows, bool $allowPersonNames): array
+    private function describeEnvelopeWithIdentityRows(
+        array $identityRows,
+        bool $allowPersonNames,
+        ?string $consentTenantId = null
+    ): array
     {
-        // The legacy local option is intentionally ignored. The recognition
-        // service owns the tenant naming agreement and applies the final gate.
-        $this->setOption('acx_legacy_naming_fixture', $allowPersonNames);
+        $this->setOption('acx_description_allow_person_names', $allowPersonNames);
+        $this->setOption(
+            'acx_description_allow_person_names_tenant_id',
+            $consentTenantId ?? self::currentTenantId()
+        );
         $this->plantAttachment(42, "\xff\xd8\xff\xe0fake-jpeg-bytes", 'jpg');
 
         $host = new DescribeMediaServiceTestHost(self::currentTenantId(), $this->validBackendBody(42));
@@ -1145,7 +1192,7 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame(array(), $this->getHttpCalls());
     }
 
-    public function testBuildsBoundedContextPackFromAttachmentParentTermsAndProductMeta(): void
+    public function testBuildsBoundedContextPackFromAttachmentParentTermsAndProductNameByDefault(): void
     {
         $bytes = "\xff\xd8\xff\xe0fake-jpeg-bytes";
         $this->plantAttachment(42, $bytes, 'jpg');
@@ -1188,8 +1235,38 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame('publish', $contextPack['post']['status']);
         $this->assertArrayNotHasKey('description', $contextPack['post']);
         $this->assertSame('Jackets', $contextPack['taxonomy_terms'][0]['name']);
-        $this->assertSame('JKT-RED-1', $contextPack['product']['sku']);
-        $this->assertSame('129.00', $contextPack['product']['price']);
+        $this->assertSame('Trail jackets for spring', $contextPack['product']['name']);
+        $this->assertArrayNotHasKey('sku', $contextPack['product']);
+        $this->assertArrayNotHasKey('price', $contextPack['product']);
+    }
+
+    public function testContextCategoryPolicySendsOnlyExplicitlyAllowedCategory(): void
+    {
+        $contextPack = $this->dispatchedProductContextPackForCategories(array('post'));
+
+        $this->assertArrayNotHasKey('attachment', $contextPack);
+        $this->assertArrayHasKey('post', $contextPack);
+        $this->assertArrayNotHasKey('taxonomy_terms', $contextPack);
+        $this->assertArrayNotHasKey('product', $contextPack);
+        $this->assertArrayHasKey('identity', $contextPack);
+    }
+
+    public function testMalformedContextCategoryPolicyFailsClosedWithoutLoggingOptionValue(): void
+    {
+        $sentinel = 'SECRET_SENTINEL_DFG_CATLOG';
+        $contextPack = $this->dispatchedProductContextPackForCategories($sentinel);
+
+        $this->assertArrayHasKey('attachment', $contextPack);
+        $this->assertArrayNotHasKey('post', $contextPack);
+        $this->assertArrayNotHasKey('taxonomy_terms', $contextPack);
+        $this->assertArrayNotHasKey('product', $contextPack);
+        $this->assertArrayHasKey('identity', $contextPack);
+        $this->assertCount(1, $this->getErrorLog());
+        $logLine = $this->getErrorLog()[0];
+        $this->assertStringContainsString('acx_description_context_categories', $logLine);
+        $this->assertStringContainsString('type=string', $logLine);
+        $this->assertStringContainsString('size=' . strlen($sentinel), $logLine);
+        $this->assertStringNotContainsString($sentinel, $logLine);
     }
 
     public function testContextPackExcludesNonPublicParentPostContent(): void
@@ -1324,7 +1401,7 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertStringContainsString('identity_unconfirmed', $envelopeJson);
     }
 
-    public function testRosterDescriptionContextAlwaysSendsConfirmedNamesToService(): void
+    public function testRosterDescriptionContextDoesNotSendConfirmedNamesWhenPolicyIsDisabled(): void
     {
         $envelopeJson = json_encode(
             $this->describeEnvelopeWithIdentityRows(
@@ -1342,8 +1419,38 @@ class DescribeMediaServiceTest extends TestCase
         );
 
         $this->assertIsString($envelopeJson);
-        $this->assertStringContainsString('Ada Lovelace', $envelopeJson);
-        $this->assertStringNotContainsString('person_naming_policy_disabled', $envelopeJson);
+        $envelope = json_decode($envelopeJson, true);
+        $this->assertIsArray($envelope);
+        $identity = $envelope['context_pack']['identity'];
+        $this->assertSame('disabled', $identity['policy']['person_naming']);
+        $this->assertSame(array(), $identity['identities']);
+        $this->assertStringNotContainsString('Ada Lovelace', $envelopeJson);
+    }
+
+    public function testRosterDescriptionContextDoesNotReuseConsentFromAnotherTenant(): void
+    {
+        $envelopeJson = json_encode(
+            $this->describeEnvelopeWithIdentityRows(
+                array(
+                    array(
+                        'identity_uuid'     => 'identity-1',
+                        'cluster_uuid'      => 'cluster-1',
+                        'person_name'       => 'Ada Lovelace',
+                        'is_user_confirmed' => 1,
+                    ),
+                ),
+                true,
+                'previous-tenant'
+            )
+        );
+
+        $this->assertIsString($envelopeJson);
+        $envelope = json_decode($envelopeJson, true);
+        $this->assertIsArray($envelope);
+        $identity = $envelope['context_pack']['identity'];
+        $this->assertSame('disabled', $identity['policy']['person_naming']);
+        $this->assertSame(array(), $identity['identities']);
+        $this->assertStringNotContainsString('Ada Lovelace', $envelopeJson);
     }
 
     public function testRosterDescriptionContextRepresentsAmbiguousMachineOnlyState(): void

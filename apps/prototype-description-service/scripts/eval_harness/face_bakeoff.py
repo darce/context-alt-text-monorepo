@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Protocol
@@ -390,9 +391,32 @@ def _cache_provenance_from_detector(cache_det: Any) -> LandmarkCacheProvenance:
 def build_candidate_leg(
     *,
     models_dir: Path | None = None,
+    score_threshold: float | None = None,
 ) -> tuple[OrtYuNetDetector, FivePointAligner, OrtSFaceEmbedder]:
-    """Construct the ACX-owned candidate leg (OrtYuNet + FivePoint + OrtSFace)."""
-    detector = OrtYuNetDetector(models_dir=models_dir)
+    """Construct the ACX-owned candidate leg with an optional YuNet threshold.
+
+    ``None`` leaves the detector's configured default in effect. An explicit
+    threshold must be finite and strictly between zero and one.
+    """
+    if score_threshold is not None:
+        try:
+            valid_score_threshold = (
+                math.isfinite(score_threshold) and 0 < score_threshold < 1
+            )
+        except (TypeError, ValueError, OverflowError):
+            valid_score_threshold = False
+        if not valid_score_threshold:
+            raise ValueError(
+                "score_threshold must be finite and satisfy 0 < value < 1; "
+                f"got {score_threshold!r}"
+            )
+
+    if score_threshold is None:
+        detector = OrtYuNetDetector(models_dir=models_dir)
+    else:
+        detector = OrtYuNetDetector(
+            models_dir=models_dir, score_threshold=score_threshold
+        )
     aligner = FivePointAligner()
     embedder = OrtSFaceEmbedder(models_dir=models_dir)
     return detector, aligner, embedder

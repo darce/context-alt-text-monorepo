@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,19 @@ from scripts.bench.tests.conftest import (
     write_manifest,
     write_pair,
 )
+
+
+def _fresh_reset_evidence() -> dict[str, dict[str, object]]:
+    completed_at = datetime.now(UTC).isoformat()
+    return {
+        stack_id: {
+            "reset_attested_by": "bench test operator",
+            "reset_reference": "FIR23-STACK runbook reset",
+            "reset_completed_at": completed_at,
+            "prior_run_identity_rows_empty": True,
+        }
+        for stack_id in ("acx-dev-insightface", "acx-dev-fir")
+    }
 
 
 def test_partial_intersection_is_blocker() -> None:
@@ -46,6 +60,7 @@ def test_run_start_blocks_before_media_write(tmp_path: Path) -> None:
                 "acx-dev-insightface": FakeClient(),
                 "acx-dev-fir": FakeClient(),
             },
+            pre_run_reset_by_stack=_fresh_reset_evidence(),
         )
     assert exc.value.code == "baseline_not_superset"
     # No media write / analyze before the blocker.
@@ -70,6 +85,7 @@ def test_absent_baseline_key_skips_assert(tmp_path: Path) -> None:
             "acx-dev-fir": fake_b,
         },
         skip_preflight=True,
+        pre_run_reset_by_stack=_fresh_reset_evidence(),
     )
     assert fake_a.analyze_calls
     assert fake_b.analyze_calls

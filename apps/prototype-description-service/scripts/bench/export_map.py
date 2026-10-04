@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import unicodedata
@@ -23,6 +24,14 @@ from scripts.bench.status import CLUSTER_SUCCESS_STATUSES, ItemOutcome, ItemPhas
 from scripts.eval_harness.face_metrics import ImageDetection, ImageIdentities
 from scripts.eval_harness.manifest import FaceBox, GoldenEntry, GoldenManifest
 
+LEG_EXPORT_PAYLOAD_FILES = (
+    "media_identities.json",
+    "media_identity_results.json",
+    "clusters.json",
+    "cluster_members.json",
+)
+LEG_EXPORT_REQUIRED_FILES = (*LEG_EXPORT_PAYLOAD_FILES, "export_sha256.json")
+
 
 @dataclass
 class LegExport:
@@ -31,6 +40,7 @@ class LegExport:
     clusters: Any
     cluster_members: Any
     paths: dict[str, Path] = field(default_factory=dict)
+    media_identity_results: Any = None
 
 
 def require_cluster_success(run_dir: Path | str, stack_id: str) -> dict[str, Any]:
@@ -47,7 +57,41 @@ def require_cluster_success(run_dir: Path | str, stack_id: str) -> dict[str, Any
 def export_leg(client: Any, run_dir: Path | str, stack_id: str) -> LegExport:
     require_cluster_success(run_dir, stack_id)
     media_ids = _roster_stack_media_ids(run_dir, stack_id)
-    identities = client.media_identities(media_ids)
+    export_dir = Path(run_dir) / "legs" / stack_id / "exports"
+    export_dir.mkdir(parents=True, exist_ok=True)
+    paths = {
+        "media_identities": export_dir / "media_identities.json",
+        "media_identity_results": export_dir / "media_identity_results.json",
+        "clusters": export_dir / "clusters.json",
+        "cluster_members": export_dir / "cluster_members.json",
+    }
+    try:
+        identities = client.media_identities(media_ids)
+        identity_rows = _unwrap_rows(identities, what="media_identities")
+    except Exception:
+        # The upstream endpoint is one opaque batch request, so a failed batch
+        # means every requested media id has an unknown/failed query result.
+        _write_preserved(
+            paths["media_identity_results"],
+            [
+                {"media_id": mid, "query_succeeded": False, "rows": []}
+                for mid in media_ids
+            ],
+        )
+        raise
+    identity_results = [
+        {
+            "media_id": mid,
+            "query_succeeded": True,
+            "rows": [
+                row
+                for row in identity_rows
+                if isinstance(row, dict) and row.get("media_id") == mid
+            ],
+        }
+        for mid in media_ids
+    ]
+    _write_preserved(paths["media_identity_results"], identity_results)
     clusters = client.clusters()
     members: Any
     rows = _unwrap_rows(clusters, what="clusters")
@@ -58,43 +102,83 @@ def export_leg(client: Any, run_dir: Path | str, stack_id: str) -> LegExport:
             continue
         members.append(client.cluster_members(str(cid)))
 
-    export_dir = Path(run_dir) / "legs" / stack_id / "exports"
-    export_dir.mkdir(parents=True, exist_ok=True)
-    paths = {
-        "media_identities": export_dir / "media_identities.json",
-        "clusters": export_dir / "clusters.json",
-        "cluster_members": export_dir / "cluster_members.json",
-    }
     _write_preserved(paths["media_identities"], identities)
     _write_preserved(paths["clusters"], clusters)
     _write_preserved(paths["cluster_members"], members)
+    export_sha256 = _write_export_sha256(paths)
+    paths["export_sha256"] = export_sha256
     return LegExport(
         stack_id=stack_id,
         media_identities=identities,
         clusters=clusters,
         cluster_members=members,
         paths=paths,
+        media_identity_results=identity_results,
     )
 
 
 def load_leg_exports(run_dir: Path | str, stack_id: str) -> LegExport:
     export_dir = Path(run_dir) / "legs" / stack_id / "exports"
+    payloads = _read_verified_export_payloads(export_dir)
+    identity_results_path = export_dir / "media_identity_results.json"
+    identity_results = None
+    if not identity_results_path.is_symlink() and identity_results_path.is_file():
+        identity_results = json.loads(payloads["media_identity_results.json"])
     return LegExport(
         stack_id=stack_id,
-        media_identities=json.loads((export_dir / "media_identities.json").read_text(encoding="utf-8")),
-        clusters=json.loads((export_dir / "clusters.json").read_text(encoding="utf-8")),
-        cluster_members=json.loads((export_dir / "cluster_members.json").read_text(encoding="utf-8")),
+        media_identities=json.loads(payloads["media_identities.json"]),
+        clusters=json.loads(payloads["clusters.json"]),
+        cluster_members=json.loads(payloads["cluster_members.json"]),
+        media_identity_results=identity_results,
         paths={
             "media_identities": export_dir / "media_identities.json",
+            "media_identity_results": identity_results_path,
             "clusters": export_dir / "clusters.json",
             "cluster_members": export_dir / "cluster_members.json",
+            "export_sha256": export_dir / "export_sha256.json",
         },
     )
+
+
+def _read_verified_export_payloads(export_dir: Path) -> dict[str, bytes]:
+    digest_path = export_dir / "export_sha256.json"
+    try:
+        digests = json.loads(digest_path.read_bytes())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise BenchError("export_digest_invalid", f"cannot read {digest_path.name}") from exc
+    if not isinstance(digests, dict):
+        raise BenchError("export_digest_invalid", f"{digest_path.name} must contain an object")
+
+    payloads: dict[str, bytes] = {}
+    for name in LEG_EXPORT_PAYLOAD_FILES:
+        expected_digest = digests.get(name)
+        if not isinstance(expected_digest, str) or not expected_digest:
+            raise BenchError("export_digest_missing", f"missing digest for {name}")
+        try:
+            payload = (export_dir / name).read_bytes()
+        except OSError as exc:
+            raise BenchError("export_payload_missing", f"cannot read {name}") from exc
+        actual_digest = hashlib.sha256(payload).hexdigest()
+        if actual_digest != expected_digest:
+            raise BenchError("export_digest_mismatch", f"sha256 mismatch for {name}")
+        payloads[name] = payload
+    return payloads
 
 
 def _write_preserved(path: Path, payload: Any) -> None:
     # Persist the upstream payload as-is. Never invent envelope fields.
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _write_export_sha256(paths: dict[str, Path]) -> Path:
+    """Persist content hashes for the raw JSON exports used by scoring."""
+    digests = {
+        paths[name].name: hashlib.sha256(paths[name].read_bytes()).hexdigest()
+        for name in ("media_identities", "media_identity_results", "clusters", "cluster_members")
+    }
+    dest = next(iter(paths.values())).parent / "export_sha256.json"
+    dest.write_text(json.dumps(digests, indent=2, sort_keys=True), encoding="utf-8")
+    return dest
 
 
 def _roster_stack_media_ids(run_dir: Path | str, stack_id: str) -> list[int]:
@@ -427,6 +511,8 @@ def to_face_metric_inputs(
     join: dict[int, dict[str, Any]],
     label_map: str,
     frame: Literal["native", "e2e"],
+    *,
+    localization_counts: dict[str, int] | None = None,
 ) -> tuple[list[ImageDetection], list[ImageIdentities]]:
     roster = list(manifest.roster)
     if "optimistic" in label_map:
@@ -462,6 +548,10 @@ def to_face_metric_inputs(
             image_width=width,
             image_height=height,
         )
+        if localization_counts is not None:
+            localization_counts["degenerate_box_dropped"] = (
+                localization_counts.get("degenerate_box_dropped", 0) + match.degenerate_box_dropped
+            )
         detections.append(
             ImageDetection(
                 image=entry.path,

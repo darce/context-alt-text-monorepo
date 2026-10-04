@@ -1,4 +1,4 @@
-"""Fail-open wrapper command transform (internal).
+"""Guard wrapper command transform (internal).
 
 Single source for the wrapper-prefix form shared by the renderer
 (``generate_agent_workflows.py``) and the contract-content checker
@@ -12,6 +12,7 @@ import re
 import shlex
 
 _GUARD_WRAPPER_RELPATH = "scripts/hooks/_run_guard.py"
+_WORKSPACE_ROOT_EXPR = "$(git rev-parse --show-toplevel)"
 # Kept aligned with coherence._INTERPRETERS (REV-A-002): the resolve gate and
 # the wrap transform must classify the same words as interpreter prefixes.
 _WRAP_INTERPRETER_WORDS = frozenset({"python", "python3", "bash", "sh", "uv", "uvx"})
@@ -33,17 +34,16 @@ def _quote_command_token(token: str) -> str:
 
 
 def wrap_guard_command(command: str, *, fail_mode: object = None) -> str:
-    """Prefix one rendered hook command with the fail-open wrapper.
+    """Prefix one rendered hook command with the guard wrapper.
 
     The wrapper path is emitted with the SAME per-harness anchor the command
     already uses (``$CLAUDE_PROJECT_DIR`` for Claude, ``${GROK_WORKSPACE_ROOT}``
-    for Grok, relative for VS Code/Codex whose runners spawn hooks with
-    cwd=workspace root), so wrapper self-resolution rides the anchor the
-    contract already verified per harness. The original interpreter word is
-    dropped: the wrapper re-derives bash vs python3 from the handler
-    extension. Idempotent — an already-wrapped command is returned unchanged.
-    ``fail_mode == "closed"`` renders the ``--fail-mode=closed`` opt-out flag
-    (the wrapper then blocks on a missing handler instead of failing open).
+    for Grok). Unanchored relative commands discover the checkout root through
+    Git, so a hook launched from a subdirectory still finds both wrapper and
+    handler. The original interpreter word is dropped: the wrapper re-derives
+    bash vs python3 from the handler extension. Idempotent — an already-wrapped
+    command is returned unchanged. Missing handlers fail closed by default;
+    pass ``fail_mode="open"`` only for hooks that intentionally allow them.
     """
     try:
         words = shlex.split(command)
@@ -63,9 +63,14 @@ def wrap_guard_command(command: str, *, fail_mode: object = None) -> str:
         # rather than mis-wrap a non-path token as the handler (REV-A-002).
         return command
     anchor_match = _WRAP_ANCHOR_RE.match(script)
-    anchor = anchor_match.group(0) if anchor_match else ""
+    if anchor_match:
+        anchor = anchor_match.group(0)
+        handler = script
+    else:
+        anchor = f"{_WORKSPACE_ROOT_EXPR}/"
+        handler = script if script.startswith("/") else f"{anchor}{script}"
     tokens = ["python3", f"{anchor}{_GUARD_WRAPPER_RELPATH}"]
-    if fail_mode == "closed":
+    if fail_mode != "open":
         tokens.append("--fail-mode=closed")
-    tokens.extend(rest)
+    tokens.extend([handler, *rest[1:]])
     return " ".join(_quote_command_token(token) for token in tokens)

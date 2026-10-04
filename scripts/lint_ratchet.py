@@ -304,7 +304,11 @@ def ruff_format_config_guard(pyproject: Path | None = None) -> dict[str, object]
     return {"format_options": {k: fmt[k] for k in sorted(fmt)}}
 
 
-_RUFF_FORMAT_LOCATION = re.compile(r"^\s*-->\s+(.+):\d+:\d+\s*$")
+_RUFF_FORMAT_LOCATION = re.compile(
+    r"^\s*-->\s+(.+?)(?::cell\s+\d+)?:\d+:\d+\s*$"
+)
+_RUFF_FORMAT_ARROW = re.compile(r"^\s*-->\s+")
+_RUFF_FORMAT_DIAGNOSTIC = re.compile(r"^\s*unformatted:")
 _RUFF_FORMAT_LEGACY_PREFIX = "Would reformat: "
 _ANSI_ESCAPE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
@@ -318,19 +322,36 @@ def _ruff_format_reported_paths(output: str) -> set[str]:
     JSON serializer.
     """
     paths: set[str] = set()
+    diagnostic_count = 0
+    parsed_location_count = 0
+    arrow_count = 0
     for raw_line in output.splitlines():
         line = _ANSI_ESCAPE.sub("", raw_line)
+        if _RUFF_FORMAT_DIAGNOSTIC.match(line):
+            diagnostic_count += 1
         location = _RUFF_FORMAT_LOCATION.match(line)
         if location:
             path = location.group(1)
+            parsed_location_count += 1
+            arrow_count += 1
         elif line.startswith(_RUFF_FORMAT_LEGACY_PREFIX):
             path = line.removeprefix(_RUFF_FORMAT_LEGACY_PREFIX)
+            diagnostic_count += 1
+            parsed_location_count += 1
         else:
+            if _RUFF_FORMAT_ARROW.match(line):
+                arrow_count += 1
             continue
         candidate = Path(path)
         if not candidate.is_absolute():
             candidate = REPO_ROOT / candidate
         paths.add(_relpath(candidate))
+    reported_count = max(diagnostic_count, arrow_count)
+    if parsed_location_count != reported_count:
+        raise RatchetError(
+            "ruff format --check output did not yield a complete file inventory "
+            f"(parsed {parsed_location_count} of {reported_count} reported locations)"
+        )
     return paths
 
 
@@ -356,8 +377,9 @@ def collect_ruff_format() -> Baseline:
     # 0 = all formatted, 1 = some would be reformatted; anything else is a real
     # failure (bad config, unparseable file) and must not be read as "clean".
     if proc.returncode not in (0, 1):
+        diagnostics = "\n".join(part for part in (proc.stdout, proc.stderr) if part)
         raise RatchetError(
-            f"ruff format --check failed with exit {proc.returncode}.\n{proc.stderr}"
+            f"ruff format --check failed with exit {proc.returncode}.\n{diagnostics}"
         )
     output = "\n".join(part for part in (proc.stdout, proc.stderr) if part)
     paths = _ruff_format_reported_paths(output)

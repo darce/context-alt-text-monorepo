@@ -1,0 +1,69 @@
+{
+  "lane": "dfrf-01",
+  "base": "ca065abdaa0f0e3fc9e2c4a2106e3c149e211b50",
+  "results": [
+    {
+      "db_id": 16863,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-wp-alt-context/src/support/class-recognition-transport.php:30-47,53-64 - credentialed requests disable redirects and use WordPress safe transports for every non-loopback host; only explicit loopback development targets bypass safe validation. apps/prototype-wp-alt-context/src/api/class-settings-controller.php:191-195 - settings no longer write the local_url field.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No additional fix is indicated by this re-check; retain the safe non-loopback transport and redirect prohibition."
+    },
+    {
+      "db_id": 16866,
+      "outcome": "REFUTED",
+      "evidence": "apps/prototype-wp-alt-context/src/api/services/class-describe-media-service.php:185-215 - the multipart recognition request always contains the image bytes and context_pack. apps/prototype-wp-alt-context/src/api/services/class-describe-media-service.php:931-978 - context_pack includes attachment fields, public-parent fields, taxonomy, and product SKU/price. apps/prototype-wp-alt-context/tests/Unit/DescribeMediaServiceTest.php:1137-1167 asserts taxonomy, SKU, and price are present in the outbound context; roster names are only gated at class-describe-media-service.php:1025-1078.",
+      "severity": "high",
+      "fix_files": [
+        "apps/prototype-wp-alt-context/src/api/services/class-describe-media-service.php",
+        "apps/prototype-wp-alt-context/tests/Unit/DescribeMediaServiceTest.php"
+      ],
+      "test_file": "apps/prototype-wp-alt-context/tests/Unit/DescribeMediaServiceTest.php",
+      "size": "M",
+      "fix_hint": "Apply an explicit tenant policy to all outbound context and omit metadata and image data that the tenant has not approved for recognition processing."
+    },
+    {
+      "db_id": 16876,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-wp-alt-context/src/api/class-api.php:223-242 - both workbench media GET routes use can_view_media_queue; :417-419 requires manage_options. apps/prototype-wp-alt-context/tests/Unit/ClustersSchemaParityTest.php:168-176 asserts upload_files alone is denied and manage_options is allowed.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-wp-alt-context/tests/Unit/ClustersSchemaParityTest.php",
+      "size": "S",
+      "fix_hint": "No fix is indicated; preserve the manage_options permission check for both workbench media routes."
+    },
+    {
+      "db_id": 16877,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-wp-alt-context/src/api/class-blob-url-rewriter.php:44,132-148,199-214 - signed URLs have a 300-second TTL, are not minted for anonymous viewers, and sign the current viewer ID. apps/prototype-wp-alt-context/src/api/class-blobs-controller.php:151-200 requires an authenticated viewer and verifies that viewer-bound signature. apps/prototype-wp-alt-context/tests/Unit/BlobsControllerTest.php:86-135 asserts the five-minute expiry, rejects use by a different viewer, and rejects anonymous access.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-wp-alt-context/tests/Unit/BlobsControllerTest.php",
+      "size": "S",
+      "fix_hint": "No fix is indicated; retain the short expiry and authenticated viewer binding for signed blob URLs."
+    },
+    {
+      "db_id": 16885,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-wp-alt-context/tests/Unit/ClustersSchemaParityTest.php:127-163 scrapes live repository SELECT columns, compares them with parsed DDL, and asserts that a fabricated confidence_score column is flagged as absent from the DDL.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-wp-alt-context/tests/Unit/ClustersSchemaParityTest.php",
+      "size": "S",
+      "fix_hint": "No fix is indicated; keep the live SQL read-column scrape and fabricated-column regression assertion."
+    },
+    {
+      "db_id": 16838,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-7-occlusion-adapters-task-plan.md:475 lists FIR-11 Slices 1-2 as an upstream dependency for fir7-0a; :482-484 places FIR-11 before the main refresh and Slice 0a in the executable merge order.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No fix is indicated; preserve the explicit FIR-11 prerequisite in the lane table and merge order."
+    }
+  ]
+}

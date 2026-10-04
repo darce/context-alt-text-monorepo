@@ -17,6 +17,7 @@ from pathlib import Path
 
 import lint_ratchet
 import pytest
+from _guard_wrap import wrap_guard_command
 from lint_ratchet import (
     Baseline,
     RatchetError,
@@ -385,6 +386,55 @@ def test_ruff_format_collects_paths_from_ansi_colored_diagnostics(monkeypatch):
     assert current.counts == {"colored.py": {"unformatted": 1}}
 
 
+def test_ruff_format_parses_relative_notebook_cell_path_from_stderr(monkeypatch):
+    output = (
+        "unformatted: File would be reformatted\n"
+        "  --> notebooks/example.ipynb:cell 1:1:2\n"
+    )
+    monkeypatch.setattr(
+        lint_ratchet,
+        "_run",
+        lambda cmd, cwd: subprocess.CompletedProcess(cmd, 1, stdout="", stderr=output),
+    )
+
+    current = lint_ratchet.collect_ruff_format()
+
+    assert current.counts == {"notebooks/example.ipynb": {"unformatted": 1}}
+
+
+def test_ruff_format_parses_legacy_would_reformat_lines(monkeypatch):
+    monkeypatch.setattr(
+        lint_ratchet,
+        "_run",
+        lambda cmd, cwd: subprocess.CompletedProcess(
+            cmd, 1, stdout="Would reformat: legacy.py\n", stderr=""
+        ),
+    )
+
+    current = lint_ratchet.collect_ruff_format()
+
+    assert current.counts == {"legacy.py": {"unformatted": 1}}
+
+
+def test_ruff_format_rejects_partial_inventory_for_newline_filename(monkeypatch):
+    parsed = lint_ratchet.REPO_ROOT / "parsed.py"
+    output = (
+        "unformatted: File would be reformatted\n"
+        f"  --> {parsed}:1:1\n"
+        "\n"
+        "unformatted: File would be reformatted\n"
+        f"  --> {lint_ratchet.REPO_ROOT}/line-one\nline-two.py:1:1\n"
+    )
+    monkeypatch.setattr(
+        lint_ratchet,
+        "_run",
+        lambda cmd, cwd: subprocess.CompletedProcess(cmd, 1, stdout=output, stderr=""),
+    )
+
+    with pytest.raises(RatchetError, match="complete file inventory"):
+        lint_ratchet.collect_ruff_format()
+
+
 def test_ruff_format_drift_without_named_files_is_an_error(monkeypatch):
     """Exit 1 with an empty file list means the output contract changed; that
     must fail loudly rather than bless an empty baseline."""
@@ -405,3 +455,30 @@ def test_ruff_format_unexpected_exit_code_is_an_error(monkeypatch):
     )
     with pytest.raises(RatchetError, match="exit 2"):
         lint_ratchet.collect_ruff_format()
+
+
+def test_ruff_format_unexpected_exit_includes_stdout_diagnostic(monkeypatch):
+    diagnostic = "invalid.py:1:1: Failed to parse Python source"
+    monkeypatch.setattr(
+        lint_ratchet,
+        "_run",
+        lambda cmd, cwd: subprocess.CompletedProcess(cmd, 2, stdout=diagnostic, stderr=""),
+    )
+
+    with pytest.raises(RatchetError, match="Failed to parse Python source"):
+        lint_ratchet.collect_ruff_format()
+
+
+def test_guard_wrapper_anchors_unanchored_paths_and_fails_closed_by_default():
+    wrapped = wrap_guard_command("python3 scripts/hooks/check-worktree.py --strict")
+
+    assert '"$(git rev-parse --show-toplevel)/scripts/hooks/_run_guard.py"' in wrapped
+    assert '"$(git rev-parse --show-toplevel)/scripts/hooks/check-worktree.py"' in wrapped
+    assert "--fail-mode=closed" in wrapped
+    assert wrapped.endswith("--strict")
+
+
+def test_guard_wrapper_allows_an_explicit_fail_open_mode():
+    wrapped = wrap_guard_command("scripts/hooks/optional-check.py", fail_mode="open")
+
+    assert "--fail-mode=closed" not in wrapped

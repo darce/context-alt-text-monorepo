@@ -1,0 +1,353 @@
+{
+  "lane": "ta-scripts",
+  "base": "773138f240b3c38511cb26b8e51a0e0253d8f4b1",
+  "baseline": {
+    "command": ".venv/bin/python -m pytest -p no:cacheprovider -q scripts/test_worktree_reap.py scripts/train/occlusion/test_equivalence_claims.py --durations=15",
+    "result": "PASS: 77 passed, 0 failed in 381.32s (0:06:21). DBG-02 observation; no red tests requiring provisional KEEP.",
+    "import_origin": "Skipped: lane owns report only; root pyproject.toml sets package=false. Tests load repository-local scripts by file location, not an owned installable project package.",
+    "lane_gate": {
+      "command": ".venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "26 passed in 8.57s"
+    },
+    "slowest": [
+      {
+        "seconds": 352.6,
+        "phase": "call",
+        "test": "scripts/train/occlusion/test_equivalence_claims.py::test_m6_is_verdict_and_reason_equivalent_on_audit_provenance_row"
+      },
+      {
+        "seconds": 1.31,
+        "phase": "call",
+        "test": "scripts/test_worktree_reap.py::test_protect_accepts_branch_and_path_forms"
+      },
+      {
+        "seconds": 1.26,
+        "phase": "setup",
+        "test": "scripts/test_worktree_reap.py::test_a_newly_named_harness_stamp_does_not_block_a_reap"
+      },
+      {
+        "seconds": 0.9,
+        "phase": "call",
+        "test": "scripts/test_worktree_reap.py::test_apply_removes_only_redundant_and_is_idempotent"
+      },
+      {
+        "seconds": 0.72,
+        "phase": "call",
+        "test": "scripts/test_worktree_reap.py::test_ignored_only_content_requires_explicit_opt_in"
+      },
+      {
+        "seconds": 0.67,
+        "phase": "call",
+        "test": "scripts/test_worktree_reap.py::test_merge_base_failure_is_unknown_and_strict_fails"
+      },
+      {
+        "seconds": 0.64,
+        "phase": "call",
+        "test": "scripts/test_worktree_reap.py::test_apply_recovers_after_worktree_removal_before_branch_delete"
+      },
+      {
+        "seconds": 0.58,
+        "phase": "call",
+        "test": "scripts/test_worktree_reap.py::test_a_newly_named_harness_stamp_does_not_block_a_reap"
+      },
+      {
+        "seconds": 0.52,
+        "phase": "setup",
+        "test": "scripts/test_worktree_reap.py::test_ignored_only_content_requires_explicit_opt_in"
+      },
+      {
+        "seconds": 0.52,
+        "phase": "setup",
+        "test": "scripts/test_worktree_reap.py::test_apply_rechecks_ignored_content_created_after_classification"
+      },
+      {
+        "seconds": 0.5,
+        "phase": "call",
+        "test": "scripts/test_worktree_reap.py::test_apply_rechecks_lane_ownership_before_recovered_intent"
+      },
+      {
+        "seconds": 0.48,
+        "phase": "setup",
+        "test": "scripts/test_worktree_reap.py::test_apply_skips_a_protected_redundant_record"
+      },
+      {
+        "seconds": 0.47,
+        "phase": "setup",
+        "test": "scripts/test_worktree_reap.py::test_protect_accepts_branch_and_path_forms"
+      },
+      {
+        "seconds": 0.45,
+        "phase": "call",
+        "test": "scripts/test_worktree_reap.py::test_branch_only_refs_are_not_classified_or_reaped"
+      },
+      {
+        "seconds": 0.45,
+        "phase": "call",
+        "test": "scripts/test_worktree_reap.py::test_apply_rechecks_branch_binding_after_recording_intent"
+      }
+    ],
+    "scope": "Report only; no production/test changes or mutation experiments performed. Rewrite red proofs are required future implementation checks, not claims of executed mutants. No module moves; pins_to_update empty because test names and paths remain unchanged."
+  },
+  "items": [
+    {
+      "path": "scripts/test_worktree_reap.py",
+      "claimed": "REWRITE",
+      "ruling": "REFUTE",
+      "action": "KEEP",
+      "tests": [
+        "test_apply_rechecks_cleanliness_after_recording_intent",
+        "test_apply_rechecks_branch_binding_after_recording_intent",
+        "test_apply_rechecks_lane_ownership_before_recovered_intent"
+      ],
+      "target": null,
+      "seam": "scripts/worktree_reap.py:apply",
+      "production_change": "none",
+      "steps": [],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/test_worktree_reap.py:327 - cleanliness test wraps private _write_intent, writes unsafe ignored data after prepared intent, then asserts public apply refuses and real tree/ref survive.",
+        "scripts/test_worktree_reap.py:365 - binding test wraps private _write_intent to commit after prepared intent; public apply refusal and surviving tree/ref are the assertions.",
+        "scripts/test_worktree_reap.py:1215 - recovery test creates a worktree-removed journal through private _write_intent, removes the real tree, then asserts public classify/apply retain the branch and journal under new ownership.",
+        "scripts/worktree_reap.py:922 - intent writer fsyncs and atomically replaces the journal; it is a durable protocol, not an external Git/registry collaborator.",
+        "scripts/worktree_reap.py:1380 - prepared intent precedes binding/proof/cleanliness/ownership revalidation.",
+        "REF-12/TEST-15: KEEP precise phase and recovery setup. A Git/registry injection API alone does not replace journal-phase triggers; no independent second consumer of an intent callback is established. Preserve fresh real fixture repos. Expected suite-time change: 0; no production or test edits."
+      ],
+      "canon": [
+        "TEST-12",
+        "TEST-16",
+        "REF-12",
+        "TEST-15",
+        "TEST-19"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "scripts/test_worktree_reap.py",
+      "claimed": "REWRITE",
+      "ruling": "REFUTE",
+      "action": "KEEP",
+      "tests": [
+        "test_apply_does_not_delete_branch_when_worktree_removal_fails",
+        "test_apply_recovers_after_worktree_removal_before_branch_delete",
+        "test_merge_base_failure_is_unknown_and_strict_fails",
+        "test_delete_ref_rechecks_landing_parent_in_same_transaction",
+        "test_lane_registered_during_removal_is_restored",
+        "test_registry_unreadable_after_removal_restores_and_fails",
+        "test_parent_rewritten_between_proof_and_oid_is_not_redundant"
+      ],
+      "target": null,
+      "seam": "scripts/worktree_reap.py:apply",
+      "production_change": "none",
+      "steps": [],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/test_worktree_reap.py:505 - private _git wrapper fails only external worktree removal; public apply plus real filesystem/ref assertions catch accidental branch deletion.",
+        "scripts/test_worktree_reap.py:545 - private _git wrapper fails update-ref once; public apply/classify retry must delete preserved branch and clear journal.",
+        "scripts/test_worktree_reap.py:639 - private _git wrapper injects merge-base failure; public classify UNKNOWN and main strict/advisory exit statuses are asserted.",
+        "scripts/test_worktree_reap.py:836 - private _git wrapper commits the landing parent immediately before real update-ref; apply must fail and leave child ref intact.",
+        "scripts/test_worktree_reap.py:1140 - private _git wrapper observes completed removal; public active_lane_paths supplies late owner; apply must restore tree and preserve ref.",
+        "scripts/test_worktree_reap.py:1176 - private _git wrapper observes completed removal; public active_lane_paths raises registry error afterwards; apply must restore tree and preserve ref.",
+        "scripts/test_worktree_reap.py:1345 - private _ref_oid wrapper rewrites the real parent before OID capture; public classify must return LIVE or UNKNOWN.",
+        "scripts/worktree_reap.py:95 - _git is the existing subprocess boundary, and delegates actual Git for every uninjected operation.",
+        "scripts/worktree_reap.py:562 - landing proof captures parent OIDs before merged-state checks.",
+        "scripts/worktree_reap.py:1136 - update-ref verifies parent and deletes child in a single transaction.",
+        "TEST-19/REF-12: these already inject external Git faults while running real domain logic and asserting public outcomes. Renaming that boundary or adding collaborator plumbing has no demonstrated second use or safety benefit. KEEP deterministic fault timing and fresh fixture repositories; do not replace Git graph/ref semantics with domain fakes. Expected suite-time change: 0."
+      ],
+      "canon": [
+        "TEST-12",
+        "TEST-16",
+        "REF-12",
+        "TEST-15",
+        "TEST-19"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "scripts/test_worktree_reap.py",
+      "claimed": "REWRITE",
+      "ruling": "REFUTE",
+      "action": "KEEP",
+      "tests": [
+        "test_apply_refuses_when_another_reaper_holds_the_repository_lock"
+      ],
+      "target": null,
+      "seam": "scripts/worktree_reap.py:apply",
+      "production_change": "none",
+      "steps": [],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/test_worktree_reap.py:599 - private _repository_lock holds an actual lock while public apply must refuse without deleting tree or branch.",
+        "scripts/worktree_reap.py:130 - nonblocking POSIX flock implements shared-repository serialization.",
+        "scripts/worktree_reap.py:1600 - apply acquires repository locks before recovery or mutations.",
+        "TEST-15/REF-12: KEEP real lock contention; faking Git or registry does not exercise flock, and exporting the lock solely for this test adds no second use. A clock or wall-clock wait is unnecessary. Expected suite-time change: 0."
+      ],
+      "canon": [
+        "TEST-12",
+        "TEST-16",
+        "REF-12",
+        "TEST-15",
+        "TEST-19"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "scripts/test_worktree_reap.py",
+      "claimed": "REWRITE",
+      "ruling": "CONFIRM",
+      "action": "REWRITE",
+      "tests": [
+        "test_missing_lane_state_can_be_overridden_explicitly"
+      ],
+      "target": null,
+      "seam": "scripts/worktree_reap.py:main",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/test_worktree_reap.py"
+          ],
+          "do": "In test_missing_lane_state_can_be_overridden_explicitly retain classify(require_lane_state=False), its warning, REDUNDANT observation, and all records lane_verified=False. Replace _record_json calls with main([\"--repo\", str(repo), \"--json\", \"--allow-missing-lane-state\"]), capture stdout/stderr separately, assert warning/return 1, parse stdout and require nonempty linked records all have lane_verified is False.",
+          "red_proof": "Temporarily remove or set True the lane_verified field in _record_json; rewritten receipt assertion must fail even when WorktreeRecord.lane_verified remains False. Separately force classify opt-out to mark records verified and require its retained assertion to fail.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/test_worktree_reap.py:1029 - patches public active_lane_paths; classify opt-out assertions are public, but receipt check calls private _record_json.",
+        "scripts/worktree_reap.py:1718 - main --json renders linked-worktree records using _record_json.",
+        "scripts/worktree_reap.py:1727 - unverified ownership is reported and returns status 1 even after observation opt-out.",
+        "TEST-16/TEST-15: the emitted JSON is the receipt being protected. Use the existing CLI function seam without new production code. Expected suite-time change: one extra classification, approximately +0.1-0.5 seconds; no saving claimed."
+      ],
+      "canon": [
+        "TEST-12",
+        "TEST-16",
+        "TEST-15",
+        "TEST-04",
+        "REF-12",
+        "TEST-19"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "scripts/test_worktree_reap.py",
+      "claimed": "REWRITE",
+      "ruling": "CONFIRM",
+      "action": "REWRITE",
+      "tests": [
+        "test_terminal_lane_rows_do_not_protect_a_worktree",
+        "test_closed_stale_lane_does_not_own_its_worktree",
+        "test_lane_status_ownership_contract",
+        "test_a_lane_row_without_a_status_fails_closed",
+        "test_active_lane_row_without_usable_path_fails_closed"
+      ],
+      "target": null,
+      "seam": "scripts/worktree_reap.py:active_lane_paths",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/test_worktree_reap.py"
+          ],
+          "do": "Rewrite all five named tests to accept tmp_path/monkeypatch, install each original row collection through _install_registry_response({\"ok\": True, \"data\": {\"lanes\": rows}}), and invoke _real_active_lane_paths(tmp_path). Retain exact owner-set/membership and exception assertions, including both unusable-path cases and all eight statuses. Do not patch _lane_owners_from_rows or replace domain classification with a fake.",
+          "red_proof": "Temporarily remove closed_stale, then merged/closed, from terminal statuses: their ownership assertions must fail. Mark each nonterminal status terminal: corresponding parameter must fail. Skip no-status validation and then unusable-path validation: each corresponding exception case must fail. Restore production after each mutant.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/test_worktree_reap.py:1056 - terminal-row test calls private _lane_owners_from_rows and asserts only blocked row owns its path.",
+        "scripts/test_worktree_reap.py:1062 - closed_stale case directly asserts private row reducer returns no owner.",
+        "scripts/test_worktree_reap.py:1082 - eight status parameter cases directly assert private row-reducer ownership membership.",
+        "scripts/test_worktree_reap.py:1089 - absent status directly asserts private reducer raises LaneStateError.",
+        "scripts/test_worktree_reap.py:1094 - absent and NUL paths directly assert private reducer raises usable-worktree-path LaneStateError.",
+        "scripts/worktree_reap.py:327 - documented active_lane_paths loads external registry rows and delegates to the real reducer.",
+        "scripts/test_worktree_reap.py:1306 - existing _install_registry_response supplies fake backend modules/list_lanes without faking row-reduction domain logic.",
+        "scripts/test_worktree_reap.py:30 - _real_active_lane_paths retains the public implementation before autouse isolation patches it.",
+        "TEST-04/TEST-19: existing public registry lookup plus existing external backend fake reaches the same reducer, with no production incision. Expected suite-time change: negligible (+<0.1 seconds estimated); preserve each status and malformed row."
+      ],
+      "canon": [
+        "TEST-12",
+        "TEST-16",
+        "TEST-04",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "scripts/test_worktree_reap.py",
+      "claimed": "REWRITE",
+      "ruling": "CONFIRM",
+      "action": "REWRITE",
+      "tests": [
+        "test_harness_scratch_is_regenerable",
+        "test_unowned_content_is_not_regenerable"
+      ],
+      "target": null,
+      "seam": "scripts/worktree_reap.py:classify",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/test_worktree_reap.py"
+          ],
+          "do": "Rewrite both parameterized tests using fresh fixture_repo per parameter. First remove the inherited broad .venv/ ignore from the ancestor .gitignore, commit that setup, and fast-forward its parent branch so the ancestor stays landed. Create a nonempty file at each original relative_path (nested/.task-state/.heartbeat can be an ignored leaf file), add an exact anchored ignore entry in the common Git info/exclude file, and verify with real git status --ignored that the intended entry is observable rather than hidden under an ignored ancestor directory. Classify the landed ancestor with allow_ignored=False. Require REDUNDANT for each scratch path and DIRTY with the non-regenerable ignored explanation for each unowned path. Retain all eleven parameters; avoid fixture ignored/ tree. No apply is needed to test this classification predicate.",
+          "red_proof": "For scratch cases temporarily deny heartbeat/lock/stamp/pid handling, including nested heartbeat; each affected parameter must fail REDUNDANT. For unsafe cases temporarily treat all .task-state contents as regenerable, then all ignored paths as regenerable: evidence/brief/patch and models/.venv parameters must fail DIRTY. Verify baseline Git reports each exact leaf so ignored-directory coalescing cannot make a mutant invisible.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/test_worktree_reap.py:1439 - six path parameters directly call private _is_regenerable_ignored expecting True.",
+        "scripts/test_worktree_reap.py:1454 - five unowned-path parameters directly call private _is_regenerable_ignored expecting False.",
+        "scripts/worktree_reap.py:398 - path predicate distinguishes harness/cache products from unsafe ignored content.",
+        "scripts/test_worktree_reap.py:264 - existing real-repo test establishes public classify/apply seam for ignored regenerable paths.",
+        "scripts/test_worktree_reap.py:1459 - existing stamp test proves public classification recognizes a newly named harness stamp.",
+        "TEST-15/TEST-19: run the same eleven paths through real Git status and public classification, never fake the provenance predicate. Expected suite-time change: approximately +5-15 seconds for eleven fresh repositories; this improves the seam rather than shortening the suite."
+      ],
+      "canon": [
+        "TEST-12",
+        "TEST-16",
+        "TEST-04",
+        "TEST-15",
+        "TEST-19",
+        "TEST-24",
+        "REF-12"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "scripts/train/occlusion/test_equivalence_claims.py",
+      "claimed": "REWRITE",
+      "ruling": "REFUTE",
+      "action": "KEEP",
+      "tests": [
+        "test_m6_is_not_path_equivalent_one_layer_down"
+      ],
+      "target": null,
+      "seam": "scripts/train/occlusion/license_policy.py:_synthetic_audit_targets",
+      "production_change": "none",
+      "steps": [],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/train/occlusion/test_equivalence_claims.py:162 - directly compares private helper outputs on pristine and M6-mutated modules across the deterministic grid, requiring nonzero differences.",
+        "scripts/train/occlusion/test_equivalence_claims.py:134 - separate public audit_provenance_row test pins verdict/reason equality; identical public outcomes cannot prove the intermediate path differs.",
+        "scripts/train/occlusion/test_equivalence_claims.py:57 - modules use the real mutation applier on real source, not fake policy domain logic.",
+        "scripts/train/occlusion/license_policy.py:7072 - target collector has internal category/lineage and registry-token routing branches.",
+        "scripts/train/occlusion/license_policy.py:7401 - public provenance audit consumes internal targets only after floor checks.",
+        "scripts/train/occlusion/mutation_guard.py:2816 - M6 justification explicitly relies on intermediate deltas plus public verdict equivalence.",
+        "scripts/train/occlusion/mutation_guard.py:3575 - surviving-M6 exemption names NOT path-equivalent as supporting evidence.",
+        "TEST-16/TEST-15/REF-12: KEEP the necessary intermediate measurement. Public verdict equivalence deliberately masks this information; adding a public diagnostic only for this test or promoting an internal policy helper has no established second consumer. Preserve both halves of the exemption evidence. Red sensitivity is loss of intermediate deltas (e.g. make base token loop empty too), not a new public verdict difference. Expected suite-time change: 0."
+      ],
+      "canon": [
+        "TEST-12",
+        "TEST-16",
+        "REF-12",
+        "TEST-15",
+        "TEST-19"
+      ],
+      "risk": "high"
+    }
+  ]
+}

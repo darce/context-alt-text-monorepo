@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,19 @@ from scripts.bench.export_map import export_leg, require_cluster_success
 from scripts.bench.stack_pair import BenchError
 from scripts.bench.stack_pair import BenchError, load_stack_pair
 from scripts.bench.tests.conftest import FakeClient, write_hashed_manifest, write_pair
+
+
+def _fresh_reset_evidence() -> dict[str, dict[str, object]]:
+    completed_at = datetime.now(UTC).isoformat()
+    return {
+        stack_id: {
+            "reset_attested_by": "bench test operator",
+            "reset_reference": "FIR23-STACK runbook reset",
+            "reset_completed_at": completed_at,
+            "prior_run_identity_rows_empty": True,
+        }
+        for stack_id in ("acx-dev-insightface", "acx-dev-fir")
+    }
 
 
 def _rec(media_id: int, *, outcome: str, attempt: int) -> dict:
@@ -112,6 +126,7 @@ def test_refused_leg_does_not_mark_run_done(tmp_path: Path) -> None:
                 "acx-dev-fir": FakeClient(analyze_ok=False),
             },
             skip_preflight=True,
+            pre_run_reset_by_stack=_fresh_reset_evidence(),
         )
     assert exc.value.code == "run_incomplete"
     run_doc = json.loads((out / "run.json").read_text())

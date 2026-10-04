@@ -2,6 +2,10 @@
 
 declare(strict_types=1);
 
+if (!defined('ABSPATH')) {
+    define('ABSPATH', sys_get_temp_dir() . '/');
+}
+
 require_once dirname(__DIR__) . '/vendor/autoload.php';
 require_once __DIR__ . '/stubs/wp-asset-queues.php';
 require_once __DIR__ . '/stubs/wp.php';

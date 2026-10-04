@@ -1012,11 +1012,40 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
 });
 
 describe('ux-map render parity (owned maps)', () => {
+  it('declares the review-suggestions group-card error state in the map contract', () => {
+    const raw = readMapJson('workbench-operator-loop') as UxMapRenderSource;
+    const screen = raw.screens.find((candidate) => candidate.id === 'workbench-scan');
+    const zone = screen?.zones?.find((candidate) => candidate.id === 'z-review-suggestions-group-card');
+
+    expect(zone?.states ?? []).toContain('error');
+  });
+
   it.each(GENERATED_MAPS)('%s.md is structurally equal to its JSON render projection', (mapRef) => {
     const raw = readMapJson(mapRef) as UxMapRenderSource;
     const md = readFileSync(path.join(uxMapsDir, `${mapRef}.md`), 'utf8');
+    const parityOptions = { includeScreenMetadata: mapRef === 'workbench-operator-loop' };
 
-    expect(parseRenderedUxMap(md)).toEqual(projectUxMapForRenderParity(raw));
+    expect(parseRenderedUxMap(md, parityOptions)).toEqual(projectUxMapForRenderParity(raw, parityOptions));
+  });
+
+  it.each([
+    ['wp_page', /^wp_page: .*$/m, 'wp_page: `mutated-page`'],
+    ['job_entry', /^job_entry: .*$/m, 'job_entry: false'],
+    ['deep_link', /^deep_link: .*$/m, 'deep_link: false'],
+    ['primary_action_id', /^primary_action_id: .*$/m, 'primary_action_id: `mutated-action`'],
+    ['code_ref', /^code_ref: .*$/m, 'code_ref: `mutated/Screen.tsx`'],
+  ] as const)('detects rendered %s metadata drift', (_field, rowPattern, changedRow) => {
+    const raw = readMapJson('workbench-operator-loop') as UxMapRenderSource;
+    const md = readFileSync(path.join(uxMapsDir, 'workbench-operator-loop.md'), 'utf8');
+    const parityOptions = { includeScreenMetadata: true };
+    const renderedRow = rowPattern.exec(md)?.[0];
+
+    expect(renderedRow, `missing rendered ${_field} metadata`).toBeDefined();
+    const mutant = md.replace(renderedRow!, changedRow);
+    expect(mutant).not.toBe(md);
+    expect(parseRenderedUxMap(mutant, parityOptions)).not.toEqual(
+      projectUxMapForRenderParity(raw, parityOptions),
+    );
   });
 
   it('retains each screen state in source order instead of accepting an aggregate parity-index match', () => {

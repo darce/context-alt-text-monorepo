@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace AltContext\Admin;
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 require_once __DIR__ . '/../support/class-vite-manifest.php';
 
 use AltContext\Api\RecognitionEndpointResolver;

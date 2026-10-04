@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 # Install-extra forms only — not bare Python list literals like ``[face]`` vars.
 # Covers: '[face]' / ".[face]" / pkg[face] / extra == "face" / --extra face / face = [
 # Package-extra arm avoids Python subscripts used as assignment targets (``x[local] =``).
@@ -116,6 +118,7 @@ def _iter_scan_files(repo_root: Path) -> list[Path]:
     return files
 
 
+@pytest.mark.integration
 def test_no_deprecated_face_or_local_extra_strings() -> None:
     """Live surfaces must not advertise ``[face]`` / ``[local]`` install extras."""
     repo = _repo_root()

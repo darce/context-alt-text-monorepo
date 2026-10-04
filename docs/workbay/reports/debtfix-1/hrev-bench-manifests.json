@@ -1,0 +1,79 @@
+{
+  "lane": "hrev-bench-manifests",
+  "base": "57eb151417a52df980219cc5faac0338f7ecdcb3",
+  "executed": [
+    {
+      "command": ".venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 2.10s."
+    },
+    {
+      "command": ".venv/bin/python benchmarks/tools/fir_corpus_population_draft_20260919.py --check-profile-calibration",
+      "result": "pass",
+      "detail": "Printed 'profile calibration and derived tags are consistent'; checked the selected detector artifact, threshold, tags, counts, evaluation scope, and reproduced metrics against both corpus manifests."
+    },
+    {
+      "command": ".venv/bin/python -m json.tool <manifest> > /dev/null for the four changed manifests",
+      "result": "pass",
+      "detail": "slice-tag-calibration-v1.json, corpus-manifest-v3.json, corpus-manifest-v3r-20260814.json, and golden150-selection-v1.json all parsed."
+    },
+    {
+      "command": ".venv/bin/python -m pytest apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py apps/prototype-description-service/scripts/bench/tests/test_corpus_superset.py -q",
+      "result": "pass",
+      "detail": "26 passed; 16 warnings (rubric-empty and intentional hash-skip warnings)."
+    },
+    {
+      "command": ".venv/bin/python inline golden-selection/corpus digest and row consistency check",
+      "result": "pass",
+      "detail": "Corpus digest matched; 150 selected rows had 0 derived-tag mismatches; selection and summary both counted 112 profile rows."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16887,
+      "finding_id": "DADJ-5614",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "benchmarks/manifests/slice-tag-calibration-v1.json:4,6-19 - uses detections-yunet-t030.json and explicitly lists IDs 271 and 375 as a separate stratum (one profile-positive, one negative), excluded rather than treated as profile-negative. The added check at benchmarks/tools/fir_corpus_population_draft_20260919.py asserts a 148-image detector-supported intersection, but does not assert the recorded no-signal IDs or exclusion policy, so that part of the correction can regress without a red guard.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 16886,
+      "finding_id": "DADJ-5610",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "benchmarks/manifests/slice-tag-calibration-v1.json:5-6 - labels the evaluation in_sample_calibration_only and states the signal and threshold were selected and scored on the same 148 images, with no held-out performance claim; corpus-manifest-v3.json:32-36 repeats that scope and limitation.",
+      "guard_test": "benchmarks/tools/fir_corpus_population_draft_20260919.py::check_profile_calibration"
+    },
+    {
+      "db_id": 16792,
+      "finding_id": "DADJ-5609",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "benchmarks/manifests/corpus-manifest-v3.json:14,26-36 - the derived profile source is detections-yunet-t030.json and max is 0.8473, matching slice-tag-calibration-v1.json:4,25-29. The checker asserts threshold equality and exact derived-tag population against the detector artifact for both corpus manifests.",
+      "guard_test": "benchmarks/tools/fir_corpus_population_draft_20260919.py::check_profile_calibration"
+    },
+    {
+      "db_id": 16965,
+      "finding_id": "D3V3-c0199a229c03e163-M-4270fbe257fbb5290028d199",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "benchmarks/manifests/golden150-selection-v1.json:6 pins the corpus digest and :73-75 reports profile=112; row :191-193 now includes profile. A direct comparison confirmed the digest and all 150 selected derived-tag rows match corpus-manifest-v3.json, with zero mismatches. No committed test asserts the digest or row-level snapshot consistency.",
+      "guard_test": ""
+    }
+  ],
+  "new_findings": [
+    {
+      "severity": "low",
+      "file": "benchmarks/manifests/corpus-manifest-v3r-20260814.json",
+      "line": 32,
+      "title": "v3r omits the detector-missed label stratum",
+      "defect": "The derived profile rule says only '148 labelled images from 150 hand-tagged images'; its caveat says the metrics are in-sample but does not identify the two detector-missed labels or state their exclusion policy, unlike the calibration manifest.",
+      "failure_scenario": "A consumer reproducing profile calibration from v3r alone cannot distinguish detector misses from missing or invalid labels and may count the metrics as covering a different labelled population.",
+      "fix": "Add the two no-signal IDs, their one-positive/one-negative split, and the exclusion-not-negative policy to v3r's calibrated_on/caveat metadata or link the calibration record explicitly.",
+      "test_file": "scripts/test_profile_calibration_contract.py",
+      "urgency": "next_wave"
+    }
+  ],
+  "summary": "The calibration, threshold, and golden selection corrections are present; calibration-scope and threshold guards pass, while no-signal accounting and golden row consistency lack committed regression assertions. One low-priority metadata omission remains in the v3r manifest."
+}

@@ -112,6 +112,8 @@ def _validate_schema_state(
     policy_names: Iterable[tuple[str, str]] | None = None,
     operator_policy_bodies: Mapping[tuple[str, str], tuple[str | None, str | None]] | None = None,
     operator_policy_permissiveness: Mapping[tuple[str, str], bool | None] | None = None,
+    operator_policy_commands: Mapping[tuple[str, str], str | None] | None = None,
+    operator_policy_roles: Mapping[tuple[str, str], Iterable[str] | None] | None = None,
     table_relkinds: Mapping[str, str] | None = None,
     column_gaps: Mapping[str, Iterable[str]] | None = None,
     non_additive_column_gaps: Mapping[str, Iterable[str]] | None = None,
@@ -130,8 +132,9 @@ def _validate_schema_state(
     from the mapping count as RLS gaps. ``policy_names`` is the set of
     (tablename, policyname) pairs present. ``operator_scope_tables`` are checked
     separately from tenant tables: ENABLE+FORCE RLS and the approved
-    ``operator_scope_*`` policy must be permissive. Its body must be
-    ``app.bypass_rls`` only; additional restrictive policies may narrow access.
+    ``operator_scope_*`` policy must be permissive, apply to ALL commands, and
+    target PUBLIC. Its body must be ``app.bypass_rls`` only; additional
+    restrictive policies may narrow access.
     ``column_gaps`` maps an existing
     table to the ORM-declared columns absent from it (MAINT-TPR-01 / PA-03).
     ``non_additive_column_gaps`` is the subset of those columns ``heal()`` would
@@ -170,10 +173,16 @@ def _validate_schema_state(
                     if operator_policy_permissiveness is None
                     else operator_policy_permissiveness.get(policy_key)
                 )
+                command = None if operator_policy_commands is None else operator_policy_commands.get(policy_key)
+                roles = None if operator_policy_roles is None else operator_policy_roles.get(policy_key)
+                role_set = None if roles is None else {str(role).lower() for role in roles}
                 if (
                     body is None
                     or not _operator_scope_policy_body_approved(*body)
                     or permissive is not True
+                    or command is None
+                    or command.upper() != "ALL"
+                    or role_set != {"public"}
                 ):
                     operator_policy_gaps.append(table)
 
@@ -447,14 +456,16 @@ def collect_and_validate(connection) -> SchemaStateReport:
     }
     policy_rows = connection.execute(
         text(
-            "SELECT tablename, policyname, permissive, qual, with_check "
+            "SELECT tablename, policyname, permissive, qual, with_check, cmd, roles "
             "FROM pg_policies WHERE schemaname = current_schema()"
         )
     ).all()
     policy_names = {(row[0], row[1]) for row in policy_rows}
     operator_policy_bodies: dict[tuple[str, str], tuple[str | None, str | None]] | None
     operator_policy_permissiveness: dict[tuple[str, str], bool | None] | None
-    if policy_rows and len(policy_rows[0]) >= 5:
+    operator_policy_commands: dict[tuple[str, str], str | None] | None
+    operator_policy_roles: dict[tuple[str, str], tuple[str, ...] | None] | None
+    if policy_rows and len(policy_rows[0]) >= 7:
         operator_policy_bodies = {(row[0], row[1]): (row[3], row[4]) for row in policy_rows}
         operator_policy_permissiveness = {
             (row[0], row[1]): (
@@ -464,9 +475,19 @@ def collect_and_validate(connection) -> SchemaStateReport:
             )
             for row in policy_rows
         }
+        operator_policy_commands = {
+            (row[0], row[1]): None if row[5] is None else str(row[5])
+            for row in policy_rows
+        }
+        operator_policy_roles = {
+            (row[0], row[1]): None if row[6] is None else tuple(str(role) for role in row[6])
+            for row in policy_rows
+        }
     else:
         operator_policy_bodies = None
         operator_policy_permissiveness = None
+        operator_policy_commands = None
+        operator_policy_roles = None
     table_relkinds = dict(
         connection.execute(
             text(
@@ -513,6 +534,8 @@ def collect_and_validate(connection) -> SchemaStateReport:
         policy_names=policy_names,
         operator_policy_bodies=operator_policy_bodies,
         operator_policy_permissiveness=operator_policy_permissiveness,
+        operator_policy_commands=operator_policy_commands,
+        operator_policy_roles=operator_policy_roles,
         table_relkinds=table_relkinds,
         column_gaps=column_gaps,
         non_additive_column_gaps=non_additive_column_gaps,

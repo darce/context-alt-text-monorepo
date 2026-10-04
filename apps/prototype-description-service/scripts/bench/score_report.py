@@ -667,7 +667,9 @@ def compute_accepted_set(run_dir: Path | str) -> AcceptedSet:
     # exhaustiveness when annotation_mode is roster_only. Route through the
     # same resolver score_head_to_head uses so the accepted-set artifact
     # agrees with refused detection cells (rg-015).
-    candidate_entries = [e for e in accepted if is_detection_exhaustive(e)]
+    candidate_entries = [
+        e for e in accepted if _is_detection_exhaustive_for_manifest(e, manifest)
+    ]
     detection_manifest = _subset_manifest(manifest, candidate_entries)
     if _detection_score_mode(detection_manifest, manifest) is not AnnotationMode.EXHAUSTIVE:
         detection_set: list[int] = []
@@ -838,7 +840,7 @@ def write_attrition(run_dir: Path, accepted: AcceptedSet, manifest: GoldenManife
             "manifest_media_id": entry.media_id,
             "reason": (
                 "entry_not_detection_exhaustive"
-                if not is_detection_exhaustive(entry)
+                if not _is_detection_exhaustive_for_manifest(entry, manifest)
                 else "detection_scoring_refused"
             ),
         }
@@ -904,6 +906,17 @@ def _detection_score_mode(detection_manifest: GoldenManifest | None, parent: Gol
     """Mode of the document whose entries are detection-scored (ADR-015)."""
     source = detection_manifest if detection_manifest is not None else parent
     return source.annotation_mode
+
+
+def _is_detection_exhaustive_for_manifest(
+    entry: GoldenEntry, manifest: GoldenManifest
+) -> bool:
+    """Treat annotated zero-face negatives as covered in exhaustive documents."""
+    return is_detection_exhaustive(entry) or (
+        manifest.annotation_mode is AnnotationMode.EXHAUSTIVE
+        and entry.face_count == 0
+        and not entry.face_boxes
+    )
 
 
 def _detection_refusal_invariant(mode: AnnotationMode) -> ScoreInvariant:
@@ -1239,7 +1252,10 @@ def score_head_to_head(run_dir: Path | str) -> Path:
     accepted_entries = [e for e in manifest.entries if e.media_id in set(accepted.manifest_media_ids)]
     full_detection_population = (
         manifest.annotation_mode is AnnotationMode.EXHAUSTIVE
-        and all(is_detection_exhaustive(entry) for entry in manifest.entries)
+        and all(
+            _is_detection_exhaustive_for_manifest(entry, manifest)
+            for entry in manifest.entries
+        )
     )
     detection_entries = (
         list(manifest.entries)

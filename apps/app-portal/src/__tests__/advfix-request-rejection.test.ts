@@ -89,8 +89,7 @@ describe('portal client request rejection normalization', () => {
     });
 
     const pending = createPortalUsageClient(request).read();
-    await vi.advanceTimersByTimeAsync(1);
-    await expect(pending).rejects.toMatchObject({
+    const assertion = expect(pending).rejects.toMatchObject({
       name: 'AbortError',
       status: 0,
       code: 'request_aborted',
@@ -98,5 +97,7 @@ describe('portal client request rejection normalization', () => {
       attemptId: null,
       retryAfterSeconds: null,
     });
+    await vi.advanceTimersByTimeAsync(1);
+    await assertion;
   });
 });

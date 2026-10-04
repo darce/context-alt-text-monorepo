@@ -707,6 +707,21 @@ async def _advfix_ledger_h1_expiry_releases_counters(monkeypatch) -> None:
             abandoned_row.reserved_at = datetime.now(tz=UTC).replace(hour=0, minute=0, second=0, microsecond=0)
             await session.flush()
 
+            # Expiry belongs to the sweeper's fenced release path, never admission.
+            stale_rows = await usage_repository.SqlAlchemyUsageRepository(session).list_stale_reservations(
+                0, limit=100
+            )
+            assert abandoned.reservation_id in {row.id for row in stale_rows}
+            await admission.release_fenced(abandoned, fence_token=abandoned.fence_token)
+            await session.refresh(abandoned_row)
+            assert abandoned_row.status == UsageReservationStatus.EXPIRED
+            state = await session.get(GlobalUsageAdmissionState, GLOBAL_USAGE_ADMISSION_STATE_ID)
+            assert state is not None
+            assert int(state.daily_cost_units) == 0
+            assert int(state.inflight_units) == 0
+            assert int(state.queue_depth) == 0
+            assert int(state.queue_bytes) == 0
+
             admitted = await admission.reserve(
                 tenant.id,
                 idempotency_key="advfix-expired-b",

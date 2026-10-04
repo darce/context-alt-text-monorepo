@@ -297,7 +297,6 @@ class BillingCheckoutAttempt(Base):
             "provider",
             "environment",
             "seller_account",
-            "plan_code",
             unique=True,
             postgresql_where=text(f"status IN ({_CHECKOUT_ATTEMPT_ACTIVE_STATUS_SQL})"),
             sqlite_where=text(f"status IN ({_CHECKOUT_ATTEMPT_ACTIVE_STATUS_SQL})"),

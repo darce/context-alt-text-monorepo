@@ -14,6 +14,7 @@ import pytest
 from scripts.eval_harness.face_metrics import require_boxed_identification_gt
 from scripts.eval_harness.manifest import (
     AnnotationMode,
+    GoldenManifest,
     ManifestError,
     ScoreInvariant,
     load_manifest,
@@ -340,11 +341,21 @@ def _partially_boxed_group() -> tuple[dict, dict, dict]:
         }
 
     def _box(cx: float, cy: float, w: float, h: float, name: str | None) -> dict:
-        return {"x": cx, "y": cy, "w": w, "h": h, "name": name, "source": "iptc"}
+        lineage = {**_LINEAGE, "decision": "named" if name is not None else "stranger"}
+        return {
+            "x": cx,
+            "y": cy,
+            "w": w,
+            "h": h,
+            "name": name,
+            "source": "iptc",
+            "lineage": lineage,
+        }
 
     entry = {
         "path": "celebs01/group.jpg",
         "media_id": 1,
+        "sha256": "a" * 64,
         "face_count": 3,
         "present_identities": names,
         "must_right": [],
@@ -355,7 +366,6 @@ def _partially_boxed_group() -> tuple[dict, dict, dict]:
             _box(150 / 300, 0.5, 80 / 300, 0.8, None),
             _box(250 / 300, 0.5, 80 / 300, 0.8, None),
         ],
-        "annotation_mode": "exhaustive",
         "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
     }
     face_run = {
@@ -382,7 +392,31 @@ def _partially_boxed_group() -> tuple[dict, dict, dict]:
             }
         ],
     }
-    manifest = {"annotation_mode": "exhaustive", "roster": names, "entries": [entry]}
+    review_records = []
+    for box_index, box in enumerate(entry["face_boxes"]):
+        record_id = f"review-{box_index}"
+        box["adjudication_source"] = f"human_adjudicated:{record_id}"
+        review_records.append(
+            {
+                "record_id": record_id,
+                "media_id": 1,
+                "box_index": box_index,
+                "reviewer_id": "test-reviewer",
+                "reviewer_kind": "human",
+                "review_method": "independent_blind_review",
+                "decision": "confirmed",
+                "reviewed_at": "2026-08-15T00:00:00Z",
+            }
+        )
+    manifest = GoldenManifest.model_validate(
+        {
+            "manifest_version": 3,
+            "annotation_mode": "exhaustive",
+            "roster": names,
+            "entries": [entry],
+            "adjudication_records": review_records,
+        }
+    )
     return face_run, manifest, entry
 
 

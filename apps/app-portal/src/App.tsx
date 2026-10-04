@@ -204,7 +204,7 @@ function PortalShell({
   const navigate = useNavigate();
   const location = useLocation();
   const privateShellRef = useRef<HTMLDivElement>(null);
-  const restoreKeysFocusRef = useRef(false);
+  const previousPathnameRef = useRef(location.pathname);
 
   useEffect(() => {
     // Clerk owns the sign-in/up callback URLs; leave their verification data intact.
@@ -237,17 +237,20 @@ function PortalShell({
   const displayAccount = ownedAccount(account, activeOwner);
 
   useEffect(() => {
-    if (!restoreKeysFocusRef.current || !matchesExactPortalPath(location.pathname, '/keys')) {
+    if (previousPathnameRef.current === location.pathname) {
       return;
     }
-    // The keys screen is remounted, and its guidance trigger may no longer exist.
-    const heading = privateShellRef.current?.querySelector<HTMLHeadingElement>('h1');
-    if (heading) {
-      heading.tabIndex = -1;
-      heading.focus();
-      restoreKeysFocusRef.current = false;
+    previousPathnameRef.current = location.pathname;
+
+    const main = privateShellRef.current?.querySelector<HTMLElement>('main');
+    const heading = main?.querySelector<HTMLHeadingElement>('h1');
+    if (!main || !heading || main.contains(document.activeElement)) {
+      return;
     }
-  }, [location.pathname, displayAccount.status]);
+
+    heading.tabIndex = -1;
+    heading.focus();
+  }, [location.pathname]);
 
   epochRef.current = fetchEpoch;
   ownerRef.current = activeOwner;
@@ -379,7 +382,6 @@ function PortalShell({
   const userMenu = <UserButton />;
   const path = location.pathname;
   const dismissWordPressGuidance = () => {
-    restoreKeysFocusRef.current = true;
     navigate('/keys');
   };
   const wrapPrivate = (node: ReactNode) => (

@@ -707,13 +707,6 @@ class SqlAlchemyUsageRepository:
         )
         return result.scalar_one_or_none()
 
-    def _assert_period_current(self, global_state: GlobalUsageAdmissionState, *, now: datetime) -> None:
-        period_end = global_state.period_end
-        if period_end.tzinfo is None:
-            period_end = period_end.replace(tzinfo=UTC)
-        if now >= period_end:
-            raise UsageAdmissionUnavailableError("global usage period has elapsed; recovery is unsafe")
-
     async def assert_fence_current(self, ticket: UsageTicket, *, fence_token: str) -> None:
         """Reject a captured token whose epoch no longer matches global state."""
         global_state = await self._lock_global_state()
@@ -725,20 +718,20 @@ class SqlAlchemyUsageRepository:
     async def begin_recovery(self, ticket: UsageTicket) -> UsageReservation:
         """Lock global state, entitlement, then reservation for trusted recovery.
 
-        Does not mint a new reservation. Period rollover is fail-closed rather
-        than settled against reset counters. [RES-01][DATA-03]
+        Recovery uses the reservation's recorded entitlement period, because
+        the singleton entitlement may have advanced since admission. A daily
+        rollover resets only daily accounting; inflight and queue holds remain
+        available for recovery to release. [RES-19][DATA-03]
         """
         now = datetime.now(tz=UTC)
         global_state = await self._lock_global_state()
-        self._assert_period_current(global_state, now=now)
+        self._roll_global_period_if_needed(global_state, now)
         entitlement = await self._lock_entitlement_row(ticket.tenant_id)
         if entitlement is None:
             raise UsageAdmissionUnavailableError("tenant entitlement is missing; recovery is unsafe")
         reservation = await self._lock_reservation(ticket)
         if reservation is None or not self._ticket_identity_matches(reservation, ticket):
             raise ReservationNotFoundError("usage ticket does not identify a reservation")
-        if reservation.period_start != entitlement.period_start:
-            raise UsageAdmissionUnavailableError("reservation period is not the current entitlement period")
         return reservation
 
     async def complete_recovery(
@@ -752,7 +745,7 @@ class SqlAlchemyUsageRepository:
             raise InvalidUsageRequestError("recovery target must be committed or released")
         now = datetime.now(tz=UTC)
         global_state = await self._lock_global_state()
-        self._assert_period_current(global_state, now=now)
+        self._roll_global_period_if_needed(global_state, now)
         try:
             current_status = UsageReservationStatus(reservation.status)
         except (TypeError, ValueError):

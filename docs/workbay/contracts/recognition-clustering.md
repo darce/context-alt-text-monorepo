@@ -97,8 +97,10 @@ Notes:
 - The JSON body is limited to 1 MiB (`1048576` bytes). The route checks the
   declared `Content-Length` and enforces the same limit while streaming; an
   oversized body returns `413`.
-- A malformed or negative `Content-Length`, or a body the route cannot parse,
-  returns `400`.
+- A malformed or negative `Content-Length`, or a failure while reading the body
+  stream, returns `400`.
+- Malformed JSON and request schema validation failures return `422` through
+  FastAPI's normal body parsing and validation.
 - When `RECOGNITION_ASYNC_ANALYZE_INLINE=0`, Postgres requires a running scan
   worker or the service returns 503.
 - Each `media_items[]` carries exactly one of `media_url` (this route) or

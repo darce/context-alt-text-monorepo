@@ -185,8 +185,7 @@ def _run_nested_collection(
         "-q",
         "-p",
         "no:cacheprovider",
-        "--collection-scope-receipt",
-        str(receipt_path),
+        f"--collection-scope-receipt={receipt_path}",
         *paths,
     ]
     try:
@@ -237,7 +236,7 @@ def _cached_nested_collection(
     project_root = Path(__file__).resolve().parent
     shared_directory = tmp_path_factory.getbasetemp().parent
     if os.environ.get("PYTEST_XDIST_WORKER") is None:
-        receipt_path = shared_directory / f"nested-{name}-receipt.json"
+        receipt_path = tmp_path_factory.getbasetemp() / f"nested-{name}-receipt.json"
         return _run_nested_collection(project_root, receipt_path, *paths)
 
     test_run_uid = os.environ["PYTEST_XDIST_TESTRUNUID"]

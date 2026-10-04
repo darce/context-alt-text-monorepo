@@ -1,0 +1,209 @@
+{
+  "lane": "ta-clust",
+  "base": "352951074b4ae71c473846626ceebca9d40e983a",
+  "baseline": {
+    "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/api/test_clustering_admission.py --durations=15",
+    "result": "BLOCKED: full baseline emitted 13 passing cases, then hung in test_open_breaker_short_circuits_with_503_before_repo at line 317 (TestClient.post / AnyIO BlockingPortal); faulthandler emitted Timeout (0:04:00). No completed full-suite counts or durations; second breaker case not reached at that point. Preserve both unclaimed breaker guards (KEEP) pending environment review. Run interrupted after captured hang traceback (exit 130); no pytest failure summary was produced.",
+    "requested_base": "773138f240b3c38511cb26b8e51a0e0253d8f4b1",
+    "environment": "Initial prescribed uv sync failed read-only while removing bin/alembic; retried immediately with --no-sync. Managed lane interpreter resolves recognition inside this worktree.",
+    "lane_gate": "26 passed in 4.13s using lane-root .venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+    "focused_command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/api/test_clustering_admission.py -k 'not breaker' --durations=15",
+    "focused_result": "13 passed, 2 deselected, 1 warning in 0.23s; slowest: test_acquire_lock_non_postgres_skips_set_local, 0.13s call; remaining displayed durations <0.005s. This is focused verification, not a green full baseline.",
+    "slowest_tests": [
+      {
+        "test": "test_acquire_lock_non_postgres_skips_set_local",
+        "phase": "call",
+        "seconds": 0.13,
+        "scope": "focused run only"
+      }
+    ],
+    "verification_blocker": "Existing HTTP TestClient admission seam cannot currently complete in the sandbox. Orchestrator must resolve/verify this runner blocker before assigning the two proposed route rewrites; no production/test changes made here."
+  },
+  "items": [
+    {
+      "path": "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py",
+      "claimed": "REWRITE",
+      "ruling": "MODIFY",
+      "action": "REWRITE",
+      "tests": [
+        "test_probe_raises_503_retry_after_when_blocker_detected",
+        "test_probe_swallows_execute_exception_best_effort"
+      ],
+      "target": null,
+      "seam": "apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters_admission.py:create_clustering_job",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py"
+          ],
+          "do": "In the same module rewrite both named cases through POST /recognition/clustering/jobs in async mode. Override get_clustering_session with a PostgreSQL-advertising external DB stub that distinguishes the pg_locks query from settings/backend-pid/tenant-lock queries, rather than queuing by global call order. Run the actual admission helpers and real JobService backed by the existing FakeJobRepository; do not patch probe/lock/breaker/domain decisions or rely on FakeJobService to prove job creation. Assert blocker returns canonical 503, Retry-After 5 and no new job; probe permission failure proceeds to 202 and a persisted fake-repository job. Keep exact existing names until replacement red proof succeeds.",
+          "red_proof": "With the blocker fixture unchanged, suppress the real probe rejection: blocker case must fail (202 instead of 503). Re-raise the external execute permission exception: best-effort case must fail instead of returning 202. Show the old and replacement assertions fail for those same mutations before deleting the helper invocations.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py:134 - private _clustering_admission_probe seam; scalar blocker yields HTTPException 503 and exact Retry-After 5.",
+        "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py:150 - private _clustering_admission_probe seam; DB execute permission error must not escape.",
+        "apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters_admission.py:211 - existing get_clustering_session dependency is a substitution point; no admission-component extraction needed (no current second consumer demonstrated).",
+        "apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters_admission.py:297 - route runs the actual probe inside its owned transaction before locking and job lookup.",
+        "apps/prototype-description-service/recognition/tests/api/conftest.py:815 - api_client already overrides get_clustering_session; replace only this external DB dependency for these cases.",
+        "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py:330 - existing HTTP breaker test patches both domain helpers, so it is not equivalent red proof for probe logic.",
+        "Suite time: expected approximately 0 seconds saved; two HTTP requests add overhead relative to direct awaits; correctness, not speed, motivates the narrow rewrite.",
+        "DBG-02: all named cases passed in the focused baseline; route replacement plans remain subject to the HTTP runner blocker and their stated mutation red proofs. These are adjudication plans, not executed rewrites."
+      ],
+      "canon": [
+        "TEST-12",
+        "TEST-04",
+        "TEST-15",
+        "TEST-19",
+        "REF-12",
+        "REF-05",
+        "DBG-02"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py",
+      "claimed": "REWRITE",
+      "ruling": "MODIFY",
+      "action": "REWRITE",
+      "tests": [
+        "test_acquire_lock_query_canceled_raises_503_retry_after",
+        "test_acquire_lock_non_canceled_dbapi_error_is_reraised",
+        "test_is_query_canceled_matches_sqlstate_57014",
+        "test_is_query_canceled_rejects_other_sqlstates",
+        "test_is_query_canceled_handles_missing_orig"
+      ],
+      "target": null,
+      "seam": "apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters_admission.py:create_clustering_job",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py"
+          ],
+          "do": "Rewrite the five named tests through the existing POST route using an injected DB session and real JobService with FakeJobRepository. Raise the original external DBAPIError only at the actual Tenant SELECT FOR UPDATE; tolerate other DB setup queries without stubbing domain logic. Run the actual probe, lock wrapper and classifier. Preserve 57014 => 503 with Retry-After 5, breaker failure and no job; 08000 and orig=None => same DBAPIError object re-raised by TestClient (raise_server_exceptions=True), no breaker failure/no job. For both original lock-error tests retain an external execute spy proving an attempted default-timeout restore after the failed lock; this narrower rewrite deliberately keeps that operational guard. Keep five named cases, even if a shared request harness reduces setup duplication.",
+          "red_proof": "Change cancellation SQLSTATE mapping: 57014 case must fail, as must 08000 when misclassified as cancellation. Remove missing-orig handling: orig=None case must fail on the wrong exception instead of the same DBAPIError. Swallow the generic DBAPIError: generic-error case must fail. Remove the finally restore: both lock-error cases must fail the restoration-attempt assertion even if HTTP responses remain unchanged. Demonstrate the same mutations against old and replacement tests.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py:208 - private lock helper seam; cancellation must yield 503/Retry-After and still attempt default timeout restoration.",
+        "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py:230 - private lock helper seam; same non-cancellation DBAPIError object must propagate and restoration must be attempted.",
+        "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py:255 - private _is_query_canceled seam; SQLSTATE 57014 maps to True.",
+        "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py:260 - private _is_query_canceled seam; SQLSTATE 08000 maps to False.",
+        "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py:265 - private _is_query_canceled seam; missing orig maps to False.",
+        "apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters_admission.py:102 - classifier is driver-agnostic; preserve missing-orig distinction via an external DBAPIError with orig=None, not a domain-helper replacement.",
+        "apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters_admission.py:183 - narrow timeout is applied before locking; restoration attempt occurs in finally at line 194, including both error paths.",
+        "apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters_admission.py:317 - actual route counts only lock HTTP 503 signals toward the breaker; HTTP success/failure alone cannot prove timeout restoration.",
+        "apps/prototype-description-service/recognition/tests/api/conftest.py:815 - public dependency override already exists; keep external statement-observation assertions where required to preserve original red proof.",
+        "Suite time: expected approximately 0 seconds saved; five route-driven cases add modest request overhead. Do not replace restoration guards with status-only assertions.",
+        "DBG-02: all named cases passed in the focused baseline; route replacement plans remain subject to the HTTP runner blocker and their stated mutation red proofs. These are adjudication plans, not executed rewrites."
+      ],
+      "canon": [
+        "TEST-12",
+        "TEST-04",
+        "TEST-15",
+        "TEST-19",
+        "REF-12",
+        "REF-05",
+        "DBG-02"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py",
+      "claimed": "REWRITE",
+      "ruling": "REFUTE",
+      "action": "KEEP",
+      "tests": [
+        "test_probe_no_op_on_non_postgres_session",
+        "test_probe_noop_when_no_blocker_row_returned",
+        "test_acquire_lock_non_postgres_skips_set_local",
+        "test_acquire_lock_postgres_happy_path_narrows_and_restores_timeout"
+      ],
+      "target": null,
+      "seam": "apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters_admission.py:_clustering_admission_probe / _acquire_tenant_lock_fast_fail",
+      "production_change": "none",
+      "steps": [],
+      "pins_to_update": [],
+      "evidence": [
+        "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py:75 - private probe seam; zero execute calls guards backend bypass, not merely successful admission.",
+        "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py:88 - private probe seam; exactly one pg_locks query and no rejection guards an actual empty-result probe, not merely successful admission.",
+        "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py:168 - private lock seam; one SELECT FOR UPDATE and no PostgreSQL SET LOCAL guards portable lock acquisition.",
+        "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py:186 - private lock seam; narrow 1000ms setting, FOR UPDATE and default 10s restore guard the operational lifetime of a transaction-local timeout.",
+        "apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters_admission.py:298 - route applies default PostgreSQL safety settings separately before calling helpers. A status-only route rewrite loses the ability to distinguish omitted probing/locking/narrowing/restoration from a successful request.",
+        "The helpers are private, but naming an admission component solely for tests fails REF-12. Existing DI supplies a public seam; the proposed blanket replacement still fails TEST-15 for these exact operation guards. Keep now; a future route rewrite would need equivalent DB-operation observation or genuine PostgreSQL behavior, not just response assertions.",
+        "Suite time: 0 seconds change; four tests retained."
+      ],
+      "canon": [
+        "TEST-12",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py",
+      "claimed": "REWRITE",
+      "ruling": "REFUTE",
+      "action": "KEEP",
+      "tests": [
+        "test_probe_sql_excludes_reader_lock_modes_br22"
+      ],
+      "target": null,
+      "seam": "apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters_admission.py:_clustering_admission_probe",
+      "production_change": "none",
+      "steps": [],
+      "pins_to_update": [],
+      "evidence": [
+        "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py:103 - private helper plus emitted-SQL text seam, not Python source slicing; checks tuple/strong relation candidates and AccessShareLock exclusion.",
+        "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py:127 - assertion covers AccessShareLock but does not independently assert RowShareLock exclusion; its broad NOT IN/inequality allowance is not full PostgreSQL lock semantics.",
+        "apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters_admission.py:79 - SQL uses tuple locks or relation ExclusiveLock/AccessExclusiveLock, excluding reader-compatible relation modes.",
+        "A fake returning blocker/no-blocker rows cannot prove that SQL actually excludes readers (TEST-19). Real two-connection PostgreSQL route cases should test idle reader admission and real blocking relation/tenant-lock rejection, but no services are available in this lane and no equivalent replacement red proof has been demonstrated. Retain this imperfect live BR-22 guard until an implementation lane can add and mutation-verify that behavior first; do not delete it based on the proposed extraction.",
+        "Suite time: 0 seconds change; keep the fast guard rather than assuming an unverified integration replacement."
+      ],
+      "canon": [
+        "TEST-12",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py",
+      "claimed": "REWRITE",
+      "ruling": "REFUTE",
+      "action": "KEEP",
+      "tests": [
+        "test_admission_path_latency_is_sub_second_on_happy_path"
+      ],
+      "target": null,
+      "seam": "apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters_admission.py:_clustering_admission_probe / _acquire_tenant_lock_fast_fail",
+      "production_change": "none",
+      "steps": [],
+      "pins_to_update": [],
+      "evidence": [
+        "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py:277 - already marked timing and asyncio; private helper seam plus real perf_counter budget.",
+        "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py:279 - times two helpers over an immediate DB fake, not the full HTTP handler, real lock wait or clustering_admission_latency_ms histogram despite module prose.",
+        "apps/prototype-description-service/recognition/tests/api/test_clustering_admission.py:302 - elapsed must stay below 1000ms; an injected clock alone would lose red proof for accidental real synchronous sleeping/blocking.",
+        "apps/prototype-description-service/Makefile:316 - fast lane already excludes timing tests.",
+        "apps/prototype-description-service/Makefile:332 - serial test-integration already includes timing tests; requested restaging is already in place.",
+        "apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters_admission.py:338 - handler records full-handler latency independently; a deterministic route metrics test would be additional behavior, not an equivalent replacement for this real elapsed-time guard.",
+        "Suite time: 0 seconds change; this test already stays outside fast commit feedback. Keep until a real performance replacement proves the same accidental-delay defect; no new component or injected clock solely to make this test prettier."
+      ],
+      "canon": [
+        "TEST-08",
+        "TEST-24",
+        "TEST-15",
+        "REF-12"
+      ],
+      "risk": "high"
+    }
+  ]
+}

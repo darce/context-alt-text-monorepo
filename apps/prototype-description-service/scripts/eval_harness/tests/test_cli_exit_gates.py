@@ -48,6 +48,15 @@ def _named_box(
     }
 
 
+def _cli_exit_status(main: Any, argv: list[str]) -> Any:
+    """Mirror running main as a script: fall-through is success (status 0)."""
+    try:
+        status = main(argv)
+    except SystemExit as exc:
+        status = exc.code
+    return 0 if status is None else status
+
+
 def _manifest_doc(
     *,
     mode: str,
@@ -739,7 +748,7 @@ def test_allow_refused_identification_does_not_consent_to_detection(
 
 
 def test_allow_refused_both_metrics_exits_zero(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     import scripts.eval_harness.cli as cli_mod
 
@@ -749,7 +758,8 @@ def test_allow_refused_both_metrics_exits_zero(
     # refusal-consent path these tests target.
     man_path, rec_path = _write_score_inputs(tmp_path, mode="roster_only", boxed=False, n=5)
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
-    cli_mod.main(
+    status = _cli_exit_status(
+        cli_mod.main,
         [
             "score",
             "--manifest",
@@ -758,8 +768,12 @@ def test_allow_refused_both_metrics_exits_zero(
             str(rec_path),
             "--allow-refused=detection",
             "--allow-refused=identification",
-        ]
+        ],
     )
+    assert status == 0
+    output = capsys.readouterr().out
+    assert "detection=REFUSED(" in output
+    assert "identification=REFUSED(" in output
 
 
 def test_bare_allow_refused_is_equivalent_to_naming_every_metric(
@@ -941,10 +955,12 @@ def test_score_face_allow_refused_identification_exits_zero(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import scripts.eval_harness.cli as cli_mod
+    from scripts.eval_harness.manifest import ScoreInvariant
 
     man_path, rec_path = _partial_id_face_inputs(tmp_path)
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
-    cli_mod.main(
+    status = _cli_exit_status(
+        cli_mod.main,
         [
             "score-face",
             "--manifest",
@@ -952,8 +968,13 @@ def test_score_face_allow_refused_identification_exits_zero(
             "--run-record",
             str(rec_path),
             "--allow-refused=identification",
-        ]
+        ],
     )
+    assert status == 0
+    published = json.loads(rec_path.with_name("face-run-face-report.json").read_text(encoding="utf-8"))
+    ident = published["slices"]["full_corpus_identification"]
+    assert ident["refused"] is True
+    assert ident["invariant"] == ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS
 
 
 def test_score_face_allow_refused_detection_does_not_consent_to_identification(

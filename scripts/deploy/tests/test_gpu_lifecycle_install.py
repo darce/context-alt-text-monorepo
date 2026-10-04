@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -39,6 +40,59 @@ def _run_installer(*arguments: str, environment: dict[str, str] | None = None) -
         text=True,
         check=False,
     )
+
+
+@pytest.fixture(scope="module")
+def successful_lifecycle_install(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, str]:
+    install_root = tmp_path_factory.mktemp("gpu-lifecycle-install")
+    result, calls = _run_lifecycle(
+        install_root,
+        enabled=True,
+        ready_url="http://gpu.test/health/ready",
+        dry_run=False,
+        full_remote_install=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return install_root, calls
+
+
+def _parse_systemd_unit(path: Path) -> dict[tuple[str, str], list[str]]:
+    """Parse rendered directives while retaining repeated keys such as PathChanged."""
+    directives: dict[tuple[str, str], list[str]] = {}
+    section = ""
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1]
+            continue
+        key, separator, value = line.partition("=")
+        if separator:
+            directives.setdefault((section, key), []).append(value)
+    return directives
+
+
+def _rendered_unit(install_root: Path, name: str) -> dict[tuple[str, str], list[str]]:
+    return _parse_systemd_unit(install_root / "effective-systemd" / name)
+
+
+def _rendered_execstart(unit: dict[tuple[str, str], list[str]]) -> list[str]:
+    return shlex.split(unit[("Service", "ExecStart")][0])
+
+
+def _contract_intent_environments() -> list[str]:
+    contract = CONTRACT.read_text(encoding="utf-8")
+    match = re.search(
+        r"`ACX_ENV`\s+is\s+`([^`]+)`,\s*`([^`]+)`,\s+or\s+`([^`]+)",
+        contract,
+    )
+    assert match is not None
+    return list(match.groups())
+
+
+def _mapped_intent_path(install_root: Path, environment: str) -> str:
+    return str(install_root / "host" / "run-acx-write" / environment / "gpu-intent.json")
 
 
 @pytest.mark.parametrize("idle_seconds", ["-1", "0", "abc", "", " 1", "1 ", "+1"])
@@ -86,123 +140,183 @@ def test_installer_requires_readiness_url() -> None:
     assert "READY_URL" in result.stderr
 
 
-def test_start_unit_always_executes_a_readiness_probe() -> None:
-    script = INSTALLER.read_text(encoding="utf-8")
-    start_unit = re.search(
-        r"sudo tee [^\n]*/acx-gpu-start\.service.*?<<UNIT\n(.*?)\nUNIT",
-        script,
-        flags=re.DOTALL,
-    ).group(1)
+def _assert_service_readiness_url(install_root: Path, service_name: str) -> None:
+    unit = _rendered_unit(install_root, service_name)
+    arguments = _rendered_execstart(unit)
+    assert "--ready-url" in arguments
+    assert arguments[arguments.index("--ready-url") + 1] == "${READY_URL}"
 
-    assert "--ready-url" in start_unit
-    assert "${READY_URL}" in start_unit
-
-
-def test_reap_unit_always_executes_a_readiness_probe() -> None:
-    script = INSTALLER.read_text(encoding="utf-8")
-    reap_unit = re.search(
-        r"sudo tee [^\n]*/acx-gpu-reap\.service.*?<<UNIT\n(.*?)\nUNIT",
-        script,
-        flags=re.DOTALL,
-    ).group(1)
-
-    assert "--ready-url" in reap_unit
-    assert "${READY_URL}" in reap_unit
-
-
-def test_lifecycle_units_pass_the_operator_intent_directory() -> None:
-    script = INSTALLER.read_text(encoding="utf-8")
-    services = re.findall(
-        r"sudo tee [^\n]*/acx-gpu-(?:start|reap)\.service.*?<<UNIT\n(.*?)\nUNIT",
-        script,
-        flags=re.DOTALL,
+    environment_files = unit[("Service", "EnvironmentFile")]
+    assert len(environment_files) == 1
+    environment = dict(
+        line.split("=", 1)
+        for line in Path(environment_files[0]).read_text(encoding="utf-8").splitlines()
+        if "=" in line
     )
-
-    assert len(services) == 2
-    for service in services:
-        assert "--intent-dir /run/acx-write" in service
+    assert environment["READY_URL"] == "http://gpu.test/health/ready"
 
 
-def test_intent_allowlist_matches_contract_environments() -> None:
-    script = INSTALLER.read_text(encoding="utf-8")
-    contract = CONTRACT.read_text(encoding="utf-8")
+def test_start_unit_always_executes_a_readiness_probe(
+    successful_lifecycle_install: tuple[Path, str]
+) -> None:
+    _assert_service_readiness_url(successful_lifecycle_install[0], "acx-gpu-start.service")
 
-    allowlist = re.search(r'^GPU_INTENT_ENVIRONMENTS="([^"]+)"$', script, flags=re.MULTILINE)
-    contract_environments = re.search(
-        r"`ACX_ENV`\s+is\s+`([^`]+)`,\s*`([^`]+)`,\s+or\s+`([^`]+)`",
-        contract,
+
+def test_reap_unit_always_executes_a_readiness_probe(
+    successful_lifecycle_install: tuple[Path, str]
+) -> None:
+    _assert_service_readiness_url(successful_lifecycle_install[0], "acx-gpu-reap.service")
+
+
+def test_lifecycle_units_pass_the_operator_intent_directory(
+    successful_lifecycle_install: tuple[Path, str]
+) -> None:
+    install_root, _ = successful_lifecycle_install
+    expected_intent_directory = str(install_root / "host" / "run-acx-write")
+    for service_name in ("acx-gpu-start.service", "acx-gpu-reap.service"):
+        arguments = _rendered_execstart(_rendered_unit(install_root, service_name))
+        assert arguments[arguments.index("--intent-dir") + 1] == expected_intent_directory
+
+
+def test_intent_allowlist_matches_contract_environments(
+    successful_lifecycle_install: tuple[Path, str]
+) -> None:
+    install_root, _ = successful_lifecycle_install
+    expected_paths = [
+        _mapped_intent_path(install_root, environment)
+        for environment in _contract_intent_environments()
+    ]
+    watcher = _rendered_unit(install_root, "acx-gpu-intent.path")
+    assert watcher[("Path", "PathChanged")] == expected_paths
+
+
+def test_intent_path_unit_watches_only_contract_environments_and_starts_gpu(
+    successful_lifecycle_install: tuple[Path, str]
+) -> None:
+    install_root, calls = successful_lifecycle_install
+    watcher = _rendered_unit(install_root, "acx-gpu-intent.path")
+    assert watcher[("Path", "Unit")] == ["acx-gpu-start.service"]
+    assert "systemctl <enable> <--now> <acx-gpu-intent.path>" in calls
+
+
+def test_registry_addition_gets_tmpfiles_directory_without_intent_trigger(tmp_path: Path) -> None:
+    result, _ = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://gpu.test/health/ready",
+        dry_run=False,
+        extra_registry_environment=("qa",),
+        full_remote_install=True,
     )
+    assert result.returncode == 0, result.stdout + result.stderr
 
-    assert allowlist is not None
-    assert contract_environments is not None
-    assert allowlist.group(1).split() == list(contract_environments.groups())
+    tmpfiles = (tmp_path / "host" / "etc-tmpfiles" / "acx-gpu.conf").read_text(encoding="utf-8")
+    environment_root = str(tmp_path / "host" / "run-acx-write") + "/"
+    tmpfile_paths = [
+        line.split()[1]
+        for line in tmpfiles.splitlines()
+        if line.startswith("d ") and line.split()[1].startswith(environment_root)
+    ]
+    assert tmpfile_paths == [
+        str(tmp_path / "host" / "run-acx-write" / environment)
+        for environment in (*DEPLOYMENTS.read_text(encoding="utf-8").split(), "qa")
+    ]
+    watcher = _parse_systemd_unit(tmp_path / "effective-systemd" / "acx-gpu-intent.path")
+    assert watcher[("Path", "PathChanged")] == [
+        _mapped_intent_path(tmp_path, environment) for environment in _contract_intent_environments()
+    ]
 
 
-def test_intent_path_unit_watches_only_contract_environments_and_starts_gpu() -> None:
-    script = INSTALLER.read_text(encoding="utf-8")
-    path_unit = re.search(
-        r"sudo tee [^\n]*/acx-gpu-intent\.path.*?<<UNIT\n(.*?)\nUNIT",
-        script,
-        flags=re.DOTALL,
+def test_intent_path_is_fenced_before_release_mutation_and_on_failure(tmp_path: Path) -> None:
+    result, _ = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://gpu.test/health/ready",
+        dry_run=False,
+        previous_release=True,
+        seed_intent_path_active=True,
+        full_remote_install=True,
     )
-
-    assert path_unit is not None
-    content = path_unit.group(1)
-    assert "${INTENT_PATH_ENTRIES}" in content
-    append_deployment = script[script.index("append_deployment()") : script.index("load_deployments()")]
-    assert "GPU_INTENT_ENVIRONMENTS" in append_deployment
-    assert "PathChanged=/run/acx-write/${environment}/gpu-intent.json" in append_deployment
-    registered_environments = set(DEPLOYMENTS.read_text(encoding="utf-8").split())
-    assert registered_environments, "GPU snapshot deployment registry must not be empty"
-    assert {"dev", "staging", "prod"} <= registered_environments
-    # Every registered environment gets its tmpfiles rule from one template the
-    # installer expands per registry line, so the registry is the only list.
-    assert "d /run/acx-write/${environment} 0775 root" in script
-    assert 'done < "$DEPLOYMENTS_FILE"' in script
-    assert "Unit=acx-gpu-start.service" in content
-    assert "acx-gpu-intent.path" in script
-    assert "systemctl enable --now acx-gpu-intent.path" in script
-
-
-def test_intent_path_is_fenced_before_release_mutation_and_on_failure() -> None:
-    script = INSTALLER.read_text(encoding="utf-8")
-    transaction = script[script.index('run_with_deadline "systemd unit installation"') :]
-
-    assert "sudo systemctl disable --now acx-gpu-intent.path" in script
-    assert transaction.index("fence_gpu_intent_path") < transaction.index("previous_release=\\$(python3 -c")
-    assert transaction.index("fence_gpu_intent_path") < transaction.index("activate_gpu_lifecycle_timers \\")
-    cleanup = script[script.index("cleanup_gpu_lifecycle_transaction()") : script.index("# Hermetic verification")]
-    assert cleanup.index("fence_gpu_intent_path") < cleanup.index("fence_gpu_lifecycle_start")
-    assert script.index("sudo systemctl enable --now acx-gpu-intent.path") > script.index(
-        "verify_gpu_lifecycle_start_timer"
+    assert result.returncode == 0, result.stdout + result.stderr
+    events = (tmp_path / "events.log").read_text(encoding="utf-8").splitlines()
+    first_fence = events.index("systemctl-disable-intent-path")
+    current_switch = next(
+        index for index, event in enumerate(events)
+        if event.startswith("atomic-replace ") and event.endswith("/current>")
     )
-
-
-def test_installer_purges_cloud_init_idle_reaper_units() -> None:
-    script = INSTALLER.read_text(encoding="utf-8")
-
-    assert "acx-gpu-idle-reaper.service" in script
-    assert "acx-gpu-idle-reaper.timer" in script
-    assert "systemctl disable --now" in script
-    assert "systemctl daemon-reload" in script
-    assert 'rm -f "/etc/systemd/system/$unit"' in script
-
-
-def test_oneshot_units_have_systemd_execution_deadlines() -> None:
-    script = INSTALLER.read_text(encoding="utf-8")
-    services = re.findall(
-        r"sudo tee [^\n]*/acx-gpu-(?:start|reap)\.service.*?<<UNIT\n(.*?)\nUNIT",
-        script,
-        flags=re.DOTALL,
+    assert first_fence < current_switch
+    assert "intent-path-inactive-at-current-switch" in events
+    assert (tmp_path / "intent-path.active").exists()
+    assert (tmp_path / "intent-path.enabled").exists()
+    last_start_verification = max(
+        index for index, event in enumerate(events) if event == "systemctl-verify-start-timer"
     )
+    assert events.index("systemctl-enable-intent-path") > last_start_verification
 
-    assert len(services) == 2
-    for service in services:
-        assert re.search(r"^TimeoutStartSec=\d+s$", service, flags=re.MULTILINE)
-        assert re.search(r"^RuntimeMaxSec=\d+s$", service, flags=re.MULTILINE)
+    failure_root = tmp_path / "failure"
+    failure_root.mkdir()
+    failed, _ = _run_lifecycle(
+        failure_root,
+        enabled=True,
+        ready_url="http://gpu.test/health/ready",
+        dry_run=False,
+        previous_release=True,
+        seed_intent_path_active=True,
+        external_failure="unit-write",
+        full_remote_install=True,
+    )
+    assert failed.returncode != 0, failed.stdout + failed.stderr
+    assert "injected-unit-write-failure" in (failure_root / "events.log").read_text(encoding="utf-8")
+    failure_events = (failure_root / "events.log").read_text(encoding="utf-8").splitlines()
+    intent_fences = [i for i, event in enumerate(failure_events) if event == "systemctl-disable-intent-path"]
+    start_fences = [i for i, event in enumerate(failure_events) if event == "systemctl-disable-start-timer"]
+    assert len(intent_fences) >= 2, "failure cleanup must fence intent again"
+    assert intent_fences[-1] < start_fences[-1], "cleanup must fence intent before lifecycle start"
+    assert not (failure_root / "intent-path.active").exists()
+    assert not (failure_root / "intent-path.enabled").exists()
 
 
-def test_timers_delay_their_first_trigger_relative_to_activation_not_boot() -> None:
+def test_installer_purges_cloud_init_idle_reaper_units(tmp_path: Path) -> None:
+    result, calls = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://gpu.test/health/ready",
+        dry_run=False,
+        seed_stale_reaper_units=True,
+        full_remote_install=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    events = (tmp_path / "events.log").read_text(encoding="utf-8").splitlines()
+    effective_systemd = tmp_path / "effective-systemd"
+    removal_events = []
+    for unit in ("acx-gpu-idle-reaper.timer", "acx-gpu-idle-reaper.service"):
+        assert f"systemctl <disable> <--now> <{unit}>" in calls
+        assert not (effective_systemd / unit).exists()
+        assert f"systemctl-disable-stale <{unit}>" in events
+        removal = next(index for index, event in enumerate(events) if event.startswith("sudo-rm") and unit in event)
+        removal_events.append(removal)
+    reload = next(index for index, event in enumerate(events) if event == "systemctl-daemon-reload")
+    unit_write = next(
+        index for index, event in enumerate(events)
+        if event.startswith("sudo-tee") and "acx-gpu-start.service" in event
+    )
+    assert max(removal_events) < reload < unit_write
+
+
+def test_oneshot_units_have_systemd_execution_deadlines(
+    successful_lifecycle_install: tuple[Path, str]
+) -> None:
+    install_root, _ = successful_lifecycle_install
+    for service_name in ("acx-gpu-start.service", "acx-gpu-reap.service"):
+        unit = _rendered_unit(install_root, service_name)
+        for key in ("TimeoutStartSec", "RuntimeMaxSec"):
+            value = unit[("Service", key)][0]
+            assert re.fullmatch(r"[1-9][0-9]*s", value), f"{service_name} has no positive {key}"
+
+
+def test_timers_delay_their_first_trigger_relative_to_activation_not_boot(
+    successful_lifecycle_install: tuple[Path, str]
+) -> None:
     """A boot-relative first trigger is already elapsed on a redeploy.
 
     Both timers are enabled with `systemctl enable --now` against a host that has been
@@ -212,74 +326,101 @@ def test_timers_delay_their_first_trigger_relative_to_activation_not_boot() -> N
     poll reads has been written. OnActiveSec is measured from activation instead, which
     is the same delay at boot and the intended delay on a running host.
     """
-    script = INSTALLER.read_text(encoding="utf-8")
-    timers = dict(
-        re.findall(
-            r"sudo tee [^\n]*/acx-gpu-(start|reap)\.timer.*?<<UNIT\n(.*?)\nUNIT",
-            script,
-            flags=re.DOTALL,
-        )
+    install_root = successful_lifecycle_install[0]
+    for name in ("start", "reap"):
+        timer = _rendered_unit(install_root, f"acx-gpu-{name}.timer")
+        assert ("Timer", "OnBootSec") not in timer
+        assert re.fullmatch(r"[1-9][0-9]*min", timer[("Timer", "OnActiveSec")][0])
+        assert timer[("Timer", "OnUnitActiveSec")][0]
+
+
+def test_oneshot_units_share_persistent_boot_fenced_lifecycle_state(
+    successful_lifecycle_install: tuple[Path, str]
+) -> None:
+    install_root = successful_lifecycle_install[0]
+    expected_state = str(install_root / "host" / "var-lib-acx-gpu")
+    for service_name in ("acx-gpu-start.service", "acx-gpu-reap.service"):
+        unit = _rendered_unit(install_root, service_name)
+        arguments = _rendered_execstart(unit)
+        assert unit[("Service", "StateDirectory")] == ["acx-gpu"]
+        assert ("Service", "RuntimeDirectory") not in unit
+        assert arguments[arguments.index("--running-since-path") + 1] == f"{expected_state}/running-since.json"
+        assert arguments[:3] == ["/usr/bin/flock", "--wait", "120"]
+        assert arguments[3] == f"{expected_state}/lifecycle.lock"
+
+
+def test_transport_is_bounded_and_release_switch_is_atomic(tmp_path: Path) -> None:
+    result, calls = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://gpu.test/health/ready",
+        dry_run=False,
+        previous_release=True,
+        full_remote_install=True,
     )
+    assert result.returncode == 0, result.stdout + result.stderr
 
-    assert set(timers) == {"start", "reap"}
-    for name, timer in timers.items():
-        assert "OnBootSec=" not in timer, f"acx-gpu-{name}.timer would fire immediately on a redeploy"
-        assert re.search(r"^OnActiveSec=\d+min$", timer, flags=re.MULTILINE), (
-            f"acx-gpu-{name}.timer has no activation-relative first trigger"
-        )
-        assert re.search(r"^OnUnitActiveSec=", timer, flags=re.MULTILINE)
+    transport_calls = calls.splitlines()
+    ssh_calls = [line for line in transport_calls if line.startswith("ssh")]
+    scp_calls = [line for line in transport_calls if line.startswith("scp")]
+    assert len(ssh_calls) >= 3 and len(scp_calls) == 2
+    for line in (*ssh_calls, *scp_calls):
+        arguments = re.findall(r"<([^>]*)>", line)
+        assert "BatchMode=yes" in arguments
+        for option in ("ConnectTimeout", "ServerAliveInterval", "ServerAliveCountMax"):
+            match = next((re.fullmatch(rf"{option}=([1-9][0-9]*)", value) for value in arguments if value.startswith(f"{option}=")), None)
+            assert match is not None, f"{line} lacks a positive {option}"
 
+    host = tmp_path / "host"
+    current = host / "opt-acx-gpu" / "current"
+    assert current.is_symlink()
+    release = current.resolve()
+    assert release != host / "opt-acx-gpu" / "old release"
+    assert (release / "infra" / "oci" / "gpu_lifecycle" / "reaper.py").is_file()
+    assert (host / "opt-acx-gpu" / "old release" / "infra" / "oci" / "gpu_lifecycle" / "prior-release-marker").is_file()
 
-def test_oneshot_units_share_persistent_boot_fenced_lifecycle_state() -> None:
-    script = INSTALLER.read_text(encoding="utf-8")
-    services = re.findall(
-        r"sudo tee [^\n]*/acx-gpu-(?:start|reap)\.service.*?<<UNIT\n(.*?)\nUNIT",
-        script,
-        flags=re.DOTALL,
-    )
+    events = (tmp_path / "events.log").read_text(encoding="utf-8").splitlines()
+    copied_reaper = next(i for i, event in enumerate(events) if event.startswith("copy ") and event.endswith("/reaper.py>"))
+    imported = next(i for i, event in enumerate(events) if event.startswith("release-import-ok "))
+    published_release = next(i for i, event in enumerate(events) if event.startswith("sudo-mv ") and ".staging-" in event)
+    assert copied_reaper < imported < published_release
 
-    assert len(services) == 2
-    for service in services:
-        assert "StateDirectory=acx-gpu" in service
-        assert "--running-since-path /var/lib/acx-gpu/running-since.json" in service
-        assert "/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock" in service
-        assert "RuntimeDirectory=acx-gpu" not in service
-
-
-def test_transport_is_bounded_and_release_switch_is_atomic() -> None:
-    script = INSTALLER.read_text(encoding="utf-8")
-
-    for option in (
-        "BatchMode=yes",
-        "ConnectTimeout=",
-        "ServerAliveInterval=",
-        "ServerAliveCountMax=",
-    ):
-        assert option in script
-    assert "run_with_deadline" in script
-    assert "/opt/acx-gpu/releases/" in script
-    assert "python3 -c 'import infra.oci.gpu_lifecycle.reaper'" in script
-    assert "os.replace(sys.argv[1], sys.argv[2])" in script
-    assert "WorkingDirectory=/opt/acx-gpu/current" in script
-    assert "rm -rf /opt/acx-gpu/infra/oci/gpu_lifecycle" not in script
-
-    stage_position = script.index('remote_stage="/opt/acx-gpu/releases/.staging-')
-    copy_position = script.index('scp -q "${SSH_OPTIONS[@]}"')
-    validate_position = script.index("python3 -c 'import infra.oci.gpu_lifecycle.reaper'")
-    switch_position = script.index("' '/opt/acx-gpu/.current-${release_id}' /opt/acx-gpu/current")
-    assert stage_position < copy_position < validate_position < switch_position
+    current_replacements = [
+        event for event in events
+        if event.startswith("atomic-replace ") and event.endswith("/current>")
+    ]
+    assert len(current_replacements) == 1
+    assert not any(event.startswith("rm ") and event.endswith("/current>") for event in events)
+    assert not any(event.startswith("ln ") and event.endswith("/current>") for event in events)
+    for service_name in ("acx-gpu-start.service", "acx-gpu-reap.service"):
+        unit = _rendered_unit(tmp_path, service_name)
+        assert unit[("Service", "WorkingDirectory")] == [str(current)]
 
 
 @pytest.mark.parametrize("idle_seconds", ["-1", "0", "abc", "", " 1", "1 ", "+1"])
-def test_idle_seconds_cli_type_rejects_non_positive_values(idle_seconds: str) -> None:
+def test_idle_seconds_cli_type_rejects_non_positive_values(tmp_path: Path, idle_seconds: str) -> None:
+    oci_invoked = tmp_path / "oci-invoked"
+    fake_oci = tmp_path / "oci"
+    _write_executable(
+        fake_oci,
+        f"#!/usr/bin/env bash\nprintf invoked >{shlex.quote(str(oci_invoked))}\nexit 0\n",
+    )
     command = [
         sys.executable,
-        "-c",
-        (
-            "from infra.oci.gpu_lifecycle.reaper import _build_parser; "
-            "_build_parser().parse_args(['--instance-id', 'ocid1.test', "
-            f"'--idle-seconds', {idle_seconds!r}])"
-        ),
+        "-m",
+        "infra.oci.gpu_lifecycle",
+        "--instance-id",
+        "ocid1.test",
+        "--idle-seconds",
+        idle_seconds,
+        "--oci-bin",
+        str(fake_oci),
+        "--fence-delay-seconds",
+        "0",
+        "--ready-sleep-seconds",
+        "0",
+        "--max-wait-seconds",
+        "1",
     ]
     result = subprocess.run(
         command,
@@ -289,53 +430,66 @@ def test_idle_seconds_cli_type_rejects_non_positive_values(idle_seconds: str) ->
         check=False,
     )
 
-    assert result.returncode != 0
+    assert result.returncode == 2
+    assert "usage:" in result.stderr.lower()
     assert "positive integer" in result.stderr
+    assert not oci_invoked.exists(), "argparse must reject before invoking the OCI command"
 
 
-def test_mid_sequence_copy_failure_never_switches_the_live_release(tmp_path: Path) -> None:
-    """A failed module copy must leave `current` pointing at the previous release."""
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    transport_log = tmp_path / "transport.log"
-
-    _write_executable(
-        fake_bin / "ssh",
-        '#!/usr/bin/env bash\nset -eu\nprintf \'ssh %s\\n\' "$*" >>"$FAKE_TRANSPORT_LOG"\n',
-    )
-    _write_executable(
-        fake_bin / "scp",
-        '#!/usr/bin/env bash\nset -eu\nprintf \'scp %s\\n\' "$*" >>"$FAKE_TRANSPORT_LOG"\nexit 77\n',
-    )
-
-    command_environment = os.environ.copy()
-    command_environment.update(
-        {
-            "ACX_GPU_DEPLOYMENTS_FILE": str(DEPLOYMENTS),
-            "GPU_INSTANCE_ID": FAKE_GPU_INSTANCE_ID,
-            "PATH": f"{fake_bin}:{os.environ['PATH']}",
-            "FAKE_TRANSPORT_LOG": str(transport_log),
-        }
-    )
+def test_idle_seconds_public_cli_help_is_a_valid_parse_control() -> None:
     result = subprocess.run(
-        [
-            str(INSTALLER),
-            "--host",
-            "test.invalid",
-            "--ready-url",
-            "http://127.0.0.1:8000/health/ready",
-        ],
+        [sys.executable, "-m", "infra.oci.gpu_lifecycle", "--help"],
         cwd=REPO_ROOT,
-        env=command_environment,
         capture_output=True,
         text=True,
         check=False,
     )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "--idle-seconds" in result.stdout
 
-    assert result.returncode != 0, result.stdout + result.stderr
-    calls = transport_log.read_text(encoding="utf-8") if transport_log.exists() else ""
-    assert "scp " in calls, "the copy leg was never attempted"
-    assert "/opt/acx-gpu/current" not in calls, "the live release was switched despite a failed module copy"
+
+@pytest.mark.parametrize("failure", ["copy", "import", "stall"])
+def test_mid_sequence_transport_or_import_failure_preserves_the_live_release(
+    tmp_path: Path, failure: str
+) -> None:
+    if failure == "stall":
+        with pytest.raises(AssertionError, match="GPU lifecycle module copy exceeded 1s"):
+            _run_lifecycle(
+                tmp_path,
+                enabled=True,
+                ready_url="http://gpu.test/health/ready",
+                dry_run=False,
+                previous_release=True,
+                external_failure=failure,
+                remote_timeout=1,
+                fixture_timeout=5,
+                full_remote_install=True,
+            )
+    else:
+        result, _ = _run_lifecycle(
+            tmp_path,
+            enabled=True,
+            ready_url="http://gpu.test/health/ready",
+            dry_run=False,
+            previous_release=True,
+            external_failure=failure,
+            full_remote_install=True,
+        )
+        assert result.returncode != 0, result.stdout + result.stderr
+    host = tmp_path / "host"
+    current = host / "opt-acx-gpu" / "current"
+    assert current.is_symlink()
+    assert current.resolve() == host / "opt-acx-gpu" / "old release"
+    assert (current / "infra" / "oci" / "gpu_lifecycle" / "prior-release-marker").is_file()
+    events = (tmp_path / "events.log").read_text(encoding="utf-8").splitlines()
+    assert not any(event.startswith("atomic-replace ") and event.endswith("/current>") for event in events)
+    if failure == "import":
+        assert any(event.startswith("release-import-attempt ") for event in events)
+        assert not any(event.startswith("release-import-ok ") for event in events)
+    elif failure == "copy":
+        assert "injected-copy-failure" in events
+    else:
+        assert "fake-stalled-scp" in events
 
 
 def test_installer_provisions_every_supplementary_group_it_references(tmp_path: Path) -> None:

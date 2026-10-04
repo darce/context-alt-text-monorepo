@@ -1,0 +1,427 @@
+{
+  "lane": "ta-gpu",
+  "base": "773138f240b3c38511cb26b8e51a0e0253d8f4b1",
+  "checkout_head": "7947dac097f9b9558460f6970ccc9b39f897f4fb",
+  "baseline": {
+    "command": "<lane-root>/.venv/bin/python -m pytest -p no:cacheprovider -q scripts/test_vlm3_oci_gpu_infra.py scripts/deploy/tests/test_gpu_lifecycle_install.py --durations=15",
+    "result": "fail: 74 passed, 1 failed in 32.91s; test_terraform_configuration_validates failed because terraform is absent",
+    "slowest_tests": [
+      {
+        "test": "scripts/deploy/tests/test_gpu_lifecycle_install.py::test_installer_provisions_every_supplementary_group_it_references",
+        "seconds": 5.32
+      },
+      {
+        "test": "scripts/deploy/tests/test_gpu_lifecycle_install.py::test_idle_seconds_cli_type_rejects_non_positive_values[0]",
+        "seconds": 2.32
+      },
+      {
+        "test": "scripts/deploy/tests/test_gpu_lifecycle_install.py::test_idle_seconds_cli_type_rejects_non_positive_values[-1]",
+        "seconds": 1.38
+      },
+      {
+        "test": "scripts/deploy/tests/test_gpu_lifecycle_install.py::test_idle_seconds_cli_type_rejects_non_positive_values[1 ]",
+        "seconds": 1.01
+      },
+      {
+        "test": "scripts/deploy/tests/test_gpu_lifecycle_install.py::test_idle_seconds_cli_type_rejects_non_positive_values[ 1]",
+        "seconds": 0.98
+      },
+      {
+        "test": "scripts/deploy/tests/test_gpu_lifecycle_install.py::test_installer_accepts_positive_idle_seconds",
+        "seconds": 0.96
+      },
+      {
+        "test": "scripts/deploy/tests/test_gpu_lifecycle_install.py::test_idle_seconds_cli_type_rejects_non_positive_values[abc]",
+        "seconds": 0.93
+      },
+      {
+        "test": "scripts/deploy/tests/test_gpu_lifecycle_install.py::test_mid_sequence_copy_failure_never_switches_the_live_release",
+        "seconds": 0.91
+      },
+      {
+        "test": "scripts/deploy/tests/test_gpu_lifecycle_install.py::test_idle_seconds_cli_type_rejects_non_positive_values[+1]",
+        "seconds": 0.86
+      },
+      {
+        "test": "scripts/deploy/tests/test_gpu_lifecycle_install.py::test_installer_accepts_supported_monotonic_intervals[1s-START_INTERVAL]",
+        "seconds": 0.83
+      },
+      {
+        "test": "scripts/deploy/tests/test_gpu_lifecycle_install.py::test_installer_accepts_supported_monotonic_intervals[30s-REAP_INTERVAL]",
+        "seconds": 0.82
+      },
+      {
+        "test": "scripts/deploy/tests/test_gpu_lifecycle_install.py::test_idle_seconds_cli_type_rejects_non_positive_values[]",
+        "seconds": 0.75
+      },
+      {
+        "test": "scripts/deploy/tests/test_gpu_lifecycle_install.py::test_installer_rejects_unsupported_start_intervals[ 1s]",
+        "seconds": 0.73
+      },
+      {
+        "test": "scripts/deploy/tests/test_gpu_lifecycle_install.py::test_installer_accepts_supported_monotonic_intervals[1h-REAP_INTERVAL]",
+        "seconds": 0.66
+      },
+      {
+        "test": "scripts/deploy/tests/test_gpu_lifecycle_install.py::test_installer_rejects_unsupported_start_intervals[-1s]",
+        "seconds": 0.6
+      }
+    ]
+  },
+  "items": [
+    {
+      "path": "scripts/test_vlm3_oci_gpu_infra.py",
+      "claimed": "REWRITE",
+      "ruling": "MODIFY",
+      "action": "REWRITE",
+      "tests": [
+        "test_gpu_instance_dedicated_tag_matches_bench_gate",
+        "test_gpu_instance_ignores_runtime_state_drift_after_reaper_stop",
+        "test_gpu_instance_uses_configurable_a10_shape_and_dedicated_cloud_init",
+        "test_gpu_watchdog_rollout_checks_capacity_and_preserves_existing_boot_volume",
+        "test_gpu_instance_security_posture_private_only",
+        "test_gpu_nat_and_jump_host_ssh_present",
+        "test_gpu_endpoint_outputs_for_acx_gpu_endpoint_url",
+        "test_gpu_self_stop_terraform_wiring_and_narrow_policy_are_present",
+        "test_gpu_self_stop_policy_allows_only_targeted_read_for_verification"
+      ],
+      "target": null,
+      "seam": "infra/oci/main.tf:oci_core_instance.acx_gpu_burst; infra/oci/watchdog.tf:oci_identity_policy.acx_gpu_self_stop",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "pyproject.toml",
+            "uv.lock"
+          ],
+          "do": "Add and lock a test-only HCL parser in the root development dependencies. This reads the existing public Terraform configuration artifact, requires no provider initialization, cloud service, production accessor, or handcrafted regex parser. Keep the mandatory Terraform validate release gate unchanged.",
+          "red_proof": "A malformed HCL fixture must fail parsing; whitespace/comment-only changes to valid input must parse without changing assertions.",
+          "after": []
+        },
+        {
+          "files": [
+            "scripts/test_vlm3_oci_gpu_infra.py"
+          ],
+          "do": "Rewrite the nine named tests to navigate parsed resource/variable/output attributes and HCL expression syntax trees. Assert reference bindings as well as literal values; do not claim an evaluated plan or mock HCL expression evaluation. Check GPU tags against bench.BENCH_DEDICATED_TAG; ignore_changes state; variable/default/shape/image/boot-volume bindings; RUNNING state; templatefile/base64encode and both watchdog inputs; lifecycle preservation and full capacity predicate; VNIC/subnet/security-list attachment and every 8000 ingress; NAT route and jump-host-only SSH; private-IP outputs; exact dynamic-group principal and the full two IAM statements with GPU target conditions. Parse IAM statements as provider-facing strings, checking each statement independently rather than counting occurrences anywhere in the file. Preserve existing tfvars/example and operator-migration documentation checks separately in these tests. No deletion of cloud-init runtime, artifact, watchdog or release-gate tests.",
+          "red_proof": "Show each named test fails for its corresponding isolated mutation: wrong dedicated tag; removed state ignore; wrong A10 default/image/template binding; removed AVAILABLE or count>=1 predicate or preservation flag; public VNIC/wrong subnet/world-open 8000 rule; missing NAT route or world-open SSH; endpoint using backend IP; wrong enabled/default/uptime input or broad power grant; read grant missing target or targeting backend. Changing only formatting must remain green. Require these proofs before replacing old assertions.",
+          "after": [
+            0
+          ]
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/test_vlm3_oci_gpu_infra.py:19 - _gpu_instance_block slices Terraform source; the nine guards are source-text tests, not plans.",
+        "scripts/test_vlm3_oci_gpu_infra.py:27 - dedicated tag uses regex against sliced block and public bench.BENCH_DEDICATED_TAG.",
+        "scripts/test_vlm3_oci_gpu_infra.py:36 - runtime state drift uses nested-block regex and literal state list.",
+        "scripts/test_vlm3_oci_gpu_infra.py:44 - shape/default/image/cloud-init bindings are literal snippets.",
+        "scripts/test_vlm3_oci_gpu_infra.py:62 - rollout tests source predicates, lifecycle flags and operator documentation.",
+        "scripts/test_vlm3_oci_gpu_infra.py:77 - private placement and port-8000 ingress use source slicing/regex.",
+        "scripts/test_vlm3_oci_gpu_infra.py:108 - NAT/jump-host checks are unscoped source substrings.",
+        "scripts/test_vlm3_oci_gpu_infra.py:119 - endpoint outputs are source substrings.",
+        "scripts/test_vlm3_oci_gpu_infra.py:611 - watchdog wiring mixes source configuration with tfvars documentation.",
+        "scripts/test_vlm3_oci_gpu_infra.py:642 - IAM read scope uses global substring counts/absence checks.",
+        "infra/oci/main.tf:279 - capacity precondition has a real compound expression; parsing alone does not evaluate it.",
+        "infra/oci/watchdog.tf:22 - two provider-facing IAM statements each require GPU target and permission constraints."
+      ],
+      "canon": [
+        "DBG-02",
+        "TEST-16",
+        "TEST-15",
+        "TEST-19",
+        "REF-12",
+        "REF-05"
+      ],
+      "risk": "high",
+      "expected_suite_time_change": "No demonstrated speedup: these assertions are already cheap; one cached parse per file adds small local overhead and removes provider/network requirements from configuration checks.",
+      "rationale": "Narrow the effective-resource/provider-free-plan proposal to the existing public HCL configuration model. Terraform validate is not a configuration export, and no offline plan is demonstrated. A generic production measurement API is unnecessary. Expressions and IAM policy strings must retain the same defect guards; merely asserting parsed resource existence is insufficient."
+    },
+    {
+      "path": "scripts/deploy/tests/test_gpu_lifecycle_install.py",
+      "claimed": "REWRITE",
+      "ruling": "CONFIRM",
+      "action": "REWRITE",
+      "tests": [
+        "test_start_unit_always_executes_a_readiness_probe",
+        "test_reap_unit_always_executes_a_readiness_probe",
+        "test_lifecycle_units_pass_the_operator_intent_directory",
+        "test_intent_allowlist_matches_contract_environments",
+        "test_intent_path_unit_watches_only_contract_environments_and_starts_gpu",
+        "test_oneshot_units_have_systemd_execution_deadlines",
+        "test_timers_delay_their_first_trigger_relative_to_activation_not_boot",
+        "test_oneshot_units_share_persistent_boot_fenced_lifecycle_state"
+      ],
+      "target": null,
+      "seam": "scripts/deploy/gpu-lifecycle-install.sh:public CLI -> installed systemd units",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/test_gpu_lifecycle_install.py",
+            "scripts/deploy/tests/test_gpu_lifecycle_deploy_wiring.py"
+          ],
+          "do": "Use _run_lifecycle(enabled=True,dry_run=False) to execute the real installer via the deploy CLI with fake external commands. Share a module-scoped successful installation among artifact assertions to bound suite time. Parse effective-systemd units as systemd directives (repeated keys retained); inspect ExecStart arguments and EnvironmentFile together for readiness URL propagation, intent directory, persistent state and lock paths, positive oneshot deadlines, OnActiveSec/OnUnitActiveSec and absence of OnBootSec. Compare rendered PathChanged entries exactly to documented dev/staging/prod, verify Unit and enable call. Add test-support registry override for a fixture containing an extra environment: ensure tmpfiles has every registry environment but intent watcher remains allowlisted. Account for fake-host path remapping explicitly; never substitute generated expected domain values into the units.",
+          "red_proof": "Delete --ready-url independently in start/reap; remove --intent-dir in either; add a non-contract environment to the allowlist or remove one contract environment; add wrong PathChanged or wrong Unit or omit enable; remove either positive deadline; replace OnActiveSec by OnBootSec; remove StateDirectory or use RuntimeDirectory, change shared running-since/lock path. Each affected named test must fail on the real rendered result.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_gpu_lifecycle_install.py:89 - start probe guard regex-extracts a heredoc.",
+        "scripts/deploy/tests/test_gpu_lifecycle_install.py:101 - reap probe guard regex-extracts a heredoc.",
+        "scripts/deploy/tests/test_gpu_lifecycle_install.py:113 - intent-directory guard reads two service heredocs.",
+        "scripts/deploy/tests/test_gpu_lifecycle_install.py:126 - allowlist compares installer source assignment with contract text.",
+        "scripts/deploy/tests/test_gpu_lifecycle_install.py:141 - watcher guard mixes source heredoc, sliced append_deployment body and registry text.",
+        "scripts/deploy/tests/test_gpu_lifecycle_install.py:191 - execution deadlines are checked in unrendered service heredocs.",
+        "scripts/deploy/tests/test_gpu_lifecycle_install.py:205 - timers inspect heredocs for activation-relative deadlines.",
+        "scripts/deploy/tests/test_gpu_lifecycle_install.py:233 - persistent state and flock paths inspect heredocs.",
+        "scripts/deploy/tests/test_gpu_lifecycle_install.py:341 - existing behavior test executes payload and reads effective-systemd artifacts.",
+        "scripts/deploy/tests/test_gpu_lifecycle_deploy_wiring.py:169 - fake ssh remaps filesystem paths then executes the unchanged domain shell logic.",
+        "scripts/deploy/gpu-lifecycle-install.sh:929 - public installer emits units after shell expansion.",
+        "docs/workbay/contracts/gpu-lifecycle.md:32 - public operator intent environment contract is dev/staging/prod."
+      ],
+      "canon": [
+        "TEST-16",
+        "TEST-04",
+        "TEST-15",
+        "TEST-19",
+        "REF-12",
+        "TEST-24"
+      ],
+      "risk": "high",
+      "expected_suite_time_change": "One shared fake-host installation adds roughly 5.3s based on the observed existing artifact test; avoid eight separate installs. Extra registry scenario adds one bounded local run.",
+      "rationale": "The artifact seam already has a current second use. No production render-only CLI is needed. These are independent live guards; keep their names and module, with no move or merge."
+    },
+    {
+      "path": "scripts/deploy/tests/test_gpu_lifecycle_install.py",
+      "claimed": "REWRITE",
+      "ruling": "MODIFY",
+      "action": "REWRITE",
+      "tests": [
+        "test_intent_path_is_fenced_before_release_mutation_and_on_failure"
+      ],
+      "target": null,
+      "seam": "scripts/deploy/gpu-lifecycle-install.sh:public CLI -> transaction execution and systemctl calls",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/test_gpu_lifecycle_deploy_wiring.py"
+          ],
+          "do": "Extend only external-tool fake-host support: track path-watcher active/enabled state, seed an existing watcher for reinstall scenarios, log filesystem switch/mutation events in the sudo/external Python boundary without replacing its real implementation, and allow a deterministic external-command failure after fencing. Do not fake transaction domain logic.",
+          "red_proof": "A fixture smoke run must execute real shell transaction and actual local symlink replacement, with external-tool events recording a path disable before switch; injected external failure must be observed.",
+          "after": []
+        },
+        {
+          "files": [
+            "scripts/deploy/tests/test_gpu_lifecycle_install.py",
+            "scripts/deploy/tests/test_gpu_lifecycle_deploy_wiring.py"
+          ],
+          "do": "Replace source-index ordering with success and reinstall-failure CLI scenarios. Prove intent path is quiesced before release/unit mutation, cleanup fences intent before lifecycle start, and watcher is re-enabled only after start-timer verification; assert final watcher disabled on failure. Keep old structural guard until all event/failure scenarios pass.",
+          "red_proof": "Move fence call after switch; remove cleanup intent fence; swap cleanup fence ordering; enable watcher before start verification. Each isolated defect must make this named behavior guard fail, including the seeded already-active watcher case.",
+          "after": [
+            0
+          ]
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_gpu_lifecycle_install.py:167 - source slices and string indices claim ordering and failure behavior.",
+        "scripts/deploy/tests/test_gpu_lifecycle_deploy_wiring.py:222 - systemctl fake logs calls but only start timer/service have tracked active state.",
+        "scripts/deploy/gpu-lifecycle-install.sh:184 - fence_gpu_intent_path disables watcher and checks absent-unit fallback.",
+        "scripts/deploy/gpu-lifecycle-install.sh:877 - real transaction arms failure cleanup before release mutation.",
+        "scripts/deploy/gpu-lifecycle-install.sh:899 - intent fence precedes the live-release switch."
+      ],
+      "canon": [
+        "TEST-16",
+        "TEST-04",
+        "TEST-15",
+        "TEST-19",
+        "REF-05"
+      ],
+      "risk": "high",
+      "expected_suite_time_change": "Adds at least two bounded fake-host runs, roughly 10s using observed 5.3s/run; correctness improvement, no speedup claim.",
+      "rationale": "Current call logs alone cannot prove watcher quiescence or order relative to filesystem mutations. Extend external-tool observation first; no production seam change is justified."
+    },
+    {
+      "path": "scripts/deploy/tests/test_gpu_lifecycle_install.py",
+      "claimed": "REWRITE",
+      "ruling": "CONFIRM",
+      "action": "REWRITE",
+      "tests": [
+        "test_installer_purges_cloud_init_idle_reaper_units"
+      ],
+      "target": null,
+      "seam": "scripts/deploy/gpu-lifecycle-install.sh:public CLI -> legacy installed artifacts and systemctl calls",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/test_gpu_lifecycle_install.py",
+            "scripts/deploy/tests/test_gpu_lifecycle_deploy_wiring.py"
+          ],
+          "do": "Seed old acx-gpu-idle-reaper service and timer in fake effective-systemd before installation. Execute the public installer; assert both disable --now calls, absence of both legacy fragments, and daemon-reload after removal. Add bounded sudo filesystem-operation logging if needed to establish order, executing the real rm command.",
+          "red_proof": "Remove one unit from purge loop, omit disable, omit fragment removal, or omit daemon-reload: each mutation must fail this named guard.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_gpu_lifecycle_install.py:181 - source words do not prove old units are actually removed.",
+        "scripts/deploy/gpu-lifecycle-install.sh:200 - public installer purge loops over both old units and removes each before daemon-reload.",
+        "scripts/deploy/tests/test_gpu_lifecycle_deploy_wiring.py:67 - effective-systemd files can be seeded as actual artifacts.",
+        "scripts/deploy/tests/test_gpu_lifecycle_deploy_wiring.py:193 - sudo shim executes local filesystem commands after path mapping."
+      ],
+      "canon": [
+        "TEST-16",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high",
+      "expected_suite_time_change": "One seeded fake-host install adds roughly 5s; can share the seeded reinstall scenario with fencing tests when fixtures remain legible.",
+      "rationale": "Existing executed-payload seam suffices; require artifact deletion as well as logged disable commands."
+    },
+    {
+      "path": "scripts/deploy/tests/test_gpu_lifecycle_install.py",
+      "claimed": "REWRITE",
+      "ruling": "MODIFY",
+      "action": "REWRITE",
+      "tests": [
+        "test_transport_is_bounded_and_release_switch_is_atomic"
+      ],
+      "target": null,
+      "seam": "scripts/deploy/gpu-lifecycle-install.sh:public CLI -> transport argv, staged import, filesystem switch",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/test_gpu_lifecycle_deploy_wiring.py"
+          ],
+          "do": "Extend external ssh/scp stand-ins to execute all installer remote payloads after existing sandbox path remapping, copy real package/registry files locally, log copy/import/switch events, and support deterministic copy/import rejection and immediate transport failure. Preserve real package import, real shell transaction and real os.replace. Record SSH/scp options as argv. Fake external stalled transport deterministically for deadline invocation; keep the separate existing real timeout coverage. Never replace package/domain validation with a canned success.",
+          "red_proof": "A success fixture must stage a real importable package and switch an actual symlink; deliberately unimportable staged files must fail before publication.",
+          "after": []
+        },
+        {
+          "files": [
+            "scripts/deploy/tests/test_gpu_lifecycle_install.py",
+            "scripts/deploy/tests/test_gpu_lifecycle_deploy_wiring.py"
+          ],
+          "do": "Assert positive SSH connect/keepalive bounds and BatchMode on actual argv, and positive run_with_deadline enforcement at the external-process boundary. Assert current remains old on copy/import failure, successfully switches to a valid release through actual atomic replacement, preserves prior package, and installed services use current WorkingDirectory. Observe actual os.replace versus non-atomic unlink/ln via command execution tracing, rather than merely checking final link: final state alone cannot distinguish atomicity. Retain original atomicity/deadline guard if this tracing cannot reject the mutations; do not ship a partial replacement.",
+          "red_proof": "Remove each bounded option/deadline wrapper; move switch before copy/import; bypass actual import; replace os.replace with unlink+symlink; delete live old package. The named guard must go red independently for each defect, with no cloud access or wall-clock sleep added.",
+          "after": [
+            0
+          ]
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_gpu_lifecycle_install.py:249 - source snippets and string ordering assert transport, import, atomicity and old package preservation.",
+        "scripts/deploy/tests/test_gpu_lifecycle_install.py:296 - existing public installer copy-failure guard checks no live switch.",
+        "scripts/deploy/tests/test_gpu_lifecycle_deploy_wiring.py:153 - shared fake ssh executes only payloads containing activate_gpu_lifecycle_timers; early staging/import are skipped.",
+        "scripts/deploy/tests/test_gpu_lifecycle_deploy_wiring.py:374 - current fake scp logs but does not copy files.",
+        "scripts/deploy/gpu-lifecycle-install.sh:823 - staging/copy/validation are public transport commands wrapped in deadlines.",
+        "scripts/deploy/gpu-lifecycle-install.sh:913 - actual os.replace publishes the live symlink."
+      ],
+      "canon": [
+        "TEST-04",
+        "TEST-15",
+        "TEST-16",
+        "TEST-19",
+        "TEST-08",
+        "TEST-24",
+        "REF-05"
+      ],
+      "risk": "high",
+      "expected_suite_time_change": "Several bounded local fake-host runs will increase suite time; no measured saving. Reuse success run, use immediate transport failure for added cases, retain existing timeout guard.",
+      "rationale": "A wholesale rewrite through the current fixture would silently drop staging/import and atomicity guards. Stage external fake fidelity first, and retain the source guard unless atomicity/deadline mutations are demonstrably caught. No new production test-only seam."
+    },
+    {
+      "path": "scripts/deploy/tests/test_gpu_lifecycle_install.py",
+      "claimed": "REWRITE",
+      "ruling": "MODIFY",
+      "action": "REWRITE",
+      "tests": [
+        "test_idle_seconds_cli_type_rejects_non_positive_values"
+      ],
+      "target": null,
+      "seam": "infra/oci/gpu_lifecycle/__main__.py:module CLI -> reaper.main",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/test_gpu_lifecycle_install.py"
+          ],
+          "do": "Replace python -c private _build_parser calls with selected interpreter -m infra.oci.gpu_lifecycle --instance-id ocid1.test --idle-seconds VALUE. Keep all seven invalid values, nonzero exit and positive integer diagnostic; assert argparse usage rejection (exit 2) before any OCI action. Include one valid parse control with --help or a harmless documented CLI mode so unrelated import/startup failure cannot count as validation success. Keep existing installer validation cases unchanged.",
+          "red_proof": "Mutate reaper --idle-seconds type to int (zero/negative accepted) or a permissive parser (whitespace/+1 accepted), and demonstrate invalid cases fail. A public-CLI mutation bypassing parser validation must be caught; an unrelated import failure cannot satisfy positive integer/usage assertions.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_gpu_lifecycle_install.py:274 - subprocess directly imports private _build_parser, not installer CLI.",
+        "scripts/deploy/tests/test_gpu_lifecycle_install.py:45 - installer CLI already independently tests invalid IDLE_SECONDS.",
+        "infra/oci/gpu_lifecycle/__main__.py:3 - public module entrypoint calls reaper.main.",
+        "infra/oci/gpu_lifecycle/reaper.py:3892 - public main parses arguments before OCI/domain work.",
+        "infra/oci/gpu_lifecycle/reaper.py:3723 - positive integer type is the actual Python CLI guard."
+      ],
+      "canon": [
+        "TEST-12",
+        "TEST-16",
+        "TEST-15",
+        "REF-12"
+      ],
+      "risk": "high",
+      "expected_suite_time_change": "Seven module CLI subprocesses should have similar import cost to current seven private-parser subprocesses (observed 0.75-2.32s each); no proven saving.",
+      "rationale": "The proposed installer CLI replacement would lose the Python lifecycle CLI guarantee. Rewrite through the module CLI instead, requiring no production change."
+    },
+    {
+      "path": "scripts/test_vlm3_oci_gpu_infra.py",
+      "claimed": "REWRITE",
+      "ruling": "REFUTE",
+      "action": "KEEP",
+      "tests": [
+        "test_terraform_configuration_validates"
+      ],
+      "target": null,
+      "seam": "terraform:validate",
+      "production_change": "none",
+      "steps": [],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/test_vlm3_oci_gpu_infra.py:415 - existing public Terraform release guard fails when terraform binary is missing.",
+        "scripts/test_vlm3_oci_gpu_infra.py:485 - mandatory make test-infra-terraform release gate remains independently documented/guarded."
+      ],
+      "canon": [
+        "DBG-02",
+        "TEST-15"
+      ],
+      "risk": "high",
+      "expected_suite_time_change": "Unchanged.",
+      "rationale": "Additional baseline finding outside the named rewrite claims: red guard remains KEEP pending Terraform-equipped verification; do not skip it or accept parser checks as a release-gate substitute."
+    }
+  ],
+  "verification": {
+    "lane_gate": "pass: 26 passed in 4.20s",
+    "import_origin": "Not applicable: report-only lane owns no Python package; root pyproject.toml sets package=false. No unrelated ambient package was probed.",
+    "limitations": [
+      "Baseline release verification blocked by absent Terraform binary; requires orchestrator Terraform-equipped rerun.",
+      "Checkout HEAD differs from dispatch base; report records both, and evidence refers to current checked-out files.",
+      "Red proofs and timing projections are implementation acceptance requirements, not mutation tests performed by this report-only lane."
+    ]
+  },
+  "item_summary": [
+    "scripts/test_vlm3_oci_gpu_infra.py [test_gpu_instance_dedicated_tag_matches_bench_gate, test_gpu_instance_ignores_runtime_state_drift_after_reaper_stop, test_gpu_instance_uses_configurable_a10_shape_and_dedicated_cloud_init, test_gpu_watchdog_rollout_checks_capacity_and_preserves_existing_boot_volume, test_gpu_instance_security_posture_private_only, test_gpu_nat_and_jump_host_ssh_present, test_gpu_endpoint_outputs_for_acx_gpu_endpoint_url, test_gpu_self_stop_terraform_wiring_and_narrow_policy_are_present, test_gpu_self_stop_policy_allows_only_targeted_read_for_verification]: MODIFY -> REWRITE, steps 2 (DBG-02, TEST-16, TEST-15, TEST-19, REF-12, REF-05)",
+    "scripts/deploy/tests/test_gpu_lifecycle_install.py [test_start_unit_always_executes_a_readiness_probe, test_reap_unit_always_executes_a_readiness_probe, test_lifecycle_units_pass_the_operator_intent_directory, test_intent_allowlist_matches_contract_environments, test_intent_path_unit_watches_only_contract_environments_and_starts_gpu, test_oneshot_units_have_systemd_execution_deadlines, test_timers_delay_their_first_trigger_relative_to_activation_not_boot, test_oneshot_units_share_persistent_boot_fenced_lifecycle_state]: CONFIRM -> REWRITE, steps 1 (TEST-16, TEST-04, TEST-15, TEST-19, REF-12, TEST-24)",
+    "scripts/deploy/tests/test_gpu_lifecycle_install.py [test_intent_path_is_fenced_before_release_mutation_and_on_failure]: MODIFY -> REWRITE, steps 2 (TEST-16, TEST-04, TEST-15, TEST-19, REF-05)",
+    "scripts/deploy/tests/test_gpu_lifecycle_install.py [test_installer_purges_cloud_init_idle_reaper_units]: CONFIRM -> REWRITE, steps 1 (TEST-16, TEST-15, TEST-19, REF-12)",
+    "scripts/deploy/tests/test_gpu_lifecycle_install.py [test_transport_is_bounded_and_release_switch_is_atomic]: MODIFY -> REWRITE, steps 2 (TEST-04, TEST-15, TEST-16, TEST-19, TEST-08, TEST-24, REF-05)",
+    "scripts/deploy/tests/test_gpu_lifecycle_install.py [test_idle_seconds_cli_type_rejects_non_positive_values]: MODIFY -> REWRITE, steps 1 (TEST-12, TEST-16, TEST-15, REF-12)",
+    "scripts/test_vlm3_oci_gpu_infra.py [test_terraform_configuration_validates]: REFUTE -> KEEP, steps 0 (DBG-02, TEST-15)"
+  ],
+  "command_summary": [
+    "<lane-root>/.venv/bin/python -m pytest -p no:cacheprovider -q scripts/test_vlm3_oci_gpu_infra.py scripts/deploy/tests/test_gpu_lifecycle_install.py --durations=15: fail - 74 passed, 1 failed",
+    "<lane-root>/.venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q: pass - 26 passed",
+    "<lane-root>/.venv/bin/python -c JSON validation and coverage checks: pass - 1 JSON document; 21 named tests exactly once plus baseline KEEP"
+  ]
+}

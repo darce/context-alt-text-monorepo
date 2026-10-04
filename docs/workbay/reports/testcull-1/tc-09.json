@@ -1,0 +1,267 @@
+{
+  "lane": "tc-09",
+  "base": "e56ab004eb3080fd1dac7c602d78835e11fac792",
+  "files": [
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_describe_run_reclaim.py",
+      "verdict": "SPEED",
+      "tests_total": 9,
+      "tests_affected": [
+        "test_reclaim_derives_terminal_status_and_preserves_completed_items",
+        "test_reclaim_derives_completed_when_all_items_completed_before_crash",
+        "test_reclaim_derives_cancelled_when_all_items_skipped_before_crash",
+        "test_reclaim_honors_cancel_requested_as_cancelled",
+        "test_reclaim_fails_closed_when_rls_bypass_not_active",
+        "test_startup_reclaim_failure_does_not_block_boot_and_is_wired",
+        "test_startup_boot_order_reclaim_then_purge_then_snapshot",
+        "test_startup_purge_or_snapshot_failure_does_not_block_boot",
+        "test_reclaim_leaves_terminal_runs_untouched"
+      ],
+      "reason": "Keep the reclaim state-transition and lifespan assertions but move this database/app-startup integration file out of commit-stage feedback or share its per-test engine and lifespan setup; its observed slowest test is 10.5 seconds.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_describe_run_reclaim.py:29 - reclaim tests create and dispose a fresh async SQLite engine, and three more cases boot TestClient lifespans; the scan reports a 10.5-second slowest case.",
+      "subject": "startup reclaim, purge, and snapshot lifespan behavior",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-24"
+      ],
+      "replacement": "Move the DB-backed reclaim and app-lifespan checks to a later integration stage, or reuse module-scoped database and app-lifespan setup while retaining the persisted state and startup ordering assertions.",
+      "est_seconds_saved": 10.5,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_dw2_001identit_1.py",
+      "verdict": "MERGE",
+      "tests_total": 4,
+      "tests_affected": [
+        "test_demand_lease_count_is_bounded_by_parent_operation_retention",
+        "test_identity_migration_binds_lease_retention_to_parent",
+        "test_purge_expired_deletes_operations_in_bounded_batches",
+        "test_stop_holds_exclude_only_the_named_leases_without_deleting_them"
+      ],
+      "reason": "All four tests assert live lease-retention, bounded-purge, and stop-hold behavior on DescribeOperationRepository and belong beside that repository's canonical tests.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_dw2_001identit_1.py:68 - the wave-named module exercises DescribeOperationRepository query bounds, retention linkage, purge batching, and lease holds.",
+      "subject": "DescribeOperationRepository lease retention and purge behavior",
+      "duplicate_of": "",
+      "canon": [
+        "REF-10"
+      ],
+      "replacement": "Merge into scene/tests/test_describe_operation_repository.py, grouping the lease-retention and purge cases with the subject repository.",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_dw2_describeru_1.py",
+      "verdict": "MERGE",
+      "tests_total": 4,
+      "tests_affected": [
+        "test_readiness_sees_startup_committed_by_a_second_session",
+        "test_readiness_reads_operation_startup_after_locking_the_run",
+        "test_warm_readiness_does_not_replace_concurrent_cold_ramp_up",
+        "test_worker_timeout_persists_timing_from_cancelled_adapter_attempt"
+      ],
+      "reason": "These live readiness-race and timeout-timing checks are named for a review wave and belong with the describe-run worker tests; the private helper ordering assertions should move behind the worker's observable run records where practical.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_dw2_describeru_1.py:89 - tests exercise run readiness and cancelled-adapter timing in the describe-run worker, including private helper and lock ordering.",
+      "subject": "describe-run worker readiness and adapter-attempt timing",
+      "duplicate_of": "",
+      "canon": [
+        "REF-10",
+        "TEST-12",
+        "TEST-16"
+      ],
+      "replacement": "Merge into scene/tests/test_describe_run_worker.py and assert the persisted run readiness/timing contract through the worker interface instead of helper call order where possible.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_dw2_facemetric_1.py",
+      "verdict": "MERGE",
+      "tests_total": 3,
+      "tests_affected": [
+        "test_score_run_record_refuses_unknown_human_label_source",
+        "test_strict_scoring_refuses_nonfinite_or_degenerate_detection_boxes",
+        "test_strict_row_refusals_include_corpus_index_and_image_path"
+      ],
+      "reason": "The three live scoring-validation tests cover manifest lineage, invalid geometry, and row diagnostics, so group them with the canonical face-metrics tests instead of keeping a review-wave module.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_dw2_facemetric_1.py:76 - score_run_record and strict scoring assertions check ManifestError invariants and offending corpus row details.",
+      "subject": "strict face-metric scoring validation",
+      "duplicate_of": "",
+      "canon": [
+        "REF-10"
+      ],
+      "replacement": "Merge into scene/tests/test_eval_harness_face_metrics.py beside the strict scoring contract tests.",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_dw2_gpusmoke1b_1.py",
+      "verdict": "REWRITE",
+      "tests_total": 1,
+      "tests_affected": [
+        "test_gpu_installer_checks_running_api_container_gid"
+      ],
+      "reason": "This live installer guard reads the production shell source and pins literal commands; exercise the GID refusal and pre-mutation ordering through the existing fake-Docker deployment harness instead.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_dw2_gpusmoke1b_1.py:19 - the test reads gpu-lifecycle-install.sh and asserts its rendered shell text, while the deployment wiring tests already run the script against fake Docker.",
+      "subject": "GPU lifecycle installer API-container GID validation",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-16"
+      ],
+      "replacement": "Rewrite in scripts/deploy/tests/test_gpu_lifecycle_deploy_wiring.py using its _run_lifecycle fake-Docker seam; assert a mismatched GID fails before lifecycle mutation.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_dw2_merge_1.py",
+      "verdict": "MERGE",
+      "tests_total": 2,
+      "tests_affected": [
+        "test_normalized_box_rejects_invalid_geometry",
+        "test_phrase_boxes_from_json_drops_invalid_boxes_and_reversed_spans"
+      ],
+      "reason": "Both geometry checks protect live behavior but cover separate owning modules, so move them beside the identity-merge value object and visual-facts phrase-box consumer tests.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_dw2_merge_1.py:4 - the wave-named file imports NormalizedBox and the private phrase-box converter, then checks invalid geometry and reversed spans.",
+      "subject": "normalized-box validation and phrase-box parsing",
+      "duplicate_of": "",
+      "canon": [
+        "REF-10",
+        "TEST-12"
+      ],
+      "replacement": "Merge NormalizedBox cases into scene/tests/test_identity_merge_findings.py and move phrase-box coverage into scene/tests/test_visual_facts_pass.py through a public visual-facts result rather than the private converter.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_dw2_pctrank_1.py",
+      "verdict": "MERGE",
+      "tests_total": 2,
+      "tests_affected": [
+        "test_latency_summary_uses_nearest_rank_for_integer_boundary",
+        "test_nearest_rank_percentile_boundary_cases"
+      ],
+      "reason": "These live nearest-rank boundary cases belong with the face-metrics latency tests; the existing canonical test covers ordinary p50 and empty input but not the p95 integer boundary or q=0/q=1 edges.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_dw2_pctrank_1.py:8 - the tests assert p95=18 for twenty values and exercise singleton plus q=0 and q=1 percentile boundaries.",
+      "subject": "nearest-rank percentile and latency summary behavior",
+      "duplicate_of": "",
+      "canon": [
+        "REF-10"
+      ],
+      "replacement": "Merge into scene/tests/test_eval_harness_face_metrics.py beside its latency_summary and nearest_rank_percentile assertions.",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_dw2_recognitio_3.py",
+      "verdict": "MERGE",
+      "tests_total": 2,
+      "tests_affected": [
+        "test_snapshot_quality_fields_reject_one_sided_nulls",
+        "test_snapshot_quality_fields_accept_matched_values_and_both_null"
+      ],
+      "reason": "Both tests protect the published snapshot schema: the apparent no-assert case calls Draft7Validator.validate twice, which raises on invalid data, so this is a false-positive scan signal and the cases should join the shared-schema tests.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_dw2_recognitio_3.py:41 - Draft7Validator.validate checks the valid matched-value and both-null payloads, and the paired parametrized test asserts rejection of one-sided nulls.",
+      "subject": "recognition cluster snapshot quality schema contract",
+      "duplicate_of": "",
+      "canon": [
+        "REF-10"
+      ],
+      "replacement": "Merge into scene/tests/test_shared_schema_documents.py with the other shared-contract schema behavior checks.",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_dw2_recognitio_4.py",
+      "verdict": "MERGE",
+      "tests_total": 1,
+      "tests_affected": [
+        "test_merge_candidates_schema_does_not_claim_roster_candidates_shape_family"
+      ],
+      "reason": "This published shared-schema description guard is live documentation behavior and belongs with the other merge-candidate schema checks in the shared-schema test module.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_dw2_recognitio_4.py:11 - it loads the shared merge-candidates schema and checks its description no longer makes the stale roster-candidates shape-family claim.",
+      "subject": "recognition merge-candidates shared schema description",
+      "duplicate_of": "",
+      "canon": [
+        "REF-10"
+      ],
+      "replacement": "Merge into scene/tests/test_shared_schema_documents.py with the existing merge-candidate schema documentation checks, retaining the consumer-facing distinction.",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_dw2_scenehealt_1.py",
+      "verdict": "MERGE",
+      "tests_total": 5,
+      "tests_affected": [
+        "test_fresh_readiness_requires_endpoint_evidence",
+        "test_usable_readiness_requires_fresh_evidence",
+        "test_unusable_readiness_requires_a_reason",
+        "test_readiness_schema_accepts_documented_reasons",
+        "test_readiness_schema_rejects_unknown_reason"
+      ],
+      "reason": "These five cases verify live detailed-health JSON Schema requirements and should be grouped with the other shared schema contract tests.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_dw2_scenehealt_1.py:36 - the tests validate fresh endpoint evidence, usable/fresh consistency, documented unusable reasons, and rejection of an unknown reason.",
+      "subject": "detailed health description-adapter readiness schema",
+      "duplicate_of": "",
+      "canon": [
+        "REF-10"
+      ],
+      "replacement": "Merge into scene/tests/test_shared_schema_documents.py under the scene-health-detailed schema contract cases.",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_eval_harness_audit_sampling.py",
+      "verdict": "KEEP",
+      "tests_total": 71,
+      "tests_affected": [
+        "test_published_cells_regenerate_from_fir12_selection_manifest",
+        "test_scope_doc_ci_n_fence_runs_as_written",
+        "test_scope_doc_planning_n_fence_runs_as_written",
+        "test_every_scope_doc_executable_fence_published_comment_matches_eval",
+        "test_scope_doc_fence_collector_count_is_all_fences_minus_opt_outs",
+        "test_scope_doc_fence_collector_keeps_unknown_and_non_python_tags",
+        "test_unparseable_trailing_comment_fails_instead_of_skipping",
+        "test_psu_census_trailing_comment_is_checked",
+        "test_scope_doc_published_tables_match_eval",
+        "test_scope_doc_fence_inventory_catches_indented_executable_fence",
+        "test_scope_doc_table_guard_rejects_blank_line_that_drops_rows",
+        "test_scope_doc_table_guard_rejects_duplicate_n_column",
+        "test_scope_doc_success_criteria_guard_rejects_hidden_or_changed_n",
+        "test_scope_doc_quantity_inventory_rejects_prose_n_drift",
+        "test_table_only_disagreement_is_caught",
+        "test_unrelated_markdown_table_is_not_audited",
+        "test_tilde_fence_published_disagreement_is_caught",
+        "test_backtick_fence_body_containing_tildes_is_one_block"
+      ],
+      "reason": "Keep the flagged documentation checks: the scope file is a pre-registered annotation protocol with dual-annotator, disagreement, and gold-QC rules, and these tests execute its published sampling fences and compare its tables to shipped calculations.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_audit_sampling.py:952 - the tests read the published scope document, execute its sizing fences, and reject table or prose counts that drift from eval results.",
+      "subject": "published DESCQUAL-2 annotation sample design and audit-sampling calculations",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-15"
+      ],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_eval_harness_pilot_draw.py",
+      "verdict": "REWRITE",
+      "tests_total": 49,
+      "tests_affected": [
+        "test_pilot_module_does_not_estimate_icc_or_deff"
+      ],
+      "reason": "Keep the pilot's no-ICC/deff regression guard but replace direct production-source string assertions with a public-output contract check or a focused static lint; the sibling draw test already checks public reports and packets for design-stat leakage.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_pilot_draw.py:1187 - the flagged test calls inspect.getsource on pilot_draw and asserts that named implementation tokens are absent.",
+      "subject": "pilot draw and annotation-output contract, including the ban on ICC/deff estimation",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-16",
+        "TEST-15"
+      ],
+      "replacement": "Retain the no-estimator guard by asserting the draw, packet, and report public outputs contain no ICC/deff fields, or move prohibited estimator-syntax detection into a dedicated static lint; remove source substring checks.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    }
+  ],
+  "fixtures": []
+}

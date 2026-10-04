@@ -1,0 +1,409 @@
+{
+  "lane": "ta-deploy",
+  "base": "cfb418d193776fec71be3ce09752136290b882cd",
+  "brief_base": "773138f240b3c38511cb26b8e51a0e0253d8f4b1",
+  "base_note": "Report adjudicates files and baseline observed in the supplied sandbox checkout; actual HEAD differs from dispatch brief. No git history consulted.",
+  "baseline": {
+    "command": ".venv/bin/python -m pytest -p no:cacheprovider -q scripts/deploy/tests/test_staged_rollback.py scripts/deploy/tests/test_deploy_snapshot.py scripts/deploy/tests/test_recognition_ocir_config.py --durations=15",
+    "result": "FAIL: 40 passed, 1 failed, 0 skipped in 38.87s; failing test_deploy_records_transaction_order_and_pins_restart_digest uses real SSH for deploy lease; unavailable hostname resolution in sandbox.",
+    "passed": 40,
+    "failed": 1,
+    "skipped": 0,
+    "seconds": 38.87,
+    "slowest_tests": [
+      {
+        "test": "scripts/deploy/tests/test_recognition_ocir_config.py::test_repair_failure_recovery_restores_vm_and_registry_tag",
+        "seconds": 3.89
+      },
+      {
+        "test": "scripts/deploy/tests/test_recognition_ocir_config.py::test_stalled_push_has_deadline_and_unknown_outcome",
+        "seconds": 2.38
+      },
+      {
+        "test": "scripts/deploy/tests/test_deploy_snapshot.py::test_dirty_opt_out_still_snapshots_production_and_promote",
+        "seconds": 2.17
+      },
+      {
+        "test": "scripts/deploy/tests/test_recognition_ocir_config.py::test_stalled_pull_has_deadline_in_both_build_modes[1]",
+        "seconds": 1.91
+      },
+      {
+        "test": "scripts/deploy/tests/test_recognition_ocir_config.py::test_signal_exit_cleans_login_config",
+        "seconds": 1.76
+      },
+      {
+        "test": "scripts/deploy/tests/test_recognition_ocir_config.py::test_stalled_pull_has_deadline_in_both_build_modes[0]",
+        "seconds": 1.72
+      },
+      {
+        "test": "scripts/deploy/tests/test_recognition_ocir_config.py::test_status_prints_unhealthy_for_reachable_503_health_body",
+        "seconds": 1.63
+      },
+      {
+        "test": "scripts/deploy/tests/test_staged_rollback.py::test_cutover_health_image_only_keeps_image_identity_without_sha",
+        "seconds": 1.61
+      },
+      {
+        "test": "scripts/deploy/tests/test_recognition_ocir_config.py::test_local_push_uses_login_config_and_success_cleans_it",
+        "seconds": 1.38
+      },
+      {
+        "test": "scripts/deploy/tests/test_recognition_ocir_config.py::test_previous_serving_digest_is_published_as_rollback",
+        "seconds": 1.33
+      },
+      {
+        "test": "scripts/deploy/tests/test_recognition_ocir_config.py::test_failed_local_push_still_cleans_login_config",
+        "seconds": 1.28
+      },
+      {
+        "test": "scripts/deploy/tests/test_recognition_ocir_config.py::test_uninitialized_config_dir_never_reaches_the_vm[/tmp/]",
+        "seconds": 1.11
+      },
+      {
+        "test": "scripts/deploy/tests/test_recognition_ocir_config.py::test_digest_mismatch_fails_environment_tag_promotion",
+        "seconds": 1.1
+      },
+      {
+        "test": "scripts/deploy/tests/test_deploy_snapshot.py::test_snapshot_is_removed_on_success_and_fail_exit",
+        "seconds": 1.1
+      },
+      {
+        "test": "scripts/deploy/tests/test_recognition_ocir_config.py::test_remote_push_issues_bounded_remote_cleanup[False-0]",
+        "seconds": 1.1
+      }
+    ]
+  },
+  "verification": {
+    "command": ".venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+    "result": "PASS: 26 passed in 7.38s",
+    "import_origin": "Skipped: report-only shell deploy lane owns no importable Python package; root pyproject.toml sets package=false. Selected lane-root interpreter used for all Python commands."
+  },
+  "items": [
+    {
+      "path": "scripts/deploy/tests/test_staged_rollback.py",
+      "claimed": "REWRITE",
+      "ruling": "MODIFY",
+      "action": "REWRITE",
+      "tests": [
+        "test_canonical_side_rollback_stages_before_restart",
+        "test_rollback_public_edge_failure_reverts_before_canonical_restart",
+        "test_unhealthy_rollback_candidate_never_restarts_canonical",
+        "test_unhealthy_canonical_stays_behind_next_route",
+        "test_next_side_rollback_probes_canonical_before_edge_restore",
+        "test_unknown_traffic_side_refuses_rollback_restart",
+        "test_inflight_marker_selects_next_side_for_rollback"
+      ],
+      "target": null,
+      "seam": "scripts/deploy/recognition-service.sh:do_rollback / do_deploy (direct CLI)",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/_deploy_cli_harness.py",
+            "scripts/deploy/tests/test_staged_rollback.py"
+          ],
+          "do": "First add a strict external-tool harness and parallel CLI cases, retaining all seven current guards. Run the unmodified script as bash recognition-service.sh rollback prod aaaaaaaaaaaa with CONFIRM=PROMOTE for canonical/inflight states; use deploy prod with a real post-flip failure for the ACX_TRAFFIC_FLIPPED=1 branch. Never set that internal flag in a sourced driver: script initialization resets it. Fake SSH transport, Docker/OCI, curl and remote OS operations only; execute production routing, topology restore, health admission, fences and receipt generation. Maintain tool-side image/container identities, lease state, edge files, inflight marker and receipt bytes in a temporary VM tree. Reject unrecognized tool commands instead of returning blanket success. Set documented probe attempts=1 and sleeps=0; use immediate fake sleep for OS polling, retaining bounded subprocess deadlines.",
+          "red_proof": "All seven scenarios must reach rollback (not fail preflight/fence), show route state and restart/drain events, and inspect generated deployed-release.json. Demonstrate baseline green and isolated mutation red for each case before any deletion.",
+          "after": []
+        },
+        {
+          "files": [
+            "scripts/deploy/tests/_deploy_cli_harness.py",
+            "scripts/deploy/tests/test_staged_rollback.py"
+          ],
+          "do": "Replace the seven recorder-based cases under the same test names only after step 0 succeeds. Assert safety ordering at observable effects: next ready and public health before canonical restart; canonical ready with rollback identity before routing back/draining; receipt written once after successful verification. For next-side cases separately cover the live flipped flag through failed deploy and the persisted inflight marker through manual rollback. Assert unknown traffic refuses canonical restart. Do not import the existing domain-stubbing transaction fixture as a shortcut.",
+          "red_proof": "Mutation map: canonical-side case: restart before next health/public probe or receipt before final verification; public-edge-failure case: restart after failing public curl or fail to revert route; unhealthy-candidate case: allow restart/flip/receipt after candidate probe failure; unhealthy-canonical case: route back or drain next after failed canonical health; next-side case: restore edge before canonical health/digest or recreate next; unknown-side case: treat marker probe error as absence; inflight case: ignore present marker and recreate the serving next unit. Each corresponding test must fail for its mutation and pass after reverting it. Include failure receipt absence and success receipt digest/SHA checks.",
+          "after": [
+            0
+          ]
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_staged_rollback.py:14 - _run_rollback enters a private helper; lines 42-60 replace routing, admission, restore and receipt domain functions, not just external tools.",
+        "scripts/deploy/tests/test_staged_rollback.py:95 - canonical-side safety sequence and receipt-last guard.",
+        "scripts/deploy/tests/test_staged_rollback.py:117 - public failure must revert without canonical restart; :134 candidate failure forbids restart; :143 canonical failure preserves next.",
+        "scripts/deploy/tests/test_staged_rollback.py:153 - next-side path tests health/digest before edge restore; :171 refuses unknown traffic; :178 selects next from persisted inflight marker.",
+        "scripts/deploy/recognition-service.sh:251 - ACX_TRAFFIC_FLIPPED resets to zero on script load.",
+        "scripts/deploy/recognition-service.sh:4579 - real compensation selects next from either in-memory flip or persisted marker and refuses unknown marker status.",
+        "scripts/deploy/recognition-service.sh:4780 - do_rollback is an existing operator command with fence/lease checks before real restore.",
+        "scripts/deploy/recognition-service.sh:6238 - normal dispatcher exposes rollback and deploy.",
+        "scripts/deploy/tests/test_recognition_deploy.py:2827 - existing fake-tool transaction fixture is a starting reference, but :3173-3212 also stubs lease/build/preserve/gate/verify domain logic. It is not equivalent coverage."
+      ],
+      "canon": [
+        "TEST-12",
+        "TEST-16",
+        "TEST-04",
+        "TEST-15",
+        "TEST-19",
+        "TEST-08",
+        "TEST-24",
+        "REF-12"
+      ],
+      "risk": "high",
+      "rationale": "Modify the blanket eight-case rewrite into seven staged behavioral replacements. The public commands already exist; no production seam is justified. A manual rollback alone cannot cover automatic compensation with an in-memory flip. Retain current guards until the complete external-effect harness and per-case red proofs establish equivalent safety coverage.",
+      "expected_suite_time_change": "Likely increases by several seconds for seven full transactions versus short sourced drivers; temporary parallel cases cost more during staging. Measure after replacement; no speed saving claimed."
+    },
+    {
+      "path": "scripts/deploy/tests/test_staged_rollback.py",
+      "claimed": "REWRITE",
+      "ruling": "REFUTE",
+      "action": "KEEP",
+      "tests": [
+        "test_cutover_health_image_only_keeps_image_identity_without_sha"
+      ],
+      "target": null,
+      "seam": "scripts/deploy/recognition-service.sh:probe_cutover_api_health",
+      "production_change": "none",
+      "steps": [],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_staged_rollback.py:187 - eighth case is not a rollback-order test: calls the probe in two modes and examines the emitted remote command.",
+        "scripts/deploy/tests/test_staged_rollback.py:224 - asserts immutable image identity survives --image-only and deploy SHA is absent; :230 asserts SHA is present in normal mode.",
+        "scripts/deploy/recognition-service.sh:4005 - image-only intentionally skips commit pinning while preserving immutable image comparison; normal mode includes expected commit."
+      ],
+      "canon": [
+        "TEST-12",
+        "TEST-15",
+        "REF-12",
+        "TEST-19"
+      ],
+      "risk": "high",
+      "rationale": "The whole-file claim incorrectly treats this case as helper-order coverage. It checks a security-relevant generated remote command contract, with no source slicing or exact inter-helper order. Proposed route/restart/receipt assertions do not replace its two-mode image-versus-SHA discrimination. Keep this guard; a later separately evidenced transport-level rewrite may improve it without inventing a production seam.",
+      "expected_suite_time_change": "No change."
+    },
+    {
+      "path": "scripts/deploy/tests/test_deploy_snapshot.py",
+      "claimed": "REWRITE",
+      "ruling": "MODIFY",
+      "action": "REWRITE",
+      "tests": [
+        "test_dispatch_materializes_only_shipping_commands_after_sha_pin"
+      ],
+      "target": null,
+      "seam": "scripts/deploy/recognition-service.sh:direct command dispatcher",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/test_deploy_snapshot.py"
+          ],
+          "do": "Replace source regex matching with subprocess execution of a copied, unmodified script in the temporary git fixture. Exercise build, build-remote, deploy, promote, prepare-producer and verify with valid argv. A PATH git wrapper delegates real git operations and records rev-parse/archive arguments; PATH external tools terminate safely after the relevant phase. Assert shipping commands archive exactly the pinned commit and verify performs commit resolution without any archive. Add invalid SHA and archive-failure cases asserting no downstream Docker/SSH work. Do not stub dispatcher, pinning or materialization.",
+          "red_proof": "Removing any shipping command from the snapshot guard must fail its command case; adding verify must fail the no-archive case; selecting HEAD rather than the pinned SHA after live ref mutation must fail archived-commit/content assertion. Invalid pin/archive failure must prevent downstream tool events. Do not require removing only the redundant outer pin call to turn red: materialize_deploy_snapshot pins internally.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_deploy_snapshot.py:238 - source-text seam: regex extracts the guard and indexes literal function call order.",
+        "scripts/deploy/recognition-service.sh:6227 - existing direct execution seam chooses shipping commands and verify.",
+        "scripts/deploy/recognition-service.sh:1013 - materialize_deploy_snapshot itself calls pin_deploy_sha; literal outer pin-before-materialize order is redundant with real commit resolution before archive.",
+        "scripts/deploy/tests/test_deploy_snapshot.py:24 - temporary git fixture already supplies real commits and snapshot files."
+      ],
+      "canon": [
+        "TEST-16",
+        "TEST-04",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high",
+      "rationale": "Keep shipping-command selection and pinned archive behavior, but drop the redundant literal outer helper-order assertion. A behavior-only test cannot discriminate removal of a redundant outer pin call, so the original proposal requires a narrower ruling rather than unconditional confirmation.",
+      "expected_suite_time_change": "Approximately +1-3 seconds for six command subprocesses and git recording; measure, no speed gain promised."
+    },
+    {
+      "path": "scripts/deploy/tests/test_deploy_snapshot.py",
+      "claimed": "REWRITE",
+      "ruling": "MODIFY",
+      "action": "REWRITE",
+      "tests": [
+        "test_gpu_gate_inputs_come_from_snapshot"
+      ],
+      "target": null,
+      "seam": "scripts/deploy/recognition-service.sh:verify_live_gpu_snapshots (SSH payload)",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/test_deploy_snapshot.py"
+          ],
+          "do": "Retain the current real git/archive snapshot-content check. Replace only the two obsolete source-path assertions with invocation of the existing GPU gate against a fake SSH executable that records stdin. After snapshot creation mutate both live configuration and checker, and give each distinct committed/live sentinel bytes. Execute real verify_live_gpu_snapshots with existing sourced fixture, no overridden domain functions. Decode the actual ACX_GPU_CHECKER_V1 header and payload at the SSH boundary and assert deployment registry and checker bytes both come from the pinned snapshot. Fake SSH captures transport and returns immediately; this narrowly extends the artifact test rather than building a whole deploy simulator.",
+          "red_proof": "Independently change either conf read at recognition-service.sh:5691 or checker read at :5692 back to SCRIPT_DIR/REPO_ROOT. The payload assertion for each must fail even while the retained snapshot-content assertion remains green. Reverting each mutation restores green.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_deploy_snapshot.py:260 - hybrid seam: real materialized snapshot content and final source-text checks.",
+        "scripts/deploy/tests/test_deploy_snapshot.py:276 - mutates live conf after materializing and asserts snapshot still contains committed deployments.",
+        "scripts/deploy/tests/test_deploy_snapshot.py:284 - source checks merely forbid old path spellings; they do not observe checker bytes actually shipped.",
+        "scripts/deploy/recognition-service.sh:1057 - snapshot establishes DEPLOY_ASSETS_DIR.",
+        "scripts/deploy/recognition-service.sh:5680 - real GPU gate exposes a bounded SSH stdin transport; :5691-5692 compose registry plus checker from deployment assets."
+      ],
+      "canon": [
+        "TEST-16",
+        "TEST-04",
+        "TEST-15",
+        "TEST-19",
+        "TEST-08",
+        "REF-12"
+      ],
+      "risk": "high",
+      "rationale": "The surrounding artifact regression is useful and already behavioral. Only its source-text tail needs replacement; the existing external SSH substitution point provides direct payload measurement without a new seam or full dispatcher fixture. Explicitly cover both configuration and checker, not just snapshot existence.",
+      "expected_suite_time_change": "Small increase for one bounded shell/SSH subprocess, likely below 1 second; measure."
+    },
+    {
+      "path": "scripts/deploy/tests/test_recognition_ocir_config.py",
+      "claimed": "REWRITE",
+      "ruling": "CONFIRM",
+      "action": "REWRITE",
+      "tests": [
+        "test_all_remote_registry_commands_carry_the_deploy_config"
+      ],
+      "target": null,
+      "seam": "scripts/deploy/recognition-service.sh:deploy / promote / rollback CLI and remote Docker environment",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/_deploy_cli_harness.py",
+            "scripts/deploy/tests/test_recognition_ocir_config.py"
+          ],
+          "do": "Add behavior cases using the strict fake-tool harness, keeping the literal guard until proofs pass. Initialize credentials through real OCI login/config lifecycle. Execute remote-build deploy, remote promote and manual rollback commands; include remote pulls even in local-build rollback and the rollback-tag push. Fake SSH transports remote command strings into the temporary VM; fake Docker rejects registry login/pull/push without the active nonempty remote DOCKER_CONFIG and correct config.json bytes. Distinguish laptop TMPDIR from VM /tmp. Assert cleanup and no token output. Use immediate tools and documented one-attempt/zero-sleep probe budgets. Do not replace remote_docker_with_config, _pull_ref*, preserve_rollback_tag or other registry domain logic.",
+          "red_proof": "Bypass credential wrapper independently for rollback-tag push, manual-rollback pull and promote source pull; each corresponding command must fail. Also mutate remote_docker_with_config to use local TMPDIR or an empty/literal wrong config and require rejection. Demonstrate these cases reach their intended registry calls rather than fail preflight.",
+          "after": []
+        },
+        {
+          "files": [
+            "scripts/deploy/tests/test_recognition_ocir_config.py"
+          ],
+          "do": "Replace the named source-string test with the proven parameterized command cases, retaining its name and the surrounding existing credential regressions. Reuse external harness rather than copying another fake protocol.",
+          "red_proof": "Repeat the targeted credential-omission mutations after removing the literal assertions; each must still fail and return green on revert.",
+          "after": [
+            0
+          ]
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_recognition_ocir_config.py:255 - source-text seam pins helper definition, remote_dir quoting and literal caller spellings.",
+        "scripts/deploy/tests/test_recognition_ocir_config.py:160 - existing remote-push regression observes explicit config; :196 also verifies bounded cleanup and local-to-remote path mapping, but does not cover every pull/rollback-tag push caller.",
+        "scripts/deploy/recognition-service.sh:1549 - registry wrapper exports quoted remote DOCKER_CONFIG to Docker.",
+        "scripts/deploy/recognition-service.sh:1583 - pull follows build mode; :1601 remote-only pull always targets VM.",
+        "scripts/deploy/recognition-service.sh:4780 - public manual rollback reaches remote-only pulls; :5187 public promote reaches source pull.",
+        "scripts/deploy/recognition-service.sh:5006 - public deploy reaches rollback capture before build."
+      ],
+      "canon": [
+        "TEST-12",
+        "TEST-16",
+        "TEST-04",
+        "TEST-15",
+        "TEST-19",
+        "TEST-08",
+        "TEST-24",
+        "REF-12"
+      ],
+      "risk": "high",
+      "rationale": "Literal helper spelling is not the contract: every remote registry command must receive the deploy config. Public command seams and external tool substitution already exist, so this can be rewritten without production changes. Existing remote-push tests alone are insufficient to delete the all-callers guard.",
+      "expected_suite_time_change": "Likely +2-6 seconds for multiple complete fake-tool transactions instead of an instantaneous source read; measure."
+    },
+    {
+      "path": "scripts/deploy/tests/test_recognition_ocir_config.py",
+      "claimed": "REWRITE",
+      "ruling": "MODIFY",
+      "action": "RESTAGE",
+      "tests": [
+        "test_rollback_is_captured_before_remote_build_and_used_on_failures"
+      ],
+      "target": null,
+      "seam": "scripts/deploy/recognition-service.sh:deploy CLI transaction",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/_deploy_cli_harness.py",
+            "scripts/deploy/tests/test_recognition_ocir_config.py"
+          ],
+          "do": "First establish a baseline-green public remote-build deploy with strict fake OCI/Docker/SSH/HTTP/OS tools. Retain both the source guard and the baseline-red transaction-order test unchanged. Run real lease acquire/renew, previous-serving digest capture, rollback-tag publication, build and smoke admission. Record immutable prior digest, rollback publication, first remote build and promotion effects. Inject faults at external tools, not by replacing build/gate/push/restart/restore functions. Assert prior rollback artifact exists before build and that failed boot smoke cannot publish an env tag.",
+          "red_proof": "Moving preserve_rollback_tag after remote build must fail the rollback-before-build observation. Using the candidate or registry env tag instead of the running prior identity must fail immutable previous digest assertion. Bypassing promote_gate must allow a bad smoke candidate to publish and fail the no-promotion assertion.",
+          "after": []
+        },
+        {
+          "files": [
+            "scripts/deploy/tests/_deploy_cli_harness.py",
+            "scripts/deploy/tests/test_recognition_ocir_config.py"
+          ],
+          "do": "Add failed env-tag push and real restart-failure cases on both pre-live-disruption and post-flip/live-disruption paths. Assert registry and VM cached tags recover the prior digest; no unnecessary canonical restart before live disruption; after disruption only verified prior runtime restores serving traffic and receipt. Replace the sliced-source test only after these cases pass and each fault is discriminating. If full external-tool harness work cannot fit these two files, retain KEEP and split a new harness task before any deletion.",
+          "red_proof": "Omit no-runtime restore on tag-push failure: registry/VM cached tag assertion fails. Hardcode runtime recovery to 0 after disruption: serving runtime/route/receipt assertions fail. Hardcode it to 1 before disruption: forbidden restart assertion fails. Remove failure compensation entirely: prior tag/runtime checks fail. Restore each mutation and rerun green.",
+          "after": [
+            0
+          ]
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_recognition_ocir_config.py:380 - source text slices _ship_selected_env and asserts capture/build order, compensation call literals and smoke-gate spelling.",
+        "scripts/deploy/recognition-service.sh:5039 - lease and preserve previous serving digest precede remote build.",
+        "scripts/deploy/recognition-service.sh:5094 - failed tag promotion restores tags without runtime restart.",
+        "scripts/deploy/recognition-service.sh:5131 - failed restart chooses compensation from actual disruption state.",
+        "scripts/deploy/tests/test_recognition_ocir_config.py:543 - nearby public do_deploy transaction-order regression replaces preserve/build/gate/restart/verify domain functions and fails baseline at :566 because real deploy lease SSH is unhandled.",
+        "scripts/deploy/tests/test_recognition_deploy.py:3179 - existing fake-tool transaction helper also stubs lease and preservation; it cannot prove this source guard redundant."
+      ],
+      "canon": [
+        "DBG-02",
+        "TEST-12",
+        "TEST-16",
+        "TEST-04",
+        "TEST-15",
+        "TEST-19",
+        "TEST-08",
+        "REF-05",
+        "REF-12"
+      ],
+      "risk": "high",
+      "rationale": "Restage rather than delete on the strength of the existing phase test: that test is baseline red and mocks the very capture/gate/compensation semantics this guard protects. A public external-tool harness is possible without a production incision, but must be established green before the guarded failure-path rewrite. Steps are test-only; if a production change becomes necessary, require a separately reviewed seam step before test changes (REF-05).",
+      "expected_suite_time_change": "Likely +3-8 seconds for the failure matrix, with temporary parallel coverage adding more; measure."
+    },
+    {
+      "path": "scripts/deploy/tests/test_recognition_ocir_config.py",
+      "claimed": "REWRITE",
+      "ruling": "REFUTE",
+      "action": "KEEP",
+      "tests": [
+        "test_deploy_records_transaction_order_and_pins_restart_digest"
+      ],
+      "target": null,
+      "seam": "scripts/deploy/recognition-service.sh:do_deploy (sourced driver)",
+      "production_change": "none",
+      "steps": [],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_recognition_ocir_config.py:543 - baseline-red additional case discovered during required observation; not one of the original four named source tests.",
+        "scripts/deploy/tests/test_recognition_ocir_config.py:550 - driver stubs preflight and domain stages but leaves deploy_env_lease live.",
+        "scripts/deploy/tests/test_recognition_ocir_config.py:566 - assertion fails with SSH hostname resolution error and lease unavailable; never reaches sequence assertions.",
+        "scripts/deploy/recognition-service.sh:5039 - acquire lease is required before preserve_rollback_tag."
+      ],
+      "canon": [
+        "DBG-02",
+        "TEST-15",
+        "TEST-19"
+      ],
+      "risk": "high",
+      "rationale": "KEEP for now under the explicit red-baseline rule. This is a verification limitation, not evidence that deploy safety is broken. Do not fix or delete it in this report-only lane; separate implementation ownership should make the real lease run through fake transport, without stubbing lease domain logic, and rebaseline before relying on it as replacement coverage.",
+      "expected_suite_time_change": "No change."
+    }
+  ],
+  "report_lines": [
+    "scripts/deploy/tests/test_staged_rollback.py [test_canonical_side_rollback_stages_before_restart, test_rollback_public_edge_failure_reverts_before_canonical_restart, test_unhealthy_rollback_candidate_never_restarts_canonical, test_unhealthy_canonical_stays_behind_next_route, test_next_side_rollback_probes_canonical_before_edge_restore, test_unknown_traffic_side_refuses_rollback_restart, test_inflight_marker_selects_next_side_for_rollback]: MODIFY -> REWRITE, steps 2 (TEST-12, TEST-16, TEST-04, TEST-15, TEST-19, TEST-08, TEST-24, REF-12)",
+    "scripts/deploy/tests/test_staged_rollback.py [test_cutover_health_image_only_keeps_image_identity_without_sha]: REFUTE -> KEEP, steps 0 (TEST-12, TEST-15, REF-12, TEST-19)",
+    "scripts/deploy/tests/test_deploy_snapshot.py [test_dispatch_materializes_only_shipping_commands_after_sha_pin]: MODIFY -> REWRITE, steps 1 (TEST-16, TEST-04, TEST-15, TEST-19, REF-12)",
+    "scripts/deploy/tests/test_deploy_snapshot.py [test_gpu_gate_inputs_come_from_snapshot]: MODIFY -> REWRITE, steps 1 (TEST-16, TEST-04, TEST-15, TEST-19, TEST-08, REF-12)",
+    "scripts/deploy/tests/test_recognition_ocir_config.py [test_all_remote_registry_commands_carry_the_deploy_config]: CONFIRM -> REWRITE, steps 2 (TEST-12, TEST-16, TEST-04, TEST-15, TEST-19, TEST-08, TEST-24, REF-12)",
+    "scripts/deploy/tests/test_recognition_ocir_config.py [test_rollback_is_captured_before_remote_build_and_used_on_failures]: MODIFY -> RESTAGE, steps 2 (DBG-02, TEST-12, TEST-16, TEST-04, TEST-15, TEST-19, TEST-08, REF-05, REF-12)",
+    "scripts/deploy/tests/test_recognition_ocir_config.py [test_deploy_records_transaction_order_and_pins_restart_digest]: REFUTE -> KEEP, steps 0 (DBG-02, TEST-15, TEST-19)"
+  ],
+  "command_results": [
+    ".venv/bin/python -m pytest -p no:cacheprovider -q scripts/deploy/tests/test_staged_rollback.py scripts/deploy/tests/test_deploy_snapshot.py scripts/deploy/tests/test_recognition_ocir_config.py --durations=15: fail - 40 passed, 1 failed, 0 skipped",
+    ".venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q: pass - 26 passed"
+  ]
+}

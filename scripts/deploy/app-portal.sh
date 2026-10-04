@@ -641,6 +641,37 @@ frontend_asset_references() {
 
 frontend_module_references() {
   awk '
+    function skip_regex_literal(    c, in_class) {
+      position++
+      in_class = 0
+      while (position <= source_length) {
+        c = substr(source, position, 1)
+        if (c == "\n" || c == "\r") break
+        if (c == "\\") {
+          position++
+          if (position > source_length) break
+          c = substr(source, position, 1)
+          if (c == "\n" || c == "\r") break
+          position++
+          continue
+        }
+        if (c == "[" && !in_class) {
+          in_class = 1
+        } else if (c == "]" && in_class) {
+          in_class = 0
+        } else if (c == "/" && !in_class) {
+          position++
+          while (position <= source_length &&
+                 substr(source, position, 1) ~ /[A-Za-z0-9_$]/) position++
+          return 1
+        }
+        position++
+      }
+      failed = 1
+      print "unterminated JavaScript regular expression" > "/dev/stderr"
+      return 0
+    }
+
     function next_token(    c, quote, value) {
       while (position <= source_length) {
         c = substr(source, position, 1)
@@ -679,6 +710,16 @@ frontend_module_references() {
         return
       }
       c = substr(source, position, 1)
+      if (c == "/" && regex_allowed) {
+        if (!skip_regex_literal()) {
+          token_type = "eof"
+          return
+        }
+        token_type = "regex"
+        token_value = ""
+        regex_allowed = 0
+        return
+      }
       if (c == "\047" || c == "\042") {
         quote = c
         position++
@@ -687,6 +728,7 @@ frontend_module_references() {
           if (c == quote) {
             position++
             token_type = "string"
+            regex_allowed = 0
             return
           }
           if (c == "\\") {
@@ -715,6 +757,7 @@ frontend_module_references() {
           if (c == "`") {
             position++
             token_type = "template"
+            regex_allowed = 0
             return
           }
           if (c == "\n") line++
@@ -732,11 +775,18 @@ frontend_module_references() {
           position++
         }
         token_type = "identifier"
+        regex_allowed = (regex_allowed &&
+                         (token_value == "return" || token_value == "typeof"))
         return
       }
       token_value = c
       token_type = "punctuation"
       position++
+      regex_allowed = (c == "(" || c == "," || c == "=" || c == ":" ||
+                       c == "[" || c == "!" || c == "&" || c == "|" ||
+                       c == "?" || c == "{" || c == "}" || c == ";" ||
+                       c == "+" || c == "-" || c == "*" || c == "/" ||
+                       c == "%" || c == "^" || c == "~" || c == "<" || c == ">")
     }
 
     function emit_reference(value, query, fragment, cut_at) {
@@ -758,6 +808,7 @@ frontend_module_references() {
       source_length = length(source)
       position = 1
       line = 1
+      regex_allowed = 1
       while (!failed) {
         next_token()
         if (token_type == "eof") break

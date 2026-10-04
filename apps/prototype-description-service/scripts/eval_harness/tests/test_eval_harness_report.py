@@ -24,10 +24,9 @@ from scripts.eval_harness.manifest import GoldenManifest, ManifestError, ScoreIn
 from scripts.eval_harness.report import (
     Audience,
     ReportError,
-    build_reports,
     build_score_verdict,
-    score_run_record,
 )
+from scripts.eval_harness.tests._reviewed_gt_fixtures import build_reports, score_run_record
 
 _TEST_MODEL_STAMPS = {
     "adapter": "seeded",

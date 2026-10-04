@@ -1316,7 +1316,7 @@ def test_heal_replaces_legacy_checkout_active_index_and_enforces_namespace_exclu
     seeded_rows = checkout_rows()
     legacy_definition = active_index_definition().lower()
     assert "(tenant_id, provider, environment, seller_account, plan_code)" in legacy_definition
-    assert {row[0] for row in seeded_rows} == set(seeded_ids)
+    assert {str(row[0]) for row in seeded_rows} == set(seeded_ids)
 
     with pg_empty_engine.begin() as conn:
         MIGRATION.heal(conn)

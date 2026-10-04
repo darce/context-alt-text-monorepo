@@ -4015,7 +4015,8 @@ def _association_counts_for_media(
         boxes = list(gt_by_media.get(mid, ()))
         assoc = by_media.get(mid)
         if assoc is None:
-            named = sum(1 for b in boxes if gt_box_name(b) is not None)
+            # Use the same geometry partition as full-corpus failed items.
+            named = _failed_item_gt_counts({mid}, gt_by_media)["named_misses"]
             if named:
                 missed += named
                 notes.append(
@@ -4667,9 +4668,8 @@ def score_face_run_record(
     detection["association_complete"] = detection["geometry_incomplete_gt"] == 0
 
     try:
-        require_boxed_identification_gt(
-            [entry_by_id[int(item["media_id"])] for item in scoreable]
-        )
+        # Failed items contribute to the full-corpus denominator too (EVAL-16).
+        require_boxed_identification_gt(entries)
     except ManifestError as exc:
         if not _invariant_is(exc.invariant, IDENTIFICATION_UNBOXED_INVARIANT):
             raise
@@ -5055,7 +5055,9 @@ def score_face_run_record(
             "rate_denominator": unknown.rate_denominator,
             # HARM-09 / AUDIT-07: disclose the stranger-miss term folded into
             # rate_denominator (already required into face_unknown_rejection).
-            "missed_stranger_gt": int(assignment.missed_stranger_gt),
+            "missed_stranger_gt": int(
+                assignment.missed_stranger_gt + failed_item_gt["stranger_misses"]
+            ),
             **unknown_status,
         }
         full_id_block = _face_pr_dict(id_pr)

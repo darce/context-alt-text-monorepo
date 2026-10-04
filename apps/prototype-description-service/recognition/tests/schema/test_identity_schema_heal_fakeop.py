@@ -63,6 +63,8 @@ class _FakeOp:
         self.current_user = current_user
         self.missing_roles = set(missing_roles or ())
         self.owner_schema_create = owner_schema_create
+        self.bypass_rls = ""
+        self.setting_writes: list[str] = []
 
     def get_bind(self):
         op = self
@@ -72,6 +74,14 @@ class _FakeOp:
 
             def execute(self, stmt, params=None):  # noqa: ANN001
                 sql = str(stmt).lower()
+                if sql == "select current_setting(:name, true)":
+                    assert params == {"name": "app.bypass_rls"}
+                    return _FakeScalarResult(op.bypass_rls)
+                if sql == "select set_config(:name, :value, true)":
+                    assert params["name"] == "app.bypass_rls"
+                    op.bypass_rls = params["value"]
+                    op.setting_writes.append(op.bypass_rls)
+                    return _FakeScalarResult(op.bypass_rls)
                 if "quote_ident(current_user)" in sql:
                     return _FakeScalarResult((op.current_user, _fake_quote_ident(op.current_user)))
                 if "select quote_ident(" in sql:
@@ -431,3 +441,39 @@ def test_ensure_unique_constraint_raises_named_action_on_dbapi_pgcode_23505() ->
     assert "image_description_runs" in message
     assert "duplicate" in message.lower()
     assert isinstance(exc_info.value.__cause__, DBAPIError)
+
+
+@pytest.mark.parametrize("previous", ["", "false", "true"])
+@pytest.mark.parametrize("create_fails", [False, True])
+def test_matview_creation_scopes_and_restores_migration_rls_bypass(
+    monkeypatch: pytest.MonkeyPatch, previous: str, create_fails: bool
+) -> None:
+    class _ScopedOp(_FakeOp):
+        def execute(self, sql):
+            if "CREATE MATERIALIZED VIEW" in str(sql):
+                assert self.bypass_rls == "true", "creation must see every tenant under FORCE RLS"
+                if create_fails:
+                    raise RuntimeError("creation failed")
+            super().execute(sql)
+
+    op = _ScopedOp()
+    op.bypass_rls = previous
+    monkeypatch.setattr(MIGRATION, "_relkind", lambda _op, _name: None)
+    monkeypatch.setattr(MIGRATION, "_matview_create_privilege_gaps", lambda _op: [])
+    if create_fails:
+        with pytest.raises(RuntimeError, match="creation failed"):
+            MIGRATION.ensure_matview(op)
+    else:
+        MIGRATION.ensure_matview(op)
+    assert op.bypass_rls == previous
+    assert op.setting_writes == ["true", previous]
+
+
+def test_matview_refusal_does_not_write_migration_rls_setting(monkeypatch: pytest.MonkeyPatch) -> None:
+    op = _FakeOp()
+    monkeypatch.setattr(MIGRATION, "_relkind", lambda _op, _name: None)
+    monkeypatch.setattr(MIGRATION, "_matview_create_privilege_gaps", lambda _op: ["schema CREATE"])
+    with pytest.raises(RuntimeError, match="cannot create"):
+        MIGRATION.ensure_matview(op)
+    assert op.setting_writes == []
+    assert op.statements == []

@@ -425,6 +425,8 @@ def test_dispatch_materializes_only_shipping_commands_after_sha_pin(tmp_path: Pa
         extra_env={"DEPLOY_SHA": "invalid-sha"},
     )
     assert result.returncode != 0
+    assert "DEPLOY_SHA must be a full lowercase 40-character commit SHA" in result.stderr
+    assert "invalid-sha" in result.stderr
     assert not Path(tools_env["GIT_EVENT_RECORD"]).exists()
     assert not Path(tools_env["EXTERNAL_EVENT_RECORD"]).exists()
 

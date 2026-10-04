@@ -699,7 +699,7 @@ async def _advfix_ledger_h1_expiry_releases_counters(monkeypatch) -> None:
                 tenant.id,
                 idempotency_key="advfix-expired-a",
                 job_id=str(uuid.uuid4()),
-                cost_units=1,
+                cost_units=2,
                 queue_bytes=7,
             )
             abandoned_row = await session.get(UsageReservation, abandoned.reservation_id)
@@ -714,6 +714,10 @@ async def _advfix_ledger_h1_expiry_releases_counters(monkeypatch) -> None:
                 cost_units=1,
                 queue_bytes=19,
             )
+            admitted_row = await session.get(UsageReservation, admitted.reservation_id)
+            assert admitted_row is not None
+            assert int(admitted_row.cost_units) == 1
+            assert int(admitted_row.queue_bytes) == 19
             state = await session.get(GlobalUsageAdmissionState, GLOBAL_USAGE_ADMISSION_STATE_ID)
             assert state is not None
             assert int(state.daily_cost_units) == 1

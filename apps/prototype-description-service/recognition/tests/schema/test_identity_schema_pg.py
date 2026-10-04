@@ -235,9 +235,7 @@ def test_billing_known_item_lease_is_operator_scope_and_namespace_inbox_unique(p
     [([0.25, 0.75], False), ([1e-39, 0.75], True)],
     ids=["weighted-media", "tiny-positive-single-member"],
 )
-def test_matview_builds_weighted_centroid_with_vector_operators(
-    pg_migrated_engine, weights, separate_clusters
-) -> None:
+def test_matview_builds_weighted_centroid_with_vector_operators(pg_migrated_engine, weights, separate_clusters) -> None:
     dimension = MIGRATION.EMBEDDING_DIMENSION
     tenant_id = uuid.uuid4()
     cluster_ids = [uuid.uuid4()]
@@ -317,5 +315,80 @@ def test_matview_builds_weighted_centroid_with_vector_operators(
                     else:
                         expected = [weights[0] / magnitude, weights[1] / magnitude, *([0.0] * (dimension - 2))]
                     assert centroid == pytest.approx(expected, abs=1e-5)
+        finally:
+            transaction.rollback()
+
+
+@pytest.mark.parametrize("entrypoint", ["heal", "repair_centroids_matview"])
+@pytest.mark.parametrize("drift", ["missing", "stale-marker"])
+def test_centroid_create_and_rebuild_populates_all_tenants_under_forced_rls(
+    pg_migrated_engine, entrypoint: str, drift: str
+) -> None:
+    # TEST-15: without the migration bypass these source rows are invisible
+    # and creation succeeds with an empty view, even for its application owner.
+    dimension = MIGRATION.EMBEDDING_DIMENSION
+    embedding = "[1," + ",".join(["0"] * (dimension - 1)) + "]"
+    expected = []
+    with pg_migrated_engine.connect() as conn:
+        transaction = conn.begin()
+        try:
+            rolsuper, rolbypassrls = conn.execute(
+                text("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user")
+            ).one()
+            assert (rolsuper, rolbypassrls) == (False, False)
+            conn.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
+            for media_id in (74831, 74832):
+                tenant_id, cluster_id, identity_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+                expected.append((cluster_id, tenant_id))
+                params = {"tenant": tenant_id, "cluster": cluster_id, "identity": identity_id}
+                conn.execute(
+                    text("INSERT INTO tenants (id, site_url) VALUES (:tenant, :url)"),
+                    {**params, "url": f"https://rls-centroid-{tenant_id}.test"},
+                )
+                conn.execute(
+                    text("INSERT INTO identity_clusters (id, tenant_id) VALUES (:cluster, :tenant)"),
+                    params,
+                )
+                conn.execute(
+                    text(
+                        "INSERT INTO media_identities "
+                        "(id, tenant_id, media_id, media_url, bbox_x, bbox_y, bbox_width, bbox_height, "
+                        "confidence, embedding, embedding_model, quality_score) "
+                        "VALUES (:identity, :tenant, :media, 'https://centroid.test/image', "
+                        "0, 0, 10, 10, 1.0, CAST(:embedding AS vector), 'centroid-test', 1.0)"
+                    ),
+                    {**params, "media": media_id, "embedding": embedding},
+                )
+                conn.execute(
+                    text(
+                        "INSERT INTO identity_members (id, tenant_id, cluster_id, identity_id, similarity) "
+                        "VALUES (:id, :tenant, :cluster, :identity, 1.0)"
+                    ),
+                    {**params, "id": uuid.uuid4()},
+                )
+            conn.execute(text("SELECT set_config('app.bypass_rls', 'false', true)"))
+            conn.execute(text("SELECT set_config('app.current_tenant', '', true)"))
+            assert conn.execute(text("SELECT count(*) FROM identity_clusters")).scalar_one() == 0
+            if drift == "missing":
+                conn.execute(text("DROP MATERIALIZED VIEW mv_identity_cluster_centroids"))
+            else:
+                conn.execute(
+                    text("COMMENT ON MATERIALIZED VIEW mv_identity_cluster_centroids IS 'centroid-definition:obsolete'")
+                )
+            getattr(MIGRATION, entrypoint)(conn)
+            assert conn.execute(text("SELECT current_setting('app.bypass_rls', true)")).scalar_one() == "false"
+            for cluster_id, tenant_id in expected:
+                row = conn.execute(
+                    text(
+                        "SELECT tenant_id, identity_count, centroid::text "
+                        "FROM mv_identity_cluster_centroids WHERE cluster_id = :cluster"
+                    ),
+                    {"cluster": cluster_id},
+                ).one()
+                assert row.tenant_id == tenant_id
+                assert row.identity_count == 1
+                assert [float(value) for value in row[2].strip("[]").split(",")] == pytest.approx(
+                    [1.0, *([0.0] * (dimension - 1))]
+                )
         finally:
             transaction.rollback()

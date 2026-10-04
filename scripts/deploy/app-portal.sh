@@ -457,14 +457,53 @@ frontend_asset_references() {
       print value
     }
 
-    function parse_tag(tag,    i, n, c, start, name, value, quote, tag_name, script_type, script_src) {
+    function find_raw_close(document, lower_document, element, from,    needle, offset, found, after, comment, nested, cursor, body_from) {
+      needle = "</" element
+      body_from = from
+      while (from <= length(document)) {
+        offset = index(substr(lower_document, from), needle)
+        if (offset == 0) return 0
+        found = from + offset - 1
+        after = substr(document, found + length(needle), 1)
+        if (after ~ /[[:space:]/>]/) {
+          if (element == "script") {
+            # Fail closed on potentially double-escaped script data. In that
+            # state the first textual closing tag does not close the element.
+            comment = index(substr(document, body_from, found - body_from), "<!--")
+            if (comment > 0) {
+              cursor = body_from + comment + 3
+              while (cursor < found) {
+                nested = index(substr(lower_document, cursor, found - cursor), "<script")
+                if (nested == 0) break
+                cursor += nested - 1
+                if (substr(document, cursor + 7, 1) ~ /[[:space:]/>]/) return 0
+                cursor += 7
+              }
+            }
+          }
+          return found
+        }
+        from = found + length(needle)
+      }
+      return 0
+    }
+
+    function parse_tag(tag, active,    i, n, c, start, name, value, quote) {
       i = 2
       n = length(tag)
+      parsed_tag_name = ""
+      parsed_tag_closing = 0
+      parsed_script_type = ""
+      parsed_script_src = ""
+      if (substr(tag, i, 1) == "/") {
+        parsed_tag_closing = 1
+        i++
+      }
       if (substr(tag, i, 1) !~ /[A-Za-z]/) return
-      while (i <= n && substr(tag, i, 1) ~ /[A-Za-z0-9:-]/) i++
-      tag_name = tolower(substr(tag, 2, i - 2))
-      script_type = ""
-      script_src = ""
+      start = i
+      while (i <= n && substr(tag, i, 1) !~ /[ \t\r\n\f/>]/) i++
+      parsed_tag_name = tolower(substr(tag, start, i - start))
+      if (parsed_tag_closing) return
       while (i <= n) {
         c = substr(tag, i, 1)
         if (c ~ /[[:space:]>]/ || c == "/") {
@@ -497,12 +536,13 @@ frontend_asset_references() {
             value = substr(tag, start, i - start)
           }
         }
-        if (name == "type") script_type = value
-        if (name == "src") script_src = value
-        if (mode == "assets" && (name == "src" || name == "href")) emit_asset(value)
+        if (name == "type") parsed_script_type = value
+        if (name == "src") parsed_script_src = value
+        if (active && mode == "assets" && (name == "src" || name == "href")) emit_asset(value)
       }
-      if (mode == "modules" && tag_name == "script" && tolower(script_type) == "module") {
-        emit_module_asset(script_src)
+      if (active && mode == "modules" && parsed_tag_name == "script" &&
+          tolower(parsed_script_type) == "module") {
+        emit_module_asset(parsed_script_src)
       }
     }
 
@@ -513,7 +553,17 @@ frontend_asset_references() {
     END {
       i = 1
       n = length(document)
+      lower_document = tolower(document)
+      inert_depth = 0
+      raw_element = ""
       while (i <= n) {
+        if (raw_element != "") {
+          raw_close = find_raw_close(document, lower_document, raw_element, i)
+          if (raw_close == 0) break
+          i = raw_close
+          raw_element = ""
+          continue
+        }
         if (substr(document, i, 4) == "<!--") {
           comment_end = index(substr(document, i + 4), "-->")
           if (comment_end == 0) break
@@ -525,7 +575,12 @@ frontend_asset_references() {
           continue
         }
         next_char = substr(document, i + 1, 1)
-        if (next_char !~ /[A-Za-z]/) {
+        if (next_char == "/") {
+          if (substr(document, i + 2, 1) !~ /[A-Za-z]/) {
+            i++
+            continue
+          }
+        } else if (next_char !~ /[A-Za-z]/) {
           i++
           continue
         }
@@ -543,7 +598,28 @@ frontend_asset_references() {
           end++
         }
         if (end <= n) {
-          parse_tag(substr(document, i, end - i + 1))
+          parse_tag(substr(document, i, end - i + 1), inert_depth == 0)
+          if (parsed_tag_name == "template") {
+            if (parsed_tag_closing) {
+              for (depth = inert_depth; depth > 0; depth--) {
+                if (inert_stack[depth] == parsed_tag_name) {
+                  inert_depth = depth - 1
+                  break
+                }
+              }
+            } else {
+              inert_stack[++inert_depth] = parsed_tag_name
+            }
+          }
+          if (!parsed_tag_closing && parsed_tag_name == "plaintext") break
+          if (!parsed_tag_closing &&
+              (parsed_tag_name == "script" || parsed_tag_name == "style" ||
+               parsed_tag_name == "textarea" || parsed_tag_name == "title" ||
+               parsed_tag_name == "iframe" || parsed_tag_name == "xmp" ||
+               parsed_tag_name == "noembed" || parsed_tag_name == "noframes" ||
+               parsed_tag_name == "noscript")) {
+            raw_element = parsed_tag_name
+          }
           i = end + 1
         } else {
           break
@@ -1096,6 +1172,12 @@ if [ -L "$CADDYFILE" ] || [ ! -f "$CADDYFILE" ]; then
   refuse "CADDYFILE must be a regular file: ${CADDYFILE}"
 fi
 [ -n "$APP_HEALTH_CMD" ] || refuse "APP_HEALTH_CMD is required to check the live frontend and portal upstream"
+
+# Reject invalid source output before creating staging or rollback artifacts.
+# The staged copy is validated again below in case FRONTEND_DIST changes.
+if ! validate_frontend "$FRONTEND_DIST"; then
+  exit 2
+fi
 
 STAGED_CADDY="${STAGING_DIR}/Caddyfile"
 STAGED_WWW="${STAGING_DIR}/www"

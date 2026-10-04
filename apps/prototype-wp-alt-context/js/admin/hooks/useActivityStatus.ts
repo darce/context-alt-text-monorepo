@@ -409,6 +409,7 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
   });
   const resubmitInFlightRef = useRef(false);
   const resubmitMediaIdsByKeyRef = useRef(new Map<string, Promise<number[]>>());
+  const resubmitActionRef = useRef<WarmupResubmitAction | null>(null);
   const resubmitMutation = useMutation<WarmupResubmitResult, Error, WarmupResubmitAction>({
     mutationFn: async ({ runId, idempotencyKey }) => {
       let unfinishedIdsPromise = resubmitMediaIdsByKeyRef.current.get(idempotencyKey);
@@ -439,8 +440,13 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
         persistRunContext(result.response);
       }
     },
-    onSettled: (_result, _error, variables) => {
-      resubmitMediaIdsByKeyRef.current.delete(variables.idempotencyKey);
+    onSettled: (_result, error, variables) => {
+      if (error === null) {
+        resubmitMediaIdsByKeyRef.current.delete(variables.idempotencyKey);
+        if (resubmitActionRef.current?.idempotencyKey === variables.idempotencyKey) {
+          resubmitActionRef.current = null;
+        }
+      }
       resubmitInFlightRef.current = false;
     },
   });
@@ -550,7 +556,12 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
             return;
           }
           resubmitInFlightRef.current = true;
-          resubmitMutation.mutate({ runId, idempotencyKey: createDescribeIdempotencyKey() });
+          const action =
+            resubmitActionRef.current?.runId === runId
+              ? resubmitActionRef.current
+              : { runId, idempotencyKey: createDescribeIdempotencyKey() };
+          resubmitActionRef.current = action;
+          resubmitMutation.mutate(action);
         };
       }
       return () => {

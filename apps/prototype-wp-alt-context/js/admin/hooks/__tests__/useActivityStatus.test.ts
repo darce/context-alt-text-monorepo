@@ -701,11 +701,11 @@ describe('useActivityStatus', () => {
     );
   });
 
-  it('reuses the key across a mutation retry and mints a new key for another Retry action', async () => {
+  it('reuses the key and unfinished-media snapshot after an ambiguous Retry failure', async () => {
     seedWarmupTimeoutRun('run-1');
-    fetchDescribeRunItemsMock
-      .mockResolvedValueOnce(itemsResponse('run-1', [describeItem(51, 'failed')]))
-      .mockResolvedValueOnce(itemsResponse('run-1', [describeItem(52, 'pending')]));
+    fetchDescribeRunItemsMock.mockResolvedValue(
+      itemsResponse('run-1', [describeItem(51, 'failed')]),
+    );
     submitBulkDescribeRunMock
       .mockRejectedValueOnce(new Error('temporary submit failure'))
       .mockRejectedValueOnce(new Error('temporary submit failure'))
@@ -741,11 +741,9 @@ describe('useActivityStatus', () => {
     });
 
     await waitFor(() => expect(submitBulkDescribeRunMock).toHaveBeenCalledTimes(3));
-    expect(fetchDescribeRunItemsMock).toHaveBeenCalledTimes(2);
-    expect(submitBulkDescribeRunMock.mock.calls[2]?.[0]).toEqual([52]);
-    const nextActionKey = submitBulkDescribeRunMock.mock.calls[2]?.[1];
-    expect(nextActionKey).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
-    expect(nextActionKey).not.toBe(firstActionKey);
+    expect(fetchDescribeRunItemsMock).toHaveBeenCalledTimes(1);
+    expect(submitBulkDescribeRunMock.mock.calls[2]?.[0]).toEqual([51]);
+    expect(submitBulkDescribeRunMock.mock.calls[2]?.[1]).toBe(firstActionKey);
   });
 
   it('keeps Retry available after a warmup-timeout resubmit failure', async () => {

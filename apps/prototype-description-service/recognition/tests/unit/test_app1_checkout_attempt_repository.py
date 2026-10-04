@@ -209,7 +209,7 @@ async def test_foreign_tenant_cannot_see_or_collide_on_same_client_key(
 
 
 @pytest.mark.asyncio
-async def test_one_active_attempt_per_tenant_namespace_plan_is_atomic(
+async def test_one_active_attempt_per_tenant_namespace_is_atomic(
     checkout_session: _AsyncSessionFacade,
 ) -> None:
     tenant = await _create_tenant(checkout_session, "active")
@@ -223,6 +223,26 @@ async def test_one_active_attempt_per_tenant_namespace_plan_is_atomic(
                 client_idempotency_key="client-key-2",
                 idempotency_key="provider-key-2",
                 request_fingerprint="fp-second-purchase",
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_only_one_active_attempt_per_tenant_namespace_across_plans(
+    checkout_session: _AsyncSessionFacade,
+) -> None:
+    tenant = await _create_tenant(checkout_session, "cross-plan-active")
+    repo = CheckoutAttemptRepository(checkout_session)
+    await repo.begin_attempt(**_begin_kwargs(tenant.id))
+
+    with pytest.raises(CheckoutAttemptActiveConflictError):
+        await repo.begin_attempt(
+            **_begin_kwargs(
+                tenant.id,
+                plan_code="enterprise",
+                idempotency_key="provider-key-enterprise",
+                client_idempotency_key="client-key-enterprise",
+                request_fingerprint="fp-enterprise",
             )
         )
 
@@ -310,6 +330,9 @@ def test_checkout_uniques_distinguish_tenant_scoped_client_key_from_seller_wide_
     assert client_key[0] == "tenant_id"
     assert "client_idempotency_key" in client_key
     assert "idempotency_key" not in client_key
+
+    active = unique_column_sets["uq_billing_checkout_attempt_one_active"]
+    assert active == ("tenant_id", "provider", "environment", "seller_account")
 
 
 def test_migration_authority_registers_checkout_attempt_upgrade() -> None:

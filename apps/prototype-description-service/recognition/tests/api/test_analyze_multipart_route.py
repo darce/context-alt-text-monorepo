@@ -1218,9 +1218,10 @@ async def test_multipart_cleans_up_blobs_when_dispatch_registration_fails(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "failure_kind", ["registration", "store_factory", "non_idempotent_replay", "persisted_replay"]
+    "failure_kind",
+    ["registration", "store_factory", "non_idempotent_replay", "persisted_replay", "replay_put_failure"],
 )
-async def test_multipart_replay_dispatch_registration_failure_preserves_original_job(
+async def test_multipart_replay_failure_preserves_original_job(
     tenant_id: str, monkeypatch: pytest.MonkeyPatch, failure_kind: str, tmp_path: Path
 ) -> None:
     """Replay dispatch preserves the original job, blobs, and reservation on both sinks."""
@@ -1253,9 +1254,13 @@ async def test_multipart_replay_dispatch_registration_failure_preserves_original
             self.blobs: dict[tuple[str, str], bytes] = {}
             self.put_jobs: list[str] = []
             self.cleanup_jobs: list[str] = []
+            self.fail_next_put = False
 
         def put(self, *, job_id: str, media_id: str, data: bytes) -> str:
             self.put_jobs.append(job_id)
+            if self.fail_next_put:
+                self.fail_next_put = False
+                raise OSError("simulated temporary-file creation failure")
             self.blobs[(job_id, media_id)] = bytes(data)
             return super().put(job_id=job_id, media_id=media_id, data=data)
 
@@ -1333,6 +1338,8 @@ async def test_multipart_replay_dispatch_registration_failure_preserves_original
     original_blob = store.blobs[(str(original_job_id), "42")]
     blob_path = tmp_path / tenant_id / str(original_job_id) / "42.bin"
     original_inode = blob_path.stat().st_ino
+    if failure_kind == "replay_put_failure":
+        store.fail_next_put = True
 
     if failure_kind in {"store_factory", "non_idempotent_replay"}:
         def failing_factory(_tenant):
@@ -1359,7 +1366,10 @@ async def test_multipart_replay_dispatch_registration_failure_preserves_original
             assert blob_path.stat().st_ino == original_inode
         assert admission.commits == []
     else:
-        expected_error = HTTPException if failure_kind == "registration" else RuntimeError
+        expected_error = {
+            "registration": HTTPException,
+            "replay_put_failure": OSError,
+        }.get(failure_kind, RuntimeError)
         with pytest.raises(expected_error) as exc_info:
             await mod._analyze_media_multipart_form(
                 form_data=_form_data(), background_tasks=_RaisingBackgroundTasks(), **common
@@ -1367,17 +1377,54 @@ async def test_multipart_replay_dispatch_registration_failure_preserves_original
         if failure_kind == "registration":
             assert exc_info.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
             assert exc_info.value.detail == "Scan dispatch unavailable"
+        elif failure_kind == "replay_put_failure":
+            assert str(exc_info.value) == "simulated temporary-file creation failure"
+            assert blob_path.stat().st_ino == original_inode
         else:
             assert str(exc_info.value) == "replay store unavailable"
         assert admission.commits == []
     assert len(queue.calls) == 1
     assert queue.cancelled_jobs == []
     assert queue.job_statuses[original_job_id] == "pending"
-    assert store.put_jobs == [str(original_job_id)] * (2 if failure_kind in {"registration", "persisted_replay"} else 1)
+    assert store.put_jobs == [str(original_job_id)] * (
+        2 if failure_kind in {"registration", "persisted_replay", "replay_put_failure"} else 1
+    )
     assert store.cleanup_jobs == []
     assert store.blobs[(str(original_job_id), "42")] == original_blob
     assert blob_path.read_bytes() == original_blob
     assert admission.releases == []
+
+
+@pytest.mark.asyncio
+async def test_multipart_router_rate_limiter_enforces_key_limit_before_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The router-level limiter throttles API keys before its handler parses uploads."""
+    from recognition.interface_adapters.http.deps import rate_limit
+    from recognition.interface_adapters.http.deps.auth import require_auth
+    from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
+    from recognition.interface_adapters.http.routers.analyze_multipart import router as multipart_router
+
+    monkeypatch.setenv("RECOGNITION_RATE_LIMIT_RPM", "1")
+    rate_limit._reset_state_for_tests()
+    try:
+        dependency_calls = [dependency.dependency for dependency in multipart_router.dependencies]
+        assert dependency_calls.index(require_auth) < dependency_calls.index(enforce_rate_limit)
+
+        auth = AuthContext(
+            token="t",
+            tenant_claim="tenant",
+            api_key_id="multipart-rate-key",
+            rate_limit_tier="STANDARD",
+            enabled=True,
+        )
+        await enforce_rate_limit(auth)
+        with pytest.raises(HTTPException) as exc_info:
+            await enforce_rate_limit(auth)
+        assert exc_info.value.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+        assert exc_info.value.detail == "rate limit exceeded"
+    finally:
+        rate_limit._reset_state_for_tests()
 
 
 # ---------------------------------------------------------------------------

@@ -805,7 +805,7 @@ def test_published_detection_recall_is_fixture_local_not_a_population_estimate()
     frame = str(det.get("sampling_frame") or "")
     assert frame, "detection must publish a sampling_frame"
     assert "all_gt_boxes" in frame
-    assert "missed_stranger_gt" in frame
+    assert "named and anonymous GT share one population" in frame and "anonymous misses feed unknown rejection" in frame
 
     md = _REPORT_MD.read_text()
     # Published rounded display — do not change these numbers (C-02).

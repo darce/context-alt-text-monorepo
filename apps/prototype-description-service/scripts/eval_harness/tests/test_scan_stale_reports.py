@@ -17,17 +17,17 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from scripts.eval_harness.scan_stale_reports import (
     EXIT_CLEAN,
     EXIT_STALE,
-    IdentVerdict,
     REFUSED_IDENTIFICATION_KEYS,
-    _has_metric_fields,
+    IdentVerdict,
     classify_identification,
     provenance_contradictions,
     scan_payload,
 )
-
 
 _THIS = Path(__file__).resolve()
 _SCANNER = _THIS.parents[1] / "scan_stale_reports.py"
@@ -36,9 +36,7 @@ _SCANNER = _THIS.parents[1] / "scan_stale_reports.py"
 def _init_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(
-        ["git", "init"], cwd=repo, check=True, capture_output=True, text=True
-    )
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True)
     subprocess.run(["git", "config", "user.email", "t@t.test"], cwd=repo, check=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
     return repo
@@ -150,6 +148,7 @@ def _refused_with_macro_precision() -> dict:
     }
 
 
+@pytest.mark.integration
 def test_precision_null_recall_zero_populated_table_is_flagged(tmp_path: Path) -> None:
     """The exact leftover shape the precision-only scan missed (S2R3-08)."""
     repo = _init_repo(tmp_path)
@@ -183,6 +182,7 @@ def test_classifier_flags_leftover_as_scored() -> None:
     assert hit.per_identity_rows == 1
 
 
+@pytest.mark.integration
 def test_explicit_refusal_is_clean(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path)
     _track(
@@ -204,6 +204,7 @@ def test_classifier_accepts_explicit_refusal() -> None:
     assert verdict is IdentVerdict.REFUSED
 
 
+@pytest.mark.integration
 def test_numeric_identification_score_is_flagged(tmp_path: Path) -> None:
     """Any scored block is stale here, including a numeric P/R."""
     repo = _init_repo(tmp_path)
@@ -211,9 +212,7 @@ def test_numeric_identification_score_is_flagged(tmp_path: Path) -> None:
         "refused": False,
         "precision": 0.5,
         "recall": 0.5,
-        "per_identity": {
-            "Ada": {"precision": 0.5, "recall": 0.5, "tp": 1, "fp": 1, "fn": 1}
-        },
+        "per_identity": {"Ada": {"precision": 0.5, "recall": 0.5, "tp": 1, "fp": 1, "fn": 1}},
     }
     _track(repo, "docs/tasks/vlm/scored-report.json", _report(ident=ident))
     _commit(repo, "add numeric score")
@@ -224,6 +223,7 @@ def test_numeric_identification_score_is_flagged(tmp_path: Path) -> None:
     assert "precision=0.5" in combined
 
 
+@pytest.mark.integration
 def test_missing_refused_key_empty_table_is_flagged(tmp_path: Path) -> None:
     """A scanner that only looks at a populated table would miss this."""
     repo = _init_repo(tmp_path)
@@ -246,6 +246,7 @@ def test_refused_false_null_precision_is_flagged(tmp_path: Path) -> None:
     assert verdict is IdentVerdict.SCORED
 
 
+@pytest.mark.integration
 def test_unrecognized_shape_is_reported_not_passed(tmp_path: Path) -> None:
     """rg-008: neither refused nor scored → UNRECOGNIZED, exit 1."""
     repo = _init_repo(tmp_path)
@@ -274,6 +275,7 @@ def test_classifier_fails_closed_on_empty_object() -> None:
     assert "no identification metric fields" in reason
 
 
+@pytest.mark.integration
 def test_invalid_json_report_is_unrecognized(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path)
     _track(repo, "docs/tasks/vlm/broken-report.json", "{not json")
@@ -285,6 +287,7 @@ def test_invalid_json_report_is_unrecognized(tmp_path: Path) -> None:
     assert "broken-report.json" in combined
 
 
+@pytest.mark.integration
 def test_report_without_identification_is_clean(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path)
     _track(repo, "docs/tasks/vlm/caption-only-report.json", _report(ident=None))
@@ -295,6 +298,7 @@ def test_report_without_identification_is_clean(tmp_path: Path) -> None:
     assert "ok —" in proc.stdout
 
 
+@pytest.mark.integration
 def test_no_report_files_is_a_failed_scan(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path)
     _track(repo, "docs/README.md", "no reports\n")
@@ -305,6 +309,7 @@ def test_no_report_files_is_a_failed_scan(tmp_path: Path) -> None:
     assert "no tracked" in combined
 
 
+@pytest.mark.integration
 def test_dated_report_filename_is_scanned(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path)
     ident = {"precision": None, "recall": 0.0, "per_identity": {"Ada": {}}}
@@ -321,6 +326,7 @@ def test_dated_report_filename_is_scanned(tmp_path: Path) -> None:
     assert "S0-determinism-anchor-report-20260714.json" in combined
 
 
+@pytest.mark.integration
 def test_same_sha_divergent_verdicts_is_a_contradiction(tmp_path: Path) -> None:
     sha = "73cbe113" + "a" * 56
     repo = _init_repo(tmp_path)
@@ -368,6 +374,7 @@ def test_provenance_helper_groups_mixed_verdicts() -> None:
     assert len(groups[sha]) == 2
 
 
+@pytest.mark.integration
 def test_same_sha_all_refused_is_not_a_contradiction(tmp_path: Path) -> None:
     sha = "fc7ce548" + "c" * 56
     repo = _init_repo(tmp_path)
@@ -381,13 +388,22 @@ def test_same_sha_all_refused_is_not_a_contradiction(tmp_path: Path) -> None:
 
 
 def test_has_metric_fields_is_key_presence_not_precision_value() -> None:
-    """The leftover shape has a precision key whose value is null."""
+    """The classifier exposes metric-key presence through public verdicts."""
     leftover = _leftover_ident()
     assert leftover["precision"] is None
-    assert _has_metric_fields(leftover) is True
-    assert _has_metric_fields({"refused": True, "invariant": "x"}) is False
+    verdict, _ = classify_identification(leftover)
+    assert verdict is IdentVerdict.SCORED
+
+    structural_refusal = {"refused": True, "invariant": "x"}
+    verdict, _ = classify_identification(structural_refusal)
+    assert verdict is IdentVerdict.REFUSED
+
+    structural_only = {"invariant": "x"}
+    verdict, _ = classify_identification(structural_only)
+    assert verdict is IdentVerdict.UNRECOGNIZED
 
 
+@pytest.mark.integration
 def test_greenwashed_refusal_is_unrecognized(tmp_path: Path) -> None:
     """A refused stamp that still names people it got wrong is not clean."""
     repo = _init_repo(tmp_path)
@@ -412,12 +428,10 @@ def test_greenwashed_refusal_is_unrecognized(tmp_path: Path) -> None:
 def test_classifier_flags_greenwashed_refusal() -> None:
     verdict, reason = classify_identification(_greenwashed_ident())
     assert verdict is IdentVerdict.UNRECOGNIZED
-    assert reason == (
-        "refused block still publishes fn, fp, macro_recall, "
-        "tp, true_rejections, wrong_names"
-    )
+    assert reason == ("refused block still publishes fn, fp, macro_recall, tp, true_rejections, wrong_names")
 
 
+@pytest.mark.integration
 def test_refused_with_macro_precision_is_unrecognized(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path)
     _track(
@@ -444,11 +458,7 @@ def test_refused_whitelist_tracks_scorer_emitted_keys() -> None:
     """rg-015: scanner whitelist must match report.py's refused shape."""
     from scripts.eval_harness.report import _refused_identification_metric
 
-    emitted = frozenset(
-        _refused_identification_metric(
-            "identification_refuses_unboxed_identity_claims"
-        )
-    )
+    emitted = frozenset(_refused_identification_metric("identification_refuses_unboxed_identity_claims"))
     expected = frozenset(
         {
             "refused",
@@ -465,20 +475,19 @@ def test_refused_whitelist_tracks_scorer_emitted_keys() -> None:
         }
     )
     assert emitted == expected
-    assert REFUSED_IDENTIFICATION_KEYS == expected
+    assert expected == REFUSED_IDENTIFICATION_KEYS
 
 
 def test_scorer_emitted_refusal_classifies_clean() -> None:
     from scripts.eval_harness.report import _refused_identification_metric
 
-    block = _refused_identification_metric(
-        "identification_refuses_unboxed_identity_claims"
-    )
+    block = _refused_identification_metric("identification_refuses_unboxed_identity_claims")
     verdict, reason = classify_identification(block)
     assert verdict is IdentVerdict.REFUSED
     assert reason == "explicit refusal"
 
 
+@pytest.mark.integration
 def test_absent_manifest_sha_is_not_a_contradiction(tmp_path: Path) -> None:
     """Two reports that both omit score_manifest_sha256 do not share a SHA."""
     repo = _init_repo(tmp_path)

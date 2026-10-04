@@ -950,7 +950,7 @@ async def test_expired_operation_id_retry_with_fresh_key_is_rejected(database) -
 
 
 @pytest.mark.asyncio
-async def test_used_jobs_ignores_expired_reservations_by_lease_age(database) -> None:
+async def test_used_jobs_keeps_stale_reserved_reservations_chargeable(database) -> None:
     session_factory, tenant_id, period_start = database
     async with session_factory() as session:
         session.add(
@@ -973,7 +973,7 @@ async def test_used_jobs_ignores_expired_reservations_by_lease_age(database) -> 
 
     async with session_factory() as session:
         repository = SqlAlchemyTenantEntitlementRepository(session, plan_allowances={"paid": 1})
-        assert await repository.used_jobs(tenant_id, period_start) == 0
+        assert await repository.used_jobs(tenant_id, period_start) == 1
 
 
 @pytest.mark.asyncio

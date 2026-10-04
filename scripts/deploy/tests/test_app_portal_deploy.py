@@ -986,6 +986,30 @@ def test_apply_refuses_invalid_staged_frontend_without_touching_live_or_rollback
     assert not (tmp_path / "opt" / "acx-backend" / "app" / "activation.journal").exists()
 
 
+def test_apply_refuses_frontend_with_missing_transitive_module(
+    tmp_path: Path,
+) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    live_before = live.read_bytes()
+    www = _prior_www(tmp_path)
+    dist = _write_frontend(tmp_path)
+    (dist / "assets" / "index.js").write_text(
+        'import "./missing-chunk.js";\n', encoding="utf-8"
+    )
+
+    result = _run(tmp_path, args=["--apply"], frontend=dist, live_caddy=live)
+    output = result.stdout + result.stderr
+
+    assert result.returncode != 0, output
+    assert "missing module dependency" in output.lower(), output
+    assert "applied:" not in result.stdout
+    assert live.read_bytes() == live_before
+    assert (www / "keep.txt").read_text(encoding="utf-8") == "active\n"
+    assert not (www / "index.html").exists()
+    assert not (tmp_path / "opt" / "acx-backend" / "app" / "activation.journal").exists()
+
+
 def test_apply_refuses_path_traversal(tmp_path: Path) -> None:
     live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
     _write_live_caddy(live)
@@ -1214,6 +1238,39 @@ def test_apply_staging_caddy_hardlink_to_live_preserves_active_files(tmp_path: P
     assert overlay.read_bytes() == b"active overlay\n"
     assert "staged Caddy path is the same file as CADDYFILE" in output, output
     assert not any("caddy validate" in line for line in _log(tmp_path).splitlines())
+
+
+@pytest.mark.parametrize("alias_kind", ["symlink", "hardlink"])
+def test_apply_staging_overlay_alias_to_live_caddy_preserves_live_config(
+    tmp_path: Path, alias_kind: str
+) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    before = live.read_bytes()
+    staged_overlay = live.parent / "app" / "staging" / "docker-compose.app.yml"
+    staged_overlay.parent.mkdir(parents=True)
+    if alias_kind == "symlink":
+        staged_overlay.symlink_to(live)
+    else:
+        os.link(live, staged_overlay)
+    invalid_snippet = tmp_path / "invalid-Caddyfile.app"
+    invalid_snippet.write_text("this is not valid Caddy syntax\n", encoding="utf-8")
+
+    result = _run(
+        tmp_path,
+        args=["--apply"],
+        live_caddy=live,
+        caddy_fail=True,
+        extra_env={"APP_SNIPPET": str(invalid_snippet)},
+    )
+    output = result.stdout + result.stderr
+
+    assert result.returncode != 0, output
+    assert (
+        "staged Caddy validation failed" in output
+        or "staged overlay path is the same file as CADDYFILE" in output
+    ), output
+    assert live.read_bytes() == before
 
 
 @pytest.mark.parametrize("target", ["backend", "app"])

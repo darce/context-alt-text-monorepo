@@ -1,0 +1,41 @@
+{
+  "lane": "hrev-uxmap",
+  "base": "57eb151417a52df980219cc5faac0338f7ecdcb3",
+  "executed": [
+    {
+      "command": "<lane-root>/.venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 5.26s"
+    },
+    {
+      "command": "<lane-root>/.venv/bin/python apps/prototype-wp-alt-context/docs/ux-maps/render_ux_maps.py --check",
+      "result": "pass",
+      "detail": "all UX-map artifacts are current (11 checked)"
+    },
+    {
+      "command": "cd apps/prototype-wp-alt-context && npx vitest run js/admin/__tests__/uxmap-render-parity.test.ts",
+      "result": "not_run",
+      "detail": "apps/prototype-wp-alt-context/node_modules is absent"
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16873,
+      "finding_id": "DADJ-11304",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/uxmap/renderParity.ts:573-669 projects and parses product, fixture, goals, jobs, screens, actions, flows, questions, policies, and parity index; e.g. `product: doc.product` and `not_doing: doc.not_doing`. apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.test.ts:1023-1028 asserts full projection equality (`toEqual(projectUxMapForRenderParity(...))`), while :1031-1048 mutates each of the five extended screen metadata fields and asserts a mismatch.",
+      "guard_test": "apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.test.ts::it.each(GENERATED_MAPS)('%s.md is structurally equal to its JSON render projection'); ::it.each([...])('detects rendered %s metadata drift')"
+    },
+    {
+      "db_id": 16814,
+      "finding_id": "DADJ-10073",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-wp-alt-context/docs/ux-maps/workbench-operator-loop.uxmap.json:138 now declares `error` for z-review-suggestions-group-card; :159, :167, :173, :194, and :200 also declare `error` for the cited conflict/dead-letter queue and action zones. apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.test.ts:1015-1020 directly asserts the group-card state with `toContain('error')`.",
+      "guard_test": "apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.test.ts::declares the review-suggestions group-card error state in the map contract"
+    }
+  ],
+  "new_findings": [],
+  "summary": "Both fixed findings hold at the reviewed tip: complete JSON-to-Markdown projection parity is asserted, and the targeted operator-loop failure states are present with a direct group-card regression assertion. Lane pytest and renderer checks pass; Vitest was not run because node_modules is absent."
+}

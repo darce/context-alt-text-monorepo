@@ -3681,6 +3681,10 @@ class DescribeRunControllerTest extends TestCase
      */
     public function testFailedSubmitDoesNotStoreMembershipEvenWithRunId(): void
     {
+        global $wpdb;
+        $previousMockVar = $wpdb->mockVar;
+        $wpdb->mockVar = '1'; // GET_LOCK(...) acquired.
+
         $this->plantAttachment(101, "\xff\xd8\xff\xe0jpeg-101", 'jpg');
         $runId = '11111111-1111-1111-1111-111111111146';
         $this->queueHttpResponse([
@@ -3696,13 +3700,7 @@ class DescribeRunControllerTest extends TestCase
         $this->setRequestIdempotencyKey($request, 'client-test-key-0001');
         $response = $this->controller->submit_describe_run($request);
 
-        $this->assertInstanceOf(\WP_REST_Response::class, $response);
-        $this->assertSame(500, $response->get_status());
-        $this->assertFalse(get_option('acx_describe_run_media_ids_' . $runId, false));
         $index = get_option('acx_describe_run_media_ids_index', []);
-        if (is_array($index)) {
-            $this->assertArrayNotHasKey($runId, $index);
-        }
 
         // Subsequent apply of that run id is refused (fail closed).
         $this->queueRunStatusResponse($runId, 'completed');
@@ -3725,6 +3723,15 @@ class DescribeRunControllerTest extends TestCase
         $apply = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
         $apply->set_param('run_id', $runId);
         $applyResponse = $this->controller->apply_describe_run_drafts($apply);
+
+        $wpdb->mockVar = $previousMockVar;
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(500, $response->get_status());
+        $this->assertFalse(get_option('acx_describe_run_media_ids_' . $runId, false));
+        if (is_array($index)) {
+            $this->assertArrayNotHasKey($runId, $index);
+        }
         $this->assertInstanceOf(\WP_Error::class, $applyResponse);
         $this->assertSame('describe_run_media_ids_unknown', $applyResponse->get_error_code());
     }

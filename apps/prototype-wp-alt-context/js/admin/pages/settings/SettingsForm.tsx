@@ -2,7 +2,9 @@ import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
 import {
+  CONTEXT_CATEGORIES,
   RecognitionSource,
+  type ContextCategory,
   UrlRejectionReason,
   type SettingsResponse,
   type TestConnectionResponse,
@@ -72,6 +74,7 @@ interface SettingsFormValues {
   descriptionBudgetMaxAttempts: string;
   recognitionEnabled: boolean;
   allowPersonNames?: boolean | null;
+  contextCategories?: ContextCategory[];
   urlReadOnly: boolean;
   keyReadOnly: boolean;
 }
@@ -92,6 +95,7 @@ interface SettingsFormActions {
   onDescriptionBudgetMaxAttemptsChange: (value: string) => void;
   onRecognitionEnabledChange: (value: boolean) => void;
   onAllowPersonNamesChange?: (value: boolean) => void;
+  onContextCategoriesChange?: (value: ContextCategory[]) => void;
   onSave: (e: React.FormEvent) => void;
   onTest: () => void;
   onCommitRouting?: () => void;
@@ -116,6 +120,7 @@ export const SettingsForm = ({
     descriptionBudgetMaxAttempts,
     recognitionEnabled,
     allowPersonNames: suppliedAllowPersonNames,
+    contextCategories: suppliedContextCategories,
     urlReadOnly,
     keyReadOnly,
   } = values;
@@ -134,6 +139,7 @@ export const SettingsForm = ({
     onDescriptionBudgetMaxAttemptsChange,
     onRecognitionEnabledChange,
     onAllowPersonNamesChange,
+    onContextCategoriesChange,
     onSave,
     onTest,
     onCommitRouting,
@@ -158,6 +164,14 @@ export const SettingsForm = ({
   const namingAgreementUnavailable =
     allowPersonNames === null || typeof allowPersonNames !== 'boolean';
   const namingAgreementError = data.allow_person_names_error ?? '';
+  const contextCategories = suppliedContextCategories ?? CONTEXT_CATEGORIES;
+  const contextCategoriesError = data.context_categories_error ?? '';
+  const contextCategoryLabels = [
+    __('Attachment details', 'alt-context'),
+    __('Parent post', 'alt-context'),
+    __('Categories and tags', 'alt-context'),
+    __('Product name', 'alt-context'),
+  ];
   // Rejected installs report url_source=default; surface the tier that held the
   // rejected value so the chip does not claim "Not configured".
   const urlSourceLabel =
@@ -442,6 +456,47 @@ export const SettingsForm = ({
             </>
           ) : null}
         </p>
+        <fieldset className="acx-settings__recognition">
+          <legend>{__('Site context sent with each image', 'alt-context')}</legend>
+          {CONTEXT_CATEGORIES.map((category, index) => (
+            <label
+              key={category}
+              htmlFor={`acx-settings-context-category-${category}`}
+              className="acx-settings__recognition-option"
+            >
+              <input
+                id={`acx-settings-context-category-${category}`}
+                type="checkbox"
+                checked={contextCategories.includes(category)}
+                onChange={(event) => {
+                  const selected = contextCategories.filter((current) => current !== category);
+                  if (event.target.checked) {
+                    selected.push(category);
+                  }
+                  onContextCategoriesChange?.(
+                    CONTEXT_CATEGORIES.filter((current) => selected.includes(current)),
+                  );
+                }}
+                aria-describedby="acx-settings-context-categories-help"
+              />
+              {contextCategoryLabels[index]}
+            </label>
+          ))}
+          <p id="acx-settings-context-categories-help" className="description">
+            {__(
+              "The image itself is always sent. People's names follow the naming setting above.",
+              'alt-context',
+            )}
+            {contextCategoriesError ? (
+              <>
+                {' '}
+                <span role="alert" data-testid="acx-settings-context-categories-error">
+                  {contextCategoriesError}
+                </span>
+              </>
+            ) : null}
+          </p>
+        </fieldset>
       </div>
 
       <p className="submit">

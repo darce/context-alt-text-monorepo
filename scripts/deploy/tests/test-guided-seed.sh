@@ -27,14 +27,14 @@ count_files() {
 run_verify() {
   local seed="$1" persons="$2" per_person="$3"
   SEED_DIR="$seed" OUT="$seed/media" MANIFEST="$seed/clustering-manifest.txt" \
-    README="$seed/README.md" GUIDED_MANIFEST="$seed/guided-manifest.txt" \
+    README="$seed/README.md" RIGHTS="$seed/guided-rights.tsv" GUIDED_MANIFEST="$seed/guided-manifest.txt" \
     PERSONS="$persons" PER_PERSON="$per_person" \
     bash "$VERIFY"
 }
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-OUT="$tmp/media"; MANIFEST="$tmp/guided-manifest.txt"; README="$tmp/README.md"
+OUT="$tmp/media"; MANIFEST="$tmp/guided-manifest.txt"; README="$tmp/README.md"; RIGHTS="$tmp/guided-rights.tsv"
 cat > "$README" <<'MD'
 # scratch
 <!-- SEED-PROVENANCE:START -->
@@ -50,8 +50,16 @@ MD
 bash -n "$SELECT" && pass "selector parses (bash -n)" || fail "selector has a syntax error"
 [ -f "$VERIFY" ] && bash -n "$VERIFY" && pass "verifier parses (bash -n)" || fail "verifier missing or has a syntax error"
 
-OUT="$OUT" MANIFEST="$MANIFEST" README="$README" bash "$SELECT" >/dev/null \
+OUT="$OUT" MANIFEST="$MANIFEST" README="$README" RIGHTS="$RIGHTS" bash "$SELECT" >/dev/null \
   && pass "selector exits 0 against the bundled assets" || fail "selector exited non-zero"
+
+if rights_mode=$(stat -c %a "$RIGHTS" 2>/dev/null); then
+  :
+else
+  rights_mode=$(stat -f %Lp "$RIGHTS" 2>/dev/null || echo unknown)
+fi
+[ "$rights_mode" = "644" ] && pass "generated rights ledger has mode 644" \
+  || fail "generated rights ledger has mode $rights_mode, expected 644"
 
 for f in katy_perry_1.jpg katy_perry_2.jpg katy_perry_3.jpg justin_trudeau_1.jpg justin_trudeau_2.jpg tribeca_press_1.jpg coachella_press_1.webp; do
   [ -f "$OUT/$f" ] && pass "copied $f" || fail "missing $OUT/$f"
@@ -85,6 +93,30 @@ expected_manifest=$'coachella_press 1\njustin_trudeau 2\nkaty_perry 3\ntribeca_p
 diff -q "$MANIFEST" "$REPO_ROOT/infra/oci/demo/seed/guided-manifest.txt" >/dev/null \
   && pass "committed guided-manifest.txt matches the generated one" || fail "committed infra/oci/demo/seed/guided-manifest.txt is stale"
 
+expected_rights_header=$'file\tsubject\tbasis\tsource\tnotice\tadded'
+[ "$(head -n 1 "$RIGHTS")" = "$expected_rights_header" ] \
+  && pass "rights ledger has the exact header" || fail "rights ledger header is unexpected"
+rights_rows=$(awk 'END { print NR - 1 }' "$RIGHTS")
+[ "$rights_rows" -eq "$n" ] && pass "rights ledger has one data row per guided media file" \
+  || fail "expected $n rights rows, found $rights_rows"
+rights_match=1
+for f in "$OUT"/*; do
+  [ -f "$f" ] || continue
+  base=$(basename "$f")
+  matches=$(awk -F '\t' -v file="$base" 'NR > 1 && $1 == file { count++ } END { print count + 0 }' "$RIGHTS")
+  if [ "$matches" -ne 1 ]; then
+    fail "rights ledger has $matches rows for $base"
+    rights_match=0
+  fi
+done
+[ "$rights_match" -eq 1 ] && pass "every guided media file has exactly one rights row"
+awk -F '\t' '$1 == "coachella_press_1.webp" && $3 == "unrecorded" { found = 1 } END { exit !found }' "$RIGHTS" \
+  && pass "coachella row records unrecorded basis" || fail "coachella row lacks unrecorded basis"
+awk -F '\t' '$1 == "katy_perry_3.jpg" && $3 == "public_domain" { found = 1 } END { exit !found }' "$RIGHTS" \
+  && pass "Katy Perry public-domain row records public_domain basis" || fail "Katy Perry public-domain row lacks public_domain basis"
+diff -q "$RIGHTS" "$REPO_ROOT/infra/oci/demo/seed/guided-rights.tsv" >/dev/null \
+  && pass "committed guided-rights.tsv matches the generated one" || fail "committed infra/oci/demo/seed/guided-rights.tsv is stale"
+
 rows=$(grep -cE '^\| (coachella_press|katy_perry|justin_trudeau|tribeca_press)_[0-9]+\.(jpg|webp) \|' "$README" || true)
 [ "$rows" -eq 7 ] && pass "7 guided provenance rows" || fail "expected 7 guided provenance rows, found $rows"
 grep -q 'sigourney_weaver_1.jpg' "$README" && pass "SEED-PROVENANCE block untouched" || fail "SEED-PROVENANCE block was clobbered"
@@ -94,7 +126,7 @@ grep -q '| Katy Perry |' "$README" && grep -q '| Justin Trudeau |' "$README" && 
 start=$(grep -n 'GUIDED-PROVENANCE:START' "$README" | cut -d: -f1); end=$(grep -n 'GUIDED-PROVENANCE:END' "$README" | cut -d: -f1)
 [ "$((end - start))" -eq 10 ] && pass "guided block is header + separator + 7 rows + END" || fail "guided block has $((end - start - 1)) lines between markers"
 
-OUT="$OUT" MANIFEST="$MANIFEST" README="$README" bash "$SELECT" >/dev/null
+OUT="$OUT" MANIFEST="$MANIFEST" README="$README" RIGHTS="$RIGHTS" bash "$SELECT" >/dev/null
 n2=$(count_files "$OUT"); rows2=$(grep -cE '^\| (coachella_press|katy_perry|justin_trudeau|tribeca_press)_[0-9]+\.(jpg|webp) \|' "$README" || true)
 [ "$n2" -eq 7 ] && [ "$rows2" -eq 7 ] && pass "re-run is idempotent (7 files, 7 rows)" || fail "re-run drifted: $n2 files, $rows2 rows"
 
@@ -102,7 +134,7 @@ n2=$(count_files "$OUT"); rows2=$(grep -cE '^\| (coachella_press|katy_perry|just
 # must survive a rerun. Cleanup may only remove exact owned 1..N files.
 sentinel="$OUT/katy_perry_99.jpg"
 cp "$ASSETS/guided-katy-perry-2016.jpg" "$sentinel"
-OUT="$OUT" MANIFEST="$MANIFEST" README="$README" bash "$SELECT" >/dev/null
+OUT="$OUT" MANIFEST="$MANIFEST" README="$README" RIGHTS="$RIGHTS" bash "$SELECT" >/dev/null
 [ -f "$sentinel" ] && pass "GR-01 clustering sentinel katy_perry_99.jpg survived rerun" \
   || fail "GR-01 clustering sentinel was deleted on guided rerun"
 n_gr01=$(count_files "$OUT")
@@ -125,7 +157,7 @@ exit 1
 STUB
 chmod +x "$stub_bin/find"
 set +e
-PATH="$stub_bin:$PATH" OUT="$OUT" MANIFEST="$MANIFEST" README="$README" bash "$SELECT" >/dev/null 2>"$tmp/gr06.err"
+PATH="$stub_bin:$PATH" OUT="$OUT" MANIFEST="$MANIFEST" README="$README" RIGHTS="$RIGHTS" bash "$SELECT" >/dev/null 2>"$tmp/gr06.err"
 gr06_rc=$?
 set -e
 [ "$gr06_rc" -eq 0 ] && pass "GR-06 selector reruns when find(1) rejects -maxdepth" \
@@ -189,7 +221,7 @@ set -e
 
 stale="$tmp/stale"; mkdir -p "$stale"; cp "$ASSETS"/*.jpg "$stale"/; rm "$stale/guided-katy-perry-2019.jpg"
 set +e
-SRC="$stale" OUT="$tmp/out2" MANIFEST="$tmp/m2" README="$README" bash "$SELECT" >/dev/null 2>&1; rc=$?
+SRC="$stale" OUT="$tmp/out2" MANIFEST="$tmp/m2" README="$README" RIGHTS="$tmp/rights2.tsv" bash "$SELECT" >/dev/null 2>&1; rc=$?
 set -e
 [ "$rc" -eq 2 ] && pass "refuses (exit 2) when a bundled source image is missing" || fail "expected exit 2 on missing source, got $rc"
 # GUIDESEED-1-GR-07: empty-file is still a write. Refusal must leave the path absent.
@@ -197,6 +229,11 @@ if [ -e "$tmp/m2" ]; then
   fail "GR-07 manifest created on refusal ($(wc -c < "$tmp/m2" | tr -d ' ') bytes)"
 else
   pass "GR-07 no manifest created on refusal"
+fi
+if [ -e "$tmp/rights2.tsv" ]; then
+  fail "rights ledger created on refusal ($(wc -c < "$tmp/rights2.tsv" | tr -d ' ') bytes)"
+else
+  pass "no rights ledger created on refusal"
 fi
 
 if [ "$fails" -ne 0 ]; then echo "test-guided-seed: $fails failure(s)" >&2; exit 1; fi

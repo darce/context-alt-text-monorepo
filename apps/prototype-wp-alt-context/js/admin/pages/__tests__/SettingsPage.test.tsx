@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { SettingsPage } from '../SettingsPage';
 import {
+  CONTEXT_CATEGORIES,
   UrlRejectionReason,
   type SettingsResponse,
   type TestConnectionOutcomeValue,
@@ -197,6 +198,8 @@ const defaultSettings: SettingsResponse = {
   recognition_enabled: true,
   allow_person_names: true,
   allow_person_names_error: null,
+  context_categories: null,
+  context_categories_error: null,
   description_budget: {
     max_attempts: -1,
     usage: {
@@ -355,6 +358,31 @@ describe('SettingsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
 
     expect(saveMutate).toHaveBeenCalledWith({ allow_person_names: false });
+  });
+
+  it('saves the remaining context categories in canonical order when one is unchecked', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPageWithRouter />);
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Attachment details' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
+
+    expect(saveMutate).toHaveBeenCalledWith({
+      context_categories: CONTEXT_CATEGORIES.slice(1),
+    });
+  });
+
+  it('does not send context_categories when its selection is unchanged', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPageWithRouter />);
+
+    fireEvent.change(screen.getByLabelText('Service API URL'), {
+      target: { value: 'https://new-api.example.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
+
+    expect(saveMutate).toHaveBeenCalledWith({ url: 'https://new-api.example.com' });
+    expect(saveMutate.mock.calls[0]?.[0]).not.toHaveProperty('context_categories');
   });
 
   it('renders the people recognition checkbox checked when GET recognition_enabled is true', () => {

@@ -30,6 +30,7 @@ DESCRIBE_GATE_SRC="${DESCRIBE_GATE_SRC:-infra/oci/demo/lib/describe-gate.sh}"
 GPU_ENV_CONTRACT_SRC="${GPU_ENV_CONTRACT_SRC:-scripts/deploy/lib/gpu-env-contract.sh}"
 GPU_PREFLIGHT_SRC="${GPU_PREFLIGHT_SRC:-scripts/deploy/preflight-gpu-env.sh}"
 SEED_IMPORT_SRC="${SEED_IMPORT_SRC:-infra/oci/demo/seed/import.sh}"
+SEED_RIGHTS_DIR="${SEED_RIGHTS_DIR:-infra/oci/demo/seed}"
 SEED_MEDIA_DIR="${SEED_MEDIA_DIR:-infra/oci/demo/seed/media}"
 
 REMOTE_DEMO_DIR="/opt/acx-backend/demo"
@@ -95,7 +96,7 @@ fi
 SMOKE_GATE_LIB="$(dirname "${BASH_SOURCE[0]}")/lib/smoke-gate.sh"
 FIXTURE_DENYLIST_LIB="$(dirname "${BASH_SOURCE[0]}")/lib/fixture-denylist.sh"
 
-for src in "$DEMO_COMPOSE_SRC" "$CADDYFILE_SRC" "$CADDY_COMPOSE_SRC" "$SYSTEMD_SRC" "$ENV_EXAMPLE_SRC" "$BOOTSTRAP_SRC" "$DESCRIBE_GATE_SRC" "$GPU_ENV_CONTRACT_SRC" "$SEED_IMPORT_SRC" "$SMOKE_GATE_LIB" "$FIXTURE_DENYLIST_LIB"; do
+for src in "$DEMO_COMPOSE_SRC" "$CADDYFILE_SRC" "$CADDY_COMPOSE_SRC" "$SYSTEMD_SRC" "$ENV_EXAMPLE_SRC" "$BOOTSTRAP_SRC" "$DESCRIBE_GATE_SRC" "$GPU_ENV_CONTRACT_SRC" "$SEED_IMPORT_SRC" "$SEED_RIGHTS_DIR/clustering-rights.tsv" "$SEED_RIGHTS_DIR/guided-rights.tsv" "$SMOKE_GATE_LIB" "$FIXTURE_DENYLIST_LIB"; do
   if [[ ! -f "$src" ]]; then
     echo "ERROR: source file not found: $src" >&2
     exit 2
@@ -147,6 +148,8 @@ $SCP "$BOOTSTRAP_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_DEMO_DIR}/bootstrap-wp.s
 $SCP "$DESCRIBE_GATE_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_DEMO_DIR}/lib/describe-gate.sh"
 $SCP "$GPU_ENV_CONTRACT_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_DEMO_DIR}/lib/gpu-env-contract.sh"
 $SCP "$SEED_IMPORT_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_DEMO_DIR}/seed/import.sh"
+$SCP "$SEED_RIGHTS_DIR/clustering-rights.tsv" "${OCI_USER}@${OCI_HOST}:${REMOTE_DEMO_DIR}/seed/clustering-rights.tsv"
+$SCP "$SEED_RIGHTS_DIR/guided-rights.tsv" "${OCI_USER}@${OCI_HOST}:${REMOTE_DEMO_DIR}/seed/guided-rights.tsv"
 $SCP "$ENV_EXAMPLE_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_DEMO_DIR}/secrets/.env.example"
 $SSH "chmod +x '${REMOTE_DEMO_DIR}/bootstrap-wp.sh' '${REMOTE_DEMO_DIR}/seed/import.sh'"
 

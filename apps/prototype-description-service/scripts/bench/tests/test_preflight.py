@@ -3,24 +3,45 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
 import pytest
 
 from scripts.bench.preflight import (
+    PRE_RUN_RESET_EVIDENCE_ENV,
+    PRE_RUN_RESET_EVIDENCE_MAX_AGE,
     PreflightError,
+    _parse_numeric_runtime_fingerprint,
     preflight_stack,
+    pre_run_reset_evidence_sha256,
+    validate_pre_run_reset_evidence,
     write_preflight_json,
 )
 from scripts.bench.stack_pair import StackEndpoint, load_stack_pair
-from scripts.bench.tests.conftest import FIR_STACK, INSIGHTFACE_STACK, write_pair
+from scripts.bench.tests.conftest import FIR_STACK, INSIGHTFACE_STACK, valid_pair_dict, write_pair
 
 
 def _insightface_endpoint(**overrides: object) -> StackEndpoint:
     payload = {**INSIGHTFACE_STACK, **overrides}
+    return StackEndpoint(
+        stack_id=payload["stack_id"],
+        role=payload["role"],
+        base_url=payload["base_url"],
+        expected_profile=payload["expected_profile"],
+        expected_pgvector_dim=payload["expected_pgvector_dim"],
+        opencv_major=payload.get("opencv_major"),
+        api_key_env=payload["api_key_env"],
+        tenant_id_env=payload["tenant_id_env"],
+    )
+
+
+def _fir_endpoint(**overrides: object) -> StackEndpoint:
+    payload = {**FIR_STACK, **overrides}
     return StackEndpoint(
         stack_id=payload["stack_id"],
         role=payload["role"],
@@ -47,7 +68,26 @@ def _ready(dim: int, *, status: str = "ok") -> dict:
     }
 
 
-def _health(profile: str) -> dict:
+def _health(profile: str, *, opencv_version: str = "5.0.0.93", include_runtime: bool = True) -> dict:
+    detail = "cached"
+    if include_runtime:
+        version_major = int(opencv_version.split(".", 1)[0])
+        fingerprint = {
+            "opencv_version": opencv_version,
+            "opencv_major": version_major,
+            "onnxruntime_version": "1.28.0",
+            "numpy_version": "2.5.1",
+            "scipy_version": "1.18.0",
+            "pillow_version": "12.3.0",
+            "hdbscan_version": "0.8.44",
+            "pgvector_version": "0.5.0",
+            "comparison_token": "0" * 64,
+        }
+        detail += "; numeric_runtime_fingerprint=" + json.dumps(
+            fingerprint,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
     return {
         "status": "ok",
         "timestamp": "2026-07-29T00:00:00Z",
@@ -55,11 +95,32 @@ def _health(profile: str) -> dict:
             "model_name": "buffalo_l",
             "cache_dir": "/models",
             "bundle_files": 2,
+            "bundle_sha256": "a" * 64,
             "status": "ok",
-            "detail": "cached",
+            "detail": detail,
             "profile": profile,
         },
     }
+
+
+def _rewrite_runtime_fingerprint(
+    health: dict,
+    *,
+    remove: tuple[str, ...] = (),
+    updates: dict[str, object] | None = None,
+) -> dict:
+    detail = health["model_cache"]["detail"]
+    prefix, separator, serialized = detail.partition("numeric_runtime_fingerprint=")
+    fingerprint = json.loads(serialized)
+    for key in remove:
+        fingerprint.pop(key)
+    fingerprint.update(updates or {})
+    health["model_cache"]["detail"] = prefix + separator + json.dumps(
+        fingerprint,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return health
 
 
 def _transport(ready: dict | int, health: dict | int) -> httpx.MockTransport:
@@ -77,6 +138,45 @@ def _transport(ready: dict | int, health: dict | int) -> httpx.MockTransport:
     return httpx.MockTransport(handler)
 
 
+def _reset_evidence(*, rows_empty: bool = True) -> dict[str, dict[str, object]]:
+    completed_at = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+    return {
+        stack["stack_id"]: {
+            "reset_attested_by": "bench operator",
+            "reset_reference": "FIR23-STACK runbook §reset",
+            "reset_completed_at": completed_at,
+            "prior_run_identity_rows_empty": rows_empty,
+        }
+        for stack in (INSIGHTFACE_STACK, FIR_STACK)
+    }
+
+
+def test_pre_run_reset_evidence_rejects_stale_timestamp(tmp_path: Path) -> None:
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    evidence = _reset_evidence()
+    stale_at = (datetime.now(UTC) - PRE_RUN_RESET_EVIDENCE_MAX_AGE - timedelta(seconds=1)).isoformat()
+    for record in evidence.values():
+        record["reset_completed_at"] = stale_at
+
+    with pytest.raises(PreflightError) as exc:
+        validate_pre_run_reset_evidence(pair, evidence)
+
+    assert exc.value.code == "pre_run_reset_unverified"
+
+
+def test_pre_run_reset_evidence_rejects_future_timestamp(tmp_path: Path) -> None:
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    evidence = _reset_evidence()
+    future_at = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+    for record in evidence.values():
+        record["reset_completed_at"] = future_at
+
+    with pytest.raises(PreflightError) as exc:
+        validate_pre_run_reset_evidence(pair, evidence)
+
+    assert exc.value.code == "pre_run_reset_unverified"
+
+
 def test_preflight_ok_real_shapes() -> None:
     result = preflight_stack(
         _insightface_endpoint(),
@@ -86,7 +186,207 @@ def test_preflight_ok_real_shapes() -> None:
     assert result.resolved_profile == "insightface"
     assert result.resolved_pgvector_dim == 512
     assert result.opencv_major == 5
-    assert result.opencv_major_source == "operator_attested"
+    assert result.opencv_major_source == "service_reported"
+    assert "numeric_runtime_fingerprint" in result.health_detailed_excerpt["model_cache"]["detail"]
+
+
+def test_preflight_refuses_service_opencv_major_drift() -> None:
+    with pytest.raises(PreflightError) as exc:
+        preflight_stack(
+            _insightface_endpoint(),
+            transport=_transport(_ready(512), _health("insightface", opencv_version="4.13.0.92")),
+            api_key="k",
+        )
+    assert exc.value.code == "opencv_major_drift"
+
+
+def test_preflight_refuses_non5_even_when_configured() -> None:
+    with pytest.raises(PreflightError) as exc:
+        preflight_stack(
+            _insightface_endpoint(opencv_major=4),
+            transport=_transport(_ready(512), _health("insightface", opencv_version="4.13.0.92")),
+            api_key="k",
+        )
+    assert exc.value.code == "opencv_major_unsupported"
+
+
+def test_preflight_refuses_missing_service_runtime_fingerprint() -> None:
+    with pytest.raises(PreflightError) as exc:
+        preflight_stack(
+            _insightface_endpoint(),
+            transport=_transport(_ready(512), _health("insightface", include_runtime=False)),
+            api_key="k",
+        )
+    assert exc.value.code == "opencv_runtime_unreported"
+
+
+@pytest.mark.parametrize(
+    "missing_key",
+    ("scipy_version", "pillow_version", "hdbscan_version", "pgvector_version"),
+)
+def test_preflight_refuses_missing_new_runtime_version(missing_key: str) -> None:
+    health = _rewrite_runtime_fingerprint(_health("insightface"), remove=(missing_key,))
+
+    with pytest.raises(PreflightError) as exc:
+        preflight_stack(
+            _insightface_endpoint(),
+            transport=_transport(_ready(512), health),
+            api_key="k",
+        )
+
+    assert exc.value.code == "opencv_runtime_unreported"
+
+
+def test_preflight_refuses_empty_scipy_version() -> None:
+    health = _rewrite_runtime_fingerprint(_health("insightface"), updates={"scipy_version": ""})
+
+    with pytest.raises(PreflightError) as exc:
+        preflight_stack(
+            _insightface_endpoint(),
+            transport=_transport(_ready(512), health),
+            api_key="k",
+        )
+
+    assert exc.value.code == "opencv_runtime_unreported"
+
+
+@pytest.mark.parametrize("comparison_token", ("0" * 63, "A" * 64))
+def test_preflight_refuses_invalid_comparison_token(comparison_token: str) -> None:
+    health = _rewrite_runtime_fingerprint(
+        _health("insightface"), updates={"comparison_token": comparison_token}
+    )
+
+    with pytest.raises(PreflightError) as exc:
+        preflight_stack(
+            _insightface_endpoint(),
+            transport=_transport(_ready(512), health),
+            api_key="k",
+        )
+
+    assert exc.value.code == "opencv_runtime_unreported"
+
+
+def test_preflight_parses_complete_runtime_fingerprint_with_comparison_token() -> None:
+    parsed = _parse_numeric_runtime_fingerprint(_health("insightface"))
+
+    assert parsed["comparison_token"] == "0" * 64
+    assert set(parsed) == {
+        "opencv_version",
+        "opencv_major",
+        "onnxruntime_version",
+        "numpy_version",
+        "scipy_version",
+        "pillow_version",
+        "hdbscan_version",
+        "pgvector_version",
+        "comparison_token",
+    }
+
+
+def test_preflight_refuses_unhashed_model_bundle() -> None:
+    health = _health("insightface")
+    del health["model_cache"]["bundle_sha256"]
+
+    with pytest.raises(PreflightError) as exc:
+        preflight_stack(
+            _insightface_endpoint(),
+            transport=_transport(_ready(512), health),
+            api_key="k",
+        )
+
+    assert exc.value.code == "model_bundle_unreported"
+
+
+def test_preflight_persists_live_model_bundle_provenance(tmp_path: Path) -> None:
+    result = preflight_stack(
+        _insightface_endpoint(),
+        transport=_transport(_ready(512), _health("insightface")),
+        api_key="k",
+    )
+    dest = tmp_path / "preflight.json"
+
+    write_preflight_json(dest, result)
+
+    cache = json.loads(dest.read_text(encoding="utf-8"))["health_detailed_excerpt"]["model_cache"]
+    assert cache["model_name"] == "buffalo_l"
+    assert cache["bundle_files"] == 2
+    assert cache["bundle_sha256"] == "a" * 64
+
+
+def test_health_check_exposes_the_shared_runtime_fingerprint(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from recognition.application import health
+    from recognition.infrastructure import face_pipeline
+    from shared.health import HealthStatus
+
+    monkeypatch.setattr(
+        face_pipeline,
+        "numeric_runtime_fingerprint",
+        lambda: SimpleNamespace(
+            opencv_version="5.0.0.93",
+            opencv_major=5,
+            onnxruntime_version="1.28.0",
+            numpy_version="2.5.1",
+            scipy_version="1.18.0",
+            pillow_version="12.3.0",
+            hdbscan_version="0.8.44",
+            pgvector_version="0.5.0",
+            opencv_distribution_versions=(("opencv-python-headless", "5.0.0.93"),),
+            comparability_token="0" * 64,
+        ),
+    )
+    result = health._with_numeric_runtime_fingerprint(
+        health.CheckResult("model_cache", HealthStatus.OK, "cached")
+    )
+    assert '"opencv_version":"5.0.0.93"' in result.detail
+    assert '"onnxruntime_version":"1.28.0"' in result.detail
+    assert '"opencv_distribution_versions":[["opencv-python-headless","5.0.0.93"]]' in result.detail
+    assert "numeric_runtime_fingerprint_unavailable" not in result.detail
+
+
+def test_model_bundle_sha256_tracks_model_names_and_bytes(tmp_path: Path) -> None:
+    from recognition.application.health import model_bundle_paths, sha256_model_bundle
+
+    cache_dir = tmp_path / "models"
+    bundle_dir = cache_dir / "buffalo_l"
+    bundle_dir.mkdir(parents=True)
+    (bundle_dir / "z.onnx").write_bytes(b"model-z")
+    (bundle_dir / "a.onnx").write_bytes(b"model-a")
+
+    paths = model_bundle_paths(cache_dir, "buffalo_l", "insightface")
+    digest = sha256_model_bundle(paths, cache_dir=cache_dir)
+
+    assert [path.name for path in paths] == ["a.onnx", "z.onnx"]
+    assert digest is not None
+    (bundle_dir / "a.onnx").write_bytes(b"changed model")
+    assert sha256_model_bundle(paths, cache_dir=cache_dir) != digest
+
+
+def test_score_refuses_different_service_opencv_versions(tmp_path: Path) -> None:
+    from scripts.bench.score_report import _require_prov01_preflights
+    from scripts.bench.stack_pair import BenchError
+
+    results = (
+        preflight_stack(
+            _insightface_endpoint(),
+            transport=_transport(_ready(512), _health("insightface")),
+            api_key="k",
+        ),
+        preflight_stack(
+            _fir_endpoint(),
+            transport=_transport(_ready(128), _health("face_pipeline", opencv_version="5.0.1.99")),
+            api_key="k",
+        ),
+    )
+    for result in results:
+        dest = tmp_path / "legs" / result.stack_id / "preflight.json"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        write_preflight_json(dest, result)
+
+    with pytest.raises(BenchError) as exc:
+        _require_prov01_preflights(tmp_path, [result.stack_id for result in results])
+    assert exc.value.code == "preflight_invalid"
 
 
 def test_dim_drift_on_insightface_raises_profile_or_dim_drift() -> None:
@@ -180,6 +480,15 @@ def test_write_preflight_json_round_trips_prov01_keys(tmp_path: Path) -> None:
     write_preflight_json(dest, result)
     assert _require_prov01_preflights(tmp_path, [result.stack_id]) is True
 
+    doc = json.loads(dest.read_text(encoding="utf-8"))
+    doc["opencv_major"] = 4
+    dest.write_text(json.dumps(doc), encoding="utf-8")
+    from scripts.bench.stack_pair import BenchError
+
+    with pytest.raises(BenchError) as exc:
+        _require_prov01_preflights(tmp_path, [result.stack_id])
+    assert exc.value.code == "preflight_invalid"
+
 
 def test_missing_opencv_major_raises_and_writes_no_preflight_json(tmp_path: Path) -> None:
     dest = tmp_path / "preflight.json"
@@ -213,6 +522,16 @@ def test_load_missing_opencv_major_is_unattested(tmp_path: Path) -> None:
     assert getattr(exc.value, "code", "") == "opencv_major_unattested"
 
 
+def test_load_unsupported_opencv_major_is_rejected(tmp_path: Path) -> None:
+    from scripts.bench.stack_pair import BenchError
+
+    pair = valid_pair_dict()
+    pair["stacks"][0]["opencv_major"] = 4
+    with pytest.raises(BenchError) as exc:
+        load_stack_pair(write_pair(tmp_path / "pair.yaml", pair))
+    assert exc.value.code == "opencv_major_unsupported"
+
+
 def test_run_pair_defaults_to_fail_closed_preflight(tmp_path: Path) -> None:
     from scripts.bench.driver import run_pair
     from scripts.bench.tests.conftest import FakeClient, write_hashed_manifest, write_pair
@@ -234,6 +553,7 @@ def test_run_pair_defaults_to_fail_closed_preflight(tmp_path: Path) -> None:
                 "acx-dev-insightface": _transport(500, _health("insightface")),
                 "acx-dev-fir": _transport(_ready(128), _health("face_pipeline")),
             },
+            pre_run_reset_by_stack=_reset_evidence(),
         )
     assert exc.value.code == "preflight_endpoint_missing"
     assert not list((tmp_path / "out-default").rglob("items.jsonl"))
@@ -249,6 +569,12 @@ def test_cli_run_fail_closed_aborts_before_media_write(
     manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
     pair_path = write_pair(tmp_path / "pair.yaml")
     out = tmp_path / "cli-out"
+    evidence_path = tmp_path / "reset-evidence.json"
+    evidence_path.write_text(
+        json.dumps({"pre_run_reset_by_stack": _reset_evidence()}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(PRE_RUN_RESET_EVIDENCE_ENV, str(evidence_path))
 
     def boom(*_a, **_k):
         raise PreflightError("preflight_endpoint_missing", "cli seam")
@@ -283,6 +609,17 @@ def test_run_pair_persists_preflight_json(tmp_path: Path) -> None:
             "acx-dev-insightface": _transport(_ready(512), _health("insightface")),
             "acx-dev-fir": _transport(_ready(128), _health("face_pipeline")),
         },
+        pre_run_reset_by_stack=_reset_evidence(),
+    )
+    run_doc = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert set(run_doc["pre_run_reset_by_stack"]) == {"acx-dev-insightface", "acx-dev-fir"}
+    expected_digest = hashlib.sha256(
+        json.dumps(run_doc["pre_run_reset_by_stack"], sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    assert run_doc["pre_run_reset_evidence_sha256"] == expected_digest
+    assert all(
+        record["prior_run_identity_rows_empty"] is True
+        for record in run_doc["pre_run_reset_by_stack"].values()
     )
     for stack_id, dim, profile in (
         ("acx-dev-insightface", 512, "insightface"),
@@ -290,9 +627,224 @@ def test_run_pair_persists_preflight_json(tmp_path: Path) -> None:
     ):
         doc = json.loads((out / "legs" / stack_id / "preflight.json").read_text())
         assert doc["opencv_major"] == 5
-        assert doc["opencv_major_source"] == "operator_attested"
+        assert doc["opencv_major_source"] == "service_reported"
         assert doc["resolved_pgvector_dim"] == dim
         assert doc["resolved_profile"] == profile
+
+
+def test_fresh_reset_evidence_passes_once_and_reuse_is_refused(tmp_path: Path) -> None:
+    from scripts.bench import driver
+    from scripts.bench.tests.conftest import FakeClient, write_hashed_manifest, write_pair
+
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    output_root = tmp_path / "results"
+    evidence = _reset_evidence()
+    first_clients = {
+        "acx-dev-insightface": FakeClient(),
+        "acx-dev-fir": FakeClient(),
+    }
+
+    driver.run_pair(
+        pair,
+        manifest_path=manifest,
+        images_dir=images,
+        out_dir=output_root / "run-1",
+        clients=first_clients,
+        skip_preflight=True,
+        pre_run_reset_by_stack=evidence,
+    )
+    assert first_clients["acx-dev-insightface"].analyze_calls
+    first_run_doc = json.loads((output_root / "run-1" / "run.json").read_text(encoding="utf-8"))
+    assert first_run_doc["pre_run_reset_evidence_sha256"] == pre_run_reset_evidence_sha256(
+        first_run_doc["pre_run_reset_by_stack"]
+    )
+
+    second_clients = {
+        "acx-dev-insightface": FakeClient(),
+        "acx-dev-fir": FakeClient(),
+    }
+    with pytest.raises(PreflightError) as exc:
+        driver.run_pair(
+            pair,
+            manifest_path=manifest,
+            images_dir=images,
+            out_dir=output_root / "run-2",
+            clients=second_clients,
+            skip_preflight=True,
+            pre_run_reset_by_stack=evidence,
+        )
+
+    assert exc.value.code == "pre_run_reset_unverified"
+    assert not second_clients["acx-dev-insightface"].analyze_calls
+    assert not (output_root / "run-2" / "run.json").exists()
+
+
+def test_run_pair_resumes_same_reset_evidence_after_age_bound(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.bench import driver, preflight
+    from scripts.bench.tests.conftest import FakeClient, write_hashed_manifest, write_pair
+
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = tmp_path / "results" / "run-1"
+    evidence = _reset_evidence()
+    first_clients = {stack_id: FakeClient() for stack_id in pair.allowlist_ids}
+    driver.run_pair(
+        pair,
+        manifest_path=manifest,
+        images_dir=images,
+        out_dir=out,
+        clients=first_clients,
+        skip_preflight=True,
+        pre_run_reset_by_stack=evidence,
+    )
+    first_doc = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    first_digest = first_doc["pre_run_reset_evidence_sha256"]
+    frozen_now = datetime.now(UTC) + PRE_RUN_RESET_EVIDENCE_MAX_AGE + timedelta(seconds=1)
+
+    class FrozenDateTime:
+        @staticmethod
+        def now(tz: object = UTC) -> datetime:
+            return frozen_now
+
+        @staticmethod
+        def fromisoformat(value: str) -> datetime:
+            return datetime.fromisoformat(value)
+
+    monkeypatch.setattr(preflight, "datetime", FrozenDateTime)
+
+    def unexpected_evidence_stamp(_root: Path, key: str, _value: object) -> None:
+        if key in {"pre_run_reset_by_stack", "pre_run_reset_evidence_sha256"}:
+            pytest.fail("resume must preserve the reset evidence already recorded for the run")
+
+    monkeypatch.setattr(driver, "_stamp_run_field", unexpected_evidence_stamp)
+    resumed_clients = {stack_id: FakeClient() for stack_id in pair.allowlist_ids}
+    driver.run_pair(
+        pair,
+        manifest_path=manifest,
+        images_dir=images,
+        out_dir=out,
+        clients=resumed_clients,
+        skip_preflight=True,
+        pre_run_reset_by_stack=evidence,
+    )
+
+    resumed_doc = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert resumed_doc["pre_run_reset_evidence_sha256"] == first_digest
+    assert resumed_doc["pre_run_reset_by_stack"] == first_doc["pre_run_reset_by_stack"]
+
+
+def test_run_pair_refuses_different_reset_evidence_for_existing_run(tmp_path: Path) -> None:
+    from scripts.bench import driver
+    from scripts.bench.tests.conftest import FakeClient, write_hashed_manifest, write_pair
+
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = tmp_path / "results" / "run-1"
+    evidence = _reset_evidence()
+    first_clients = {stack_id: FakeClient() for stack_id in pair.allowlist_ids}
+    driver.run_pair(
+        pair,
+        manifest_path=manifest,
+        images_dir=images,
+        out_dir=out,
+        clients=first_clients,
+        skip_preflight=True,
+        pre_run_reset_by_stack=evidence,
+    )
+    first_doc = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    changed_evidence = {stack_id: dict(record) for stack_id, record in evidence.items()}
+    changed_evidence["acx-dev-fir"]["reset_reference"] = "a different reset record"
+    resumed_clients = {stack_id: FakeClient() for stack_id in pair.allowlist_ids}
+
+    with pytest.raises(PreflightError) as exc:
+        driver.run_pair(
+            pair,
+            manifest_path=manifest,
+            images_dir=images,
+            out_dir=out,
+            clients=resumed_clients,
+            skip_preflight=True,
+            pre_run_reset_by_stack=changed_evidence,
+        )
+
+    assert exc.value.code == "pre_run_reset_unverified"
+    assert not resumed_clients["acx-dev-insightface"].analyze_calls
+    current_doc = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert current_doc["pre_run_reset_evidence_sha256"] == first_doc["pre_run_reset_evidence_sha256"]
+    assert current_doc["pre_run_reset_by_stack"] == first_doc["pre_run_reset_by_stack"]
+
+
+def test_run_pair_refuses_stale_reset_evidence_for_new_run(tmp_path: Path) -> None:
+    from scripts.bench import driver
+    from scripts.bench.tests.conftest import FakeClient, write_hashed_manifest, write_pair
+
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = tmp_path / "results" / "run-1"
+    evidence = _reset_evidence()
+    stale_at = (datetime.now(UTC) - PRE_RUN_RESET_EVIDENCE_MAX_AGE - timedelta(seconds=1)).isoformat()
+    for record in evidence.values():
+        record["reset_completed_at"] = stale_at
+    clients = {stack_id: FakeClient() for stack_id in pair.allowlist_ids}
+
+    with pytest.raises(PreflightError) as exc:
+        driver.run_pair(
+            pair,
+            manifest_path=manifest,
+            images_dir=images,
+            out_dir=out,
+            clients=clients,
+            skip_preflight=True,
+            pre_run_reset_by_stack=evidence,
+        )
+
+    assert exc.value.code == "pre_run_reset_unverified"
+    assert not clients["acx-dev-insightface"].analyze_calls
+    assert not (out / "run.json").exists()
+
+
+@pytest.mark.parametrize("invalid_kind", ["missing_stack", "nonempty_rows", "skipped_preflight"])
+def test_run_pair_refuses_without_reset_and_empty_state_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_kind: str,
+) -> None:
+    from scripts.bench import driver
+    from scripts.bench.tests.conftest import write_hashed_manifest, write_pair
+
+    monkeypatch.delenv(PRE_RUN_RESET_EVIDENCE_ENV, raising=False)
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    evidence = _reset_evidence()
+    if invalid_kind == "missing_stack":
+        del evidence["acx-dev-fir"]
+    elif invalid_kind == "nonempty_rows":
+        evidence["acx-dev-fir"]["prior_run_identity_rows_empty"] = False
+
+    def unexpected_ingest(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("run_leg must not be entered without reset and empty-state evidence")
+
+    monkeypatch.setattr(driver, "run_leg", unexpected_ingest)
+    with pytest.raises(PreflightError) as exc:
+        driver.run_pair(
+            pair,
+            manifest_path=manifest,
+            images_dir=images,
+            out_dir=tmp_path / f"out-{invalid_kind}",
+            pre_run_reset_by_stack=(None if invalid_kind == "skipped_preflight" else evidence),
+            skip_preflight=invalid_kind == "skipped_preflight",
+        )
+    assert exc.value.code == "pre_run_reset_unverified"
+    assert not (tmp_path / f"out-{invalid_kind}" / "run.json").exists()
 
 
 def test_run_pair_preflights_when_not_skipped(tmp_path: Path) -> None:
@@ -317,6 +869,7 @@ def test_run_pair_preflights_when_not_skipped(tmp_path: Path) -> None:
                 "acx-dev-insightface": _transport(500, _health("insightface")),
                 "acx-dev-fir": _transport(_ready(128), _health("face_pipeline")),
             },
+            pre_run_reset_by_stack=_reset_evidence(),
         )
     assert exc.value.code == "preflight_endpoint_missing"
     assert not list((tmp_path / "out").rglob("items.jsonl"))

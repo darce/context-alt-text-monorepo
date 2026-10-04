@@ -1,0 +1,97 @@
+{
+  "lane": "tc-11",
+  "base": "e56ab004eb3080fd1dac7c602d78835e11fac792",
+  "files": [
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_fusion_runner.py",
+      "verdict": "KEEP",
+      "tests_total": 18,
+      "tests_affected": [],
+      "reason": "The suite checks live fusion records, attachment decisions, scorer discrimination, and CLI artifacts, including a flipped-label negative control that proves the scorer can catch the claimed regression.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_fusion_runner.py:187 - the negative control flips a labeled identity decision and asserts the scorer reports the mismatch.",
+      "subject": "scripts/eval_harness/fusion_runner.py and its scoring/report behavior",
+      "duplicate_of": "",
+      "canon": ["TEST-15"],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/scripts/eval_harness/tests/test_cli_exit_gates.py",
+      "verdict": "CULL",
+      "tests_total": 16,
+      "tests_affected": [
+        "test_allow_refused_both_metrics_exits_zero",
+        "test_score_face_allow_refused_identification_exits_zero"
+      ],
+      "reason": "These two success-path tests call cli.main without asserting or expecting an exit status, so an incorrect nonzero return can still pass.",
+      "evidence": "apps/prototype-description-service/scripts/eval_harness/tests/test_cli_exit_gates.py:424 and :623 - both allow-refused calls ignore cli.main's returned status and have no assertion.",
+      "subject": "scripts/eval_harness/cli.py score and score-face allow-refused exit behavior",
+      "duplicate_of": "",
+      "canon": ["TEST-15", "TEST-11"],
+      "replacement": "Keep explicit `assert cli_mod.main(...) == 0` checks for both consent paths in an assertion-bearing CLI test before removing their exit-status coverage.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-description-service/scripts/eval_harness/tests/test_score_roster_only_refusal.py",
+      "verdict": "KEEP",
+      "tests_total": 34,
+      "tests_affected": [],
+      "reason": "The tests cover live roster-only refusal behavior and the published Markdown and CLI help contract that operators use to interpret refused scores.",
+      "evidence": "apps/prototype-description-service/scripts/eval_harness/tests/test_score_roster_only_refusal.py:503 - asserts the shipped `--allow-refused` help text and its exit-3 contract.",
+      "subject": "scripts/eval_harness/report.py and scripts/eval_harness/cli.py roster-only scoring refusal",
+      "duplicate_of": "",
+      "canon": ["TEST-15"],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_gpuflow_timing_models.py",
+      "verdict": "KEEP",
+      "tests_total": 11,
+      "tests_affected": [],
+      "reason": "The tests verify live timing schema and constraint behavior, migration healing, and that the operator remediation runbook covers every canonical tenant table.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_gpuflow_timing_models.py:381 - compares the runbook's audited tenant tables against the migration's canonical tenant table set.",
+      "subject": "db.models.scene and db.migrations.versions.001_identity_schema timing schema",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py",
+      "verdict": "REWRITE",
+      "tests_total": 177,
+      "tests_affected": [
+        "test_apply_and_verify_both_emit_concat_exclusions",
+        "test_apply_and_verify_both_recheck_the_shipped_map_vocabulary",
+        "test_apply_and_verify_emit_wordlist_and_ambiguous_stem_measurements",
+        "test_apply_and_verify_both_emit_family_exclusions",
+        "test_apply_and_verify_both_emit_adjacent_exclusions",
+        "test_adjacent_parse_shares_the_match_pattern_flags",
+        "test_plan_does_not_write_a_pin_record",
+        "test_production_module_has_no_free_text_deny_constant",
+        "test_given_name_docstring_uses_invented_vocab",
+        "test_concatenated_pass_reaches_embedded_alnum_runs",
+        "test_family_word_adjacent_redacts_the_dictionary_given_name",
+        "test_family_word_adjacent_with_middle_initial_is_rewritten",
+        "test_family_word_adjacent_title_case_is_rewritten",
+        "test_reorder_applies_to_every_roster_bearing_fixture",
+        "test_family_word_pass_preserves_source_case",
+        "test_rename_with_absent_pre_sha_raises_naming_the_path"
+      ],
+      "reason": "The 177 cases protect live privacy behavior, but sampled tests call private helpers or scan production source text, so retain their regression properties while asserting through the shipped apply and verify behavior.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py:850 - test_apply_and_verify_both_emit_concat_exclusions slices production source to assert helper calls; :1888 checks the private _ADJACENT_PARSE flag directly.",
+      "subject": "scripts/privacy/priv1_pseudonymize.py apply, verify, and pseudonymization behavior",
+      "duplicate_of": "",
+      "canon": ["TEST-12", "TEST-16", "TEST-15"],
+      "replacement": "Keep the live redaction and past-review regression cases, exercise them via cmd_apply/cmd_verify results or a stable public transformation facade, and replace source-text/private-state pins with contract checks.",
+      "est_seconds_saved": 0,
+      "risk": "high"
+    }
+  ],
+  "fixtures": []
+}

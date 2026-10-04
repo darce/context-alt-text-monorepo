@@ -1,0 +1,46 @@
+{
+  "lane": "tc-24",
+  "base": "e56ab004eb3080fd1dac7c602d78835e11fac792",
+  "files": [
+    {
+      "path": "scripts/test_gpu_burst_evidence.py",
+      "verdict": "REWRITE",
+      "tests_total": 101,
+      "tests_affected": [
+        "test_gpu_evidence_make_target_does_not_duplicate_deploy_shell_suite",
+        "test_gpu_evidence_makefile_resolves_alias_names_lazily"
+      ],
+      "reason": "Replace these source-text checks with dry-run assertions over public make targets and alias inputs; other tests already cover shell metacharacter rejection through make.",
+      "evidence": "scripts/test_gpu_burst_evidence.py:1509 - the target check reads mk/gpu-evidence.mk and asserts literal membership; line 1596 pins exact alias assignment strings.",
+      "subject": "mk/gpu-evidence.mk GPU evidence target composition and alias behavior",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-16"
+      ],
+      "replacement": "Check registered commands via `make -n gpu-evidence-tests`, and exercise export/check dry-runs with alias environment values to verify lazy resolution and safe expansion.",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "scripts/test_gpu_burst_smoke.py",
+      "verdict": "REWRITE",
+      "tests_total": 111,
+      "tests_affected": [
+        "test_run_smoke_is_decomposed_into_phase_helpers",
+        "test_cleanup_is_decomposed_into_bounded_helpers"
+      ],
+      "reason": "Replace the AST line-count checks with behavior assertions; the runbook check covers published operator guidance and the signal test interrupts its deliberate sleep on the passing path.",
+      "evidence": "scripts/test_gpu_burst_smoke.py:2172 - these tests AST-parse smoke.py and assert helper line counts; line 1500 reads the operator runbook and line 1680 sleeps before the parent sends SIGTERM.",
+      "subject": "GPU burst smoke lifecycle behavior and helper decomposition",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-16",
+        "TEST-12"
+      ],
+      "replacement": "Keep lifecycle, deadline, and compensation assertions at the `smoke.run_smoke`/CLI seams; remove the function-size thresholds or move any desired size policy to static analysis.",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    }
+  ],
+  "fixtures": []
+}

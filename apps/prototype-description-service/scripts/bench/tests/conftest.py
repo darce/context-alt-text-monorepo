@@ -36,7 +36,7 @@ INSIGHTFACE_STACK = {
 FIR_STACK = {
     "stack_id": "acx-dev-fir",
     "role": "face_pipeline_candidate",
-    "base_url": "https://fir.api.altcontext.com",
+    "base_url": "https://fir.dev.api.altcontext.com",
     "expected_profile": "face_pipeline",
     "expected_pgvector_dim": 128,
     "opencv_major": 5,
@@ -339,20 +339,38 @@ def write_stub_preflight(run_dir: Path, stack_id: str) -> Path:
     dest = Path(run_dir) / "legs" / stack_id / "preflight.json"
     dest.parent.mkdir(parents=True, exist_ok=True)
     insight = "insight" in stack_id
+    profile = "insightface" if insight else "face_pipeline"
+    runtime_fingerprint = {
+        "opencv_version": "5.0.0.93",
+        "opencv_major": 5,
+        "onnxruntime_version": "1.28.0",
+        "numpy_version": "2.5.1",
+        "scipy_version": "1.18.0",
+        "pillow_version": "12.3.0",
+        "hdbscan_version": "0.8.44",
+        "pgvector_version": "0.5.0",
+        "comparison_token": "0" * 64,
+    }
     dest.write_text(
         json.dumps(
             {
                 "stack_id": stack_id,
-                "base_url": "https://dev.api.altcontext.com" if insight else "https://fir.api.altcontext.com",
-                "expected_profile": "insightface" if insight else "face_pipeline",
+                "base_url": "https://dev.api.altcontext.com" if insight else "https://fir.dev.api.altcontext.com",
+                "expected_profile": profile,
                 "expected_pgvector_dim": 512 if insight else 128,
-                "resolved_profile": "insightface" if insight else "face_pipeline",
+                "resolved_profile": profile,
                 "resolved_pgvector_dim": 512 if insight else 128,
                 "opencv_major": 5,
-                "opencv_major_source": "operator_attested",
+                "opencv_major_source": "service_reported",
                 "checked_at": "2026-07-29T00:00:00Z",
                 "ready_excerpt": {},
-                "health_detailed_excerpt": {},
+                "health_detailed_excerpt": {
+                    "model_cache": {
+                        "profile": profile,
+                        "detail": "numeric_runtime_fingerprint="
+                        + json.dumps(runtime_fingerprint, separators=(",", ":")),
+                    }
+                },
             },
             indent=2,
         ),

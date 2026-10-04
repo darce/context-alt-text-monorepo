@@ -1,0 +1,59 @@
+{
+  "lane": "hrev-php-proxy",
+  "base": "57eb151417a52df980219cc5faac0338f7ecdcb3",
+  "executed": [
+    {
+      "command": "/home/gate/workbay-sandbox/feature-debtfix-1-hrev-php-proxy-f6d733e9/.venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 5.38s"
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 17059,
+      "finding_id": "FX3KEY-fb1e030344709ee6-H-c4ecef58855491114cb61801",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php:10 - requires class-recognition-api-key-store.php, which exists and declares RecognitionApiKeyStore at line 10; the test round-trip assertion exercises the store.",
+      "guard_test": "apps/prototype-wp-alt-context/tests/Unit/RecognitionApiKeyStoreTest.php::testEncryptRoundTripsAndStoresAnEncryptedValue"
+    },
+    {
+      "db_id": 16885,
+      "finding_id": "DADJ-1296",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-wp-alt-context/tests/Unit/ClustersSchemaParityTest.php:127 - testSqlReadColumnsExistInClustersDdl scrapes repository SELECT columns against live DDL; line 139's fabricated confidence_score assertion proves the parser reports a missing read column.",
+      "guard_test": "apps/prototype-wp-alt-context/tests/Unit/ClustersSchemaParityTest.php::testSqlReadColumnGuardDetectsFabricatedColumn; apps/prototype-wp-alt-context/tests/Unit/ClustersSchemaParityTest.php::testSqlReadColumnsExistInClustersDdl"
+    },
+    {
+      "db_id": 16877,
+      "finding_id": "DADJ-2727",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-wp-alt-context/src/api/class-blob-url-rewriter.php:211 - the HMAC includes the current viewer ID; apps/prototype-wp-alt-context/src/api/class-blobs-controller.php:156 - rejects unauthenticated viewers. BlobsControllerTest lines 97-132 covers cross-viewer rejection, anonymous rejection, and the 300-second expiry.",
+      "guard_test": "apps/prototype-wp-alt-context/tests/Unit/BlobsControllerTest.php::testBlobTokenRequiresTheViewerThatReceivedIt; apps/prototype-wp-alt-context/tests/Unit/BlobsControllerTest.php::testBlobTokenRequiresAnAuthenticatedViewer; apps/prototype-wp-alt-context/tests/Unit/BlobsControllerTest.php::testSignedBlobUrlExpiresWithinFiveMinutes"
+    },
+    {
+      "db_id": 16875,
+      "finding_id": "DADJ-1294",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php:882 - GET_LOCK is selected through $wpdb, while lines 860-862 update the transient counter. A split or load-balanced DB can route same-name locks to different MySQL hosts while transient writes share a primary, leaving increments racy; the unit test at ProxyRequestTest.php:930 exercises only one mocked $wpdb.",
+      "guard_test": "apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php::testUiReadFailureIncrementsCircuitCounterUnderAtomicNamedLock; apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php::testUiReadCounterFailsClosedWithoutRacyIncrementWhenLockTimesOut"
+    }
+  ],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "apps/prototype-wp-alt-context/src/api/class-blobs-controller.php",
+      "line": 156,
+      "title": "Cookie-authenticated image requests lose viewer identity without a REST nonce",
+      "defect": "Signed image URLs contain expires and token but no _wpnonce (class-blob-url-rewriter.php:144-150). WordPress REST cookie authentication sets the current user to 0 when no nonce is present, then returns success; the route-scoped filter only handles rest_cookie_invalid_nonce and does not restore the viewer. verify_blob_token therefore rejects the legitimate image request with 401. See [WordPress source](https://developer.wordpress.org/reference/functions/rest_cookie_check_errors/).",
+      "failure_scenario": "An authenticated admin page renders a signed recognition blob URL in an img element. The browser sends the login cookie but no REST nonce, WordPress clears the current user, and verify_blob_token returns 401 so the blob or thumbnail does not display.",
+      "fix": "Append wp_create_nonce('wp_rest') as _wpnonce to each signed proxy URL in BlobUrlRewriter and add an integration test that runs the image request through the REST cookie-authentication filter before verify_blob_token.",
+      "test_file": "apps/prototype-wp-alt-context/tests/Unit/BlobsControllerTest.php",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "Review results: HOLDS 3, PARTIAL 1; one medium before-merge blob authentication regression found. The lane check passed 26 tests; the dispatch brief reports external PHPUnit verification of 2,569 tests with 0 failures."
+}

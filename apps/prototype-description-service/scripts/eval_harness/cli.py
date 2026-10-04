@@ -25,6 +25,7 @@ import contextlib
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import re
 import subprocess
@@ -131,6 +132,7 @@ SCORE_GATE_PREFIX_TRUNCATION = "score truncation gate:"
 SCORE_GATE_PREFIX_MANIFEST_MISMATCH = "score manifest-mismatch gate:"
 SCORE_GATE_PREFIX_MANIFEST_DRIFT = "score manifest-drift gate:"
 SCORE_GATE_PREFIX_MANIFEST_RELABEL = "score manifest-relabel gate:"
+SCORE_GATE_PREFIX_PRODUCER_IDENTITY = "score producer-identity gate:"
 SCORE_GATE_PREFIX_EMPTY_RUBRIC = "score empty-rubric gate:"
 SCORE_GATE_PREFIX_MUST_RIGHT_FAILURES = "score must-right failures gate:"
 SCORE_GATE_PREFIX_WRONG_NAME_FLOOR_VACUITY = "score wrong-name floor vacuity gate:"
@@ -156,6 +158,7 @@ SCORE_GATE_PREFIXES: frozenset[str] = frozenset(
         SCORE_GATE_PREFIX_MANIFEST_MISMATCH,
         SCORE_GATE_PREFIX_MANIFEST_DRIFT,
         SCORE_GATE_PREFIX_MANIFEST_RELABEL,
+        SCORE_GATE_PREFIX_PRODUCER_IDENTITY,
         SCORE_GATE_PREFIX_EMPTY_RUBRIC,
         SCORE_GATE_PREFIX_MUST_RIGHT_FAILURES,
         SCORE_GATE_PREFIX_WRONG_NAME_FLOOR_VACUITY,
@@ -220,6 +223,61 @@ def _score_gate_fail(message: str) -> NoReturn:
     # exception boundary. The outer message pass is an EncodedText no-op, and
     # keeps this gate on the message encoder contract (API-11 / OBS-08).
     raise ScoreGateError(_printable_message(_printable_exception_message(message)))
+
+
+def _unattributed_producer_dimensions(report: Mapping[str, Any]) -> list[str] | None:
+    """Return missing producer dimensions when the report marks itself unattributed."""
+    provenance = report.get("provenance")
+    provenance = provenance if isinstance(provenance, Mapping) else {}
+    model = provenance.get("model")
+    model = model if isinstance(model, Mapping) else {}
+    attribution = model.get("attribution")
+    if not isinstance(attribution, Mapping) or attribution.get("status") != "unattributed":
+        return None
+    missing = attribution.get("missing_dimensions")
+    if not isinstance(missing, (list, tuple)):
+        return []
+    return [str(dimension) for dimension in missing if str(dimension).strip()]
+
+
+def _compare_producer_dimensions(report: Mapping[str, Any]) -> list[str] | None:
+    """Validate legacy producer stamps as well as explicit attribution (SEC-10)."""
+    provenance = report.get("provenance")
+    provenance = provenance if isinstance(provenance, Mapping) else {}
+    model = provenance.get("model")
+    model = model if isinstance(model, Mapping) else {}
+    if "attribution" in model:
+        attribution = model["attribution"]
+        if not isinstance(attribution, Mapping) or attribution.get("status") != "unattributed":
+            raise ValueError("malformed producer provenance: attribution")
+        missing = attribution.get("missing_dimensions")
+        if not isinstance(missing, list) or not all(
+            isinstance(value, str) and value.strip() for value in missing
+        ):
+            raise ValueError("malformed producer provenance: attribution.missing_dimensions")
+        return missing
+
+    # Legacy artifacts predate attribution; derive the report producer's rule.
+    keys = ("adapters", "model_ids", "prompt_versions", "prompt_sha256s", "prompt_free_flags")
+    for key in keys:
+        if key in model and not isinstance(model[key], list):
+            raise ValueError(f"malformed producer provenance: {key}")
+
+    def has_text(key: str) -> bool:
+        return any(isinstance(value, str) and value.strip() for value in model.get(key, []))
+
+    missing = []
+    if not has_text("adapters"):
+        missing.append("adapter")
+    if not has_text("model_ids"):
+        missing.append("model")
+    if not (
+        has_text("prompt_versions")
+        or has_text("prompt_sha256s")
+        or any(value is True for value in model.get("prompt_free_flags", []))
+    ):
+        missing.append("prompt identity")
+    return missing or None
 
 
 def _score_schema_error_message(dotted_path: str, expected: str) -> str:
@@ -403,6 +461,17 @@ def _limit_arg(raw: str) -> int:
     return value
 
 
+def _score_threshold_arg(raw: str) -> float:
+    """argparse type for the candidate face detector's score threshold."""
+    try:
+        value = float(raw)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be a finite number with 0 < value < 1") from None
+    if not math.isfinite(value) or not 0 < value < 1:
+        raise argparse.ArgumentTypeError("must be a finite number with 0 < value < 1")
+    return value
+
+
 def _provider_value(raw: str) -> str:
     """argparse type for ``--provider``: a registered hosted description profile (rg-008, sr-007)."""
     value = raw.strip()
@@ -566,12 +635,17 @@ def fetch_run_record(
             describe_started = time.monotonic()
             # Billed on attempt (a failed call may still charge); refunded on cache hit.
             paid_calls += 1
-            item["describe"] = client.describe(
+            describe_response = client.describe(
                 image_bytes=image_bytes,
                 filename=image_path.name,
                 media_id=entry.media_id,
                 context_pack=entry.context_pack.model_dump(exclude_none=True),
             )
+            if isinstance(describe_response, dict) and "prompt_version" not in describe_response:
+                prompt_version = describe_response.get("prompt_or_task_version")
+                if prompt_version is not None:
+                    describe_response = {**describe_response, "prompt_version": prompt_version}
+            item["describe"] = describe_response
             item["latency_s"] = round(time.monotonic() - describe_started, 3)
             if isinstance(item["describe"], dict) and item["describe"].get("cached") is True:
                 paid_calls -= 1
@@ -1865,6 +1939,15 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"verdict={ScoreVerdict.NON_COMPARABLE.value} "
             f"(archival relabel only; not adoption-comparable; see {_printable_path(json_path)})"
         )
+    # Producer identity is measurement provenance, so neither adoption opt-outs
+    # nor consent for refused metric slices can make an unattributed report usable.
+    missing_producer_dimensions = _unattributed_producer_dimensions(scored)
+    if missing_producer_dimensions is not None:
+        missing_hint = ", ".join(missing_producer_dimensions) or "unspecified"
+        _score_gate_fail(
+            f"{SCORE_GATE_PREFIX_PRODUCER_IDENTITY} unattributed producer; "
+            f"missing dimensions: {missing_hint} (see {_printable_path(json_path)})"
+        )
     # fx8 / gx1 / EVAL-13 / TEST-15: under --freeze-certification the exit code
     # means scoring-path byte-stability once measurement integrity has passed.
     # Adoption gates below stay computed and printed (verdict / wrong_name_rate /
@@ -2152,10 +2235,12 @@ def _build_buffalo_leg() -> _FaceLegBundle:
     )
 
 
-def _build_face_leg(leg: str) -> _FaceLegBundle:
+def _build_face_leg(leg: str, *, score_threshold: float | None = None) -> _FaceLegBundle:
     if leg == "buffalo":
+        if score_threshold is not None:
+            sys.exit("--score-threshold applies only to the candidate YuNet detector; omit it with --leg buffalo")
         return _build_buffalo_leg()
-    detector, aligner, embedder = build_candidate_leg()
+    detector, aligner, embedder = build_candidate_leg(score_threshold=score_threshold)
     return _FaceLegBundle(
         detector=detector,
         aligner=aligner,
@@ -2170,7 +2255,7 @@ def _cmd_face_bakeoff(args: argparse.Namespace) -> None:
     """Offline leg walk → face_run_record JSON in out/ (no tenant writes)."""
     # Leg preflight first: --leg buffalo failures (env flag / [bench] extra) must
     # surface before unrelated GOLDEN_IMAGES_DIR / manifest errors.
-    leg = _build_face_leg(args.leg)
+    leg = _build_face_leg(args.leg, score_threshold=args.score_threshold)
     images_dir = _images_dir()
     # Pixel path: walk_face_run_record / build_occlusion_twin_pairs read image bytes.
     manifest = load_manifest(args.manifest, images_dir=images_dir)
@@ -2478,6 +2563,7 @@ _COMPARE_LOWER_IS_BETTER: tuple[tuple[str, ...], ...] = (
 )
 # Baseline verdicts that may anchor an adoption decision (rg-005 / sr-007).
 _COMPARE_ADOPTION_ELIGIBLE_VERDICTS: frozenset[str] = frozenset({ScoreVerdict.PASS.value})
+COMPARE_PRODUCER_IDENTITY_PREFIX = "compare producer-identity gate:"
 # Protocol pins that must match across baseline and candidate (EVAL-13).
 _COMPARE_PROTOCOL_PATHS: tuple[tuple[str, ...], ...] = (
     ("eval_mode",),
@@ -2757,6 +2843,24 @@ def _cmd_compare(args: argparse.Namespace) -> None:
     )
     if proxy_status:
         sys.exit("compare adoption gate: " + "; ".join(proxy_status))
+
+    for role, report, report_path in (
+        ("baseline", baseline, baseline_path),
+        ("candidate", candidate, candidate_path),
+    ):
+        try:
+            missing_dimensions = _compare_producer_dimensions(report)
+        except ValueError as exc:
+            sys.exit(
+                f"{COMPARE_PRODUCER_IDENTITY_PREFIX} {role} report: {exc} "
+                f"(see {_printable_path(report_path)})"
+            )
+        if missing_dimensions is not None:
+            missing_hint = ", ".join(missing_dimensions) or "unspecified"
+            sys.exit(
+                f"{COMPARE_PRODUCER_IDENTITY_PREFIX} {role} report has an unattributed producer "
+                f"(missing dimensions: {missing_hint}; see {_printable_path(report_path)})"
+            )
 
     for role, report in (("baseline", baseline), ("candidate", candidate)):
         verdict = (report.get("verdict") or {}).get("verdict")
@@ -3271,6 +3375,15 @@ def main(argv: list[str] | None = None) -> None:
     face_bo.add_argument("--limit", type=_limit_arg, default=None)
     face_bo.add_argument("--stall-limit", type=int, default=DEFAULT_STALL_LIMIT)
     face_bo.add_argument("--keep", type=_keep_arg, default=DEFAULT_KEEP)
+    face_bo.add_argument(
+        "--score-threshold",
+        type=_score_threshold_arg,
+        default=None,
+        help=(
+            "score threshold for the candidate YuNet detector (must be > 0 and < 1; "
+            "default: detector default 0.9)"
+        ),
+    )
     face_bo.add_argument(
         "--leg",
         choices=("candidate", "buffalo"),

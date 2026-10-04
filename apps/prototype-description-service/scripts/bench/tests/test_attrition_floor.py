@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from pathlib import Path
 
 import pytest
 
+from scripts.bench.export_map import LEG_EXPORT_PAYLOAD_FILES, export_leg
 from scripts.bench.score_report import (
     compute_accepted_set,
     resolve_floor_count,
@@ -15,6 +17,16 @@ from scripts.bench.score_report import (
 )
 from scripts.bench.stack_pair import BenchError, load_stack_pair
 from scripts.bench.tests.conftest import valid_pair_dict, write_pair
+
+
+def _refresh_export_digest(export_dir: Path) -> None:
+    digests = {
+        name: hashlib.sha256((export_dir / name).read_bytes()).hexdigest()
+        for name in LEG_EXPORT_PAYLOAD_FILES
+    }
+    (export_dir / "export_sha256.json").write_text(
+        json.dumps(digests, indent=2, sort_keys=True), encoding="utf-8"
+    )
 
 
 def test_fractional_floor_resolution() -> None:
@@ -28,8 +40,55 @@ def test_absolute_floor_resolution() -> None:
     assert resolve_floor_count(135, 150) == 135
 
 
+def test_export_persists_empty_success_for_each_requested_media_id(tmp_path: Path) -> None:
+    run_dir = _two_leg_run(tmp_path, media_ids=[1, 2], zero_export={2})
+    row = {"media_id": 1, "identity_id": "id-1"}
+
+    class SparseIdentityClient:
+        def media_identities(self, media_ids: list[int]) -> list[dict[str, object]]:
+            assert media_ids == [1, 2]
+            return [row]
+
+        def clusters(self) -> list[dict[str, object]]:
+            return []
+
+    exported = export_leg(
+        SparseIdentityClient(), run_dir, "acx-dev-insightface"
+    )
+
+    assert exported.media_identity_results == [
+        {"media_id": 1, "query_succeeded": True, "rows": [row]},
+        {"media_id": 2, "query_succeeded": True, "rows": []},
+    ]
+
+
+def test_failed_batch_marks_all_requested_media_ids_unqueried(tmp_path: Path) -> None:
+    run_dir = _two_leg_run(tmp_path, media_ids=[1, 2], zero_export=set())
+
+    class FailedIdentityClient:
+        def media_identities(self, media_ids: list[int]) -> list[dict[str, object]]:
+            raise RuntimeError("batch unavailable")
+
+    with pytest.raises(RuntimeError, match="batch unavailable"):
+        export_leg(FailedIdentityClient(), run_dir, "acx-dev-insightface")
+
+    results = json.loads(
+        (
+            run_dir
+            / "legs"
+            / "acx-dev-insightface"
+            / "exports"
+            / "media_identity_results.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert results == [
+        {"media_id": 1, "query_succeeded": False, "rows": []},
+        {"media_id": 2, "query_succeeded": False, "rows": []},
+    ]
+
+
 def test_zero_detection_accepted_item_stays_in_denominator(tmp_path: Path) -> None:
-    """Roster-present zero-export item is a scored miss, not dropped from recall denom."""
+    """A successful empty per-id export is a scored miss, not join attrition."""
     run_dir = _two_leg_run(tmp_path, media_ids=[1, 2], zero_export={2})
     accepted = compute_accepted_set(run_dir)
     assert 2 in accepted.manifest_media_ids
@@ -40,6 +99,129 @@ def test_zero_detection_accepted_item_stays_in_denominator(tmp_path: Path) -> No
     assert accepted.zero_detection_media_count >= 1
     assert frames["zero_detection_media_count"] == accepted.zero_detection_media_count
     assert report_dir.exists()
+
+
+def test_unqueried_media_id_is_join_attrition(tmp_path: Path) -> None:
+    run_dir = _two_leg_run(tmp_path, media_ids=[1, 2], zero_export=set())
+    results_path = (
+        run_dir
+        / "legs"
+        / "acx-dev-fir"
+        / "exports"
+        / "media_identity_results.json"
+    )
+    results = json.loads(results_path.read_text(encoding="utf-8"))
+    results_path.write_text(
+        json.dumps([result for result in results if result["media_id"] != 2]),
+        encoding="utf-8",
+    )
+    _refresh_export_digest(results_path.parent)
+
+    accepted = compute_accepted_set(run_dir)
+
+    assert 2 not in accepted.manifest_media_ids
+    assert 1 in accepted.manifest_media_ids
+    assert accepted.attrition_join >= 1
+
+
+def test_attrition_keeps_all_failed_conditions_by_leg(tmp_path: Path) -> None:
+    run_dir = _two_leg_run(tmp_path, media_ids=[1, 2], zero_export=set())
+    stack_a = "acx-dev-insightface"
+    path_a = run_dir / "legs" / stack_a / "items.jsonl"
+    records_a = [json.loads(line) for line in path_a.read_text().splitlines() if line.strip()]
+    for record in records_a:
+        if record.get("manifest_media_id") == 2:
+            if record.get("phase") == "ingest":
+                record["terminal_ingest_outcome"] = "failure"
+            elif record.get("phase") == "analyze":
+                record["outcome"] = "failed"
+    path_a.write_text("\n".join(json.dumps(record) for record in records_a) + "\n", encoding="utf-8")
+    export_a = run_dir / "legs" / stack_a / "exports" / "media_identities.json"
+    export_rows_a = json.loads(export_a.read_text(encoding="utf-8"))
+    export_a.write_text(
+        json.dumps([row for row in export_rows_a if row.get("media_id") != 2]),
+        encoding="utf-8",
+    )
+    _refresh_export_digest(export_a.parent)
+
+    stack_b = "acx-dev-fir"
+    path_b = run_dir / "legs" / stack_b / "items.jsonl"
+    records_b = [json.loads(line) for line in path_b.read_text().splitlines() if line.strip()]
+    records_b = [
+        record
+        for record in records_b
+        if not (record.get("manifest_media_id") == 2 and record.get("phase") == "ingest")
+    ]
+    path_b.write_text("\n".join(json.dumps(record) for record in records_b) + "\n", encoding="utf-8")
+
+    accepted = compute_accepted_set(run_dir)
+    assert 2 not in accepted.manifest_media_ids
+    assert accepted.attrition_failures_by_media[2] == {
+        stack_a: ["ingest", "analyze"],
+        stack_b: ["ingest", "roster"],
+    }
+
+    from scripts.bench.score_report import write_attrition
+    from scripts.bench.corpus import ItemOutcomeStore, load_bench_manifest
+
+    manifest = load_bench_manifest(
+        run_dir / "manifest.json",
+        None,
+        metadata_only=True,
+        skip_hash_verification=True,
+        hash_skip_reason="attrition regression is metadata-only",
+    )
+    records_by = {
+        path.name: ItemOutcomeStore(path / "items.jsonl").read_all()
+        for path in (run_dir / "legs").iterdir()
+        if path.is_dir()
+    }
+    write_attrition(run_dir, accepted, manifest, records_by)
+    missing = json.loads((run_dir / "score" / "attrition.json").read_text())["missing"]
+    row = next(row for row in missing if row["manifest_media_id"] == 2)
+    assert row["phase"] == "ingest"
+    assert row["failed_conditions_by_stack"] == accepted.attrition_failures_by_media[2]
+
+
+def test_attrition_records_post_accept_detection_exclusion(tmp_path: Path) -> None:
+    run_dir = _two_leg_run(tmp_path, media_ids=[1], zero_export=set())
+    accepted = compute_accepted_set(run_dir)
+    assert accepted.manifest_media_ids == [1]
+    assert accepted.detection_scoring_set == []
+    from scripts.bench.score_report import write_attrition
+    from scripts.bench.corpus import ItemOutcomeStore, load_bench_manifest
+
+    manifest = load_bench_manifest(
+        run_dir / "manifest.json",
+        None,
+        metadata_only=True,
+        skip_hash_verification=True,
+        hash_skip_reason="attrition regression is metadata-only",
+    )
+    records_by = {
+        path.name: ItemOutcomeStore(path / "items.jsonl").read_all()
+        for path in (run_dir / "legs").iterdir()
+        if path.is_dir()
+    }
+    write_attrition(run_dir, accepted, manifest, records_by)
+    payload = json.loads((run_dir / "score" / "attrition.json").read_text())
+    assert payload["post_accept_exclusions"] == [
+        {"manifest_media_id": 1, "reason": "entry_not_detection_exhaustive"}
+    ]
+
+
+def test_attrition_written_before_cluster_gate_refusal(tmp_path: Path, monkeypatch) -> None:
+    run_dir = _two_leg_run(tmp_path, media_ids=[1, 2], zero_export=set())
+    cluster_path = run_dir / "legs" / "acx-dev-fir" / "cluster_job.json"
+    cluster_path.write_text(json.dumps({"status": "failed"}), encoding="utf-8")
+    monkeypatch.setattr("scripts.bench.score_report._require_prov01_preflights", lambda root, stacks: True)
+
+    with pytest.raises(BenchError) as exc:
+        score_head_to_head(run_dir)
+
+    assert exc.value.code == "cluster_gate_refused"
+    assert (run_dir / "score" / "accepted_set.json").is_file()
+    assert (run_dir / "score" / "attrition.json").is_file()
 
 
 def test_analyze_failure_is_not_ingest_attrition(tmp_path: Path) -> None:
@@ -69,6 +251,7 @@ def test_analyze_failure_is_not_ingest_attrition(tmp_path: Path) -> None:
         export_path = run_dir / "legs" / stack / "exports" / "media_identities.json"
         rows = [r for r in json.loads(export_path.read_text()) if r.get("media_id") != 2]
         export_path.write_text(json.dumps(rows), encoding="utf-8")
+        _refresh_export_digest(export_path.parent)
     accepted = compute_accepted_set(run_dir)
     assert 2 not in accepted.manifest_media_ids
     assert accepted.attrition_ingest_analyze >= 1
@@ -95,7 +278,7 @@ def test_analyze_failure_is_not_ingest_attrition(tmp_path: Path) -> None:
     _ = attrition
 
 
-def test_join_attrition_when_ingest_row_missing(tmp_path: Path) -> None:
+def test_missing_ingest_row_is_ingest_attrition(tmp_path: Path) -> None:
     run_dir = _two_leg_run(tmp_path, media_ids=[1, 2], zero_export=set())
     for stack in ("acx-dev-insightface", "acx-dev-fir"):
         path = run_dir / "legs" / stack / "items.jsonl"
@@ -104,7 +287,12 @@ def test_join_attrition_when_ingest_row_missing(tmp_path: Path) -> None:
         path.write_text("\n".join(json.dumps(r) for r in recs) + "\n", encoding="utf-8")
     accepted = compute_accepted_set(run_dir)
     assert 2 not in accepted.manifest_media_ids
-    assert accepted.attrition_join >= 1
+    assert accepted.attrition_ingest_analyze == 1
+    assert accepted.attrition_join == 0
+    assert accepted.attrition_failures_by_media[2] == {
+        "acx-dev-insightface": ["ingest", "roster"],
+        "acx-dev-fir": ["ingest", "roster"],
+    }
     from scripts.bench.score_report import write_attrition
     from scripts.bench.corpus import ItemOutcomeStore, load_bench_manifest
 
@@ -123,7 +311,7 @@ def test_join_attrition_when_ingest_row_missing(tmp_path: Path) -> None:
     write_attrition(run_dir, accepted, manifest, records_by)
     payload = json.loads((run_dir / "score" / "attrition.json").read_text())
     missing = {row["manifest_media_id"]: row["phase"] for row in payload["missing"]}
-    assert missing.get(2) == "roster"
+    assert missing.get(2) == "ingest"
 
 
 def test_baseline_superset_checked_false_unless_run_asserted(tmp_path: Path) -> None:
@@ -151,6 +339,7 @@ def test_export_media_not_in_roster_fail_closed(tmp_path: Path) -> None:
     rows = json.loads(path.read_text())
     rows.append(foreign)
     path.write_text(json.dumps(rows), encoding="utf-8")
+    _refresh_export_digest(path.parent)
     with pytest.raises(BenchError) as exc:
         compute_accepted_set(run_dir)
     assert exc.value.code == "export_media_not_in_roster"
@@ -185,6 +374,7 @@ def test_manifest_id_echo_export_row_is_refused(tmp_path: Path) -> None:
             }
         )
         export_path.write_text(json.dumps(rows), encoding="utf-8")
+        _refresh_export_digest(export_path.parent)
     with pytest.raises(BenchError) as exc:
         compute_accepted_set(run_dir)
     assert exc.value.code == "export_media_not_in_roster"
@@ -209,10 +399,23 @@ def _write_leg(run_dir: Path, stack_id: str, ok_ids: list[int], *, zero_export: 
     zero_export = zero_export or set()
     leg = run_dir / "legs" / stack_id
     (leg / "exports").mkdir(parents=True, exist_ok=True)
+    profile = "insightface" if "insight" in stack_id else "face_pipeline"
+    runtime_fingerprint = {
+        "opencv_version": "5.0.0.93",
+        "opencv_major": 5,
+        "onnxruntime_version": "1.24.1",
+        "numpy_version": "2.5.1",
+        "scipy_version": "1.18.0",
+        "pillow_version": "12.3.0",
+        "hdbscan_version": "0.8.44",
+        "pgvector_version": "0.5.0",
+        "comparison_token": "0" * 64,
+    }
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     entries = {entry["media_id"]: entry for entry in manifest["entries"]}
     lines = []
     identities = []
+    identity_results = []
     for mid in ok_ids:
         entry = entries[mid]
         ingest = {
@@ -230,20 +433,27 @@ def _write_leg(run_dir: Path, stack_id: str, ok_ids: list[int], *, zero_export: 
         }
         lines.append(json.dumps(ingest))
         lines.append(json.dumps({**ingest, "phase": "analyze", "stack_media_id": mid}))
+        item_rows = []
         if mid not in zero_export:
-            identities.append(
-                {
-                    "identity_id": f"id-{mid}",
-                    "media_id": mid,
-                    "cluster_id": "c1",
-                    "cluster_label": "Alice Q",
-                    "is_auto_label": False,
-                    "bbox": {"x": 400, "y": 400, "width": 200, "height": 200},
-                }
-            )
+            identity = {
+                "identity_id": f"id-{mid}",
+                "media_id": mid,
+                "cluster_id": "c1",
+                "cluster_label": "Alice Q",
+                "is_auto_label": False,
+                "bbox": {"x": 400, "y": 400, "width": 200, "height": 200},
+            }
+            identities.append(identity)
+            item_rows.append(identity)
+        identity_results.append(
+            {"media_id": mid, "query_succeeded": True, "rows": item_rows}
+        )
     (leg / "items.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
     (leg / "cluster_job.json").write_text(json.dumps({"status": "completed"}), encoding="utf-8")
     (leg / "exports" / "media_identities.json").write_text(json.dumps(identities), encoding="utf-8")
+    (leg / "exports" / "media_identity_results.json").write_text(
+        json.dumps(identity_results), encoding="utf-8"
+    )
     (leg / "exports" / "clusters.json").write_text(
         json.dumps([{"id": "c1", "label": "Alice Q", "is_auto_label": False}]),
         encoding="utf-8",
@@ -252,22 +462,29 @@ def _write_leg(run_dir: Path, stack_id: str, ok_ids: list[int], *, zero_export: 
         json.dumps([{"cluster_id": "c1", "members": [{"media_id": m} for m in ok_ids if m not in zero_export]}]),
         encoding="utf-8",
     )
+    _refresh_export_digest(leg / "exports")
     (leg / "preflight.json").write_text(
         json.dumps(
             {
                 "stack_id": stack_id,
                 "base_url": "https://dev.api.altcontext.com"
                 if "insight" in stack_id
-                else "https://fir.api.altcontext.com",
+                else "https://fir.dev.api.altcontext.com",
                 "expected_profile": "insightface" if "insight" in stack_id else "face_pipeline",
                 "expected_pgvector_dim": 512 if "insight" in stack_id else 128,
                 "resolved_profile": "insightface" if "insight" in stack_id else "face_pipeline",
                 "resolved_pgvector_dim": 512 if "insight" in stack_id else 128,
                 "opencv_major": 5,
-                "opencv_major_source": "operator_attested",
+                "opencv_major_source": "service_reported",
                 "checked_at": "2026-07-29T00:00:00Z",
                 "ready_excerpt": {},
-                "health_detailed_excerpt": {},
+                "health_detailed_excerpt": {
+                    "model_cache": {
+                        "profile": profile,
+                        "detail": "numeric_runtime_fingerprint="
+                        + json.dumps(runtime_fingerprint),
+                    }
+                },
             }
         ),
         encoding="utf-8",
@@ -278,6 +495,9 @@ def _write_run_meta(run_dir: Path, tmp_path: Path, media_ids: list[int]) -> None
     from scripts.bench.tests.conftest import write_manifest
 
     manifest = write_manifest(tmp_path / "manifest.json", media_ids, roster=["Alice Q"])
+    manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
+    manifest_payload["iou_threshold"] = 0.5
+    manifest.write_text(json.dumps(manifest_payload), encoding="utf-8")
     pair = load_stack_pair(write_pair(tmp_path / "pair.yaml", valid_pair_dict(accepted_set_floor=0.5)))
     from scripts.bench.driver import init_run_dir
 

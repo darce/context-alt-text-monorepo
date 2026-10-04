@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from io import BytesIO
+
+from PIL import Image
+
+from scripts.bench.corpus import decode_image_dimensions
 from scripts.bench.export_map import match_detection_boxes
 from scripts.eval_harness.face_assignment import IOU_MATCH_THRESHOLD
 from scripts.eval_harness.face_metrics import ImageDetection, detection_pr
@@ -39,6 +44,17 @@ GT = [
     )
 ]
 W = H = 1000
+
+
+def test_exif_orientation_dimensions_stay_in_inference_pixel_frame() -> None:
+    image_bytes = BytesIO()
+    exif = Image.Exif()
+    exif[274] = 6  # Rotate 90 degrees for viewers that honor EXIF orientation.
+    Image.new("RGB", (640, 480), color=(10, 20, 30)).save(image_bytes, format="JPEG", exif=exif)
+
+    # Runtime adapters do not transpose EXIF orientation before inference.
+    # Keep stamped dimensions in the same stored-pixel frame as their boxes.
+    assert decode_image_dimensions(image_bytes.getvalue()) == (640, 480)
 
 
 def test_green_exact_overlap_matches() -> None:
@@ -185,7 +201,16 @@ def test_degenerate_leading_gt_indices_stay_on_original_list() -> None:
         "cluster_members": [],
     }
     join = {1: {"stack_media_id": 10, "image_width": W, "image_height": H}}
-    _det, id_n = to_face_metric_inputs(export, manifest, join, "primary", frame="native")
+    localization_counts: dict[str, int] = {}
+    _det, id_n = to_face_metric_inputs(
+        export,
+        manifest,
+        join,
+        "primary",
+        frame="native",
+        localization_counts=localization_counts,
+    )
     native = identification_pr(id_n)
     assert id_n[0].labeled == ["Alice Q"]
     assert native.true_positives == 1
+    assert localization_counts["degenerate_box_dropped"] == 1

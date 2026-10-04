@@ -57,8 +57,10 @@ import unicodedata
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path, PureWindowsPath
+from typing import Literal
 
 from pydantic import (
     BaseModel,
@@ -73,6 +75,10 @@ from pydantic import (
 from ._pathtext import _printable_message, _printable_path
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_ADJUDICATION_RECORD_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_HUMAN_ADJUDICATION_SOURCE_RE = re.compile(
+    r"^human_adjudicated:([A-Za-z0-9][A-Za-z0-9._-]{0,127})$"
+)
 
 
 def _validate_relative_image_path(value: str) -> str:
@@ -371,6 +377,9 @@ class ScoreInvariant(StrEnum):
     DETECTION_REQUIRES_HUMAN_ADJUDICATED_GT_LINEAGE = (
         "detection_requires_human_adjudicated_gt_lineage"
     )
+    DETECTION_REQUIRES_INDEPENDENT_GT_SOURCE = (
+        "detection_requires_independent_gt_source"
+    )
 
 
 # Published markdown explanation per fired invariant (S2R5-04). A refusal
@@ -421,6 +430,10 @@ REFUSAL_EXPLANATIONS: dict[ScoreInvariant, str] = {
     ScoreInvariant.DETECTION_REQUIRES_HUMAN_ADJUDICATED_GT_LINEAGE: (
         "detection P/R is not computed from ground-truth boxes without human-adjudicated "
         "lineage"
+    ),
+    ScoreInvariant.DETECTION_REQUIRES_INDEPENDENT_GT_SOURCE: (
+        "detection P/R is not computed from ground-truth boxes with missing, unrecognised, "
+        "or Buffalo-derived region provenance"
     ),
 }
 if frozenset(REFUSAL_EXPLANATIONS) != frozenset(ScoreInvariant):
@@ -494,6 +507,21 @@ class LabelSource(StrEnum):
     LEGACY_IMPORT = "legacy_import"
 
 
+class FaceBoxSource(StrEnum):
+    """Supported sources for independently checked ground-truth regions."""
+
+    IPTC = "iptc"
+    MWG = "mwg"
+    OPERATOR = "operator"  # Human-drawn regions are independent of detector proposals.
+
+
+class HistoricalFaceBoxSource(StrEnum):
+    """Recorded legacy region sources that are not independent ground truth."""
+
+    DETECTOR = "detector"
+    WORKBENCH = "workbench"
+
+
 class LabelDecision(StrEnum):
     """What the labeler decided about the face. ``inconclusive`` is a decision,
     not a confidence — the face is present but identity cannot be determined.
@@ -510,6 +538,34 @@ class LabelConfidence(StrEnum):
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
+
+
+class HumanAdjudicationRecord(BaseModel):
+    """Pinned corpus-curation evidence for one independently reviewed box.
+
+    Record IDs are resolved against ``GoldenManifest.adjudication_records``;
+    the review must be a confirmed, blind human pass by someone other than the
+    original box labeler. A free-form source string or an ID-shaped token alone
+    is not adjudication evidence.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    record_id: str = Field(pattern=_ADJUDICATION_RECORD_ID_RE.pattern)
+    media_id: int = Field(ge=1)
+    box_index: int = Field(ge=0)
+    reviewer_id: str = Field(min_length=1)
+    reviewer_kind: Literal["human"]
+    review_method: Literal["independent_blind_review"]
+    decision: Literal["confirmed"]
+    reviewed_at: datetime
+
+    @field_validator("reviewed_at")
+    @classmethod
+    def _review_time_must_be_timezone_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("reviewed_at must include a timezone")
+        return value
 
 
 # Private roots are LOCAL-ONLY: a personal photo is never publishable regardless of
@@ -869,7 +925,8 @@ class LabelLineage(BaseModel):
 
 class FaceBox(BaseModel):
     """A ground-truth face region: normalized centre (x, y) + size (w, h) in 0..1, an
-    optional confirmed identity name, and the region source (iptc | mwg).
+    optional confirmed identity name, and a supported region source (iptc | mwg |
+    operator, where operator means human-drawn).
 
     Persisted for ALL curated faces — named people AND anonymous strangers
     (``name=None``) — so a face-detection bake-off (FIR-1) has box-level ground truth,
@@ -895,8 +952,18 @@ class FaceBox(BaseModel):
     w: float
     h: float
     name: str | None = None
-    source: str  # iptc | mwg
+    source: FaceBoxSource | HistoricalFaceBoxSource
     lineage: LabelLineage | None = None
+    # Separate from the region source (iptc/mwg/operator): this source marker
+    # resolves to a HumanAdjudicationRecord before scoring.
+    adjudication_source: str | None = None
+
+    @field_validator("adjudication_source")
+    @classmethod
+    def _adjudication_source_has_record_id(cls, value: str | None) -> str | None:
+        if value is not None and _HUMAN_ADJUDICATION_SOURCE_RE.fullmatch(value) is None:
+            raise ValueError("adjudication_source must be human_adjudicated:<review_record_id>")
+        return value
 
 
 class GoldenEntry(BaseModel):
@@ -973,6 +1040,9 @@ class GoldenManifest(BaseModel):
     iou_threshold: float | None = Field(default=None, exclude_if=lambda value: value is None)
     roster: list[str]
     entries: list[GoldenEntry]
+    # Corpus-curation attestations are embedded in the pinned manifest so a
+    # score run can resolve every box-level human_adjudicated source offline.
+    adjudication_records: list[HumanAdjudicationRecord] = Field(default_factory=list)
     # FIR-5 S1: roster-name -> demographic cohort; keys validated ⊆ roster at load.
     roster_cohorts: dict[str, str] = Field(default_factory=dict)
 
@@ -1097,6 +1167,67 @@ class GoldenManifest(BaseModel):
                         entry_path=entry.path,
                     )
 
+    def _adjudication_references_resolve(self) -> None:
+        records: dict[str, HumanAdjudicationRecord] = {}
+        for record in self.adjudication_records:
+            if record.record_id in records:
+                raise ManifestError(
+                    f"human adjudication record id {record.record_id!r} is duplicated",
+                    invariant="adjudication_record_invalid",
+                )
+            records[record.record_id] = record
+
+        referenced: set[str] = set()
+        for entry_index, entry in enumerate(self.entries):
+            for box_index, box in enumerate(entry.face_boxes):
+                source = box.adjudication_source
+                if source is None:
+                    continue
+                match = _HUMAN_ADJUDICATION_SOURCE_RE.fullmatch(source)
+                if match is None:
+                    # FaceBox validates this shape; retain a fail-closed check
+                    # at the manifest cross-reference boundary as well.
+                    raise ManifestError(
+                        f"box adjudication_source is malformed: {source!r}",
+                        invariant="adjudication_record_invalid",
+                        entry_index=entry_index,
+                        entry_path=entry.path,
+                    )
+                record_id = match.group(1)
+                record = records.get(record_id)
+                if record is None:
+                    raise ManifestError(
+                        f"human adjudication record {record_id!r} is missing for "
+                        f"entry[{entry_index}] {_printable_path(entry.path)} box[{box_index}]",
+                        invariant="adjudication_record_invalid",
+                        entry_index=entry_index,
+                        entry_path=entry.path,
+                    )
+                if record.media_id != entry.media_id or record.box_index != box_index:
+                    raise ManifestError(
+                        f"human adjudication record {record_id!r} targets a different box",
+                        invariant="adjudication_record_invalid",
+                        entry_index=entry_index,
+                        entry_path=entry.path,
+                    )
+                if box.lineage is None or record.reviewer_id == box.lineage.labeler_id:
+                    raise ManifestError(
+                        f"human adjudication record {record_id!r} is not independent of "
+                        f"the original labeler",
+                        invariant="adjudication_record_invalid",
+                        entry_index=entry_index,
+                        entry_path=entry.path,
+                    )
+                referenced.add(record_id)
+
+        unused = set(records) - referenced
+        if unused:
+            raise ManifestError(
+                "human adjudication records must be referenced by a box: "
+                + ", ".join(sorted(unused)),
+                invariant="adjudication_record_invalid",
+            )
+
     @model_validator(mode="after")
     def _enforce_v3_invariants(self, info: ValidationInfo) -> GoldenManifest:
         if info.context and info.context.get("legacy"):
@@ -1105,6 +1236,7 @@ class GoldenManifest(BaseModel):
         self._boxes_cover_face_count()
         self._lineage_required_on_boxes()
         self._capture_session_required_when_exhaustive()
+        self._adjudication_references_resolve()
         return self
 
 

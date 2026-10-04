@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import importlib
+import re
 import uuid
-from unittest.mock import AsyncMock
+from pathlib import Path
+from unittest.mock import AsyncMock, Mock
 
 import numpy as np
 import pytest
@@ -15,6 +18,85 @@ from recognition.application.settings.clustering import ClusteringSettings
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import ClusterRepository, MemberRepository
+
+
+@pytest.mark.parametrize("marker", [None, "obsolete", "current"])
+def test_centroid_definition_marker_controls_rebuild(monkeypatch, marker) -> None:
+    migration = importlib.import_module("db.migrations.versions.001_identity_schema")
+    current_marker = getattr(migration, "CENTROID_DEFINITION_VERSION", "expected-current-version")
+    observed_marker = current_marker if marker == "current" else marker
+    ops = Mock()
+    ops.get_bind.return_value.execute.return_value.scalar.return_value = observed_marker
+    monkeypatch.setattr(migration, "_relkind", lambda *args: "m")
+    monkeypatch.setattr(migration, "_matview_centroid_typmod", lambda *args: migration.EMBEDDING_DIMENSION)
+    monkeypatch.setattr(migration, "_matview_owner_and_can_drop", lambda *args: ("original_owner", True))
+    monkeypatch.setattr(migration, "_current_user_quoted", lambda *args: ("healer", '"healer"'))
+    monkeypatch.setattr(migration, "_matview_create_privilege_gaps", lambda *args: [])
+    grants = (("reader", "SELECT", True),)
+    monkeypatch.setattr(migration, "_matview_nonowner_grants", lambda *args: grants)
+    monkeypatch.setattr(migration, "_missing_matview_grant_roles", lambda *args: ())
+    monkeypatch.setattr(migration, "_matview_owner_restore_blockers", lambda *args, **kwargs: [])
+    monkeypatch.setattr(migration, "_matview_stale_cluster_id_index", lambda *args: False)
+    restore = Mock()
+    monkeypatch.setattr(migration, "_restore_matview_owner_and_grants", restore)
+
+    migration.ensure_matview(ops)
+
+    statements = [call.args[0] for call in ops.execute.call_args_list]
+    drop = "DROP MATERIALIZED VIEW mv_identity_cluster_centroids"
+    if marker == "current":
+        assert drop not in statements
+        restore.assert_not_called()
+    else:
+        assert drop in statements
+        comment = f"COMMENT ON MATERIALIZED VIEW mv_identity_cluster_centroids IS '{current_marker}'"
+        create_index = next(i for i, sql in enumerate(statements) if "CREATE MATERIALIZED VIEW" in sql)
+        assert statements[create_index + 1] == comment
+        restore.assert_called_once_with(
+            ops, current_role="healer", owner="original_owner", grants=grants
+        )
+
+
+def test_centroid_sql_quality_weights_and_caps_each_media_item_once() -> None:
+    """The materialized view weights quality, then averages one vector per media item."""
+    migration = (
+        Path(__file__).resolve().parents[3]
+        / "db"
+        / "migrations"
+        / "versions"
+        / "001_identity_schema.py"
+    )
+    migration_source = migration.read_text(encoding="utf-8")
+    view_match = re.search(
+        r"CREATE MATERIALIZED VIEW IF NOT EXISTS mv_identity_cluster_centroids AS"
+        r"(?P<query>.*?)\n\s*\"\"\"",
+        migration_source,
+        flags=re.DOTALL,
+    )
+
+    assert view_match is not None, "centroid materialized view SQL must be present"
+    query = view_match.group("query")
+
+    assert "GREATEST(0.0, LEAST(1.0, COALESCE(mr.quality_score, 1.0)))" in query
+    assert re.search(
+        r"media_embeddings AS \(.*?GROUP BY cluster_id, tenant_id, media_id",
+        query,
+        flags=re.DOTALL,
+    )
+    assert re.search(
+        r"SUM\s*\(\s*unit_embedding\s*\*\s*array_fill\(\s*"
+        r"\(quality_weight / NULLIF\(media_quality_total, 0\)\)::real,\s*"
+        r"ARRAY\[\{EMBEDDING_DIMENSION\}\]\s*\)::vector\s*\)",
+        query,
+    )
+    assert re.search(
+        r"SUM\(quality_weight\) OVER\s*\(\s*PARTITION BY cluster_id, tenant_id, media_id\s*\)"
+        r" AS media_quality_total",
+        query,
+    )
+    assert "1.0 / SUM(quality_weight)" not in query
+    assert not re.search(r"unit_embedding\s*\*\s*quality_weight\b", query)
+    assert "AVG(me.media_embedding)" in query
 
 
 @pytest.fixture

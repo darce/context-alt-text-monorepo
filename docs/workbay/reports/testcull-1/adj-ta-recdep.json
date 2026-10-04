@@ -1,0 +1,357 @@
+{
+  "lane": "ta-recdep",
+  "base": "773138f240b3c38511cb26b8e51a0e0253d8f4b1",
+  "observed_checkout": "1b7bbd96571af6ef8c388a3f4a49f2456b64ef68",
+  "scope_note": "Report-only; no tests or production files changed. Findings cite the available checkout, which differs from the dispatched base. No history or network consulted. Shell/script lane owns no importable Python package; root pyproject sets package=false, so Python import-origin control does not apply. Managed lane-root interpreter used for all Python commands. No moves, merges or deletions proposed, so no module-name pins need updating.",
+  "baseline": {
+    "command": "$lane_root/.venv/bin/python -m pytest -p no:cacheprovider -q scripts/deploy/tests/test_recognition_deploy.py --durations=15",
+    "result": "pass - 216 passed, 8 skipped, 0 failed in 265.38s (4:25); all 46 named tests passed",
+    "slowest_tests": [
+      {
+        "test": "test_boot_smoke_timeout_fallback_bounds_logs_then_rms",
+        "seconds": 30.13
+      },
+      {
+        "test": "test_boot_smoke_logs_still_emitted_after_bounded_cleanup",
+        "seconds": 30.09
+      },
+      {
+        "test": "test_boot_smoke_computed_health_loop_budget[24]",
+        "seconds": 22.96
+      },
+      {
+        "test": "test_boot_smoke_health_loop_uses_full_wall_clock",
+        "seconds": 22.36
+      },
+      {
+        "test": "test_boot_smoke_computed_health_loop_budget[16]",
+        "seconds": 14.71
+      },
+      {
+        "test": "test_boot_smoke_owned_net_rm_on_create_timeout",
+        "seconds": 10.4
+      },
+      {
+        "test": "test_boot_smoke_health_passes_after_removed_diag_reserve",
+        "seconds": 6.52
+      },
+      {
+        "test": "test_actual_restart_failure_restores_after_confirmed_stopped_candidate[do_promote dev staging]",
+        "seconds": 6.29
+      },
+      {
+        "test": "test_boot_smoke_composite_deadline_covers_inner_caps",
+        "seconds": 6.23
+      },
+      {
+        "test": "test_actual_restart_failure_restores_after_confirmed_stopped_candidate[do_deploy dev]",
+        "seconds": 5.48
+      },
+      {
+        "test": "test_boot_smoke_port_timeout_fails_setup_explicitly",
+        "seconds": 5.36
+      },
+      {
+        "test": "test_manual_rollback_captures_stopped_current_generation",
+        "seconds": 4.91
+      },
+      {
+        "test": "test_actual_restart_failure_refuses_unowned_runtime_observation[wrong]",
+        "seconds": 4.76
+      },
+      {
+        "test": "test_manual_rollback_keeps_http_503_health_gate",
+        "seconds": 4.75
+      },
+      {
+        "test": "test_boot_smoke_first_probe_max_time_capped_by_remaining",
+        "seconds": 4.69
+      }
+    ],
+    "skips": "Six parameterizations of test_health_program_http and two of test_health_program_connection_refused skip on sandbox-forbidden AF_INET loopback bind (test file lines 4424-4433 and 4465-4473). These are outside the 46 assigned tests; no assigned case failed or skipped."
+  },
+  "items": [
+    {
+      "path": "scripts/deploy/tests/test_recognition_deploy.py",
+      "claimed": "REWRITE",
+      "ruling": "REFUTE",
+      "action": "KEEP",
+      "tests": [
+        "test_remote_build_is_generation_isolated_locked_and_deadlined",
+        "test_boot_smoke_has_outer_deadlines_and_curl_request_timeout",
+        "test_automatic_rollbacks_capture_failure_evidence_first",
+        "test_failure_evidence_probes_and_logs_are_deadline_bounded",
+        "test_restart_and_rollback_integration_points_are_deadlined",
+        "test_tag_promotion_confirms_registry_mapping_not_local_metadata",
+        "test_rollback_success_requires_post_restart_health_evidence",
+        "test_docker_credential_paths_are_not_globally_exported",
+        "test_restore_and_promote_serialize_on_shared_env_tag",
+        "test_do_restart_guards_remote_env_image_tag_before_compose",
+        "test_push_and_restart_failures_use_pre_candidate_evidence_phase",
+        "test_evidence_timeout_is_parsed_through_validated_deadline",
+        "test_do_restart_marks_post_restart_before_systemctl",
+        "test_do_restart_is_additive_then_flip",
+        "test_cutover_candidate_probe_requires_immutable_image_and_commit",
+        "test_do_restart_gates_canonical_health_before_flip_back",
+        "test_promote_gate_restores_topology_on_converge_failure",
+        "test_restore_runtime_topology_consumes_bak_files",
+        "test_flip_edge_alias_rewrites_only_allowlisted_proxy_targets",
+        "test_flip_edge_alias_writes_marker_before_caddy_rewrite",
+        "test_deploy_signal_traps_run_cutover_recovery",
+        "test_read_api_runtime_evidence_inspects_cutover_project",
+        "test_assert_rollback_fence_accepts_next_project_candidate",
+        "test_restore_edge_backups_uses_immutable_pre_cutover_snapshot",
+        "test_cutover_failure_restart_runtime_ignores_evidence_phase",
+        "test_prepare_producer_cli_verifies_image_and_scoped_load"
+      ],
+      "target": null,
+      "seam": null,
+      "production_change": "none",
+      "steps": [],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_recognition_deploy.py:638 - Seam: sliced do_build_remote body; asserts generation SHA directory, flock and three deadline call sites.",
+        "scripts/deploy/tests/test_recognition_deploy.py:671 - Seam: sliced do_boot_smoke body, smoke heredoc and source text; asserts outer deadline call counts, curl/diagnostic syntax, absence of ready and fixed default values.",
+        "scripts/deploy/tests/test_recognition_deploy.py:713 - Seam: sliced handle_failed_verification, _ship_selected_env and do_promote bodies; asserts evidence precedes each restore branch.",
+        "scripts/deploy/tests/test_recognition_deploy.py:732 - Seam: sliced capture_failure_evidence body; asserts three deadline sites plus health, ready and container log evidence.",
+        "scripts/deploy/tests/test_recognition_deploy.py:761 - Seam: sliced restart, registry restore, runtime restore and repair bodies; asserts deadline sites exist across four integrations.",
+        "scripts/deploy/tests/test_recognition_deploy.py:782 - Seam: sliced do_push_tag body; asserts registry_tag_digest_ref call rather than bare local image_digest_ref.",
+        "scripts/deploy/tests/test_recognition_deploy.py:805 - Seam: sliced restore_env_tag_to_rollback and restore_runtime_and_edge bodies; asserts fence, registry, topology, restart, health, edge restore, candidate abort and verify ordering.",
+        "scripts/deploy/tests/test_recognition_deploy.py:829 - Seam: source text; asserts no joint global credential export and presence of local_docker_with_config.",
+        "scripts/deploy/tests/test_recognition_deploy.py:943 - Seam: sliced restore, push, lock and registry bodies; asserts shared env-tag flock wraps fence; remote digest observed before tagging.",
+        "scripts/deploy/tests/test_recognition_deploy.py:1028 - Seam: sliced do_restart and ship_cutover_candidate_units bodies; asserts remote env-tag validation precedes rendered compose and candidate recreation.",
+        "scripts/deploy/tests/test_recognition_deploy.py:1231 - Seam: sliced verification, ship and promote bodies; asserts candidate/pre_candidate/post_restart branch-specific evidence arguments.",
+        "scripts/deploy/tests/test_recognition_deploy.py:1334 - Seam: sliced capture_failure_evidence body; asserts validated ACX_EVIDENCE_TIMEOUT independent of remote-command budget.",
+        "scripts/deploy/tests/test_recognition_deploy.py:1366 - Seam: sliced restart and recreate bodies; asserts evidence phase set before candidate start, disruption marker before live restart and reset afterward.",
+        "scripts/deploy/tests/test_recognition_deploy.py:3351 - Seam: sliced restart, ship and recreate bodies; asserts render/recreate/probe/flip before live restart; stop/remove/start candidate ordering.",
+        "scripts/deploy/tests/test_recognition_deploy.py:3370 - Seam: sliced probe_cutover_api_health and health_probe_program bodies; asserts candidate image ID and commit identity checks.",
+        "scripts/deploy/tests/test_recognition_deploy.py:3398 - Seam: sliced do_restart body; asserts canonical restart, health, digest, flip and abort ordering; candidate still probed.",
+        "scripts/deploy/tests/test_recognition_deploy.py:3448 - Seam: sliced promote_gate body; asserts convergence failure restores topology before sticky repository.",
+        "scripts/deploy/tests/test_recognition_deploy.py:3458 - Seam: sliced topology, edge and wrapper bodies; asserts compose/admin/unit/Caddy backup participants plus candidate abort.",
+        "scripts/deploy/tests/test_recognition_deploy.py:3494 - Seam: sliced flip_edge_alias body; asserts allowlisted route parsing, exact source count and reload syntax.",
+        "scripts/deploy/tests/test_recognition_deploy.py:3577 - Seam: sliced flip_edge_alias body; asserts timestamp/digest durable marker precedes sed route rewrite.",
+        "scripts/deploy/tests/test_recognition_deploy.py:3604 - Seam: sliced config initialization, trap installer, cleanup and restart bodies; asserts EXIT/HUP/INT/TERM recovery wiring and post-flip candidate enablement.",
+        "scripts/deploy/tests/test_recognition_deploy.py:3734 - Seam: sliced read_api_runtime_evidence body; asserts next compose file and acx-env-next project inspection.",
+        "scripts/deploy/tests/test_recognition_deploy.py:3741 - Seam: sliced assert_rollback_fence body; asserts canonical and next projects plus stopped-candidate handling.",
+        "scripts/deploy/tests/test_recognition_deploy.py:3764 - Seam: sliced restore_edge_backups body; asserts immutable pre-cutover snapshot and canonical-route requirement; no mutable flip.bak.",
+        "scripts/deploy/tests/test_recognition_deploy.py:3774 - Seam: sliced recovery, deploy and promote bodies; asserts recovery depends on disruption/traffic markers rather than diagnostic phase.",
+        "scripts/deploy/tests/test_recognition_deploy.py:3788 - Seam: source dispatch and sliced producer/scoped/aggregate bodies; asserts prepare-producer dispatch, image/scoped freshness/schema gate, aggregate checker kept distinct.",
+        "scripts/deploy/recognition-service.sh:1011 - CLI deploy/promote first materialize a pinned source snapshot; these tests currently inspect function text rather than run that public transaction.",
+        "scripts/deploy/tests/test_recognition_deploy.py:3150 - Existing restart transaction driver substitutes promote_gate, do_push_tag, do_build, do_verify and repository restore; it is not equivalent public-CLI evidence for those guarded branches.",
+        "scripts/deploy/tests/test_recognition_deploy.py:3915 - Producer driver replaces restart, promotion and scoped verification domain logic; cannot establish a CLI replacement preserves image/scoring admission guards.",
+        "scripts/deploy/tests/test_recognition_deploy.py:504 - Evidence harness replaces run_with_deadline, so observing its recorded budget alone does not prove real deadline enforcement.",
+        "scripts/deploy/tests/test_recognition_deploy.py:370 - Fake PATH tooling already exists for smoke, but no generic full CLI transaction fixture establishes all ordering, locking, credential and recovery defects above.",
+        "scripts/deploy/tests/test_recognition_deploy.py:3534 - Existing edge behavioral cases cover absent/exactly-one source route, not complete allowlisting, reload, durable-before-rewrite failure ordering.",
+        "scripts/deploy/tests/test_recognition_deploy.py:3694 - Signal behavior case replaces recover_interrupted_cutover with a marker writer, so it cannot replace recovery wiring plus post-flip enablement guard.",
+        "Condition (a) holds; a public CLI exists, but condition (c) is not established by current fixtures. Refute the blanket replacement now; retain each live guard until an external-tool-only CLI fixture and per-branch mutation evidence exist. This is not a finding that source checks are ideal or that a future rewrite is impossible."
+      ],
+      "canon": [
+        "TEST-12",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high",
+      "expected_suite_time_change_seconds": 0
+    },
+    {
+      "path": "scripts/deploy/tests/test_recognition_deploy.py",
+      "claimed": "REWRITE",
+      "ruling": "REFUTE",
+      "action": "KEEP",
+      "tests": [
+        "test_run_with_deadline_does_not_dup_stdin_through_fd3",
+        "test_emit_sanitized_evidence_is_hoisted_out_of_capture",
+        "test_sanitizer_sed_defined_once",
+        "test_function_body_does_not_overcapture_boot_smoke",
+        "test_restore_rollback_helpers_are_split"
+      ],
+      "target": null,
+      "seam": null,
+      "production_change": "none",
+      "steps": [],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_recognition_deploy.py:1244 - Seam: source-text slice of run_with_deadline; asserts forbids Bash 5.2 crash-shaped exec 3 duplication and requires stdin forwarding syntax.",
+        "scripts/deploy/tests/test_recognition_deploy.py:1324 - Seam: source text and sliced capture body; asserts emitter defined at top level rather than nested.",
+        "scripts/deploy/tests/test_recognition_deploy.py:1538 - Seam: source-text grep/count and sliced heredoc; asserts one sanitizer regex/definition and remote call instead of copied definition.",
+        "scripts/deploy/tests/test_recognition_deploy.py:1670 - Seam: private Python _function_body helper returning sliced shell bodies; asserts test-harness parser excludes subsequent top-level functions.",
+        "scripts/deploy/tests/test_recognition_deploy.py:3749 - Seam: sliced orchestrator, fence, registry and runtime bodies; asserts registry/runtime separation and helper responsibility boundaries.",
+        "scripts/deploy/recognition-service.sh:1487 - Explicit comment documents fd3 duplication crashing Bash 5.2 over bash -s command substitution; current platform green behavior cannot exclude that exact cross-version shape.",
+        "scripts/deploy/tests/test_recognition_deploy.py:1254 - Existing stdin command-substitution regression exercises behavior but does not establish every supported Bash version detects the forbidden fd3 implementation.",
+        "scripts/deploy/tests/test_recognition_deploy.py:1670 - Parser guard protects this test module rather than deployment CLI behavior; replacing it with CLI behavior would not detect overcapture while sliced-body consumers remain.",
+        "These cases intentionally assert placement, uniqueness, helper responsibility or a historical implementation shape. A black-box green result does not prove these exact defects are absent. Keep until the relevant architecture constraint is separately retired with evidence; no speculative clock/export/introspection API."
+      ],
+      "canon": [
+        "TEST-12",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high",
+      "expected_suite_time_change_seconds": 0
+    },
+    {
+      "path": "scripts/deploy/tests/test_recognition_deploy.py",
+      "claimed": "REWRITE",
+      "ruling": "MODIFY",
+      "action": "RESTAGE",
+      "tests": [
+        "test_boot_smoke_computed_health_loop_budget",
+        "test_boot_smoke_health_loop_uses_full_wall_clock",
+        "test_boot_smoke_health_passes_after_removed_diag_reserve",
+        "test_boot_smoke_pg_wait_is_seconds_bounded",
+        "test_boot_smoke_ready_probe_does_not_timeout_a_marginal_health_pass",
+        "test_boot_smoke_trap_handles_term_and_int",
+        "test_boot_smoke_last_curl_does_not_eat_diag_reserve",
+        "test_boot_smoke_first_probe_max_time_capped_by_remaining",
+        "test_boot_smoke_trap_still_rms_when_logs_hang",
+        "test_boot_smoke_pg_exec_per_call_timeout",
+        "test_boot_smoke_port_timeout_fails_setup_explicitly",
+        "test_boot_smoke_owned_net_rm_on_create_timeout",
+        "test_boot_smoke_timeout_fallback_bounds_logs_then_rms",
+        "test_boot_smoke_deadline_kill_still_emits_health_body"
+      ],
+      "target": null,
+      "seam": "scripts/deploy/recognition-service.sh:do_boot_smoke (assembled remote shell payload)",
+      "production_change": "Extract the existing remote smoke payload unchanged into scripts/deploy/lib/recognition-boot-smoke.sh and concatenate it with declare -f sanitize_deploy_diagnostic at the existing SSH boundary; preserve positionals, deadlines, traps and Bash compatibility. Do not add an injectable clock.",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/recognition-service.sh",
+            "scripts/deploy/lib/recognition-boot-smoke.sh"
+          ],
+          "do": "Seam step: move only the remote SMOKE heredoc body into a shell payload file; keep do_boot_smoke as the existing deadline/SSH wrapper. Read that local payload into stdin sent to the VM, with the existing sanitizer declaration, rather than installing a new remote dependency. Fail closed if the payload is unavailable. Existing production SSH composition and existing direct body execution are the two current consumers, not a speculative test API. Validate payload syntax and wrapper assembly before switching tests.",
+          "red_proof": "With fake external SSH, capture and execute the exact emitted payload; missing/empty payload must fail, an unhealthy image must remain rejected, and interrupt cleanup must still run. Demonstrate runtime and direct-test payload bytes match, including sanitizer.",
+          "after": []
+        },
+        {
+          "files": [
+            "scripts/deploy/tests/test_recognition_deploy.py"
+          ],
+          "do": "Test step after seam review: replace _boot_smoke_heredoc source slicing with execution of the shared runtime payload plus sanitizer emitted by sourcing SCRIPT and declare -f. Migrate all 14 named tests and all other consumers of that helper as compatibility maintenance; preserve each assertion and real-clock deadline semantics. Fake only Docker/curl/SSH outcomes. Run each per-test mutation below before deleting its prior slice path. Do not consolidate wall-clock coverage into one test: PG per-call, network ownership, port setup, fallback reaper, request remaining budget and outer signal cleanup are different defects. Retain both later-stage composite deadline integration tests at lines 2366 and 2433.",
+          "red_proof": "Each named test must fail under its listed red_proofs mutation while the unchanged implementation passes. Time-bearing mutations must use the real shell/process clock; an immediately returning fake timeout is not acceptable.",
+          "after": [
+            0
+          ]
+        },
+        {
+          "files": [
+            "scripts/deploy/tests/test_recognition_deploy.py"
+          ],
+          "do": "For test_boot_smoke_trap_handles_term_and_int only, have the fake first health curl emit a pipe/FIFO readiness notification after traps and both containers are established. Wait for that bounded notification, then signal the actual smoke process group. Remove the unconditional one-second delay; add a separate INT case only if supported noninteractive Bash signal semantics are verified. Do not change production trap logic or treat a fake recovery marker as proof of domain recovery.",
+          "red_proof": "Remove TERM trap/container cleanup: synchronized test must fail by missing API/PG removals or wrong exit status. A timeout while waiting for readiness must itself fail and reap the child.",
+          "after": [
+            1
+          ]
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_recognition_deploy.py:692 - Seam: real subprocess executing sliced remote SMOKE heredoc via _run_boot_smoke or direct Popen; asserts 16/24-second elapsed lower and upper bounds; failure with instant unhealthy HTTP.",
+        "scripts/deploy/tests/test_recognition_deploy.py:1980 - Seam: real subprocess executing sliced remote SMOKE heredoc via _run_boot_smoke or direct Popen; asserts 24-second elapsed lower/upper bounds for instant ECONNREFUSED.",
+        "scripts/deploy/tests/test_recognition_deploy.py:2001 - Seam: real subprocess executing sliced remote SMOKE heredoc via _run_boot_smoke or direct Popen; asserts late health success after old reserve window and elapsed bounds.",
+        "scripts/deploy/tests/test_recognition_deploy.py:2024 - Seam: real subprocess executing sliced remote SMOKE heredoc via _run_boot_smoke or direct Popen; asserts slow pg_isready failure in 2..7 seconds.",
+        "scripts/deploy/tests/test_recognition_deploy.py:1086 - Seam: real subprocess executing sliced remote SMOKE heredoc via _run_boot_smoke or direct Popen; asserts health succeeds despite a slow fake ready endpoint under outer deadline.",
+        "scripts/deploy/tests/test_recognition_deploy.py:2100 - Seam: real subprocess executing sliced remote SMOKE heredoc via _run_boot_smoke or direct Popen; asserts real process-group TERM yields 143/124 and removes API/PG containers; does not actually send INT.",
+        "scripts/deploy/tests/test_recognition_deploy.py:2280 - Seam: real subprocess executing sliced remote SMOKE heredoc via _run_boot_smoke or direct Popen; asserts one curl with max-time 6, failure logs and elapsed upper bound.",
+        "scripts/deploy/tests/test_recognition_deploy.py:2551 - Seam: real subprocess executing sliced remote SMOKE heredoc via _run_boot_smoke or direct Popen; asserts curl cap does not exceed health window and execution finishes within budget+4.",
+        "scripts/deploy/tests/test_recognition_deploy.py:2174 - Seam: real subprocess executing sliced remote SMOKE heredoc via _run_boot_smoke or direct Popen; asserts hung Docker logs still permit both container and volume removal.",
+        "scripts/deploy/tests/test_recognition_deploy.py:2192 - Seam: real subprocess executing sliced remote SMOKE heredoc via _run_boot_smoke or direct Popen; asserts 30-second fake pg exec is bounded below 6 seconds and PG removed.",
+        "scripts/deploy/tests/test_recognition_deploy.py:2211 - Seam: real subprocess executing sliced remote SMOKE heredoc via _run_boot_smoke or direct Popen; asserts hung docker port fails with setup-timeout message and both containers removed.",
+        "scripts/deploy/tests/test_recognition_deploy.py:2507 - Seam: real subprocess executing sliced remote SMOKE heredoc via _run_boot_smoke or direct Popen; asserts create timeout removes only network bearing run ownership nonce.",
+        "scripts/deploy/tests/test_recognition_deploy.py:2573 - Seam: real subprocess executing sliced remote SMOKE heredoc via _run_boot_smoke or direct Popen; asserts without GNU timeout, first removal follows logs start within 2.8 seconds.",
+        "scripts/deploy/tests/test_recognition_deploy.py:1681 - Seam: real subprocess executing sliced remote SMOKE heredoc via _run_boot_smoke or direct Popen; asserts real outer kill preserves sanitized health body and crash logs.",
+        "scripts/deploy/tests/test_recognition_deploy.py:307 - _boot_smoke_heredoc slices both sanitizer and nested SMOKE body out of SCRIPT.",
+        "scripts/deploy/tests/test_recognition_deploy.py:435 - Direct payload execution already uses fake external Docker/curl with real Bash, sleep and optional outer deadline.",
+        "scripts/deploy/recognition-service.sh:2990 - Existing do_boot_smoke composes sanitizer and remote body into deadline-bound SSH stdin; an extracted remote artifact can be shared without a new clock API.",
+        "scripts/deploy/recognition-service.sh:3273 - Budget logic uses Bash SECONDS; no existing injectable clock or current non-test clock consumer exists (REF-12).",
+        "scripts/deploy/tests/test_recognition_deploy.py:2366 - Later-stage composite deadline integration is a separate live guard and must remain.",
+        "scripts/deploy/tests/test_recognition_deploy.py:2433 - Separate composite kill-grace guard must remain.",
+        "scripts/deploy/tests/test_recognition_deploy.py:2131 - Signal test has an unconditional one-second delay after polling Docker run output; notify from first fake curl after setup instead.",
+        "Baseline - fallback logs test takes 30.13s while its logs-to-first-removal assertion remains under 2.8s; do not equate overall subprocess lifetime with cleanup latency or claim a clock fake preserves that guard."
+      ],
+      "canon": [
+        "TEST-12",
+        "TEST-16",
+        "TEST-04",
+        "TEST-14",
+        "TEST-15",
+        "TEST-19",
+        "TEST-08",
+        "TEST-24",
+        "REF-05",
+        "REF-12"
+      ],
+      "risk": "high",
+      "red_proofs": {
+        "test_boot_smoke_computed_health_loop_budget": "shorten health window to old diagnostic reserve or use iteration count",
+        "test_boot_smoke_health_loop_uses_full_wall_clock": "stop early after a fixed number of probes",
+        "test_boot_smoke_health_passes_after_removed_diag_reserve": "subtract trap diagnostic reserve from health budget",
+        "test_boot_smoke_pg_wait_is_seconds_bounded": "replace seconds-bounded readiness with budget-count iterations",
+        "test_boot_smoke_ready_probe_does_not_timeout_a_marginal_health_pass": "add ready probe after successful health",
+        "test_boot_smoke_trap_handles_term_and_int": "remove TERM cleanup trap or container removals",
+        "test_boot_smoke_last_curl_does_not_eat_diag_reserve": "start another curl in final poll interval",
+        "test_boot_smoke_first_probe_max_time_capped_by_remaining": "use uncapped request timeout greater than remaining health budget",
+        "test_boot_smoke_trap_still_rms_when_logs_hang": "remove bounded log collection or stop trap before cleanup",
+        "test_boot_smoke_pg_exec_per_call_timeout": "remove per-call pg timeout",
+        "test_boot_smoke_port_timeout_fails_setup_explicitly": "omit docker port timeout or skip failure cleanup",
+        "test_boot_smoke_owned_net_rm_on_create_timeout": "skip owned-network cleanup after timed-out create",
+        "test_boot_smoke_timeout_fallback_bounds_logs_then_rms": "remove fallback reaper or replace KILL with ignored TERM",
+        "test_boot_smoke_deadline_kill_still_emits_health_body": "omit EXIT last-health output or bypass sanitizer during kill cleanup"
+      },
+      "expected_suite_time_change": "Payload extraction: approximately 0 seconds. Readiness notification: about 1 second saved in the TERM case. No 16/24-second budget savings claimed; real timeout enforcement remains covered."
+    },
+    {
+      "path": "scripts/deploy/tests/test_recognition_deploy.py",
+      "claimed": "REWRITE",
+      "ruling": "REFUTE",
+      "action": "KEEP",
+      "tests": [
+        "test_term_after_traffic_flip_invokes_cutover_recovery"
+      ],
+      "target": null,
+      "seam": "scripts/deploy/recognition-service.sh:init_deploy_ocir_docker_config / install_deploy_interrupt_traps",
+      "production_change": "none",
+      "steps": [],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_recognition_deploy.py:3694 - Seam: sourced private configuration/trap entry point in a real subprocess, not full deploy CLI; recovery is substituted with marker write.",
+        "scripts/deploy/tests/test_recognition_deploy.py:3697 - Existing traps-ready sentinel is emitted after initialization and awaited before real process-group TERM; proposed readiness sentinel already exists.",
+        "scripts/deploy/tests/test_recognition_deploy.py:3704 - No actual traffic flip runs; the test proves registered TERM invokes the recovery hook and returns 143, not complete cutover recovery.",
+        "A full deploy CLI signal scenario is useful additional coverage, but cannot simply replace this hook contract with domain recovery faked successful. No source slicing or one-second delay here; retain this fast guard."
+      ],
+      "canon": [
+        "TEST-12",
+        "TEST-15",
+        "TEST-19",
+        "TEST-08",
+        "REF-12"
+      ],
+      "risk": "high",
+      "expected_suite_time_change_seconds": 0
+    }
+  ],
+  "lane_gate": {
+    "command": "$lane_root/.venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+    "result": "pass - 26 passed in 4.29s"
+  },
+  "validation": {
+    "json": "pass",
+    "coverage": "46 unique named tests, each in exactly one item",
+    "diff_check": "pass",
+    "python_origin": "not applicable: report/shell lane, no owned importable Python package"
+  },
+  "handoff_lines": [
+    "scripts/deploy/tests/test_recognition_deploy.py [test_remote_build_is_generation_isolated_locked_and_deadlined, test_boot_smoke_has_outer_deadlines_and_curl_request_timeout, test_automatic_rollbacks_capture_failure_evidence_first, test_failure_evidence_probes_and_logs_are_deadline_bounded, test_restart_and_rollback_integration_points_are_deadlined, test_tag_promotion_confirms_registry_mapping_not_local_metadata, test_rollback_success_requires_post_restart_health_evidence, test_docker_credential_paths_are_not_globally_exported, test_restore_and_promote_serialize_on_shared_env_tag, test_do_restart_guards_remote_env_image_tag_before_compose, test_push_and_restart_failures_use_pre_candidate_evidence_phase, test_evidence_timeout_is_parsed_through_validated_deadline, test_do_restart_marks_post_restart_before_systemctl, test_do_restart_is_additive_then_flip, test_cutover_candidate_probe_requires_immutable_image_and_commit, test_do_restart_gates_canonical_health_before_flip_back, test_promote_gate_restores_topology_on_converge_failure, test_restore_runtime_topology_consumes_bak_files, test_flip_edge_alias_rewrites_only_allowlisted_proxy_targets, test_flip_edge_alias_writes_marker_before_caddy_rewrite, test_deploy_signal_traps_run_cutover_recovery, test_read_api_runtime_evidence_inspects_cutover_project, test_assert_rollback_fence_accepts_next_project_candidate, test_restore_edge_backups_uses_immutable_pre_cutover_snapshot, test_cutover_failure_restart_runtime_ignores_evidence_phase, test_prepare_producer_cli_verifies_image_and_scoped_load]: REFUTE -> KEEP, steps 0 (TEST-12, TEST-15, TEST-19, REF-12)",
+    "scripts/deploy/tests/test_recognition_deploy.py [test_run_with_deadline_does_not_dup_stdin_through_fd3, test_emit_sanitized_evidence_is_hoisted_out_of_capture, test_sanitizer_sed_defined_once, test_function_body_does_not_overcapture_boot_smoke, test_restore_rollback_helpers_are_split]: REFUTE -> KEEP, steps 0 (TEST-12, TEST-15, TEST-19, REF-12)",
+    "scripts/deploy/tests/test_recognition_deploy.py [test_boot_smoke_computed_health_loop_budget, test_boot_smoke_health_loop_uses_full_wall_clock, test_boot_smoke_health_passes_after_removed_diag_reserve, test_boot_smoke_pg_wait_is_seconds_bounded, test_boot_smoke_ready_probe_does_not_timeout_a_marginal_health_pass, test_boot_smoke_trap_handles_term_and_int, test_boot_smoke_last_curl_does_not_eat_diag_reserve, test_boot_smoke_first_probe_max_time_capped_by_remaining, test_boot_smoke_trap_still_rms_when_logs_hang, test_boot_smoke_pg_exec_per_call_timeout, test_boot_smoke_port_timeout_fails_setup_explicitly, test_boot_smoke_owned_net_rm_on_create_timeout, test_boot_smoke_timeout_fallback_bounds_logs_then_rms, test_boot_smoke_deadline_kill_still_emits_health_body]: MODIFY -> RESTAGE, steps 3 (TEST-12, TEST-16, TEST-04, TEST-14, TEST-15, TEST-19, TEST-08, TEST-24, REF-05, REF-12)",
+    "scripts/deploy/tests/test_recognition_deploy.py [test_term_after_traffic_flip_invokes_cutover_recovery]: REFUTE -> KEEP, steps 0 (TEST-12, TEST-15, TEST-19, TEST-08, REF-12)"
+  ],
+  "command_results": [
+    "$lane_root/.venv/bin/python -m pytest -p no:cacheprovider -q scripts/deploy/tests/test_recognition_deploy.py --durations=15: pass - 216 passed, 8 skipped, 0 failed",
+    "$lane_root/.venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q: pass - 26 passed, 0 failed (also repeated after report edit)",
+    "$lane_root/.venv/bin/python -c \"import json,sys; json.load(open(sys.argv[1]))\" docs/workbay/reports/testcull-1/adj-ta-recdep.json: pass - valid JSON",
+    "git diff --check: pass - no whitespace errors"
+  ]
+}

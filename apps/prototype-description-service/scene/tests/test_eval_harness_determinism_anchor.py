@@ -67,11 +67,12 @@ _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-report.md"
 # (was structural 0). Digests rewritten with the G-02 regen.
 # VLM6-DELTA-09: regenerated for FIR-11 v3 (annotation_mode required, per-box
 # lineage — build_caption_anchor_manifest fix, VLM6-DELTA-04).
+# DEBTFIX-1 R4: schema defaults, prompt-free identity, strict lineage refusals.
 _FROZEN_DIGESTS = {
-    _MAN.name: "a13875aeed9803ea416360098f0ed477baa1a5ce42fcbad67f481ac64a36060a",
-    _RUN.name: "bc5a2e44d7ac5ed42893ac37bd5807aed3c6a79f9c843d8802f06ad4d0d32bc3",
-    _REPORT_JSON.name: "0c937e7daa8eca3077839d21817873e1c1c33e32dfba86b0ceeb38ffccaf44e0",
-    _REPORT_MD.name: "b6307a591d71c71307276a7b449a574bac90e43cbbca4e9b82ad34ceb36e527d",
+    _MAN.name: "35c71a00df36e317a683ce1802078d6aef2da101baf48900a8de667c1e04d2ca",
+    _RUN.name: "5589c910f6e20d640aca38e77db1d31d06fdc45605a28453c2115229444f38f2",
+    _REPORT_JSON.name: "ca9d5e664df60f7a00c69af2e1f2853300b63ff926085315141f7d3c668f594a",
+    _REPORT_MD.name: "5f0f44ef45729af07b8f2451ef6311b09aea4806d3ac41695e793f9c6c315e50",
 }
 
 
@@ -314,7 +315,7 @@ def test_generator_regenerates_byte_identical_committed_anchor(tmp_path: Path) -
         )
     )
     assert manifest_sha == expected_sha
-    assert manifest_sha.startswith("18d7fc6f")  # PRIV-1 pseudonymisation regen
+    assert manifest_sha.startswith("2368816a")  # DEBTFIX-1 R4: validated schema defaults
     assert man_path.read_bytes() == _MAN.read_bytes()
     assert run_path.read_bytes() == _RUN.read_bytes()
     assert report_json.read_bytes() == _REPORT_JSON.read_bytes()
@@ -1095,3 +1096,52 @@ def test_write_face_anchor_ignores_empty_golden_images_dir(tmp_path: Path, monke
     assert report_json.is_file()
     assert report_md.is_file()
     assert manifest_sha
+
+
+def test_roster_only_legacy_boxes_publish_refusals_and_keep_captions() -> None:
+    from scripts.eval_harness.manifest import ManifestError
+
+    manifest = GoldenManifest.model_validate(build_caption_anchor_manifest(load_manifest(
+        str(_GOLDEN), skip_hash_verification=True,
+        hash_skip_reason="metadata-only test", metadata_only=True,
+    )))
+    record = build_run_record(manifest, fixture_revision="0" * 40,
+                              canonical_timestamp="2026-08-11T00:00:00Z")
+    entries = [dict(e.model_dump(), annotation_mode="roster_only") for e in manifest.entries]
+    scored = score_run_record(record, entries, rubric_gate="skip",
+                              run_manifest=manifest.model_dump())
+    lineage = "detection_requires_human_adjudicated_gt_lineage"
+    detection = scored["faces"]["detection"]
+    assert detection["invariant"] == "detection_refuses_roster_only"
+    assert lineage in detection["refusal_invariants"]
+    identification = scored["faces"]["identification"]
+    assert identification["refused"] is True
+    assert identification["invariant"] == lineage
+    assert identification["positional"]["evaluable"] is False
+    assert identification["positional"]["vacuity_signal"] == lineage
+    ordinary = score_run_record(record, entries, rubric_gate="skip")
+    assert scored["caption"] == ordinary["caption"]
+    entries = [entry for entry in entries if entry.get("face_boxes")]
+    for entry in entries:
+        entry["annotation_mode"] = "exhaustive"
+    with pytest.raises(ManifestError) as error:
+        score_run_record(record, entries, rubric_gate="skip", run_manifest=manifest.model_dump())
+    assert error.value.invariant == lineage
+
+
+def test_anchor_generator_stamps_actual_prompt_free_identity() -> None:
+    from scene.application.seeded_adapter import SeededDescriptionAdapter
+
+    manifest = load_manifest(str(_GOLDEN), skip_hash_verification=True,
+                             hash_skip_reason="metadata-only test", metadata_only=True)
+    record = build_run_record(manifest, fixture_revision="0" * 40,
+                              canonical_timestamp="2026-08-11T00:00:00Z")
+    adapter = SeededDescriptionAdapter()
+    provenance = record["provenance"]
+    assert provenance["adapter"] == adapter.kind.value
+    assert provenance["model_id"] == adapter.model_id
+    assert provenance["model_version"] == adapter.model_version
+    assert provenance["task_version"] == adapter.prompt_or_task_version
+    assert provenance["prompt_free"] is True
+    scored = score_run_record(record, [e.model_dump() for e in manifest.entries], rubric_gate="skip")
+    assert "attribution" not in scored["provenance"]["model"]

@@ -5,9 +5,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import numpy as np
-from scipy.optimize import linear_sum_assignment
 
-from scripts.eval_harness.face_assignment import IOU_MATCH_THRESHOLD
+from scripts.eval_harness.face_assignment import (
+    IOU_MATCH_THRESHOLD,
+    hungarian_iou_pairs,
+    iou_pixel_corner,
+)
 
 __all__ = [
     "IOU_MATCH_THRESHOLD",
@@ -44,17 +47,10 @@ def box_area_xyxy(box: tuple[float, float, float, float]) -> float:
 def iou_tl(a: Sequence[float], b: Sequence[float]) -> float:
     ax1, ay1, ax2, ay2 = _xyxy(a[0], a[1], a[2], a[3])
     bx1, by1, bx2, by2 = _xyxy(b[0], b[1], b[2], b[3])
-    aa = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
-    ba = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
-    if aa <= 0.0 or ba <= 0.0:
-        return 0.0
-    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
-    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
-    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
-    union = aa + ba - inter
-    if union <= 0.0:
-        return 0.0
-    return float(inter / union)
+    return iou_pixel_corner(
+        (ax1, ay1, ax2 - ax1, ay2 - ay1),
+        (bx1, by1, bx2 - bx1, by2 - by1),
+    )
 
 
 def hungarian_iou_matches(
@@ -74,10 +70,5 @@ def hungarian_iou_matches(
             val = iou_tl(pred, gt)
             matrix[i, j] = val
             pairwise.append(val)
-    row_ind, col_ind = linear_sum_assignment(-matrix)
-    pairs: list[tuple[int, int, float]] = []
-    for r, c in zip(row_ind, col_ind, strict=True):
-        iou_val = float(matrix[r, c])
-        if iou_val >= threshold:
-            pairs.append((int(r), int(c), iou_val))
+    pairs = hungarian_iou_pairs(matrix, threshold=threshold)
     return pairs, pairwise

@@ -452,6 +452,9 @@ def test_score_uses_full_manifest_occasions_and_caps_golden150_tiers(
     import hashlib
     import json
 
+    import pytest
+
+    from scripts.eval_harness.manifest import ManifestError
     from scripts.bench import score_report
     from scripts.bench.driver import init_run_dir
     from scripts.bench.export_map import LEG_EXPORT_PAYLOAD_FILES
@@ -478,7 +481,14 @@ def test_score_uses_full_manifest_occasions_and_caps_golden150_tiers(
             present_identities=["Alice Q"],
             face_boxes=[
                 _box(),
-                {"x": 0.0, "y": 0.0, "w": 0.0, "h": 0.0, "name": None, "source": "iptc"},
+                {
+                    "x": 0.1,
+                    "y": 0.1,
+                    "w": 0.2,
+                    "h": 0.2,
+                    "name": None,
+                    "source": "iptc",
+                },
             ],
         )
         entry["face_boxes"][0]["lineage"]["capture_session_id"] = (
@@ -587,7 +597,8 @@ def test_score_uses_full_manifest_occasions_and_caps_golden150_tiers(
     frames = json.loads((run_dir / "score" / "frames.json").read_text(encoding="utf-8"))
     assert frames["primary_claim"]["claim_type"] == "equivalence"
     assert frames["primary_claim"]["direction"] is None
-    assert frames["degenerate_box_dropped"] == {A_STACK: 4, B_STACK: 4}
+    # Both fixture boxes have usable geometry, so the localization pass drops none.
+    assert frames["degenerate_box_dropped"] == {A_STACK: 0, B_STACK: 0}
     expected_holm_family = [
         "detection_precision@frame_e2e/label_map_primary",
         "identification_recall@frame_e2e/label_map_primary",
@@ -623,3 +634,24 @@ def test_score_uses_full_manifest_occasions_and_caps_golden150_tiers(
     assert len(native_identification) == 2
     assert all(cell["tier"] == CrossbenchTier.DIRECTIONAL.value for cell in native_identification)
     assert all(cell["reason"] == "frame_fir5_native" for cell in native_identification)
+
+    # Preserve the strict scorer's refusal as a regression on a golden150 run.
+    invalid_manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    invalid_manifest["entries"][0]["face_boxes"][1].update(
+        {"x": 0.0, "y": 0.0, "w": 0.0, "h": 0.0}
+    )
+    invalid_manifest_bytes = json.dumps(invalid_manifest).encode("utf-8")
+    (run_dir / "manifest.json").write_bytes(invalid_manifest_bytes)
+    invalid_manifest_sha = hashlib.sha256(invalid_manifest_bytes).hexdigest()
+    (run_dir / "manifest.sha").write_text(f"{invalid_manifest_sha}\n", encoding="ascii")
+    monkeypatch.setattr(
+        score_report,
+        "GOLDEN150_MANIFEST_SHA256",
+        invalid_manifest_sha,
+    )
+    assert score_report._is_golden150_corpus(run_dir) is True
+    with pytest.raises(
+        ManifestError,
+        match="strict detection scoring requires usable localization geometry",
+    ):
+        score_report.score_head_to_head(run_dir)

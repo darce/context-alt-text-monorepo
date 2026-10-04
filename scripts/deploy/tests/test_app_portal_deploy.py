@@ -686,6 +686,75 @@ def test_apply_refuses_css_only_frontend_without_touching_live_tree(tmp_path: Pa
     assert not (tmp_path / "opt" / "acx-backend" / "app" / "staging").exists()
 
 
+@pytest.mark.parametrize(
+    "module_markup",
+    [
+        pytest.param(
+            '<template><script type="module" src="/assets/index.js"></script></template>',
+            id="template",
+        ),
+        pytest.param(
+            '<noscript><script type="module" src="/assets/index.js"></script></noscript>',
+            id="noscript",
+        ),
+        pytest.param(
+            '<script type="module" nomodule src="/assets/index.js"></script>',
+            id="nomodule",
+        ),
+        pytest.param(
+            '<script>const markup = "<script type=module src=/assets/index.js>";</script>',
+            id="script-body",
+        ),
+        pytest.param(
+            '<style>/* <script type="module" src="/assets/index.js"> */</style>',
+            id="style-body",
+        ),
+        pytest.param(
+            '<textarea><script type="module" src="/assets/index.js"></script></textarea>',
+            id="textarea-body",
+        ),
+        pytest.param(
+            '<title><script type="module" src="/assets/index.js"></script></title>',
+            id="title-body",
+        ),
+    ],
+)
+def test_apply_refuses_inert_module_frontend_before_staging(
+    tmp_path: Path, module_markup: str
+) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    www = _prior_www(tmp_path)
+    overlay = tmp_path / "opt" / "acx-backend" / "app" / "docker-compose.app.yml"
+    overlay.write_text("existing overlay\n", encoding="utf-8")
+    rollback = tmp_path / "opt" / "acx-backend" / "app" / "rollback"
+    rollback.mkdir()
+    (rollback / "operator-notes").write_text("keep\n", encoding="utf-8")
+    live_before = live.read_bytes()
+    www_before = _tree_files(www)
+    overlay_before = overlay.read_bytes()
+    rollback_before = _tree_files(rollback)
+    dist = _write_frontend(
+        tmp_path,
+        index=f'<link rel="stylesheet" href="/assets/index.css">{module_markup}',
+    )
+
+    result = _run(tmp_path, args=["--apply"], frontend=dist, live_caddy=live)
+    output = result.stdout + result.stderr
+
+    assert result.returncode != 0, output
+    assert "has no /assets/*.js module script entry" in output, output
+    assert "applied:" not in result.stdout
+    assert live.read_bytes() == live_before
+    assert _tree_files(www) == www_before
+    assert overlay.read_bytes() == overlay_before
+    assert _tree_files(rollback) == rollback_before
+    app_root = tmp_path / "opt" / "acx-backend" / "app"
+    assert not (app_root / "staging").exists()
+    assert not (app_root / "activation.journal").exists()
+    assert not any(" up -d " in f" {line} " for line in _log(tmp_path).splitlines())
+
+
 def test_apply_refuses_frontend_symlink_without_touching_live_tree(tmp_path: Path) -> None:
     live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
     _write_live_caddy(live)

@@ -22,13 +22,12 @@ import pytest
 from scripts.eval_harness.scan_stale_reports import (
     EXIT_CLEAN,
     EXIT_STALE,
-    IdentVerdict,
     REFUSED_IDENTIFICATION_KEYS,
+    IdentVerdict,
     classify_identification,
     provenance_contradictions,
     scan_payload,
 )
-
 
 _THIS = Path(__file__).resolve()
 _SCANNER = _THIS.parents[1] / "scan_stale_reports.py"
@@ -37,9 +36,7 @@ _SCANNER = _THIS.parents[1] / "scan_stale_reports.py"
 def _init_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(
-        ["git", "init"], cwd=repo, check=True, capture_output=True, text=True
-    )
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True)
     subprocess.run(["git", "config", "user.email", "t@t.test"], cwd=repo, check=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
     return repo
@@ -215,9 +212,7 @@ def test_numeric_identification_score_is_flagged(tmp_path: Path) -> None:
         "refused": False,
         "precision": 0.5,
         "recall": 0.5,
-        "per_identity": {
-            "Ada": {"precision": 0.5, "recall": 0.5, "tp": 1, "fp": 1, "fn": 1}
-        },
+        "per_identity": {"Ada": {"precision": 0.5, "recall": 0.5, "tp": 1, "fp": 1, "fn": 1}},
     }
     _track(repo, "docs/tasks/vlm/scored-report.json", _report(ident=ident))
     _commit(repo, "add numeric score")
@@ -433,10 +428,7 @@ def test_greenwashed_refusal_is_unrecognized(tmp_path: Path) -> None:
 def test_classifier_flags_greenwashed_refusal() -> None:
     verdict, reason = classify_identification(_greenwashed_ident())
     assert verdict is IdentVerdict.UNRECOGNIZED
-    assert reason == (
-        "refused block still publishes fn, fp, macro_recall, "
-        "tp, true_rejections, wrong_names"
-    )
+    assert reason == ("refused block still publishes fn, fp, macro_recall, tp, true_rejections, wrong_names")
 
 
 @pytest.mark.integration
@@ -466,11 +458,7 @@ def test_refused_whitelist_tracks_scorer_emitted_keys() -> None:
     """rg-015: scanner whitelist must match report.py's refused shape."""
     from scripts.eval_harness.report import _refused_identification_metric
 
-    emitted = frozenset(
-        _refused_identification_metric(
-            "identification_refuses_unboxed_identity_claims"
-        )
-    )
+    emitted = frozenset(_refused_identification_metric("identification_refuses_unboxed_identity_claims"))
     expected = frozenset(
         {
             "refused",
@@ -487,15 +475,13 @@ def test_refused_whitelist_tracks_scorer_emitted_keys() -> None:
         }
     )
     assert emitted == expected
-    assert REFUSED_IDENTIFICATION_KEYS == expected
+    assert expected == REFUSED_IDENTIFICATION_KEYS
 
 
 def test_scorer_emitted_refusal_classifies_clean() -> None:
     from scripts.eval_harness.report import _refused_identification_metric
 
-    block = _refused_identification_metric(
-        "identification_refuses_unboxed_identity_claims"
-    )
+    block = _refused_identification_metric("identification_refuses_unboxed_identity_claims")
     verdict, reason = classify_identification(block)
     assert verdict is IdentVerdict.REFUSED
     assert reason == "explicit refusal"

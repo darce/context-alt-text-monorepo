@@ -1,7 +1,7 @@
 {
   "tool": "ruff-format",
   "version": 1,
-  "total": 296,
+  "total": 293,
   "config_guard": {
     "format_options": {
       "indent-style": "space",
@@ -363,9 +363,6 @@
     "apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py": {
       "unformatted": 1
     },
-    "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d2_legacy_import_session.py": {
-      "unformatted": 1
-    },
     "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d3_extract_head_shas.py": {
       "unformatted": 1
     },
@@ -376,12 +373,6 @@
       "unformatted": 1
     },
     "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d4_cli_score_omits_annotation_mode.py": {
-      "unformatted": 1
-    },
-    "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e1_parent_mode_fill.py": {
-      "unformatted": 1
-    },
-    "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py": {
       "unformatted": 1
     },
     "apps/prototype-description-service/scripts/eval_harness/tests/test_regen_eval_report_gate.py": {

@@ -28,22 +28,25 @@ def test_analyze_rejects_too_many_media_items() -> None:
 
 
 @pytest.mark.asyncio
-async def test_analyze_rejects_oversized_json_before_parsing() -> None:
+@pytest.mark.parametrize("prefix", ["", "/recognition"])
+async def test_analyze_rejects_oversized_json_before_parsing(prefix: str) -> None:
     app = FastAPI()
-    app.include_router(analyze_router)
-    body = b"[" + b" " * MAX_ANALYZE_BODY_BYTES + b"]"
+    app.include_router(analyze_router, prefix=prefix)
+    # Invalid JSON ensures an unbounded route fails at parsing, before dependencies.
+    body = b"[" + b" " * MAX_ANALYZE_BODY_BYTES + b"!"
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/analyze", content=body, headers={"content-type": "application/json"})
+        response = await client.post(f"{prefix}/analyze", content=body, headers={"content-type": "application/json"})
 
     assert response.status_code == 413
 
 
 @pytest.mark.asyncio
-async def test_analyze_rejects_oversized_chunked_json_body() -> None:
+@pytest.mark.parametrize("prefix", ["", "/recognition"])
+async def test_analyze_rejects_oversized_chunked_json_body(prefix: str) -> None:
     app = FastAPI()
-    app.include_router(analyze_router)
+    app.include_router(analyze_router, prefix=prefix)
     transport = httpx.ASGITransport(app=app)
 
     async def body_chunks():
@@ -52,7 +55,7 @@ async def test_analyze_rejects_oversized_chunked_json_body() -> None:
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post(
-            "/analyze",
+            f"{prefix}/analyze",
             content=body_chunks(),
             headers={"content-type": "application/json"},
         )

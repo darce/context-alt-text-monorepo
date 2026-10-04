@@ -128,8 +128,6 @@ class _AnalyzeBodyLimitAPIRoute(APIRoute):
 
     def get_route_handler(self) -> Callable[[Request], Awaitable[Response]]:
         original_handler = super().get_route_handler()
-        if self.path != "/analyze" or "POST" not in (self.methods or set()):
-            return original_handler
 
         async def handler(request: Request) -> Response:
             await _read_bounded_analyze_body(request)
@@ -141,7 +139,6 @@ class _AnalyzeBodyLimitAPIRoute(APIRoute):
 router = APIRouter(
     tags=["analyze"],
     dependencies=[Depends(require_auth), Depends(enforce_rate_limit)],
-    route_class=_AnalyzeBodyLimitAPIRoute,
 )
 
 
@@ -762,7 +759,6 @@ async def _schedule_analysis(
     return queued_analyze_job_response(persisted_job_id, len(media_items))
 
 
-@router.post("/analyze", response_model=JobStatusResponse, status_code=status.HTTP_202_ACCEPTED)
 async def analyze_media(
     request: AnalyzeRequest,
     background_tasks: BackgroundTasks,
@@ -851,6 +847,18 @@ async def analyze_media(
             total_media_items,
             (_time.perf_counter() - started_at) * 1000,
         )
+
+
+# Attach the limit to this endpoint; include_router preserves its route class
+# when copying it under the production /recognition prefix.
+router.add_api_route(
+    "/analyze",
+    analyze_media,
+    methods=["POST"],
+    response_model=JobStatusResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    route_class_override=_AnalyzeBodyLimitAPIRoute,
+)
 
 
 @router.get("/jobs/{job_id}", response_model=JobStatusResponse)

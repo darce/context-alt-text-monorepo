@@ -19,6 +19,7 @@ import json
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -100,8 +101,15 @@ def decode_image_bytes_bgr(image_bytes: bytes) -> np.ndarray:
     return img
 
 
+def _manifest_json_default(value: object) -> str:
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
 def _manifest_sha(manifest: GoldenManifest) -> str:
-    canonical = json.dumps(manifest.model_dump(), sort_keys=True).encode()
+    # Preserve existing anchor hashes; only extend serialization for review dates.
+    canonical = json.dumps(manifest.model_dump(), sort_keys=True, default=_manifest_json_default).encode()
     return hashlib.sha256(canonical).hexdigest()
 
 

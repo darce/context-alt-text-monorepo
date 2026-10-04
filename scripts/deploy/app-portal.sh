@@ -565,7 +565,7 @@ frontend_asset_references() {
       while (i <= n) {
         if (raw_element != "") {
           raw_close = find_raw_close(document, lower_document, raw_element, i)
-          if (raw_close == 0) break
+          if (raw_close == 0) fail_scan("index.html contains undecidable <script> data")
           if (raw_close < 0) fail_scan("index.html ends inside an unterminated <" raw_element ">")
           i = raw_close
           raw_element = ""
@@ -618,7 +618,9 @@ frontend_asset_references() {
               inert_stack[++inert_depth] = parsed_tag_name
             }
           }
-          if (!parsed_tag_closing && parsed_tag_name == "plaintext") break
+          if (!parsed_tag_closing && parsed_tag_name == "plaintext") {
+            fail_scan("index.html contains unsupported <plaintext> data")
+          }
           if (!parsed_tag_closing &&
               (parsed_tag_name == "script" || parsed_tag_name == "style" ||
                parsed_tag_name == "textarea" || parsed_tag_name == "title" ||
@@ -632,6 +634,7 @@ frontend_asset_references() {
           fail_scan("index.html ends inside an unterminated tag")
         }
       }
+      if (inert_depth > 0) fail_scan("index.html ends inside an unterminated <template>")
     }
   ' "$1"
 }

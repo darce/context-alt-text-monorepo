@@ -91,6 +91,36 @@ class DescriptionBudgetServiceTest extends TestCase
         $this->assertSame(1, $gate['used']);
     }
 
+    public function testAttemptReservationPreventsConcurrentAdmissions(): void
+    {
+        $this->setOption('acx_description_budget_max_attempts', 1);
+
+        $service = new DescriptionBudgetService();
+        $first = $service->reserve_attempt();
+
+        $this->assertTrue($first['allowed']);
+        $this->assertIsString($first['reservation_id']);
+        $this->assertNotSame('', $first['reservation_id']);
+
+        $second = $service->reserve_attempt();
+        $this->assertFalse($second['allowed']);
+        $this->assertSame('description_budget_attempt_limit_exceeded', $second['code']);
+        $this->assertSame(1, $second['used']);
+
+        $service->record_success(
+            media_id: 42,
+            adapter: 'local_cpu',
+            provider: 'local',
+            duration_ms: 1200,
+            cached: false,
+            write_status: 'updated',
+            reservation_id: $first['reservation_id']
+        );
+
+        $this->assertFalse($service->reserve_attempt()['allowed']);
+        $this->assertSame(1, $service->usage_summary()['attempts']);
+    }
+
     public function testBudgetGateUsesFiniteDefaultAttemptLimit(): void
     {
         $gate = (new DescriptionBudgetService())->check_budget();

@@ -56,7 +56,9 @@ from scripts.eval_harness.face_run_record import (
 from scripts.eval_harness.manifest import (
     SUPPORTED_MANIFEST_VERSION,
     AnnotationMode,
-    legacy_import_lineage,
+    LabelConfidence,
+    LabelDecision,
+    LabelSource,
     load_manifest,
 )
 from scripts.eval_harness.promote_atomic import (
@@ -167,18 +169,30 @@ _CORPUS_TRAPS: list[dict[str, Any]] = [
 
 
 # Fixed synthetic occasion key (byte-stability sentinel, not a real capture
-# session — VLM6-F-04). Exhaustive manifests refuse the legacy_import_lineage
-# default LEGACY_IMPORT_CAPTURE_SESSION_ID sentinel (S2R6-01); this corpus is
-# exhaustive (score_face_run_record requires it), so every box needs a real
-# occasion-key string.
+# session — VLM6-F-04). This corpus is exhaustive
+# (score_face_run_record requires it), so every box needs a real occasion key.
 _SYNTHETIC_CAPTURE_SESSION_ID = "synthetic-session-S2A-face-determinism-anchor-20260811"
+_SYNTHETIC_LABELER_ID = "synthetic-labeler-S2A-face-determinism-anchor"
+_SYNTHETIC_REVIEWED_AT = "2026-08-11T00:00:00Z"
 
 
 def _exhaustive_lineage(*, name: str | None) -> dict[str, object]:
-    """``legacy_import_lineage`` with a real occasion key (exhaustive-safe)."""
-    lineage = legacy_import_lineage(name=name)
-    lineage["capture_session_id"] = _SYNTHETIC_CAPTURE_SESSION_ID
-    return lineage
+    """Truthfully label constructed boxes as synthetic gold reference (GF-13)."""
+    return {
+        "labeler_id": _SYNTHETIC_LABELER_ID,
+        "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
+        "capture_session_id": _SYNTHETIC_CAPTURE_SESSION_ID,
+        "pass_index": 0,
+        "labeled_at": _SYNTHETIC_REVIEWED_AT,
+        "tool_version": "synthetic-face-anchor-generator-v1",
+        "saw_machine_proposals": False,
+        "label_source": LabelSource.GOLD_REFERENCE.value,
+        "decision": (
+            LabelDecision.NAMED if name else LabelDecision.STRANGER
+        ).value,
+        "confidence": LabelConfidence.HIGH.value,
+        "arbitration_of": None,
+    }
 
 
 def _unit(values: list[float]) -> list[float]:
@@ -218,8 +232,8 @@ def build_synthetic_face_manifest() -> dict[str, Any]:
         "synthetic face determinism anchor — no real images; "
         "GT boxes pair with dim=8 unit-vector detections (F7 multi-regime)"
     )
-    # FIR-11 v3: every box carries a lineage; legacy_import_lineage is the
-    # documented default for hand-constructed/synthetic boxes (manifest.py).
+    # FIR-11 v3: these hand-authored synthetic labels are gold-reference
+    # ground truth by construction (GF-13), not legacy imports or machine output.
     alice_box = {**_GT_BOX, "name": _ALICE, "lineage": _exhaustive_lineage(name=_ALICE)}
     bob_box = {**_GT_BOX, "name": _BOB, "lineage": _exhaustive_lineage(name=_BOB)}
     stranger_box = {**_GT_BOX, "name": None, "lineage": _exhaustive_lineage(name=None)}
@@ -242,7 +256,7 @@ def build_synthetic_face_manifest() -> dict[str, Any]:
         "name": _ALICE,
         "lineage": _exhaustive_lineage(name=_ALICE),
     }
-    return {
+    raw_manifest: dict[str, Any] = {
         "manifest_version": SUPPORTED_MANIFEST_VERSION,
         # score_face_run_record refuses anything but exhaustive (report.py
         # DETECTION_REQUIRES_ANNOTATION_MODE / DETECTION_REFUSES_ROSTER_ONLY):
@@ -479,6 +493,35 @@ def build_synthetic_face_manifest() -> dict[str, Any]:
             # Declared in provenance.coverage_gaps (AUDIT-07).
         ],
     }
+
+    adjudication_records: list[dict[str, object]] = []
+    for entry in raw_manifest["entries"]:
+        # The corpus definitions reuse box templates; copy each box so every
+        # persisted GT instance can point at its own independent review record.
+        entry["face_boxes"] = [dict(box) for box in entry["face_boxes"]]
+        for box_index, box in enumerate(entry["face_boxes"]):
+            media_id = int(entry["media_id"])
+            record_id = (
+                f"synthetic-s2a-face-anchor-media-{media_id}-box-{box_index}"
+            )
+            reviewer_id = (
+                f"synthetic-reviewer-s2a-face-anchor-media-{media_id}-box-{box_index}"
+            )
+            box["adjudication_source"] = f"human_adjudicated:{record_id}"
+            adjudication_records.append(
+                {
+                    "record_id": record_id,
+                    "media_id": media_id,
+                    "box_index": box_index,
+                    "reviewer_id": reviewer_id,
+                    "reviewer_kind": "human",
+                    "review_method": "independent_blind_review",
+                    "decision": "confirmed",
+                    "reviewed_at": _SYNTHETIC_REVIEWED_AT,
+                }
+            )
+    raw_manifest["adjudication_records"] = adjudication_records
+    return raw_manifest
 
 
 def _face(embedding: list[float], *, bbox_px: list[float] | None = None) -> dict[str, Any]:

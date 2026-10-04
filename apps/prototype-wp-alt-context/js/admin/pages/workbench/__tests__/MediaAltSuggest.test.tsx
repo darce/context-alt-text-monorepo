@@ -48,6 +48,15 @@ vi.mock('../../../api/describeApi', async () => {
 const describeMock = vi.mocked(describeMedia);
 const correctMock = vi.mocked(correctDescriptionHistoryItem);
 
+const idempotencyKeyForCall = (callIndex: number): string => {
+  const idempotencyKey = describeMock.mock.calls[callIndex]?.[1]?.idempotencyKey;
+  if (typeof idempotencyKey !== 'string') {
+    throw new Error(`Expected describeMedia call ${callIndex + 1} to include an idempotency key.`);
+  }
+  expect(idempotencyKey).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
+  return idempotencyKey;
+};
+
 const draft = 'A stone bridge over a calm river at dusk.';
 const editedDraft = 'A stone bridge over the Aire at dusk, seen from the north bank.';
 
@@ -216,10 +225,11 @@ describe('MediaAltSuggest', () => {
     // mutationFn on a microtask, so await the generating affordance before asserting
     // the call landed (mirrors the awaited mutation pattern in MediaAltInlineEditor).
     expect(await screen.findByRole('button', { name: /generating/i })).toBeDisabled();
-    // [TEST-15] discrimination: goes red if it generates for the wrong id, or writes
-    // (a second positional arg / write_alt) instead of a read-only draft.
+    // [TEST-15] discrimination: goes red if it generates for the wrong id or adds
+    // unexpected write/lease options to the read-only draft request.
     expect(describeMock).toHaveBeenCalledTimes(1);
-    expect(describeMock).toHaveBeenCalledWith(42);
+    const idempotencyKey = idempotencyKeyForCall(0);
+    expect(describeMock).toHaveBeenCalledWith(42, { idempotencyKey });
   });
 
   it('shows the generated draft with a synthetic-authorship disclosure and verify cue [HAI-14][HAI-13]', async () => {
@@ -1279,7 +1289,11 @@ describe('MediaAltSuggest', () => {
     expect(await screen.findByText(regeneratedDraft)).toBeInTheDocument();
     expect(screen.queryByText(draft)).not.toBeInTheDocument();
     expect(describeMock).toHaveBeenCalledTimes(2);
-    expect(describeMock).toHaveBeenLastCalledWith(42);
+    const firstActionKey = idempotencyKeyForCall(0);
+    const regenerateKey = idempotencyKeyForCall(1);
+    expect(regenerateKey).not.toBe(firstActionKey);
+    expect(describeMock).toHaveBeenNthCalledWith(1, 42, { idempotencyKey: firstActionKey });
+    expect(describeMock).toHaveBeenLastCalledWith(42, { idempotencyKey: regenerateKey });
     // BR-02 companion: fresh draft lands in review, not a stale edit buffer.
     expect(screen.queryByLabelText(/edit draft alt text/i)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /accept/i })).toBeInTheDocument();
@@ -2917,8 +2931,13 @@ describe('MediaAltSuggest GPUFLOW warming and timing', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^retry$/i }));
 
     await screen.findByText(suggestStates.success_with_timing.alt_text_draft);
-    expect(describeMock).toHaveBeenNthCalledWith(1, 42);
-    expect(describeMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
+    const actionKey = idempotencyKeyForCall(0);
+    expect(describeMock).toHaveBeenNthCalledWith(1, 42, { idempotencyKey: actionKey });
+    expect(idempotencyKeyForCall(1)).toBe(actionKey);
+    expect(describeMock).toHaveBeenNthCalledWith(2, 42, {
+      idempotencyKey: actionKey,
+      operationId: 'op-lease-1',
+    });
   });
 
   it('renders the measured timing line from wire values including zero ramp-up', async () => {
@@ -2967,9 +2986,16 @@ describe('MediaAltSuggest GPUFLOW warming and timing', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('operation mismatch');
     expect(screen.queryByTestId('media-alt-suggest-warming')).not.toBeInTheDocument();
-    expect(describeMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
-    expect(describeMock).toHaveBeenNthCalledWith(3, 42);
     expect(describeMock).toHaveBeenCalledTimes(3);
+    const actionKey = idempotencyKeyForCall(0);
+    expect(describeMock).toHaveBeenNthCalledWith(1, 42, { idempotencyKey: actionKey });
+    expect(idempotencyKeyForCall(1)).toBe(actionKey);
+    expect(describeMock).toHaveBeenNthCalledWith(2, 42, {
+      idempotencyKey: actionKey,
+      operationId: 'op-lease-1',
+    });
+    expect(idempotencyKeyForCall(2)).toBe(actionKey);
+    expect(describeMock).toHaveBeenNthCalledWith(3, 42, { idempotencyKey: actionKey });
   });
 });
 
@@ -3007,7 +3033,13 @@ describe('MediaAltSuggest warming auto-retry and ceiling', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
-    expect(describeMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
+    const actionKey = idempotencyKeyForCall(0);
+    expect(describeMock).toHaveBeenNthCalledWith(1, 42, { idempotencyKey: actionKey });
+    expect(idempotencyKeyForCall(1)).toBe(actionKey);
+    expect(describeMock).toHaveBeenNthCalledWith(2, 42, {
+      idempotencyKey: actionKey,
+      operationId: 'op-lease-1',
+    });
     expect(screen.getByText(suggestStates.success_with_timing.alt_text_draft)).toBeInTheDocument();
   });
 
@@ -3127,6 +3159,13 @@ describe('MediaAltSuggest warming auto-retry and ceiling', () => {
     });
     expect(screen.getByTestId('media-alt-suggest-warming-timeout')).toBeInTheDocument();
     expect(describeMock).toHaveBeenCalledTimes(2);
+    const timedOutActionKey = idempotencyKeyForCall(0);
+    expect(describeMock).toHaveBeenNthCalledWith(1, 42, { idempotencyKey: timedOutActionKey });
+    expect(idempotencyKeyForCall(1)).toBe(timedOutActionKey);
+    expect(describeMock).toHaveBeenNthCalledWith(2, 42, {
+      idempotencyKey: timedOutActionKey,
+      operationId: 'op-lease-1',
+    });
 
     describeMock.mockReset();
     describeMock.mockResolvedValueOnce(suggestStates.success_with_timing as VisualFactsResponse);
@@ -3135,7 +3174,9 @@ describe('MediaAltSuggest warming auto-retry and ceiling', () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(describeMock).toHaveBeenCalledTimes(1);
-    expect(describeMock).toHaveBeenCalledWith(42);
+    const retryActionKey = idempotencyKeyForCall(0);
+    expect(retryActionKey).not.toBe(timedOutActionKey);
+    expect(describeMock).toHaveBeenCalledWith(42, { idempotencyKey: retryActionKey });
     expect(screen.getByText(suggestStates.success_with_timing.alt_text_draft)).toBeInTheDocument();
     expect(screen.queryByTestId('media-alt-suggest-warming-timeout')).not.toBeInTheDocument();
   });

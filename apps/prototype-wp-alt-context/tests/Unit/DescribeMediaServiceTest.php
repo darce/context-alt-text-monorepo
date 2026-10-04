@@ -36,6 +36,10 @@ class DescribeMediaServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $wpdb = $GLOBALS['wpdb'];
+        $lockName = 'acx_budget_lock_' . md5($wpdb->prefix);
+        $wpdb->queryResults[$wpdb->prepare('SELECT GET_LOCK(%s, %d)', $lockName, 1)] = '1';
+        $wpdb->queryResults[$wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lockName)] = '1';
         $this->setOption('acx_recognition_url', 'http://localhost:8000');
         $this->setOption('acx_recognition_api_key', 'test-key');
         $this->controller = new DescribeController();
@@ -1505,6 +1509,35 @@ class DescribeMediaServiceTest extends TestCase
 
         $this->assertInstanceOf(WP_Error::class, $result);
         $this->assertSame('describe_invalid_media_id', $result->get_error_code());
+        $this->assertSame(array(), $this->getHttpCalls());
+    }
+
+    public function testBudgetReservationFixtureGrantsOnlySiteBudgetLock(): void
+    {
+        $wpdb = $GLOBALS['wpdb'];
+        $gate = (new DescriptionBudgetService())->reserve_attempt();
+
+        $this->assertTrue($gate['allowed']);
+        $this->assertIsString($gate['reservation_id']);
+        $this->assertNull($wpdb->mockVar);
+        $this->assertNull($wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, %d)', 'unrelated-lock', 1)));
+    }
+
+    public function testBudgetLockRefusalBlocksBeforeBackendDispatch(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $wpdb = $GLOBALS['wpdb'];
+        $lockName = 'acx_budget_lock_' . md5($wpdb->prefix);
+        $wpdb->queryResults[$wpdb->prepare('SELECT GET_LOCK(%s, %d)', $lockName, 1)] = '0';
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_budget_reservation_unavailable', $result->get_error_code());
+        $this->assertSame(503, $result->get_error_data()['status'] ?? null);
         $this->assertSame(array(), $this->getHttpCalls());
     }
 

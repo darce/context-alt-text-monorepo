@@ -189,11 +189,26 @@ class ScanItemHandler:
                     # SET LOCAL bypass dies with the rolled-back txn; restore
                     # before status writes so FORCE RLS still updates the row
                     # (FIR-FINAL2-LOCAL-01).
-                    await enable_rls_bypass(session)
                     # Rollback released the original claim locks. Revalidate
                     # the attempt token and hold its row lock through the
                     # failure/retry commit so a newer claim cannot be changed.
-                    if not await self._lock_claim_item(session=session, item=item):
+                    try:
+                        await enable_rls_bypass(session)
+                        owns_claim = await self._lock_claim_item(session=session, item=item)
+                    except Exception:
+                        # A NOWAIT conflict or driver error cannot authorize a
+                        # failure write. Leave recovery to reclaim/stall cleanup.
+                        await session.rollback()
+                        logger.info(
+                            "[worker] SKIP unverifiable scan_item failure request_id=%s job_id=%s item_id=%s attempts=%s",
+                            request_id,
+                            item.job_id,
+                            item.id,
+                            item.attempts,
+                            exc_info=True,
+                        )
+                        return
+                    if not owns_claim:
                         await session.rollback()
                         logger.info(
                             "[worker] SKIP stale scan_item failure request_id=%s job_id=%s item_id=%s attempts=%s",

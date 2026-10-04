@@ -226,6 +226,23 @@ def _build_ready_app(
 
 
 @pytest.fixture(autouse=True)
+def _stub_insightface_runtime(monkeypatch):
+    """Isolate API probes from ONNX loading while preserving bundle checks."""
+    from recognition.application import health
+    from shared.health import HealthStatus
+
+    def _verified_bundle(cache_dir, model_name, bundle):
+        return health._with_numeric_runtime_fingerprint(
+            health.CheckResult("model_cache", HealthStatus.OK, f"verified: detector+recognition @ {bundle}")
+        )
+
+    health.reset_face_pipeline_verify_cache_for_tests()
+    monkeypatch.setattr(health, "_verify_insightface_bundle", _verified_bundle)
+    yield
+    health.reset_face_pipeline_verify_cache_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _clear_disk_headroom_settings_cache():
     """Keep cached headroom settings isolated from env-mutating probe tests."""
     from shared.disk_headroom import get_disk_headroom_settings

@@ -2276,6 +2276,9 @@ def _cmd_face_bakeoff(args: argparse.Namespace) -> None:
             # rg-015: dim comes from the leg's embedder (the producer), so an
             # injected leg with a different space cannot mislabel the record.
             embedding_dim=getattr(embedder, "embedding_dim", None),
+            # Record the detector's effective setting, including its default
+            # when --score-threshold was omitted.
+            detector_score_threshold=getattr(detector, "score_threshold", None),
             leg=args.leg,
             leg_mode=leg.leg_mode,
         )

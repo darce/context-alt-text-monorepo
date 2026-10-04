@@ -229,8 +229,8 @@ def test_secondary_holm_uses_real_bootstrap_p(tmp_path: Path) -> None:
         assert cell["tier"] == "CONFIRMATORY"
 
 
-def test_detection_excludes_boxless_from_precision(tmp_path: Path) -> None:
-    """Box-less accepted entry with a pred must not add an FP to detection precision."""
+def test_detection_counts_pred_on_zero_face_negative_as_fp(tmp_path: Path) -> None:
+    """A prediction on an annotated zero-face negative counts as a detection FP."""
     boxed = golden_entry(1, face_count=1, present_identities=["Alice Q"], face_boxes=[_box()])
     boxless = golden_entry(2, face_count=0, present_identities=[], face_boxes=[])
     run_dir = _init(tmp_path, [1, 2], [boxed, boxless])
@@ -239,13 +239,13 @@ def test_detection_excludes_boxless_from_precision(tmp_path: Path) -> None:
     _write_leg(run_dir, B_STACK, identities, [1, 2])
     score_head_to_head(run_dir)
     frames = json.loads((run_dir / "score" / "frames.json").read_text())
-    assert frames["detection_scoring_set_size"] == 1
+    assert frames["detection_scoring_set_size"] == 2
     prec = _cells(run_dir, SECONDARY_PREC)
     assert prec
     for cell in prec:
-        assert cell["false_positives"] == 0
+        assert cell["false_positives"] == 1
         assert cell["true_positives"] == 1
-        assert cell["precision"] == 1.0
+        assert cell["precision"] == 0.5
 
 
 def test_discordant_pair_widens_ci_through_score_path(tmp_path: Path) -> None:

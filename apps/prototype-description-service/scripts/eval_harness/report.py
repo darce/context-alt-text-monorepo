@@ -88,6 +88,7 @@ from .manifest import (
     compute_corpus_coverage_gaps,
     parse_annotation_mode,
     refusal_explanation,
+    require_confirmed_blind_reviews_for_strict_scoring,
 )
 from .placement_metrics import PlacementScores, placement_accuracy, score_placement
 from .schema import SCHEMA, DocKind
@@ -2180,6 +2181,8 @@ def score_run_record(
     """
     # identity_names lives in this module (VLM6-RH-07) — no lazy cli import.
     _validate_record_kind(run_record)
+    if run_manifest is not None:
+        require_confirmed_blind_reviews_for_strict_scoring(run_manifest)
     lineage_error = None
     if run_manifest is not None:
         for entry_index, entry in enumerate(manifest_entries):

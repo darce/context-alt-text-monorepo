@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from scripts.eval_harness.manifest import ManifestError, ScoreInvariant
+from scripts.eval_harness.manifest import GoldenManifest, ManifestError, ScoreInvariant
 from scripts.eval_harness.report import score_run_record
 
 
@@ -47,12 +47,34 @@ def test_exhaustive_detection_uses_ratified_run_manifest_threshold() -> None:
             "annotation_mode": "exhaustive",
         }
     ]
+    run_manifest = GoldenManifest.model_validate(
+        {
+            "manifest_version": 3,
+            "annotation_mode": "exhaustive",
+            "iou_threshold": 0.0,
+            "roster": [],
+            "entries": [
+                {
+                    "path": "mock_images/empty.jpg",
+                    "sha256": "a" * 64,
+                    "media_id": 1,
+                    "face_count": 0,
+                    "present_identities": [],
+                    "must_right": [],
+                    "easy_wrong": [],
+                    "policy": {"recognition_enabled": True},
+                    "face_boxes": [],
+                }
+            ],
+            "adjudication_records": [],
+        }
+    ).model_dump()
 
     with pytest.raises(ManifestError) as exc_info:
         score_run_record(
             run_record,
             entries,
-            run_manifest={"iou_threshold": 0.0},
+            run_manifest=run_manifest,
         )
 
     assert exc_info.value.invariant == ScoreInvariant.DETECTION_REQUIRES_RATIFIED_IOU_THRESHOLD

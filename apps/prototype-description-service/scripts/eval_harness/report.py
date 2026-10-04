@@ -67,6 +67,7 @@ from .face_metrics import (
     face_identification_pr,
     face_unknown_rejection,
     identification_pr,
+    has_independent_gt_region_source,
     has_human_adjudicated_gt_lineage,
     labeled_order,
     named_box_name,
@@ -4464,6 +4465,28 @@ def score_face_run_record(
             invariant=ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE,
         )
     require_exhaustive_box_coverage(entries)
+    for entry_index, entry in enumerate(entries):
+        for box_index, box in enumerate(entry.get("face_boxes") or []):
+            if not has_independent_gt_region_source(box):
+                raise ManifestError(
+                    "strict detection scoring requires an independent supported source "
+                    "on every GT box "
+                    f"(entry_index={entry_index}, box_index={box_index})",
+                    invariant=ScoreInvariant.DETECTION_REQUIRES_INDEPENDENT_GT_SOURCE,
+                    entry_index=entry_index,
+                    entry_path=str(entry.get("path", "")),
+                )
+    for entry_index, entry in enumerate(entries):
+        for box_index, box in enumerate(entry.get("face_boxes") or []):
+            if not has_human_adjudicated_gt_lineage(box):
+                raise ManifestError(
+                    "strict detection scoring requires human-adjudicated lineage "
+                    "on every GT box "
+                    f"(entry_index={entry_index}, box_index={box_index})",
+                    invariant=ScoreInvariant.DETECTION_REQUIRES_HUMAN_ADJUDICATED_GT_LINEAGE,
+                    entry_index=entry_index,
+                    entry_path=str(entry.get("path", "")),
+                )
     entry_by_id = _entry_index(entries)
     gt_by_media = _gt_by_media(entries)
     total_boxes = _total_gt_boxes(entries)
@@ -4471,6 +4494,21 @@ def score_face_run_record(
 
     items = list(face_run_record.get("items") or [])
     _assert_no_occlusion_marked_items(items)  # FIR5RR-08 / EVAL-16
+    manifest_media_ids = {int(entry["media_id"]) for entry in entries}
+    run_media_ids = [int(item["media_id"]) for item in items]
+    run_media_counts = Counter(run_media_ids)
+    missing_media_ids = sorted(manifest_media_ids - set(run_media_ids))
+    unexpected_media_ids = sorted(set(run_media_ids) - manifest_media_ids)
+    duplicate_media_ids = sorted(media_id for media_id, n in run_media_counts.items() if n > 1)
+    if missing_media_ids or unexpected_media_ids or duplicate_media_ids:
+        raise ManifestError(
+            "score_face_run_record requires exactly one run-record item for every "
+            "score-time manifest entry; population mismatch: "
+            f"missing_media_ids={missing_media_ids}, "
+            f"unexpected_media_ids={unexpected_media_ids}, "
+            f"duplicate_media_ids={duplicate_media_ids}",
+            invariant="face_run_population_mismatch",
+        )
     # Keep error items out of assignment but count them as failures.
     scoreable: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []

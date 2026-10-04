@@ -133,14 +133,16 @@ _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-face-report.md"
 # Regenerated 2026-10-03 (DEBTFIX-1 / DATA-03): the canonical manifest model dump
 # now includes adjudication_records and per-box adjudication_source defaults.
 # The persisted manifest bytes and scored metrics are unchanged; provenance hashes moved.
+# Regenerated 2026-10-04 after detection and missed-GT sampling-frame wording
+# changed; report structure and metric values are unchanged.
 _FROZEN_DIGESTS = {
     # VLM6-DELTA-08: regenerated for FIR-11 v3 (annotation_mode=exhaustive,
     # real capture_session_id on every box — the exhaustive gate refuses the
     # legacy_import_lineage unknown-occasion sentinel, S2R6-01).
     _MANIFEST.name: "b74ac3b3ea34358e1df435c8ca06ea063654eebe0b6440f94bbe004ab9ccf1c5",
     _RUN.name: "382c5f08dffd417abe638938d58c29be92517866060489d85d8a89ea7cc23827",
-    _REPORT_JSON.name: "e332b0502958555be85e4460bcbb6b5cdb9d489db8f55ebea54467c4142ce62b",
-    _REPORT_MD.name: "c4beb21936a902076d0bf051cfeb8e2a4bfb0951653a3225485b1cdbc4cc0640",
+    _REPORT_JSON.name: "65a84f2888ac1478601210a5631c867d51521938cd860d1e9db819c5523e76cb",
+    _REPORT_MD.name: "d3f8f76aeb3db44603242cedf6cc83caa425b6389d4c986b268d2159887dc608",
 }
 
 
@@ -457,11 +459,13 @@ def test_labeled_y_missing_constant_zero_goes_red_on_extended_corpus(
     from scripts.eval_harness.generate_face_determinism_anchor import (
         build_synthetic_face_manifest,
     )
+    from scripts.eval_harness.tests._reviewed_gt_fixtures import reviewed_report_entries
     from scripts.eval_harness import report as report_mod
     from scripts.eval_harness.report import score_run_record
 
     raw = build_synthetic_face_manifest()
     entries = list(raw["entries"])
+    reviewed_entries, review_manifest = reviewed_report_entries(entries)
     items = [
         {
             "media_id": e["media_id"],
@@ -490,7 +494,9 @@ def test_labeled_y_missing_constant_zero_goes_red_on_extended_corpus(
         },
     }
 
-    live = score_run_record(record, entries)["faces"]["identity_ordering"]
+    live = score_run_record(
+        record, reviewed_entries, review_manifest=review_manifest
+    )["faces"]["identity_ordering"]
     live_n = int(live["labeled_y_missing_images"])
     assert live_n >= 1, (
         f"extended corpus must make labeled_y_missing_images non-zero; got {live_n} "
@@ -508,7 +514,9 @@ def test_labeled_y_missing_constant_zero_goes_red_on_extended_corpus(
         )
 
     monkeypatch.setattr(report_mod, "labeled_order", _blind_constant_zero)
-    blind = score_run_record(record, entries)["faces"]["identity_ordering"]
+    blind = score_run_record(
+        record, reviewed_entries, review_manifest=review_manifest
+    )["faces"]["identity_ordering"]
     blind_n = int(blind["labeled_y_missing_images"])
     assert blind_n == 0, "mutation must force counter to 0"
     assert blind_n != live_n, (
@@ -642,14 +650,18 @@ def test_pre_harm01_detection_formula_goes_red_on_extended_freeze(
     """
     from scripts.eval_harness import report as report_mod
 
+    current_detection_from_assignment = report_mod._detection_from_assignment
+
     def _pre_harm01_detection(assignment):  # type: ignore[no-untyped-def]
-        tp = sum(len(a.pairs) for a in assignment.association_by_media.values())
-        fp = int(assignment.false_detections)
+        detection = current_detection_from_assignment(assignment)
         # Pre-HARM-01: named misses only — stranger misses invisible to detection.
-        fn = int(assignment.missed_gt)
-        precision = (tp / (tp + fp)) if (tp + fp) else 0.0
-        recall = (tp / (tp + fn)) if (tp + fn) else 0.0
-        return {"precision": precision, "recall": recall, "tp": tp, "fp": fp, "fn": fn}
+        detection["fn"] = int(assignment.missed_gt)
+        detection["recall"] = (
+            detection["tp"] / (detection["tp"] + detection["fn"])
+            if detection["tp"] + detection["fn"]
+            else 0.0
+        )
+        return detection
 
     freeze = json.loads(_REPORT_JSON.read_text())
     # Freeze must itself exercise the stranger-miss population (else control is vacuous).
@@ -793,7 +805,7 @@ def test_published_detection_recall_is_fixture_local_not_a_population_estimate()
     frame = str(det.get("sampling_frame") or "")
     assert frame, "detection must publish a sampling_frame"
     assert "all_gt_boxes" in frame
-    assert "missed_stranger_gt" in frame
+    assert "named and anonymous GT share one population" in frame and "anonymous misses feed unknown rejection" in frame
 
     md = _REPORT_MD.read_text()
     # Published rounded display — do not change these numbers (C-02).

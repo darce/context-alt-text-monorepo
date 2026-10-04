@@ -113,7 +113,7 @@
     "geometry_incomplete_gt": 1,
     "precision": 0.8571428571428571,
     "recall": 0.5454545454545454,
-    "sampling_frame": "all_gt_boxes_on_scoreable_media_via_association: named and anonymous GT share one population (HARM-01 / EVAL-16); TP=IoU-matched pairs; FN=unmatched complete GT (named missed_gt + missed_stranger_gt); FP=unmatched detections; geometry_incomplete_gt = GT boxes excluded from IoU (null/invalid centre-y; not detector FN); tp+fn+geometry_incomplete_gt equals GT boxes that reached association; association_complete=false when geometry_incomplete_gt>0; error-item media excluded from association (listed in failures)",
+    "sampling_frame": "all_gt_boxes_on_manifest_media: named and anonymous GT share one population (HARM-01 / EVAL-16); TP=IoU-matched pairs; FN=unmatched complete GT plus complete GT on error-item media; named misses feed identification and anonymous misses feed unknown rejection; FP=unmatched detections; geometry_incomplete_gt = GT boxes excluded from IoU (null/invalid centre-y; not detector FN); tp+fn+geometry_incomplete_gt equals the manifest GT population; association_complete=false when geometry_incomplete_gt>0; error-item media excluded from association (complete GT misses are attributed at report boundary; items remain listed in failures)",
     "tp": 6
   },
   "failures": [],
@@ -315,11 +315,11 @@
     "protocol_id": "fir-5-face-bakeoff-v0.11.0",
     "sampling_frames": {
       "clustering": "named_matched_faces_pairwise: P_same/P_diff pair floors; M==0 all-singletons guard; single-linkage diagnostic (GRPH-18)",
-      "detection": "all_gt_boxes_on_scoreable_media_via_association: named and anonymous GT share one population (HARM-01 / EVAL-16); TP=IoU-matched pairs; FN=unmatched complete GT (named missed_gt + missed_stranger_gt); FP=unmatched detections; geometry_incomplete_gt = GT boxes excluded from IoU (null/invalid centre-y; not detector FN); tp+fn+geometry_incomplete_gt equals GT boxes that reached association; association_complete=false when geometry_incomplete_gt>0; error-item media excluded from association (listed in failures)",
-      "full_corpus_identification": "full_corpus_named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag",
+      "detection": "all_gt_boxes_on_manifest_media: named and anonymous GT share one population (HARM-01 / EVAL-16); TP=IoU-matched pairs; FN=unmatched complete GT plus complete GT on error-item media; named misses feed identification and anonymous misses feed unknown rejection; FP=unmatched detections; geometry_incomplete_gt = GT boxes excluded from IoU (null/invalid centre-y; not detector FN); tp+fn+geometry_incomplete_gt equals the manifest GT population; association_complete=false when geometry_incomplete_gt>0; error-item media excluded from association (complete GT misses are attributed at report boundary; items remain listed in failures)",
+      "full_corpus_identification": "full_corpus_named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag; named complete GT on error-item media count as identification misses",
       "headline_identification": "celebs01_named_matched_probes (provenance.source==CELEB); named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag; error-item media excluded from association (attributable named GT misses remain in headline FN; listed in failures)",
       "occlusion_recovery": "eligible_twin_pairs: distinct_image_min_gallery AND gallery_n_identities>=2; re_detect_miss counts as incorrect only inside that frame",
-      "unknown_rejection": "stranger_probes_matched_plus_missed_gt: correct_reject=decision=reject; false_accept=decision=accept; missed_stranger_gt counted as failure in denominator (EVAL-16 / AUDIT-07); caller must pass missed_stranger_gt scoped to the same frame as decisions"
+      "unknown_rejection": "stranger_probes_matched_plus_missed_gt: correct_reject=decision=reject; false_accept=decision=accept; missed_stranger_gt counted as failure in denominator (EVAL-16 / AUDIT-07); caller must pass missed_stranger_gt scoped to the same frame as decisions; complete stranger GT on error-item media count as missed rejections"
     },
     "score_manifest_sha256": "c6cb9fd342f3de285d74125d37bab20e5806c941e1138a0d1b0f837de2d02cbf",
     "started_at": null,
@@ -424,7 +424,7 @@
       "recall": 0.5,
       "recall_denominator": 8,
       "recall_numerator": 4,
-      "sampling_frame": "full_corpus_named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag",
+      "sampling_frame": "full_corpus_named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag; named complete GT on error-item media count as identification misses",
       "tp": 4,
       "unmatched_detections": 1,
       "wrong_names": [

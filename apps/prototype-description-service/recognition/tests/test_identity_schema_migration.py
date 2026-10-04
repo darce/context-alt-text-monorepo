@@ -42,6 +42,12 @@ class _RecordingOp:
 
         class _FakeBind:
             def execute(self, stmt, params=None):  # noqa: ANN001
+                if str(stmt) == "SELECT current_setting(:name, true)":
+                    assert params == {"name": "app.bypass_rls"}
+                    return _FakeResult(("",))
+                if str(stmt) == "SELECT set_config(:name, :value, true)":
+                    assert params["name"] == "app.bypass_rls"
+                    return _FakeResult((params["value"],))
                 # These DDL-shape tests model a role allowed to create the view.
                 if "has_schema_privilege" in str(stmt) and "has_table_privilege" in str(stmt):
                     return _FakeResult(("public", True, True, True, True, True))

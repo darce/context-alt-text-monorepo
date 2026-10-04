@@ -3965,8 +3965,7 @@ def ensure_matview(op) -> None:
                 "python -m scripts.sync_identity_schema."
             )
     # WHY: FROM/JOIN tables + functions here are preflighted by _matview_create_privilege_gaps (C-01 ratchet).
-    op.execute(
-        f"""
+    create_matview_sql = f"""
         CREATE MATERIALIZED VIEW IF NOT EXISTS mv_identity_cluster_centroids AS
         WITH member_rows AS (
             SELECT
@@ -4084,7 +4083,9 @@ def ensure_matview(op) -> None:
         FROM cluster_embeddings
         WHERE identity_count >= 1;
         """
-    )
+    # FORCE RLS applies to the application owner too; populate all tenants
+    # only after every refusal preflight has succeeded.
+    _with_migration_rls_bypass(op, lambda: op.execute(create_matview_sql))
     if relkind is None or restore is not None:
         op.execute(
             "COMMENT ON MATERIALIZED VIEW mv_identity_cluster_centroids "

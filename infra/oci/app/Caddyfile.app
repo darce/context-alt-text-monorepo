@@ -3,6 +3,8 @@
 # Static SPA at /; backend portal API only under /portal.
 # Admin, webhooks, health, and description-service APIs stay off this vhost.
 app.altcontext.com {
+	header Strict-Transport-Security "max-age=31536000"
+
 	@admin path /admin /admin/*
 	respond @admin 404
 

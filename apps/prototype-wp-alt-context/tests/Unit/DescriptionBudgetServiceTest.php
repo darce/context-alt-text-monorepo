@@ -74,21 +74,26 @@ class DescriptionBudgetServiceTest extends TestCase
 
     public function testExpiredReservationsArePrunedOnAdmission(): void
     {
-        $this->setOption('acx_description_budget_max_attempts', 2);
+        $this->setOption('acx_description_budget_max_attempts', 3);
         $activeExpiry = time() + 3600;
+        $expiredReservation = [
+            'expires_at' => time() - 1,
+            'dispatched' => true,
+            'operation_id' => 'dispatched-before-expiry',
+        ];
         $this->setOption('acx_description_budget_reservations', [
-            'expired' => time() - 1,
+            'expired' => $expiredReservation,
             'active' => $activeExpiry,
         ]);
 
         $gate = (new DescriptionBudgetService())->reserve_attempt();
         $this->assertTrue($gate['allowed']);
-        $this->assertSame(2, $gate['used']);
+        $this->assertSame(3, $gate['used']);
         $stored = get_option('acx_description_budget_reservations');
-        $this->assertArrayNotHasKey('expired', $stored);
+        $this->assertSame($expiredReservation, $stored['expired']);
         $this->assertSame($activeExpiry, $stored['active']);
         $this->assertArrayHasKey($gate['reservation_id'], $stored);
-        $this->assertCount(2, $stored);
+        $this->assertCount(3, $stored);
     }
 
     public function testRecordsSuccessfulAndFailedUsageAttempts(): void

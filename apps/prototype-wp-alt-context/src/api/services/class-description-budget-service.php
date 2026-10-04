@@ -6,11 +6,16 @@ namespace AltContext\Api\Services;
 
 use AltContext\Sovereign\Repositories\DescriptionUsageRepository;
 
+use function array_key_exists;
 use function array_reduce;
 use function add_option;
 use function count;
 use function get_option;
 use function get_transient;
+use function is_array;
+use function is_bool;
+use function is_int;
+use function is_string;
 use function set_transient;
 use function update_option;
 use function wp_cache_delete;
@@ -67,7 +72,7 @@ class DescriptionBudgetService {
 	 *
 	 * @return array<string,mixed>
 	 */
-	public function reserve_attempt(): array {
+	public function reserve_attempt( ?string $operation_id = null ): array {
 		$limit = (int) get_option( self::MAX_ATTEMPTS_OPTION, self::DEFAULT_MAX_ATTEMPTS );
 		if ( $limit < 0 ) {
 			return array(
@@ -91,7 +96,8 @@ class DescriptionBudgetService {
 		try {
 			$limit        = (int) get_option( self::MAX_ATTEMPTS_OPTION, self::DEFAULT_MAX_ATTEMPTS );
 			$reservations = $this->active_budget_reservations();
-			$used        = count( $this->repository->all() ) + count( $reservations );
+			$usage_rows   = $this->repository->all();
+			$used         = count( $usage_rows ) + count( $reservations );
 			if ( $limit < 0 ) {
 				return array(
 					'allowed'        => true,
@@ -99,6 +105,30 @@ class DescriptionBudgetService {
 					'used'           => count( $this->repository->all() ),
 					'reservation_id' => null,
 				);
+			}
+
+			if ( null !== $operation_id ) {
+				foreach ( $usage_rows as $usage_row ) {
+					if ( $operation_id === ( $usage_row['operation_id'] ?? null ) ) {
+						return array(
+							'allowed'        => true,
+							'limit'          => $limit,
+							'used'           => $used,
+							'reservation_id' => null,
+						);
+					}
+				}
+
+				foreach ( $reservations as $existing_reservation_id => $reservation ) {
+					if ( is_array( $reservation ) && $operation_id === ( $reservation['operation_id'] ?? null ) ) {
+						return array(
+							'allowed'        => true,
+							'limit'          => $limit,
+							'used'           => $used,
+							'reservation_id' => $existing_reservation_id,
+						);
+					}
+				}
 			}
 
 			if ( $used >= $limit ) {
@@ -111,8 +141,12 @@ class DescriptionBudgetService {
 				);
 			}
 
-			$reservation_id                   = wp_generate_uuid4();
-			$reservations[ $reservation_id ] = time() + self::BUDGET_RESERVATION_TTL_SECONDS;
+			$reservation_id                  = wp_generate_uuid4();
+			$reservations[ $reservation_id ] = array(
+				'expires_at'   => time() + self::BUDGET_RESERVATION_TTL_SECONDS,
+				'dispatched'   => false,
+				'operation_id' => $operation_id,
+			);
 			if ( ! $this->store_budget_reservations( $reservations ) ) {
 				return array(
 					'allowed' => false,
@@ -128,6 +162,51 @@ class DescriptionBudgetService {
 				'used'           => $used + 1,
 				'reservation_id' => $reservation_id,
 			);
+		} finally {
+			$this->release_budget_lock( $budget_lock );
+		}
+	}
+
+	/**
+	 * Persist that dispatch is about to cross the backend boundary. An expired
+	 * dispatched reservation continues to count until its operation is settled.
+	 */
+	public function mark_attempt_dispatched( ?string $reservation_id, ?string $operation_id = null ): bool {
+		if ( null === $reservation_id ) {
+			return true;
+		}
+
+		$budget_lock = $this->acquire_budget_lock();
+		if ( null === $budget_lock ) {
+			return false;
+		}
+
+		try {
+			$reservations = $this->active_budget_reservations();
+			if ( ! array_key_exists( $reservation_id, $reservations ) ) {
+				if ( null !== $operation_id ) {
+					foreach ( $this->repository->all() as $usage_row ) {
+						if ( $operation_id === ( $usage_row['operation_id'] ?? null ) ) {
+							return true;
+						}
+					}
+				}
+
+				return false;
+			}
+
+			$reservation = $reservations[ $reservation_id ];
+			if ( is_int( $reservation ) ) {
+				$reservation = array(
+					'expires_at'   => $reservation,
+					'dispatched'   => false,
+					'operation_id' => null,
+				);
+			}
+			$reservation['dispatched']       = true;
+			$reservations[ $reservation_id ] = $reservation;
+
+			return $this->store_budget_reservations( $reservations );
 		} finally {
 			$this->release_budget_lock( $budget_lock );
 		}
@@ -230,7 +309,8 @@ class DescriptionBudgetService {
 		string $write_status,
 		float $cost_amount = 0.0,
 		?string $cost_currency = null,
-		?string $reservation_id = null
+		?string $reservation_id = null,
+		?string $operation_id = null
 	): array {
 		return $this->record_usage(
 			array(
@@ -243,6 +323,7 @@ class DescriptionBudgetService {
 				'write_status'  => $write_status,
 				'cost_amount'   => $cost_amount,
 				'cost_currency' => $cost_currency,
+				'operation_id'  => $operation_id,
 			),
 			$reservation_id
 		);
@@ -261,7 +342,8 @@ class DescriptionBudgetService {
 		string $source,
 		float $cost_amount = 0.0,
 		?string $cost_currency = null,
-		?string $reservation_id = null
+		?string $reservation_id = null,
+		?string $operation_id = null
 	): array {
 		return $this->record_usage(
 			array(
@@ -275,6 +357,7 @@ class DescriptionBudgetService {
 				'source'        => $source,
 				'cost_amount'   => $cost_amount,
 				'cost_currency' => $cost_currency,
+				'operation_id'  => $operation_id,
 			),
 			$reservation_id
 		);
@@ -314,11 +397,6 @@ class DescriptionBudgetService {
 	 * @param array<string,mixed> $recorded
 	 */
 	private function usage_insert_succeeded( array $recorded ): bool {
-		global $wpdb;
-		if ( isset( $wpdb ) && is_object( $wpdb ) && isset( $wpdb->rows_affected ) ) {
-			return 1 === (int) $wpdb->rows_affected;
-		}
-
 		return isset( $recorded['id'] );
 	}
 
@@ -354,7 +432,7 @@ class DescriptionBudgetService {
 	}
 
 	/**
-	 * @return array<string,int>
+	 * @return array<string,int|array<string,mixed>>
 	 */
 	private function active_budget_reservations(): array {
 		// Another worker may have written while this worker waited for the lock.
@@ -366,18 +444,75 @@ class DescriptionBudgetService {
 			return array();
 		}
 
-		$now = time();
-		foreach ( $reservations as $reservation_id => $expires_at ) {
-			if ( ! is_string( $reservation_id ) || ! is_int( $expires_at ) || $expires_at <= $now ) {
+		$operation_ids = array();
+		$changed       = false;
+		$now           = time();
+		foreach ( $reservations as $reservation_id => $reservation ) {
+			if ( ! is_string( $reservation_id ) ) {
 				unset( $reservations[ $reservation_id ] );
+				$changed = true;
+				continue;
 			}
+
+			if ( is_int( $reservation ) ) {
+				$expires_at = $reservation;
+				$dispatched = false;
+				$operation_id = null;
+			} elseif (
+				is_array( $reservation )
+				&& is_int( $reservation['expires_at'] ?? null )
+				&& is_bool( $reservation['dispatched'] ?? null )
+				&& ( null === ( $reservation['operation_id'] ?? null ) || is_string( $reservation['operation_id'] ) )
+			) {
+				$expires_at   = $reservation['expires_at'];
+				$dispatched   = $reservation['dispatched'];
+				$operation_id = $reservation['operation_id'];
+			} else {
+				unset( $reservations[ $reservation_id ] );
+				$changed = true;
+				continue;
+			}
+
+			if ( $dispatched && is_string( $operation_id ) ) {
+				$operation_ids[ $operation_id ] = true;
+			}
+
+			if ( $expires_at <= $now && ! $dispatched ) {
+				unset( $reservations[ $reservation_id ] );
+				$changed = true;
+			}
+		}
+
+		if ( count( $operation_ids ) > 0 ) {
+			$settled_operation_ids = array();
+			foreach ( $this->repository->all() as $usage_row ) {
+				$settled_operation_id = $usage_row['operation_id'] ?? null;
+				if ( is_string( $settled_operation_id ) && isset( $operation_ids[ $settled_operation_id ] ) ) {
+					$settled_operation_ids[ $settled_operation_id ] = true;
+				}
+			}
+
+			foreach ( $reservations as $reservation_id => $reservation ) {
+				if (
+					is_array( $reservation )
+					&& is_string( $reservation['operation_id'] ?? null )
+					&& isset( $settled_operation_ids[ $reservation['operation_id'] ] )
+				) {
+					unset( $reservations[ $reservation_id ] );
+					$changed = true;
+				}
+			}
+		}
+
+		if ( $changed ) {
+			$this->store_budget_reservations( $reservations );
 		}
 
 		return $reservations;
 	}
 
 	/**
-	 * @param array<string,int> $reservations
+	 * @param array<string,int|array<string,mixed>> $reservations
 	 */
 	private function store_budget_reservations( array $reservations ): bool {
 		if ( false === get_option( self::BUDGET_RESERVATIONS_OPTION, false ) ) {

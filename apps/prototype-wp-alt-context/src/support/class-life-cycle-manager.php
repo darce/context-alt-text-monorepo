@@ -896,6 +896,7 @@ class LifecycleManager {
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			occurred_at datetime NOT NULL,
 			media_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			operation_id varchar(128) DEFAULT NULL,
 			outcome varchar(20) NOT NULL,
 			adapter varchar(64) NOT NULL DEFAULT '',
 			provider varchar(64) NOT NULL DEFAULT '',
@@ -909,6 +910,7 @@ class LifecycleManager {
 			retryable tinyint(1) DEFAULT NULL,
 			error_source varchar(64) DEFAULT NULL,
 			PRIMARY KEY  (id),
+			UNIQUE KEY uq_operation_id (operation_id),
 			KEY idx_outcome_occurred (outcome, occurred_at),
 			KEY idx_media_occurred (media_id, occurred_at)
 		) {$charset_collate};";

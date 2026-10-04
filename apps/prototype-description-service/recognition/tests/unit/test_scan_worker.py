@@ -6,14 +6,18 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityClusteringJob
 from recognition.application.embedding.detector import DetectionAdapterError, StubFaceDetector
 from recognition.application.embedding.generator import StubEmbeddingGenerator
+from recognition.application.scan.queue_repository import ScanQueueItem
 from recognition.domain.job import JobStatus
 from recognition.worker import scan_worker as scan_worker_module
+from recognition.worker.handlers import scan as scan_handler_module
 from recognition.worker.handlers.base import JobHandler
+from recognition.worker.handlers.scan import ScanItemHandler
 
 
 class _FakeDetector:
@@ -1028,3 +1032,148 @@ async def test_unavailable_detector_demotes_sticky_ready_flag(
     assert worker._can_claim_scan_items() is False
 
     await worker.__aexit__(None, None, None)
+
+
+class _ClaimQueryResult:
+    def __init__(self, value: object | None) -> None:
+        self._value = value
+
+    def scalar_one_or_none(self) -> object | None:
+        return self._value
+
+
+class _ClaimCheckSession:
+    def __init__(self, query_results: list[object | None]) -> None:
+        self.query_results = list(query_results)
+        self.executed_statements: list[object] = []
+        self.commits = 0
+        self.rollbacks = 0
+
+    async def execute(self, statement: object) -> _ClaimQueryResult:
+        self.executed_statements.append(statement)
+        assert self.query_results, "unexpected claim ownership query"
+        return _ClaimQueryResult(self.query_results.pop(0))
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+    async def rollback(self) -> None:
+        self.rollbacks += 1
+
+
+class _ClaimCheckQueueRepository:
+    def __init__(self) -> None:
+        self.completed_items: list[uuid.UUID] = []
+
+    async def mark_item_completed(self, *, item_id: uuid.UUID, **_kwargs: object) -> None:
+        self.completed_items.append(item_id)
+
+
+class _IdentityWriteRecorder:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def process_media_item(self, **_kwargs: object) -> int:
+        self.calls += 1
+        return 0
+
+    def emit_pending_scan_media_reconciled(self) -> None:
+        return None
+
+
+def _make_claim_check_handler(
+    monkeypatch: pytest.MonkeyPatch, query_results: list[object | None]
+) -> tuple[
+    ScanItemHandler,
+    _ClaimCheckSession,
+    _ClaimCheckQueueRepository,
+    _IdentityWriteRecorder,
+    ScanQueueItem,
+]:
+    session = _ClaimCheckSession(query_results)
+    repo = _ClaimCheckQueueRepository()
+    scan_service = _IdentityWriteRecorder()
+    item = ScanQueueItem(
+        id=uuid.uuid4(),
+        job_id=uuid.uuid4(),
+        tenant_id=uuid.uuid4(),
+        media_id=41,
+        media_url="https://example.test/media.jpg",
+        status="processing",
+        attempts=3,
+        identities_detected=0,
+        last_error=None,
+    )
+
+    async def _no_rls_bypass(_session: object) -> None:
+        return None
+
+    monkeypatch.setattr(scan_handler_module, "enable_rls_bypass", _no_rls_bypass)
+    monkeypatch.setattr(scan_handler_module, "SqlAlchemyScanQueueRepository", lambda _session: repo)
+    handler = ScanItemHandler(
+        session_factory=lambda: _FakeAsyncCtx(session),
+        detector=object(),
+        generator=object(),
+        max_attempts=3,
+        max_concurrency=1,
+    )
+    monkeypatch.setattr(handler, "_build_scan_service", lambda _session: scan_service)
+
+    async def _no_refresh(_job_ids: set[uuid.UUID]) -> None:
+        return None
+
+    monkeypatch.setattr(handler, "_refresh_job_progress", _no_refresh)
+    return handler, session, repo, scan_service, item
+
+
+@pytest.mark.asyncio
+async def test_scan_handler_skips_identity_writes_when_claim_job_is_no_longer_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handler, session, repo, scan_service, item = _make_claim_check_handler(monkeypatch, [None])
+
+    await handler.process_items(claimed=[item])
+
+    assert len(session.executed_statements) == 1
+    assert scan_service.calls == 0
+    assert repo.completed_items == []
+    assert session.commits == 0
+    assert session.rollbacks == 1
+
+
+@pytest.mark.asyncio
+async def test_scan_handler_skips_reclaimed_item_with_newer_attempt_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handler, session, repo, scan_service, item = _make_claim_check_handler(monkeypatch, [object(), None])
+
+    await handler.process_items(claimed=[item])
+
+    assert len(session.executed_statements) == 2
+    assert "identity_scan_job_items.attempts" in str(
+        session.executed_statements[1].compile(dialect=postgresql.dialect())
+    )
+    assert scan_service.calls == 0
+    assert repo.completed_items == []
+    assert session.commits == 0
+    assert session.rollbacks == 1
+
+
+@pytest.mark.asyncio
+async def test_scan_handler_processes_current_claim_and_completes_item(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handler, session, repo, scan_service, item = _make_claim_check_handler(monkeypatch, [object(), object()])
+
+    await handler.process_items(claimed=[item])
+
+    assert len(session.executed_statements) == 2
+    compiled_statements = [
+        str(statement.compile(dialect=postgresql.dialect())) for statement in session.executed_statements
+    ]
+    assert "FOR SHARE" in compiled_statements[0]
+    assert "FOR UPDATE NOWAIT" in compiled_statements[1]
+    assert "identity_scan_job_items.attempts" in compiled_statements[1]
+    assert scan_service.calls == 1
+    assert repo.completed_items == [item.id]
+    assert session.commits == 1

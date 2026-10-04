@@ -483,7 +483,7 @@
     "generator": "scripts.eval_harness.generate_face_determinism_anchor",
     "head_sha": null,
     "leg": "candidate",
-    "manifest_sha256": "47fdf1169d0292993b7db03db59d534a4f782fc389223c08d54e9961f12bf4c2",
+    "manifest_sha256": "c6cb9fd342f3de285d74125d37bab20e5806c941e1138a0d1b0f837de2d02cbf",
     "model_id": "synthetic-face-anchor",
     "note": "synthetic dim=8 unit vectors; no real image/embedding (PROV-01); fixture_revision/canonical_timestamp are byte-stability sentinels (not git/wall-clock provenance); F7 multi-regime corpus (2 identities, FP/FN, wrong-name, occlusion twin, 2 cohorts; HARM-05 unmatched stranger GT + mixed named/anonymous miss; VLM6-R2-G-01 mixed-y order_degraded trap (media 11); failures[] declared gap — score-face hard-exits on counts.failed>0); see provenance.corpus_traps",
     "started_at": null

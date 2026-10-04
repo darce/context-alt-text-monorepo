@@ -118,6 +118,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $result = $this->controller->describe_media($req);
         $this->assertInstanceOf(WP_REST_Response::class, $result);
 

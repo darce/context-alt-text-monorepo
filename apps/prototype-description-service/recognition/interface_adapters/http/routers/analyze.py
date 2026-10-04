@@ -85,6 +85,8 @@ INTERNAL_ERROR_DETAIL = "internal server error"
 _OPERATION_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _IDENTITY_ENVELOPE_KEYS = frozenset({"tenant_id", "media_ids", "media_items", "operation_id", "idempotency_key"})
 MAX_ANALYZE_BODY_BYTES = 1_048_576
+ANALYZE_BODY_IDLE_TIMEOUT_SECONDS = 10.0
+ANALYZE_BODY_TOTAL_TIMEOUT_SECONDS = 60.0
 
 
 def _analyze_body_too_large() -> HTTPException:
@@ -109,12 +111,24 @@ async def _read_bounded_analyze_body(request: Request) -> None:
 
     body = bytearray()
     try:
-        async for chunk in request.stream():
-            if len(body) + len(chunk) > MAX_ANALYZE_BODY_BYTES:
-                raise _analyze_body_too_large()
-            body.extend(chunk)
+        async with asyncio.timeout(ANALYZE_BODY_TOTAL_TIMEOUT_SECONDS):
+            stream = request.stream().__aiter__()
+            while True:
+                try:
+                    async with asyncio.timeout(ANALYZE_BODY_IDLE_TIMEOUT_SECONDS):
+                        chunk = await anext(stream)
+                except StopAsyncIteration:
+                    break
+                if len(body) + len(chunk) > MAX_ANALYZE_BODY_BYTES:
+                    raise _analyze_body_too_large()
+                body.extend(chunk)
     except HTTPException:
         raise
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_408_REQUEST_TIMEOUT,
+            detail="Analyze request body timed out",
+        ) from exc
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid analyze body") from exc
 
@@ -743,15 +757,16 @@ async def _schedule_analysis(
             "Scan dispatch failed after job commit",
             extra={"job_id": str(persisted_job_id), "tenant_id": str(tenant_uuid)},
         )
-        try:
-            await scan_queue.cancel_scan_job(job_id=persisted_job_id)
-            if session is not None:
-                await session.commit()
-        except Exception:
-            logger.exception(
-                "Failed to mark scan job failed after dispatch registration error",
-                extra={"job_id": str(persisted_job_id), "tenant_id": str(tenant_uuid)},
-            )
+        if not existing_job:
+            try:
+                await scan_queue.cancel_scan_job(job_id=persisted_job_id)
+                if session is not None:
+                    await session.commit()
+            except Exception:
+                logger.exception(
+                    "Failed to mark scan job failed after dispatch registration error",
+                    extra={"job_id": str(persisted_job_id), "tenant_id": str(tenant_uuid)},
+                )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Scan dispatch unavailable",

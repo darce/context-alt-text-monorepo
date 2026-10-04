@@ -366,6 +366,40 @@ def test_evidence_reads_only_the_bounded_child_output_tail(tmp_path: Path) -> No
     assert len(capture["tail"].encode("utf-8")) == runner.CAPTURED_TAIL_BYTES
 
 
+def test_child_credentials_are_redacted_from_log_and_failed_run_evidence(tmp_path: Path) -> None:
+    payload = _manifest_payload(tmp_path)
+    manifest_path = _write_manifest(tmp_path, payload)
+    secret = "recognition-secret-value"
+    credential = "sk-live-abcdefghijklmnop"
+
+    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        assert kwargs["env"]["ACX_RECOGNITION_API_KEY"] == secret
+        xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
+        _write_command_junit(command, xml_path)
+        kwargs["stdout"].write(f"key={secret}\n")
+        kwargs["stdout"].write(f"provider credential {credential}\n")
+        raise FileNotFoundError(f"child startup failed after printing {secret}")
+
+    status = runner.run_evals(
+        manifest_path,
+        out_dir=tmp_path / "out",
+        environment={"ACX_RECOGNITION_API_KEY": secret},
+        command_runner=_git_ok_then(handler),
+    )
+
+    evidence = _last_evidence(tmp_path)
+    group = evidence["groups"][0]
+    log_path = Path(group["output_capture"]["path"])
+    log_text = log_path.read_text(encoding="utf-8")
+    assert status == runner.COMMAND_NOT_FOUND_EXIT_STATUS
+    assert secret not in log_text
+    assert credential not in log_text
+    assert secret not in group["output_capture"]["tail"]
+    assert credential not in group["output_capture"]["tail"]
+    assert secret not in " ".join(group["failure_reasons"])
+    assert evidence["environment"]["ACX_RECOGNITION_API_KEY"] == "<redacted>"
+
+
 def _last_evidence(tmp_path: Path) -> dict[str, Any]:
     return json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1])
 
@@ -689,8 +723,60 @@ def _typed_provenance(*, git_sha: str = _FAKE_BY_TEST_SHA) -> dict[str, Any]:
         "schema_version": 1,
         "git_sha": git_sha,
         "command": "pytest",
+        "runner_exit_status": 0,
         "provenance": {"source": "unit-test", "result": "pass"},
     }
+
+
+@pytest.mark.parametrize(
+    ("runner_exit_status", "provenance_result"),
+    [(1, "failed"), (None, "pass"), (0, None), (0, "ambiguous")],
+)
+def test_provenance_json_without_explicit_success_cannot_pass_a_selected_release_gate(
+    tmp_path: Path,
+    runner_exit_status: int | None,
+    provenance_result: str | None,
+) -> None:
+    artifact = tmp_path / "failed-run.json"
+    report: dict[str, Any] = {
+        "schema_version": 1,
+        "git_sha": _FAKE_BY_TEST_SHA,
+        "command": "pytest",
+        "provenance": {"source": "unit-test"},
+    }
+    if runner_exit_status is not None:
+        report["runner_exit_status"] = runner_exit_status
+    if provenance_result is not None:
+        report["provenance"]["result"] = provenance_result
+    artifact.write_text(json.dumps(report), encoding="utf-8")
+    payload = _manifest_payload(tmp_path)
+    payload["cases"][0].pop("test")
+    payload["cases"][0]["artifact"] = str(artifact)
+    payload["cases"][0]["additional_evidence_required"] = True
+    manifest_path = _write_manifest(tmp_path, payload)
+
+    def clean_repository(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        if command[:3] == ["git", "rev-parse", "HEAD"]:
+            return SimpleNamespace(returncode=0, stdout=_FAKE_BY_TEST_SHA, stderr="")
+        if command[:2] == ["git", "status"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        pytest.fail(f"evidence-only group unexpectedly started a child: {command}")
+
+    status = runner.run_evals(
+        manifest_path,
+        gates=["beta"],
+        out_dir=tmp_path / "out",
+        command_runner=clean_repository,
+    )
+
+    evidence = _last_evidence(tmp_path)
+    group = evidence["groups"][0]
+    assert status == 1
+    assert evidence["full_suite"] is True
+    assert evidence["git_dirty"] is False
+    assert group["case_ledger"][0]["status"] == "unverified"
+    assert group["case_ledger"][0]["additional_evidence_verified"] is False
+    assert evidence["release_gate_results"]["beta"]["status"] == "failed"
 
 
 def test_arbitrary_nonempty_artifact_is_unverified_not_proof(tmp_path: Path) -> None:

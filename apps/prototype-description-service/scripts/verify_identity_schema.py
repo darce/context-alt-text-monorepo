@@ -175,7 +175,8 @@ def _validate_schema_state(
                 )
                 command = None if operator_policy_commands is None else operator_policy_commands.get(policy_key)
                 roles = None if operator_policy_roles is None else operator_policy_roles.get(policy_key)
-                role_set = None if roles is None else {str(role).lower() for role in roles}
+                # pg_policies reports PUBLIC as 'public'; quoted role names retain case.
+                role_set = None if roles is None else {str(role) for role in roles}
                 if (
                     body is None
                     or not _operator_scope_policy_body_approved(*body)

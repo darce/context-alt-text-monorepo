@@ -1019,7 +1019,9 @@ def test_check_fails_when_ownership_was_never_verified(
 
 
 def test_missing_lane_state_can_be_overridden_explicitly(
-    fixture_repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    fixture_repo: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     repo = fixture_repo["repo"]
 
@@ -1030,14 +1032,20 @@ def test_missing_lane_state_can_be_overridden_explicitly(
     with pytest.warns(RuntimeWarning, match="without lane-state verification"):
         records = reaper.classify(repo, require_lane_state=False)
     assert any(item.status == "REDUNDANT" for item in records)
-    # A zero in a reclaim receipt must distinguish "examined, none eligible"
-    # from "never examined"; the status alone reads the same either way.
     assert all(item.lane_verified is False for item in records)
-    assert all(
-        reaper._record_json(item)["lane_verified"] is False
-        for item in records
-        if item.status != "ROOT"
-    )
+
+    with pytest.warns(RuntimeWarning, match="without lane-state verification"):
+        result = reaper.main(
+            ["--repo", str(repo), "--json", "--allow-missing-lane-state"]
+        )
+    captured = capsys.readouterr()
+    assert result == 1
+    assert "lane ownership was NOT verified" in captured.err
+
+    # The CLI receipt must preserve the unverified state for every linked tree.
+    linked_records = json.loads(captured.out)
+    assert linked_records
+    assert all(record["lane_verified"] is False for record in linked_records)
 
 
 def test_verified_lane_state_marks_records_verified(
@@ -1047,21 +1055,39 @@ def test_verified_lane_state_marks_records_verified(
     assert all(item.lane_verified is True for item in records)
 
 
-def test_terminal_lane_rows_do_not_protect_a_worktree() -> None:
+def test_terminal_lane_rows_do_not_protect_a_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     rows = [
         {"lane_id": "done", "status": "merged", "worktree_path": "/tmp/reap-a"},
         {"lane_id": "shut", "status": "closed", "worktree_path": "/tmp/reap-b"},
         {"lane_id": "busy", "status": "blocked", "worktree_path": "/tmp/reap-c"},
         {"lane_id": "stale", "status": "closed_stale", "worktree_path": "/tmp/reap-d"},
     ]
-    owners = reaper._lane_owners_from_rows(rows)
+    _install_registry_response(monkeypatch, {"ok": True, "data": {"lanes": rows}})
+    owners = _real_active_lane_paths(tmp_path)
     assert set(owners) == {Path("/tmp/reap-c").resolve()}
 
 
-def test_closed_stale_lane_does_not_own_its_worktree() -> None:
-    owners = reaper._lane_owners_from_rows(
-        [{"lane_id": "stale", "status": "closed_stale", "worktree_path": "/tmp/reap-d"}]
+def test_closed_stale_lane_does_not_own_its_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_registry_response(
+        monkeypatch,
+        {
+            "ok": True,
+            "data": {
+                "lanes": [
+                    {
+                        "lane_id": "stale",
+                        "status": "closed_stale",
+                        "worktree_path": "/tmp/reap-d",
+                    }
+                ]
+            },
+        },
     )
+    owners = _real_active_lane_paths(tmp_path)
     assert owners == {}
 
 
@@ -1078,25 +1104,53 @@ def test_closed_stale_lane_does_not_own_its_worktree() -> None:
         ("closed_stale", False),
     ],
 )
-def test_lane_status_ownership_contract(status: str, owns_worktree: bool) -> None:
-    owners = reaper._lane_owners_from_rows(
-        [{"lane_id": "lane", "status": status, "worktree_path": "/tmp/reap-status"}]
+def test_lane_status_ownership_contract(
+    status: str,
+    owns_worktree: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_registry_response(
+        monkeypatch,
+        {
+            "ok": True,
+            "data": {
+                "lanes": [
+                    {
+                        "lane_id": "lane",
+                        "status": status,
+                        "worktree_path": "/tmp/reap-status",
+                    }
+                ]
+            },
+        },
     )
+    owners = _real_active_lane_paths(tmp_path)
     assert (Path("/tmp/reap-status").resolve() in owners) is owns_worktree
 
 
-def test_a_lane_row_without_a_status_fails_closed() -> None:
+def test_a_lane_row_without_a_status_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_registry_response(
+        monkeypatch,
+        {"ok": True, "data": {"lanes": [{"lane_id": "x", "worktree_path": "/tmp/reap-a"}]}},
+    )
     with pytest.raises(reaper.LaneStateError):
-        reaper._lane_owners_from_rows([{"lane_id": "x", "worktree_path": "/tmp/reap-a"}])
+        _real_active_lane_paths(tmp_path)
 
 
-def test_active_lane_row_without_usable_path_fails_closed() -> None:
-    for row in (
+def test_active_lane_row_without_usable_path_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rows = (
         {"lane_id": "missing", "status": "active"},
         {"lane_id": "invalid", "status": "active", "worktree_path": "\x00"},
-    ):
+    )
+    for row in rows:
+        _install_registry_response(monkeypatch, {"ok": True, "data": {"lanes": [row]}})
         with pytest.raises(reaper.LaneStateError, match="usable worktree_path"):
-            reaper._lane_owners_from_rows([row])
+            _real_active_lane_paths(tmp_path)
 
 
 def test_apply_rechecks_lane_ownership_after_classification(
@@ -1436,9 +1490,12 @@ def test_worktree_reap_advise_maps_only_status_3_to_advisory_success(
         "nested/.task-state/.heartbeat",
     ],
 )
-def test_harness_scratch_is_regenerable(relative_path: str) -> None:
+def test_harness_scratch_is_regenerable(
+    relative_path: str, fixture_repo: dict[str, Any]
+) -> None:
     """R4-02: the allowlist is provenance-shaped, not a list of filenames."""
-    assert reaper._is_regenerable_ignored(relative_path) is True
+    record = _classify_ignored_path(fixture_repo, relative_path)
+    assert record.status == "REDUNDANT"
 
 
 @pytest.mark.parametrize(
@@ -1451,9 +1508,55 @@ def test_harness_scratch_is_regenerable(relative_path: str) -> None:
         ".venv/bin/python",
     ],
 )
-def test_unowned_content_is_not_regenerable(relative_path: str) -> None:
+def test_unowned_content_is_not_regenerable(
+    relative_path: str, fixture_repo: dict[str, Any]
+) -> None:
     """The provenance rule must not collapse into 'ignored means disposable'."""
-    assert reaper._is_regenerable_ignored(relative_path) is False
+    record = _classify_ignored_path(fixture_repo, relative_path)
+    assert record.status == "DIRTY"
+    assert "non-regenerable ignored changes" in record.reason
+    assert relative_path in record.reason
+
+
+def _classify_ignored_path(
+    fixture_repo: dict[str, Any], relative_path: str
+) -> Any:
+    repo = fixture_repo["repo"]
+    ancestor = fixture_repo["paths"]["ancestor"]
+
+    # Remove the fixture's broad .venv/ rule, then land that setup commit in
+    # the parent branch so the target remains eligible for REDUNDANT.
+    gitignore = ancestor / ".gitignore"
+    lines = [line for line in gitignore.read_text().splitlines() if line != ".venv/"]
+    assert len(lines) < len(gitignore.read_text().splitlines())
+    gitignore.write_text("\n".join(lines) + "\n")
+    _git(ancestor, "add", ".gitignore")
+    _git(ancestor, "commit", "-m", "remove broad virtualenv ignore")
+    _git(repo, "merge", "--ff-only", "feature/parent-ancestor")
+
+    ignored_file = ancestor / relative_path
+    ignored_file.parent.mkdir(parents=True, exist_ok=True)
+    ignored_file.write_text("ignored test content\n")
+
+    common_dir = Path(_git(repo, "rev-parse", "--git-common-dir").stdout.strip())
+    if not common_dir.is_absolute():
+        common_dir = (repo / common_dir).resolve()
+    exclude = common_dir / "info" / "exclude"
+    with exclude.open("a") as handle:
+        handle.write(f"\n/{relative_path}\n")
+
+    status = _git(
+        ancestor,
+        "status",
+        "--ignored",
+        "--porcelain=v1",
+        "--untracked-files=all",
+        "-z",
+    ).stdout
+    assert f"!! {relative_path}\0" in status
+
+    records = reaper.classify(repo, allow_ignored=False)
+    return next(item for item in records if item.branch == "feature/parent-ancestor")
 
 
 def test_a_newly_named_harness_stamp_does_not_block_a_reap(

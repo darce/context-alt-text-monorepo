@@ -12,11 +12,13 @@ import os
 import re
 import time as _time
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 
 import asyncpg
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, status
+from fastapi.responses import Response
+from fastapi.routing import APIRoute
 from sqlalchemy import select
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -82,8 +84,62 @@ INLINE_PROCESSING_HEARTBEAT_INTERVAL = timedelta(minutes=5)
 INTERNAL_ERROR_DETAIL = "internal server error"
 _OPERATION_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _IDENTITY_ENVELOPE_KEYS = frozenset({"tenant_id", "media_ids", "media_items", "operation_id", "idempotency_key"})
+MAX_ANALYZE_BODY_BYTES = 1_048_576
 
-router = APIRouter(tags=["analyze"], dependencies=[Depends(require_auth), Depends(enforce_rate_limit)])
+
+def _analyze_body_too_large() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+        detail=f"Analyze request body exceeds maximum of {MAX_ANALYZE_BODY_BYTES} bytes",
+    )
+
+
+async def _read_bounded_analyze_body(request: Request) -> None:
+    """Buffer at most the allowed JSON body before FastAPI parses it."""
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared_length = int(content_length)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Malformed Content-Length") from exc
+        if declared_length < 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Negative Content-Length")
+        if declared_length > MAX_ANALYZE_BODY_BYTES:
+            raise _analyze_body_too_large()
+
+    body = bytearray()
+    try:
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > MAX_ANALYZE_BODY_BYTES:
+                raise _analyze_body_too_large()
+            body.extend(chunk)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid analyze body") from exc
+
+    # Starlette's Request.body() returns this cache to FastAPI's normal body
+    # parser, so the bounded stream is parsed without consuming it twice.
+    request._body = bytes(body)
+
+
+class _AnalyzeBodyLimitAPIRoute(APIRoute):
+    """Cap the JSON analyze request before FastAPI parses its body."""
+
+    def get_route_handler(self) -> Callable[[Request], Awaitable[Response]]:
+        original_handler = super().get_route_handler()
+
+        async def handler(request: Request) -> Response:
+            await _read_bounded_analyze_body(request)
+            return await original_handler(request)
+
+        return handler
+
+
+router = APIRouter(
+    tags=["analyze"],
+    dependencies=[Depends(require_auth), Depends(enforce_rate_limit)],
+)
 
 
 def _validate_operation_id(raw: str) -> str:
@@ -703,7 +759,6 @@ async def _schedule_analysis(
     return queued_analyze_job_response(persisted_job_id, len(media_items))
 
 
-@router.post("/analyze", response_model=JobStatusResponse, status_code=status.HTTP_202_ACCEPTED)
 async def analyze_media(
     request: AnalyzeRequest,
     background_tasks: BackgroundTasks,
@@ -792,6 +847,18 @@ async def analyze_media(
             total_media_items,
             (_time.perf_counter() - started_at) * 1000,
         )
+
+
+# Attach the limit to this endpoint; include_router preserves its route class
+# when copying it under the production /recognition prefix.
+router.add_api_route(
+    "/analyze",
+    analyze_media,
+    methods=["POST"],
+    response_model=JobStatusResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    route_class_override=_AnalyzeBodyLimitAPIRoute,
+)
 
 
 @router.get("/jobs/{job_id}", response_model=JobStatusResponse)

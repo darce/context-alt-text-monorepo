@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from scripts.eval_harness.face_metrics import named_box_name
+from scripts.eval_harness.face_metrics import has_human_adjudicated_gt_lineage, named_box_name
 from scripts.eval_harness.manifest import GoldenManifest, ManifestError, ScoreInvariant
 from scripts.eval_harness.report import (
     CORPUS_TRAP_AFFECTS_DETECTION_FN,
@@ -31,10 +31,10 @@ from scripts.eval_harness.report import (
     _markdown_face,
     build_face_reports,
     build_real_occlusion_pairs,
-    build_reports,
+    build_reports as _build_reports,
     redact_face_report_for_public,
     score_face_run_record as _score_face_run_record,
-    score_run_record,
+    score_run_record as _score_run_record,
     synthetic_real_divergence,
     wilson_half_width,
 )
@@ -236,6 +236,53 @@ def _manifest_entries() -> list[dict]:
             "face_boxes": [],
         },
     ]
+
+
+def _reviewed_report_entries(entries: list[dict]) -> tuple[list[dict], dict[str, Any]]:
+    """Add explicit confirmed review evidence for strict report fixtures."""
+    reviewed_entries = copy.deepcopy(entries)
+    records: list[dict[str, Any]] = []
+    for entry in reviewed_entries:
+        for box_index, box in enumerate(entry.get("face_boxes") or []):
+            # Review admission validates the complete persisted box shape. A few
+            # report-only fixtures use abbreviated boxes because width/height
+            # and source are irrelevant to those assertions.
+            box.setdefault("w", 0.2)
+            box.setdefault("h", 0.3)
+            box.setdefault("source", "iptc")
+            if not has_human_adjudicated_gt_lineage(box):
+                continue
+            record_id = f"report-fixture-review-{entry['media_id']}-{box_index}"
+            box["adjudication_source"] = f"human_adjudicated:{record_id}"
+            records.append(
+                {
+                    "record_id": record_id,
+                    "media_id": entry["media_id"],
+                    "box_index": box_index,
+                    "reviewer_id": "report-fixture-reviewer",
+                    "reviewer_kind": "human",
+                    "review_method": "independent_blind_review",
+                    "decision": "confirmed",
+                    "reviewed_at": "2026-08-15T00:00:00Z",
+                }
+            )
+    return reviewed_entries, {"adjudication_records": records}
+
+
+def score_run_record(run_record: dict[str, Any], entries: list[dict], *args: Any, **kwargs: Any) -> dict[str, Any]:
+    """Score legacy report fixtures with explicit review-only evidence."""
+    if kwargs.get("run_manifest") is None and kwargs.get("review_manifest") is None:
+        entries, review_manifest = _reviewed_report_entries(entries)
+        kwargs["review_manifest"] = review_manifest
+    return _score_run_record(run_record, entries, *args, **kwargs)
+
+
+def build_reports(run_record: dict[str, Any], entries: list[dict], *args: Any, **kwargs: Any) -> tuple[str, str]:
+    """Build legacy report fixtures with explicit review-only evidence."""
+    if kwargs.get("run_manifest") is None and kwargs.get("review_manifest") is None:
+        entries, review_manifest = _reviewed_report_entries(entries)
+        kwargs["review_manifest"] = review_manifest
+    return _build_reports(run_record, entries, *args, **kwargs)
 
 
 def test_score_run_record_shapes():

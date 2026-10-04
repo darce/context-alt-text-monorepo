@@ -156,6 +156,7 @@ def main(argv: list[str] | None = None) -> int:
         score_manifest_sha256=score_sha,
         manifest_roster=roster,
         baseline_run_record=baseline_for_delta,
+        run_manifest=manifest.model_dump(),
     )
     for path, text in (
         (Path(args.out_record), json.dumps(baseline, indent=2, sort_keys=True) + "\n"),

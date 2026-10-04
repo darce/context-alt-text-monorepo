@@ -5,6 +5,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "deploy" / "app-portal.sh"
 
@@ -57,3 +59,67 @@ def test_unterminated_javascript_string_still_fails(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "unterminated JavaScript string" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "counter++ / 2", "counter-- / 2", "counter++/2", "counter--/2",
+        "(counter) / 2", "values[0] / 2", "42 / 2", "1.5e+2 / 2",
+        "++counter / 2", "--counter / 2", "obj.throw / 2", "obj.if(ok) / 2",
+        '"value" / 2', "`value` / 2", "/x/ / 2",
+    ],
+)
+def test_division_after_expression_keeps_later_import(
+    tmp_path: Path, expression: str,
+) -> None:
+    result = _scan(tmp_path, f'a = {expression}; import("./x.js");\n')
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["./x.js"]
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "throw", "return", "typeof", "case", "delete", "void", "new",
+        "in", "of", "instanceof", "yield", "await",
+    ],
+)
+def test_regex_after_expression_keyword_is_skipped(tmp_path: Path, prefix: str) -> None:
+    result = _scan(tmp_path, f'{prefix} /import "bogus.js"/; import("./x.js");\n')
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["./x.js"]
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "if (ok)", "if(b)", "if (check(ok))", "while (ok)",
+        "for (;;)", "for (const item of items)", "with (scope)",
+        "if /* comment */ ((ok))", "if (ok) if (other)",
+    ],
+)
+def test_regex_after_control_header_is_skipped(tmp_path: Path, header: str) -> None:
+    result = _scan(tmp_path, f'{header}/import "bogus.js"/.test(s); import("./x.js");\n')
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["./x.js"]
+
+
+@pytest.mark.parametrize("source", ['throw /x"y/;', 'if (ok) /"/.test(s);'])
+def test_regex_after_keyword_or_header_does_not_open_string(
+    tmp_path: Path, source: str,
+) -> None:
+    result = _scan(tmp_path, source)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+
+
+def test_unterminated_regex_still_fails(tmp_path: Path) -> None:
+    result = _scan(tmp_path, "throw /unterminated;\n")
+
+    assert result.returncode != 0
+    assert "unterminated JavaScript regular expression" in result.stderr

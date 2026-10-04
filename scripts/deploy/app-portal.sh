@@ -672,7 +672,7 @@ frontend_module_references() {
       return 0
     }
 
-    function next_token(    c, quote, value) {
+    function next_token(    c, quote, value, previous_value, control_header) {
       while (position <= source_length) {
         c = substr(source, position, 1)
         if (c ~ /[ \t\r\n\f]/) {
@@ -703,6 +703,9 @@ frontend_module_references() {
         break
       }
 
+      previous_value = token_value
+      control_header = pending_control_header
+      pending_control_header = 0
       token_line = line
       token_value = ""
       if (position > source_length) {
@@ -775,13 +778,49 @@ frontend_module_references() {
           position++
         }
         token_type = "identifier"
-        regex_allowed = (regex_allowed &&
-                         (token_value == "return" || token_value == "typeof"))
+        # Property names are not expression keywords or control headers.
+        pending_control_header = (previous_value != "." &&
+                                  token_value ~ /^(if|while|for|with|switch|catch)$/)
+        regex_allowed = (previous_value != "." &&
+                         token_value ~ /^(return|typeof|throw|case|delete|void|new|in|of|instanceof|yield|await|else|do)$/)
+        return
+      }
+      if (c ~ /[0-9]/ || (c == "." && substr(source, position + 1, 1) ~ /[0-9]/)) {
+        # Consume the whole numeric operand, including exponent signs.
+        while (position <= source_length) {
+          c = substr(source, position, 1)
+          if (c !~ /[A-Za-z0-9_.]/ &&
+              !(c ~ /[+-]/ && substr(source, position - 1, 1) ~ /[eE]/)) break
+          token_value = token_value c
+          position++
+        }
+        token_type = "number"
+        regex_allowed = 0
         return
       }
       token_value = c
       token_type = "punctuation"
       position++
+      if ((c == "+" || c == "-") && substr(source, position, 1) == c) {
+        token_value = c c
+        position++
+        # Prefix ++/-- still expects an operand; postfix ++/-- ends one.
+        return
+      }
+      if (c == "(") {
+        paren_control[++paren_depth] = control_header
+        regex_allowed = 1
+        return
+      }
+      if (c == ")") {
+        # A control header ends before a statement, unlike a call/group.
+        regex_allowed = (paren_depth > 0 && paren_control[paren_depth])
+        if (paren_depth > 0) {
+          delete paren_control[paren_depth]
+          paren_depth--
+        }
+        return
+      }
       regex_allowed = (c == "(" || c == "," || c == "=" || c == ":" ||
                        c == "[" || c == "!" || c == "&" || c == "|" ||
                        c == "?" || c == "{" || c == "}" || c == ";" ||

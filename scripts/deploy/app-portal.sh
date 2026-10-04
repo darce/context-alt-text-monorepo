@@ -457,15 +457,21 @@ frontend_asset_references() {
       print value
     }
 
+    function fail_scan(message) {
+      print message | "cat 1>&2"
+      close("cat 1>&2")
+      exit 1
+    }
+
     function find_raw_close(document, lower_document, element, from,    needle, offset, found, after, comment, nested, cursor, body_from) {
       needle = "</" element
       body_from = from
       while (from <= length(document)) {
         offset = index(substr(lower_document, from), needle)
-        if (offset == 0) return 0
+        if (offset == 0) return -1
         found = from + offset - 1
         after = substr(document, found + length(needle), 1)
-        if (after ~ /[[:space:]/>]/) {
+        if (after ~ /[ \t\r\n\f/>]/) {
           if (element == "script") {
             # Fail closed on potentially double-escaped script data. In that
             # state the first textual closing tag does not close the element.
@@ -476,7 +482,7 @@ frontend_asset_references() {
                 nested = index(substr(lower_document, cursor, found - cursor), "<script")
                 if (nested == 0) break
                 cursor += nested - 1
-                if (substr(document, cursor + 7, 1) ~ /[[:space:]/>]/) return 0
+                if (substr(document, cursor + 7, 1) ~ /[ \t\r\n\f/>]/) return 0
                 cursor += 7
               }
             }
@@ -485,7 +491,7 @@ frontend_asset_references() {
         }
         from = found + length(needle)
       }
-      return 0
+      return -1
     }
 
     function parse_tag(tag, active,    i, n, c, start, name, value, quote) {
@@ -506,22 +512,22 @@ frontend_asset_references() {
       if (parsed_tag_closing) return
       while (i <= n) {
         c = substr(tag, i, 1)
-        if (c ~ /[[:space:]>]/ || c == "/") {
+        if (c ~ /[ \t\r\n\f>]/ || c == "/") {
           i++
           continue
         }
         start = i
-        while (i <= n && substr(tag, i, 1) !~ /[[:space:]=>]/ && substr(tag, i, 1) != "/") i++
+        while (i <= n && substr(tag, i, 1) !~ /[ \t\r\n\f=>]/ && substr(tag, i, 1) != "/") i++
         if (i == start) {
           i++
           continue
         }
         name = tolower(substr(tag, start, i - start))
-        while (i <= n && substr(tag, i, 1) ~ /[[:space:]]/) i++
+        while (i <= n && substr(tag, i, 1) ~ /[ \t\r\n\f]/) i++
         value = ""
         if (substr(tag, i, 1) == "=") {
           i++
-          while (i <= n && substr(tag, i, 1) ~ /[[:space:]]/) i++
+          while (i <= n && substr(tag, i, 1) ~ /[ \t\r\n\f]/) i++
           c = substr(tag, i, 1)
           if (c == "\047" || c == "\042") {
             quote = c
@@ -532,7 +538,7 @@ frontend_asset_references() {
             if (i <= n) i++
           } else {
             start = i
-            while (i <= n && substr(tag, i, 1) !~ /[[:space:]>]/) i++
+            while (i <= n && substr(tag, i, 1) !~ /[ \t\r\n\f>]/) i++
             value = substr(tag, start, i - start)
           }
         }
@@ -560,13 +566,14 @@ frontend_asset_references() {
         if (raw_element != "") {
           raw_close = find_raw_close(document, lower_document, raw_element, i)
           if (raw_close == 0) break
+          if (raw_close < 0) fail_scan("index.html ends inside an unterminated <" raw_element ">")
           i = raw_close
           raw_element = ""
           continue
         }
         if (substr(document, i, 4) == "<!--") {
           comment_end = index(substr(document, i + 4), "-->")
-          if (comment_end == 0) break
+          if (comment_end == 0) fail_scan("index.html ends inside an unterminated comment")
           i += comment_end + 6
           continue
         }
@@ -622,7 +629,7 @@ frontend_asset_references() {
           }
           i = end + 1
         } else {
-          break
+          fail_scan("index.html ends inside an unterminated tag")
         }
       }
     }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import AsyncExitStack
 from typing import Any
 from uuid import UUID
 
@@ -87,27 +88,46 @@ async def sync_curation_operation(
     tenant_uuid = UUID(tenant_id)
     await set_tenant_context(session, tenant_uuid)
     operations = request.operations if isinstance(request, CurationSyncBatchRequest) else [request]
-    operation_id = build_usage_operation_id(
-        tenant_uuid,
-        route="roster_curation_sync",
-        idempotency_keys=[operation.idempotency_key for operation in operations],
-    )
-    request_fingerprint = build_usage_request_fingerprint(
-        tenant_uuid,
-        route="roster_curation_sync",
-        payload=request.model_dump(mode="json"),
-    )
     service = CurationSyncService(session=session, job_service=job_service)
+    tickets: list[Any] = []
 
-    async with admit_usage(
-        usage_admission_service,
-        tenant_id=tenant_uuid,
-        idempotency_key=operation_id,
-        job_id=None,
-        cost_units=len(operations),
-        operation_id=operation_id,
-        request_fingerprint=request_fingerprint,
-    ) as ticket:
+    async with AsyncExitStack() as reservations:
+        fingerprints_by_key: dict[str, str] = {}
+        for operation in operations:
+            idempotency_key = operation.idempotency_key
+            request_fingerprint = build_usage_request_fingerprint(
+                tenant_uuid,
+                route="roster_curation_sync",
+                payload=operation.model_dump(mode="json"),
+            )
+            if idempotency_key in fingerprints_by_key:
+                if fingerprints_by_key[idempotency_key] != request_fingerprint:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={"error": "usage_fingerprint_conflict"},
+                    )
+                continue
+
+            fingerprints_by_key[idempotency_key] = request_fingerprint
+            operation_id = build_usage_operation_id(
+                tenant_uuid,
+                route="roster_curation_sync",
+                idempotency_keys=[idempotency_key],
+            )
+            ticket = await reservations.enter_async_context(
+                admit_usage(
+                    usage_admission_service,
+                    tenant_id=tenant_uuid,
+                    idempotency_key=operation_id,
+                    job_id=None,
+                    cost_units=1,
+                    operation_id=operation_id,
+                    request_fingerprint=request_fingerprint,
+                )
+            )
+            if ticket is not None:
+                tickets.append(ticket)
+
         try:
             if isinstance(request, CurationSyncBatchRequest):
                 results = await service.apply_batch(tenant_id=tenant_id, operations=request.operations)
@@ -140,7 +160,7 @@ async def sync_curation_operation(
                 "idempotency_key": request.idempotency_key,
             }
 
-    if ticket is not None:
+    for ticket in tickets:
         await usage_admission_service.commit(ticket)
 
     return response

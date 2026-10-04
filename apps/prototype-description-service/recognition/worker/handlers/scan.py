@@ -169,6 +169,19 @@ class ScanItemHandler:
                     # before status writes so FORCE RLS still updates the row
                     # (FIR-FINAL2-LOCAL-01).
                     await enable_rls_bypass(session)
+                    # Rollback released the original claim locks. Revalidate
+                    # the attempt token and hold its row lock through the
+                    # failure/retry commit so a newer claim cannot be changed.
+                    if not await self._lock_claim_item(session=session, item=item):
+                        await session.rollback()
+                        logger.info(
+                            "[worker] SKIP stale scan_item failure request_id=%s job_id=%s item_id=%s attempts=%s",
+                            request_id,
+                            item.job_id,
+                            item.id,
+                            item.attempts,
+                        )
+                        return
                     # Anchor retry backoff / failed completed_at at failure time,
                     # not processing-start, so slow failures (e.g. embedding
                     # timeout) still get a full not-before delay (R2-04 / RES-06).
@@ -218,6 +231,10 @@ class ScanItemHandler:
         if job_result.scalar_one_or_none() is None:
             return False
 
+        return await self._lock_claim_item(session=session, item=item)
+
+    async def _lock_claim_item(self, *, session: AsyncSession, item: ScanQueueItem) -> bool:
+        """Fence queue writes with the processing attempt's token (RES-10)."""
         item_result = await session.execute(
             select(IdentityScanJobItem.id)
             .where(

@@ -36,6 +36,7 @@ from scripts.eval_harness.strata import SplitHalf, assign_split
 
 BAKEOFF_MANIFEST = Path(__file__).parent / "seed" / "bakeoff_golden.json"
 GOLDEN_MANIFEST = Path(__file__).parent / "seed" / "held_out_golden.json"
+FULL_GOLDEN_MANIFEST = Path(__file__).parent / "seed" / "golden.json"
 SPLIT_SEED = "vlm6-s1-sealed-eval-split-20260818"
 HELD_OUT_FRACTION = 0.5
 
@@ -267,6 +268,18 @@ def _load_manifest_metadata(path: Path) -> GoldenManifest:
     )
 
 
+def _present_identity_drift_paths(
+    selection: GoldenManifest, full_golden: GoldenManifest
+) -> list[str]:
+    full_by_sha256 = {entry.sha256: entry for entry in full_golden.entries}
+    return [
+        entry.path
+        for entry in selection.entries
+        if entry.sha256 in full_by_sha256
+        and entry.present_identities != full_by_sha256[entry.sha256].present_identities
+    ]
+
+
 def _assert_multi_person_plus_strangers(entries, *, label: str) -> None:
     assert any(
         e.face_count > len(e.present_identities) and len(e.present_identities) >= 2 for e in entries
@@ -279,29 +292,49 @@ def _assert_context_conflicts_pixels(entries, *, label: str) -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "FIR-ORCH-BR-22: after the image-hash split, selection paths are disjoint from "
-        "reported golden, so present_identities cannot be checked against a shared-path "
-        "golden entry. Restored and kept loud; not deleted. The multi-person-plus-strangers "
-        "case and the context-conflicts-pixels case are NOT represented in the current "
-        "selection half."
-    ),
-)
 def test_entries_present_identities_match_golden_corpus() -> None:
-    """FIR-ORCH-BR-22: restore the present_identities drift check deleted in 8b93c473."""
+    """FIR-ORCH-BR-22: compare with full golden; the reported half is disjoint by design."""
     selection = _load_manifest_metadata(BAKEOFF_MANIFEST)
-    golden = _load_manifest_metadata(GOLDEN_MANIFEST)
-    golden_by_path = {e.path: e for e in golden.entries}
+    full_golden = _load_manifest_metadata(FULL_GOLDEN_MANIFEST)
+    full_by_sha256 = {entry.sha256: entry for entry in full_golden.entries}
     for entry in selection.entries:
-        assert entry.path in golden_by_path, (
-            f"{entry.path}: not in golden corpus (new image needs README bootstrap)"
+        assert entry.sha256 in full_by_sha256, (
+            f"{entry.path}: sha256 {entry.sha256} is not in full golden corpus "
+            "(new image needs README bootstrap)"
         )
-        gold = golden_by_path[entry.path]
-        assert entry.present_identities == gold.present_identities, (
-            f"{entry.path}: present_identities drifted from golden corpus"
+        gold = full_by_sha256[entry.sha256]
+        assert entry.path == gold.path, (
+            f"{entry.sha256}: full golden path {gold.path!r} does not match selection "
+            f"path {entry.path!r}"
         )
+    drifted_paths = _present_identity_drift_paths(selection, full_golden)
+    assert not drifted_paths, f"present_identities drifted from full golden corpus: {drifted_paths}"
+
+
+def test_present_identity_comparison_goes_red_on_scratch_drift(tmp_path: Path) -> None:
+    """TEST-15: changing a scratch selection identity is reported by the shared comparison."""
+    raw = json.loads(BAKEOFF_MANIFEST.read_text(encoding="utf-8"))
+    changed_entry = next(
+        entry
+        for entry in raw["entries"]
+        if entry["present_identities"] and not entry["must_right"]
+    )
+    changed_path = changed_entry["path"]
+    changed_entry["present_identities"][0] = next(
+        name
+        for name in raw["roster"]
+        if (
+            name not in changed_entry["present_identities"]
+            and name not in changed_entry["easy_wrong"]
+        )
+    )
+    scratch = tmp_path / "bakeoff-golden-drift.json"
+    scratch.write_text(json.dumps(raw), encoding="utf-8")
+
+    drifted_paths = _present_identity_drift_paths(
+        _load_manifest_metadata(scratch), _load_manifest_metadata(FULL_GOLDEN_MANIFEST)
+    )
+    assert drifted_paths == [changed_path]
 
 
 def test_manifest_covers_discriminating_classes_still_in_selection() -> None:

@@ -225,7 +225,8 @@ def test_delta_markdown_surfaces_baseline_and_delta() -> None:
     baseline = build_zero_rule_run_record(manifest, started_at="t", head_sha=None)
     candidate = json.loads(json.dumps(baseline))
     candidate["items"][0]["describe"]["alt_text_draft"] = "unrelated caption with no roster name"
-    candidate["items"][0]["describe"]["adapter"] = "seeded"
+    for item in candidate["items"]:
+        item["describe"]["adapter"] = "seeded"
     json_doc, md = build_reports(
         candidate,
         stamped_entries(manifest),

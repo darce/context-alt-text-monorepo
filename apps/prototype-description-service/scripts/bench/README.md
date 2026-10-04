@@ -24,6 +24,31 @@ uv run python -m scripts.bench.cross_stack_bench score --run-dir ../../benchmark
 
 `run` must be invoked from a **git checkout** of the monorepo (`init_run_dir` fails closed with `provenance_sha_unavailable` otherwise).
 
+### Running a stack pair
+
+Before every `run`, follow the FIR23-STACK runbook's stack-scoped tenant reset procedure for both configured stacks and verify that prior-run media-identity, cluster, and membership rows are empty. Record the operator, reset reference, completion time in UTC, and the empty-row check in a JSON file, then point `ACX_BENCH_PRE_RUN_RESET_EVIDENCE_FILE` at that file:
+
+```json
+{
+  "pre_run_reset_by_stack": {
+    "acx-dev-insightface": {
+      "reset_attested_by": "operator name",
+      "reset_reference": "FIR23-STACK runbook reset record",
+      "reset_completed_at": "2026-10-01T12:00:00Z",
+      "prior_run_identity_rows_empty": true
+    },
+    "acx-dev-fir": {
+      "reset_attested_by": "operator name",
+      "reset_reference": "FIR23-STACK runbook reset record",
+      "reset_completed_at": "2026-10-01T12:00:00Z",
+      "prior_run_identity_rows_empty": true
+    }
+  }
+}
+```
+
+Replace the sample names and timestamp with the values from the reset you just completed; do not copy the sample time. Save the document as `/secure/bench/pre-run-reset.json`, then run `export ACX_BENCH_PRE_RUN_RESET_EVIDENCE_FILE=/secure/bench/pre-run-reset.json` in the shell used for the CLI command. The document must contain exactly one attestation per configured stack. Each timestamp must be timezone-aware, no more than one hour old, and not in the future. The harness stores a stable digest of the validated evidence in `run.json`; the same evidence digest can authorize only one run among the run directories under the `--out` parent directory. Perform and attest a new reset for each subsequent run. A failed invocation can be resumed with the same `--out` path and evidence; the one-hour freshness limit applies when that run is first created.
+
 ### Fail-closed codes operators hit on the live path
 
 | Code | When |

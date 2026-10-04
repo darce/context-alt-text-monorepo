@@ -6,8 +6,9 @@ import hashlib
 import json
 import os
 import subprocess
+import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -19,17 +20,16 @@ from scripts.bench.corpus import (
     load_bench_manifest,
     resolve_media_bytes,
 )
-from scripts.eval_harness.manifest import load_manifest
-from scripts.bench.export_map import export_leg
+from scripts.bench.export_map import LEG_EXPORT_REQUIRED_FILES, export_leg, load_leg_exports
 from scripts.bench.production_shaped_guard import assert_named_bench_stack
-from scripts.bench.stack_pair import BenchError, FIR23_STACK_ALLOWLIST, StackEndpoint, StackPairConfig
+from scripts.bench.stack_pair import FIR23_STACK_ALLOWLIST, BenchError, StackEndpoint, StackPairConfig
 from scripts.bench.status import (
     ANALYZE_PARTIAL_SUCCESS,
     CLUSTER_SUCCESS_STATUSES,
     ItemOutcome,
-    ItemPhase,
     RunPhase,
 )
+from scripts.eval_harness.manifest import GoldenManifest, load_manifest
 from scripts.eval_harness.remote_client import RemoteSceneClient
 
 LICENSE_BANNER = (
@@ -76,7 +76,124 @@ def cluster_gate_admits(items: list[Any], item_max_attempts: int = 2) -> bool:
     return evaluate_cluster_gate(items, item_max_attempts=item_max_attempts).admits
 
 
-def init_run_dir(run_dir: Path | str, pair: StackPairConfig, manifest_path: Path | str) -> Path:
+def _refuse_reused_reset_evidence(
+    output_root: Path,
+    evidence_sha256: str,
+    *,
+    current_run_path: Path | None = None,
+) -> None:
+    """Refuse evidence recorded by another run, while allowing its own resume."""
+    from scripts.bench.preflight import PreflightError
+
+    if not output_root.exists():
+        return
+    current_path = current_run_path.resolve() if current_run_path is not None else None
+    for record_path in sorted(output_root.rglob("run.json")):
+        try:
+            run_doc = json.loads(record_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise PreflightError(
+                "pre_run_reset_unverified",
+                f"cannot verify prior run record {record_path}",
+            ) from exc
+        if not isinstance(run_doc, dict):
+            raise PreflightError(
+                "pre_run_reset_unverified",
+                f"cannot verify prior run record {record_path}",
+            )
+        recorded_digest = run_doc.get("pre_run_reset_evidence_sha256")
+        if current_path is not None and record_path.resolve() == current_path:
+            if recorded_digest != evidence_sha256:
+                raise PreflightError(
+                    "pre_run_reset_unverified",
+                    f"run {record_path.parent} was started with different or missing reset evidence",
+                )
+            continue
+        if recorded_digest == evidence_sha256:
+            raise PreflightError(
+                "pre_run_reset_unverified",
+                f"reset evidence was already used by a run under output root {output_root}",
+            )
+
+
+def _stack_pair_snapshot(pair: StackPairConfig) -> dict[str, Any]:
+    # FLOW-01: pin every config field, including future behavior settings.
+    # No exclusions: credential fields hold env-var names, not secret values.
+    # Normalize tuples to lists to match the persisted JSON on resume.
+    return json.loads(json.dumps(asdict(pair)))
+
+
+def _validate_resume_inputs(
+    root: Path, pair: StackPairConfig, manifest_path: Path | str
+) -> tuple[bytes, str]:
+    try:
+        pinned_digest = (root / "manifest.sha").read_text(encoding="ascii").strip()
+        manifest_bytes = (root / "manifest.json").read_bytes()
+        saved_digest = hashlib.sha256(manifest_bytes).hexdigest()
+        saved_pair = json.loads((root / "stack_pair.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise BenchError("resume_inputs_unverified", f"cannot read pinned inputs for run {root}") from exc
+
+    if pinned_digest != saved_digest:
+        raise BenchError(
+            "resume_manifest_pin_mismatch",
+            f"run pins manifest sha256 {pinned_digest!r}, but its saved manifest hashes to {saved_digest!r}",
+        )
+    try:
+        current_bytes = Path(manifest_path).read_bytes()
+        current_digest = hashlib.sha256(current_bytes).hexdigest()
+    except OSError as exc:
+        raise BenchError("resume_inputs_unverified", f"cannot read current manifest {manifest_path}") from exc
+    if pinned_digest != current_digest:
+        raise BenchError(
+            "resume_manifest_mismatch",
+            f"run pins manifest sha256 {pinned_digest!r}, current manifest sha256 is {current_digest!r}",
+        )
+
+    current_pair = _stack_pair_snapshot(pair)
+    if saved_pair != current_pair:
+        raise BenchError(
+            "resume_stack_pair_mismatch",
+            f"run pins stack_pair {saved_pair!r}, current stack_pair is {current_pair!r}",
+        )
+    return manifest_bytes, pinned_digest
+
+
+def _refuse_linked_leg_state(root: Path) -> None:
+    legs_root = root / "legs"
+    if legs_root.is_symlink() or (
+        legs_root.is_dir() and any(path.is_symlink() for path in legs_root.iterdir())
+    ):
+        raise BenchError(
+            "leg_state_symlink",
+            f"{legs_root} contains linked leg state; use regular leg directories",
+        )
+
+
+def _has_leg_state(root: Path) -> bool:
+    legs_root = root / "legs"
+    return legs_root.is_dir() and any(path.is_file() for path in legs_root.rglob("*"))
+
+
+def _load_manifest_bytes(manifest_bytes: bytes) -> GoldenManifest:
+    """Parse the exact input snapshot whose digest is used by this run."""
+    with tempfile.TemporaryDirectory(prefix="bench-manifest-") as temp_dir:
+        snapshot = Path(temp_dir) / "manifest.json"
+        snapshot.write_bytes(manifest_bytes)
+        return load_manifest(
+            str(snapshot),
+            metadata_only=True,
+            skip_hash_verification=True,
+            hash_skip_reason="bench driver reads media ids only",
+        )
+
+
+def init_run_dir(
+    run_dir: Path | str,
+    pair: StackPairConfig,
+    manifest_path: Path | str,
+    manifest_bytes: bytes | None = None,
+) -> Path:
     root = Path(run_dir)
     root.mkdir(parents=True, exist_ok=True)
     stamp = root.name
@@ -91,35 +208,14 @@ def init_run_dir(run_dir: Path | str, pair: StackPairConfig, manifest_path: Path
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "bootstrap_seed": pair.bootstrap_seed,
     }
-    redacted = {
-        "head_to_head_delta": pair.head_to_head_delta,
-        "bootstrap_seed": pair.bootstrap_seed,
-        "primary_endpoint": pair.primary_endpoint,
-        "secondary_endpoints": list(pair.secondary_endpoints),
-        "accepted_set_floor": pair.accepted_set_floor,
-        "max_differential_attrition": pair.max_differential_attrition,
-        "allow_private_source": pair.allow_private_source,
-        "baseline_manifest_path": pair.baseline_manifest_path,
-        "stacks": [
-            {
-                "stack_id": s.stack_id,
-                "role": s.role,
-                "base_url": s.base_url,
-                "expected_profile": s.expected_profile,
-                "expected_pgvector_dim": s.expected_pgvector_dim,
-                "opencv_major": s.opencv_major,
-                "api_key_env": s.api_key_env,
-                "tenant_id_env": s.tenant_id_env,
-            }
-            for s in pair.stacks
-        ],
-    }
-    digest = hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest()
+    if manifest_bytes is None:
+        manifest_bytes = Path(manifest_path).read_bytes()
+    digest = hashlib.sha256(manifest_bytes).hexdigest()
     (root / "manifest.sha").write_text(digest + "\n", encoding="utf-8")
-    (root / "manifest.json").write_bytes(Path(manifest_path).read_bytes())
+    (root / "manifest.json").write_bytes(manifest_bytes)
     run_doc["manifest_path"] = str(Path(manifest_path))
     (root / "run.json").write_text(json.dumps(run_doc, indent=2), encoding="utf-8")
-    (root / "stack_pair.json").write_text(json.dumps(redacted, indent=2), encoding="utf-8")
+    (root / "stack_pair.json").write_text(json.dumps(_stack_pair_snapshot(pair), indent=2), encoding="utf-8")
     for stack in pair.stacks:
         (root / "legs" / stack.stack_id).mkdir(parents=True, exist_ok=True)
     return root
@@ -169,6 +265,7 @@ def run_leg(
     run_dir: Path | str,
     client: Any | None = None,
     deadline: float | None = None,
+    preloaded_manifest: GoldenManifest | None = None,
 ) -> list[AnalyzeOutcome]:
     assert_named_bench_stack(endpoint, FIR23_STACK_ALLOWLIST)
     root = Path(run_dir)
@@ -179,20 +276,22 @@ def run_leg(
     # resolve_media_bytes, which verifies the manifest sha256 for local files
     # and for the explicitly pinned remote fallback. Strict whole-directory
     # verification would make a missing local file prevent that fallback.
-    manifest = load_bench_manifest(
-        manifest_path,
-        None,
-        metadata_only=True,
-        skip_hash_verification=True,
-        hash_skip_reason="bench ingest resolves each media item with its sha256 pin",
-    )
+    manifest = preloaded_manifest
+    if manifest is None:
+        manifest = load_bench_manifest(
+            manifest_path,
+            None,
+            metadata_only=True,
+            skip_hash_verification=True,
+            hash_skip_reason="bench ingest resolves each media item with its sha256 pin",
+        )
     owned_client = False
     if client is None:
         client = RemoteSceneClient(
             endpoint.base_url,
             os.environ.get(endpoint.api_key_env, ""),
             tenant_id=os.environ.get(endpoint.tenant_id_env, ""),
-            timeout_s=float(pair.job_poll_timeout_sec),
+            job_poll_timeout_s=float(pair.job_poll_timeout_sec),
         )
         owned_client = True
     outcomes: list[AnalyzeOutcome] = []
@@ -269,7 +368,6 @@ def run_leg(
                             "outcome": "failed",
                             "error_code": "analyze_completed_with_errors",
                             "attempt": analyze_attempt,
-                            "terminal_ingest_outcome": "success",
                         }
                     )
                     terminal = analyze_attempt >= pair.item_max_attempts
@@ -288,7 +386,6 @@ def run_leg(
                         "outcome": "ok",
                         "error_code": None,
                         "attempt": analyze_attempt,
-                        "terminal_ingest_outcome": "success",
                     }
                 )
                 outcomes.append(AnalyzeOutcome(entry.media_id, "ok", analyze_attempt, True))
@@ -305,7 +402,7 @@ def run_leg(
                         "outcome": "failed",
                         "error_code": exc.code,
                         "attempt": failure_attempt,
-                        "terminal_ingest_outcome": exc.code if ingest_failed else "success",
+                        **({"terminal_ingest_outcome": exc.code} if ingest_failed else {}),
                     }
                 )
                 terminal = failure_attempt >= pair.item_max_attempts
@@ -322,7 +419,11 @@ def run_leg(
                         "outcome": "failed",
                         "error_code": "ingest_failed" if not ingest_ready else "analyze_failed",
                         "attempt": failure_attempt,
-                        "terminal_ingest_outcome": "ingest_failed" if not ingest_ready else "success",
+                        **(
+                            {"terminal_ingest_outcome": "ingest_failed"}
+                            if not ingest_ready
+                            else {}
+                        ),
                     }
                 )
                 terminal = failure_attempt >= pair.item_max_attempts
@@ -342,9 +443,7 @@ def run_leg(
             )
             if not decision.admits:
                 return outcomes
-        exports = leg_dir / "exports"
-        needed = ("media_identities.json", "clusters.json", "cluster_members.json")
-        if not all((exports / name).is_file() for name in needed):
+        if not _leg_complete(root, endpoint.stack_id):
             export_leg(client, root, endpoint.stack_id)
         return outcomes
     finally:
@@ -361,21 +460,43 @@ def run_pair(
     clients: dict[str, Any] | None = None,
     skip_preflight: bool = False,
     preflight_transports: dict[str, Any] | None = None,
+    pre_run_reset_by_stack: dict[str, Any] | None = None,
 ) -> Path:
+    out_dir_path = Path(out_dir)
+    # FLOW-17: refuse linked outputs before validating or mutating run pins.
+    _refuse_linked_leg_state(out_dir_path)
+    run_record_path = out_dir_path / "run.json"
+    is_resume = run_record_path.exists()
+    if not is_resume and _has_leg_state(out_dir_path):
+        # FLOW-17: reject orphaned results before pinning a new manifest over them.
+        raise BenchError(
+            "run_record_missing_with_leg_state",
+            f"run.json is missing but {out_dir_path} contains leg state; "
+            "clear the output directory before starting a fresh run",
+        )
+    if is_resume:
+        manifest_bytes, manifest_digest = _validate_resume_inputs(out_dir_path, pair, manifest_path)
+    else:
+        try:
+            manifest_bytes = Path(manifest_path).read_bytes()
+        except OSError:
+            # Preserve load_manifest's established error for missing or unreadable input.
+            load_manifest(
+                str(manifest_path),
+                metadata_only=True,
+                skip_hash_verification=True,
+                hash_skip_reason="bench driver reads media ids only",
+            )
+            raise
+        manifest_digest = hashlib.sha256(manifest_bytes).hexdigest()
+
     # Load without images_dir first so floor/superset fail before any media I/O.
     # Deliberate metadata-only load (VLM6-PANEL6L-rvM-01 / OBS-04): only
     # entry counts and media_id sets are read here, never image bytes.
-    manifest = load_manifest(
-        str(manifest_path),
-        metadata_only=True,
-        skip_hash_verification=True,
-        hash_skip_reason="bench driver reads media ids only",
-    )
+    manifest = _load_manifest_bytes(manifest_bytes)
     assert_floor_fits_corpus(pair.accepted_set_floor, len(manifest.entries))
-    if pair.manifest_sha256:
-        digest = hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest()
-        if digest != pair.manifest_sha256:
-            raise BenchError("manifest_sha_mismatch", "manifest bytes do not match manifest_sha256")
+    if pair.manifest_sha256 and manifest_digest != pair.manifest_sha256:
+        raise BenchError("manifest_sha_mismatch", "manifest bytes do not match manifest_sha256")
     if pair.baseline_manifest_path:
         baseline = load_manifest(
             str(pair.baseline_manifest_path),
@@ -387,14 +508,47 @@ def run_pair(
             {e.media_id for e in manifest.entries},
             {e.media_id for e in baseline.entries},
         )
+    from scripts.bench.preflight import (
+        load_pre_run_reset_evidence,
+        preflight_pair,
+        pre_run_reset_evidence_sha256,
+        validate_pre_run_reset_evidence,
+    )
+
+    # This gate is independent of the optional health preflight switch: skipping
+    # health checks must never permit ingest against an unattested scratch tenant.
+    reset_evidence = (
+        validate_pre_run_reset_evidence(
+            pair,
+            pre_run_reset_by_stack,
+            enforce_freshness=not is_resume,
+        )
+        if pre_run_reset_by_stack is not None
+        else load_pre_run_reset_evidence(pair, enforce_freshness=not is_resume)
+    )
+    reset_evidence_sha256 = pre_run_reset_evidence_sha256(reset_evidence)
+    _refuse_reused_reset_evidence(
+        out_dir_path.parent,
+        reset_evidence_sha256,
+        current_run_path=run_record_path if is_resume else None,
+    )
     preflight_results = None
     if not skip_preflight:
-        from scripts.bench.preflight import preflight_pair
-
         keys = {s.stack_id: os.environ.get(s.api_key_env, "") for s in pair.stacks}
         # Abort before any media/run-dir writes; persist after init.
-        preflight_results = preflight_pair(pair, transports=preflight_transports, api_keys=keys)
-    root = init_run_dir(out_dir, pair, manifest_path)
+        preflight_results = preflight_pair(
+            pair,
+            transports=preflight_transports,
+            api_keys=keys,
+        )
+    root = (
+        out_dir_path
+        if is_resume
+        else init_run_dir(out_dir_path, pair, manifest_path, manifest_bytes=manifest_bytes)
+    )
+    if not is_resume:
+        _stamp_run_field(root, "pre_run_reset_by_stack", reset_evidence)
+        _stamp_run_field(root, "pre_run_reset_evidence_sha256", reset_evidence_sha256)
     if preflight_results is not None:
         from scripts.bench.preflight import write_preflight_json
 
@@ -416,6 +570,7 @@ def run_pair(
             run_dir=root,
             client=client,
             deadline=deadline,
+            preloaded_manifest=manifest,
         )
         if not _leg_complete(root, endpoint.stack_id):
             incomplete.append(endpoint.stack_id)
@@ -493,8 +648,16 @@ def _leg_complete(run_dir: Path, stack_id: str) -> bool:
     if _terminal_leg_refusal(leg / "leg_outcome.json"):
         return False
     exports = leg / "exports"
-    needed = ("media_identities.json", "clusters.json", "cluster_members.json")
-    return _cluster_status_ok(leg / "cluster_job.json") and all((exports / name).is_file() for name in needed)
+    needed = LEG_EXPORT_REQUIRED_FILES
+    if not _cluster_status_ok(leg / "cluster_job.json") or not all(
+        (exports / name).is_file() for name in needed
+    ):
+        return False
+    try:
+        load_leg_exports(run_dir, stack_id)
+    except (BenchError, OSError, UnicodeError, json.JSONDecodeError):
+        return False
+    return True
 
 
 def _terminal_leg_refusal(path: Path) -> bool:

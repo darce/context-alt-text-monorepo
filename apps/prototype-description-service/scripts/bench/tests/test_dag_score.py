@@ -19,9 +19,11 @@ from scripts.bench.score_report import (
     AcceptedSet,
     _analyze_ok,
     _declared_stack_ids,
+    _first_runtime_fingerprint_difference,
     _ingest_roster,
     _load_manifest_from_run,
     _load_pair,
+    _require_prov01_preflights,
     _terminal_ingest_ok,
     compute_accepted_set,
     score_head_to_head,
@@ -37,6 +39,7 @@ from scripts.bench.tests.conftest import (
     valid_pair_dict,
     write_manifest,
     write_pair,
+    write_stub_preflight,
 )
 
 PRIMARY = "detection_recall@frame_e2e/label_map_primary"
@@ -141,6 +144,9 @@ def test_record_provenance_requires_latest_path_and_content_pin(tmp_path: Path) 
 
     assert _analyze_ok([valid_analyze], entry.media_id, entry=entry) == valid_analyze
     assert _terminal_ingest_ok([valid_ingest], entry.media_id, entry=entry) is True
+    # Older analyze records copied this field, but cannot replace a missing
+    # durable ingest-phase row.
+    assert _terminal_ingest_ok([valid_analyze], entry.media_id, entry=entry) is False
 
     for field, value in (("manifest_path", "fixtures/relabelled.jpg"), ("content_sha256", "f" * 64)):
         tampered_analyze = {**valid_analyze, field: value}
@@ -169,6 +175,158 @@ def test_record_provenance_does_not_accept_non_string_pin_fields(tmp_path: Path,
         assert _analyze_ok([record], entry.media_id, entry=entry) is None
     else:
         assert _terminal_ingest_ok([record], entry.media_id, entry=entry) is False
+
+
+@pytest.mark.parametrize(
+    ("field", "different"),
+    [
+        ("opencv_version", "5.0.1.93"),
+        ("opencv_major", 4),
+        ("onnxruntime_version", "1.29.0"),
+        ("numpy_version", "2.5.2"),
+        ("scipy_version", "1.18.1"),
+        ("pillow_version", "12.3.1"),
+        ("hdbscan_version", "0.8.45"),
+        ("pgvector_version", "0.5.1"),
+        ("comparison_token", "1" * 64),
+    ],
+)
+def test_runtime_fingerprint_comparison_names_every_differing_field(
+    field: str, different: object
+) -> None:
+    """TEST-15: every validated fingerprint component participates in equality."""
+    baseline: dict[str, object] = {
+        "opencv_version": "5.0.0.93",
+        "opencv_major": 5,
+        "onnxruntime_version": "1.28.0",
+        "numpy_version": "2.5.1",
+        "scipy_version": "1.18.0",
+        "pillow_version": "12.3.0",
+        "hdbscan_version": "0.8.44",
+        "pgvector_version": "0.5.0",
+        "comparison_token": "0" * 64,
+    }
+    candidate = {**baseline, field: different}
+
+    assert _first_runtime_fingerprint_difference(baseline, candidate) == field
+
+
+def test_runtime_fingerprint_comparison_accepts_equal_objects() -> None:
+    fingerprint = {
+        "opencv_version": "5.0.0.93",
+        "opencv_major": 5,
+        "onnxruntime_version": "1.28.0",
+        "numpy_version": "2.5.1",
+        "scipy_version": "1.18.0",
+        "pillow_version": "12.3.0",
+        "hdbscan_version": "0.8.44",
+        "pgvector_version": "0.5.0",
+        "comparison_token": "0" * 64,
+    }
+
+    assert _first_runtime_fingerprint_difference(fingerprint, dict(fingerprint)) is None
+
+
+def test_preflight_gate_refuses_different_numpy_fingerprint(tmp_path: Path) -> None:
+    run_dir = _pinned_run(tmp_path)
+    write_stub_preflight(run_dir, STACK_A)
+    changed_path = write_stub_preflight(run_dir, STACK_B)
+    doc = json.loads(changed_path.read_text(encoding="utf-8"))
+    detail = doc["health_detailed_excerpt"]["model_cache"]["detail"]
+    marker = "numeric_runtime_fingerprint="
+    fingerprint = json.loads(detail.split(marker, 1)[1])
+    fingerprint["numpy_version"] = "2.5.2"
+    doc["health_detailed_excerpt"]["model_cache"]["detail"] = marker + json.dumps(
+        fingerprint, separators=(",", ":")
+    )
+    changed_path.write_text(json.dumps(doc), encoding="utf-8")
+
+    with pytest.raises(BenchError) as exc:
+        _require_prov01_preflights(run_dir, [STACK_A, STACK_B])
+
+    assert exc.value.code == "preflight_invalid"
+    assert "numpy_version" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("field", "different"),
+    [
+        ("hdbscan_version", "0.8.45"),
+        ("pgvector_version", "0.5.1"),
+        ("comparison_token", "1" * 64),
+    ],
+)
+def test_preflight_gate_refuses_different_full_fingerprint_fields(
+    tmp_path: Path, field: str, different: str
+) -> None:
+    run_dir = _pinned_run(tmp_path)
+    write_stub_preflight(run_dir, STACK_A)
+    changed_path = write_stub_preflight(run_dir, STACK_B)
+    doc = json.loads(changed_path.read_text(encoding="utf-8"))
+    detail = doc["health_detailed_excerpt"]["model_cache"]["detail"]
+    marker = "numeric_runtime_fingerprint="
+    fingerprint = json.loads(detail.split(marker, 1)[1])
+    fingerprint[field] = different
+    doc["health_detailed_excerpt"]["model_cache"]["detail"] = marker + json.dumps(
+        fingerprint, separators=(",", ":")
+    )
+    changed_path.write_text(json.dumps(doc), encoding="utf-8")
+
+    with pytest.raises(BenchError) as exc:
+        _require_prov01_preflights(run_dir, [STACK_A, STACK_B])
+
+    assert exc.value.code == "preflight_invalid"
+    assert field in str(exc.value)
+
+
+def test_preflight_gate_refuses_fingerprint_missing_scipy_version(tmp_path: Path) -> None:
+    run_dir = _pinned_run(tmp_path)
+    write_stub_preflight(run_dir, STACK_A)
+    changed_path = write_stub_preflight(run_dir, STACK_B)
+    doc = json.loads(changed_path.read_text(encoding="utf-8"))
+    detail = doc["health_detailed_excerpt"]["model_cache"]["detail"]
+    marker = "numeric_runtime_fingerprint="
+    fingerprint = json.loads(detail.split(marker, 1)[1])
+    del fingerprint["scipy_version"]
+    doc["health_detailed_excerpt"]["model_cache"]["detail"] = marker + json.dumps(
+        fingerprint, separators=(",", ":")
+    )
+    changed_path.write_text(json.dumps(doc), encoding="utf-8")
+
+    with pytest.raises(BenchError) as exc:
+        _require_prov01_preflights(run_dir, [STACK_A, STACK_B])
+
+    assert exc.value.code == "preflight_invalid"
+    assert "incomplete" in str(exc.value)
+
+
+@pytest.mark.parametrize("token", ["a" * 63, "A" * 64, "0" * 63 + "g", 123])
+def test_preflight_gate_refuses_invalid_comparison_token(tmp_path: Path, token: object) -> None:
+    run_dir = _pinned_run(tmp_path)
+    changed_path = write_stub_preflight(run_dir, STACK_A)
+    doc = json.loads(changed_path.read_text(encoding="utf-8"))
+    detail = doc["health_detailed_excerpt"]["model_cache"]["detail"]
+    marker = "numeric_runtime_fingerprint="
+    fingerprint = json.loads(detail.split(marker, 1)[1])
+    fingerprint["comparison_token"] = token
+    doc["health_detailed_excerpt"]["model_cache"]["detail"] = marker + json.dumps(
+        fingerprint, separators=(",", ":")
+    )
+    changed_path.write_text(json.dumps(doc), encoding="utf-8")
+
+    with pytest.raises(BenchError) as exc:
+        _require_prov01_preflights(run_dir, [STACK_A])
+
+    assert exc.value.code == "preflight_invalid"
+    assert "comparison token" in str(exc.value)
+
+
+def test_preflight_gate_accepts_equal_runtime_fingerprints(tmp_path: Path) -> None:
+    run_dir = _pinned_run(tmp_path)
+    write_stub_preflight(run_dir, STACK_A)
+    write_stub_preflight(run_dir, STACK_B)
+
+    assert _require_prov01_preflights(run_dir, [STACK_A, STACK_B]) is True
 
 
 @pytest.mark.parametrize("mutator", ["missing", "renamed", "extra", "rogue_file"])

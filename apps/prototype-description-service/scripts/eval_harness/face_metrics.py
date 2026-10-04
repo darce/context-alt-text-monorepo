@@ -38,6 +38,7 @@ import numpy as np
 
 from .manifest import (
     AnnotationMode,
+    FaceBoxSource,
     LabelDecision,
     LabelSource,
     ManifestError,
@@ -668,6 +669,22 @@ def has_human_adjudicated_gt_lineage(box: Any) -> bool:
     )
 
 
+def has_independent_gt_region_source(box: Any) -> bool:
+    """Return whether a GT box has a recognized non-Buffalo region source.
+
+    Raw mappings can reach score time without passing through ``FaceBox``
+    validation, so keep the persisted source vocabulary fail-closed here too.
+    Human adjudication is separately attested by ``has_human_adjudicated_gt_lineage``.
+    """
+    if isinstance(box, Mapping):
+        source = box.get("source")
+    else:
+        source = getattr(box, "source", None)
+    return isinstance(source, str) and source in {
+        member.value for member in FaceBoxSource
+    }
+
+
 def _strict_gt_box_dimension(box: Any, name: str) -> float | None:
     if isinstance(box, Mapping):
         value = box.get(name)
@@ -784,8 +801,16 @@ def detection_pr_strict(
 
     threshold = _strict_iou_threshold(run_manifest)
 
-    # Refusal order is part of the strict contract: threshold, lineage, frame,
-    # usable geometry, and finally independent count/box coverage.
+    # Refusal order is part of the strict contract: threshold, independent
+    # source, human lineage, frame, usable geometry, then count/box coverage.
+    for row_index, row in enumerate(items):
+        if any(not has_independent_gt_region_source(box) for box in row.gt_boxes):
+            raise _strict_row_refusal(
+                "strict detection scoring requires an independent supported source on every GT box",
+                ScoreInvariant.DETECTION_REQUIRES_INDEPENDENT_GT_SOURCE,
+                row_index,
+                row,
+            )
     for row_index, row in enumerate(items):
         if any(not has_human_adjudicated_gt_lineage(box) for box in row.gt_boxes):
             raise _strict_row_refusal(

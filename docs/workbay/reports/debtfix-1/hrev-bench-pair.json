@@ -1,0 +1,117 @@
+{
+  "lane": "hrev-bench-pair",
+  "base": "57eb151417a52df980219cc5faac0338f7ecdcb3",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal scripts/bench/tests/test_stack_pair_consumption.py scripts/bench/tests/test_corpus_media_id_ceiling.py scripts/bench/tests/test_corpus_superset.py scripts/bench/tests/test_manifest_version_seam.py",
+      "result": "fail",
+      "detail": "uv stopped before pytest: failed to remove the symlinked environment's alembic executable (Read-only file system, os error 30)."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal scripts/bench/tests/test_stack_pair_consumption.py scripts/bench/tests/test_corpus_media_id_ceiling.py scripts/bench/tests/test_corpus_superset.py scripts/bench/tests/test_manifest_version_seam.py",
+      "result": "pass",
+      "detail": "94 passed, 19 warnings in 3.29s."
+    },
+    {
+      "command": "lane_root=\"$(git rev-parse --show-toplevel)\"; resolved_python=\"$lane_root/.venv/bin/python\"; cd \"$lane_root/apps/prototype-description-service\"; \"$resolved_python\" -c \"import recognition as module; print(module.__file__)\"",
+      "result": "pass",
+      "detail": "Recognition resolved to apps/prototype-description-service/recognition/__init__.py within the lane worktree; import-origin control was repeated after the final report edit."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16830,
+      "finding_id": "DADJ-6424",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/bench/stack_pair.py:332-333 - rejects non-HTTPS URLs with base_url_invalid.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_stack_pair_consumption.py::test_http_base_url_rejected"
+    },
+    {
+      "db_id": 16832,
+      "finding_id": "DADJ-6392",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/bench/corpus.py:140-145 - rejects media IDs above 999999 because the analyze route truncates them and can collide.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_corpus_media_id_ceiling.py::test_manifest_media_id_ceiling_includes_999999_and_rejects_1000000"
+    },
+    {
+      "db_id": 16797,
+      "finding_id": "DADJ-6404",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/bench/stack_pair.py:296-297 requires configured OpenCV 5; preflight.py:198-205 rejects runtime drift and any non-5 service; cross_stack_bench.py:68-74 runs with skip_preflight=False. Score-time PROV-01 revalidates the recorded runtime fingerprint.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_preflight.py::test_preflight_refuses_service_opencv_major_drift; apps/prototype-description-service/scripts/bench/tests/test_preflight.py::test_score_refuses_different_service_opencv_versions"
+    },
+    {
+      "db_id": 16789,
+      "finding_id": "DADJ-6382",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:1455,1488-1490 writes p_value and Holm fields; :1511-1512 stamps degenerate_box_dropped and its scope in frames.json.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py::test_score_uses_full_manifest_occasions_and_caps_golden150_tiers; apps/prototype-description-service/scripts/bench/tests/test_score_head_to_head.py::test_secondary_holm_uses_real_bootstrap_p"
+    },
+    {
+      "db_id": 16826,
+      "finding_id": "DADJ-6413",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/bench/corpus.py:104-114 reads stored image.size and explicitly keeps dimensions in the inference pixel frame without EXIF transpose.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py::test_exif_orientation_dimensions_stay_in_inference_pixel_frame"
+    },
+    {
+      "db_id": 16899,
+      "finding_id": "DFIX03-9806a688f4e6db9b-M-e80790d70e4d91029eff2ab7",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/bench/tests/fixtures/stack-pair.example.yaml:20 points to https://fir.dev.api.altcontext.com; the allowlist in stack_pair.py:97 accepts that hostname.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_stack_pair_consumption.py::test_example_pair_uses_current_fir_ingress"
+    },
+    {
+      "db_id": 16859,
+      "finding_id": "DADJ-6309",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/bench/stack_pair.py:25-38 keeps one canonical detection label-map spelling and computes Holm endpoints after excluding permanently directional cells.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_stack_pair_consumption.py::test_detection_label_map_aliases_are_rejected; apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py::test_score_uses_full_manifest_occasions_and_caps_golden150_tiers"
+    },
+    {
+      "db_id": 16849,
+      "finding_id": "DADJ-6282",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/bench/stack_pair.py:204-206 requires head_to_head_delta to be finite YAML float in (0.0, 1.0].",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_stack_pair_consumption.py::test_head_to_head_delta_requires_bounded_yaml_float"
+    },
+    {
+      "db_id": 16798,
+      "finding_id": "DADJ-6405",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "apps/prototype-description-service/scripts/eval_harness/manifest.py:510-515 rejects Buffalo as a FaceBox source, but :948-952 leaves adjudication_source optional; score_report.py:1229 calls generic detection_pr rather than detection_pr_strict, so the bench score accepts an IPTC/MWG/operator box without human-adjudication evidence.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py::test_strict_detection_refuses_missing_or_unsupported_gt_source (covers the strict helper; no assertion covers the bench scoring caller)"
+    },
+    {
+      "db_id": 16997,
+      "finding_id": "FXBSA-be347bb3d2c4cdb9-M-ec224415d79cfb941855dce4",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/bench/tests/conftest.py:36-44 sets FIR_STACK.base_url to https://fir.dev.api.altcontext.com, matching the stack allowlist.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_stack_pair_consumption.py::test_shared_fir_fixture_passes_production_allowlist"
+    }
+  ],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "apps/prototype-description-service/scripts/bench/export_map.py",
+      "line": 120,
+      "title": "Scoring trusts exports without checking their recorded digests",
+      "defect": "export_leg writes export_sha256.json, but load_leg_exports reads the payload JSON without comparing hashes; driver._leg_complete only checks that all required paths exist. The score caller therefore does not detect when an export changes after its digest was recorded.",
+      "failure_scenario": "After export, replace media_identities.json with a valid but altered row list and leave export_sha256.json unchanged. _leg_complete still accepts the leg and score_head_to_head consumes the altered identities while the sidecar describes the old bytes.",
+      "fix": "Verify each payload hash against export_sha256.json in load_leg_exports and treat mismatches as incomplete in _leg_complete; add a regression that mutates an export while retaining the original digest and asserts scoring refuses it.",
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_driver_export_skip.py",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "The assigned suite passes (94 tests). Nine prior fixes hold; DADJ-6405 is partial because the bench scorer bypasses the strict human-adjudication gate, and a new medium export-integrity gap needs review before merge."
+}

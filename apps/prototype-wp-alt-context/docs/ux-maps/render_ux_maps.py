@@ -78,13 +78,25 @@ def _zone_table(screen: dict) -> list[str]:
     return rows
 
 
-def _screen_block(screen: dict) -> list[str]:
+def _screen_block(screen: dict, *, include_render_metadata: bool = False) -> list[str]:
     out: list[str] = []
     if screen.get("purpose"):
         out += [f"Purpose: {screen['purpose']}", ""]
     params = screen.get("url_params") or []
     if params:
         out += ["url_params: " + ", ".join(f"`{p}`" for p in params), ""]
+    if include_render_metadata:
+        def nullable(value):
+            return "—" if value is None else f"`{value}`"
+
+        out += [
+            f"wp_page: {nullable(screen.get('wp_page'))}",
+            f"job_entry: {str(screen.get('job_entry', False)).lower()}",
+            f"deep_link: {str(screen.get('deep_link', False)).lower()}",
+            f"primary_action_id: {nullable(screen.get('primary_action_id'))}",
+            f"code_ref: {nullable(screen.get('code_ref'))}",
+            "",
+        ]
     if screen.get("action_states"):
         out += ["Action states: " + ", ".join(screen["action_states"]), ""]
     if screen.get("zones"):
@@ -439,7 +451,10 @@ def render(map_ref: str) -> str:
         if heading and heading.group(1) in screens:
             active_screen = screens[heading.group(1)]
             out.append("")
-            out += _screen_block(screens[heading.group(1)])
+            out += _screen_block(
+                screens[heading.group(1)],
+                include_render_metadata=map_ref == "workbench-operator-loop",
+            )
             # `_screen_block` ends with a blank line; drop the duplicate blank the bundle
             # emits immediately after the heading.
             if out and out[-1] == "":
@@ -510,6 +525,14 @@ def _read_visible_snapshot(map_ref: str, json_path: Path) -> str:
 
 
 SCREEN_METADATA_KEYS = ("Purpose", "url_params", "Action states", "Screen states")
+SCREEN_RENDER_METADATA_KEYS = (
+    *SCREEN_METADATA_KEYS,
+    "wp_page",
+    "job_entry",
+    "deep_link",
+    "primary_action_id",
+    "code_ref",
+)
 
 
 def scan_declarations(block: str, screen_id: str, first_line: int = 1) -> dict[str, str]:
@@ -522,7 +545,7 @@ def scan_declarations(block: str, screen_id: str, first_line: int = 1) -> dict[s
         if not colon:
             continue
         label = " ".join(re.sub(r"[_*`]+", "", label).split()).lower()
-        key = next((key for key in SCREEN_METADATA_KEYS if key.replace("_", "").lower() == label), None)
+        key = next((key for key in SCREEN_RENDER_METADATA_KEYS if key.replace("_", "").lower() == label), None)
         if key is None:
             continue
         number = first_line + index
@@ -545,7 +568,8 @@ def _check_projection(map_ref: str, rendered: str | None = None) -> tuple[str, s
             f"import {{ parseRenderedUxMap, projectUxMapForRenderParity }} from {json.dumps(parity_module.as_uri())};",
             f"const source = JSON.parse(fs.readFileSync({json.dumps(str(json_path))}, 'utf8'));",
             f"const markdown = fs.readFileSync({json.dumps(str(markdown_path))}, 'utf8');",
-            "console.log(JSON.stringify({expected: projectUxMapForRenderParity(source), actual: parseRenderedUxMap(markdown)}, null, 2));",
+            "const parityOptions = {includeScreenMetadata: source.map_ref === 'workbench-operator-loop'};",
+            "console.log(JSON.stringify({expected: projectUxMapForRenderParity(source, parityOptions), actual: parseRenderedUxMap(markdown, parityOptions)}, null, 2));",
         ]
     )
     try:

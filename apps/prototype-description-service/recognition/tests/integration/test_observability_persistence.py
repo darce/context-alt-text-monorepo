@@ -3,15 +3,39 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from importlib.metadata import version
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
 
-from db.models import AssignmentDecision, ClusteringJobReport
+from db.models import AssignmentDecision, ClusteringJobReport, RecognitionRun
+from recognition.application.orchestration.clustering.orchestrator import IncrementalClusteringRunner
 from recognition.observability.decisions import DecisionLog, DecisionType
 from recognition.observability.persistence import ObservabilityRepository
 from recognition.observability.reports import BatchJobReport
 from recognition.shared.ids import generate_id
+
+
+@pytest.mark.asyncio
+async def test_clustering_run_persists_runtime_versions(db_session, tenant) -> None:
+    runner = object.__new__(IncrementalClusteringRunner)
+    runner._session = db_session
+    runner._gate = SimpleNamespace(settings=SimpleNamespace(model_dump=lambda: {"similarity_threshold": 0.8}))
+
+    context = await runner._start_run_context(
+        tenant_uuid=tenant.id,
+        clustering_job=SimpleNamespace(id=None, payload={}),
+        dataset=[],
+        started_at=datetime.now(tz=UTC),
+    )
+    row = await db_session.get(RecognitionRun, context.run_id)
+
+    assert row is not None
+    assert row.settings_snapshot["runtime_versions"] == {
+        "hdbscan": version("hdbscan"),
+        "scipy": version("scipy"),
+    }
 
 
 @pytest.mark.asyncio

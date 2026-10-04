@@ -967,6 +967,30 @@ def test_dump_load_snapshot_commits_before_stale_publication_is_dropped(
     asyncio.run(body())
 
 
+def test_dump_load_snapshot_reseeds_revision_after_database_counter_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    async def body():
+        engine, sf = await _sessionmaker()
+        target = tmp_path / "describe-load.json"
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        _publish_gpu_state(tmp_path, monkeypatch, now=start, state="stopped")
+        target.write_text(
+            json.dumps({"queue_depth": 0, "in_flight": 0, "revision": 41, "written_at": 1.0}),
+            encoding="utf-8",
+        )
+
+        # _sessionmaker creates an empty revision table, representing a schema
+        # drop/recreate while the host snapshot survives.
+        await dump_load_snapshot(sf, path=target, now=start, raise_on_error=True)
+        loaded = json.loads(target.read_text())
+        assert loaded["revision"] == 42
+        assert loaded["written_at"] == start.timestamp()
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
 def test_dump_load_snapshot_observes_stop_intent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from scene.application.gpu_intent import IntentAction, write_gpu_intent
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\ProbeOutcome;
+use AltContext\Api\RecognitionApiKeyStore;
 use AltContext\Api\RecognitionEndpointResolver;
 use AltContext\Api\SettingsController;
 use AltContext\Api\Services\DescriptionBudgetService;
@@ -18,14 +19,28 @@ use WP_REST_Request;
 class SettingsControllerTest extends TestCase
 {
     private SettingsController $controller;
+    private string|false $originalRecognitionApiKeyEnvironment;
 
     protected function setUp(): void
     {
         parent::setUp();
+        $this->originalRecognitionApiKeyEnvironment = getenv('ACX_RECOGNITION_API_KEY');
+        putenv('ACX_RECOGNITION_API_KEY');
         // Opt-in update_option failure map is not cleared by TestCase::resetGlobalState;
         // drop it here so R23-BR-14 fail pins cannot leak into later tests.
         $GLOBALS['__ac_update_option_fail'] = [];
         $this->controller = new SettingsController();
+    }
+
+    protected function tearDown(): void
+    {
+        if (false === $this->originalRecognitionApiKeyEnvironment) {
+            putenv('ACX_RECOGNITION_API_KEY');
+        } else {
+            putenv('ACX_RECOGNITION_API_KEY=' . $this->originalRecognitionApiKeyEnvironment);
+        }
+
+        parent::tearDown();
     }
 
     public function testRegisterRoutesIncludesSettingsEndpoints(): void
@@ -39,6 +54,7 @@ class SettingsControllerTest extends TestCase
 
         $this->assertContains('/settings', $routes);
         $this->assertContains('/settings/test', $routes);
+        $this->assertArrayHasKey('rest_pre_dispatch', $GLOBALS['__ac_filters']);
     }
 
     // --- GET /settings ---
@@ -71,6 +87,7 @@ class SettingsControllerTest extends TestCase
         $this->assertFalse($data['api_key_set']);
         $this->assertSame('', $data['api_key_last4']);
         $this->assertSame('default', $data['key_source']);
+        $this->assertSame(DescriptionBudgetService::DEFAULT_MAX_ATTEMPTS, $data['description_budget']['max_attempts']);
         $this->assertSame(TenantIdentity::resolve()['value'], $data['tenant_id']);
         $this->assertSame('derived', $data['tenant_id_source']);
         $this->assertFalse($data['tenant_paired']);
@@ -223,7 +240,7 @@ class SettingsControllerTest extends TestCase
         $this->assertSame('http://host.docker.internal:8000', $data['url_rejection_value']);
     }
 
-    public function testGetSettingsReturnsOptionSourceWhenOptionSet(): void
+    public function testGetSettingsReturnsDecryptedOptionSourceWhenOptionSet(): void
     {
         $this->setUserCapability('manage_options', true);
         $this->setOption('acx_recognition_url', 'https://api.example.com');
@@ -243,6 +260,44 @@ class SettingsControllerTest extends TestCase
         $this->assertTrue($data['api_key_set']);
         $this->assertSame('****1234', $data['api_key_last4']);
         $this->assertSame('option', $data['key_source']);
+        $this->assertStringContainsString(
+            'stored encrypted with a key derived from the site\'s auth salt',
+            $data['api_key_storage_notice']
+        );
+    }
+
+    public function testGetSettingsReportsUnreadableStoredApiKey(): void
+    {
+        update_option(
+            RecognitionApiKeyStore::OPTION_NAME,
+            RecognitionApiKeyStore::PREFIX . 'not-valid-ciphertext'
+        );
+
+        $data = $this->controller
+            ->get_settings(new WP_REST_Request('GET', '/acx/v1/settings'))
+            ->get_data();
+
+        $this->assertFalse($data['api_key_set']);
+        $this->assertSame('', $data['api_key_last4']);
+        $this->assertSame('unreadable', $data['key_source']);
+        $this->assertStringContainsString('cannot be read', $data['api_key_storage_notice']);
+        $this->assertStringContainsString('must be re-entered', $data['api_key_storage_notice']);
+    }
+
+    public function testGetSettingsPrefersEnvironmentApiKeyOverEncryptedOption(): void
+    {
+        putenv('ACX_RECOGNITION_API_KEY=environment-key-12345678');
+        $this->setOption('acx_recognition_api_key', 'legacy-plain-key-9999');
+
+        $this->assertSame('environment-key-12345678', apply_filters('acx_recognition_api_key', ''));
+
+        $data = $this->controller
+            ->get_settings(new WP_REST_Request('GET', '/acx/v1/settings'))
+            ->get_data();
+
+        $this->assertSame('constant', $data['key_source']);
+        $this->assertSame('****5678', $data['api_key_last4']);
+        $this->assertNull($data['api_key_storage_notice']);
     }
 
     public function testGetSettingsReturnsPersistedTenantFields(): void
@@ -454,7 +509,54 @@ class SettingsControllerTest extends TestCase
 
         $this->assertFalse(get_option('acx_recognition_source', false));
         $this->assertSame('https://new-api.example.com', get_option('acx_recognition_url'));
-        $this->assertSame('new-key-12345678', get_option('acx_recognition_api_key'));
+        $storedKey = get_option(RecognitionApiKeyStore::OPTION_NAME);
+        $this->assertStringStartsWith(RecognitionApiKeyStore::PREFIX, $storedKey);
+        $this->assertNotSame('new-key-12345678', $storedKey);
+        $this->assertSame('new-key-12345678', RecognitionApiKeyStore::decrypt($storedKey));
+    }
+
+    public function testSaveSettingsDoesNotStorePlaintextShadowOfEnvironmentKey(): void
+    {
+        putenv('ACX_RECOGNITION_API_KEY=environment-managed-key');
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_api_key', 'legacy-plain-key');
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params(['api_key' => 'submitted-shadow-key']);
+
+        $data = $this->controller->save_settings($request)->get_data();
+
+        $this->assertSame('error', $data['result']);
+        $this->assertContains('api_key', $data['failed']);
+        $storedKey = get_option(RecognitionApiKeyStore::OPTION_NAME);
+        $this->assertNotSame('legacy-plain-key', $storedKey);
+        $this->assertSame('legacy-plain-key', RecognitionApiKeyStore::decrypt($storedKey));
+    }
+
+    public function testRateLimitsDescribeAnalyzeAndBulkRunRequestsTogether(): void
+    {
+        $this->controller->register_routes();
+        $this->setUserCapability('manage_options', true);
+        $GLOBALS['wpdb']->mockVar = '1';
+
+        $routes = [
+            '/acx/v1/recognition/describe',
+            '/acx/v1/recognition/analyze',
+            '/acx/v1/recognition/describe/runs',
+        ];
+        for ($attempt = 0; $attempt < 30; ++$attempt) {
+            $request = new WP_REST_Request('POST', $routes[$attempt % count($routes)]);
+            $this->assertNull(apply_filters('rest_pre_dispatch', null, null, $request));
+        }
+
+        $blocked = apply_filters(
+            'rest_pre_dispatch',
+            null,
+            null,
+            new WP_REST_Request('POST', '/acx/v1/recognition/analyze')
+        );
+        $this->assertInstanceOf(\WP_Error::class, $blocked);
+        $this->assertSame('recognition_rate_limit_exceeded', $blocked->get_error_code());
     }
 
     public function testSaveSettingsSynchronizesAllowPersonNamesWithRecognitionService(): void
@@ -462,6 +564,7 @@ class SettingsControllerTest extends TestCase
         $this->setUserCapability('manage_options', true);
         $this->setOption('acx_recognition_url', 'https://api.example.com');
         $this->setOption('acx_recognition_api_key', 'test-key');
+        $this->setOption('acx_description_allow_person_names', true);
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => '{"enabled":false}',
@@ -474,9 +577,36 @@ class SettingsControllerTest extends TestCase
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $this->assertSame(['allow_person_names'], $response->get_data()['saved']);
         $this->assertArrayNotHasKey('acx_description_allow_person_names', $GLOBALS['__ac_options'] ?? []);
+        $this->assertArrayNotHasKey(
+            'acx_description_allow_person_names_tenant_id',
+            $GLOBALS['__ac_options'] ?? []
+        );
+        $this->assertFalse(get_option('acx_description_allow_person_names'));
         $calls = $this->getHttpCalls();
         $this->assertSame('PUT', $calls[0]['method']);
         $this->assertSame('{"enabled":false}', $calls[0]['args']['body']);
+    }
+
+    public function testSaveSettingsCachesEnabledPersonNamesForConfirmedTenant(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $tenantId = 'dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $this->setOption('acx_recognition_tenant_id', $tenantId);
+        $this->setOption('acx_recognition_url', 'https://api.example.com');
+        $this->setOption('acx_recognition_api_key', 'test-key');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"enabled":true}',
+        ]);
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params(['allow_person_names' => true]);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(['allow_person_names'], $response->get_data()['saved']);
+        $this->assertTrue(get_option('acx_description_allow_person_names'));
+        $this->assertSame($tenantId, get_option('acx_description_allow_person_names_tenant_id'));
     }
 
     public function testSaveSettingsRejectsNonBooleanAllowPersonNames(): void
@@ -497,6 +627,7 @@ class SettingsControllerTest extends TestCase
         $this->setUserCapability('manage_options', true);
         $this->setOption('acx_recognition_url', 'https://api.example.com');
         $this->setOption('acx_recognition_api_key', 'test-key');
+        $this->setOption('acx_description_allow_person_names', true);
         $this->queueHttpResponse(new \WP_Error('http_request_failed', 'Connection refused'));
 
         $request = new WP_REST_Request('POST', '/acx/v1/settings');
@@ -506,6 +637,7 @@ class SettingsControllerTest extends TestCase
         $this->assertInstanceOf(\WP_Error::class, $response);
         $this->assertSame('allow_person_names_sync_failed', $response->get_error_code());
         $this->assertSame(502, $response->get_error_data()['status']);
+        $this->assertFalse(get_option('acx_description_allow_person_names'));
     }
 
     public function testSaveSettingsRr07PreservesCodeManagedSelectorContract(): void
@@ -1014,7 +1146,9 @@ class SettingsControllerTest extends TestCase
         $this->assertContains('recognition_enabled', $data['saved']);
         $this->assertArrayNotHasKey('failed', $data);
         $this->assertSame('https://stable.example.com', get_option('acx_recognition_url'));
-        $this->assertSame('stable-key-1234', get_option('acx_recognition_api_key'));
+        $storedKey = get_option(RecognitionApiKeyStore::OPTION_NAME);
+        $this->assertNotSame('stable-key-1234', $storedKey);
+        $this->assertSame('stable-key-1234', RecognitionApiKeyStore::decrypt($storedKey));
         $this->assertSame('alt_only', get_option('acx_alt_style'));
         $this->assertSame(10, get_option('acx_description_budget_max_attempts'));
         $this->assertSame('0', get_option('acx_recognition_enabled'));
@@ -1969,5 +2103,89 @@ class SettingsControllerTest extends TestCase
                 )
             ),
         ];
+    }
+
+    public function testGetSettingsReturnsNullContextCategoriesWhenOptionIsAbsent(): void
+    {
+        $this->setUserCapability('manage_options', true);
+
+        $response = $this->controller->get_settings(new WP_REST_Request('GET', '/acx/v1/settings'));
+        $data = $response->get_data();
+
+        $this->assertArrayHasKey('context_categories', $data);
+        $this->assertNull($data['context_categories']);
+        $this->assertNull($data['context_categories_error']);
+    }
+
+    public function testGetSettingsReturnsCanonicalContextCategorySubset(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_description_context_categories', array( 'product', 'attachment' ));
+
+        $response = $this->controller->get_settings(new WP_REST_Request('GET', '/acx/v1/settings'));
+        $data = $response->get_data();
+
+        $this->assertSame(array( 'attachment', 'product' ), $data['context_categories']);
+        $this->assertNull($data['context_categories_error']);
+    }
+
+    public function testGetSettingsFailsClosedForMalformedContextCategories(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_description_context_categories', array( 'attachment', 'unknown' ));
+
+        $response = $this->controller->get_settings(new WP_REST_Request('GET', '/acx/v1/settings'));
+        $data = $response->get_data();
+
+        $this->assertSame(array( 'attachment' ), $data['context_categories']);
+        $this->assertStringContainsString('invalid', $data['context_categories_error']);
+        $this->assertStringContainsString('only attachment details are sent', $data['context_categories_error']);
+    }
+
+    public function testSaveSettingsWritesCanonicalContextCategorySubset(): void
+    {
+        $this->setUserCapability('manage_options', true);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params(['context_categories' => ['product', 'attachment']]);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertContains('context_categories', $response->get_data()['saved']);
+        $this->assertSame(
+            array( 'attachment', 'product' ),
+            get_option('acx_description_context_categories')
+        );
+    }
+
+    public function testSaveSettingsAcceptsEmptyContextCategoryList(): void
+    {
+        $this->setUserCapability('manage_options', true);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params(['context_categories' => []]);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertContains('context_categories', $response->get_data()['saved']);
+        $this->assertSame(array(), get_option('acx_description_context_categories'));
+    }
+
+    public function testSaveSettingsRejectsInvalidContextCategoriesWithoutChangingOption(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_description_context_categories', array( 'post' ));
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params(['context_categories' => ['post', 'unknown']]);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_context_categories', $response->get_error_code());
+        $this->assertSame(400, $response->get_error_data()['status']);
+        $this->assertSame(array( 'post' ), get_option('acx_description_context_categories'));
     }
 }

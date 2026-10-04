@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -10,10 +11,20 @@ from scripts.bench.stack_pair import (
     DEPLOY_OWNERSHIP_KEYS,
     BenchError,
     load_stack_pair,
+    validate_stack_pair_config,
 )
-from scripts.bench.tests.conftest import FIR_STACK, INSIGHTFACE_STACK, valid_pair_dict, write_pair
+from scripts.bench.tests.conftest import (
+    FIR_STACK,
+    INSIGHTFACE_STACK,
+    valid_pair_dict as _valid_pair_dict,
+    write_pair,
+)
 
 PRIMARY = "detection_recall@frame_e2e/label_map_primary"
+
+
+def valid_pair_dict(**overrides: object):
+    return _valid_pair_dict(**overrides)
 
 
 def _load(tmp_path: Path, **overrides: object):
@@ -23,6 +34,20 @@ def _load(tmp_path: Path, **overrides: object):
 def test_valid_pair_loads(tmp_path: Path) -> None:
     pair = _load(tmp_path)
     assert {s.stack_id for s in pair.stacks} == {"acx-dev-insightface", "acx-dev-fir"}
+    assert pair.stacks[1].base_url == "https://fir.dev.api.altcontext.com"
+
+
+def test_shared_fir_fixture_passes_production_allowlist(tmp_path: Path) -> None:
+    pair = load_stack_pair(write_pair(tmp_path / "shared-fixture.yaml", _valid_pair_dict()))
+    fir = next(stack for stack in pair.stacks if stack.stack_id == FIR_STACK["stack_id"])
+    assert fir.base_url == FIR_STACK["base_url"] == "https://fir.dev.api.altcontext.com"
+
+
+def test_example_pair_uses_current_fir_ingress() -> None:
+    fixture_path = Path(__file__).parent / "fixtures" / "stack-pair.example.yaml"
+    pair = load_stack_pair(fixture_path)
+    fir = next(stack for stack in pair.stacks if stack.stack_id == "acx-dev-fir")
+    assert fir.base_url == "https://fir.dev.api.altcontext.com"
 
 
 def test_unknown_stack_id_fails(tmp_path: Path) -> None:
@@ -41,6 +66,35 @@ def test_unknown_base_url_fails(tmp_path: Path) -> None:
     assert exc.value.code == "base_url_not_allowlisted"
 
 
+def test_http_base_url_rejected(tmp_path: Path) -> None:
+    stacks = [dict(INSIGHTFACE_STACK), dict(FIR_STACK)]
+    stacks[0]["base_url"] = "http://dev.api.altcontext.com"
+    with pytest.raises(BenchError) as exc:
+        _load(tmp_path, stacks=stacks)
+    assert exc.value.code == "base_url_invalid"
+
+
+def test_old_fir_ingress_is_not_allowlisted(tmp_path: Path) -> None:
+    stacks = [dict(INSIGHTFACE_STACK), dict(FIR_STACK)]
+    stacks[1]["base_url"] = "https://fir.api.altcontext.com"
+    with pytest.raises(BenchError) as exc:
+        _load(tmp_path, stacks=stacks)
+    assert exc.value.code == "base_url_not_allowlisted"
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "detection_recall@frame_e2e/label_map_optimistic",
+        "detection_precision@frame_fir5_native/label_map_optimistic",
+    ],
+)
+def test_detection_label_map_aliases_are_rejected(tmp_path: Path, endpoint: str) -> None:
+    with pytest.raises(BenchError) as exc:
+        _load(tmp_path, secondary_endpoints=[endpoint])
+    assert exc.value.code == "config_endpoint_invalid"
+
+
 @pytest.mark.parametrize("key", sorted(DEPLOY_OWNERSHIP_KEYS))
 def test_deploy_ownership_key_rejected(tmp_path: Path, key: str) -> None:
     payload = valid_pair_dict()
@@ -53,6 +107,94 @@ def test_deploy_ownership_key_rejected(tmp_path: Path, key: str) -> None:
 def test_allowed_key_control_still_loads(tmp_path: Path) -> None:
     pair = _load(tmp_path, images_dir="/tmp/corpus")
     assert pair.images_dir == "/tmp/corpus"
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("wall_clock_timeout_sec", "600"),
+        ("wall_clock_timeout_sec", 0),
+        ("wall_clock_timeout_sec", 86401),
+        ("job_poll_timeout_sec", 600.0),
+        ("job_poll_timeout_sec", 0),
+        ("job_poll_timeout_sec", 86401),
+        ("item_max_attempts", "2"),
+        ("item_max_attempts", 0),
+        ("item_max_attempts", 11),
+    ],
+)
+def test_invalid_run_budgets_fail_without_coercion(tmp_path: Path, key: str, value: object) -> None:
+    with pytest.raises(BenchError) as exc:
+        _load(tmp_path, **{key: value})
+    assert exc.value.code == "config_invalid"
+
+
+@pytest.mark.parametrize(
+    ("wall_clock_timeout_sec", "job_poll_timeout_sec", "item_max_attempts"),
+    [(1, 1, 1), (86400, 86400, 10)],
+)
+def test_run_budget_boundaries_are_accepted(
+    tmp_path: Path,
+    wall_clock_timeout_sec: int,
+    job_poll_timeout_sec: int,
+    item_max_attempts: int,
+) -> None:
+    pair = _load(
+        tmp_path,
+        wall_clock_timeout_sec=wall_clock_timeout_sec,
+        job_poll_timeout_sec=job_poll_timeout_sec,
+        item_max_attempts=item_max_attempts,
+    )
+    assert pair.wall_clock_timeout_sec == wall_clock_timeout_sec
+    assert pair.job_poll_timeout_sec == job_poll_timeout_sec
+    assert pair.item_max_attempts == item_max_attempts
+
+
+@pytest.mark.parametrize("value", ["false", "true", 0, 1])
+def test_private_source_requires_boolean(tmp_path: Path, value: object) -> None:
+    with pytest.raises(BenchError) as exc:
+        _load(tmp_path, allow_private_source=value)
+    assert exc.value.code == "config_invalid"
+
+
+@pytest.mark.parametrize("value", [0.0, 1.01, 1, "0.10", True, float("nan"), float("inf")])
+def test_head_to_head_delta_requires_bounded_yaml_float(tmp_path: Path, value: object) -> None:
+    with pytest.raises(BenchError) as exc:
+        _load(tmp_path, head_to_head_delta=value)
+    assert exc.value.code == "config_invalid"
+
+
+@pytest.mark.parametrize("value", [0.01, 1.0])
+def test_head_to_head_delta_float_boundaries_are_accepted(tmp_path: Path, value: float) -> None:
+    pair = _load(tmp_path, head_to_head_delta=value)
+    assert pair.head_to_head_delta == value
+
+
+@pytest.mark.parametrize("value", [0, "0.05", True])
+def test_attrition_requires_yaml_float(tmp_path: Path, value: object) -> None:
+    with pytest.raises(BenchError) as exc:
+        _load(tmp_path, max_differential_attrition=value)
+    assert exc.value.code == "max_differential_attrition_invalid"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("wall_clock_timeout_sec", 0),
+        ("job_poll_timeout_sec", 86401),
+        ("item_max_attempts", 11),
+        ("allow_private_source", "false"),
+        ("head_to_head_delta", "0.10"),
+        ("max_differential_attrition", "0.05"),
+    ],
+)
+def test_materialized_config_rejects_invalid_scalars(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    pair = _load(tmp_path)
+    with pytest.raises(BenchError) as exc:
+        validate_stack_pair_config(replace(pair, **{field: value}))
+    assert exc.value.code in {"config_invalid", "max_differential_attrition_invalid"}
 
 
 @pytest.mark.parametrize("value", [1, 1.0, 1.5, -1, "ninety"])

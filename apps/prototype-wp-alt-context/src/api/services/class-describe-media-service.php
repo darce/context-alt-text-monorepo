@@ -10,6 +10,7 @@ require_once __DIR__ . '/../../sovereign/repositories/class-description-usage-re
 require_once __DIR__ . '/class-description-budget-service.php';
 require_once __DIR__ . '/../../sovereign/repositories/class-identity-members-repository.php';
 require_once __DIR__ . '/../class-alt-style.php';
+require_once __DIR__ . '/../class-context-category-policy.php';
 require_once __DIR__ . '/../class-alt-text-write-status.php';
 require_once __DIR__ . '/../class-description-write-status.php';
 require_once __DIR__ . '/class-description-history-service.php';
@@ -18,6 +19,7 @@ require_once __DIR__ . '/../../settings/class-recognition-policy.php';
 
 use AltContext\Api\AltStyle;
 use AltContext\Api\AltTextWriteStatus;
+use AltContext\Api\ContextCategoryPolicy;
 use AltContext\Api\DescriptionWriteStatus;
 use AltContext\Api\DescribeHostInterface;
 use AltContext\Settings\RecognitionPolicy;
@@ -43,6 +45,7 @@ use function get_post;
 use function get_site_url;
 use function gmdate;
 use function hash;
+use function in_array;
 use function is_array;
 use function is_numeric;
 use function is_object;
@@ -61,6 +64,7 @@ use function trim;
 use function update_post_meta;
 use function sanitize_text_field;
 use function sanitize_textarea_field;
+use function var_export;
 use function wp_get_object_terms;
 use function wp_json_encode;
 use function wp_unslash;
@@ -88,7 +92,6 @@ class DescribeMediaService {
 	private const ALT_TEXT_META_KEY = '_wp_attachment_image_alt';
 	private const PROVENANCE_META_KEY = '_acx_description_provenance';
 	private const PROVENANCE_PENDING_META_KEY = '_acx_description_provenance_pending';
-
 	/**
 	 * The 17 provenance-bearing fields the backend contract guarantees
 	 * (packages/shared-contracts/schemas/image-description-response.schema.json).
@@ -929,10 +932,12 @@ class DescribeMediaService {
 	 * @return array<string,mixed>
 	 */
 	private function build_context_pack( int $media_id, string $path ): array {
-		$attachment = get_post( $media_id );
-		$parent     = $this->get_public_parent_post( $attachment );
-		$context    = array(
-			'attachment' => $this->non_empty_fields(
+		$attachment         = get_post( $media_id );
+		$allowed_categories = $this->allowed_context_categories( $media_id );
+		$context            = array();
+
+		if ( in_array( 'attachment', $allowed_categories, true ) ) {
+			$context['attachment'] = $this->non_empty_fields(
 				array(
 					'title'       => $this->bounded_string( is_object( $attachment ) && isset( $attachment->post_title ) ? $attachment->post_title : null, 160 ),
 					'caption'     => $this->bounded_string( is_object( $attachment ) && isset( $attachment->post_excerpt ) ? $attachment->post_excerpt : null, 500 ),
@@ -940,32 +945,38 @@ class DescribeMediaService {
 					'alt_text'    => $this->bounded_string( get_post_meta( $media_id, '_wp_attachment_image_alt', true ), 500 ),
 					'filename'    => $this->bounded_string( basename( $path ), 255 ),
 				)
-			),
-			'identity'   => $this->build_identity_context( $media_id ),
-		);
+			);
+		}
+
+		// Identity naming has its own tenant-bound policy and is not controlled by
+		// the metadata category allowlist.
+		$context['identity'] = $this->build_identity_context( $media_id );
+		$parent              = $this->get_public_parent_post( $attachment );
 
 		if ( null !== $parent ) {
-			$context['post'] = $this->non_empty_fields(
-				array(
-					'title'     => $this->bounded_string( $parent->post_title ?? null, 200 ),
-					'excerpt'   => $this->bounded_string( $parent->post_excerpt ?? null, 1000 ),
-					'post_type' => $this->bounded_string( $parent->post_type ?? null, 64 ),
-					'status'    => $this->bounded_string( $parent->post_status ?? null, 32 ),
-				)
-			);
+			if ( in_array( 'post', $allowed_categories, true ) ) {
+				$context['post'] = $this->non_empty_fields(
+					array(
+						'title'     => $this->bounded_string( $parent->post_title ?? null, 200 ),
+						'excerpt'   => $this->bounded_string( $parent->post_excerpt ?? null, 1000 ),
+						'post_type' => $this->bounded_string( $parent->post_type ?? null, 64 ),
+						'status'    => $this->bounded_string( $parent->post_status ?? null, 32 ),
+					)
+				);
+			}
 
 			if ( isset( $parent->ID ) ) {
-				$terms = $this->collect_taxonomy_terms( (int) $parent->ID );
-				if ( array() !== $terms ) {
-					$context['taxonomy_terms'] = $terms;
+				if ( in_array( 'taxonomy_terms', $allowed_categories, true ) ) {
+					$terms = $this->collect_taxonomy_terms( (int) $parent->ID );
+					if ( array() !== $terms ) {
+						$context['taxonomy_terms'] = $terms;
+					}
 				}
 
-				if ( 'product' === (string) ( $parent->post_type ?? '' ) ) {
+				if ( in_array( 'product', $allowed_categories, true ) && 'product' === (string) ( $parent->post_type ?? '' ) ) {
 					$context['product'] = $this->non_empty_fields(
 						array(
-							'name'  => $this->bounded_string( $parent->post_title ?? null, 200 ),
-							'sku'   => $this->bounded_string( get_post_meta( (int) $parent->ID, '_sku', true ), 120 ),
-							'price' => $this->bounded_string( get_post_meta( (int) $parent->ID, '_price', true ), 64 ),
+							'name' => $this->bounded_string( $parent->post_title ?? null, 200 ),
 						)
 					);
 				}
@@ -976,6 +987,54 @@ class DescribeMediaService {
 			$context,
 			static fn ( array $value ): bool => array() !== $value
 		);
+	}
+
+	/**
+	 * Resolve the tenant's outbound context policy. An absent option defaults to
+	 * all supported categories; malformed values fail closed to attachment only.
+	 *
+	 * @return string[]
+	 */
+	private function allowed_context_categories( int $media_id ): array {
+		$option_missing         = new \stdClass();
+		$configured_categories = get_option( ContextCategoryPolicy::OPTION_NAME, $option_missing );
+		if ( $option_missing === $configured_categories ) {
+			return ContextCategoryPolicy::ALL;
+		}
+
+		if ( is_array( $configured_categories ) ) {
+			$valid_categories = true;
+			foreach ( $configured_categories as $category ) {
+				if ( ! is_string( $category ) || ! in_array( $category, ContextCategoryPolicy::ALL, true ) ) {
+					$valid_categories = false;
+					break;
+				}
+			}
+
+			if ( $valid_categories ) {
+				return $configured_categories;
+			}
+		}
+
+		$configured_categories_type = gettype( $configured_categories );
+		$configured_categories_size = is_string( $configured_categories )
+			? strlen( $configured_categories )
+			: ( is_array( $configured_categories ) ? count( $configured_categories ) : null );
+		$size_detail                 = null === $configured_categories_size
+			? ''
+			: sprintf( ' size=%d', $configured_categories_size );
+
+		Telemetry::log_line(
+			sprintf(
+				'[acx] describe media_id=%d rejected %s option type=%s%s; using attachment only',
+				$media_id,
+				ContextCategoryPolicy::OPTION_NAME,
+				$configured_categories_type,
+				$size_detail
+			)
+		);
+
+		return array( ContextCategoryPolicy::ATTACHMENT );
 	}
 
 	private function get_public_parent_post( mixed $attachment ): ?object {
@@ -1023,9 +1082,15 @@ class DescribeMediaService {
 
 
 	private function build_identity_context( int $media_id ): array {
-		$tenant_id           = $this->host->get_tenant_id();
+		$tenant_id            = $this->host->get_tenant_id();
+		$allowed_tenant_id    = (string) get_option( 'acx_description_allow_person_names_tenant_id', '' );
+		$allow_person_names   = $this->is_truthy_flag( get_option( 'acx_description_allow_person_names', false ) )
+			&& $tenant_id === $allowed_tenant_id;
 		$confirmed_identities = array();
 		$machine_only_count   = 0;
+		$policy               = array(
+			'person_naming' => $allow_person_names ? 'allowed' : 'disabled',
+		);
 
 		try {
 			$rows = $this->identity_members_repository->list_for_media_ids( $tenant_id, array( $media_id ) );
@@ -1039,7 +1104,7 @@ class DescribeMediaService {
 				)
 			);
 			return array(
-				'policy'         => array( 'person_naming' => 'allowed' ),
+				'policy'         => $policy,
 				'identities'     => array(),
 				'review_reasons' => array(),
 			);
@@ -1058,6 +1123,10 @@ class DescribeMediaService {
 			// label as a roster-confirmed name.
 			$person_name = trim( (string) ( $row['person_name'] ?? '' ) );
 			if ( $this->is_truthy_flag( $row['is_user_confirmed'] ?? false ) && '' !== $person_name ) {
+				if ( ! $allow_person_names ) {
+					continue;
+				}
+
 				$confirmed_identities[] = $this->non_empty_fields(
 					array(
 						'name'        => $person_name,
@@ -1083,7 +1152,7 @@ class DescribeMediaService {
 		}
 
 		return array(
-			'policy'         => array( 'person_naming' => 'allowed' ),
+			'policy'         => $policy,
 			'identities'     => $confirmed_identities,
 			'review_reasons' => $review_reasons,
 		);

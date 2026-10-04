@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urljoin, urlparse
 
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, UnidentifiedImageError
 
 from scripts.bench.stack_pair import BenchError
 from scripts.eval_harness._pathtext import _printable_message, _printable_path
@@ -23,7 +23,7 @@ from scripts.eval_harness.manifest import (
     GoldenEntry,
     GoldenManifest,
     ManifestError,
-    load_manifest,
+    load_manifest as load_v3_manifest,
     resolve_image_path,
 )
 
@@ -40,6 +40,9 @@ REMOTE_FETCH_MAX_BYTES = 8 * 1024 * 1024
 # request/headers/body. Matches the previous per-phase 30s socket timeout but
 # does not reset on hops ([API-04] [RES-02]).
 REMOTE_FETCH_DEADLINE_S = 30.0
+# The analyze route keeps only the last six digits of a media id. Keep bench
+# manifests within the same ceiling enforced by eval_harness.face_pass.
+ANALYZE_MEDIA_ID_CEILING = 999_999
 # getaddrinfo cannot be cancelled. Cap concurrent DNS workers; a stall must
 # lose to deadline_at without join, pin, or fetch ([API-04] [RES-02] [RES-03]).
 _DNS_MAX_IN_FLIGHT = 4
@@ -101,8 +104,9 @@ class ItemOutcomeStore:
 def decode_image_dimensions(image_bytes: bytes) -> tuple[int, int]:
     try:
         with Image.open(BytesIO(image_bytes)) as image:
-            transposed = ImageOps.exif_transpose(image)
-            width, height = transposed.size
+            # Recognition adapters decode pixels without EXIF transpose, so
+            # annotations and predicted boxes use the stored image coordinate frame.
+            width, height = image.size
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         raise BenchError("image_decode_failed", f"Pillow could not decode image: {exc}") from exc
     if width <= 0 or height <= 0:
@@ -123,7 +127,8 @@ def load_bench_manifest(
     # Do not infer metadata_only from skip + images_dir=None (rg-015).
     # Callers that never open image bytes must pass metadata_only=True
     # and a hash_skip_reason; pixel paths leave both at defaults.
-    manifest = load_manifest(
+    # Bench manifests use the current v3 contract; frozen v2 data has no path here.
+    manifest = load_v3_manifest(
         str(path),
         images_dir=images,
         skip_hash_verification=skip_hash_verification,
@@ -132,6 +137,12 @@ def load_bench_manifest(
     )
     non_exhaustive: list[int] = []
     for entry in manifest.entries:
+        if entry.media_id > ANALYZE_MEDIA_ID_CEILING:
+            raise BenchError(
+                "media_id_exceeds_analyze_ceiling",
+                f"media_id={entry.media_id} exceeds analyze route ceiling {ANALYZE_MEDIA_ID_CEILING}; "
+                "the route truncates ids to their last 6 digits, which can collide",
+            )
         exhaustive = bool(entry.face_boxes) and entry.face_count == len(entry.face_boxes)
         if not exhaustive:
             if require_detection_exhaustiveness:

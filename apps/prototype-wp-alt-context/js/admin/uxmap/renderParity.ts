@@ -18,9 +18,14 @@ export interface RenderParityMap {
     title: string;
     purpose: string;
     route: string;
+    wp_page?: string | null;
+    job_entry?: boolean;
+    deep_link?: boolean;
     url_params: string[];
     states: string[];
     action_states?: string[];
+    primary_action_id?: string | null;
+    code_ref?: string | null;
     zones: Array<{ id: string; label: string; role: string; states: string[] }>;
   }>;
   actions: Array<{
@@ -81,6 +86,11 @@ export interface UxMapRenderSource extends Omit<RenderParityMap, 'screens' | 'fl
   }>;
 }
 
+export interface RenderParityOptions {
+  /** Compare extended metadata only for maps whose Markdown has been regenerated with it. */
+  includeScreenMetadata?: boolean;
+}
+
 const section = (markdown: string, heading: string): string => {
   const headings = [...markdown.matchAll(/^ {0,3}##[ \t]+([^\r\n]*?)(?:[ \t]+#+)?[ \t]*\r?$/gm)];
   const matches = headings.filter((match) => match[1] === heading);
@@ -123,12 +133,26 @@ const listSection = (markdown: string, heading: string): string[] =>
 
 export const SCREEN_METADATA_KEYS = ['Purpose', 'url_params', 'Action states', 'Screen states'] as const;
 type MetadataKey = (typeof SCREEN_METADATA_KEYS)[number];
+const SCREEN_RENDER_METADATA_KEYS = [
+  ...SCREEN_METADATA_KEYS,
+  'wp_page',
+  'job_entry',
+  'deep_link',
+  'primary_action_id',
+  'code_ref',
+] as const;
+type ScreenRenderMetadataKey = (typeof SCREEN_RENDER_METADATA_KEYS)[number];
 
 // Both Python --check branches call this parser. Scan every line once, including
 // code indentation and Markdown containers: formatting must not hide a declaration.
-export const scanDeclarations = (block: string, screenId: string, firstLine: number): Map<MetadataKey, string> => {
-  const declarations = new Map<MetadataKey, string>();
-  const locations = new Map<MetadataKey, number>();
+const scanDeclarationsForKeys = <Key extends string>(
+  block: string,
+  screenId: string,
+  firstLine: number,
+  keys: readonly Key[],
+): Map<Key, string> => {
+  const declarations = new Map<Key, string>();
+  const locations = new Map<Key, number>();
   for (const [index, line] of block.split('\n').entries()) {
     const candidate = line.trimStart().replace(/^(?:(?:>|[-+*]|\d+[.)])\s*)+/, '').trim();
     const colon = candidate.indexOf(':');
@@ -139,7 +163,7 @@ export const scanDeclarations = (block: string, screenId: string, firstLine: num
     const label = candidate.slice(0, colon)
       .replace(/[_*`]+/g, '').trim()
       .replace(/\s+/g, ' ').toLowerCase();
-    const key = SCREEN_METADATA_KEYS.find((field) => field.replace(/_/g, '').toLowerCase() === label);
+    const key = keys.find((field) => field.replace(/_/g, '').toLowerCase() === label);
     if (!key) continue;
     const lineNumber = firstLine + index;
     const previous = locations.get(key);
@@ -150,6 +174,23 @@ export const scanDeclarations = (block: string, screenId: string, firstLine: num
     declarations.set(key, candidate.slice(colon + 1).replace(/^[_*`]+/, '').trim());
   }
   return declarations;
+};
+
+export const scanDeclarations = (block: string, screenId: string, firstLine: number): Map<MetadataKey, string> =>
+  scanDeclarationsForKeys(block, screenId, firstLine, SCREEN_METADATA_KEYS);
+
+const parseRequiredNullableMetadata = (value: string | undefined, screenId: string, key: string): string | null => {
+  if (value === undefined) {
+    throw new Error(`screen ${screenId} is missing ${key} metadata`);
+  }
+  const parsed = unquote(value);
+  return parsed === '—' ? null : parsed;
+};
+
+const parseRequiredBooleanMetadata = (value: string | undefined, screenId: string, key: string): boolean => {
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  throw new Error(`screen ${screenId} ${key} must be exactly true or false`);
 };
 
 const parseScreenStates = (block: string, screenId: string, declaration: string | undefined): string[] => {
@@ -177,7 +218,7 @@ const parseScreenStates = (block: string, screenId: string, declaration: string 
   return explicitStates ?? asciiStates;
 };
 
-const parseScreens = (markdown: string): RenderParityMap['screens'] => {
+const parseScreens = (markdown: string, options: RenderParityOptions): RenderParityMap['screens'] => {
   const screensSection = section(markdown, 'Screens');
   // Account for every level-three screen heading, including malformed headings.
   // Matching only valid blocks would silently discard a retired inventory between them.
@@ -209,7 +250,9 @@ const parseScreens = (markdown: string): RenderParityMap['screens'] => {
   }
   const summaries = new Map<
     string,
-    Pick<RenderParityMap['screens'][number], 'id' | 'kind' | 'title' | 'route' | 'url_params'>
+    Pick<RenderParityMap['screens'][number], 'id' | 'kind' | 'title' | 'route' | 'url_params'> & {
+      wp_page: string | null;
+    }
   >();
 
   // Every nonblank summary line must belong to the canonical table. In particular,
@@ -230,6 +273,7 @@ const parseScreens = (markdown: string): RenderParityMap['screens'] => {
       kind: kind ?? '',
       route: unquote(rawRoute ?? ''),
       title: title ?? '',
+      wp_page: fifthColumn === 'wp_page' && rawParams !== '—' ? unquote(rawParams) : null,
       url_params:
         fifthColumn !== 'url_params' || rawParams === '—' ? [] : rawParams.split(', ').filter(Boolean).map(unquote),
     });
@@ -245,13 +289,25 @@ const parseScreens = (markdown: string): RenderParityMap['screens'] => {
     if (!base) {
       throw new Error(`screen ${id} has a detail block but no Screens table row`);
     }
-    const metadata = scanDeclarations(block, id, firstLine);
+    const metadata = scanDeclarationsForKeys(block, id, firstLine, SCREEN_RENDER_METADATA_KEYS);
     const purpose = metadata.get('Purpose') ?? '';
     const params = metadata.get('url_params');
     const actionStates = metadata.get('Action states');
     const parsedParams = params ? params.split(', ').map(unquote) : base.url_params;
     if (params && fifthColumn === 'url_params' && JSON.stringify(parsedParams) !== JSON.stringify(base.url_params)) {
       throw new Error(`screen ${id} has different url_params in the Screens table and detail block`);
+    }
+    const declaredWpPage = metadata.get('wp_page');
+    const wpPage = declaredWpPage === undefined ? base.wp_page : parseRequiredNullableMetadata(declaredWpPage, id, 'wp_page');
+    if (
+      declaredWpPage !== undefined &&
+      fifthColumn === 'wp_page' &&
+      wpPage !== base.wp_page
+    ) {
+      throw new Error(`screen ${id} has different wp_page in the Screens table and detail block`);
+    }
+    if (options.includeScreenMetadata && declaredWpPage === undefined && fifthColumn !== 'wp_page') {
+      throw new Error(`screen ${id} is missing wp_page metadata`);
     }
     const zones: RenderParityMap['screens'][number]['zones'] = [];
     const zoneLines: string[] = [];
@@ -311,10 +367,22 @@ const parseScreens = (markdown: string): RenderParityMap['screens'] => {
       throw new Error(`screen ${id} has an incomplete Zones table`);
     }
     return {
-      ...base,
+      id: base.id,
+      kind: base.kind,
+      title: base.title,
       purpose,
+      route: base.route,
       url_params: parsedParams,
       states: parseScreenStates(block, id, metadata.get('Screen states')),
+      ...(options.includeScreenMetadata
+        ? {
+            wp_page: wpPage,
+            job_entry: parseRequiredBooleanMetadata(metadata.get('job_entry'), id, 'job_entry'),
+            deep_link: parseRequiredBooleanMetadata(metadata.get('deep_link'), id, 'deep_link'),
+            primary_action_id: parseRequiredNullableMetadata(metadata.get('primary_action_id'), id, 'primary_action_id'),
+            code_ref: parseRequiredNullableMetadata(metadata.get('code_ref'), id, 'code_ref'),
+          }
+        : {}),
       ...(actionStates
         ? { action_states: actionStates.split(', ') }
         : {}),
@@ -482,7 +550,10 @@ const parseParityIndex = (markdown: string): RenderParityIndex => {
   };
 };
 
-export const projectUxMapForRenderParity = (doc: UxMapRenderSource): RenderedUxMapProjection => {
+export const projectUxMapForRenderParity = (
+  doc: UxMapRenderSource,
+  options: RenderParityOptions = {},
+): RenderedUxMapProjection => {
   const states: string[] = [];
   const zones = doc.screens.flatMap((screen) => screen.zones ?? []);
   for (const screen of doc.screens) {
@@ -512,6 +583,15 @@ export const projectUxMapForRenderParity = (doc: UxMapRenderSource): RenderedUxM
         title: screen.title,
         purpose: screen.purpose,
         route: screen.route,
+        ...(options.includeScreenMetadata
+          ? {
+              wp_page: screen.wp_page ?? null,
+              job_entry: screen.job_entry ?? false,
+              deep_link: screen.deep_link ?? false,
+              primary_action_id: screen.primary_action_id ?? null,
+              code_ref: screen.code_ref ?? null,
+            }
+          : {}),
         url_params: screen.url_params ?? [],
         states: screen.states ?? [],
         ...(screen.action_states ? { action_states: screen.action_states } : {}),
@@ -552,7 +632,10 @@ export const projectUxMapForRenderParity = (doc: UxMapRenderSource): RenderedUxM
   };
 };
 
-export const parseRenderedUxMap = (markdown: string): RenderedUxMapProjection => {
+export const parseRenderedUxMap = (
+  markdown: string,
+  options: RenderParityOptions = {},
+): RenderedUxMapProjection => {
   // Git autocrlf checkouts must have the same projection as LF checkouts.
   markdown = markdown.replaceAll('\r\n', '\n');
   const mapRef = /^# UX Map — (.+)$/m.exec(markdown)?.[1] ?? '';
@@ -569,7 +652,7 @@ export const parseRenderedUxMap = (markdown: string): RenderedUxMapProjection =>
     source_fixture: sourceFixture,
     goals: listSection(markdown, 'Goals'),
     jobs,
-    screens: parseScreens(markdown),
+    screens: parseScreens(markdown, options),
     actions: parseActions(markdown),
     ...(section(markdown, 'Suggested task-slice decomposition (from map)')
       ? {

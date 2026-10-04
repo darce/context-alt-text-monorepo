@@ -10,10 +10,11 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import hashlib
+import json
 import logging
 import threading
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -113,6 +114,70 @@ class CheckResult:
 def check_health() -> HealthReport:
     """Return a static health signal for the recognition service."""
     return HealthReport.ok("recognition")
+
+
+def model_bundle_paths(cache_dir: Path, model_name: str, profile: str) -> tuple[Path, ...]:
+    """Return the files that make up the active model bundle, in stable order."""
+    if profile == ModelSpace.FACE_PIPELINE.value:
+        paths = (cache_dir / MODEL_MANIFEST[name].file_name for name in ("yunet", "sface"))
+    elif profile == ModelSpace.AURAFACE.value:
+        paths = (cache_dir / MODEL_MANIFEST["auraface"].file_name,)
+    else:
+        bundle = cache_dir / model_name
+        paths = bundle.glob("*.onnx") if bundle.is_dir() else ()
+    return tuple(sorted((path for path in paths if path.is_file()), key=lambda path: path.as_posix()))
+
+
+def sha256_model_bundle(paths: Sequence[Path], *, cache_dir: Path) -> str | None:
+    """Hash every model file and its relative name into one bundle identity."""
+    manifest: list[dict[str, str]] = []
+    for path in sorted(paths, key=lambda item: item.as_posix()):
+        file_digest = hashlib.sha256()
+        try:
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    file_digest.update(chunk)
+            relative_path = path.relative_to(cache_dir).as_posix()
+        except (OSError, ValueError):
+            return None
+        manifest.append({"path": relative_path, "sha256": file_digest.hexdigest()})
+    if not manifest:
+        return None
+    encoded = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _with_numeric_runtime_fingerprint(result: CheckResult) -> CheckResult:
+    """Expose every numeric-relevant distribution on detailed model health.
+
+    /health/detailed already includes ``model_cache.detail``. Keeping the
+    machine-readable fingerprint there lets remote benchmark preflight attest
+    the service's full numeric-relevant installed stack without importing
+    runtime packages on the operator's machine.
+    """
+    try:
+        from recognition.infrastructure.face_pipeline import numeric_runtime_fingerprint
+
+        fingerprint = numeric_runtime_fingerprint()
+        values = {
+            "opencv_version": fingerprint.opencv_version,
+            "opencv_major": fingerprint.opencv_major,
+            "onnxruntime_version": fingerprint.onnxruntime_version,
+            "numpy_version": fingerprint.numpy_version,
+            "scipy_version": fingerprint.scipy_version,
+            "pillow_version": fingerprint.pillow_version,
+            "hdbscan_version": fingerprint.hdbscan_version,
+            "pgvector_version": fingerprint.pgvector_version,
+            "opencv_distribution_versions": fingerprint.opencv_distribution_versions,
+            "comparison_token": fingerprint.comparability_token,
+        }
+        encoded = json.dumps(values, sort_keys=True, separators=(",", ":"))
+        detail = f"{result.detail}; numeric_runtime_fingerprint={encoded}"
+    except Exception as exc:  # noqa: BLE001 - health must never raise
+        # Keep ordinary readiness behavior. Benchmark preflight sees the
+        # missing marker and refuses to create a comparable run.
+        detail = f"{result.detail}; numeric_runtime_fingerprint_unavailable={type(exc).__name__}"
+    return replace(result, detail=detail)
 
 
 def _disk_headroom_result(
@@ -507,7 +572,9 @@ def check_model_cache(cache_dir: Path, model_name: str = "buffalo_l") -> CheckRe
     onnx_files = list(bundle.glob("*.onnx"))
     if not onnx_files:
         return CheckResult("model_cache", HealthStatus.UNHEALTHY, f"no_onnx_files: {bundle}")
-    return CheckResult("model_cache", HealthStatus.OK, f"{len(onnx_files)} bundle file(s)")
+    return _with_numeric_runtime_fingerprint(
+        CheckResult("model_cache", HealthStatus.OK, f"{len(onnx_files)} bundle file(s)")
+    )
 
 
 def expected_embedding_dimension(space: ModelSpace) -> int:
@@ -649,7 +716,9 @@ def check_face_pipeline_models(models_dir: Path) -> CheckResult:
             HealthStatus.UNHEALTHY,
             f"runtime unavailable: {exc}",
         )
-    return CheckResult("model_cache", HealthStatus.OK, f"verified: yunet+sface @ {root}")
+    return _with_numeric_runtime_fingerprint(
+        CheckResult("model_cache", HealthStatus.OK, f"verified: yunet+sface @ {root}")
+    )
 
 
 def check_model_space(space: ModelSpace, store: Path, /) -> CheckResult:
@@ -710,7 +779,9 @@ def check_model_space(space: ModelSpace, store: Path, /) -> CheckResult:
         )
     except Exception as exc:
         return CheckResult("model_cache", HealthStatus.UNHEALTHY, f"runtime unavailable: {exc}")
-    return CheckResult("model_cache", HealthStatus.OK, f"verified: auraface @ {store}")
+    return _with_numeric_runtime_fingerprint(
+        CheckResult("model_cache", HealthStatus.OK, f"verified: auraface @ {store}")
+    )
 
 
 def reset_face_pipeline_verify_cache_for_tests() -> None:

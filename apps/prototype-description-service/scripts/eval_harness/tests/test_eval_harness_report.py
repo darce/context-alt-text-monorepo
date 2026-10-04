@@ -10,12 +10,32 @@ post-E1 resolver (FIR-11-S2R3-02).
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
+import scripts.eval_harness.bakeoff as bakeoff
+import scripts.eval_harness.build_bakeoff_report as build_bakeoff_report
+from scripts.eval_harness.bakeoff import BakeoffClient, _stamp_stage_costs
+from scripts.eval_harness.build_bakeoff_report import _format_durable_stage_costs
+from scripts.eval_harness.cli import BoundedStallError
 from scripts.eval_harness.cli import _extract_detection_boxes, _extract_identities
 from scripts.eval_harness.manifest import ManifestError, ScoreInvariant, compute_corpus_coverage_gaps
-from scripts.eval_harness.report import Audience, build_reports, score_run_record
+from scripts.eval_harness.report import (
+    Audience,
+    ReportError,
+    build_reports,
+    build_score_verdict,
+    score_run_record,
+)
+
+_TEST_MODEL_STAMPS = {
+    "adapter": "seeded",
+    "model_id": "seeded-fixtures",
+    "model_version": "1",
+    "prompt_version": "v1",
+    "prompt_sha256": "f" * 64,
+}
 
 _LINEAGE = {
     "labeler_id": "test-labeler",
@@ -80,9 +100,7 @@ def _run_record() -> dict:
                 "describe": {
                     "alt_text_draft": "Alice Example relaxes by a pool.",
                     "visual_facts": {"caption": "a person by a pool", "objects": ["pool", "person"]},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 "identities": [{"name": "Alice Example", "unpositioned": True}],
@@ -95,9 +113,7 @@ def _run_record() -> dict:
                 "describe": {
                     "alt_text_draft": "A man on a beach.",
                     "visual_facts": {"caption": "a man on a beach", "objects": ["beach"]},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": True,
                 },
                 "identities": [{"name": "Alice Example", "unpositioned": True}],
@@ -172,9 +188,7 @@ def _audience_fixtures(*, mode: str | None = "exhaustive") -> tuple[dict, list[d
                 "describe": {
                     "alt_text_draft": f"{_PUBLIC_NAME} at a podium.",
                     "visual_facts": {"objects": ["podium"]},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 "identities": [{"name": _PUBLIC_NAME, "unpositioned": True}],
@@ -187,9 +201,7 @@ def _audience_fixtures(*, mode: str | None = "exhaustive") -> tuple[dict, list[d
                 "describe": {
                     "alt_text_draft": f"{_LOCAL_NAME} at a party.",
                     "visual_facts": {"objects": ["cake"]},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 "identities": [{"name": "Wrong Celebrity", "unpositioned": True}],
@@ -278,6 +290,381 @@ def test_score_run_record_emits_scored_detection_arithmetic() -> None:
         scored["faces"]["detection"], tp=_DEFAULT_TP, fp=_DEFAULT_FP, fn=_DEFAULT_FN
     )
     assert scored["counts"] == {"total": 3, "scored": 2, "failed": 1}
+
+
+def test_score_run_record_preserves_homogeneous_model_run_stamps() -> None:
+    record = _run_record()
+    decoding = {"temperature": 0, "seed": 17, "max_tokens_by_pass": {"caption": 512}}
+    stamps = {
+        "model_revision": "sha256:fixture-model",
+        "seed": 17,
+        "prompt_variant": "v2",
+        "prompt_version": "v2",
+        "prompt_sha256": "a" * 64,
+        "task_version": "alt-text-v1",
+        "decoding_contract": decoding,
+    }
+    for item in record["items"][:2]:
+        item["describe"].update(stamps)
+    record["provenance"].update(stamps)
+
+    scored = score_run_record(record, _manifest_entries())
+    model = scored["provenance"]["model"]
+
+    assert model["model_revisions"] == ["sha256:fixture-model"]
+    assert model["seeds"] == [17]
+    assert model["prompt_versions"] == ["v2"]
+    assert model["prompt_sha256s"] == ["a" * 64]
+    assert model["task_versions"] == ["alt-text-v1"]
+    assert model["decoding_contracts"] == [decoding]
+    assert "attribution" not in model
+
+
+def _otherwise_passing_verdict_input() -> dict:
+    return {
+        "counts": {"total": 5, "scored": 5, "failed": 0},
+        "corpus": {},
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "model": {
+                "adapters": ["fixture"],
+                "model_ids": ["fixture-model"],
+                "prompt_versions": ["v1"],
+                "prompt_sha256s": ["f" * 64],
+            },
+        },
+        "caption": {
+            "must_right_defined_images": 5,
+            "easy_wrong_defined_images": 5,
+            "must_right_failed_images": 0,
+            "insertion_rate": 0.0,
+            "mean_gated_score": 1.0,
+        },
+        "faces": {
+            "detection": {"precision": 1.0, "recall": 1.0},
+            "identification": {
+                "evaluated_images": 5,
+                "precision": 1.0,
+                "recall": 1.0,
+                "wrong_names": [],
+                "positional": {
+                    "position_accuracy": 1.0,
+                    "compared_images": 5,
+                    "evaluable": True,
+                },
+            },
+            "identity_ordering": {"positional_images": 5},
+        },
+        "placement": {"claims": 5, "accuracy": 1.0},
+        "hallucination": {
+            "images_with_traps": 5,
+            "fabricated_fact_rate": 0.0,
+            "fabricated_fact_rate_trapped": 0.0,
+        },
+    }
+
+
+def test_score_verdict_requires_complete_producer_identity() -> None:
+    attributed = _otherwise_passing_verdict_input()
+    assert build_score_verdict(attributed)["verdict"] == "pass"
+
+    unattributed = _otherwise_passing_verdict_input()
+    unattributed["provenance"]["model"]["attribution"] = {
+        "status": "unattributed",
+        "missing_dimensions": ["adapter", "model", "prompt identity"],
+    }
+    verdict = build_score_verdict(unattributed)
+
+    assert verdict["verdict"] == "not_ready"
+    assert verdict["reasons"] == [
+        "producer identity incomplete: missing adapter, model, prompt identity"
+    ]
+
+
+@pytest.mark.parametrize("setting", [{"seed": 7}, {"decoding_contract": {"temperature": 0}}])
+def test_score_run_record_marks_settings_only_model_provenance_unattributed(setting: dict) -> None:
+    record = _run_record()
+    for item in record["items"][:2]:
+        describe = item["describe"]
+        for field in ("adapter", "model_id", "model_version", "prompt_version", "prompt_sha256"):
+            describe.pop(field, None)
+        describe.update(setting)
+
+    report, markdown = build_reports(record, _manifest_entries())
+    scored = json.loads(report)
+    assert scored["counts"]["scored"] == 2
+    assert scored["provenance"]["model"]["attribution"] == {
+        "status": "unattributed",
+        "missing_dimensions": ["adapter", "model", "prompt identity"],
+    }
+    assert "unattributed aggregate metrics**: missing adapter, model, prompt identity" in markdown
+    assert "diagnostic only; report is not adoption-ready" in markdown
+    assert any(
+        reason == "producer identity incomplete: missing adapter, model, prompt identity"
+        for reason in scored["verdict"]["reasons"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("fields", "missing"),
+    [(("adapter",), "adapter"), (("model_id",), "model"),
+     (("prompt_version", "prompt_sha256"), "prompt identity")],
+)
+def test_score_run_record_names_each_missing_identity(fields: tuple, missing: str) -> None:
+    record = _run_record()
+    for item in record["items"][:2]:
+        for field in fields:
+            item["describe"].pop(field)
+    report, markdown = build_reports(record, _manifest_entries())
+    assert json.loads(report)["provenance"]["model"]["attribution"] == {
+        "status": "unattributed", "missing_dimensions": [missing],
+    }
+    assert f"unattributed aggregate metrics**: missing {missing}" in markdown
+
+
+@pytest.mark.parametrize("declaration", [None, False, "true", 1])
+def test_prompt_free_requires_explicit_boolean_run_declaration(declaration: object) -> None:
+    record = _run_record()
+    for item in record["items"][:2]:
+        item["describe"].pop("prompt_version")
+        item["describe"].pop("prompt_sha256")
+        item["describe"]["prompt_variant"] = "v1"
+    if declaration is not None:
+        record["provenance"]["prompt_free"] = declaration
+    scored = score_run_record(record, _manifest_entries())
+    assert scored["provenance"]["model"]["attribution"] == {
+        "status": "unattributed", "missing_dimensions": ["prompt identity"],
+    }
+
+
+def test_zero_rule_prompt_free_record_scores_and_builds_reports() -> None:
+    from scripts.eval_harness.zero_rule_baseline import (
+        build_zero_rule_run_record, load_held_out_manifest, stamped_entries,
+    )
+
+    manifest = load_held_out_manifest()
+    record = build_zero_rule_run_record(manifest, started_at="t", head_sha=None)
+    assert record["provenance"]["prompt_free"] is True
+    entries = stamped_entries(manifest)
+    scored = score_run_record(record, entries)
+    assert scored["counts"]["scored"] == len(entries)
+    assert scored["provenance"]["model"]["prompt_free_flags"] == [True]
+    assert "attribution" not in scored["provenance"]["model"]
+    report, markdown = build_reports(record, entries)
+    assert json.loads(report)["counts"]["scored"] == len(entries)
+    assert markdown
+
+    record["provenance"].pop("prompt_free")
+    report, markdown = build_reports(record, entries)
+    assert json.loads(report)["provenance"]["model"]["attribution"] == {
+        "status": "unattributed", "missing_dimensions": ["prompt identity"],
+    }
+    assert "unattributed aggregate metrics**: missing prompt identity" in markdown
+
+
+@pytest.mark.parametrize("field", ["adapter", "model_id"])
+def test_prompt_free_does_not_exempt_producer_identity(field: str) -> None:
+    record = _run_record()
+    record["provenance"]["prompt_free"] = True
+    for item in record["items"][:2]:
+        for missing in (field, "prompt_version", "prompt_sha256"):
+            item["describe"].pop(missing)
+    scored = score_run_record(record, _manifest_entries())
+    assert scored["provenance"]["model"]["attribution"] == {
+        "status": "unattributed",
+        "missing_dimensions": ["adapter" if field == "adapter" else "model"],
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "mixed_value"),
+    [
+        ("model_id", "other-model"),
+        ("model_revision", "sha256:other-model"),
+        ("seed", 42),
+        ("prompt_sha256", "b" * 64),
+        ("task_version", "alt-text-v2"),
+        ("decoding_contract", {"temperature": 0.7, "seed": 17, "max_tokens_by_pass": {"caption": 512}}),
+    ],
+)
+def test_score_run_record_refuses_mixed_model_or_run_stamps(field: str, mixed_value: object) -> None:
+    record = _run_record()
+    common = {
+        "model_revision": "sha256:fixture-model",
+        "seed": 17,
+        "prompt_variant": "v2",
+        "prompt_version": "v2",
+        "prompt_sha256": "a" * 64,
+        "task_version": "alt-text-v1",
+        "decoding_contract": {"temperature": 0, "seed": 17, "max_tokens_by_pass": {"caption": 512}},
+    }
+    for item in record["items"][:2]:
+        item["describe"].update(common)
+    record["items"][1]["describe"][field] = mixed_value
+
+    with pytest.raises(ReportError, match="refusing aggregate score"):
+        score_run_record(record, _manifest_entries())
+
+
+def test_bakeoff_stamps_measured_stage_costs_and_explicit_unknowns() -> None:
+    record = {
+        "provenance": {},
+        "timing": {"cold_load_s": 3600.0, "warmup": {"elapsed_s": 60.0}},
+        "items": [{"latency_s": 10.0}, {"latency_s": 5.0}],
+    }
+    _stamp_stage_costs(record, hourly_rate=3.6)
+
+    costs = record["provenance"]["stage_costs"]
+    assert costs["model_load"]["amount_usd"] == 3.6
+    assert costs["scored_inference"]["amount_usd"] == 0.015
+    assert costs["offline_report_scoring"]["status"] == "unknown"
+    assert costs["offline_report_scoring"]["reason"] == "stage duration was not measured"
+
+    unknown_rate_record = {"provenance": {}, "timing": {"warmup": {"elapsed_s": 5.0}}, "items": []}
+    _stamp_stage_costs(unknown_rate_record, hourly_rate=None)
+    assert unknown_rate_record["provenance"]["stage_costs"]["warmup"]["amount_usd"] is None
+    assert (
+        unknown_rate_record["provenance"]["stage_costs"]["warmup"]["reason"]
+        == "operator hourly rate was not supplied"
+    )
+
+
+def test_bakeoff_main_persists_stage_costs_for_completed_and_aborted_records(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = SimpleNamespace(
+        media_id=1,
+        present_identities=[],
+        easy_wrong=[],
+        must_right=[],
+        face_boxes=[],
+    )
+    manifest = SimpleNamespace(entries=[entry], roster=[])
+
+    class StubClient:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def run_configuration(self) -> dict:
+            return {}
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(bakeoff, "__file__", str(tmp_path / "bakeoff.py"))
+    monkeypatch.setattr(bakeoff, "load_manifest", lambda *_args, **_kwargs: manifest)
+    monkeypatch.setattr(bakeoff, "BakeoffClient", StubClient)
+    monkeypatch.setattr(bakeoff, "_head_sha", lambda: "0" * 40)
+    monkeypatch.setattr(bakeoff, "prune_out_dir", lambda *_args, **_kwargs: None)
+    monkeypatch.setenv("ACX_EVAL_LIVE", "1")
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(tmp_path))
+
+    for outcome in ("completed", "aborted"):
+        record = {
+            "provenance": {},
+            "items": [{"media_id": 1, "latency_s": 2.0, "error": None}],
+        }
+
+        def fake_fetch(*_args, _outcome=outcome, **_kwargs):
+            if _outcome == "aborted":
+                raise BoundedStallError("fixture stalled", record)
+            return record
+
+        monkeypatch.setattr(bakeoff, "fetch_run_record", fake_fetch)
+        run_path = tmp_path / f"{outcome}.json"
+        argv = [
+            "--endpoint", "http://candidate",
+            "--model-id", "fixture-model",
+            "--manifest", str(tmp_path / "manifest.json"),
+            "--out", str(run_path),
+            "--warmup", "0",
+            "--cold-load-s", "36",
+            "--hourly-rate", "3.6",
+            "--vram-sample-interval-s", "0",
+        ]
+        if outcome == "aborted":
+            with pytest.raises(SystemExit):
+                bakeoff.main(argv)
+            run_path = run_path.with_name("aborted-aborted.json")
+        else:
+            bakeoff.main(argv)
+
+        written_record = json.loads(run_path.read_text())
+        assert written_record["provenance"]["stage_costs"]["model_load"]["amount_usd"] == 0.036
+
+
+def test_bakeoff_stamps_run_defining_revision_seed_prompt_and_decoding() -> None:
+    client = BakeoffClient(
+        "http://candidate",
+        model_id="candidate/model",
+        model_revision="sha256:checkpoint",
+        seed=17,
+    )
+    try:
+        provenance = client.run_configuration()
+    finally:
+        client.close()
+
+    assert provenance["model_revision"] == "sha256:checkpoint"
+    assert provenance["model_revision_source"] == "operator_supplied"
+    assert provenance["seed"] == 17
+    assert provenance["prompt_version"] == "v1"
+    assert len(provenance["prompt_sha256"]) == 64
+    assert provenance["task_version"] == "alt-text-v1"
+    assert provenance["decoding_contract"]["temperature"] == 0
+    assert provenance["decoding_contract"]["seed"] == 17
+
+
+def test_bakeoff_report_surfaces_durable_stage_costs() -> None:
+    formatted = _format_durable_stage_costs(
+        {
+            "candidate": {
+                "stage_costs": {
+                    "model_load": {"status": "estimated", "amount_usd": 0.25},
+                    "inference": {"status": "unknown", "amount_usd": None},
+                }
+            }
+        }
+    )
+
+    assert formatted == "candidate [inference=unknown, model_load=$0.250000]"
+
+
+@pytest.mark.parametrize("saved_costs", [True, False])
+def test_bakeoff_report_main_renders_saved_stage_costs(tmp_path, saved_costs: bool) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({"entries": [{"media_id": 7, "path": "images/sample.jpg"}]}))
+    run_path = tmp_path / "run.json"
+    run_path.write_text(
+        json.dumps(
+            {
+                "provenance": {
+                    "stage_costs": {
+                        "model_load": {"status": "estimated", "amount_usd": 0.25},
+                        "inference": {"status": "unknown", "amount_usd": None},
+                    }
+                } if saved_costs else {},
+                "items": [{"media_id": 7, "describe": {"alt_text_draft": "A sample caption."}}],
+            }
+        )
+    )
+    report_path = tmp_path / "report.html"
+
+    exit_code = build_bakeoff_report.main(
+        [
+            "--manifest", str(manifest_path),
+            "--run", f"candidate={run_path}",
+            "--out", str(report_path),
+            "--media-ids", "7",
+        ]
+    )
+
+    assert exit_code == 0
+    report_html = report_path.read_text()
+    if saved_costs:
+        assert "durable stage costs: candidate [inference=unknown, model_load=$0.250000]" in report_html
+    else:
+        assert "durable stage costs:" not in report_html
 
 
 def test_live_score_stamps_mapping_corpus_coverage_audit() -> None:
@@ -426,7 +813,11 @@ def test_overshoot_markdown_names_fp() -> None:
             {
                 "media_id": 1,
                 "path": "mock_images/alice.jpg",
-                "describe": {"alt_text_draft": "Alice Example.", "visual_facts": {"objects": []}},
+                "describe": {
+                    "alt_text_draft": "Alice Example.",
+                    "visual_facts": {"objects": []},
+                    **_TEST_MODEL_STAMPS,
+                },
                 "identities": [{"name": "Alice Example", "unpositioned": True}],
                 "face_count": 3,
                 "error": None,
@@ -465,7 +856,11 @@ def test_stranger_faces_are_not_detection_fps() -> None:
             {
                 "media_id": 1,
                 "path": "mock_images/group.jpg",
-                "describe": {"alt_text_draft": "Muted and friends.", "visual_facts": {"objects": []}},
+                "describe": {
+                    "alt_text_draft": "Muted and friends.",
+                    "visual_facts": {"objects": []},
+                    **_TEST_MODEL_STAMPS,
+                },
                 "identities": [{"name": "Muted Yarrow", "unpositioned": True}],
                 "face_count": 3,
                 "error": None,
@@ -533,7 +928,11 @@ def test_strict_detection_uses_wire_boxes_for_unrecognized_faces() -> None:
             {
                 "media_id": 1,
                 "path": "mock_images/group.jpg",
-                "describe": {"alt_text_draft": "Alice Example and a friend.", "visual_facts": {"objects": []}},
+                "describe": {
+                    "alt_text_draft": "Alice Example and a friend.",
+                    "visual_facts": {"objects": []},
+                    **_TEST_MODEL_STAMPS,
+                },
                 "identities": identities,
                 "detection_boxes": detection_boxes,
                 "face_count": face_count,
@@ -603,9 +1002,7 @@ def test_caption_quality_metrics_ignore_identity_spelling() -> None:
                     "describe": {
                         "alt_text_draft": caption,
                         "visual_facts": {"objects": objects},
-                        "adapter": "seeded",
-                        "model_id": "seeded-fixtures",
-                        "model_version": "1",
+                        **_TEST_MODEL_STAMPS,
                         "cached": False,
                     },
                     "identities": [{"name": present_identity, "unpositioned": True}],

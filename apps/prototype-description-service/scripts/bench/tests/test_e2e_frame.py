@@ -487,8 +487,8 @@ def test_zero_export_stays_in_both_detection_denominators() -> None:
     manifest = _manifest()
     export = _export_partial_only()
     join = _join()
-    det_n, _ = to_face_metric_inputs(export, manifest, join, "primary", frame="native")
-    det_e, _ = to_face_metric_inputs(export, manifest, join, "primary", frame="e2e")
+    det_n, id_n = to_face_metric_inputs(export, manifest, join, "primary", frame="native")
+    det_e, id_e = to_face_metric_inputs(export, manifest, join, "primary", frame="e2e")
     zero_n = next(d for d in det_n if d.image.endswith("zero.jpg") or "2" in d.image)
     zero_e = next(d for d in det_e if d.image.endswith("zero.jpg") or "2" in d.image)
     assert zero_n.pred_faces == 0
@@ -499,6 +499,16 @@ def test_zero_export_stays_in_both_detection_denominators() -> None:
     e2e = detection_pr(det_e, annotation_mode=AnnotationMode.EXHAUSTIVE)
     assert native.false_negatives >= 1
     assert e2e.false_negatives >= 1
+    zero_id_n = next(row for row in id_n if row.image == "zero.jpg")
+    zero_id_e = next(row for row in id_e if row.image == "zero.jpg")
+    # Native identification excludes a pure detector miss because no face matched.
+    assert zero_id_n.labeled == []
+    assert zero_id_n.predicted == []
+    assert identification_pr([zero_id_n]).false_negatives == 0
+    # E2E keeps the missed named face in the ID recall denominator as an FN.
+    assert zero_id_e.labeled == ["Alice Q"]
+    assert zero_id_e.predicted == []
+    assert identification_pr([zero_id_e]).false_negatives == 1
     _ = SAMPLING_FRAME_CROSSBENCH_NATIVE, SAMPLING_FRAME_E2E
 
 

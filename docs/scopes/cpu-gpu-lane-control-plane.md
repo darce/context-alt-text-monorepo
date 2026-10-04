@@ -94,7 +94,7 @@ batching** (higher ceiling) vs **llama.cpp `--parallel`/`--cont-batching`** (reu
 warm image). Both are OpenAI-compatible, so the *control plane* is indifferent
 `[SERVE-01]` — but the **benchmark is not apples-to-apples by default**: the pinned
 production artifact is Qwen3-VL-30B-A3B **Q4 GGUF** baked into the llama.cpp warm image
-(`benchmarks/HARDWARE.md`), and vLLM does not serve GGUF vision models — it needs a
+([`infra/oci/INFRA-TOPOLOGY.md`](../../infra/oci/INFRA-TOPOLOGY.md)), and vLLM does not serve GGUF vision models — it needs a
 safetensors requant (AWQ/FP8), a **new image bake**, and quality re-validation against
 the DESCQUAL-validated pinned model. The benchmark slice must state its quant-parity
 policy and budget the vLLM image bake, or accept quality re-validation as part of the
@@ -105,19 +105,23 @@ slice.
 1. **Pool-feasibility gate:** A10 concurrent-instance service limit + free
    `compute-capacity-report` probe → max concurrent A10s. The probe is a *planning*
    gate (point-in-time — capacity can vanish between probe and launch); the existing
-   `benchmarks/runners/a10-launch-retry.sh` multi-AD rotation stays the *runtime*
+   `infra/oci/incidents/a10-launch-retry.sh` multi-AD rotation stays the *runtime*
    fallback.
 2. **Stack benchmark (1 GPU):** concurrency sweep on vLLM and llama.cpp `--parallel`
    under the quant-parity policy above → pick lanes-per-GPU N and the stack.
 3. **Control plane v1:** durable queue of `media_id` items + async dispatcher keeping
    N lanes busy on **one** GPU; the lease contract, retry taxonomy, and dead-letter
-   path above; results dedup on `UNIQUE(run_id, media_id)`. **Reuses the run-record
-   JSON *shape*** (per-item rows: `media_id`, status `ok`/`error`, latency, model —
-   anchor: `scripts/eval_harness/build_bakeoff_report.py` + the driver run-record
-   contract, currently on the unmerged `altq-1` branch; **ordering dependency:**
-   altq-1 merges first, or this slice vendors exactly that field list).
+   path above; results dedup on `UNIQUE(run_id, media_id)`. **Reuses the current
+   `acx-eval/v1` run-record envelope** (per-item `media_id`, `error`, `latency_s`, and
+   `describe` with `model_id`/`model_version`; run identity in provenance), implemented by
+   `apps/prototype-description-service/scripts/eval_harness/cli.py::fetch_run_record`
+   and `bakeoff.py`, and consumed by
+   `apps/prototype-description-service/scripts/eval_harness/build_bakeoff_report.py`.
+   The control-plane row exposes `status=ok|error` from the `error` value and the
+   model id from `describe`. This implementation is already in the current main
+   tree; there is no `altq-1` merge-order dependency.
    **Per-item incremental persistence is *new work* in this slice** — the current
-   driver writes the record once at the end (partial only on stall-abort; the
+   driver writes the record once at the end (partial on bounded-stall abort; the
    646-corpus run lost 5 items that way). The dispatcher is crash-safe: on restart it
    **resumes from the durable queue** (leases expire → in-flight items requeue); no
    batch state lives only in process memory.

@@ -11,14 +11,11 @@ use AltContext\Tests\TestCase;
  * clusters DDL. Two complementary checks:
  *
  *  - Live parity: the DDL column set is parsed live from
- *    class-life-cycle-manager.php and the SQL write columns are parsed live
- *    from the repository-layer INSERT/upsert statements, so a fabricated or
- *    renamed *write* column is caught directly from the SQL
- *    (testSqlWriteColumnsExistInClustersDdl).
- *  - Allowlist: REPOSITORY_COLUMNS is a hand-maintained list kept as a
- *    secondary belt-and-suspenders check covering read/where columns the SQL
- *    parser does not extract. On its own it does not prove the SQL matches the
- *    DDL — that is what the live-parity check adds.
+ *    class-life-cycle-manager.php and SQL read/write columns are parsed live
+ *    from repository queries, so a fabricated or renamed column is caught
+ *    directly from its SQL.
+ *  - Allowlist: REPOSITORY_COLUMNS is a hand-maintained secondary check that
+ *    confirms the expected repository columns remain in use.
  *
  * Write columns are scraped from two shapes (R23-BR-16):
  *  - raw SQL: `INSERT INTO … (cols) VALUES|SELECT` and `VALUES(col)` back-refs
@@ -125,6 +122,77 @@ class ClustersSchemaParityTest extends TestCase
             $this->columnsMissingFrom($scrape['columns'], $this->parseClustersDdlColumns()),
             'Clusters repository SQL writes columns absent from the clusters DDL'
         );
+    }
+
+    public function testSqlReadColumnsExistInClustersDdl(): void
+    {
+        $columns = $this->scrapeRepositoryLayerReadColumns();
+
+        $this->assertNotEmpty($columns, 'parser found no SELECT columns in the clusters repository SQL');
+        $this->assertSame(
+            [],
+            $this->columnsMissingFrom($columns, $this->parseClustersDdlColumns()),
+            'Clusters repository SQL reads columns absent from the clusters DDL'
+        );
+    }
+
+    public function testSqlReadColumnGuardDetectsFabricatedColumn(): void
+    {
+        $sql = <<<'SQL'
+SELECT confidence_score
+FROM %i
+WHERE suggested_label_confidence = %f
+    AND tenant_id = %1$s
+    AND person_id = %s
+    AND cluster_uuid = %d
+    AND curation_state = %m
+    AND label = %p
+    AND curation_state = 'dismissed'
+    AND label = 'cluster-%%'
+SQL;
+        $referenced = $this->parseSqlReadColumns($sql);
+
+        $this->assertContains('confidence_score', $referenced, 'parser must extract selected identifiers');
+        $this->assertContains('suggested_label_confidence', $referenced, 'parser must extract where identifiers');
+        foreach (['i', 'f', 'p', 's', 'd', 'm', 'dismissed', 'cluster'] as $nonColumn) {
+            $this->assertNotContains($nonColumn, $referenced, "parser must exclude {$nonColumn} because it is a placeholder token, alias, or SQL string literal");
+        }
+        $this->assertSame(
+            ['confidence_score'],
+            $this->columnsMissingFrom($referenced, $this->parseClustersDdlColumns()),
+            'live-parity guard must flag a fabricated SQL read column missing from the DDL'
+        );
+    }
+
+    public function testMediaQueueReadRequiresAdministratorCapability(): void
+    {
+        $api = (new \ReflectionClass(\AltContext\Api\Api::class))->newInstanceWithoutConstructor();
+        $this->setUserCapability('upload_files', true);
+        $this->setUserCapability('manage_options', false);
+
+        $this->assertFalse($api->can_view_media_queue(), 'upload_files alone must not expose the workbench media queue');
+
+        $this->setUserCapability('manage_options', true);
+        $this->assertTrue($api->can_view_media_queue(), 'administrators must retain access to the workbench media queue');
+    }
+
+    public function testOwnedSourcesExitWhenWordPressIsNotBootstrapped(): void
+    {
+        $root = dirname(__DIR__, 2);
+        $paths = [
+            $root . '/src/admin/class-admin.php',
+            $root . '/src/api/class-api.php',
+            $root . '/src/settings/class-recognition-policy.php',
+        ];
+
+        foreach ($paths as $path) {
+            $source = (string) file_get_contents($path);
+            $this->assertMatchesRegularExpression(
+                '/if\s*\(\s*!\s*defined\s*\(\s*[\'\"]ABSPATH[\'\"]\s*\)\s*\)\s*\{\s*exit\s*;\s*\}/',
+                $source,
+                basename($path) . ' must stop direct execution outside the WordPress bootstrap'
+            );
+        }
     }
 
     /**
@@ -437,6 +505,90 @@ PHP;
             'raw_sql_call_sites' => $rawSites,
             'array_form_call_sites' => $arraySites,
         ];
+    }
+
+    /**
+     * Walk the cluster read repositories and collect selected and predicate
+     * columns from their SQL string literals.
+     *
+     * @return string[]
+     */
+    private function scrapeRepositoryLayerReadColumns(): array
+    {
+        $root = dirname(__DIR__, 2);
+        $files = [
+            $root . '/src/sovereign/repositories/class-clusters-read-repository.php',
+            $root . '/src/sovereign/repositories/class-cluster-curation-writer.php',
+            $root . '/src/sovereign/repositories/class-cluster-snapshot-merger.php',
+        ];
+        $columns = [];
+        $queryCount = 0;
+
+        foreach ($files as $file) {
+            $source = (string) file_get_contents($file);
+            if (! preg_match_all('/([\'\"])(SELECT\b.*?\bFROM\b.*?)\\1/is', $source, $matches)) {
+                continue;
+            }
+
+            foreach ($matches[2] as $query) {
+                ++$queryCount;
+                foreach ($this->parseSqlReadColumns($query) as $column) {
+                    $columns[$column] = true;
+                }
+            }
+        }
+
+        $this->assertGreaterThan(0, $queryCount, 'no SELECT query strings found in the clusters read corpus');
+
+        return array_keys($columns);
+    }
+
+    /**
+     * Extract qualified cluster fields and standalone SQL identifiers from a
+     * SELECT template. Person/member aliases are excluded because their fields
+     * belong to their own tables.
+     *
+     * @return string[]
+     */
+    private function parseSqlReadColumns(string $sql): array
+    {
+        // String literals and wpdb conversion placeholders are not column names.
+        $sql = preg_replace("~'(?:''|\\\\.|[^'\\\\])*'~s", ' ', $sql) ?? $sql;
+        $sql = preg_replace('/%(?:[0-9]+\$)?[a-z]/i', ' ', $sql) ?? $sql;
+
+        $columns = [];
+        if (preg_match_all('/\b([a-z_][a-z0-9_]*)\s*\.\s*([a-z_][a-z0-9_]*)\b/i', $sql, $qualifiedMatches, PREG_SET_ORDER)) {
+            foreach ($qualifiedMatches as $match) {
+                if (! in_array(strtolower($match[1]), ['p', 'm'], true)) {
+                    $columns[$match[2]] = true;
+                }
+            }
+        }
+
+        $sql = preg_replace('/\{\$[^}]*\}/', ' ', $sql) ?? $sql;
+        $sql = preg_replace('/\bAS\s+[a-z_][a-z0-9_]*/i', ' ', $sql) ?? $sql;
+        $sql = preg_replace('/\b(?:FROM|JOIN)\s+[a-z_][a-z0-9_]*\b/i', ' ', $sql) ?? $sql;
+        $sql = preg_replace('/\b[a-z_][a-z0-9_]*\s*\.\s*(?:[a-z_][a-z0-9_]*|\*)/i', ' ', $sql) ?? $sql;
+
+        $keywords = array_fill_keys([
+            'all', 'and', 'as', 'asc', 'between', 'by', 'case', 'cross', 'desc', 'distinct', 'else', 'end',
+            'exists', 'false', 'for', 'from', 'fulltext', 'group', 'having', 'in', 'inner', 'is', 'join',
+            'key', 'left', 'limit', 'like', 'not', 'null', 'offset', 'on', 'or', 'order', 'outer', 'over',
+            'right', 'select', 'share', 'then', 'true', 'update', 'when', 'where', 'with', 'c', 'filtered',
+        ], true);
+
+        if (preg_match_all('/\b[a-z_][a-z0-9_]*\b/i', $sql, $identifierMatches, PREG_OFFSET_CAPTURE)) {
+            foreach ($identifierMatches[0] as [$candidate, $offset]) {
+                $candidate = strtolower($candidate);
+                $tail = substr($sql, $offset + strlen($candidate));
+                if (isset($keywords[$candidate]) || preg_match('/^\s*\(/', $tail)) {
+                    continue;
+                }
+                $columns[$candidate] = true;
+            }
+        }
+
+        return array_keys($columns);
     }
 
     /**

@@ -2,16 +2,25 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from scripts.bench.corpus import ItemOutcomeStore
-from scripts.bench.driver import init_run_dir, run_leg
-from scripts.bench.stack_pair import load_stack_pair
+from scripts.bench import driver as driver_module
+from scripts.bench.driver import init_run_dir, run_leg, run_pair
+from scripts.bench.preflight import pre_run_reset_evidence_sha256
+from scripts.bench.stack_pair import BenchError, load_stack_pair
+from scripts.eval_harness import remote_client as remote_client_module
+from scripts.eval_harness.remote_client import JobPollTimeoutError, RemoteSceneClient
 from scripts.bench.tests.conftest import (
     FakeClient,
+    png_bytes,
     write_hashed_manifest,
     write_pair,
 )
@@ -49,6 +58,366 @@ def _seed_terminal_success(items_path: Path, media_id: int, width: int = 16, hei
             "terminal_ingest_outcome": "success",
         }
     )
+
+
+def _reset_evidence(pair) -> dict[str, dict[str, object]]:
+    completed_at = datetime.now(UTC).isoformat()
+    return {
+        endpoint.stack_id: {
+            "reset_attested_by": "bench test operator",
+            "reset_reference": "FIR23-STACK runbook reset",
+            "reset_completed_at": completed_at,
+            "prior_run_identity_rows_empty": True,
+        }
+        for endpoint in pair.stacks
+    }
+
+
+def _stamp_reset_evidence(out: Path, evidence: dict[str, dict[str, object]]) -> None:
+    driver_module._stamp_run_field(out, "pre_run_reset_by_stack", evidence)
+    driver_module._stamp_run_field(
+        out,
+        "pre_run_reset_evidence_sha256",
+        pre_run_reset_evidence_sha256(evidence),
+    )
+
+
+def _file_snapshot(root: Path) -> dict[str, bytes]:
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+
+
+def test_wait_job_obeys_total_budget_separate_from_request_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+    clock = [0.0]
+    timeout_s = 0.02
+
+    def pending_job(*_args: object, **_kwargs: object) -> dict[str, str]:
+        nonlocal calls
+        calls += 1
+        clock[0] += timeout_s / 2
+        return {"status": "processing"}
+
+    monkeypatch.setattr(
+        remote_client_module,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock[0], sleep=lambda _seconds: None),
+    )
+
+    client = RemoteSceneClient(
+        "https://bench.invalid",
+        "key",
+        timeout_s=5.0,
+        job_poll_timeout_s=timeout_s,
+        poll_interval=0,
+        max_poll_attempts=60,
+    )
+    client._request_dict = pending_job  # type: ignore[method-assign]
+    try:
+        with pytest.raises(JobPollTimeoutError):
+            client.wait_job("pending")
+    finally:
+        client.close()
+    assert calls < 60
+    assert clock[0] <= timeout_s
+
+
+def test_resume_rejects_changed_manifest_before_running_legs(tmp_path: Path) -> None:
+    images = tmp_path / "images"
+    pinned_manifest = write_hashed_manifest(tmp_path / "manifest-a.json", images, [1])
+    current_manifest = write_hashed_manifest(tmp_path / "manifest-b.json", images, [2])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = init_run_dir(tmp_path / "out-manifest-mismatch", pair, pinned_manifest)
+
+    with pytest.raises(BenchError) as exc:
+        run_pair(
+            pair,
+            manifest_path=current_manifest,
+            images_dir=images,
+            out_dir=out,
+            skip_preflight=True,
+        )
+
+    assert exc.value.code == "resume_manifest_mismatch"
+    assert hashlib.sha256(pinned_manifest.read_bytes()).hexdigest() in str(exc.value)
+    assert hashlib.sha256(current_manifest.read_bytes()).hexdigest() in str(exc.value)
+
+
+def test_resume_rejects_changed_stack_pair_before_running_legs(tmp_path: Path) -> None:
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pinned_pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    current_pair = replace(pinned_pair, head_to_head_delta=pinned_pair.head_to_head_delta + 0.01)
+    out = init_run_dir(tmp_path / "out-pair-mismatch", pinned_pair, manifest)
+
+    with pytest.raises(BenchError) as exc:
+        run_pair(
+            current_pair,
+            manifest_path=manifest,
+            images_dir=images,
+            out_dir=out,
+            skip_preflight=True,
+        )
+
+    assert exc.value.code == "resume_stack_pair_mismatch"
+    assert repr(pinned_pair.head_to_head_delta) in str(exc.value)
+    assert repr(current_pair.head_to_head_delta) in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("item_max_attempts", 3),
+        ("job_poll_timeout_sec", 601),
+        ("wall_clock_timeout_sec", 3601),
+        ("images_dir", "other-images"),
+        ("manifest_sha256", "a" * 64),
+        ("media_url_map_path", "other-media-urls.json"),
+    ],
+)
+def test_resume_rejects_changed_behavior_setting(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pinned_pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    current_pair = replace(pinned_pair, **{field: value})
+    out = init_run_dir(tmp_path / "out", pinned_pair, manifest)
+
+    with pytest.raises(BenchError) as exc:
+        run_pair(
+            current_pair,
+            manifest_path=manifest,
+            images_dir=images,
+            out_dir=out,
+            skip_preflight=True,
+        )
+
+    assert exc.value.code == "resume_stack_pair_mismatch"
+    assert field in str(exc.value)
+    assert repr(value) in str(exc.value)
+
+
+@pytest.mark.parametrize("symlink_stack_dirs", [False, True], ids=["regular", "symlinked"])
+def test_missing_run_record_refuses_existing_leg_state(
+    tmp_path: Path, symlink_stack_dirs: bool
+) -> None:
+    images = tmp_path / "images"
+    manifest_a = write_hashed_manifest(tmp_path / "manifest-a.json", images, [1])
+    manifest_b = tmp_path / "manifest-b.json"
+    manifest_b_doc = json.loads(manifest_a.read_text(encoding="utf-8"))
+    changed_content = png_bytes(101, 100)
+    manifest_b_doc["entries"][0]["path"] = "img_1_b.jpg"
+    manifest_b_doc["entries"][0]["sha256"] = hashlib.sha256(changed_content).hexdigest()
+    (images / "img_1_b.jpg").write_bytes(changed_content)
+    manifest_b.write_text(json.dumps(manifest_b_doc, indent=2), encoding="utf-8")
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = tmp_path / "out-missing-run-record"
+    clients = {endpoint.stack_id: FakeClient() for endpoint in pair.stacks}
+    run_pair(
+        pair,
+        manifest_path=manifest_a,
+        images_dir=images,
+        out_dir=out,
+        clients=clients,
+        skip_preflight=True,
+        pre_run_reset_by_stack=_reset_evidence(pair),
+    )
+
+    pinned_manifest = (out / "manifest.json").read_bytes()
+    manifest_pin = (out / "manifest.sha").read_bytes()
+    journals = {
+        endpoint.stack_id: (out / "legs" / endpoint.stack_id / "items.jsonl").read_bytes()
+        for endpoint in pair.stacks
+    }
+    exports = {
+        endpoint.stack_id: (
+            out / "legs" / endpoint.stack_id / "exports" / "export_sha256.json"
+        ).read_bytes()
+        for endpoint in pair.stacks
+    }
+    if symlink_stack_dirs:
+        completed_legs = tmp_path / "completed-run" / "legs"
+        completed_legs.mkdir(parents=True)
+        for endpoint in pair.stacks:
+            stack_leg = out / "legs" / endpoint.stack_id
+            completed_leg = completed_legs / endpoint.stack_id
+            stack_leg.rename(completed_leg)
+            stack_leg.symlink_to(completed_leg, target_is_directory=True)
+        target_snapshot = _file_snapshot(completed_legs)
+    (out / "run.json").unlink()
+    clients = {endpoint.stack_id: FakeClient() for endpoint in pair.stacks}
+    output_snapshot = _file_snapshot(out)
+
+    with pytest.raises(BenchError) as exc:
+        run_pair(
+            pair,
+            manifest_path=manifest_b,
+            images_dir=images,
+            out_dir=out,
+            clients=clients,
+            skip_preflight=True,
+            pre_run_reset_by_stack=_reset_evidence(pair),
+        )
+
+    assert exc.value.code == (
+        "leg_state_symlink" if symlink_stack_dirs else "run_record_missing_with_leg_state"
+    )
+    if not symlink_stack_dirs:
+        assert "clear the output directory" in str(exc.value)
+    assert _file_snapshot(out) == output_snapshot
+    if symlink_stack_dirs:
+        assert _file_snapshot(completed_legs) == target_snapshot
+    assert all(not client.analyze_calls and not client.cluster_calls for client in clients.values())
+    assert not (out / "run.json").exists()
+    assert (out / "manifest.json").read_bytes() == pinned_manifest
+    assert (out / "manifest.sha").read_bytes() == manifest_pin
+    for endpoint in pair.stacks:
+        stack_id = endpoint.stack_id
+        assert (out / "legs" / stack_id / "items.jsonl").read_bytes() == journals[stack_id]
+        assert (
+            out / "legs" / stack_id / "exports" / "export_sha256.json"
+        ).read_bytes() == exports[stack_id]
+
+
+@pytest.mark.parametrize("resume", [False, True], ids=["fresh", "resume"])
+@pytest.mark.parametrize("linked_root", [False, True], ids=["stack-link", "root-link"])
+def test_run_pair_refuses_linked_leg_state_before_any_write(
+    tmp_path: Path, resume: bool, linked_root: bool
+) -> None:
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = init_run_dir(tmp_path / "out", pair, manifest)
+    if not resume:
+        (out / "run.json").unlink()
+    else:
+        # Link refusal must take precedence even over a resume-input mismatch.
+        manifest.write_bytes(manifest.read_bytes() + b"\n")
+    linked_path = out / "legs"
+    if not linked_root:
+        linked_path /= pair.stacks[0].stack_id
+    target = tmp_path / "linked-target"
+    linked_path.rename(target)
+    (target / "sentinel.txt").write_bytes(b"existing leg state")
+    linked_path.symlink_to(target, target_is_directory=True)
+    output_snapshot = _file_snapshot(out)
+    target_snapshot = _file_snapshot(target)
+    clients = {endpoint.stack_id: FakeClient() for endpoint in pair.stacks}
+
+    with pytest.raises(BenchError) as exc:
+        run_pair(
+            pair,
+            manifest_path=manifest,
+            images_dir=images,
+            out_dir=out,
+            clients=clients,
+            pre_run_reset_by_stack=_reset_evidence(pair),
+        )
+
+    assert exc.value.code == "leg_state_symlink"
+    assert _file_snapshot(out) == output_snapshot
+    assert _file_snapshot(target) == target_snapshot
+    assert all(not client.analyze_calls and not client.cluster_calls for client in clients.values())
+
+
+def test_fresh_run_accepts_empty_regular_stack_directories(tmp_path: Path) -> None:
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = tmp_path / "out"
+    for endpoint in pair.stacks:
+        (out / "legs" / endpoint.stack_id).mkdir(parents=True)
+    clients = {endpoint.stack_id: FakeClient() for endpoint in pair.stacks}
+
+    assert run_pair(
+        pair,
+        manifest_path=manifest,
+        images_dir=images,
+        out_dir=out,
+        clients=clients,
+        skip_preflight=True,
+        pre_run_reset_by_stack=_reset_evidence(pair),
+    ) == out
+    assert json.loads((out / "run.json").read_text())["phase"] == "done"
+    assert all(client.analyze_calls for client in clients.values())
+
+
+def test_resume_accepts_unchanged_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", tmp_path / "images", [1])
+    pair_path = write_pair(tmp_path / "pair.yaml")
+    pair = load_stack_pair(pair_path)
+    out = init_run_dir(tmp_path / "out", pair, manifest)
+    evidence = _reset_evidence(pair)
+    _stamp_reset_evidence(out, evidence)
+    reached_legs: list[str] = []
+
+    def stub_leg(endpoint, _pair, **_kwargs) -> None:
+        reached_legs.append(endpoint.stack_id)
+
+    monkeypatch.setattr(driver_module, "run_leg", stub_leg)
+    monkeypatch.setattr(driver_module, "_leg_complete", lambda *_args: True)
+
+    result = run_pair(
+        load_stack_pair(pair_path),
+        manifest_path=manifest,
+        images_dir=tmp_path / "images",
+        out_dir=out,
+        skip_preflight=True,
+        pre_run_reset_by_stack=evidence,
+    )
+
+    assert result == out
+    assert reached_legs == [endpoint.stack_id for endpoint in pair.stacks]
+
+
+def test_resume_uses_pinned_manifest_after_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    images = tmp_path / "images"
+    manifest_a = write_hashed_manifest(tmp_path / "manifest-a.json", images, [1])
+    manifest_b = write_hashed_manifest(tmp_path / "manifest-b.json", images, [2])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = init_run_dir(tmp_path / "out", pair, manifest_a)
+    evidence = _reset_evidence(pair)
+    _stamp_reset_evidence(out, evidence)
+    validated = driver_module._validate_resume_inputs
+    seen_media_ids: list[list[int]] = []
+
+    def validate_then_replace_manifest(root, current_pair, current_manifest):
+        result = validated(root, current_pair, current_manifest)
+        Path(current_manifest).write_bytes(manifest_b.read_bytes())
+        return result
+
+    def capture_leg(_endpoint, _pair, *, manifest_path, preloaded_manifest=None, **_kwargs) -> None:
+        manifest = preloaded_manifest
+        if manifest is None:
+            manifest = driver_module.load_manifest(
+                str(manifest_path),
+                metadata_only=True,
+                skip_hash_verification=True,
+                hash_skip_reason="test captures resumed manifest ids only",
+            )
+        seen_media_ids.append([entry.media_id for entry in manifest.entries])
+
+    monkeypatch.setattr(driver_module, "_validate_resume_inputs", validate_then_replace_manifest)
+    monkeypatch.setattr(driver_module, "run_leg", capture_leg)
+    monkeypatch.setattr(driver_module, "_leg_complete", lambda *_args: True)
+
+    run_pair(
+        pair,
+        manifest_path=manifest_a,
+        images_dir=images,
+        out_dir=out,
+        skip_preflight=True,
+        pre_run_reset_by_stack=evidence,
+    )
+
+    assert pair.manifest_sha256 is None
+    assert seen_media_ids == [[1], [1]]
 
 
 def test_resume_does_not_repost_terminal_success(tmp_path: Path) -> None:
@@ -172,11 +541,12 @@ def test_completed_with_errors_is_not_ok(tmp_path: Path) -> None:
     assert analyze
     assert analyze[-1]["outcome"] == "failed"
     assert analyze[-1]["error_code"] == "analyze_completed_with_errors"
-    assert analyze[-1]["terminal_ingest_outcome"] == "success"
+    assert "terminal_ingest_outcome" not in analyze[-1]
     assert "stack_media_id" in analyze[-1]
     assert analyze[-1]["stack_media_id"] is None
     ingest = [r for r in store.read_all() if r.get("phase") == "ingest"]
     assert ingest
+    assert ingest[-1]["terminal_ingest_outcome"] == "success"
     assert "stack_media_id" in ingest[-1]
     assert ingest[-1]["stack_media_id"] is None
 

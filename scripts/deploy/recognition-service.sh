@@ -71,7 +71,7 @@
 #                            default unix:///var/run/docker.sock; other endpoints are refused
 #   ACX_ALLOW_DIRTY          set to 1 to allow dirty deploy inputs (dev and dev-fir only)
 #   ACX_CUTOVER_HEALTH_ATTEMPTS default 5 (max 60); ACX_CUTOVER_HEALTH_SLEEP default 5 seconds (max 120 s) (candidate admission)
-#   ACX_CANONICAL_HEALTH_ATTEMPTS default 5 (max 60); ACX_CANONICAL_HEALTH_SLEEP default 5 seconds (max 120 s) (restart readiness)
+#   ACX_CANONICAL_HEALTH_ATTEMPTS default 8 (max 60); ACX_CANONICAL_HEALTH_SLEEP default 5 seconds (max 120 s) (restart readiness)
 #   ACX_VERIFY_ATTEMPTS      default 5 (max 60) (post-deploy public verify only)
 #   ACX_VERIFY_SLEEP         default 5 (max 120 s) (seconds between post-deploy public verify attempts)
 #   ACX_ROLLBACK_VERIFY_ATTEMPTS default 5 (max 60); ACX_ROLLBACK_VERIFY_SLEEP default 5 seconds (max 120 s) (rollback verify)
@@ -2156,7 +2156,7 @@ deploy_env_lease() {
     if ! cutover_budget="$(probe_budget ACX_CUTOVER_HEALTH 5 5)"; then
       fail "ACX_CUTOVER_HEALTH_ATTEMPTS and ACX_CUTOVER_HEALTH_SLEEP must define a valid restart health budget"
     fi
-    if ! canonical_budget="$(probe_budget ACX_CANONICAL_HEALTH 5 5)"; then
+    if ! canonical_budget="$(probe_budget ACX_CANONICAL_HEALTH 8 5)"; then
       fail "ACX_CANONICAL_HEALTH_ATTEMPTS and ACX_CANONICAL_HEALTH_SLEEP must define a valid restart health budget"
     fi
     if ! verify_budget="$(probe_budget ACX_VERIFY 5 5)"; then
@@ -4066,7 +4066,7 @@ probe_canonical_api_health() {
   remote_dir="$(env_to_remote_dir "$env")"
   compose_files="$(env_to_compose_files "$env")"
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
-  if ! budget="$(probe_budget ACX_CANONICAL_HEALTH 5 5)"; then
+  if ! budget="$(probe_budget ACX_CANONICAL_HEALTH 8 5)"; then
     return 1
   fi
   read -r max_attempts sleep_s <<<"${budget}"

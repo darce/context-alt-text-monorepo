@@ -176,15 +176,15 @@ def _has_leg_state(root: Path) -> bool:
 
 
 def _load_manifest_bytes(manifest_bytes: bytes) -> GoldenManifest:
-    """Parse the exact input snapshot whose digest is used by this run."""
+    """Parse the exact paired-run snapshot with the bench ingest contract."""
     with tempfile.TemporaryDirectory(prefix="bench-manifest-") as temp_dir:
         snapshot = Path(temp_dir) / "manifest.json"
         snapshot.write_bytes(manifest_bytes)
-        return load_manifest(
+        return load_bench_manifest(
             str(snapshot),
             metadata_only=True,
             skip_hash_verification=True,
-            hash_skip_reason="bench driver reads media ids only",
+            hash_skip_reason="bench driver validates media ids before ingest",
         )
 
 

@@ -149,6 +149,38 @@ def _run_record() -> dict:
     }
 
 
+def _face_run_record() -> dict:
+    return {
+        "schema": "acx-eval/v1",
+        "kind": "face_run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "head_sha": "0" * 40,
+            "started_at": "2026-08-14T00:00:00Z",
+            "leg": "candidate",
+            "model_id": "test-face-model",
+            "embedding_dim": 8,
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": _IMAGE_PATH,
+                "model_id": "test-face-model",
+                "embedding_dim": 8,
+                "image_size": [100, 100],
+                "faces": [
+                    {
+                        "bbox_px": [40.0, 25.0, 20.0, 30.0],
+                        "landmarks_px": [[0.0, 0.0]] * 5,
+                        "embedding": [1.0] + [0.0] * 7,
+                        "det_score": 0.95,
+                    }
+                ],
+            }
+        ],
+    }
+
+
 def test_strict_scoring_rejects_unreviewed_box_before_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
     run_manifest, entries = _manifest(reviewed=False)
 
@@ -171,3 +203,31 @@ def test_strict_scoring_accepts_confirmed_second_human_review() -> None:
     scored = report.score_run_record(_run_record(), entries, run_manifest=run_manifest)
 
     assert scored["faces"]["detection"]["tp"] == 1
+
+
+def test_strict_face_scoring_rejects_unreviewed_box_before_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+    run_manifest_doc, _entries = _manifest(reviewed=False)
+    run_manifest = GoldenManifest.model_validate(run_manifest_doc)
+
+    def metric_must_not_run(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("a face metric ran before the confirmed blind-review gate")
+
+    monkeypatch.setattr(report, "score_face_assignment", metric_must_not_run)
+
+    with pytest.raises(ManifestError, match="confirmed independent blind review") as exc_info:
+        report.score_face_run_record(_face_run_record(), run_manifest)
+
+    assert exc_info.value.invariant == "adjudication_record_required"
+
+
+def test_strict_face_scoring_accepts_confirmed_second_human_review() -> None:
+    run_manifest_doc, _entries = _manifest(reviewed=True)
+    run_manifest = GoldenManifest.model_validate(run_manifest_doc)
+
+    scored = report.score_face_run_record(_face_run_record(), run_manifest)
+
+    assert scored["detection"]["tp"] == 1
+    assert scored["detection"]["precision"] == 1.0
+    full_identification = scored["slices"]["full_corpus_identification"]
+    assert full_identification["precision"] is not None
+    assert full_identification["recall"] is not None

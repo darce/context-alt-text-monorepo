@@ -487,21 +487,57 @@ class SqlAlchemyUsageRepository:
             return self._replay_or_conflict(existing, normalized_fingerprint)
 
         lease_cutoff = datetime.now(tz=UTC) - USAGE_RESERVATION_LEASE
+        expiry_filter = (
+            UsageReservation.tenant_id == tenant_id,
+            UsageReservation.period_start == entitlement.period_start,
+            UsageReservation.status == UsageReservationStatus.RESERVED,
+            UsageReservation.reserved_at < lease_cutoff,
+        )
         expire_stmt = (
             update(UsageReservation)
-            .where(
-                UsageReservation.tenant_id == tenant_id,
-                UsageReservation.period_start == entitlement.period_start,
-                UsageReservation.status == UsageReservationStatus.RESERVED,
-                UsageReservation.reserved_at < lease_cutoff,
-            )
+            .where(*expiry_filter)
             .values(status=UsageReservationStatus.EXPIRED, settled_at=func.now())
+            .returning(
+                UsageReservation.cost_units,
+                UsageReservation.queue_bytes,
+                UsageReservation.reserved_at,
+            )
+            .execution_options(synchronize_session=False)
         )
-        await _with_timeout(
+        expired_result = await _with_timeout(
             self._session.execute(expire_stmt),
             timeout_s=self._timeout_s,
             operation="expire stale usage reservations",
         )
+        expired_cost_units = 0
+        expired_queue_depth = 0
+        expired_queue_bytes = 0
+        expired_current_day_cost_units = 0
+        period_start = global_state.period_start
+        period_end = global_state.period_end
+        if period_start.tzinfo is None:
+            period_start = period_start.replace(tzinfo=UTC)
+        if period_end.tzinfo is None:
+            period_end = period_end.replace(tzinfo=UTC)
+        for cost_units, queue_bytes, reserved_at in expired_result:
+            cost_units = int(cost_units)
+            queue_bytes = int(queue_bytes or 0)
+            if reserved_at.tzinfo is None:
+                reserved_at = reserved_at.replace(tzinfo=UTC)
+            expired_cost_units += cost_units
+            expired_queue_depth += 1
+            expired_queue_bytes += queue_bytes
+            if period_start <= reserved_at < period_end:
+                expired_current_day_cost_units += cost_units
+        if expired_queue_depth:
+            global_state.inflight_units = max(0, int(global_state.inflight_units) - expired_cost_units)
+            global_state.queue_depth = max(0, int(global_state.queue_depth) - expired_queue_depth)
+            global_state.queue_bytes = max(0, int(global_state.queue_bytes) - expired_queue_bytes)
+            global_state.daily_cost_units = max(
+                0,
+                int(global_state.daily_cost_units) - expired_current_day_cost_units,
+            )
+            global_state.updated_at = now
 
         used_stmt = (
             select(func.coalesce(func.sum(UsageReservation.cost_units), 0))
@@ -613,7 +649,13 @@ class SqlAlchemyUsageRepository:
         if reserved_at.tzinfo is None:
             reserved_at = reserved_at.replace(tzinfo=UTC)
         stale_reservation = reserved_at < lease_cutoff
-        settled_status = UsageReservationStatus.EXPIRED if stale_reservation else target_status
+        # A commit is proof of terminal work and remains chargeable after the
+        # reservation lease; the lease only expires abandoned or released work.
+        settled_status = (
+            UsageReservationStatus.EXPIRED
+            if stale_reservation and target_status is not UsageReservationStatus.COMMITTED
+            else target_status
+        )
         lease_guard = (
             UsageReservation.reserved_at < lease_cutoff
             if stale_reservation
@@ -806,6 +848,7 @@ class SqlAlchemyUsageRepository:
         *,
         limit: int = 100,
         now: datetime | None = None,
+        exclude_reservation_ids: Iterable[UUID] = (),
     ) -> list[UsageReservation]:
         """Return a bounded, oldest-first batch of reservations still held open."""
         if isinstance(stale_after_seconds, bool) or not isinstance(stale_after_seconds, (int, float)):
@@ -820,15 +863,14 @@ class SqlAlchemyUsageRepository:
         if reference_time.tzinfo is None:
             reference_time = reference_time.replace(tzinfo=UTC)
         cutoff = reference_time - timedelta(seconds=stale_after)
-        stmt = (
-            select(UsageReservation)
-            .where(
-                UsageReservation.status == UsageReservationStatus.RESERVED,
-                UsageReservation.reserved_at <= cutoff,
-            )
-            .order_by(UsageReservation.reserved_at.asc(), UsageReservation.id.asc())
-            .limit(limit)
+        stmt = select(UsageReservation).where(
+            UsageReservation.status == UsageReservationStatus.RESERVED,
+            UsageReservation.reserved_at <= cutoff,
         )
+        excluded_ids = tuple(set(exclude_reservation_ids))
+        if excluded_ids:
+            stmt = stmt.where(UsageReservation.id.not_in(excluded_ids))
+        stmt = stmt.order_by(UsageReservation.reserved_at.asc(), UsageReservation.id.asc()).limit(limit)
         result = await _with_timeout(
             self._session.execute(stmt),
             timeout_s=self._timeout_s,

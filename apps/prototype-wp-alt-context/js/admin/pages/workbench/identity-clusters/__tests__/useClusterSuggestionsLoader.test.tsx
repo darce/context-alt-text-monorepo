@@ -157,7 +157,7 @@ describe('useClusterSuggestionsLoader', () => {
     queryClient.clear();
   });
 
-  it('findClusterByLabel short-circuits non-DOMException TimeoutError abort [CARD-24]', async () => {
+  it('findClusterByLabel fails closed on a non-DOMException TimeoutError [CARD-24][FEBT1G-H-04]', async () => {
     emptyIdentityBatch();
     const { result, queryClient } = renderLoader();
     await waitFor(() => expect(result.current.findClusterByLabel).toEqual(expect.any(Function)));
@@ -171,9 +171,15 @@ describe('useClusterSuggestionsLoader', () => {
     });
     const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
-    await expect(result.current.findClusterByLabel('Alice')).resolves.toBeNull();
+    const lookupPromise = result.current.findClusterByLabel('Alice');
+    await expect(lookupPromise).rejects.toBeInstanceOf(ClusterLabelLookupError);
+    await expect(lookupPromise).rejects.toHaveProperty('lookupCause', timeoutErr);
     expect(consoleWarn).not.toHaveBeenCalled();
-    expect(records.filter((record) => record.level === 'warn')).toHaveLength(0);
+
+    const warns = records.filter((record) => record.level === 'warn');
+    expect(warns).toHaveLength(1);
+    expect(warns[0]?.message).toBe('Failed to find cluster by label');
+    expect(warns[0]?.fields.tag).toBe('timeout');
 
     consoleWarn.mockRestore();
     queryClient.clear();

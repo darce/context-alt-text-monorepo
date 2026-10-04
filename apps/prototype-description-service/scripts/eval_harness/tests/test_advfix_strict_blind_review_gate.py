@@ -206,6 +206,40 @@ def test_strict_scoring_accepts_confirmed_second_human_review() -> None:
     assert scored["faces"]["detection"]["tp"] == 1
 
 
+@pytest.mark.parametrize("refusal", ["uncovered", "unknown_mode", "roster_mixed_lineage"])
+@pytest.mark.parametrize("reviewed", [False, True])
+def test_detection_refusal_still_requires_review_before_metrics(
+    refusal: str, reviewed: bool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    doc, entries = _manifest(reviewed=reviewed)
+    if refusal == "uncovered":
+        entries[0]["face_count"] = 2
+    elif refusal == "unknown_mode":
+        entries[0]["annotation_mode"] = "unknown"
+    else:
+        entries[0]["annotation_mode"] = "roster_only"
+        box_without_lineage = dict(entries[0]["face_boxes"][0])
+        box_without_lineage.pop("lineage")
+        box_without_lineage.pop("adjudication_source", None)
+        entries.append({
+            **entries[0], "media_id": 2, "face_boxes": [box_without_lineage],
+        })
+
+    if reviewed:
+        scored = report.score_run_record(_run_record(), entries, run_manifest=doc)
+        assert scored["faces"]["detection"]["precision"] is None
+        return
+
+    def metric_must_not_run(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("a metric ran before the confirmed blind-review gate")
+
+    monkeypatch.setattr(report, "score_caption", metric_must_not_run)
+    monkeypatch.setattr(report, "identification_pr", metric_must_not_run)
+    with pytest.raises(ManifestError) as exc_info:
+        report.score_run_record(_run_record(), entries, run_manifest=doc)
+    assert exc_info.value.invariant == "adjudication_record_required"
+
+
 def test_strict_face_scoring_rejects_unreviewed_box_before_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
     run_manifest_doc, _entries = _manifest(reviewed=False)
     run_manifest = GoldenManifest.model_validate(run_manifest_doc)

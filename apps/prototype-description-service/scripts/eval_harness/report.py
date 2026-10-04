@@ -2214,10 +2214,9 @@ def score_run_record(
             if strict_mode is AnnotationMode.EXHAUSTIVE:
                 if lineage_error is not None:
                     raise lineage_error
-            # Roster-only detection still permits identification, whose strict
-            # GT must also have confirmed review evidence.
-            if lineage_error is None:
-                require_confirmed_blind_reviews_for_strict_scoring(run_manifest, entries=manifest_entries)
+        # Caught detection refusals still permit downstream metrics. Review
+        # every strict-lineage box even when another box lacks lineage.
+        require_confirmed_blind_reviews_for_strict_scoring(run_manifest, entries=manifest_entries)
     eval_mode = str(run_record["provenance"].get("eval_mode", "standard"))
     if eval_mode not in EVAL_MODES:
         raise ReportError(f"unknown eval_mode {eval_mode!r} in run-record provenance; expected one of {EVAL_MODES}")

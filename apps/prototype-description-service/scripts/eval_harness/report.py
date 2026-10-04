@@ -2181,8 +2181,6 @@ def score_run_record(
     """
     # identity_names lives in this module (VLM6-RH-07) — no lazy cli import.
     _validate_record_kind(run_record)
-    if run_manifest is not None:
-        require_confirmed_blind_reviews_for_strict_scoring(run_manifest)
     lineage_error = None
     if run_manifest is not None:
         for entry_index, entry in enumerate(manifest_entries):
@@ -2198,6 +2196,28 @@ def score_run_record(
                     break
             if lineage_error is not None:
                 break
+        # Preserve the established mode/coverage/lineage refusals before the
+        # review gate, while still refusing unreviewed GT before any metric.
+        try:
+            strict_mode = _resolve_score_annotation_mode(annotation_mode, manifest_entries)
+            if strict_mode is AnnotationMode.EXHAUSTIVE:
+                require_exhaustive_box_coverage(manifest_entries)
+        except ManifestError as exc:
+            if not _invariant_is(
+                exc.invariant,
+                ScoreInvariant.DETECTION_UNRECOGNISED_ANNOTATION_MODE,
+                ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES,
+                DETECTION_UNCOVERED_FACE_COUNT_INVARIANT,
+            ):
+                raise
+        else:
+            if strict_mode is AnnotationMode.EXHAUSTIVE:
+                if lineage_error is not None:
+                    raise lineage_error
+            # Roster-only detection still permits identification, whose strict
+            # GT must also have confirmed review evidence.
+            if lineage_error is None:
+                require_confirmed_blind_reviews_for_strict_scoring(run_manifest, entries=manifest_entries)
     eval_mode = str(run_record["provenance"].get("eval_mode", "standard"))
     if eval_mode not in EVAL_MODES:
         raise ReportError(f"unknown eval_mode {eval_mode!r} in run-record provenance; expected one of {EVAL_MODES}")

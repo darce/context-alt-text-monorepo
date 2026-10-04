@@ -168,6 +168,12 @@ def preflight_stack(
     transport: httpx.BaseTransport | None = None,
     api_key: str | None = None,
 ) -> PreflightResult:
+    key = api_key.strip() if isinstance(api_key, str) else ""
+    if not key:
+        raise PreflightError(
+            "preflight_auth_failed", f"API key is required for {endpoint.stack_id}"
+        )
+
     if getattr(endpoint, "opencv_major", None) in (None, ""):
         raise PreflightError("opencv_major_unattested", "opencv_major is required")
     try:
@@ -175,10 +181,7 @@ def preflight_stack(
     except (TypeError, ValueError) as exc:
         raise PreflightError("opencv_major_unattested", "opencv_major is not parseable") from exc
 
-    headers: dict[str, str] = {}
-    key = api_key
-    if key:
-        headers["X-API-Key"] = key
+    headers = {"X-API-Key": key}
     client = httpx.Client(
         base_url=endpoint.base_url,
         headers=headers,

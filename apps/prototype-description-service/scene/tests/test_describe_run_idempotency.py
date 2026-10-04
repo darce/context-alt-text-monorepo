@@ -29,8 +29,10 @@ import scene.interface_adapters.http.routers.describe_run as describe_run_mod
 from db.models.base_imports import Base
 from db.models.scene import DescribeRun, DescribeRunItem
 from db.models.tenant import Tenant
+from recognition.domain.portal_contracts import UsageTicket
 from recognition.interface_adapters.http.deps import get_optional_session, require_write_access
 from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
+from recognition.interface_adapters.http.deps.usage_admission import get_usage_admission_service
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.domain.describe_run import DescribeItemStatus, DescribeRunStatus
 from scene.interface_adapters.http.router import router as scene_router
@@ -45,6 +47,56 @@ class _AnyTenantAuth:
 
     tenant_claim = ""
     user_id = 42
+
+
+class _PassAdmission:
+    def __init__(self) -> None:
+        self.reserves: list[dict] = []
+
+    async def reserve(
+        self,
+        tenant_id,
+        *,
+        idempotency_key,
+        job_id,
+        cost_units,
+        operation_id=None,
+        request_fingerprint=None,
+        queue_bytes=0,
+    ):
+        self.reserves.append(
+            {
+                "tenant_id": tenant_id,
+                "idempotency_key": idempotency_key,
+                "operation_id": operation_id,
+                "request_fingerprint": request_fingerprint,
+                "job_id": job_id,
+                "cost_units": cost_units,
+                "queue_bytes": queue_bytes,
+            }
+        )
+        return UsageTicket(
+            uuid.uuid4(),
+            tenant_id,
+            idempotency_key,
+            cost_units,
+            operation_id=operation_id or idempotency_key,
+            request_fingerprint=request_fingerprint or "",
+            job_id=job_id,
+            fence_token="fence-idem-run",
+        )
+
+    async def commit(self, ticket):
+        del ticket
+
+    async def release(self, ticket):
+        del ticket
+
+    async def commit_fenced(self, ticket, *, fence_token):
+        del ticket, fence_token
+
+    async def release_fenced(self, ticket, *, fence_token):
+        del ticket, fence_token
 
 
 @pytest.fixture(autouse=True)
@@ -82,9 +134,12 @@ def _app():
 
     app = FastAPI()
     app.include_router(scene_router, prefix="/scene")
+    admission = _PassAdmission()
+    app.state.usage_admission_service = admission
     app.dependency_overrides[require_write_access] = lambda: _AnyTenantAuth()
     app.dependency_overrides[enforce_demo_quota] = lambda: None
     app.dependency_overrides[get_optional_session] = _session
+    app.dependency_overrides[get_usage_admission_service] = lambda: admission
     try:
         yield app, sf
     finally:
@@ -93,18 +148,20 @@ def _app():
             os.unlink(path)
 
 
-def _multipart(media_ids, *, tenant=TENANT_A, key=KEY, with_images=True):
+def _multipart(media_ids, *, tenant=TENANT_A, key=KEY, operation_id=None, with_images=True):
     files = (
         [(f"image_{m}", (f"{m}.png", b"\x89PNG\r\n\x1a\n", "image/png")) for m in media_ids] if with_images else None
     )
     data = {"tenant_id": str(tenant), "media_ids": json.dumps(media_ids)}
     if key is not None:
         data["idempotency_key"] = key
+    if operation_id is not None:
+        data["operation_id"] = operation_id
     return data, files
 
 
-def _submit(client, media_ids, *, tenant=TENANT_A, key=KEY, with_images=True):
-    data, files = _multipart(media_ids, tenant=tenant, key=key, with_images=with_images)
+def _submit(client, media_ids, *, tenant=TENANT_A, key=KEY, operation_id=None, with_images=True):
+    data, files = _multipart(media_ids, tenant=tenant, key=key, operation_id=operation_id, with_images=with_images)
     return client.post("/scene/describe/run", data=data, files=files)
 
 
@@ -136,9 +193,7 @@ def test_replay_of_same_key_returns_202_same_run_and_enqueues_once(monkeypatch):
         assert first.status_code == 202, first.text
         run_id = first.json()["run_id"]
 
-        # No image parts on the replay: proof the replay path reads no bytes and
-        # never reaches the missing-image-part validation.
-        replay = _submit(client, [70, 71], with_images=False)
+        replay = _submit(client, [70, 71])
         assert replay.status_code == 202, replay.text
         assert replay.json()["run_id"] == run_id
 
@@ -193,16 +248,17 @@ def test_malformed_idempotency_key_is_rejected_422(monkeypatch, bad_key):
         assert _run_rows(sf, TENANT_A) == 0
 
 
-def test_omitted_idempotency_key_keeps_todays_non_deduped_behaviour(monkeypatch):
+def test_omitted_idempotency_key_is_rejected_before_reservation(monkeypatch):
     calls = _count_enqueues(monkeypatch)
     with _app() as (app, sf), TestClient(app) as client:
-        first = _submit(client, [70], key=None)
-        second = _submit(client, [70], key=None)
-        assert first.status_code == 202, first.text
-        assert second.status_code == 202, second.text
-        assert first.json()["run_id"] != second.json()["run_id"]
-        assert len(calls) == 2
-        assert _run_rows(sf, TENANT_A) == 2
+        response = _submit(client, [70], key=None)
+        assert response.status_code == 400, response.text
+        detail = response.json()["detail"]
+        assert detail["code"] == "idempotency_key_required"
+        assert detail["field"] == "idempotency_key"
+        assert app.state.usage_admission_service.reserves == []
+        assert calls == []
+        assert _run_rows(sf, TENANT_A) == 0
 
 
 def test_concurrent_submits_with_one_key_produce_exactly_one_run(monkeypatch):
@@ -260,7 +316,7 @@ def test_repeated_media_ids_under_one_key_replay(monkeypatch):
         first = _submit(client, [70, 71])
         assert first.status_code == 202, first.text
 
-        replay = _submit(client, [71, 70, 71], with_images=False)
+        replay = _submit(client, [71, 70, 71])
         assert replay.status_code == 202, replay.text
         assert replay.json()["run_id"] == first.json()["run_id"]
         assert len(calls) == 1
@@ -271,26 +327,20 @@ def test_same_key_with_a_different_recognition_switch_still_conflicts(monkeypatc
     """The canonical digest must still catch a genuinely different payload."""
     _count_enqueues(monkeypatch)
     with _app() as (app, sf), TestClient(app) as client:
-        first = _submit(client, [70])
+        data, files = _multipart([70])
+        data["recognition_enabled"] = "true"
+        first = client.post("/scene/describe/run", data=data, files=files)
         assert first.status_code == 202, first.text
 
         data, files = _multipart([70])
-        data["recognition_enabled"] = "true"
+        data["recognition_enabled"] = "false"
         conflict = client.post("/scene/describe/run", data=data, files=files)
         assert conflict.status_code == 409, conflict.text
         assert _run_rows(sf, TENANT_A) == 1
 
 
-def test_same_key_and_media_ids_with_different_bytes_replays_by_contract(monkeypatch):
-    """S04, contract option (b): the key binds (media_ids, recognition_enabled).
-
-    Image bytes are deliberately outside the binding — hashing up to 200 x
-    max_description_image_bytes on every replay is exactly the cost the
-    replay-before-bytes ordering exists to avoid. The caller owns byte stability
-    and must mint a new key when an asset's bytes change; the published schema
-    says so. This test pins that documented behaviour so it cannot drift
-    silently into an undocumented one.
-    """
+def test_same_key_and_media_ids_with_different_bytes_conflicts(monkeypatch):
+    """G2: usage fingerprint includes image bytes. Same key + different bytes is 409."""
     calls = _count_enqueues(monkeypatch)
     with _app() as (app, sf), TestClient(app) as client:
         first = client.post(
@@ -305,8 +355,7 @@ def test_same_key_and_media_ids_with_different_bytes_replays_by_contract(monkeyp
             data={"tenant_id": str(TENANT_A), "media_ids": json.dumps([70]), "idempotency_key": KEY},
             files=[("image_70", ("70.png", b"\x89PNG\r\n\x1a\nSECOND", "image/png"))],
         )
-        assert second.status_code == 202, second.text
-        assert second.json()["run_id"] == first.json()["run_id"]
+        assert second.status_code == 409, second.text
         assert len(calls) == 1
         assert _run_rows(sf, TENANT_A) == 1
 
@@ -459,8 +508,27 @@ def test_a_run_with_output_keeps_its_key_even_when_other_items_failed(monkeypatc
 
         assert asyncio.run(_one_ok_one_failed()) == DescribeRunStatus.COMPLETED_WITH_ERRORS
 
-        replay = _submit(client, [70, 71], with_images=False)
+        replay = _submit(client, [70, 71])
         assert replay.status_code == 202, replay.text
         assert replay.json()["run_id"] == str(run_id)
         assert len(calls) == 1
         assert _run_rows(sf, TENANT_A) == 1
+
+
+def test_same_idempotency_key_without_caller_operation_replays_without_second_reserve(monkeypatch):
+    """Client key K + operation A, then retry K without A, must not reserve twice."""
+    calls = _count_enqueues(monkeypatch)
+    with _app() as (app, sf), TestClient(app) as client:
+        first = _submit(client, [70], key=KEY, operation_id="caller-op-aaaaaaaa")
+        replay = _submit(client, [70], key=KEY)
+        changed = _submit(client, [71], key=KEY)
+
+        assert first.status_code == 202, first.text
+        assert replay.status_code == 202, replay.text
+        assert first.json()["run_id"] == replay.json()["run_id"]
+        assert changed.status_code == 409, changed.text
+        assert len(calls) == 1
+        assert _run_rows(sf, TENANT_A) == 1
+        assert len(app.state.usage_admission_service.reserves) == 1
+        assert app.state.usage_admission_service.reserves[0]["idempotency_key"] == KEY
+        assert app.state.usage_admission_service.reserves[0]["operation_id"] == KEY

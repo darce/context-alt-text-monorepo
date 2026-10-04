@@ -1,0 +1,26 @@
+{
+  "lane": "a1h-spec",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "/home/gate/workbay-sandbox/feature-app-1-a1h-spec-71873070/.venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 2.07s"
+    }
+  ],
+  "rechecked": [],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "apps/app-portal/src/App.tsx",
+      "line": 410,
+      "title": "Checkout cancellation returns to the generic account screen",
+      "defect": "[TEST-31] The contract selects `/billing/cancel` as the default cancel URL (docs/specs/app-portal-account-billing-spec.md:200), and the backend constructs it (recognition/interface_adapters/http/routers/portal.py:72,845), but App handles only `/billing/return` and `/billing` (App.tsx:410-434); unmatched paths fall through to AccountScreen (App.tsx:436-447).",
+      "failure_scenario": "A signed-in customer cancels hosted checkout; the provider returns them to `/billing/cancel`, which renders the generic account screen without cancellation status or a retry action.",
+      "fix": "Add an authenticated `/billing/cancel` route with cancellation and retry actions, and cover the return path in the billing journey test.",
+      "test_file": "apps/app-portal/src/__tests__/billing-journey.test.tsx",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "No listed corrections required rechecking. The default hosted-checkout cancellation URL has no matching portal screen; the lane overlap guard passed with 26 tests."
+}

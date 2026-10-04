@@ -18,12 +18,58 @@ from sqlalchemy import func, select
 
 import scene.interface_adapters.http.routers.describe_run as describe_run_mod
 from db.models.scene import DescribeRun, DescribeRunItem
+from recognition.domain.portal_contracts import UsageTicket
+from recognition.interface_adapters.http.deps.usage_admission import get_usage_admission_service
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.tests.demo_quota_harness import demo_quota_client
 from scene.tests.demo_quota_harness import recognition_used as _used
 
 KEY_A = "quota-key-aaaaaaaaaaaa"
 KEY_B = "quota-key-bbbbbbbbbbbb"
+
+
+class _PassAdmission:
+    async def reserve(
+        self,
+        tenant_id,
+        *,
+        idempotency_key,
+        job_id,
+        cost_units,
+        operation_id=None,
+        request_fingerprint=None,
+        queue_bytes=0,
+    ):
+        del queue_bytes
+        return UsageTicket(
+            uuid.uuid4(),
+            tenant_id,
+            idempotency_key,
+            cost_units,
+            operation_id=operation_id or idempotency_key,
+            request_fingerprint=request_fingerprint or "",
+            job_id=job_id,
+            fence_token="fence-quota-run",
+        )
+
+    async def commit(self, ticket):
+        del ticket
+
+    async def release(self, ticket):
+        del ticket
+
+    async def commit_fenced(self, ticket, *, fence_token):
+        del ticket, fence_token
+
+    async def release_fenced(self, ticket, *, fence_token):
+        del ticket, fence_token
+
+
+def _install_admission(client) -> _PassAdmission:
+    admission = _PassAdmission()
+    client.app.state.usage_admission_service = admission
+    client.app.dependency_overrides[get_usage_admission_service] = lambda: admission
+    return admission
 
 
 def _no_worker(monkeypatch) -> list[dict]:
@@ -59,6 +105,7 @@ def test_first_accept_charges_the_demo_quota_exactly_once(monkeypatch):
     """Baseline for the two invariants below: N unique items cost N units, once."""
     _no_worker(monkeypatch)
     with demo_quota_client(recognition_quota=5, tables="run") as (client, sf, _p, tenant_id, slug):
+        _install_admission(client)
         accepted = _submit(client, tenant_id, [70, 71], key=KEY_A)
         assert accepted.status_code == 202, accepted.text
         assert _used(sf, slug) == 2
@@ -72,6 +119,7 @@ def test_replaying_one_key_never_charges_the_demo_quota_twice(monkeypatch):
     """
     enqueues = _no_worker(monkeypatch)
     with demo_quota_client(recognition_quota=5, tables="run") as (client, sf, _p, tenant_id, slug):
+        _install_admission(client)
         first = _submit(client, tenant_id, [70, 71], key=KEY_A)
         assert first.status_code == 202, first.text
         assert _used(sf, slug) == 2
@@ -106,6 +154,7 @@ def test_a_race_loser_rolls_back_before_it_can_spend_demo_quota(monkeypatch):
         return await real_lookup(self, tenant_id=tenant_id, idempotency_key=idempotency_key)
 
     with demo_quota_client(recognition_quota=5, tables="run") as (client, sf, _p, tenant_id, slug):
+        _install_admission(client)
         winner = _submit(client, tenant_id, [70, 71], key=KEY_A)
         assert winner.status_code == 202, winner.text
         assert _used(sf, slug) == 2
@@ -127,6 +176,7 @@ def test_distinct_keys_still_charge_per_run(monkeypatch):
     """Guard against over-correcting: dedupe is per key, not per payload."""
     _no_worker(monkeypatch)
     with demo_quota_client(recognition_quota=5, tables="run") as (client, sf, _p, tenant_id, slug):
+        _install_admission(client)
         assert _submit(client, tenant_id, [70], key=KEY_A).status_code == 202
         assert _submit(client, tenant_id, [70], key=KEY_B).status_code == 202
         assert _used(sf, slug) == 2
@@ -152,6 +202,7 @@ def test_over_quota_demo_key_is_rejected_before_the_run_is_inserted(monkeypatch)
     monkeypatch.setattr(DescribeRunRepository, "create_run", _spy_create)
 
     with demo_quota_client(recognition_quota=2, tables="run") as (client, sf, _p, tenant_id, slug):
+        _install_admission(client)
         rejected = _submit(client, tenant_id, [70, 71, 72], key=KEY_A)
         assert rejected.status_code == 429, rejected.text
         assert rejected.json()["detail"]["code"] == "demo_quota_exceeded"
@@ -171,7 +222,32 @@ def test_a_non_demo_key_is_untouched_by_the_pre_check(monkeypatch):
     """[S07] The pre-check reads the demo registry only; other tenants pass through."""
     _no_worker(monkeypatch)
     with demo_quota_client(recognition_quota=1, non_demo=True, tables="run") as (client, sf, _p, tenant_id, slug):
+        _install_admission(client)
         response = _submit(client, tenant_id, [70, 71, 72], key=KEY_A)
         assert response.status_code == 202, response.text
         assert _used(sf, slug) == 0
         assert uuid.UUID(response.json()["run_id"])
+
+
+def test_lost_202_replay_after_last_demo_quota_unit_does_not_429(monkeypatch):
+    """Same-fingerprint retry after the last quota unit must replay, not 429."""
+    enqueues = _no_worker(monkeypatch)
+    with demo_quota_client(recognition_quota=2, tables="run") as (client, sf, _p, tenant_id, slug):
+        _install_admission(client)
+        first = _submit(client, tenant_id, [70, 71], key=KEY_A)
+        assert first.status_code == 202, first.text
+        assert _used(sf, slug) == 2
+
+        replay = _submit(client, tenant_id, [70, 71], key=KEY_A)
+        assert replay.status_code == 202, replay.text
+        assert replay.json()["run_id"] == first.json()["run_id"]
+        assert _used(sf, slug) == 2
+        assert len(enqueues) == 1
+        assert _row_counts(sf)[0] == 1
+
+        new_key = _submit(client, tenant_id, [70, 71], key=KEY_B)
+        assert new_key.status_code == 429, new_key.text
+        assert new_key.json()["detail"]["code"] == "demo_quota_exceeded"
+
+        changed = _submit(client, tenant_id, [72, 73], key=KEY_A)
+        assert changed.status_code == 409, changed.text

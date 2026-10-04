@@ -43,7 +43,7 @@ FROM unnest(ARRAY[
     'image_descriptions','image_description_runs','image_description_run_items',
     'clustering_job_reports','assignment_decisions',
     'identity_atlas_runs','identity_atlas_points','identity_atlas_queue_dispositions',
-    'api_key_rotation_history','billing_subscription_projection','portal_identity',
+    'api_key_rotation_history','billing_checkout_attempt','billing_subscription_projection','portal_identity',
     'portal_tenant_invitation','tenant_entitlement','tenant_key_idempotency',
     'usage_reservation']) AS t(relname)
 LEFT JOIN pg_class c
@@ -140,11 +140,21 @@ docker compose -f docker-compose.env.yml -f docker-compose.admin.yml \
 ```
 
 Any restart through the deploy path also converges it (the boot CMD runs the same
-heal before the verifier). Confirm recovery with `curl -s .../recognition/tenant/whoami`
-(HTTP 200, key-canonical `tenant_id`) and `manage_api_keys tenant list`. Additive
-only: a missing NOT NULL column with no server default, or a missing primary key,
-raises for operator remediation instead of guessing a backfill (non-additive drift
-→ reset per greenfield policy, `scripts/reset_dev_db.sh` locally / a fresh prod DB).
+heal before the verifier). Confirm recovery by entering a valid tenant API key at
+the prompt; expect HTTP 200 and a key-canonical `tenant_id`:
+
+```bash
+read -rsp 'Tenant API key: ' API_KEY; printf '\n'
+printf 'header = "Authorization: Bearer %s"\n' "$API_KEY" | \
+  curl --config - --fail --silent --show-error --write-out '%{http_code}\n' \
+  https://api.altcontext.com/recognition/tenant/whoami
+```
+
+Also run `manage_api_keys tenant list`. Additive only: a missing NOT NULL column
+with no server default, or a missing primary key, raises for operator remediation
+instead of guessing a backfill (non-additive drift → reset per greenfield policy,
+`apps/prototype-description-service/scripts/reset_dev_db.sh` locally / a fresh
+prod DB).
 
 ## Known operator-required conditions
 

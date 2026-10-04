@@ -1,0 +1,53 @@
+{
+  "lane": "a1h-wpjs1",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "lane_root=\"$(git rev-parse --show-toplevel)\"; resolved_python=\"$lane_root/.venv/bin/python\"; \"$resolved_python\" -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 2.32s"
+    },
+    {
+      "command": "cd apps/prototype-wp-alt-context && npm test -- --run",
+      "result": "not_run",
+      "detail": "The sandbox brief says Vitest runs outside this sandbox; node_modules are unavailable here."
+    },
+    {
+      "command": "cd apps/prototype-wp-alt-context && npm run typecheck",
+      "result": "not_run",
+      "detail": "The sandbox brief says tsc runs outside this sandbox; node_modules are unavailable here. Static review found five one-argument submitBulkDescribeRun calls in an included test file."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16999,
+      "finding_id": "FAOPFR-f7f4b75a806147e2-M-b23460750cd3b4318c5ff3de",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/hooks/useActivityStatus.ts:414,434 - the code caches by idempotencyKey (\"get(idempotencyKey)\") and submits the cached unfinishedIds with that key. apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useActivityStatus.test.ts:704-733 asserts both retry attempts use [51] and the same key.",
+      "guard_test": "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useActivityStatus.test.ts::reuses the key across a mutation retry and mints a new key for another Retry action"
+    },
+    {
+      "db_id": 17000,
+      "finding_id": "FAOPFR-f7f4b75a806147e2-M-b284b510fd67c9ab3915940f",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/guidedPrototype/useGuidedLiveDescription.ts:345 - submit receives both mediaId and idempotencyKey. apps/prototype-wp-alt-context/js/admin/pages/guided/__tests__/GuidedLiveDescriptionPanel.test.tsx:203 asserts the call has the media id and generated key.",
+      "guard_test": "apps/prototype-wp-alt-context/js/admin/pages/guided/__tests__/GuidedLiveDescriptionPanel.test.tsx::sends the media id only and never calls apply or a roster write"
+    }
+  ],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "apps/prototype-wp-alt-context/js/admin/guidedPrototype/describeRunParse.test.ts",
+      "line": 102,
+      "title": "Describe-run parse tests omit the newly required idempotency key",
+      "defect": "This file calls submitBulkDescribeRun([101]) at lines 102, 129, 142, 154, and 160, but describeApi.ts:1445 declares idempotencyKey as a required second argument. tsconfig.type-check.json includes js/**/*.ts, so npm run typecheck reports TS2554 for these calls; the first network expectation at line 104 also asserts the obsolete body without idempotency_key.",
+      "failure_scenario": "Running the package typecheck fails on the five calls because submitBulkDescribeRun now requires two arguments, blocking the TypeScript verification gate before merge.",
+      "fix": "Pass valid idempotency keys at each submitBulkDescribeRun test call and update the first expected request body to include its key.",
+      "test_file": "apps/prototype-wp-alt-context/js/admin/guidedPrototype/describeRunParse.test.ts",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "Both supplied findings hold, and their tests cover the corrections. One medium pre-merge issue remains: five parse-test calls omit the required idempotency key and are included in typecheck. The manifest-overlap test passed (26); Vitest and typecheck were not run in this sandbox."
+}

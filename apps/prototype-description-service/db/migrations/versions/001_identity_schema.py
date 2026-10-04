@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import uuid
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -34,6 +36,7 @@ TENANT_TABLES = [
     "tenant_entitlement",
     "usage_reservation",
     "billing_subscription_projection",
+    "billing_checkout_attempt",
     "api_key_rotation_history",
     "tenant_key_idempotency",
     "portal_tenant_invitation",
@@ -69,6 +72,15 @@ TENANT_TABLES = [
     "identity_atlas_queue_dispositions",
 ]
 
+# Seller-wide recovery control plane. Not tenant rows and not a fake tenant.
+# Access is transaction-local app.bypass_rls (FORCE RLS, never role BYPASSRLS).
+OPERATOR_SCOPE_TABLES = [
+    "billing_reconciliation_cursor",
+    "billing_reconciliation_quarantine",
+    "billing_reconciliation_item_progress",
+    "billing_known_item_lease",
+]
+
 # UNIQUE constraints heal may additively CREATE on an already-provisioned table.
 # (table, constraint name, columns) is the public column list so
 # _ensure_unique_constraint does not read SQLAlchemy-private
@@ -88,6 +100,31 @@ HEAL_UNIQUE_CONSTRAINTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "cluster_merge_receipts",
         "uq_cluster_merge_receipts_survivor_seq",
         ("survivor_cluster_id", "sequence_no"),
+    ),
+    (
+        "billing_checkout_attempt",
+        "uq_billing_checkout_attempt_provider_key",
+        ("provider", "environment", "seller_account", "idempotency_key"),
+    ),
+    (
+        "usage_reservation",
+        "uq_usage_reservation_tenant_operation_id",
+        ("tenant_id", "operation_id"),
+    ),
+    (
+        "billing_reconciliation_quarantine",
+        "uq_billing_reconciliation_quarantine_remote",
+        ("provider", "environment", "seller_account", "kind", "remote_id"),
+    ),
+    (
+        "billing_webhook_inbox",
+        "uq_billing_webhook_inbox_provider_namespace_event",
+        ("provider", "environment", "seller_account", "provider_event_id"),
+    ),
+    (
+        "billing_subscription_projection",
+        "uq_billing_subscription_projection_provider_namespace_customer",
+        ("provider", "environment", "seller_account", "provider_customer_id"),
     ),
 )
 
@@ -122,8 +159,14 @@ EXPECTED_SCHEMA_TABLES = [
     "portal_identity",
     "tenant_entitlement",
     "usage_reservation",
+    "usage_admission_global_state",
     "billing_subscription_projection",
     "billing_webhook_inbox",
+    "billing_checkout_attempt",
+    "billing_reconciliation_cursor",
+    "billing_reconciliation_quarantine",
+    "billing_reconciliation_item_progress",
+    "billing_known_item_lease",
     "api_key_rotation_history",
     "tenant_key_idempotency",
     "portal_tenant_invitation",
@@ -168,8 +211,14 @@ DOWNGRADE_TABLE_ORDER = [
     "portal_tenant_invitation",
     "tenant_key_idempotency",
     "api_key_rotation_history",
+    "billing_known_item_lease",
+    "billing_reconciliation_item_progress",
+    "billing_reconciliation_quarantine",
+    "billing_reconciliation_cursor",
+    "billing_checkout_attempt",
     "billing_webhook_inbox",
     "billing_subscription_projection",
+    "usage_admission_global_state",
     "usage_reservation",
     "tenant_entitlement",
     "portal_identity",
@@ -353,6 +402,475 @@ def _ensure_unique_constraint(op, table_name: str, constraint) -> bool:
             "python -m scripts.sync_identity_schema."
         ) from exc
     return True
+
+
+USAGE_SCHEMA_WRITERS_DRAINED_GUC = "app.usage_schema_writers_drained"
+USAGE_SCHEMA_WRITERS_DRAINED_ENV = "ACX_USAGE_SCHEMA_WRITERS_DRAINED"
+BILLING_NAMESPACE_WRITERS_DRAINED_GUC = "app.billing_namespace_writers_drained"
+BILLING_NAMESPACE_WRITERS_DRAINED_ENV = "ACX_BILLING_NAMESPACE_WRITERS_DRAINED"
+_LEGACY_INBOX_EVENT_UNIQUE = "uq_billing_webhook_inbox_provider_event"
+_LEGACY_PROJECTION_CUSTOMER_UNIQUE = "uq_billing_subscription_projection_provider_customer"
+_NAMESPACED_INBOX_EVENT_UNIQUE = "uq_billing_webhook_inbox_provider_namespace_event"
+_NAMESPACED_PROJECTION_CUSTOMER_UNIQUE = "uq_billing_subscription_projection_provider_namespace_customer"
+_USAGE_IDENTITY_CONTRACT_COLUMNS = ("operation_id", "request_fingerprint", "fence_token", "queue_bytes")
+_CHECKOUT_PROVIDER_KEY_COLUMNS = ("provider", "environment", "seller_account", "idempotency_key")
+_USAGE_SCHEMA_DRAIN_REQUIRED = (
+    "existing usage schema upgrade requires drained writers before NOT NULL "
+    "contraction and global-counter enforcement. Old writers omit "
+    "operation_id/request_fingerprint/fence_token and do not update "
+    "usage_admission_global_state, so rolling nullable/default columns would "
+    "bypass global caps. Stop old API/worker writers, then re-run with "
+    f"{USAGE_SCHEMA_WRITERS_DRAINED_ENV}=1 (sets {USAGE_SCHEMA_WRITERS_DRAINED_GUC}). "
+    "See docs/runbooks/app1-usage-schema-upgrade.md"
+)
+
+
+def _bind_dialect_name(op) -> str:
+    if op is None:
+        return ""
+    get_bind = getattr(op, "get_bind", None)
+    if not callable(get_bind):
+        return ""
+    bind = get_bind()
+    if bind is None:
+        return ""
+    dialect = getattr(bind, "dialect", None)
+    return str(getattr(dialect, "name", "") or "")
+
+
+def _is_postgres_op(op) -> bool:
+    return op is not None and _bind_dialect_name(op) == "postgresql"
+
+
+def _current_setting(op, name: str) -> str:
+    value = op.get_bind().execute(sa.text("SELECT current_setting(:name, true)"), {"name": name}).scalar()
+    return "" if value is None else str(value)
+
+
+def _set_local_setting(op, name: str, value: str) -> None:
+    op.get_bind().execute(sa.text("SELECT set_config(:name, :value, true)"), {"name": name, "value": value})
+
+
+def _writers_drained(op) -> bool:
+    if not _is_postgres_op(op):
+        return True
+    return _current_setting(op, USAGE_SCHEMA_WRITERS_DRAINED_GUC).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _billing_namespace_writers_drained(op) -> bool:
+    if not _is_postgres_op(op):
+        return True
+    guc = _current_setting(op, BILLING_NAMESPACE_WRITERS_DRAINED_GUC).strip().lower()
+    if guc in {"1", "true", "yes", "on"}:
+        return True
+    env = os.environ.get(BILLING_NAMESPACE_WRITERS_DRAINED_ENV, "").strip().lower()
+    return env in {"1", "true", "yes", "on"}
+
+
+def _drop_unique_constraint_if_present(op, table_name: str, constraint_name: str) -> None:
+    if constraint_name in _existing_constraint_names(op, table_name):
+        op.execute(f'ALTER TABLE "{table_name}" DROP CONSTRAINT "{constraint_name}"')
+
+
+def _heal_billing_namespace_uniques(op) -> None:
+    """Add namespaced uniques; drop legacy global uniques only under writer drain."""
+    if not _is_postgres_op(op):
+        return
+    if _relkind(op, "billing_webhook_inbox") in {"r", "p"}:
+        if _NAMESPACED_INBOX_EVENT_UNIQUE not in _existing_constraint_names(op, "billing_webhook_inbox"):
+            _ensure_unique_constraint(
+                op,
+                "billing_webhook_inbox",
+                sa.UniqueConstraint(
+                    "provider",
+                    "environment",
+                    "seller_account",
+                    "provider_event_id",
+                    name=_NAMESPACED_INBOX_EVENT_UNIQUE,
+                ),
+            )
+        if _billing_namespace_writers_drained(op):
+            _drop_unique_constraint_if_present(op, "billing_webhook_inbox", _LEGACY_INBOX_EVENT_UNIQUE)
+    if _relkind(op, "billing_subscription_projection") in {"r", "p"}:
+        if _NAMESPACED_PROJECTION_CUSTOMER_UNIQUE not in _existing_constraint_names(
+            op, "billing_subscription_projection"
+        ):
+            _ensure_unique_constraint(
+                op,
+                "billing_subscription_projection",
+                sa.UniqueConstraint(
+                    "provider",
+                    "environment",
+                    "seller_account",
+                    "provider_customer_id",
+                    name=_NAMESPACED_PROJECTION_CUSTOMER_UNIQUE,
+                ),
+            )
+        if _billing_namespace_writers_drained(op):
+            _drop_unique_constraint_if_present(
+                op, "billing_subscription_projection", _LEGACY_PROJECTION_CUSTOMER_UNIQUE
+            )
+
+
+def _column_nullable(op, table_name: str, column_name: str) -> bool | None:
+    value = (
+        op.get_bind()
+        .execute(
+            sa.text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = :t AND column_name = :c"
+            ),
+            {"t": table_name, "c": column_name},
+        )
+        .scalar()
+    )
+    if value is None:
+        return None
+    return str(value).upper() == "YES"
+
+
+def _unique_constraint_column_names(op, table_name: str, constraint_name: str) -> list[str]:
+    rows = (
+        op.get_bind()
+        .execute(
+            sa.text(
+                """
+                SELECT a.attname
+                FROM pg_constraint c
+                JOIN pg_class t ON c.conrelid = t.oid
+                JOIN pg_namespace n ON t.relnamespace = n.oid
+                JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON true
+                JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+                WHERE n.nspname = current_schema()
+                  AND t.relname = :table
+                  AND c.conname = :name
+                ORDER BY k.ord
+                """
+            ),
+            {"table": table_name, "name": constraint_name},
+        )
+        .fetchall()
+    )
+    return [str(row[0]) for row in rows]
+
+
+def _usage_reservation_needs_identity_contract(op) -> bool:
+    if _relkind(op, "usage_reservation") not in {"r", "p"}:
+        return False
+    existing = _existing_columns(op, "usage_reservation")
+    for column_name in _USAGE_IDENTITY_CONTRACT_COLUMNS:
+        if column_name not in existing:
+            return True
+        if _column_nullable(op, "usage_reservation", column_name):
+            return True
+    return False
+
+
+def _refuse_undrained_existing_usage_upgrade(op) -> None:
+    if not _is_postgres_op(op):
+        return
+    usage_existed = _relkind(op, "usage_reservation") in {"r", "p"}
+    if not usage_existed:
+        return
+    needs_contract = _usage_reservation_needs_identity_contract(op)
+    global_missing = _relkind(op, "usage_admission_global_state") not in {"r", "p"}
+    if (needs_contract or global_missing) and not _writers_drained(op):
+        raise RuntimeError(_USAGE_SCHEMA_DRAIN_REQUIRED)
+
+
+def _parse_positive_epoch(value: str) -> int:
+    if not value.isdigit() or (len(value) > 1 and value.startswith("0")):
+        raise RuntimeError(f"malformed usage_reservation fence epoch {value!r}; operator remediation required")
+    epoch = int(value)
+    if epoch < 1:
+        raise RuntimeError(f"malformed usage_reservation fence epoch {value!r}; operator remediation required")
+    return epoch
+
+
+def _parse_uuid_token(value: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(str(value))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise RuntimeError(f"malformed usage_reservation fence UUID {value!r}; operator remediation required") from exc
+
+
+def _rewrite_usage_reservation_fence_token(token: str | None, *, reservation_id: str, epoch: int) -> str:
+    """Map stored fence_token to the frozen epoch-prefixed contract.
+
+    Legacy provenance is ``{epoch}:legacy:{reservation UUID}`` only when the
+    stored token is missing/blank or equals the reservation UUID. Modern
+    unprefixed UUIDs expand to ``{epoch}:{uuid}``. Already epoch-prefixed
+    valid tokens are preserved exactly. Fail closed on malformed markers.
+    """
+    if epoch < 1:
+        raise RuntimeError("usage_admission_global_state.fence_epoch must be >= 1")
+    reservation_uuid = _parse_uuid_token(reservation_id)
+    raw = "" if token is None else str(token).strip()
+    if not raw or _uuid_text_equal(raw, reservation_uuid):
+        return f"{epoch}:legacy:{reservation_uuid}"
+    if ":" in raw:
+        parts = raw.split(":")
+        if len(parts) == 3 and parts[1] == "legacy":
+            _parse_positive_epoch(parts[0])
+            _parse_uuid_token(parts[2])
+            return raw
+        if len(parts) == 2 and parts[1] != "legacy":
+            _parse_positive_epoch(parts[0])
+            _parse_uuid_token(parts[1])
+            return raw
+        raise RuntimeError(
+            f"malformed usage_reservation.fence_token {raw!r} on {reservation_uuid}; operator remediation required"
+        )
+    modern = _parse_uuid_token(raw)
+    return f"{epoch}:{modern}"
+
+
+def _uuid_text_equal(value: str, expected: uuid.UUID) -> bool:
+    try:
+        return uuid.UUID(str(value)) == expected
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
+def _with_migration_rls_bypass(op, callback):
+    """SET LOCAL app.bypass_rls for migration reads/writes, then restore.
+
+    Never ALTER ROLE ... BYPASSRLS. FORCE RLS stays on; only this transaction
+    sees all tenant rows, and the prior GUC is restored before return.
+    """
+    previous = _current_setting(op, "app.bypass_rls")
+    _set_local_setting(op, "app.bypass_rls", "true")
+    try:
+        return callback()
+    finally:
+        _set_local_setting(op, "app.bypass_rls", previous)
+
+
+def _backfill_usage_reservation_identity(op) -> None:
+    """Expand-then-backfill operation/fingerprint/fence on existing reservation rows."""
+    if not _is_postgres_op(op):
+        return
+    if _relkind(op, "usage_reservation") not in {"r", "p"}:
+        return
+    _with_migration_rls_bypass(op, lambda: _backfill_usage_reservation_identity_locked(op))
+
+
+def _backfill_usage_reservation_identity_locked(op) -> None:
+    bind = op.get_bind()
+    unknown_reserved = bind.execute(
+        sa.text(
+            """
+            SELECT id FROM usage_reservation
+            WHERE status = 'reserved' AND queue_bytes IS NULL
+            LIMIT 1
+            """
+        )
+    ).scalar()
+    if unknown_reserved is not None:
+        raise RuntimeError(
+            "usage_reservation has RESERVED rows with unknown queue_bytes; "
+            "drain those reservations or set queue_bytes explicitly, then re-run. "
+            "Migration will not invent usage receipts. "
+            "See docs/runbooks/app1-usage-schema-upgrade.md"
+        )
+    op.execute(
+        sa.text(
+            """
+            UPDATE usage_reservation
+            SET
+                operation_id = COALESCE(NULLIF(BTRIM(operation_id), ''), idempotency_key),
+                request_fingerprint = COALESCE(NULLIF(BTRIM(request_fingerprint), ''), idempotency_key),
+                queue_bytes = COALESCE(queue_bytes, 0)
+            WHERE operation_id IS NULL
+               OR BTRIM(COALESCE(operation_id, '')) = ''
+               OR request_fingerprint IS NULL
+               OR BTRIM(COALESCE(request_fingerprint, '')) = ''
+               OR queue_bytes IS NULL
+            """
+        )
+    )
+    rewrite_tokens = _writers_drained(op) or _column_nullable(op, "usage_reservation", "fence_token") is True
+    if rewrite_tokens:
+        epoch = bind.execute(
+            sa.text("SELECT fence_epoch FROM usage_admission_global_state WHERE id = 'global'")
+        ).scalar()
+        if epoch is None:
+            raise RuntimeError("usage_admission_global_state singleton missing before fence backfill")
+        epoch_value = int(epoch)
+        if epoch_value < 1:
+            raise RuntimeError("usage_admission_global_state.fence_epoch must be >= 1")
+        rows = bind.execute(sa.text("SELECT id::text, fence_token FROM usage_reservation")).fetchall()
+        for reservation_id, token in rows:
+            rewritten = _rewrite_usage_reservation_fence_token(
+                None if token is None else str(token),
+                reservation_id=str(reservation_id),
+                epoch=epoch_value,
+            )
+            if rewritten != ("" if token is None else str(token)):
+                bind.execute(
+                    sa.text("UPDATE usage_reservation SET fence_token = :token WHERE id = CAST(:id AS uuid)"),
+                    {"token": rewritten, "id": str(reservation_id)},
+                )
+    leftover = bind.execute(
+        sa.text(
+            """
+            SELECT 1 FROM usage_reservation
+            WHERE operation_id IS NULL
+               OR request_fingerprint IS NULL
+               OR fence_token IS NULL
+               OR queue_bytes IS NULL
+            LIMIT 1
+            """
+        )
+    ).scalar()
+    if leftover is not None:
+        raise RuntimeError("usage_reservation identity backfill left nulls; operator remediation required")
+    for column_name in _USAGE_IDENTITY_CONTRACT_COLUMNS:
+        op.execute(sa.text(f'ALTER TABLE "usage_reservation" ALTER COLUMN "{column_name}" SET NOT NULL'))
+    op.execute(sa.text('ALTER TABLE "usage_reservation" ALTER COLUMN "queue_bytes" SET DEFAULT 0'))
+
+
+def _seed_usage_admission_global_state(op) -> None:
+    """Insert or reconcile the singleton from current-period reservation rows."""
+    if not _is_postgres_op(op):
+        return
+    if _relkind(op, "usage_admission_global_state") not in {"r", "p"}:
+        return
+    _with_migration_rls_bypass(op, lambda: _seed_usage_admission_global_state_locked(op))
+
+
+def _seed_usage_admission_global_state_locked(op) -> None:
+    bind = op.get_bind()
+    bind.execute(sa.text("LOCK TABLE usage_admission_global_state IN EXCLUSIVE MODE"))
+    if _relkind(op, "usage_reservation") in {"r", "p"}:
+        bind.execute(sa.text("LOCK TABLE usage_reservation IN SHARE MODE"))
+    period_start_sql = "date_trunc('day', timezone('utc', now()))"
+    period_end_sql = f"{period_start_sql} + interval '1 day'"
+    reservation_from = (
+        "FROM usage_reservation"
+        if _relkind(op, "usage_reservation") in {"r", "p"}
+        else "FROM (SELECT NULL::integer AS cost_units, NULL::text AS status, NULL::timestamptz AS period_start, NULL::integer AS queue_bytes WHERE false) usage_reservation"
+    )
+    bind.execute(
+        sa.text(
+            f"""
+            INSERT INTO usage_admission_global_state (
+                id, period_start, period_end,
+                daily_cost_limit, daily_cost_units,
+                inflight_limit, inflight_units,
+                queue_limit, queue_depth,
+                queue_byte_limit, queue_bytes,
+                stop_requested, fence_epoch,
+                config_version, updated_at
+            )
+            SELECT
+                'global',
+                {period_start_sql},
+                {period_end_sql},
+                10000,
+                COALESCE((
+                    SELECT SUM(cost_units) {reservation_from}
+                    WHERE status IN ('reserved', 'committed')
+                      AND period_start >= {period_start_sql}
+                      AND period_start < {period_end_sql}
+                ), 0),
+                1000,
+                COALESCE((
+                    SELECT SUM(cost_units) {reservation_from}
+                    WHERE status = 'reserved'
+                      AND period_start >= {period_start_sql}
+                      AND period_start < {period_end_sql}
+                ), 0),
+                1000,
+                COALESCE((
+                    SELECT COUNT(*) {reservation_from}
+                    WHERE status = 'reserved'
+                      AND period_start >= {period_start_sql}
+                      AND period_start < {period_end_sql}
+                ), 0),
+                268435456,
+                COALESCE((
+                    SELECT SUM(queue_bytes) {reservation_from}
+                    WHERE status = 'reserved'
+                      AND period_start >= {period_start_sql}
+                      AND period_start < {period_end_sql}
+                ), 0),
+                false, 1,
+                'v1',
+                timezone('utc', now())
+            WHERE NOT EXISTS (
+                SELECT 1 FROM usage_admission_global_state WHERE id = 'global'
+            )
+            """
+        )
+    )
+    if _relkind(op, "usage_reservation") not in {"r", "p"}:
+        return
+    bind.execute(
+        sa.text(
+            """
+            UPDATE usage_admission_global_state AS g
+            SET
+                daily_cost_units = COALESCE((
+                    SELECT SUM(r.cost_units) FROM usage_reservation r
+                    WHERE r.status IN ('reserved', 'committed')
+                      AND r.period_start >= g.period_start
+                      AND r.period_start < g.period_end
+                ), 0),
+                inflight_units = COALESCE((
+                    SELECT SUM(r.cost_units) FROM usage_reservation r
+                    WHERE r.status = 'reserved'
+                      AND r.period_start >= g.period_start
+                      AND r.period_start < g.period_end
+                ), 0),
+                queue_depth = COALESCE((
+                    SELECT COUNT(*) FROM usage_reservation r
+                    WHERE r.status = 'reserved'
+                      AND r.period_start >= g.period_start
+                      AND r.period_start < g.period_end
+                ), 0),
+                queue_bytes = COALESCE((
+                    SELECT SUM(r.queue_bytes) FROM usage_reservation r
+                    WHERE r.status = 'reserved'
+                      AND r.period_start >= g.period_start
+                      AND r.period_start < g.period_end
+                ), 0),
+                updated_at = timezone('utc', now())
+            WHERE g.id = 'global'
+            """
+        )
+    )
+
+
+def _heal_checkout_provider_key_unique(op) -> None:
+    """Replace tenant-scoped provider-key unique with spec 5.1 seller-wide unique."""
+    if not _is_postgres_op(op):
+        return
+    if _relkind(op, "billing_checkout_attempt") not in {"r", "p"}:
+        return
+    current = _unique_constraint_column_names(
+        op, "billing_checkout_attempt", "uq_billing_checkout_attempt_provider_key"
+    )
+    expected = list(_CHECKOUT_PROVIDER_KEY_COLUMNS)
+    if current == expected:
+        return
+    if current:
+        op.execute('ALTER TABLE "billing_checkout_attempt" DROP CONSTRAINT "uq_billing_checkout_attempt_provider_key"')
+    _ensure_unique_constraint(
+        op,
+        "billing_checkout_attempt",
+        sa.UniqueConstraint(*expected, name="uq_billing_checkout_attempt_provider_key"),
+    )
+
+
+def _heal_portal_tenant_invitation_tenant_nullable(op) -> None:
+    """Pending invitations may have NULL tenant_id; keep FK for bound rows."""
+    if not _is_postgres_op(op):
+        return
+    if _relkind(op, "portal_tenant_invitation") not in {"r", "p"}:
+        return
+    if _column_nullable(op, "portal_tenant_invitation", "tenant_id") is False:
+        op.execute(sa.text('ALTER TABLE "portal_tenant_invitation" ALTER COLUMN "tenant_id" DROP NOT NULL'))
 
 
 def _ensure_foreign_key_constraint(op, table_name: str, constraint) -> bool:
@@ -655,6 +1173,10 @@ def ensure_tables(op) -> None:
     _ensure_index(op, "idx_tenant_entitlement_reclaim", "tenant_entitlement", ["updated_at"])
 
     # Reclaim key: settled_at; the usage-retention job purges settled reservations after the retention window.
+    # Identity columns expand nullable, then backfill, then SET NOT NULL.
+    # Existing-schema NOT NULL contraction and first global-enforcement insert
+    # require drained writers; fresh DBs skip this gate.
+    _refuse_undrained_existing_usage_upgrade(op)
     _ensure_table(
         op,
         "usage_reservation",
@@ -667,19 +1189,38 @@ def ensure_tables(op) -> None:
         ),
         sa.Column("period_start", sa.TIMESTAMP(timezone=True), nullable=False),
         sa.Column("idempotency_key", sa.Text(), nullable=False),
+        sa.Column("operation_id", sa.Text(), nullable=True),
+        sa.Column("request_fingerprint", sa.Text(), nullable=True),
         sa.Column("job_id", sa.Text(), nullable=True),
+        sa.Column("fence_token", sa.Text(), nullable=True),
+        sa.Column("queue_bytes", sa.Integer(), nullable=True),
         sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("'reserved'")),
         sa.Column("reserved_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("settled_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("cost_units", sa.Integer(), nullable=False),
         sa.UniqueConstraint("tenant_id", "idempotency_key", name="uq_usage_reservation_tenant_idempotency_key"),
+        sa.UniqueConstraint("tenant_id", "operation_id", name="uq_usage_reservation_tenant_operation_id"),
         # A zero or negative charge would mint allowance back to the tenant.
         sa.CheckConstraint("cost_units > 0", name="ck_usage_reservation_cost_units_positive"),
+        sa.CheckConstraint("queue_bytes >= 0", name="ck_usage_reservation_queue_bytes_nonnegative"),
         # Usage accounting sums only 'reserved' and 'committed'; an unknown
         # status silently drops the row out of every allowance calculation.
         sa.CheckConstraint(
             "status IN ('reserved', 'committed', 'released', 'expired')",
             name="ck_usage_reservation_status",
+        ),
+        sa.CheckConstraint("length(operation_id) > 0", name="ck_usage_reservation_operation_id_present"),
+        sa.CheckConstraint(
+            "length(request_fingerprint) > 0",
+            name="ck_usage_reservation_request_fingerprint_present",
+        ),
+        sa.CheckConstraint("length(fence_token) > 0", name="ck_usage_reservation_fence_token_present"),
+        heal_constraints=(
+            "uq_usage_reservation_tenant_operation_id",
+            "ck_usage_reservation_queue_bytes_nonnegative",
+            "ck_usage_reservation_operation_id_present",
+            "ck_usage_reservation_request_fingerprint_present",
+            "ck_usage_reservation_fence_token_present",
         ),
     )
     _ensure_index(
@@ -689,6 +1230,53 @@ def ensure_tables(op) -> None:
         ["tenant_id", "period_start", "status"],
     )
     _ensure_index(op, "idx_usage_reservation_reclaim", "usage_reservation", ["status", "settled_at"])
+
+    # Non-tenant singleton: do not add this table to TENANT_TABLES.
+    _ensure_table(
+        op,
+        "usage_admission_global_state",
+        sa.Column("id", sa.Text(), primary_key=True),
+        sa.Column("period_start", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.Column("period_end", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.Column("daily_cost_limit", sa.Integer(), nullable=False),
+        sa.Column("daily_cost_units", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("inflight_limit", sa.Integer(), nullable=False),
+        sa.Column("inflight_units", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("queue_limit", sa.Integer(), nullable=False),
+        sa.Column("queue_depth", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("queue_byte_limit", sa.BigInteger(), nullable=False),
+        sa.Column("queue_bytes", sa.BigInteger(), nullable=False, server_default=sa.text("0")),
+        sa.Column("stop_requested", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("fence_epoch", sa.Integer(), nullable=False, server_default=sa.text("1")),
+        sa.Column("config_version", sa.Text(), nullable=False),
+        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.CheckConstraint("daily_cost_limit >= 0", name="ck_usage_admission_global_daily_cost_limit"),
+        sa.CheckConstraint("daily_cost_units >= 0", name="ck_usage_admission_global_daily_cost_units"),
+        sa.CheckConstraint("inflight_limit >= 0", name="ck_usage_admission_global_inflight_limit"),
+        sa.CheckConstraint("inflight_units >= 0", name="ck_usage_admission_global_inflight_units"),
+        sa.CheckConstraint("queue_limit >= 0", name="ck_usage_admission_global_queue_limit"),
+        sa.CheckConstraint("queue_depth >= 0", name="ck_usage_admission_global_queue_depth"),
+        sa.CheckConstraint("queue_byte_limit >= 0", name="ck_usage_admission_global_queue_byte_limit"),
+        sa.CheckConstraint("queue_bytes >= 0", name="ck_usage_admission_global_queue_bytes"),
+        sa.CheckConstraint("fence_epoch >= 1", name="ck_usage_admission_global_fence_epoch"),
+        sa.CheckConstraint("length(config_version) > 0", name="ck_usage_admission_global_config_version"),
+        sa.CheckConstraint("period_end > period_start", name="ck_usage_admission_global_period"),
+        heal_constraints=(
+            "ck_usage_admission_global_daily_cost_limit",
+            "ck_usage_admission_global_daily_cost_units",
+            "ck_usage_admission_global_inflight_limit",
+            "ck_usage_admission_global_inflight_units",
+            "ck_usage_admission_global_queue_limit",
+            "ck_usage_admission_global_queue_depth",
+            "ck_usage_admission_global_queue_byte_limit",
+            "ck_usage_admission_global_queue_bytes",
+            "ck_usage_admission_global_fence_epoch",
+            "ck_usage_admission_global_config_version",
+            "ck_usage_admission_global_period",
+        ),
+    )
+    _seed_usage_admission_global_state(op)
+    _backfill_usage_reservation_identity(op)
 
     # Reclaim key: updated_at; the billing projection retention job purges obsolete inactive projections.
     _ensure_table(
@@ -709,15 +1297,27 @@ def ensure_tables(op) -> None:
         sa.Column("past_due_since", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("last_event_id", sa.Text(), nullable=True),
         sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("environment", sa.Text(), nullable=True),
+        sa.Column("seller_account", sa.Text(), nullable=True),
         sa.UniqueConstraint("tenant_id", name="uq_billing_subscription_projection_tenant_id"),
         sa.UniqueConstraint(
             "provider",
+            "environment",
+            "seller_account",
             "provider_customer_id",
-            name="uq_billing_subscription_projection_provider_customer",
+            name="uq_billing_subscription_projection_provider_namespace_customer",
         ),
         sa.CheckConstraint(
             "status IN ('none', 'active', 'past_due', 'canceled', 'refund_hold')",
             name="ck_billing_subscription_projection_status",
+        ),
+        sa.CheckConstraint(
+            "environment IS NULL OR environment IN ('sandbox', 'live')",
+            name="ck_billing_subscription_projection_environment",
+        ),
+        heal_constraints=(
+            "uq_billing_subscription_projection_provider_namespace_customer",
+            "ck_billing_subscription_projection_environment",
         ),
     )
     _ensure_index(op, "idx_billing_subscription_projection_reclaim", "billing_subscription_projection", ["updated_at"])
@@ -738,14 +1338,302 @@ def ensure_tables(op) -> None:
         sa.Column("next_attempt_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("quarantined_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("'received'")),
+        sa.Column("environment", sa.Text(), nullable=True),
+        sa.Column("seller_account", sa.Text(), nullable=True),
         sa.UniqueConstraint(
             "provider",
+            "environment",
+            "seller_account",
             "provider_event_id",
-            name="uq_billing_webhook_inbox_provider_event",
+            name="uq_billing_webhook_inbox_provider_namespace_event",
+        ),
+        sa.CheckConstraint(
+            "environment IS NULL OR environment IN ('sandbox', 'live')",
+            name="ck_billing_webhook_inbox_environment",
+        ),
+        heal_constraints=(
+            "uq_billing_webhook_inbox_provider_namespace_event",
+            "ck_billing_webhook_inbox_environment",
         ),
     )
     _ensure_index(op, "idx_billing_webhook_inbox_reclaim", "billing_webhook_inbox", ["status", "processed_at"])
     _ensure_index(op, "idx_billing_webhook_inbox_pending", "billing_webhook_inbox", ["status", "next_attempt_at"])
+    _heal_billing_namespace_uniques(op)
+
+    # Reclaim key: updated_at. Existing installs gain this table through
+    # _ensure_table (create if missing) rather than a greenfield-only revision.
+    _ensure_table(
+        op,
+        "billing_checkout_attempt",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("provider", sa.Text(), nullable=False),
+        sa.Column("environment", sa.Text(), nullable=False),
+        sa.Column("seller_account", sa.Text(), nullable=False),
+        sa.Column("plan_code", sa.Text(), nullable=False),
+        sa.Column("idempotency_key", sa.Text(), nullable=False),
+        sa.Column("client_idempotency_key", sa.Text(), nullable=True),
+        sa.Column("request_fingerprint", sa.Text(), nullable=False),
+        sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("'created'")),
+        sa.Column("provider_checkout_id", sa.Text(), nullable=True),
+        sa.Column("checkout_url", sa.Text(), nullable=True),
+        sa.Column("last_error_class", sa.Text(), nullable=False, server_default=sa.text("'none'")),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.UniqueConstraint(
+            "provider",
+            "environment",
+            "seller_account",
+            "idempotency_key",
+            name="uq_billing_checkout_attempt_provider_key",
+        ),
+        sa.CheckConstraint(
+            "status IN ('created', 'provider_requested', 'pending', 'ambiguous', "
+            "'succeeded', 'expired', 'canceled', 'failed')",
+            name="ck_billing_checkout_attempt_status",
+        ),
+        sa.CheckConstraint(
+            "environment IN ('sandbox', 'live')",
+            name="ck_billing_checkout_attempt_environment",
+        ),
+        sa.CheckConstraint(
+            "provider IN ('polar', 'fake')",
+            name="ck_billing_checkout_attempt_provider",
+        ),
+        sa.CheckConstraint(
+            "last_error_class IN ('none', 'ambiguous', 'rejected', 'expired')",
+            name="ck_billing_checkout_attempt_last_error_class",
+        ),
+        heal_constraints=(
+            "uq_billing_checkout_attempt_provider_key",
+            "ck_billing_checkout_attempt_status",
+            "ck_billing_checkout_attempt_environment",
+            "ck_billing_checkout_attempt_provider",
+            "ck_billing_checkout_attempt_last_error_class",
+        ),
+    )
+    _ensure_index(
+        op,
+        "uq_billing_checkout_attempt_client_key",
+        "billing_checkout_attempt",
+        ["tenant_id", "provider", "environment", "seller_account", "client_idempotency_key"],
+        unique=True,
+        postgresql_where=sa.text("client_idempotency_key IS NOT NULL"),
+    )
+    _ensure_index(
+        op,
+        "uq_billing_checkout_attempt_one_active",
+        "billing_checkout_attempt",
+        ["tenant_id", "provider", "environment", "seller_account", "plan_code"],
+        unique=True,
+        postgresql_where=sa.text("status IN ('created', 'provider_requested', 'pending', 'ambiguous')"),
+    )
+    _ensure_index(op, "idx_billing_checkout_attempt_reclaim", "billing_checkout_attempt", ["updated_at"])
+    _heal_checkout_provider_key_unique(op)
+
+    # C0 recovery cursor/lease. Seller-wide operator scope; not a tenant table.
+    _ensure_table(
+        op,
+        "billing_reconciliation_cursor",
+        sa.Column("provider", sa.Text(), primary_key=True),
+        sa.Column("environment", sa.Text(), primary_key=True),
+        sa.Column("seller_account", sa.Text(), primary_key=True),
+        sa.Column("kind", sa.Text(), primary_key=True),
+        sa.Column("cursor", sa.Text(), nullable=True),
+        sa.Column("lease_owner", sa.Text(), nullable=True),
+        sa.Column("lease_until", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("fence", sa.BigInteger(), nullable=False, server_default=sa.text("0")),
+        sa.Column("last_progress_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("exhausted", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("failure_count", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("last_failure_class", sa.Text(), nullable=True),
+        sa.Column("last_failure_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.CheckConstraint(
+            "kind IN ('subscriptions', 'ambiguous_checkouts')",
+            name="ck_billing_reconciliation_cursor_kind",
+        ),
+        sa.CheckConstraint(
+            "environment IN ('sandbox', 'live')",
+            name="ck_billing_reconciliation_cursor_environment",
+        ),
+        sa.CheckConstraint(
+            "provider IN ('polar', 'fake')",
+            name="ck_billing_reconciliation_cursor_provider",
+        ),
+        sa.CheckConstraint("fence >= 0", name="ck_billing_reconciliation_cursor_fence_nonnegative"),
+        sa.CheckConstraint("failure_count >= 0", name="ck_billing_reconciliation_cursor_failure_count"),
+        sa.CheckConstraint(
+            "cursor IS NULL OR (length(cursor) > 0 AND length(cursor) <= 256)",
+            name="ck_billing_reconciliation_cursor_cursor_bound",
+        ),
+        heal_constraints=(
+            "ck_billing_reconciliation_cursor_kind",
+            "ck_billing_reconciliation_cursor_environment",
+            "ck_billing_reconciliation_cursor_provider",
+            "ck_billing_reconciliation_cursor_fence_nonnegative",
+            "ck_billing_reconciliation_cursor_failure_count",
+            "ck_billing_reconciliation_cursor_cursor_bound",
+        ),
+    )
+    _ensure_index(
+        op,
+        "idx_billing_reconciliation_cursor_lease",
+        "billing_reconciliation_cursor",
+        ["lease_until", "kind"],
+    )
+
+    _ensure_table(
+        op,
+        "billing_reconciliation_quarantine",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column("provider", sa.Text(), nullable=False),
+        sa.Column("environment", sa.Text(), nullable=False),
+        sa.Column("seller_account", sa.Text(), nullable=False),
+        sa.Column("kind", sa.Text(), nullable=False),
+        sa.Column("remote_id", sa.Text(), nullable=False),
+        sa.Column("reason", sa.Text(), nullable=False),
+        sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("'open'")),
+        sa.Column("attempt_count", sa.Integer(), nullable=False, server_default=sa.text("1")),
+        sa.Column("fence", sa.BigInteger(), nullable=False),
+        sa.Column("next_retry_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("operator_identity", sa.Text(), nullable=True),
+        sa.Column("operator_reason", sa.Text(), nullable=True),
+        sa.Column("details", sa.dialects.postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.UniqueConstraint(
+            "provider",
+            "environment",
+            "seller_account",
+            "kind",
+            "remote_id",
+            name="uq_billing_reconciliation_quarantine_remote",
+        ),
+        sa.CheckConstraint(
+            "kind IN ('subscriptions', 'ambiguous_checkouts')",
+            name="ck_billing_reconciliation_quarantine_kind",
+        ),
+        sa.CheckConstraint(
+            "status IN ('open', 'retry_pending', 'exhausted', 'resolved')",
+            name="ck_billing_reconciliation_quarantine_status",
+        ),
+        sa.CheckConstraint(
+            "environment IN ('sandbox', 'live')",
+            name="ck_billing_reconciliation_quarantine_environment",
+        ),
+        sa.CheckConstraint(
+            "provider IN ('polar', 'fake')",
+            name="ck_billing_reconciliation_quarantine_provider",
+        ),
+        sa.CheckConstraint("attempt_count >= 1", name="ck_billing_reconciliation_quarantine_attempt_count"),
+        sa.CheckConstraint("fence >= 1", name="ck_billing_reconciliation_quarantine_fence"),
+        sa.CheckConstraint(
+            "length(remote_id) > 0 AND length(remote_id) <= 128",
+            name="ck_billing_reconciliation_quarantine_remote_id",
+        ),
+        heal_constraints=(
+            "uq_billing_reconciliation_quarantine_remote",
+            "ck_billing_reconciliation_quarantine_kind",
+            "ck_billing_reconciliation_quarantine_status",
+            "ck_billing_reconciliation_quarantine_environment",
+            "ck_billing_reconciliation_quarantine_provider",
+            "ck_billing_reconciliation_quarantine_attempt_count",
+            "ck_billing_reconciliation_quarantine_fence",
+            "ck_billing_reconciliation_quarantine_remote_id",
+        ),
+    )
+    _ensure_index(
+        op,
+        "idx_billing_reconciliation_quarantine_retry",
+        "billing_reconciliation_quarantine",
+        ["status", "next_retry_at"],
+    )
+
+    _ensure_table(
+        op,
+        "billing_reconciliation_item_progress",
+        sa.Column("provider", sa.Text(), primary_key=True),
+        sa.Column("environment", sa.Text(), primary_key=True),
+        sa.Column("seller_account", sa.Text(), primary_key=True),
+        sa.Column("kind", sa.Text(), primary_key=True),
+        sa.Column("remote_id", sa.Text(), primary_key=True),
+        sa.Column("fence", sa.BigInteger(), nullable=False),
+        sa.Column("status", sa.Text(), nullable=False),
+        sa.Column("processed_at", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.CheckConstraint(
+            "kind IN ('subscriptions', 'ambiguous_checkouts')",
+            name="ck_billing_reconciliation_item_progress_kind",
+        ),
+        sa.CheckConstraint(
+            "status IN ('completed', 'quarantined')",
+            name="ck_billing_reconciliation_item_progress_status",
+        ),
+        sa.CheckConstraint(
+            "environment IN ('sandbox', 'live')",
+            name="ck_billing_reconciliation_item_progress_environment",
+        ),
+        sa.CheckConstraint(
+            "provider IN ('polar', 'fake')",
+            name="ck_billing_reconciliation_item_progress_provider",
+        ),
+        sa.CheckConstraint(
+            "length(remote_id) > 0 AND length(remote_id) <= 128",
+            name="ck_billing_reconciliation_item_progress_remote_id",
+        ),
+        sa.CheckConstraint("fence >= 1", name="ck_billing_reconciliation_item_progress_fence"),
+        heal_constraints=(
+            "ck_billing_reconciliation_item_progress_kind",
+            "ck_billing_reconciliation_item_progress_status",
+            "ck_billing_reconciliation_item_progress_environment",
+            "ck_billing_reconciliation_item_progress_provider",
+            "ck_billing_reconciliation_item_progress_remote_id",
+            "ck_billing_reconciliation_item_progress_fence",
+        ),
+    )
+
+    _ensure_table(
+        op,
+        "billing_known_item_lease",
+        sa.Column("provider", sa.Text(), primary_key=True),
+        sa.Column("environment", sa.Text(), primary_key=True),
+        sa.Column("seller_account", sa.Text(), primary_key=True),
+        sa.Column("kind", sa.Text(), primary_key=True),
+        sa.Column("remote_id", sa.Text(), primary_key=True),
+        sa.Column("lease_owner", sa.Text(), nullable=True),
+        sa.Column("lease_until", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("fence", sa.BigInteger(), nullable=False, server_default=sa.text("0")),
+        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.CheckConstraint("kind IN ('inbox', 'projection')", name="ck_billing_known_item_lease_kind"),
+        sa.CheckConstraint(
+            "environment IN ('sandbox', 'live')",
+            name="ck_billing_known_item_lease_environment",
+        ),
+        sa.CheckConstraint("provider IN ('polar', 'fake')", name="ck_billing_known_item_lease_provider"),
+        sa.CheckConstraint("fence >= 0", name="ck_billing_known_item_lease_fence_nonnegative"),
+        sa.CheckConstraint(
+            "length(remote_id) > 0 AND length(remote_id) <= 128",
+            name="ck_billing_known_item_lease_remote_id",
+        ),
+        heal_constraints=(
+            "ck_billing_known_item_lease_kind",
+            "ck_billing_known_item_lease_environment",
+            "ck_billing_known_item_lease_provider",
+            "ck_billing_known_item_lease_fence_nonnegative",
+            "ck_billing_known_item_lease_remote_id",
+        ),
+    )
+    _ensure_index(
+        op,
+        "idx_billing_known_item_lease_until",
+        "billing_known_item_lease",
+        ["lease_until", "kind"],
+    )
 
     # Reclaim key: created_at; the API-key history retention job purges old rotation records.
     _ensure_table(
@@ -823,7 +1711,7 @@ def ensure_tables(op) -> None:
             "tenant_id",
             sa.dialects.postgresql.UUID(as_uuid=True),
             sa.ForeignKey("tenants.id", ondelete="CASCADE"),
-            nullable=False,
+            nullable=True,
         ),
         sa.Column("invited_email", sa.Text(), nullable=False),
         sa.Column("token_hash", sa.Text(), nullable=False),
@@ -837,6 +1725,11 @@ def ensure_tables(op) -> None:
         ),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.UniqueConstraint("token_hash", name="uq_portal_tenant_invitation_token_hash"),
+        sa.CheckConstraint(
+            "accepted_at IS NULL OR tenant_id IS NOT NULL",
+            name="ck_portal_tenant_invitation_accepted_requires_tenant",
+        ),
+        heal_constraints=("ck_portal_tenant_invitation_accepted_requires_tenant",),
     )
     _ensure_index(
         op,
@@ -844,6 +1737,7 @@ def ensure_tables(op) -> None:
         "portal_tenant_invitation",
         ["expires_at", "accepted_at"],
     )
+    _heal_portal_tenant_invitation_tenant_nullable(op)
 
     # DS-3 / launch-plan §5: per-prospect demo registry. Looked up by opaque
     # slug (not tenant_id); raw API key is never stored — only a hash/ref.
@@ -2555,6 +3449,30 @@ def ensure_rls(op) -> None:
             WITH CHECK (tenant_id = {SAFE_TENANT_EXPR} OR {BYPASS_RLS_EXPR})
             """
         )
+    for table in OPERATOR_SCOPE_TABLES:
+        flags = bind.execute(
+            sa.text(
+                "SELECT c.relrowsecurity, c.relforcerowsecurity FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = current_schema() AND c.relname = :name"
+            ),
+            {"name": table},
+        ).first()
+        if flags is None:
+            raise RuntimeError(f"ensure_rls: operator table {table!r} does not exist; run ensure_tables first")
+        if not flags[0]:
+            op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+        if not flags[1]:
+            op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+        op.execute(f"DROP POLICY IF EXISTS operator_scope_{table} ON {table}")
+        op.execute(
+            f"""
+            CREATE POLICY operator_scope_{table} ON {table}
+            FOR ALL
+            USING ({BYPASS_RLS_EXPR})
+            WITH CHECK ({BYPASS_RLS_EXPR})
+            """
+        )
 
 
 def ensure_refresh_queue(op) -> None:
@@ -3047,8 +3965,7 @@ def ensure_matview(op) -> None:
                 "python -m scripts.sync_identity_schema."
             )
     # WHY: FROM/JOIN tables + functions here are preflighted by _matview_create_privilege_gaps (C-01 ratchet).
-    op.execute(
-        f"""
+    create_matview_sql = f"""
         CREATE MATERIALIZED VIEW IF NOT EXISTS mv_identity_cluster_centroids AS
         WITH member_rows AS (
             SELECT
@@ -3166,7 +4083,9 @@ def ensure_matview(op) -> None:
         FROM cluster_embeddings
         WHERE identity_count >= 1;
         """
-    )
+    # FORCE RLS applies to the application owner too; populate all tenants
+    # only after every refusal preflight has succeeded.
+    _with_migration_rls_bypass(op, lambda: op.execute(create_matview_sql))
     if relkind is None or restore is not None:
         op.execute(
             "COMMENT ON MATERIALIZED VIEW mv_identity_cluster_centroids "
@@ -3321,8 +4240,14 @@ def downgrade() -> None:
     op.drop_index("idx_tenant_key_idempotency_reclaim", table_name="tenant_key_idempotency")
     op.drop_index("idx_api_key_rotation_history_reclaim", table_name="api_key_rotation_history")
     op.drop_index("idx_api_key_rotation_history_tenant_created", table_name="api_key_rotation_history")
+    op.drop_index("idx_billing_known_item_lease_until", table_name="billing_known_item_lease")
     op.drop_index("idx_billing_webhook_inbox_reclaim", table_name="billing_webhook_inbox")
     op.drop_index("idx_billing_webhook_inbox_pending", table_name="billing_webhook_inbox")
+    op.drop_index("idx_billing_reconciliation_quarantine_retry", table_name="billing_reconciliation_quarantine")
+    op.drop_index("idx_billing_reconciliation_cursor_lease", table_name="billing_reconciliation_cursor")
+    op.drop_index("idx_billing_checkout_attempt_reclaim", table_name="billing_checkout_attempt")
+    op.drop_index("uq_billing_checkout_attempt_one_active", table_name="billing_checkout_attempt")
+    op.drop_index("uq_billing_checkout_attempt_client_key", table_name="billing_checkout_attempt")
     op.drop_index("idx_billing_subscription_projection_reclaim", table_name="billing_subscription_projection")
     op.drop_index("idx_usage_reservation_reclaim", table_name="usage_reservation")
     op.drop_index("idx_usage_reservation_tenant_period_status", table_name="usage_reservation")
@@ -3335,6 +4260,10 @@ def downgrade() -> None:
     op.drop_index("idx_demo_instances_tenant", table_name="demo_instances")
     for table in TENANT_TABLES:
         op.execute(f"DROP POLICY IF EXISTS tenant_isolation_{table} ON {table}")
+        op.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
+        op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
+    for table in OPERATOR_SCOPE_TABLES:
+        op.execute(f"DROP POLICY IF EXISTS operator_scope_{table} ON {table}")
         op.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
         op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
     for table in DOWNGRADE_TABLE_ORDER:

@@ -8,6 +8,8 @@ HTTP request bodies into filesystem paths.
 
 from __future__ import annotations
 
+import os
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -63,6 +65,55 @@ def test_put_uri_path_layout_is_tenant_scoped(blob_root: Path) -> None:
     expected_path = blob_root / tenant_id / job_id / "7.bin"
     assert uri == f"file://{expected_path}"
     assert expected_path.is_file()
+
+
+@pytest.mark.parametrize("failure_kind", ["write", "replace"])
+def test_failed_replacement_preserves_blob_and_removes_temporary_file(
+    blob_root: Path, monkeypatch: pytest.MonkeyPatch, failure_kind: str
+) -> None:
+    tenant_id, job_id = _tenant(), _job()
+    store = FilesystemObjectStore(root=blob_root, tenant_id=tenant_id)
+    uri = store.put(job_id=job_id, media_id="42", data=b"original")
+    original_temporary_file = tempfile.NamedTemporaryFile
+
+    def failing_temporary_file(**kwargs):
+        temporary = original_temporary_file(**kwargs)
+
+        def fail_write(data):
+            temporary.file.write(data[:2])
+            raise OSError("disk full")
+
+        temporary.write = fail_write
+        return temporary
+
+    def fail_replace(source, target):
+        assert Path(source).read_bytes() == b"replacement"
+        with store.open(uri) as reader:
+            assert reader.read() == b"original"
+        raise OSError("replace failed")
+
+    if failure_kind == "write":
+        monkeypatch.setattr(tempfile, "NamedTemporaryFile", failing_temporary_file)
+    else:
+        monkeypatch.setattr(os, "replace", fail_replace)
+
+    with pytest.raises(OSError, match="disk full|replace failed"):
+        store.put(job_id=job_id, media_id="42", data=b"replacement")
+    with store.open(uri) as reader:
+        assert reader.read() == b"original"
+    assert list((blob_root / tenant_id / job_id).iterdir()) == [Path(uri.removeprefix("file://"))]
+
+
+def test_replacement_publishes_complete_blob_without_mutating_open_reader(blob_root: Path) -> None:
+    tenant_id, job_id = _tenant(), _job()
+    store = FilesystemObjectStore(root=blob_root, tenant_id=tenant_id)
+    uri = store.put(job_id=job_id, media_id="42", data=b"original")
+    with store.open(uri) as original_reader:
+        assert store.put(job_id=job_id, media_id="42", data=b"new") == uri
+        with store.open(uri) as new_reader:
+            assert new_reader.read() == b"new"
+        assert original_reader.read() == b"original"
+    assert list((blob_root / tenant_id / job_id).iterdir()) == [Path(uri.removeprefix("file://"))]
 
 
 def test_cleanup_removes_per_job_directory(blob_root: Path) -> None:

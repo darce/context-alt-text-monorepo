@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from db.models.scene import DescribeOperation, DescribeStartup
 from db.tenant_context import get_tenant_record, set_tenant_context
+from recognition.application.services.usage_settlement_service import capture_usage_fence, settle_usage_job
 from scene.application.describe_load import load_snapshot, resolve_load_path, write_load_snapshot
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.identity_merge import NamingRealizer, NamingSkipReason, NamingStatus
@@ -907,6 +908,13 @@ async def run_describe_job(
         "describe run per-item envelope seconds=%s (PERF-10 traded for DATA-19 WBUX-6 S9-F1)",
         item_envelope,
     )
+    captured_fence: str | None = None
+    try:
+        async with session_factory() as claim_session:
+            await set_tenant_context(claim_session, tenant_id)
+            captured_fence = await capture_usage_fence(claim_session, tenant_id=tenant_id, job_id=str(run_id))
+    except Exception:
+        logger.debug("usage fence capture skipped run_id=%s", run_id, exc_info=True)
 
     async def cancel_requested() -> bool:
         # A fresh, short-lived session is intentional. The tracking session has
@@ -1108,9 +1116,7 @@ async def run_describe_job(
                     else:
                         outcome = outcome or DescribeItemOutcome()
                         if warmup_fallback_reason is not None:
-                            outcome = _stamp_warmup_cpu_fallback_outcome(
-                                outcome, warmup_fallback_reason
-                            )
+                            outcome = _stamp_warmup_cpu_fallback_outcome(outcome, warmup_fallback_reason)
                         await _record_item_processing_ms(
                             repo=repo,
                             tenant_id=tenant_id,
@@ -1194,6 +1200,18 @@ async def run_describe_job(
         except Exception:  # noqa: BLE001 - best-effort terminal write
             logger.exception("failed to mark run FAILED run_id=%s", run_id)
     finally:
+        try:
+            async with session_factory() as settle_session:
+                await set_tenant_context(settle_session, tenant_id)
+                await settle_usage_job(
+                    settle_session,
+                    tenant_id=tenant_id,
+                    job_id=str(run_id),
+                    fence_token=captured_fence,
+                )
+                await settle_session.commit()
+        except Exception:
+            logger.exception("usage settlement failed run_id=%s", run_id)
         # GPUW-1: refresh the burst-GPU load dump on completion, failure AND
         # cancellation. A release that only fires on the happy path is a
         # reclaimer that eventually does not fire [RES-07] -- and here the cost

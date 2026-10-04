@@ -15,6 +15,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, StrictInt, ValidationError
 
 from recognition.interface_adapters.http.deps import require_auth, require_write_access
+from recognition.interface_adapters.http.deps.operator_authorization import (
+    authorize_operator_control,
+    get_operator_entitlement_repository,
+)
 from scene.application.describe_load import resolve_load_path
 from scene.application.gpu_intent import (
     IntentAction,
@@ -156,10 +160,16 @@ async def get_gpu_status(auth=Depends(require_auth)) -> GpuStatusResponse:
 async def post_gpu_intent(
     request: GpuIntentRequest,
     auth=Depends(require_write_access),
+    entitlement_repository: Any = Depends(get_operator_entitlement_repository),
 ) -> GpuStatusResponse:
     """Persist one operator intent and return the resulting status view."""
     if _is_demo_tier(auth):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="gpu_control_forbidden")
+    await authorize_operator_control(
+        auth,
+        repository=entitlement_repository,
+        forbidden_detail="gpu_control_forbidden",
+    )
     now = _now()
     intent_path = resolve_gpu_intent_path()
     try:
@@ -225,10 +235,10 @@ def _gpu_state_response(snapshot: _GpuSnapshot | None) -> GpuStateResponse:
 def _load_response(path: Path, *, now: float) -> GpuLoadResponse:
     payload = _read_json_object(path) or {}
     written_at = _finite_number(payload.get("written_at"))
-    has_work = any(
-        _positive_number(payload.get(key))
-        for key in ("queue_depth", "in_flight")
-    ) or payload.get("batch_in_progress") is True
+    has_work = (
+        any(_positive_number(payload.get(key)) for key in ("queue_depth", "in_flight"))
+        or payload.get("batch_in_progress") is True
+    )
     return GpuLoadResponse(
         has_work=has_work,
         written_at=written_at,
@@ -262,10 +272,7 @@ def _is_fresh(payload: dict[str, Any] | None, *, now: float) -> bool:
 
 
 def _is_fresh_timestamp(written_at: float, *, now: float) -> bool:
-    return (
-        written_at - now <= GPU_STATE_FUTURE_SKEW_SECONDS
-        and now - written_at <= resolve_gpu_state_stale_seconds()
-    )
+    return written_at - now <= GPU_STATE_FUTURE_SKEW_SECONDS and now - written_at <= resolve_gpu_state_stale_seconds()
 
 
 def _validated_snapshot(payload: dict[str, Any] | None) -> _GpuSnapshot | None:
@@ -360,13 +367,18 @@ def _authenticated_principal(auth: Any) -> str | None:
     return None
 
 
+def _normalized_auth_marker(value: Any) -> str | None:
+    raw = getattr(value, "value", value)
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip().lower().replace("-", "_")
+    return None
+
+
 def _is_demo_tier(auth: Any) -> bool:
     """Recognize the demo marker exposed by auth fakes and auth contexts."""
     for attribute in ("rate_limit_tier", "tier", "demo_tier"):
-        value = getattr(auth, attribute, None)
-        if hasattr(value, "value"):
-            value = value.value
-        if isinstance(value, str) and value.strip().lower() in {"demo", "demo_tier"}:
+        value = _normalized_auth_marker(getattr(auth, attribute, None))
+        if value in {"demo", "demo_tier"}:
             return True
     return any(bool(getattr(auth, attribute, False)) for attribute in ("is_demo", "demo"))
 

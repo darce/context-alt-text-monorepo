@@ -1,0 +1,122 @@
+{
+  "lane": "a1h-deploy1",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_configure_clerk_production.py",
+      "result": "not_run",
+      "detail": "uv stopped before pytest while removing the alembic executable: Read-only file system (os error 30); retried with --no-sync."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_configure_clerk_production.py",
+      "result": "pass",
+      "detail": "25 passed in 1.60s."
+    },
+    {
+      "command": "LC_ALL=C python3 -m pytest -p no:cacheprovider -q scripts/deploy/tests/test_app_portal_deploy.py",
+      "result": "pass",
+      "detail": "33 passed in 4.08s."
+    },
+    {
+      "command": "LC_ALL=C python3 -m pytest -p no:cacheprovider -q scripts/deploy/tests/test_app_portal_activation_journal.py",
+      "result": "pass",
+      "detail": "15 passed in 4.82s."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16979,
+      "finding_id": "FADP-576ccda6e834928b-H-e797b0ef3ef42d02f5f167bb",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "scripts/deploy/app-portal.sh:741-759 - pruning skips suffixes matching `*[!0-9]*` and rejects wrong object types before `rm -rf`; scripts/deploy/tests/test_app_portal_deploy.py:666-714 asserts `Caddyfile.operator-copy.1`, other operator copies, and wrong-type entries survive reclamation.",
+      "guard_test": "scripts/deploy/tests/test_app_portal_deploy.py::test_successful_applies_reclaim_old_snapshot_sets"
+    },
+    {
+      "db_id": 16679,
+      "finding_id": "W6HOST-3f29eee6b2014a4c-H-f3154c125ca765182667e38a",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "scripts/deploy/app-portal.sh:764-792 - `flock -w` is acquired before checking the activation journal, and recovery is inside the `--apply` branch; scripts/deploy/tests/test_app_portal_activation_journal.py:207-247 asserts a competing apply refuses without mutation and a later apply recovers.",
+      "guard_test": "scripts/deploy/tests/test_app_portal_activation_journal.py::test_deploy_lock_refuses_concurrent_recovery_then_recovers"
+    },
+    {
+      "db_id": 15984,
+      "finding_id": "APP1-HOST-RV01",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "scripts/deploy/app-portal.sh:862-905 - ERR/INT/TERM handlers restore snapshots, and Caddy reload plus health run before the journal is cleared; scripts/deploy/tests/test_app_portal_deploy.py:595-612,736-766 asserts failed reload and health restore Caddy, www, and overlay, while activation_journal.py:71-112 verifies next-apply recovery after interruption.",
+      "guard_test": "scripts/deploy/tests/test_app_portal_deploy.py::test_apply_failed_reload_restores_caddy_www_and_overlay"
+    },
+    {
+      "db_id": 16677,
+      "finding_id": "APP1-W6HJ-H3",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "scripts/deploy/app-portal.sh:589-591 retains the journal when rollback reload fails; lines 703-713 route reload through `APP_RELOAD_CMD` or Caddy. scripts/deploy/tests/test_app_portal_activation_journal.py:148-205 asserts the custom command is called for rollback and a failed rollback reload leaves the journal.",
+      "guard_test": "scripts/deploy/tests/test_app_portal_activation_journal.py::test_failed_rollback_reload_keeps_journal_for_recovery"
+    },
+    {
+      "db_id": 16676,
+      "finding_id": "APP1-W6HJ-H2",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "scripts/deploy/app-portal.sh:447-456 writes with `cat` into the existing destination inode; scripts/deploy/tests/test_app_portal_activation_journal.py:115-145 asserts inode preservation on promotion and rollback.",
+      "guard_test": "scripts/deploy/tests/test_app_portal_activation_journal.py::test_caddyfile_inode_is_preserved_on_promotion"
+    },
+    {
+      "db_id": 16675,
+      "finding_id": "APP1-W6HJ-H1",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "scripts/deploy/app-portal.sh:782-792 only recovers when `APPLY` is 1 and otherwise reports pending recovery; scripts/deploy/tests/test_app_portal_activation_journal.py:97-112 asserts dry-run leaves the full filesystem snapshot and reload log unchanged.",
+      "guard_test": "scripts/deploy/tests/test_app_portal_activation_journal.py::test_dry_run_leaves_interrupted_activation_pending_without_mutation"
+    },
+    {
+      "db_id": 15985,
+      "finding_id": "APP1-HOST-RV02",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "scripts/deploy/app-portal.sh:169-245 rejects `/`, symlink path components, wrong file/directory types, and destinations outside approved roots; scripts/deploy/tests/test_app_portal_deploy.py:497-575 asserts root, symlink, and outside-root inputs fail without writes.",
+      "guard_test": "scripts/deploy/tests/test_app_portal_deploy.py::test_apply_refuses_symlink_component_in_app_root"
+    },
+    {
+      "db_id": 16980,
+      "finding_id": "FADP-576ccda6e834928b-M-59eca7e3ad66c1f33ddbb3c6",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "docs/runbooks/app-portal-deploy.md:85-97 documents the required health executable and includes `APP_HEALTH_CMD=/usr/local/bin/app-portal-health-check` in the apply command; test_app_portal_deploy.py:458-487 asserts that command is present.",
+      "guard_test": "scripts/deploy/tests/test_app_portal_deploy.py::test_runbook_documents_later_integration_and_env_ownership"
+    },
+    {
+      "db_id": 16685,
+      "finding_id": "APP1-W6HJ-M4",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "scripts/deploy/app-portal.sh:350-362 rejects APP_WWW or APP_WWW.prev overlapping the journal, lock, overlay, or APP_ROOT activation paths; test_app_portal_activation_journal.py:287-328 covers each alias and asserts no journal or lock is created.",
+      "guard_test": "scripts/deploy/tests/test_app_portal_activation_journal.py::test_app_www_cannot_collide_with_activation_paths"
+    },
+    {
+      "db_id": 16680,
+      "finding_id": "W6HOST-3f29eee6b2014a4c-M-db01f8421fc1eaf419fe784b",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "scripts/deploy/app-portal.sh:561-577 always removes and recopies the saved www tree and atomically recopies the overlay without comparing contents; test_app_portal_activation_journal.py:250-284 forces an overlay mode-only failure and asserts the original mode is restored.",
+      "guard_test": "scripts/deploy/tests/test_app_portal_activation_journal.py::test_rollback_restores_overlay_mode_when_contents_match"
+    }
+  ],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "scripts/deploy/app-portal.sh",
+      "line": 903,
+      "title": "Live frontend health runs before Caddy receives the app volume",
+      "defect": "--apply reloads the portal Caddyfile and requires APP_HEALTH_CMD to verify the live frontend before reporting success, but the compose overlay that mounts APP_WWW at /srv/app-portal is only applied after successful apply in the runbook. On a fresh host without that mount, the new Caddy root has no frontend files and the live health check fails, causing rollback before the documented compose step can be reached.",
+      "failure_scenario": "On a fresh deployment, follow the runbook apply command while Caddy has no /srv/app-portal volume; APP_HEALTH_CMD gets a failing response for https://app.altcontext.com/, run_health fails, and activation_fail restores the old Caddyfile. The next documented step to apply docker-compose.app.yml is only reached after success.",
+      "fix": "Apply the rendered compose overlay and ensure Caddy mounts APP_WWW before the live frontend health check, or make the deploy explicitly stage/apply that integration before health; update the runbook order to match.",
+      "test_file": "scripts/deploy/tests/test_app_portal_deploy.py",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "All ten recorded corrections hold with regression assertions; the first-deploy runbook order still makes the required live frontend health check precede the Caddy volume integration it depends on."
+}

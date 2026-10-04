@@ -1,0 +1,105 @@
+{
+  "lane": "a1h-usage1",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "lane_root=\"$(git rev-parse --show-toplevel)\"; resolved_python=\"$lane_root/.venv/bin/python\"; \"$resolved_python\" -c 'import recognition as module; print(module.__file__)'",
+      "result": "pass",
+      "detail": "Imported recognition from apps/prototype-description-service/recognition/__init__.py inside this lane."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_gate3_sweeper_context.py recognition/tests/unit/test_app1_usage_sweeper.py recognition/tests/unit/test_app1_usage_sweeper_schedule.py scene/tests/test_describe_run_reclaim.py",
+      "result": "not_run",
+      "detail": "uv stopped before pytest: failed to remove the lane venv alembic executable because the file system is read-only. Retried with --no-sync as the lane note directs."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_gate3_sweeper_context.py recognition/tests/unit/test_app1_usage_sweeper.py recognition/tests/unit/test_app1_usage_sweeper_schedule.py scene/tests/test_describe_run_reclaim.py",
+      "result": "not_run",
+      "detail": "The run emitted three progress dots, then pytest printed `Timeout (0:04:00)!`; its stack points to site-packages/aiosqlite/core.py:59 (_connection_worker_thread) and the pytest-asyncio event loop. It remained hung after the timeout and was interrupted (exit 130), so the suite has no trusted final result."
+    },
+    {
+      "command": "Postgres integration: recognition/tests/integration/test_app1_reserved_at_period_postgres.py",
+      "result": "not_run",
+      "detail": "The sandbox has no PostgreSQL database, per the lane brief; read for assertion coverage only."
+    },
+    {
+      "command": "Postgres integration: recognition/tests/integration/test_app1_sweeper_rls_postgres.py",
+      "result": "not_run",
+      "detail": "The sandbox has no PostgreSQL database, per the lane brief; read for assertion coverage only."
+    },
+    {
+      "command": "Postgres integration: recognition/tests/integration/test_app1_usage_recovery_postgres.py",
+      "result": "not_run",
+      "detail": "The sandbox has no PostgreSQL database, per the lane brief; read for assertion coverage only."
+    },
+    {
+      "command": "Postgres integration: recognition/tests/integration/test_app1_usage_worker_postgres.py",
+      "result": "not_run",
+      "detail": "The sandbox has no PostgreSQL database, per the lane brief; read for assertion coverage only."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16022,
+      "finding_id": "APP1-WORKER-RV07",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "recognition/application/services/usage_settlement_service.py:244 - `if _has_started(run): return COMMITTED` runs before the never-picked release branch at line 248; a COMPLETED_WITH_ERRORS run without startup evidence is released.",
+      "guard_test": "recognition/tests/unit/test_app1_usage_sweeper.py::test_completed_with_errors_without_start_releases_and_started_commits"
+    },
+    {
+      "db_id": 16017,
+      "finding_id": "APP1-WORKER-RV02",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "recognition/application/services/usage_settlement_service.py:720 - REJECTED increments rejected counters but not progressed; the no-progress branch sets stalled and exit_code=1 after the configured limit.",
+      "guard_test": "recognition/tests/unit/test_app1_usage_sweeper.py::test_sweep_rejected_only_batch_stalls_nonzero"
+    },
+    {
+      "db_id": 16016,
+      "finding_id": "APP1-WORKER-RV01",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "recognition/application/services/usage_settlement_service.py:497 - recovery starts under the current locked G1 state; recognition/infrastructure/repositories/usage_repository.py:750 says completion atomically re-fences to the current epoch before settling.",
+      "guard_test": "recognition/tests/unit/test_app1_usage_sweeper.py::test_trusted_recovery_settles_stale_terminal_exactly_once"
+    },
+    {
+      "db_id": 15552,
+      "finding_id": "GXPLAN-e71025f7c0c5b190-H-df8fe763d376204901da6c57",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "recognition/application/services/tenant_entitlement_service.py:226 - PAST_DUE remains eligible while `now <= grace_until`, and the configured allowance and usage are returned.",
+      "guard_test": "recognition/tests/unit/test_app1_tenant_entitlement_service.py::test_past_due_tenant_keeps_its_allowance_inside_the_grace_window"
+    },
+    {
+      "db_id": 15534,
+      "finding_id": "APP1-HG-42",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "recognition/application/services/tenant_entitlement_service.py:168 - default RecognitionSettings supplies plan allowances to the repository; recognition/config/settings.py:848 configures the paid plan default and validates it.",
+      "guard_test": "recognition/tests/unit/test_app1_tenant_entitlement.py::test_first_paid_activation_uses_settings_allowance; recognition/tests/unit/test_app1_entitlement_settings.py::test_recognition_settings_default_plan_allowances_include_paid"
+    },
+    {
+      "db_id": 16987,
+      "finding_id": "FAUS1-dd38b1af7583ecec-M-529eeabb8404767399ee2900",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "recognition/tests/integration/test_app1_sweeper_rls_postgres.py:55 - the PG test asserts a nonprivileged role and forced RLS; its cross-tenant sweep verifies cleared session settings, committed RELEASED rows per tenant, and restored global counters.",
+      "guard_test": "recognition/tests/integration/test_app1_sweeper_rls_postgres.py::test_background_sweep_recovers_across_tenants_and_commits_under_forced_rls; recognition/tests/integration/test_app1_sweeper_rls_postgres.py::test_sweep_failure_resets_bypass_and_caller_rollback_discards_prior_settlements"
+    }
+  ],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "apps/prototype-description-service/recognition/worker/scan_worker.py",
+      "line": 445,
+      "title": "Worker ignores nonzero stale-sweep reports",
+      "defect": "The worker discards the SweepReport and only logs exceptions. A sweep that returns stalled=true and exit_code=1 is committed without a warning, hiding the unresolved reservation from worker logs.",
+      "failure_scenario": "A stale reservation returns REJECTED for every no-progress batch; sweep_stale_reservations returns exit_code=1 while the reservation stays RESERVED, but the worker commits and emits no error. Its counters remain held until a later sweep or operator intervention.",
+      "fix": "Capture the report and log a warning with exit_code and rejected/fail_closed/no_progress counts when it is nonzero, while preserving successful settlements. Add a schedule test for a returned nonzero report.",
+      "test_file": "apps/prototype-description-service/recognition/tests/unit/test_app1_usage_sweeper_schedule.py",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "All six listed corrections hold in code and have targeted assertions, including forced-RLS PostgreSQL coverage; one worker caller hides nonzero sweep reports. The requested unit suite timed out in the sandbox's aiosqlite worker, and PostgreSQL tests could not run here."
+}

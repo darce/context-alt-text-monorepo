@@ -144,6 +144,11 @@ class DescribeMediaService {
 			);
 		}
 
+		$operation_id = $this->resolve_operation_id( $request );
+		if ( is_wp_error( $operation_id ) ) {
+			return $operation_id;
+		}
+
 		$budget_gate = $this->budget_service->check_budget();
 		if ( false === ( $budget_gate['allowed'] ?? false ) ) {
 			return new WP_Error(
@@ -201,10 +206,7 @@ class DescribeMediaService {
 			),
 		);
 
-		$operation_id = $this->resolve_operation_id( $request );
-		if ( is_string( $operation_id ) ) {
-			$multipart_body['operation_id'] = $operation_id;
-		}
+		$multipart_body['operation_id'] = $operation_id;
 
 		$response = $this->host->proxy_recognition_request(
 			'POST',
@@ -308,27 +310,77 @@ class DescribeMediaService {
 	}
 
 	/**
-	 * Optional multipart retry token. Read only from the form body field;
-	 * query/default params are ignored. Forwarded verbatim — no trim.
-	 * Empty or >128-char strings are treated as absent (not forwarded, not an error).
+	 * Resolve the caller's operation key from JSON first, then form body params.
+	 * Query and route params are deliberately ignored. A fresh caller key becomes
+	 * the backend operation_id; a resumed operation_id takes precedence.
 	 */
-	private function resolve_operation_id( WP_REST_Request $request ): ?string {
-		$body_params = $request->get_body_params();
-		if ( ! is_array( $body_params ) || ! array_key_exists( 'operation_id', $body_params ) ) {
-			return null;
+	private function resolve_operation_id( WP_REST_Request $request ): string|WP_Error {
+		$json_params = $request->get_json_params();
+		$form_params = $request->get_body_params();
+
+		$has_idempotency_key = ( is_array( $json_params ) && array_key_exists( 'idempotency_key', $json_params ) )
+			|| ( is_array( $form_params ) && array_key_exists( 'idempotency_key', $form_params ) );
+		$idempotency_key = is_array( $json_params ) && array_key_exists( 'idempotency_key', $json_params )
+			? $json_params['idempotency_key']
+			: ( $form_params['idempotency_key'] ?? null );
+
+		if ( $has_idempotency_key ) {
+			if ( ! is_string( $idempotency_key ) ) {
+				return new WP_Error(
+					'invalid_idempotency_key',
+					'idempotency_key must be a string of 16-128 characters using [A-Za-z0-9_-].',
+					array( 'status' => 400 )
+				);
+			}
+
+			$key_length = strlen( $idempotency_key );
+			if (
+				$key_length < 16
+				|| $key_length > 128
+				|| 1 !== preg_match( '/^[A-Za-z0-9_-]+\z/', $idempotency_key )
+			) {
+				return new WP_Error(
+					'invalid_idempotency_key',
+					'idempotency_key must be 16-128 characters using [A-Za-z0-9_-].',
+					array( 'status' => 400 )
+				);
+			}
 		}
 
-		$raw = $body_params['operation_id'];
-		if ( ! is_string( $raw ) ) {
-			return null;
+		$has_operation_id = ( is_array( $json_params ) && array_key_exists( 'operation_id', $json_params ) )
+			|| ( is_array( $form_params ) && array_key_exists( 'operation_id', $form_params ) );
+		$operation_id = is_array( $json_params ) && array_key_exists( 'operation_id', $json_params )
+			? $json_params['operation_id']
+			: ( $form_params['operation_id'] ?? null );
+
+		if ( $has_operation_id ) {
+			if ( ! is_string( $operation_id ) ) {
+				return new WP_Error(
+					'invalid_operation_id',
+					'operation_id must be a string of 1-128 characters.',
+					array( 'status' => 400 )
+				);
+			}
+
+			$operation_id_length = strlen( $operation_id );
+			if ( $operation_id_length < 1 || $operation_id_length > 128 ) {
+				return new WP_Error(
+					'invalid_operation_id',
+					'operation_id must be a string of 1-128 characters.',
+					array( 'status' => 400 )
+				);
+			}
 		}
 
-		$length = strlen( $raw );
-		if ( $length < 1 || $length > 128 ) {
-			return null;
+		if ( ! $has_operation_id && ! $has_idempotency_key ) {
+			return new WP_Error(
+				'idempotency_key_required',
+				'idempotency_key is required.',
+				array( 'status' => 400 )
+			);
 		}
 
-		return $raw;
+		return $has_operation_id ? $operation_id : $idempotency_key;
 	}
 
 	private function should_write_alt_text( WP_REST_Request $request ): bool {

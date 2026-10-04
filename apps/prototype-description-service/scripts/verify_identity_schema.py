@@ -2,9 +2,12 @@
 
 Verifies the load-bearing invariant, not just names: every ``TENANT_TABLES``
 member must have RLS enabled **and** forced with its ``tenant_isolation_*``
-policy present, the centroid materialized view must actually be a matview
-(``relkind='m'``) with the expected vector typmod, and every
-``EXPECTED_SCHEMA_TABLES`` member must exist.
+policy present, every ``OPERATOR_SCOPE_TABLES`` member must have ENABLE+FORCE
+RLS and an ``operator_scope_*`` policy whose body is only ``app.bypass_rls``
+(not a fake ``tenant_id`` predicate, and not that expression ``OR true``),
+the centroid materialized view must actually be a matview (``relkind='m'``)
+with the expected vector typmod, and every ``EXPECTED_SCHEMA_TABLES`` member
+must exist.
 
 Exit codes distinguish who can fix the gap:
 
@@ -24,6 +27,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import re
 import sys
 from collections.abc import Iterable, Mapping
 from typing import TypedDict
@@ -38,7 +42,11 @@ EXPECTED_REVISION = identity_schema.revision
 EXPECTED_TABLES = tuple(identity_schema.EXPECTED_SCHEMA_TABLES)
 SCHEMA_BOOKKEEPING_TABLES = frozenset({"alembic_version"})
 TENANT_TABLES = tuple(identity_schema.TENANT_TABLES)
+OPERATOR_SCOPE_TABLES = tuple(identity_schema.OPERATOR_SCOPE_TABLES)
+BYPASS_RLS_EXPR = identity_schema.BYPASS_RLS_EXPR
 HEAL_UNIQUE_CONSTRAINTS = tuple(identity_schema.HEAL_UNIQUE_CONSTRAINTS)
+_TEXT_CAST_RE = re.compile(r"::text", re.IGNORECASE)
+_WS_RE = re.compile(r"\s+")
 EMBEDDING_DIMENSION = identity_schema.EMBEDDING_DIMENSION
 MATVIEW_NAME = "mv_identity_cluster_centroids"
 
@@ -69,6 +77,29 @@ class SchemaStateReport(TypedDict):
     operator_actions: list[str]
 
 
+def _normalize_policy_expr(expr: str | None) -> str:
+    """Canonicalize a pg_policies qual/with_check for exact semantic compare.
+
+    PostgreSQL stores the approved bypass predicate as
+    ``(COALESCE(...))::boolean`` with ``::text`` casts. Extra grouping parens
+    must not fail a generated policy; a disjunction such as ``OR true`` still
+    survives this collapse.
+    """
+    if not expr:
+        return ""
+    text = _TEXT_CAST_RE.sub("", expr.strip())
+    text = _WS_RE.sub("", text).lower().replace("(", "").replace(")", "")
+    return text
+
+
+def _operator_scope_policy_body_approved(qual: str | None, with_check: str | None) -> bool:
+    """Accept only the approved bypass expression, not ``OR true`` wrappers."""
+    approved = _normalize_policy_expr(BYPASS_RLS_EXPR)
+    if not approved:
+        return False
+    return _normalize_policy_expr(qual) == approved and _normalize_policy_expr(with_check) == approved
+
+
 def _validate_schema_state(
     *,
     actual_tables: Iterable[str],
@@ -76,8 +107,11 @@ def _validate_schema_state(
     expected_tables: Iterable[str] = EXPECTED_TABLES,
     expected_revision: str = EXPECTED_REVISION,
     tenant_tables: Iterable[str] = TENANT_TABLES,
+    operator_scope_tables: Iterable[str] = (),
     rls_state: Mapping[str, tuple[bool, bool]] | None = None,
     policy_names: Iterable[tuple[str, str]] | None = None,
+    operator_policy_bodies: Mapping[tuple[str, str], tuple[str | None, str | None]] | None = None,
+    operator_policy_permissiveness: Mapping[tuple[str, str], bool | None] | None = None,
     table_relkinds: Mapping[str, str] | None = None,
     column_gaps: Mapping[str, Iterable[str]] | None = None,
     non_additive_column_gaps: Mapping[str, Iterable[str]] | None = None,
@@ -94,7 +128,11 @@ def _validate_schema_state(
 
     ``rls_state`` maps table -> (rowsecurity, forcerowsecurity); tables absent
     from the mapping count as RLS gaps. ``policy_names`` is the set of
-    (tablename, policyname) pairs present. ``column_gaps`` maps an existing
+    (tablename, policyname) pairs present. ``operator_scope_tables`` are checked
+    separately from tenant tables: ENABLE+FORCE RLS and the approved
+    ``operator_scope_*`` policy must be permissive. Its body must be
+    ``app.bypass_rls`` only; additional restrictive policies may narrow access.
+    ``column_gaps`` maps an existing
     table to the ORM-declared columns absent from it (MAINT-TPR-01 / PA-03).
     ``non_additive_column_gaps`` is the subset of those columns ``heal()`` would
     *refuse* to add (a missing primary key, or a NOT NULL column with no server
@@ -112,13 +150,47 @@ def _validate_schema_state(
 
     rls_gaps: list[str] = []
     policy_gaps: list[str] = []
+    rls_targets = list(dict.fromkeys([*tenant_tables, *operator_scope_tables]))
     if rls_state is not None:
-        rls_gaps = sorted(t for t in tenant_tables if rls_state.get(t) != (True, True))
+        rls_gaps = sorted(t for t in rls_targets if rls_state.get(t) != (True, True))
     if policy_names is not None:
         # (table, policy) pairs: a policy name on the WRONG table must not
         # satisfy another table's check (cross-table name collision).
         present = set(policy_names)
-        policy_gaps = sorted(t for t in tenant_tables if (t, f"tenant_isolation_{t}") not in present)
+        tenant_policy_gaps = [t for t in tenant_tables if (t, f"tenant_isolation_{t}") not in present]
+        operator_policy_gaps: list[str] = []
+        for table in operator_scope_tables:
+            policy_key = (table, f"operator_scope_{table}")
+            if policy_key not in present:
+                operator_policy_gaps.append(table)
+            else:
+                body = None if operator_policy_bodies is None else operator_policy_bodies.get(policy_key)
+                permissive = (
+                    None
+                    if operator_policy_permissiveness is None
+                    else operator_policy_permissiveness.get(policy_key)
+                )
+                if (
+                    body is None
+                    or not _operator_scope_policy_body_approved(*body)
+                    or permissive is not True
+                ):
+                    operator_policy_gaps.append(table)
+
+            # PostgreSQL ORs permissive policies together. An extra policy is
+            # safe only when we know it is restrictive; missing/unknown
+            # permissiveness must fail closed, regardless of the policy body.
+            extra_policies = (key for key in present if key[0] == table and key != policy_key)
+            if any(
+                operator_policy_permissiveness is None
+                or operator_policy_permissiveness.get(key) is not False
+                for key in extra_policies
+            ):
+                operator_policy_gaps.append(table)
+        policy_gaps = sorted(set(tenant_policy_gaps) | set(operator_policy_gaps))
+    elif operator_scope_tables:
+        # Operator policy facts are mandatory for these privileged tables.
+        policy_gaps = sorted(set(operator_scope_tables))
 
     # An expected-table name occupied by a non-table relation is NOT
     # heal-repairable: the heal fails loudly on it; classify as operator.
@@ -361,6 +433,7 @@ def collect_and_validate(connection) -> SchemaStateReport:
     if "alembic_version" in table_names:
         actual_revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
 
+    rls_tables = list(dict.fromkeys([*TENANT_TABLES, *OPERATOR_SCOPE_TABLES]))
     rls_state = {
         name: (enabled, forced)
         for name, enabled, forced in connection.execute(
@@ -369,15 +442,31 @@ def collect_and_validate(connection) -> SchemaStateReport:
                 "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
                 "WHERE n.nspname = current_schema() AND c.relname = ANY(:tables)"
             ),
-            {"tables": list(TENANT_TABLES)},
+            {"tables": rls_tables},
         )
     }
-    policy_names = {
-        (row[0], row[1])
-        for row in connection.execute(
-            text("SELECT tablename, policyname FROM pg_policies WHERE schemaname = current_schema()")
+    policy_rows = connection.execute(
+        text(
+            "SELECT tablename, policyname, permissive, qual, with_check "
+            "FROM pg_policies WHERE schemaname = current_schema()"
         )
-    }
+    ).all()
+    policy_names = {(row[0], row[1]) for row in policy_rows}
+    operator_policy_bodies: dict[tuple[str, str], tuple[str | None, str | None]] | None
+    operator_policy_permissiveness: dict[tuple[str, str], bool | None] | None
+    if policy_rows and len(policy_rows[0]) >= 5:
+        operator_policy_bodies = {(row[0], row[1]): (row[3], row[4]) for row in policy_rows}
+        operator_policy_permissiveness = {
+            (row[0], row[1]): (
+                True if str(row[2]).upper() == "PERMISSIVE" else
+                False if str(row[2]).upper() == "RESTRICTIVE" else
+                None
+            )
+            for row in policy_rows
+        }
+    else:
+        operator_policy_bodies = None
+        operator_policy_permissiveness = None
     table_relkinds = dict(
         connection.execute(
             text(
@@ -419,8 +508,11 @@ def collect_and_validate(connection) -> SchemaStateReport:
     return _validate_schema_state(
         actual_tables=table_names,
         actual_revision=actual_revision,
+        operator_scope_tables=tuple(name for name in OPERATOR_SCOPE_TABLES if name in rls_state),
         rls_state=rls_state,
         policy_names=policy_names,
+        operator_policy_bodies=operator_policy_bodies,
+        operator_policy_permissiveness=operator_policy_permissiveness,
         table_relkinds=table_relkinds,
         column_gaps=column_gaps,
         non_additive_column_gaps=non_additive_column_gaps,

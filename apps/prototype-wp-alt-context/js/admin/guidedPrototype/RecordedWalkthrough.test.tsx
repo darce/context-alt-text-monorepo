@@ -98,7 +98,10 @@ describe('RecordedWalkthrough public scope', () => {
       expect(photoStep).toContainElement(reviewCard as HTMLElement);
       expect(faces).not.toContainElement(reviewCard as HTMLElement);
       expect(reviewCard?.parentElement).toBe(photoStep);
-      expect(photo?.compareDocumentPosition(reviewCard as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      if (!photo || !reviewCard) {
+        throw new Error(`Expected the ${photoKey} photo and review elements to render`);
+      }
+      expect(photo.compareDocumentPosition(reviewCard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }
   });
 

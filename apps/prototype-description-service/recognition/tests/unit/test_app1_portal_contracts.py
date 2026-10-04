@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import inspect
+from collections.abc import Mapping
 from dataclasses import FrozenInstanceError, is_dataclass
 from datetime import UTC, datetime
+from typing import get_type_hints
 from uuid import UUID, uuid4
 
 import pytest
@@ -12,10 +15,13 @@ from recognition.domain.portal_contracts import (
     DEFAULT_ALLOWANCE_JOBS,
     DEFAULT_ENTITLEMENT_STATUS,
     BillingProvider,
+    BillingReconciliationRepository,
     BillingState,
     BillingSubscriptionStatus,
+    CheckoutSession,
     EntitlementSnapshot,
     EntitlementStatus,
+    EnumerationPage,
     PortalIdentityService,
     PortalIdentityStatus,
     PortalPrincipal,
@@ -140,8 +146,10 @@ class _BillingProviderStub:
         plan_code: str,
         success_url: str,
         cancel_url: str,
-    ) -> str:
-        return success_url
+        idempotency_key: str,
+        attempt_id: UUID,
+    ) -> CheckoutSession:
+        return CheckoutSession(url=success_url, provider_checkout_id=f"chk-{attempt_id}:{idempotency_key}")
 
     async def create_portal_session(self, *, tenant_id: UUID, return_url: str) -> str:
         return return_url
@@ -159,8 +167,20 @@ class _BillingProviderStub:
             "request_timeout": request_timeout,
         }
 
-    async def verify_webhook(self, raw_body: bytes, signature: str) -> bool:
-        return bool(raw_body and signature)
+    async def retrieve_checkout(self, *, provider_checkout_id: str, request_timeout: float) -> Mapping[str, object]:
+        return {"id": provider_checkout_id, "request_timeout": request_timeout}
+
+    async def enumerate_subscriptions(
+        self,
+        *,
+        cursor: str | None,
+        limit: int,
+        request_timeout: float,
+    ) -> EnumerationPage:
+        return EnumerationPage(items=(), next_cursor=cursor, exhausted=True)
+
+    async def verify_webhook(self, raw_body: bytes, headers: Mapping[str, str]) -> bool:
+        return bool(raw_body and headers)
 
     async def parse_event(self, raw_body: bytes) -> dict[str, object]:
         return {"raw_body": raw_body}
@@ -180,18 +200,122 @@ def test_protocols_are_runtime_checkable(protocol, stub) -> None:
     assert isinstance(stub, protocol)
 
 
+def test_protocol_signatures_are_awaitable_and_preserve_parameter_kinds() -> None:
+    positional = inspect.Parameter.POSITIONAL_OR_KEYWORD
+    keyword_only = inspect.Parameter.KEYWORD_ONLY
+    contracts = {
+        PortalIdentityService: {
+            "resolve_principal": (("self", "issuer", "subject"), ()),
+            "claim_tenant": (("self",), ("issuer", "subject", "email", "invitation_token")),
+        },
+        TenantEntitlementService: {
+            "snapshot": (("self", "tenant_id"), ()),
+            "grant_beta": (
+                ("self", "tenant_id"),
+                ("allowance_jobs", "allowance_version", "period_start", "period_end", "source"),
+            ),
+            "apply_billing_state": (("self", "tenant_id", "state"), ()),
+        },
+        UsageAdmissionService: {
+            "reserve": (("self", "tenant_id"), ("idempotency_key", "job_id", "cost_units")),
+            "commit": (("self", "ticket"), ()),
+            "release": (("self", "ticket"), ()),
+        },
+        BillingProvider: {
+            "create_checkout_session": (
+                ("self",),
+                ("tenant_id", "plan_code", "success_url", "cancel_url", "idempotency_key", "attempt_id"),
+            ),
+            "create_portal_session": (("self",), ("tenant_id", "return_url")),
+            "retrieve_state": (("self",), ("provider_customer_id", "provider_subscription_id", "request_timeout")),
+            "retrieve_checkout": (("self",), ("provider_checkout_id", "request_timeout")),
+            "enumerate_subscriptions": (("self",), ("cursor", "limit", "request_timeout")),
+            "verify_webhook": (("self", "raw_body", "headers"), ()),
+            "parse_event": (("self", "raw_body"), ()),
+        },
+        BillingReconciliationRepository: {
+            "acquire_lease": (("self", "key"), ("owner", "lease_ttl", "now")),
+            "heartbeat": (("self", "lease"), ("now", "lease_ttl")),
+            "complete_item": (("self", "lease"), ("remote_id", "now")),
+            "quarantine_item": (("self", "lease"), ("observation", "now")),
+            "advance_cursor": (
+                ("self", "lease"),
+                ("next_cursor", "exhausted", "page_remote_ids", "now"),
+            ),
+            "record_page_failure": (("self", "lease"), ("failure_class", "now")),
+            "audited_retry": (
+                ("self", "lease"),
+                ("remote_id", "operator_identity", "operator_reason", "now"),
+            ),
+            "get_quarantine": (("self", "key", "remote_id"), ()),
+        },
+    }
+
+    for protocol, methods in contracts.items():
+        declared_methods = {
+            name for name, member in vars(protocol).items() if not name.startswith("_") and inspect.isfunction(member)
+        }
+        assert declared_methods == set(methods)
+        for name, (positional_names, keyword_only_names) in methods.items():
+            method = getattr(protocol, name)
+            assert inspect.iscoroutinefunction(method), f"{protocol.__name__}.{name} must be awaitable"
+            actual_parameters = tuple(inspect.signature(method).parameters.values())
+            expected_parameters = tuple(
+                (parameter_name, keyword_only if parameter_name in keyword_only_names else positional)
+                for parameter_name in (*positional_names, *keyword_only_names)
+            )
+            assert tuple((parameter.name, parameter.kind) for parameter in actual_parameters) == expected_parameters
+
+
 def test_stub_omitting_a_required_method_fails_structural_check() -> None:
     class MissingParseEvent:
-        async def create_checkout_session(self, **kwargs) -> str:
-            return ""
+        async def create_checkout_session(self, **kwargs) -> CheckoutSession:
+            return CheckoutSession(url="", provider_checkout_id="chk-missing")
 
         async def create_portal_session(self, **kwargs) -> str:
             return ""
 
-        async def verify_webhook(self, raw_body: bytes, signature: str) -> bool:
+        async def verify_webhook(self, raw_body: bytes, headers: Mapping[str, str]) -> bool:
             return True
 
     assert not isinstance(MissingParseEvent(), BillingProvider)
+
+
+def test_checkout_session_is_frozen_and_carries_provider_id_and_url() -> None:
+    session = CheckoutSession(url="https://pay.example.test/c", provider_checkout_id="chk-1")
+    assert is_dataclass(session)
+    assert session.url == "https://pay.example.test/c"
+    assert session.provider_checkout_id == "chk-1"
+    with pytest.raises(FrozenInstanceError):
+        session.url = "https://evil.example.test"
+
+
+def test_enumeration_page_is_frozen_with_opaque_cursor() -> None:
+    page = EnumerationPage(items=(), next_cursor="2", exhausted=False)
+    assert is_dataclass(page)
+    assert page.next_cursor == "2"
+    assert page.exhausted is False
+    assert page.observations == ()
+    with pytest.raises(FrozenInstanceError):
+        page.exhausted = True
+
+
+def test_billing_provider_requires_attempt_owned_checkout_and_header_verify() -> None:
+    checkout_params = inspect.signature(BillingProvider.create_checkout_session).parameters
+    verify_params = inspect.signature(BillingProvider.verify_webhook).parameters
+    assert "idempotency_key" in checkout_params
+    assert "attempt_id" in checkout_params
+    assert checkout_params["idempotency_key"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert checkout_params["attempt_id"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert "headers" in verify_params
+    assert "signature" not in verify_params
+    assert hasattr(BillingProvider, "retrieve_checkout")
+    assert hasattr(BillingProvider, "enumerate_subscriptions")
+
+    identity_params = inspect.signature(PortalIdentityService.claim_tenant).parameters
+    assert identity_params["invitation_token"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert identity_params["invitation_token"].default is inspect.Parameter.empty
+    assert get_type_hints(PortalIdentityService.claim_tenant)["invitation_token"] is str
 
 
 def test_missing_entitlement_is_fail_safe_zero_allowance() -> None:

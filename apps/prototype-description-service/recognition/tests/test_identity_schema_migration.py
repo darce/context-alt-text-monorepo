@@ -42,6 +42,12 @@ class _RecordingOp:
 
         class _FakeBind:
             def execute(self, stmt, params=None):  # noqa: ANN001
+                if str(stmt) == "SELECT current_setting(:name, true)":
+                    assert params == {"name": "app.bypass_rls"}
+                    return _FakeResult(("",))
+                if str(stmt) == "SELECT set_config(:name, :value, true)":
+                    assert params["name"] == "app.bypass_rls"
+                    return _FakeResult((params["value"],))
                 # These DDL-shape tests model a role allowed to create the view.
                 if "has_schema_privilege" in str(stmt) and "has_table_privilege" in str(stmt):
                     return _FakeResult(("public", True, True, True, True, True, True))
@@ -98,8 +104,14 @@ def test_identity_schema_declares_expected_table_set() -> None:
         "portal_identity",
         "tenant_entitlement",
         "usage_reservation",
+        "usage_admission_global_state",
         "billing_subscription_projection",
         "billing_webhook_inbox",
+        "billing_checkout_attempt",
+        "billing_reconciliation_cursor",
+        "billing_reconciliation_quarantine",
+        "billing_reconciliation_item_progress",
+        "billing_known_item_lease",
         "api_key_rotation_history",
         "tenant_key_idempotency",
         "portal_tenant_invitation",
@@ -135,6 +147,63 @@ def test_identity_schema_declares_expected_table_set() -> None:
         "identity_atlas_points",
         "identity_atlas_queue_dispositions",
     ]
+    assert identity_schema.DOWNGRADE_TABLE_ORDER == [
+        "describe_load_snapshot_revisions",
+        "describe_demand_leases",
+        "describe_operations",
+        "describe_startups",
+        "portal_tenant_invitation",
+        "tenant_key_idempotency",
+        "api_key_rotation_history",
+        "billing_known_item_lease",
+        "billing_reconciliation_item_progress",
+        "billing_reconciliation_quarantine",
+        "billing_reconciliation_cursor",
+        "billing_checkout_attempt",
+        "billing_webhook_inbox",
+        "billing_subscription_projection",
+        "usage_admission_global_state",
+        "usage_reservation",
+        "tenant_entitlement",
+        "portal_identity",
+        "identity_atlas_queue_dispositions",
+        "identity_atlas_points",
+        "identity_atlas_runs",
+        "assignment_decisions",
+        "clustering_job_reports",
+        "worker_capabilities",
+        "image_description_run_items",
+        "image_description_runs",
+        "image_descriptions",
+        "audit_events",
+        "clustering_feedback",
+        "export_jobs",
+        "recognition_events",
+        "identity_cluster_blocks",
+        "name_suggestions",
+        "cluster_merge_suggestions",
+        "identity_suggestions",
+        "identity_scan_job_items",
+        "recognition_runs",
+        "cluster_merge_receipts",
+        "identity_cluster_representatives",
+        "identity_name_suppressions",
+        "identity_members",
+        "curation_replay_records",
+        "identity_scan_jobs",
+        "identity_clustering_jobs",
+        "identity_constraints",
+        "identity_clusters",
+        "media_identities",
+        "demo_instances",
+        "api_keys",
+        "tenants",
+    ]
+    assert "billing_checkout_attempt" in identity_schema.TENANT_TABLES
+    assert "usage_reservation" in identity_schema.TENANT_TABLES
+    assert "usage_admission_global_state" not in identity_schema.TENANT_TABLES
+    assert "billing_known_item_lease" in identity_schema.OPERATOR_SCOPE_TABLES
+    assert "billing_known_item_lease" not in identity_schema.TENANT_TABLES
 
 
 def test_identity_schema_refresh_status_constraint_matches_enum(monkeypatch) -> None:
@@ -201,6 +270,10 @@ def test_identity_schema_downgrade_drops_children_before_parents(monkeypatch) ->
         "media_identities"
     )
     assert recorder.dropped_tables.index("recognition_events") < recorder.dropped_tables.index("recognition_runs")
+    assert recorder.dropped_tables.index("billing_checkout_attempt") < recorder.dropped_tables.index("tenants")
+    assert recorder.dropped_tables.index("usage_admission_global_state") < recorder.dropped_tables.index(
+        "usage_reservation"
+    )
 
 
 def test_ensure_table_fails_loudly_when_existing_table_missing_named_constraint() -> None:
@@ -419,16 +492,12 @@ class _ProvisionedTableOp:
         return _Bind()
 
 
-def _describe_run_table_declaration(monkeypatch) -> tuple[tuple, dict]:
-    """The real ``image_description_runs`` args, captured from the migration itself.
-
-    Read from the call site rather than restated here, so this test cannot drift
-    from the declaration it is asserting about.
-    """
+def _table_declaration(monkeypatch, table_name: str) -> tuple[tuple, dict]:
+    """Capture one ``_ensure_table`` call from the live ``ensure_tables`` body."""
     captured: dict[str, tuple[tuple, dict]] = {}
 
-    def _capture(op_arg, table_name, *columns, **kw):  # noqa: ANN001, ANN002, ANN003
-        captured[table_name] = (columns, kw)
+    def _capture(op_arg, name, *columns, **kw):  # noqa: ANN001, ANN002, ANN003
+        captured[name] = (columns, kw)
 
     monkeypatch.setattr(identity_schema, "op", _RecordingOp())
     monkeypatch.setattr(identity_schema, "_ensure_table", _capture)
@@ -437,8 +506,13 @@ def _describe_run_table_declaration(monkeypatch) -> tuple[tuple, dict]:
     # and leaving the capture stub in place would silently assert nothing.
     monkeypatch.undo()
     assert identity_schema._ensure_table is not _capture
-    assert "image_description_runs" in captured
-    return captured["image_description_runs"]
+    assert table_name in captured, f"ensure_tables did not declare {table_name!r}"
+    return captured[table_name]
+
+
+def _describe_run_table_declaration(monkeypatch) -> tuple[tuple, dict]:
+    """The real ``image_description_runs`` args, captured from the migration itself."""
+    return _table_declaration(monkeypatch, "image_description_runs")
 
 
 def _split_declaration(columns):
@@ -545,6 +619,9 @@ def test_pre_timing_schema_heals_checks_and_columns_on_postgres(monkeypatch, pg_
         )
         patch.setattr(identity_schema, "_ensure_index", lambda *args, **kw: None)
         patch.setattr(identity_schema, "ensure_identity_vector_typmods", lambda op: None)
+        # G1 added bind-using post-create hooks; this test only captures declarations.
+        patch.setattr(identity_schema, "_backfill_usage_reservation_identity", lambda op: None)
+        patch.setattr(identity_schema, "_seed_usage_admission_global_state", lambda op: None)
         identity_schema.ensure_tables(_RecordingOp())
     elements, kw = captured[table_name]
     timing_columns = {
@@ -627,3 +704,153 @@ def test_timing_checks_reject_nonfinite_sql_on_postgres(pg_empty_engine):
                         )
                 connection.exec_driver_sql("INSERT INTO timing_finite_probe VALUES (NULL), (0), (42)")
                 connection.exec_driver_sql("DROP TABLE timing_finite_probe")
+
+
+def test_sqlite_fixture_excludes_mapped_checkout_and_global_admission_tables() -> None:
+    from recognition.tests.conftest import SQLITE_TEST_TABLE_EXCLUSIONS
+
+    assert "billing_checkout_attempt" in SQLITE_TEST_TABLE_EXCLUSIONS
+    assert "usage_admission_global_state" in SQLITE_TEST_TABLE_EXCLUSIONS
+    assert "usage_reservation" in SQLITE_TEST_TABLE_EXCLUSIONS
+
+
+def test_usage_reservation_declares_expand_first_identity_fields(monkeypatch) -> None:
+    import sqlalchemy as sa
+
+    columns, kw = _table_declaration(monkeypatch, "usage_reservation")
+    colmap = {column.name: column for column in columns if isinstance(column, sa.Column)}
+    assert {
+        "operation_id",
+        "request_fingerprint",
+        "job_id",
+        "fence_token",
+        "queue_bytes",
+    } <= set(colmap)
+    assert colmap["operation_id"].nullable is True
+    assert colmap["request_fingerprint"].nullable is True
+    assert colmap["fence_token"].nullable is True
+    assert colmap["job_id"].nullable is True
+    assert colmap["queue_bytes"].nullable is True
+    assert "uq_usage_reservation_tenant_operation_id" in tuple(kw.get("heal_constraints", ()))
+    assert (
+        "usage_reservation",
+        "uq_usage_reservation_tenant_operation_id",
+        ("tenant_id", "operation_id"),
+    ) in identity_schema.HEAL_UNIQUE_CONSTRAINTS
+    check_names = {item.name for item in columns if isinstance(item, CheckConstraint)}
+    assert {
+        "ck_usage_reservation_queue_bytes_nonnegative",
+        "ck_usage_reservation_operation_id_present",
+        "ck_usage_reservation_request_fingerprint_present",
+        "ck_usage_reservation_fence_token_present",
+    } <= check_names
+
+
+def test_usage_admission_global_state_is_declared_nontenant_singleton(monkeypatch) -> None:
+    import sqlalchemy as sa
+
+    columns, kw = _table_declaration(monkeypatch, "usage_admission_global_state")
+    colmap = {column.name: column for column in columns if isinstance(column, sa.Column)}
+    assert "tenant_id" not in colmap
+    assert colmap["id"].primary_key is True
+    assert {
+        "daily_cost_limit",
+        "daily_cost_units",
+        "inflight_limit",
+        "inflight_units",
+        "queue_limit",
+        "queue_depth",
+        "queue_byte_limit",
+        "queue_bytes",
+        "stop_requested",
+        "fence_epoch",
+        "config_version",
+    } <= set(colmap)
+    check_names = {item.name for item in columns if isinstance(item, CheckConstraint)}
+    assert "ck_usage_admission_global_period" in check_names
+    assert "ck_usage_admission_global_fence_epoch" in tuple(kw.get("heal_constraints", ()))
+
+
+def test_checkout_provider_key_unique_is_seller_wide_without_tenant(monkeypatch) -> None:
+    """Spec 5.1: provider-key unique is seller-wide and omits tenant_id."""
+    import sqlalchemy as sa
+
+    spec_seller_wide = ("provider", "environment", "seller_account", "idempotency_key")
+    actual = next(
+        cols
+        for table, name, cols in identity_schema.HEAL_UNIQUE_CONSTRAINTS
+        if table == "billing_checkout_attempt" and name == "uq_billing_checkout_attempt_provider_key"
+    )
+    assert actual == spec_seller_wide
+    assert "tenant_id" not in actual
+
+    columns, kw = _table_declaration(monkeypatch, "billing_checkout_attempt")
+    provider_key = next(
+        item for item in columns if getattr(item, "name", None) == "uq_billing_checkout_attempt_provider_key"
+    )
+    assert tuple(identity_schema._constraint_column_names(provider_key)) == spec_seller_wide
+    assert "uq_billing_checkout_attempt_provider_key" in tuple(kw.get("heal_constraints", ()))
+
+
+def test_portal_invitation_tenant_id_is_nullable_for_pending_rows(monkeypatch) -> None:
+    import sqlalchemy as sa
+
+    columns, kw = _table_declaration(monkeypatch, "portal_tenant_invitation")
+    colmap = {column.name: column for column in columns if isinstance(column, sa.Column)}
+    assert colmap["tenant_id"].nullable is True
+    assert colmap["tenant_id"].foreign_keys
+    check_names = {item.name for item in columns if isinstance(item, sa.CheckConstraint)}
+    assert "ck_portal_tenant_invitation_accepted_requires_tenant" in check_names
+    assert "ck_portal_tenant_invitation_accepted_requires_tenant" in tuple(kw.get("heal_constraints", ()))
+
+
+@pytest.mark.parametrize(
+    ("token", "reservation_id", "epoch", "expected"),
+    [
+        (None, "11111111-1111-1111-1111-111111111111", 1, "1:legacy:11111111-1111-1111-1111-111111111111"),
+        ("", "11111111-1111-1111-1111-111111111111", 2, "2:legacy:11111111-1111-1111-1111-111111111111"),
+        (
+            "11111111-1111-1111-1111-111111111111",
+            "11111111-1111-1111-1111-111111111111",
+            1,
+            "1:legacy:11111111-1111-1111-1111-111111111111",
+        ),
+        (
+            "22222222-2222-2222-2222-222222222222",
+            "11111111-1111-1111-1111-111111111111",
+            4,
+            "4:22222222-2222-2222-2222-222222222222",
+        ),
+        (
+            "3:33333333-3333-3333-3333-333333333333",
+            "11111111-1111-1111-1111-111111111111",
+            1,
+            "3:33333333-3333-3333-3333-333333333333",
+        ),
+        (
+            "9:legacy:11111111-1111-1111-1111-111111111111",
+            "11111111-1111-1111-1111-111111111111",
+            1,
+            "9:legacy:11111111-1111-1111-1111-111111111111",
+        ),
+    ],
+)
+def test_rewrite_usage_reservation_fence_token_markers(token, reservation_id, epoch, expected) -> None:
+    assert (
+        identity_schema._rewrite_usage_reservation_fence_token(token, reservation_id=reservation_id, epoch=epoch)
+        == expected
+    )
+
+
+def test_rewrite_usage_reservation_fence_token_failclosed_on_malformed() -> None:
+    reservation_id = "11111111-1111-1111-1111-111111111111"
+    with pytest.raises(RuntimeError, match="malformed"):
+        identity_schema._rewrite_usage_reservation_fence_token("not-a-token", reservation_id=reservation_id, epoch=1)
+    with pytest.raises(RuntimeError, match="malformed"):
+        identity_schema._rewrite_usage_reservation_fence_token(
+            "0:11111111-1111-1111-1111-111111111111", reservation_id=reservation_id, epoch=1
+        )
+    with pytest.raises(RuntimeError, match="malformed"):
+        identity_schema._rewrite_usage_reservation_fence_token(
+            "1:legacy:not-a-uuid", reservation_id=reservation_id, epoch=1
+        )

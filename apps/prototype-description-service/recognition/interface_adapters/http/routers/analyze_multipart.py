@@ -20,16 +20,20 @@ envelope so it can be tested in isolation.
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import logging
 import os
 import uuid
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
+from contextlib import suppress
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, status
 from python_multipart.exceptions import FormParserError
 from python_multipart.multipart import parse_options_header
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from starlette.datastructures import FormData, UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
@@ -51,8 +55,22 @@ from recognition.interface_adapters.http.deps.object_store import (
     ObjectStoreFactory,
     get_object_store_factory_for_request,
 )
+from recognition.interface_adapters.http.deps.usage_admission import (
+    _is_usage_service,
+    admit_usage,
+    get_usage_admission_service,
+)
 from recognition.interface_adapters.http.middleware.correlation import (
     get_correlation_id,
+)
+from recognition.interface_adapters.http.routers.analyze import (
+    _dispatch_persisted_analysis,
+    bound_job_uuid,
+    build_analyze_request_fingerprint,
+    fingerprint_options_from_envelope,
+    get_shared_insightface_adapter,
+    is_usage_replay,
+    resolve_analyze_operation_id,
 )
 from recognition.interface_adapters.http.schemas.requests import MediaItem
 from recognition.interface_adapters.http.schemas.responses import (
@@ -67,6 +85,9 @@ _DEFAULT_ALLOWED_MIME_TYPES: frozenset[str] = frozenset({"image/jpeg", "image/pn
 _IMAGE_KEY_PREFIX = "image_"
 _MAX_IMAGE_PARTS = 5
 _MAX_MULTIPART_FILES = _MAX_IMAGE_PARTS + 1  # JSON request envelope may itself be an UploadFile.
+_MULTIPART_IDLE_TIMEOUT_S = 10.0
+_MULTIPART_TOTAL_TIMEOUT_S = 300.0
+_DISPATCH_REGISTRATION_FAILURE_DETAIL = "Scan dispatch unavailable"
 _TOO_MANY_IMAGE_PARTS_DETAIL = f"multipart submission accepts at most {_MAX_IMAGE_PARTS} image parts"
 _INVALID_MULTIPART_DETAIL = "invalid multipart form"
 
@@ -123,13 +144,29 @@ async def _parse_multipart_form(request: Request) -> FormData:
             detail="content-type must be multipart/form-data",
         )
 
+    async def _stream_with_idle_timeout() -> AsyncIterator[bytes]:
+        stream = request.stream().__aiter__()
+        while True:
+            try:
+                async with asyncio.timeout(_MULTIPART_IDLE_TIMEOUT_S):
+                    chunk = await anext(stream)
+            except StopAsyncIteration:
+                return
+            yield chunk
+
     parser = _ClosingMultiPartParser(
         request.headers,
-        request.stream(),
+        _stream_with_idle_timeout(),
         max_files=_MAX_MULTIPART_FILES,
     )
     try:
-        return await parser.parse()
+        async with asyncio.timeout(_MULTIPART_TOTAL_TIMEOUT_S):
+            return await parser.parse()
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_408_REQUEST_TIMEOUT,
+            detail="multipart upload timed out",
+        ) from exc
     except (MultiPartException, FormParserError) as exc:
         detail = exc.message if isinstance(exc, MultiPartException) else _INVALID_MULTIPART_DETAIL
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail) from exc
@@ -277,6 +314,26 @@ def _extract_request_envelope(form_data: FormData) -> dict:
     return envelope
 
 
+def _multipart_usage_inputs(form_data: FormData) -> tuple[list[str], list[str], int]:
+    """Read stable upload digests without consuming the streams used by persistence."""
+    media_ids: list[str] = []
+    media_sources: list[str] = []
+    queue_bytes = 0
+    for key, value in form_data.multi_items():
+        if not key.startswith(_IMAGE_KEY_PREFIX) or not isinstance(value, UploadFile):
+            continue
+        position = value.file.tell()
+        data = value.file.read()
+        value.file.seek(position)
+        media_id = key[len(_IMAGE_KEY_PREFIX) :]
+        with suppress(ValueError):
+            media_id = str(int(media_id))
+        media_ids.append(media_id)
+        media_sources.append(hashlib.sha256(data).hexdigest())
+        queue_bytes += len(data)
+    return media_ids, media_sources, queue_bytes
+
+
 @router.post(
     "/analyze/multipart",
     response_model=JobStatusResponse,
@@ -285,11 +342,13 @@ def _extract_request_envelope(form_data: FormData) -> dict:
 async def analyze_media_multipart(
     request: Request,
     background_tasks: BackgroundTasks,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     auth=Depends(require_write_access),
     session=Depends(get_optional_session),
     scan_queue=Depends(get_scan_queue_service_optional),
     object_store_factory: ObjectStoreFactory = Depends(get_object_store_factory_for_request),
     _demo_quota=Depends(enforce_demo_quota),
+    usage_admission_service=Depends(get_usage_admission_service),
 ) -> JobStatusResponse:
     """Multipart variant of /recognition/analyze for inline image upload.
 
@@ -330,6 +389,8 @@ async def analyze_media_multipart(
             session=session,
             scan_queue=scan_queue,
             object_store_factory=object_store_factory,
+            usage_admission_service=usage_admission_service,
+            idempotency_key=idempotency_key,
         )
     finally:
         await form_data.close()
@@ -343,6 +404,8 @@ async def _analyze_media_multipart_form(
     session,
     scan_queue,
     object_store_factory: ObjectStoreFactory,
+    usage_admission_service=None,
+    idempotency_key: str | None = None,
 ) -> JobStatusResponse:
     """Validate, persist, and dispatch an already-parsed multipart request."""
     pre_generated_job_id = uuid.uuid4()
@@ -384,6 +447,76 @@ async def _analyze_media_multipart_form(
         await require_tenant_record(session, tenant_uuid)
         await require_scan_dispatch_ready(session, inline_processing=inline_processing)
 
+    usage_media_ids, usage_media_sources, queue_bytes = _multipart_usage_inputs(form_data)
+    if not usage_media_ids:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=("multipart submission must include at least one image_<media_id> part"),
+        )
+    operation_id = resolve_analyze_operation_id(
+        header_value=idempotency_key,
+        envelope=envelope,
+        required=_is_usage_service(usage_admission_service),
+    )
+    fingerprint = build_analyze_request_fingerprint(
+        tenant_id=tenant_uuid,
+        route="analyze_multipart",
+        media_ids=usage_media_ids,
+        media_sources=usage_media_sources,
+        options=fingerprint_options_from_envelope(envelope),
+    )
+    async with admit_usage(
+        usage_admission_service,
+        tenant_id=tenant_uuid,
+        idempotency_key=operation_id,
+        job_id=str(pre_generated_job_id),
+        cost_units=len(usage_media_ids),
+        operation_id=operation_id,
+        request_fingerprint=fingerprint,
+        queue_bytes=queue_bytes,
+    ) as ticket:
+        bound_job_id = bound_job_uuid(ticket, pre_generated_job_id)
+        replay = is_usage_replay(ticket, pre_generated_job_id)
+        response = await _persist_and_dispatch_multipart(
+            form_data=form_data,
+            background_tasks=background_tasks,
+            auth=auth,
+            session=session,
+            scan_queue=scan_queue,
+            object_store_factory=object_store_factory,
+            tenant_uuid=tenant_uuid,
+            canonical_tenant_id=canonical_tenant_id,
+            pre_generated_job_id=bound_job_id,
+            inline_processing=inline_processing,
+            existing_job=replay,
+        )
+    return response
+
+
+async def _persist_and_dispatch_multipart(
+    *,
+    form_data: FormData,
+    background_tasks: BackgroundTasks,
+    auth,
+    session,
+    scan_queue,
+    object_store_factory: ObjectStoreFactory,
+    tenant_uuid: uuid.UUID,
+    canonical_tenant_id: str,
+    pre_generated_job_id: uuid.UUID,
+    inline_processing: bool,
+    existing_job: bool = False,
+) -> JobStatusResponse:
+    """Persist uploads and enqueue work inside an already-admitted usage scope."""
+    if existing_job:
+        if scan_queue is None and session is not None:
+            scan_queue = get_scan_queue_service_factory(session)
+        # Re-registration is safe only through the persisted, idempotent sink.
+        # Other sinks need neither a new dispatch nor blob staging on replay.
+        if not isinstance(scan_queue, ScanQueueService):
+            media_ids, _, _ = _multipart_usage_inputs(form_data)
+            return _multipart_queued_response(pre_generated_job_id, len(media_ids))
+
     object_store = object_store_factory(canonical_tenant_id)
 
     media_items_list = multipart_to_media_items(
@@ -412,20 +545,23 @@ async def _analyze_media_multipart_form(
     # Any failure between here and the scheduled background task must roll
     # them back, otherwise the worker can never discover the orphans (no DB
     # row exists for cleanup-by-job_id to find later).
-    persistence_committed = False
-    try:
-        persisted_job_id = await scan_queue.create_scan_job_record(
-            tenant_id=tenant_uuid,
-            total=len(media_items_list),
-            job_id=pre_generated_job_id,
-            created_by_user_id=getattr(auth, "user_id", None),
-        )
-        if session is not None:
-            await session.commit()
-        persistence_committed = True
-    finally:
-        if not persistence_committed:
-            object_store.cleanup(job_id=str(pre_generated_job_id))
+    if existing_job:
+        persisted_job_id = pre_generated_job_id
+    else:
+        persistence_committed = False
+        try:
+            persisted_job_id = await scan_queue.create_scan_job_record(
+                tenant_id=tenant_uuid,
+                total=len(media_items_list),
+                job_id=pre_generated_job_id,
+                created_by_user_id=getattr(auth, "user_id", None),
+            )
+            if session is not None:
+                await session.commit()
+            persistence_committed = True
+        finally:
+            if not persistence_committed:
+                object_store.cleanup(job_id=str(pre_generated_job_id))
 
     # BR-05: schedule the populate + process pipeline so the scan worker has
     # queue items to claim. Mirror the JSON /analyze flow's dispatch shape.
@@ -443,19 +579,65 @@ async def _analyze_media_multipart_form(
     # attribute access leaks here. Slice B (OCI) swaps the factory via
     # app.dependency_overrides[get_object_store_factory_for_request] without
     # touching this route.
-    background_tasks.add_task(
-        chain_populate_and_process,
-        tenant_id=str(tenant_uuid),
-        job_id=str(persisted_job_id),
-        media_items=media_items_tuples,
-        media_ids=media_ids,
-        media_sources=media_sources,
-        scan_queue=scan_queue if not isinstance(scan_queue, ScanQueueService) else None,
-        session_factory=session_factory,
-        inline_processing=inline_processing,
-        correlation_id=get_correlation_id(),
-        object_store_factory=object_store_factory,
-    )
+    dispatch_task = chain_populate_and_process
+    dispatch_kwargs = {
+        "tenant_id": str(tenant_uuid),
+        "job_id": str(persisted_job_id),
+        "media_items": media_items_tuples,
+        "media_ids": media_ids,
+        "media_sources": media_sources,
+        "scan_queue": scan_queue if not isinstance(scan_queue, ScanQueueService) else None,
+        "session_factory": session_factory,
+        "inline_processing": inline_processing,
+        "correlation_id": get_correlation_id(),
+        "object_store_factory": object_store_factory,
+    }
+    if isinstance(scan_queue, ScanQueueService):
+        dispatch_task = _dispatch_multipart_persisted_analysis
+        dispatch_kwargs = {
+            "tenant_id": str(tenant_uuid),
+            "job_id": str(persisted_job_id),
+            "media_items": media_items_tuples,
+            "media_ids": media_ids,
+            "media_sources": media_sources,
+            "session_factory": session_factory,
+            "inline_processing": inline_processing,
+            "correlation_id": dispatch_kwargs["correlation_id"],
+            "object_store_factory": object_store_factory,
+            "canonical_tenant_id": canonical_tenant_id,
+        }
+
+    try:
+        background_tasks.add_task(
+            dispatch_task,
+            **dispatch_kwargs,
+        )
+    except Exception as exc:
+        logger.exception(
+            "Multipart scan dispatch failed after job commit",
+            extra={"job_id": str(persisted_job_id), "tenant_id": canonical_tenant_id},
+        )
+        if not existing_job:
+            try:
+                await scan_queue.cancel_scan_job(job_id=persisted_job_id)
+                if session is not None:
+                    await session.commit()
+            except Exception:
+                logger.exception(
+                    "Failed to mark multipart scan job failed after dispatch registration error",
+                    extra={"job_id": str(persisted_job_id), "tenant_id": canonical_tenant_id},
+                )
+            try:
+                object_store.cleanup(job_id=str(persisted_job_id))
+            except Exception:
+                logger.exception(
+                    "Failed to clean multipart blobs after dispatch registration error",
+                    extra={"job_id": str(persisted_job_id), "tenant_id": canonical_tenant_id},
+                )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_DISPATCH_REGISTRATION_FAILURE_DETAIL,
+        ) from exc
 
     # E15-11 S3.1: structured single-line telemetry for the multipart route so
     # transport failures can be triaged without parsing FastAPI access logs.
@@ -479,19 +661,87 @@ async def _analyze_media_multipart_form(
         persisted_job_id,
     )
 
+    return _multipart_queued_response(persisted_job_id, len(media_items_list))
+
+
+def _multipart_queued_response(job_id: uuid.UUID, total: int) -> JobStatusResponse:
     progress = JobProgressResponse(
         completed=0,
-        total=len(media_items_list),
+        total=total,
         phase=JobPhase.QUEUED,
         images_processed=0,
         faces_found=0,
     )
     return JobStatusResponse(
-        id=str(persisted_job_id),
+        id=str(job_id),
         type=JobType.ANALYZE.value,
         status=JobStatus.PENDING,
         progress=progress,
         started_at=datetime.now(tz=UTC),
         finished_at=None,
-        message=f"Queueing 0/{len(media_items_list)} items",
+        message=f"Queueing 0/{total} items",
     )
+
+
+async def _dispatch_multipart_persisted_analysis(
+    *,
+    tenant_id: str,
+    job_id: str,
+    media_items: list[tuple[int, str]],
+    media_ids: list[str],
+    media_sources: list[str],
+    session_factory,
+    inline_processing: bool,
+    correlation_id: str | None,
+    object_store_factory: ObjectStoreFactory,
+    canonical_tenant_id: str,
+) -> None:
+    """Dispatch an admitted multipart job idempotently and clean inline blobs."""
+    try:
+        await _dispatch_persisted_analysis(
+            tenant_id=tenant_id,
+            job_id=job_id,
+            media_items=media_items,
+            media_ids=media_ids,
+            media_sources=media_sources,
+            session_factory=session_factory,
+            inline_processing=inline_processing,
+            adapter_provider=get_shared_insightface_adapter if inline_processing else None,
+            correlation_id=correlation_id,
+        )
+    finally:
+        if inline_processing:
+            try:
+                if await _multipart_job_is_terminal(
+                    tenant_id=tenant_id,
+                    job_id=job_id,
+                    session_factory=session_factory,
+                ):
+                    object_store_factory(canonical_tenant_id).cleanup(job_id=job_id)
+            except Exception:
+                logger.exception(
+                    "Failed to clean multipart blobs after inline processing",
+                    extra={"job_id": job_id, "tenant_id": canonical_tenant_id},
+                )
+
+
+async def _multipart_job_is_terminal(*, tenant_id: str, job_id: str, session_factory) -> bool:
+    """Keep multipart blobs while an idempotent dispatcher observes a live job."""
+    from db.models import IdentityScanJob
+    from db.tenant_context import set_tenant_context
+
+    if session_factory is None:
+        from db.session import async_session_factory
+
+        session_factory = async_session_factory
+
+    async with session_factory() as session:
+        tenant_uuid = uuid.UUID(tenant_id)
+        await set_tenant_context(session, tenant_uuid)
+        job_status = await session.scalar(
+            select(IdentityScanJob.status).where(
+                IdentityScanJob.id == uuid.UUID(job_id),
+                IdentityScanJob.tenant_id == tenant_uuid,
+            )
+        )
+    return job_status is not None and job_status not in (JobStatus.PENDING, JobStatus.RUNNING)

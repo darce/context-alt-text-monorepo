@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import logging
+import os
 import random
 import sys
 import time
@@ -32,6 +33,12 @@ logger = logging.getLogger("sync_identity_schema")
 _ADVISORY_LOCK_KEY = 0xAC33051D
 
 _MIGRATION_MODULE = "db.migrations.versions.001_identity_schema"
+_WRITERS_DRAINED_ENV = "ACX_USAGE_SCHEMA_WRITERS_DRAINED"
+_WRITERS_DRAINED_GUC = "app.usage_schema_writers_drained"
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def sync_schema(engine: Engine) -> list[str]:
@@ -47,6 +54,11 @@ def sync_schema(engine: Engine) -> list[str]:
     with engine.begin() as conn:
         if conn.dialect.name == "postgresql":
             conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _ADVISORY_LOCK_KEY})
+            if _env_flag(_WRITERS_DRAINED_ENV):
+                conn.execute(
+                    text("SELECT set_config(:name, 'true', true)"),
+                    {"name": _WRITERS_DRAINED_GUC},
+                )
         before = {
             row[0] for row in conn.execute(text("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()"))
         }

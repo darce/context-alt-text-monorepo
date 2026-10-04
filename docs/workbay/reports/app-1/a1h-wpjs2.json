@@ -1,0 +1,41 @@
+{
+  "lane": "a1h-wpjs2",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "/home/gate/workbay-sandbox/feature-app-1-a1h-wpjs2-b0028735/.venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 14.69s"
+    },
+    {
+      "command": "vitest run apps/prototype-wp-alt-context/js/admin/api/__tests__/describeOperationKey.test.ts apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useBulkDescribe.test.tsx apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeMedia.test.tsx",
+      "result": "not_run",
+      "detail": "Per task brief, Vitest runs outside this sandbox; node_modules are unavailable here."
+    },
+    {
+      "command": "tsc --noEmit --project apps/prototype-wp-alt-context/tsconfig.type-check.json",
+      "result": "not_run",
+      "detail": "Per task brief, tsc runs outside this sandbox; node_modules are unavailable here."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 17046,
+      "finding_id": "A1R4-coord-L-assert",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/hooks/useDescribeMedia.ts:69 - the code now declares `asserts value is string`. apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeMedia.test.tsx:103 checks the invariant message, but the earlier bare throw had the same runtime behavior, so this test does not distinguish the typed assertion correction; no test checks the assertion signature.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 17045,
+      "finding_id": "A1R4-coord-L-dupkey",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/hooks/useDescribeMedia.ts:14,248,256 - the hook imports and calls `createDescribeIdempotencyKey`; its single implementation is in apps/prototype-wp-alt-context/js/admin/api/describeIdempotencyKey.ts:2-10. The helper-spy assertion is at useDescribeMedia.test.tsx:75-94, and retry/action key behavior is asserted in describeOperationKey.test.ts:63-86.",
+      "guard_test": "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeMedia.test.tsx::uses the shared idempotency-key helper for describe actions"
+    }
+  ],
+  "new_findings": [],
+  "summary": "The typed invariant assertion is present but only partially verified because its runtime test also passes with the prior bare throw; the shared idempotency-key correction holds and has a regression test. Integration callers preserve retry keys; no new defect was found. Verdicts: HOLDS=1, PARTIAL=1, NOT_FIXED=0; new findings: high=0, medium=0, low=0; manifest test passed (26), Vitest and tsc not_run per the task brief."
+}

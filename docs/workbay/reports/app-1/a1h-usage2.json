@@ -1,0 +1,121 @@
+{
+  "lane": "a1h-usage2",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_gate3_daily_settle.py recognition/tests/unit/test_app1_single_admission.py recognition/tests/unit/test_app1_usage_admission_contract.py recognition/tests/unit/test_app1_usage_admission_service.py",
+      "result": "not_run",
+      "detail": "uv stopped before pytest: error: failed to remove file `/home/gate/workbay-sandbox/.venv-lane-feature-app-1-a1h-usage2-35f55729/lib/python3.12/site-packages/../../../bin/alembic`: Read-only file system (os error 30)."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_gate3_daily_settle.py recognition/tests/unit/test_app1_single_admission.py recognition/tests/unit/test_app1_usage_admission_contract.py recognition/tests/unit/test_app1_usage_admission_service.py",
+      "result": "pass",
+      "detail": "50 passed in 20.85s."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/integration/test_app1_reserved_at_period_postgres.py",
+      "result": "not_run",
+      "detail": "Requires the PostgreSQL integration database, which this sandbox lacks. Read the test: it asserts persisted admission time and release/sweeper refunds at the rolled period boundary."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16977,
+      "finding_id": "FAUS2-25f83efb13e42a65-H-9f70d4495d796a20995df9a2",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/usage_repository.py:442-446,546 - reserve captures `now` after locking and rolling the global period, then persists `reserved_at=now`; the unit test asserts the admission timestamp and refund.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_gate3_daily_settle.py::test_reservation_timestamp_matches_the_rolled_admission_period_and_release_refunds"
+    },
+    {
+      "db_id": 15849,
+      "finding_id": "W4USAG-ac21ad4e1d22ef24-H-1540f14dced9d9122f11f249",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/usage_repository.py:346-362,532 - `_assert_global_capacity` checks `int(global_state.inflight_units) + cost_units`, `int(global_state.queue_depth) + 1`, and `int(global_state.queue_bytes) + queue_bytes` against configured limits. The available guard test sets `daily_cost_limit=1` and checks overflow, but does not assert the in-flight or queue limits.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_usage_admission_service.py::test_global_daily_cost_limit_is_enforced"
+    },
+    {
+      "db_id": 15989,
+      "finding_id": "APP1-LEDGER-RV02",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/usage_repository.py:240-257,622-634 - `_ticket_identity_matches` rejects mismatched job, operation, and fingerprint; the guarded update includes `operation_id == reservation.operation_id`. The test rejects altered values before committing the original ticket.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_usage_admission_service.py::test_settlement_requires_exact_operation_fingerprint_and_job"
+    },
+    {
+      "db_id": 15988,
+      "finding_id": "APP1-LEDGER-RV01",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/usage_repository.py:575-580 - `parsed.epoch != int(global_state.fence_epoch)` raises before settlement mutation. The test verifies stale tokens leave reservation status and counters unchanged.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_usage_admission_service.py::test_stale_epoch_is_rejected_before_status_or_counter_mutation"
+    },
+    {
+      "db_id": 15577,
+      "finding_id": "HG-51",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/tenant_entitlement_repository.py:370-402 - `entering_or_staying_past_due` preserves the paid period after period end; usage admission sums by `UsageReservation.period_start == entitlement.period_start` at usage_repository.py:506-515. The test asserts the original period and 5000 used jobs.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_tenant_entitlement.py::test_dunning_after_period_end_does_not_reopen_the_consumed_period"
+    },
+    {
+      "db_id": 15545,
+      "finding_id": "GXPLAN-e71025f7c0c5b190-H-96034f35405792f68a7ddce0",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/application/services/tenant_entitlement_service.py:167-179 - session-backed construction runs `configured_settings = RecognitionSettings()` when omitted, then passes plan allowances and `past_due_grace_s` to the repository; tests cover configured paid allowance and the production grace fallback.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_tenant_entitlement_service.py::test_production_settings_configure_the_past_due_grace_window; apps/prototype-description-service/recognition/tests/unit/test_app1_tenant_entitlement.py::test_first_paid_activation_uses_settings_allowance"
+    },
+    {
+      "db_id": 15533,
+      "finding_id": "APP1-HG-41",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/tenant_entitlement_repository.py:269-272 - the beta upsert `where` requires `TenantEntitlement.source != _BILLING_SOURCE`; the test confirms a beta grant leaves past-due paid allowance intact through recovery.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_tenant_entitlement.py::test_beta_grant_cannot_replace_past_due_paid_state_and_recovery_recomputes_plan"
+    },
+    {
+      "db_id": 15527,
+      "finding_id": "APP1-HG-20",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/tenant_entitlement_repository.py:383-397 - beta-to-paid transition sets `row.period_start = normalized_now` after refreshing allowance; the test asserts 5000 allowance and zero carried beta usage.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_tenant_entitlement_service.py::test_beta_to_paid_upgrade_applies_paid_allowance_and_starts_a_clean_period"
+    },
+    {
+      "db_id": 15482,
+      "finding_id": "W2RECO-a759eea27bcc891d-H-8e62839a43c8508cf7a7c10b",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/tenant_entitlement_repository.py:269-272,358-365 - upsert excludes billing-sourced rows and `beta_current and normalized_status in _BETA_PRESERVING_BILLING_STATUSES` returns the beta grant unchanged; tests cover both directions.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_tenant_entitlement.py::test_unexpired_beta_grant_survives_non_active_billing_states; apps/prototype-description-service/recognition/tests/unit/test_app1_tenant_entitlement_service.py::test_h4_beta_upsert_does_not_clear_active_paid_status"
+    },
+    {
+      "db_id": 15480,
+      "finding_id": "W2RECO-a759eea27bcc891d-H-71cf3278f4dc4793ebf9cbb0",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/tenant_entitlement_repository.py:327-347 - new paid rows set `allowance_jobs = self._allowance_for_plan(normalized_plan_code)`; tests assert configured paid allowance and past-due grace.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_tenant_entitlement_service.py::test_h6_active_paid_state_uses_configured_plan_allowance; apps/prototype-description-service/recognition/tests/unit/test_app1_tenant_entitlement_service.py::test_h6_past_due_state_gets_configured_allowance_and_grace_window"
+    },
+    {
+      "db_id": 15993,
+      "finding_id": "APP1-LEDGER-RV06",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py:617-640 - `job_id=str(generated_job_id)` is passed to admission and the ticket-bound UUID to scheduling; analyze_multipart.py:408,465-475,536-540 persists the pre-generated admitted UUID. Caller tests assert the binding.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_usage_admission_wiring.py::test_analyze_reserve_uses_pregenerated_job_and_fingerprint; apps/prototype-description-service/recognition/tests/unit/test_app1_usage_admission_wiring.py::test_multipart_request_uses_usage_admission; apps/prototype-description-service/recognition/tests/unit/test_app1_usage_recognition_lifecycle.py::test_same_operation_replays_same_job_without_second_enqueue"
+    },
+    {
+      "db_id": 15578,
+      "finding_id": "HG-52",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/application/services/tenant_entitlement_service.py:339-348 passes `grace_until=None`; tenant_entitlement_repository.py:407-417 assigns `normalized_grace_until = existing_grace_until` on repeat, and the test asserts it stays at the first deadline.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_tenant_entitlement.py::test_repeated_dunning_events_do_not_slide_the_grace_deadline"
+    }
+  ],
+  "new_findings": [],
+  "summary": "All 12 historical corrections are rechecked: 11 hold and global capacity is partial because in-flight and queue bounds lack direct assertions; no new defects were found. The lane unit suite passes, while the PostgreSQL test was not run because its database is unavailable."
+}

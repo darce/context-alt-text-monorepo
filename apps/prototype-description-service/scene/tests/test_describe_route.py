@@ -10,10 +10,10 @@ from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import cast
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from jsonschema import Draft7Validator
-import pytest
 from referencing import Registry, Resource
 from sqlalchemy import Table, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -35,11 +35,13 @@ from db.models.scene import (
     ImageDescription,
 )
 from db.models.tenant import Tenant
+from recognition.domain.portal_contracts import UsageTicket
 from recognition.interface_adapters.http.deps import (
     get_optional_session,
     require_write_access,
 )
 from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
+from recognition.interface_adapters.http.deps.usage_admission import get_usage_admission_service
 from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.description_adapter import AdapterResult
@@ -47,7 +49,7 @@ from scene.domain.description import DescriptionAdapterKind
 from scene.interface_adapters.http.deps import get_description_adapter, get_gpu_description_adapter
 from scene.interface_adapters.http.router import router as scene_router
 from scene.interface_adapters.http.routers.describe import AsyncAdmissionGate, _PreflightMissCacheRepository
-from scene.tests.demo_quota_harness import demo_quota_client as _demo_quota_client
+from scene.tests.demo_quota_harness import demo_quota_client as _raw_demo_quota_client
 from scene.tests.demo_quota_harness import recognition_used as _recognition_used
 
 TENANT_ID = "00000000-0000-0000-0000-0000000000bb"
@@ -77,6 +79,53 @@ class _Auth:
     def __init__(self, tenant_claim=None):
         self.tenant_claim = tenant_claim
         self.user_id = None
+
+
+class _PassAdmission:
+    async def reserve(
+        self,
+        tenant_id,
+        *,
+        idempotency_key,
+        job_id,
+        cost_units,
+        operation_id=None,
+        request_fingerprint=None,
+        queue_bytes=0,
+    ):
+        del queue_bytes
+        tenant_uuid = tenant_id if isinstance(tenant_id, uuid.UUID) else uuid.UUID(str(tenant_id))
+        return UsageTicket(
+            uuid.uuid4(),
+            tenant_uuid,
+            idempotency_key,
+            cost_units,
+            operation_id=operation_id or idempotency_key,
+            request_fingerprint=request_fingerprint or "",
+            job_id=job_id,
+            fence_token="fence-describe-route",
+        )
+
+    async def commit(self, ticket):
+        del ticket
+
+    async def release(self, ticket):
+        del ticket
+
+    async def commit_fenced(self, ticket, *, fence_token):
+        del ticket, fence_token
+
+    async def release_fenced(self, ticket, *, fence_token):
+        del ticket, fence_token
+
+
+@contextmanager
+def _demo_quota_client(**kwargs):
+    with _raw_demo_quota_client(**kwargs) as ctx:
+        admission = _PassAdmission()
+        ctx[0].app.state.usage_admission_service = admission
+        ctx[0].app.dependency_overrides[get_usage_admission_service] = lambda: admission
+        yield ctx
 
 
 class _SlowLocalAdapter:
@@ -173,6 +222,9 @@ def _client(auth_tenant=None, adapter=None, naming_agreement_enabled=True, db_ab
     # re-resolved (would 401 under default RECOGNITION_AUTH_ENABLED=1).
     app.dependency_overrides[enforce_demo_quota] = lambda: None
     app.dependency_overrides[get_optional_session] = (lambda: None) if db_absent else _session
+    admission = _PassAdmission()
+    app.state.usage_admission_service = admission
+    app.dependency_overrides[get_usage_admission_service] = lambda: admission
     if adapter is not None:
         app.dependency_overrides[get_description_adapter] = lambda: adapter
     try:
@@ -196,11 +248,17 @@ def _post(
     recognition_enabled=None,
 ):
     payload = body if body is not None else b"image-bytes-payload"
-    data = {"request": json.dumps(request_body or {"tenant_id": str(tenant), "media_id": media_id})}
+    data = {
+        "request": json.dumps(request_body or {"tenant_id": str(tenant), "media_id": media_id}),
+        "operation_id": uuid.uuid4().hex,
+    }
     if recognition_enabled is not None:
         data["recognition_enabled"] = "true" if recognition_enabled else "false"
     if extra_data:
         data.update(extra_data)
+        # Explicit None keeps tests of the keyless fast path keyless.
+        if data.get("operation_id") is None:
+            data.pop("operation_id", None)
     return client.post(
         "/scene/describe/multipart",
         data=data,
@@ -274,7 +332,7 @@ def _operation_first_ready_at(client, operation_id: str):
 def _post_async(client, tenant, *, media_id=42, image_key="image_42", content_type="image/jpeg", body=b"image-bytes"):
     return client.post(
         "/scene/describe/async",
-        data={"request": json.dumps({"tenant_id": str(tenant), "media_id": media_id})},
+        data={"request": json.dumps({"tenant_id": str(tenant), "media_id": media_id}), "operation_id": uuid.uuid4().hex},
         files={image_key: ("x.jpg", body, content_type)},
     )
 
@@ -298,7 +356,7 @@ def test_happy_path_returns_15_fields_then_cached():
         assert body["media_id"] == 42
         assert body["adapter"] == "seeded"
         assert body["provider_disclosure"]["provider"] == "none"
-        r2 = _post(client, tenant)
+        r2 = _post(client, tenant, extra_data={"operation_id": None})
         assert r2.status_code == 200
         cached = r2.json()
         assert cached["cached"] is True
@@ -313,7 +371,7 @@ def test_route_records_description_metrics():
     metrics = get_default_metrics()
     with _client() as client:
         r1 = _post(client, TENANT_ID)
-        r2 = _post(client, TENANT_ID)
+        r2 = _post(client, TENANT_ID, extra_data={"operation_id": None})
         assert r1.status_code == 200, r1.text
         assert r2.status_code == 200, r2.text
 
@@ -330,7 +388,7 @@ def test_two_image_parts_422():
     with _client() as client:
         r = client.post(
             "/scene/describe/multipart",
-            data={"request": json.dumps({"tenant_id": str(tenant), "media_id": 42})},
+            data={"request": json.dumps({"tenant_id": str(tenant), "media_id": 42}), "operation_id": uuid.uuid4().hex},
             files=[
                 ("image_42", ("a.jpg", b"x", "image/jpeg")),
                 ("image_43", ("b.jpg", b"y", "image/jpeg")),
@@ -356,7 +414,7 @@ def test_missing_image_part_422():
     with _client() as client:
         r = client.post(
             "/scene/describe/multipart",
-            data={"request": json.dumps({"tenant_id": str(tenant), "media_id": 42})},
+            data={"request": json.dumps({"tenant_id": str(tenant), "media_id": 42}), "operation_id": uuid.uuid4().hex},
         )
         assert r.status_code == 422
 
@@ -424,10 +482,14 @@ def _png_bytes(width=100, height=50):
     return buf.getvalue()
 
 
-def _post_png(client, tenant, *, media_id=42, recognition_enabled=None):
-    data = {"request": json.dumps({"tenant_id": str(tenant), "media_id": media_id})}
+def _post_png(client, tenant, *, media_id=42, recognition_enabled=None, extra_data=None):
+    data = {"request": json.dumps({"tenant_id": str(tenant), "media_id": media_id}), "operation_id": uuid.uuid4().hex}
     if recognition_enabled is not None:
         data["recognition_enabled"] = "true" if recognition_enabled else "false"
+    if extra_data:
+        data.update(extra_data)
+        if data.get("operation_id") is None:
+            data.pop("operation_id", None)
     return client.post(
         "/scene/describe/multipart",
         data=data,
@@ -656,7 +718,7 @@ def test_cache_hit_keeps_grounded_naming_parity():
         seed=_seed_confirmed_identity("Daniel", roster_id=uuid.uuid4()),
     ) as client:
         first = _post_png(client, TENANT_ID, recognition_enabled=True).json()
-        second = _post_png(client, TENANT_ID, recognition_enabled=True).json()
+        second = _post_png(client, TENANT_ID, recognition_enabled=True, extra_data={"operation_id": None}).json()
         assert second["cached"] is True
         assert second["named_draft"] == first["named_draft"] == "Daniel stands by the window."
         assert second["naming_provenance"]["mode"] == first["naming_provenance"]["mode"] == "grounded"
@@ -685,7 +747,7 @@ def test_cache_hit_without_base_skips_naming_preview(monkeypatch):
             raise AssertionError("naming preview must not run when cached base is missing")
 
         monkeypatch.setattr(describe_mod, "_naming_preview", boom)
-        second = _post_png(client, TENANT_ID)
+        second = _post_png(client, TENANT_ID, extra_data={"operation_id": None})
         assert second.status_code == 200, second.text
         body = second.json()
         assert body["cached"] is True
@@ -729,6 +791,7 @@ def test_positional_fallback_suppressed_when_stage2_drops_identity():
         r = client.post(
             "/scene/describe/multipart",
             data={
+                "operation_id": uuid.uuid4().hex,
                 "request": json.dumps(
                     {
                         "tenant_id": TENANT_ID,
@@ -1108,7 +1171,7 @@ def test_demo_quota_cache_hit_does_not_charge():
         assert r1.json()["cached"] is False
         assert _recognition_used(sf, slug) == 1
 
-        r2 = _post(client, tenant_id, media_id=1, image_key="image_1", body=body)
+        r2 = _post(client, tenant_id, media_id=1, image_key="image_1", body=body, extra_data={"operation_id": None})
         assert r2.status_code == 200, r2.text
         assert r2.json()["cached"] is True
         assert _recognition_used(sf, slug) == 1
@@ -1130,7 +1193,7 @@ def test_demo_quota_survives_post_consume_http_error():
         # Unsupported content-type fails before compute — no additional charge.
         bad = client.post(
             "/scene/describe/multipart",
-            data={"request": json.dumps({"tenant_id": str(tenant_id), "media_id": 2})},
+            data={"request": json.dumps({"tenant_id": str(tenant_id), "media_id": 2}), "operation_id": uuid.uuid4().hex},
             files={"image_2": ("x.bin", b"not-an-image", "application/octet-stream")},
         )
         assert bad.status_code == 415, bad.text
@@ -1327,22 +1390,25 @@ def test_gpu_unavailable_retry_terminalizes_existing_operation(monkeypatch, tmp_
         assert adapter.calls == 0
 
 
-def test_gpu_unavailable_retry_unknown_operation_is_mismatch(monkeypatch, tmp_path):
+def test_gpu_unavailable_first_use_accepts_and_terminalizes_operation(monkeypatch, tmp_path):
     _gpu_env(monkeypatch, tmp_path, state="stopped")
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://8.8.8.8:8000")
     adapter = _UnavailableGpuAdapter()
     with _client(adapter=adapter) as client:
-        monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://8.8.8.8:8000")
+        operation_id = "unavailable-first-use-operation"
         response = _post(
             client,
             TENANT_ID,
             request_body={"tenant_id": TENANT_ID, "media_id": 42, "tier": "gpu"},
-            extra_data={"operation_id": "unknown-operation-id"},
+            extra_data={"operation_id": operation_id},
         )
-        assert response.status_code == 409, response.text
+        assert response.status_code == 503, response.text
         detail = response.json()["detail"]
-        assert detail["code"] == "operation_mismatch"
-        assert detail["operation_id"] is None
-        assert _lease_rows(client) == []
+        assert detail["code"] == "description_service_unavailable"
+        assert detail["reason"] == "endpoint_not_private"
+        assert detail["operation_id"] == operation_id
+        assert _lease_state(client, operation_id) == "completed"
+        assert _active_lease_count(client) == 0
         assert adapter.calls == 0
 
 
@@ -1444,6 +1510,7 @@ def test_gpu_unusable_endpoint_fails_fast_before_demand(monkeypatch, tmp_path, e
         response = _post(
             client,
             TENANT_ID,
+            extra_data={"operation_id": None},
             request_body={"tenant_id": TENANT_ID, "media_id": 42, "tier": "gpu"},
         )
         assert response.status_code == 503, response.text
@@ -1523,14 +1590,60 @@ def test_gpu_adapter_reason_fails_fast_before_demand(monkeypatch, tmp_path):
         "endpoint_resolution_pending",
         kind=DescriptionAdapterKind.GPU,
     )
+    adapter_calls = []
+    original_describe = adapter.describe
+
+    def track_describe(*args, **kwargs):
+        adapter_calls.append((args, kwargs))
+        return original_describe(*args, **kwargs)
+
+    monkeypatch.setattr(adapter, "describe", track_describe)
     with _client(adapter=adapter) as client:
-        response = _post(client, TENANT_ID)
+        operation_id = "adapter-reason-first-use-operation"
+        response = _post(
+            client,
+            TENANT_ID,
+            extra_data={"operation_id": operation_id},
+        )
+        assert response.status_code == 503, response.text
+        detail = response.json()["detail"]
+        assert detail["code"] == "description_service_unavailable"
+        assert detail["reason"] == "endpoint_resolution_pending"
+        assert detail["operation_id"] == operation_id
+        assert _lease_state(client, operation_id) == "completed"
+        assert _active_lease_count(client) == 0
+        assert adapter_calls == []
+
+
+def test_gpu_adapter_reason_keyless_fails_fast_before_demand(monkeypatch, tmp_path):
+    from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
+
+    _gpu_env(monkeypatch, tmp_path, state="stopped")
+    adapter = UnavailableDescriptionAdapter(
+        "endpoint_resolution_pending",
+        kind=DescriptionAdapterKind.GPU,
+    )
+    adapter_calls = []
+    original_describe = adapter.describe
+
+    def track_describe(*args, **kwargs):
+        adapter_calls.append((args, kwargs))
+        return original_describe(*args, **kwargs)
+
+    monkeypatch.setattr(adapter, "describe", track_describe)
+    with _client(adapter=adapter) as client:
+        response = _post(
+            client,
+            TENANT_ID,
+            extra_data={"operation_id": None},
+        )
         assert response.status_code == 503, response.text
         detail = response.json()["detail"]
         assert detail["code"] == "description_service_unavailable"
         assert detail["reason"] == "endpoint_resolution_pending"
         assert detail["operation_id"] is None
         assert _lease_rows(client) == []
+        assert adapter_calls == []
 
 
 def test_gpu_ready_warm_request_has_no_startup(monkeypatch, tmp_path):
@@ -1601,7 +1714,7 @@ def test_gpu_cache_hit_completes_operation_without_active_lease(monkeypatch, tmp
         assert first.status_code == 200, first.text
         assert len(accepts) == 1
         assert len(describes) == 1
-        cached = _post(client, TENANT_ID)
+        cached = _post(client, TENANT_ID, extra_data={"operation_id": None})
         assert cached.status_code == 200, cached.text
         body = cached.json()
         assert body["cached"] is True
@@ -2021,15 +2134,29 @@ def test_gpu_cache_hit_mismatch_is_409(monkeypatch, tmp_path):
     _gpu_env(monkeypatch, tmp_path, state="ready")
     adapter = _GpuAdapter()
     with _client(adapter=adapter) as client:
-        first = _post(client, TENANT_ID)
+        operation_id = "gpu-cache-original-operation"
+        first = _post(client, TENANT_ID, extra_data={"operation_id": operation_id})
         assert first.status_code == 200, first.text
-        mismatch = _post(client, TENANT_ID, extra_data={"operation_id": "not-this-operation"})
+        assert first.json()["operation_id"] == operation_id
+        mismatch = _post(
+            client,
+            TENANT_ID,
+            body=b"different-image-bytes-payload",
+            extra_data={"operation_id": operation_id},
+        )
         assert mismatch.status_code == 409, mismatch.text
         detail = mismatch.json()["detail"]
         assert detail["code"] == "operation_mismatch"
         assert detail["operation_id"] is None
         assert "startup_id" in detail
         assert "timing" in detail
+        assert adapter.calls == 1
+
+        new_operation_id = "gpu-cache-independent-operation"
+        cached = _post(client, TENANT_ID, extra_data={"operation_id": new_operation_id})
+        assert cached.status_code == 200, cached.text
+        assert cached.json()["cached"] is True
+        assert cached.json()["operation_id"] == new_operation_id
         assert adapter.calls == 1
 
 
@@ -2141,16 +2268,25 @@ def test_oversized_operation_id_is_422():
         assert _lease_rows(client) == []
 
 
-def test_unknown_max_length_operation_id_is_409_with_null_id(monkeypatch, tmp_path):
+def test_max_length_operation_id_is_accepted_then_mismatched_with_null_id(monkeypatch, tmp_path):
     _gpu_env(monkeypatch, tmp_path, state="ready")
     adapter = _GpuAdapter()
     with _client(adapter=adapter) as client:
-        response = _post(client, TENANT_ID, extra_data={"operation_id": "a" * 128})
-        assert response.status_code == 409, response.text
-        detail = response.json()["detail"]
+        operation_id = "a" * 128
+        first = _post(client, TENANT_ID, extra_data={"operation_id": operation_id})
+        assert first.status_code == 200, first.text
+        assert first.json()["operation_id"] == operation_id
+        mismatch = _post(
+            client,
+            TENANT_ID,
+            body=b"different-image-bytes-payload",
+            extra_data={"operation_id": operation_id},
+        )
+        assert mismatch.status_code == 409, mismatch.text
+        detail = mismatch.json()["detail"]
         assert detail["code"] == "operation_mismatch"
         assert detail["operation_id"] is None
-        assert adapter.calls == 0
+        assert adapter.calls == 1
 
 
 def test_gpu_quota_http_exception_after_accept_releases_lease(monkeypatch, tmp_path):

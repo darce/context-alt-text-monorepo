@@ -58,6 +58,7 @@ from recognition.interface_adapters.http.deps.clustering_circuit_breaker import 
 )
 from recognition.interface_adapters.http.deps.portal_composition import (
     install_portal_composition,
+    install_usage_admission_factory,
     install_usage_admission_composition,
 )
 from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
@@ -653,6 +654,7 @@ def create_app() -> FastAPI:
     app.include_router(scene_router, prefix="/scene")
     app.include_router(gpu_router, prefix="/scene")
 
+    install_usage_admission_factory(app)
     if os.environ.get("RECOGNITION_PORTAL_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}:
         install_portal_composition(app, settings=recognition_settings)
         app.include_router(portal_router)

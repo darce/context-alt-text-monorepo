@@ -11,6 +11,7 @@ import {
   type DescribeOperationTiming,
   type VisualFactsResponse,
 } from '../api/describeApi';
+import { createDescribeIdempotencyKey } from '../api/describeIdempotencyKey';
 import { clampRetryAfterMs } from '../utils/retryAfter';
 
 export type DescribeMediaMutationInput =
@@ -65,6 +66,12 @@ const mediaIdOf = (input: DescribeMediaMutationInput): number => (typeof input =
 const writeOptionsOf = (input: DescribeMediaMutationInput): DescribeMediaWriteOptions =>
   typeof input === 'number' ? {} : { writeAlt: input.writeAlt, force: input.force ?? false };
 
+const assertDescribeActionIdempotencyKey: (value: string | null) => asserts value is string = (value) => {
+  if (value === null) {
+    throw new Error('Describe action idempotency key was not initialized.');
+  }
+};
+
 const isMismatchOrExpired = (code: string | null): boolean =>
   code === DESCRIBE_OPERATION_ERROR_CODE.MISMATCH || code === DESCRIBE_OPERATION_ERROR_CODE.EXPIRED;
 
@@ -95,13 +102,12 @@ const warmingRetryDelayMs = (error: unknown, warmupEtaSeconds: number | null): n
 const describeWithLease = (
   input: DescribeMediaMutationInput,
   operationId: string | null,
+  idempotencyKey: string,
 ): Promise<VisualFactsResponse> => {
   const mediaId = mediaIdOf(input);
-  if (typeof input === 'number' && operationId === null) {
-    return describeMedia(mediaId);
-  }
   return describeMedia(mediaId, {
     ...writeOptionsOf(input),
+    idempotencyKey,
     ...(operationId !== null ? { operationId } : {}),
   });
 };
@@ -118,6 +124,7 @@ export const useDescribeMedia = () => {
   const lastInputRef = useRef<DescribeMediaMutationInput | null>(null);
   const lastMutateOptionsRef = useRef<DescribeMutateOptions | undefined>(undefined);
   const leaseOperationIdRef = useRef<string | null>(null);
+  const actionIdempotencyKeyRef = useRef<string | null>(null);
   const mismatchRetriedRef = useRef(false);
   const warmingStartedAtRef = useRef<number | null>(null);
   const warmingCeilingMsRef = useRef(SUGGEST_WARMING_HARD_CEILING_MS);
@@ -140,14 +147,16 @@ export const useDescribeMedia = () => {
   const mutation = useMutation<VisualFactsResponse, Error, DescribeMediaMutationInput>({
     mutationFn: async (input: DescribeMediaMutationInput) => {
       lastInputRef.current = input;
+      const idempotencyKey = actionIdempotencyKeyRef.current;
+      assertDescribeActionIdempotencyKey(idempotencyKey);
       try {
-        return await describeWithLease(input, leaseOperationIdRef.current);
+        return await describeWithLease(input, leaseOperationIdRef.current, idempotencyKey);
       } catch (error) {
         const code = resolveDescribeErrorCode(error);
         if (isMismatchOrExpired(code) && !mismatchRetriedRef.current) {
           leaseOperationIdRef.current = null;
           mismatchRetriedRef.current = true;
-          return await describeWithLease(input, null);
+          return await describeWithLease(input, null, idempotencyKey);
         }
         throw error;
       }
@@ -236,9 +245,18 @@ export const useDescribeMedia = () => {
 
   const mutate = (input: DescribeMediaMutationInput, options?: DescribeMutateOptions): void => {
     leaseOperationIdRef.current = null;
+    actionIdempotencyKeyRef.current = createDescribeIdempotencyKey();
     warmingStartedAtRef.current = null;
     lastMutateOptionsRef.current = options;
     mutation.mutate(input, options);
+  };
+
+  const mutateAsync = (input: DescribeMediaMutationInput, options?: DescribeMutateOptions) => {
+    leaseOperationIdRef.current = null;
+    actionIdempotencyKeyRef.current = createDescribeIdempotencyKey();
+    warmingStartedAtRef.current = null;
+    lastMutateOptionsRef.current = options;
+    return mutation.mutateAsync(input, options);
   };
 
   const retry = (options?: DescribeMutateOptions): void => {
@@ -255,10 +273,11 @@ export const useDescribeMedia = () => {
   const reset = (): void => {
     lastInputRef.current = null;
     lastMutateOptionsRef.current = undefined;
+    actionIdempotencyKeyRef.current = null;
     clearLease();
     setTiming(null);
     mutation.reset();
   };
 
-  return { ...mutation, mutate, reset, retry, warming, warmingTimedOut, timing };
+  return { ...mutation, mutate, mutateAsync, reset, retry, warming, warmingTimedOut, timing };
 };

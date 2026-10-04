@@ -81,6 +81,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', $mediaId);
+        $this->ensureTestIdempotencyKey($req);
         $this->controller->describe_media($req);
 
         $body = $this->getHttpCalls()[0]['args']['body'];
@@ -117,6 +118,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $result = $this->controller->describe_media($req);
         $this->assertInstanceOf(WP_REST_Response::class, $result);
 
@@ -179,6 +181,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $service->describe_media($req);
 
         $body = $host->lastBody['request'] ?? '';
@@ -200,6 +203,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $result = $this->controller->describe_media($req);
 
         $this->assertNotInstanceOf(WP_Error::class, $result, var_export($result, true));
@@ -294,8 +298,10 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $req->set_param('recognition_enabled', true);
         $req->set_body_params(['recognition_enabled' => 'true']);
+        $this->ensureTestIdempotencyKey($req);
         $this->controller->describe_media($req);
 
         $body = $this->getHttpCalls()[0]['args']['body'];
@@ -320,6 +326,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $service->describe_media($req);
 
         $this->assertSame('true', $host->lastBody['recognition_enabled'] ?? null);
@@ -361,6 +368,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $result = $this->controller->describe_media($req);
 
         $this->assertInstanceOf(WP_REST_Response::class, $result);
@@ -395,6 +403,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $result = $service->describe_media($req);
 
         $this->assertInstanceOf(WP_REST_Response::class, $result, 'Describe must not fatal on projection failure');
@@ -422,6 +431,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $req->set_param('write_alt', true);
         $result = $this->controller->describe_media($req);
 
@@ -458,6 +468,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $req->set_param('write_alt', true);
         $result = $this->controller->describe_media($req);
 
@@ -495,6 +506,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $req->set_param('write_alt', true);
         $req->set_param('force', true);
         $result = $this->controller->describe_media($req);
@@ -538,6 +550,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $req->set_param('write_alt', true);
         $req->set_param('force', true);
         $result = $this->controller->describe_media($req);
@@ -571,6 +584,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $req->set_param('write_alt', true);
         $result = $this->controller->describe_media($req);
 
@@ -598,6 +612,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $req->set_param('write_alt', true);
         $req->set_param('force', true);
         $result = $this->controller->describe_media($req);
@@ -625,6 +640,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $req->set_param('write_alt', true);
         $result = $this->controller->describe_media($req);
 
@@ -657,6 +673,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $req->set_param('write_alt', true);
         $result = $this->controller->describe_media($req);
 
@@ -695,6 +712,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $req->set_param('write_alt', true);
         $result = $this->controller->describe_media($req);
 
@@ -717,6 +735,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $req->set_param('write_alt', true);
         $req->set_param('force', true);
         $result = $this->controller->describe_media($req);
@@ -750,6 +769,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $req->set_param('write_alt', true);
         $req->set_param('force', true);
         $result = $this->controller->describe_media($req);
@@ -791,10 +811,20 @@ class DescribeMediaServiceTest extends TestCase
         $GLOBALS['__ac_posts'][$id]->post_content = '';
     }
 
+    private function ensureTestIdempotencyKey(WP_REST_Request $request): void
+    {
+        $bodyParams = $request->get_body_params();
+        if (!array_key_exists('idempotency_key', $bodyParams)) {
+            $bodyParams['idempotency_key'] = 'test-operation-key-0001';
+        }
+        $request->set_body_params($bodyParams);
+    }
+
     private function writeRequest(int $media_id, bool $force = false): WP_REST_Request
     {
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', $media_id);
+        $this->ensureTestIdempotencyKey($req);
         $req->set_param('write_alt', true);
         if ($force) {
             $req->set_param('force', true);
@@ -1116,6 +1146,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $result = $this->controller->describe_media($req);
 
         $this->assertInstanceOf(WP_REST_Response::class, $result);
@@ -1189,6 +1220,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $result = $this->controller->describe_media($req);
 
         $this->assertInstanceOf(WP_REST_Response::class, $result);
@@ -1257,6 +1289,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $this->controller->describe_media($req);
 
         $body = $this->getHttpCalls()[0]['args']['body'];
@@ -1279,6 +1312,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $this->controller->describe_media($req);
 
         $body = $this->getHttpCalls()[0]['args']['body'];
@@ -1456,6 +1490,7 @@ class DescribeMediaServiceTest extends TestCase
     {
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 9001);
+        $this->ensureTestIdempotencyKey($req);
         $result = $this->controller->describe_media($req);
 
         $this->assertInstanceOf(WP_Error::class, $result);
@@ -1480,6 +1515,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $result = $this->controller->describe_media($req);
 
         $this->assertInstanceOf(WP_Error::class, $result);
@@ -1495,6 +1531,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 7);
+        $this->ensureTestIdempotencyKey($req);
         $result = $this->controller->describe_media($req);
 
         $this->assertInstanceOf(WP_Error::class, $result);
@@ -1514,6 +1551,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $result = $this->controller->describe_media($req);
 
         $this->assertInstanceOf(WP_Error::class, $result);
@@ -1535,6 +1573,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $result = $this->controller->describe_media($req);
 
         $this->assertInstanceOf(WP_Error::class, $result);
@@ -1555,6 +1594,7 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $result = $this->controller->describe_media($req);
 
         $this->assertInstanceOf(WP_REST_Response::class, $result);
@@ -1588,10 +1628,13 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
         $operationId = $fixture['request']['operation_id'] ?? null;
+        $bodyParams = ['idempotency_key' => 'test-operation-key-0001'];
         if (is_string($operationId)) {
-            $req->set_body_params(['operation_id' => $operationId]);
+            $bodyParams['operation_id'] = $operationId;
         }
+        $req->set_body_params($bodyParams);
 
         $result = $this->controller->describe_media($req);
         $this->assertInstanceOf(WP_REST_Response::class, $result);
@@ -1611,28 +1654,26 @@ class DescribeMediaServiceTest extends TestCase
             $this->assertStringContainsString('name="operation_id"', $body);
             $this->assertStringContainsString($operationId, $body);
         } else {
-            $this->assertStringNotContainsString('name="operation_id"', $body);
+            $this->assertStringContainsString('name="operation_id"', $body);
+            $this->assertStringContainsString('test-operation-key-0001', $body);
         }
     }
 
-    public function testOmittedOperationIdIsNotInventedOnRetryField(): void
+    public function testMissingIdempotencyKeyReturns400WithoutRemoteCall(): void
     {
         $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => (string) json_encode($this->validBackendBody(42)),
-        ]);
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
-        $this->controller->describe_media($req);
+        $result = $this->controller->describe_media($req);
 
-        $body = $this->getHttpCalls()[0]['args']['body'];
-        $this->assertIsString($body);
-        $this->assertStringNotContainsString('name="operation_id"', $body);
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('idempotency_key_required', $result->get_error_code());
+        $this->assertSame(400, $result->get_error_data()['status'] ?? null);
+        $this->assertSame([], $this->getHttpCalls());
     }
 
-    public function testQueryStringOperationIdIsIgnoredAndBodyFieldIsForwardedByteForByte(): void
+    public function testJsonBodyIdempotencyKeyIsForwardedUnchangedAndTakesPrecedence(): void
     {
         $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
         $this->queueHttpResponse([
@@ -1640,22 +1681,25 @@ class DescribeMediaServiceTest extends TestCase
             'body' => (string) json_encode($this->validBackendBody(42)),
         ]);
 
-        $verbatim = " op-pad\t";
-        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $jsonKey = 'json-key-1234567';
+        $formKey = 'form-key-7654321';
+        $req = new DescribeMediaServicePayloadRequest(
+            ['idempotency_key' => $jsonKey],
+            ['idempotency_key' => $formKey]
+        );
         $req->set_param('media_id', 42);
-        $req->set_param('operation_id', 'from-query');
-        $req->set_body_params(['operation_id' => $verbatim]);
 
-        $this->controller->describe_media($req);
+        $result = $this->controller->describe_media($req);
 
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
         $body = $this->getHttpCalls()[0]['args']['body'];
         $this->assertIsString($body);
         $this->assertStringContainsString('name="operation_id"', $body);
-        $this->assertStringContainsString($verbatim, $body);
-        $this->assertStringNotContainsString('from-query', $body);
+        $this->assertStringContainsString($jsonKey, $body);
+        $this->assertStringNotContainsString($formKey, $body);
     }
 
-    public function testQueryStringOperationIdAloneIsNotForwarded(): void
+    public function testFormBodyIdempotencyKeyIsForwardedWhenJsonBodyIsAbsent(): void
     {
         $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
         $this->queueHttpResponse([
@@ -1663,95 +1707,178 @@ class DescribeMediaServiceTest extends TestCase
             'body' => (string) json_encode($this->validBackendBody(42)),
         ]);
 
-        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $formKey = 'form-key-7654321';
+        $req = new DescribeMediaServicePayloadRequest(null, ['idempotency_key' => $formKey]);
         $req->set_param('media_id', 42);
-        $req->set_param('operation_id', 'from-query');
 
-        $this->controller->describe_media($req);
+        $result = $this->controller->describe_media($req);
 
-        $body = $this->getHttpCalls()[0]['args']['body'];
-        $this->assertIsString($body);
-        $this->assertStringNotContainsString('name="operation_id"', $body);
-        $this->assertStringNotContainsString('from-query', $body);
-    }
-
-    public function testNonStringBodyOperationIdIsAbsent(): void
-    {
-        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => (string) json_encode($this->validBackendBody(42)),
-        ]);
-
-        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
-        $req->set_param('media_id', 42);
-        $req->set_body_params(['operation_id' => ['not' => 'string']]);
-
-        $this->controller->describe_media($req);
-
-        $body = $this->getHttpCalls()[0]['args']['body'];
-        $this->assertIsString($body);
-        $this->assertStringNotContainsString('name="operation_id"', $body);
-    }
-
-    public function testEmptyStringBodyOperationIdIsDropped(): void
-    {
-        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => (string) json_encode($this->validBackendBody(42)),
-        ]);
-
-        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
-        $req->set_param('media_id', 42);
-        $req->set_body_params(['operation_id' => '']);
-
-        $this->controller->describe_media($req);
-
-        $body = $this->getHttpCalls()[0]['args']['body'];
-        $this->assertIsString($body);
-        $this->assertStringNotContainsString('name="operation_id"', $body);
-    }
-
-    public function testOverlongBodyOperationIdIsDropped(): void
-    {
-        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => (string) json_encode($this->validBackendBody(42)),
-        ]);
-
-        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
-        $req->set_param('media_id', 42);
-        $req->set_body_params(['operation_id' => str_repeat('a', 129)]);
-
-        $this->controller->describe_media($req);
-
-        $body = $this->getHttpCalls()[0]['args']['body'];
-        $this->assertIsString($body);
-        $this->assertStringNotContainsString('name="operation_id"', $body);
-        $this->assertStringNotContainsString(str_repeat('a', 129), $body);
-    }
-
-    public function testMaxLengthBodyOperationIdIsForwardedByteForByte(): void
-    {
-        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => (string) json_encode($this->validBackendBody(42)),
-        ]);
-
-        $verbatim = str_repeat('b', 128);
-        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
-        $req->set_param('media_id', 42);
-        $req->set_body_params(['operation_id' => $verbatim]);
-
-        $this->controller->describe_media($req);
-
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
         $body = $this->getHttpCalls()[0]['args']['body'];
         $this->assertIsString($body);
         $this->assertStringContainsString('name="operation_id"', $body);
-        $this->assertStringContainsString($verbatim, $body);
+        $this->assertStringContainsString($formKey, $body);
+    }
+
+    public function testBodyOperationIdTakesPrecedenceOverIdempotencyKey(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => (string) json_encode($this->validBackendBody(42)),
+        ]);
+
+        $key = 'caller-key-1234567';
+        $operationId = 'resume-operation-42';
+        $req = new DescribeMediaServicePayloadRequest(
+            ['idempotency_key' => $key, 'operation_id' => $operationId],
+            []
+        );
+        $req->set_param('media_id', 42);
+
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $body = $this->getHttpCalls()[0]['args']['body'];
+        $this->assertIsString($body);
+        $this->assertStringContainsString($operationId, $body);
+        $this->assertStringNotContainsString($key, $body);
+    }
+
+    public function testQueryStringIdempotencyKeyIsIgnored(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $req->set_param('idempotency_key', 'query-key-1234567');
+        $req->set_param('operation_id', 'query-operation-id');
+
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('idempotency_key_required', $result->get_error_code());
+        $this->assertSame(400, $result->get_error_data()['status'] ?? null);
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testMalformedIdempotencyKeyReturns400WithoutRemoteCall(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+
+        $req = new DescribeMediaServicePayloadRequest(['idempotency_key' => 'bad key value'], []);
+        $req->set_param('media_id', 42);
+
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('invalid_idempotency_key', $result->get_error_code());
+        $this->assertSame(400, $result->get_error_data()['status'] ?? null);
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testJsonIdempotencyKeyWithTrailingNewlineReturns400WithoutRemoteCall(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+
+        $req = new DescribeMediaServicePayloadRequest(['idempotency_key' => "ABCDEFGHIJKLMNOP\n"], []);
+        $req->set_param('media_id', 42);
+
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('invalid_idempotency_key', $result->get_error_code());
+        $this->assertSame(400, $result->get_error_data()['status'] ?? null);
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testFormIdempotencyKeyWithTrailingNewlineReturns400WithoutRemoteCall(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+
+        $req = new DescribeMediaServicePayloadRequest(null, ['idempotency_key' => "ABCDEFGHIJKLMNOP\n"]);
+        $req->set_param('media_id', 42);
+
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('invalid_idempotency_key', $result->get_error_code());
+        $this->assertSame(400, $result->get_error_data()['status'] ?? null);
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testMalformedOperationIdReturns400WithoutRemoteCall(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $req = new DescribeMediaServicePayloadRequest(
+            ['idempotency_key' => 'caller-key-1234567', 'operation_id' => ''],
+            []
+        );
+        $req->set_param('media_id', 42);
+
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('invalid_operation_id', $result->get_error_code());
+        $this->assertSame(400, $result->get_error_data()['status'] ?? null);
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testNonStringOperationIdReturns400WithoutRemoteCall(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $req = new DescribeMediaServicePayloadRequest(
+            ['idempotency_key' => 'caller-key-1234567', 'operation_id' => ['not' => 'string']],
+            []
+        );
+        $req->set_param('media_id', 42);
+
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('invalid_operation_id', $result->get_error_code());
+        $this->assertSame(400, $result->get_error_data()['status'] ?? null);
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testOverlongOperationIdReturns400WithoutRemoteCall(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $req = new DescribeMediaServicePayloadRequest(
+            ['idempotency_key' => 'caller-key-1234567', 'operation_id' => str_repeat('a', 129)],
+            []
+        );
+        $req->set_param('media_id', 42);
+
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('invalid_operation_id', $result->get_error_code());
+        $this->assertSame(400, $result->get_error_data()['status'] ?? null);
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testMaxLengthOperationIdIsForwardedUnchanged(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => (string) json_encode($this->validBackendBody(42)),
+        ]);
+
+        $operationId = str_repeat('b', 128);
+        $req = new DescribeMediaServicePayloadRequest(
+            ['idempotency_key' => 'caller-key-1234567', 'operation_id' => $operationId],
+            []
+        );
+        $req->set_param('media_id', 42);
+
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $body = $this->getHttpCalls()[0]['args']['body'];
+        $this->assertIsString($body);
+        $this->assertStringContainsString($operationId, $body);
     }
 
     /**
@@ -3200,6 +3327,25 @@ final class DescribeMediaServiceTestHost implements DescribeHostInterface
     public function is_proxy_unavailable(WP_REST_Response|WP_Error $response): bool
     {
         return false;
+    }
+}
+
+final class DescribeMediaServicePayloadRequest extends WP_REST_Request
+{
+    /** @param array<string,mixed>|null $jsonParams @param array<string,mixed> $formParams */
+    public function __construct(private ?array $jsonParams, private array $formParams)
+    {
+        parent::__construct('POST', '/acx/v1/recognition/describe');
+    }
+
+    public function get_json_params(): ?array
+    {
+        return $this->jsonParams;
+    }
+
+    public function get_body_params(): array
+    {
+        return $this->formParams;
     }
 }
 

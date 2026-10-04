@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import math
 import re
+import sqlite3
 import uuid
 from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, func, select, tuple_, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.scene import DescribeDemandLease, DescribeOperation, DescribeStartup
@@ -32,6 +34,25 @@ from scene.domain.describe_run import (
 )
 
 _PURGE_BATCH_SIZE = 400
+
+
+def _is_describe_operation_primary_key_conflict(error: IntegrityError) -> bool:
+    """Return whether ``error`` is the composite operation identity conflict.
+
+    PostgreSQL exposes its constraint name through either asyncpg's
+    ``constraint_name`` or psycopg's diagnostic record. SQLite does not expose
+    named constraints, so accept only its exact composite-primary-key error.
+    """
+    original = error.orig
+    diagnostic = getattr(original, "diag", None)
+    constraint_name = getattr(original, "constraint_name", None) or getattr(diagnostic, "constraint_name", None)
+    if constraint_name == "describe_operations_pkey":
+        return True
+    if getattr(original, "sqlite_errorcode", None) == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY:
+        return str(original) == (
+            "UNIQUE constraint failed: describe_operations.tenant_id, describe_operations.operation_id"
+        )
+    return False
 
 
 class DescribeOperationRepository:
@@ -67,6 +88,48 @@ class DescribeOperationRepository:
             raise ValueError("lease retention exceeds operation retention")
         return lease
 
+    async def _insert_new(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        request_digest: str,
+        operation_id: str,
+        now: datetime,
+    ) -> DescribeOperation:
+        op = DescribeOperation(
+            tenant_id=tenant_id,
+            operation_id=operation_id,
+            request_digest=request_digest,
+            accepted_at=now,
+            retain_until=now + self._retention,
+            expires_at=now + min(self._lease, self._retention),
+        )
+        self._session.add(op)
+        await self._session.flush()
+        self._session.add(
+            DescribeDemandLease(
+                tenant_id=tenant_id,
+                operation_id=op.operation_id,
+                state=State.ACTIVE,
+                expires_at=op.expires_at,
+                retain_until=op.retain_until,
+            )
+        )
+        await self._session.flush()
+        return op
+
+    async def bind_usage_identity(self, *, tenant_id: uuid.UUID, operation_id: str) -> DescribeOperation:
+        """Return the durable operation row used as the G2 usage binding.
+
+        Persisted shape for G3: ``(tenant_id, operation_id, request_digest)``.
+        ``reservation_id``, ``fence_token``, and ``job_id`` are not columns on
+        ``DescribeOperation``; they remain on ``UsageTicket`` until G3 adds them.
+        """
+        op = await self.get(tenant_id=tenant_id, operation_id=operation_id)
+        if op is None:
+            raise OperationMismatchError("unknown operation")
+        return op
+
     async def accept(
         self, *, tenant_id: uuid.UUID, request_digest: str, operation_id: str | None = None, now: datetime | None = None
     ) -> DescribeOperation:
@@ -74,31 +137,34 @@ class DescribeOperationRepository:
         if not isinstance(request_digest, str) or re.fullmatch(r"[0-9a-f]{64}", request_digest) is None:
             raise ValueError("request_digest must be a SHA-256 digest")
         if operation_id is None:
-            op = DescribeOperation(
+            return await self._insert_new(
                 tenant_id=tenant_id,
-                operation_id=uuid.uuid4().hex,
                 request_digest=request_digest,
-                accepted_at=now,
-                retain_until=now + self._retention,
-                expires_at=now + min(self._lease, self._retention),
+                operation_id=uuid.uuid4().hex,
+                now=now,
             )
-            self._session.add(op)
-            await self._session.flush()
-            self._session.add(
-                DescribeDemandLease(
-                    tenant_id=tenant_id,
-                    operation_id=op.operation_id,
-                    state=State.ACTIVE,
-                    expires_at=op.expires_at,
-                    retain_until=op.retain_until,
-                )
-            )
-            await self._session.flush()
-            return op
         if not isinstance(operation_id, str) or not 1 <= len(operation_id) <= 128:
             raise OperationMismatchError("invalid operation id")
         op = await self.get(tenant_id=tenant_id, operation_id=operation_id)
-        if op is None or op.request_digest != request_digest:
+        if op is None:
+            try:
+                async with self._session.begin_nested():
+                    return await self._insert_new(
+                        tenant_id=tenant_id,
+                        request_digest=request_digest,
+                        operation_id=operation_id,
+                        now=now,
+                    )
+            except IntegrityError as exc:
+                if not _is_describe_operation_primary_key_conflict(exc):
+                    raise
+                # A concurrent first request may have committed the same
+                # tenant/key after our miss. Re-read it under the same tenant
+                # scope, then apply the ordinary replay/mismatch rules below.
+                op = await self.get(tenant_id=tenant_id, operation_id=operation_id)
+                if op is None:
+                    raise
+        if op.request_digest != request_digest:
             raise OperationMismatchError("operation does not match this tenant and request")
         lease = await self._lease_for(op)
         if utc_observation(op.retain_until) <= now:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -20,6 +21,10 @@ from recognition.interface_adapters.http.deps import (
     get_session,
     require_auth,
     require_write_access,
+)
+from recognition.interface_adapters.http.deps.operator_authorization import (
+    authorize_operator_control,
+    get_operator_entitlement_repository,
 )
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 from recognition.interface_adapters.http.deps.tenant import get_tenant_id
@@ -60,8 +65,10 @@ async def revert_merge_cluster(
     _auth=Depends(require_write_access),
     session=Depends(get_session),
     cluster_service_builder=Depends(get_cluster_service_builder),
+    entitlement_repository: Any = Depends(get_operator_entitlement_repository),
 ) -> RevertMergeResponse | JSONResponse:
     """Revert the named receipt on the path survivor cluster (CONTRACTSROSTER-R-03)."""
+    await authorize_operator_control(_auth, repository=entitlement_repository)
     auth_tenant_id = getattr(_auth, "tenant_claim", None)
     service_tenant_id = tenant_id
     if auth_tenant_id:

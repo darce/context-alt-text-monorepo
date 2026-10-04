@@ -673,6 +673,37 @@ frontend_module_references() {
     }
 
     function next_token(    c, quote, value, previous_value, control_header) {
+      # Template text is opaque; only ${...} bodies re-enter the code lexer.
+      if (template_depth > 0 && template_text[template_depth]) {
+        while (position <= source_length) {
+          c = substr(source, position, 1)
+          if (c == "\\") {
+            position += 2
+            continue
+          }
+          if (c == "`") {
+            position++
+            delete template_text[template_depth]
+            delete template_brace[template_depth]
+            template_depth--
+            token_type = "template"
+            token_value = ""
+            regex_allowed = 0
+            return
+          }
+          if (substr(source, position, 2) == "${") {
+            position += 2
+            template_text[template_depth] = 0
+            template_brace[template_depth] = brace_depth
+            regex_allowed = 1
+            # The interpolation starts an expression, including a bare object.
+            token_value = "="
+            return next_token()
+          }
+          if (c == "\n") line++
+          position++
+        }
+      }
       while (position <= source_length) {
         c = substr(source, position, 1)
         if (c ~ /[ \t\r\n\f]/) {
@@ -709,10 +740,20 @@ frontend_module_references() {
       token_line = line
       token_value = ""
       if (position > source_length) {
+        if (template_depth > 0) {
+          failed = 1
+          print "unterminated JavaScript template string" > "/dev/stderr"
+        }
         token_type = "eof"
         return
       }
       c = substr(source, position, 1)
+      if (c == "}" && template_depth > 0 &&
+          brace_depth == template_brace[template_depth]) {
+        position++
+        template_text[template_depth] = 1
+        return next_token()
+      }
       if (c == "/" && regex_allowed) {
         if (!skip_regex_literal()) {
           token_type = "eof"
@@ -751,25 +792,8 @@ frontend_module_references() {
       }
       if (c == "`") {
         position++
-        while (position <= source_length) {
-          c = substr(source, position, 1)
-          if (c == "\\") {
-            position += 2
-            continue
-          }
-          if (c == "`") {
-            position++
-            token_type = "template"
-            regex_allowed = 0
-            return
-          }
-          if (c == "\n") line++
-          position++
-        }
-        failed = 1
-        print "unterminated JavaScript template string" > "/dev/stderr"
-        token_type = "eof"
-        return
+        template_text[++template_depth] = 1
+        return next_token()
       }
       if (c ~ /[A-Za-z_$]/) {
         while (position <= source_length &&
@@ -801,6 +825,12 @@ frontend_module_references() {
       token_value = c
       token_type = "punctuation"
       position++
+      if (c == "=" && substr(source, position, 1) == ">") {
+        token_value = "=>"
+        position++
+        regex_allowed = 1
+        return
+      }
       if ((c == "+" || c == "-") && substr(source, position, 1) == c) {
         token_value = c c
         position++
@@ -818,6 +848,21 @@ frontend_module_references() {
         if (paren_depth > 0) {
           delete paren_control[paren_depth]
           paren_depth--
+        }
+        return
+      }
+      if (c == "{") {
+        # An object ends an operand; a statement block permits a following regex.
+        brace_object[++brace_depth] = (previous_value ~ /^[=(,:\[?!&|+*\/%^~<>-]$/ ||
+                                      previous_value ~ /^(return|throw|yield|await)$/)
+        regex_allowed = 1
+        return
+      }
+      if (c == "}") {
+        regex_allowed = !brace_object[brace_depth]
+        if (brace_depth > 0) {
+          delete brace_object[brace_depth]
+          brace_depth--
         }
         return
       }
@@ -849,7 +894,8 @@ frontend_module_references() {
       line = 1
       regex_allowed = 1
       while (!failed) {
-        next_token()
+        if (!reuse_token) next_token()
+        reuse_token = 0
         if (token_type == "eof") break
         if (token_type != "identifier" ||
             (token_value != "import" && token_value != "export")) continue
@@ -876,7 +922,11 @@ frontend_module_references() {
             break
           }
           if (token_type == "identifier" &&
-              (token_value == "import" || token_value == "export")) break
+              (token_value == "import" || token_value == "export")) {
+            # Let the outer loop process the token rather than consuming it.
+            reuse_token = 1
+            break
+          }
           next_token()
         }
       }

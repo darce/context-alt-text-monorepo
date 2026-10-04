@@ -856,28 +856,58 @@ def _heal_checkout_provider_key_unique(op) -> None:
 
 
 def _heal_checkout_attempt_active_index(op) -> None:
-    """Replace the earlier plan-scoped active-attempt index when present."""
+    """Reject conflicting open purchases before creating the tenant-wide index."""
     index_name = "uq_billing_checkout_attempt_one_active"
     table_name = "billing_checkout_attempt"
     if not _is_postgres_op(op) or _relkind(op, table_name) not in {"r", "p"}:
         return
-    if _relkind(op, index_name) not in {"i", "I"}:
-        return
+    index_present = _relkind(op, index_name) in {"i", "I"}
     definition = (
-        op.get_bind()
-        .execute(
-            sa.text(
-                "SELECT pg_get_indexdef(c.oid) FROM pg_class c "
-                "JOIN pg_namespace n ON n.oid = c.relnamespace "
-                "WHERE n.nspname = current_schema() AND c.relname = :name"
-            ),
-            {"name": index_name},
+        (
+            op.get_bind()
+            .execute(
+                sa.text(
+                    "SELECT pg_get_indexdef(c.oid) FROM pg_class c "
+                    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "WHERE n.nspname = current_schema() AND c.relname = :name"
+                ),
+                {"name": index_name},
+            )
+            .scalar()
         )
-        .scalar()
+        if index_present
+        else None
     )
     previous_columns = "(tenant_id, provider, environment, seller_account, plan_code)"
-    if definition is not None and previous_columns in str(definition).lower():
-        op.drop_index(index_name, table_name=table_name)
+    old_index = definition is not None and previous_columns in str(definition).lower()
+    if index_present and not old_index:
+        return
+
+    def preflight() -> None:
+        bind = op.get_bind()
+        # Block writers until the transaction creates the narrowed unique index (CON-11).
+        bind.execute(sa.text("LOCK TABLE billing_checkout_attempt IN SHARE MODE"))
+        conflicts = bind.execute(
+            sa.text(
+                "SELECT tenant_id, provider, environment, seller_account "
+                "FROM billing_checkout_attempt "
+                "WHERE status IN ('created', 'provider_requested', 'pending', 'ambiguous') "
+                "GROUP BY tenant_id, provider, environment, seller_account "
+                "HAVING COUNT(*) > 1 "
+                "ORDER BY tenant_id, provider, environment, seller_account"
+            )
+        ).all()
+        if conflicts:
+            groups = [tuple(str(value) for value in row) for row in conflicts]
+            raise RuntimeError(
+                f"{index_name}: conflicting open checkout groups "
+                f"(tenant, provider, environment, seller_account)={groups!r}; "
+                "close the older open attempts, or wipe the dev database, then retry schema healing"
+            )
+        if old_index:
+            op.drop_index(index_name, table_name=table_name)
+
+    _with_migration_rls_bypass(op, preflight)
 
 
 def _heal_portal_tenant_invitation_tenant_nullable(op) -> None:

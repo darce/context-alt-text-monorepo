@@ -1174,11 +1174,11 @@ def test_heal_reconciles_global_counters_from_current_period_chargeable_and_rese
             text(
                 "INSERT INTO usage_reservation "
                 "(id, tenant_id, period_start, idempotency_key, operation_id, "
-                " request_fingerprint, fence_token, queue_bytes, status, cost_units) "
+                " request_fingerprint, fence_token, queue_bytes, status, cost_units, reserved_at) "
                 "VALUES "
-                "(:r1, :tenant, :ps, 'k1', 'op-1', 'fp-1', '3:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 7, 'reserved', 3), "
-                "(:r2, :tenant, :ps, 'k2', 'op-2', 'fp-2', '3:bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 0, 'committed', 5), "
-                "(:r3, :tenant, :old, 'k3', 'op-3', 'fp-3', '3:cccccccc-cccc-cccc-cccc-cccccccccccc', 99, 'reserved', 8)"
+                "(:r1, :tenant, :old, 'k1', 'op-1', 'fp-1', '3:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 7, 'reserved', 3, :ps), "
+                "(:r2, :tenant, :ps, 'k2', 'op-2', 'fp-2', '3:bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 0, 'committed', 5, :ps), "
+                "(:r3, :tenant, :old, 'k3', 'op-3', 'fp-3', '3:cccccccc-cccc-cccc-cccc-cccccccccccc', 99, 'reserved', 8, :old)"
             ),
             {
                 "r1": str(uuid.uuid4()),
@@ -1201,7 +1201,52 @@ def test_heal_reconciles_global_counters_from_current_period_chargeable_and_rese
                 "FROM usage_admission_global_state WHERE id = 'global'"
             )
         ).one()
-    assert row == (8, 3, 1, 7, 42, True, "keep-me", 3)
+    # Today's cost follows reserved_at, including r1's older entitlement period.
+    # Outstanding counters also include yesterday's still-reserved r3.
+    assert row == (8, 11, 2, 106, 42, True, "keep-me", 3)
+
+
+@pytest.mark.pg
+def test_heal_refuses_cross_plan_open_checkouts_with_actionable_groups(pg_empty_engine) -> None:
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+    tenant = str(uuid.uuid4())
+    with pg_empty_engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        conn.execute(text("DROP INDEX uq_billing_checkout_attempt_one_active"))
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX uq_billing_checkout_attempt_one_active ON billing_checkout_attempt "
+                "(tenant_id, provider, environment, seller_account, plan_code) "
+                "WHERE status IN ('created', 'provider_requested', 'pending', 'ambiguous')"
+            )
+        )
+        conn.execute(
+            text("INSERT INTO tenants (id, site_url) VALUES (:id, :url)"),
+            {"id": tenant, "url": f"https://{tenant}.example"},
+        )
+        for plan in ("pro", "enterprise"):
+            conn.execute(
+                text(
+                    "INSERT INTO billing_checkout_attempt "
+                    "(id, tenant_id, provider, environment, seller_account, plan_code, "
+                    "idempotency_key, request_fingerprint, status) "
+                    "VALUES (:id, :tenant, 'polar', 'sandbox', 'seller-a', :plan, :plan, :plan, 'pending')"
+                ),
+                {"id": str(uuid.uuid4()), "tenant": tenant, "plan": plan},
+            )
+
+    with pytest.raises(RuntimeError) as exc, pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+    for value in (tenant, "polar", "sandbox", "seller-a", "close the older open attempts", "wipe the dev database"):
+        assert value in str(exc.value)
+    with pg_empty_engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        assert conn.execute(text("SELECT count(*) FROM billing_checkout_attempt")).scalar() == 2
+        assert (
+            "plan_code"
+            in conn.execute(text("SELECT pg_get_indexdef('uq_billing_checkout_attempt_one_active'::regclass)")).scalar()
+        )
 
 
 @pytest.mark.pg

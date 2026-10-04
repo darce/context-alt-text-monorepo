@@ -702,6 +702,16 @@ def test_apply_refuses_css_only_frontend_without_touching_live_tree(tmp_path: Pa
             id="script-body",
         ),
         pytest.param(
+            '<script><!--<script></script>'
+            '<script type="module" src="/assets/index.js"></script>',
+            id="script-double-escaped-body",
+        ),
+        pytest.param(
+            '<script><!--<SCRIPT ></scriptx></script>'
+            '<script type="module" src="/assets/index.js"></script>',
+            id="script-double-escaped-body-with-invalid-close",
+        ),
+        pytest.param(
             '<style>/* <script type="module" src="/assets/index.js"> */</style>',
             id="style-body",
         ),
@@ -900,14 +910,25 @@ def test_apply_refuses_protected_existing_hostname(tmp_path: Path) -> None:
     assert "reverse_proxy prod-api:8000" in live.read_text(encoding="utf-8")
 
 
-def test_apply_accepts_module_frontend_with_nomodule_attribute(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "module_markup",
+    [
+        '<script type="module" nomodule src="/assets/index.js"></script>',
+        '<noscript><textarea>Please enable JavaScript</noscript>'
+        '<script type="module" src="/assets/index.js"></script>',
+    ],
+    ids=["nomodule", "noscript-raw-text"],
+)
+def test_apply_accepts_active_module_frontend(
+    tmp_path: Path, module_markup: str
+) -> None:
     live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
     _write_live_caddy(live)
     dist = _write_frontend(
         tmp_path,
         index=(
             '<link rel="stylesheet" href="/assets/index.css">'
-            '<script type="module" nomodule src="/assets/index.js"></script>'
+            f'{module_markup}'
         ),
     )
 

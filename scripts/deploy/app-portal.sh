@@ -457,14 +457,32 @@ frontend_asset_references() {
       print value
     }
 
-    function find_raw_close(document, lower_document, element, from,    needle, offset, found, after) {
+    function find_raw_close(document, lower_document, element, from,    needle, offset, found, after, comment, nested, cursor, body_from) {
       needle = "</" element
+      body_from = from
       while (from <= length(document)) {
         offset = index(substr(lower_document, from), needle)
         if (offset == 0) return 0
         found = from + offset - 1
         after = substr(document, found + length(needle), 1)
-        if (after ~ /[[:space:]/>]/) return found
+        if (after ~ /[[:space:]/>]/) {
+          if (element == "script") {
+            # Fail closed on potentially double-escaped script data. In that
+            # state the first textual closing tag does not close the element.
+            comment = index(substr(document, body_from, found - body_from), "<!--")
+            if (comment > 0) {
+              cursor = body_from + comment + 3
+              while (cursor < found) {
+                nested = index(substr(lower_document, cursor, found - cursor), "<script")
+                if (nested == 0) break
+                cursor += nested - 1
+                if (substr(document, cursor + 7, 1) ~ /[[:space:]/>]/) return 0
+                cursor += 7
+              }
+            }
+          }
+          return found
+        }
         from = found + length(needle)
       }
       return 0
@@ -581,7 +599,7 @@ frontend_asset_references() {
         }
         if (end <= n) {
           parse_tag(substr(document, i, end - i + 1), inert_depth == 0)
-          if (parsed_tag_name == "template" || parsed_tag_name == "noscript") {
+          if (parsed_tag_name == "template") {
             if (parsed_tag_closing) {
               for (depth = inert_depth; depth > 0; depth--) {
                 if (inert_stack[depth] == parsed_tag_name) {
@@ -598,7 +616,8 @@ frontend_asset_references() {
               (parsed_tag_name == "script" || parsed_tag_name == "style" ||
                parsed_tag_name == "textarea" || parsed_tag_name == "title" ||
                parsed_tag_name == "iframe" || parsed_tag_name == "xmp" ||
-               parsed_tag_name == "noembed" || parsed_tag_name == "noframes")) {
+               parsed_tag_name == "noembed" || parsed_tag_name == "noframes" ||
+               parsed_tag_name == "noscript")) {
             raw_element = parsed_tag_name
           }
           i = end + 1

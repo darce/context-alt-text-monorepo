@@ -1,5 +1,41 @@
 export type PortalRequest = (path: string, init?: RequestInit) => Promise<Response>;
 
+export type PortalRequestError = {
+  status: number;
+  code: string;
+  detail: null;
+  attemptId: null;
+  retryAfterSeconds: null;
+};
+
+export function normalizePortalRequestError(error: unknown): Error & PortalRequestError {
+  const name =
+    typeof error === 'object' && error !== null && 'name' in error && typeof error.name === 'string'
+      ? error.name
+      : null;
+  const aborted = name === 'AbortError';
+  const normalized = new Error('portal_request_failed') as Error & PortalRequestError;
+  normalized.name = aborted ? 'AbortError' : 'Error';
+  normalized.status = 0;
+  normalized.code = aborted ? 'request_aborted' : 'portal_transport_error';
+  normalized.detail = null;
+  normalized.attemptId = null;
+  normalized.retryAfterSeconds = null;
+  return normalized;
+}
+
+export async function requestPortalResponse(
+  request: PortalRequest,
+  path: string,
+  init?: RequestInit,
+): Promise<Response> {
+  try {
+    return await request(path, init);
+  } catch (error) {
+    throw normalizePortalRequestError(error);
+  }
+}
+
 export type PortalRequestOwner = {
   userId: string;
   sessionId: string;

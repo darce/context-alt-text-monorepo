@@ -1,4 +1,4 @@
-type PortalRequest = (path: string, init?: RequestInit) => Promise<Response>;
+import { requestPortalResponse, type PortalRequest } from './portalRequest';
 
 export type PortalUsagePeriodResponse = { start: string; end: string };
 export type PortalUsageResponse = {
@@ -203,7 +203,7 @@ function parseUsage(value: unknown): PortalUsageResponse | null {
 export function createPortalUsageClient(request: PortalRequest): PortalUsageClient {
   return {
     async read() {
-      const response = await request('/portal/usage', { method: 'GET' });
+      const response = await requestPortalResponse(request, '/portal/usage', { method: 'GET' });
       const body = await readJson(response);
       if (!response.ok) {
         const parsed = parseErrorBody(body);

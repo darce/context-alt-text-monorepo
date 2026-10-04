@@ -595,9 +595,12 @@ frontend_asset_references() {
               inert_stack[++inert_depth] = parsed_tag_name
             }
           }
+          if (!parsed_tag_closing && parsed_tag_name == "plaintext") break
           if (!parsed_tag_closing &&
               (parsed_tag_name == "script" || parsed_tag_name == "style" ||
-               parsed_tag_name == "textarea" || parsed_tag_name == "title")) {
+               parsed_tag_name == "textarea" || parsed_tag_name == "title" ||
+               parsed_tag_name == "iframe" || parsed_tag_name == "xmp" ||
+               parsed_tag_name == "noembed" || parsed_tag_name == "noframes")) {
             raw_element = parsed_tag_name
           }
           i = end + 1

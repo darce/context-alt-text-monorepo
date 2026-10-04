@@ -717,6 +717,26 @@ def test_apply_refuses_css_only_frontend_without_touching_live_tree(tmp_path: Pa
             '<title><script type="module" src="/assets/index.js"></script></title>',
             id="title-body",
         ),
+        pytest.param(
+            '<iframe><script type="module" src="/assets/index.js"></script></iframe>',
+            id="iframe-body",
+        ),
+        pytest.param(
+            '<xmp><script type="module" src="/assets/index.js"></script></xmp>',
+            id="xmp-body",
+        ),
+        pytest.param(
+            '<noembed><script type="module" src="/assets/index.js"></script></noembed>',
+            id="noembed-body",
+        ),
+        pytest.param(
+            '<noframes><script type="module" src="/assets/index.js"></script></noframes>',
+            id="noframes-body",
+        ),
+        pytest.param(
+            '<plaintext></plaintext><script type="module" src="/assets/index.js"></script>',
+            id="plaintext-body",
+        ),
     ],
 )
 def test_apply_refuses_inert_module_frontend_before_staging(

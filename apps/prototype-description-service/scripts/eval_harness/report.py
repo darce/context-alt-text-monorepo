@@ -4490,6 +4490,7 @@ def score_face_run_record(
                     entry_index=entry_index,
                     entry_path=str(entry.get("path", "")),
                 )
+    require_confirmed_blind_reviews_for_strict_scoring(manifest)
     entry_by_id = _entry_index(entries)
     gt_by_media = _gt_by_media(entries)
     total_boxes = _total_gt_boxes(entries)

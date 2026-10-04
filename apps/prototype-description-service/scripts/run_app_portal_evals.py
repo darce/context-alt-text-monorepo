@@ -673,6 +673,64 @@ def _redact_child_output(text: str, secret_values: Sequence[str]) -> str:
     return text
 
 
+def _redact_junit_artifact(path: Path, secret_values: Sequence[str]) -> None:
+    """Atomically scrub child secrets from a persistent JUnit report."""
+
+    try:
+        original_stat = path.stat()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise EvalRunnerError(f"cannot inspect child JUnit report {path}: {exc}") from exc
+
+    try:
+        tree = ET.parse(path, parser=ET.XMLParser(target=ET.TreeBuilder(insert_comments=True, insert_pis=True)))
+    except (ET.ParseError, UnicodeError):
+        try:
+            raw_text = path.read_bytes().decode("utf-8", errors="replace")
+        except OSError as exc:
+            raise EvalRunnerError(f"cannot read child JUnit report {path}: {exc}") from exc
+        payload = _redact_child_output(raw_text, secret_values).encode("utf-8")
+    else:
+        for element in tree.getroot().iter():
+            if element.text is not None:
+                element.text = _redact_child_output(element.text, secret_values)
+            if element.tail is not None:
+                element.tail = _redact_child_output(element.tail, secret_values)
+            for name, value in element.attrib.items():
+                element.set(name, _redact_child_output(value, secret_values))
+        payload = ET.tostring(tree.getroot(), encoding="utf-8", xml_declaration=True)
+
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            temporary.write(payload)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.utime(temporary_path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+        os.replace(temporary_path, path)
+    except OSError as exc:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as unlink_error:
+            raise EvalRunnerError(
+                f"cannot redact child JUnit report {path} and cannot remove its unsafe original: {unlink_error}"
+            ) from exc
+        raise EvalRunnerError(f"cannot redact child JUnit report {path}; removed unsafe original: {exc}") from exc
+
+
 def _safe_redaction_boundary(
     text: str,
     proposed: int,
@@ -1156,6 +1214,7 @@ def _run_group(
         with log_path.open("w", encoding="utf-8") as log_file:
             _write_redacted_child_log(child_output, log_file, secret_values=secret_values)
 
+    _redact_junit_artifact(xml_path, secret_values)
     junit = _read_junit(xml_path)
     stale_junit = ran_pytest and _junit_is_stale(junit, started_at=started_at)
     usable_junit = (
@@ -1246,7 +1305,14 @@ def _run_group(
                 "required": required,
                 "status": str(ledger_status),
                 "test_status": str(test_status),
-                "junit_identity": None if not matched else ",".join(item.node_id for item in matched),
+                "junit_identity": (
+                    None
+                    if not matched
+                    else _redact_child_output(
+                        ",".join(item.node_id for item in matched),
+                        secret_values,
+                    )
+                ),
                 "additional_evidence_required": case.additional_evidence_required,
                 "additional_evidence_present": artifact.present if needs_artifact else True,
                 "additional_evidence_verified": artifact.verified if needs_artifact else True,
@@ -1274,7 +1340,10 @@ def _run_group(
         "case_ledger": case_ledger,
         "evidence_only_group": evidence_only_group,
         "passed_testcases": [
-            {"classname": classname, "name": name}
+            {
+                "classname": _redact_child_output(classname, secret_values),
+                "name": _redact_child_output(name, secret_values),
+            }
             for classname, name in sorted(junit.passed_testcases)
         ],
         "stripped_env_keys": stripped_env_keys,

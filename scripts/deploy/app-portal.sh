@@ -501,7 +501,7 @@ frontend_asset_references() {
       }
       if (substr(tag, i, 1) !~ /[A-Za-z]/) return
       start = i
-      while (i <= n && substr(tag, i, 1) ~ /[A-Za-z0-9:-]/) i++
+      while (i <= n && substr(tag, i, 1) !~ /[ \t\r\n\f/>]/) i++
       parsed_tag_name = tolower(substr(tag, start, i - start))
       if (parsed_tag_closing) return
       while (i <= n) {

@@ -121,7 +121,10 @@ def test_metered_scene_ingress_is_503_when_factory_missing(monkeypatch) -> None:
     app.dependency_overrides[get_optional_session] = lambda: None
     app.dependency_overrides[get_description_adapter] = lambda: _SpyAdapter()
 
-    data = {"request": json.dumps({"tenant_id": TENANT_ID, "media_id": 42})}
+    data = {
+        "request": json.dumps({"tenant_id": TENANT_ID, "media_id": 42}),
+        "operation_id": "idem-key-aaaaaaaa",
+    }
     files = {"image_42": ("x.jpg", b"image-bytes", "image/jpeg")}
     with TestClient(app) as client:
         response = client.post("/scene/describe/multipart", data=data, files=files)

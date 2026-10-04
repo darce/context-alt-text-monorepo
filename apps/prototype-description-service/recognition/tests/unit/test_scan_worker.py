@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -1177,3 +1178,71 @@ async def test_scan_handler_processes_current_claim_and_completes_item(
     assert scan_service.calls == 1
     assert repo.completed_items == [item.id]
     assert session.commits == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("attempts", [1, 3])
+async def test_scan_handler_skips_stale_failure_write_after_rollback(
+    monkeypatch: pytest.MonkeyPatch, attempts: int
+) -> None:
+    handler, session, repo, scan_service, item = _make_claim_check_handler(
+        monkeypatch, [object(), object(), None]
+    )
+    item = replace(item, attempts=attempts)
+    failure_writes: list[object] = []
+
+    async def _fail_processing(**_kwargs: object) -> int:
+        raise RuntimeError("slow attempt failed")
+
+    async def _record_failure(**kwargs: object) -> None:
+        failure_writes.append(kwargs)
+
+    monkeypatch.setattr(scan_service, "process_media_item", _fail_processing)
+    monkeypatch.setattr(repo, "mark_item_failed", _record_failure, raising=False)
+    monkeypatch.setattr(repo, "release_item_for_retry", _record_failure, raising=False)
+
+    await handler.process_items(claimed=[item])
+
+    assert failure_writes == []
+    assert repo.completed_items == []
+    assert session.commits == 0
+    assert session.rollbacks == 2
+    assert len(session.executed_statements) == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("attempts", [1, 3])
+async def test_scan_handler_writes_failure_for_current_claim_after_rollback(
+    monkeypatch: pytest.MonkeyPatch, attempts: int
+) -> None:
+    handler, session, repo, scan_service, item = _make_claim_check_handler(
+        monkeypatch, [object(), object(), object()]
+    )
+    item = replace(item, attempts=attempts)
+    failure_writes: list[object] = []
+
+    async def _fail_processing(**_kwargs: object) -> int:
+        raise RuntimeError("current attempt failed")
+
+    async def _record_failure(**kwargs: object) -> None:
+        failure_writes.append(kwargs)
+
+    monkeypatch.setattr(scan_service, "process_media_item", _fail_processing)
+    method = "release_item_for_retry" if attempts < 3 else "mark_item_failed"
+    monkeypatch.setattr(repo, method, _record_failure, raising=False)
+
+    await handler.process_items(claimed=[item])
+
+    assert len(failure_writes) == 1
+    assert session.rollbacks == 1
+    assert session.commits == 1
+    assert len(session.executed_statements) == 3
+    statement = session.executed_statements[-1].compile(dialect=postgresql.dialect())
+    assert "FOR UPDATE NOWAIT" in str(statement)
+    assert statement.params == {
+        "id_1": item.id,
+        "job_id_1": item.job_id,
+        "tenant_id_1": item.tenant_id,
+        "status_1": "processing",
+        "attempts_1": attempts,
+    }

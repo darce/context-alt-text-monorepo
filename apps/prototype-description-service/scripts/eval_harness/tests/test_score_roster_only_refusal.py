@@ -37,10 +37,9 @@ from scripts.eval_harness.report import (
     _invariant_is,
     _mode_restrictiveness,
     _resolve_score_annotation_mode,
-    build_reports,
     score_face_run_record,
-    score_run_record,
 )
+from scripts.eval_harness.tests._reviewed_gt_fixtures import build_reports, score_run_record
 
 _LINEAGE = {
     "labeler_id": "test-labeler",

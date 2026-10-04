@@ -21,6 +21,7 @@ from scripts.eval_harness.manifest import (
     legacy_import_lineage,
     load_legacy_manifest,
     load_manifest,
+    require_confirmed_blind_reviews_for_strict_scoring,
 )
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -622,6 +623,81 @@ def test_real_capture_session_still_loads_exhaustive(tmp_path: Path) -> None:
     manifest = load_manifest(str(path), skip_hash_verification=True)
     assert manifest.annotation_mode is AnnotationMode.EXHAUSTIVE
     assert manifest.entries[0].face_boxes[0].lineage.capture_session_id == REAL_SESSION
+
+
+def test_strict_scoring_requires_a_resolved_confirmed_blind_review(tmp_path: Path) -> None:
+    """An operator-blind label alone cannot enter strict metrics as scored truth."""
+    doc = _exhaustive_doc(session=REAL_SESSION, label_source="operator_blind")
+    box_doc = doc["entries"][0]["face_boxes"][0]
+    box_doc["lineage"]["saw_machine_proposals"] = False
+    path = _write(tmp_path, doc, "unreviewed-strict-ground-truth.json")
+    manifest = load_manifest(str(path), skip_hash_verification=True)
+    box = manifest.entries[0].face_boxes[0]
+
+    with pytest.raises(
+        ManifestError, match="confirmed independent blind review"
+    ) as exc_info:
+        require_confirmed_blind_reviews_for_strict_scoring(manifest.model_dump())
+        detection_pr_strict(
+            [
+                ImageDetection(
+                    image=manifest.entries[0].path,
+                    pred_faces=1,
+                    labeled_faces=1,
+                    detections_bbox_px=((40.0, 25.0, 20.0, 30.0),),
+                    gt_boxes=(box,),
+                    image_size=(100, 100),
+                    detection_frame_size=(100, 100),
+                )
+            ],
+            annotation_mode=manifest.annotation_mode,
+            run_manifest={"iou_threshold": 0.5},
+        )
+
+    assert exc_info.value.invariant == "adjudication_record_required"
+
+
+def test_confirmed_independent_blind_review_allows_strict_scoring(tmp_path: Path) -> None:
+    """Positive pair: resolved second-review evidence keeps strict scoring live."""
+    doc = _exhaustive_doc(session=REAL_SESSION, label_source="operator_blind")
+    box_doc = doc["entries"][0]["face_boxes"][0]
+    box_doc["lineage"]["labeler_id"] = "operator-1"
+    box_doc["lineage"]["saw_machine_proposals"] = False
+    box_doc["adjudication_source"] = "human_adjudicated:review-1"
+    doc["adjudication_records"] = [
+        {
+            "record_id": "review-1",
+            "media_id": 1,
+            "box_index": 0,
+            "reviewer_id": "operator-2",
+            "reviewer_kind": "human",
+            "review_method": "independent_blind_review",
+            "decision": "confirmed",
+            "reviewed_at": "2026-06-01T12:00:00+00:00",
+        }
+    ]
+    path = _write(tmp_path, doc, "reviewed-strict-ground-truth.json")
+    manifest = load_manifest(str(path), skip_hash_verification=True)
+    require_confirmed_blind_reviews_for_strict_scoring(manifest.model_dump())
+    box = manifest.entries[0].face_boxes[0]
+
+    result = detection_pr_strict(
+        [
+            ImageDetection(
+                image=manifest.entries[0].path,
+                pred_faces=1,
+                labeled_faces=1,
+                detections_bbox_px=((40.0, 25.0, 20.0, 30.0),),
+                gt_boxes=(box,),
+                image_size=(100, 100),
+                detection_frame_size=(100, 100),
+            )
+        ],
+        annotation_mode=manifest.annotation_mode,
+        run_manifest={"iou_threshold": 0.5},
+    )
+
+    assert result.true_positives == 1
 
 
 def test_real_session_on_legacy_import_source_still_loads_exhaustive(tmp_path: Path) -> None:

@@ -1167,7 +1167,36 @@ class GoldenManifest(BaseModel):
                         entry_path=entry.path,
                     )
 
-    def _adjudication_references_resolve(self) -> None:
+    def _box_has_strict_scoring_lineage(self, box: FaceBox) -> bool:
+        """Whether a box otherwise qualifies for strict identity/detection scoring.
+
+        The strict scorers admit these blind, human-decided lineage tuples as
+        ground truth. They still need a resolved adjudication record before a
+        v3 manifest can supply that box to scoring.
+        """
+        if box.lineage is None:
+            return False
+        lineage = box.lineage
+        return (
+            lineage.label_source
+            in {
+                LabelSource.OPERATOR_BLIND,
+                LabelSource.OPERATOR_REPASS,
+                LabelSource.ARBITRATION,
+                LabelSource.GOLD_REFERENCE,
+            }
+            and lineage.saw_machine_proposals is False
+            and lineage.decision
+            in {
+                LabelDecision.NAMED,
+                LabelDecision.STRANGER,
+                LabelDecision.INCONCLUSIVE,
+            }
+        )
+
+    def _adjudication_references_resolve(
+        self, *, require_strict_scoring_reviews: bool = False
+    ) -> None:
         records: dict[str, HumanAdjudicationRecord] = {}
         for record in self.adjudication_records:
             if record.record_id in records:
@@ -1182,6 +1211,18 @@ class GoldenManifest(BaseModel):
             for box_index, box in enumerate(entry.face_boxes):
                 source = box.adjudication_source
                 if source is None:
+                    if (
+                        require_strict_scoring_reviews
+                        and self._box_has_strict_scoring_lineage(box)
+                    ):
+                        raise ManifestError(
+                            "strict scoring requires a confirmed independent blind review "
+                            f"for entry[{entry_index}] "
+                            f"{_printable_path(entry.path)} box[{box_index}]",
+                            invariant="adjudication_record_required",
+                            entry_index=entry_index,
+                            entry_path=entry.path,
+                        )
                     continue
                 match = _HUMAN_ADJUDICATION_SOURCE_RE.fullmatch(source)
                 if match is None:
@@ -1238,6 +1279,25 @@ class GoldenManifest(BaseModel):
         self._capture_session_required_when_exhaustive()
         self._adjudication_references_resolve()
         return self
+
+
+def require_confirmed_blind_reviews_for_strict_scoring(
+    manifest: GoldenManifest | Mapping[str, object],
+) -> None:
+    """Reject strict scoring unless each strict-ready GT box has review.
+
+    Normal loading keeps optional review references available for historical
+    ingestion. Strict scoring entrypoints must call this guard with the loaded
+    manifest or its full model-dump before computing detection or identification.
+    The ordinary model validation also confirms every present reference resolves
+    to a second-human confirmed blind review.
+    """
+    validated = (
+        manifest
+        if isinstance(manifest, GoldenManifest)
+        else GoldenManifest.model_validate(manifest)
+    )
+    validated._adjudication_references_resolve(require_strict_scoring_reviews=True)
 
 
 def _reject_per_entry_annotation_mode(entries_raw: object) -> None:

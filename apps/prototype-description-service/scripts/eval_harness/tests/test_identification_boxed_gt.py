@@ -21,10 +21,9 @@ from scripts.eval_harness.manifest import (
 )
 from scripts.eval_harness.report import (
     Audience,
-    build_reports,
     score_face_run_record,
-    score_run_record,
 )
+from scripts.eval_harness.tests._reviewed_gt_fixtures import build_reports, score_run_record
 from scripts.eval_harness.schema import DocKind
 
 _LINEAGE = {

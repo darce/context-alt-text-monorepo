@@ -7,6 +7,11 @@ from uuid import uuid4
 
 import pytest
 
+from recognition.application.services.usage_settlement_service import (
+    SettlementOutcome,
+    SettlementResult,
+    UsageSettlementService,
+)
 from recognition.infrastructure.repositories.usage_repository import SqlAlchemyUsageRepository
 from recognition.tests.unit.test_app1_usage_sweeper import (
     _advfix_ledger_h1_expiry_releases_counters,
@@ -28,6 +33,52 @@ async def test_stale_started_terminal_job_commits_and_keeps_daily_charge(monkeyp
 @pytest.mark.asyncio
 async def test_sweeper_pages_past_active_prefix_to_release_missing_job() -> None:
     await _advfix_ledger_m1_sweeper_pages_past_active_prefix()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("outcome", "expected_exit_code"),
+    [
+        (SettlementOutcome.FAIL_CLOSED, 1),
+        (SettlementOutcome.REJECTED, 1),
+        (SettlementOutcome.SKIPPED_ACTIVE, 0),
+    ],
+)
+async def test_sweep_batch_budget_exit_reflects_unresolved_recovery_outcomes(
+    monkeypatch, outcome: SettlementOutcome, expected_exit_code: int
+) -> None:
+    stale_row = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        job_id=uuid4(),
+        operation_id="op-fail-closed",
+        request_fingerprint="fp-fail-closed",
+    )
+    monkeypatch.setattr(
+        SqlAlchemyUsageRepository,
+        "list_stale_reservations",
+        AsyncMock(return_value=[stale_row]),
+    )
+    service = UsageSettlementService(session=None, admission=MagicMock())
+    monkeypatch.setattr(
+        service,
+        "recover_job",
+        AsyncMock(return_value=SettlementResult(outcome=outcome)),
+    )
+
+    report = await service._sweep_stale_reservations(
+        stale_after_seconds=30,
+        max_batches=1,
+        batch_size=100,
+        no_progress_limit=3,
+    )
+
+    assert report.fail_closed == int(outcome is SettlementOutcome.FAIL_CLOSED)
+    assert report.rejected == int(outcome is SettlementOutcome.REJECTED)
+    assert report.skipped_active == int(outcome is SettlementOutcome.SKIPPED_ACTIVE)
+    assert report.no_progress_cycles == int(outcome is not SettlementOutcome.SKIPPED_ACTIVE)
+    assert report.stalled is False
+    assert report.exit_code == expected_exit_code
 
 
 @pytest.mark.asyncio

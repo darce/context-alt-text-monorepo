@@ -202,8 +202,15 @@ FACE_BAKEOFF_SAMPLING_FRAMES: dict[str, str] = {
         # surfaced in `failures`/association notes.
         + "; error-item media excluded from association (attributable named GT misses remain in headline FN; listed in failures)"
     ),
-    "full_corpus_identification": "full_corpus_" + SAMPLING_FRAME_FACE_ID,
-    "unknown_rejection": SAMPLING_FRAME_UNKNOWN_REJECTION,
+    "full_corpus_identification": (
+        "full_corpus_"
+        + SAMPLING_FRAME_FACE_ID
+        + "; named complete GT on error-item media count as identification misses"
+    ),
+    "unknown_rejection": (
+        SAMPLING_FRAME_UNKNOWN_REJECTION
+        + "; complete stranger GT on error-item media count as missed rejections"
+    ),
     "occlusion_recovery": SAMPLING_FRAME_OCCLUSION_RECOVERY,
     "clustering": SAMPLING_FRAME_CLUSTERING,
     # VLM6-R2-C-02: detection P/R population (named + anonymous GT boxes).
@@ -212,14 +219,16 @@ FACE_BAKEOFF_SAMPLING_FRAMES: dict[str, str] = {
     # spatial association and are NOT detector FNs — the honest identity is
     # tp+fn+geometry_incomplete_gt = n_gt that entered association (EVAL-03).
     "detection": (
-        "all_gt_boxes_on_scoreable_media_via_association: named and anonymous "
+        "all_gt_boxes_on_manifest_media: named and anonymous "
         "GT share one population (HARM-01 / EVAL-16); TP=IoU-matched pairs; "
-        "FN=unmatched complete GT (named missed_gt + missed_stranger_gt); "
+        "FN=unmatched complete GT plus complete GT on error-item media; "
+        "named misses feed identification and anonymous misses feed unknown rejection; "
         "FP=unmatched detections; geometry_incomplete_gt = GT boxes excluded "
         "from IoU (null/invalid centre-y; not detector FN); "
-        "tp+fn+geometry_incomplete_gt equals GT boxes that reached association; "
+        "tp+fn+geometry_incomplete_gt equals the manifest GT population; "
         "association_complete=false when geometry_incomplete_gt>0; "
-        "error-item media excluded from association (listed in failures)"
+        "error-item media excluded from association (complete GT misses are "
+        "attributed at report boundary; items remain listed in failures)"
     ),
 }
 
@@ -4152,6 +4161,40 @@ def _total_gt_boxes(entries: Sequence[Mapping[str, Any]]) -> int:
     return sum(len(e.get("face_boxes") or []) for e in entries)
 
 
+def _failed_item_gt_counts(
+    media_ids: set[int],
+    gt_by_media: Mapping[int, Sequence[Any]],
+) -> dict[str, int]:
+    """Count complete GT on errored media as upstream detection/ID misses.
+
+    An errored item never reaches assignment. Reuse its association geometry
+    partition with no detections so null/invalid-y GT remains geometry-incomplete
+    rather than becoming an FN, while every complete box is attributed to the
+    appropriate end-to-end miss population (EVAL-16).
+    """
+    counts = {
+        "detection_misses": 0,
+        "named_misses": 0,
+        "stranger_misses": 0,
+        "geometry_incomplete_gt": 0,
+        "association_incomplete_media": 0,
+    }
+    for media_id in sorted(media_ids):
+        boxes = list(gt_by_media.get(media_id, ()))
+        if not boxes:
+            continue
+        association = associate_detections([], boxes, [1, 1])
+        complete_indices = association.unmatched_gt
+        named = sum(1 for index in complete_indices if gt_box_name(boxes[index]) is not None)
+        counts["detection_misses"] += len(complete_indices)
+        counts["named_misses"] += named
+        counts["stranger_misses"] += len(complete_indices) - named
+        counts["geometry_incomplete_gt"] += len(association.geometry_incomplete_gt)
+        if association.geometry_incomplete_gt:
+            counts["association_incomplete_media"] += 1
+    return counts
+
+
 def _sort_nested_lists(obj: Any) -> Any:
     """Canonicalize for bit-identical serialization (§G) WITHOUT corrupting rows.
 
@@ -4532,7 +4575,8 @@ def score_face_run_record(
             f"duplicate_media_ids={duplicate_media_ids}",
             invariant="face_run_population_mismatch",
         )
-    # Keep error items out of assignment but count them as failures.
+    # Keep error items out of assignment but count them as failures and retain
+    # their complete manifest GT as end-to-end misses (EVAL-16).
     scoreable: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     for item in items:
@@ -4604,8 +4648,23 @@ def score_face_run_record(
     # and the freeze could not pin labeled_y_missing_* (wF4 residual).
     identity_ordering = _identity_ordering_block_for_face(scoreable, entry_by_id)
 
+    failed_item_gt = _failed_item_gt_counts(
+        {int(failure["media_id"]) for failure in failures}, gt_by_media
+    )
+
     assignment = score_face_assignment(scoreable, gt_by_media)
     detection = _detection_from_assignment(assignment)
+    detection["fn"] += failed_item_gt["detection_misses"]
+    detection["recall"] = (
+        detection["tp"] / (detection["tp"] + detection["fn"])
+        if detection["tp"] + detection["fn"]
+        else 0.0
+    )
+    detection["geometry_incomplete_gt"] += failed_item_gt["geometry_incomplete_gt"]
+    detection["association_incomplete_media"] += failed_item_gt[
+        "association_incomplete_media"
+    ]
+    detection["association_complete"] = detection["geometry_incomplete_gt"] == 0
 
     try:
         require_boxed_identification_gt(
@@ -4632,13 +4691,15 @@ def score_face_run_record(
     if identification_invariant is None:
         id_pr = face_identification_pr(
             assignment.decisions,
-            missed_gt=assignment.missed_gt,
+            missed_gt=assignment.missed_gt + failed_item_gt["named_misses"],
             unmatched_detections=assignment.false_detections,
             sampling_frame=FACE_BAKEOFF_SAMPLING_FRAMES["full_corpus_identification"],
         )
         unknown = face_unknown_rejection(
             assignment.decisions,
-            missed_stranger_gt=assignment.missed_stranger_gt,
+            missed_stranger_gt=(
+                assignment.missed_stranger_gt + failed_item_gt["stranger_misses"]
+            ),
         )
 
         # Headline = celebs01 named probes only (provenance.source == CELEB).

@@ -477,7 +477,6 @@ frontend_asset_references() {
       parsed_tag_closing = 0
       parsed_script_type = ""
       parsed_script_src = ""
-      parsed_nomodule = 0
       if (substr(tag, i, 1) == "/") {
         parsed_tag_closing = 1
         i++
@@ -521,11 +520,10 @@ frontend_asset_references() {
         }
         if (name == "type") parsed_script_type = value
         if (name == "src") parsed_script_src = value
-        if (name == "nomodule") parsed_nomodule = 1
         if (active && mode == "assets" && (name == "src" || name == "href")) emit_asset(value)
       }
       if (active && mode == "modules" && parsed_tag_name == "script" &&
-          tolower(parsed_script_type) == "module" && !parsed_nomodule) {
+          tolower(parsed_script_type) == "module") {
         emit_module_asset(parsed_script_src)
       }
     }

@@ -202,6 +202,28 @@ describe('useBulkDescribe', () => {
     expect(nextActionKey).not.toBe(firstActionKey);
   });
 
+  it('replays the same action key and frozen media payload after an ambiguous failure', async () => {
+    const submittedMediaIds = [101, 202];
+    submitBulkDescribeRunMock
+      .mockRejectedValueOnce(new Error('Connection lost after submit'))
+      .mockResolvedValue(runResponse({ run_id: 'run-recovered', status: 'pending' }));
+
+    const { result } = renderHook(() => useBulkDescribe(), { wrapper });
+    result.current.submit.mutate(submittedMediaIds);
+    submittedMediaIds.reverse();
+
+    await waitFor(() => expect(result.current.submit.isError).toBe(true));
+    const firstActionKey = submitBulkDescribeRunMock.mock.calls[0]?.[1];
+    expect(submitBulkDescribeRunMock.mock.calls[0]?.[0]).toEqual([101, 202]);
+
+    result.current.submit.mutate([101, 202]);
+
+    await waitFor(() => expect(result.current.submit.isSuccess).toBe(true));
+    expect(submitBulkDescribeRunMock).toHaveBeenCalledTimes(2);
+    expect(submitBulkDescribeRunMock.mock.calls[1]?.[0]).toEqual([101, 202]);
+    expect(submitBulkDescribeRunMock.mock.calls[1]?.[1]).toBe(firstActionKey);
+  });
+
   it('polls run status and reflects backend eta_seconds + progress fraction', async () => {
     submitBulkDescribeRunMock.mockResolvedValue(runResponse({ run_id: 'run-9', status: 'pending' }));
     fetchBulkDescribeRunMock.mockResolvedValue(

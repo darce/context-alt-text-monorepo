@@ -278,6 +278,46 @@ def _utc(value: datetime) -> datetime:
 
 
 @pytest.mark.asyncio
+async def test_used_jobs_counts_stale_reserved_like_admission(database) -> None:
+    session_factory, tenant_id, now = database
+    period_start = now - timedelta(days=1)
+    current_time = datetime.now(tz=UTC)
+    reservations = (
+        ("stale-reserved", UsageReservationStatus.RESERVED, 11, current_time - timedelta(hours=1)),
+        ("fresh-reserved", UsageReservationStatus.RESERVED, 13, current_time - timedelta(minutes=5)),
+        ("old-committed", UsageReservationStatus.COMMITTED, 17, current_time - timedelta(hours=1)),
+        ("released", UsageReservationStatus.RELEASED, 19, current_time - timedelta(hours=1)),
+    )
+    async with session_factory() as session:
+        for suffix, status, cost_units, reserved_at in reservations:
+            session.add(
+                UsageReservation(
+                    tenant_id=tenant_id,
+                    period_start=period_start,
+                    idempotency_key=f"used-jobs-{suffix}",
+                    operation_id=f"used-jobs-{suffix}",
+                    request_fingerprint=f"fp-used-jobs-{suffix}",
+                    fence_token=f"fence-used-jobs-{suffix}",
+                    queue_bytes=0,
+                    status=status,
+                    reserved_at=reserved_at,
+                    cost_units=cost_units,
+                )
+            )
+        await session.commit()
+
+    async with session_factory() as session:
+        repository = SqlAlchemyTenantEntitlementRepository(
+            session,
+            plan_allowances={"paid": 5000},
+            past_due_grace=timedelta(days=3),
+        )
+        used = await repository.used_jobs(tenant_id, period_start)
+
+    assert used == 41
+
+
+@pytest.mark.asyncio
 async def test_dunning_after_period_end_does_not_reopen_the_consumed_period(database) -> None:
     session_factory, tenant_id, now = database
     period_start = now - timedelta(days=40)

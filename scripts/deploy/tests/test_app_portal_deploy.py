@@ -698,10 +698,6 @@ def test_apply_refuses_css_only_frontend_without_touching_live_tree(tmp_path: Pa
             id="noscript",
         ),
         pytest.param(
-            '<script type="module" nomodule src="/assets/index.js"></script>',
-            id="nomodule",
-        ),
-        pytest.param(
             '<script>const markup = "<script type=module src=/assets/index.js>";</script>',
             id="script-body",
         ),
@@ -902,6 +898,27 @@ def test_apply_refuses_protected_existing_hostname(tmp_path: Path) -> None:
     assert "api.altcontext.com" in output
     assert live.read_text(encoding="utf-8") == before
     assert "reverse_proxy prod-api:8000" in live.read_text(encoding="utf-8")
+
+
+def test_apply_accepts_module_frontend_with_nomodule_attribute(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    dist = _write_frontend(
+        tmp_path,
+        index=(
+            '<link rel="stylesheet" href="/assets/index.css">'
+            '<script type="module" nomodule src="/assets/index.js"></script>'
+        ),
+    )
+
+    result = _run(tmp_path, args=["--apply"], frontend=dist, live_caddy=live)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 0, output
+    www = tmp_path / "opt" / "acx-backend" / "app" / "www"
+    assert _tree_files(www) == _tree_files(dist)
+    for relative_path in _tree_files(dist):
+        assert (www / relative_path).read_bytes() == (dist / relative_path).read_bytes()
 
 
 def test_apply_merges_vhost_preserves_existing_hosts_and_copies_frontend(tmp_path: Path) -> None:

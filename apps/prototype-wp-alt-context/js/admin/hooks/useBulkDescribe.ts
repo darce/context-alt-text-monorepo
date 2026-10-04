@@ -55,6 +55,12 @@ type TerminalDescribeRun = {
   runId: string;
 };
 
+type BulkDescribeSubmitAction = {
+  selectionKey: string;
+  mediaIds: readonly number[];
+  idempotencyKey: string;
+};
+
 const emptyTenantSnapshot = (): string | null => null;
 
 /**
@@ -109,23 +115,49 @@ export const useBulkDescribe = (): UseBulkDescribeResult => {
     emptyTenantSnapshot,
   );
   const { runId: storedRunId } = useActiveDescribeRun();
-  const submitIdempotencyKeysRef = useRef<WeakMap<number[], string>>(new WeakMap());
+  const submitActionsBySelectionRef = useRef<Map<string, BulkDescribeSubmitAction>>(new Map());
+  const submitActionsByMutationMediaIdsRef = useRef<WeakMap<number[], BulkDescribeSubmitAction>>(
+    new WeakMap(),
+  );
   const submitMutation = useMutation<DescribeRunSubmitResponse, Error, number[]>({
     mutationFn: (mediaIds) => {
-      const idempotencyKey = submitIdempotencyKeysRef.current.get(mediaIds);
-      if (idempotencyKey === undefined) {
+      const action = submitActionsByMutationMediaIdsRef.current.get(mediaIds);
+      if (action === undefined) {
         throw new Error('Describe run submit is missing its action idempotency key.');
       }
-      return submitBulkDescribeRun(mediaIds, idempotencyKey);
+      return submitBulkDescribeRun([...action.mediaIds], action.idempotencyKey);
     },
-    onSuccess: persistRunContext,
-    onSettled: (_data, _error, mediaIds) => {
-      submitIdempotencyKeysRef.current.delete(mediaIds);
+    onSuccess: (response, mutationMediaIds) => {
+      persistRunContext(response);
+      const action = submitActionsByMutationMediaIdsRef.current.get(mutationMediaIds);
+      if (
+        action !== undefined &&
+        submitActionsBySelectionRef.current.get(action.selectionKey) === action
+      ) {
+        // Only a confirmed response retires the recovery action. After an
+        // ambiguous rejection, the same selection must replay its frozen
+        // payload with the same key so the server can recover the accepted run.
+        submitActionsBySelectionRef.current.delete(action.selectionKey);
+      }
+    },
+    onSettled: (_data, _error, mutationMediaIds) => {
+      submitActionsByMutationMediaIdsRef.current.delete(mutationMediaIds);
     },
   });
   const createSubmitActionMediaIds = (mediaIds: number[]): number[] => {
-    const actionMediaIds = [...mediaIds];
-    submitIdempotencyKeysRef.current.set(actionMediaIds, createDescribeIdempotencyKey());
+    const sortedMediaIds = [...mediaIds].sort((left, right) => left - right);
+    const selectionKey = JSON.stringify([tenantId, sortedMediaIds]);
+    let action = submitActionsBySelectionRef.current.get(selectionKey);
+    if (action === undefined) {
+      action = {
+        selectionKey,
+        mediaIds: Object.freeze([...mediaIds]),
+        idempotencyKey: createDescribeIdempotencyKey(),
+      };
+      submitActionsBySelectionRef.current.set(selectionKey, action);
+    }
+    const actionMediaIds = [...action.mediaIds];
+    submitActionsByMutationMediaIdsRef.current.set(actionMediaIds, action);
     return actionMediaIds;
   };
   const submit: UseBulkDescribeResult['submit'] = {

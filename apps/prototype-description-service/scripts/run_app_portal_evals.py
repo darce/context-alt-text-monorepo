@@ -66,11 +66,11 @@ _REQUIRED_CASE_KEYS = frozenset({"id", "group", "criterion", "status"})
 _REQUIRED_RELEASE_GATES = ("beta", "expansion", "paid")
 _GATE_ENV_KEYS = frozenset({"CI", "GITHUB_ACTIONS", "PYTEST_ADDOPTS", "PYTEST_PLUGINS"})
 _PYTEST_FILTER_ENV_KEYS = frozenset({"PYTEST_ADDOPTS", "PYTEST_PLUGINS"})
-_SENSITIVE_ENV_PARTS = ("SECRET", "TOKEN", "PASSWORD", "PRIVATE_KEY", "API_KEY")
+_SENSITIVE_ENV_PARTS = ("SECRET", "TOKEN", "PASSWORD", "PRIVATE_KEY", "API_KEY", "CREDENTIAL", "AUTHORIZATION")
 _MAX_RECOGNIZED_CREDENTIAL_CHARS = 8 * 1024
 _RECOGNIZED_CREDENTIAL_PATTERNS = (
     re.compile(
-        rf"(?i)\b((?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|password)\s*[:=]\s*['\"]?)([^\s,'\";]{{1,{_MAX_RECOGNIZED_CREDENTIAL_CHARS}}})(?=$|[\s,'\";])"
+        rf"(?i)\b((?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|password|credentials?|authorization)\s*[:=]\s*['\"]?(?:(?:bearer|basic)\s+)?)([^\s,'\";]{{1,{_MAX_RECOGNIZED_CREDENTIAL_CHARS}}})(?=$|[\s,'\";])"
     ),
     re.compile(rf"(?i)\bbearer\s+([A-Za-z0-9._~+/-]{{8,{_MAX_RECOGNIZED_CREDENTIAL_CHARS}}}={{0,2}})(?=$|\s)"),
     re.compile(rf"\b(?:sk|rk|pk)-[A-Za-z0-9_-]{{16,{_MAX_RECOGNIZED_CREDENTIAL_CHARS}}}\b"),
@@ -1122,7 +1122,7 @@ def _run_group(
     timed_out = False
     execution_error: str | None = None
     ran_pytest = bool(test_nodes)
-    with tempfile.TemporaryFile(mode="w+t", encoding="utf-8") as child_output:
+    with tempfile.TemporaryFile(mode="w+t", encoding="utf-8", errors="replace") as child_output:
         if not test_nodes:
             if evidence_only_group:
                 raw_exit_status = 0

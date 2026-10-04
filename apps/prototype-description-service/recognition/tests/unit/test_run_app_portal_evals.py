@@ -400,6 +400,65 @@ def test_child_credentials_are_redacted_from_log_and_failed_run_evidence(tmp_pat
     assert evidence["environment"]["ACX_RECOGNITION_API_KEY"] == "<redacted>"
 
 
+@pytest.mark.parametrize("environment_key", ["ACX_SERVICE_CREDENTIAL", "ACX_SERVICE_AUTHORIZATION"])
+def test_child_credential_variants_are_redacted_from_failed_run(tmp_path: Path, environment_key: str) -> None:
+    manifest_path = _write_manifest(tmp_path, _manifest_payload(tmp_path))
+    secret = "injected-service-value"
+    printed_credentials = ["unconfigured-credential-value", "unconfigured-auth-value"]
+
+    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        assert kwargs["env"][environment_key] == secret
+        kwargs["stdout"].write(f"service value: {secret}\n")
+        kwargs["stdout"].write(f"credential={printed_credentials[0]}\n")
+        kwargs["stdout"].write(f"Authorization: Basic {printed_credentials[1]}\n")
+        raise FileNotFoundError(f"child startup failed: {secret}")
+
+    status = runner.run_evals(
+        manifest_path,
+        out_dir=tmp_path / "out",
+        environment={environment_key: secret},
+        command_runner=_git_ok_then(handler),
+    )
+
+    evidence = _last_evidence(tmp_path)
+    log_text = Path(evidence["groups"][0]["output_capture"]["path"]).read_text(encoding="utf-8")
+    assert status == runner.COMMAND_NOT_FOUND_EXIT_STATUS
+    for value in [secret, *printed_credentials]:
+        assert value not in log_text
+        assert value not in json.dumps(evidence)
+    assert evidence["environment"][environment_key] == "<redacted>"
+
+
+@pytest.mark.parametrize("exit_status", [0, 1])
+def test_invalid_utf8_child_output_still_records_redacted_evidence(tmp_path: Path, exit_status: int) -> None:
+    manifest_path = _write_manifest(tmp_path, _manifest_payload(tmp_path))
+    secret = "recognition-secret-value"
+
+    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
+        _write_command_junit(command, xml_path)
+        # A subprocess writes bytes directly to the supplied descriptor, bypassing TextIO encoding.
+        os.write(kwargs["stdout"].fileno(), b"invalid: \xff\xfe\n" + secret.encode() + b"\n")
+        return SimpleNamespace(returncode=exit_status)
+
+    status = runner.run_evals(
+        manifest_path,
+        out_dir=tmp_path / "out",
+        environment={"ACX_RECOGNITION_API_KEY": secret},
+        command_runner=_git_ok_then(handler),
+    )
+
+    evidence = _last_evidence(tmp_path)
+    capture = evidence["groups"][0]["output_capture"]
+    log_text = Path(capture["path"]).read_text(encoding="utf-8")
+    assert status == exit_status
+    assert "invalid: \ufffd\ufffd" in log_text
+    assert "invalid: \ufffd\ufffd" in capture["tail"]
+    assert "<redacted>" in log_text
+    assert secret not in log_text
+    assert secret not in json.dumps(evidence)
+
+
 def _last_evidence(tmp_path: Path) -> dict[str, Any]:
     return json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1])
 

@@ -519,16 +519,16 @@ class SqlAlchemyUsageRepository:
             period_start = period_start.replace(tzinfo=UTC)
         if period_end.tzinfo is None:
             period_end = period_end.replace(tzinfo=UTC)
-        for cost_units, queue_bytes, reserved_at in expired_result:
-            cost_units = int(cost_units)
-            queue_bytes = int(queue_bytes or 0)
+        for expired_cost, expired_bytes, reserved_at in expired_result:
+            expired_cost = int(expired_cost)
+            expired_bytes = int(expired_bytes or 0)
             if reserved_at.tzinfo is None:
                 reserved_at = reserved_at.replace(tzinfo=UTC)
-            expired_cost_units += cost_units
+            expired_cost_units += expired_cost
             expired_queue_depth += 1
-            expired_queue_bytes += queue_bytes
+            expired_queue_bytes += expired_bytes
             if period_start <= reserved_at < period_end:
-                expired_current_day_cost_units += cost_units
+                expired_current_day_cost_units += expired_cost
         if expired_queue_depth:
             global_state.inflight_units = max(0, int(global_state.inflight_units) - expired_cost_units)
             global_state.queue_depth = max(0, int(global_state.queue_depth) - expired_queue_depth)

@@ -59,6 +59,7 @@ def _typed_provenance() -> str:
             "schema_version": 1,
             "git_sha": "d" * 40,
             "command": "pytest",
+            "runner_exit_status": 0,
             "provenance": {"source": "unit-test", "result": "pass"},
         }
     )

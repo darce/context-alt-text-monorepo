@@ -774,7 +774,7 @@ class UsageSettlementService:
                     return report
             else:
                 no_progress = 0
-        report.exit_code = 0
+        report.exit_code = int(report.fail_closed > 0 or report.rejected > 0)
         return report
 
 

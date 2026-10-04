@@ -4647,12 +4647,12 @@ def score_face_run_record(
         elif isinstance(raw_twin_errors, list):
             twin_errors = [str(error) for error in raw_twin_errors]
             twin_pass_status = "complete" if not twin_errors else "incomplete"
-        elif raw_twin_errors:
-            twin_errors = [str(raw_twin_errors)]
-            twin_pass_status = "incomplete"
         else:
-            twin_errors = []
-            twin_pass_status = "complete"
+            twin_errors = [
+                "occlusion_twin_pass.errors must be a list "
+                f"(got {type(raw_twin_errors).__name__})"
+            ]
+            twin_pass_status = "incomplete"
     else:
         twin_errors = []
         twin_pass_status = "unattested"

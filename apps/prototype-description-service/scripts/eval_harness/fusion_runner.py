@@ -842,6 +842,7 @@ def main(argv: list[str] | None = None) -> int:
             record,
             entries,
             score_manifest_sha256=score_manifest_sha,
+            run_manifest=manifest.model_dump(),
         )
         # Append mis-attachment summary to markdown (report.py unchanged).
         md_report = md_report.rstrip() + "\n\n## Mis-attachment (E20-FUSION)\n\n"
@@ -875,6 +876,7 @@ def main(argv: list[str] | None = None) -> int:
                 entries,
                 audience=Audience.PUBLIC,
                 score_manifest_sha256=score_manifest_sha,
+                run_manifest=manifest.model_dump(),
             )
             (out_dir / f"{stem}-report.public.json").write_text(public_json, encoding="utf-8")
             (out_dir / f"{stem}-report.public.md").write_text(public_md, encoding="utf-8")

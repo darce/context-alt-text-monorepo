@@ -196,7 +196,7 @@ class DescribeMediaService {
 
 		$multipart_body['operation_id'] = $operation_id;
 
-		$budget_gate = $this->budget_service->reserve_attempt();
+		$budget_gate = $this->budget_service->reserve_attempt( $operation_id );
 		if ( false === ( $budget_gate['allowed'] ?? false ) ) {
 			return new WP_Error(
 				(string) ( $budget_gate['code'] ?? 'description_budget_denied' ),
@@ -208,6 +208,13 @@ class DescribeMediaService {
 			);
 		}
 		$reservation_id = is_string( $budget_gate['reservation_id'] ?? null ) ? $budget_gate['reservation_id'] : null;
+		if ( ! $this->budget_service->mark_attempt_dispatched( $reservation_id, $operation_id ) ) {
+			return new WP_Error(
+				'description_budget_reservation_unavailable',
+				'Description generation budget could not mark an attempt as dispatched.',
+				array( 'status' => 503 )
+			);
+		}
 
 		$response = $this->host->proxy_recognition_request(
 			'POST',
@@ -220,22 +227,22 @@ class DescribeMediaService {
 		);
 
 		if ( is_wp_error( $response ) ) {
-			$this->record_error_from_wp_error( $media_id, $response, 'backend', true, $reservation_id );
+			$this->record_error_from_wp_error( $media_id, $response, 'backend', true, $reservation_id, $operation_id );
 			return $response;
 		}
 
 		$result = $this->validate_description_envelope( $response, $media_id );
 		if ( is_wp_error( $result ) ) {
-			$this->record_error_from_wp_error( $media_id, $result, 'validation', false, $reservation_id );
+			$this->record_error_from_wp_error( $media_id, $result, 'validation', false, $reservation_id, $operation_id );
 			return $result;
 		}
 
 		if ( $result->get_status() >= 400 ) {
-			$this->record_error_from_response( $media_id, $result, $reservation_id );
+			$this->record_error_from_response( $media_id, $result, $reservation_id, $operation_id );
 			return $result;
 		}
 
-		$this->record_success_from_response( $media_id, $result, $started_at, $reservation_id );
+		$this->record_success_from_response( $media_id, $result, $started_at, $reservation_id, $operation_id );
 
 		if ( ! $this->should_write_alt_text( $request ) ) {
 			return $result;
@@ -916,7 +923,7 @@ class DescribeMediaService {
 		);
 	}
 
-	private function record_success_from_response( int $media_id, WP_REST_Response $response, float $started_at, ?string $reservation_id ): void {
+	private function record_success_from_response( int $media_id, WP_REST_Response $response, float $started_at, ?string $reservation_id, string $operation_id ): void {
 		$data                = $response->get_data();
 		$provider_disclosure = is_array( $data['provider_disclosure'] ?? null ) ? $data['provider_disclosure'] : array();
 
@@ -927,11 +934,12 @@ class DescribeMediaService {
 			isset( $data['duration_ms'] ) ? max( 0, (int) $data['duration_ms'] ) : $this->elapsed_ms( $started_at ),
 			(bool) ( $data['cached'] ?? false ),
 			'drafted',
-			reservation_id: $reservation_id
+			reservation_id: $reservation_id,
+			operation_id: $operation_id
 		);
 	}
 
-	private function record_error_from_response( int $media_id, WP_REST_Response $response, ?string $reservation_id ): void {
+	private function record_error_from_response( int $media_id, WP_REST_Response $response, ?string $reservation_id, string $operation_id ): void {
 		$status  = $response->get_status();
 		$data    = $response->get_data();
 		$message = sprintf( 'Upstream description request failed with HTTP %d.', $status );
@@ -952,11 +960,12 @@ class DescribeMediaService {
 			$message,
 			$status >= 500 || 429 === $status,
 			'backend',
-			reservation_id: $reservation_id
+			reservation_id: $reservation_id,
+			operation_id: $operation_id
 		);
 	}
 
-	private function record_error_from_wp_error( int $media_id, WP_Error $error, string $source, bool $retryable, ?string $reservation_id ): void {
+	private function record_error_from_wp_error( int $media_id, WP_Error $error, string $source, bool $retryable, ?string $reservation_id, string $operation_id ): void {
 		$this->budget_service->record_error(
 			$media_id,
 			'description',
@@ -965,7 +974,8 @@ class DescribeMediaService {
 			$error->get_error_message(),
 			$retryable,
 			$source,
-			reservation_id: $reservation_id
+			reservation_id: $reservation_id,
+			operation_id: $operation_id
 		);
 	}
 

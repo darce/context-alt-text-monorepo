@@ -28,6 +28,7 @@ from recognition.infrastructure.face_pipeline._common import (
 from scripts.eval_harness.face_bakeoff import (
     DEFAULT_STALL_LIMIT,
     BoundedStallError,
+    FaceRunOptions,
     build_occlusion_twin_pairs,
     walk_face_run_record,
 )
@@ -309,6 +310,16 @@ class _MockEmbedder:
         return np.stack(out, axis=0)
 
 
+def test_walker_groups_run_settings_in_frozen_options() -> None:
+    from dataclasses import FrozenInstanceError, is_dataclass
+
+    assert len(inspect.signature(walk_face_run_record).parameters) <= 7
+    options = face_bakeoff_module.FaceRunOptions(head_sha="deadbeef")
+    assert is_dataclass(options)
+    with pytest.raises(FrozenInstanceError):
+        options.head_sha = "changed"
+
+
 def test_walker_isolates_per_item_failure(tmp_path: Path) -> None:
     """One detector failure becomes an error-item; walk continues (rg-007)."""
     manifest = _tiny_manifest(3, tmp_path)
@@ -327,8 +338,10 @@ def test_walker_isolates_per_item_failure(tmp_path: Path) -> None:
         detector=detector,
         embedder=embedder,
         aligner=_StubAligner(),  # type: ignore[arg-type]
-        head_sha="deadbeef",
-        embedding_dim=embedder.embedding_dim,
+        options=FaceRunOptions(
+            head_sha="deadbeef",
+            embedding_dim=embedder.embedding_dim,
+        ),
     )
     assert len(record["items"]) == 3
     assert record["items"][0].get("error") is None
@@ -354,8 +367,10 @@ def test_walker_prints_filename_bearing_oserror_without_surrogate_leak(
         tmp_path,
         detector=_MockDetector(),
         embedder=_MockEmbedder(),
-        head_sha="deadbeef",
-        embedding_dim=8,
+        options=FaceRunOptions(
+            head_sha="deadbeef",
+            embedding_dim=8,
+        ),
     )
     error = record["items"][0]["error"]
     assert "undecodable:/tmp/caf\\\\xe9.jpg" in error
@@ -422,9 +437,11 @@ def test_walker_bounded_stall_aborts(tmp_path: Path) -> None:
             detector=detector,
             embedder=embedder,
             aligner=_StubAligner(),  # type: ignore[arg-type]
-            head_sha="deadbeef",
-            stall_limit=DEFAULT_STALL_LIMIT,
-            embedding_dim=embedder.embedding_dim,
+            options=FaceRunOptions(
+                head_sha="deadbeef",
+                stall_limit=DEFAULT_STALL_LIMIT,
+                embedding_dim=embedder.embedding_dim,
+            ),
         )
     partial = excinfo.value.partial_record
     assert partial["aborted"] is True
@@ -806,11 +823,13 @@ def test_walker_stamps_buffalo_leg_provenance(
         detector=detector,
         embedder=embedder,
         aligner=aligner,  # type: ignore[arg-type]
-        model_id=bb.BUFFALO_MODEL_ID,
-        head_sha="deadbeef",
-        embedding_dim=embedder.embedding_dim,
-        leg="buffalo",
-        leg_mode=bb.BUFFALO_LEG_MODE,
+        options=FaceRunOptions(
+            model_id=bb.BUFFALO_MODEL_ID,
+            head_sha="deadbeef",
+            embedding_dim=embedder.embedding_dim,
+            leg="buffalo",
+            leg_mode=bb.BUFFALO_LEG_MODE,
+        ),
     )
     prov = record["provenance"]
     assert prov["leg"] == "buffalo"
@@ -829,8 +848,10 @@ def test_walker_provenance_defaults_stay_candidate(tmp_path: Path) -> None:
         tmp_path,
         detector=_MockDetector(),
         embedder=_MockEmbedder(),
-        head_sha="deadbeef",
-        embedding_dim=8,
+        options=FaceRunOptions(
+            head_sha="deadbeef",
+            embedding_dim=8,
+        ),
     )
     assert record["provenance"]["leg"] == "candidate"
     assert "leg_mode" not in record["provenance"]
@@ -1121,7 +1142,7 @@ def test_raw_detection_attribute_contract() -> None:
     assert hasattr(det, "score")
     # Walker maps these — not alternate names.
     assert not hasattr(det, "bbox_px")
-    assert inspect.signature(walk_face_run_record).parameters["stall_limit"].default == DEFAULT_STALL_LIMIT
+    assert FaceRunOptions(head_sha="deadbeef").stall_limit == DEFAULT_STALL_LIMIT
 
 
 def test_face_anchor_freeze_sees_labeled_y_missing_counter(

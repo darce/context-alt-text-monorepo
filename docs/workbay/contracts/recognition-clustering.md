@@ -26,8 +26,10 @@ explicit DB -> adapter -> DB phase split documented in
 
 Contract impact:
 
-- No HTTP request or response envelope changed for `/recognition/analyze`,
-  `/recognition/analyze/multipart`, `/recognition/jobs/{job_id}`, or the
+- The JSON shape for `/recognition/analyze` is unchanged, but that route now
+  enforces the request limits and rejection statuses documented below. The
+  request and response envelopes remain unchanged for
+  `/recognition/analyze/multipart`, `/recognition/jobs/{job_id}`, and the
   clustering routes covered by this document.
 - `JobStatusResponse.status` serializes the lowercase `JobStatus` wire
   vocabulary: `pending`, `running`, `completed`, `completed_with_errors`,
@@ -90,6 +92,15 @@ Response: `JobStatusResponse`.
 Notes:
 
 - `media_items` is preferred. `media_ids` is accepted for tests and stub detectors.
+- `media_ids` and `media_items` each accept at most 100 entries; an array over
+  this limit returns `422`.
+- The JSON body is limited to 1 MiB (`1048576` bytes). The route checks the
+  declared `Content-Length` and enforces the same limit while streaming; an
+  oversized body returns `413`.
+- A malformed or negative `Content-Length`, or a failure while reading the body
+  stream, returns `400`.
+- Malformed JSON and request schema validation failures return `422` through
+  FastAPI's normal body parsing and validation.
 - When `RECOGNITION_ASYNC_ANALYZE_INLINE=0`, Postgres requires a running scan
   worker or the service returns 503.
 - Each `media_items[]` carries exactly one of `media_url` (this route) or

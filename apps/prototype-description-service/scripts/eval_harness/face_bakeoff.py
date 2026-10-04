@@ -161,6 +161,7 @@ def walk_face_run_record(
     stall_limit: int = DEFAULT_STALL_LIMIT,
     started_at: str = "1970-01-01T00:00:00Z",
     embedding_dim: int | None = None,
+    detector_score_threshold: float | None = None,
     leg: str = "candidate",
     leg_mode: str | None = None,
 ) -> dict[str, Any]:
@@ -197,6 +198,8 @@ def walk_face_run_record(
         }
         if leg_mode is not None:
             provenance["leg_mode"] = leg_mode
+        if detector_score_threshold is not None:
+            provenance["detector_score_threshold"] = float(detector_score_threshold)
         return build_face_run_record(items, provenance=provenance, aborted=aborted)
 
     for entry in entries:

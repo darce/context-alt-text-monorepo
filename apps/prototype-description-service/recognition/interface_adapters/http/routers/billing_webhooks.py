@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-from collections.abc import Mapping
-from datetime import datetime
+from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Final, cast
 from uuid import UUID
@@ -22,6 +22,16 @@ from recognition.infrastructure.repositories.billing_repository import BillingRe
 logger = logging.getLogger(__name__)
 
 POLAR_PROVIDER: Final[str] = "polar"
+WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS: Final[float] = 300.0
+
+
+def _system_clock() -> datetime:
+    return datetime.now(tz=UTC)
+
+
+# Tests and application composition may replace this callable without changing
+# the provider's Standard Webhooks verification contract.
+_clock: Callable[[], datetime] = _system_clock
 
 
 class _ProjectionOutcome(StrEnum):
@@ -43,6 +53,14 @@ _SIGNATURE_HEADERS: Final[tuple[str, ...]] = (
     "x-polar-signature",
     "polar-signature",
     "x-webhook-signature",
+)
+
+# Standard Webhooks / Polar / Svix delivery-authentication timestamp. This is
+# not payload["timestamp"] (event occurrence time).
+_DELIVERY_TIMESTAMP_HEADERS: Final[tuple[str, ...]] = (
+    "webhook-timestamp",
+    "svix-timestamp",
+    "x-webhook-timestamp",
 )
 
 _EVENT_STATUS: Final[dict[str, BillingSubscriptionStatus]] = {
@@ -90,7 +108,7 @@ async def _commit_billing_transaction(repository: BillingRepository) -> None:
     try:
         await repository.session.commit()
     except Exception as exc:
-        logger.exception("Failed to commit Polar webhook")
+        logger.error("Failed to commit Polar webhook")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Webhook persistence unavailable",
@@ -106,10 +124,11 @@ async def receive_polar_webhook(
     """Verify, durably enqueue, and acknowledge one Polar webhook.
 
     The provider adapter owns constant-time signature comparison.  This
-    boundary passes it the exact bytes read from the request stream and only
-    asks it to parse after verification succeeds.  Projection is deliberately
-    a second operation and is bounded; a timeout leaves the received inbox row
-    available to a later worker instead of making the provider redeliver it.
+    boundary passes it the exact bytes read from the request stream plus the
+    full header map and only asks it to parse after verification succeeds.
+    Projection is deliberately a second operation and is bounded; a timeout
+    leaves the received inbox row available to a later worker instead of
+    making the provider redeliver it.
     """
     signature = _signature_from_request(request)
     if not signature:
@@ -118,9 +137,9 @@ async def receive_polar_webhook(
     raw_body = await _read_bounded_body(request)
 
     try:
-        signature_verified = await provider.verify_webhook(raw_body, signature)
+        signature_verified = await provider.verify_webhook(raw_body, request.headers)
     except Exception:
-        logger.warning("Polar webhook signature verification failed")
+        logger.warning("Polar webhook rejected: outcome=verification_failed")
         signature_verified = False
     if signature_verified is not True:
         raise _invalid_signature()
@@ -135,6 +154,13 @@ async def receive_polar_webhook(
     payload = cast(Mapping[str, object], parsed)
     event_id = _event_id(payload, raw_body)
     event_type = _required_text(payload, "type")
+    if not _webhook_timestamp_is_current(request):
+        logger.warning(
+            "Polar webhook rejected: event_id=%s event_type=%s outcome=timestamp_out_of_tolerance",
+            event_id,
+            event_type,
+        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid webhook timestamp")
 
     try:
         async with asyncio.timeout(WEBHOOK_PERSIST_TIMEOUT_SECONDS):
@@ -168,7 +194,7 @@ async def receive_polar_webhook(
             ) from exc
         inserted = False
     except Exception as exc:
-        logger.exception("Failed to persist Polar webhook")
+        logger.error("Failed to persist Polar webhook")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Webhook persistence unavailable",
@@ -183,7 +209,7 @@ async def receive_polar_webhook(
                 payload=payload,
             )
         except Exception:
-            logger.exception("Failed to check the existing Polar webhook projection")
+            logger.error("Failed to check the existing Polar webhook projection")
             outcome = _ProjectionOutcome.FAILED
         if outcome is _ProjectionOutcome.FAILED:
             raise HTTPException(
@@ -296,7 +322,7 @@ async def _project_and_mark(
                 cast(UUID, projection["tenant_id"]),
             )
         except Exception:
-            logger.exception("Failed to read the existing Polar subscription pointer; inbox row remains pending")
+            logger.error("Failed to read the existing Polar subscription pointer; inbox row remains pending")
             return _ProjectionOutcome.FAILED
 
     try:
@@ -305,7 +331,7 @@ async def _project_and_mark(
             cast(UUID, projection["tenant_id"]),
         )
     except Exception:
-        logger.exception("Failed to read the existing Polar customer binding; inbox row remains pending")
+        logger.error("Failed to read the existing Polar customer binding; inbox row remains pending")
         return _ProjectionOutcome.FAILED
     # WHY: the HMAC proves the delivery channel, not the authority of the payload's
     # tenant_id. Mirror the reconciler's binding check so a customer cannot be
@@ -331,7 +357,7 @@ async def _project_and_mark(
         logger.warning("Polar webhook projection timed out; inbox row remains pending")
         return _ProjectionOutcome.FAILED
     except Exception:
-        logger.exception("Failed to project Polar webhook; inbox row remains pending")
+        logger.error("Failed to project Polar webhook; inbox row remains pending")
         return _ProjectionOutcome.FAILED
 
     # WHY: the repository returns False both for an ordering skip and for a
@@ -347,7 +373,7 @@ async def _project_and_mark(
                 event_position=projection["event_position"],
             )
         except Exception:
-            logger.exception("Failed to confirm the Polar projection position; inbox row remains pending")
+            logger.error("Failed to confirm the Polar projection position; inbox row remains pending")
             return _ProjectionOutcome.FAILED
         if superseded:
             logger.info("Polar webhook event was superseded by a newer projection; acknowledging")
@@ -459,7 +485,7 @@ def _status_for_event(payload: Mapping[str, object], event_type: str) -> Billing
     try:
         return _provider_billing_status(provider_status)
     except ValueError:
-        logger.warning("Polar webhook has an unmapped subscription status: %s", provider_status)
+        logger.warning("Polar webhook has an unmapped subscription status; outcome=projection_skipped")
         return None
 
 
@@ -551,6 +577,62 @@ def _optional_datetime(value: object) -> datetime | None:
         return None
 
 
+def _webhook_timestamp_is_current(request: Request) -> bool:
+    """Bound delivery authentication time, never domain event occurrence time.
+
+    Payload `timestamp` is when the billing event happened and can be hours
+    old on replay or reconciliation. Replay protection belongs on the
+    delivery timestamp (Standard Webhooks `webhook-timestamp`). A missing
+    delivery header is not treated as event-age; signature verification
+    already ran. An unparseable delivery header is rejected.
+    """
+    header_value = _delivery_timestamp_header(request)
+    if header_value is None:
+        return True
+    delivery_time = _webhook_timestamp(header_value)
+    clock = getattr(request.app.state, "webhook_clock", None)
+    if not callable(clock):
+        clock = _clock
+    try:
+        now = clock()
+        if not isinstance(now, datetime) or now.tzinfo is None or delivery_time is None:
+            return False
+        return abs((now.astimezone(UTC) - delivery_time).total_seconds()) <= WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS
+    except (OverflowError, OSError, TypeError, ValueError):
+        return False
+
+
+def _delivery_timestamp_header(request: Request) -> str | None:
+    for header_name in _DELIVERY_TIMESTAMP_HEADERS:
+        value = request.headers.get(header_name)
+        if value:
+            return value
+    return None
+
+
+def _webhook_timestamp(value: object) -> datetime | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value), UTC)
+        except (OverflowError, OSError, ValueError):
+            return None
+    if isinstance(value, str) and value:
+        try:
+            return datetime.fromtimestamp(float(value), UTC)
+        except (OverflowError, OSError, ValueError):
+            pass
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo is not None else None
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else None
+    return None
+
+
 def _invalid_signature() -> HTTPException:
     return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook signature")
 
@@ -569,6 +651,7 @@ def _accepted_response() -> Response:
 __all__ = [
     "MAX_WEBHOOK_BODY_BYTES",
     "POLAR_PROVIDER",
+    "WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS",
     "WEBHOOK_PERSIST_TIMEOUT_SECONDS",
     "WEBHOOK_PROJECTION_TIMEOUT_SECONDS",
     "get_billing_provider",

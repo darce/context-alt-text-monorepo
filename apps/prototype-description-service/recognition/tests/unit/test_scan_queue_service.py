@@ -8,10 +8,18 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import select
 
+import recognition.tests.conftest as _recognition_conftest
 from db.models import IdentityScanJob, IdentityScanJobItem
 from recognition.application.scan.scan_queue_service import JobProgressResult, ScanQueueService
 from recognition.domain.job import JobStatus
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
+
+_recognition_conftest.SQLITE_TEST_TABLE_EXCLUSIONS = _recognition_conftest.SQLITE_TEST_TABLE_EXCLUSIONS | {
+    "billing_known_item_lease",
+    "billing_reconciliation_cursor",
+    "billing_reconciliation_item_progress",
+    "billing_reconciliation_quarantine",
+}
 
 
 @pytest.mark.asyncio
@@ -155,6 +163,7 @@ async def test_refresh_job_progress_does_not_overwrite_terminal_stalled_job(db_s
     await repo.mark_job_running(job_id=job_id, started_at=datetime.now(tz=UTC) - timedelta(seconds=3600))
 
     terminated = await queue.terminate_stalled_jobs(stale_after_seconds=600)
+    assert isinstance(terminated, int)
     assert terminated == 1
     job = (await db_session.execute(select(IdentityScanJob).where(IdentityScanJob.id == job_id))).scalar_one()
     assert job.status == "failed"
@@ -203,9 +212,7 @@ async def test_release_item_for_retry_applies_attempt_based_not_before(db_sessio
     assert released is True
     await db_session.flush()
 
-    row = (
-        await db_session.execute(select(IdentityScanJobItem).where(IdentityScanJobItem.id == item.id))
-    ).scalar_one()
+    row = (await db_session.execute(select(IdentityScanJobItem).where(IdentityScanJobItem.id == item.id))).scalar_one()
     assert row.status == "pending"
     assert row.last_error == "transient"
     expected_available = now + compute_retry_backoff(item.attempts)
@@ -246,12 +253,8 @@ async def test_release_item_for_retry_longer_backoff_for_higher_attempts(db_sess
     assert len(claimed) == 2
     low, high = claimed[0], claimed[1]
 
-    assert await repo.release_item_for_retry(
-        item_id=low.id, error_message="e1", attempts=1, now=now
-    )
-    assert await repo.release_item_for_retry(
-        item_id=high.id, error_message="e2", attempts=3, now=now
-    )
+    assert await repo.release_item_for_retry(item_id=low.id, error_message="e1", attempts=1, now=now)
+    assert await repo.release_item_for_retry(item_id=high.id, error_message="e2", attempts=3, now=now)
     await db_session.flush()
 
     low_row = (
@@ -271,9 +274,7 @@ async def test_release_item_for_retry_longer_backoff_for_higher_attempts(db_sess
 
 
 @pytest.mark.asyncio
-async def test_release_item_for_retry_status_guard_skips_non_processing(
-    db_session, tenant
-) -> None:
+async def test_release_item_for_retry_status_guard_skips_non_processing(db_session, tenant) -> None:
     """R2-05: late release must not demote pending/terminal rows after reclaim."""
     from recognition.application.scan.retry_backoff import compute_retry_backoff
 
@@ -290,49 +291,33 @@ async def test_release_item_for_retry_status_guard_skips_non_processing(
     item = claimed[0]
 
     # First release while processing succeeds.
-    assert await repo.release_item_for_retry(
-        item_id=item.id, error_message="first", attempts=1, now=now
-    )
+    assert await repo.release_item_for_retry(item_id=item.id, error_message="first", attempts=1, now=now)
     await db_session.flush()
-    row = (
-        await db_session.execute(select(IdentityScanJobItem).where(IdentityScanJobItem.id == item.id))
-    ).scalar_one()
+    row = (await db_session.execute(select(IdentityScanJobItem).where(IdentityScanJobItem.id == item.id))).scalar_one()
     assert row.status == "pending"
     first_started = _as_utc(row.started_at)
 
     # Late release after row is already pending must be a no-op (status guard).
     later = now + timedelta(seconds=30)
     assert (
-        await repo.release_item_for_retry(
-            item_id=item.id, error_message="stale-late", attempts=2, now=later
-        )
-        is False
+        await repo.release_item_for_retry(item_id=item.id, error_message="stale-late", attempts=2, now=later) is False
     )
     await db_session.flush()
-    row = (
-        await db_session.execute(select(IdentityScanJobItem).where(IdentityScanJobItem.id == item.id))
-    ).scalar_one()
+    row = (await db_session.execute(select(IdentityScanJobItem).where(IdentityScanJobItem.id == item.id))).scalar_one()
     assert row.status == "pending"
     assert row.last_error == "first"
     assert _as_utc(row.started_at) == first_started
     assert first_started == now + compute_retry_backoff(1)
 
     # Terminal row also protected.
-    await repo.mark_item_failed(
-        item_id=item.id, completed_at=later, error_message="terminal"
-    )
+    await repo.mark_item_failed(item_id=item.id, completed_at=later, error_message="terminal")
     # Force processing so mark_item_failed is not needed for the guard case:
     # mark_item_failed already set failed; release must still return False.
     assert (
-        await repo.release_item_for_retry(
-            item_id=item.id, error_message="after-fail", attempts=3, now=later
-        )
-        is False
+        await repo.release_item_for_retry(item_id=item.id, error_message="after-fail", attempts=3, now=later) is False
     )
     await db_session.flush()
-    row = (
-        await db_session.execute(select(IdentityScanJobItem).where(IdentityScanJobItem.id == item.id))
-    ).scalar_one()
+    row = (await db_session.execute(select(IdentityScanJobItem).where(IdentityScanJobItem.id == item.id))).scalar_one()
     assert row.status == "failed"
     assert row.last_error == "terminal"
 

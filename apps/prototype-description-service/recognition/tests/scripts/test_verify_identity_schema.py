@@ -103,6 +103,86 @@ def _complete_kwargs(script) -> dict:
     }
 
 
+def _with_approved_operator_policy(script, kwargs: dict, table: str) -> dict:
+    policy_key = (table, f"operator_scope_{table}")
+    kwargs["operator_scope_tables"] = (table,)
+    kwargs["rls_state"][table] = (True, True)
+    kwargs["policy_names"] = set(kwargs["policy_names"]) | {policy_key}
+    kwargs["operator_policy_bodies"] = {
+        policy_key: (script.BYPASS_RLS_EXPR, script.BYPASS_RLS_EXPR)
+    }
+    kwargs["operator_policy_permissiveness"] = {policy_key: True}
+    return kwargs
+
+
+def test_operator_scope_approved_restrictive_policy_is_gap() -> None:
+    script = _import_script()
+    table = script.OPERATOR_SCOPE_TABLES[0]
+    kwargs = _with_approved_operator_policy(script, _complete_kwargs(script), table)
+    policy_key = (table, f"operator_scope_{table}")
+    kwargs["operator_policy_permissiveness"][policy_key] = False
+
+    report = script._validate_schema_state(**kwargs)
+
+    assert report["ok"] is False
+    assert report["policy_gaps"] == [table]
+
+
+def test_operator_scope_approved_permissive_policy_stays_clean() -> None:
+    script = _import_script()
+    table = script.OPERATOR_SCOPE_TABLES[0]
+    kwargs = _with_approved_operator_policy(script, _complete_kwargs(script), table)
+
+    report = script._validate_schema_state(**kwargs)
+
+    assert report["ok"] is True
+    assert report["policy_gaps"] == []
+
+
+def test_operator_scope_missing_approved_policy_permissiveness_is_gap() -> None:
+    script = _import_script()
+    table = script.OPERATOR_SCOPE_TABLES[0]
+
+    for permissiveness in (None, {}):
+        kwargs = _with_approved_operator_policy(script, _complete_kwargs(script), table)
+        kwargs["operator_policy_permissiveness"] = permissiveness
+
+        report = script._validate_schema_state(**kwargs)
+
+        assert report["ok"] is False
+        assert report["policy_gaps"] == [table]
+
+
+def test_operator_scope_extra_permissive_policy_is_gap() -> None:
+    script = _import_script()
+    table = script.OPERATOR_SCOPE_TABLES[0]
+    kwargs = _with_approved_operator_policy(script, _complete_kwargs(script), table)
+    extra_key = (table, "extra_open_policy")
+    kwargs["policy_names"].add(extra_key)
+    kwargs["operator_policy_bodies"][extra_key] = ("true", "true")
+    kwargs["operator_policy_permissiveness"][extra_key] = True
+
+    report = script._validate_schema_state(**kwargs)
+
+    assert report["ok"] is False
+    assert report["policy_gaps"] == [table]
+
+
+def test_operator_scope_extra_restrictive_policy_stays_clean() -> None:
+    script = _import_script()
+    table = script.OPERATOR_SCOPE_TABLES[0]
+    kwargs = _with_approved_operator_policy(script, _complete_kwargs(script), table)
+    extra_key = (table, "extra_restrictive_policy")
+    kwargs["policy_names"].add(extra_key)
+    kwargs["operator_policy_bodies"][extra_key] = ("true", "true")
+    kwargs["operator_policy_permissiveness"][extra_key] = False
+
+    report = script._validate_schema_state(**kwargs)
+
+    assert report["ok"] is True
+    assert report["policy_gaps"] == []
+
+
 def test_dropped_policy_is_heal_repairable_and_named() -> None:
     script = _import_script()
     kwargs = _complete_kwargs(script)
@@ -280,6 +360,7 @@ def _catalog_connection(
     unique_constraints: set[str] | None = None,
     matview_present: bool = True,
     missing_relations: set[str] | None = None,
+    extra_operator_policy_rows: list[tuple[str, str, str, str | None, str | None]] | None = None,
 ):
     quoted = current_user_quoted if current_user_quoted is not None else current_user
     missing = set(missing_relations or ())
@@ -297,9 +378,25 @@ def _catalog_connection(
             if "select version_num" in sql:
                 return _Result(scalar_value=script.EXPECTED_REVISION)
             if "relrowsecurity" in sql:
-                return _Result(rows=[(name, True, True) for name in script.TENANT_TABLES])
+                return _Result(
+                    rows=[(name, True, True) for name in (*script.TENANT_TABLES, *script.OPERATOR_SCOPE_TABLES)]
+                )
             if "from pg_policies" in sql:
-                return _Result(rows=[(name, f"tenant_isolation_{name}") for name in script.TENANT_TABLES])
+                tenant_rows = [
+                    (name, f"tenant_isolation_{name}", "PERMISSIVE", None, None)
+                    for name in script.TENANT_TABLES
+                ]
+                operator_rows = [
+                    (
+                        name,
+                        f"operator_scope_{name}",
+                        "PERMISSIVE",
+                        script.BYPASS_RLS_EXPR,
+                        script.BYPASS_RLS_EXPR,
+                    )
+                    for name in script.OPERATOR_SCOPE_TABLES
+                ]
+                return _Result(rows=[*tenant_rows, *operator_rows, *(extra_operator_policy_rows or ())])
             if "select c.relname, c.relkind" in sql:
                 return _Result(
                     rows=[
@@ -575,6 +672,23 @@ def test_collect_and_validate_probes_every_identity_vector_column(monkeypatch) -
     assert report["exit_code"] == script.EXIT_OK
 
 
+def test_collect_and_validate_reads_permissiveness_for_operator_policies(monkeypatch) -> None:
+    script = _import_script()
+    table = script.OPERATOR_SCOPE_TABLES[0]
+    connection = _catalog_connection(
+        script,
+        centroid_typmod=script.EMBEDDING_DIMENSION,
+        extra_operator_policy_rows=[(table, "extra_open_policy", "PERMISSIVE", "true", "true")],
+    )
+    monkeypatch.setattr(script, "inspect", lambda _connection: _Inspector(script))
+    monkeypatch.setattr(script, "_expected_columns", lambda: {})
+
+    report = script.collect_and_validate(connection)
+
+    assert any("permissive" in sql for sql in connection.sql_log if "pg_policies" in sql)
+    assert table in report["policy_gaps"]
+
+
 def test_main_healthy_catalog_does_not_warn_about_alembic_version(monkeypatch, capsys) -> None:
     from types import SimpleNamespace
 
@@ -734,6 +848,23 @@ def test_collect_and_validate_missing_unique_constraint_is_heal_repairable(monke
     assert report["exit_code"] == script.EXIT_HEAL_REPAIRABLE
     assert "image_description_runs.uq_image_description_runs_idempotency_key" in report["unique_constraint_gaps"]
     assert any("pg_constraint" in sql for sql in connection.sql_log)
+
+
+def test_collect_and_validate_guards_cluster_merge_receipt_survivor_sequence_unique(monkeypatch) -> None:
+    script = _import_script()
+    constraint = "uq_cluster_merge_receipts_survivor_seq"
+    connection = _catalog_connection(
+        script,
+        centroid_typmod=script.EMBEDDING_DIMENSION,
+        unique_constraints={name for _table, name, _columns in script.HEAL_UNIQUE_CONSTRAINTS} - {constraint},
+    )
+    monkeypatch.setattr(script, "inspect", lambda _connection: _Inspector(script))
+    monkeypatch.setattr(script, "_expected_columns", lambda: {})
+
+    report = script.collect_and_validate(connection)
+
+    assert report["exit_code"] == script.EXIT_HEAL_REPAIRABLE
+    assert report["unique_constraint_gaps"] == [f"cluster_merge_receipts.{constraint}"]
 
 
 def test_collect_matview_create_privilege_gaps_sql_matches_migration() -> None:

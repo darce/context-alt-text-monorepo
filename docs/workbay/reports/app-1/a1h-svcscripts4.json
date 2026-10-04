@@ -1,0 +1,50 @@
+{
+  "lane": "a1h-svcscripts4",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "resolved_python -c \"import db as module; print(module.__file__)\"",
+      "result": "pass",
+      "detail": "Resolved to apps/prototype-description-service/db/__init__.py inside the lane worktree."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_billing_recovery_verifier.py",
+      "result": "fail",
+      "detail": "uv stopped before pytest collection: error: failed to remove file /home/gate/workbay-sandbox/.venv-lane-feature-app-1-a1h-svcscripts4-e92b0e36/lib/python3.12/site-packages/../../../bin/alembic: Read-only file system (os error 30)."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_billing_recovery_verifier.py",
+      "result": "pass",
+      "detail": "12 passed in 8.29s."
+    },
+    {
+      "command": "Postgres-backed tests in recognition/tests/integration/test_app1_billing_recovery_verifier_postgres.py and recognition/tests/schema/test_identity_schema_heal_pg.py",
+      "result": "not_run",
+      "detail": "Require the scratch PostgreSQL database unavailable in this sandbox; relevant assertions were read for TEST-15."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16037,
+      "finding_id": "APP1-RECOVERY-RV05",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/verify_identity_schema.py:412 - `rls_tables` includes `OPERATOR_SCOPE_TABLES`; :474 passes configured operator tables found in collected RLS state. At :150-152, missing ENABLE+FORCE flags become `rls_gaps`; :159-167 checks the expected operator policy body. The collector no longer relies on `TENANT_TABLES` alone.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/integration/test_app1_billing_recovery_verifier_postgres.py::test_disabled_operator_rls_fails_then_restore (asserts the cursor is in rls_gaps; not_run here because PostgreSQL is unavailable)"
+    }
+  ],
+  "new_findings": [
+    {
+      "severity": "high",
+      "file": "apps/prototype-description-service/scripts/verify_identity_schema.py",
+      "line": 159,
+      "title": "Extra permissive recovery-table policies can bypass verifier RLS checks",
+      "defect": "The validation loop at lines 159-167 checks only the named `operator_scope_{table}` policy, even though collection reads all policy rows. PostgreSQL combines permissive policies with OR, and no check rejects an additional permissive policy on an operator-scope table.",
+      "failure_scenario": "With ENABLE and FORCE RLS set and the approved `operator_scope_billing_reconciliation_cursor` intact, a `PUBLIC` policy `USING (true) WITH CHECK (true)` is added under another name. `collect_and_validate` still reports success, while an ordinary application database role with table privileges can read every seller-wide recovery row (and write rows if it has write privileges).",
+      "fix": "Validate all policies for each operator-scope table and fail on any unapproved permissive policy that broadens access; add a PostgreSQL regression case that keeps the approved policy and adds a second permissive `USING (true)` policy.",
+      "test_file": "apps/prototype-description-service/recognition/tests/integration/test_app1_billing_recovery_verifier_postgres.py",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "The reported RLS omission is fixed and the lane unit suite passes, but an extra permissive policy can still make the verifier report healthy while exposing recovery rows; resolve this high-severity gap before merge."
+}

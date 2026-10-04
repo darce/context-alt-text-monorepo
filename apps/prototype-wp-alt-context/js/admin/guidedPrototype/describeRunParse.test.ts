@@ -27,6 +27,7 @@ const fetchApiMock = vi.mocked(httpModule.fetchRequiredApi);
 
 const TENANT_ID = '550e8400-e29b-41d4-a716-446655440000';
 const RUN_ID = '6ba7b810-9dad-41d1-80b4-00c04fd430c8';
+const IDEMPOTENCY_KEY = 'guided-test-idempotency-key';
 
 const validRun = {
   tenant_id: TENANT_ID,
@@ -99,9 +100,9 @@ describe('bulk describe-run wrapper boundaries', () => {
   it.each([
     [
       'submit',
-      () => submitBulkDescribeRun([101]),
+      () => submitBulkDescribeRun([101], IDEMPOTENCY_KEY),
       'https://example.test/recognitionDescribeRuns',
-      { method: 'POST', body: { media_ids: [101] } },
+      { method: 'POST', body: { media_ids: [101], idempotency_key: IDEMPOTENCY_KEY } },
     ],
     [
       'fetch',
@@ -126,7 +127,7 @@ describe('bulk describe-run wrapper boundaries', () => {
   });
 
   it.each([
-    ['submit', () => submitBulkDescribeRun([101])],
+    ['submit', () => submitBulkDescribeRun([101], IDEMPOTENCY_KEY)],
     ['fetch', () => fetchBulkDescribeRun(RUN_ID)],
     ['cancel', () => cancelBulkDescribeRun(RUN_ID)],
   ] as const)('rejects a malformed response from the %s wrapper', async (_label, invoke) => {
@@ -139,7 +140,7 @@ describe('bulk describe-run wrapper boundaries', () => {
   it('accepts WP unreadable media IDs on submit and returns them with the run', async () => {
     fetchApiMock.mockResolvedValue({ ...validRun, unreadable_media_ids: [7, 9] });
 
-    await expect(submitBulkDescribeRun([101])).resolves.toEqual({
+    await expect(submitBulkDescribeRun([101], IDEMPOTENCY_KEY)).resolves.toEqual({
       ...validRun,
       unreadable_media_ids: [7, 9],
     });
@@ -151,13 +152,13 @@ describe('bulk describe-run wrapper boundaries', () => {
   ] as const)('rejects %s unreadable media IDs', async (_label, unreadableMediaIds) => {
     fetchApiMock.mockResolvedValue({ ...validRun, unreadable_media_ids: unreadableMediaIds });
 
-    await expect(submitBulkDescribeRun([101])).rejects.toThrow(/response\.unreadable_media_ids/);
+    await expect(submitBulkDescribeRun([101], IDEMPOTENCY_KEY)).rejects.toThrow(/response\.unreadable_media_ids/);
   });
 
   it('continues rejecting other unknown submit fields', async () => {
     fetchApiMock.mockResolvedValue({ ...validRun, unexpected: true });
 
-    await expect(submitBulkDescribeRun([101])).rejects.toThrow(/response\.unexpected/);
+    await expect(submitBulkDescribeRun([101], IDEMPOTENCY_KEY)).rejects.toThrow(/response\.unexpected/);
   });
 
   it('continues rejecting WP unreadable media IDs on GET', async () => {

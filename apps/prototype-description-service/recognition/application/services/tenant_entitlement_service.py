@@ -266,6 +266,9 @@ class TenantEntitlementService:
             raise InvalidEntitlementRequestError("allowance_jobs must be a non-negative integer")
         version = _validate_text(allowance_version, "allowance_version")
         grant_source = _validate_text(source, "source")
+        for field_name, value in (("period_start", period_start), ("period_end", period_end)):
+            if isinstance(value, datetime) and (value.tzinfo is None or value.utcoffset() is None):
+                raise InvalidEntitlementRequestError(f"{field_name} must be timezone-aware")
         normalized_start, normalized_end = _validate_period(period_start, period_end)
 
         upsert = getattr(self._repository, "upsert_beta", None) or self._repository.upsert

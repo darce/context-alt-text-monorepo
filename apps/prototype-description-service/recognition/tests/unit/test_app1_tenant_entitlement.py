@@ -143,6 +143,10 @@ async def test_beta_to_paid_opens_fresh_period_without_beta_usage(database) -> N
                 tenant_id=tenant_id,
                 period_start=beta_start,
                 idempotency_key="beta-used-all-10",
+                operation_id="beta-used-all-10",
+                request_fingerprint="fp-beta-used-all-10",
+                fence_token="fence-beta-used-all-10",
+                queue_bytes=0,
                 status=UsageReservationStatus.COMMITTED,
                 cost_units=10,
             )
@@ -296,6 +300,10 @@ async def test_dunning_after_period_end_does_not_reopen_the_consumed_period(data
                 tenant_id=tenant_id,
                 period_start=period_start,
                 idempotency_key="usage-exhausted",
+                operation_id="usage-exhausted",
+                request_fingerprint="fp-usage-exhausted",
+                fence_token="fence-usage-exhausted",
+                queue_bytes=0,
                 status=UsageReservationStatus.COMMITTED,
                 cost_units=5000,
             )

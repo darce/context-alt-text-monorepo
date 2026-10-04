@@ -13,6 +13,7 @@ import { GUIDED_LIVE_WARM_CEILING_SECONDS, useGuidedLiveDescription } from './us
 import type { GuidedLiveDescriptionClient, UseGuidedLiveDescriptionResult } from './useGuidedLiveDescription';
 
 const MEDIA_ID = 4211;
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
 
 const runResponse = (over: Partial<DescribeRunResponse> = {}): DescribeRunResponse => ({
   tenant_id: 'demo',
@@ -109,7 +110,10 @@ describe('useGuidedLiveDescription', () => {
 
       await press(() => result.current.request());
 
-      expect(client.submit).toHaveBeenCalledWith(MEDIA_ID);
+      expect(client.submit).toHaveBeenCalledWith(
+        MEDIA_ID,
+        expect.stringMatching(IDEMPOTENCY_KEY_PATTERN),
+      );
     });
 
     it('stays unavailable without a media id, because there is nothing live to describe', () => {
@@ -133,13 +137,16 @@ describe('useGuidedLiveDescription', () => {
   });
 
   describe('a run that works', () => {
-    it('submits the media id alone and reports the phases it is told', async () => {
+    it('submits the media id with an action key and reports the phases it is told', async () => {
       const client = stubClient();
       const { result } = mount(client);
 
       await press(() => result.current.request());
 
-      expect(client.submit).toHaveBeenCalledWith(MEDIA_ID);
+      expect(client.submit).toHaveBeenCalledWith(
+        MEDIA_ID,
+        expect.stringMatching(IDEMPOTENCY_KEY_PATTERN),
+      );
       expect(result.current.state.runId).toBe('run-1');
 
       await settle(600);
@@ -345,6 +352,89 @@ describe('useGuidedLiveDescription', () => {
 
       expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.UNAVAILABLE);
       expect(result.current.state.reason).toBe('submit_failed');
+    });
+
+    it('reuses the pending action key when retrying a failed submit for the same media', async () => {
+      const client = stubClient({
+        submit: vi
+          .fn<GuidedLiveDescriptionClient['submit']>()
+          .mockRejectedValueOnce(new Error('response lost'))
+          .mockRejectedValueOnce(new Error('response lost again'))
+          .mockResolvedValue(runResponse()),
+      });
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      expect(result.current.state.reason).toBe('submit_failed');
+
+      await press(() => result.current.request());
+
+      expect(client.submit).toHaveBeenCalledTimes(2);
+      const firstActionKey = client.submit.mock.calls[0]?.[1];
+      expect(firstActionKey).toMatch(IDEMPOTENCY_KEY_PATTERN);
+      expect(client.submit.mock.calls[1]?.[1]).toBe(firstActionKey);
+
+      expect(result.current.state.reason).toBe('submit_failed');
+      await press(() => result.current.request());
+      expect(client.submit).toHaveBeenCalledTimes(3);
+      expect(client.submit.mock.calls[2]?.[1]).toBe(firstActionKey);
+    });
+
+    it('mints a new action key while a run disclosed by a submit error is being cancelled', async () => {
+      let rejectSubmit!: (error: unknown) => void;
+      const client = stubClient({
+        submit: vi
+          .fn<GuidedLiveDescriptionClient['submit']>()
+          .mockImplementationOnce(() =>
+            new Promise<DescribeRunResponse>((_resolve, reject) => {
+              rejectSubmit = reject;
+            }),
+          )
+          .mockResolvedValue(runResponse({ run_id: 'run-fresh' })),
+        // Leave cancellation in flight: the retry must not replay this run.
+        cancel: vi.fn<GuidedLiveDescriptionClient['cancel']>(() => new Promise(() => {})),
+      });
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      // Commit the waiting render first to isolate key retirement from the
+      // separate batched-rejection retry-guard regression above (TEST-15).
+      await press(() => rejectSubmit({ data: { run_id: 'run-stranded' } }));
+      expect(result.current.state.reason).toBe('submit_failed');
+      expect(client.cancel).toHaveBeenCalledWith('run-stranded');
+
+      await press(() => result.current.request());
+
+      expect(client.submit).toHaveBeenCalledTimes(2);
+      const firstActionKey = client.submit.mock.calls[0]?.[1];
+      expect(firstActionKey).toMatch(IDEMPOTENCY_KEY_PATTERN);
+      expect(client.submit.mock.calls[1]?.[1]).toMatch(IDEMPOTENCY_KEY_PATTERN);
+      expect(client.submit.mock.calls[1]?.[1]).not.toBe(firstActionKey);
+      expect(result.current.state.runId).toBe('run-fresh');
+    });
+
+    it('mints a new action key when retrying with a different media item', async () => {
+      const submit = vi
+        .fn<GuidedLiveDescriptionClient['submit']>()
+        .mockRejectedValueOnce(new Error('response lost'))
+        .mockResolvedValue(runResponse());
+      const client = stubClient({ submit });
+      const { result, rerender } = renderHook(
+        ({ mediaId }: { mediaId: number }) => useGuidedLiveDescription({ mediaId, client }),
+        { initialProps: { mediaId: MEDIA_ID } },
+      );
+
+      await press(() => result.current.request());
+      rerender({ mediaId: MEDIA_ID + 1 });
+      await press(() => result.current.request());
+
+      expect(client.submit).toHaveBeenCalledTimes(2);
+      expect(client.submit.mock.calls[0]?.[0]).toBe(MEDIA_ID);
+      expect(client.submit.mock.calls[1]?.[0]).toBe(MEDIA_ID + 1);
+      const firstActionKey = client.submit.mock.calls[0]?.[1];
+      expect(firstActionKey).toMatch(IDEMPOTENCY_KEY_PATTERN);
+      expect(client.submit.mock.calls[1]?.[1]).toMatch(IDEMPOTENCY_KEY_PATTERN);
+      expect(client.submit.mock.calls[1]?.[1]).not.toBe(firstActionKey);
     });
 
     it('times out at the ceiling and never retries on its own', async () => {
@@ -853,6 +943,10 @@ describe('useGuidedLiveDescription', () => {
       // the server may still be working on is worth stopping.
       expect(client.cancel).not.toHaveBeenCalled();
       expect(client.submit).toHaveBeenCalledTimes(2);
+      const firstActionKey = client.submit.mock.calls[0]?.[1];
+      expect(firstActionKey).toMatch(IDEMPOTENCY_KEY_PATTERN);
+      expect(client.submit.mock.calls[1]?.[1]).toMatch(IDEMPOTENCY_KEY_PATTERN);
+      expect(client.submit.mock.calls[1]?.[1]).not.toBe(firstActionKey);
     });
 
     it('cancels the timed-out run before a retry starts a second one', async () => {
@@ -869,6 +963,10 @@ describe('useGuidedLiveDescription', () => {
       // the first may still be on a GPU is the one-live-run rule breaking.
       expect(client.cancel).toHaveBeenCalledWith('run-1');
       expect(client.submit).toHaveBeenCalledTimes(2);
+      const firstActionKey = client.submit.mock.calls[0]?.[1];
+      expect(firstActionKey).toMatch(IDEMPOTENCY_KEY_PATTERN);
+      expect(client.submit.mock.calls[1]?.[1]).toMatch(IDEMPOTENCY_KEY_PATTERN);
+      expect(client.submit.mock.calls[1]?.[1]).not.toBe(firstActionKey);
     });
   });
 

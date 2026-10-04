@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://context-alt-text.dev/schemas/scene-describe-multipart.schema.json",
   "title": "Scene describe multipart success and typed operation error",
-  "description": "POST /scene/describe/multipart response body. 200 success; 503 starting/unavailable; 502 service error after ready; 409 operation_mismatch; 410 operation_expired. Retry-After is an HTTP header, never a body field. Validation/auth/upload errors retain their existing envelopes and are outside this operation-response schema. Request operation_id is an optional multipart form field, never a header or query parameter. Unavailable responses name a typed reason; starting responses expose the service-owned warmup budget.",
+  "description": "POST /scene/describe/multipart response body. 200 success; 400 missing_operation_id for metered requests; 422 invalid_operation_id; 503 starting/unavailable; 502 service error after ready; 409 operation_mismatch; 410 operation_expired. Retry-After is an HTTP header, never a body field. Validation/auth/upload errors retain their existing envelopes and are outside this operation-response schema. Request operation_id is an optional multipart form field for unmetered requests and required for metered requests, never a header or query parameter. Unavailable responses name a typed reason; starting responses expose the service-owned warmup budget.",
   "oneOf": [
     {
       "$ref": "#/definitions/success"
@@ -19,7 +19,9 @@
                 "description_service_unavailable",
                 "description_service_error",
                 "operation_mismatch",
-                "operation_expired"
+                "operation_expired",
+                "missing_operation_id",
+                "invalid_operation_id"
               ]
             },
             "message": {

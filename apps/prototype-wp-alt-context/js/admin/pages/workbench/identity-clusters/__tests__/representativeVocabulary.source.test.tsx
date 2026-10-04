@@ -196,6 +196,7 @@ describe('missing-representative vocabulary source', () => {
       isAssignmentError: false,
       isUnavailable: false,
       isReadOnly: false,
+      readOnlyReason: null,
       queueSettled: true,
       nextAction: {
         kind: NEXT_ACTION_KIND.ASSIGNMENT,
@@ -224,6 +225,7 @@ describe('missing-representative vocabulary source', () => {
       isAssignmentError: false,
       isUnavailable: false,
       isReadOnly: false,
+      readOnlyReason: null,
       queueSettled: true,
       nextAction: {
         kind: NEXT_ACTION_KIND.ASSIGNMENT,

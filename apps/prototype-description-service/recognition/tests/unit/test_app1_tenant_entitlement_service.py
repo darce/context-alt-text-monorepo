@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
@@ -12,7 +12,10 @@ from sqlalchemy.orm import Session
 
 from db.base import Base
 from db.models import AuditEvent, Tenant, TenantEntitlement, UsageReservation
-from recognition.application.services.tenant_entitlement_service import TenantEntitlementService
+from recognition.application.services.tenant_entitlement_service import (
+    InvalidEntitlementRequestError,
+    TenantEntitlementService,
+)
 from recognition.domain.portal_contracts import (
     DEFAULT_ALLOWANCE_JOBS,
     DEFAULT_ENTITLEMENT_STATUS,
@@ -227,6 +230,72 @@ async def test_grant_beta_is_tenant_bound_audited_and_upserts_metadata(database)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("naive_field", ["period_start", "period_end"])
+async def test_grant_beta_rejects_naive_period_boundaries_without_writes(database, naive_field: str) -> None:
+    session_factory, tenant_id, now = database
+    period_start = now
+    period_end = now + timedelta(days=30)
+    if naive_field == "period_start":
+        period_start = now.replace(tzinfo=None)
+    else:
+        period_end = period_end.replace(tzinfo=None)
+
+    async with session_factory() as session:
+        with pytest.raises(InvalidEntitlementRequestError, match="timezone-aware"):
+            await _service(session, now).grant_beta(
+                tenant_id,
+                allowance_jobs=10,
+                allowance_version="beta-v1",
+                period_start=period_start,
+                period_end=period_end,
+                source="operator:alice",
+            )
+
+        entitlements = (
+            (await session.execute(select(TenantEntitlement).where(TenantEntitlement.tenant_id == tenant_id)))
+            .scalars()
+            .all()
+        )
+        events = (
+            (await session.execute(select(AuditEvent).where(AuditEvent.tenant_id == tenant_id)))
+            .scalars()
+            .all()
+        )
+
+    assert entitlements == []
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_grant_beta_normalizes_aware_non_utc_period_boundaries_to_utc(database) -> None:
+    session_factory, tenant_id, now = database
+    offset = timezone(timedelta(hours=5, minutes=30))
+    period_end_utc = now + timedelta(days=30)
+
+    async with session_factory() as session:
+        snapshot = await _service(session, now).grant_beta(
+            tenant_id,
+            allowance_jobs=10,
+            allowance_version="beta-v1",
+            period_start=now.astimezone(offset),
+            period_end=period_end_utc.astimezone(offset),
+            source="operator:alice",
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        entitlement = (
+            await session.execute(select(TenantEntitlement).where(TenantEntitlement.tenant_id == tenant_id))
+        ).scalar_one()
+
+    assert snapshot.period_start == now
+    assert snapshot.period_end == period_end_utc
+    # SQLite drops timezone metadata; the persisted wall times still represent UTC.
+    assert entitlement.period_start == now.replace(tzinfo=None)
+    assert entitlement.period_end == period_end_utc.replace(tzinfo=None)
+
+
+@pytest.mark.asyncio
 async def test_beta_to_paid_upgrade_applies_paid_allowance_and_starts_a_clean_period(database) -> None:
     session_factory, tenant_id, now = database
     period_start = now - timedelta(hours=1)
@@ -248,6 +317,10 @@ async def test_beta_to_paid_upgrade_applies_paid_allowance_and_starts_a_clean_pe
                 tenant_id=tenant_id,
                 period_start=period_start,
                 idempotency_key="already-used",
+                operation_id="already-used",
+                request_fingerprint="fp-already-used",
+                fence_token="fence-already-used",
+                queue_bytes=0,
                 status=UsageReservationStatus.COMMITTED,
                 cost_units=3,
             )

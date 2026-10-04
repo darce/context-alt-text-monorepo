@@ -51,6 +51,19 @@ def _case(case_id: str, *, artifact: Path | None = None, additional: bool = Fals
     return case
 
 
+def _typed_provenance() -> str:
+    """Provenance JSON the runner accepts for the fake HEAD this file's runner returns."""
+
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "git_sha": "d" * 40,
+            "command": "pytest",
+            "provenance": {"source": "unit-test", "result": "pass"},
+        }
+    )
+
+
 def _successful_runner() -> Any:
     def fake(command: list[str], **kwargs: Any) -> SimpleNamespace:
         if command[:3] == ["git", "rev-parse", "HEAD"]:
@@ -81,7 +94,7 @@ def _successful_runner() -> Any:
 
 def test_required_test_case_checks_its_own_supplemental_artifact(tmp_path: Path) -> None:
     artifact = tmp_path / "earlier-case-report.md"
-    artifact.write_text("recorded", encoding="utf-8")
+    artifact.write_text(_typed_provenance(), encoding="utf-8")
     manifest_path = _manifest(
         tmp_path,
         [

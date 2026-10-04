@@ -12,7 +12,10 @@ from fastapi.routing import APIRoute
 from recognition.infrastructure.billing.polar_provider import PolarBillingProvider
 from recognition.interface_adapters.http.deps import session as session_deps
 from recognition.interface_adapters.http.deps.auth import require_auth
-from recognition.interface_adapters.http.deps.portal_auth import require_portal_principal
+from recognition.interface_adapters.http.deps.portal_auth import (
+    require_portal_principal,
+    require_verified_portal_identity,
+)
 from recognition.interface_adapters.http.deps.portal_composition import BillingRepositoryFactory
 from recognition.interface_adapters.http.middleware.upload_size import UploadSizeLimitMiddleware
 from recognition.interface_adapters.http.routers.billing_webhooks import receive_polar_webhook
@@ -21,6 +24,7 @@ _PORTAL_ENV = "RECOGNITION_PORTAL_ENABLED"
 _PORTAL_TEST_SETTINGS = {
     "ACX_CLERK_ISSUER": "https://issuer.example.test",
     "ACX_CLERK_JWKS_URL": "https://jwks.example.test/keys",
+    "ACX_CLERK_AUDIENCE": "portal-api",
     "ACX_CLERK_AUTHORIZED_PARTIES": "portal-api",
     "POLAR_WEBHOOK_SECRET": "test-webhook-secret",
     "POLAR_PRODUCT_IDS": "starter=prod_starter",
@@ -33,6 +37,9 @@ _NEW_ROUTE_SIGNATURES = {
     ("/portal/keys/{api_key_id}/rotate", frozenset({"POST"})),
     ("/portal/keys/{api_key_id}/revoke", frozenset({"POST"})),
     ("/portal/usage", frozenset({"GET"})),
+    ("/portal/onboarding/claim", frozenset({"POST"})),
+    ("/portal/billing/checkout", frozenset({"POST"})),
+    ("/portal/billing/manage", frozenset({"POST"})),
     ("/billing/webhooks/polar", frozenset({"POST"})),
 }
 
@@ -126,8 +133,13 @@ def test_enabled_mount_preserves_existing_routes_and_resolves_auth_boundaries(
         for route in app.routes
         if isinstance(route, APIRoute) and route.path.startswith("/portal")
     ]
-    assert len(portal_routes) == 7
+    assert len(portal_routes) == 10
+    claim_dependencies = _dependency_calls(_route(app, "/portal/onboarding/claim", "POST"))
+    assert require_verified_portal_identity in claim_dependencies
+    assert require_portal_principal not in claim_dependencies
     for route in portal_routes:
+        if route.path == "/portal/onboarding/claim":
+            continue
         dependencies = _dependency_calls(route)
         assert require_portal_principal in dependencies, route.path
 

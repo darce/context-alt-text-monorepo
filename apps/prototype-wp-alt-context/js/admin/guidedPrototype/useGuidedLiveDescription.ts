@@ -18,6 +18,7 @@ import {
   isGpuState,
   submitBulkDescribeRun,
 } from '../api/describeApi';
+import { createDescribeIdempotencyKey } from '../api/describeIdempotencyKey';
 import type { DescribeRunItemsResponse, DescribeRunResponse } from '../api/describeApi';
 import { parseWpErrorPayload } from '../api/wpErrorMessage';
 import { isFrozenPollFailure } from '../hooks/useDescribeRunProgress';
@@ -86,7 +87,7 @@ export interface GuidedLiveDescriptionClient {
   // Both the submit response and every status poll carry `deadline_seconds` on
   // the shared contract, so both are typed by it rather than by a local
   // intersection that a schema rename could not break (rg-015).
-  submit: (mediaId: number) => Promise<DescribeRunResponse>;
+  submit: (mediaId: number, idempotencyKey: string) => Promise<DescribeRunResponse>;
   poll: (runId: string) => Promise<DescribeRunResponse>;
   items: (runId: string) => Promise<DescribeRunItemsResponse>;
   cancel: (runId: string) => Promise<unknown>;
@@ -95,7 +96,8 @@ export interface GuidedLiveDescriptionClient {
 const defaultClient: GuidedLiveDescriptionClient = {
   // The payload builder is the single place that decides what leaves the
   // browser, so the route never sees anything the guided screen invented.
-  submit: (mediaId) => submitBulkDescribeRun(guidedLiveRequestPayload(mediaId).media_ids),
+  submit: (mediaId, idempotencyKey) =>
+    submitBulkDescribeRun(guidedLiveRequestPayload(mediaId).media_ids, idempotencyKey),
   poll: fetchBulkDescribeRun,
   items: fetchDescribeRunItems,
   cancel: cancelBulkDescribeRun,
@@ -224,6 +226,7 @@ export const useGuidedLiveDescription = ({
   const generationRef = useRef(0);
   const attemptRef = useRef(0);
   const requestInFlightRef = useRef(false);
+  const pendingIdempotencyRef = useRef<{ mediaId: number; key: string } | null>(null);
   // Set by the tick that crosses the client deadline. Distinct from `waiting`
   // so an in-flight submit that resolves before the queued re-render is not
   // mistaken for a timed-out wait (GR-201).
@@ -312,6 +315,12 @@ export const useGuidedLiveDescription = ({
       return;
     }
     requestInFlightRef.current = true;
+    let pendingIdempotency = pendingIdempotencyRef.current;
+    if (pendingIdempotency === null || pendingIdempotency.mediaId !== mediaId) {
+      pendingIdempotency = { mediaId, key: createDescribeIdempotencyKey() };
+      pendingIdempotencyRef.current = pendingIdempotency;
+    }
+    const idempotencyKey = pendingIdempotency.key;
     // A timed-out run is stopped on screen only; the server may still be
     // burning GPU on it. Retrying without cancelling first is how one learner
     // gesture ends up paying for two live runs.
@@ -339,11 +348,14 @@ export const useGuidedLiveDescription = ({
           // whole path exists to prevent.
           return undefined;
         }
-        return client.submit(mediaId);
+        return client.submit(mediaId, idempotencyKey);
       })
       .then((run) => {
         if (run === undefined) {
           return;
+        }
+        if (pendingIdempotencyRef.current?.key === idempotencyKey) {
+          pendingIdempotencyRef.current = null;
         }
         if (generationRef.current !== generation) {
           // The learner stopped waiting while the submit was in flight. The run
@@ -379,9 +391,17 @@ export const useGuidedLiveDescription = ({
       .catch((error: unknown) => {
         const strandedRunId = strandedRunIdOf(error);
         if (strandedRunId !== null) {
+          // Acceptance consumes the key even when the response is an error.
+          // Replaying it would adopt the run we are now cancelling (API-02).
+          if (pendingIdempotencyRef.current?.key === idempotencyKey) {
+            pendingIdempotencyRef.current = null;
+          }
           void releaseRun(client, strandedRunId, 'submit_failed_after_acceptance');
         }
         if (generationRef.current === generation) {
+          // React may batch requested + failed without rendering waiting=true,
+          // so the waiting layout effect alone cannot unlock a failed submit.
+          requestInFlightRef.current = false;
           dispatch({ kind: 'failed', reason: GUIDED_LIVE_REASON.SUBMIT_FAILED });
         }
       });

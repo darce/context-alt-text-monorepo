@@ -1,6 +1,7 @@
 import type { SyncHealthResponse } from '../../../api/recognition/types/sync';
 import {
   getDashboardSyncHealthSummary,
+  getDegradedDebtLinks,
   resolveEffectiveSyncHealth,
   shouldShowDegradedBanner,
   translateSyncHealthWarning,
@@ -8,7 +9,7 @@ import {
 
 const buildEnvelope = (overrides: Partial<SyncHealthResponse> = {}): SyncHealthResponse => ({
   breaker: { state: 'closed', base_url: 'http://localhost:8000', opened_at: null },
-  outbox: { pending: 0, failed: 0 },
+  outbox: { state: 'ok', pending: 0, failed: 0, dead_lettered: 0, oldest_age_seconds: 0 },
   conflicts: { open: 0 },
   replays: { failed: null, source: 'unavailable_local' },
   last_pull: { at: '2026-06-11T12:00:00Z', ok: true },
@@ -48,6 +49,23 @@ describe('getDashboardSyncHealthSummary', () => {
     });
 
     expect(getDashboardSyncHealthSummary('healthy', envelope)).toContain('warning threshold');
+  });
+});
+
+describe('getDegradedDebtLinks', () => {
+  it('does not link to failed outbox work when its count is unknown', () => {
+    const envelope = buildEnvelope({
+      outbox: {
+        state: 'degraded',
+        pending: null,
+        failed: null,
+        dead_lettered: null,
+        oldest_age_seconds: null,
+        warnings: [],
+      },
+    });
+
+    expect(getDegradedDebtLinks(envelope).failedOutboxHref).toBeNull();
   });
 });
 

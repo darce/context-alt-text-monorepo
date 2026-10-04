@@ -571,7 +571,10 @@ describe('GuidedA11y (W04)', () => {
       expect(screen.getByTestId('guided-live-status')).toHaveTextContent(guidedCopy('live.failed'));
     });
     expect(liveClient.submit).toHaveBeenCalledTimes(1);
-    expect(liveClient.submit).toHaveBeenCalledWith(LIVE_MEDIA_ID);
+    expect(liveClient.submit).toHaveBeenCalledWith(
+      LIVE_MEDIA_ID,
+      expect.stringMatching(/^[A-Za-z0-9_-]{16,128}$/),
+    );
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', edited);
     expect(

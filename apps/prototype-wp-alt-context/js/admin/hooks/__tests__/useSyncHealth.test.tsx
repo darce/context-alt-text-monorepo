@@ -24,7 +24,7 @@ describe('useSyncHealth', () => {
     const fetchSyncHealthMock = vi.mocked(recognitionApi.fetchSyncHealth);
     fetchSyncHealthMock.mockResolvedValue({
       breaker: { state: 'closed', base_url: 'http://localhost:8000', opened_at: null },
-      outbox: { pending: 0, failed: 0 },
+      outbox: { state: 'ok', pending: 0, failed: 0, dead_lettered: 0, oldest_age_seconds: 0 },
       conflicts: { open: 0 },
       replays: { failed: null, source: 'unavailable_local' },
       last_pull: { at: null, ok: true },

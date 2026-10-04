@@ -27,11 +27,13 @@ from db.models.scene import (
     ImageDescription,
 )
 from db.models.tenant import Tenant
+from recognition.domain.portal_contracts import UsageTicket
 from recognition.interface_adapters.http.deps import (
     get_optional_session,
     require_write_access,
 )
 from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
+from recognition.interface_adapters.http.deps.usage_admission import get_usage_admission_service
 from scene.application.description_adapter import AdapterResult
 from scene.domain.description import DescriptionAdapterKind
 from scene.interface_adapters.http.deps import get_description_adapter
@@ -45,6 +47,44 @@ class _Auth:
     def __init__(self, tenant_claim=None):
         self.tenant_claim = tenant_claim
         self.user_id = None
+
+
+class _PassAdmission:
+    async def reserve(
+        self,
+        tenant_id,
+        *,
+        idempotency_key,
+        job_id,
+        cost_units,
+        operation_id=None,
+        request_fingerprint=None,
+        queue_bytes=0,
+    ):
+        del queue_bytes
+        tenant_uuid = tenant_id if isinstance(tenant_id, uuid.UUID) else uuid.UUID(str(tenant_id))
+        return UsageTicket(
+            uuid.uuid4(),
+            tenant_uuid,
+            idempotency_key,
+            cost_units,
+            operation_id=operation_id or idempotency_key,
+            request_fingerprint=request_fingerprint or "",
+            job_id=job_id,
+            fence_token="fence-eligibility",
+        )
+
+    async def commit(self, ticket):
+        del ticket
+
+    async def release(self, ticket):
+        del ticket
+
+    async def commit_fenced(self, ticket, *, fence_token):
+        del ticket, fence_token
+
+    async def release_fenced(self, ticket, *, fence_token):
+        del ticket, fence_token
 
 
 class CountingAdapter:
@@ -114,9 +154,12 @@ def _client(adapter=None, auth_tenant=None):
 
     app = FastAPI()
     app.include_router(scene_router, prefix="/scene")
+    admission = _PassAdmission()
+    app.state.usage_admission_service = admission
     app.dependency_overrides[require_write_access] = lambda: _Auth(tenant_claim=auth_tenant)
     app.dependency_overrides[enforce_demo_quota] = lambda: None
     app.dependency_overrides[get_optional_session] = _session
+    app.dependency_overrides[get_usage_admission_service] = lambda: admission
     if adapter is not None:
         app.dependency_overrides[get_description_adapter] = lambda: adapter
     try:
@@ -234,6 +277,7 @@ def test_non_decorative_unaffected():
         r = client.post(
             "/scene/describe/multipart",
             data={
+                "operation_id": "eligibility-non-decorative-action",
                 "request": json.dumps(
                     {
                         "tenant_id": TENANT_ID,

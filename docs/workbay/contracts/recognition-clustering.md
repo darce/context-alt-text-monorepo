@@ -130,6 +130,11 @@ Status codes:
 - `400` — missing/malformed `request` part, non-integer `image_<id>` suffix
 - `403` — `X-Tenant-ID` / `auth.tenant_claim` differs from
   `request.tenant_id`
+- `408` — no body bytes arrived within the 10-second idle window, or multipart
+  parsing exceeded the 300-second total ceiling. Parsing happens before usage
+  reservation or job creation, so the client can retry the full upload after
+  resolving a stall or slow transfer; an upload that again exceeds the total
+  ceiling will time out again.
 - `411` — body-bearing request without `Content-Length`
 - `413` — `Content-Length > RECOGNITION_MAX_UPLOAD_BYTES` (default 25 MiB)
 - `415` — image part with disallowed MIME type

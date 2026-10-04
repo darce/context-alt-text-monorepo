@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from db.models.scene import ImageDescription
 from db.tenant_context import set_tenant_context
+from recognition.application.services.usage_settlement_service import capture_usage_fence, settle_usage_job
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.description_adapter import AdapterResult, DescriptionAdapter
 from scene.application.description_repository import ImageDescriptionRepository
@@ -383,15 +384,37 @@ async def run_async_describe_job(
                     )
                 await session.commit()
 
-    if job_timeout_seconds is not None:
+    captured_fence: str | None = None
+    try:
+        async with session_factory() as claim_session:
+            await set_tenant_context(claim_session, tenant_id)
+            captured_fence = await capture_usage_fence(claim_session, tenant_id=tenant_id, job_id=str(run_id))
+    except Exception:
+        _logger.debug("usage fence capture skipped run_id=%s", run_id, exc_info=True)
+
+    try:
+        if job_timeout_seconds is not None:
+            try:
+                await asyncio.wait_for(_run(), job_timeout_seconds)
+            except TimeoutError:
+                # wait_for cancels the inner task; the CancelledError cleanup usually
+                # persisted a terminal state already. _mark_terminal's terminal guard
+                # prevents a second write from overwriting that error, and its
+                # degraded-vs-failed split keeps the timeout path consistent with the
+                # GPU-exception and reclaim contracts (VLM5-F1A-BR-02).
+                await _mark_terminal(f"TimeoutError: job exceeded {job_timeout_seconds}s")
+        else:
+            await _run()
+    finally:
         try:
-            await asyncio.wait_for(_run(), job_timeout_seconds)
-        except TimeoutError:
-            # wait_for cancels the inner task; the CancelledError cleanup usually
-            # persisted a terminal state already. _mark_terminal's terminal guard
-            # prevents a second write from overwriting that error, and its
-            # degraded-vs-failed split keeps the timeout path consistent with the
-            # GPU-exception and reclaim contracts (VLM5-F1A-BR-02).
-            await _mark_terminal(f"TimeoutError: job exceeded {job_timeout_seconds}s")
-        return
-    await _run()
+            async with session_factory() as settle_session:
+                await set_tenant_context(settle_session, tenant_id)
+                await settle_usage_job(
+                    settle_session,
+                    tenant_id=tenant_id,
+                    job_id=str(run_id),
+                    fence_token=captured_fence,
+                )
+                await settle_session.commit()
+        except Exception:
+            _logger.exception("usage settlement failed run_id=%s", run_id)

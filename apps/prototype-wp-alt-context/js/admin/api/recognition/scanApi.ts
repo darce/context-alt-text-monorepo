@@ -40,7 +40,11 @@ const recordClientBatchFailure = async (
 };
 
 export const scanFaces = async (request: AnalyzeRequest): Promise<AnalyzeResponse> => {
-  const body: Record<string, unknown> = { media_ids: request.mediaIds };
+  const batchRunId = request.batchRunId ?? createBatchRunId();
+  const body: Record<string, unknown> = {
+    media_ids: request.mediaIds,
+    idempotency_key: `${batchRunId}-b${request.batchIndex ?? 0}`,
+  };
   if (request.sensitivity) {
     body.sensitivity = request.sensitivity;
   }

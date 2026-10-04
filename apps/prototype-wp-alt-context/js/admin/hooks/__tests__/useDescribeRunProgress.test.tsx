@@ -336,7 +336,7 @@ describe('useDescribeRunProgress', () => {
 
     const liveRegion = screen.getByTestId('gpu-tier-status-live');
 
-    rerender(<GpuTierStatus gpuState={GPU_STATE.UNKNOWN} isRunPending />, { wrapper });
+    rerender(<GpuTierStatus gpuState={GPU_STATE.UNKNOWN} isRunPending />);
 
     await waitFor(() => expect(liveRegion).toHaveTextContent('Description Service status is out of date'));
   });

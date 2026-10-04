@@ -8,6 +8,7 @@ lifecycle, authentication, and transport policy.
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -17,10 +18,18 @@ from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Protocol, cast
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 from uuid import UUID
 
-from recognition.domain.portal_contracts import BillingState, BillingSubscriptionStatus
+from recognition.domain.portal_contracts import (
+    RECONCILIATION_MAX_REMOTE_ID_LENGTH,
+    BillingState,
+    BillingSubscriptionStatus,
+    CheckoutSession,
+    EnumerationObservation,
+    EnumerationObservationReason,
+    EnumerationPage,
+)
 
 
 class AsyncHttpClient(Protocol):
@@ -62,6 +71,10 @@ class PolarRequestError(RuntimeError):
         super().__init__(f"Polar {operation} request failed with HTTP {status_code}")
 
 
+class PolarEnumerationError(RuntimeError):
+    """Raised when a subscription page cannot be trusted as a typed result."""
+
+
 class PolarBillingProvider:
     """Use Polar's HTTP API while preserving the domain billing protocol.
 
@@ -100,6 +113,7 @@ class PolarBillingProvider:
         allowed_return_origins: Iterable[str] | None = None,
         webhook_tolerance_seconds: float = _DEFAULT_WEBHOOK_TOLERANCE_SECONDS,
         clock: Callable[[], datetime] | None = None,
+        seller_account: str | None = None,
     ) -> None:
         if not callable(client.post):
             raise TypeError("client must provide an async post method")
@@ -129,12 +143,15 @@ class PolarBillingProvider:
 
         if not isinstance(base_url, str) or not base_url.startswith(("http://", "https://")):
             raise ValueError("base_url must be an absolute HTTP(S) URL")
+        if seller_account is not None and (not isinstance(seller_account, str) or not seller_account.strip()):
+            raise ValueError("seller_account must be a non-empty string")
 
         resolved_token = access_token if access_token is not None else api_token
         if resolved_token is not None and not isinstance(resolved_token, str):
             raise ValueError("access_token must be a string")
 
         normalized_environment = _normalize_environment(environment)
+        _assert_environment_matches_base_url(normalized_environment, base_url)
         normalized_origins: set[str] = set()
         if allowed_return_origins is not None:
             if isinstance(allowed_return_origins, str):
@@ -150,13 +167,14 @@ class PolarBillingProvider:
             raise ValueError("clock must be callable")
 
         self._client = client
-        self._webhook_secret = webhook_secret.encode("utf-8")
+        self._webhook_secret = webhook_secret
         self._access_token = resolved_token
         self._product_ids = normalized_products
         self._base_url = base_url.rstrip("/")
         self._timeout = float(resolved_timeout)
         self._payments_enabled = payments_enabled
         self._environment = normalized_environment
+        self._seller_account = seller_account.strip() if isinstance(seller_account, str) else None
         self._allowed_return_origins = frozenset(normalized_origins)
         self._webhook_tolerance_seconds = float(webhook_tolerance_seconds)
         self._clock = clock or (lambda: datetime.now(UTC))
@@ -177,32 +195,39 @@ class PolarBillingProvider:
         plan_code: str,
         success_url: str,
         cancel_url: str,
-    ) -> str:
+        idempotency_key: str,
+        attempt_id: UUID,
+    ) -> CheckoutSession:
         """Create a tenant-bound checkout session for an allowlisted plan."""
         self._require_payments_enabled()
         if not isinstance(tenant_id, UUID):
             raise ValueError("tenant_id must be a UUID")
         if not isinstance(plan_code, str) or not plan_code:
             raise ValueError("plan_code is required")
+        if not isinstance(idempotency_key, str) or not idempotency_key:
+            raise ValueError("idempotency_key is required")
+        if not isinstance(attempt_id, UUID):
+            raise ValueError("attempt_id must be a UUID")
         product_id = self._product_ids.get(plan_code)
         if product_id is None:
             raise ValueError("plan_code is not configured")
         _validate_url("success_url", success_url, self._allowed_return_origins)
         _validate_url("cancel_url", cancel_url, self._allowed_return_origins)
 
+        metadata: dict[str, object] = {
+            "tenant_id": str(tenant_id),
+            "environment": self._environment,
+            "attempt_id": str(attempt_id),
+        }
+        if self._seller_account is not None:
+            metadata["seller_account"] = self._seller_account
         payload: dict[str, object] = {
             "products": [product_id],
-            "metadata": {"tenant_id": str(tenant_id), "environment": self._environment},
+            "external_customer_id": self._scope_identifier(str(tenant_id)),
+            "metadata": metadata,
             "success_url": success_url,
             "return_url": cancel_url,
         }
-        idempotency_key = _checkout_idempotency_key(
-            environment=self._environment,
-            tenant_id=tenant_id,
-            plan_code=plan_code,
-            success_url=success_url,
-            cancel_url=cancel_url,
-        )
         try:
             response = await self._post(
                 self._CHECKOUTS_PATH,
@@ -215,7 +240,7 @@ class PolarBillingProvider:
                     "Polar checkout creation outcome is ambiguous; retry with the same request"
                 ) from exc
             raise
-        return _response_url(response, "checkout")
+        return _checkout_session(response)
 
     async def create_portal_session(self, *, tenant_id: UUID, return_url: str) -> str:
         """Create a hosted customer portal session for the mapped tenant."""
@@ -268,37 +293,61 @@ class PolarBillingProvider:
             requested_subscription_id=raw_subscription_id,
         )
 
-    async def verify_webhook(self, raw_body: bytes, signature: str) -> bool:
-        """Verify a constant-time HMAC for a fresh, identified event body."""
+    async def retrieve_checkout(
+        self,
+        *,
+        provider_checkout_id: str,
+        request_timeout: float,
+    ) -> Mapping[str, object]:
+        """Read one Polar checkout session by provider id."""
+        if not isinstance(provider_checkout_id, str) or not provider_checkout_id:
+            raise ValueError("provider_checkout_id is required")
+        _require_positive_timeout(request_timeout)
+        checkout_id = self._unscope_identifier(provider_checkout_id)
+        path = f"{self._CHECKOUTS_PATH}{quote(checkout_id, safe='')}"
+        return await self._get(path, request_timeout=float(request_timeout))
+
+    async def enumerate_subscriptions(
+        self,
+        *,
+        cursor: str | None,
+        limit: int,
+        request_timeout: float,
+    ) -> EnumerationPage:
+        """Read one Polar subscription page; invalid items become quarantine observations."""
+        _require_positive_timeout(request_timeout)
+        page = _cursor_page(cursor)
+        bound_limit = _enumeration_limit(limit)
+        query: dict[str, str] = {"page": str(page), "limit": str(bound_limit)}
+        if self._seller_account is not None:
+            query["organization_id"] = self._seller_account
+        path = f"{self._SUBSCRIPTIONS_PATH}?{urlencode(query)}"
+        response = await self._get(path, request_timeout=float(request_timeout))
+        return _enumeration_page_from_response(
+            response,
+            environment=self._environment,
+            seller_account=self._seller_account,
+            page=page,
+            limit=bound_limit,
+        )
+
+    async def verify_webhook(self, raw_body: bytes, headers: Mapping[str, str]) -> bool:
+        """Verify Polar Standard Webhooks headers over the exact raw body."""
         if not isinstance(raw_body, bytes) or not raw_body or len(raw_body) > self._MAX_WEBHOOK_BODY_BYTES:
             return False
-        if not isinstance(signature, str) or not signature:
+        if not isinstance(headers, Mapping):
             return False
-
-        token = _signature_token(signature)
-        if token is None:
-            return False
-
-        digest = hmac.new(self._webhook_secret, raw_body, hashlib.sha256).digest()
-        expected_values = (
-            base64.b64encode(digest).decode("ascii"),
-            digest.hex(),
-        )
-        valid = any(hmac.compare_digest(token, expected) for expected in expected_values)
-        if not valid:
-            return False
-
         try:
-            decoded = _decode_json_object(raw_body)
-            _validate_event_shape(decoded)
-            event_time = _event_timestamp(decoded)
-            now = self._clock()
-            if (
-                now.tzinfo is None
-                or abs((now.astimezone(UTC) - event_time).total_seconds()) > self._webhook_tolerance_seconds
-            ):
-                return False
-        except (TypeError, ValueError, OverflowError):
+            body_text = raw_body.decode("utf-8")
+        except UnicodeDecodeError:
+            return False
+        if not _verify_polar_signature(
+            body_text,
+            headers,
+            secret=self._webhook_secret,
+            now=self._clock(),
+            tolerance_seconds=self._webhook_tolerance_seconds,
+        ):
             return False
 
         body_key = hashlib.sha256(raw_body).digest()
@@ -369,31 +418,24 @@ def _normalize_environment(value: str) -> str:
     return value.lower()
 
 
+def _assert_environment_matches_base_url(environment: str, base_url: str) -> None:
+    host = (urlsplit(base_url).hostname or "").lower()
+    if host == "api.polar.sh" and environment != "live":
+        raise ValueError("sandbox environment cannot use the live Polar API host")
+    if host == "sandbox-api.polar.sh" and environment != "sandbox":
+        raise ValueError("live environment cannot use the sandbox Polar API host")
+
+
+def _require_positive_timeout(request_timeout: float) -> None:
+    if isinstance(request_timeout, bool) or not isinstance(request_timeout, (int, float)):
+        raise ValueError("request_timeout must be a positive number")
+    if request_timeout <= 0 or not math.isfinite(float(request_timeout)):
+        raise ValueError("request_timeout must be a positive number")
+
+
 def _scope_identifier(value: str, environment: str) -> str:
     prefix = f"{environment}:"
     return value if value.startswith(prefix) else f"{prefix}{value}"
-
-
-def _checkout_idempotency_key(
-    *,
-    environment: str,
-    tenant_id: UUID,
-    plan_code: str,
-    success_url: str,
-    cancel_url: str,
-) -> str:
-    request = json.dumps(
-        {
-            "cancel_url": cancel_url,
-            "environment": environment,
-            "plan_code": plan_code,
-            "success_url": success_url,
-            "tenant_id": str(tenant_id),
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return f"{environment}-{hashlib.sha256(request).hexdigest()}"
 
 
 def _is_ambiguous_error(exc: Exception) -> bool:
@@ -405,14 +447,81 @@ def _is_ambiguous_error(exc: Exception) -> bool:
     return any(marker in error_name for marker in ("timeout", "connection", "reset", "network"))
 
 
-def _signature_token(signature: str) -> str | None:
-    """Accept one Polar value, with the optional version prefix, exactly."""
-    if signature.startswith("v1,"):
-        token = signature[3:]
-        return token or None
-    if "," in signature:
-        return None
-    return signature
+_WEBHOOK_ID_HEADERS: tuple[str, ...] = ("webhook-id", "svix-id", "x-webhook-id")
+_WEBHOOK_TIMESTAMP_HEADERS: tuple[str, ...] = (
+    "webhook-timestamp",
+    "svix-timestamp",
+    "x-webhook-timestamp",
+)
+_WEBHOOK_SIGNATURE_HEADERS: tuple[str, ...] = (
+    "webhook-signature",
+    "svix-signature",
+    "x-polar-signature",
+    "polar-signature",
+    "x-webhook-signature",
+)
+
+
+def _header_value(headers: Mapping[str, str], names: tuple[str, ...]) -> str | None:
+    lowered = {str(key).lower(): value for key, value in headers.items()}
+    for name in names:
+        value = lowered.get(name)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _verify_polar_signature(
+    body: str,
+    headers: Mapping[str, str],
+    *,
+    secret: str,
+    now: datetime,
+    tolerance_seconds: float,
+) -> bool:
+    """Port of Polar SDK `validate_event` signature checks (try both HMAC keys)."""
+    if not secret or now.tzinfo is None:
+        return False
+    webhook_id = _header_value(headers, _WEBHOOK_ID_HEADERS)
+    webhook_timestamp = _header_value(headers, _WEBHOOK_TIMESTAMP_HEADERS)
+    webhook_signature = _header_value(headers, _WEBHOOK_SIGNATURE_HEADERS)
+    if not webhook_id or not webhook_timestamp or not webhook_signature:
+        return False
+    try:
+        timestamp = float(webhook_timestamp)
+    except ValueError:
+        return False
+    if not math.isfinite(timestamp):
+        return False
+    now_ts = now.astimezone(UTC).timestamp()
+    if timestamp < now_ts - tolerance_seconds or timestamp > now_ts + tolerance_seconds:
+        return False
+    signed_content = f"{webhook_id}.{math.floor(timestamp)}.{body}".encode()
+    for signing_key in _signing_keys(secret):
+        expected_signature = hmac.new(signing_key, signed_content, hashlib.sha256).digest()
+        for versioned_signature in webhook_signature.split():
+            version, separator, signature = versioned_signature.partition(",")
+            if version != "v1" or not separator:
+                continue
+            try:
+                decoded_signature = base64.b64decode(signature, validate=True)
+            except (binascii.Error, ValueError):
+                continue
+            if hmac.compare_digest(expected_signature, decoded_signature):
+                return True
+    return False
+
+
+def _signing_keys(secret: str) -> tuple[bytes, ...]:
+    keys: list[bytes] = [secret.encode("utf-8")]
+    remainder = secret.removeprefix("whsec_")
+    try:
+        decoded = base64.b64decode(remainder + "=" * (-len(remainder) % 4), validate=True)
+    except (binascii.Error, ValueError):
+        return (keys[0],)
+    if decoded and decoded != keys[0]:
+        keys.append(decoded)
+    return tuple(keys)
 
 
 def _decode_json_object(raw_body: bytes) -> dict[str, object]:
@@ -726,10 +835,262 @@ def _response_url(response: Mapping[str, object], operation: str) -> str:
     return url
 
 
+def _checkout_session(response: Mapping[str, object]) -> CheckoutSession:
+    checkout_id = response.get("id")
+    if not isinstance(checkout_id, str) or not checkout_id:
+        raise ValueError("Polar checkout response is missing id")
+    return CheckoutSession(url=_response_url(response, "checkout"), provider_checkout_id=checkout_id)
+
+
+def _cursor_page(cursor: str | None) -> int:
+    if cursor is None:
+        return 1
+    if not isinstance(cursor, str) or not cursor.isdigit():
+        raise ValueError("cursor must be a positive decimal page")
+    page = int(cursor)
+    if page < 1 or cursor != str(page):
+        raise ValueError("cursor must be a positive decimal page")
+    return page
+
+
+def _enumeration_limit(limit: int) -> int:
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 100:
+        raise ValueError("limit must be between 1 and 100")
+    return limit
+
+
+def _enumeration_page_from_response(
+    response: Mapping[str, object],
+    *,
+    environment: str,
+    seller_account: str | None,
+    page: int,
+    limit: int,
+) -> EnumerationPage:
+    items_raw = response.get("items")
+    pagination = response.get("pagination")
+    if not isinstance(items_raw, list) or not isinstance(pagination, Mapping):
+        raise PolarEnumerationError("Polar subscription page is malformed")
+    if len(items_raw) > limit:
+        raise PolarEnumerationError("Polar subscription page exceeds the requested limit")
+    max_page = pagination.get("max_page")
+    if isinstance(max_page, bool) or not isinstance(max_page, int) or max_page < 1:
+        raise PolarEnumerationError("Polar subscription page pagination is invalid")
+    items: list[BillingState] = []
+    observations: list[EnumerationObservation] = []
+    for index, item in enumerate(items_raw):
+        state, observation = _subscription_item_result(
+            item,
+            environment=environment,
+            seller_account=seller_account,
+            page=page,
+            index=index,
+        )
+        if state is not None:
+            items.append(state)
+        if observation is not None:
+            observations.append(observation)
+    exhausted = page >= max_page
+    return EnumerationPage(
+        items=tuple(items),
+        next_cursor=None if exhausted else str(page + 1),
+        exhausted=exhausted,
+        observations=tuple(observations),
+    )
+
+
+def _subscription_item_result(
+    item: object,
+    *,
+    environment: str,
+    seller_account: str | None,
+    page: int,
+    index: int,
+) -> tuple[BillingState | None, EnumerationObservation | None]:
+    if not isinstance(item, Mapping):
+        return None, EnumerationObservation(
+            reason=EnumerationObservationReason.MALFORMED_ITEM,
+            remote_id=_digest_item_identity(item, page=page, index=index),
+            details={"shape": "non_object", "field_class": "item"},
+        )
+    remote_id = _enumeration_observation_id(item, page=page, index=index)
+    organization_id = _first_text(
+        item.get("organization_id"),
+        _nested_value(item.get("customer"), "organization_id"),
+        _nested_value(item.get("product"), "organization_id"),
+    )
+    if seller_account is not None and organization_id is not None and organization_id != seller_account:
+        return None, EnumerationObservation(
+            reason=EnumerationObservationReason.SELLER_MISMATCH,
+            remote_id=remote_id,
+            details={"field_class": "organization_id"},
+        )
+    tenant, tenant_reason = _tenant_from_enumeration(item, environment)
+    if tenant is None:
+        return None, EnumerationObservation(
+            reason=tenant_reason or EnumerationObservationReason.TENANT_UNPARSEABLE,
+            remote_id=remote_id,
+            details={"identity": tenant_reason.value if tenant_reason is not None else "unparseable"},
+        )
+    vendor_id = _first_text(item.get("id"), item.get("subscription_id"))
+    if vendor_id is None:
+        return None, EnumerationObservation(
+            reason=EnumerationObservationReason.MISSING_REMOTE_ID,
+            remote_id=remote_id,
+            details={"identity": "missing_id"},
+        )
+    unusable = _unusable_billing_identifier(item, environment)
+    if unusable is not None:
+        field_class, identity = unusable
+        return None, EnumerationObservation(
+            reason=EnumerationObservationReason.MALFORMED_ITEM,
+            remote_id=remote_id,
+            details={"identity": identity, "field_class": field_class},
+        )
+    try:
+        state = _billing_state_from_response(
+            item,
+            environment=environment,
+            requested_customer_id=_first_text(
+                item.get("customer_id"),
+                _nested_value(item.get("customer"), "id"),
+            )
+            or "",
+            requested_subscription_id=vendor_id,
+        )
+    except ValueError:
+        return None, EnumerationObservation(
+            reason=EnumerationObservationReason.MALFORMED_ITEM,
+            remote_id=remote_id,
+            details={"identity": "unusable_state"},
+        )
+    return state, None
+
+
+_OPAQUE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def _is_opaque_identifier(value: str) -> bool:
+    return _OPAQUE_IDENTIFIER.fullmatch(value) is not None
+
+
+def _digest_item_identity(item: object, *, page: int, index: int) -> str:
+    canonical_item: object
+    if isinstance(item, Mapping):
+        canonical_item = dict(item)
+    else:
+        canonical_item = {"shape": type(item).__name__, "value": item}
+    return _digest_remote_id(
+        {
+            "page": str(page),
+            "index": str(index),
+            "canonical": json.dumps(
+                canonical_item,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ),
+        }
+    )
+
+
+def _enumeration_observation_id(
+    item: Mapping[str, object],
+    *,
+    page: int,
+    index: int,
+) -> str:
+    remote_id = _first_text(item.get("id"), item.get("subscription_id"))
+    if (
+        remote_id is not None
+        and _is_opaque_identifier(remote_id)
+        and len(remote_id) <= RECONCILIATION_MAX_REMOTE_ID_LENGTH
+    ):
+        return remote_id
+    return _digest_item_identity(item, page=page, index=index)
+
+
+def _unusable_billing_identifier(
+    item: Mapping[str, object],
+    environment: str,
+) -> tuple[str, str] | None:
+    subscription_id = _first_text(item.get("id"), item.get("subscription_id"))
+    customer_id = _first_text(
+        item.get("customer_id"),
+        _nested_value(item.get("customer"), "id"),
+    )
+    for field_class, value in (("subscription_id", subscription_id), ("customer_id", customer_id)):
+        if value is None:
+            continue
+        if len(value) > RECONCILIATION_MAX_REMOTE_ID_LENGTH or (
+            _is_opaque_identifier(value)
+            and len(_scope_identifier(value, environment)) > RECONCILIATION_MAX_REMOTE_ID_LENGTH
+        ):
+            return field_class, "overlong_id"
+        if not _is_opaque_identifier(value):
+            return field_class, "unsafe_id"
+    return None
+
+
+def _tenant_from_enumeration(
+    payload: Mapping[str, object],
+    environment: str,
+) -> tuple[UUID | None, EnumerationObservationReason | None]:
+    prefix = f"{environment}:"
+    candidates: tuple[object, ...] = (
+        _nested_value(payload.get("customer"), "external_id"),
+        payload.get("external_customer_id"),
+        _nested_value(payload.get("metadata"), "tenant_id"),
+        payload.get("tenant_id"),
+    )
+    prefixed: set[UUID] = set()
+    unprefixed: set[UUID] = set()
+    saw_foreign_environment = False
+    for value in candidates:
+        if isinstance(value, UUID):
+            unprefixed.add(value)
+            continue
+        if not isinstance(value, str) or not value:
+            continue
+        if ":" in value:
+            if not value.startswith(prefix):
+                saw_foreign_environment = True
+                continue
+            try:
+                prefixed.add(UUID(value[len(prefix) :]))
+            except ValueError:
+                continue
+            continue
+        try:
+            unprefixed.add(UUID(value))
+        except ValueError:
+            continue
+    if saw_foreign_environment:
+        return None, EnumerationObservationReason.ENVIRONMENT_MISMATCH
+    if len(prefixed) > 1:
+        return None, EnumerationObservationReason.TENANT_UNPARSEABLE
+    if len(prefixed) == 1:
+        tenant = next(iter(prefixed))
+        if unprefixed - {tenant}:
+            return None, EnumerationObservationReason.TENANT_UNPARSEABLE
+        return tenant, None
+    email = _first_text(_nested_value(payload.get("customer"), "email"), payload.get("email"))
+    if email is not None:
+        return None, EnumerationObservationReason.EMAIL_IDENTITY_REJECTED
+    return None, EnumerationObservationReason.TENANT_UNPARSEABLE
+
+
+def _digest_remote_id(fragments: Mapping[str, str]) -> str:
+    canonical = json.dumps(dict(fragments), sort_keys=True, separators=(",", ":"), default=str)
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return f"digest:{digest}"[:RECONCILIATION_MAX_REMOTE_ID_LENGTH]
+
+
 __all__ = [
     "AsyncHttpClient",
     "CheckoutAmbiguityError",
     "PaymentsDisabledError",
     "PolarBillingProvider",
+    "PolarEnumerationError",
     "PolarRequestError",
 ]

@@ -9,8 +9,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from recognition.domain.portal_contracts import UsageTicket
 from recognition.interface_adapters.http.deps import get_optional_session, require_write_access
 from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
+from recognition.interface_adapters.http.deps.usage_admission import get_usage_admission_service
 from scene.application.seeded_adapter import SeededDescriptionAdapter
 from scene.application.visual_facts_service import VisualFactsService
 from scene.interface_adapters.http.deps import get_description_adapter
@@ -24,6 +26,44 @@ IMG = b"\x89PNG\r\n context pack test image bytes"
 class _Auth:
     tenant_claim = None
     user_id = None
+
+
+class _PassAdmission:
+    async def reserve(
+        self,
+        tenant_id,
+        *,
+        idempotency_key,
+        job_id,
+        cost_units,
+        operation_id=None,
+        request_fingerprint=None,
+        queue_bytes=0,
+    ):
+        del queue_bytes
+        tenant_uuid = tenant_id if isinstance(tenant_id, uuid.UUID) else uuid.UUID(str(tenant_id))
+        return UsageTicket(
+            uuid.uuid4(),
+            tenant_uuid,
+            idempotency_key,
+            cost_units,
+            operation_id=operation_id or idempotency_key,
+            request_fingerprint=request_fingerprint or "",
+            job_id=job_id,
+            fence_token="fence-context-pack",
+        )
+
+    async def commit(self, ticket):
+        del ticket
+
+    async def release(self, ticket):
+        del ticket
+
+    async def commit_fenced(self, ticket, *, fence_token):
+        del ticket, fence_token
+
+    async def release_fenced(self, ticket, *, fence_token):
+        del ticket, fence_token
 
 
 class CapturingAdapter:
@@ -127,10 +167,13 @@ class DescribeClientDidNotFinish(TimeoutError):
 def _scene_describe_app(adapter):
     app = FastAPI()
     app.include_router(scene_router, prefix="/scene")
+    admission = _PassAdmission()
+    app.state.usage_admission_service = admission
     app.dependency_overrides[require_write_access] = lambda: _Auth()
     app.dependency_overrides[enforce_demo_quota] = lambda: None
     app.dependency_overrides[get_optional_session] = lambda: None
     app.dependency_overrides[get_description_adapter] = lambda: adapter
+    app.dependency_overrides[get_usage_admission_service] = lambda: admission
     return app
 
 
@@ -144,6 +187,7 @@ def _post_describe_bounded(app, *, timeout_s: float = 8.0):
     blocks that call hangs in ``TestClient.__enter__`` until the job timeout.
     """
     payload = {
+        "operation_id": "context-pack-describe-action",
         "request": json.dumps(
             {"tenant_id": TENANT_ID, "media_id": 7, "context_pack": _context_pack()}
         )

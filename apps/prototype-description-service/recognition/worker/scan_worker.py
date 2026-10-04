@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
+import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
@@ -37,7 +40,12 @@ from recognition.application.scan.capability import (
     publish_embedding_runtime_capability,
 )
 from recognition.application.scan.queue_repository import ScanQueueItem
-from recognition.application.scan.scan_queue_service import ScanQueueService
+from recognition.application.scan.scan_queue_service import ScanQueueService, TerminatedJobIdentity
+from recognition.application.services.usage_settlement_service import (
+    UsageSettlementService,
+    capture_usage_fence,
+    settle_usage_job,
+)
 from recognition.config import get_settings as get_recognition_settings
 from recognition.domain.job import CLUSTERING_JOB_TYPES, JobStatus
 from recognition.domain.repositories import MvRefreshOutcome
@@ -47,6 +55,12 @@ from recognition.observability.face_pipeline_metrics import FacePipelineMetrics
 from recognition.worker.handlers.clustering import ClusteringJobHandler, CurationJobHandler, SplitJobHandler
 from recognition.worker.handlers.scan import ScanItemHandler
 from recognition.worker.handlers.utils import ensure_job_context
+from scripts.usage_reservation_sweeper import (
+    DEFAULT_BATCH_SIZE as _USAGE_SWEEP_BATCH_SIZE,
+    DEFAULT_MAX_BATCHES as _USAGE_SWEEP_MAX_BATCHES,
+    DEFAULT_NO_PROGRESS_LIMIT as _USAGE_SWEEP_NO_PROGRESS_LIMIT,
+    DEFAULT_STALE_AFTER_SECONDS as _USAGE_SWEEP_STALE_AFTER_SECONDS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +71,7 @@ _CLUSTERING_JOB_TYPE_VALUES: tuple[str, ...] = tuple(sorted(t.value for t in CLU
 
 _DEFAULT_WORKER_METRICS_PORT = 9108
 _DEFAULT_WORKER_METRICS_ADDR = "127.0.0.1"
+_DEFAULT_USAGE_SWEEP_INTERVAL_SECONDS = 300.0
 _WORKER_LOCK_TIMEOUT = "5s"
 
 # Process exporter state: registry identity (not a bare bool) so a restart that
@@ -81,22 +96,16 @@ def _resolve_worker_metrics_port() -> int:
     try:
         port = int(raw)
     except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"Invalid RECOGNITION_SCAN_WORKER_METRICS_PORT={raw!r}; must be an integer 1..65535"
-        ) from exc
+        raise ValueError(f"Invalid RECOGNITION_SCAN_WORKER_METRICS_PORT={raw!r}; must be an integer 1..65535") from exc
     if port < 1 or port > 65535:
-        raise ValueError(
-            f"Invalid RECOGNITION_SCAN_WORKER_METRICS_PORT={port}; must be in range 1..65535"
-        )
+        raise ValueError(f"Invalid RECOGNITION_SCAN_WORKER_METRICS_PORT={port}; must be in range 1..65535")
     return port
 
 
 def _validate_worker_metrics_addr(raw: str) -> str:
     """Reject empty / whitespace / control-character bind addresses (fail closed)."""
     if not isinstance(raw, str):
-        raise ValueError(
-            f"Invalid RECOGNITION_SCAN_WORKER_METRICS_ADDR={raw!r}; must be a non-empty string"
-        )
+        raise ValueError(f"Invalid RECOGNITION_SCAN_WORKER_METRICS_ADDR={raw!r}; must be a non-empty string")
     addr = raw.strip()
     if not addr:
         raise ValueError(
@@ -104,10 +113,7 @@ def _validate_worker_metrics_addr(raw: str) -> str:
             "(default 127.0.0.1; empty would bind all interfaces in prometheus_client)"
         )
     if any(ord(ch) < 32 for ch in addr):
-        raise ValueError(
-            f"Invalid RECOGNITION_SCAN_WORKER_METRICS_ADDR={raw!r}; "
-            "must not contain control characters"
-        )
+        raise ValueError(f"Invalid RECOGNITION_SCAN_WORKER_METRICS_ADDR={raw!r}; must not contain control characters")
     return addr
 
 
@@ -125,9 +131,31 @@ def _resolve_worker_metrics_export_enabled() -> bool:
     if raw in {"1", "true", "yes", "on"}:
         return True
     raise ValueError(
-        f"Invalid RECOGNITION_SCAN_WORKER_METRICS_EXPORT_ENABLED={raw!r}; "
-        "use 1/true/yes/on or 0/false/no/off"
+        f"Invalid RECOGNITION_SCAN_WORKER_METRICS_EXPORT_ENABLED={raw!r}; use 1/true/yes/on or 0/false/no/off"
     )
+
+
+def _validate_usage_sweep_interval_seconds(value: object) -> float:
+    if isinstance(value, bool):
+        interval = float("nan")
+    else:
+        try:
+            interval = float(value)
+        except (TypeError, ValueError):
+            interval = float("nan")
+    if not math.isfinite(interval) or interval <= 0:
+        raise ValueError(
+            f"Invalid RECOGNITION_USAGE_SWEEP_INTERVAL_S={value!r}; must be a positive finite number"
+        )
+    return interval
+
+
+def _resolve_usage_sweep_interval_seconds() -> float:
+    raw = os.getenv(
+        "RECOGNITION_USAGE_SWEEP_INTERVAL_S",
+        str(_DEFAULT_USAGE_SWEEP_INTERVAL_SECONDS),
+    )
+    return _validate_usage_sweep_interval_seconds(raw)
 
 
 def start_process_metrics_exporter(
@@ -144,9 +172,7 @@ def start_process_metrics_exporter(
     """
     global _process_metrics_exporter_registry
     if not config.metrics_export_enabled:
-        logger.info(
-            "[worker] metrics export disabled (RECOGNITION_SCAN_WORKER_METRICS_EXPORT_ENABLED)"
-        )
+        logger.info("[worker] metrics export disabled (RECOGNITION_SCAN_WORKER_METRICS_EXPORT_ENABLED)")
         return
     registry = metrics.registry
     if _process_metrics_exporter_registry is registry:
@@ -188,6 +214,7 @@ class ScanWorkerConfig:
     stale_after_seconds: int = 600
     max_attempts: int = 3
     mv_refresh_interval_seconds: int = 60
+    usage_sweep_interval_seconds: float = field(default_factory=_resolve_usage_sweep_interval_seconds)
     # FINALB-06: process-local Prometheus exporter (validated 1..65535).
     metrics_port: int = field(default_factory=_resolve_worker_metrics_port)
     # COORD-FINAL-01: bind address (default loopback; operators may override).
@@ -201,6 +228,11 @@ class ScanWorkerConfig:
             raise ValueError(f"metrics_port={port} out of range; must be 1..65535")
         object.__setattr__(self, "metrics_port", port)
         object.__setattr__(self, "metrics_addr", _validate_worker_metrics_addr(str(self.metrics_addr)))
+        object.__setattr__(
+            self,
+            "usage_sweep_interval_seconds",
+            _validate_usage_sweep_interval_seconds(self.usage_sweep_interval_seconds),
+        )
 
 
 class ScanWorker:
@@ -211,8 +243,10 @@ class ScanWorker:
         config: ScanWorkerConfig,
         *,
         metrics: FacePipelineMetrics | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._config = config
+        self._clock = clock
         connect_args: dict[str, object] = {}
         if config.postgres_dsn.startswith("postgresql"):
             connect_args["server_settings"] = {"application_name": "scan_worker"}
@@ -240,6 +274,7 @@ class ScanWorker:
         self._runtime_mode = settings.runtime_mode
 
         self._last_mv_refresh_time: datetime = datetime.min.replace(tzinfo=UTC)
+        self._last_usage_sweep_at: float | None = None
         # Separate "last attempt" clock (HEALTHOBS-1-BR-06): advanced on every
         # _refresh_mv_if_needed attempt regardless of outcome, so a run of
         # SKIPPED_HEADROOM/FAILED outcomes still respects mv_refresh_interval_seconds
@@ -270,6 +305,7 @@ class ScanWorker:
         self._object_store_factory = _worker_object_store_factory
         # Cumulative reconcile counters published on every heartbeat ([OBS-05]/[OBS-08]).
         self._scan_counters = ScanWorkerCounters()
+        self._unsettled_stalled_jobs: list[TerminatedJobIdentity] = []
 
         self._scan_handler = ScanItemHandler(
             session_factory=self._session_factory,
@@ -322,7 +358,9 @@ class ScanWorker:
         while True:
             claimed: list[ScanQueueItem] = []
             should_sleep = False
+            captured_fences: dict[str, str] = {}
             await self._probe_and_publish_embedding_runtime_capability()
+            await self._sweep_stale_usage_reservations_if_due()
             async with self._session_factory() as session:
                 await enable_rls_bypass(session)
                 repo = SqlAlchemyScanQueueRepository(session)
@@ -336,12 +374,27 @@ class ScanWorker:
                     now=now,
                 )
                 queue = ScanQueueService(repo)
-                terminated = await queue.terminate_stalled_jobs(
-                    stale_after_seconds=self._config.stale_after_seconds,
-                    now=now,
-                )
-                if terminated:
-                    logger.warning("[worker] Terminated %d stalled scan job(s)", terminated)
+                identities_fn = getattr(queue, "terminate_stalled_jobs_with_identities", None)
+                if callable(identities_fn):
+                    terminated_jobs = list(
+                        await identities_fn(
+                            stale_after_seconds=self._config.stale_after_seconds,
+                            now=now,
+                        )
+                    )
+                    stalled_terminated = len(terminated_jobs)
+                else:
+                    terminated_jobs = []
+                    stalled_terminated = await queue.terminate_stalled_jobs(
+                        stale_after_seconds=self._config.stale_after_seconds,
+                        now=now,
+                    )
+                if stalled_terminated:
+                    logger.warning("[worker] Terminated %d stalled scan job(s)", stalled_terminated)
+                to_settle = list(terminated_jobs) + self._unsettled_stalled_jobs
+                self._unsettled_stalled_jobs = []
+                if to_settle:
+                    self._unsettled_stalled_jobs = await self._settle_stalled_usage(session, to_settle)
 
                 if await self._process_pending_clustering_jobs(session=session, now=now):
                     await session.commit()
@@ -359,6 +412,12 @@ class ScanWorker:
                     else:
                         for job_id in {item.job_id for item in claimed}:
                             await repo.mark_job_running(job_id=job_id, started_at=now)
+                        for item in claimed:
+                            fence = await capture_usage_fence(
+                                session, tenant_id=item.tenant_id, job_id=str(item.job_id)
+                            )
+                            if fence:
+                                captured_fences[str(item.job_id)] = fence
                         await session.commit()
 
             if should_sleep:
@@ -366,6 +425,44 @@ class ScanWorker:
                 continue
 
             await self._process_claimed_items(claimed=claimed)
+            await self._settle_claimed_usage(claimed=claimed, fences=captured_fences)
+
+    async def _sweep_stale_usage_reservations_if_due(self) -> None:
+        """Sweep stale usage in its own transaction at most once per interval."""
+        now = self._clock()
+        if (
+            self._last_usage_sweep_at is not None
+            and now - self._last_usage_sweep_at < self._config.usage_sweep_interval_seconds
+        ):
+            return
+        # Mark the attempt before opening the session so a failed sweep is not
+        # retried on every worker cycle.
+        self._last_usage_sweep_at = now
+        try:
+            async with self._session_factory() as session:
+                try:
+                    await enable_rls_bypass(session)
+                    report = await UsageSettlementService(session).sweep_stale_reservations(
+                        stale_after_seconds=_USAGE_SWEEP_STALE_AFTER_SECONDS,
+                        max_batches=_USAGE_SWEEP_MAX_BATCHES,
+                        batch_size=_USAGE_SWEEP_BATCH_SIZE,
+                        no_progress_limit=_USAGE_SWEEP_NO_PROGRESS_LIMIT,
+                    )
+                    if report.exit_code != 0:
+                        logger.warning(
+                            "[worker] usage reservation sweep returned nonzero "
+                            "exit_code=%d rejected=%d fail_closed=%d no_progress_cycles=%d",
+                            report.exit_code,
+                            report.rejected,
+                            report.fail_closed,
+                            report.no_progress_cycles,
+                        )
+                    await session.commit()
+                except Exception:
+                    await session.rollback()
+                    raise
+        except Exception:
+            logger.exception("[worker] usage reservation sweep failed")
 
     async def _process_claimed_items(
         self,
@@ -374,6 +471,66 @@ class ScanWorker:
     ) -> None:
         await self._ensure_embedding_runtime()
         await self._scan_handler.process_items(claimed=claimed)
+
+    async def _settle_claimed_usage(
+        self,
+        *,
+        claimed: list[ScanQueueItem],
+        fences: dict[str, str],
+    ) -> None:
+        seen: set[uuid.UUID] = set()
+        try:
+            async with self._session_factory() as session:
+                await enable_rls_bypass(session)
+                for item in claimed:
+                    if item.job_id in seen:
+                        continue
+                    seen.add(item.job_id)
+                    await settle_usage_job(
+                        session,
+                        tenant_id=item.tenant_id,
+                        job_id=str(item.job_id),
+                        fence_token=fences.get(str(item.job_id)),
+                    )
+                await session.commit()
+        except Exception:
+            logger.exception("[worker] usage settlement failed for claimed scan jobs")
+
+    async def _settle_stalled_usage(
+        self,
+        session: AsyncSession,
+        terminated: list[TerminatedJobIdentity],
+    ) -> list[TerminatedJobIdentity]:
+        """Settle exact stalled job identities on the caller-owned session."""
+        from recognition.application.services.usage_settlement_service import SettlementOutcome
+
+        remaining: list[TerminatedJobIdentity] = []
+        for item in terminated:
+            try:
+                result = await settle_usage_job(
+                    session,
+                    tenant_id=item.tenant_id,
+                    job_id=str(item.job_id),
+                    fence_token=None,
+                    allow_missing_job_release=False,
+                )
+            except Exception:
+                logger.exception("[worker] usage settlement failed for stalled scan job %s", item.job_id)
+                remaining.append(item)
+                continue
+            if result.outcome in {
+                SettlementOutcome.FAIL_CLOSED,
+                SettlementOutcome.REJECTED,
+                SettlementOutcome.SKIPPED_ACTIVE,
+            }:
+                logger.warning(
+                    "[worker] stalled usage settlement outcome=%s job_id=%s detail=%s",
+                    result.outcome,
+                    item.job_id,
+                    result.detail,
+                )
+                remaining.append(item)
+        return remaining
 
     def _can_claim_scan_items(self) -> bool:
         """Whether this worker may claim pending scan items this cycle.
@@ -750,6 +907,9 @@ async def _main() -> None:
     if not postgres_dsn:
         logger.error("Database DSN not configured. Exiting.")
         sys.exit(1)
+    # Validate worker environment (including the reservation sweep interval)
+    # before waiting for a database that may be unavailable for several minutes.
+    worker_config = ScanWorkerConfig(postgres_dsn=postgres_dsn)
 
     # Wait for database availability before starting main loop
     async def wait_for_database(dsn: str, max_retries: int = 30) -> bool:
@@ -784,7 +944,6 @@ async def _main() -> None:
     # COORD-FINAL-01: one config + one metrics registry for the whole process.
     # Exporter starts once here (fail-loud); replacement ScanWorkers share the
     # same metrics object so post-restart scrapes stay live.
-    worker_config = ScanWorkerConfig(postgres_dsn=postgres_dsn)
     process_metrics = FacePipelineMetrics()
     start_process_metrics_exporter(metrics=process_metrics, config=worker_config)
 

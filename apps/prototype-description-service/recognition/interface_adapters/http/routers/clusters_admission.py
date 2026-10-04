@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import time as _time
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -34,6 +35,11 @@ from recognition.interface_adapters.http.deps.clustering_circuit_breaker import 
     get_or_create_clustering_circuit_breaker,
 )
 from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
+from recognition.interface_adapters.http.deps.operator_authorization import (
+    authorize_operator_control,
+    get_clustering_operator_entitlement_repository,
+    get_operator_entitlement_repository,
+)
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 from recognition.interface_adapters.http.deps.session import (
     _apply_postgres_session_safety_settings,
@@ -212,6 +218,7 @@ async def create_clustering_job(
     cluster_service_builder=Depends(get_cluster_service_builder_clustering),
     job_service=Depends(get_persisted_cluster_job_service_clustering),
     _demo_quota: object = Depends(enforce_demo_quota),
+    entitlement_repository: Any = Depends(get_clustering_operator_entitlement_repository),
 ) -> ClusteringJobStatusResponse:
     """Trigger clustering for unclustered identities."""
     _logger.info("Clustering request: tenant_id=%s, mode=%s", request.tenant_id, request.mode)
@@ -221,7 +228,9 @@ async def create_clustering_job(
     _admission_started_at = _time.perf_counter()
     _admission_status: int = status.HTTP_202_ACCEPTED
     try:
-        if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
+        await authorize_operator_control(auth, repository=entitlement_repository)
+        tenant_claim = getattr(auth, "tenant_claim", None)
+        if auth and tenant_claim and tenant_claim != request.tenant_id:
             _admission_status = status.HTTP_403_FORBIDDEN
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
@@ -351,8 +360,10 @@ async def recover_orphan_identities(
     session=Depends(get_session),
     cluster_service_builder=Depends(get_cluster_service_builder),
     _demo_quota: object = Depends(enforce_demo_quota),
+    entitlement_repository: Any = Depends(get_operator_entitlement_repository),
 ) -> OrphanRecoveryResponse:
     """Re-cluster any orphaned identities for a tenant."""
+    await authorize_operator_control(auth, repository=entitlement_repository)
     assert_tenant_match(auth, request.tenant_id)
 
     cluster_service = await cluster_service_builder(request.tenant_id)

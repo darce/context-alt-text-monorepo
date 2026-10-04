@@ -5,7 +5,8 @@ from __future__ import annotations
 import math
 import os
 import uuid
-from collections.abc import AsyncGenerator, Iterable, Sequence
+from collections.abc import AsyncGenerator, Iterable, Iterator, Sequence
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import NoReturn
 
@@ -14,6 +15,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import Table, event, inspect, text
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.ext.compiler import compiles
@@ -55,6 +57,11 @@ SQLITE_TEST_TABLE_EXCLUSIONS = frozenset(
         "image_descriptions",
         # Portal and billing tables are outside this recognition fixture's schema.
         "api_key_rotation_history",
+        "billing_checkout_attempt",
+        "billing_known_item_lease",
+        "billing_reconciliation_cursor",
+        "billing_reconciliation_item_progress",
+        "billing_reconciliation_quarantine",
         "billing_subscription_projection",
         "billing_webhook_inbox",
         "export_jobs",
@@ -62,6 +69,7 @@ SQLITE_TEST_TABLE_EXCLUSIONS = frozenset(
         "portal_tenant_invitation",
         "tenant_entitlement",
         "tenant_key_idempotency",
+        "usage_admission_global_state",
         "usage_reservation",
         # This identity table is provisioned by the migration but not needed here.
         "identity_name_suppressions",
@@ -455,16 +463,15 @@ def _pg_drop_scratch_db(admin, db_name: str) -> None:
     admin.dispose()
 
 
-@pytest.fixture(scope="session")
-def pg_migrated_engine():
-    """Empty scratch DB with the identity migration applied, torn down after."""
+@contextmanager
+def _pg_migrated_scratch(suffix: str) -> Iterator[Engine]:
     import subprocess
     import sys
     from pathlib import Path as _Path
 
     from sqlalchemy import create_engine
 
-    scratch_url, admin_url, db_name, owner = _pg_scratch_urls("")
+    scratch_url, admin_url, db_name, owner = _pg_scratch_urls(suffix)
     admin = _pg_create_scratch_db(admin_url, db_name, owner)
 
     # env.py derives the URL from PG*/DB_NAME env vars and full-DSN overrides
@@ -498,6 +505,20 @@ def pg_migrated_engine():
     finally:
         engine.dispose()
         _pg_drop_scratch_db(admin, db_name)
+
+
+@pytest.fixture(scope="session")
+def pg_migrated_engine():
+    """Empty scratch DB with the identity migration applied, torn down after."""
+    with _pg_migrated_scratch("") as engine:
+        yield engine
+
+
+@pytest.fixture
+def pg_isolated_migrated_engine():
+    """Fresh migrated scratch DB per test, for proofs that scan every tenant."""
+    with _pg_migrated_scratch("_isolated") as engine:
+        yield engine
 
 
 @pytest.fixture

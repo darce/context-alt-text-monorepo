@@ -15,6 +15,7 @@ from db.settings import get_database_settings
 from recognition.application.embedding.detector import FaceDetection, FaceDetectorProtocol
 from recognition.application.scan.capability import ScanWorkerCounters, format_capability_reason
 from recognition.application.scan.service import ReconcileResult, ScanService
+from recognition.domain.job import JobStatus
 from recognition.interface_adapters.http.middleware.correlation import (
     _correlation_id_var,
     generate_correlation_id,
@@ -284,14 +285,15 @@ async def test_save_job_results_emits_one_event_per_media(
     tenant = uuid.uuid4()
     job = SimpleNamespace(
         id=job_id,
-        status=None,
+        status=JobStatus.RUNNING,
         processed_media=0,
         identities_detected=0,
         completed_at=None,
     )
 
     class _JobSession(_FakeSession):
-        async def get(self, _model, _id):  # noqa: ANN001
+        async def scalar(self, statement):  # noqa: ANN001
+            assert statement._for_update_arg is not None
             return job
 
     session = _JobSession()
@@ -327,7 +329,7 @@ async def test_save_job_results_zero_detection_media_emits_detected_zero(
     tenant = uuid.uuid4()
     job = SimpleNamespace(
         id=job_id,
-        status=None,
+        status=JobStatus.RUNNING,
         processed_media=0,
         identities_detected=0,
         completed_at=None,
@@ -336,7 +338,8 @@ async def test_save_job_results_zero_detection_media_emits_detected_zero(
     existing_m2.media_id = 2
 
     class _JobSession(_FakeSession):
-        async def get(self, _model, _id):  # noqa: ANN001
+        async def scalar(self, statement):  # noqa: ANN001
+            assert statement._for_update_arg is not None
             return job
 
     # Empty dets orphan-clean existing rows (verified on a single-media job).
@@ -360,6 +363,7 @@ async def test_save_job_results_zero_detection_media_emits_detected_zero(
 
     # Mixed job: media 1 has faces, media 2 has zero detections → two events.
     caplog.clear()
+    job.status = JobStatus.RUNNING
     session_mixed = _JobSession()
     service_mixed = ScanService(session=session_mixed, detector=MagicMock(), generator=MagicMock())
     with caplog.at_level(logging.INFO, logger="recognition.application.scan.service"):
@@ -387,14 +391,15 @@ async def test_save_job_results_no_events_when_later_media_raises(
     tenant = uuid.uuid4()
     job = SimpleNamespace(
         id=job_id,
-        status=None,
+        status=JobStatus.RUNNING,
         processed_media=0,
         identities_detected=0,
         completed_at=None,
     )
 
     class _JobSession(_FakeSession):
-        async def get(self, _model, _id):  # noqa: ANN001
+        async def scalar(self, statement):  # noqa: ANN001
+            assert statement._for_update_arg is not None
             return job
 
     session = _JobSession()
@@ -467,14 +472,15 @@ async def test_no_event_when_detect_or_persist_raises(
     job_id = uuid.uuid4()
     job = SimpleNamespace(
         id=job_id,
-        status=None,
+        status=JobStatus.RUNNING,
         processed_media=0,
         identities_detected=0,
         completed_at=None,
     )
 
     class _JobSession(_FakeSession):
-        async def get(self, _model, _id):  # noqa: ANN001
+        async def scalar(self, statement):  # noqa: ANN001
+            assert statement._for_update_arg is not None
             return job
 
     session3 = _JobSession()

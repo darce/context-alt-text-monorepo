@@ -71,10 +71,42 @@ def test_retry_restart_shared_startup_and_retained_timing():
             )
             assert replay.processing_ms == 12
             assert replay.server_elapsed_ms == 15
+            first_snapshot = (
+                replay.request_digest,
+                replay.accepted_at,
+                replay.first_ready_at,
+                replay.completed_at,
+                replay.queue_ms,
+                replay.ramp_up_ms,
+                replay.processing_ms,
+                replay.startup_ms,
+                replay.server_elapsed_ms,
+            )
             with pytest.raises(OperationMismatchError):
                 await repo.accept(tenant_id=tenant, request_digest="c" * 64, operation_id=token, now=start)
-            with pytest.raises(OperationMismatchError):
-                await repo.accept(tenant_id=uuid.uuid4(), request_digest="a" * 64, operation_id=token, now=start)
+            other_tenant = uuid.uuid4()
+            other_tenant_operation = await repo.accept(
+                tenant_id=other_tenant,
+                request_digest="d" * 64,
+                operation_id=token,
+                now=start,
+            )
+            assert other_tenant_operation is not replay
+            assert other_tenant_operation.tenant_id == other_tenant
+            assert other_tenant_operation.operation_id == token
+            assert other_tenant_operation.request_digest == "d" * 64
+            original = await repo.get(tenant_id=tenant, operation_id=token)
+            assert (
+                original.request_digest,
+                original.accepted_at,
+                original.first_ready_at,
+                original.completed_at,
+                original.queue_ms,
+                original.ramp_up_ms,
+                original.processing_ms,
+                original.startup_ms,
+                original.server_elapsed_ms,
+            ) == first_snapshot
             with pytest.raises(OperationExpiredError):
                 await repo.accept(
                     tenant_id=tenant,
@@ -82,6 +114,64 @@ def test_retry_restart_shared_startup_and_retained_timing():
                     operation_id=second.operation_id,
                     now=start + timedelta(seconds=90),
                 )
+            await session.commit()
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_concurrent_first_use_conflict_applies_replay_and_mismatch_rules_in_savepoint():
+    async def body():
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as connection:
+            await connection.run_sync(
+                Base.metadata.create_all,
+                tables=[DescribeStartup.__table__, DescribeOperation.__table__, DescribeDemandLease.__table__],
+            )
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        tenant = uuid.uuid4()
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        async with sf() as session:
+            repo = DescribeOperationRepository(session, lease_seconds=60)
+            original = await repo.accept(
+                tenant_id=tenant,
+                request_digest="a" * 64,
+                operation_id="same-first-use-key",
+                now=start,
+            )
+            real_get = repo.get
+            miss_next_read = True
+
+            async def miss_once(*, tenant_id, operation_id):
+                nonlocal miss_next_read
+                if miss_next_read:
+                    miss_next_read = False
+                    return None
+                return await real_get(tenant_id=tenant_id, operation_id=operation_id)
+
+            repo.get = miss_once
+            replay = await repo.accept(
+                tenant_id=tenant,
+                request_digest="a" * 64,
+                operation_id="same-first-use-key",
+                now=start + timedelta(seconds=1),
+            )
+            assert replay.operation_id == original.operation_id
+            assert replay.request_digest == original.request_digest
+            assert replay.accepted_at == original.accepted_at
+            assert (await repo.get(tenant_id=tenant, operation_id=original.operation_id)).operation_id == original.operation_id
+
+            miss_next_read = True
+            with pytest.raises(OperationMismatchError):
+                await repo.accept(
+                    tenant_id=tenant,
+                    request_digest="b" * 64,
+                    operation_id="same-first-use-key",
+                    now=start + timedelta(seconds=2),
+                )
+            unchanged = await repo.get(tenant_id=tenant, operation_id=original.operation_id)
+            assert unchanged.request_digest == "a" * 64
+            assert unchanged.accepted_at == original.accepted_at
             await session.commit()
         await engine.dispose()
 
@@ -180,6 +270,7 @@ def test_utc_observations_validate_clock_order_without_fabricated_zero():
 
 def test_write_guards_and_purge_lock_order():
     from sqlalchemy import event
+
     from scene.domain.describe_run import utc_observation
 
     async def body():

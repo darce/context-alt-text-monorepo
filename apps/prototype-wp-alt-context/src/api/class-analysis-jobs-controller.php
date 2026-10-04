@@ -129,6 +129,10 @@ class AnalysisJobsController extends AbstractRecognitionProxyController implemen
 				'callback'            => array( $this, 'analyze_media' ),
 				'permission_callback' => array( $this, 'can_manage_recognition' ),
 				'args'                => array(
+					'idempotency_key' => array(
+						'required'    => false,
+						'description' => 'Originator retry key; required here or in the Idempotency-Key header.',
+					),
 					'media_ids'   => array(
 						'type'              => 'array',
 						'required'          => false,

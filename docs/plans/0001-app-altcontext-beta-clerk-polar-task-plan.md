@@ -13,6 +13,8 @@
 - **Evidence:** [prior art, refreshed vendors and canon reasoning](../assessments/current/app-portal-prior-art-and-vendors-2026-09-19.md).
 - **Eval specification:** [APP-1 data](../scopes/app-altcontext-beta-clerk-polar-evals.json).
 
+> **2026-09-21 continuation:** The foundation implementation landed in `e2a539107` and is present on main. The original status, baseline/current-state inventory and S0–S7 sequence below are historical planning context, not a claim that all features are absent or that launch is complete. [Plan 0002](0002-app-altcontext-launch-continuation-task-plan.md) owns the remaining-work inventory and proposed DAG. APP-R1..R6 and APP-SC-01..20 remain the product/acceptance contract. No new dispatch is authorized.
+
 ## Objective
 
 Let an invited WordPress customer sign up at app.altcontext.com, obtain and safely rotate a tenant API key, see their allowance, and use the service free during beta. Implement the paid conversion path before beta release, prove it in Polar sandbox, and later enable explicit paid checkout without replacing accounts, tenants or keys.

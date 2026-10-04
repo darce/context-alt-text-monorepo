@@ -18,6 +18,8 @@ from pathlib import Path
 import pytest
 
 import scene.interface_adapters.http.routers.describe_run as describe_run_mod
+from recognition.domain.portal_contracts import UsageTicket
+from recognition.interface_adapters.http.deps.usage_admission import get_usage_admission_service
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.describe_run_worker import (
     DescribeRunTerminalCode,
@@ -29,7 +31,58 @@ from scene.domain.description import DescriptionAdapterKind, DescriptionResultTi
 from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
 from scene.tests.demo_quota_harness import demo_quota_client
 from scene.tests.demo_quota_harness import recognition_used as _used
-from scene.tests.test_describe_run_worker import TENANT_ID, _client, _submit
+from scene.tests.test_describe_run_worker import TENANT_ID, _client as _worker_client, _submit
+
+
+class _PassAdmission:
+    async def reserve(
+        self,
+        tenant_id,
+        *,
+        idempotency_key,
+        job_id,
+        cost_units,
+        operation_id=None,
+        request_fingerprint=None,
+        queue_bytes=0,
+    ):
+        del queue_bytes
+        return UsageTicket(
+            uuid.uuid4(),
+            tenant_id,
+            idempotency_key,
+            cost_units,
+            operation_id=operation_id or idempotency_key,
+            request_fingerprint=request_fingerprint or "",
+            job_id=job_id,
+            fence_token="fence-routes-run",
+        )
+
+    async def commit(self, ticket):
+        del ticket
+
+    async def release(self, ticket):
+        del ticket
+
+    async def commit_fenced(self, ticket, *, fence_token):
+        del ticket, fence_token
+
+    async def release_fenced(self, ticket, *, fence_token):
+        del ticket, fence_token
+
+
+def _install_admission(client) -> _PassAdmission:
+    admission = _PassAdmission()
+    client.app.state.usage_admission_service = admission
+    client.app.dependency_overrides[get_usage_admission_service] = lambda: admission
+    return admission
+
+
+@contextmanager
+def _client():
+    with _worker_client() as (client, sf):
+        _install_admission(client)
+        yield client, sf
 
 
 def _no_worker(monkeypatch):
@@ -69,7 +122,12 @@ def test_submit_persists_recognition_enabled_false(monkeypatch):
     _no_worker(monkeypatch)
     with _client() as (client, sf):
         files = [("image_70", ("70.png", b"\x89PNG\r\n\x1a\n", "image/png"))]
-        data = {"tenant_id": str(TENANT_ID), "media_ids": json.dumps([70]), "recognition_enabled": "false"}
+        data = {
+            "tenant_id": str(TENANT_ID),
+            "media_ids": json.dumps([70]),
+            "recognition_enabled": "false",
+            "idempotency_key": uuid.uuid4().hex,
+        }
         response = client.post("/scene/describe/run", data=data, files=files)
         assert response.status_code == 202, response.text
         body = response.json()
@@ -90,7 +148,12 @@ def test_submit_rejects_non_bool_recognition_enabled(monkeypatch, raw):
     _no_worker(monkeypatch)
     with _client() as (client, _):
         files = [("image_70", ("70.png", b"\x89PNG\r\n\x1a\n", "image/png"))]
-        data = {"tenant_id": str(TENANT_ID), "media_ids": json.dumps([70]), "recognition_enabled": raw}
+        data = {
+            "tenant_id": str(TENANT_ID),
+            "media_ids": json.dumps([70]),
+            "recognition_enabled": raw,
+            "idempotency_key": uuid.uuid4().hex,
+        }
         response = client.post("/scene/describe/run", data=data, files=files)
         assert response.status_code == 422, response.text
         assert "recognition_enabled" in response.text
@@ -103,7 +166,12 @@ def test_submit_accepts_case_insensitive_true_false_recognition_enabled(monkeypa
     _no_worker(monkeypatch)
     with _client() as (client, sf):
         files = [("image_70", ("70.png", b"\x89PNG\r\n\x1a\n", "image/png"))]
-        data = {"tenant_id": str(TENANT_ID), "media_ids": json.dumps([70]), "recognition_enabled": raw}
+        data = {
+            "tenant_id": str(TENANT_ID),
+            "media_ids": json.dumps([70]),
+            "recognition_enabled": raw,
+            "idempotency_key": uuid.uuid4().hex,
+        }
         response = client.post("/scene/describe/run", data=data, files=files)
         assert response.status_code == 202, response.text
         body = response.json()
@@ -397,7 +465,10 @@ def test_stage2_fails_closed_when_recognition_enabled_and_naming_inputs_missing(
 def test_status_route_returns_run_snapshot(monkeypatch):
     _no_worker(monkeypatch)
     with _client() as (client, _):
-        run_id = _create_run(client)
+        submitted = _submit(client, [70])
+        assert submitted.status_code == 202, submitted.text
+        submitted_body = submitted.json()
+        run_id = submitted_body["run_id"]
         status_response = client.get(f"/scene/describe/run/{run_id}")
         assert status_response.status_code == 200, status_response.text
         body = status_response.json()
@@ -405,8 +476,9 @@ def test_status_route_returns_run_snapshot(monkeypatch):
         assert body["status"] == DescribeRunStatus.PENDING
         assert "eta_seconds" in body
         assert "timing" not in body
-        assert "operation_id" not in body
-        assert "startup_id" not in body
+        # Usage reservation writes operation_id at accept. Startup stays null until observed.
+        assert body["operation_id"] == submitted_body["operation_id"]
+        assert body["startup_id"] is None
         assert body["terminal"] is None
         assert body["fallback_reason"] is None
 
@@ -488,8 +560,9 @@ def test_submit_omits_unobserved_timing_and_operation_ids(monkeypatch):
     with _client() as (client, _):
         body = _submit(client, [70]).json()
         assert "timing" not in body
-        assert "operation_id" not in body
-        assert "startup_id" not in body
+        # Usage reservation writes operation_id at accept. Startup stays null until observed.
+        assert isinstance(body["operation_id"], str) and body["operation_id"]
+        assert body["startup_id"] is None
 
 
 def test_status_returns_persisted_timing_from_repository(monkeypatch):
@@ -619,12 +692,13 @@ def test_cancel_route_404_for_unknown_run(monkeypatch):
 def _demo_run_client(*, recognition_quota: int = 5, non_demo: bool = False):
     """Describe/run client — shared harness with run tables (DS2B-PM-H-02)."""
     with demo_quota_client(recognition_quota=recognition_quota, non_demo=non_demo, tables="run") as ctx:
+        _install_admission(ctx[0])
         yield ctx
 
 
 def _submit_run(client, tenant_id: str, media_ids: list[int]):
     files = [(f"image_{m}", (f"{m}.png", b"\x89PNG\r\n\x1a\n", "image/png")) for m in media_ids]
-    data = {"tenant_id": str(tenant_id), "media_ids": json.dumps(media_ids)}
+    data = {"tenant_id": str(tenant_id), "media_ids": json.dumps(media_ids), "idempotency_key": uuid.uuid4().hex}
     return client.post("/scene/describe/run", data=data, files=files or None)
 
 
@@ -650,7 +724,7 @@ def test_demo_quota_run_empty_media_ids_422_no_consume(monkeypatch):
         # Explicit empty JSON array; no image parts.
         resp = client.post(
             "/scene/describe/run",
-            data={"tenant_id": str(tenant_id), "media_ids": "[]"},
+            data={"tenant_id": str(tenant_id), "media_ids": "[]", "idempotency_key": uuid.uuid4().hex},
         )
         assert resp.status_code == 422, resp.text
         assert "'media_ids' must be non-empty" in resp.text
@@ -769,7 +843,7 @@ def test_submit_bounds_image_reads(monkeypatch, media_ids, part_ids, part_size, 
     with _client() as (client, _):
         response = client.post(
             "/scene/describe/run",
-            data={"tenant_id": str(TENANT_ID), "media_ids": json.dumps(media_ids)},
+            data={"tenant_id": str(TENANT_ID), "media_ids": json.dumps(media_ids), "idempotency_key": uuid.uuid4().hex},
             files=[(f"image_{i}", (f"{i}.png", b"x" * part_size, "image/png")) for i in part_ids],
         )
     assert response.status_code == expected, response.text

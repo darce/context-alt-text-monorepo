@@ -48,15 +48,72 @@ def _row(
     )
 
 
+class _WorkLease:
+    def __init__(
+        self,
+        *,
+        provider: str,
+        environment: str,
+        seller_account: str,
+        kind: str,
+        remote_id: str,
+        owner: str,
+        fence: int,
+        lease_until: datetime,
+    ) -> None:
+        self.provider = provider
+        self.environment = environment
+        self.seller_account = seller_account
+        self.kind = kind
+        self.remote_id = remote_id
+        self.owner = owner
+        self.fence = fence
+        self.lease_until = lease_until
+
+
+class _Session:
+    def __init__(self) -> None:
+        self.in_txn = False
+        self.commits = 0
+        self.rollbacks = 0
+        self.open_during_provider: list[bool] = []
+
+    def mark_write(self) -> None:
+        self.in_txn = True
+
+    def in_transaction(self) -> bool:
+        return self.in_txn
+
+    async def execute(self, *_args: object, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(scalar_one_or_none=lambda: None, scalars=lambda: SimpleNamespace(all=lambda: []))
+
+    async def commit(self) -> None:
+        self.commits += 1
+        self.in_txn = False
+
+    async def rollback(self) -> None:
+        self.rollbacks += 1
+        self.in_txn = False
+
+
 class _Repository:
     def __init__(self, rows: list[SimpleNamespace], *, session: object | None = None) -> None:
         self.rows = rows
         self.projections: dict[UUID, SimpleNamespace] = {}
+        self.known: list[SimpleNamespace] = []
         self.list_limits: list[int] = []
         self.upserts: list[dict[str, object]] = []
         self.marks: list[dict[str, object]] = []
+        self.claims: list[dict[str, object]] = []
+        self.locks: list[object] = []
+        self.finishes: list[object] = []
         self.session = session
         self.entitlement_service = _EntitlementService()
+        self.environment = "sandbox"
+        self.seller_account = "org_sandbox"
+        self._fences: dict[tuple[str, str], int] = {}
+        self.stale_on_lock = False
+        self.tenants: set[UUID] = {_TENANT_ID}
 
     async def list_pending_webhooks(self, *, limit: int) -> list[SimpleNamespace]:
         self.list_limits.append(limit)
@@ -65,6 +122,78 @@ class _Repository:
             WebhookInboxStatus.FAILED.value,
         }
         return [row for row in self.rows if row.status in pending][:limit]
+
+    async def list_known_projections(
+        self,
+        *,
+        provider: str,
+        limit: int,
+        after_tenant_id: UUID | None = None,
+    ) -> list[SimpleNamespace]:
+        rows = [
+            row
+            for row in self.known
+            if row.provider == provider
+            and getattr(row, "environment", None) == self.environment
+            and getattr(row, "seller_account", None) == self.seller_account
+        ]
+        rows.sort(key=lambda row: row.tenant_id)
+        if after_tenant_id is not None:
+            rows = [row for row in rows if row.tenant_id > after_tenant_id]
+        return rows[:limit]
+
+    async def claim_reconcile_item(
+        self,
+        *,
+        provider: str,
+        kind: str,
+        remote_id: str,
+        owner: str,
+        lease_ttl: timedelta,
+        now: datetime,
+    ) -> _WorkLease | None:
+        key = (kind, remote_id)
+        fence = self._fences.get(key, 0) + 1
+        self._fences[key] = fence
+        lease = _WorkLease(
+            provider=provider,
+            environment=self.environment,
+            seller_account=self.seller_account,
+            kind=kind,
+            remote_id=remote_id,
+            owner=owner,
+            fence=fence,
+            lease_until=now + lease_ttl,
+        )
+        self.claims.append(
+            {
+                "provider": provider,
+                "kind": kind,
+                "remote_id": remote_id,
+                "owner": owner,
+                "fence": fence,
+            }
+        )
+        mark_write = getattr(self.session, "mark_write", None)
+        if callable(mark_write):
+            mark_write()
+        return lease
+
+    async def lock_reconcile_item(self, lease: object, *, now: datetime) -> None:
+        if self.stale_on_lock or getattr(lease, "lease_until", now) <= now:
+            raise RuntimeError("stale reconcile lease")
+        if getattr(lease, "environment", None) in {None, ""} or getattr(lease, "seller_account", None) in {None, ""}:
+            raise RuntimeError("lease namespace is required")
+        self.locks.append(lease)
+        mark_write = getattr(self.session, "mark_write", None)
+        if callable(mark_write):
+            mark_write()
+
+    async def finish_reconcile_item(self, lease: object, *, now: datetime) -> None:
+        self.finishes.append(lease)
+        mark_write = getattr(self.session, "mark_write", None)
+        if callable(mark_write):
+            mark_write()
 
     async def get_projection(self, tenant_id: UUID, *, provider: str | None = None) -> SimpleNamespace | None:
         projection = self.projections.get(tenant_id)
@@ -86,6 +215,7 @@ class _Repository:
         status = kwargs["status"]
         assert isinstance(status, BillingSubscriptionStatus)
         self.projections[tenant_id] = SimpleNamespace(
+            tenant_id=tenant_id,
             provider=kwargs["provider"],
             provider_customer_id=kwargs["provider_customer_id"],
             provider_subscription_id=kwargs["provider_subscription_id"],
@@ -94,6 +224,8 @@ class _Repository:
             past_due_since=kwargs["past_due_since"],
             last_event_id=kwargs["provider_event_id"],
             updated_at=position,
+            environment=self.environment,
+            seller_account=self.seller_account,
         )
         return True
 
@@ -124,6 +256,8 @@ class _Provider:
     def __init__(self, *, positions: dict[str, datetime] | None = None) -> None:
         self.positions = positions or {}
         self.calls: list[dict[str, object]] = []
+        self.environment = "sandbox"
+        self.seller_account = "org_sandbox"
 
     async def retrieve_state(
         self,
@@ -132,11 +266,13 @@ class _Provider:
         provider_subscription_id: str | None,
         request_timeout: float,
     ) -> dict[str, object]:
+        session = getattr(self, "session", None)
         self.calls.append(
             {
                 "customer_id": provider_customer_id,
                 "subscription_id": provider_subscription_id,
                 "timeout": request_timeout,
+                "txn_open": bool(getattr(session, "in_txn", False)),
             }
         )
         position = self.positions.get(
@@ -780,3 +916,76 @@ async def test_refund_payload_id_never_overwrites_the_subscription_pointer() -> 
         assert call.get("provider_subscription_id") != "rfnd_abc"
     for upsert in repository.upserts:
         assert upsert.get("provider_subscription_id") != "rfnd_abc"
+
+
+@pytest.mark.asyncio
+async def test_inbox_path_uses_n1_claim_lock_finish_and_releases_txn_before_get() -> None:
+    repository = _Repository([_row("evt-fence")], session=_Session())
+    provider = _Provider()
+    provider.session = repository.session
+
+    report = await reconcile(repository, provider, config=_config(), sleeper=_no_sleep)
+
+    assert report.exit_code == 0
+    assert [claim["kind"] for claim in repository.claims] == ["inbox"]
+    assert len(repository.locks) == 1
+    assert len(repository.finishes) == 1
+    assert provider.calls[0]["txn_open"] is False
+    assert repository.session.in_txn is False
+
+
+@pytest.mark.asyncio
+async def test_unsupported_repository_without_n1_methods_fails_closed() -> None:
+    class _LegacyRepo:
+        def __init__(self) -> None:
+            self.marks: list[dict[str, object]] = []
+            self.upserts: list[dict[str, object]] = []
+            self.session = _Session()
+
+        async def list_pending_webhooks(self, *, limit: int) -> list[SimpleNamespace]:
+            return [_row("evt-legacy")]
+
+        async def get_projection(self, tenant_id: UUID, *, provider: str | None = None) -> None:
+            return None
+
+        async def upsert_projection(self, **kwargs: object) -> bool:
+            self.upserts.append(kwargs)
+            return True
+
+        async def mark_webhook_processed(self, **kwargs: object) -> bool:
+            self.marks.append(kwargs)
+            return True
+
+    repository = _LegacyRepo()
+    report = await reconcile(repository, _Provider(), config=_config(), sleeper=_no_sleep)
+
+    assert report.exit_code == 1
+    assert report.failed >= 1
+    assert repository.upserts == []
+    assert repository.marks == []
+    assert all(mark.get("status") is not WebhookInboxStatus.PROCESSED for mark in repository.marks)
+
+
+@pytest.mark.asyncio
+async def test_stale_inbox_lease_cannot_mark_or_apply_paid() -> None:
+    repository = _Repository([_row("evt-stale-lock")], session=_Session())
+    repository.stale_on_lock = True
+    provider = _Provider()
+    provider.session = repository.session
+    entitlement_service = _EntitlementService()
+
+    report = await reconcile(
+        repository,
+        provider,
+        entitlement_service=entitlement_service,
+        config=_config(),
+        sleeper=_no_sleep,
+    )
+
+    assert report.exit_code == 1
+    assert report.failed == 1
+    assert repository.upserts == []
+    assert entitlement_service.states == []
+    assert repository.marks == []
+    assert repository.rows[0].status == WebhookInboxStatus.RECEIVED.value
+    assert repository.finishes == []

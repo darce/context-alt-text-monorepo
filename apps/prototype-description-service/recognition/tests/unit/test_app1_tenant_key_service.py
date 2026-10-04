@@ -148,6 +148,72 @@ async def test_rotation_shortens_old_key_and_preserves_original_lifetime(
 
 
 @pytest.mark.asyncio
+async def test_rotation_recovers_legacy_finite_lifetime_from_absolute_expiry(
+    db_session: AsyncSession,
+    tenant: Tenant,
+) -> None:
+    original_lifetime = 31 * 24 * 60 * 60
+    legacy = ApiKey(
+        id=uuid.uuid4(),
+        tenant_id=tenant.id,
+        api_key_hash=hashlib.sha256(b"legacy-secret").hexdigest(),
+        created_at=NOW - timedelta(days=30),
+        expires_at=NOW + timedelta(days=1),
+        lifetime_seconds=None,
+    )
+    db_session.add(legacy)
+    await db_session.flush()
+
+    replacement = await _service(db_session, ["replacement-secret"]).rotate_key(
+        tenant.id,
+        legacy.id,
+        idempotency_key="rotate-legacy",
+        reason="routine",
+    )
+    replacement_row = await SqlAlchemyApiKeyRepository(db_session).get_by_id(
+        replacement.api_key_id,
+        tenant_id=tenant.id,
+    )
+
+    assert replacement_row is not None
+    assert replacement_row.lifetime_seconds == original_lifetime
+    assert replacement_row.expires_at is not None
+    assert _as_utc(replacement_row.expires_at) == NOW + timedelta(seconds=original_lifetime)
+
+
+@pytest.mark.asyncio
+async def test_rotation_keeps_unlimited_legacy_key_unlimited(
+    db_session: AsyncSession,
+    tenant: Tenant,
+) -> None:
+    legacy = ApiKey(
+        id=uuid.uuid4(),
+        tenant_id=tenant.id,
+        api_key_hash=hashlib.sha256(b"unlimited-legacy-secret").hexdigest(),
+        created_at=NOW,
+        expires_at=None,
+        lifetime_seconds=None,
+    )
+    db_session.add(legacy)
+    await db_session.flush()
+
+    replacement = await _service(db_session, ["replacement-secret"]).rotate_key(
+        tenant.id,
+        legacy.id,
+        idempotency_key="rotate-unlimited",
+        reason="routine",
+    )
+    replacement_row = await SqlAlchemyApiKeyRepository(db_session).get_by_id(
+        replacement.api_key_id,
+        tenant_id=tenant.id,
+    )
+
+    assert replacement_row is not None
+    assert replacement_row.lifetime_seconds is None
+    assert replacement_row.expires_at is None
+
+
+@pytest.mark.asyncio
 async def test_revoke_is_immediate_and_repeated_portal_revoke_is_refused(
     db_session: AsyncSession,
     tenant: Tenant,

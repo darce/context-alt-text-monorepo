@@ -7,10 +7,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
-from fastapi import HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 
 from recognition.domain.portal_contracts import PortalPrincipal
 from recognition.interface_adapters.http.deps import portal_auth
@@ -380,3 +381,145 @@ async def test_missing_credential_is_401_and_audited(monkeypatch: pytest.MonkeyP
 
     assert raised.value.status_code == 401
     assert events == ["invalid_key"]
+
+
+@pytest.mark.asyncio
+async def test_missing_or_malformed_bearer_fails_before_portal_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime(2026, 9, 20, tzinfo=UTC)
+    principal = _principal()
+    verifier = _Verifier(
+        portal_auth.PortalTokenClaims(
+            issuer=principal.issuer,
+            subject=principal.subject,
+            email=principal.email,
+            email_verified=True,
+            expires_at=now + timedelta(minutes=5),
+        )
+    )
+    identity_service = _IdentityService(principal)
+    verifier_dependency_calls: list[None] = []
+    session_dependency_calls: list[object] = []
+    identity_dependency_calls: list[object] = []
+    events: list[str] = []
+
+    async def get_test_verifier() -> _Verifier:
+        verifier_dependency_calls.append(None)
+        return verifier
+
+    async def get_test_session() -> object:
+        session = object()
+        session_dependency_calls.append(session)
+        return session
+
+    async def get_test_identity_service(
+        session: object = Depends(portal_auth.get_optional_session),
+    ) -> _IdentityService:
+        identity_dependency_calls.append(session)
+        return identity_service
+
+    app = FastAPI()
+
+    @app.get("/portal/me")
+    async def portal_me(
+        resolved_principal: PortalPrincipal = Depends(portal_auth.require_portal_principal),
+    ) -> dict[str, str]:
+        return {"subject": resolved_principal.subject}
+
+    @app.get("/portal/identity")
+    async def portal_identity(
+        claims: portal_auth.PortalTokenClaims = Depends(portal_auth.require_verified_portal_identity),
+    ) -> dict[str, str]:
+        return {"subject": claims.subject}
+
+    app.dependency_overrides[portal_auth.get_portal_token_verifier] = get_test_verifier
+    app.dependency_overrides[portal_auth.get_optional_session] = get_test_session
+    app.dependency_overrides[portal_auth.get_portal_identity_service] = get_test_identity_service
+    monkeypatch.setattr(portal_auth, "emit_auth_event", lambda outcome, **kwargs: events.append(outcome))
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://testserver",
+    ) as client:
+        for path, headers, expected_detail in (
+            ("/portal/me", {}, "portal authorization required"),
+            (
+                "/portal/me",
+                {"Authorization": "Basic browser-token"},
+                "invalid portal authorization",
+            ),
+            ("/portal/identity", {}, portal_auth._INVALID_PORTAL_AUTHORIZATION),
+            (
+                "/portal/identity",
+                {"Authorization": "Basic browser-token"},
+                portal_auth._INVALID_PORTAL_AUTHORIZATION,
+            ),
+        ):
+            response = await client.get(path, headers=headers)
+            assert response.status_code == 401
+            assert response.json()["detail"] == expected_detail
+
+        assert verifier_dependency_calls == []
+        assert session_dependency_calls == []
+        assert identity_dependency_calls == []
+
+        response = await client.get(
+            "/portal/me",
+            headers={"Authorization": "Bearer browser-token"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"subject": principal.subject}
+    assert verifier_dependency_calls == [None]
+    assert len(session_dependency_calls) == 1
+    assert identity_dependency_calls == session_dependency_calls
+    assert verifier.calls == ["browser-token"]
+    assert identity_service.calls == [(principal.issuer, principal.subject)]
+    assert events == ["invalid_key"] * 4 + ["success"]
+
+
+def test_from_env_loads_audience_and_authorized_parties_separately(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ACX_CLERK_ISSUER", "https://issuer.example.test")
+    monkeypatch.setenv("ACX_CLERK_JWKS_URL", "https://jwks.example.test/keys")
+    monkeypatch.setenv("ACX_CLERK_AUDIENCE", "clerk-instance-aud")
+    monkeypatch.setenv(
+        "ACX_CLERK_AUTHORIZED_PARTIES",
+        "https://app.altcontext.io, https://admin.altcontext.io",
+    )
+
+    settings = portal_auth.PortalAuthSettings.from_env()
+
+    assert settings.issuer == "https://issuer.example.test"
+    assert settings.jwks_url == "https://jwks.example.test/keys"
+    assert settings.audience == ("clerk-instance-aud",)
+    assert settings.authorized_parties == (
+        "https://app.altcontext.io",
+        "https://admin.altcontext.io",
+    )
+
+
+def test_from_env_does_not_treat_authorized_parties_as_audience(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ACX_CLERK_ISSUER", "https://issuer.example.test")
+    monkeypatch.setenv("ACX_CLERK_JWKS_URL", "https://jwks.example.test/keys")
+    monkeypatch.delenv("ACX_CLERK_AUDIENCE", raising=False)
+    monkeypatch.setenv("ACX_CLERK_AUTHORIZED_PARTIES", "https://app.altcontext.io")
+
+    with pytest.raises(ValueError, match="incomplete"):
+        portal_auth.PortalAuthSettings.from_env()
+
+
+def test_from_env_requires_authorized_parties_independently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ACX_CLERK_ISSUER", "https://issuer.example.test")
+    monkeypatch.setenv("ACX_CLERK_JWKS_URL", "https://jwks.example.test/keys")
+    monkeypatch.setenv("ACX_CLERK_AUDIENCE", "clerk-instance-aud")
+    monkeypatch.delenv("ACX_CLERK_AUTHORIZED_PARTIES", raising=False)
+
+    with pytest.raises(ValueError, match="incomplete"):
+        portal_auth.PortalAuthSettings.from_env()

@@ -10,12 +10,12 @@ from __future__ import annotations
 import uuid
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from recognition.application.scan.queue_repository import ScanQueueItem, ScanQueueRepository
 from recognition.application.settings.scan import ScanSettings
 from recognition.config import get_settings
-from recognition.domain.job import JobStatus
+from recognition.domain.job import JobStatus, ScanItemStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +64,14 @@ def _chunk_items(items: Sequence[tuple[int, str]], chunk_size: int) -> Iterable[
         raise ValueError("chunk_size must be positive")
     for start in range(0, len(items), chunk_size):
         yield items[start : start + chunk_size]
+
+
+@dataclass(frozen=True, slots=True)
+class TerminatedJobIdentity:
+    """Exact stalled job identity for usage settlement. [RES-01][DATA-03]"""
+
+    job_id: uuid.UUID
+    tenant_id: uuid.UUID
 
 
 class ScanQueueService:
@@ -283,6 +291,63 @@ class ScanQueueService:
             stale_after_seconds=stale_after_seconds,
             now=effective_now,
         )
+
+    async def terminate_stalled_jobs_with_identities(
+        self,
+        *,
+        stale_after_seconds: int,
+        now: datetime | None = None,
+    ) -> list[TerminatedJobIdentity]:
+        """Fail stalled running jobs and return their persisted job/tenant IDs."""
+        if stale_after_seconds <= 0:
+            return []
+        effective_now = now or datetime.now(tz=UTC)
+        identities = await self._list_stalled_running_identities(
+            stale_after_seconds=stale_after_seconds,
+            now=effective_now,
+        )
+        await self._repository.fail_stalled_running_jobs(
+            stale_after_seconds=stale_after_seconds,
+            now=effective_now,
+        )
+        return identities
+
+    async def _list_stalled_running_identities(
+        self,
+        *,
+        stale_after_seconds: int,
+        now: datetime,
+    ) -> list[TerminatedJobIdentity]:
+        session = getattr(self._repository, "_session", None)
+        if session is None:
+            return []
+        from sqlalchemy import exists, select
+
+        from db.models import IdentityScanJob, IdentityScanJobItem
+
+        stale_before = now - timedelta(seconds=stale_after_seconds)
+        incomplete_items = exists(
+            select(IdentityScanJobItem.id).where(
+                IdentityScanJobItem.job_id == IdentityScanJob.id,
+                IdentityScanJobItem.status.in_(
+                    (
+                        ScanItemStatus.PENDING.value,
+                        ScanItemStatus.PROCESSING.value,
+                    )
+                ),
+            )
+        )
+        stmt = select(IdentityScanJob.id, IdentityScanJob.tenant_id).where(
+            IdentityScanJob.status == JobStatus.RUNNING.value,
+            IdentityScanJob.started_at.is_not(None),
+            IdentityScanJob.started_at < stale_before,
+            incomplete_items,
+        )
+        rows = (await session.execute(stmt)).all()
+        return [TerminatedJobIdentity(job_id=job_id, tenant_id=tenant_id) for job_id, tenant_id in rows]
+
+    async def get_job_tenant_id(self, *, job_id: uuid.UUID) -> uuid.UUID | None:
+        return await self._repository.get_job_tenant_id(job_id=job_id)
 
     async def cancel_scan_job(self, *, job_id: uuid.UUID) -> int:
         """Cancel any pending items for a scan job.

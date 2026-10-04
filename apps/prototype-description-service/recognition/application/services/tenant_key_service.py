@@ -314,6 +314,16 @@ class TenantKeyService:
         except OverflowError as exc:
             raise InvalidKeyRequestError("lifetime_seconds is too large") from exc
 
+    @staticmethod
+    def _legacy_lifetime_seconds(old_key: Any, *, old_expiry: datetime, now: datetime) -> int:
+        """Recover a finite lifetime from legacy absolute-expiry metadata."""
+        created_at = getattr(old_key, "created_at", None)
+        reference = _as_utc(created_at) if isinstance(created_at, datetime) else now
+        original_window = old_expiry - reference
+        # Keep a short legacy window usable through the same grace period as an
+        # explicit lifetime, while retaining a finite policy for future rotates.
+        return max(1, int(max(original_window, _ROTATION_GRACE).total_seconds()))
+
     async def create_key(
         self,
         tenant_id: UUID,
@@ -452,6 +462,8 @@ class TenantKeyService:
 
         cutoff = now + _ROTATION_GRACE if old_expiry is None else min(old_expiry, now + _ROTATION_GRACE)
         lifetime = _normalize_lifetime(getattr(old_key, "lifetime_seconds", None))
+        if lifetime is None and old_expiry is not None:
+            lifetime = self._legacy_lifetime_seconds(old_key, old_expiry=old_expiry, now=now)
         replacement_expiry = self._expiry(now, lifetime)
         raw_key, hashed_key = self._new_secret()
         replacement = await self._repository.create(

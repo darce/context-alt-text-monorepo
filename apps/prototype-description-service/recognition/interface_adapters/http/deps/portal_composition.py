@@ -6,27 +6,22 @@ import json
 import logging
 import math
 import os
-from collections.abc import AsyncIterator, Collection, Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlparse
 from uuid import UUID
 
-import anyio
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from recognition.application.services.usage_admission_service import (
-    AllowanceExceededError,
-    UsageAdmissionError,
-    UsageAdmissionService,
-    UsageAdmissionTimeoutError,
-)
+from recognition.application.services.checkout_service import CheckoutService
+from recognition.application.services.usage_admission_service import UsageAdmissionService
 from recognition.config.settings import RecognitionSettings
 from recognition.infrastructure.billing.polar_provider import PolarBillingProvider
 from recognition.infrastructure.repositories.billing_repository import BillingRepository
-from recognition.infrastructure.repositories.usage_repository import ExpiredUsageReservationError
-from recognition.interface_adapters.http.deps.auth import require_write_access
+from recognition.infrastructure.repositories.checkout_attempt_repository import CheckoutAttemptRepository
 from recognition.interface_adapters.http.deps.portal_auth import (
     PortalAuthSettings,
     build_portal_token_verifier,
@@ -36,11 +31,15 @@ from recognition.interface_adapters.http.routers.billing_webhooks import get_bil
 from shared.secrets import get_secret_provider
 
 _MISSING = object()
-logger = logging.getLogger(__name__)
-_DEFAULT_POLAR_BASE_URL = "https://api.polar.sh"
+_POLAR_SANDBOX_BASE_URL = "https://sandbox-api.polar.sh"
+_POLAR_LIVE_BASE_URL = "https://api.polar.sh"
+_POLAR_SANDBOX_HOST = "sandbox-api.polar.sh"
+_POLAR_LIVE_HOST = "api.polar.sh"
+_ALLOWED_POLAR_ENVIRONMENTS = frozenset({"sandbox", "live"})
+_DEFAULT_POLAR_BASE_URL = _POLAR_SANDBOX_BASE_URL
 _DEFAULT_POLAR_TIMEOUT_SECONDS = 10.0
-_MAX_TENANT_LOOKUP_BODY_BYTES = 25 * 1024 * 1024
-_TENANT_LOOKUP_READ_TIMEOUT_SECONDS = 10.0
+_DEFAULT_USAGE_ADMISSION_TIMEOUT_S = 5.0
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +55,9 @@ class PortalCompositionConfig:
     billing_payments_enabled: bool = False
     billing_environment: str = "sandbox"
     billing_allowed_return_origins: tuple[str, ...] = ()
+    billing_seller_account: str | None = None
+    app_public_origin: str = ""
+    app_allowed_origins: tuple[str, ...] = ()
 
 
 class _OutboundHttpClient:
@@ -104,11 +106,54 @@ class _OutboundHttpClient:
         return float(resolved)
 
 
+@dataclass(frozen=True, slots=True)
 class BillingRepositoryFactory:
     """Construct a billing repository around the session for one request."""
 
+    environment: str | None = None
+    seller_account: str | None = None
+
     def __call__(self, session: AsyncSession) -> BillingRepository:
-        return BillingRepository(session)
+        return BillingRepository(
+            session,
+            environment=self.environment,
+            seller_account=self.seller_account,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CheckoutServiceFactory:
+    """Construct a checkout service around the session for one request."""
+
+    provider: Any
+    seller_account: str
+    payments_enabled: bool = False
+    provider_name: str = "polar"
+    environment: str = "sandbox"
+
+    def __call__(self, session: AsyncSession) -> CheckoutService:
+        return CheckoutService(
+            CheckoutAttemptRepository(session),
+            self.provider,
+            payments_enabled=self.payments_enabled,
+            provider_name=self.provider_name,
+            environment=self.environment,
+            seller_account=self.seller_account,
+        )
+
+
+class UsageAdmissionServiceFactory:
+    """Construct a usage admission service around the session for one request."""
+
+    def __init__(self, *, timeout_s: float = _DEFAULT_USAGE_ADMISSION_TIMEOUT_S) -> None:
+        self.timeout_s = _positive_float(
+            timeout_s,
+            setting_name="RECOGNITION_USAGE_ADMISSION_TIMEOUT_S",
+            default=_DEFAULT_USAGE_ADMISSION_TIMEOUT_S,
+        )
+
+    def __call__(self, session: AsyncSession) -> UsageAdmissionService:
+        return UsageAdmissionService(session, timeout_s=self.timeout_s)
 
 
 def _setting_value(settings: RecognitionSettings, sections: Collection[str], names: Collection[str]) -> object:
@@ -192,31 +237,30 @@ def _portal_auth_settings(
         environment_names=("ACX_CLERK_JWKS_URL",),
         missing=missing,
     )
+    audience_setting = _setting_value(settings, sections, ("audience", "portal_audience"))
+    audience_values = _text_values(audience_setting) or _text_values(_environment_value(("ACX_CLERK_AUDIENCE",)))
     parties_setting = _setting_value(settings, sections, ("authorized_parties",))
     party_values = _text_values(parties_setting) or _text_values(_environment_value(("ACX_CLERK_AUTHORIZED_PARTIES",)))
-    audience = _setting_value(settings, sections, ("audience", "portal_audience"))
-    audience_values = _text_values(audience)
-    # When a distinct audience is configured the authorized-parties setting is a genuine
-    # origin pin, so it must reach the azp check instead of silently serving as the audience.
-    # Deployments that configure only ACX_CLERK_AUTHORIZED_PARTIES keep using it as the
-    # audience; pinning azp to the same value there would reject every legitimate token.
-    enforced_parties: tuple[str, ...] | None = party_values or None
     if not audience_values:
-        audience_values = party_values
-        enforced_parties = None
-    if not audience_values:
+        missing.append("ACX_CLERK_AUDIENCE")
+    if not party_values:
         missing.append("ACX_CLERK_AUTHORIZED_PARTIES")
-    if not issuer or not jwks_url or not audience_values:
+    if not issuer or not jwks_url or not audience_values or not party_values:
         return None
     return PortalAuthSettings(
         issuer=issuer,
         jwks_url=jwks_url,
         audience=audience_values,
-        authorized_parties=enforced_parties,
+        authorized_parties=party_values,
     )
 
 
-def _product_ids(settings: RecognitionSettings, missing: list[str]) -> Mapping[str, str]:
+def _product_ids(
+    settings: RecognitionSettings,
+    missing: list[str],
+    *,
+    required: bool = True,
+) -> Mapping[str, str]:
     sections = ("billing", "polar")
     configured = _setting_value(settings, sections, ("product_ids", "products", "plan_products"))
     if configured is None:
@@ -257,7 +301,7 @@ def _product_ids(settings: RecognitionSettings, missing: list[str]) -> Mapping[s
     else:
         result = {}
 
-    if not result:
+    if not result and required:
         missing.append("POLAR_PRODUCT_IDS")
     return result
 
@@ -288,24 +332,120 @@ def _boolean(value: object, *, default: bool) -> bool:
     raise ValueError("billing payments enabled must be boolean")
 
 
+def _polar_environment(settings: RecognitionSettings) -> str:
+    sections = ("billing", "polar")
+    environment = _setting_value(settings, sections, ("environment", "polar_environment"))
+    if not isinstance(environment, str) or not environment.strip():
+        environment = _environment_value(("POLAR_ENVIRONMENT",)) or "sandbox"
+    normalized = environment.strip().lower()
+    if normalized not in _ALLOWED_POLAR_ENVIRONMENTS:
+        raise ValueError("POLAR_ENVIRONMENT must be sandbox or live")
+    return normalized
+
+
+def _polar_host(base_url: str) -> str:
+    parsed = urlparse(base_url)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme != "https" or not host or parsed.username is not None:
+        raise ValueError("POLAR_BASE_URL must be an absolute HTTPS URL")
+    return host
+
+
+def _validated_polar_base_url(base_url: str, *, environment: str) -> str:
+    host = _polar_host(base_url)
+    if host == _POLAR_LIVE_HOST and environment != "live":
+        raise ValueError(f"POLAR_BASE_URL host {_POLAR_LIVE_HOST} does not match environment {environment}")
+    if host == _POLAR_SANDBOX_HOST and environment != "sandbox":
+        raise ValueError(f"POLAR_BASE_URL host {_POLAR_SANDBOX_HOST} does not match environment {environment}")
+    return base_url.rstrip("/")
+
+
+def _polar_base_url(settings: RecognitionSettings, *, environment: str) -> str:
+    sections = ("billing", "polar")
+    base_url = _setting_value(settings, sections, ("base_url", "api_base_url", "polar_base_url"))
+    if not isinstance(base_url, str) or not base_url.strip():
+        base_url = _environment_value(("POLAR_BASE_URL", "POLAR_API_BASE_URL"))
+    if not isinstance(base_url, str) or not base_url.strip():
+        return _POLAR_SANDBOX_BASE_URL if environment == "sandbox" else _POLAR_LIVE_BASE_URL
+    return _validated_polar_base_url(base_url.strip(), environment=environment)
+
+
+def _absolute_origin(value: str, *, setting_name: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"{setting_name} must be an absolute HTTP(S) origin")
+    if parsed.path not in {"", "/"} or parsed.query or parsed.fragment or parsed.username is not None:
+        raise ValueError(f"{setting_name} must be an absolute HTTP(S) origin")
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _seller_account(
+    settings: RecognitionSettings,
+    missing: list[str],
+    *,
+    required: bool,
+) -> str | None:
+    sections = ("billing", "polar")
+    value = _setting_value(
+        settings,
+        sections,
+        ("seller_account", "organization_id", "polar_organization_id", "polar_seller_account"),
+    )
+    if not isinstance(value, str) or not value.strip():
+        value = _environment_value(("POLAR_ORGANIZATION_ID", "POLAR_SELLER_ACCOUNT", "POLAR_ORGANIZATION"))
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    if required:
+        missing.append("POLAR_ORGANIZATION_ID")
+    return None
+
+
+def _app_public_origin(
+    settings: RecognitionSettings,
+    missing: list[str],
+    *,
+    required: bool,
+) -> str:
+    sections = ("portal", "app", "billing")
+    value = _setting_value(settings, sections, ("public_origin", "app_public_origin"))
+    if not isinstance(value, str) or not value.strip():
+        value = _environment_value(("APP_PUBLIC_ORIGIN",))
+    if isinstance(value, str) and value.strip():
+        return _absolute_origin(value.strip(), setting_name="APP_PUBLIC_ORIGIN")
+    if required:
+        missing.append("APP_PUBLIC_ORIGIN")
+    return ""
+
+
+def _app_allowed_origins(settings: RecognitionSettings) -> tuple[str, ...]:
+    sections = ("portal", "app")
+    configured = _setting_value(settings, sections, ("allowed_origins", "app_allowed_origins"))
+    if configured is None:
+        configured = _environment_value(("APP_ALLOWED_ORIGINS",))
+    return _text_values(configured)
+
+
 def _composition_config(settings: RecognitionSettings) -> PortalCompositionConfig:
     missing: list[str] = []
     portal_auth = _portal_auth_settings(settings, missing)
-    webhook_secret = _secret_value(("POLAR_WEBHOOK_SECRET", "POLAR_WEBHOOK_SIGNING_SECRET")) or ""
-    if not webhook_secret:
-        missing.append("POLAR_WEBHOOK_SECRET")
+    sections = ("billing", "polar")
+    payments_enabled = _setting_value(settings, sections, ("payments_enabled", "polar_payments_enabled"))
+    if payments_enabled is None:
+        payments_enabled = _environment_value(("POLAR_PAYMENTS_ENABLED",))
+    billing_payments_enabled = _boolean(payments_enabled, default=False)
 
-    product_ids = _product_ids(settings, missing)
+    webhook_secret = _secret_value(("POLAR_WEBHOOK_SECRET", "POLAR_WEBHOOK_SIGNING_SECRET")) or ""
+    product_ids = _product_ids(settings, missing, required=billing_payments_enabled)
+    if billing_payments_enabled and not webhook_secret:
+        missing.append("POLAR_WEBHOOK_SECRET")
     if missing:
         missing_names = ", ".join(dict.fromkeys(missing))
         raise ValueError(f"portal and billing composition requires: {missing_names}")
     if portal_auth is None:
         raise ValueError("portal and billing composition requires portal authentication settings")
 
-    sections = ("billing", "polar")
-    base_url = _setting_value(settings, sections, ("base_url", "api_base_url", "polar_base_url"))
-    if not isinstance(base_url, str) or not base_url.strip():
-        base_url = _environment_value(("POLAR_BASE_URL", "POLAR_API_BASE_URL")) or _DEFAULT_POLAR_BASE_URL
+    environment = _polar_environment(settings)
+    base_url = _polar_base_url(settings, environment=environment)
 
     timeout_value = _setting_value(settings, sections, ("timeout_seconds", "request_timeout_seconds"))
     if timeout_value is None:
@@ -316,18 +456,19 @@ def _composition_config(settings: RecognitionSettings) -> PortalCompositionConfi
         default=_DEFAULT_POLAR_TIMEOUT_SECONDS,
     )
 
-    environment = _setting_value(settings, sections, ("environment", "polar_environment"))
-    if not isinstance(environment, str) or not environment.strip():
-        environment = _environment_value(("POLAR_ENVIRONMENT",)) or "sandbox"
-
-    payments_enabled = _setting_value(settings, sections, ("payments_enabled", "polar_payments_enabled"))
-    if payments_enabled is None:
-        payments_enabled = _environment_value(("POLAR_PAYMENTS_ENABLED",))
+    seller_account = _seller_account(settings, missing, required=billing_payments_enabled)
+    app_public_origin = _app_public_origin(settings, missing, required=billing_payments_enabled)
+    app_allowed_origins = _app_allowed_origins(settings)
+    if missing:
+        missing_names = ", ".join(dict.fromkeys(missing))
+        raise ValueError(f"portal and billing composition requires: {missing_names}")
 
     origins = _setting_value(settings, sections, ("allowed_return_origins", "return_origins"))
     if origins is None:
         origins = _environment_value(("POLAR_ALLOWED_RETURN_ORIGINS",))
     allowed_return_origins = _text_values(origins)
+    if app_public_origin and app_public_origin not in allowed_return_origins:
+        allowed_return_origins = (*allowed_return_origins, app_public_origin)
 
     access_token = _secret_value(("POLAR_ACCESS_TOKEN", "POLAR_API_TOKEN"))
     return PortalCompositionConfig(
@@ -335,11 +476,14 @@ def _composition_config(settings: RecognitionSettings) -> PortalCompositionConfi
         billing_webhook_secret=webhook_secret,
         billing_product_ids=product_ids,
         billing_access_token=access_token,
-        billing_base_url=base_url.strip(),
+        billing_base_url=base_url,
         billing_timeout_seconds=timeout_seconds,
-        billing_payments_enabled=_boolean(payments_enabled, default=False),
-        billing_environment=str(environment).strip(),
+        billing_payments_enabled=billing_payments_enabled,
+        billing_environment=environment,
         billing_allowed_return_origins=allowed_return_origins,
+        billing_seller_account=seller_account,
+        app_public_origin=app_public_origin,
+        app_allowed_origins=app_allowed_origins,
     )
 
 
@@ -356,149 +500,47 @@ async def _resolve_billing_repository(
     return factory(session)
 
 
-async def get_usage_admission_service(
-    request: Request,
-    session: AsyncSession | None = Depends(get_optional_session),
-) -> UsageAdmissionService | None:
-    """Resolve admission only when its independent app-level gate is installed."""
-    factory = getattr(request.app.state, "usage_admission_service_factory", None)
-    if not callable(factory):
-        return None
-    if session is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Usage admission unavailable",
-        )
-    return factory(session)
+def install_usage_admission_factory(app: FastAPI) -> None:
+    """Install usage admission without portal Clerk/Polar configuration."""
+    usage_timeout_value = _environment_value(("RECOGNITION_USAGE_ADMISSION_TIMEOUT_S",))
+    usage_timeout_s = _positive_float(
+        usage_timeout_value,
+        setting_name="RECOGNITION_USAGE_ADMISSION_TIMEOUT_S",
+        default=_DEFAULT_USAGE_ADMISSION_TIMEOUT_S,
+    )
+    app.state.usage_admission_service = UsageAdmissionServiceFactory(timeout_s=usage_timeout_s)
 
 
-async def _request_tenant_id(request: Request) -> UUID:
-    content_type = request.headers.get("content-type", "").lower()
-    if content_type.startswith("multipart/form-data"):
-        await _cache_bounded_request_body(request)
-        form = await request.form()
-        try:
-            request_part = form.get("request")
-            if not isinstance(request_part, str):
-                raise ValueError("request envelope is missing")
-            envelope = json.loads(request_part)
-        finally:
-            await form.close()
-    elif content_type.startswith("application/json"):
-        try:
-            envelope = await request.json()
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid request envelope") from exc
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="request content-type must be JSON or multipart/form-data",
-        )
-
-    if not isinstance(envelope, Mapping):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid request envelope")
-    try:
-        return UUID(str(envelope.get("tenant_id", "")))
-    except (ValueError, TypeError, AttributeError) as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid tenant_id") from exc
+def install_portal_fallback(
+    app: FastAPI,
+    *,
+    settings: RecognitionSettings,
+    http_client: Any | None = None,
+) -> None:
+    """Install Clerk portal auth/keys/usage without Polar."""
+    config = _composition_config(settings)
+    outbound_client = http_client or _OutboundHttpClient(
+        default_timeout_seconds=config.billing_timeout_seconds,
+    )
+    app.state.portal_token_verifier = build_portal_token_verifier(
+        outbound_client,
+        config.portal_auth,
+    )
+    app.state.portal_composition_config = config
+    app.state.app_allowed_origins = config.app_allowed_origins
+    app.state.billing_provider = None
+    app.state.billing_repository = None
+    app.state.checkout_service = None
+    install_usage_admission_factory(app)
 
 
-async def _cache_bounded_request_body(request: Request) -> None:
-    content_length = request.headers.get("content-length")
-    if content_length is not None:
-        try:
-            declared_length = int(content_length)
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid request body") from exc
-        if declared_length < 0:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid request body")
-        if declared_length > _MAX_TENANT_LOOKUP_BODY_BYTES:
-            raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="request body too large")
-
-    body = bytearray()
-    try:
-        with anyio.fail_after(_TENANT_LOOKUP_READ_TIMEOUT_SECONDS):
-            async for chunk in request.stream():
-                if len(body) + len(chunk) > _MAX_TENANT_LOOKUP_BODY_BYTES:
-                    raise HTTPException(
-                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-                        detail="request body too large",
-                    )
-                body.extend(chunk)
-    except TimeoutError as exc:
-        raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="request body read timed out") from exc
-
-    request._body = bytes(body)
-
-
-async def admit_usage(
-    request: Request,
-    usage_admission_service: UsageAdmissionService | None = Depends(get_usage_admission_service),
-    auth=Depends(require_write_access),
-) -> AsyncIterator[None]:
-    """Reserve one unit before an analysis submission reaches its route handler."""
-    if usage_admission_service is None:
-        yield
-        return
-    idempotency_key = request.headers.get("Idempotency-Key", "").strip()
-    if not idempotency_key:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Idempotency-Key header is required")
-    auth_tenant = getattr(auth, "tenant_claim", None)
-    if auth_tenant:
-        try:
-            tenant_id = UUID(str(auth_tenant))
-        except (ValueError, TypeError, AttributeError) as exc:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid tenant claim") from exc
-    else:
-        tenant_id = await _request_tenant_id(request)
-    try:
-        ticket = await usage_admission_service.reserve(
-            tenant_id,
-            idempotency_key=idempotency_key,
-            job_id=None,
-            cost_units=1,
-        )
-    except ExpiredUsageReservationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="idempotency key expired; retry with a new key",
-        ) from exc
-    except AllowanceExceededError as exc:
-        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="usage allowance exhausted") from exc
-    except (UsageAdmissionError, UsageAdmissionTimeoutError) as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="usage admission unavailable") from exc
-
-    try:
-        yield
-    except BaseException:
-        with anyio.CancelScope(shield=True):
-            await usage_admission_service.release(ticket)
-        raise
-    else:
-        try:
-            with anyio.CancelScope(shield=True):
-                await usage_admission_service.commit(ticket)
-        except BaseException as commit_error:
-            try:
-                with anyio.CancelScope(shield=True):
-                    await usage_admission_service.release(ticket)
-            except BaseException as release_error:
-                logger.error(
-                    "usage admission commit failed: %r",
-                    commit_error,
-                    exc_info=(type(commit_error), commit_error, commit_error.__traceback__),
-                )
-                logger.error(
-                    "usage admission ticket release also failed: %r",
-                    release_error,
-                    exc_info=(type(release_error), release_error, release_error.__traceback__),
-                )
-            raise
+def _polar_configured(config: PortalCompositionConfig) -> bool:
+    return bool(config.billing_webhook_secret and config.billing_product_ids)
 
 
 def install_usage_admission_composition(app: FastAPI) -> None:
     """Install the request-scoped usage service independently of portal routes."""
-    app.state.usage_admission_service_factory = UsageAdmissionService
+    install_usage_admission_factory(app)
 
 
 def install_portal_composition(
@@ -516,7 +558,12 @@ def install_portal_composition(
         outbound_client,
         config.portal_auth,
     )
-    app.state.billing_provider = PolarBillingProvider(
+    app.state.portal_composition_config = config
+    app.state.app_allowed_origins = config.app_allowed_origins
+    if not _polar_configured(config):
+        install_portal_fallback(app, settings=settings, http_client=outbound_client)
+        return
+    billing_provider = PolarBillingProvider(
         outbound_client,
         config.billing_webhook_secret,
         access_token=config.billing_access_token,
@@ -526,16 +573,37 @@ def install_portal_composition(
         payments_enabled=config.billing_payments_enabled,
         environment=config.billing_environment,
         allowed_return_origins=config.billing_allowed_return_origins,
+        seller_account=config.billing_seller_account,
     )
-    app.state.billing_repository = BillingRepositoryFactory()
+    app.state.billing_provider = billing_provider
+    if config.billing_environment and config.billing_seller_account:
+        app.state.billing_repository = BillingRepositoryFactory(
+            environment=config.billing_environment,
+            seller_account=config.billing_seller_account,
+        )
+    else:
+        app.state.billing_repository = None
+    if config.billing_seller_account:
+        app.state.checkout_service = CheckoutServiceFactory(
+            provider=billing_provider,
+            seller_account=config.billing_seller_account,
+            payments_enabled=config.billing_payments_enabled,
+            provider_name="polar",
+            environment=config.billing_environment,
+        )
+    else:
+        app.state.checkout_service = None
+    install_usage_admission_factory(app)
     app.dependency_overrides[get_billing_repository] = _resolve_billing_repository
 
 
 __all__ = [
     "BillingRepositoryFactory",
+    "CheckoutServiceFactory",
     "PortalCompositionConfig",
-    "admit_usage",
-    "get_usage_admission_service",
+    "UsageAdmissionServiceFactory",
+    "install_portal_fallback",
+    "install_usage_admission_factory",
     "install_portal_composition",
     "install_usage_admission_composition",
 ]

@@ -1,0 +1,73 @@
+{
+  "lane": "a1h-portal5",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "$resolved_python -c \"import recognition as module; print(module.__file__)\"",
+      "result": "pass",
+      "detail": "The lane interpreter imported recognition from apps/prototype-description-service/recognition/__init__.py, inside this worktree."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_app_mount.py recognition/tests/unit/test_app1_portal_auth.py recognition/tests/unit/test_app1_portal_checkout_router.py recognition/tests/unit/test_app1_portal_claim_router.py recognition/tests/unit/test_app1_portal_composition.py recognition/tests/unit/test_app1_portal_me_cache.py",
+      "result": "not_run",
+      "detail": "uv failed before pytest while building prototype-description-service: it could not fetch setuptools from https://pypi.org/simple/setuptools/ because DNS lookup failed."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_app_mount.py recognition/tests/unit/test_app1_portal_auth.py recognition/tests/unit/test_app1_portal_checkout_router.py recognition/tests/unit/test_app1_portal_claim_router.py recognition/tests/unit/test_app1_portal_composition.py recognition/tests/unit/test_app1_portal_me_cache.py",
+      "result": "fail",
+      "detail": "Pytest emitted three passing progress marks, then timed out in test_enabled_mount_resolves_real_portal_and_billing_composition while awaiting GET /portal/me without Authorization (Timeout (0:04:00)! followed by an event-loop thread dump). Ctrl-C ended the process with exit 130 after pytest printed F; no suite summary was produced."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=60 -o timeout_method=signal -k 'not test_enabled_mount_resolves_real_portal_and_billing_composition' recognition/tests/unit/test_app1_app_mount.py recognition/tests/unit/test_app1_portal_auth.py recognition/tests/unit/test_app1_portal_checkout_router.py recognition/tests/unit/test_app1_portal_claim_router.py recognition/tests/unit/test_app1_portal_composition.py recognition/tests/unit/test_app1_portal_me_cache.py",
+      "result": "not_run",
+      "detail": "The exploratory run emitted 18 progress dots, then was interrupted with Ctrl-C (exit 130) before a summary; no result is claimed."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --locked --extra dev pytest -p no:cacheprovider -q -o timeout=30 -o timeout_method=signal recognition/tests/unit/test_app1_portal_auth.py recognition/tests/unit/test_app1_portal_composition.py",
+      "result": "pass",
+      "detail": "39 passed in 4.40s."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --locked --extra dev pytest -p no:cacheprovider -q -o timeout=60 -o timeout_method=signal recognition/tests/unit/test_app1_pretenant_auth.py",
+      "result": "not_run",
+      "detail": "The exploratory run emitted 12 progress dots, then was interrupted with Ctrl-C (exit 130) before a summary; no result is claimed."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --locked --extra dev pytest -p no:cacheprovider -q -o timeout=30 -o timeout_method=signal recognition/tests/unit/test_app1_pretenant_auth.py -k test_azp_mismatch_is_401",
+      "result": "pass",
+      "detail": "1 passed, 12 deselected, 1 warning in 4.54s."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 15532,
+      "finding_id": "APP1-HG-40",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "api/main.py:658 calls install_portal_composition(app, settings=recognition_settings) when enabled; portal_composition.py:557 assigns app.state.portal_token_verifier from build_portal_token_verifier. test_missing_billing_product_ids_does_not_block_portal_fallback asserts app.state.portal_token_verifier is not None and passed in the 39-test focused run. The mount request timed out later while resolving the identity session, after the verifier dependency had been resolved.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_portal_composition.py::test_missing_billing_product_ids_does_not_block_portal_fallback"
+    },
+    {
+      "db_id": 15555,
+      "finding_id": "GXPLAN-e71025f7c0c5b190-M-c84a19a5fc981b2c67fb7859",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "portal_auth.py:181-191 reads ACX_CLERK_AUDIENCE and ACX_CLERK_AUTHORIZED_PARTIES independently; portal_auth.py:577 forwards resolved.authorized_parties to the verifier, and portal_auth.py:538-540 rejects absent or unconfigured azp. The environment wiring assertions passed in the focused 39-test run, and the verifier mismatch guard passed separately.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_portal_composition.py::test_authorized_parties_from_the_environment_reach_the_azp_check; apps/prototype-description-service/recognition/tests/unit/test_app1_pretenant_auth.py::test_azp_mismatch_is_401"
+    }
+  ],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "apps/prototype-description-service/recognition/interface_adapters/http/deps/portal_auth.py",
+      "line": 765,
+      "title": "Missing bearer can block on identity session resolution",
+      "defect": "require_portal_principal declares get_portal_identity_service as an eager FastAPI dependency. That dependency opens get_optional_session before require_portal_principal can reject a missing bearer, so unauthenticated requests wait on database setup first.",
+      "failure_scenario": "With the portal enabled and the database unavailable or slow, GET /portal/me without Authorization enters get_portal_identity_service and its optional-session probe before auth can return 401, yielding 503 or a stall. The integration test test_enabled_mount_resolves_real_portal_and_billing_composition timed out at this request.",
+      "fix": "Resolve the identity service only after bearer verification succeeds, and add an assertion that missing or malformed Authorization returns 401 without invoking the session factory.",
+      "test_file": "apps/prototype-description-service/recognition/tests/unit/test_app1_app_mount.py",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "Both listed auth corrections hold and their focused guards pass, but the prescribed suite cannot complete: uv could not sync from PyPI and the no-sync run timed out on an unauthenticated /portal/me request before the remaining tests ran."
+}

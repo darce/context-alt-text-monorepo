@@ -83,6 +83,6 @@ export const getDegradedWarningMessage = (health: SyncHealthResponse): string | 
 export const getDegradedDebtLinks = (
   health: SyncHealthResponse,
 ): { failedOutboxHref: string | null; conflictsHref: string | null } => ({
-  failedOutboxHref: health.outbox.failed > 0 ? SCAN_DEAD_LETTER_HREF : null,
+  failedOutboxHref: health.outbox.failed !== null && health.outbox.failed > 0 ? SCAN_DEAD_LETTER_HREF : null,
   conflictsHref: health.conflicts.open > 0 ? SCAN_CONFLICTS_HREF : null,
 });

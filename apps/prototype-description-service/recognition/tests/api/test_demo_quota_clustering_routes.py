@@ -11,7 +11,8 @@ import os
 import tempfile
 import uuid
 from contextlib import contextmanager, suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import cast
 
 from fastapi import FastAPI
@@ -22,9 +23,25 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from db.models.base_imports import Base
 from db.models.tenant import ApiKey, DemoInstance, Tenant
 from recognition.application.services.demo_provisioning_service import provision_demo
+from recognition.domain.portal_contracts import EntitlementStatus
 from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth
+from recognition.interface_adapters.http.deps.operator_authorization import (
+    get_clustering_operator_entitlement_repository,
+    get_operator_entitlement_repository,
+)
+
+
+class _PaidOperatorEntitlementRepository:
+    async def get(self, tenant_id: object) -> SimpleNamespace:
+        now = datetime.now(tz=UTC)
+        return SimpleNamespace(
+            tenant_id=tenant_id,
+            status=EntitlementStatus.PAID_ACTIVE,
+            period_start=now - timedelta(days=1),
+            period_end=now + timedelta(days=1),
+        )
 
 
 def _stub_cluster_result():
@@ -110,6 +127,11 @@ def _clustering_demo_client(*, recognition_quota: int = 5, non_demo: bool = Fals
 
         return FakeJobService()
 
+    operator_entitlement_repository = _PaidOperatorEntitlementRepository()
+
+    async def operator_entitlement_repository_dep():
+        return operator_entitlement_repository
+
     app = FastAPI()
     app.include_router(recognition_router, prefix="/recognition")
     app.dependency_overrides[require_auth] = lambda: auth
@@ -119,6 +141,8 @@ def _clustering_demo_client(*, recognition_quota: int = 5, non_demo: bool = Fals
     app.dependency_overrides[dependencies.get_cluster_service_builder] = cluster_builder
     app.dependency_overrides[dependencies.get_cluster_service_builder_clustering] = cluster_builder
     app.dependency_overrides[dependencies.get_persisted_cluster_job_service_clustering] = job_service_dep
+    app.dependency_overrides[get_operator_entitlement_repository] = operator_entitlement_repository_dep
+    app.dependency_overrides[get_clustering_operator_entitlement_repository] = operator_entitlement_repository_dep
 
     try:
         with TestClient(app) as client:

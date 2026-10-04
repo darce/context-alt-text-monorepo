@@ -1267,6 +1267,7 @@ async def test_multipart_replay_dispatch_registration_failure_preserves_original
     class _ReplayAdmission:
         def __init__(self) -> None:
             self.ticket: UsageTicket | None = None
+            self.commits: list[UsageTicket] = []
             self.releases: list[UsageTicket] = []
 
         async def reserve(self, tenant_id, *, idempotency_key: str, job_id: str, cost_units: int, **kwargs):
@@ -1284,6 +1285,7 @@ async def test_multipart_replay_dispatch_registration_failure_preserves_original
             return self.ticket
 
         async def commit(self, ticket: UsageTicket) -> None:
+            self.commits.append(ticket)
             return None
 
         async def release(self, ticket: UsageTicket) -> None:
@@ -1325,6 +1327,7 @@ async def test_multipart_replay_dispatch_registration_failure_preserves_original
     first = await mod._analyze_media_multipart_form(
         form_data=_form_data(), background_tasks=background_tasks, **common
     )
+    assert admission.commits == []
     assert first.id == str(queue.calls[0]["job_id"])
     original_job_id = queue.calls[0]["job_id"]
     original_blob = store.blobs[(str(original_job_id), "42")]
@@ -1354,6 +1357,7 @@ async def test_multipart_replay_dispatch_registration_failure_preserves_original
         else:
             assert replay_tasks.tasks == []
             assert blob_path.stat().st_ino == original_inode
+        assert admission.commits == []
     else:
         expected_error = HTTPException if failure_kind == "registration" else RuntimeError
         with pytest.raises(expected_error) as exc_info:
@@ -1365,6 +1369,7 @@ async def test_multipart_replay_dispatch_registration_failure_preserves_original
             assert exc_info.value.detail == "Scan dispatch unavailable"
         else:
             assert str(exc_info.value) == "replay store unavailable"
+        assert admission.commits == []
     assert len(queue.calls) == 1
     assert queue.cancelled_jobs == []
     assert queue.job_statuses[original_job_id] == "pending"

@@ -6,6 +6,8 @@ import inspect
 import pathlib
 from types import ModuleType
 
+import pytest
+
 
 def _import_script() -> ModuleType:
     path = pathlib.Path(__file__).resolve().parents[3] / "scripts" / "verify_identity_schema.py"
@@ -697,7 +699,8 @@ def test_collect_and_validate_reads_permissiveness_for_operator_policies(monkeyp
     assert table in report["policy_gaps"]
 
 
-def test_collect_and_validate_rejects_operator_policy_for_unrelated_role(monkeypatch) -> None:
+@pytest.mark.parametrize("role", ["restricted_role", "Public", "PUBLIC"])
+def test_collect_and_validate_rejects_operator_policy_for_unrelated_role(monkeypatch, role) -> None:
     script = _import_script()
     table = script.OPERATOR_SCOPE_TABLES[0]
     policy = f"operator_scope_{table}"
@@ -712,7 +715,7 @@ def test_collect_and_validate_rejects_operator_policy_for_unrelated_role(monkeyp
                 script.BYPASS_RLS_EXPR,
                 script.BYPASS_RLS_EXPR,
                 "ALL",
-                ["restricted_role"],
+                [role],
             )
         ],
     )

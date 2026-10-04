@@ -9,10 +9,10 @@ use AltContext\Sovereign\Repositories\DescriptionUsageRepository;
 use function array_reduce;
 use function add_option;
 use function count;
-use function delete_transient;
 use function get_option;
 use function get_transient;
 use function set_transient;
+use function update_option;
 use function wp_cache_delete;
 use function wp_generate_uuid4;
 
@@ -21,9 +21,8 @@ class DescriptionBudgetService {
 	public const DEFAULT_MAX_ATTEMPTS = 1000;
 	private const REQUEST_RATE_LIMIT = 30;
 	private const REQUEST_RATE_WINDOW_SECONDS = 60;
-	private const BUDGET_RESERVATIONS_TRANSIENT = 'acx_description_budget_reservations';
+	private const BUDGET_RESERVATIONS_OPTION = 'acx_description_budget_reservations';
 	private const BUDGET_RESERVATION_TTL_SECONDS = 3600;
-	private const BUDGET_LOCK_LEASE_SECONDS = 3600;
 
 	private DescriptionUsageRepository $repository;
 
@@ -114,7 +113,7 @@ class DescriptionBudgetService {
 
 			$reservation_id                   = wp_generate_uuid4();
 			$reservations[ $reservation_id ] = time() + self::BUDGET_RESERVATION_TTL_SECONDS;
-			if ( ! set_transient( self::BUDGET_RESERVATIONS_TRANSIENT, $reservations, self::BUDGET_RESERVATION_TTL_SECONDS ) ) {
+			if ( ! $this->store_budget_reservations( $reservations ) ) {
 				return array(
 					'allowed' => false,
 					'code'    => 'description_budget_reservation_unavailable',
@@ -324,96 +323,31 @@ class DescriptionBudgetService {
 	}
 
 	/**
-	 * Claim a unique wp_options row for the short budget critical section. The
-	 * option-name unique index makes add_option atomic across PHP workers; the
-	 * owner-checked delete prevents one worker from releasing another's lease.
-	 *
-	 * @return array{option_name:string,value:array{owner:string,expires_at:int}}|null
+	 * Serialize admission and finalization across database connections. MySQL
+	 * releases the named lock if the worker's connection closes unexpectedly.
 	 */
-	private function acquire_budget_lock(): ?array {
+	private function acquire_budget_lock(): ?string {
 		global $wpdb;
 		if (
 			! isset( $wpdb )
 			|| ! is_object( $wpdb )
-			|| ! isset( $wpdb->options )
-			|| ! is_string( $wpdb->options )
 			|| ! method_exists( $wpdb, 'prepare' )
-			|| ! method_exists( $wpdb, 'query' )
+			|| ! method_exists( $wpdb, 'get_var' )
 		) {
 			return null;
 		}
 
-		$option_name = $this->budget_lock_option_name();
-		$deadline    = microtime( true ) + 1.0;
-		do {
-			$lock_value = array(
-				'owner'      => wp_generate_uuid4(),
-				'expires_at' => time() + self::BUDGET_LOCK_LEASE_SECONDS,
-			);
-			if ( add_option( $option_name, $lock_value, '', false ) ) {
-				return array(
-					'option_name' => $option_name,
-					'value'       => $lock_value,
-				);
-			}
-
-			$existing = get_option( $option_name, false );
-			if (
-				is_array( $existing )
-				&& is_int( $existing['expires_at'] ?? null )
-				&& $existing['expires_at'] <= time()
-				&& $this->delete_budget_lock_option( $option_name, $existing )
-			) {
-				continue;
-			}
-
-			usleep( 10000 );
-		} while ( microtime( true ) < $deadline );
-
-		return null;
+		$lock_name = $this->budget_lock_name();
+		$acquired = $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s, %d)', $lock_name, 1 ) );
+		return '1' === (string) $acquired ? $lock_name : null;
 	}
 
-	/**
-	 * @param array{option_name:string,value:array{owner:string,expires_at:int}} $budget_lock
-	 */
-	private function release_budget_lock( array $budget_lock ): void {
-		$this->delete_budget_lock_option( $budget_lock['option_name'], $budget_lock['value'] );
-	}
-
-	/**
-	 * Delete a budget lock only if its stored owner value still matches.
-	 *
-	 * @param array<string,mixed> $lock_value
-	 */
-	private function delete_budget_lock_option( string $option_name, array $lock_value ): bool {
+	private function release_budget_lock( string $lock_name ): void {
 		global $wpdb;
-		if (
-			! isset( $wpdb )
-			|| ! is_object( $wpdb )
-			|| ! isset( $wpdb->options )
-			|| ! is_string( $wpdb->options )
-			|| ! method_exists( $wpdb, 'prepare' )
-			|| ! method_exists( $wpdb, 'query' )
-		) {
-			return false;
-		}
-
-		$query = $wpdb->prepare(
-			"DELETE FROM {$wpdb->options} WHERE option_name = %s AND BINARY option_value = %s",
-			$option_name,
-			serialize( $lock_value )
-		);
-		$result   = $wpdb->query( $query );
-		$affected = is_numeric( $result ) ? (int) $result : (int) ( $wpdb->rows_affected ?? 0 );
-		if ( $affected > 0 ) {
-			wp_cache_delete( $option_name, 'options' );
-			wp_cache_delete( 'notoptions', 'options' );
-		}
-
-		return $affected > 0;
+		$wpdb->get_var( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
 	}
 
-	private function budget_lock_option_name(): string {
+	private function budget_lock_name(): string {
 		global $wpdb;
 		$site_prefix = isset( $wpdb ) && is_object( $wpdb ) && isset( $wpdb->prefix ) && is_string( $wpdb->prefix ) ? $wpdb->prefix : 'default';
 		return 'acx_budget_lock_' . md5( $site_prefix );
@@ -423,7 +357,11 @@ class DescriptionBudgetService {
 	 * @return array<string,int>
 	 */
 	private function active_budget_reservations(): array {
-		$reservations = get_transient( self::BUDGET_RESERVATIONS_TRANSIENT );
+		// Another worker may have written while this worker waited for the lock.
+		// Discard local option caches before reading the durable reservation map.
+		wp_cache_delete( self::BUDGET_RESERVATIONS_OPTION, 'options' );
+		wp_cache_delete( 'notoptions', 'options' );
+		$reservations = get_option( self::BUDGET_RESERVATIONS_OPTION, array() );
 		if ( ! is_array( $reservations ) ) {
 			return array();
 		}
@@ -442,11 +380,13 @@ class DescriptionBudgetService {
 	 * @param array<string,int> $reservations
 	 */
 	private function store_budget_reservations( array $reservations ): bool {
-		if ( empty( $reservations ) ) {
-			return delete_transient( self::BUDGET_RESERVATIONS_TRANSIENT );
+		if ( false === get_option( self::BUDGET_RESERVATIONS_OPTION, false ) ) {
+			return add_option( self::BUDGET_RESERVATIONS_OPTION, $reservations, '', false );
 		}
 
-		return set_transient( self::BUDGET_RESERVATIONS_TRANSIENT, $reservations, self::BUDGET_RESERVATION_TTL_SECONDS );
+		// update_option also returns false when the value is already identical.
+		return update_option( self::BUDGET_RESERVATIONS_OPTION, $reservations, false )
+			|| get_option( self::BUDGET_RESERVATIONS_OPTION, false ) === $reservations;
 	}
 
 	/**

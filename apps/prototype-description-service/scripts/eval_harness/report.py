@@ -2175,6 +2175,7 @@ def score_run_record(
     rubric_gate: str = "enforce",
     annotation_mode: AnnotationMode | str | None = None,
     run_manifest: Mapping[str, Any] | None = None,
+    review_manifest: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Pure scoring: run record + manifest labels -> metrics dict.
 
@@ -2185,7 +2186,8 @@ def score_run_record(
     to exhaustive. ``roster_only``, a missing stamp, and an unrecognised
     token refuse; they never silently score unlabeled non-roster faces as
     false positives. Caption metrics still run; strict identification refuses
-    GT boxes without human-adjudicated lineage.
+    GT boxes without human-adjudicated lineage. ``review_manifest`` supplies
+    adjudication records without activating ``run_manifest`` localization scoring.
     Face-bakeoff scoring (``score_face_run_record``) raises instead.
     """
     # identity_names lives in this module (VLM6-RH-07) — no lazy cli import.
@@ -2223,9 +2225,21 @@ def score_run_record(
             if strict_mode is AnnotationMode.EXHAUSTIVE:
                 if lineage_error is not None:
                     raise lineage_error
-        # Caught detection refusals still permit downstream metrics. Review
-        # every strict-lineage box even when another box lacks lineage.
-        require_confirmed_blind_reviews_for_strict_scoring(run_manifest, entries=manifest_entries)
+    # Caught detection refusals still permit downstream metrics. Review every
+    # strict-lineage box even when another box lacks lineage. This admission
+    # gate applies with or without the optional full manifest: otherwise the
+    # default report API could publish strict metrics from unreviewed GT.
+    strict_review_gt_present = any(
+        has_human_adjudicated_gt_lineage(box)
+        for entry in manifest_entries
+        for box in entry.get("face_boxes") or []
+    )
+    if run_manifest is not None or strict_review_gt_present:
+        # A full run manifest also selects strict localization scoring. A
+        # review-only manifest lets count-based report callers supply verified
+        # adjudication records without changing that scoring mode.
+        review_evidence = run_manifest if run_manifest is not None else review_manifest
+        require_confirmed_blind_reviews_for_strict_scoring(review_evidence, entries=manifest_entries)
     eval_mode = str(run_record["provenance"].get("eval_mode", "standard"))
     if eval_mode not in EVAL_MODES:
         raise ReportError(f"unknown eval_mode {eval_mode!r} in run-record provenance; expected one of {EVAL_MODES}")
@@ -3734,6 +3748,7 @@ def build_reports(
     score_manifest_sha256: str | None = None,
     manifest_roster: list[str] | None = None,
     run_manifest: Mapping[str, Any] | None = None,
+    review_manifest: Mapping[str, Any] | None = None,
     annotation_mode: AnnotationMode | str | None = None,
     audience: Audience = Audience.LOCAL,
     rubric_gate: str = "enforce",
@@ -3767,6 +3782,7 @@ def build_reports(
         score_manifest_sha256=score_manifest_sha256,
         manifest_roster=manifest_roster,
         run_manifest=run_manifest,
+        review_manifest=review_manifest,
         rubric_gate=rubric_gate,
         annotation_mode=annotation_mode,
     )
@@ -3779,6 +3795,7 @@ def build_reports(
             score_manifest_sha256=score_manifest_sha256,
             manifest_roster=manifest_roster,
             run_manifest=run_manifest,
+            review_manifest=review_manifest,
             rubric_gate=rubric_gate,
             annotation_mode=annotation_mode,
         )

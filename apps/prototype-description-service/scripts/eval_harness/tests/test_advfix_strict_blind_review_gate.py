@@ -1,12 +1,55 @@
 from __future__ import annotations
 
+import hashlib
+import json
+from datetime import date, datetime
+from pathlib import Path
+
 import pytest
 
-from scripts.eval_harness.manifest import GoldenManifest, ManifestError
+from scripts.eval_harness.manifest import GoldenManifest, ManifestError, load_manifest
 from scripts.eval_harness import report
 
 
 _IMAGE_PATH = "mock_images/alice.jpg"
+
+
+def test_manifest_hash_date_hook_rejects_other_types() -> None:
+    from scripts.eval_harness.face_bakeoff import _manifest_json_default
+
+    assert _manifest_json_default(date(2026, 8, 15)) == "2026-08-15"
+    with pytest.raises(TypeError, match="object is not JSON serializable"):
+        _manifest_json_default(object())
+
+
+def test_manifest_hash_preserves_existing_serialization() -> None:
+    from scripts.eval_harness import cli, face_bakeoff
+
+    manifest_doc, _ = _manifest(reviewed=False)
+    manifest = GoldenManifest.model_validate(manifest_doc)
+    expected = hashlib.sha256(json.dumps(manifest.model_dump(), sort_keys=True).encode()).hexdigest()
+
+    assert cli._manifest_sha(manifest) == expected
+    assert face_bakeoff._manifest_sha(manifest) == expected
+
+
+def test_manifest_hash_with_confirmed_review_is_stable_across_loads(tmp_path: Path) -> None:
+    from scripts.eval_harness import cli, face_bakeoff
+
+    manifest_doc, _ = _manifest(reviewed=True)
+    manifest_doc["entries"][0]["provenance"] = {"source": "fixture", "license": "fixture"}
+    path = tmp_path / "reviewed.json"
+    manifest = GoldenManifest.model_validate(manifest_doc)
+    path.write_text(manifest.model_dump_json(), encoding="utf-8")
+    first = load_manifest(str(path), metadata_only=True, skip_hash_verification=True, hash_skip_reason="hash regression")
+    second = load_manifest(str(path), metadata_only=True, skip_hash_verification=True, hash_skip_reason="hash regression")
+    assert isinstance(first.adjudication_records[0].reviewed_at, datetime)
+
+    expected = hashlib.sha256(
+        json.dumps(first.model_dump(), sort_keys=True, default=lambda value: value.isoformat()).encode()
+    ).hexdigest()
+    assert cli._manifest_sha(first) == cli._manifest_sha(second) == expected
+    assert face_bakeoff._manifest_sha(first) == face_bakeoff._manifest_sha(second) == expected
 
 
 def _manifest(*, reviewed: bool) -> tuple[dict, list[dict]]:

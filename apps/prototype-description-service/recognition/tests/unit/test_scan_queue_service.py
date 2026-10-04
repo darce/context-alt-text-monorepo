@@ -178,6 +178,71 @@ async def test_refresh_job_progress_does_not_overwrite_terminal_stalled_job(db_s
     assert job.error_message == "stalled"
 
 
+@pytest.mark.asyncio
+async def test_terminate_stalled_jobs_processes_bounded_batches() -> None:
+    class _ScalarResult:
+        def __init__(self, values):
+            self._values = values
+
+        def all(self):
+            return [row[0] if isinstance(row, tuple) else row for row in self._values]
+
+    class _Result:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def all(self):
+            return self._rows
+
+        def scalars(self):
+            return _ScalarResult(self._rows)
+
+    class _DmlResult:
+        rowcount = 1
+
+    class _Session:
+        def __init__(self, identities, job_ids):
+            self._identities = identities
+            self._job_ids = job_ids
+            self.statements = []
+
+        async def execute(self, stmt, params=None):
+            self.statements.append(stmt)
+            if len(self.statements) == 1:
+                rows = self._identities
+            elif len(self.statements) == 2:
+                rows = self._job_ids
+            else:
+                return _DmlResult()
+            limit_clause = getattr(stmt, "_limit_clause", None)
+            if limit_clause is not None:
+                rows = rows[: int(limit_clause.value)]
+            return _Result(rows)
+
+    class _CapturingRepository(SqlAlchemyScanQueueRepository):
+        async def fail_stalled_running_jobs(self, *, stale_after_seconds: int, now: datetime) -> int:
+            self.terminated_count = await super().fail_stalled_running_jobs(
+                stale_after_seconds=stale_after_seconds,
+                now=now,
+            )
+            return self.terminated_count
+
+    batch_size = 100
+    tenant_id = uuid.uuid4()
+    identities = [(uuid.uuid4(), tenant_id) for _ in range(batch_size + 1)]
+    session = _Session(identities, [job_id for job_id, _ in identities])
+    repo = _CapturingRepository(session)
+    queue = ScanQueueService(repo)
+    now = datetime.now(tz=UTC)
+    first_batch = await queue.terminate_stalled_jobs_with_identities(stale_after_seconds=600, now=now)
+    assert len(first_batch) == batch_size
+    assert repo.terminated_count == batch_size
+    assert [identity.job_id for identity in first_batch] == [job_id for job_id, _ in identities[:batch_size]]
+    limit_clauses = [getattr(stmt, "_limit_clause", None) for stmt in session.statements[:2]]
+    assert all(limit_clause is not None for limit_clause in limit_clauses)
+    assert [limit_clause.value for limit_clause in limit_clauses if limit_clause is not None] == [batch_size] * 2
+
+
 def _as_utc(dt: datetime) -> datetime:
     """Normalize SQLite naive timestamps for comparison with aware datetimes."""
     if dt.tzinfo is None:

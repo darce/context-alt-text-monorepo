@@ -1043,6 +1043,77 @@ class _ClaimQueryResult:
         return self._value
 
 
+@pytest.mark.asyncio
+async def test_scan_handler_holds_no_claim_locks_during_detection_or_embedding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from recognition.application.embedding.detector import FaceDetection
+    from recognition.application.scan.service import ReconcileResult, ScanService
+
+    handler, session, repo, _, item = _make_claim_check_handler(monkeypatch, [object(), object()])
+    remote_queries: list[list[object]] = []
+    persistence_queries: list[list[object]] = []
+
+    class _Detector:
+        async def detect(self, _sources):
+            remote_queries.append(list(session.executed_statements))
+            return [FaceDetection(media_id="41", bbox=(0, 0, 1, 1), confidence=1.0)]
+
+    class _Generator:
+        async def generate(self, _faces):
+            remote_queries.append(list(session.executed_statements))
+            return [SimpleNamespace(embedding=[1.0])]
+
+    async def _persist(_service, **_kwargs):
+        persistence_queries.append(list(session.executed_statements))
+        return ReconcileResult(detected=1, matched=0, new=1)
+
+    handler._detector = _Detector()
+    handler._generator = _Generator()
+    monkeypatch.setattr(handler, "_build_scan_service", lambda s: ScanItemHandler._build_scan_service(handler, s))
+    monkeypatch.setattr(ScanService, "_persist_identities_unlocked", _persist)
+    monkeypatch.setattr(ScanService, "emit_pending_scan_media_reconciled", lambda _self: None)
+
+    await handler.process_items(claimed=[item])
+
+    assert remote_queries == [[], []], "remote processing must not hold job or item row locks"
+    assert len(persistence_queries) == 1
+    assert len(persistence_queries[0]) == 2, "claim must be fenced before identity writes"
+    assert repo.completed_items == [item.id]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("claim_results", [[None], [object(), None]])
+async def test_scan_handler_revalidates_claim_after_remote_processing(
+    monkeypatch: pytest.MonkeyPatch, claim_results: list[object | None]
+) -> None:
+    from recognition.application.scan.service import ScanService
+
+    handler, session, repo, _, item = _make_claim_check_handler(monkeypatch, [object(), object()])
+    identity_writes: list[object] = []
+
+    class _Detector:
+        async def detect(self, _sources):
+            # Termination or reclaim wins while the old attempt is detecting.
+            session.query_results = list(claim_results)
+            return []
+
+    async def _persist(_service, **kwargs):
+        identity_writes.append(kwargs)
+        raise AssertionError("stale attempt reached identity mutation")
+
+    handler._detector = _Detector()
+    monkeypatch.setattr(handler, "_build_scan_service", lambda s: ScanItemHandler._build_scan_service(handler, s))
+    monkeypatch.setattr(ScanService, "_persist_identities_unlocked", _persist)
+
+    await handler.process_items(claimed=[item])
+
+    assert identity_writes == []
+    assert repo.completed_items == []
+    assert session.commits == 0
+    assert session.rollbacks == 1
+
+
 class _ClaimCheckSession:
     def __init__(self, query_results: list[object | None]) -> None:
         self.query_results = list(query_results)
@@ -1075,6 +1146,7 @@ class _IdentityWriteRecorder:
         self.calls = 0
 
     async def process_media_item(self, **_kwargs: object) -> int:
+        await self.check_claim()
         self.calls += 1
         return 0
 
@@ -1185,9 +1257,7 @@ async def test_scan_handler_processes_current_claim_and_completes_item(
 async def test_scan_handler_skips_stale_failure_write_after_rollback(
     monkeypatch: pytest.MonkeyPatch, attempts: int
 ) -> None:
-    handler, session, repo, scan_service, item = _make_claim_check_handler(
-        monkeypatch, [object(), object(), None]
-    )
+    handler, session, repo, scan_service, item = _make_claim_check_handler(monkeypatch, [None])
     item = replace(item, attempts=attempts)
     failure_writes: list[object] = []
 
@@ -1207,7 +1277,7 @@ async def test_scan_handler_skips_stale_failure_write_after_rollback(
     assert repo.completed_items == []
     assert session.commits == 0
     assert session.rollbacks == 2
-    assert len(session.executed_statements) == 3
+    assert len(session.executed_statements) == 1
 
 
 @pytest.mark.asyncio
@@ -1215,9 +1285,7 @@ async def test_scan_handler_skips_stale_failure_write_after_rollback(
 async def test_scan_handler_writes_failure_for_current_claim_after_rollback(
     monkeypatch: pytest.MonkeyPatch, attempts: int
 ) -> None:
-    handler, session, repo, scan_service, item = _make_claim_check_handler(
-        monkeypatch, [object(), object(), object()]
-    )
+    handler, session, repo, scan_service, item = _make_claim_check_handler(monkeypatch, [object()])
     item = replace(item, attempts=attempts)
     failure_writes: list[object] = []
 
@@ -1236,7 +1304,7 @@ async def test_scan_handler_writes_failure_for_current_claim_after_rollback(
     assert len(failure_writes) == 1
     assert session.rollbacks == 1
     assert session.commits == 1
-    assert len(session.executed_statements) == 3
+    assert len(session.executed_statements) == 1
     statement = session.executed_statements[-1].compile(dialect=postgresql.dialect())
     assert "FOR UPDATE NOWAIT" in str(statement)
     assert statement.params == {

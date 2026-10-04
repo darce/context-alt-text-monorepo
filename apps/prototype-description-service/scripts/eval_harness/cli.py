@@ -45,6 +45,7 @@ from shared.secrets import get_secret_provider
 
 from .face_bakeoff import (
     CANDIDATE_MODEL_ID,
+    FaceRunOptions,
     build_candidate_leg,
     build_occlusion_twin_pairs,
     build_pinned_cache_detector,
@@ -2268,19 +2269,21 @@ def _cmd_face_bakeoff(args: argparse.Namespace) -> None:
             detector=detector,
             embedder=embedder,
             aligner=aligner,
-            model_id=leg.model_id,
-            head_sha=_head_sha(),
-            limit=args.limit,
-            stall_limit=args.stall_limit,
-            started_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            # rg-015: dim comes from the leg's embedder (the producer), so an
-            # injected leg with a different space cannot mislabel the record.
-            embedding_dim=getattr(embedder, "embedding_dim", None),
-            # Record the detector's effective setting, including its default
-            # when --score-threshold was omitted.
-            detector_score_threshold=getattr(detector, "score_threshold", None),
-            leg=args.leg,
-            leg_mode=leg.leg_mode,
+            options=FaceRunOptions(
+                model_id=leg.model_id,
+                head_sha=_head_sha(),
+                limit=args.limit,
+                stall_limit=args.stall_limit,
+                started_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                # rg-015: dim comes from the leg's embedder (the producer), so an
+                # injected leg with a different space cannot mislabel the record.
+                embedding_dim=getattr(embedder, "embedding_dim", None),
+                # Record the detector's effective setting, including its default
+                # when --score-threshold was omitted.
+                detector_score_threshold=getattr(detector, "score_threshold", None),
+                leg=args.leg,
+                leg_mode=leg.leg_mode,
+            ),
         )
     except FaceBoundedStallError as exc:
         record = exc.partial_record

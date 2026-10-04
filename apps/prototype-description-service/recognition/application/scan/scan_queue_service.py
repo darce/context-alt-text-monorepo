@@ -17,6 +17,8 @@ from recognition.application.settings.scan import ScanSettings
 from recognition.config import get_settings
 from recognition.domain.job import JobStatus, ScanItemStatus
 
+_STALLED_JOB_BATCH_SIZE = 100
+
 
 @dataclass(frozen=True, slots=True)
 class EnqueueScanResult:
@@ -342,7 +344,7 @@ class ScanQueueService:
             IdentityScanJob.started_at.is_not(None),
             IdentityScanJob.started_at < stale_before,
             incomplete_items,
-        )
+        ).order_by(IdentityScanJob.started_at, IdentityScanJob.id).limit(_STALLED_JOB_BATCH_SIZE)
         rows = (await session.execute(stmt)).all()
         return [TerminatedJobIdentity(job_id=job_id, tenant_id=tenant_id) for job_id, tenant_id in rows]
 

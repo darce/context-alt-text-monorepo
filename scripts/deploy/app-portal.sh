@@ -639,9 +639,205 @@ frontend_asset_references() {
   ' "$1"
 }
 
+frontend_module_references() {
+  awk '
+    function next_token(    c, quote, value) {
+      while (position <= source_length) {
+        c = substr(source, position, 1)
+        if (c ~ /[ \t\r\n\f]/) {
+          if (c == "\n") line++
+          position++
+          continue
+        }
+        if (c == "/" && substr(source, position + 1, 1) == "/") {
+          position += 2
+          while (position <= source_length && substr(source, position, 1) != "\n") position++
+          continue
+        }
+        if (c == "/" && substr(source, position + 1, 1) == "*") {
+          position += 2
+          while (position <= source_length &&
+                 substr(source, position, 2) != "*/") {
+            if (substr(source, position, 1) == "\n") line++
+            position++
+          }
+          if (position > source_length) {
+            failed = 1
+            print "unterminated JavaScript comment" > "/dev/stderr"
+            return
+          }
+          position += 2
+          continue
+        }
+        break
+      }
+
+      token_line = line
+      token_value = ""
+      if (position > source_length) {
+        token_type = "eof"
+        return
+      }
+      c = substr(source, position, 1)
+      if (c == "\047" || c == "\042") {
+        quote = c
+        position++
+        while (position <= source_length) {
+          c = substr(source, position, 1)
+          if (c == quote) {
+            position++
+            token_type = "string"
+            return
+          }
+          if (c == "\\") {
+            position++
+            if (position > source_length) break
+            c = substr(source, position, 1)
+            if (c == "\n") line++
+          }
+          token_value = token_value c
+          if (c == "\n") line++
+          position++
+        }
+        failed = 1
+        print "unterminated JavaScript string" > "/dev/stderr"
+        token_type = "eof"
+        return
+      }
+      if (c == "`") {
+        position++
+        while (position <= source_length) {
+          c = substr(source, position, 1)
+          if (c == "\\") {
+            position += 2
+            continue
+          }
+          if (c == "`") {
+            position++
+            token_type = "template"
+            return
+          }
+          if (c == "\n") line++
+          position++
+        }
+        failed = 1
+        print "unterminated JavaScript template string" > "/dev/stderr"
+        token_type = "eof"
+        return
+      }
+      if (c ~ /[A-Za-z_$]/) {
+        while (position <= source_length &&
+               substr(source, position, 1) ~ /[A-Za-z0-9_$]/) {
+          token_value = token_value substr(source, position, 1)
+          position++
+        }
+        token_type = "identifier"
+        return
+      }
+      token_value = c
+      token_type = "punctuation"
+      position++
+    }
+
+    function emit_reference(value, query, fragment, cut_at) {
+      query = index(value, "?")
+      fragment = index(value, "#")
+      cut_at = 0
+      if (query > 0) cut_at = query
+      if (fragment > 0 && (cut_at == 0 || fragment < cut_at)) cut_at = fragment
+      if (cut_at > 0) value = substr(value, 1, cut_at - 1)
+      print value
+    }
+
+    {
+      source = source $0 "\n"
+      if (NR == 1) line = 1
+    }
+
+    END {
+      source_length = length(source)
+      position = 1
+      line = 1
+      while (!failed) {
+        next_token()
+        if (token_type == "eof") break
+        if (token_type != "identifier" ||
+            (token_value != "import" && token_value != "export")) continue
+
+        declaration = token_value
+        next_token()
+        if (declaration == "import" && token_type == "punctuation" && token_value == ".") {
+          continue
+        }
+        if (declaration == "import" && token_type == "punctuation" && token_value == "(") {
+          next_token()
+          if (token_type == "string") emit_reference(token_value)
+          continue
+        }
+        if (declaration == "import" && token_type == "string") {
+          emit_reference(token_value)
+          continue
+        }
+
+        while (token_type != "eof" && token_value != ";") {
+          if (token_type == "identifier" && token_value == "from") {
+            next_token()
+            if (token_type == "string") emit_reference(token_value)
+            break
+          }
+          if (token_type == "identifier" &&
+              (token_value == "import" || token_value == "export")) break
+          next_token()
+        }
+      }
+      if (failed) exit 1
+    }
+  ' "$1"
+}
+
+resolve_frontend_asset_reference() {
+  local _frontend_dir="$1"
+  local _module_path="$2"
+  local _reference="$3"
+  local _part _normalized _count=0
+  local -a _path_parts=()
+
+  case "$_reference" in
+    /assets/*) _normalized="${_reference#/}" ;;
+    ./*|../*) _normalized="${_module_path%/*}/${_reference}" ;;
+    *) return 1 ;;
+  esac
+
+  local -a _raw_parts=()
+  IFS='/' read -r -a _raw_parts <<< "$_normalized"
+  for _part in "${_raw_parts[@]}"; do
+    case "$_part" in
+      ''|.) ;;
+      ..)
+        [ "$_count" -gt 0 ] || return 1
+        _count=$((_count - 1))
+        ;;
+      *)
+        _path_parts[$_count]="$_part"
+        _count=$((_count + 1))
+        ;;
+    esac
+  done
+
+  _normalized=""
+  for (( _part = 0; _part < _count; _part++ )); do
+    if [ -n "$_normalized" ]; then _normalized="${_normalized}/"; fi
+    _normalized="${_normalized}${_path_parts[$_part]}"
+  done
+  case "$_normalized" in
+    assets/*) printf '%s/%s\n' "$_frontend_dir" "$_normalized" ;;
+    *) return 1 ;;
+  esac
+}
+
 validate_frontend() {
   local _frontend_dir="${1:-${FRONTEND_DIST}}"
-  local _symlink_paths _asset_refs _module_refs _asset_ref _asset
+  local _symlink_paths _asset_refs _module_refs _asset_ref _asset _module_file _dependency _module_files
 
   if [ -z "$_frontend_dir" ]; then
     echo "ERROR: FRONTEND_DIST is required for --apply" >&2
@@ -705,6 +901,33 @@ validate_frontend() {
       return 1
     fi
   done <<< "$_asset_refs"
+
+  if ! _module_files="$(find "${_frontend_dir}/assets" -type f \( -name '*.js' -o -name '*.mjs' \) -print)"; then
+    echo "ERROR: could not inspect FRONTEND_DIST for JavaScript modules: ${_frontend_dir}/assets" >&2
+    return 1
+  fi
+  while IFS= read -r _module_file; do
+    [ -n "$_module_file" ] || continue
+    if ! _module_refs="$(frontend_module_references "$_module_file")"; then
+      echo "ERROR: could not inspect JavaScript module dependencies: ${_module_file}" >&2
+      return 1
+    fi
+    while IFS= read -r _module_ref; do
+      [ -n "$_module_ref" ] || continue
+      case "$_module_ref" in
+        ./*|../*|/assets/*) ;;
+        *) continue ;;
+      esac
+      if ! _dependency="$(resolve_frontend_asset_reference "$_frontend_dir" "${_module_file#"$_frontend_dir"/}" "$_module_ref")"; then
+        echo "ERROR: FRONTEND_DIST has an unsafe module dependency ${_module_ref} in ${_module_file}" >&2
+        return 1
+      fi
+      if [ ! -f "$_dependency" ] || [ ! -s "$_dependency" ]; then
+        echo "ERROR: FRONTEND_DIST has a missing module dependency ${_module_ref} imported from ${_module_file}" >&2
+        return 1
+      fi
+    done <<< "$_module_refs"
+  done <<< "$_module_files"
 }
 
 sync_path() {
@@ -1213,14 +1436,46 @@ elif [ -e "$STAGED_CADDY" ]; then
   fi
 fi
 
-{
-  strip_app_vhost "$CADDYFILE"
-  printf '\n'
-  render_snippet
-  printf '\n'
-} > "$STAGED_CADDY"
+if ! (
+  umask 077
+  set -o noclobber
+  {
+    strip_app_vhost "$CADDYFILE"
+    printf '\n'
+    render_snippet
+    printf '\n'
+  } > "$STAGED_CADDY"
+); then
+  rm -f -- "$STAGED_CADDY"
+  refuse "cannot create private staged Caddy file: ${STAGED_CADDY}"
+fi
 
-render_overlay > "$STAGED_OVERLAY"
+# The overlay is also opened before rollback snapshots and activation guards
+# exist. Remove stale aliases, then use noclobber so redirection cannot follow
+# a link that appears at the staged path between the check and the open.
+if [ -L "$STAGED_OVERLAY" ]; then
+  if ! rm -f -- "$STAGED_OVERLAY"; then
+    refuse "cannot remove staged overlay symlink: ${STAGED_OVERLAY}"
+  fi
+elif [ -e "$STAGED_OVERLAY" ]; then
+  if [ "$STAGED_OVERLAY" -ef "$CADDYFILE" ]; then
+    refuse "staged overlay path is the same file as CADDYFILE: ${STAGED_OVERLAY}"
+  fi
+  if [ ! -f "$STAGED_OVERLAY" ]; then
+    refuse "staged overlay path is not a regular file: ${STAGED_OVERLAY}"
+  fi
+  if ! rm -f -- "$STAGED_OVERLAY"; then
+    refuse "cannot remove stale staged overlay file: ${STAGED_OVERLAY}"
+  fi
+fi
+if ! (
+  umask 077
+  set -o noclobber
+  render_overlay > "$STAGED_OVERLAY"
+); then
+  rm -f -- "$STAGED_OVERLAY"
+  refuse "cannot create private staged overlay file: ${STAGED_OVERLAY}"
+fi
 
 rm -rf "$STAGED_WWW"
 mkdir -p "$STAGED_WWW"

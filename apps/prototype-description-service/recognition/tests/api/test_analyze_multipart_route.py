@@ -1216,6 +1216,165 @@ async def test_multipart_cleans_up_blobs_when_dispatch_registration_fails(
     assert store.cleanup_jobs == [str(job_id)]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure_kind", ["registration", "store_factory", "non_idempotent_replay", "persisted_replay"]
+)
+async def test_multipart_replay_dispatch_registration_failure_preserves_original_job(
+    tenant_id: str, monkeypatch: pytest.MonkeyPatch, failure_kind: str, tmp_path: Path
+) -> None:
+    """Replay dispatch preserves the original job, blobs, and reservation on both sinks."""
+    from recognition.application.scan.scan_queue_service import ScanQueueService
+    from recognition.domain.portal_contracts import UsageTicket
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    class _StatusTrackingQueue(_FakeScanQueue):
+        def __init__(self) -> None:
+            super().__init__()
+            self.cancelled_jobs: list[uuid.UUID] = []
+            self.job_statuses: dict[uuid.UUID, str] = {}
+
+        async def create_scan_job_record(self, **kwargs) -> uuid.UUID:
+            job_id = await super().create_scan_job_record(**kwargs)
+            self.job_statuses[job_id] = "pending"
+            return job_id
+
+        async def cancel_scan_job(self, *, job_id: uuid.UUID) -> int:
+            self.cancelled_jobs.append(job_id)
+            self.job_statuses[job_id] = "failed"
+            return 0
+
+    class _PersistedStatusTrackingQueue(_StatusTrackingQueue, ScanQueueService):
+        """Use the production sink type without executing background dispatch."""
+
+    class _RecordingStore(FilesystemObjectStore):
+        def __init__(self) -> None:
+            super().__init__(root=tmp_path, tenant_id=tenant_id)
+            self.blobs: dict[tuple[str, str], bytes] = {}
+            self.put_jobs: list[str] = []
+            self.cleanup_jobs: list[str] = []
+
+        def put(self, *, job_id: str, media_id: str, data: bytes) -> str:
+            self.put_jobs.append(job_id)
+            self.blobs[(job_id, media_id)] = bytes(data)
+            return super().put(job_id=job_id, media_id=media_id, data=data)
+
+        def cleanup(self, *, job_id: str) -> None:
+            self.cleanup_jobs.append(job_id)
+            self.blobs = {key: value for key, value in self.blobs.items() if key[0] != job_id}
+            super().cleanup(job_id=job_id)
+
+    class _ReplayAdmission:
+        def __init__(self) -> None:
+            self.ticket: UsageTicket | None = None
+            self.releases: list[UsageTicket] = []
+
+        async def reserve(self, tenant_id, *, idempotency_key: str, job_id: str, cost_units: int, **kwargs):
+            if self.ticket is None:
+                self.ticket = UsageTicket(
+                    reservation_id=uuid.uuid4(),
+                    tenant_id=tenant_id,
+                    idempotency_key=idempotency_key,
+                    cost_units=cost_units,
+                    operation_id=kwargs["operation_id"],
+                    request_fingerprint=kwargs["request_fingerprint"],
+                    job_id=job_id,
+                    fence_token="fence-1",
+                )
+            return self.ticket
+
+        async def commit(self, ticket: UsageTicket) -> None:
+            return None
+
+        async def release(self, ticket: UsageTicket) -> None:
+            self.releases.append(ticket)
+
+    class _RaisingBackgroundTasks:
+        def add_task(self, *_args, **_kwargs) -> None:
+            raise RuntimeError("simulated replay registration failure")
+
+    def _form_data() -> FormData:
+        return FormData(
+            [
+                ("request", json.dumps({"tenant_id": tenant_id})),
+                (
+                    "image_42",
+                    UploadFile(
+                        file=io.BytesIO(PNG_BYTES),
+                        filename="a.png",
+                        headers=Headers({"content-type": "image/png"}),
+                    ),
+                ),
+            ]
+        )
+
+    monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
+    queue = _StatusTrackingQueue() if failure_kind == "non_idempotent_replay" else _PersistedStatusTrackingQueue()
+    store = _RecordingStore()
+    admission = _ReplayAdmission()
+    background_tasks = BackgroundTasks()
+    common = {
+        "auth": AuthContext(token="t", tenant_claim=tenant_id),
+        "session": None,
+        "scan_queue": queue,
+        "object_store_factory": lambda _tenant: store,
+        "usage_admission_service": admission,
+        "idempotency_key": "multipart-replay-registration-failure",
+    }
+
+    first = await mod._analyze_media_multipart_form(
+        form_data=_form_data(), background_tasks=background_tasks, **common
+    )
+    assert first.id == str(queue.calls[0]["job_id"])
+    original_job_id = queue.calls[0]["job_id"]
+    original_blob = store.blobs[(str(original_job_id), "42")]
+    blob_path = tmp_path / tenant_id / str(original_job_id) / "42.bin"
+    original_inode = blob_path.stat().st_ino
+
+    if failure_kind in {"store_factory", "non_idempotent_replay"}:
+        def failing_factory(_tenant):
+            raise RuntimeError("replay store unavailable")
+
+        common["object_store_factory"] = failing_factory
+
+    if failure_kind in {"persisted_replay", "non_idempotent_replay"}:
+        replay_tasks = BackgroundTasks()
+        replay = await mod._analyze_media_multipart_form(
+            form_data=_form_data(), background_tasks=replay_tasks, **common
+        )
+        assert replay.id == first.id
+        assert replay.status == first.status
+        assert replay.progress == first.progress
+        assert replay.message == first.message
+        if failure_kind == "persisted_replay":
+            assert len(replay_tasks.tasks) == 1
+            assert replay_tasks.tasks[0].func is mod._dispatch_multipart_persisted_analysis
+            assert replay_tasks.tasks[0].kwargs["job_id"] == first.id
+            assert blob_path.stat().st_ino != original_inode
+        else:
+            assert replay_tasks.tasks == []
+            assert blob_path.stat().st_ino == original_inode
+    else:
+        expected_error = HTTPException if failure_kind == "registration" else RuntimeError
+        with pytest.raises(expected_error) as exc_info:
+            await mod._analyze_media_multipart_form(
+                form_data=_form_data(), background_tasks=_RaisingBackgroundTasks(), **common
+            )
+        if failure_kind == "registration":
+            assert exc_info.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+            assert exc_info.value.detail == "Scan dispatch unavailable"
+        else:
+            assert str(exc_info.value) == "replay store unavailable"
+    assert len(queue.calls) == 1
+    assert queue.cancelled_jobs == []
+    assert queue.job_statuses[original_job_id] == "pending"
+    assert store.put_jobs == [str(original_job_id)] * (2 if failure_kind in {"registration", "persisted_replay"} else 1)
+    assert store.cleanup_jobs == []
+    assert store.blobs[(str(original_job_id), "42")] == original_blob
+    assert blob_path.read_bytes() == original_blob
+    assert admission.releases == []
+
+
 # ---------------------------------------------------------------------------
 # E15-11-BR-14: route must not reach through FilesystemObjectStore.root
 # ---------------------------------------------------------------------------

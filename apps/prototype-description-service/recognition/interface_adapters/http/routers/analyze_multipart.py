@@ -87,6 +87,7 @@ _MAX_IMAGE_PARTS = 5
 _MAX_MULTIPART_FILES = _MAX_IMAGE_PARTS + 1  # JSON request envelope may itself be an UploadFile.
 _MULTIPART_IDLE_TIMEOUT_S = 10.0
 _MULTIPART_TOTAL_TIMEOUT_S = 300.0
+_DISPATCH_REGISTRATION_FAILURE_DETAIL = "Scan dispatch unavailable"
 _TOO_MANY_IMAGE_PARTS_DETAIL = f"multipart submission accepts at most {_MAX_IMAGE_PARTS} image parts"
 _INVALID_MULTIPART_DETAIL = "invalid multipart form"
 
@@ -475,7 +476,8 @@ async def _analyze_media_multipart_form(
         queue_bytes=queue_bytes,
     ) as ticket:
         bound_job_id = bound_job_uuid(ticket, pre_generated_job_id)
-        return await _persist_and_dispatch_multipart(
+        replay = is_usage_replay(ticket, pre_generated_job_id)
+        response = await _persist_and_dispatch_multipart(
             form_data=form_data,
             background_tasks=background_tasks,
             auth=auth,
@@ -486,8 +488,9 @@ async def _analyze_media_multipart_form(
             canonical_tenant_id=canonical_tenant_id,
             pre_generated_job_id=bound_job_id,
             inline_processing=inline_processing,
-            existing_job=is_usage_replay(ticket, pre_generated_job_id),
+            existing_job=replay,
         )
+    return response
 
 
 async def _persist_and_dispatch_multipart(
@@ -505,6 +508,15 @@ async def _persist_and_dispatch_multipart(
     existing_job: bool = False,
 ) -> JobStatusResponse:
     """Persist uploads and enqueue work inside an already-admitted usage scope."""
+    if existing_job:
+        if scan_queue is None and session is not None:
+            scan_queue = get_scan_queue_service_factory(session)
+        # Re-registration is safe only through the persisted, idempotent sink.
+        # Other sinks need neither a new dispatch nor blob staging on replay.
+        if not isinstance(scan_queue, ScanQueueService):
+            media_ids, _, _ = _multipart_usage_inputs(form_data)
+            return _multipart_queued_response(pre_generated_job_id, len(media_ids))
+
     object_store = object_store_factory(canonical_tenant_id)
 
     media_items_list = multipart_to_media_items(
@@ -605,25 +617,26 @@ async def _persist_and_dispatch_multipart(
             "Multipart scan dispatch failed after job commit",
             extra={"job_id": str(persisted_job_id), "tenant_id": canonical_tenant_id},
         )
-        try:
-            await scan_queue.cancel_scan_job(job_id=persisted_job_id)
-            if session is not None:
-                await session.commit()
-        except Exception:
-            logger.exception(
-                "Failed to mark multipart scan job failed after dispatch registration error",
-                extra={"job_id": str(persisted_job_id), "tenant_id": canonical_tenant_id},
-            )
-        try:
-            object_store.cleanup(job_id=str(persisted_job_id))
-        except Exception:
-            logger.exception(
-                "Failed to clean multipart blobs after dispatch registration error",
-                extra={"job_id": str(persisted_job_id), "tenant_id": canonical_tenant_id},
-            )
+        if not existing_job:
+            try:
+                await scan_queue.cancel_scan_job(job_id=persisted_job_id)
+                if session is not None:
+                    await session.commit()
+            except Exception:
+                logger.exception(
+                    "Failed to mark multipart scan job failed after dispatch registration error",
+                    extra={"job_id": str(persisted_job_id), "tenant_id": canonical_tenant_id},
+                )
+            try:
+                object_store.cleanup(job_id=str(persisted_job_id))
+            except Exception:
+                logger.exception(
+                    "Failed to clean multipart blobs after dispatch registration error",
+                    extra={"job_id": str(persisted_job_id), "tenant_id": canonical_tenant_id},
+                )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Scan dispatch unavailable",
+            detail=_DISPATCH_REGISTRATION_FAILURE_DETAIL,
         ) from exc
 
     # E15-11 S3.1: structured single-line telemetry for the multipart route so
@@ -648,21 +661,25 @@ async def _persist_and_dispatch_multipart(
         persisted_job_id,
     )
 
+    return _multipart_queued_response(persisted_job_id, len(media_items_list))
+
+
+def _multipart_queued_response(job_id: uuid.UUID, total: int) -> JobStatusResponse:
     progress = JobProgressResponse(
         completed=0,
-        total=len(media_items_list),
+        total=total,
         phase=JobPhase.QUEUED,
         images_processed=0,
         faces_found=0,
     )
     return JobStatusResponse(
-        id=str(persisted_job_id),
+        id=str(job_id),
         type=JobType.ANALYZE.value,
         status=JobStatus.PENDING,
         progress=progress,
         started_at=datetime.now(tz=UTC),
         finished_at=None,
-        message=f"Queueing 0/{len(media_items_list)} items",
+        message=f"Queueing 0/{total} items",
     )
 
 

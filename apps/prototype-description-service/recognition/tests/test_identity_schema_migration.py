@@ -44,7 +44,7 @@ class _RecordingOp:
             def execute(self, stmt, params=None):  # noqa: ANN001
                 # These DDL-shape tests model a role allowed to create the view.
                 if "has_schema_privilege" in str(stmt) and "has_table_privilege" in str(stmt):
-                    return _FakeResult(("public", True, True, True, True, True))
+                    return _FakeResult(("public", True, True, True, True, True, True))
                 if "relrowsecurity" in str(stmt):
                     return _FakeResult((False, False))
                 return _FakeResult(None)

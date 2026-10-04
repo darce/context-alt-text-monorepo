@@ -68,9 +68,15 @@ _GATE_ENV_KEYS = frozenset({"CI", "GITHUB_ACTIONS", "PYTEST_ADDOPTS", "PYTEST_PL
 _PYTEST_FILTER_ENV_KEYS = frozenset({"PYTEST_ADDOPTS", "PYTEST_PLUGINS"})
 _SENSITIVE_ENV_PARTS = ("SECRET", "TOKEN", "PASSWORD", "PRIVATE_KEY", "API_KEY", "CREDENTIAL", "AUTHORIZATION")
 _MAX_RECOGNIZED_CREDENTIAL_CHARS = 8 * 1024
+_RECOGNIZED_LABELED_CREDENTIAL_LABELS = (
+    r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|password|credentials?|authorization)"
+)
+_LABELED_CREDENTIAL_HEADER_PATTERN = re.compile(
+    rf"(?i)\b{_RECOGNIZED_LABELED_CREDENTIAL_LABELS}\s*[:=]\s*['\"]?(?:(?:bearer|basic)\s+)?"
+)
 _RECOGNIZED_CREDENTIAL_PATTERNS = (
     re.compile(
-        rf"(?i)\b((?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|password|credentials?|authorization)\s*[:=]\s*['\"]?(?:(?:bearer|basic)\s+)?)([^\s,'\";]{{1,{_MAX_RECOGNIZED_CREDENTIAL_CHARS}}})(?=$|[\s,'\";])"
+        rf"(?i)\b({_RECOGNIZED_LABELED_CREDENTIAL_LABELS}\s*[:=]\s*['\"]?(?:(?:bearer|basic)\s+)?)([^\s,'\";]{{1,{_MAX_RECOGNIZED_CREDENTIAL_CHARS}}})(?=$|[\s,'\";])"
     ),
     re.compile(rf"(?i)\bbearer\s+([A-Za-z0-9._~+/-]{{8,{_MAX_RECOGNIZED_CREDENTIAL_CHARS}}}={{0,2}})(?=$|\s)"),
     re.compile(rf"\b(?:sk|rk|pk)-[A-Za-z0-9_-]{{16,{_MAX_RECOGNIZED_CREDENTIAL_CHARS}}}\b"),
@@ -750,8 +756,30 @@ def _safe_redaction_boundary(
             for match in pattern.finditer(text):
                 if match.start() < boundary < match.end():
                     boundary = match.start()
+        for match in _LABELED_CREDENTIAL_HEADER_PATTERN.finditer(text):
+            if match.end() == len(text) and match.start() < boundary:
+                boundary = match.start()
         if boundary == previous_boundary:
             return boundary
+
+
+def _compact_labeled_credential_whitespace(text: str) -> str:
+    """Bound a credential label's arbitrarily long pre-value whitespace run."""
+
+    pieces: list[str] = []
+    previous_end = 0
+    changed = False
+    for match in _LABELED_CREDENTIAL_HEADER_PATTERN.finditer(text):
+        header = match.group()
+        compacted = re.sub(r"\s+", " ", header)
+        pieces.append(text[previous_end : match.start()])
+        pieces.append(compacted)
+        previous_end = match.end()
+        changed = changed or compacted != header
+    if not changed:
+        return text
+    pieces.append(text[previous_end:])
+    return "".join(pieces)
 
 
 def _write_redacted_child_log(
@@ -766,7 +794,7 @@ def _write_redacted_child_log(
     pending = ""
     source.seek(0)
     while chunk := source.read(8192):
-        pending += chunk
+        pending = _compact_labeled_credential_whitespace(pending + chunk)
         if len(pending) <= window:
             continue
         boundary = _safe_redaction_boundary(pending, len(pending) - window, secret_values)

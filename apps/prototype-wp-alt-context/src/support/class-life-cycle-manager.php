@@ -896,7 +896,7 @@ class LifecycleManager {
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			occurred_at datetime NOT NULL,
 			media_id bigint(20) unsigned NOT NULL DEFAULT 0,
-			operation_id varchar(128) DEFAULT NULL,
+			operation_id varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL,
 			outcome varchar(20) NOT NULL,
 			adapter varchar(64) NOT NULL DEFAULT '',
 			provider varchar(64) NOT NULL DEFAULT '',

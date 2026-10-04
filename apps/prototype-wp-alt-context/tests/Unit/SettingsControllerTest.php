@@ -20,6 +20,7 @@ class SettingsControllerTest extends TestCase
 {
     private SettingsController $controller;
     private string|false $originalRecognitionApiKeyEnvironment;
+    private array $namingLockQueries = [];
 
     protected function setUp(): void
     {
@@ -29,7 +30,33 @@ class SettingsControllerTest extends TestCase
         // Opt-in update_option failure map is not cleared by TestCase::resetGlobalState;
         // drop it here so R23-BR-14 fail pins cannot leak into later tests.
         $GLOBALS['__ac_update_option_fail'] = [];
+        $this->mockNamingPolicyLock();
         $this->controller = new SettingsController();
+    }
+
+    private function mockNamingPolicyLock(?string $result = '1', ?callable $onLockQuery = null): void
+    {
+        $this->namingLockQueries = [];
+        $wpdb = $GLOBALS['wpdb'];
+        $wpdb->onGetVar = function (string $query) use ($wpdb, $result, $onLockQuery): void {
+            $isAcquire = str_contains($query, 'GET_LOCK(');
+            if (! $isAcquire && ! str_contains($query, 'RELEASE_LOCK(')) {
+                return;
+            }
+
+            $this->namingLockQueries[] = $query;
+            $wpdb->queryResults[$query] = $isAcquire ? $result : '1';
+            if (null !== $onLockQuery) {
+                $onLockQuery($query);
+            }
+        };
+    }
+
+    private function assertNamingPolicyLockReleased(): void
+    {
+        $this->assertCount(2, $this->namingLockQueries);
+        $this->assertStringContainsString('GET_LOCK(', $this->namingLockQueries[0]);
+        $this->assertStringContainsString('RELEASE_LOCK(', $this->namingLockQueries[1]);
     }
 
     protected function tearDown(): void
@@ -585,6 +612,7 @@ class SettingsControllerTest extends TestCase
         $calls = $this->getHttpCalls();
         $this->assertSame('PUT', $calls[0]['method']);
         $this->assertSame('{"enabled":false}', $calls[0]['args']['body']);
+        $this->assertNamingPolicyLockReleased();
     }
 
     public function testSaveSettingsCachesEnabledPersonNamesForConfirmedTenant(): void
@@ -607,6 +635,7 @@ class SettingsControllerTest extends TestCase
         $this->assertSame(['allow_person_names'], $response->get_data()['saved']);
         $this->assertTrue(get_option('acx_description_allow_person_names'));
         $this->assertSame($tenantId, get_option('acx_description_allow_person_names_tenant_id'));
+        $this->assertNamingPolicyLockReleased();
     }
 
     public function testSaveSettingsSerializesNamingPolicyCacheWritesPerTenant(): void
@@ -629,7 +658,7 @@ class SettingsControllerTest extends TestCase
             file_put_contents($eventsFile, $event . "\n", FILE_APPEND | LOCK_EX);
         };
         $lockHandles = [];
-        $GLOBALS['wpdb']->onGetVar = static function (string $query) use ($lockFile, &$lockHandles): void {
+        $this->mockNamingPolicyLock('1', static function (string $query) use ($lockFile, &$lockHandles): void {
             if (str_contains($query, 'GET_LOCK(')) {
                 $lockHandle = fopen($lockFile, 'c');
                 if (false === $lockHandle || ! flock($lockHandle, LOCK_EX)) {
@@ -643,14 +672,7 @@ class SettingsControllerTest extends TestCase
                     fclose($lockHandle);
                 }
             }
-        };
-        $GLOBALS['wpdb']->onGetVarResolve = static function (string $query): ?string {
-            if (str_contains($query, 'GET_LOCK(') || str_contains($query, 'RELEASE_LOCK(')) {
-                return '1';
-            }
-
-            return null;
-        };
+        });
         $childPid = null;
 
         // The child save enters after save A's PUT returned but before A writes
@@ -762,6 +784,44 @@ class SettingsControllerTest extends TestCase
         $this->assertSame('allow_person_names_sync_failed', $response->get_error_code());
         $this->assertSame(502, $response->get_error_data()['status']);
         $this->assertFalse(get_option('acx_description_allow_person_names'));
+        $this->assertNamingPolicyLockReleased();
+    }
+
+    public function testSaveSettingsReportsNamingLockFailureWithoutSideEffects(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $tenantId = 'dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $this->setOption('acx_recognition_tenant_id', $tenantId);
+        $this->setOption('acx_recognition_url', 'https://api.example.com');
+        $this->setOption('acx_recognition_api_key', 'test-key');
+        $this->setOption('acx_description_allow_person_names', true);
+        $this->setOption('acx_description_allow_person_names_tenant_id', $tenantId);
+        $optionsBefore = $GLOBALS['__ac_options'];
+        $optionMutations = [];
+        foreach (['acx_description_allow_person_names', 'acx_description_allow_person_names_tenant_id'] as $option) {
+            $recordMutation = static function () use (&$optionMutations, $option): void {
+                $optionMutations[] = $option;
+            };
+            $GLOBALS['__ac_option_before_delete'][$option] = $recordMutation;
+            $GLOBALS['__ac_option_before_update'][$option] = $recordMutation;
+        }
+
+        foreach (['0', null] as $lockResult) {
+            $this->mockNamingPolicyLock($lockResult);
+            $request = new WP_REST_Request('POST', '/acx/v1/settings');
+            $request->set_body_params(['allow_person_names' => false]);
+
+            $response = $this->controller->save_settings($request);
+
+            $this->assertInstanceOf(\WP_Error::class, $response);
+            $this->assertSame('allow_person_names_lock_failed', $response->get_error_code());
+            $this->assertSame(503, $response->get_error_data()['status']);
+            $this->assertSame([], $this->getHttpCalls());
+            $this->assertSame([], $optionMutations);
+            $this->assertSame($optionsBefore, $GLOBALS['__ac_options']);
+            $this->assertCount(1, $this->namingLockQueries);
+            $this->assertStringContainsString('GET_LOCK(', $this->namingLockQueries[0]);
+        }
     }
 
     public function testSaveSettingsRr07PreservesCodeManagedSelectorContract(): void

@@ -20,13 +20,17 @@ import type { GpuIntentAction, GpuIntentStatus, GpuStatusResponse } from '../api
 import { toDescriptionHistoryRun, toWorkbench } from '../navigation/appLinks';
 import { useActiveDescribeRun } from './activeDescribeRun';
 import {
+  clearPendingDescribeSubmitAction,
   DESCRIBE_RUN_SETTLE_OUTCOME,
+  getPendingDescribeSubmitAction,
+  persistPendingDescribeSubmitAction,
   pendingTerminalRuns,
+  resolveDescribeOperationTenantId,
   settleRun,
   subscribeDescribeOperationStore,
   type DescribeRunSettleOutcome,
 } from './describeOperationStore';
-import { persistRunContext } from './useBulkDescribe';
+import { isDefinitiveDescribeSubmitRefusal, persistRunContext } from './useBulkDescribe';
 import { useDescribeRunProgress, type DescribeRunProgress } from './useDescribeRunProgress';
 import { useGpuServiceStatus } from './useGpuServiceStatus';
 import {
@@ -74,7 +78,7 @@ type WarmupResubmitResult =
   | { kind: 'exhausted' }
   | { kind: 'submitted'; response: DescribeRunResponse };
 
-type WarmupResubmitAction = { runId: string; idempotencyKey: string };
+type WarmupResubmitAction = { runId: string; tenantId: string | null };
 
 const unfinishedMediaIdsFromItems = (items: readonly DescribeRunItem[]): number[] =>
   items
@@ -408,31 +412,27 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
     mutationFn: cancelBulkDescribeRun,
   });
   const resubmitInFlightRef = useRef(false);
-  const resubmitMediaIdsByKeyRef = useRef(new Map<string, Promise<number[]>>());
-  const resubmitActionRef = useRef<WarmupResubmitAction | null>(null);
   const resubmitMutation = useMutation<WarmupResubmitResult, Error, WarmupResubmitAction>({
-    mutationFn: async ({ runId, idempotencyKey }) => {
-      let unfinishedIdsPromise = resubmitMediaIdsByKeyRef.current.get(idempotencyKey);
-      if (unfinishedIdsPromise === undefined) {
-        unfinishedIdsPromise = fetchDescribeRunItems(runId).then(({ items }) =>
-          unfinishedMediaIdsFromItems(items),
-        );
-        resubmitMediaIdsByKeyRef.current.set(idempotencyKey, unfinishedIdsPromise);
-      }
-      let unfinishedIds: number[];
-      try {
-        unfinishedIds = await unfinishedIdsPromise;
-      } catch (error) {
-        // A failed item fetch sent no submit request, so a mutation retry may fetch again.
-        if (resubmitMediaIdsByKeyRef.current.get(idempotencyKey) === unfinishedIdsPromise) {
-          resubmitMediaIdsByKeyRef.current.delete(idempotencyKey);
+    mutationFn: async ({ runId, tenantId }) => {
+      const scope = { kind: 'warmup_recovery' as const, sourceRunId: runId };
+      let action = getPendingDescribeSubmitAction(scope, tenantId);
+      if (action === null) {
+        const { items } = await fetchDescribeRunItems(runId);
+        const unfinishedIds = unfinishedMediaIdsFromItems(items);
+        if (unfinishedIds.length === 0) {
+          return { kind: 'exhausted' };
         }
-        throw error;
+        action = persistPendingDescribeSubmitAction(
+          scope,
+          unfinishedIds,
+          createDescribeIdempotencyKey(),
+          tenantId,
+        );
+        if (action === null) {
+          throw new Error('Could not persist the warmup retry action before sending the request.');
+        }
       }
-      if (unfinishedIds.length === 0) {
-        return { kind: 'exhausted' };
-      }
-      const response = await submitBulkDescribeRun(unfinishedIds, idempotencyKey);
+      const response = await submitBulkDescribeRun(action.mediaIds, action.idempotencyKey);
       return { kind: 'submitted', response };
     },
     onSuccess: (result) => {
@@ -440,12 +440,20 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
         persistRunContext(result.response);
       }
     },
+    onError: (error, variables) => {
+      if (isDefinitiveDescribeSubmitRefusal(error)) {
+        clearPendingDescribeSubmitAction(
+          { kind: 'warmup_recovery', sourceRunId: variables.runId },
+          variables.tenantId,
+        );
+      }
+    },
     onSettled: (_result, error, variables) => {
       if (error === null) {
-        resubmitMediaIdsByKeyRef.current.delete(variables.idempotencyKey);
-        if (resubmitActionRef.current?.idempotencyKey === variables.idempotencyKey) {
-          resubmitActionRef.current = null;
-        }
+        clearPendingDescribeSubmitAction(
+          { kind: 'warmup_recovery', sourceRunId: variables.runId },
+          variables.tenantId,
+        );
       }
       resubmitInFlightRef.current = false;
     },
@@ -556,12 +564,7 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
             return;
           }
           resubmitInFlightRef.current = true;
-          const action =
-            resubmitActionRef.current?.runId === runId
-              ? resubmitActionRef.current
-              : { runId, idempotencyKey: createDescribeIdempotencyKey() };
-          resubmitActionRef.current = action;
-          resubmitMutation.mutate(action);
+          resubmitMutation.mutate({ runId, tenantId: resolveDescribeOperationTenantId() });
         };
       }
       return () => {

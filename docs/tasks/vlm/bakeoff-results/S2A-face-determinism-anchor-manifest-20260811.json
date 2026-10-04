@@ -1,4 +1,126 @@
 {
+  "adjudication_records": [
+    {
+      "box_index": 0,
+      "decision": "confirmed",
+      "media_id": 1,
+      "record_id": "synthetic-s2a-face-anchor-media-1-box-0",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-1-box-0",
+      "reviewer_kind": "human"
+    },
+    {
+      "box_index": 0,
+      "decision": "confirmed",
+      "media_id": 2,
+      "record_id": "synthetic-s2a-face-anchor-media-2-box-0",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-2-box-0",
+      "reviewer_kind": "human"
+    },
+    {
+      "box_index": 0,
+      "decision": "confirmed",
+      "media_id": 4,
+      "record_id": "synthetic-s2a-face-anchor-media-4-box-0",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-4-box-0",
+      "reviewer_kind": "human"
+    },
+    {
+      "box_index": 0,
+      "decision": "confirmed",
+      "media_id": 5,
+      "record_id": "synthetic-s2a-face-anchor-media-5-box-0",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-5-box-0",
+      "reviewer_kind": "human"
+    },
+    {
+      "box_index": 0,
+      "decision": "confirmed",
+      "media_id": 6,
+      "record_id": "synthetic-s2a-face-anchor-media-6-box-0",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-6-box-0",
+      "reviewer_kind": "human"
+    },
+    {
+      "box_index": 0,
+      "decision": "confirmed",
+      "media_id": 8,
+      "record_id": "synthetic-s2a-face-anchor-media-8-box-0",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-8-box-0",
+      "reviewer_kind": "human"
+    },
+    {
+      "box_index": 0,
+      "decision": "confirmed",
+      "media_id": 3,
+      "record_id": "synthetic-s2a-face-anchor-media-3-box-0",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-3-box-0",
+      "reviewer_kind": "human"
+    },
+    {
+      "box_index": 0,
+      "decision": "confirmed",
+      "media_id": 9,
+      "record_id": "synthetic-s2a-face-anchor-media-9-box-0",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-9-box-0",
+      "reviewer_kind": "human"
+    },
+    {
+      "box_index": 0,
+      "decision": "confirmed",
+      "media_id": 10,
+      "record_id": "synthetic-s2a-face-anchor-media-10-box-0",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-10-box-0",
+      "reviewer_kind": "human"
+    },
+    {
+      "box_index": 1,
+      "decision": "confirmed",
+      "media_id": 10,
+      "record_id": "synthetic-s2a-face-anchor-media-10-box-1",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-10-box-1",
+      "reviewer_kind": "human"
+    },
+    {
+      "box_index": 0,
+      "decision": "confirmed",
+      "media_id": 11,
+      "record_id": "synthetic-s2a-face-anchor-media-11-box-0",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-11-box-0",
+      "reviewer_kind": "human"
+    },
+    {
+      "box_index": 1,
+      "decision": "confirmed",
+      "media_id": 11,
+      "record_id": "synthetic-s2a-face-anchor-media-11-box-1",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-11-box-1",
+      "reviewer_kind": "human"
+    }
+  ],
   "annotation_mode": "exhaustive",
   "entries": [
     {
@@ -7,19 +129,20 @@
       "easy_wrong": [],
       "face_boxes": [
         {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-1-box-0",
           "h": 0.4,
           "lineage": {
             "arbitration_of": null,
-            "batch_id": "fir-11-slice-2-v3-migration",
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
             "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
-            "confidence": "low",
+            "confidence": "high",
             "decision": "named",
-            "label_source": "legacy_import",
-            "labeled_at": "1970-01-01T00:00:00Z",
-            "labeler_id": "legacy-import",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
             "pass_index": 0,
-            "saw_machine_proposals": true,
-            "tool_version": "legacy-import"
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
           },
           "name": "Alice Example",
           "source": "iptc",
@@ -52,19 +175,20 @@
       "easy_wrong": [],
       "face_boxes": [
         {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-2-box-0",
           "h": 0.4,
           "lineage": {
             "arbitration_of": null,
-            "batch_id": "fir-11-slice-2-v3-migration",
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
             "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
-            "confidence": "low",
+            "confidence": "high",
             "decision": "named",
-            "label_source": "legacy_import",
-            "labeled_at": "1970-01-01T00:00:00Z",
-            "labeler_id": "legacy-import",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
             "pass_index": 0,
-            "saw_machine_proposals": true,
-            "tool_version": "legacy-import"
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
           },
           "name": "Alice Example",
           "source": "iptc",
@@ -97,19 +221,20 @@
       "easy_wrong": [],
       "face_boxes": [
         {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-4-box-0",
           "h": 0.4,
           "lineage": {
             "arbitration_of": null,
-            "batch_id": "fir-11-slice-2-v3-migration",
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
             "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
-            "confidence": "low",
+            "confidence": "high",
             "decision": "named",
-            "label_source": "legacy_import",
-            "labeled_at": "1970-01-01T00:00:00Z",
-            "labeler_id": "legacy-import",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
             "pass_index": 0,
-            "saw_machine_proposals": true,
-            "tool_version": "legacy-import"
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
           },
           "name": "Bob Example",
           "source": "iptc",
@@ -142,19 +267,20 @@
       "easy_wrong": [],
       "face_boxes": [
         {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-5-box-0",
           "h": 0.4,
           "lineage": {
             "arbitration_of": null,
-            "batch_id": "fir-11-slice-2-v3-migration",
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
             "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
-            "confidence": "low",
+            "confidence": "high",
             "decision": "named",
-            "label_source": "legacy_import",
-            "labeled_at": "1970-01-01T00:00:00Z",
-            "labeler_id": "legacy-import",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
             "pass_index": 0,
-            "saw_machine_proposals": true,
-            "tool_version": "legacy-import"
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
           },
           "name": "Bob Example",
           "source": "iptc",
@@ -187,19 +313,20 @@
       "easy_wrong": [],
       "face_boxes": [
         {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-6-box-0",
           "h": 0.4,
           "lineage": {
             "arbitration_of": null,
-            "batch_id": "fir-11-slice-2-v3-migration",
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
             "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
-            "confidence": "low",
+            "confidence": "high",
             "decision": "named",
-            "label_source": "legacy_import",
-            "labeled_at": "1970-01-01T00:00:00Z",
-            "labeler_id": "legacy-import",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
             "pass_index": 0,
-            "saw_machine_proposals": true,
-            "tool_version": "legacy-import"
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
           },
           "name": "Alice Example",
           "source": "iptc",
@@ -252,19 +379,20 @@
       "easy_wrong": [],
       "face_boxes": [
         {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-8-box-0",
           "h": 0.2,
           "lineage": {
             "arbitration_of": null,
-            "batch_id": "fir-11-slice-2-v3-migration",
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
             "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
-            "confidence": "low",
+            "confidence": "high",
             "decision": "named",
-            "label_source": "legacy_import",
-            "labeled_at": "1970-01-01T00:00:00Z",
-            "labeler_id": "legacy-import",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
             "pass_index": 0,
-            "saw_machine_proposals": true,
-            "tool_version": "legacy-import"
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
           },
           "name": "Alice Example",
           "source": "iptc",
@@ -296,19 +424,20 @@
       "easy_wrong": [],
       "face_boxes": [
         {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-3-box-0",
           "h": 0.4,
           "lineage": {
             "arbitration_of": null,
-            "batch_id": "fir-11-slice-2-v3-migration",
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
             "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
-            "confidence": "low",
+            "confidence": "high",
             "decision": "stranger",
-            "label_source": "legacy_import",
-            "labeled_at": "1970-01-01T00:00:00Z",
-            "labeler_id": "legacy-import",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
             "pass_index": 0,
-            "saw_machine_proposals": true,
-            "tool_version": "legacy-import"
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
           },
           "name": null,
           "source": "iptc",
@@ -338,19 +467,20 @@
       "easy_wrong": [],
       "face_boxes": [
         {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-9-box-0",
           "h": 0.2,
           "lineage": {
             "arbitration_of": null,
-            "batch_id": "fir-11-slice-2-v3-migration",
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
             "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
-            "confidence": "low",
+            "confidence": "high",
             "decision": "stranger",
-            "label_source": "legacy_import",
-            "labeled_at": "1970-01-01T00:00:00Z",
-            "labeler_id": "legacy-import",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
             "pass_index": 0,
-            "saw_machine_proposals": true,
-            "tool_version": "legacy-import"
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
           },
           "name": null,
           "source": "iptc",
@@ -381,19 +511,20 @@
       "easy_wrong": [],
       "face_boxes": [
         {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-10-box-0",
           "h": 0.2,
           "lineage": {
             "arbitration_of": null,
-            "batch_id": "fir-11-slice-2-v3-migration",
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
             "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
-            "confidence": "low",
+            "confidence": "high",
             "decision": "named",
-            "label_source": "legacy_import",
-            "labeled_at": "1970-01-01T00:00:00Z",
-            "labeler_id": "legacy-import",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
             "pass_index": 0,
-            "saw_machine_proposals": true,
-            "tool_version": "legacy-import"
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
           },
           "name": "Alice Example",
           "source": "iptc",
@@ -402,19 +533,20 @@
           "y": 0.1
         },
         {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-10-box-1",
           "h": 0.2,
           "lineage": {
             "arbitration_of": null,
-            "batch_id": "fir-11-slice-2-v3-migration",
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
             "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
-            "confidence": "low",
+            "confidence": "high",
             "decision": "stranger",
-            "label_source": "legacy_import",
-            "labeled_at": "1970-01-01T00:00:00Z",
-            "labeler_id": "legacy-import",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
             "pass_index": 0,
-            "saw_machine_proposals": true,
-            "tool_version": "legacy-import"
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
           },
           "name": null,
           "source": "iptc",
@@ -446,19 +578,20 @@
       "easy_wrong": [],
       "face_boxes": [
         {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-11-box-0",
           "h": 0.2,
           "lineage": {
             "arbitration_of": null,
-            "batch_id": "fir-11-slice-2-v3-migration",
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
             "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
-            "confidence": "low",
+            "confidence": "high",
             "decision": "named",
-            "label_source": "legacy_import",
-            "labeled_at": "1970-01-01T00:00:00Z",
-            "labeler_id": "legacy-import",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
             "pass_index": 0,
-            "saw_machine_proposals": true,
-            "tool_version": "legacy-import"
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
           },
           "name": "Bob Example",
           "source": "iptc",
@@ -467,19 +600,20 @@
           "y": 0.1
         },
         {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-11-box-1",
           "h": 0.2,
           "lineage": {
             "arbitration_of": null,
-            "batch_id": "fir-11-slice-2-v3-migration",
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
             "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
-            "confidence": "low",
+            "confidence": "high",
             "decision": "named",
-            "label_source": "legacy_import",
-            "labeled_at": "1970-01-01T00:00:00Z",
-            "labeler_id": "legacy-import",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
             "pass_index": 0,
-            "saw_machine_proposals": true,
-            "tool_version": "legacy-import"
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
           },
           "name": "Alice Example",
           "source": "iptc",

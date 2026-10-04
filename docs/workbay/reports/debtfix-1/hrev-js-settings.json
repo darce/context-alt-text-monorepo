@@ -1,0 +1,28 @@
+{
+  "lane": "hrev-js-settings",
+  "base": "57eb151417a52df980219cc5faac0338f7ecdcb3",
+  "executed": [
+    {
+      "command": "\"$resolved_python\" -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 2.24s; used the lane-root .venv interpreter."
+    },
+    {
+      "command": "cd apps/prototype-wp-alt-context && npx vitest run js/admin/pages/__tests__/SettingsPage.test.tsx js/admin/pages/settings/__tests__/SettingsFormContextCategories.test.tsx js/admin/api/__tests__/recognitionApi.test.ts",
+      "result": "not_run",
+      "detail": "apps/prototype-wp-alt-context/node_modules is absent."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 17038,
+      "finding_id": "FXCTXS-50eb6bd9a0cba252-H-df69b17c276a064e9ac18e81",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/SettingsPage.tsx:170 — `payload.context_categories = selectedContextCategories`; apps/prototype-wp-alt-context/src/api/class-settings-controller.php:225 — GET includes `context_categories`; class-settings-controller.php:401-415 validates the submitted list and calls `update_option`.",
+      "guard_test": "apps/prototype-wp-alt-context/js/admin/pages/__tests__/SettingsPage.test.tsx::saves the remaining context categories in canonical order when one is unchecked; apps/prototype-wp-alt-context/tests/Unit/SettingsControllerTest.php::testGetSettingsReturnsCanonicalContextCategorySubset; apps/prototype-wp-alt-context/tests/Unit/SettingsControllerTest.php::testSaveSettingsWritesCanonicalContextCategorySubset"
+    }
+  ],
+  "new_findings": [],
+  "summary": "The context category selection now round-trips through the settings UI and REST endpoint: the page sends changed canonical categories, GET returns the resolved categories, and POST validates and stores the list. Assertions cover the client payload and server GET/POST behavior. The lane pytest passed; the changed Vitest suites could not run because node_modules is absent."
+}

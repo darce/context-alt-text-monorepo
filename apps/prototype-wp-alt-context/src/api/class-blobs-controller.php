@@ -16,18 +16,18 @@ use WP_REST_Response;
 use function add_query_arg;
 use function add_filter;
 use function esc_url_raw;
+use function get_current_user_id;
 use function hash_equals;
 use function header;
 use function in_array;
 use function is_string;
 use function is_wp_error;
 use function nocache_headers;
-use function parse_url;
+use function preg_match;
 use function register_rest_route;
 use function remove_filter;
 use function rest_get_server;
 use function sprintf;
-use function sanitize_text_field;
 use function status_header;
 use function str_contains;
 use function strlen;
@@ -37,11 +37,10 @@ use function substr;
 use function time;
 use function trim;
 use function untrailingslashit;
-use function wp_unslash;
 use function wp_remote_retrieve_body;
 use function wp_remote_retrieve_header;
 use function wp_remote_retrieve_response_code;
-use const PHP_URL_PATH;
+use function wp_set_current_user;
 
 /**
  * Streaming proxy for recognition-service blob bytes.
@@ -70,10 +69,9 @@ class BlobsController extends AbstractRecognitionProxyController {
 		'application/octet-stream',
 	);
 
-	private const ROUTE_PREFIXES = array(
-		'/wp-json/acx/v1/recognition/blobs/',
-		'/wp-json/acx/v1/recognition/face-thumbs/',
-	);
+	private const BLOB_ROUTE_PATTERN = '~^/acx/v1/recognition/(?:blobs|face-thumbs)/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/?\z~';
+	private static int $remembered_blob_viewer_id = 0;
+	private static string $remembered_blob_route = '';
 
 	public function register_routes(): void {
 		register_rest_route(
@@ -96,64 +94,110 @@ class BlobsController extends AbstractRecognitionProxyController {
 			)
 		);
 
-		// `<img>` requests can't carry an X-WP-Nonce header. WP REST's
-		// rest_cookie_check_errors fires on rest_authentication_errors
-		// before the route's permission_callback and rejects every
-		// cookie-authed request without a nonce as 403
-		// rest_cookie_invalid_nonce — short-circuiting our HMAC token
-		// check. Clear that error specifically for the blob route so
-		// verify_blob_token can run. Priority 200 runs after the cookie
-		// check (priority 100); the bypass is scoped to the blob route
-		// path so the rest of WP REST stays nonce-protected.
+		// `<img>` requests can't carry an X-WP-Nonce header. Remember the
+		// cookie-authenticated viewer before rest_cookie_check_errors runs
+		// at priority 100, since its no-nonce path clears the current user
+		// and returns success. At priority 200, restore that viewer only
+		// for this token-protected route; also bypass its invalid-nonce
+		// error so verify_blob_token can validate the HMAC. Other REST routes
+		// keep the standard cookie+nonce behavior.
+		add_filter( 'rest_authentication_errors', array( self::class, 'remember_blob_viewer_before_cookie_check' ), 99 );
 		add_filter( 'rest_authentication_errors', array( self::class, 'maybe_bypass_nonce_for_blob_route' ), 200 );
 	}
 
 	/**
+	 * Remember the authenticated viewer before REST cookie auth clears it
+	 * for an image request with no nonce.
+	 *
+	 * @param mixed $errors Prior auth result from upstream filters.
+	 * @return mixed
+	 */
+	public static function remember_blob_viewer_before_cookie_check( $errors ) {
+		self::$remembered_blob_viewer_id      = 0;
+		self::$remembered_blob_route          = '';
+		$route                                = self::blob_request_route();
+		if ( null === $route ) {
+			return $errors;
+		}
+
+		$viewer_id = get_current_user_id();
+		if ( $viewer_id > 0 ) {
+			self::$remembered_blob_viewer_id = $viewer_id;
+			self::$remembered_blob_route     = $route;
+		}
+
+		return $errors;
+	}
+
+	/**
 	 * Replace a `rest_cookie_invalid_nonce` error with `null` (auth ok)
-	 * when the request URI targets the blob proxy route. Returns the
+	 * when the dispatched route targets the blob proxy. Returns the
 	 * upstream value untouched in every other case.
 	 *
 	 * @param mixed $errors Prior auth result from upstream filters.
 	 * @return mixed
 	 */
 	public static function maybe_bypass_nonce_for_blob_route( $errors ) {
-		if ( ! ( $errors instanceof WP_Error ) ) {
+		$route = self::blob_request_route();
+		if ( null === $route ) {
+			self::clear_remembered_blob_viewer();
 			return $errors;
 		}
-		if ( 'rest_cookie_invalid_nonce' !== $errors->get_error_code() ) {
-			return $errors;
-		}
-		$request_uri = isset( $_SERVER['REQUEST_URI'] )
-			? sanitize_text_field( wp_unslash( (string) $_SERVER['REQUEST_URI'] ) )
-			: '';
-		if ( '' === $request_uri ) {
-			return $errors;
-		}
-		$path = parse_url( $request_uri, PHP_URL_PATH );
-		if ( ! is_string( $path ) || '' === $path ) {
-			return $errors;
-		}
-		foreach ( self::ROUTE_PREFIXES as $route_prefix ) {
-			if ( str_contains( $path, $route_prefix ) ) {
-				return null;
+
+		if ( $errors instanceof WP_Error ) {
+			if ( 'rest_cookie_invalid_nonce' !== $errors->get_error_code() ) {
+				self::clear_remembered_blob_viewer();
+				return $errors;
 			}
+			$errors = null;
 		}
+
+		$viewer_id = self::$remembered_blob_route === $route
+			? self::$remembered_blob_viewer_id
+			: 0;
+		self::clear_remembered_blob_viewer();
+		if ( $viewer_id > 0 && get_current_user_id() <= 0 ) {
+			wp_set_current_user( $viewer_id );
+		}
+
 		return $errors;
 	}
 
+	private static function blob_request_route(): ?string {
+		global $wp;
+
+		$route = isset( $wp->query_vars['rest_route'] ) ? $wp->query_vars['rest_route'] : null;
+		if ( ! is_string( $route ) || 1 !== preg_match( self::BLOB_ROUTE_PATTERN, $route ) ) {
+			return null;
+		}
+
+		return $route;
+	}
+
+	private static function clear_remembered_blob_viewer(): void {
+		self::$remembered_blob_viewer_id    = 0;
+		self::$remembered_blob_route        = '';
+	}
+
 	/**
-	 * Permission gate for the blob proxy. Validates the HMAC capability
-	 * token minted by `BlobUrlRewriter::sign` against the request's
-	 * job_id, media_id, and expires query args.
+	 * Permission gate for the blob proxy. Validates the HMAC token minted by
+	 * `BlobUrlRewriter::sign` against the request's media details and current
+	 * authenticated viewer.
 	 *
 	 * `<img src>` requests cannot carry the `X-WP-Nonce` header, so the
 	 * standard cookie+nonce REST permission check fails for thumbnails
-	 * embedded in admin pages. The signed URL is the capability that
-	 * authorizes this specific GET; no session check is required because
-	 * the token is unforgeable without `wp_salt('auth')`, which is server
-	 * side only.
+	 * embedded in admin pages. The token is bound to the current viewer ID,
+	 * so a copied URL is not sufficient to authorize another viewer.
 	 */
 	public function verify_blob_token( WP_REST_Request $request ): bool|WP_Error {
+		if ( get_current_user_id() <= 0 ) {
+			return new WP_Error(
+				'recognition_blob_auth_required',
+				'An authenticated viewer is required to access this blob.',
+				array( 'status' => 401 )
+			);
+		}
+
 		$job_id   = (string) $request->get_param( 'job_id' );
 		$media_id = (string) $request->get_param( 'media_id' );
 		$expires  = (int) $request->get_param( 'expires' );

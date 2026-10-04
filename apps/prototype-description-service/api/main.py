@@ -32,6 +32,8 @@ from recognition.application.health import (
     check_model_cache,
     check_model_space,
     disk_headroom_probe_failure,
+    model_bundle_paths,
+    sha256_model_bundle,
 )
 from recognition.application.scan.capability import (
     embedding_runtime_health_payload,
@@ -44,7 +46,6 @@ from recognition.config.security import (
 )
 from recognition.config.settings import RecognitionSettings
 from recognition.infrastructure.face_pipeline.model_space import ModelSpace, UnhandledModelSpaceError
-from recognition.infrastructure.face_pipeline.provenance import MODEL_MANIFEST
 from recognition.interface_adapters.http import deps as http_deps
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.auth import require_auth
@@ -282,7 +283,7 @@ def _wire_model_version(spec: ProfileSpec, model_id: str | None) -> str | None:
 
 def _resolve_description_profile() -> DescriptionProfile:
     """Validate the configured description profile before registering routes."""
-    raw = os.environ.get("ACX_DESCRIPTION_ADAPTER", DescriptionProfile.SEEDED.value)
+    raw = os.environ.get("ACX_DESCRIPTION_ADAPTER", DescriptionProfile.FLORENCE_SMALL.value)
     try:
         return DescriptionProfile(raw)
     except ValueError as exc:
@@ -967,16 +968,8 @@ def register_health_probes(
         disk_headroom_check = await _disk_headroom_probe()
         status = aggregate_status([db_check, breaker_check, mc_check, embedding_model_check, disk_headroom_check])
         profile = _current_profile()
-        if profile == "face_pipeline":
-            bundle_files = sum(
-                1 for name in ("yunet", "sface") if (cache_dir / MODEL_MANIFEST[name].file_name).is_file()
-            )
-        elif profile == "auraface":
-            auraface_artifact = cache_dir / MODEL_MANIFEST["auraface"].file_name
-            bundle_files = 1 if auraface_artifact.is_file() else 0
-        else:
-            bundle = cache_dir / model_name
-            bundle_files = len(list(bundle.glob("*.onnx"))) if bundle.is_dir() else 0
+        bundle_paths = model_bundle_paths(cache_dir, model_name, profile)
+        bundle_sha256 = sha256_model_bundle(bundle_paths, cache_dir=cache_dir)
         embedding_runtime = {
             "available": False,
             "reason": "database unavailable",
@@ -995,7 +988,8 @@ def register_health_probes(
             "model_cache": {
                 "model_name": model_name,
                 "cache_dir": str(cache_dir),
-                "bundle_files": bundle_files,
+                "bundle_files": len(bundle_paths),
+                "bundle_sha256": bundle_sha256,
                 "status": mc_check.status.value,
                 "detail": mc_check.detail,
                 "profile": profile,

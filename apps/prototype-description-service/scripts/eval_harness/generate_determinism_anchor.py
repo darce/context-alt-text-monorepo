@@ -439,7 +439,12 @@ def build_run_record(
         "head_sha": live_head,
         "started_at": live_started,
         "generator": "scripts.eval_harness.generate_determinism_anchor",
-        "adapter": "seeded",
+        "adapter": adapter.kind.value,
+        "model_id": adapter.model_id,
+        "model_version": adapter.model_version,
+        "task_version": adapter.prompt_or_task_version,
+        # Offline fixture selection uses a task-version seed, never a prompt.
+        "prompt_free": True,
         "predictions_source": _PREDICTIONS_SOURCE,
         # Face metrics from GT-derived fixtures are non-evidential (VLM6-C-04 / E-04).
         "face_metrics_evidential": False,
@@ -555,6 +560,9 @@ def write_anchor(
             hash_skip_reason="caption-anchor reloads the synthetic temp manifest so score-time SHA matches",
         )
 
+        # Freeze the current validated schema, including additive defaults (DATA-03).
+        (tmp_dir / man_name).write_text(_dumps(manifest.model_dump(mode="json")))
+
         if pin_live_provenance:
             # Byte-stable mode: null contract head_sha/started_at (never fabricate).
             # Sentinels live only in fixture_revision / canonical_timestamp (S4-04).
@@ -595,6 +603,7 @@ def write_anchor(
             score_manifest_sha256=manifest_sha,
             manifest_roster=roster,
             rubric_gate="skip",
+            run_manifest=manifest.model_dump(),
         )
         # Stamp non-evidential face disclosure onto the scored document too.
         scored.setdefault("provenance", {})

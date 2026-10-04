@@ -17,6 +17,7 @@ depends_on = None
 
 # Sole root: PGVECTOR_DIM → DatabaseSettings.pgvector_dimension (no bare 512).
 EMBEDDING_DIMENSION = int(get_database_settings().pgvector_dimension)
+CENTROID_DEFINITION_VERSION = "centroid-definition:v3-normalized-quality-weighting"
 SAFE_TENANT_EXPR = "NULLIF(current_setting('app.current_tenant', true), '')::uuid"
 BYPASS_RLS_EXPR = "COALESCE(NULLIF(current_setting('app.bypass_rls', true), ''), 'false')::boolean"
 
@@ -2795,12 +2796,19 @@ def _matview_create_privilege_gaps(op) -> list[str]:
                 "  SELECT 1 FROM pg_proc p "
                 "  WHERE p.proname = 'l2_normalize' "
                 "    AND has_function_privilege(current_user, p.oid, 'EXECUTE')"
+                "), "
+                "EXISTS ("
+                "  SELECT 1 FROM pg_proc p "
+                "  WHERE p.proname = 'array_fill' "
+                "    AND p.pronamespace = 'pg_catalog'::regnamespace "
+                "    AND p.pronargs = 2 "
+                "    AND has_function_privilege(current_user, p.oid, 'EXECUTE')"
                 ")"
             )
         )
         .one()
     )
-    schema_name, schema_create, sel_clusters, sel_members, sel_media, exec_l2 = row
+    schema_name, schema_create, sel_clusters, sel_members, sel_media, exec_l2, exec_array_fill = row
     gaps: list[str] = []
     if not schema_create:
         gaps.append(f"CREATE on schema {schema_name}")
@@ -2812,6 +2820,8 @@ def _matview_create_privilege_gaps(op) -> list[str]:
         gaps.append("SELECT on media_identities")
     if not exec_l2:
         gaps.append("EXECUTE on l2_normalize")
+    if not exec_array_fill:
+        gaps.append("EXECUTE on array_fill")
     return gaps
 
 
@@ -2954,8 +2964,8 @@ def _matview_stale_cluster_id_index(op) -> bool:
 def ensure_matview(op) -> None:
     """Create the centroid materialized view + indexes; fail loudly on a plain-table impostor.
 
-    A matview whose ``centroid`` column lost its vector typmod (built before the
-    outer cast existed) is derived data, so it is dropped and rebuilt here when
+    A matview with a stale definition marker or wrong ``centroid`` vector typmod
+    is derived data, so it is dropped and rebuilt here when
     the current role can drop it *and* recreate it with owner+grants restored.
     Otherwise the heal raises a named operator action before making any
     destructive change.
@@ -2970,14 +2980,28 @@ def ensure_matview(op) -> None:
     restore: tuple[str, str, tuple[tuple[str, str, bool], ...]] | None = None
     if relkind == "m":
         observed_typmod = _matview_centroid_typmod(op)
+        observed_marker = op.get_bind().execute(
+            sa.text(
+                "SELECT obj_description(c.oid, 'pg_class') FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = current_schema() "
+                "AND c.relname = 'mv_identity_cluster_centroids'"
+            )
+        ).scalar()
+        rebuild_reasons = []
         if observed_typmod != EMBEDDING_DIMENSION:
+            rebuild_reasons.append(f"observed centroid typmod {observed_typmod!r}")
+        if observed_marker != CENTROID_DEFINITION_VERSION:
+            rebuild_reasons.append(f"observed definition marker {observed_marker!r}")
+        if rebuild_reasons:
+            rebuild_reason = "; ".join(rebuild_reasons)
             owner, can_drop = _matview_owner_and_can_drop(op)
             current_role, quoted_role = _current_user_quoted(op)
             if not can_drop:
                 operator_sql = f"ALTER MATERIALIZED VIEW mv_identity_cluster_centroids OWNER TO {quoted_role};"
                 raise RuntimeError(
                     "cannot rebuild mv_identity_cluster_centroids: "
-                    f"observed centroid typmod {observed_typmod!r}; owner role is {owner!r}; "
+                    f"{rebuild_reason}; owner role is {owner!r}; "
                     f"current role is {current_role!r} and cannot DROP the relation. "
                     f"Run {operator_sql} then re-run python -m scripts.sync_identity_schema."
                 )
@@ -2985,7 +3009,7 @@ def ensure_matview(op) -> None:
             if gaps:
                 raise RuntimeError(
                     "cannot rebuild mv_identity_cluster_centroids: "
-                    f"observed centroid typmod {observed_typmod!r}; "
+                    f"{rebuild_reason}; "
                     "current role lacks privileges required to recreate the view: "
                     f"{', '.join(gaps)}. Grant these privileges then re-run "
                     "python -m scripts.sync_identity_schema."
@@ -2995,7 +3019,7 @@ def ensure_matview(op) -> None:
             if missing_roles:
                 raise RuntimeError(
                     "cannot rebuild mv_identity_cluster_centroids: "
-                    f"observed centroid typmod {observed_typmod!r}; "
+                    f"{rebuild_reason}; "
                     "relacl names vanished roles "
                     f"{', '.join(missing_roles)} that cannot receive GRANT. "
                     "Operator action: REVOKE the stale grants or DROP the view as its owner."
@@ -3004,7 +3028,7 @@ def ensure_matview(op) -> None:
             if owner_blockers:
                 raise RuntimeError(
                     "cannot rebuild mv_identity_cluster_centroids: "
-                    f"observed centroid typmod {observed_typmod!r}; "
+                    f"{rebuild_reason}; "
                     f"{'; '.join(owner_blockers)}. "
                     "Operator action: recreate the owner role with CREATE on the schema "
                     "or REASSIGN OWNED."
@@ -3030,8 +3054,10 @@ def ensure_matview(op) -> None:
             SELECT
                 im.cluster_id,
                 mi.tenant_id,
+                mi.media_id,
                 mi.embedding,
                 mi.embedding_model,
+                mi.quality_score,
                 mi.updated_at
             FROM identity_members im
             JOIN media_identities mi ON mi.id = im.identity_id
@@ -3060,23 +3086,69 @@ def ensure_matview(op) -> None:
             SELECT
                 mr.cluster_id,
                 mr.tenant_id,
+                mr.media_id,
                 l2_normalize(mr.embedding)::vector({EMBEDDING_DIMENSION}) AS unit_embedding,
+                GREATEST(0.0, LEAST(1.0, COALESCE(mr.quality_score, 1.0)))::double precision
+                    AS quality_weight,
                 mr.updated_at
             FROM member_rows mr
             JOIN chosen_model cm
               ON cm.cluster_id = mr.cluster_id
              AND cm.embedding_model = mr.embedding_model
         ),
+        media_weight_totals AS (
+            SELECT
+                normalized_embeddings.*,
+                SUM(quality_weight) OVER (
+                    PARTITION BY cluster_id, tenant_id, media_id
+                ) AS media_quality_total
+            FROM normalized_embeddings
+        ),
+        -- One source media item contributes at most one quality-weighted
+        -- representative, so repeated detections from that item cannot
+        -- outvote representatives from other media items.
+        media_embeddings AS (
+            SELECT
+                cluster_id,
+                tenant_id,
+                media_id,
+                CASE
+                    WHEN SUM(quality_weight) > 0 THEN
+                        (
+                            -- Divide in double precision first: even tiny positive
+                            -- totals yield factors in [0, 1] safe to cast to real.
+                            SUM(
+                                unit_embedding
+                                * array_fill(
+                                    (quality_weight / NULLIF(media_quality_total, 0))::real,
+                                    ARRAY[{EMBEDDING_DIMENSION}]
+                                )::vector
+                            )
+                        )::vector({EMBEDDING_DIMENSION})
+                    ELSE NULL
+                END AS media_embedding
+            FROM media_weight_totals
+            GROUP BY cluster_id, tenant_id, media_id
+        ),
+        cluster_member_stats AS (
+            SELECT
+                cluster_id,
+                COUNT(unit_embedding) AS identity_count,
+                MAX(updated_at) AS refreshed_at
+            FROM normalized_embeddings
+            GROUP BY cluster_id
+        ),
         cluster_embeddings AS (
             SELECT
                 c.id AS cluster_id,
                 c.tenant_id,
-                COUNT(ne.unit_embedding) AS identity_count,
-                AVG(ne.unit_embedding)::vector({EMBEDDING_DIMENSION}) AS avg_embedding,
-                COALESCE(MAX(ne.updated_at), c.updated_at) AS refreshed_at
+                cms.identity_count,
+                AVG(me.media_embedding)::vector({EMBEDDING_DIMENSION}) AS avg_embedding,
+                COALESCE(cms.refreshed_at, c.updated_at) AS refreshed_at
             FROM identity_clusters c
-            JOIN normalized_embeddings ne ON ne.cluster_id = c.id
-            GROUP BY c.id, c.tenant_id, c.updated_at
+            JOIN media_embeddings me ON me.cluster_id = c.id AND me.tenant_id = c.tenant_id
+            JOIN cluster_member_stats cms ON cms.cluster_id = c.id
+            GROUP BY c.id, c.tenant_id, c.updated_at, cms.identity_count, cms.refreshed_at
         )
         SELECT
             cluster_id,
@@ -3095,6 +3167,11 @@ def ensure_matview(op) -> None:
         WHERE identity_count >= 1;
         """
     )
+    if relkind is None or restore is not None:
+        op.execute(
+            "COMMENT ON MATERIALIZED VIEW mv_identity_cluster_centroids "
+            f"IS '{CENTROID_DEFINITION_VERSION}'"
+        )
 
     op.execute(
         """

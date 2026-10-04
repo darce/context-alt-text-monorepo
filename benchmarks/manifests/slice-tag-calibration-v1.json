@@ -1,6 +1,23 @@
 {
  "auc_floor": 0.75,
  "labelled_images": 148,
+ "detection_artifact": "detections-yunet-t030.json",
+ "evaluation_scope": "in_sample_calibration_only",
+ "evaluation_note": "The signal and threshold were selected and scored on the same 148 detector-supported labelled images out of 150 hand-tagged images. The 2 images without detector signal (media IDs 271 and 375; one profile-positive, one profile-negative) are reported as a separate stratum and excluded from signal/threshold metrics. These are calibration-sample metrics, not held-out performance estimates.",
+ "labelled_image_accounting": {
+  "hand_tagged_images": 150,
+  "scored_images": 148,
+  "without_detector_signal": {
+   "count": 2,
+   "media_ids": [
+    271,
+    375
+   ],
+   "profile_positive": 1,
+   "profile_negative": 1
+  },
+  "policy": "Images without detector signal are excluded from profile signal/threshold metrics and reported as a separate stratum; they are not treated as profile-negative."
+ },
  "shippable": {
   "profile": {
    "signal": "eye_span_ratio",

@@ -373,7 +373,15 @@ _PUBLIC_PROVENANCE_ALLOW_FIELDS: frozenset[str] = frozenset(
         "eval_mode",
         "model_versions",
         "model",
+        "model_revision",
+        "model_revision_source",
+        "seed",
         "prompt_variant",
+        "prompt_version",
+        "prompt_sha256",
+        "task_version",
+        "decoding_contract",
+        "stage_costs",
         "two_pass",
         "dual_length",
         "face_gate",
@@ -1448,27 +1456,100 @@ def _selection_metadata_issue(
     return None
 
 
-def _model_provenance(items: list[dict[str, Any]]) -> dict[str, list[str]]:
+def _model_provenance(
+    items: list[dict[str, Any]],
+    run_provenance: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Adapter/model that actually produced the captions (HARM-01).
 
     Surfaced so a report is never mistaken for a caption-model baseline when it
     actually scored a model-free 'seeded' stub run — every artifact stamped with
-    the adapter/model version (scope Q5).
+    the adapter/model version (scope Q5). Every model stamp must be homogeneous
+    for all audiences; run-level settings must also agree with every item-level
+    stamp. Incomplete identity is marked unattributed and can only produce
+    diagnostic metrics; records with conflicting stamps are refused.
     """
-    adapters, model_ids, model_versions = set(), set(), set()
-    for item in items:
-        describe = item.get("describe") or {}
-        if describe.get("adapter"):
-            adapters.add(str(describe["adapter"]))
-        if describe.get("model_id"):
-            model_ids.add(str(describe["model_id"]))
-        if describe.get("model_version") is not None:
-            model_versions.add(str(describe["model_version"]))
-    return {
-        "adapters": sorted(adapters),
-        "model_ids": sorted(model_ids),
-        "model_versions": sorted(model_versions),
-    }
+    run_provenance = run_provenance or {}
+    dimensions = (
+        ("adapters", "adapter", None),
+        ("model_ids", "model_id", None),
+        ("model_versions", "model_version", None),
+        ("model_revisions", "model_revision", "model_revision"),
+        ("seeds", "seed", "seed"),
+        ("prompt_variants", "prompt_variant", "prompt_variant"),
+        ("prompt_versions", "prompt_version", "prompt_version"),
+        ("prompt_sha256s", "prompt_sha256", "prompt_sha256"),
+        ("prompt_free_flags", "prompt_free", "prompt_free"),
+        ("task_versions", "task_version", "task_version"),
+        ("decoding_contracts", "decoding_contract", "decoding_contract"),
+    )
+    successful_items = [item for item in items if not item.get("error")]
+    out: dict[str, Any] = {}
+
+    def _canonical(value: Any) -> str:
+        return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+    for output_key, item_key, provenance_key in dimensions:
+        values: dict[str, Any] = {}
+        missing_paths: list[str] = []
+        for item in successful_items:
+            describe = item.get("describe")
+            describe = describe if isinstance(describe, Mapping) else {}
+            if item_key in describe:
+                value = describe[item_key]
+            elif provenance_key is not None and provenance_key in run_provenance:
+                # Older item rows may omit a globally stamped run setting.
+                value = run_provenance[provenance_key]
+            else:
+                missing_paths.append(str(item.get("path", item.get("media_id", "?"))))
+                continue
+            values[_canonical(value)] = value
+        if values and missing_paths:
+            raise ReportError(
+                f"run record has mixed known and missing {item_key} stamps on {missing_paths}; "
+                "refusing aggregate score",
+                invariant="model_provenance_refuses_mixed_values",
+            )
+        if len(values) > 1:
+            raise ReportError(
+                f"run record mixes {item_key} values {sorted(values)}; refusing aggregate score",
+                invariant="model_provenance_refuses_mixed_values",
+            )
+        if provenance_key is not None and provenance_key in run_provenance and values:
+            run_value = _canonical(run_provenance[provenance_key])
+            if any(_canonical(item_value) != run_value for item_value in values.values()):
+                raise ReportError(
+                    f"run record {item_key} stamp disagrees with run provenance.{provenance_key}; "
+                    "refusing aggregate score",
+                    invariant="model_provenance_refuses_mixed_values",
+                )
+        out[output_key] = [values[key] for key in sorted(values)]
+    # Attribution needs producer identity, not merely any recorded setting such
+    # as a seed. A prompt version or digest identifies the prompt used, unless
+    # the producer explicitly declares the run prompt-free (PROV-01).
+    def _has_text_identity(output_key: str) -> bool:
+        return any(isinstance(value, str) and value.strip() for value in out[output_key])
+
+    missing_identity = []
+    if not _has_text_identity("adapters"):
+        missing_identity.append("adapter")
+    if not _has_text_identity("model_ids"):
+        missing_identity.append("model")
+    if not (
+        _has_text_identity("prompt_versions")
+        or _has_text_identity("prompt_sha256s")
+        or run_provenance.get("prompt_free") is True
+    ):
+        missing_identity.append("prompt identity")
+    if successful_items and missing_identity:
+        # Legacy producers remain scoreable for diagnostics, but incomplete
+        # identity cannot certify an adoption-ready verdict (PROV-01, SEC-10).
+        # Omit this field for fully stamped records to preserve their bytes.
+        out["attribution"] = {
+            "status": "unattributed",
+            "missing_dimensions": missing_identity,
+        }
+    return out
 
 
 def _context_text(entry: dict[str, Any]) -> str:
@@ -1862,12 +1943,16 @@ def build_score_verdict(
     ``rubric_gate=skip`` bypasses only the must-right failures reason; a clean
     skip run persists ``pass_ungated`` so it is never readable as a gated pass.
 
-    Category vacuity (VLM6-A-05 / VLM6-B-07 / S2-06): critical scored slices with
-    claim-unit sampling π=0 yield ``not_ready`` (never ``pass``). Quality-floor
-    breaches on measurable critical slices yield ``fail`` (S2-02). Readiness is
-    the weakest category (EVAL-23); AUDIT-07 requires naming the frame.
+    Incomplete producer identity is ``not_ready``: metrics remain visible for
+    diagnostics, while the score CLI's readiness gate refuses adoption (SEC-10,
+    RLSE-02). Category vacuity (VLM6-A-05 / VLM6-B-07 / S2-06): critical scored
+    slices with claim-unit sampling π=0 yield ``not_ready`` (never ``pass``).
+    Quality-floor breaches on measurable critical slices yield ``fail`` (S2-02).
+    Readiness is the weakest category (EVAL-23); AUDIT-07 requires naming the
+    frame.
     """
     reasons: list[str] = []
+    readiness_reasons: list[str] = []
     counts = scored.get("counts") or {}
     # F1d-4 / VLM-6-S2A-P-01: corpus-integrity counts live in scored["corpus"],
     # not counts (counts is the pinned {total, scored, failed} contract shape).
@@ -1875,6 +1960,24 @@ def build_score_verdict(
     caption = scored.get("caption") or {}
     faces = scored.get("faces") or {}
     ident = faces.get("identification") or {}
+
+    provenance = scored.get("provenance") or {}
+    model = provenance.get("model") if isinstance(provenance, Mapping) else None
+    attribution = model.get("attribution") if isinstance(model, Mapping) else None
+    if isinstance(attribution, Mapping) and attribution.get("status") == "unattributed":
+        missing_dimensions = attribution.get("missing_dimensions")
+        if isinstance(missing_dimensions, list) and missing_dimensions:
+            missing = ", ".join(str(dimension) for dimension in missing_dimensions)
+        else:
+            missing = "details unavailable"
+        attribution_reason = f"producer identity incomplete: missing {missing}"
+        if ident.get("refused"):
+            # Preserve the CLI's dedicated refusal/consent path: not_ready
+            # reasons are consumed before that gate, while hard-fail reasons
+            # leave refusal handling in control. The report remains non-PASS.
+            reasons.append(attribution_reason)
+        else:
+            readiness_reasons.append(attribution_reason)
 
     failed = int(counts.get("failed") or 0)
     if failed > 0:
@@ -1948,15 +2051,15 @@ def build_score_verdict(
     reasons.extend(build_score_quality_floor_reasons(scored, scored_n=scored_n))
 
     # Shared vacuity set with compare (S2-01 / S2-06 / EVAL-23 / AUDIT-07).
-    vacuity_reasons = build_score_vacuity_reasons(scored, scored_n=scored_n)
+    readiness_reasons.extend(build_score_vacuity_reasons(scored, scored_n=scored_n))
 
-    # Hard failures win; otherwise vacuity yields not_ready (not adoption pass).
+    # Hard failures win; otherwise a readiness gap yields not_ready (not adoption pass).
     if reasons:
         verdict_value = ScoreVerdict.FAIL.value
-        all_reasons = reasons + vacuity_reasons
-    elif vacuity_reasons:
+        all_reasons = reasons + readiness_reasons
+    elif readiness_reasons:
         verdict_value = ScoreVerdict.NOT_READY.value
-        all_reasons = vacuity_reasons
+        all_reasons = readiness_reasons
     elif rubric_gate == "skip":
         verdict_value = ScoreVerdict.PASS_UNGATED.value
         all_reasons = []
@@ -2070,26 +2173,38 @@ def score_run_record(
     argument may only narrow the stamp — it cannot widen ``roster_only``
     to exhaustive. ``roster_only``, a missing stamp, and an unrecognised
     token refuse; they never silently score unlabeled non-roster faces as
-    false positives. Identification and caption metrics still run.
+    false positives. Caption metrics still run; strict identification refuses
+    GT boxes without human-adjudicated lineage.
     Face-bakeoff scoring (``score_face_run_record``) raises instead.
     """
     # identity_names lives in this module (VLM6-RH-07) — no lazy cli import.
     _validate_record_kind(run_record)
+    lineage_error = None
     if run_manifest is not None:
         for entry_index, entry in enumerate(manifest_entries):
             for box_index, box in enumerate(entry.get("face_boxes") or []):
                 if not has_human_adjudicated_gt_lineage(box):
-                    raise ManifestError(
+                    lineage_error = ManifestError(
                         "strict detection scoring requires human-adjudicated lineage on every GT box "
                         f"(entry_index={entry_index}, box_index={box_index})",
                         invariant=ScoreInvariant.DETECTION_REQUIRES_HUMAN_ADJUDICATED_GT_LINEAGE,
                         entry_index=entry_index,
                         entry_path=str(entry.get("path", "")),
                     )
+                    break
+            if lineage_error is not None:
+                break
     eval_mode = str(run_record["provenance"].get("eval_mode", "standard"))
     if eval_mode not in EVAL_MODES:
         raise ReportError(f"unknown eval_mode {eval_mode!r} in run-record provenance; expected one of {EVAL_MODES}")
     entries = _entry_index(manifest_entries)
+    # Provenance for this score only includes joined items; unknown media is
+    # reported below as a named failure, not as missing model metadata.
+    scored_items = [item for item in run_record["items"] if int(item["media_id"]) in entries]
+    model_provenance = _model_provenance(
+        scored_items,
+        run_record["provenance"],
+    )
     roster = _corpus_roster(manifest_entries, manifest_roster)
     caption_scores: list[CaptionScores] = []
     long_scores: list[CaptionScores] = []
@@ -2479,6 +2594,8 @@ def score_run_record(
                     det = None
                     detection_invariant = DETECTION_EMPTY_OBSERVATIONS_INVARIANT
                 else:
+                    if lineage_error is not None:
+                        raise lineage_error
                     if run_manifest is not None:
                         det = detection_pr_strict(
                             detections,
@@ -2500,9 +2617,15 @@ def score_run_record(
     # Uses positional_items (face_boxes L→R labeled order), not alphabetical
     # present_identities (FL30A-GATE-01). Independent of the boxed-GT refusal
     # below — its own evaluable/status/vacuity_signal covers missing face_boxes.
-    positional = positional_identification(positional_items)
+    positional = positional_identification([] if lineage_error is not None else positional_items)
+    if lineage_error is not None:
+        # No legacy GT box may contribute to the positional gate (PROV-01).
+        positional = replace(positional, vacuity_signal=lineage_error.invariant)
 
-    if not identification_entries:
+    if lineage_error is not None:
+        ident = None
+        identification_invariant = lineage_error.invariant
+    elif not identification_entries:
         ident = None
         identification_invariant = IDENTIFICATION_EMPTY_OBSERVATIONS_INVARIANT
     else:
@@ -2569,7 +2692,7 @@ def score_run_record(
         "manifest_matches_fetch": (
             None if score_manifest_sha256 is None else score_manifest_sha256 == fetch_provenance.get("manifest_sha256")
         ),
-        "model": _model_provenance(run_record["items"]),
+        "model": model_provenance,
         # Recompute against the manifest actually scored. Fetch-time metadata
         # may describe a different revision; live reports must expose the
         # observed metric backing for this score (AUDIT-07 / EVAL-23).
@@ -2717,6 +2840,8 @@ def score_run_record(
                 {
                     "refused": True,
                     "invariant": detection_invariant,
+                    **({"refusal_invariants": [detection_invariant, lineage_error.invariant]}
+                       if lineage_error is not None else {}),
                     "precision": None,
                     "recall": None,
                     "tp": None,
@@ -2731,7 +2856,7 @@ def score_run_record(
                     "fn": det.false_negatives,
                 }
             ),
-            # A-02 / VLM6-B-10: "positional" is always computed — it has its own
+            # A-02 / VLM6-B-10: "positional" always publishes its own
             # evaluable/status/vacuity_signal/sampling_frame vacuity contract and
             # is independent of the boxed-GT refusal that can null out set-based
             # identification below (EVAL-23: consumers must not treat
@@ -3054,14 +3179,18 @@ def _markdown(scored: dict[str, Any]) -> str:
     cap = scored["caption"]
     det = scored["faces"]["detection"]
     ident = scored["faces"]["identification"]
-    adapters = ", ".join(model.get("adapters", [])) or "unknown"
-    model_ids = ", ".join(model.get("model_ids", [])) or "unknown"
+    def _format_model_stamp(value: Any) -> str:
+        return "unknown" if value is None else str(value)
+
+    adapters = ", ".join(_format_model_stamp(value) for value in model.get("adapters", [])) or "unknown"
+    model_ids = ", ".join(_format_model_stamp(value) for value in model.get("model_ids", [])) or "unknown"
+    model_versions = ", ".join(_format_model_stamp(value) for value in model.get("model_versions", [])) or "unknown"
     lines = [
         "# Caption + Face Eval Report",
         "",
         f"- schema: `{scored['schema']}` kind: `{scored.get('kind', 'report')}`",
         f"- adapter(s): `{adapters}` model(s): `{model_ids}` version(s): "
-        f"`{', '.join(model.get('model_versions', [])) or 'unknown'}`",
+        f"`{model_versions}`",
         f"- head_sha: `{_fmt_prov(prov.get('head_sha'))}`",
         f"- base_url: {_fmt_prov(prov.get('base_url'))}",
         f"- fetch manifest_sha256: `{_fmt_prov(prov.get('manifest_sha256'))}`",
@@ -3072,6 +3201,12 @@ def _markdown(scored: dict[str, Any]) -> str:
     ]
     # RF-15: low-sample / chance-floor caveats must be operator-visible, not
     # source-comment-only.
+    if model.get("attribution", {}).get("status") == "unattributed":
+        missing = ", ".join(model["attribution"]["missing_dimensions"])
+        lines.append(
+            f"- **unattributed aggregate metrics**: missing {missing} "
+            "(diagnostic only; report is not adoption-ready)"
+        )
     if prov.get("low_sample_warning"):
         lines.append(f"- ⚠️ **low_sample_warning**: {_fmt_prov(prov.get('low_sample_warning'))}")
     if prov.get("quality_floor_caveat"):
@@ -3301,7 +3436,8 @@ def _markdown(scored: dict[str, Any]) -> str:
         "## Face detection (identity-agnostic)",
         "",
         (
-            f"- REFUSED ({det.get('invariant')}): {refusal_explanation(det.get('invariant'))}"
+            f"- REFUSED ({', '.join(det.get('refusal_invariants') or [det.get('invariant')])}): "
+            f"{refusal_explanation(det.get('invariant'))}"
             if det.get("refused")
             else (
                 f"- precision: {_fmt(det['precision'])} recall: {_fmt(det['recall'])} "

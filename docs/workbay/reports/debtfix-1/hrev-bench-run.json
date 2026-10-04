@@ -1,0 +1,73 @@
+{
+  "lane": "hrev-bench-run",
+  "base": "57eb151417a52df980219cc5faac0338f7ecdcb3",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal scripts/bench/tests/test_driver_export_skip.py scripts/bench/tests/test_driver_metadata_only_env.py scripts/bench/tests/test_preflight.py scripts/bench/tests/test_resume.py scripts/bench/tests/test_e2e_frame.py scripts/bench/tests/test_e2e_mocked.py",
+      "result": "fail",
+      "detail": "uv could not remove the shared alembic executable: Read-only file system (os error 30); retried with --no-sync per lane guidance."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal scripts/bench/tests/test_driver_export_skip.py scripts/bench/tests/test_driver_metadata_only_env.py scripts/bench/tests/test_preflight.py scripts/bench/tests/test_resume.py scripts/bench/tests/test_e2e_frame.py scripts/bench/tests/test_e2e_mocked.py",
+      "result": "pass",
+      "detail": "72 passed, 67 warnings in 10.69s."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q recognition/tests/unit/test_health_numeric_runtime_fingerprint.py -k health_detail_publishes_every_numeric_runtime_version_and_token",
+      "result": "pass",
+      "detail": "1 passed, 2 deselected; producer assertion covers all runtime fields and comparison_token."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 17055,
+      "finding_id": "FX3PRO-d55e7347a8878e09-H-29d8072f50f61d7134a3fe0c",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/application/health.py:162-174 - publishes the fingerprint via `detail = f\"{result.detail}; numeric_runtime_fingerprint={encoded}\"`; apps/prototype-description-service/api/main.py:988-995 returns `detail: mc_check.detail`. The health unit test asserts all fields including comparison_token; preflight requires them at apps/prototype-description-service/scripts/bench/preflight.py:330-346.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_health_numeric_runtime_fingerprint.py::test_health_detail_publishes_every_numeric_runtime_version_and_token"
+    },
+    {
+      "db_id": 17014,
+      "finding_id": "FXBSE-cf576f32e74a83ad-H-a970f3f81117365d833e763c",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/bench/preflight.py:140-143 - `if enforce_freshness and now - parsed_at.astimezone(UTC) > PRE_RUN_RESET_EVIDENCE_MAX_AGE` rejects stale timestamps; apps/prototype-description-service/scripts/bench/tests/test_preflight.py::test_pre_run_reset_evidence_rejects_stale_timestamp asserts pre_run_reset_unverified.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_preflight.py::test_pre_run_reset_evidence_rejects_stale_timestamp"
+    },
+    {
+      "db_id": 16834,
+      "finding_id": "DADJ-6394",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "apps/prototype-description-service/scripts/bench/driver.py:230-235 passes pair.job_poll_timeout_sec as job_poll_timeout_s; apps/prototype-description-service/scripts/eval_harness/remote_client.py:233-236 uses `math.ceil(self._job_poll_timeout_s / self._poll_interval)` under a monotonic deadline. apps/prototype-description-service/scripts/bench/tests/test_resume.py::test_wait_job_obeys_total_budget_separate_from_request_timeout uses 25ms and asserts fewer than 60 polls, so it still passes if scaling is removed; no assertion covers the >60-poll boundary for the configured 600s case.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 17015,
+      "finding_id": "FXBSE-cf576f32e74a83ad-M-14ab826be73e6a67dfc77761",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "apps/prototype-description-service/scripts/bench/README.md:29-50 - says `Before every run` to perform the tenant reset and `point ACX_BENCH_PRE_RUN_RESET_EVIDENCE_FILE at that file`, then gives the per-stack JSON schema, freshness, reuse, and resume rules. The lane tests do not assert these instructions, so removing the documentation would not make a test go red.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 17016,
+      "finding_id": "FXBSE-cf576f32e74a83ad-M-af63659b43368a3e16fb5abe",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/bench/driver.py:439-451 says `This gate is independent of the optional health preflight switch` and loads or validates evidence before that branch; apps/prototype-description-service/scripts/bench/tests/test_preflight.py::test_run_pair_refuses_without_reset_and_empty_state_evidence[skipped_preflight] asserts the skip path raises pre_run_reset_unverified before run_leg.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_preflight.py::test_run_pair_refuses_without_reset_and_empty_state_evidence[skipped_preflight]"
+    },
+    {
+      "db_id": 17026,
+      "finding_id": "FXBSE2-coord-M-resume-evidence-refusal",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/bench/driver.py:442-457 detects the existing run and validates with `enforce_freshness=not is_resume`, then passes current_run_path so its own digest is allowed. apps/prototype-description-service/scripts/bench/tests/test_preflight.py::test_run_pair_resumes_same_reset_evidence_after_age_bound advances time past the bound and asserts the digest and evidence are preserved.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_preflight.py::test_run_pair_resumes_same_reset_evidence_after_age_bound"
+    }
+  ],
+  "new_findings": [],
+  "summary": "The producer, freshness gate, preflight-independent reset gate, and same-run resume fixes hold. Poll-cap scaling and the reset runbook correction are present but lack regression assertions. The selected bench suite passed (72 tests); the health producer assertion passed (1 test)."
+}

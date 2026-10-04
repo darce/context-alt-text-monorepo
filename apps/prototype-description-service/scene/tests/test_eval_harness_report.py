@@ -39,6 +39,15 @@ from scripts.eval_harness.report import (
 from scripts.eval_harness.schema import DocKind
 
 
+_TEST_MODEL_STAMPS = {
+    "adapter": "seeded",
+    "model_id": "seeded-fixtures",
+    "model_version": "1",
+    "prompt_version": "v1",
+    "prompt_sha256": "f" * 64,
+}
+
+
 def _run_record() -> dict:
     return {
         "schema": "acx-eval/v1",
@@ -56,9 +65,7 @@ def _run_record() -> dict:
                 "describe": {
                     "alt_text_draft": "Alice Example relaxes by a pool.",
                     "visual_facts": {"caption": "a person by a pool", "objects": ["pool", "person"]},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 "identities": [
@@ -77,9 +84,7 @@ def _run_record() -> dict:
                 "describe": {
                     "alt_text_draft": "A man on a beach.",
                     "visual_facts": {"caption": "a man on a beach", "objects": ["beach"]},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": True,
                 },
                 "identities": [
@@ -295,7 +300,81 @@ def test_model_provenance_surfaced():  # HARM-01
     assert model["adapters"] == ["seeded"]
     assert model["model_ids"] == ["seeded-fixtures"]
     assert model["model_versions"] == ["1"]
+    assert model["prompt_versions"] == ["v1"]
+    assert model["prompt_sha256s"] == ["f" * 64]
+    assert "attribution" not in model
     assert "seeded" in md and "NOT a caption-model baseline" in md
+
+
+@pytest.mark.parametrize("stamp_key", ["adapter", "model_id", "model_version"])
+def test_markdown_renders_null_model_stamp_without_changing_json(stamp_key):
+    record = _run_record()
+    for item in record["items"]:
+        if not item.get("error"):
+            item["describe"][stamp_key] = None
+
+    json_doc, md = build_reports(record, _manifest_entries())
+    output_key = {
+        "adapter": "adapters",
+        "model_id": "model_ids",
+        "model_version": "model_versions",
+    }[stamp_key]
+    assert json.loads(json_doc)["provenance"]["model"][output_key] == [None]
+    expected = {
+        "adapter": "adapter(s): `unknown`",
+        "model_id": "model(s): `unknown`",
+        "model_version": "version(s): `unknown`",
+    }[stamp_key]
+    assert expected in md
+
+
+def test_model_provenance_marks_complete_run_without_any_stamps_unattributed():
+    record = _run_record()
+    model_stamp_keys = (
+        "adapter",
+        "model_id",
+        "model_version",
+        "model_revision",
+        "seed",
+        "prompt_variant",
+        "prompt_version",
+        "prompt_sha256",
+        "task_version",
+        "decoding_contract",
+    )
+    for item in record["items"]:
+        if item.get("error"):
+            item["error"] = None
+            item["describe"] = {
+                "alt_text_draft": "A glacier under a clear sky.",
+                "visual_facts": {"caption": "a glacier under a clear sky", "objects": ["glacier"]},
+            }
+        for key in model_stamp_keys:
+            item["describe"].pop(key, None)
+
+    json_doc, markdown = build_reports(record, _manifest_entries())
+    scored = json.loads(json_doc)
+    assert scored["counts"]["scored"] == 3
+    assert scored["provenance"]["model"]["attribution"] == {
+        "status": "unattributed",
+        "missing_dimensions": ["adapter", "model", "prompt identity"],
+    }
+    assert "unattributed aggregate metrics**: missing adapter, model, prompt identity" in markdown
+
+
+@pytest.mark.parametrize(
+    ("stamp_key", "run_value", "item_value"),
+    [("seed", 17, 42), ("prompt_variant", "baseline", "variant-a")],
+)
+def test_model_provenance_rejects_item_stamp_conflicting_with_run(stamp_key, run_value, item_value):
+    record = _run_record()
+    record["provenance"][stamp_key] = run_value
+    for item in record["items"]:
+        if not item.get("error"):
+            item["describe"][stamp_key] = item_value
+
+    with pytest.raises(ReportError, match=stamp_key):
+        score_run_record(record, _manifest_entries())
 
 
 def test_cache_hit_reads_contract_cached_field():  # HARM-02
@@ -321,7 +400,11 @@ def test_detection_uses_face_count_and_counts_stranger_true_rejection():  # S3-0
             {  # group photo: 1 roster person correctly named + 2 strangers, no wrong name
                 "media_id": 1,
                 "path": "mock_images/group.jpg",
-                "describe": {"alt_text_draft": "Muted and friends.", "visual_facts": {"objects": []}},
+                "describe": {
+                    "alt_text_draft": "Muted and friends.",
+                    "visual_facts": {"objects": []},
+                    **_TEST_MODEL_STAMPS,
+                },
                 "identities": [
                     {
                         "name": "Muted Yarrow",
@@ -656,9 +739,7 @@ def _audience_fixtures() -> tuple[dict, list[dict]]:
                 "describe": {
                     "alt_text_draft": f"{_PUBLIC_NAME} at a podium.",
                     "visual_facts": {"objects": ["podium"]},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 "identities": [
@@ -677,9 +758,7 @@ def _audience_fixtures() -> tuple[dict, list[dict]]:
                 "describe": {
                     "alt_text_draft": f"{_LOCAL_NAME} at a party.",
                     "visual_facts": {"objects": ["cake"]},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 # Wrong name asserted — must never leak into a public report.
@@ -771,6 +850,8 @@ def test_public_fail_closed_missing_entry():
     # Unknown media stays in failures so the public artifact fails loud.
     assert any(f.get("media_id") == 999 for f in scored["failures"])
     assert scored["counts"]["failed"] >= 1
+    # Its absent item-level model stamps do not block the known run provenance.
+    assert scored["provenance"]["model"]["model_ids"] == ["seeded-fixtures"]
 
 
 def test_public_fail_closed_missing_provenance():
@@ -971,7 +1052,11 @@ def test_overshoot_markdown_names_fp() -> None:
             {
                 "media_id": 1,
                 "path": "mock_images/alice.jpg",
-                "describe": {"alt_text_draft": "Alice Example.", "visual_facts": {"objects": []}},
+                "describe": {
+                    "alt_text_draft": "Alice Example.",
+                    "visual_facts": {"objects": []},
+                    **_TEST_MODEL_STAMPS,
+                },
                 "identities": [
                     {
                         "name": "Alice Example",
@@ -2209,9 +2294,7 @@ def _identity_scoring_pair() -> tuple[dict, list[dict]]:
                 "describe": {
                     "alt_text_draft": "Alice Example relaxes by a pool.",
                     "visual_facts": {"caption": "a person by a pool", "objects": ["pool", "person"]},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 "identities": [_dict_identity("Alice Example", x=10.0)],
@@ -2224,9 +2307,7 @@ def _identity_scoring_pair() -> tuple[dict, list[dict]]:
                 "describe": {
                     "alt_text_draft": "A man on a beach.",
                     "visual_facts": {"caption": "a man on a beach", "objects": ["beach"]},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": True,
                 },
                 "identities": [_dict_identity("Alice Example", x=80.0)],  # wrong name: Bob labeled
@@ -2380,9 +2461,7 @@ def test_positional_alphabetical_present_identities_scored_via_face_boxes():  # 
                 "describe": {
                     "alt_text_draft": "Three people stand together.",
                     "visual_facts": {"caption": "group", "objects": []},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 # Model predicts true L→R: Cam, Amy, Zoe.
@@ -2440,9 +2519,7 @@ def test_positional_genuine_swap_still_counted_with_face_boxes():  # FL30A-GATE-
                 "describe": {
                     "alt_text_draft": "Three people stand together.",
                     "visual_facts": {"caption": "group", "objects": []},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 # Predicted left/mid swap relative to boxes (Cam, Amy, Zoe L→R).
@@ -2949,7 +3026,9 @@ def test_public_provenance_allow_list_drops_unknown_keys():  # VLM6-R3-01 / R4-0
         "sha256": "a" * 64,
     }
     record["provenance"]["totally_unknown_future_key"] = "should-never-publish"
-    record["items"][0]["describe"]["model_id"] = "/Users/daniel/models/Qwen3-VL-27B-Q4_K_M.gguf"
+    model_id = "/Users/daniel/models/Qwen3-VL-27B-Q4_K_M.gguf"
+    for item in record["items"]:
+        item["describe"]["model_id"] = model_id
     json_doc, md = build_reports(record, entries, audience=Audience.PUBLIC)
     scored = json.loads(json_doc)
     prov = scored["provenance"]
@@ -2970,6 +3049,17 @@ def test_public_provenance_allow_list_drops_unknown_keys():  # VLM6-R3-01 / R4-0
     # Allowed keys still present.
     assert "head_sha" in prov
     assert "manifest_sha256" in prov
+    # A homogeneous absolute weight path is reduced to its public-safe basename
+    # at the provenance boundary.
+    assert prov["model"]["model_ids"] == ["Qwen3-VL-27B-Q4_K_M.gguf"]
+
+
+def test_public_refuses_mixed_model_ids():
+    record, entries = _audience_fixtures()
+    record["items"][1]["describe"]["model_id"] = "/models/other-model.gguf"
+
+    with pytest.raises(ReportError, match="mixes model_id"):
+        build_reports(record, entries, audience=Audience.PUBLIC)
 
 
 def test_public_validates_record_kind_before_audience_branch():  # VLM6-R3-04
@@ -3081,6 +3171,7 @@ def test_score_run_record_positional_uses_centre_x_not_corner_x():  # VLM6-B-03
                 "describe": {
                     "alt_text_draft": "Narrow Left stands left of Wide Right.",
                     "visual_facts": {"objects": []},
+                    **_TEST_MODEL_STAMPS,
                 },
                 # Corner-x order (Wide first) — centre-x order is Narrow first.
                 "identities": [
@@ -3163,6 +3254,7 @@ def test_score_run_record_positional_vacuity_signal_on_real_golden():  # VLM6-B-
                 "describe": {
                     "alt_text_draft": cap,
                     "visual_facts": {"objects": []},
+                    **_TEST_MODEL_STAMPS,
                 },
                 "identities": [
                     {
@@ -3228,6 +3320,7 @@ def _two_image_measurable_pass_pair() -> tuple[dict, list[dict]]:
                 "describe": {
                     "alt_text_draft": f"{left} stands left of {right} by a {scene}.",
                     "visual_facts": {"objects": []},
+                    **_TEST_MODEL_STAMPS,
                 },
                 "identities": [
                     {
@@ -3412,6 +3505,7 @@ def test_score_verdict_not_ready_when_positional_and_placement_vacuous():  # VLM
                 "describe": {
                     "alt_text_draft": "Alice Example relaxes by a pool.",
                     "visual_facts": {"objects": []},
+                    **_TEST_MODEL_STAMPS,
                 },
                 "identities": [
                     {
@@ -3429,6 +3523,7 @@ def test_score_verdict_not_ready_when_positional_and_placement_vacuous():  # VLM
                 "describe": {
                     "alt_text_draft": "Bob Builder on a beach.",
                     "visual_facts": {"objects": []},
+                    **_TEST_MODEL_STAMPS,
                 },
                 "identities": [
                     {
@@ -3521,6 +3616,7 @@ def test_score_verdict_blocks_pass_on_vacuous_placement_alone():  # VLM6-B-07
                 "describe": {
                     "alt_text_draft": "Alice Example and Bob Builder by a pool.",
                     "visual_facts": {"objects": []},
+                    **_TEST_MODEL_STAMPS,
                 },
                 "identities": [
                     {
@@ -4162,9 +4258,7 @@ def _ordering_disclosure_pair() -> tuple[dict, list[dict]]:
                 "describe": {
                     "alt_text_draft": "Three people stand together.",
                     "visual_facts": {"caption": "people", "objects": []},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 "identities": [
@@ -4184,9 +4278,7 @@ def _ordering_disclosure_pair() -> tuple[dict, list[dict]]:
                 "describe": {
                     "alt_text_draft": "Two people stand together.",
                     "visual_facts": {"caption": "people", "objects": []},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 "identities": [
@@ -4460,7 +4552,12 @@ def test_face_identity_ordering_matches_caption_on_same_corpus():  # wG1
             "media_id": e["media_id"],
             "path": e["path"],
             "model_id": "x",
-            "describe": {"alt_text_draft": "placeholder"},
+            "describe": {
+                "alt_text_draft": "placeholder",
+                "adapter": "seeded",
+                "model_id": "x",
+                "model_version": "1",
+            },
             "identities": [],
             "face_count": e["face_count"],
             "identity_ordering": "positional",
@@ -5077,9 +5174,7 @@ def test_order_degraded_excluded_from_positional_scoring():  # RA-01
                 "describe": {
                     "alt_text_draft": "Alice and Bob stand together.",
                     "visual_facts": {"caption": "people", "objects": []},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 "identities": [
@@ -5106,9 +5201,7 @@ def test_order_degraded_excluded_from_positional_scoring():  # RA-01
                 "describe": {
                     "alt_text_draft": "Carol stands alone.",
                     "visual_facts": {"caption": "person", "objects": []},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 "identities": [
@@ -5187,9 +5280,7 @@ def test_empty_string_y_normalized_before_labeled_order_in_report():  # RA-04 bo
                 "describe": {
                     "alt_text_draft": "A person.",
                     "visual_facts": {"caption": "person", "objects": []},
-                    "adapter": "seeded",
-                    "model_id": "seeded-fixtures",
-                    "model_version": "1",
+                    **_TEST_MODEL_STAMPS,
                     "cached": False,
                 },
                 "identities": [

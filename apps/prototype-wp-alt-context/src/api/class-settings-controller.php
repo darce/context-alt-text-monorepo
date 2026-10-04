@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace AltContext\Api;
 
 require_once __DIR__ . '/class-alt-style.php';
+require_once __DIR__ . '/class-context-category-policy.php';
 require_once __DIR__ . '/../settings/class-recognition-policy.php';
 require_once __DIR__ . '/class-probe-outcome.php';
 require_once __DIR__ . '/class-abstract-recognition-proxy-controller.php';
 require_once __DIR__ . '/class-recognition-endpoint-resolver.php';
+require_once __DIR__ . '/class-recognition-api-key-store.php';
 require_once __DIR__ . '/class-tenant-identity.php';
 require_once __DIR__ . '/services/class-description-budget-service.php';
 require_once __DIR__ . '/services/class-tenant-local-rekey-service.php';
@@ -27,6 +29,7 @@ use WP_REST_Response;
 use function apply_filters;
 use function array_key_exists;
 use function current_user_can;
+use function delete_option;
 use function defined;
 use function get_option;
 use function in_array;
@@ -86,6 +89,9 @@ class SettingsController {
 	) {
 		$this->endpoint_resolver          = $endpoint_resolver ?? new RecognitionEndpointResolver();
 		$this->description_budget_service = $description_budget_service ?? new DescriptionBudgetService();
+		// The proxy controllers resolve keys through this shared filter, so make
+		// the environment fallback available outside the Settings REST endpoint too.
+		add_filter( 'acx_recognition_api_key', array( $this, 'provide_environment_api_key' ), PHP_INT_MAX, 1 );
 	}
 
 	public function register_routes(): void {
@@ -115,17 +121,81 @@ class SettingsController {
 				'permission_callback' => array( $this, 'can_manage_settings' ),
 			)
 		);
+
+		// Rate-limit the spend-bearing routes before they enter describe/analyze
+		// services. The shared counter prevents switching endpoints to bypass a
+		// per-user burst limit.
+		add_filter( 'rest_pre_dispatch', array( $this, 'rate_limit_recognition_requests' ), 10, 3 );
 	}
 
 	public function can_manage_settings(): bool {
 		return current_user_can( 'manage_options' );
 	}
 
+	/**
+	 * Provide the deploy-time environment key to all recognition proxy callers.
+	 *
+	 * @param mixed $configured Existing key supplied by an earlier filter.
+	 * @return mixed
+	 */
+	public function provide_environment_api_key( $configured ) {
+		$environment = getenv( 'ACX_RECOGNITION_API_KEY' );
+		if ( is_string( $environment ) && '' !== trim( $environment ) ) {
+			return trim( $environment );
+		}
+
+		return $configured;
+	}
+
+	/**
+	 * @param mixed           $pre_dispatch Existing short-circuit result.
+	 * @param mixed           $server        REST server (unused).
+	 * @param WP_REST_Request $request       Current REST request.
+	 * @return mixed
+	 */
+	public function rate_limit_recognition_requests( $pre_dispatch, $server, WP_REST_Request $request ) {
+		if (
+			null !== $pre_dispatch
+			|| 'POST' !== strtoupper( $request->get_method() )
+			|| ! current_user_can( 'manage_options' )
+		) {
+			return $pre_dispatch;
+		}
+
+		$spend_routes = array(
+			'/acx/v1/recognition/describe',
+			'/acx/v1/recognition/analyze',
+			'/acx/v1/recognition/describe/runs',
+		);
+		if ( ! in_array( $request->get_route(), $spend_routes, true ) ) {
+			return $pre_dispatch;
+		}
+
+		$limit = $this->description_budget_service->check_request_rate_limit( (int) get_current_user_id() );
+		if ( $limit['allowed'] ?? false ) {
+			return $pre_dispatch;
+		}
+
+		$data = array(
+			'status' => (int) ( $limit['status'] ?? 429 ),
+		);
+		if ( isset( $limit['retry_after'] ) ) {
+			$data['retry_after'] = (int) $limit['retry_after'];
+		}
+
+		return new WP_Error(
+			(string) ( $limit['code'] ?? 'recognition_rate_limit_exceeded' ),
+			(string) ( $limit['message'] ?? 'Recognition request rate limit exceeded.' ),
+			$data
+		);
+	}
+
 	public function get_settings( WP_REST_Request $request ): WP_REST_Response {
-		$snapshot          = $this->endpoint_resolver->resolve_settings_snapshot();
-		$key_resolution    = $this->resolve_key_source();
-		$tenant_resolution = TenantIdentity::resolve();
-		$naming_resolution = $this->resolve_naming_agreement();
+		$snapshot           = $this->endpoint_resolver->resolve_settings_snapshot();
+		$key_resolution     = $this->resolve_key_source();
+		$tenant_resolution  = TenantIdentity::resolve();
+		$naming_resolution  = $this->resolve_naming_agreement();
+		$context_categories = ContextCategoryPolicy::resolve();
 
 		return new WP_REST_Response(
 			array(
@@ -142,10 +212,18 @@ class SettingsController {
 				'api_key_set'               => '' !== $key_resolution['value'],
 				'api_key_last4'             => $this->mask_key( $key_resolution['value'] ),
 				'key_source'                => $key_resolution['source'],
+				'api_key_storage_notice'    => match ( $key_resolution['source'] ) {
+					'option' => 'This key is stored encrypted with a key derived from the site\'s auth salt. '
+						. 'Prefer the ACX_RECOGNITION_API_KEY PHP constant or environment variable, or the acx_recognition_api_key filter.',
+					'unreadable' => 'The stored key cannot be read, for example after the site salts changed, and must be re-entered.',
+					default => null,
+				},
 				'tenant_id'                 => $tenant_resolution['value'],
 				'tenant_id_source'          => $tenant_resolution['source'],
 				'tenant_paired'             => TenantIdentity::is_paired(),
 				'alt_style'                 => AltStyle::current(),
+				'context_categories'        => $context_categories['categories'],
+				'context_categories_error'  => $context_categories['error'],
 				'recognition_enabled'       => RecognitionPolicy::enabled(),
 				'allow_person_names'        => $naming_resolution['value'],
 				'allow_person_names_error'  => $naming_resolution['error'],
@@ -192,11 +270,35 @@ class SettingsController {
 
 		if ( isset( $body['api_key'] ) && is_string( $body['api_key'] ) ) {
 			$key = trim( $body['api_key'] );
-			update_option( 'acx_recognition_api_key', $key );
-			if ( $this->option_matches_intended( 'acx_recognition_api_key', $key ) ) {
-				$saved[] = 'api_key';
-			} else {
+			$key_resolution = $this->resolve_key_source();
+			if ( in_array( $key_resolution['source'], array( 'constant', 'filter' ), true ) ) {
+				// Do not create a plaintext shadow copy of a deployment-managed key.
 				$failed[] = 'api_key';
+			} else {
+				if ( ! RecognitionApiKeyStore::is_available() ) {
+					return new WP_Error(
+						'api_key_encryption_unavailable',
+						'The key was not saved; use the ACX_RECOGNITION_API_KEY constant or environment variable.',
+						array( 'status' => 500 )
+					);
+				}
+
+				try {
+					$encrypted_key = RecognitionApiKeyStore::encrypt( $key );
+				} catch ( \Throwable $error ) {
+					return new WP_Error(
+						'api_key_encryption_unavailable',
+						'The key was not saved; use the ACX_RECOGNITION_API_KEY constant or environment variable.',
+						array( 'status' => 500 )
+					);
+				}
+
+				update_option( RecognitionApiKeyStore::OPTION_NAME, $encrypted_key );
+				if ( $this->option_matches_intended( RecognitionApiKeyStore::OPTION_NAME, $key ) ) {
+					$saved[] = 'api_key';
+				} else {
+					$failed[] = 'api_key';
+				}
 			}
 		}
 
@@ -246,6 +348,24 @@ class SettingsController {
 			}
 
 			$allow_person_names = $body['allow_person_names'];
+			// Remove any earlier opt-in before contacting the service, so a failed
+			// request or concurrent describe cannot keep sending names.
+			delete_option( 'acx_description_allow_person_names' );
+			delete_option( 'acx_description_allow_person_names_tenant_id' );
+			$stored_policy = get_option( 'acx_description_allow_person_names', false );
+			if (
+				true === $stored_policy
+				|| 1 === $stored_policy
+				|| '1' === $stored_policy
+				|| 'true' === $stored_policy
+			) {
+				return new WP_Error(
+					'allow_person_names_cache_failed',
+					'Could not safely clear the local person-naming preference.',
+					array( 'status' => 500 )
+				);
+			}
+
 			$sync_response      = $this->request_naming_agreement( 'PUT', $allow_person_names );
 			if ( is_wp_error( $sync_response ) || $sync_response['enabled'] !== $allow_person_names ) {
 				$message = is_wp_error( $sync_response )
@@ -257,8 +377,43 @@ class SettingsController {
 					array( 'status' => 502 )
 				);
 			}
+			// Cache only an agreement confirmed by the authoritative service. The
+			// describe request uses this tenant-scoped value before sending names.
+			if ( $allow_person_names ) {
+				$tenant_id = TenantIdentity::resolve()['value'];
+				update_option( 'acx_description_allow_person_names', true );
+				update_option( 'acx_description_allow_person_names_tenant_id', $tenant_id );
+				if (
+					! $this->option_matches_intended( 'acx_description_allow_person_names', true )
+					|| ! $this->option_matches_intended( 'acx_description_allow_person_names_tenant_id', $tenant_id )
+				) {
+					return new WP_Error(
+						'allow_person_names_cache_failed',
+						'Could not safely save the local person-naming preference.',
+						array( 'status' => 500 )
+					);
+				}
+			}
 
 			$saved[] = 'allow_person_names';
+		}
+
+		if ( array_key_exists( 'context_categories', $body ) ) {
+			if ( ! ContextCategoryPolicy::is_valid_list( $body['context_categories'] ) ) {
+				return new WP_Error(
+					'invalid_context_categories',
+					'context_categories must be a list of unique values from: attachment, post, taxonomy_terms, product.',
+					array( 'status' => 400 )
+				);
+			}
+
+			$context_categories_to_save = ContextCategoryPolicy::canonical( $body['context_categories'] );
+			update_option( ContextCategoryPolicy::OPTION_NAME, $context_categories_to_save );
+			if ( $this->option_matches_intended( ContextCategoryPolicy::OPTION_NAME, $context_categories_to_save ) ) {
+				$saved[] = 'context_categories';
+			} else {
+				$failed[] = 'context_categories';
+			}
 		}
 
 		if ( isset( $body['description_budget'] ) && is_array( $body['description_budget'] ) ) {
@@ -341,6 +496,9 @@ class SettingsController {
 	private function option_matches_intended( string $option, $intended ): bool {
 		// null default: missing option is distinguishable from stored empty string.
 		$stored = get_option( $option, null );
+		if ( RecognitionApiKeyStore::OPTION_NAME === $option ) {
+			return RecognitionApiKeyStore::decrypt( $stored ) === $intended;
+		}
 		if ( is_int( $intended ) ) {
 			return is_numeric( $stored ) && (int) $stored === $intended;
 		}
@@ -362,7 +520,7 @@ class SettingsController {
 	 */
 	private function get_description_budget_payload(): array {
 		return array(
-			'max_attempts'  => (int) get_option( 'acx_description_budget_max_attempts', -1 ),
+			'max_attempts'  => (int) get_option( 'acx_description_budget_max_attempts', DescriptionBudgetService::DEFAULT_MAX_ATTEMPTS ),
 			'usage'         => $this->description_budget_service->usage_summary(),
 			'recent_errors' => $this->description_budget_service->recent_errors( 5 ),
 		);
@@ -951,17 +1109,23 @@ class SettingsController {
 	 * @return array{value: string, source: string}
 	 */
 	private function resolve_key_source(): array {
-		// E15-12-RR-01: code-managed sources (constant, filter) MUST win over
-		// operator-saved options. The pre-fix order resolved option before
+		// E15-12-RR-01: deployment-managed sources (constant, environment,
+		// filter) MUST win over operator-saved options. The pre-fix order resolved option before
 		// filter, mirroring the BR-07 URL bug: a stale saved key kept routing
 		// recognition auth even after an operator wired a filter to inject a
 		// deploy-time key, and the key field surfaced as option-owned/editable
 		// instead of code-managed/read-only. Precedence is now: constant ->
-		// filter -> option -> default, matching resolve_url_source() and the
-		// documented selector contract.
+		// environment -> filter -> option -> default. Environment variables are
+		// grouped under the existing 'constant' selector value to preserve the
+		// Settings API's source contract for deployment-managed keys.
 		$constant = $this->get_constant_value( 'ACX_RECOGNITION_API_KEY' );
 		if ( '' !== $constant ) {
 			return array( 'value' => $constant, 'source' => 'constant' );
+		}
+
+		$environment = getenv( 'ACX_RECOGNITION_API_KEY' );
+		if ( is_string( $environment ) && '' !== trim( $environment ) ) {
+			return array( 'value' => trim( $environment ), 'source' => 'constant' );
 		}
 
 		$filter = trim( (string) apply_filters( 'acx_recognition_api_key', '' ) );
@@ -969,9 +1133,15 @@ class SettingsController {
 			return array( 'value' => $filter, 'source' => 'filter' );
 		}
 
-		$option = trim( (string) get_option( 'acx_recognition_api_key', '' ) );
-		if ( '' !== $option ) {
-			return array( 'value' => $option, 'source' => 'option' );
+		$stored_option = get_option( RecognitionApiKeyStore::OPTION_NAME, '' );
+		if ( null !== $stored_option && false !== $stored_option && '' !== $stored_option ) {
+			$option = RecognitionApiKeyStore::decrypt( $stored_option );
+			if ( null === $option ) {
+				return array( 'value' => '', 'source' => 'unreadable' );
+			}
+			if ( '' !== trim( $option ) ) {
+				return array( 'value' => $option, 'source' => 'option' );
+			}
 		}
 
 		return array( 'value' => '', 'source' => 'default' );

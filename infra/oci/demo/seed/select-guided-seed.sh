@@ -30,38 +30,75 @@ SRC="${SRC:-$REPO_ROOT/apps/prototype-wp-alt-context/js/admin/assets/guided}"
 OUT="${OUT:-$SEED_DIR/media}"
 MANIFEST="${MANIFEST:-$SEED_DIR/guided-manifest.txt}"
 README="${README:-$SEED_DIR/README.md}"
+RIGHTS="${RIGHTS:-$SEED_DIR/guided-rights.tsv}"
 ADDED="${ADDED:-2026-09-08}"
 
-# source_file|target_slug|subject label|source / licence  (one row per bundled asset;
+# Match import.sh's Gregorian date validation before creating or changing outputs.
+if [[ ! "$ADDED" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  echo "ERROR: invalid ADDED date '$ADDED' (expected a real Gregorian YYYY-MM-DD)" >&2
+  exit 2
+fi
+added_year=$((10#${ADDED:0:4}))
+added_month=$((10#${ADDED:5:2}))
+added_day=$((10#${ADDED:8:2}))
+case "$added_month" in
+  1|3|5|7|8|10|12) added_days_in_month=31 ;;
+  4|6|9|11) added_days_in_month=30 ;;
+  2)
+    if ((added_year % 400 == 0 || (added_year % 4 == 0 && added_year % 100 != 0))); then
+      added_days_in_month=29
+    else
+      added_days_in_month=28
+    fi
+    ;;
+  *) added_days_in_month=0 ;;
+esac
+if ((added_month < 1 || added_month > 12 || added_day < 1 || added_day > added_days_in_month)); then
+  echo "ERROR: invalid ADDED date '$ADDED' (expected a real Gregorian YYYY-MM-DD)" >&2
+  exit 2
+fi
+
+# source_file|target_slug|subject label|source / licence|basis|notice (one row per bundled asset;
 # mirrors js/admin/assets/guided/CREDITS.md — keep the two in sync)
-ROWS='guided-katy-perry-2026.jpg|katy_perry|Katy Perry|Wikimedia Commons, Justin Higuchi — CC BY 4.0
-guided-katy-perry-2019.jpg|katy_perry|Katy Perry|Wikimedia Commons, Glenn Francis (Toglenn) — CC BY-SA 4.0
-guided-katy-perry-2016.jpg|katy_perry|Katy Perry|Wikimedia Commons, Voice of America — public domain
-guided-justin-trudeau-2025.jpg|justin_trudeau|Justin Trudeau|Wikimedia Commons, European Commission — EU reuse licence (Commission Decision 2011/833/EU)
-guided-justin-trudeau-2023.jpg|justin_trudeau|Justin Trudeau|Wikimedia Commons, Lea-Kim Chateauneuf — CC BY-SA 4.0
-guided-press-tribeca-2026.jpg|tribeca_press|Justin Trudeau and Katy Perry (press photo, walkthrough subject)|Wikimedia Commons, Colleen Sturtevant — CC BY-SA 4.0
-guided-press-coachella-2026.webp|coachella_press|Justin Trudeau and Katy Perry (press photo, walkthrough subject)|Katy Perry'\''s Instagram account — no formal reuse licence recorded'
+ROWS='guided-katy-perry-2026.jpg|katy_perry|Katy Perry|Wikimedia Commons, Justin Higuchi — CC BY 4.0|cc_by|attribution_required
+guided-katy-perry-2019.jpg|katy_perry|Katy Perry|Wikimedia Commons, Glenn Francis (Toglenn) — CC BY-SA 4.0|cc_by_sa|attribution_required
+guided-katy-perry-2016.jpg|katy_perry|Katy Perry|Wikimedia Commons, Voice of America — public domain|public_domain|none
+guided-justin-trudeau-2025.jpg|justin_trudeau|Justin Trudeau|Wikimedia Commons, European Commission — EU reuse licence (Commission Decision 2011/833/EU)|eu_reuse|attribution_required
+guided-justin-trudeau-2023.jpg|justin_trudeau|Justin Trudeau|Wikimedia Commons, Lea-Kim Chateauneuf — CC BY-SA 4.0|cc_by_sa|attribution_required
+guided-press-tribeca-2026.jpg|tribeca_press|Justin Trudeau and Katy Perry (press photo, walkthrough subject)|Wikimedia Commons, Colleen Sturtevant — CC BY-SA 4.0|cc_by_sa|attribution_required
+guided-press-coachella-2026.webp|coachella_press|Justin Trudeau and Katy Perry (press photo, walkthrough subject)|Katy Perry'\''s Instagram account — no formal reuse licence recorded|unrecorded|takedown_on_request'
 
 [ -d "$SRC" ] || { echo "ERROR: SRC not found: $SRC" >&2; exit 2; }
 
 # Validate every source before touching OUT/MANIFEST/README (all-or-nothing).
 missing=0
-while IFS='|' read -r src _slug _label _lic; do
+while IFS='|' read -r src _slug _label _lic basis notice; do
   [ -n "${src:-}" ] || continue
   if [ ! -f "$SRC/$src" ]; then
-    echo "ERROR: bundled source missing: $SRC/$src" >&2; missing=$((missing + 1)); continue
+    echo "ERROR: bundled source missing: $SRC/$src" >&2; missing=$((missing + 1))
+  else
+    mt=$(file -b --mime-type "$SRC/$src" 2>/dev/null || echo unknown)
+    case "$mt" in
+      image/jpeg|image/webp) ;;
+      *) echo "ERROR: $src is '$mt' by content, not image/jpeg or image/webp" >&2; missing=$((missing + 1)); ;;
+    esac
   fi
-  mt=$(file -b --mime-type "$SRC/$src" 2>/dev/null || echo unknown)
-  case "$mt" in
-    image/jpeg|image/webp) ;;
-    *) echo "ERROR: $src is '$mt' by content, not image/jpeg or image/webp" >&2; missing=$((missing + 1)); ;;
+  case "$basis" in
+    editorial_fair_use|cc_by|cc_by_sa|public_domain|eu_reuse|generated|unrecorded) ;;
+    *) echo "ERROR: unrecognised guided rights basis '$basis' for $src" >&2; missing=$((missing + 1)); ;;
+  esac
+  case "$notice" in
+    takedown_on_request|attribution_required|none) ;;
+    *) echo "ERROR: unrecognised guided rights notice '$notice' for $src" >&2; missing=$((missing + 1)); ;;
   esac
 done <<< "$ROWS"
 [ "$missing" -eq 0 ] || exit 2
 
 mkdir -p "$OUT"
-tmp_rows="$(mktemp)"; tmp_manifest="$(mktemp)"; tmp_readme="$(mktemp)"
-trap 'rm -f "$tmp_rows" "$tmp_manifest" "$tmp_readme"' EXIT
+tmp_rows="$(mktemp)"; tmp_rights_rows="$(mktemp)"; tmp_manifest_rows="$(mktemp)"; tmp_readme="$(mktemp)"
+tmp_manifest="$(mktemp "${MANIFEST}.XXXXXX")"
+tmp_rights="$(mktemp "${RIGHTS}.XXXXXX")"
+trap 'rm -f "$tmp_rows" "$tmp_rights_rows" "$tmp_manifest_rows" "$tmp_manifest" "$tmp_readme" "$tmp_rights"' EXIT
 
 # Remove exactly slug_1..slug_count in OUT. Never glob slug_* (GR-01).
 # Portable: no find(1) (GR-06). Do not swallow rm failures.
@@ -100,7 +137,7 @@ fi
 # Also drop the exact targets we are about to write (manifest missing or counts changed).
 _prev=""
 _n=0
-while IFS='|' read -r _src _slug _label _lic; do
+while IFS='|' read -r _src _slug _label _lic _basis _notice; do
   [ -n "${_src:-}" ] || continue
   if [ "$_slug" != "$_prev" ]; then
     _prev=$_slug
@@ -117,19 +154,29 @@ done <<< "$ROWS"
 
 total=0
 prev=""; n=0
-while IFS='|' read -r src slug label lic; do
+while IFS='|' read -r src slug label lic basis notice; do
   [ -n "${src:-}" ] || continue
   if [ "$slug" != "$prev" ]; then
-    [ -n "$prev" ] && printf '%s %s\n' "$prev" "$n" >> "$tmp_manifest"
+    [ -n "$prev" ] && printf '%s %s\n' "$prev" "$n" >> "$tmp_manifest_rows"
     prev="$slug"; n=0
   fi
   n=$((n + 1)); total=$((total + 1))
   ext=${src##*.}
-  cp "$SRC/$src" "$OUT/${slug}_${n}.${ext}"
+  target="${slug}_${n}.${ext}"
+  cp "$SRC/$src" "$OUT/$target"
   printf '| %s | %s | %s | %s |\n' "${slug}_${n}.${ext}" "$label" "$lic" "$ADDED" >> "$tmp_rows"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$target" "$label" "$basis" "$lic" "$notice" "$ADDED" >> "$tmp_rights_rows"
 done <<< "$ROWS"
-[ -n "$prev" ] && printf '%s %s\n' "$prev" "$n" >> "$tmp_manifest"
-sort "$tmp_manifest" > "$MANIFEST"
+[ -n "$prev" ] && printf '%s %s\n' "$prev" "$n" >> "$tmp_manifest_rows"
+sort "$tmp_manifest_rows" > "$tmp_manifest"
+chmod 0644 "$tmp_manifest"
+mv "$tmp_manifest" "$MANIFEST"
+{
+  printf 'file\tsubject\tbasis\tsource\tnotice\tadded\n'
+  LC_ALL=C sort "$tmp_rights_rows"
+} > "$tmp_rights"
+chmod 0644 "$tmp_rights"
+mv "$tmp_rights" "$RIGHTS"
 
 echo "==> Copied $total guided images into $OUT ($(wc -l < "$MANIFEST" | tr -d ' ') persons in $MANIFEST)"
 
@@ -143,6 +190,7 @@ if [ -f "$README" ] && grep -q 'GUIDED-PROVENANCE:START' "$README" && grep -q 'G
     cat "$tmp_rows"
     tail -n +"$end_line" "$README"
   } > "$tmp_readme"
+  chmod 0644 "$tmp_readme"
   mv "$tmp_readme" "$README"
   echo "==> Regenerated guided provenance table in $README ($total rows)"
 else

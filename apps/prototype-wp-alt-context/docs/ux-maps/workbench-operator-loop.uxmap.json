@@ -135,7 +135,7 @@
           "id": "z-review-suggestions-group-card",
           "label": "Top-of-queue group card + Name this person (NameFaceControl; default also covers an AI-suggested label and the open suggestions disclosure; loading = save in flight; degraded = read-only card; edge_input = missing or uncroppable face image)",
           "role": "ai_review",
-          "states": ["default", "loading", "degraded", "edge_input"]
+          "states": ["default", "loading", "error", "degraded", "edge_input"]
         }
       ]
     },

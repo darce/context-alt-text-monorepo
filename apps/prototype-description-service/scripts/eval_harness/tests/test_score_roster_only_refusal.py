@@ -122,6 +122,15 @@ def _overshoot_record_for(manifest_path: Path, *, n: int = 5) -> dict:
         item["media_id"] = i
         item["path"] = f"mock_images/alice{i}.jpg"
         item["describe"]["alt_text_draft"] = "Alice Example in the foreground by the pool."
+        # Complete producer provenance lets these CLI fixtures reach refusal gates.
+        item["describe"].update(
+            {
+                "adapter": "fixture-adapter",
+                "model_id": "fixture-model",
+                "model_version": "fixture-version",
+                "prompt_version": "fixture-prompt-v1",
+            }
+        )
         items.append(item)
     record = copy.deepcopy(_OVERSHOOT_RECORD)
     record["items"] = items

@@ -26,7 +26,16 @@ LEGAL_ENDPOINTS: frozenset[str] = frozenset(
     for metric in LEGAL_METRICS
     for frame in LEGAL_FRAMES
     for label in LEGAL_LABEL_MAPS
+    # Detection precision/recall do not consume cluster-name mapping. Keep
+    # one canonical label-map spelling for those endpoint identifiers.
+    if not (metric.startswith("detection_") and label == "label_map_optimistic")
 )
+PERMANENTLY_DIRECTIONAL_ENDPOINTS: frozenset[str] = frozenset(
+    endpoint
+    for endpoint in LEGAL_ENDPOINTS
+    if "frame_fir5_native" in endpoint or "label_map_optimistic" in endpoint
+)
+HOLM_FAMILY_ENDPOINTS: frozenset[str] = LEGAL_ENDPOINTS - PERMANENTLY_DIRECTIONAL_ENDPOINTS
 
 ROOT_KEYS = frozenset(
     {
@@ -85,7 +94,7 @@ FIR23_STACK_ALLOWLIST: dict[str, dict[str, Any]] = {
         "role": "face_pipeline_candidate",
         "expected_profile": "face_pipeline",
         "expected_pgvector_dim": 128,
-        "hosts": frozenset({"fir.api.altcontext.com"}),
+        "hosts": frozenset({"fir.dev.api.altcontext.com"}),
     },
 }
 
@@ -188,17 +197,16 @@ def validate_stack_pair_config(pair: StackPairConfig) -> StackPairConfig:
         _validate_endpoints(pair.primary_endpoint, list(pair.secondary_endpoints))
     except (TypeError, ValueError) as exc:
         raise BenchError("config_invalid", "stack-pair endpoint declarations are malformed") from exc
-    if isinstance(pair.head_to_head_delta, bool) or not isinstance(pair.head_to_head_delta, (int, float)):
-        raise BenchError("config_invalid", "head_to_head_delta must be numeric")
-    if not math.isfinite(float(pair.head_to_head_delta)):
-        raise BenchError("config_invalid", "head_to_head_delta must be finite")
+    _validate_bounded_int(pair.wall_clock_timeout_sec, "wall_clock_timeout_sec", 1, 86400)
+    _validate_bounded_int(pair.job_poll_timeout_sec, "job_poll_timeout_sec", 1, 86400)
+    _validate_bounded_int(pair.item_max_attempts, "item_max_attempts", 1, 10)
+    _as_bool(pair.allow_private_source, "allow_private_source")
+    delta = _as_float(pair.head_to_head_delta, "head_to_head_delta")
+    if not 0.0 < delta <= 1.0:
+        raise BenchError("config_invalid", "head_to_head_delta must be in (0.0, 1.0]")
     if isinstance(pair.bootstrap_seed, bool) or not isinstance(pair.bootstrap_seed, int):
         raise BenchError("config_invalid", "bootstrap_seed must be an integer")
     _validate_floor(pair.accepted_set_floor)
-    if isinstance(pair.max_differential_attrition, bool) or not isinstance(
-        pair.max_differential_attrition, (int, float)
-    ):
-        raise BenchError("config_invalid", "max_differential_attrition must be numeric")
     _validate_attrition(pair.max_differential_attrition)
     return pair
 
@@ -239,12 +247,16 @@ def load_stack_pair(path: str | Path) -> StackPairConfig:
         bootstrap_seed=_as_int(data["bootstrap_seed"], "bootstrap_seed"),
         primary_endpoint=primary,
         secondary_endpoints=tuple(secondaries),
-        wall_clock_timeout_sec=int(data.get("wall_clock_timeout_sec", 3600)),
-        job_poll_timeout_sec=int(data.get("job_poll_timeout_sec", 600)),
-        item_max_attempts=int(data.get("item_max_attempts", 2)),
+        wall_clock_timeout_sec=_validate_bounded_int(
+            data.get("wall_clock_timeout_sec", 3600), "wall_clock_timeout_sec", 1, 86400
+        ),
+        job_poll_timeout_sec=_validate_bounded_int(
+            data.get("job_poll_timeout_sec", 600), "job_poll_timeout_sec", 1, 86400
+        ),
+        item_max_attempts=_validate_bounded_int(data.get("item_max_attempts", 2), "item_max_attempts", 1, 10),
         accepted_set_floor=_validate_floor(data.get("accepted_set_floor", 0.90)),
         max_differential_attrition=_validate_attrition(data.get("max_differential_attrition", 0.05)),
-        allow_private_source=bool(data.get("allow_private_source", False)),
+        allow_private_source=_as_bool(data.get("allow_private_source", False), "allow_private_source"),
         images_dir=data.get("images_dir"),
         manifest_sha256=data.get("manifest_sha256"),
         baseline_manifest_path=data.get("baseline_manifest_path"),
@@ -281,6 +293,8 @@ def _parse_stack(entry: Any) -> StackEndpoint:
         opencv_major = int(entry["opencv_major"])
     except (TypeError, ValueError) as exc:
         raise BenchError("opencv_major_unattested", "opencv_major is not a parseable integer") from exc
+    if opencv_major != 5:
+        raise BenchError("opencv_major_unsupported", f"opencv_major must be 5, got {opencv_major}")
 
     stack_id = str(entry["stack_id"])
     if stack_id not in FIR23_STACK_ALLOWLIST:
@@ -315,8 +329,8 @@ def _parse_stack(entry: Any) -> StackEndpoint:
 
 def _normalize_base_url(url: str) -> str:
     parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise BenchError("base_url_invalid", f"base_url {url!r} must be absolute http(s)")
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise BenchError("base_url_invalid", f"base_url {url!r} must be absolute https")
     if parsed.query or parsed.fragment:
         raise BenchError("base_url_invalid", f"base_url {url!r} must not include query or fragment")
     path = parsed.path or ""
@@ -379,25 +393,37 @@ def _validate_floor(value: Any) -> float | int:
 
 
 def _validate_attrition(value: Any) -> float:
-    if isinstance(value, bool):
-        raise BenchError("max_differential_attrition_invalid", "max_differential_attrition must be a float")
-    try:
-        parsed = float(value)
-    except (OverflowError, TypeError, ValueError) as exc:
-        raise BenchError("max_differential_attrition_invalid", "max_differential_attrition must be a float") from exc
+    if type(value) is not float:
+        raise BenchError(
+            "max_differential_attrition_invalid",
+            "max_differential_attrition must be a YAML float",
+        )
+    parsed = value
     if not math.isfinite(parsed) or parsed < 0.0 or parsed > 1.0:
         raise BenchError("max_differential_attrition_invalid", "max_differential_attrition must be in [0.0, 1.0]")
     return parsed
 
 
 def _as_float(value: Any, name: str) -> float:
-    try:
-        parsed = float(value)
-    except (OverflowError, TypeError, ValueError) as exc:
-        raise BenchError("config_invalid", f"{name} must be numeric") from exc
-    if not math.isfinite(parsed):
+    if type(value) is not float:
+        raise BenchError("config_invalid", f"{name} must be a YAML float")
+    if not math.isfinite(value):
         raise BenchError("config_invalid", f"{name} must be finite")
-    return parsed
+    return value
+
+
+def _as_bool(value: Any, name: str) -> bool:
+    if type(value) is not bool:
+        raise BenchError("config_invalid", f"{name} must be a boolean")
+    return value
+
+
+def _validate_bounded_int(value: Any, name: str, minimum: int, maximum: int) -> int:
+    if type(value) is not int:
+        raise BenchError("config_invalid", f"{name} must be an integer")
+    if not minimum <= value <= maximum:
+        raise BenchError("config_invalid", f"{name} must be in [{minimum}, {maximum}]")
+    return value
 
 
 def _as_int(value: Any, name: str) -> int:

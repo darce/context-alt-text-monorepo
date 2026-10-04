@@ -5,6 +5,7 @@ from __future__ import annotations
 from scripts.bench.score_report import (
     BOOTSTRAP_RESAMPLES,
     CrossbenchTier,
+    _primary_claim_type,
     assign_tier,
     bootstrap_paired_delta,
     holm_bonferroni,
@@ -74,6 +75,18 @@ def test_partial_occasion_splits() -> None:
     assert interval.resampling_unit == "occasion+image"
 
 
+def test_unknown_occasions_remain_image_resampling_units() -> None:
+    interval = bootstrap_paired_delta(
+        [1.0, 0.0],
+        [0.0, 1.0],
+        seed=3,
+        metric="mean",
+        occasion_ids=["image:1", "image:2"],
+        occasion_full_size={"image:1": 1, "image:2": 1},
+    )
+    assert interval.resampling_unit == "image"
+
+
 def test_holm_on_secondaries() -> None:
     # Three secondaries; first two tiny p, third large.
     result = holm_bonferroni(
@@ -141,10 +154,57 @@ def test_assign_tier_primary_emits_confirmatory() -> None:
         "exhaustiveness_ok": True,
         "count_only": False,
         "bootstrap_status": "ok",
+        "primary_claim_type": "equivalence",
     }
     tier, reason = assign_tier("detection_recall@frame_e2e/label_map_primary", ctx)
     assert tier is CrossbenchTier.CONFIRMATORY
     assert reason is None
+
+
+def test_assign_tier_superiority_claim_emits_confirmatory() -> None:
+    ctx = {
+        "named": True,
+        "primary": True,
+        "optimistic": False,
+        "native_frame": False,
+        "floor_ok": True,
+        "ci_half_width": 0.02,
+        "head_to_head_delta": 0.10,
+        "holm_significant": False,
+        "exhaustiveness_ok": True,
+        "count_only": False,
+        "bootstrap_status": "ok",
+        "primary_claim_type": "superiority",
+    }
+    tier, reason = assign_tier("detection_recall@frame_e2e/label_map_primary", ctx)
+    assert tier is CrossbenchTier.CONFIRMATORY
+    assert reason is None
+
+
+def test_primary_claim_classifies_superiority_equivalence_and_unsupported() -> None:
+    assert _primary_claim_type(0.02, 0.07, 0.10) == "superiority"
+    assert _primary_claim_type(-0.04, 0.03, 0.10) == "equivalence"
+    assert _primary_claim_type(-0.12, 0.02, 0.10) is None
+
+
+def test_primary_claim_is_required_for_confirmatory_tier() -> None:
+    ctx = {
+        "named": True,
+        "primary": True,
+        "optimistic": False,
+        "native_frame": False,
+        "floor_ok": True,
+        "ci_half_width": 0.0,
+        "head_to_head_delta": 0.10,
+        "holm_significant": False,
+        "exhaustiveness_ok": True,
+        "count_only": False,
+        "bootstrap_status": "ok",
+        "primary_claim_type": None,
+    }
+    tier, reason = assign_tier("detection_recall@frame_e2e/label_map_primary", ctx)
+    assert tier is CrossbenchTier.DIRECTIONAL
+    assert reason == "primary_claim_unsupported"
 
 
 def test_assign_tier_holm_secondary_emits_confirmatory() -> None:
@@ -384,3 +444,214 @@ def test_padded_ci_uses_B_draw_space_not_survivors() -> None:
     assert interval.ci_lower == 0.0
     assert interval.ci_upper == 1.0
     assert (interval.ci_lower, interval.ci_upper) != (1.0, 1.0)
+
+
+def test_score_uses_full_manifest_occasions_and_caps_golden150_tiers(
+    tmp_path, monkeypatch
+) -> None:
+    import hashlib
+    import json
+
+    import pytest
+
+    from scripts.eval_harness.manifest import ManifestError
+    from scripts.bench import score_report
+    from scripts.bench.driver import init_run_dir
+    from scripts.bench.export_map import LEG_EXPORT_PAYLOAD_FILES
+    from scripts.bench.stack_pair import load_stack_pair
+    from scripts.bench.tests.conftest import golden_entry, valid_pair_dict, write_pair
+    from scripts.bench.tests.test_score_head_to_head import (
+        A_STACK,
+        B_STACK,
+        NATIVE_ID,
+        PRIMARY,
+        _box,
+        _pred,
+        _write_leg,
+        _write_manifest,
+    )
+
+    session_a = "occasion-a"
+    session_b = "occasion-b"
+    entries = []
+    for media_id in range(1, 7):
+        entry = golden_entry(
+            media_id,
+            face_count=2,
+            present_identities=["Alice Q"],
+            face_boxes=[
+                _box(),
+                {
+                    "x": 0.1,
+                    "y": 0.1,
+                    "w": 0.2,
+                    "h": 0.2,
+                    "name": None,
+                    "source": "iptc",
+                },
+            ],
+        )
+        entry["face_boxes"][0]["lineage"]["capture_session_id"] = (
+            session_a if media_id <= 3 else session_b
+        )
+        entry["face_boxes"][1]["lineage"]["capture_session_id"] = (
+            session_a if media_id <= 3 else session_b
+        )
+        entries.append(entry)
+
+    manifest_path = _write_manifest(
+        tmp_path / "golden150-draft-20260723.json", entries
+    )
+    secondary_endpoints = [
+        "detection_precision@frame_e2e/label_map_primary",
+        "identification_recall@frame_e2e/label_map_primary",
+        "identification_precision@frame_e2e/label_map_primary",
+        "identification_recall@frame_e2e/label_map_optimistic",
+        NATIVE_ID,
+    ]
+    pair = load_stack_pair(
+        write_pair(
+            tmp_path / "pair.yaml",
+            valid_pair_dict(accepted_set_floor=0.5, secondary_endpoints=secondary_endpoints),
+        )
+    )
+    run_dir = init_run_dir(tmp_path / "run", pair, manifest_path)
+    media_ids = list(range(1, 7))
+    predictions = [_pred(media_id) for media_id in media_ids]
+    for stack_id in (A_STACK, B_STACK):
+        _write_leg(run_dir, stack_id, predictions, media_ids)
+        items_path = run_dir / "legs" / stack_id / "items.jsonl"
+        retained = [
+            line
+            for line in items_path.read_text(encoding="utf-8").splitlines()
+            if json.loads(line)["manifest_media_id"] not in {5, 6}
+        ]
+        items_path.write_text("\n".join(retained) + "\n", encoding="utf-8")
+        exports_path = run_dir / "legs" / stack_id / "exports"
+        identities_path = exports_path / "media_identities.json"
+        identities = json.loads(identities_path.read_text(encoding="utf-8"))
+        identities = [row for row in identities if row["media_id"] not in {5, 6}]
+        identities_path.write_text(json.dumps(identities), encoding="utf-8")
+        identity_results = [
+            {
+                "media_id": media_id,
+                "query_succeeded": True,
+                "rows": [row for row in identities if row["media_id"] == media_id],
+            }
+            for media_id in range(1, 5)
+        ]
+        (exports_path / "media_identity_results.json").write_text(
+            json.dumps(identity_results), encoding="utf-8"
+        )
+        members_path = exports_path / "cluster_members.json"
+        members = json.loads(members_path.read_text(encoding="utf-8"))
+        for cluster in members:
+            cluster["members"] = [
+                row for row in cluster["members"] if row["media_id"] not in {5, 6}
+            ]
+        members_path.write_text(json.dumps(members), encoding="utf-8")
+        digests = {
+            name: hashlib.sha256((exports_path / name).read_bytes()).hexdigest()
+            for name in LEG_EXPORT_PAYLOAD_FILES
+        }
+        (exports_path / "export_sha256.json").write_text(
+            json.dumps(digests, indent=2, sort_keys=True), encoding="utf-8"
+        )
+
+    observed_calls: list[dict[str, object]] = []
+    original_bootstrap = score_report.bootstrap_paired_delta
+
+    def observe_bootstrap(*args, **kwargs):
+        observed_calls.append(kwargs.copy())
+        return original_bootstrap(*args, **kwargs)
+
+    # Test an approved pinned manifest after its run metadata has disappeared.
+    monkeypatch.setattr(
+        score_report,
+        "GOLDEN150_MANIFEST_SHA256",
+        hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+    )
+    run_doc = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    run_doc["manifest_path"] = "renamed-source.json"
+    (run_dir / "run.json").write_text(json.dumps(run_doc), encoding="utf-8")
+    assert score_report._is_golden150_corpus(run_dir) is True
+    (run_dir / "run.json").unlink()
+
+    # This regression exercises tier provenance, not the separately gated PROV-01 check.
+    monkeypatch.setattr(score_report, "_require_prov01_preflights", lambda root, stacks: True)
+    monkeypatch.setattr(score_report, "bootstrap_paired_delta", observe_bootstrap)
+    score_report.score_head_to_head(run_dir)
+
+    primary_call = next(call for call in observed_calls if call.get("cell") == PRIMARY)
+    assert primary_call["occasion_ids"] == [
+        f"occasion:{session_a}",
+        f"occasion:{session_a}",
+        f"occasion:{session_a}",
+        f"occasion:{session_b}",
+    ]
+    assert primary_call["occasion_full_size"] == {
+        f"occasion:{session_a}": 3,
+        f"occasion:{session_b}": 3,
+    }
+
+    frames = json.loads((run_dir / "score" / "frames.json").read_text(encoding="utf-8"))
+    assert frames["primary_claim"]["claim_type"] == "equivalence"
+    assert frames["primary_claim"]["direction"] is None
+    # Both fixture boxes have usable geometry, so the localization pass drops none.
+    assert frames["degenerate_box_dropped"] == {A_STACK: 0, B_STACK: 0}
+    expected_holm_family = [
+        "detection_precision@frame_e2e/label_map_primary",
+        "identification_recall@frame_e2e/label_map_primary",
+        "identification_precision@frame_e2e/label_map_primary",
+    ]
+    assert frames["holm_family"] == expected_holm_family
+    assert frames["holm_family_size"] == len(expected_holm_family)
+    for endpoint in expected_holm_family:
+        endpoint_cells = [cell for cell in frames["cells"] if cell.get("cell") == endpoint]
+        assert len(endpoint_cells) == 2
+        for cell in endpoint_cells:
+            expected_threshold = 0.05 / (len(expected_holm_family) - cell["holm_rank"] + 1)
+            assert cell["holm_threshold"] == expected_threshold
+    directional_secondaries = [
+        cell for cell in frames["cells"]
+        if cell.get("cell") in {NATIVE_ID, "identification_recall@frame_e2e/label_map_optimistic"}
+    ]
+    assert len(directional_secondaries) == 4
+    assert all("holm_rank" not in cell for cell in directional_secondaries)
+    primary_cells = [cell for cell in frames["cells"] if cell.get("cell") == PRIMARY]
+    assert len(primary_cells) == 2
+    for cell in primary_cells:
+        assert cell["primary_claim_type"] == "equivalence"
+        assert cell["primary_claim_direction"] is None
+        assert cell["resampling_unit"] == "occasion+image"
+        assert cell["partial_occasions"] == 1
+        assert cell["tier"] == CrossbenchTier.DIRECTIONAL.value
+        assert cell["reason"] == "golden150_bias_bound_pending"
+
+    native_identification = [
+        cell for cell in frames["cells"] if cell.get("cell") == NATIVE_ID
+    ]
+    assert len(native_identification) == 2
+    assert all(cell["tier"] == CrossbenchTier.DIRECTIONAL.value for cell in native_identification)
+    assert all(cell["reason"] == "frame_fir5_native" for cell in native_identification)
+
+    # Preserve the strict scorer's refusal as a regression on a golden150 run.
+    invalid_manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    invalid_manifest["entries"][0]["face_boxes"][1].update(
+        {"x": 0.0, "y": 0.0, "w": 0.0, "h": 0.0}
+    )
+    invalid_manifest_bytes = json.dumps(invalid_manifest).encode("utf-8")
+    (run_dir / "manifest.json").write_bytes(invalid_manifest_bytes)
+    invalid_manifest_sha = hashlib.sha256(invalid_manifest_bytes).hexdigest()
+    (run_dir / "manifest.sha").write_text(f"{invalid_manifest_sha}\n", encoding="ascii")
+    monkeypatch.setattr(
+        score_report,
+        "GOLDEN150_MANIFEST_SHA256",
+        invalid_manifest_sha,
+    )
+    assert score_report._is_golden150_corpus(run_dir) is True
+    with pytest.raises(
+        ManifestError,
+        match="strict detection scoring requires usable localization geometry",
+    ):
+        score_report.score_head_to_head(run_dir)

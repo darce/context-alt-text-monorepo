@@ -127,8 +127,9 @@ def _run_record(
     face_count: int = 3,
     n: int = 1,
     prediction_boxes_by_image: list[list[dict[str, float]]] | None = None,
+    producer_identity: bool = True,
 ) -> dict[str, Any]:
-    return {
+    record = {
         "schema": "acx-eval/v1",
         "kind": "run_record",
         "provenance": {
@@ -183,6 +184,8 @@ def _run_record(
             for i in range(1, n + 1)
         ],
     }
+    # Tests of other exit gates need complete provenance to reach their gate.
+    return _stamp_producer_identity(record) if producer_identity else record
 
 
 def _write_score_inputs(
@@ -230,6 +233,70 @@ def _write_score_inputs(
     return man_path, rec_path
 
 
+def _stamp_producer_identity(record: dict[str, Any]) -> dict[str, Any]:
+    for item in record["items"]:
+        item["describe"].update(
+            {
+                "adapter": "fixture-adapter",
+                "model_id": "fixture-model",
+                "model_version": "fixture-version",
+                "prompt_version": "fixture-prompt-v1",
+            }
+        )
+    return record
+
+
+def _raw_score_docs_for_cli(
+    cli_mod: Any,
+    manifest_path: Path,
+    record_path: Path,
+    *,
+    rubric_gate: str = "enforce",
+) -> tuple[str, str]:
+    """Build the same pre-fold report pair used by score's determinism check."""
+    manifest = cli_mod.load_manifest(
+        str(manifest_path),
+        metadata_only=True,
+        skip_hash_verification=True,
+        hash_skip_reason=cli_mod._SCORE_HASH_SKIP_REASON,
+    )
+    entries = []
+    for entry in manifest.entries:
+        row = entry.model_dump()
+        if row.get("annotation_mode") is None:
+            row["annotation_mode"] = manifest.annotation_mode
+        entries.append(row)
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    scored = cli_mod.score_run_record(
+        record,
+        entries,
+        ignore_list=cli_mod._load_ignore_list(record_path.parent),
+        score_manifest_sha256=cli_mod._manifest_sha(manifest),
+        manifest_roster=sorted(set(getattr(manifest, "roster", []) or [])),
+        run_manifest=manifest.model_dump(),
+        rubric_gate=rubric_gate,
+    )
+    return cli_mod._serialize_score_docs(scored)
+
+
+def _assert_unattributed_score_gate(
+    cli_mod: Any,
+    argv: list[str],
+    report_path: Path,
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main(argv)
+
+    assert isinstance(exc.value.code, str)
+    assert exc.value.code.startswith(cli_mod.SCORE_GATE_PREFIX_PRODUCER_IDENTITY)
+    assert "adapter" in exc.value.code
+    assert "model" in exc.value.code
+    assert "prompt identity" in exc.value.code
+    assert str(report_path) in exc.value.code
+    published = json.loads(report_path.read_text(encoding="utf-8"))
+    assert published["provenance"]["model"]["attribution"]["status"] == "unattributed"
+
+
 # ---------------------------------------------------------------------------
 # S2R5-13 — gate must read the published report, not a second score call
 # ---------------------------------------------------------------------------
@@ -274,6 +341,256 @@ def test_score_gate_exits_0_when_scored_and_published_report_agree_clean(
     assert published["faces"]["detection"]["fp"] == 0
     assert published["faces"]["detection"]["fn"] == 0
     assert published["verdict"]["verdict"] == "pass"
+
+
+def test_score_exits_nonzero_for_unattributed_producer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import scripts.eval_harness.cli as cli_mod
+
+    # The captions and score are clean, but the run record has no adapter/model/
+    # prompt identity stamps. Measurement integrity must reject that report.
+    man_path, rec_path = _write_score_inputs(
+        tmp_path,
+        mode="exhaustive",
+        boxed=True,
+        record=_run_record(face_count=1, n=5, producer_identity=False),
+        n=5,
+    )
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+
+    _assert_unattributed_score_gate(
+        cli_mod,
+        ["score", "--manifest", str(man_path), "--run-record", str(rec_path)],
+        rec_path.with_name("run-report.json"),
+    )
+
+
+def test_score_producer_identity_gate_is_not_skipped_by_rubric_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import scripts.eval_harness.cli as cli_mod
+
+    man_path, rec_path = _write_score_inputs(
+        tmp_path,
+        mode="exhaustive",
+        boxed=True,
+        record=_run_record(face_count=1, n=5, producer_identity=False),
+        n=5,
+    )
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    _assert_unattributed_score_gate(
+        cli_mod,
+        [
+            "score",
+            "--manifest",
+            str(man_path),
+            "--run-record",
+            str(rec_path),
+            "--rubric-gate",
+            "skip",
+        ],
+        rec_path.with_name("run-report.json"),
+    )
+
+
+def test_score_producer_identity_gate_is_not_skipped_by_freeze_certification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import scripts.eval_harness.cli as cli_mod
+
+    man_path, rec_path = _write_score_inputs(
+        tmp_path,
+        mode="exhaustive",
+        boxed=True,
+        record=_run_record(face_count=1, n=5, producer_identity=False),
+        n=5,
+    )
+    report_path = rec_path.with_name("run-report.json")
+    expect_path = tmp_path / "expected-report.json"
+    raw_docs = _raw_score_docs_for_cli(cli_mod, man_path, rec_path)
+    expect_path.write_text(raw_docs[0], encoding="utf-8")
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    monkeypatch.setattr(
+        cli_mod,
+        "_check_score_determinism_cross_process",
+        lambda *args, **kwargs: raw_docs,
+    )
+    _assert_unattributed_score_gate(
+        cli_mod,
+        [
+            "score",
+            "--manifest",
+            str(man_path),
+            "--run-record",
+            str(rec_path),
+            "--check-determinism",
+            "--expect-report",
+            str(expect_path),
+            "--freeze-certification",
+        ],
+        report_path,
+    )
+
+
+def test_score_producer_identity_gate_precedes_refusal_consent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import scripts.eval_harness.cli as cli_mod
+
+    man_path, rec_path = _write_score_inputs(
+        tmp_path,
+        mode="roster_only",
+        boxed=False,
+        record=_run_record(face_count=1, n=5, producer_identity=False),
+        n=5,
+    )
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    _assert_unattributed_score_gate(
+        cli_mod,
+        [
+            "score",
+            "--manifest",
+            str(man_path),
+            "--run-record",
+            str(rec_path),
+            "--allow-refused",
+        ],
+        rec_path.with_name("run-report.json"),
+    )
+
+
+def test_score_fully_stamped_producer_identity_control_exits_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import scripts.eval_harness.cli as cli_mod
+
+    man_path, rec_path = _write_score_inputs(
+        tmp_path,
+        mode="exhaustive",
+        boxed=True,
+        record=_stamp_producer_identity(_run_record(face_count=1, n=5)),
+        n=5,
+    )
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(rec_path)])
+    published = json.loads(rec_path.with_name("run-report.json").read_text(encoding="utf-8"))
+    assert "attribution" not in published["provenance"]["model"]
+
+
+@pytest.mark.parametrize("unattributed_role", ["baseline", "candidate"])
+def test_compare_rejects_unattributed_producer_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unattributed_role: str
+) -> None:
+    import scripts.eval_harness.cli as cli_mod
+
+    man_path, rec_path = _write_score_inputs(
+        tmp_path,
+        mode="exhaustive",
+        boxed=True,
+        record=_stamp_producer_identity(_run_record(face_count=1, n=5)),
+        n=5,
+    )
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(rec_path)])
+    report = json.loads(rec_path.with_name("run-report.json").read_text(encoding="utf-8"))
+    # These small synthetic score artifacts represent externally validated runs;
+    # compare's producer gate is independent of the offline-proxy guard.
+    report.pop("evaluation_status", None)
+    report["provenance"].pop("evaluation_status", None)
+    report["verdict"].pop("evaluation_status", None)
+    report["verdict"]["verdict"] = "pass"
+    report["verdict"]["reasons"] = []
+    baseline = dict(report)
+    candidate = dict(report)
+    target = baseline if unattributed_role == "baseline" else candidate
+    target["provenance"] = dict(report["provenance"])
+    target["provenance"]["model"] = dict(report["provenance"]["model"])
+    target["provenance"]["model"]["attribution"] = {
+        "status": "unattributed",
+        "missing_dimensions": ["adapter", "model", "prompt identity"],
+    }
+    baseline_path = tmp_path / "baseline.json"
+    candidate_path = tmp_path / "candidate.json"
+    baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+    candidate_path.write_text(json.dumps(candidate), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main(
+            ["compare", "--baseline", str(baseline_path), "--candidate", str(candidate_path)]
+        )
+
+    assert isinstance(exc.value.code, str)
+    assert exc.value.code.startswith(cli_mod.COMPARE_PRODUCER_IDENTITY_PREFIX)
+    assert unattributed_role in exc.value.code
+    assert "adapter" in exc.value.code
+    assert "model" in exc.value.code
+    assert "prompt identity" in exc.value.code
+
+
+
+@pytest.mark.parametrize(
+    "role,model,expected",
+    [
+        ("baseline", {}, "adapter, model, prompt identity"),
+        ("candidate", {"model_ids": ["m"], "prompt_versions": ["p"]}, "adapter"),
+        ("baseline", {"adapters": ["a"], "prompt_versions": ["p"]}, "model"),
+        ("candidate", {"adapters": ["a"], "model_ids": ["m"]}, "prompt identity"),
+        ("baseline", {"adapters": "a"}, "malformed producer provenance: adapters"),
+        ("candidate", {"attribution": None}, "malformed producer provenance: attribution"),
+        ("baseline", {"attribution": {"status": "attributed"}}, "malformed producer provenance: attribution"),
+    ],
+)
+def test_compare_rejects_legacy_producer_identity(tmp_path, role, model, expected):
+    from scripts.eval_harness import cli as cli_mod
+    from scene.tests.test_eval_harness_cli import _adoption_compare_report
+
+    reports = {name: _adoption_compare_report() for name in ("baseline", "candidate")}
+    reports[role]["provenance"]["model"] = model
+    paths = {name: tmp_path / f"{name}.json" for name in reports}
+    for name, report in reports.items():
+        paths[name].write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main(["compare", "--baseline", str(paths["baseline"]),
+                      "--candidate", str(paths["candidate"])])
+    message = str(exc.value.code)
+    assert message.startswith(cli_mod.COMPARE_PRODUCER_IDENTITY_PREFIX)
+    assert role in message
+    assert expected in message
+    assert str(paths[role]) in message
+
+
+@pytest.mark.parametrize("prompt", [{"prompt_versions": ["p"]}, {"prompt_free_flags": [True]}])
+def test_compare_accepts_stamped_legacy_producer(tmp_path, prompt):
+    from scripts.eval_harness import cli as cli_mod
+    from scene.tests.test_eval_harness_cli import _adoption_compare_report
+
+    report = _adoption_compare_report()
+    report["provenance"]["model"] = {"adapters": ["a"], "model_ids": ["m"], **prompt}
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps(report), encoding="utf-8")
+    cli_mod.main(["compare", "--baseline", str(path), "--candidate", str(path)])
+
+
+@pytest.mark.parametrize("variant", ["stamped", "no-adapter", "prompt-free", "prompt-sha256"])
+def test_compare_producer_identity_matches_report_contract(variant):
+    from scripts.eval_harness.cli import _compare_producer_dimensions
+    from scripts.eval_harness.report import _model_provenance
+
+    describe = {"adapter": "a", "model_id": "m", "prompt_version": "p"}
+    provenance = {}
+    if variant == "no-adapter":
+        describe.pop("adapter")
+    elif variant == "prompt-free":
+        describe.pop("prompt_version")
+        provenance = {"prompt_free": True}
+    elif variant == "prompt-sha256":
+        describe.pop("prompt_version")
+        describe["prompt_sha256"] = "a" * 64
+    model = _model_provenance([{"describe": describe}], provenance)
+    attribution = model.pop("attribution", None)
+    expected = attribution["missing_dimensions"] if attribution else None
+    assert _compare_producer_dimensions({"provenance": {"model": model}}) == expected
 
 
 def test_score_gate_publishes_geometry_matched_detection_counts(

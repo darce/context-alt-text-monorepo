@@ -25,6 +25,8 @@ def verify(seed: Path) -> subprocess.CompletedProcess[str]:
 
 @pytest.fixture
 def seed(tmp_path: Path) -> Path:
+    committed_rights = REPO_ROOT / "infra/oci/demo/seed/guided-rights.tsv"
+    committed_rights_before = committed_rights.read_bytes()
     (tmp_path / "README.md").write_text(
         "<!-- GUIDED-PROVENANCE:START -->\n<!-- GUIDED-PROVENANCE:END -->\n"
         "| ordinary_1.webp | Ordinary | source | date |\n"
@@ -36,6 +38,8 @@ def seed(tmp_path: Path) -> Path:
             "OUT": str(tmp_path / "media"),
             "MANIFEST": str(tmp_path / "guided-manifest.txt"),
             "README": str(tmp_path / "README.md"),
+            "RIGHTS": str(tmp_path / "guided-rights.tsv"),
+            "ADDED": "2099-01-01",
             "SRC": str(ASSETS),
         },
         capture_output=True,
@@ -43,6 +47,7 @@ def seed(tmp_path: Path) -> Path:
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+    assert committed_rights.read_bytes() == committed_rights_before
     shutil.copyfile(
         ASSETS / "guided-press-coachella-2026.webp",
         tmp_path / "media/ordinary_1.webp",

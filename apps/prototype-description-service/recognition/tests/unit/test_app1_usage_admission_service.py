@@ -178,6 +178,15 @@ async def _global_state(session: _AsyncSessionAdapter) -> GlobalUsageAdmissionSt
     return row
 
 
+async def _sweep_abandoned_ticket(session: _AsyncSessionAdapter, ticket: UsageTicket) -> None:
+    """Scan stale rows and use the sweeper's fenced release for known abandoned work."""
+    repository = SqlAlchemyUsageRepository(session)
+    rows = await repository.list_stale_reservations(30, limit=100)
+    assert ticket.reservation_id in {row.id for row in rows}
+    await UsageAdmissionService(session).release_fenced(ticket, fence_token=ticket.fence_token)
+    await session.commit()
+
+
 def test_service_satisfies_published_runtime_protocol() -> None:
     assert isinstance(UsageAdmissionService.__new__(UsageAdmissionService), UsageAdmissionServiceProtocol)
 
@@ -295,7 +304,6 @@ async def test_reservation_path_locks_entitlement_before_check_and_insert() -> N
         "entitlement lock",
         "reservation lookup",
         "reservation lookup",
-        "expire stale",
         "usage check",
         "insert",
         "flush",
@@ -619,7 +627,14 @@ async def test_reserve_rejects_when_remaining_allowance_is_zero(database) -> Non
     session_factory, tenant_id, _period_start = database
     async with session_factory() as session:
         service = UsageAdmissionService(session)
-        await service.reserve(tenant_id, idempotency_key="request-1", job_id=None, cost_units=1)
+        ticket = await service.reserve(
+            tenant_id, idempotency_key="request-1", job_id=None, cost_units=1, queue_bytes=7
+        )
+        await session.execute(
+            update(UsageReservation)
+            .where(UsageReservation.id == ticket.reservation_id)
+            .values(reserved_at=datetime.now(tz=UTC) - timedelta(days=1))
+        )
         await session.commit()
 
     async with session_factory() as session:
@@ -630,6 +645,14 @@ async def test_reserve_rejects_when_remaining_allowance_is_zero(database) -> Non
                 job_id=None,
                 cost_units=1,
             )
+        row = await _reservation(session, ticket.reservation_id)
+        assert row.status == UsageReservationStatus.RESERVED
+        assert row.cost_units == 1
+        state = await _global_state(session)
+        assert int(state.daily_cost_units) == 1
+        assert int(state.inflight_units) == 1
+        assert int(state.queue_depth) == 1
+        assert int(state.queue_bytes) == 7
 
 
 @pytest.mark.asyncio
@@ -667,6 +690,9 @@ async def test_expired_reservation_is_reclaimed_and_late_commit_is_ignored(datab
         await session.commit()
 
     async with session_factory() as session:
+        await _sweep_abandoned_ticket(session, stale_ticket)
+
+    async with session_factory() as session:
         service = UsageAdmissionService(session)
         ticket = await service.reserve(tenant_id, idempotency_key="new-request", job_id=None, cost_units=1)
         await service.commit(stale_ticket)
@@ -680,7 +706,7 @@ async def test_expired_reservation_is_reclaimed_and_late_commit_is_ignored(datab
 
 
 @pytest.mark.asyncio
-async def test_stale_reservation_commit_without_sweep_expires_and_is_not_counted(database) -> None:
+async def test_stale_reservation_commit_without_sweep_remains_chargeable(database) -> None:
     session_factory, tenant_id, period_start = database
     stale_id = uuid4()
     fence_token = f"{DEFAULT_GLOBAL_FENCE_EPOCH}:{uuid4()}"
@@ -719,10 +745,10 @@ async def test_stale_reservation_commit_without_sweep_expires_and_is_not_counted
 
     async with session_factory() as session:
         row = await _reservation(session, stale_id)
-        assert row.status == UsageReservationStatus.EXPIRED
+        assert row.status == UsageReservationStatus.COMMITTED
         assert row.settled_at is not None
         repository = SqlAlchemyTenantEntitlementRepository(session, plan_allowances={"paid": 1})
-        assert await repository.used_jobs(tenant_id, period_start) == 0
+        assert await repository.used_jobs(tenant_id, period_start) == 1
 
 
 @pytest.mark.asyncio
@@ -832,6 +858,7 @@ async def test_stale_same_key_retry_cannot_charge_expired_ticket(database) -> No
             cost_units=1,
         )
         assert retry.reservation_id == stale_id
+        await _sweep_abandoned_ticket(session, stale_ticket)
         await UsageAdmissionService(session).commit(retry)
         await session.commit()
 
@@ -863,6 +890,7 @@ async def test_expired_same_key_retry_is_rejected_after_sweep(database) -> None:
         await session.commit()
 
     async with session_factory() as session:
+        await _sweep_abandoned_ticket(session, first_ticket)
         await UsageAdmissionService(session).reserve(
             tenant_id,
             idempotency_key="sweeping-request",

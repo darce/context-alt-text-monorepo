@@ -344,7 +344,10 @@ def test_provenanced_fixture_is_v3_roster_only() -> None:
     assert all(box.lineage is not None for e in manifest.entries for box in e.face_boxes)
 
 
-def test_cli_gate_commands_do_not_call_load_legacy_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("reviewed", [True, False], ids=["confirmed-review", "unreviewed"])
+def test_cli_gate_commands_do_not_call_load_legacy_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reviewed: bool
+) -> None:
     """Behavioural: CLI score never reaches the legacy loader.
 
     Replaces the source-text grep (FIR-11-S2-03). The sentinel must stay
@@ -378,12 +381,28 @@ def test_cli_gate_commands_do_not_call_load_legacy_manifest(tmp_path: Path, monk
     # roster member (manifest.py::load_manifest); reuse the other fixture
     # identity rather than inventing an off-roster name.
     manifest_doc["entries"][0]["easy_wrong"] = ["Quiet Example"]
-    # Strict score-time validation requires human-adjudicated lineage even
-    # for roster-only GT boxes; make this local synthetic input scoreable.
+    # Strict scoring requires confirmed second-human reviews even for
+    # roster-only GT boxes. Exercise both the review gate and downstream gates.
+    manifest_doc["adjudication_records"] = []
     for entry in manifest_doc["entries"]:
-        for box in entry["face_boxes"]:
+        for box_index, box in enumerate(entry["face_boxes"]):
             box["lineage"]["label_source"] = "operator_blind"
             box["lineage"]["saw_machine_proposals"] = False
+            if reviewed:
+                record_id = f"review-{entry['media_id']}-{box_index}"
+                box["adjudication_source"] = f"human_adjudicated:{record_id}"
+                manifest_doc["adjudication_records"].append(
+                    {
+                        "record_id": record_id,
+                        "media_id": entry["media_id"],
+                        "box_index": box_index,
+                        "reviewer_id": f"{box['lineage']['labeler_id']}-independent-reviewer",
+                        "reviewer_kind": "human",
+                        "review_method": "independent_blind_review",
+                        "decision": "confirmed",
+                        "reviewed_at": "2026-06-01T12:00:00+00:00",
+                    }
+                )
     man_path.write_text(json.dumps(manifest_doc), encoding="utf-8")
     # Real score-time manifest sha (VLM6-F-03 / EVAL-13 drift gate; metadata-only
     # load, mirrors cli.py::_manifest_sha).
@@ -445,7 +464,11 @@ def test_cli_gate_commands_do_not_call_load_legacy_manifest(tmp_path: Path, monk
     # score gate (frozenset membership — not a bare crash/traceback) instead
     # of pinning to one specific downstream gate's exit code.
     assert isinstance(exc.value.code, str)
-    assert any(exc.value.code.startswith(prefix) for prefix in cli_mod.SCORE_GATE_PREFIXES)
+    if reviewed:
+        assert any(exc.value.code.startswith(prefix) for prefix in cli_mod.SCORE_GATE_PREFIXES)
+    else:
+        assert exc.value.code.startswith("ManifestError:")
+        assert "adjudication_record_required" in exc.value.code
     assert hits == []
 
 

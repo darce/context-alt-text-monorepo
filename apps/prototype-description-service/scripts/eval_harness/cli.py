@@ -46,6 +46,7 @@ from shared.secrets import get_secret_provider
 from .face_bakeoff import (
     CANDIDATE_MODEL_ID,
     FaceRunOptions,
+    _manifest_sha,  # noqa: F401 — canonical helper re-exported for harness callers
     build_candidate_leg,
     build_occlusion_twin_pairs,
     build_pinned_cache_detector,
@@ -815,11 +816,6 @@ def _extract_identities(
     has_unpositioned = any(bool(r.get("unpositioned")) for r in identities)
     ordering_source = IdentityOrdering.DEGRADED.value if has_unpositioned else IdentityOrdering.POSITIONAL.value
     return identities, face_count, ordering_source
-
-
-def _manifest_sha(manifest: GoldenManifest) -> str:
-    canonical = json.dumps(manifest.model_dump(), sort_keys=True).encode()
-    return hashlib.sha256(canonical).hexdigest()
 
 
 def prune_out_dir(out_dir: str, *, keep: int = DEFAULT_KEEP) -> list[str]:

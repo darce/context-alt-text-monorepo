@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib
 
+import pytest
+
 from scripts import verify_identity_schema as verify
 
 MIGRATION = importlib.import_module("db.migrations.versions.001_identity_schema")
@@ -45,6 +47,8 @@ def _with_operator(
     kwargs["policy_names"] = set(kwargs["policy_names"]) | {(table, f"operator_scope_{table}") for table in tables}
     kwargs["operator_policy_bodies"] = {(table, f"operator_scope_{table}"): (approved, approved) for table in tables}
     kwargs["operator_policy_permissiveness"] = {(table, f"operator_scope_{table}"): True for table in tables}
+    kwargs["operator_policy_commands"] = {(table, f"operator_scope_{table}"): "ALL" for table in tables}
+    kwargs["operator_policy_roles"] = {(table, f"operator_scope_{table}"): ("public",) for table in tables}
     return kwargs
 
 
@@ -61,6 +65,18 @@ def test_validate_schema_state_accepts_generated_operator_scope_body() -> None:
     assert report["exit_code"] == verify.EXIT_OK
     assert report["rls_gaps"] == []
     assert report["policy_gaps"] == []
+
+
+@pytest.mark.parametrize("metadata", ["operator_policy_commands", "operator_policy_roles"])
+def test_missing_operator_policy_metadata_is_heal_repairable(metadata) -> None:
+    kwargs = _with_operator()
+    kwargs.pop(metadata, None)
+
+    report = verify._validate_schema_state(**kwargs)
+
+    assert report["ok"] is False
+    assert report["exit_code"] == verify.EXIT_HEAL_REPAIRABLE
+    assert report["policy_gaps"] == sorted((CURSOR, LEASE))
 
 
 def test_validate_schema_state_accepts_pg_normalized_operator_scope_body() -> None:
@@ -160,7 +176,8 @@ def test_tenant_policy_gap_is_preserved_when_operator_scope_is_healthy() -> None
     assert report["policy_gaps"] == ["export_jobs"]
 
 
-def test_collect_and_validate_rejects_permissive_recovery_policy_from_catalog(monkeypatch) -> None:
+@pytest.mark.parametrize("cursor_body", [BYPASS_RLS_EXPR, "true"])
+def test_collect_and_validate_checks_recovery_policy_from_catalog(monkeypatch, cursor_body) -> None:
     class _Result:
         def __init__(self, rows=(), *, scalar=None):
             self.rows = list(rows)
@@ -187,13 +204,15 @@ def test_collect_and_validate_rejects_permissive_recovery_policy_from_catalog(mo
             table,
             f"operator_scope_{table}",
             "PERMISSIVE",
-            "true" if table == CURSOR else BYPASS_RLS_EXPR,
-            "true" if table == CURSOR else BYPASS_RLS_EXPR,
+            cursor_body if table == CURSOR else BYPASS_RLS_EXPR,
+            cursor_body if table == CURSOR else BYPASS_RLS_EXPR,
+            "ALL",
+            ["public"],
         )
         for table in verify.OPERATOR_SCOPE_TABLES
     ]
     policy_rows = [
-        (table, f"tenant_isolation_{table}", "PERMISSIVE", BYPASS_RLS_EXPR, BYPASS_RLS_EXPR)
+        (table, f"tenant_isolation_{table}", "PERMISSIVE", BYPASS_RLS_EXPR, BYPASS_RLS_EXPR, "ALL", ["public"])
         for table in verify.TENANT_TABLES
     ] + operator_policy_rows
 
@@ -225,6 +244,7 @@ def test_collect_and_validate_rejects_permissive_recovery_policy_from_catalog(mo
 
     report = verify.collect_and_validate(_Connection())
 
-    assert report["ok"] is False
-    assert report["policy_gaps"] == [CURSOR]
+    if cursor_body == "true":
+        assert report["ok"] is False
+    assert report["policy_gaps"] == ([] if cursor_body == BYPASS_RLS_EXPR else [CURSOR])
     assert LEASE not in report["policy_gaps"]

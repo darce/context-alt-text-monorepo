@@ -263,9 +263,44 @@ def test_curation_sync_batch_admits_each_operation(monkeypatch: pytest.MonkeyPat
 
     assert response.status_code == 200
     assert captured == {"tenant_id": str(TENANT_ID), "operation_count": 2}
-    assert len(admission.reserves) == 1
-    assert admission.reserves[0]["cost_units"] == 2
-    assert len(admission.commits) == 1
+    assert len(admission.reserves) == 2
+    assert [reserve["cost_units"] for reserve in admission.reserves] == [1, 1]
+    assert len(admission.commits) == 2
+
+
+def test_curation_sync_allowance_is_charged_once_per_operation_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    admission = _FakeAdmission()
+
+    async def _fake_apply_batch(self, tenant_id: str, operations):  # noqa: ANN001
+        return [CurationSyncResult(status="acknowledged", backend_version=index) for index, _ in enumerate(operations)]
+
+    async def _fake_apply(self, tenant_id: str, operation):  # noqa: ANN001
+        return CurationSyncResult(status="acknowledged", backend_version=1)
+
+    monkeypatch.setattr(curation_router.CurationSyncService, "apply_batch", _fake_apply_batch)
+    monkeypatch.setattr(curation_router.CurationSyncService, "apply", _fake_apply)
+    client = _build_client(monkeypatch, admission)
+
+    for body in (
+        {"operations": [_payload(idempotency_key="idem-a"), _payload(idempotency_key="idem-b")]},
+        {"operations": [_payload(idempotency_key="idem-b"), _payload(idempotency_key="idem-a")]},
+        _payload(idempotency_key="idem-a"),
+    ):
+        response = asyncio.run(_post(client, headers={"X-Api-Key": "verified-api-key"}, json=body))
+        assert response.status_code == 200
+
+    expected_operation_ids = {
+        curation_router.build_usage_operation_id(
+            TENANT_ID,
+            route="roster_curation_sync",
+            idempotency_keys=[key],
+        )
+        for key in ("idem-a", "idem-b")
+    }
+    assert {reserve["operation_id"] for reserve in admission.reserves} == expected_operation_ids
+    assert all(reserve["cost_units"] == 1 for reserve in admission.reserves)
+    distinct_charges = {reserve["operation_id"]: reserve["cost_units"] for reserve in admission.reserves}
+    assert sum(distinct_charges.values()) == 2
 
 
 def test_curation_sync_fails_closed_when_admission_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -909,12 +909,6 @@ async def run_describe_job(
         item_envelope,
     )
     captured_fence: str | None = None
-    try:
-        async with session_factory() as claim_session:
-            await set_tenant_context(claim_session, tenant_id)
-            captured_fence = await capture_usage_fence(claim_session, tenant_id=tenant_id, job_id=str(run_id))
-    except Exception:
-        logger.debug("usage fence capture skipped run_id=%s", run_id, exc_info=True)
 
     async def cancel_requested() -> bool:
         # A fresh, short-lived session is intentional. The tracking session has
@@ -959,6 +953,17 @@ async def run_describe_job(
 
     warmup_fallback_reason: DescribeRunTerminalReason | None = None
     try:
+        try:
+            async with session_factory() as claim_session:
+                await set_tenant_context(claim_session, tenant_id)
+                captured_fence = await capture_usage_fence(
+                    claim_session,
+                    tenant_id=tenant_id,
+                    job_id=str(run_id),
+                )
+        except Exception:
+            logger.debug("usage fence capture skipped run_id=%s", run_id, exc_info=True)
+
         await _record_run_pickup(session_factory=session_factory, tenant_id=tenant_id, run_id=run_id)
         if gpu_policy is not None:
             await _persist_run_phase(

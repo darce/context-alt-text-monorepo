@@ -1716,7 +1716,8 @@ async def describe_image_multipart(
                 timing=timing,
             )
         except HTTPException as exc:
-            if not _preserves_demand_lease(exc):
+            preserves_demand_lease = _preserves_demand_lease(exc)
+            if not preserves_demand_lease:
                 await _cleanup_accepted()
             rebuilt = exc
             if op is not None and _typed_error_detail_needs_rebuild(
@@ -1731,6 +1732,13 @@ async def describe_image_multipart(
                 )
             if adapter_consumed:
                 await _account_consumed_failure(rebuilt)
+            elif preserves_demand_lease:
+                # The same operation key replays this ticket on retry. Keep the
+                # allowance reserved while the matching demand lease stays active.
+                if session is not None:
+                    with suppress(Exception):
+                        await session.commit()
+                pending_error = rebuilt
             else:
                 await _release_reserved_failure(rebuilt)
         except TimeoutError:

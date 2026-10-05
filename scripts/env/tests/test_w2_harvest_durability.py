@@ -155,6 +155,31 @@ def test_staged_fragment_change_refuses_even_if_worktree_matches_head(clean_mani
     assert fragment.read_bytes() == head_bytes
 
 
+@pytest.mark.parametrize(
+    "index_flag",
+    ["--assume-unchanged", "--skip-worktree"],
+    ids=["assume-unchanged", "skip-worktree"],
+)
+def test_index_flagged_dirty_fragment_refuses_before_writing(
+    clean_manifest_root, tmp_path, capsys, index_flag
+):
+    fragment = clean_manifest_root / "manifest.d" / "vars.toml"
+    subprocess.run(
+        ["git", "-C", str(clean_manifest_root), "update-index", index_flag, "--", "manifest.d/vars.toml"],
+        check=True,
+    )
+    fragment.write_bytes(fragment.read_bytes() + b"# hidden local edit\n")
+    dirty_bytes = fragment.read_bytes()
+
+    code, stdout, stderr = _apply(clean_manifest_root, _source(tmp_path), capsys)
+
+    assert code == 2
+    assert stdout == ""
+    assert "vars.toml" in stderr
+    assert "safe-new" not in stderr
+    assert fragment.read_bytes() == dirty_bytes
+
+
 def test_untracked_affected_fragment_refuses_before_writing(clean_manifest_root, tmp_path, capsys):
     fragment = clean_manifest_root / "manifest.d" / "new.toml"
     fragment.write_text(

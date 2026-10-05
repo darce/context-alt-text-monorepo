@@ -10,13 +10,13 @@ name = "RECOGNITION_SECRET_BACKEND"
 target = "svc-vm"
 required = true
 section = "Secret backend"
-doc = "env (default): the app reads the secret values in this file directly.\noci_vault: api/worker fetch secret values from OCI Vault via the VM's instance principal.\n  RECOGNITION_VAULT_SECRET_MAP is a host-preserved JSON map of secret OCIDs.\n  Runbook: infra/oci/vault-instance-principal-runbook.md.\ndomain: infra (backend selector) | source: service operator | consumer: shared/secrets.py:get_secret_provider"
+doc = "env (default): the app reads the secret values in this file directly.\noci_vault: api/worker fetch secret values from OCI Vault via the VM's instance principal.\n  RECOGNITION_VAULT_SECRET_MAP is derived from this target/environment's Vault refs.\n  Runbook: infra/oci/vault-instance-principal-runbook.md.\ndomain: infra (backend selector) | source: service operator | consumer: shared/secrets.py:get_secret_provider"
 
 [[override]]
 name = "RECOGNITION_VAULT_SECRET_MAP"
 target = "svc-vm"
 required = false
-doc = "Host-preserved prod JSON map; dev/staging intentionally omit it with backend env.\nThe oci_vault reader fails startup if required entries are absent. KEY is the\nlogical secret name the app requests, such as PGPASSWORD; VALUE is a Vault OCID\n(identifier, not secret material).\n  Boot-REQUIRED keys: PGPASSWORD, RECOGNITION_ADMIN_TOKEN.\n  POSTGRES_DSN and POSTGRES_SYNC_DSN remain in this map.\n  ACX_GPU_ENDPOINT_API_KEY is not yet minted and must be added after operator\n  approval. The enabled default GPU preflight requires that mint first; run\n  make gpu-key-mint after approval, then render/apply with the returned OCID.\n  Runbook: infra/oci/vault-instance-principal-runbook.md.\ndomain: infra (OCID map) | source: OCI deploy | consumer: shared/secrets.py:OciVaultSecretProvider.from_env"
+doc = "Derived from the Vault refs declared for the current target/environment; dev/staging/fir derive an empty map.\nThe oci_vault reader fails startup if required entries are absent. KEY is the\nlogical secret name the app requests, such as PGPASSWORD; VALUE is a Vault OCID\n(identifier, not secret material).\n  Prod boot-REQUIRED keys: PGPASSWORD, RECOGNITION_ADMIN_TOKEN.\n  POSTGRES_DSN and POSTGRES_SYNC_DSN are also included in the prod map.\n  ACX_GPU_ENDPOINT_API_KEY is not yet minted and must be added after operator\n  approval. The enabled default GPU preflight requires that mint first; run\n  make gpu-key-mint after approval, then render/apply with the returned OCID.\n  Runbook: infra/oci/vault-instance-principal-runbook.md.\ndomain: infra (OCID map) | source: OCI deploy | consumer: shared/secrets.py:OciVaultSecretProvider.from_env"
 
 [[override]]
 name = "POSTGRES_USER"
@@ -52,6 +52,13 @@ required = false
 doc = "domain: infra | source: service operator | consumer: docker-compose.env.yml Postgres healthcheck"
 section = "Postgres"
 values = {}
+
+[[override]]
+name = "PGPASSWORD"
+target = "svc-vm"
+section = "Postgres"
+example = ""
+required = false
 
 [[override]]
 name = "POSTGRES_DSN"

@@ -9,6 +9,7 @@ doc = "These vars must differ per environment.\ndomain: infra | source: OCI depl
 name = "RECOGNITION_SECRET_BACKEND"
 target = "svc-vm"
 required = true
+section = "Secret backend"
 doc = "env (default): the app reads the secret values in this file directly.\noci_vault: api/worker fetch POSTGRES_DSN / POSTGRES_SYNC_DSN / PGPASSWORD /\n  RECOGNITION_ADMIN_TOKEN from OCI Vault via the VM's instance principal.\n  Those values MUST stay blank here — no app secret ships as host plaintext.\n  Runbook: infra/oci/vault-instance-principal-runbook.md.\ndomain: infra (backend selector) | source: service operator | consumer: shared/secrets.py:get_secret_provider"
 
 [[override]]
@@ -191,6 +192,7 @@ example = ""
 required = true
 doc = "oci_vault: leave this blank and replace the ACX_GPU_ENDPOINT_API_KEY OCID in\nRECOGNITION_VAULT_SECRET_MAP. env: put the direct value here. Never commit it.\ndomain: service secret | source: OCI Vault / service operator | consumer: remote GPU description adapter"
 section = "Image description"
+required_when = { RECOGNITION_SECRET_BACKEND = ["env"], ACX_GPU_ENDPOINT_URL = ["*"] }
 secret = { dev = "host:", staging = "host:", prod = "host:" }
 
 [[override]]

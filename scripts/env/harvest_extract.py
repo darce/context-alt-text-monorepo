@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
-import shlex
 import sys
 from pathlib import Path
 
@@ -15,19 +13,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from env import manifest as manifest_module
 from env.manifest import ManifestError, load_manifest
+from env.render_env import shell_assignments, shell_words
 
 
-_ASSIGNMENT = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
 _WITHHELD_KEYS = ("secret", "derived", "unmanaged", "missing", "secret_looking", "unparsed")
 
 
 def _assignments(text: str) -> dict[str, list[str]]:
-    assignments: dict[str, list[str]] = {}
-    for line in text.split("\n"):
-        match = _ASSIGNMENT.match(line)
-        if match is not None:
-            assignments.setdefault(match.group(1), []).append(match.group(2))
-    return assignments
+    return shell_assignments(text)
 
 
 def _name_is_sensitive(name: str) -> bool:
@@ -69,31 +62,8 @@ def _parse_assignment_values(assignments: dict[str, list[str]]) -> tuple[dict[st
 
 
 def _shell_token(raw_value: str) -> str | None:
-    # shlex's comments=True also strips embedded hashes (a#b and URL fragments).
-    # Only an unquoted hash at the start of a shell word introduces a comment.
-    quote = ""
-    escaped = False
-    in_word = False
-    for index, char in enumerate(raw_value):
-        if escaped:
-            escaped = False
-        elif char == "\\" and quote != "'":
-            escaped = True
-            in_word = True
-        elif quote:
-            if char == quote:
-                quote = ""
-        elif char in "\"'":
-            quote = char
-            in_word = True
-        elif char == "#" and not in_word:
-            raw_value = raw_value[:index]
-            break
-        else:
-            in_word = char not in " \t\r\n"
-    try:
-        tokens = shlex.split(raw_value, posix=True)
-    except ValueError:
+    tokens = shell_words(raw_value)
+    if tokens is None:
         return None
     return (tokens[0] if tokens else "") if len(tokens) <= 1 else None
 

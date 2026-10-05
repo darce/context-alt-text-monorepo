@@ -171,6 +171,27 @@ def test_required_ordinary_host_empty_keeps_outcome(case, value, check):
     assert case.file.read_bytes() == before
 
 
+@pytest.mark.parametrize("check", [True, False])
+def test_host_comment_only_map_is_missing(vault_case, check):
+    mat = load_module("materialize")
+    with vault_case.file.open("a") as stream:
+        stream.write("RECOGNITION_VAULT_SECRET_MAP= # host comment\n")
+    before = vault_case.file.read_bytes()
+    rc, out, err = vault_case.run(mat, env="prod", into="/opt/acx-backend/prod/.env", check=check)
+    assert rc == (1 if check else 4)
+    if check:
+        assert out == "missing\tRECOGNITION_VAULT_SECRET_MAP\n"
+    else:
+        assert "RECOGNITION_VAULT_SECRET_MAP" in err
+    assert vault_case.file.read_bytes() == before
+
+
+@pytest.mark.parametrize("value", ["a#b", "'#x'"])
+def test_host_hash_values_are_nonempty(value):
+    render = load_module("render_env")
+    assert render._assignment_has_value(f"NAME={value}")
+
+
 def test_into_mismatch_exits_2(case):
     mat = load_module("materialize")
     before = case.file.read_bytes()

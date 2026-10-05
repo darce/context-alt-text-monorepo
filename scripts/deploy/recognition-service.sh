@@ -984,6 +984,40 @@ preflight_branch_synced() {
   fi
 }
 
+preflight_env_manifest() {
+  local env="$1" manifest_env target status rerun_command
+  local -a command
+
+  if [[ "${ACX_ENV_PREFLIGHT:-0}" != "1" ]]; then
+    log "Skipping environment manifest preflight (ACX_ENV_PREFLIGHT is not 1)"
+    return 0
+  fi
+
+  case "$env" in
+    dev | staging | prod)
+      manifest_env="$env"
+      target="svc-vm"
+      ;;
+    dev-fir)
+      manifest_env="fir"
+      target="svc-fir"
+      ;;
+    *)
+      fail "Unknown deploy environment for manifest preflight: ${env}"
+      ;;
+  esac
+
+  command=(bash "${REPO_ROOT}/scripts/env/materialize_remote.sh" "$manifest_env" "$target" --check)
+  if "${command[@]}"; then
+    return 0
+  else
+    status=$?
+    printf -v rerun_command '%q ' "${command[@]}"
+    rerun_command="${rerun_command% }"
+    fail "Environment manifest preflight failed for ${env} (exit ${status}). Re-run: ${rerun_command}"
+  fi
+}
+
 pin_deploy_sha() {
   local resolved
   if [[ ${DEPLOY_SHA+x} == x ]]; then
@@ -4792,6 +4826,7 @@ _ship_selected_env() {
   preflight_remote_face_pipeline_models "$env"
   preflight_git_clean "$env"
   preflight_branch_synced "$env"
+  preflight_env_manifest "$env"
 
   # Snapshot and publish the previous-good digest before building the candidate.
   # Remote builds only tag the SHA; the environment tag changes after smoke.

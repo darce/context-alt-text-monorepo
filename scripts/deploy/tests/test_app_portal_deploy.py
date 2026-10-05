@@ -78,6 +78,17 @@ def _frontend_index(label: str) -> str:
     )
 
 
+def _clerk_config_module(publishable_key: str, fapi: str) -> str:
+    return (
+        "function parsePortalConfig(env) { return {"
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{publishable_key}", '
+        f'VITE_CLERK_FAPI: "{fapi}", VITE_PORTAL_ENABLED: "true" }};\n'
+        "parsePortalConfig(env);\n"
+    )
+
+
 def _write_frontend(
     root: Path,
     *,
@@ -90,8 +101,7 @@ def _write_frontend(
         index = _frontend_index("app")
     (dist / "index.html").write_text(index, encoding="utf-8")
     (assets / "index.js").write_text(
-        f"const clerk = {{ key: '{FAKE_LIVE_KEY}', fapi: 'https://clerk.altcontext.com' }};\n"
-        "console.log('app-portal', clerk);\n",
+        _clerk_config_module(FAKE_LIVE_KEY, "https://clerk.altcontext.com"),
         encoding="utf-8",
     )
     (assets / "index.css").write_text("body { color: black; }\n", encoding="utf-8")
@@ -1019,6 +1029,10 @@ def test_apply_refuses_invalid_staged_frontend_without_touching_live_or_rollback
         ("missing-manifest-key", "VITE_CLERK_PUBLISHABLE_KEY"),
         ("test-bundle-key", "VITE_CLERK_PUBLISHABLE_KEY"),
         ("mismatched-fapi", "VITE_CLERK_FAPI"),
+        ("unrelated-fapi-decoy", "VITE_CLERK_FAPI"),
+        ("comment-fapi-decoy", "VITE_CLERK_FAPI"),
+        ("fapi-host-prefix", "VITE_CLERK_FAPI"),
+        ("mixed-reachable-fapi", "VITE_CLERK_FAPI"),
         ("unreferenced-decoy", "VITE_CLERK_PUBLISHABLE_KEY"),
     ],
 )
@@ -1036,13 +1050,33 @@ def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
     )
 
     if failure == "test-bundle-key":
+        module.write_text(_clerk_config_module("pk_test_fake", "https://clerk.altcontext.com"), encoding="utf-8")
+    elif failure == "mismatched-fapi":
+        module.write_text(_clerk_config_module(FAKE_LIVE_KEY, "https://other.altcontext.com"), encoding="utf-8")
+    elif failure == "unrelated-fapi-decoy":
         module.write_text(
-            "const clerk = { key: 'pk_test_fake', fapi: 'https://clerk.altcontext.com' };\n",
+            _clerk_config_module(FAKE_LIVE_KEY, "https://other.altcontext.com")
+            + 'const unrelated = "https://clerk.altcontext.com";\n',
             encoding="utf-8",
         )
-    elif failure == "mismatched-fapi":
+    elif failure == "comment-fapi-decoy":
         module.write_text(
-            f"const clerk = {{ key: '{FAKE_LIVE_KEY}', fapi: 'https://other.altcontext.com' }};\n",
+            _clerk_config_module(FAKE_LIVE_KEY, "https://other.altcontext.com")
+            + "// https://clerk.altcontext.com\n",
+            encoding="utf-8",
+        )
+    elif failure == "fapi-host-prefix":
+        module.write_text(
+            _clerk_config_module(FAKE_LIVE_KEY, "https://clerk.altcontext.com.evil"),
+            encoding="utf-8",
+        )
+    elif failure == "mixed-reachable-fapi":
+        module.write_text(
+            _clerk_config_module(FAKE_LIVE_KEY, "https://clerk.altcontext.com") + "import './chunk.js';\n",
+            encoding="utf-8",
+        )
+        (dist / "assets" / "chunk.js").write_text(
+            _clerk_config_module(FAKE_LIVE_KEY, "https://other.altcontext.com"),
             encoding="utf-8",
         )
     elif failure == "unreferenced-decoy":

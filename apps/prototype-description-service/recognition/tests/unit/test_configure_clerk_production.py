@@ -102,7 +102,33 @@ def test_deployment_checks_only_reachable_module_content(tmp_path: Path) -> None
     with pytest.raises(module.ClerkConfigError, match="VITE_CLERK_PUBLISHABLE_KEY"):
         module.validate_frontend_modules(config, [reachable])
 
-    reachable.write_text(f"const key='{FAKE_LIVE_KEY}'; const fapi='https://clerk.altcontext.com';", encoding="utf-8")
+    reachable.write_text(
+        "function parsePortalConfig(env) { return {"
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        "parsePortalConfig(env);\n",
+        encoding="utf-8",
+    )
+    module.validate_frontend_modules(config, [reachable])
+
+
+def test_frontend_resolves_static_config_aliases(tmp_path: Path) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function parsePortalConfig(env) { return {"
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f'const liveKey = "{FAKE_LIVE_KEY}"; const liveFapi = "https://clerk.altcontext.com";\n'
+        'const env = { VITE_CLERK_PUBLISHABLE_KEY: liveKey, VITE_CLERK_FAPI: liveFapi, '
+        'VITE_PORTAL_ENABLED: "true" };\n'
+        "parsePortalConfig(env);\n",
+        encoding="utf-8",
+    )
+
     module.validate_frontend_modules(config, [reachable])
 
 
@@ -117,6 +143,82 @@ def test_reachable_pk_test_key_is_rejected_even_if_live_key_is_also_present(tmp_
     )
 
     with pytest.raises(module.ClerkConfigError, match="VITE_CLERK_PUBLISHABLE_KEY"):
+        module.validate_frontend_modules(config, [reachable])
+
+
+@pytest.mark.parametrize(
+    ("fapi_value", "decoy"),
+    [
+        ("https://other.altcontext.com", 'const note = "https://clerk.altcontext.com";'),
+        ("https://other.altcontext.com", "// https://clerk.altcontext.com"),
+        ("https://clerk.altcontext.com.evil", ""),
+    ],
+    ids=["unrelated-literal", "comment", "hostname-prefix"],
+)
+def test_frontend_requires_matching_fapi_in_the_portal_config_record(
+    tmp_path: Path, fapi_value: str, decoy: str
+) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function parsePortalConfig(env) { return {"
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        f'VITE_CLERK_FAPI: "{fapi_value}", VITE_PORTAL_ENABLED: "true" }};\n'
+        f"{decoy}\nparsePortalConfig(env);\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ClerkConfigError, match="VITE_CLERK_FAPI"):
+        module.validate_frontend_modules(config, [reachable])
+
+
+def test_frontend_rejects_contradictory_fapi_in_reachable_config_records(tmp_path: Path) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    entry = tmp_path / "entry.js"
+    chunk = tmp_path / "chunk.js"
+    entry.write_text(
+        "function parsePortalConfig(env) { return {"
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n',
+        encoding="utf-8",
+    )
+    chunk.write_text(
+        "function parsePortalConfig(env) { return {"
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://other.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        "parsePortalConfig(env);\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ClerkConfigError, match="VITE_CLERK_FAPI"):
+        module.validate_frontend_modules(config, [entry, chunk])
+
+
+def test_frontend_does_not_accept_an_unconsumed_config_decoy(tmp_path: Path) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function parsePortalConfig(env) { return {"
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://other.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        "parsePortalConfig(env);\n"
+        f'const unused = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ClerkConfigError, match="VITE_CLERK_FAPI"):
         module.validate_frontend_modules(config, [reachable])
 
 

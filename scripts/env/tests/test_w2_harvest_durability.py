@@ -86,8 +86,13 @@ def test_atomic_replace_fsyncs_and_closes_parent_directory_after_replace(tmp_pat
     events: list[object] = []
     directory_fds: set[int] = set()
     real_fsync = module.os.fsync
+    real_fchmod = module.os.fchmod
     real_replace = module.os.replace
     real_close = module.os.close
+
+    def recording_fchmod(fd: int, mode: int) -> None:
+        events.append(("fchmod", mode))
+        real_fchmod(fd, mode)
 
     def recording_fsync(fd: int) -> None:
         is_directory = stat.S_ISDIR(module.os.fstat(fd).st_mode)
@@ -105,6 +110,7 @@ def test_atomic_replace_fsyncs_and_closes_parent_directory_after_replace(tmp_pat
             events.append("close-directory")
         real_close(fd)
 
+    monkeypatch.setattr(module.os, "fchmod", recording_fchmod)
     monkeypatch.setattr(module.os, "fsync", recording_fsync)
     monkeypatch.setattr(module.os, "replace", recording_replace)
     monkeypatch.setattr(module.os, "close", recording_close)
@@ -112,7 +118,14 @@ def test_atomic_replace_fsyncs_and_closes_parent_directory_after_replace(tmp_pat
     module._atomic_replace(target, b"new\n", 0o644)
 
     assert target.read_bytes() == b"new\n"
-    assert events == [("fsync", "file"), "replace", ("fsync", "directory"), "close-directory"]
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644
+    assert events == [
+        ("fchmod", 0o644),
+        ("fsync", "file"),
+        "replace",
+        ("fsync", "directory"),
+        "close-directory",
+    ]
 
 
 def test_clean_git_preimage_allows_apply(clean_manifest_root, tmp_path, capsys):
@@ -227,18 +240,34 @@ def test_directory_fsync_failure_rolls_back_without_success_output(clean_manifes
     fragment = clean_manifest_root / "manifest.d" / "vars.toml"
     original = fragment.read_bytes()
     source = _source(tmp_path)
+    mode = stat.S_IMODE(fragment.stat().st_mode)
+    events: list[object] = []
     real_fsync = module.os.fsync
+    real_fchmod = module.os.fchmod
+    real_replace = module.os.replace
     directory_fsyncs = 0
+
+    def record_fchmod(fd: int, file_mode: int) -> None:
+        events.append(("fchmod", file_mode))
+        real_fchmod(fd, file_mode)
 
     def fail_first_directory_fsync(fd: int) -> None:
         nonlocal directory_fsyncs
-        if stat.S_ISDIR(module.os.fstat(fd).st_mode):
+        is_directory = stat.S_ISDIR(module.os.fstat(fd).st_mode)
+        events.append(("fsync", "directory" if is_directory else "file"))
+        if is_directory:
             directory_fsyncs += 1
             if directory_fsyncs == 1:
                 raise OSError("forced directory fsync failure")
         real_fsync(fd)
 
+    def record_replace(source_path: str | Path, destination: str | Path) -> None:
+        real_replace(source_path, destination)
+        events.append("replace")
+
+    monkeypatch.setattr(module.os, "fchmod", record_fchmod)
     monkeypatch.setattr(module.os, "fsync", fail_first_directory_fsync)
+    monkeypatch.setattr(module.os, "replace", record_replace)
 
     code, stdout, stderr = _apply(clean_manifest_root, source, capsys)
 
@@ -247,3 +276,10 @@ def test_directory_fsync_failure_rolls_back_without_success_output(clean_manifes
     assert "safe-new" not in stderr
     assert directory_fsyncs >= 2
     assert fragment.read_bytes() == original
+    replacement_order = [
+        ("fchmod", mode),
+        ("fsync", "file"),
+        "replace",
+        ("fsync", "directory"),
+    ]
+    assert events == replacement_order + replacement_order

@@ -259,8 +259,8 @@ def _atomic_replace(path: Path, content: bytes, mode: int) -> None:
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(content)
             stream.flush()
+            os.fchmod(stream.fileno(), mode)
             os.fsync(stream.fileno())
-        os.chmod(temp_path, mode)
         os.replace(temp_path, path)
         directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
         try:

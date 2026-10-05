@@ -680,12 +680,12 @@ def _validate_remote_sources(manifest: Manifest) -> None:
                 scheme = var.secret.get(env, "").partition(":")[0]
                 if scheme == "host" and env not in target.remote_paths:
                     _fail(var.source, var.name, f"host secret refs require a remote path on target {target.name}")
-                if scheme in {"vault", "host"} and target.audience in {"public_build", "test"}:
+                if scheme in {"vault", "oci", "host"} and target.audience in {"public_build", "test"}:
                     _fail(var.source, var.name, f"remote secret refs are forbidden on target {target.name}")
                 if scheme in {"keychain", "env"} and env in target.remote_paths:
                     _fail(var.source, var.name, f"local secret refs are forbidden on remote target {target.name}")
                 for name in _parse_derive_references(var):
-                    if variables[name].secret.get(env, "").partition(":")[0] in {"vault", "host"}:
+                    if variables[name].secret.get(env, "").partition(":")[0] in {"vault", "oci", "host"}:
                         _fail(var.source, var.name, f"derive references remote secret var {name}")
             mapping = vault_secret_map(manifest, target.name, env)
             backend = variables.get("RECOGNITION_SECRET_BACKEND")

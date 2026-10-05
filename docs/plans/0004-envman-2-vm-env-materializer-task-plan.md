@@ -20,9 +20,10 @@ Make the five VM runtime files (`/opt/acx-backend/{dev,staging,prod,dev-fir}/.en
 ## Design (assumptions resolved from canon)
 
 - **D-1 Render on the VM, not the laptop [SECD-05, PG-09].** The laptop ships `scripts/env/*.py` and `config/env/` to a `mktemp -d` on the VM over ssh stdin. It then runs `sudo python3 render_env.py materialize ...` there; the VM has Python 3.12 and needs only the stdlib. Host-only secrets are read and written on the VM only.
-- **D-2 Three runtime sources for VM envs.**
+- **D-2 Four runtime sources for VM envs.**
   - `values`: literal config, as today.
   - `vault:<secret-ocid>`: the app fetches the value via `OciVaultSecretProvider`. The runtime file gets `NAME=` (blank), and the OCID is added to `RECOGNITION_VAULT_SECRET_MAP`. An OCID is not a secret (ADR-013), so it may be committed.
+  - `oci:<vault-secret-ocid>`: at materialization time, the VM runs `oci secrets secret-bundle get --auth instance_principal --secret-id <ocid>` and writes the decoded secret bytes to that backend env var. This value is not added to `RECOGNITION_VAULT_SECRET_MAP`. The OCID must match `^ocid1\.vaultsecret\.oc1\.[a-z0-9-]+\.[a-z0-9]{20,}$`. A missing CLI, failed or timed-out command, invalid JSON/base64, unsupported encoding, or empty value refuses materialization; the diagnostic names only the variable and `oci` scheme and never includes CLI output or the secret value.
   - `host:`: a secret that exists only in the VM file, such as `POSTGRES_PASSWORD` for the postgres container or `MARIADB_*` for demo. The materializer keeps the existing line's bytes verbatim.
 
   `keychain:` and `env:` refs are refused for VM envs at load time.
@@ -67,10 +68,10 @@ Loader refusals (`ManifestError`, fragment and var named, never the value):
 
 - `remote_paths` entries must be absolute, normalized, under `/opt/acx-backend/`, and cover a subset of the target's `envs`.
 - `preserve` must not overlap the target's var names.
-- An OCID must match `^ocid1\.vaultsecret\.oc1\.[a-z0-9-]*\.[a-z0-9]{20,}$`.
+- A `vault:` OCID must match `^ocid1\.vaultsecret\.oc1\.[a-z0-9-]*\.[a-z0-9]{20,}$`; an `oci:` OCID must match `^ocid1\.vaultsecret\.oc1\.[a-z0-9-]+\.[a-z0-9]{20,}$`.
 - A (target, env) with any `vault:` ref must also have `derive_vault_map` and `RECOGNITION_SECRET_BACKEND = "oci_vault"` for that env. The reverse also holds: `oci_vault` with no `vault:` refs is refused. `oci_vault` also requires `vault:` refs for both boot-required keys, `PGPASSWORD` and `RECOGNITION_ADMIN_TOKEN` (`validate_oci_vault_boot` in `shared/secrets.py`).
-- `vault:`/`host:` refs are refused on `public_build` and `test` audiences. `keychain:`/`env:` refs are refused on any env listed in `remote_paths`.
-- `derive` expressions referencing a `vault:` or `host:` var are refused. For example, `POSTGRES_DSN` must itself be `vault:` or `host:` on those envs.
+- `vault:`/`oci:`/`host:` refs are refused on `public_build` and `test` audiences. `keychain:`/`env:` refs are refused on any env listed in `remote_paths`.
+- `derive` expressions referencing a `vault:`, `oci:` or `host:` var are refused. For example, `POSTGRES_DSN` must itself be `vault:` or `host:` on those envs.
 
 Loader API (`scripts/env/manifest.py`; the pinned names lanes code against):
 
@@ -81,7 +82,7 @@ Loader API (`scripts/env/manifest.py`; the pinned names lanes code against):
 
   `lease_env` keys must be a subset of the `remote_paths` keys.
 - `Var` gains `derive_vault_map: bool = False`. A var with `derive_vault_map = true` must be `class = "config"` and must have no `values`, `secret` or `derive`.
-- `secret` refs accept the schemes `keychain`, `env`, `vault` and `host`. `host:` must have an empty remainder, and `vault:` must match the OCID regex.
+- `secret` refs accept the schemes `keychain`, `env`, `vault`, `oci` and `host`. `host:` must have an empty remainder; `vault:` and `oci:` must match their OCID regexes above. `vault:` refs render as blank values and populate the app-time map; `oci:` refs are fetched during materialization for backend envs.
 - `vault_secret_map(manifest, target, env) -> dict[str, str]` returns a logical name → OCID map of the `vault:` refs for that target and env, with keys sorted. It returns `{}` when there are none. The rendered value is `json.dumps(map, separators=(",", ":"), sort_keys=True)`.
 - Every refusal is a `ManifestError`. Its message names `targets.toml` plus the target for target-level rules, or the fragment file plus the var for var-level rules.
 
@@ -200,4 +201,4 @@ The em2-frag refs start as `host:` for every VM secret, which is behaviour-neutr
 
 - B1b: calling materialize from `recognition-service.sh` (after DEFWAVE-2).
 - B2: app-portal targets, `VITE_*` build args, removing `/opt/acx-backend/prod/app-portal.env` (after APP-1).
-- Resolving `vault:` values anywhere except inside the app. The materializer never fetches from Vault.
+- Resolving `vault:` values anywhere except inside the app. The materializer fetches only explicit `oci:` refs and never fetches `vault:` refs.

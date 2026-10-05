@@ -71,8 +71,10 @@ type BulkDescribeSubmitAction = {
 export const isDefinitiveDescribeSubmitRefusal = (error: unknown): boolean => {
   const classified = classifyError(error);
   return (
-    (classified._tag === 'http' && classified.status >= 400 && classified.status < 500) ||
-    classified._tag === 'auth_expired'
+    classified._tag === 'http' &&
+    classified.status >= 400 &&
+    classified.status < 500 &&
+    ![401, 403, 408, 425, 429].includes(classified.status)
   );
 };
 

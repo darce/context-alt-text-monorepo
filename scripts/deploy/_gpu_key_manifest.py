@@ -52,6 +52,23 @@ def validate_manifest_ready(document: dict[str, object]) -> None:
         if scheme != "vault" or not separator or not _SECRET_OCID.fullmatch(ocid):
             raise ValueError(f"GPU mint requires a real prod vault ref for {name}")
 
+    variable = _unique_gpu_key_var(document)
+    if variable.get("class") != "secret" or "svc-vm" not in variable.get("targets", []):
+        raise ValueError("GPU key manifest var must remain a svc-vm secret")
+    refs = variable.get("secret")
+    if not isinstance(refs, dict) or not {"dev", "staging", "prod"} <= refs.keys():
+        raise ValueError("GPU key manifest must define dev, staging, and prod refs")
+
+
+def _unique_gpu_key_var(document: dict[str, object]) -> dict[str, object]:
+    variables = [
+        row for row in document.get("var", [])
+        if row.get("name") == "ACX_GPU_ENDPOINT_API_KEY"
+    ]
+    if len(variables) != 1:
+        raise ValueError("GPU key manifest must contain exactly one ACX_GPU_ENDPOINT_API_KEY var")
+    return variables[0]
+
 
 def update_manifest_text(text: str, secret_ocid: str) -> str:
     """Return updated TOML, changing only the GPU key's dev/prod references."""
@@ -63,10 +80,16 @@ def update_manifest_text(text: str, secret_ocid: str) -> str:
         raise ValueError("GPU key manifest is not valid TOML") from exc
     validate_manifest_ready(document)
 
-    variables = [row for row in document.get("var", []) if row.get("name") == "ACX_GPU_ENDPOINT_API_KEY"]
-    if len(variables) != 1:
-        raise ValueError("GPU key manifest must contain exactly one ACX_GPU_ENDPOINT_API_KEY var")
-    variable = variables[0]
+    return _update_gpu_key_text(text, secret_ocid)
+
+
+def _update_gpu_key_text(text: str, secret_ocid: str) -> str:
+    try:
+        document = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError("GPU key manifest is not valid TOML") from exc
+
+    variable = _unique_gpu_key_var(document)
     if variable.get("class") != "secret" or "svc-vm" not in variable.get("targets", []):
         raise ValueError("GPU key manifest var must remain a svc-vm secret")
 
@@ -109,32 +132,70 @@ def update_manifest_text(text: str, secret_ocid: str) -> str:
     return text[:start] + updated_block + text[end:]
 
 
-def check_manifest_ready(path: Path) -> None:
+def _manifest_fragment_paths(path: Path) -> list[Path]:
+    if path.is_dir():
+        directory = path
+        requested_fragment = None
+    else:
+        try:
+            source_stat = path.lstat()
+        except OSError as exc:
+            raise ValueError("cannot read GPU key manifest") from exc
+        if not stat.S_ISREG(source_stat.st_mode):
+            raise ValueError("GPU key manifest must be a regular file or fragment directory")
+        directory = path.parent
+        requested_fragment = path
+
     try:
-        document = tomllib.loads(path.read_text(encoding="utf-8"))
+        fragments = sorted(
+            fragment
+            for fragment in directory.glob("*.toml")
+            if fragment.name != "targets.toml"
+        )
     except OSError as exc:
-        raise ValueError("cannot read GPU key manifest") from exc
-    except tomllib.TOMLDecodeError as exc:
-        raise ValueError("GPU key manifest is not valid TOML") from exc
+        raise ValueError("cannot list GPU key manifest fragments") from exc
+    if not fragments or (requested_fragment is not None and requested_fragment not in fragments):
+        raise ValueError("cannot read GPU key manifest")
+    return fragments
+
+
+def _load_manifest_fragments(
+    path: Path,
+) -> tuple[dict[str, object], dict[Path, tuple[str, dict[str, object]]]]:
+    all_variables: list[dict[str, object]] = []
+    fragments: dict[Path, tuple[str, dict[str, object]]] = {}
+    for fragment_path in _manifest_fragment_paths(path):
+        try:
+            text = fragment_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ValueError("cannot read GPU key manifest") from exc
+        try:
+            fragment = tomllib.loads(text)
+        except tomllib.TOMLDecodeError as exc:
+            raise ValueError("GPU key manifest is not valid TOML") from exc
+        fragment_variables = fragment.get("var", [])
+        if not isinstance(fragment_variables, list) or any(
+            not isinstance(row, dict) for row in fragment_variables
+        ):
+            raise ValueError("GPU key manifest var entries must be tables")
+        all_variables.extend(fragment_variables)
+        fragments[fragment_path] = (text, fragment)
+    return {"var": all_variables}, fragments
+
+
+def check_manifest_ready(path: Path) -> None:
+    document, _ = _load_manifest_fragments(path)
     validate_manifest_ready(document)
 
 
-def persist_manifest(path: Path, updated_text: str) -> None:
-    """Durably atomically replace the regular manifest file."""
-    try:
-        source_stat = path.lstat()
-    except OSError as exc:
-        raise ValueError("cannot inspect GPU key manifest") from exc
-    if not stat.S_ISREG(source_stat.st_mode):
-        raise ValueError("GPU key manifest must be a regular file")
-
+def _durable_replace(path: Path, updated_text: str, mode: int) -> None:
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f"{path.name}.envman-tmp-",
         dir=path.parent,
     )
     temporary_path = Path(temporary_name)
     try:
-        os.fchmod(descriptor, stat.S_IMODE(source_stat.st_mode))
+        os.fchmod(descriptor, mode)
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
             descriptor = -1
             stream.write(updated_text)
@@ -155,15 +216,62 @@ def persist_manifest(path: Path, updated_text: str) -> None:
             pass
 
 
+def persist_manifest(path: Path, updated_text: str) -> None:
+    """Durably atomically replace the regular manifest file."""
+    try:
+        source_stat = path.lstat()
+    except OSError as exc:
+        raise ValueError("cannot inspect GPU key manifest") from exc
+    if not stat.S_ISREG(source_stat.st_mode):
+        raise ValueError("GPU key manifest must be a regular file")
+    _durable_replace(path, updated_text, stat.S_IMODE(source_stat.st_mode))
+
+
+def write_terraform_input(path: Path, secret_ocid: str) -> None:
+    """Create a durable Terraform input file containing only the secret OCID."""
+    if not _SECRET_OCID.fullmatch(secret_ocid):
+        raise ValueError("refusing invalid Vault secret OCID")
+    updated_text = (
+        "# Generated by scripts/deploy/gpu-key-mint.sh; identifier only.\n"
+        f'gpu_api_key_secret_ocid = "{secret_ocid}"\n'
+    )
+    try:
+        source_stat = path.lstat()
+    except FileNotFoundError:
+        _durable_replace(path, updated_text, 0o600)
+        return
+    except OSError as exc:
+        raise ValueError("cannot inspect Terraform GPU key input") from exc
+    if not stat.S_ISREG(source_stat.st_mode):
+        raise ValueError("Terraform GPU key input must be a regular file")
+    try:
+        existing_text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError("cannot read Terraform GPU key input") from exc
+    if existing_text == updated_text and stat.S_IMODE(source_stat.st_mode) == 0o600:
+        return
+    if existing_text != updated_text:
+        raise ValueError("refusing to replace existing Terraform GPU key input")
+    _durable_replace(path, updated_text, 0o600)
+
+
 def set_gpu_key_ocid(path: Path, secret_ocid: str) -> None:
     """Update the manifest with the real OCID returned by the Vault writer."""
-    try:
-        original = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise ValueError("cannot read GPU key manifest") from exc
-    updated = update_manifest_text(original, secret_ocid)
+    if not _SECRET_OCID.fullmatch(secret_ocid):
+        raise ValueError("refusing invalid Vault secret OCID")
+    document, fragments = _load_manifest_fragments(path)
+    validate_manifest_ready(document)
+    owners = [
+        (fragment_path, text)
+        for fragment_path, (text, fragment) in fragments.items()
+        if any(row.get("name") == "ACX_GPU_ENDPOINT_API_KEY" for row in fragment.get("var", []))
+    ]
+    if len(owners) != 1:
+        raise ValueError("GPU key manifest must contain exactly one ACX_GPU_ENDPOINT_API_KEY var")
+    owner_path, original = owners[0]
+    updated = _update_gpu_key_text(original, secret_ocid)
     if updated != original:
-        persist_manifest(path, updated)
+        persist_manifest(owner_path, updated)
 
 
 def default_manifest_path() -> Path:
@@ -174,16 +282,21 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("secret_ocid", nargs="?")
     parser.add_argument("--manifest", type=Path, default=default_manifest_path())
+    parser.add_argument("--terraform-input", type=Path)
     parser.add_argument("--check-ready", action="store_true")
     args = parser.parse_args()
     if args.check_ready:
         if args.secret_ocid is not None:
             parser.error("--check-ready does not accept a secret OCID")
+        if args.terraform_input is not None:
+            parser.error("--check-ready does not accept a Terraform input path")
         check_manifest_ready(args.manifest)
         return 0
     if args.secret_ocid is None:
         parser.error("secret_ocid is required")
     set_gpu_key_ocid(args.manifest, args.secret_ocid)
+    if args.terraform_input is not None:
+        write_terraform_input(args.terraform_input, args.secret_ocid)
     return 0
 
 

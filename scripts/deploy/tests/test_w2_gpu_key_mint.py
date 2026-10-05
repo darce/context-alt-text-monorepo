@@ -61,6 +61,60 @@ targets = ["svc-vm"]
 secret = { prod = "vault:ocid1.vaultsecret.oc1.iad.fakeadmintoken" }
 '''
 
+FRAGMENTED_MANIFEST = {
+    "10-service-shared.toml": '''version = 1
+
+[[var]]
+name = "RECOGNITION_VAULT_SECRET_MAP"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+derive_vault_map = true
+
+[[var]]
+name = "POSTGRES_DSN"
+class = "secret"
+targets = ["svc-vm"]
+secret = { prod = "vault:ocid1.vaultsecret.oc1.iad.fakepostgresdsn" }
+
+[[var]]
+name = "POSTGRES_SYNC_DSN"
+class = "secret"
+targets = ["svc-vm"]
+secret = { prod = "vault:ocid1.vaultsecret.oc1.iad.fakepostgressyncdsn" }
+''',
+    "20-service-local.toml": '''version = 1
+
+[[var]]
+name = "PGPASSWORD"
+class = "secret"
+targets = ["svc-local", "svc-vm"]
+secret = { local = "keychain:acx-local/PGPASSWORD", prod = "vault:ocid1.vaultsecret.oc1.iad.fakepgpassword" }
+''',
+    "21-service-vm.toml": '''version = 1
+
+[[var]]
+name = "RECOGNITION_ADMIN_TOKEN"
+class = "secret"
+targets = ["svc-vm"]
+secret = { prod = "vault:ocid1.vaultsecret.oc1.iad.fakeadmintoken" }
+
+[[var]]
+name = "ACX_GPU_ENDPOINT_API_KEY"
+class = "secret"
+targets = ["svc-vm"]
+secret = { dev = "host:", staging = "host:", prod = "host:" }
+''',
+}
+
+
+def _write_fragmented_manifest(directory: Path) -> dict[str, Path]:
+    paths = {}
+    for name, text in FRAGMENTED_MANIFEST.items():
+        path = directory / name
+        path.write_text(text, encoding="utf-8")
+        paths[name] = path
+    return paths
+
 
 def test_manifest_persists_valid_ocid_for_dev_and_prod_only(tmp_path: Path) -> None:
     path = tmp_path / "10-service-shared.toml"
@@ -96,6 +150,96 @@ def test_manifest_must_be_ready_before_any_mint(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="requires the svc-vm derived Vault secret map"):
         gpu_key_manifest.check_manifest_ready(path)
+
+
+def test_fragmented_manifest_readiness_and_update_find_gpu_owner(tmp_path: Path, monkeypatch) -> None:
+    paths = _write_fragmented_manifest(tmp_path)
+    paths["21-service-vm.toml"].chmod(0o640)
+    shared_before = paths["10-service-shared.toml"].read_text(encoding="utf-8")
+    local_before = paths["20-service-local.toml"].read_text(encoding="utf-8")
+    events = []
+    real_fsync = gpu_key_manifest.os.fsync
+    real_replace = gpu_key_manifest.os.replace
+
+    def record_fsync(descriptor: int) -> None:
+        events.append("fsync")
+        real_fsync(descriptor)
+
+    def record_replace(source: Path, target: Path) -> None:
+        events.append("replace")
+        real_replace(source, target)
+
+    monkeypatch.setattr(gpu_key_manifest.os, "fsync", record_fsync)
+    monkeypatch.setattr(gpu_key_manifest.os, "replace", record_replace)
+
+    gpu_key_manifest.check_manifest_ready(paths["10-service-shared.toml"])
+    gpu_key_manifest.set_gpu_key_ocid(paths["10-service-shared.toml"], FAKE_OCID)
+
+    shared_after = paths["10-service-shared.toml"].read_text(encoding="utf-8")
+    local_after = paths["20-service-local.toml"].read_text(encoding="utf-8")
+    vm_after = paths["21-service-vm.toml"].read_text(encoding="utf-8")
+    assert shared_after == shared_before
+    assert local_after == local_before
+    assert events == ["fsync", "replace", "fsync"]
+    assert "local = \"keychain:acx-local/PGPASSWORD\"" in local_after
+    assert stat.S_IMODE(paths["21-service-vm.toml"].stat().st_mode) == 0o640
+    gpu = next(row for row in tomllib.loads(vm_after)["var"] if row["name"] == "ACX_GPU_ENDPOINT_API_KEY")
+    assert gpu["secret"] == {
+        "dev": f"oci:{FAKE_OCID}",
+        "staging": "host:",
+        "prod": f"vault:{FAKE_OCID}",
+    }
+
+
+def test_fragmented_manifest_refuses_duplicate_gpu_owner_without_changes(tmp_path: Path) -> None:
+    paths = _write_fragmented_manifest(tmp_path)
+    duplicate = '''
+[[var]]
+name = "ACX_GPU_ENDPOINT_API_KEY"
+class = "secret"
+targets = ["svc-vm"]
+secret = { dev = "host:", staging = "host:", prod = "host:" }
+'''
+    paths["10-service-shared.toml"].write_text(
+        paths["10-service-shared.toml"].read_text(encoding="utf-8") + duplicate,
+        encoding="utf-8",
+    )
+    before = {name: path.read_text(encoding="utf-8") for name, path in paths.items()}
+
+    with pytest.raises(ValueError, match="exactly one ACX_GPU_ENDPOINT_API_KEY"):
+        gpu_key_manifest.set_gpu_key_ocid(paths["10-service-shared.toml"], FAKE_OCID)
+
+    assert {name: path.read_text(encoding="utf-8") for name, path in paths.items()} == before
+
+
+def test_terraform_input_artifact_contains_only_durable_identifier(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / "gpu-api-key.tfvars"
+    events = []
+    real_fsync = gpu_key_manifest.os.fsync
+    real_replace = gpu_key_manifest.os.replace
+
+    def record_fsync(descriptor: int) -> None:
+        events.append("fsync")
+        real_fsync(descriptor)
+
+    def record_replace(source: Path, target: Path) -> None:
+        events.append("replace")
+        real_replace(source, target)
+
+    monkeypatch.setattr(gpu_key_manifest.os, "fsync", record_fsync)
+    monkeypatch.setattr(gpu_key_manifest.os, "replace", record_replace)
+
+    gpu_key_manifest.write_terraform_input(path, FAKE_OCID)
+
+    assert path.read_text(encoding="utf-8") == (
+        '# Generated by scripts/deploy/gpu-key-mint.sh; identifier only.\n'
+        f'gpu_api_key_secret_ocid = "{FAKE_OCID}"\n'
+    )
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert events == ["fsync", "replace", "fsync"]
+
+    with pytest.raises(ValueError, match="refusing to replace existing Terraform GPU key input"):
+        gpu_key_manifest.write_terraform_input(path, "ocid1.vaultsecret.oc1.iad.differentfakekey")
 
 
 def test_manifest_refuses_to_change_a_different_minted_ocid(tmp_path: Path) -> None:
@@ -199,6 +343,7 @@ def test_mint_pipes_fake_random_input_and_prints_only_ocid_and_length(
     bin_dir = _fake_cli(tmp_path)
     manifest = tmp_path / "10-service-shared.toml"
     manifest.write_text(MANIFEST_TEXT, encoding="utf-8")
+    terraform_input = tmp_path / "gpu-api-key.tfvars"
     input_capture = tmp_path / "writer-stdin"
     argument_capture = tmp_path / "writer-arguments"
     args = ["bash"]
@@ -211,6 +356,8 @@ def test_mint_pipes_fake_random_input_and_prints_only_ocid_and_length(
         "ubuntu@gpu.example",
         "--manifest",
         str(manifest),
+        "--terraform-input",
+        str(terraform_input),
     ])
     if rotate:
         args.append("--rotate")
@@ -238,6 +385,61 @@ def test_mint_pipes_fake_random_input_and_prints_only_ocid_and_length(
     assert refs["dev"] == f"oci:{FAKE_OCID}"
     assert refs["prod"] == f"vault:{FAKE_OCID}"
     assert refs["staging"] == "host:"
+    assert terraform_input.read_text(encoding="utf-8") == (
+        '# Generated by scripts/deploy/gpu-key-mint.sh; identifier only.\n'
+        f'gpu_api_key_secret_ocid = "{FAKE_OCID}"\n'
+    )
+
+
+def test_mint_checks_fragmented_manifest_and_updates_gpu_owner(tmp_path: Path) -> None:
+    bin_dir = _fake_cli(tmp_path)
+    manifest_dir = tmp_path / "manifest.d"
+    manifest_dir.mkdir()
+    paths = _write_fragmented_manifest(manifest_dir)
+    terraform_input = tmp_path / "gpu-api-key.tfvars"
+    input_capture = tmp_path / "writer-stdin"
+    argument_capture = tmp_path / "writer-arguments"
+    result = subprocess.run(
+        [
+            "bash",
+            str(SCRIPT_PATH),
+            "--approve-mint",
+            "--ssh-target",
+            "ubuntu@gpu.example",
+            "--manifest",
+            str(paths["10-service-shared.toml"]),
+            "--terraform-input",
+            str(terraform_input),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+            "GPU_KEY_TEST_OCID": FAKE_OCID,
+            "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
+            "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
+            "TMPDIR": str(tmp_path),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == f"{FAKE_OCID} 64\n"
+    assert input_capture.read_text(encoding="utf-8") == FAKE_KEY
+    gpu = next(
+        row
+        for row in tomllib.loads(paths["21-service-vm.toml"].read_text(encoding="utf-8"))["var"]
+        if row["name"] == "ACX_GPU_ENDPOINT_API_KEY"
+    )
+    assert gpu["secret"]["dev"] == f"oci:{FAKE_OCID}"
+    assert gpu["secret"]["prod"] == f"vault:{FAKE_OCID}"
+    assert gpu["secret"]["staging"] == "host:"
+    assert (
+        f'gpu_api_key_secret_ocid = "{FAKE_OCID}"'
+        in terraform_input.read_text(encoding="utf-8")
+    )
 
 
 def test_cloud_init_fetches_key_at_runtime_and_gates_docker() -> None:
@@ -245,6 +447,7 @@ def test_cloud_init_fetches_key_at_runtime_and_gates_docker() -> None:
     terraform = (REPO_ROOT / "infra/oci/main.tf").read_text(encoding="utf-8")
     terraform_vars = (REPO_ROOT / "infra/oci/variables.tf").read_text(encoding="utf-8")
     prod_example = (REPO_ROOT / "apps/prototype-description-service/.env.prod.example").read_text(encoding="utf-8")
+    runbook = (REPO_ROOT / "docs/runbooks/gpu-key-mint.md").read_text(encoding="utf-8")
 
     assert "--auth instance_principal secrets secret-bundle get" in cloud_init
     assert "ATTEMPT_TIMEOUT=20" in cloud_init and "ATTEMPTS=5" in cloud_init
@@ -256,3 +459,5 @@ def test_cloud_init_fetches_key_at_runtime_and_gates_docker() -> None:
     assert "make gpu-key-mint" in prod_example
     assert "REPLACE_GPU_ENDPOINT_KEY" not in prod_example
     assert "REPLACE_GPU_ENDPOINT_KEY" not in cloud_init
+    assert "gpu-api-key.tfvars" in runbook
+    assert "terraform -chdir=infra/oci apply -var-file=terraform.tfvars -var-file=gpu-api-key.tfvars" in runbook

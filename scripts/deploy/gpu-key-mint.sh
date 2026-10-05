@@ -15,6 +15,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 SSH_TARGET="${GPU_KEY_WRITER_SSH_TARGET:-}"
 REMOTE_PYTHON="${GPU_KEY_WRITER_PYTHON:-/home/ubuntu/.oci-venv/bin/python3}"
 MANIFEST_PATH="${REPO_ROOT}/config/env/manifest.d/10-service-shared.toml"
+TERRAFORM_INPUT_PATH="${REPO_ROOT}/infra/oci/gpu-api-key.tfvars"
 MODE="bootstrap"
 APPROVED=0
 SSH_TIMEOUT_SECONDS=185
@@ -24,7 +25,7 @@ TIMEOUT_BIN=""
 
 usage() {
     cat <<'USAGE'
-Usage: scripts/deploy/gpu-key-mint.sh --approve-mint --ssh-target user@host [--rotate] [--manifest PATH]
+Usage: scripts/deploy/gpu-key-mint.sh --approve-mint --ssh-target user@host [--rotate] [--manifest PATH] [--terraform-input PATH]
 
 Bootstrap creates the secret only when absent. Rotation requires the explicit
 --rotate flag and reuses the existing secret OCID. The generated key travels
@@ -47,6 +48,11 @@ while [ $# -gt 0 ]; do
         --manifest)
             [ $# -ge 2 ] || fail "--manifest needs a path"
             MANIFEST_PATH="$2"
+            shift
+            ;;
+        --terraform-input)
+            [ $# -ge 2 ] || fail "--terraform-input needs a path"
+            TERRAFORM_INPUT_PATH="$2"
             shift
             ;;
         --rotate)
@@ -155,5 +161,6 @@ if [ "${BYTE_LENGTH}" != "64" ]; then
     fail "existing or minted GPU key has invalid byte length ${BYTE_LENGTH}"
 fi
 
-python3 "${SCRIPT_DIR}/_gpu_key_manifest.py" "${SECRET_OCID}" --manifest "${MANIFEST_PATH}"
+python3 "${SCRIPT_DIR}/_gpu_key_manifest.py" "${SECRET_OCID}" \
+    --manifest "${MANIFEST_PATH}" --terraform-input "${TERRAFORM_INPUT_PATH}"
 printf '%s %s\n' "${SECRET_OCID}" "${BYTE_LENGTH}"

@@ -1861,6 +1861,8 @@ class DescribeMediaServiceTest extends TestCase
     public function testOperationIdOutsideBackendAlphabetReturns400WithoutRemoteCall(string $operationId): void
     {
         $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $usageRowsBefore = $GLOBALS['__ac_description_usage_rows'] ?? [];
+        $reservationsBefore = get_option('acx_description_budget_reservations', []);
         $req = new DescribeMediaServicePayloadRequest(
             ['idempotency_key' => 'caller-key-1234567', 'operation_id' => $operationId],
             []
@@ -1873,6 +1875,8 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame('invalid_operation_id', $result->get_error_code());
         $this->assertSame(400, $result->get_error_data()['status'] ?? null);
         $this->assertSame([], $this->getHttpCalls());
+        $this->assertSame($usageRowsBefore, $GLOBALS['__ac_description_usage_rows'] ?? []);
+        $this->assertSame($reservationsBefore, get_option('acx_description_budget_reservations', []));
     }
 
     /**
@@ -1881,10 +1885,15 @@ class DescribeMediaServiceTest extends TestCase
     public static function invalidOperationIdAlphabetProvider(): array
     {
         return [
-            'trailing space' => ['operation-42 '],
-            'leading space'  => [' operation-42'],
-            'tab'            => ["operation\t-42"],
-            'non-ASCII byte' => ["operation-\xE9"],
+            'trailing space'              => ['operation-42 '],
+            'leading space'               => [' operation-42'],
+            'tab'                         => ["operation\t-42"],
+            'non-ASCII byte'              => ["operation-\xE9"],
+            'trailing newline'            => ["operation-42\n"],
+            'embedded NUL'                => ["operation\0-42"],
+            'dot'                         => ['operation.42'],
+            'colon'                       => ['operation:42'],
+            'valid multibyte UTF-8'       => ['operation-é'],
         ];
     }
 

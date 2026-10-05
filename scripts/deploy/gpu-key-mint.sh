@@ -18,6 +18,9 @@ MANIFEST_PATH="${REPO_ROOT}/config/env/manifest.d/10-service-shared.toml"
 TERRAFORM_INPUT_PATH="${REPO_ROOT}/infra/oci/gpu-api-key.tfvars"
 MODE="bootstrap"
 APPROVED=0
+EXPECTED_SECRET_ID=""
+EXPECTED_OWNER_SHA256=""
+EXPECTED_TERRAFORM_INPUT_SHA256=""
 SSH_TIMEOUT_SECONDS=185
 RESULT_FILE=""
 REMOTE_DIR=""
@@ -55,6 +58,21 @@ while [ $# -gt 0 ]; do
             TERRAFORM_INPUT_PATH="$2"
             shift
             ;;
+        --expected-secret-id)
+            [ $# -ge 2 ] || fail "--expected-secret-id needs a Vault secret OCID"
+            EXPECTED_SECRET_ID="$2"
+            shift
+            ;;
+        --expected-owner-sha256)
+            [ $# -ge 2 ] || fail "--expected-owner-sha256 needs a SHA-256 digest"
+            EXPECTED_OWNER_SHA256="$2"
+            shift
+            ;;
+        --expected-terraform-input-sha256)
+            [ $# -ge 2 ] || fail "--expected-terraform-input-sha256 needs a SHA-256 digest"
+            EXPECTED_TERRAFORM_INPUT_SHA256="$2"
+            shift
+            ;;
         --rotate)
             MODE="rotate"
             ;;
@@ -80,6 +98,17 @@ if [[ ! "${SSH_TARGET}" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+$ ]]; then
 fi
 if [[ ! "${REMOTE_PYTHON}" =~ ^/[A-Za-z0-9_./-]+$ || "${REMOTE_PYTHON}" == *"/../"* ]]; then
     fail "GPU_KEY_WRITER_PYTHON must be an absolute executable path"
+fi
+if [ -n "${EXPECTED_SECRET_ID}" ] && \
+    [[ ! "${EXPECTED_SECRET_ID}" =~ ^ocid1\.vaultsecret\.oc[0-9]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9._-]+$ ]]; then
+    fail "expected GPU key secret ID is invalid"
+fi
+if [ -n "${EXPECTED_OWNER_SHA256}" ] && [[ ! "${EXPECTED_OWNER_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
+    fail "expected GPU key manifest snapshot is invalid"
+fi
+if [ -n "${EXPECTED_TERRAFORM_INPUT_SHA256}" ] && \
+    [[ "${EXPECTED_TERRAFORM_INPUT_SHA256}" != "missing" && ! "${EXPECTED_TERRAFORM_INPUT_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
+    fail "expected GPU key Terraform snapshot is invalid"
 fi
 
 if command -v timeout >/dev/null 2>&1; then
@@ -143,6 +172,9 @@ REMOTE_WRITER="${REMOTE_DIR}/_vault_put_secret.py"
 bounded 20 scp -q -- "${SCRIPT_DIR}/_vault_put_secret.py" "${SSH_TARGET}:${REMOTE_WRITER}"
 
 REMOTE_COMMAND="sudo -n ${REMOTE_PYTHON} ${REMOTE_WRITER} --secret-name ACX_GPU_ENDPOINT_API_KEY --instance-principal --result-only --readable-timeout 90 --operation-timeout 150"
+if [ -n "${EXPECTED_SECRET_ID}" ]; then
+    REMOTE_COMMAND="${REMOTE_COMMAND} --expected-secret-id ${EXPECTED_SECRET_ID}"
+fi
 if [ "${MODE}" = "bootstrap" ]; then
     REMOTE_COMMAND="${REMOTE_COMMAND} --bootstrap"
 else
@@ -178,5 +210,7 @@ if [ "${BYTE_LENGTH}" != "64" ]; then
 fi
 
 python3 "${SCRIPT_DIR}/_gpu_key_manifest.py" "${SECRET_OCID}" \
-    --manifest "${MANIFEST_PATH}" --terraform-input "${TERRAFORM_INPUT_PATH}"
+    --manifest "${MANIFEST_PATH}" --terraform-input "${TERRAFORM_INPUT_PATH}" \
+    --expected-owner-sha256 "${EXPECTED_OWNER_SHA256}" \
+    --expected-terraform-input-sha256 "${EXPECTED_TERRAFORM_INPUT_SHA256}"
 printf '%s %s\n' "${SECRET_OCID}" "${BYTE_LENGTH}"

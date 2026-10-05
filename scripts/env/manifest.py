@@ -84,7 +84,9 @@ _PUBLIC_SENSITIVE_TOKENS = frozenset({
     "CREDENTIAL", "SIGNING", "SECRETS", "CREDENTIALS",
 })
 _URL_USERINFO_PASSWORD = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^/?#\s@:]+:[^/?#\s@]*@")
-_URL_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+# Each input is one env value: retain all base-check flags and add embedded URLs.
+# Spans run to the value's end; extra flags are acceptable, missed credentials are not.
+_URL_SPAN = re.compile(r"(?<![A-Za-z0-9+.-])(?=([A-Za-z][A-Za-z0-9+.-]*://.*))", re.DOTALL)
 _URL_CREDENTIAL_TOKENS = (
     "password", "passwd", "pwd", "pass", "secret", "token", "access_token",
     "api_key", "apikey", "key", "sig", "signature", "auth", "credential", "credentials",
@@ -92,16 +94,17 @@ _URL_CREDENTIAL_TOKENS = (
 
 
 def _url_query_credential(value: str) -> bool:
-    if not _URL_SCHEME.match(value):
-        return False
-    # Split only the parameter components; malformed authorities must not hide credentials.
-    url, _, fragment = value.partition("#")
-    _, _, query = url.partition("?")
-    return any(
-        key.lower().replace("-", "_").endswith(_URL_CREDENTIAL_TOKENS)
-        for component in (query, fragment)
-        for key, _ in parse_qsl(component, keep_blank_values=True)
-    )
+    for match in _URL_SPAN.finditer(value):
+        # Split only the parameter components; malformed authorities must not hide credentials.
+        url, _, fragment = match.group(1).partition("#")
+        _, _, query = url.partition("?")
+        if any(
+            key.lower().replace("-", "_").endswith(_URL_CREDENTIAL_TOKENS)
+            for component in (query, fragment)
+            for key, _ in parse_qsl(component, keep_blank_values=True)
+        ):
+            return True
+    return False
 
 
 def _fail(source: str, key: str, detail: str) -> NoReturn:

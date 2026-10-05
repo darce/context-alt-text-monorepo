@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
+from urllib.parse import parse_qsl
 
 import pytest
 
@@ -136,14 +138,29 @@ def test_missing_env_file_fails_with_names_only(write_manifest, tmp_path: Path, 
     assert "manifest-value" not in captured.err
 
 
-@pytest.mark.parametrize("value", [
+_WITHHELD_QUERY_VALUES = [
     "postgresql://db/app?password=pw",
     "https://h/x?token=abc",
     "https://h/x?API-KEY=abc",
     "https://h/x?client_secret=",
     "https://h/x?%70assword=pw",
     "https://h/x#access_token=abc",
-])
+    " https://h/x?token=abc",
+    "\thttps://h/x?token=abc",
+    "https://h/x?token=abc ",
+    "https://a/x?q=1,https://b/y?token=abc",
+    "see https://h/x?api_key=abc",
+    "https://a/x?q=1 https://b/y#access_token=abc",
+    "https://h/a,b?token=abc",
+    "https://h/x?q=a,b&api_key=abc",
+    "https://h/x#a=1,b=2&access_token=abc",
+    "https://a/x,https://b/y?q=1,2&token=abc",
+    "https://h/x?q=hello world&token=abc",
+    "https://h/x#a b&access_token=abc",
+]
+
+
+@pytest.mark.parametrize("value", _WITHHELD_QUERY_VALUES)
 def test_query_credentials_are_withheld(write_manifest, tmp_path: Path, capsys, value):
     module = load_module("harvest_extract")
     root = _root(write_manifest, _var("SERVICE_DSN"))
@@ -161,11 +178,19 @@ def test_query_credentials_are_withheld(write_manifest, tmp_path: Path, capsys, 
     assert captured.err == ""
 
 
-@pytest.mark.parametrize("value", [
+_BENIGN_QUERY_VALUES = [
     "postgresql://db/app?sslmode=require",
     "https://h/x?key_id=example",
     "password=pw",
-])
+    " https://h/x?sslmode=require",
+    "https://a/x,https://b/y",
+    "https://h/x?sslmode=require,token=abc",
+    "https://h/x?sslmode=require token=abc",
+    "https://h/a,b?q=1,2",
+]
+
+
+@pytest.mark.parametrize("value", _BENIGN_QUERY_VALUES)
 def test_benign_query_values_are_extracted(write_manifest, value):
     module = load_module("harvest_extract")
     root = _root(write_manifest, _var("SERVICE_DSN"))
@@ -174,10 +199,44 @@ def test_benign_query_values_are_extracted(write_manifest, value):
     assert result["withheld"]["secret_looking"] == []
 
 
+def _base_url_query_credential(value: str) -> bool:
+    if not re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", value):
+        return False
+    url, _, fragment = value.partition("#")
+    _, _, query = url.partition("?")
+    return any(
+        key.lower().replace("-", "_").endswith((
+            "password", "passwd", "pwd", "pass", "secret", "token", "access_token",
+            "api_key", "apikey", "key", "sig", "signature", "auth", "credential", "credentials",
+        ))
+        for component in (query, fragment)
+        for key, _ in parse_qsl(component, keep_blank_values=True)
+    )
+
+
+@pytest.mark.parametrize("value", _WITHHELD_QUERY_VALUES + _BENIGN_QUERY_VALUES + [
+    "https://h/x?q=hello\nworld&token=fake",
+    "https://h/x#a\nb&access_token=fake",
+    "see https://h/x?q=hello world&token=fake",
+    "https://a/x?q=1,https://b/y#x=hello world&api_key=fake",
+    "https://h/x?sslmode=require#section with spaces",
+])
+def test_query_credential_detection_preserves_base(value):
+    module = load_module("manifest")
+    if _base_url_query_credential(value):
+        assert module._url_query_credential(value)
+
+
 @pytest.mark.parametrize("location", ["example", "values", "override"])
-def test_public_build_query_credentials_are_rejected(write_manifest, location):
+@pytest.mark.parametrize("value", [
+    "https://h/x?api_key=abc",
+    " https://h/x?api_key=abc",
+    "https://a/x?q=1,https://b/y?api_key=abc",
+    "https://h/x?q=a,b&api_key=abc",
+    "https://h/x?q=hello world&token=abc",
+])
+def test_public_build_query_credentials_are_rejected(write_manifest, location, value):
     module = load_module("harvest_extract")
-    value = "https://h/x?api_key=abc"
     variable = _var("VITE_SERVICE_URL", cls="public")
     if location == "example":
         variable = variable.replace("safe-example", value)

@@ -131,8 +131,10 @@ if [[ ${SHIM_TAR_FAKE_RENDER:-0} == 1 ]]; then
     destination="${@: -1}"
     cat > /dev/null
     mkdir -p "$destination/scripts/env"
+    cp "$SHIM_SOURCE_ROOT"/scripts/env/*.py "$destination/scripts/env/"
     case ${SHIM_RENDER_SOURCE_MODE:-valid} in
         open)
+            rm -f "$destination/scripts/env/render_env.py"
             ;;
         syntax)
             printf 'this is not valid Python syntax\n' > "$destination/scripts/env/render_env.py"
@@ -140,10 +142,28 @@ if [[ ${SHIM_TAR_FAKE_RENDER:-0} == 1 ]]; then
         import)
             printf 'import missing_render_env_startup_module_for_test\n' > "$destination/scripts/env/render_env.py"
             ;;
+        lazy-import)
+            cat > "$destination/scripts/env/render_env.py" <<'PY'
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+def main():
+    from env.materialize import run
+    return run(None)
+PY
+            cat > "$destination/scripts/env/materialize.py" <<'PY'
+import missing_materialize_startup_dependency_for_test
+PY
+            ;;
         valid)
             cat > "$destination/scripts/env/render_env.py" <<'PY'
 import os
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 def main():
     if os.environ.get("SHIM_MATERIALIZE_STDOUT") == "1":
@@ -190,6 +210,7 @@ exec "$REAL_PYTHON" "$@"
         SHIM_EXEC_REMOTE="1",
         SHIM_REMOTE_PATH=str(remote_bin),
         SHIM_REMOTE_TMP=str(tmp_path / "remote-tmp"),
+        SHIM_SOURCE_ROOT=str(REPO),
         REAL_TAR=shutil.which("tar"),
     )
 
@@ -372,6 +393,7 @@ def test_constructed_remote_command_runs_python_materializer_wrapper(remote, tmp
         ("open", "FileNotFoundError"),
         ("syntax", "SyntaxError"),
         ("import", "ModuleNotFoundError"),
+        ("lazy-import", "ModuleNotFoundError"),
     ],
 )
 @pytest.mark.parametrize("args", [[], ["--apply"]])

@@ -136,7 +136,10 @@ def _toml_table(values: dict[str, str]) -> str:
     return "{ " + ", ".join(f'{key} = {json.dumps(value)}' for key, value in values.items()) + " }"
 
 
-def _oci_manifest(tmp_path: Path, secret_ref: str = f"oci:{SECRET_OCID}") -> Path:
+def _oci_manifest(
+    tmp_path: Path, secret_ref: str = f"oci:{SECRET_OCID}", *,
+    audience: str = "backend", derive_from_secret: bool = False,
+) -> Path:
     root = tmp_path / "envroot"
     manifest_dir = root / "manifest.d"
     manifest_dir.mkdir(parents=True)
@@ -144,7 +147,7 @@ def _oci_manifest(tmp_path: Path, secret_ref: str = f"oci:{SECRET_OCID}") -> Pat
         "\n".join([
             "version = 1",
             "[targets.t]",
-            'audience = "backend"',
+            f'audience = "{audience}"',
             'envs = ["dev"]',
             'sections = ["S"]',
             f"remote_paths = {_toml_table({'dev': INTO})}",
@@ -152,23 +155,39 @@ def _oci_manifest(tmp_path: Path, secret_ref: str = f"oci:{SECRET_OCID}") -> Pat
         ]) + "\n",
         encoding="utf-8",
     )
+    fragment = [
+        "version = 1",
+        "[[var]]",
+        'name = "API_TOKEN"',
+        'class = "secret"',
+        'targets = ["t"]',
+        'section = "S"',
+        'example = "example-value"',
+        f"secret = {_toml_table({'dev': secret_ref})}",
+    ]
+    if derive_from_secret:
+        fragment.extend(
+            [
+                "[[var]]",
+                'name = "DATABASE_URL"',
+                'class = "secret"',
+                'targets = ["t"]',
+                'section = "S"',
+                'example = "example-value"',
+                'derive = "postgresql://u:${API_TOKEN}@db/app"',
+            ]
+        )
     (manifest_dir / "10-secrets.toml").write_text(
-        "\n".join([
-            "version = 1",
-            "[[var]]",
-            'name = "API_TOKEN"',
-            'class = "secret"',
-            'targets = ["t"]',
-            'section = "S"',
-            'example = "example-value"',
-            f"secret = {_toml_table({'dev': secret_ref})}",
-        ]) + "\n",
+        "\n".join(fragment) + "\n",
         encoding="utf-8",
     )
     return root
 
 
-def _run_materialize(tmp_path, monkeypatch, *, runner, secret_ref: str = f"oci:{SECRET_OCID}"):
+def _run_materialize(
+    tmp_path, monkeypatch, *, runner, secret_ref: str = f"oci:{SECRET_OCID}",
+    audience: str = "backend", derive_from_secret: bool = False,
+):
     mat = load_module("materialize")
     render = load_module("render_env")
     original_render_target = render.render_target
@@ -179,7 +198,9 @@ def _run_materialize(tmp_path, monkeypatch, *, runner, secret_ref: str = f"oci:{
 
     monkeypatch.setattr(render, "render_target", render_with_fake_oci)
 
-    manifest_root = _oci_manifest(tmp_path, secret_ref)
+    manifest_root = _oci_manifest(
+        tmp_path, secret_ref, audience=audience, derive_from_secret=derive_from_secret,
+    )
     fs_root = tmp_path / "fs"
     output_path = fs_root / INTO.lstrip("/")
     output_path.parent.mkdir(parents=True)
@@ -237,6 +258,34 @@ def test_oci_unavailable_materialization_exits_4_without_disclosure(tmp_path, mo
     assert output_path.read_bytes() == before
     assert "API_TOKEN=" not in output_path.read_text(encoding="utf-8")
     assert stat.S_IMODE(output_path.stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize(
+    ("audience", "derive_from_secret"),
+    [("test", False), ("backend", True)],
+)
+def test_remote_oci_policy_rejection_precedes_resolver(
+    tmp_path, monkeypatch, audience, derive_from_secret,
+):
+    calls = []
+
+    def runner(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, stdout=_oci_result(), stderr="")
+
+    result, output_path, before, out, err = _run_materialize(
+        tmp_path,
+        monkeypatch,
+        runner=runner,
+        audience=audience,
+        derive_from_secret=derive_from_secret,
+    )
+
+    assert result == 2
+    assert calls == []
+    assert output_path.read_bytes() == before
+    assert out == ""
+    assert "fake-oci-secret-value" not in err
 
 
 def test_malformed_oci_materialization_is_refused_before_cli(tmp_path, monkeypatch):

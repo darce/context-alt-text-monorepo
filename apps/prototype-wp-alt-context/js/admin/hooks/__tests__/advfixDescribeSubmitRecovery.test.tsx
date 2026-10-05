@@ -144,6 +144,11 @@ const installTenant = (): void => {
 describe('describe submit recovery across remounts', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Clear unconsumed once-responses before installing each test's defaults.
+    submitBulkDescribeRunMock.mockReset();
+    fetchBulkDescribeRunMock.mockReset();
+    fetchDescribeRunItemsMock.mockReset();
+    fetchGpuStatusMock.mockReset();
     sessionStorage.clear();
     _resetDescribeOperationStoreForTests();
     installTenant();

@@ -161,3 +161,83 @@ def test_literal_command_substitution_text_remains_a_value(write_manifest, text,
 
     assert result["values"] == {"NAME": expected}
     assert result["withheld"]["unparsed"] == []
+
+
+def test_same_line_empty_case_closes_substitution_and_resumes_assignments(write_manifest):
+    render = load_module("render_env")
+    module = load_module("harvest_extract")
+    root = _manifest(write_manifest, "NOTICE", "AFTER")
+    text = 'NOTICE=$(case "$x" in esac)\nAFTER=visible\n'
+
+    assignments = render.shell_assignments(text)
+    result = _extract(module, root, text)
+
+    assert set(assignments) == {"NOTICE", "AFTER"}
+    assert result["values"] == {"AFTER": "visible"}
+    assert result["withheld"]["unparsed"] == ["NOTICE"]
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    ["(esac", '"esac"', r"\esac"],
+    ids=("parenthesized-literal", "quoted-literal", "escaped-literal"),
+)
+def test_literal_esac_case_patterns_remain_patterns(write_manifest, pattern):
+    render = load_module("render_env")
+    module = load_module("harvest_extract")
+    root = _manifest(write_manifest, "NOTICE", "LOG_LEVEL", "AFTER")
+    text = (
+        'NOTICE=$(case "$x" in\n'
+        f"{pattern})\n"
+        "LOG_LEVEL=private-fragment\n"
+        ";;\n"
+        "esac\n"
+        ")\n"
+        "AFTER=visible\n"
+    )
+
+    assignments = render.shell_assignments(text)
+    result = _extract(module, root, text)
+
+    assert set(assignments) == {"NOTICE", "AFTER"}
+    assert result["values"] == {"AFTER": "visible"}
+    assert result["withheld"]["unparsed"] == ["NOTICE"]
+
+
+@pytest.mark.parametrize(
+    "operator",
+    ["<", ">"],
+    ids=("input-process-substitution", "output-process-substitution"),
+)
+def test_multiline_process_substitutions_are_withheld_and_resume(write_manifest, operator):
+    render = load_module("render_env")
+    module = load_module("harvest_extract")
+    root = _manifest(write_manifest, "NOTICE", "LOG_LEVEL", "AFTER")
+    text = (
+        f"NOTICE={operator}(printf first\n"
+        "LOG_LEVEL=private-fragment\n"
+        "last\n"
+        ")\n"
+        "AFTER=visible\n"
+    )
+
+    assignments = render.shell_assignments(text)
+    result = _extract(module, root, text)
+
+    assert set(assignments) == {"NOTICE", "AFTER"}
+    assert result["values"] == {"AFTER": "visible"}
+    assert result["withheld"]["missing"] == ["LOG_LEVEL"]
+    assert result["withheld"]["unparsed"] == ["NOTICE"]
+
+
+@pytest.mark.parametrize("operator", ["<", ">"], ids=("input", "output"))
+def test_process_substitution_literals_are_not_scanned_as_executable(operator):
+    render = load_module("render_env")
+
+    assert render.shell_words(f"{operator}(printf literal)") is None
+    assert render.shell_words(f"'{operator}(printf literal)'") == [
+        f"{operator}(printf literal)"
+    ]
+    assert render.shell_words(f"\\{operator}\\(printf\\ literal\\)") == [
+        f"{operator}(printf literal)"
+    ]

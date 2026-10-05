@@ -98,7 +98,7 @@ def _finish_shell_word(context: _ShellContext) -> None:
 
     current_case = context.case_stack[-1] if context.case_stack else None
     if current_case is not None and current_case.phase == "pattern":
-        if word == "esac" and context.command_start and not current_case.pattern_started:
+        if word == "esac" and not current_case.pattern_started:
             context.case_stack.pop()
         else:
             current_case.pattern_started = True
@@ -179,6 +179,16 @@ def _scan_shell_line(raw: str, state: _ShellState) -> str:
             continue
 
         if char == "$" and index + 1 < len(raw) and raw[index + 1] == "(":
+            state.has_substitution = True
+            if state.contexts and state.contexts[-1].kind == "paren":
+                state.contexts[-1].word.append("\0")
+            state.contexts.append(_ShellContext("paren", state.quote, 1))
+            state.quote = ""
+            state.in_word = False
+            index += 2
+            continue
+
+        if char in "<>" and index + 1 < len(raw) and raw[index + 1] == "(":
             state.has_substitution = True
             if state.contexts and state.contexts[-1].kind == "paren":
                 state.contexts[-1].word.append("\0")

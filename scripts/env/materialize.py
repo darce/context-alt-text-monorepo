@@ -16,12 +16,39 @@ from pathlib import Path
 from typing import Callable, Sequence, TextIO
 
 from env import render_env as render
-from env.manifest import load_manifest
+from env.manifest import ManifestError, load_manifest
 from env.secret_refs import SecretUnavailable
 
 
 class _InvalidLeaseEnv(ValueError):
     pass
+
+
+class _UnmanagedKeyRefused(ValueError):
+    pass
+
+
+def _refusal_reason(exc: OSError | ValueError) -> str:
+    if isinstance(exc, ManifestError):
+        return str(exc)
+    if isinstance(exc, OSError):
+        reason = f"{type(exc).__name__}: {exc.strerror or 'unknown error'}"
+        if exc.filename is not None:
+            reason += f": {os.fsdecode(exc.filename)}"
+            if exc.filename2 is not None:
+                reason += f" -> {os.fsdecode(exc.filename2)}"
+        elif exc.filename2 is not None:
+            reason += f": {os.fsdecode(exc.filename2)}"
+        return reason
+
+    tb = exc.__traceback__
+    source_module = None
+    while tb is not None:
+        source_module = tb.tb_frame.f_globals.get("__name__")
+        tb = tb.tb_next
+    if source_module in {"env.manifest", "env.render_env"}:
+        return str(exc)
+    return type(exc).__name__
 
 
 def _lease_path(backup_root: Path, lease_env: str | None) -> Path | None:
@@ -209,7 +236,7 @@ def run(
                         print(f"{group}\t{name}", file=out)
                 return int(any(groups.values()))
             if unmanaged:
-                raise ValueError("unmanaged key " + sorted(unmanaged)[0])
+                raise _UnmanagedKeyRefused("unmanaged key " + sorted(unmanaged)[0])
             preserved = [line for line in old.split("\n") if line.startswith("# ACX_IMAGE_REPO_OWNER=")]
             for key in (*spec.preserve, *sorted(set(allow_unmanaged) - managed - set(spec.preserve))):
                 preserved.extend(actual.get(key, []))
@@ -229,9 +256,12 @@ def run(
     except _InvalidLeaseEnv as exc:
         print(f"materialize refused: {exc}", file=err)
         return 2
+    except _UnmanagedKeyRefused as exc:
+        print(f"materialize refused: {exc}", file=err)
+        return 2
     except TimeoutError:
         print("materialize lock or lease busy", file=err)
         return 75
-    except (OSError, ValueError):
-        print("materialize refused", file=err)
+    except (OSError, ValueError) as exc:
+        print(f"materialize refused: {_refusal_reason(exc)}", file=err)
         return 2

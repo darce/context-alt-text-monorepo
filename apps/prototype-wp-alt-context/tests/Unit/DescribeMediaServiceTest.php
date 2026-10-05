@@ -1857,6 +1857,37 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame([], $this->getHttpCalls());
     }
 
+    #[DataProvider('invalidOperationIdAlphabetProvider')]
+    public function testOperationIdOutsideBackendAlphabetReturns400WithoutRemoteCall(string $operationId): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $req = new DescribeMediaServicePayloadRequest(
+            ['idempotency_key' => 'caller-key-1234567', 'operation_id' => $operationId],
+            []
+        );
+        $req->set_param('media_id', 42);
+
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('invalid_operation_id', $result->get_error_code());
+        $this->assertSame(400, $result->get_error_data()['status'] ?? null);
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function invalidOperationIdAlphabetProvider(): array
+    {
+        return [
+            'trailing space' => ['operation-42 '],
+            'leading space'  => [' operation-42'],
+            'tab'            => ["operation\t-42"],
+            'non-ASCII byte' => ["operation-\xE9"],
+        ];
+    }
+
     public function testNonStringOperationIdReturns400WithoutRemoteCall(): void
     {
         $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');

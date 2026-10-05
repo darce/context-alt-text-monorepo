@@ -42,12 +42,27 @@ def _target_vars(manifest: Manifest, target_name: str) -> tuple[Var, ...]:
 def host_secret_required(var: Var, variables: tuple[Var, ...], env: str) -> bool:
     # The input is the live host env file: oci_vault must fail closed for an
     # absent, blank or quoted-empty host map, in both checks and writes.
-    return var.required or (
+    required = var.required or (
         var.name == "RECOGNITION_VAULT_SECRET_MAP" and any(
             item.name == "RECOGNITION_SECRET_BACKEND" and item.values.get(env) == "oci_vault"
             for item in variables
         )
     )
+    if not required:
+        return False
+    for name, accepted_values in (var.required_when or {}).items():
+        condition = next((item for item in variables if item.name == name), None)
+        if condition is None or condition.cls != "config":
+            raise ManifestError(
+                f"{var.source}: {var.name}: required_when cannot evaluate {name}"
+            )
+        value = condition.values.get(env, "")
+        if accepted_values == ("*",):
+            if not value:
+                return False
+        elif value not in accepted_values:
+            return False
+    return True
 
 
 def _shell_line(raw: str, quote: str = "") -> tuple[str, str, bool]:

@@ -29,3 +29,18 @@ resource "oci_identity_policy" "acx_gpu_self_stop" {
     "Allow dynamic-group ${oci_identity_dynamic_group.acx_gpu_self_stop.name} to read instances in compartment id ${var.compartment_ocid} where all { request.permission = 'INSTANCE_READ', target.instance.id = '${oci_core_instance.acx_gpu_burst.id}' }",
   ]
 }
+
+# The GPU Vault key is stored in the tenancy's root compartment. Place this
+# grant at tenancy scope, then bind it to the single configured secret OCID.
+# OCI's `read secret-bundles` verb includes SECRET_BUNDLE_READ and INSPECT;
+# it grants no secret create, update, or rotation authority.
+resource "oci_identity_policy" "acx_gpu_secret_read" {
+  count          = var.gpu_api_key_secret_ocid == "" ? 0 : 1
+  compartment_id = var.tenancy_ocid
+  description    = "Permit the ACX GPU runtime to read only its configured Vault key"
+  name           = "acx-gpu-vault-key-read"
+
+  statements = [
+    "Allow dynamic-group ${oci_identity_dynamic_group.acx_gpu_self_stop.name} to read secret-bundles in tenancy where target.secret.id = '${var.gpu_api_key_secret_ocid}'",
+  ]
+}

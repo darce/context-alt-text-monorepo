@@ -620,8 +620,11 @@ def test_gpu_self_stop_terraform_wiring_and_narrow_policy_are_present() -> None:
     assert 'variable "gpu_self_stop_enabled"' in variables_tf
     assert re.search(r'variable "gpu_self_stop_enabled".*?default\s*=\s*true', variables_tf, re.DOTALL)
     assert 'templatefile("${path.module}/gpu-cloud-init.yaml"' in main_tf
-    assert "max_uptime_seconds = var.gpu_max_uptime_seconds" in main_tf
-    assert "self_stop_enabled  = var.gpu_self_stop_enabled ? 1 : 0" in main_tf
+    assert re.search(r"max_uptime_seconds\s*=\s*var\.gpu_max_uptime_seconds", main_tf)
+    assert re.search(
+        r"self_stop_enabled\s*=\s*var\.gpu_self_stop_enabled\s*\?\s*1\s*:\s*0",
+        main_tf,
+    )
     assert "gpu_max_uptime_seconds" in tfvars_example
     assert "gpu_self_stop_enabled" in tfvars_example
     assert 'output "self_stop_dynamic_group_id"' in outputs_tf

@@ -63,6 +63,7 @@ class _JSToken:
     kind: str
     value: str | None
     raw: str
+    line_break_before: bool = False
 
 
 def decode_publishable_key(raw: str) -> str:
@@ -303,6 +304,7 @@ def _skip_regex_javascript(source: str, start: int) -> int:
 def _tokenize_javascript(source: str) -> list[_JSToken]:
     tokens: list[_JSToken] = []
     index = 0
+    last_token_end = 0
     operators = ("===", "!==", "=>", "==", "!=", "<=", ">=", "++", "--", "+=", "-=", "*=", "/=", "&&", "||", "??", "...", "?.")
     while index < len(source):
         char = source[index]
@@ -319,31 +321,34 @@ def _tokenize_javascript(source: str) -> list[_JSToken]:
                 raise ClerkConfigError("reachable JavaScript module has an unterminated comment")
             index = end + 2
             continue
+        token_start = index
+        line_break_before = any(char in source[last_token_end:token_start] for char in "\r\n")
         if char in "'\"":
             index, raw, value = _skip_quoted_javascript(source, index)
-            tokens.append(_JSToken("string", value, raw))
+            tokens.append(_JSToken("string", value, raw, line_break_before))
         elif char == "`":
             end = _skip_template_javascript(source, index)
-            tokens.append(_JSToken("template", None, source[index + 1 : end - 1]))
+            tokens.append(_JSToken("template", None, source[index + 1 : end - 1], line_break_before))
             index = end
         elif char == "/" and _regex_can_start(tokens):
             end = _skip_regex_javascript(source, index)
-            tokens.append(_JSToken("regex", None, source[index:end]))
+            tokens.append(_JSToken("regex", None, source[index:end], line_break_before))
             index = end
         elif char.isascii() and (char.isalpha() or char in "_$"):
             end = index + 1
             while end < len(source) and source[end].isascii() and (source[end].isalnum() or source[end] in "_$"):
                 end += 1
-            tokens.append(_JSToken("identifier", source[index:end], source[index:end]))
+            tokens.append(_JSToken("identifier", source[index:end], source[index:end], line_break_before))
             index = end
         else:
             operator = next((item for item in operators if source.startswith(item, index)), None)
             if operator is not None:
-                tokens.append(_JSToken("punct", operator, operator))
+                tokens.append(_JSToken("punct", operator, operator, line_break_before))
                 index += len(operator)
             else:
-                tokens.append(_JSToken("punct", char, char))
+                tokens.append(_JSToken("punct", char, char, line_break_before))
                 index += 1
+        last_token_end = index
         if len(tokens) > MAX_FRONTEND_TOKENS:
             raise ClerkConfigError("reachable JavaScript module exceeds the static inspection limit")
     return tokens
@@ -413,6 +418,26 @@ def _object_fields(
     return fields, has_spread
 
 
+_INITIALIZER_CONTINUATIONS = frozenset(
+    {
+        "(", "[", ".", "?.", "+", "-", "*", "/", "%", "**", "<", ">", "<=", ">=", "==", "===", "!=", "!==",
+        "&&", "||", "??", "?", ":", "=", "+=", "-=", "*=", "/=", "=>", "&", "|", "^", "in", "instanceof", "of",
+        "as", "satisfies",
+    }
+)
+
+
+def _initializer_ends_here(tokens: Sequence[_JSToken], next_index: int) -> bool:
+    if next_index == len(tokens):
+        return True
+    following = tokens[next_index]
+    if following.value in {";", ",", "}"}:
+        return True
+    if not following.line_break_before:
+        return False
+    return following.kind != "template" and following.value not in _INITIALIZER_CONTINUATIONS
+
+
 def _resolve_static_alias(
     name: str,
     tokens: Sequence[_JSToken],
@@ -431,8 +456,7 @@ def _resolve_static_alias(
             and tokens[index + 2].value == "="
         ):
             initializer = tokens[index + 3]
-            if initializer.kind in {"string", "identifier"}:
-                declarations.append((index, scopes[index], initializer))
+            declarations.append((index, scopes[index], initializer))
         index += 1
     visible = [item for item in declarations if len(item[1]) <= len(use_scope) and use_scope[: len(item[1])] == item[1]]
     if not visible:
@@ -447,9 +471,11 @@ def _resolve_static_alias(
         raise ClerkConfigError("VITE_CLERK_FAPI: configuration alias is cyclic")
     if len(seen) >= 16:
         raise ClerkConfigError("VITE_CLERK_FAPI: configuration alias chain is too deep")
+    if initializer.kind not in {"string", "identifier"} or not _initializer_ends_here(tokens, declaration_index + 4):
+        raise ClerkConfigError("VITE_CLERK_FAPI: configuration alias initializer is unsupported")
     if initializer.kind == "string":
         if initializer.value is None:
-            raise ClerkConfigError(f"{name}: escaped configuration aliases are unsupported")
+            raise ClerkConfigError("VITE_CLERK_FAPI: escaped configuration aliases are unsupported")
         return initializer.value
     assert initializer.value is not None
     return _resolve_static_alias(
@@ -555,6 +581,7 @@ def _resolve_config_object(
     use_scope: tuple[int, ...],
     before_index: int,
     config_objects: set[int],
+    pairs: dict[int, int],
     seen: frozenset[tuple[str, tuple[int, ...], int]] = frozenset(),
 ) -> int:
     declarations: list[tuple[int, tuple[int, ...], int]] = []
@@ -564,7 +591,6 @@ def _resolve_config_object(
             and tokens[index + 1].kind == "identifier"
             and tokens[index + 1].value == name
             and tokens[index + 2].value == "="
-            and (tokens[index + 3].kind == "identifier" or tokens[index + 3].value == "{")
         ):
             declarations.append((index, scopes[index], index + 3))
     visible = [item for item in declarations if len(item[1]) <= len(use_scope) and use_scope[: len(item[1])] == item[1]]
@@ -580,9 +606,16 @@ def _resolve_config_object(
         raise ClerkConfigError("VITE_CLERK_FAPI: portal config object alias is cyclic or too deep")
     initializer = tokens[initializer_index]
     if initializer.value == "{":
-        if initializer_index not in config_objects:
+        close_index = pairs.get(initializer_index)
+        if (
+            initializer_index not in config_objects
+            or close_index is None
+            or not _initializer_ends_here(tokens, close_index + 1)
+        ):
             raise ClerkConfigError("VITE_CLERK_FAPI: portal config object alias has no supported binding")
         return initializer_index
+    if initializer.kind != "identifier" or not _initializer_ends_here(tokens, initializer_index + 1):
+        raise ClerkConfigError("VITE_CLERK_FAPI: portal config object alias initializer is unsupported")
     assert initializer.value is not None
     return _resolve_config_object(
         initializer.value,
@@ -591,6 +624,7 @@ def _resolve_config_object(
         declaration_scope,
         declaration_index,
         config_objects,
+        pairs,
         seen | {identity},
     )
 
@@ -652,6 +686,7 @@ def _portal_config_records(tokens: Sequence[_JSToken]) -> tuple[list[dict[str, s
                 scopes[call_index],
                 call_index,
                 set(object_records),
+                pairs,
             )
         else:
             continue

@@ -46,7 +46,7 @@ def _refusal_reason(exc: OSError | ValueError) -> str:
     while tb is not None:
         source_module = tb.tb_frame.f_globals.get("__name__")
         tb = tb.tb_next
-    if source_module in {"env.manifest", "env.render_env"}:
+    if source_module in {"env.manifest", "env.render_env", __name__}:
         return str(exc)
     return type(exc).__name__
 

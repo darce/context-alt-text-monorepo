@@ -242,6 +242,122 @@ def test_terraform_input_artifact_contains_only_durable_identifier(tmp_path: Pat
         gpu_key_manifest.write_terraform_input(path, "ocid1.vaultsecret.oc1.iad.differentfakekey")
 
 
+@pytest.mark.parametrize("destination", ["conflict", "invalid-input", "invalid-manifest-owner"])
+def test_mint_preflights_output_destinations_before_remote_writer(
+    tmp_path: Path,
+    destination: str,
+) -> None:
+    bin_dir = _fake_cli(tmp_path)
+    if destination == "invalid-manifest-owner":
+        manifest_dir = tmp_path / "manifest.d"
+        manifest_dir.mkdir()
+        fragments = _write_fragmented_manifest(manifest_dir)
+        owner = fragments["21-service-vm.toml"]
+        target = tmp_path / "vm-fragment-target.toml"
+        target.write_text(owner.read_text(encoding="utf-8"), encoding="utf-8")
+        owner.unlink()
+        owner.symlink_to(target)
+        manifest = fragments["10-service-shared.toml"]
+    else:
+        manifest = tmp_path / "10-service-shared.toml"
+        manifest.write_text(MANIFEST_TEXT, encoding="utf-8")
+    if destination == "conflict":
+        terraform_input = tmp_path / "gpu-api-key.tfvars"
+        terraform_input.write_text(
+            'gpu_api_key_secret_ocid = "ocid1.vaultsecret.oc1.iad.conflictingfake"\n',
+            encoding="utf-8",
+        )
+    elif destination == "invalid-input":
+        parent_file = tmp_path / "not-a-directory"
+        parent_file.write_text("invalid destination", encoding="utf-8")
+        terraform_input = parent_file / "gpu-api-key.tfvars"
+    else:
+        terraform_input = tmp_path / "gpu-api-key.tfvars"
+    input_capture = tmp_path / "writer-stdin"
+    argument_capture = tmp_path / "writer-arguments"
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(SCRIPT_PATH),
+            "--approve-mint",
+            "--ssh-target",
+            "ubuntu@gpu.example",
+            "--manifest",
+            str(manifest),
+            "--terraform-input",
+            str(terraform_input),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+            "GPU_KEY_TEST_OCID": FAKE_OCID,
+            "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
+            "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
+            "TMPDIR": str(tmp_path),
+        },
+    )
+
+    assert result.returncode != 0
+    assert not input_capture.exists()
+    assert not argument_capture.exists()
+    document, _ = gpu_key_manifest._load_manifest_fragments(manifest)
+    assert gpu_key_manifest._current_gpu_key_ocid(document) is None
+
+
+def test_late_terraform_publish_failure_restores_manifest_preimage(tmp_path: Path, monkeypatch) -> None:
+    manifest = tmp_path / "10-service-shared.toml"
+    manifest.write_text(MANIFEST_TEXT, encoding="utf-8")
+    terraform_input = tmp_path / "gpu-api-key.tfvars"
+    real_replace = gpu_key_manifest.os.replace
+    failed = False
+
+    def fail_terraform_publish_once(source: Path, target: Path) -> None:
+        nonlocal failed
+        if Path(target) == terraform_input and not failed:
+            failed = True
+            raise OSError("injected late Terraform input publish failure")
+        real_replace(source, target)
+
+    monkeypatch.setattr(gpu_key_manifest.os, "replace", fail_terraform_publish_once)
+
+    with pytest.raises(ValueError, match="rolled back"):
+        gpu_key_manifest.persist_mint_result(manifest, terraform_input, FAKE_OCID)
+
+    assert failed
+    assert manifest.read_text(encoding="utf-8") == MANIFEST_TEXT
+    assert not terraform_input.exists()
+
+
+def test_mint_persistence_is_idempotent_for_matching_manifest_and_tfvars(tmp_path: Path, monkeypatch) -> None:
+    manifest = tmp_path / "10-service-shared.toml"
+    manifest.write_text(MANIFEST_TEXT, encoding="utf-8")
+    terraform_input = tmp_path / "gpu-api-key.tfvars"
+    real_replace = gpu_key_manifest.os.replace
+    replacements = []
+
+    def record_replace(source: Path, target: Path) -> None:
+        replacements.append(Path(target))
+        real_replace(source, target)
+
+    monkeypatch.setattr(gpu_key_manifest.os, "replace", record_replace)
+
+    gpu_key_manifest.persist_mint_result(manifest, terraform_input, FAKE_OCID)
+    first_manifest = manifest.read_text(encoding="utf-8")
+    first_input = terraform_input.read_text(encoding="utf-8")
+    first_publish_count = len(replacements)
+    gpu_key_manifest.persist_mint_result(manifest, terraform_input, FAKE_OCID)
+
+    assert first_publish_count == 2
+    assert len(replacements) == first_publish_count
+    assert manifest.read_text(encoding="utf-8") == first_manifest
+    assert terraform_input.read_text(encoding="utf-8") == first_input
+
+
 def test_manifest_refuses_to_change_a_different_minted_ocid(tmp_path: Path) -> None:
     path = tmp_path / "10-service-shared.toml"
     path.write_text(MANIFEST_TEXT, encoding="utf-8")

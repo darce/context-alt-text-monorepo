@@ -21,6 +21,12 @@ argument, log, manifest, or Terraform input. On success, the command prints
 only the secret OCID and byte length, updates the GPU declaration's dev/prod
 references atomically, and writes the identifier-only file
 `infra/oci/gpu-api-key.tfvars` durably. The staging reference is preserved.
+Before contacting the writer, the command locks the local mint transaction and
+checks that both output destinations can be updated. An unknown or stale
+Terraform input fails closed before the Vault write; when an existing input
+matches the manifest OCID, rerunning with that OCID is idempotent. If the
+second local publication fails, the helper restores and fsyncs the earlier
+file's preimage.
 
 After the operator reviews the Terraform plan and separately approves apply,
 use this exact input-file order so the generated GPU OCID is the last variable
@@ -31,6 +37,6 @@ terraform -chdir=infra/oci plan -var-file=terraform.tfvars -var-file=gpu-api-key
 terraform -chdir=infra/oci apply -var-file=terraform.tfvars -var-file=gpu-api-key.tfvars
 ```
 
-Do not apply as part of minting. If the generated tfvars file already contains
-different content, the mint helper stops instead of replacing it; inspect and
-resolve that file before retrying.
+Do not apply as part of minting. If the generated tfvars file has content that
+does not match the current manifest OCID, the mint helper stops before invoking
+the Vault writer; inspect and resolve the mismatch before retrying.

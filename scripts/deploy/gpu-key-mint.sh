@@ -92,6 +92,22 @@ fi
 command -v openssl >/dev/null 2>&1 || fail "openssl is required for cryptographic random generation"
 command -v ssh >/dev/null 2>&1 || fail "ssh is required"
 command -v scp >/dev/null 2>&1 || fail "scp is required"
+
+# Hold one transaction lock across local preflight, the remote Vault write, and
+# both durable local updates. The helper runs this script once more under lock.
+if [ "${GPU_KEY_MINT_TRANSACTION_LOCKED:-0}" != "1" ]; then
+    LOCK_ARGS=(
+        --run-locked
+        --ssh-target "${SSH_TARGET}"
+        --manifest "${MANIFEST_PATH}"
+        --terraform-input "${TERRAFORM_INPUT_PATH}"
+    )
+    if [ "${MODE}" = "rotate" ]; then
+        LOCK_ARGS+=(--rotate)
+    fi
+    exec python3 "${SCRIPT_DIR}/_gpu_key_manifest.py" "${LOCK_ARGS[@]}"
+fi
+
 python3 "${SCRIPT_DIR}/_gpu_key_manifest.py" --check-ready --manifest "${MANIFEST_PATH}"
 
 umask 077

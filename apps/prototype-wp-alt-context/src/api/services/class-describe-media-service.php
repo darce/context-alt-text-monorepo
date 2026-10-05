@@ -365,16 +365,20 @@ class DescribeMediaService {
 			if ( ! is_string( $operation_id ) ) {
 				return new WP_Error(
 					'invalid_operation_id',
-					'operation_id must be a string of 1-128 characters.',
+					'operation_id must be a string of 1-128 characters using [A-Za-z0-9_-].',
 					array( 'status' => 400 )
 				);
 			}
 
 			$operation_id_length = strlen( $operation_id );
-			if ( $operation_id_length < 1 || $operation_id_length > 128 ) {
+			if (
+				$operation_id_length < 1
+				|| $operation_id_length > 128
+				|| 1 !== preg_match( '/^[A-Za-z0-9_-]{1,128}\z/', $operation_id )
+			) {
 				return new WP_Error(
 					'invalid_operation_id',
-					'operation_id must be a string of 1-128 characters.',
+					'operation_id must be a string of 1-128 characters using [A-Za-z0-9_-].',
 					array( 'status' => 400 )
 				);
 			}

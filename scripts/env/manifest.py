@@ -85,8 +85,9 @@ _PUBLIC_SENSITIVE_TOKENS = frozenset({
 })
 _URL_USERINFO_PASSWORD = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^/?#\s@:]+:[^/?#\s@]*@")
 # Each input is one env value: retain all base-check flags and add embedded URLs.
+# Scan every scheme start, including those glued to preceding scheme characters.
 # Spans run to the value's end; extra flags are acceptable, missed credentials are not.
-_URL_SPAN = re.compile(r"(?<![A-Za-z0-9+.-])(?=([A-Za-z][A-Za-z0-9+.-]*://.*))", re.DOTALL)
+_URL_SPAN = re.compile(r"(?=([A-Za-z][A-Za-z0-9+.-]*://.*))", re.DOTALL)
 _URL_CREDENTIAL_TOKENS = (
     "password", "passwd", "pwd", "pass", "secret", "token", "access_token",
     "api_key", "apikey", "key", "sig", "signature", "auth", "credential", "credentials",

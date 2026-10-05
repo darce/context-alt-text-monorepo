@@ -10,6 +10,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping, NoReturn
+from urllib.parse import parse_qsl
 
 
 class ManifestError(ValueError):
@@ -83,6 +84,24 @@ _PUBLIC_SENSITIVE_TOKENS = frozenset({
     "CREDENTIAL", "SIGNING", "SECRETS", "CREDENTIALS",
 })
 _URL_USERINFO_PASSWORD = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^/?#\s@:]+:[^/?#\s@]*@")
+_URL_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+_URL_CREDENTIAL_TOKENS = (
+    "password", "passwd", "pwd", "pass", "secret", "token", "access_token",
+    "api_key", "apikey", "key", "sig", "signature", "auth", "credential", "credentials",
+)
+
+
+def _url_query_credential(value: str) -> bool:
+    if not _URL_SCHEME.match(value):
+        return False
+    # Split only the parameter components; malformed authorities must not hide credentials.
+    url, _, fragment = value.partition("#")
+    _, _, query = url.partition("?")
+    return any(
+        key.lower().replace("-", "_").endswith(_URL_CREDENTIAL_TOKENS)
+        for component in (query, fragment)
+        for key, _ in parse_qsl(component, keep_blank_values=True)
+    )
 
 
 def _fail(source: str, key: str, detail: str) -> NoReturn:
@@ -575,7 +594,7 @@ def _validate_public_literals(source: str, name: str, values: tuple[object, ...]
 
 def _validate_public_urls(var: Var) -> None:
     for value in (var.example, *var.values.values()):
-        if _URL_USERINFO_PASSWORD.search(value):
+        if _URL_USERINFO_PASSWORD.search(value) or _url_query_credential(value):
             _fail(var.source, var.name, "public build values cannot embed URL credentials")
 
 

@@ -174,7 +174,7 @@ textarea {
   width: 100%;
   max-width: 100%;
   padding: 0.5rem 0.75rem;
-  border: 1px solid var(--acx-color-border);
+  border: 1px solid var(--acx-gray-500);
   border-radius: var(--acx-radius-md);
   background: var(--acx-color-surface-alt);
   color: var(--acx-color-text);

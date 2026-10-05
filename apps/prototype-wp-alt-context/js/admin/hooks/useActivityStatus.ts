@@ -20,13 +20,17 @@ import type { GpuIntentAction, GpuIntentStatus, GpuStatusResponse } from '../api
 import { toDescriptionHistoryRun, toWorkbench } from '../navigation/appLinks';
 import { useActiveDescribeRun } from './activeDescribeRun';
 import {
+  clearPendingDescribeSubmitAction,
   DESCRIBE_RUN_SETTLE_OUTCOME,
+  getPendingDescribeSubmitAction,
+  persistPendingDescribeSubmitAction,
   pendingTerminalRuns,
+  resolveDescribeOperationTenantId,
   settleRun,
   subscribeDescribeOperationStore,
   type DescribeRunSettleOutcome,
 } from './describeOperationStore';
-import { persistRunContext } from './useBulkDescribe';
+import { isDefinitiveDescribeSubmitRefusal, persistRunContext } from './useBulkDescribe';
 import { useDescribeRunProgress, type DescribeRunProgress } from './useDescribeRunProgress';
 import { useGpuServiceStatus } from './useGpuServiceStatus';
 import {
@@ -74,7 +78,11 @@ type WarmupResubmitResult =
   | { kind: 'exhausted' }
   | { kind: 'submitted'; response: DescribeRunResponse };
 
-type WarmupResubmitAction = { runId: string; idempotencyKey: string };
+type WarmupResubmitAction = { runId: string; tenantId: string | null };
+type HookLocalWarmupResubmitAction = {
+  mediaIds: readonly number[];
+  idempotencyKey: string;
+};
 
 const unfinishedMediaIdsFromItems = (items: readonly DescribeRunItem[]): number[] =>
   items
@@ -408,30 +416,49 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
     mutationFn: cancelBulkDescribeRun,
   });
   const resubmitInFlightRef = useRef(false);
-  const resubmitMediaIdsByKeyRef = useRef(new Map<string, Promise<number[]>>());
+  const hookLocalResubmitActionsRef = useRef<Map<string, HookLocalWarmupResubmitAction>>(
+    new Map(),
+  );
   const resubmitMutation = useMutation<WarmupResubmitResult, Error, WarmupResubmitAction>({
-    mutationFn: async ({ runId, idempotencyKey }) => {
-      let unfinishedIdsPromise = resubmitMediaIdsByKeyRef.current.get(idempotencyKey);
-      if (unfinishedIdsPromise === undefined) {
-        unfinishedIdsPromise = fetchDescribeRunItems(runId).then(({ items }) =>
-          unfinishedMediaIdsFromItems(items),
-        );
-        resubmitMediaIdsByKeyRef.current.set(idempotencyKey, unfinishedIdsPromise);
-      }
-      let unfinishedIds: number[];
-      try {
-        unfinishedIds = await unfinishedIdsPromise;
-      } catch (error) {
-        // A failed item fetch sent no submit request, so a mutation retry may fetch again.
-        if (resubmitMediaIdsByKeyRef.current.get(idempotencyKey) === unfinishedIdsPromise) {
-          resubmitMediaIdsByKeyRef.current.delete(idempotencyKey);
+    mutationFn: async ({ runId, tenantId }) => {
+      const scope = { kind: 'warmup_recovery' as const, sourceRunId: runId };
+      let action = hookLocalResubmitActionsRef.current.get(runId) ?? null;
+      if (action === null) {
+        try {
+          action = getPendingDescribeSubmitAction(scope, tenantId);
+        } catch {
+          // Persistence is only a recovery enhancement; continue with an
+          // in-memory action when sessionStorage cannot be read.
         }
-        throw error;
+        if (action === null) {
+          const { items } = await fetchDescribeRunItems(runId);
+          const unfinishedIds = unfinishedMediaIdsFromItems(items);
+          if (unfinishedIds.length === 0) {
+            return { kind: 'exhausted' };
+          }
+          const idempotencyKey = createDescribeIdempotencyKey();
+          try {
+            action = persistPendingDescribeSubmitAction(
+              scope,
+              unfinishedIds,
+              idempotencyKey,
+              tenantId,
+            );
+          } catch {
+            action = null;
+          }
+          if (action === null) {
+            action = {
+              mediaIds: Object.freeze(
+                [...new Set(unfinishedIds)].sort((left, right) => left - right),
+              ),
+              idempotencyKey,
+            };
+            hookLocalResubmitActionsRef.current.set(runId, action);
+          }
+        }
       }
-      if (unfinishedIds.length === 0) {
-        return { kind: 'exhausted' };
-      }
-      const response = await submitBulkDescribeRun(unfinishedIds, idempotencyKey);
+      const response = await submitBulkDescribeRun([...action.mediaIds], action.idempotencyKey);
       return { kind: 'submitted', response };
     },
     onSuccess: (result) => {
@@ -439,8 +466,23 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
         persistRunContext(result.response);
       }
     },
-    onSettled: (_result, _error, variables) => {
-      resubmitMediaIdsByKeyRef.current.delete(variables.idempotencyKey);
+    onError: (error, variables) => {
+      if (isDefinitiveDescribeSubmitRefusal(error)) {
+        hookLocalResubmitActionsRef.current.delete(variables.runId);
+        clearPendingDescribeSubmitAction(
+          { kind: 'warmup_recovery', sourceRunId: variables.runId },
+          variables.tenantId,
+        );
+      }
+    },
+    onSettled: (_result, error, variables) => {
+      if (error === null) {
+        hookLocalResubmitActionsRef.current.delete(variables.runId);
+        clearPendingDescribeSubmitAction(
+          { kind: 'warmup_recovery', sourceRunId: variables.runId },
+          variables.tenantId,
+        );
+      }
       resubmitInFlightRef.current = false;
     },
   });
@@ -550,7 +592,7 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
             return;
           }
           resubmitInFlightRef.current = true;
-          resubmitMutation.mutate({ runId, idempotencyKey: createDescribeIdempotencyKey() });
+          resubmitMutation.mutate({ runId, tenantId: resolveDescribeOperationTenantId() });
         };
       }
       return () => {

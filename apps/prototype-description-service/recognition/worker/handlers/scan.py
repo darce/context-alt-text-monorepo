@@ -5,13 +5,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from db.models import IdentityClusteringJob
+from db.models import IdentityClusteringJob, IdentityScanJob, IdentityScanJobItem
 from db.tenant_context import enable_rls_bypass
-from recognition.application.embedding.detector import FaceDetectorProtocol
+from recognition.application.embedding.detector import FaceDetection, FaceDetectorProtocol
 from recognition.application.embedding.generator import EmbeddingGeneratorProtocol
 from recognition.application.scan.capability import ScanWorkerCounters
 from recognition.application.scan.queue_repository import ScanQueueItem
@@ -23,7 +25,7 @@ from recognition.application.scan.service import (
     ScanService,
 )
 from recognition.application.storage import ObjectStoreError
-from recognition.domain.job import JobStatus
+from recognition.domain.job import JobStatus, ScanItemStatus
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
 from recognition.interface_adapters.http.middleware.correlation import (
     _correlation_id_var,
@@ -31,6 +33,32 @@ from recognition.interface_adapters.http.middleware.correlation import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _ClaimUnavailableError(Exception):
+    """The processing attempt cannot authorize a persistence transaction."""
+
+
+class _ClaimFencedScanService(ScanService):
+    """Fence worker writes after detection, embedding, and the media lock wait."""
+
+    check_claim: Callable[[], Awaitable[None]]
+
+    async def _persist_identities_unlocked(
+        self,
+        *,
+        tenant_uuid: uuid.UUID,
+        media_id: int,
+        detections: list[FaceDetection],
+        media_url: str | None = None,
+    ) -> ReconcileResult:
+        await self.check_claim()
+        return await super()._persist_identities_unlocked(
+            tenant_uuid=tenant_uuid,
+            media_id=media_id,
+            detections=detections,
+            media_url=media_url,
+        )
 
 
 class ScanItemHandler:
@@ -78,9 +106,7 @@ class ScanItemHandler:
 
         async def _run_item(item: ScanQueueItem, request_id: uuid.UUID) -> None:
             async with semaphore, self._session_factory() as session:
-                await enable_rls_bypass(session)
                 repo = SqlAlchemyScanQueueRepository(session)
-                scan_service = self._build_scan_service(session)
                 logger.info(
                     "[worker] START scan_item request_id=%s job_id=%s item_id=%s media_id=%s",
                     request_id,
@@ -88,7 +114,19 @@ class ScanItemHandler:
                     item.id,
                     item.media_id,
                 )
+
+                async def _check_claim() -> None:
+                    try:
+                        await enable_rls_bypass(session)
+                        owns_claim = await self._lock_current_claim(session=session, item=item)
+                    except Exception as exc:
+                        raise _ClaimUnavailableError("Could not verify scan item claim") from exc
+                    if not owns_claim:
+                        raise _ClaimUnavailableError("Stale scan item claim")
+
                 try:
+                    scan_service = self._build_scan_service(session)
+                    scan_service.check_claim = _check_claim
                     # process_media_item is flush-only (pre-S4); this session
                     # commits identity rows + queue-item status together, then
                     # emits scan_media_reconciled and bumps counters only after
@@ -132,6 +170,17 @@ class ScanItemHandler:
                         item.id,
                         identities_detected,
                     )
+                except _ClaimUnavailableError:
+                    # No identity or queue writes are authorized by this attempt.
+                    await session.rollback()
+                    logger.info(
+                        "[worker] SKIP unverifiable scan_item request_id=%s job_id=%s item_id=%s attempts=%s",
+                        request_id,
+                        item.job_id,
+                        item.id,
+                        item.attempts,
+                        exc_info=True,
+                    )
                 except Exception as exc:
                     error_message = str(exc)
                     # Drop staged identity work before any failure-status write
@@ -140,7 +189,35 @@ class ScanItemHandler:
                     # SET LOCAL bypass dies with the rolled-back txn; restore
                     # before status writes so FORCE RLS still updates the row
                     # (FIR-FINAL2-LOCAL-01).
-                    await enable_rls_bypass(session)
+                    # Rollback released the original claim locks. Revalidate
+                    # the attempt token and hold its row lock through the
+                    # failure/retry commit so a newer claim cannot be changed.
+                    try:
+                        await enable_rls_bypass(session)
+                        owns_claim = await self._lock_claim_item(session=session, item=item)
+                    except Exception:
+                        # A NOWAIT conflict or driver error cannot authorize a
+                        # failure write. Leave recovery to reclaim/stall cleanup.
+                        await session.rollback()
+                        logger.info(
+                            "[worker] SKIP unverifiable scan_item failure request_id=%s job_id=%s item_id=%s attempts=%s",
+                            request_id,
+                            item.job_id,
+                            item.id,
+                            item.attempts,
+                            exc_info=True,
+                        )
+                        return
+                    if not owns_claim:
+                        await session.rollback()
+                        logger.info(
+                            "[worker] SKIP stale scan_item failure request_id=%s job_id=%s item_id=%s attempts=%s",
+                            request_id,
+                            item.job_id,
+                            item.id,
+                            item.attempts,
+                        )
+                        return
                     # Anchor retry backoff / failed completed_at at failure time,
                     # not processing-start, so slow failures (e.g. embedding
                     # timeout) still get a full not-before delay (R2-04 / RES-06).
@@ -166,6 +243,47 @@ class ScanItemHandler:
                 logger.error("[worker] scan_item task failed", exc_info=result)
 
         await self._refresh_job_progress(affected_jobs)
+
+    async def _lock_current_claim(self, *, session: AsyncSession, item: ScanQueueItem) -> bool:
+        """Lock and validate the active job/item claim before identity writes.
+
+        A shared job-row lock serializes with terminal transitions while still
+        allowing multiple items from one job to persist in parallel. The item's
+        attempt count is the monotonic claim token: a reclaimed and re-claimed
+        row cannot be processed by the previous worker even though its item ID
+        is unchanged. A NOWAIT item lock avoids deadlock with claim/reclaim paths
+        that lock the item before updating the parent job. Both locks remain
+        held only through the short identity/queue write transaction, never
+        during detection or embedding.
+        """
+        job_result = await session.execute(
+            select(IdentityScanJob.id)
+            .where(
+                IdentityScanJob.id == item.job_id,
+                IdentityScanJob.tenant_id == item.tenant_id,
+                IdentityScanJob.status == JobStatus.RUNNING.value,
+            )
+            .with_for_update(read=True)
+        )
+        if job_result.scalar_one_or_none() is None:
+            return False
+
+        return await self._lock_claim_item(session=session, item=item)
+
+    async def _lock_claim_item(self, *, session: AsyncSession, item: ScanQueueItem) -> bool:
+        """Fence queue writes with the processing attempt's token (RES-10)."""
+        item_result = await session.execute(
+            select(IdentityScanJobItem.id)
+            .where(
+                IdentityScanJobItem.id == item.id,
+                IdentityScanJobItem.job_id == item.job_id,
+                IdentityScanJobItem.tenant_id == item.tenant_id,
+                IdentityScanJobItem.status == ScanItemStatus.PROCESSING.value,
+                IdentityScanJobItem.attempts == item.attempts,
+            )
+            .with_for_update(nowait=True)
+        )
+        return item_result.scalar_one_or_none() is not None
 
     async def _refresh_job_progress(self, job_ids: set[uuid.UUID]) -> None:
         """Recompute progress for affected scan jobs."""
@@ -242,9 +360,9 @@ class ScanItemHandler:
             now=now,
         )
 
-    def _build_scan_service(self, session: AsyncSession) -> ScanService:
+    def _build_scan_service(self, session: AsyncSession) -> _ClaimFencedScanService:
         """Create a ScanService bound to the provided session."""
-        return ScanService(
+        return _ClaimFencedScanService(
             session=session,
             detector=self._detector,
             generator=self._generator,

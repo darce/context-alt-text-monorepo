@@ -909,12 +909,6 @@ async def run_describe_job(
         item_envelope,
     )
     captured_fence: str | None = None
-    try:
-        async with session_factory() as claim_session:
-            await set_tenant_context(claim_session, tenant_id)
-            captured_fence = await capture_usage_fence(claim_session, tenant_id=tenant_id, job_id=str(run_id))
-    except Exception:
-        logger.debug("usage fence capture skipped run_id=%s", run_id, exc_info=True)
 
     async def cancel_requested() -> bool:
         # A fresh, short-lived session is intentional. The tracking session has
@@ -925,8 +919,51 @@ async def run_describe_job(
             run = await DescribeRunRepository(cancel_session).get_run(tenant_id=tenant_id, run_id=run_id)
             return run is None or bool(run.cancel_requested)
 
+    async def terminalize_cancelled_run() -> None:
+        try:
+            async with session_factory() as session:
+                await set_tenant_context(session, tenant_id)
+                repo = DescribeRunRepository(session)
+                # A task.cancel() has no corresponding HTTP cancel request.
+                # Record cancellation before terminalizing items so runs with
+                # earlier completed items still project CANCELLED.
+                await repo.request_cancel(tenant_id=tenant_id, run_id=run_id)
+                for item in await repo.list_run_items(tenant_id=tenant_id, run_id=run_id):
+                    await repo.mark_item(
+                        tenant_id=tenant_id,
+                        run_id=run_id,
+                        media_id=item.media_id,
+                        status=DescribeItemStatus.SKIPPED,
+                    )
+                await session.commit()
+        except Exception:  # noqa: BLE001 - an exception raised here would escape
+            # run_describe_job entirely (the sibling fatal handler cannot catch
+            # it), stranding the run non-terminal. Fall back to the terminal
+            # writer, which preserves a derived CANCELLED.
+            logger.exception("failed to finalize cancelled run run_id=%s", run_id)
+            try:
+                async with session_factory() as session:
+                    await set_tenant_context(session, tenant_id)
+                    await DescribeRunRepository(session).mark_run_failed(
+                        tenant_id=tenant_id, run_id=run_id, error_message="cancel finalization failed"
+                    )
+                    await session.commit()
+            except Exception:  # noqa: BLE001 - best-effort terminal write
+                logger.exception("failed to mark cancelled run terminal run_id=%s", run_id)
+
     warmup_fallback_reason: DescribeRunTerminalReason | None = None
     try:
+        try:
+            async with session_factory() as claim_session:
+                await set_tenant_context(claim_session, tenant_id)
+                captured_fence = await capture_usage_fence(
+                    claim_session,
+                    tenant_id=tenant_id,
+                    job_id=str(run_id),
+                )
+        except Exception:
+            logger.debug("usage fence capture skipped run_id=%s", run_id, exc_info=True)
+
         await _record_run_pickup(session_factory=session_factory, tenant_id=tenant_id, run_id=run_id)
         if gpu_policy is not None:
             await _persist_run_phase(
@@ -1162,32 +1199,14 @@ async def run_describe_job(
         # Cancellation can land while the worker is still in its GPU warmup
         # gate, before the main tracking session exists. Drive every queued item
         # terminal so the run honestly projects CANCELLED and bytes are reclaimed.
-        try:
-            async with session_factory() as session:
-                await set_tenant_context(session, tenant_id)
-                repo = DescribeRunRepository(session)
-                for item in await repo.list_run_items(tenant_id=tenant_id, run_id=run_id):
-                    await repo.mark_item(
-                        tenant_id=tenant_id,
-                        run_id=run_id,
-                        media_id=item.media_id,
-                        status=DescribeItemStatus.SKIPPED,
-                    )
-                await session.commit()
-        except Exception:  # noqa: BLE001 - an exception raised here would escape
-            # run_describe_job entirely (the sibling fatal handler cannot catch
-            # it), stranding the run non-terminal. Fall back to the terminal
-            # writer, which preserves a derived CANCELLED.
-            logger.exception("failed to finalize cancelled run run_id=%s", run_id)
-            try:
-                async with session_factory() as session:
-                    await set_tenant_context(session, tenant_id)
-                    await DescribeRunRepository(session).mark_run_failed(
-                        tenant_id=tenant_id, run_id=run_id, error_message="cancel finalization failed"
-                    )
-                    await session.commit()
-            except Exception:  # noqa: BLE001 - best-effort terminal write
-                logger.exception("failed to mark cancelled run terminal run_id=%s", run_id)
+        await terminalize_cancelled_run()
+    except asyncio.CancelledError:
+        # Cancelling the background task injects CancelledError (a BaseException)
+        # and can unwind the tracking session before its RUNNING item transition
+        # commits. Persist a terminal projection before evidence-based settlement,
+        # then preserve the caller's cancellation signal.
+        await terminalize_cancelled_run()
+        raise
     except Exception as fatal:  # noqa: BLE001 - fatal loop error must surface as a FAILED run
         logger.exception("describe run fatal error run_id=%s", run_id)
         try:

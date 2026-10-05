@@ -7,7 +7,7 @@ import json
 import math
 import random
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
@@ -24,7 +24,12 @@ from scripts.bench.stack_pair import (
     load_stack_pair,
     validate_stack_pair_config,
 )
-from scripts.eval_harness.face_metrics import detection_pr, detection_pr_strict, identification_pr
+from scripts.eval_harness.face_metrics import (
+    ImageIdentities,
+    detection_pr,
+    detection_pr_strict,
+    identification_pr,
+)
 from scripts.eval_harness.manifest import (
     AnnotationMode,
     GoldenEntry,
@@ -662,7 +667,9 @@ def compute_accepted_set(run_dir: Path | str) -> AcceptedSet:
     # exhaustiveness when annotation_mode is roster_only. Route through the
     # same resolver score_head_to_head uses so the accepted-set artifact
     # agrees with refused detection cells (rg-015).
-    candidate_entries = [e for e in accepted if is_detection_exhaustive(e)]
+    candidate_entries = [
+        e for e in accepted if _is_detection_exhaustive_for_manifest(e, manifest)
+    ]
     detection_manifest = _subset_manifest(manifest, candidate_entries)
     if _detection_score_mode(detection_manifest, manifest) is not AnnotationMode.EXHAUSTIVE:
         detection_set: list[int] = []
@@ -833,7 +840,7 @@ def write_attrition(run_dir: Path, accepted: AcceptedSet, manifest: GoldenManife
             "manifest_media_id": entry.media_id,
             "reason": (
                 "entry_not_detection_exhaustive"
-                if not is_detection_exhaustive(entry)
+                if not _is_detection_exhaustive_for_manifest(entry, manifest)
                 else "detection_scoring_refused"
             ),
         }
@@ -886,11 +893,23 @@ def _subset_manifest(
     """
     if not entries:
         return None
+    referenced_adjudication_record_ids = {
+        box.adjudication_source.removeprefix("human_adjudicated:")
+        for entry in entries
+        for box in entry.face_boxes
+        if box.adjudication_source is not None
+    }
     return GoldenManifest(
         manifest_version=SUPPORTED_MANIFEST_VERSION,
         annotation_mode=manifest.annotation_mode,
+        iou_threshold=manifest.iou_threshold,
         roster=list(manifest.roster),
         entries=entries,
+        adjudication_records=[
+            record
+            for record in manifest.adjudication_records
+            if record.record_id in referenced_adjudication_record_ids
+        ],
         roster_cohorts=dict(manifest.roster_cohorts),
     )
 
@@ -899,6 +918,17 @@ def _detection_score_mode(detection_manifest: GoldenManifest | None, parent: Gol
     """Mode of the document whose entries are detection-scored (ADR-015)."""
     source = detection_manifest if detection_manifest is not None else parent
     return source.annotation_mode
+
+
+def _is_detection_exhaustive_for_manifest(
+    entry: GoldenEntry, manifest: GoldenManifest
+) -> bool:
+    """Treat annotated zero-face negatives as covered in exhaustive documents."""
+    return is_detection_exhaustive(entry) or (
+        manifest.annotation_mode is AnnotationMode.EXHAUSTIVE
+        and entry.face_count == 0
+        and not entry.face_boxes
+    )
 
 
 def _detection_refusal_invariant(mode: AnnotationMode) -> ScoreInvariant:
@@ -1232,11 +1262,21 @@ def score_head_to_head(run_dir: Path | str) -> Path:
             raise BenchError("differential_attrition_exceeded", "one-sided attrition exceeds max_differential_attrition")
 
     accepted_entries = [e for e in manifest.entries if e.media_id in set(accepted.manifest_media_ids)]
-    detection_entries = [e for e in accepted_entries if e.media_id in set(accepted.detection_scoring_set)]
+    full_detection_population = (
+        manifest.annotation_mode is AnnotationMode.EXHAUSTIVE
+        and all(
+            _is_detection_exhaustive_for_manifest(entry, manifest)
+            for entry in manifest.entries
+        )
+    )
+    detection_entries = (
+        list(manifest.entries)
+        if full_detection_population
+        else [e for e in accepted_entries if e.media_id in set(accepted.detection_scoring_set)]
+    )
     occasion_by_media, occasion_full_size = _occasion_resampling_info(manifest)
     golden150_provenance = _is_golden150_corpus(root)
-    detection_ids = set(accepted.detection_scoring_set)
-    exhaustiveness_ok = len(detection_ids) == len(accepted_entries)
+    exhaustiveness_ok = full_detection_population
     floor_ok = accepted.accepted_set_size >= accepted.resolved_floor_count
     named = {pair.primary_endpoint, *pair.secondary_endpoints}
 
@@ -1255,11 +1295,7 @@ def score_head_to_head(run_dir: Path | str) -> Path:
 
     for stack_id in stacks:
         export = load_leg_exports(root, stack_id)
-        join = {
-            mid: info
-            for mid, info in accepted.join_by_stack.get(stack_id, {}).items()
-            if mid in set(accepted.manifest_media_ids)
-        }
+        join = accepted.join_by_stack.get(stack_id, {})
         accepted_manifest = _subset_manifest(manifest, accepted_entries)
         detection_manifest = _subset_manifest(manifest, detection_entries)
         detection_mode = _detection_score_mode(detection_manifest, manifest)
@@ -1272,7 +1308,9 @@ def score_head_to_head(run_dir: Path | str) -> Path:
         for frame_key, frame_name in (("e2e", SAMPLING_FRAME_E2E), ("native", SAMPLING_FRAME_CROSSBENCH_NATIVE)):
             for label_key, label_name in (("primary", LABEL_MAP_PRIMARY), ("optimistic", LABEL_MAP_OPTIMISTIC)):
                 ident: list[Any] = []
-                if accepted_manifest is not None:
+                identification_entries = manifest.entries if frame_key == "e2e" else accepted_entries
+                identification_manifest = manifest if frame_key == "e2e" else accepted_manifest
+                if identification_manifest is not None:
                     localization_counts = (
                         {"degenerate_box_dropped": 0}
                         if frame_key == "e2e" and label_key == "primary"
@@ -1280,7 +1318,7 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                     )
                     _, ident = to_face_metric_inputs(
                         export_payload,
-                        accepted_manifest,
+                        identification_manifest,
                         join,
                         label_key,
                         frame=frame_key,  # type: ignore[arg-type]
@@ -1333,7 +1371,6 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                         ],
                         annotation_mode=detection_mode,
                     )
-                ident_pr = identification_pr(ident)
                 det_by_mid: dict[int, Any] = {}
                 for det_row in det:
                     mid = path_to_mid.get(det_row.image)
@@ -1352,11 +1389,51 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                             f"identification row path {ident_row.image!r} is not in the manifest",
                         )
                     ident_by_mid[mid] = ident_row
+                if frame_key == "e2e":
+                    for entry in identification_entries:
+                        if entry.media_id not in ident_by_mid:
+                            if entry.media_id in join:
+                                raise BenchError(
+                                    "join_row_missing",
+                                    f"identification population media_id={entry.media_id} has no metric row",
+                                )
+                            miss = ImageIdentities(
+                                image=entry.path,
+                                predicted=[],
+                                labeled=list(entry.present_identities),
+                                recognition_enabled=entry.policy.recognition_enabled,
+                            )
+                            ident.append(miss)
+                            ident_by_mid[entry.media_id] = miss
+                ident_pr = identification_pr(ident)
+                if not detection_refused:
+                    missing_detection_entries = [
+                        entry for entry in detection_entries if entry.media_id not in det_by_mid
+                    ]
+                    unexpected_detection_holes = [
+                        entry for entry in missing_detection_entries if entry.media_id in join
+                    ]
+                    if unexpected_detection_holes:
+                        entry = unexpected_detection_holes[0]
+                        raise BenchError(
+                            "join_row_missing",
+                            f"detection population media_id={entry.media_id} has no metric row",
+                        )
+                    missed_detection_faces = sum(len(entry.face_boxes) for entry in missing_detection_entries)
+                    if missed_detection_faces:
+                        det_matched = replace(
+                            det_matched,
+                            false_negatives=det_matched.false_negatives + missed_detection_faces,
+                        )
+                        det_count = replace(
+                            det_count,
+                            false_negatives=det_count.false_negatives + missed_detection_faces,
+                        )
                 for metric, result, population in (
                     ("detection_recall", det_matched, detection_entries),
                     ("detection_precision", det_matched, detection_entries),
-                    ("identification_recall", ident_pr, accepted_entries),
-                    ("identification_precision", ident_pr, accepted_entries),
+                    ("identification_recall", ident_pr, identification_entries),
+                    ("identification_precision", ident_pr, identification_entries),
                 ):
                     cell = _cell_id(metric, frame_key, label_key)
                     if metric.startswith("detection") and detection_refused:
@@ -1384,10 +1461,14 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                             if metric.startswith("detection"):
                                 row = det_by_mid.get(entry.media_id)
                                 if row is None:
-                                    raise BenchError(
-                                        "join_row_missing",
-                                        f"detection population media_id={entry.media_id} has no metric row",
-                                    )
+                                    if entry.media_id in join:
+                                        raise BenchError(
+                                            "join_row_missing",
+                                            f"detection population media_id={entry.media_id} has no metric row",
+                                        )
+                                    series.append(ImageCounts(0, 0, len(entry.face_boxes)))
+                                    series_media_ids.append(entry.media_id)
+                                    continue
                                 strict_counts = strict_detection_counts_by_path.get(row.image)
                                 if strict_counts is None:
                                     raise BenchError(
@@ -1614,7 +1695,7 @@ def score_head_to_head(run_dir: Path | str) -> Path:
         "holm_family": holm_family,
         "holm_family_size": len(holm_family),
         "degenerate_box_dropped": localization_dropped_by_stack,
-        "degenerate_box_dropped_scope": "accepted manifest; frame_e2e/label_map_primary localization pass, once per stack",
+        "degenerate_box_dropped_scope": "e2e identification rows with analyze joins; frame_e2e/label_map_primary localization pass, once per stack",
         "accepted_set_size": accepted.accepted_set_size,
         "detection_scoring_set_size": accepted.detection_scoring_set_size,
         "resolved_floor_count": accepted.resolved_floor_count,

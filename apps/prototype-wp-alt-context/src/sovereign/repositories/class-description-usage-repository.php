@@ -44,14 +44,23 @@ class DescriptionUsageRepository {
 	public function insert( array $row ): array {
 		$row = $this->with_defaults( $row );
 
+		if ( is_string( $row['operation_id'] ) ) {
+			foreach ( $this->all() as $existing_row ) {
+				if ( $row['operation_id'] === ( $existing_row['operation_id'] ?? null ) ) {
+					return $existing_row;
+				}
+			}
+		}
+
 		if ( $this->can_use_database() ) {
 			global $wpdb;
 
-			$wpdb->insert(
+			$insert_result = $wpdb->insert(
 				$this->table_name,
 				array(
 					'occurred_at'   => $row['occurred_at'],
 					'media_id'      => $row['media_id'],
+					'operation_id'  => $row['operation_id'],
 					'outcome'       => $row['outcome'],
 					'adapter'       => $row['adapter'],
 					'provider'      => $row['provider'],
@@ -67,7 +76,8 @@ class DescriptionUsageRepository {
 				)
 			);
 
-			if ( isset( $wpdb->insert_id ) && (int) $wpdb->insert_id > 0 ) {
+			$insert_id = isset( $wpdb->insert_id ) ? (int) $wpdb->insert_id : 0;
+			if ( false !== $insert_result && null !== $insert_result && $insert_id > 0 ) {
 				$row['id'] = (int) $wpdb->insert_id;
 			}
 
@@ -161,6 +171,7 @@ class DescriptionUsageRepository {
 				'id'            => null,
 				'occurred_at'   => gmdate( 'Y-m-d H:i:s' ),
 				'media_id'      => 0,
+				'operation_id'  => null,
 				'outcome'       => 'success',
 				'adapter'       => '',
 				'provider'      => '',
@@ -188,6 +199,7 @@ class DescriptionUsageRepository {
 		}
 
 		$row['media_id']    = (int) ( $row['media_id'] ?? 0 );
+		$row['operation_id'] = $row['operation_id'] ?? null;
 		$row['duration_ms'] = null === ( $row['duration_ms'] ?? null ) ? null : (int) $row['duration_ms'];
 		$row['cached']      = (bool) ( $row['cached'] ?? false );
 		$row['cost_amount'] = (float) ( $row['cost_amount'] ?? 0.0 );

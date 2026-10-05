@@ -42,7 +42,13 @@ from scripts.eval_harness.generate_face_determinism_anchor import (
     validate_coverage_gaps,
     write_face_anchor,
 )
-from scripts.eval_harness.manifest import AnnotationMode, legacy_import_lineage, load_manifest
+from scripts.eval_harness.manifest import (
+    AnnotationMode,
+    LabelConfidence,
+    LabelDecision,
+    LabelSource,
+    load_manifest,
+)
 from scripts.eval_harness.report import build_face_reports, occlusion_inputs_from_record
 
 # VLM6-DELTA-08: exhaustive manifests refuse legacy_import_lineage's unknown-
@@ -52,9 +58,35 @@ _TEST_SESSION_ID = "synthetic-session-old-single-identity-corpus"
 
 
 def _test_lineage(*, name: str | None) -> dict[str, object]:
-    lineage = legacy_import_lineage(name=name)
-    lineage["capture_session_id"] = _TEST_SESSION_ID
-    return lineage
+    return {
+        "labeler_id": "synthetic-labeler-old-single-identity-corpus",
+        "batch_id": "synthetic-batch-old-single-identity-corpus",
+        "capture_session_id": _TEST_SESSION_ID,
+        "pass_index": 0,
+        "labeled_at": "2026-08-11T00:00:00Z",
+        "tool_version": "synthetic-old-single-identity-fixture-v1",
+        "saw_machine_proposals": False,
+        "label_source": LabelSource.GOLD_REFERENCE.value,
+        "decision": (
+            LabelDecision.NAMED if name else LabelDecision.STRANGER
+        ).value,
+        "confidence": LabelConfidence.HIGH.value,
+        "arbitration_of": None,
+    }
+
+
+def _test_adjudication_record(media_id: int) -> dict[str, object]:
+    return {
+        "record_id": f"synthetic-old-single-identity-media-{media_id}-box-0",
+        "media_id": media_id,
+        "box_index": 0,
+        "reviewer_id": f"synthetic-reviewer-old-single-identity-{media_id}",
+        "reviewer_kind": "human",
+        "review_method": "independent_blind_review",
+        "decision": "confirmed",
+        "reviewed_at": "2026-08-11T00:00:00Z",
+    }
+
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _SERVICE_ROOT = Path(__file__).resolve().parents[2]
@@ -101,14 +133,16 @@ _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-face-report.md"
 # Regenerated 2026-10-03 (DEBTFIX-1 / DATA-03): the canonical manifest model dump
 # now includes adjudication_records and per-box adjudication_source defaults.
 # The persisted manifest bytes and scored metrics are unchanged; provenance hashes moved.
+# Regenerated 2026-10-04 after detection and missed-GT sampling-frame wording
+# changed; report structure and metric values are unchanged.
 _FROZEN_DIGESTS = {
     # VLM6-DELTA-08: regenerated for FIR-11 v3 (annotation_mode=exhaustive,
     # real capture_session_id on every box — the exhaustive gate refuses the
     # legacy_import_lineage unknown-occasion sentinel, S2R6-01).
-    _MANIFEST.name: "4877a9124972471ab186896a56a66ca0b7a292645aa69c54b65bb91d0a1b7087",
-    _RUN.name: "e078c1840a183618f97c2082eb11e94c1af96f0302d0ffb5cc53e55336664630",
-    _REPORT_JSON.name: "b7ff1a96bf0750f8cd0ed9c230006d7bbe0cf980a80b8601c017cf7c5d67a73b",
-    _REPORT_MD.name: "3c70ecbf47ff4a33a1589c2ebcc6af9f59db8f5bcf256775da69c4f369a73302",
+    _MANIFEST.name: "b74ac3b3ea34358e1df435c8ca06ea063654eebe0b6440f94bbe004ab9ccf1c5",
+    _RUN.name: "382c5f08dffd417abe638938d58c29be92517866060489d85d8a89ea7cc23827",
+    _REPORT_JSON.name: "65a84f2888ac1478601210a5631c867d51521938cd860d1e9db819c5523e76cb",
+    _REPORT_MD.name: "d3f8f76aeb3db44603242cedf6cc83caa425b6389d4c986b268d2159887dc608",
 }
 
 
@@ -238,6 +272,53 @@ def test_committed_face_anchor_digests_match_frozen(name: str, expected: str) ->
     assert _sha256(path) == expected
 
 
+def test_committed_face_anchor_has_strict_synthetic_blind_review_lineage() -> None:
+    """Every synthetic GT box is strict-ready and independently reviewed."""
+    from scripts.eval_harness.face_metrics import (
+        has_human_adjudicated_gt_lineage,
+        has_independent_gt_region_source,
+    )
+    from scripts.eval_harness.manifest import (
+        LabelSource,
+        require_confirmed_blind_reviews_for_strict_scoring,
+    )
+
+    manifest = load_manifest(str(_MANIFEST), skip_hash_verification=True)
+    require_confirmed_blind_reviews_for_strict_scoring(manifest)
+
+    record_ids: list[str] = []
+    reviewer_ids: list[str] = []
+    box_count = 0
+    for entry in manifest.entries:
+        for box in entry.face_boxes:
+            box_count += 1
+            assert box.lineage is not None
+            assert box.lineage.label_source is LabelSource.GOLD_REFERENCE
+            assert box.lineage.saw_machine_proposals is False
+            assert box.lineage.labeler_id.startswith("synthetic-")
+            assert has_human_adjudicated_gt_lineage(box)
+            assert has_independent_gt_region_source(box)
+
+            source = box.adjudication_source
+            assert source is not None and source.startswith("human_adjudicated:")
+            record_id = source.removeprefix("human_adjudicated:")
+            record = next(
+                item
+                for item in manifest.adjudication_records
+                if item.record_id == record_id
+            )
+            assert record.reviewer_id.startswith("synthetic-")
+            record_ids.append(record.record_id)
+            reviewer_ids.append(record.reviewer_id)
+            assert record.reviewer_id != box.lineage.labeler_id
+            assert record.reviewer_kind == "human"
+            assert record.review_method == "independent_blind_review"
+            assert record.decision == "confirmed"
+    assert len(manifest.adjudication_records) == box_count
+    assert len(set(record_ids)) == box_count
+    assert len(set(reviewer_ids)) == box_count
+
+
 def test_face_generator_regenerates_byte_identical_committed_anchor(tmp_path: Path) -> None:
     """Generator is the source of truth — re-run must match the freeze byte-for-byte."""
     man_path, run_path, report_json, report_md, manifest_sha = write_face_anchor(
@@ -250,13 +331,12 @@ def test_face_generator_regenerates_byte_identical_committed_anchor(tmp_path: Pa
     # Metadata-only: synthetic face anchor has no image files; sha over metadata only.
     expected_sha = _manifest_sha(load_manifest(str(_MANIFEST), skip_hash_verification=True))
     assert manifest_sha == expected_sha
-    # DATA-03 fields are included in the canonical model-dump sha even when their
-    # defaults are empty/null; the generated manifest bytes stay unchanged.
-    # Not a digest pin — full digest lives in _FROZEN_DIGESTS[_MANIFEST.name].
-    assert manifest_sha.startswith("47fdf116")
+    # DATA-03 defaults plus the synthetic review records contribute to this
+    # canonical model-dump hash; the full artifact digests are frozen above.
+    assert manifest_sha.startswith("c6cb9fd3")
     assert man_path.read_bytes() == _MANIFEST.read_bytes()
     assert run_path.read_bytes() == _RUN.read_bytes()
-    # wI2 regenerated report freezes from the generator; man+run remain wF4 pins.
+    # All four committed artifacts are produced by the generator and byte-pinned.
     assert report_json.read_bytes() == _REPORT_JSON.read_bytes()
     assert report_md.read_bytes() == _REPORT_MD.read_bytes()
 
@@ -379,11 +459,13 @@ def test_labeled_y_missing_constant_zero_goes_red_on_extended_corpus(
     from scripts.eval_harness.generate_face_determinism_anchor import (
         build_synthetic_face_manifest,
     )
+    from scripts.eval_harness.tests._reviewed_gt_fixtures import reviewed_report_entries
     from scripts.eval_harness import report as report_mod
     from scripts.eval_harness.report import score_run_record
 
     raw = build_synthetic_face_manifest()
     entries = list(raw["entries"])
+    reviewed_entries, review_manifest = reviewed_report_entries(entries)
     items = [
         {
             "media_id": e["media_id"],
@@ -412,7 +494,9 @@ def test_labeled_y_missing_constant_zero_goes_red_on_extended_corpus(
         },
     }
 
-    live = score_run_record(record, entries)["faces"]["identity_ordering"]
+    live = score_run_record(
+        record, reviewed_entries, review_manifest=review_manifest
+    )["faces"]["identity_ordering"]
     live_n = int(live["labeled_y_missing_images"])
     assert live_n >= 1, (
         f"extended corpus must make labeled_y_missing_images non-zero; got {live_n} "
@@ -430,7 +514,9 @@ def test_labeled_y_missing_constant_zero_goes_red_on_extended_corpus(
         )
 
     monkeypatch.setattr(report_mod, "labeled_order", _blind_constant_zero)
-    blind = score_run_record(record, entries)["faces"]["identity_ordering"]
+    blind = score_run_record(
+        record, reviewed_entries, review_manifest=review_manifest
+    )["faces"]["identity_ordering"]
     blind_n = int(blind["labeled_y_missing_images"])
     assert blind_n == 0, "mutation must force counter to 0"
     assert blind_n != live_n, (
@@ -564,14 +650,18 @@ def test_pre_harm01_detection_formula_goes_red_on_extended_freeze(
     """
     from scripts.eval_harness import report as report_mod
 
+    current_detection_from_assignment = report_mod._detection_from_assignment
+
     def _pre_harm01_detection(assignment):  # type: ignore[no-untyped-def]
-        tp = sum(len(a.pairs) for a in assignment.association_by_media.values())
-        fp = int(assignment.false_detections)
+        detection = current_detection_from_assignment(assignment)
         # Pre-HARM-01: named misses only — stranger misses invisible to detection.
-        fn = int(assignment.missed_gt)
-        precision = (tp / (tp + fp)) if (tp + fp) else 0.0
-        recall = (tp / (tp + fn)) if (tp + fn) else 0.0
-        return {"precision": precision, "recall": recall, "tp": tp, "fp": fp, "fn": fn}
+        detection["fn"] = int(assignment.missed_gt)
+        detection["recall"] = (
+            detection["tp"] / (detection["tp"] + detection["fn"])
+            if detection["tp"] + detection["fn"]
+            else 0.0
+        )
+        return detection
 
     freeze = json.loads(_REPORT_JSON.read_text())
     # Freeze must itself exercise the stranger-miss population (else control is vacuous).
@@ -715,7 +805,7 @@ def test_published_detection_recall_is_fixture_local_not_a_population_estimate()
     frame = str(det.get("sampling_frame") or "")
     assert frame, "detection must publish a sampling_frame"
     assert "all_gt_boxes" in frame
-    assert "missed_stranger_gt" in frame
+    assert "named and anonymous GT share one population" in frame and "anonymous misses feed unknown rejection" in frame
 
     md = _REPORT_MD.read_text()
     # Published rounded display — do not change these numbers (C-02).
@@ -1062,6 +1152,9 @@ def test_old_single_identity_corpus_cannot_detect_clustering_or_fp_bugs() -> Non
         "annotation_mode": AnnotationMode.EXHAUSTIVE.value,
         "roster": ["Alice Example"],
         "roster_cohorts": {"Alice Example": "cohort_a"},
+        "adjudication_records": [
+            _test_adjudication_record(media_id) for media_id in (1, 2, 3)
+        ],
         "entries": [
             {
                 "path": "celebs01/alice-a.jpg",
@@ -1082,6 +1175,10 @@ def test_old_single_identity_corpus_cannot_detect_clustering_or_fp_bugs() -> Non
                         "source": "iptc",
                         "name": "Alice Example",
                         "lineage": _test_lineage(name="Alice Example"),
+                        "adjudication_source": (
+                            "human_adjudicated:"
+                            "synthetic-old-single-identity-media-1-box-0"
+                        ),
                     }
                 ],
                 "provenance": {
@@ -1110,6 +1207,10 @@ def test_old_single_identity_corpus_cannot_detect_clustering_or_fp_bugs() -> Non
                         "source": "iptc",
                         "name": "Alice Example",
                         "lineage": _test_lineage(name="Alice Example"),
+                        "adjudication_source": (
+                            "human_adjudicated:"
+                            "synthetic-old-single-identity-media-2-box-0"
+                        ),
                     }
                 ],
                 "provenance": {
@@ -1138,6 +1239,10 @@ def test_old_single_identity_corpus_cannot_detect_clustering_or_fp_bugs() -> Non
                         "source": "iptc",
                         "name": None,
                         "lineage": _test_lineage(name=None),
+                        "adjudication_source": (
+                            "human_adjudicated:"
+                            "synthetic-old-single-identity-media-3-box-0"
+                        ),
                     }
                 ],
                 "provenance": {

@@ -47,7 +47,7 @@ class CheckoutAttemptFingerprintConflictError(CheckoutAttemptConflictError):
 
 
 class CheckoutAttemptActiveConflictError(CheckoutAttemptConflictError):
-    """The tenant already has an open attempt for this seller namespace and plan."""
+    """The tenant already has an open attempt for this seller namespace."""
 
 
 class CheckoutAttemptProviderKeyReuseError(CheckoutAttemptConflictError):
@@ -138,11 +138,10 @@ class CheckoutAttemptRepository:
                     provider=normalized_provider,
                     environment=normalized_environment,
                     seller_account=normalized_seller,
-                    plan_code=normalized_plan,
                 )
                 if active is not None:
                     raise CheckoutAttemptActiveConflictError(
-                        "an open checkout attempt already exists for this tenant, seller, and plan"
+                        "an open checkout attempt already exists for this tenant and seller namespace"
                     ) from None
                 provider_hit = await self._get_by_provider_key(
                     tenant_id=tenant_id,
@@ -336,7 +335,6 @@ class CheckoutAttemptRepository:
         provider: str,
         environment: str,
         seller_account: str,
-        plan_code: str,
     ) -> BillingCheckoutAttempt | None:
         statement = (
             select(BillingCheckoutAttempt)
@@ -345,7 +343,6 @@ class CheckoutAttemptRepository:
                 BillingCheckoutAttempt.provider == provider,
                 BillingCheckoutAttempt.environment == environment,
                 BillingCheckoutAttempt.seller_account == seller_account,
-                BillingCheckoutAttempt.plan_code == plan_code,
                 BillingCheckoutAttempt.status.in_(_ACTIVE_STATUS_VALUES),
             )
             .limit(1)

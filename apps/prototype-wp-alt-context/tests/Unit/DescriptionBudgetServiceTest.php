@@ -13,6 +13,89 @@ use AltContext\Tests\TestCase;
  */
 class DescriptionBudgetServiceTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $GLOBALS['wpdb']->mockVar = '1';
+    }
+
+    public function testReservationIsRefusedWhileAnotherConnectionOwnsBudgetLock(): void
+    {
+        $this->setOption('acx_description_budget_max_attempts', 1);
+        $wpdb = $GLOBALS['wpdb'];
+        $lockName = 'acx_budget_lock_' . md5($wpdb->prefix);
+        $owners = [$lockName => 'other-connection'];
+        $wpdb->onGetVarResolve = static function (string $sql) use (&$owners): string {
+            preg_match("/\\('([^']+)'/", $sql, $matches);
+            $name = $matches[1] ?? '';
+            if (str_contains($sql, 'GET_LOCK')) {
+                if (isset($owners[$name])) {
+                    return '0';
+                }
+                $owners[$name] = 'this-connection';
+                return '1';
+            }
+            if (str_contains($sql, 'RELEASE_LOCK') && ($owners[$name] ?? null) === 'this-connection') {
+                unset($owners[$name]);
+                return '1';
+            }
+            return '0';
+        };
+
+        $service = new DescriptionBudgetService();
+        $gate = $service->reserve_attempt();
+        $this->assertFalse($gate['allowed']);
+        $this->assertSame('description_budget_reservation_unavailable', $gate['code']);
+        $this->assertSame(503, $gate['status']);
+        $this->assertSame('other-connection', $owners[$lockName]);
+
+        // Closing the other connection frees its named lock immediately.
+        unset($owners[$lockName]);
+        $this->assertTrue($service->reserve_attempt()['allowed']);
+        $this->assertSame([], $owners);
+    }
+
+    public function testReservationSurvivesPersistentObjectCacheFlush(): void
+    {
+        $this->setOption('acx_description_budget_max_attempts', 1);
+        $first = (new DescriptionBudgetService())->reserve_attempt();
+        $this->assertTrue($first['allowed']);
+
+        // Model eviction of every cache-backed transient, retaining wp_options.
+        $GLOBALS['__ac_transients'] = [];
+        $GLOBALS['__ac_object_cache'] = [];
+
+        $second = (new DescriptionBudgetService())->reserve_attempt();
+        $this->assertFalse($second['allowed']);
+        $this->assertSame('description_budget_attempt_limit_exceeded', $second['code']);
+        $this->assertSame(1, $second['used']);
+        $this->assertFalse($GLOBALS['__ac_option_autoload']['acx_description_budget_reservations']);
+    }
+
+    public function testExpiredReservationsArePrunedOnAdmission(): void
+    {
+        $this->setOption('acx_description_budget_max_attempts', 3);
+        $activeExpiry = time() + 3600;
+        $expiredReservation = [
+            'expires_at' => time() - 1,
+            'dispatched' => true,
+            'operation_id' => 'dispatched-before-expiry',
+        ];
+        $this->setOption('acx_description_budget_reservations', [
+            'expired' => $expiredReservation,
+            'active' => $activeExpiry,
+        ]);
+
+        $gate = (new DescriptionBudgetService())->reserve_attempt();
+        $this->assertTrue($gate['allowed']);
+        $this->assertSame(3, $gate['used']);
+        $stored = get_option('acx_description_budget_reservations');
+        $this->assertSame($expiredReservation, $stored['expired']);
+        $this->assertSame($activeExpiry, $stored['active']);
+        $this->assertArrayHasKey($gate['reservation_id'], $stored);
+        $this->assertCount(3, $stored);
+    }
+
     public function testRecordsSuccessfulAndFailedUsageAttempts(): void
     {
         $service = new DescriptionBudgetService();
@@ -89,6 +172,37 @@ class DescriptionBudgetServiceTest extends TestCase
         $this->assertSame('description_budget_attempt_limit_exceeded', $gate['code']);
         $this->assertSame(1, $gate['limit']);
         $this->assertSame(1, $gate['used']);
+    }
+
+    public function testAttemptReservationPreventsConcurrentAdmissions(): void
+    {
+        $this->setOption('acx_description_budget_max_attempts', 1);
+
+        $service = new DescriptionBudgetService();
+        $first = $service->reserve_attempt();
+
+        $this->assertTrue($first['allowed']);
+        $this->assertIsString($first['reservation_id']);
+        $this->assertNotSame('', $first['reservation_id']);
+
+        $second = $service->reserve_attempt();
+        $this->assertFalse($second['allowed']);
+        $this->assertSame('description_budget_attempt_limit_exceeded', $second['code']);
+        $this->assertSame(1, $second['used']);
+
+        $service->record_success(
+            media_id: 42,
+            adapter: 'local_cpu',
+            provider: 'local',
+            duration_ms: 1200,
+            cached: false,
+            write_status: 'updated',
+            reservation_id: $first['reservation_id']
+        );
+
+        $this->assertSame([], get_option('acx_description_budget_reservations'));
+        $this->assertFalse($service->reserve_attempt()['allowed']);
+        $this->assertSame(1, $service->usage_summary()['attempts']);
     }
 
     public function testBudgetGateUsesFiniteDefaultAttemptLimit(): void

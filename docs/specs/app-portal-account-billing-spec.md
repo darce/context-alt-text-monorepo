@@ -271,7 +271,9 @@ Table `billing_checkout_attempt`. Follow the verified repository migration autho
 
 - `(tenant_id, provider, environment, seller_account, client_idempotency_key)` where client key is not null
 - `(provider, environment, seller_account, idempotency_key)`
-- Partial: at most one `status IN ('created','provider_requested','pending','ambiguous')` per `(tenant_id, provider, environment, seller_account, plan_code)`
+- Partial: at most one `status IN ('created','provider_requested','pending','ambiguous')` per `(tenant_id, provider, environment, seller_account)`, regardless of `plan_code`
+
+An active attempt for one plan conflicts with creating an active attempt for another plan in the same namespace. Schema healing refuses to install this index while open cross-plan duplicates exist.
 
 ### 5.2 State machine
 

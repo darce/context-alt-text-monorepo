@@ -1,4 +1,4 @@
-type PortalRequest = (path: string, init?: RequestInit) => Promise<Response>;
+import { requestPortalResponse, type PortalRequest } from './portalRequest';
 
 export type PortalKeyMetadataResponse = {
   id: string;
@@ -299,7 +299,7 @@ function listPath(input?: { cursor?: string; limit?: number }): string {
 export function createPortalKeyClient(request: PortalRequest): PortalKeyClient {
   return {
     async list(input) {
-      const response = await request(listPath(input), { method: 'GET' });
+      const response = await requestPortalResponse(request, listPath(input), { method: 'GET' });
       if (!response.ok) {
         await throwHttpError(response);
       }
@@ -310,7 +310,7 @@ export function createPortalKeyClient(request: PortalRequest): PortalKeyClient {
       return parsed;
     },
     async create(input, idempotencyKey) {
-      const response = await request('/portal/keys', {
+      const response = await requestPortalResponse(request, '/portal/keys', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -328,7 +328,7 @@ export function createPortalKeyClient(request: PortalRequest): PortalKeyClient {
       return parsed;
     },
     async rotate(id, input, idempotencyKey) {
-      const response = await request(`/portal/keys/${id}/rotate`, {
+      const response = await requestPortalResponse(request, `/portal/keys/${id}/rotate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -346,7 +346,7 @@ export function createPortalKeyClient(request: PortalRequest): PortalKeyClient {
       return parsed;
     },
     async revoke(id, input) {
-      const response = await request(`/portal/keys/${id}/revoke`, {
+      const response = await requestPortalResponse(request, `/portal/keys/${id}/revoke`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: compactBody(input),

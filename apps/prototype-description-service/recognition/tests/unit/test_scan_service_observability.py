@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import numpy as np
 import pytest
 
+from db.models import IdentityScanJob, IdentityScanJobItem
 from db.settings import get_database_settings
 from recognition.application.embedding.detector import FaceDetection, FaceDetectorProtocol
 from recognition.application.scan.capability import ScanWorkerCounters, format_capability_reason
@@ -51,6 +52,9 @@ class _FakeResult:
     def __init__(self, rows: list[object]) -> None:
         self._rows = rows
 
+    def scalar_one_or_none(self) -> object | None:
+        return self._rows[0] if self._rows else None
+
     def scalars(self) -> _FakeScalars:
         return _FakeScalars(self._rows)
 
@@ -67,6 +71,9 @@ class _FakeSession:
         self.rollback_calls = 0
 
     async def execute(self, _stmt):  # noqa: ANN001
+        # Worker fence SELECTs are separate from the service's identity reads.
+        if _stmt.column_descriptions[0]["entity"] in (IdentityScanJob, IdentityScanJobItem):
+            return _FakeResult([uuid.uuid4()])
         return _FakeResult(self.existing)
 
     def add_all(self, rows: list[object]) -> None:

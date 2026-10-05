@@ -20,12 +20,16 @@ import {
 import {
   DESCRIBE_OPERATION_CONTEXT_VERSION,
   DESCRIBE_OPERATION_KIND,
+  clearPendingDescribeSubmitAction,
+  getOrCreatePendingDescribeSubmitAction,
   putDescribeOperationContext,
   resolveDescribeOperationTenantId,
   subscribeDescribeOperationStore,
+  type DescribeSubmitActionScope,
 } from './describeOperationStore';
 import { SUGGEST_WARMING_HARD_CEILING_MS } from './useDescribeMedia';
 import { useDescribeRunProgress, type DescribeRunProgress } from './useDescribeRunProgress';
+import { classifyError } from '../utils/appError';
 
 export interface UseBulkDescribeResult {
   submit: ReturnType<typeof useMutation<DescribeRunSubmitResponse, Error, number[]>>;
@@ -53,6 +57,25 @@ const CANCEL_ERROR_FALLBACK = __('Could not cancel the describe run. Please try 
 type TerminalDescribeRun = {
   tenantId: string | null;
   runId: string;
+};
+
+type BulkDescribeSubmitAction = {
+  scope: DescribeSubmitActionScope;
+  selectionKey: string;
+  tenantId: string | null;
+  mediaIds: readonly number[];
+  idempotencyKey: string;
+  hookLocal: boolean;
+};
+
+export const isDefinitiveDescribeSubmitRefusal = (error: unknown): boolean => {
+  const classified = classifyError(error);
+  return (
+    classified._tag === 'http' &&
+    classified.status >= 400 &&
+    classified.status < 500 &&
+    ![401, 403, 408, 425, 429].includes(classified.status)
+  );
 };
 
 const emptyTenantSnapshot = (): string | null => null;
@@ -109,23 +132,82 @@ export const useBulkDescribe = (): UseBulkDescribeResult => {
     emptyTenantSnapshot,
   );
   const { runId: storedRunId } = useActiveDescribeRun();
-  const submitIdempotencyKeysRef = useRef<WeakMap<number[], string>>(new WeakMap());
+  const submitActionsByMutationMediaIdsRef = useRef<WeakMap<number[], BulkDescribeSubmitAction>>(
+    new WeakMap(),
+  );
+  const hookLocalSubmitActionsRef = useRef<Map<string, BulkDescribeSubmitAction>>(new Map());
   const submitMutation = useMutation<DescribeRunSubmitResponse, Error, number[]>({
     mutationFn: (mediaIds) => {
-      const idempotencyKey = submitIdempotencyKeysRef.current.get(mediaIds);
-      if (idempotencyKey === undefined) {
-        throw new Error('Describe run submit is missing its action idempotency key.');
+      const action = submitActionsByMutationMediaIdsRef.current.get(mediaIds);
+      if (action === undefined) {
+        throw new Error('Could not create the describe submit action before sending the request.');
       }
-      return submitBulkDescribeRun(mediaIds, idempotencyKey);
+      return submitBulkDescribeRun([...action.mediaIds], action.idempotencyKey);
     },
-    onSuccess: persistRunContext,
-    onSettled: (_data, _error, mediaIds) => {
-      submitIdempotencyKeysRef.current.delete(mediaIds);
+    onSuccess: (response, mutationMediaIds) => {
+      persistRunContext(response);
+      const action = submitActionsByMutationMediaIdsRef.current.get(mutationMediaIds);
+      if (action !== undefined) {
+        // Only a confirmed response retires the recovery action. After an
+        // ambiguous rejection, the same selection must replay its frozen
+        // payload with the same key so the server can recover the accepted run.
+        if (action.hookLocal) {
+          hookLocalSubmitActionsRef.current.delete(action.selectionKey);
+        }
+        clearPendingDescribeSubmitAction(action.scope, action.tenantId);
+      }
+    },
+    onError: (error, mutationMediaIds) => {
+      if (!isDefinitiveDescribeSubmitRefusal(error)) {
+        return;
+      }
+      const action = submitActionsByMutationMediaIdsRef.current.get(mutationMediaIds);
+      if (action !== undefined) {
+        if (action.hookLocal) {
+          hookLocalSubmitActionsRef.current.delete(action.selectionKey);
+        }
+        clearPendingDescribeSubmitAction(action.scope, action.tenantId);
+      }
+    },
+    onSettled: (_data, _error, mutationMediaIds) => {
+      submitActionsByMutationMediaIdsRef.current.delete(mutationMediaIds);
     },
   });
   const createSubmitActionMediaIds = (mediaIds: number[]): number[] => {
-    const actionMediaIds = [...mediaIds];
-    submitIdempotencyKeysRef.current.set(actionMediaIds, createDescribeIdempotencyKey());
+    const sortedMediaIds = [...mediaIds].sort((left, right) => left - right);
+    const selectionKey = JSON.stringify([tenantId, sortedMediaIds]);
+    const scope: DescribeSubmitActionScope = { kind: 'bulk', selectionKey };
+    let action = hookLocalSubmitActionsRef.current.get(selectionKey);
+    if (action === undefined) {
+      const pending = getOrCreatePendingDescribeSubmitAction(
+        scope,
+        sortedMediaIds,
+        createDescribeIdempotencyKey,
+        tenantId,
+      );
+      if (pending !== null) {
+        action = {
+          scope,
+          selectionKey,
+          tenantId,
+          mediaIds: Object.freeze([...pending.mediaIds]),
+          idempotencyKey: pending.idempotencyKey,
+          hookLocal: false,
+        };
+      } else {
+        action = {
+          scope,
+          selectionKey,
+          tenantId,
+          mediaIds: Object.freeze([...sortedMediaIds]),
+          idempotencyKey: createDescribeIdempotencyKey(),
+          hookLocal: true,
+        };
+        hookLocalSubmitActionsRef.current.set(selectionKey, action);
+      }
+    }
+    const actionMediaIds = [...action.mediaIds];
+    submitActionsByMutationMediaIdsRef.current.set(actionMediaIds, action);
     return actionMediaIds;
   };
   const submit: UseBulkDescribeResult['submit'] = {

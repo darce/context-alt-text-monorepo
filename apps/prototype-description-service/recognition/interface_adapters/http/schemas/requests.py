@@ -13,6 +13,8 @@ from recognition.interface_adapters.http.validation_utils import validate_uuid_f
 # Alias for backward compatibility with external usage
 _validate_uuid = validate_uuid_format
 
+MAX_ANALYZE_MEDIA_ITEMS = 100
+
 
 class MediaItem(BaseModel):
     """WordPress-compatible media item descriptor.
@@ -48,8 +50,8 @@ class MediaItem(BaseModel):
 class AnalyzeRequest(BaseModel):
     """Request to analyze media for faces."""
 
-    media_ids: list[str] | None = Field(default=None)
-    media_items: list[MediaItem] | None = Field(default=None)
+    media_ids: list[str] | None = Field(default=None, max_length=MAX_ANALYZE_MEDIA_ITEMS)
+    media_items: list[MediaItem] | None = Field(default=None, max_length=MAX_ANALYZE_MEDIA_ITEMS)
     tenant_id: str
 
     @field_validator("tenant_id")

@@ -170,6 +170,8 @@ function KeysScreenSession({
   const [createBlocked, setCreateBlocked] = useState(false);
   const createInFlightRef = useRef(false);
   const rotateInFlightRef = useRef(false);
+  const revokeInFlightRef = useRef(false);
+  const revokeAttemptRef = useRef(0);
   const secretHeldRef = useRef(false);
   const restoreFocusIdRef = useRef<string | null>(null);
   const revokeDialogRef = useRef<HTMLDivElement>(null);
@@ -256,13 +258,23 @@ function KeysScreenSession({
         return;
       }
       handleDialogKeydown(event, container, () => {
+        if (revokeInFlightRef.current) {
+          return;
+        }
         restoreFocusIdRef.current = `revoke-key-${keyId}`;
+        revokeAttemptRef.current += 1;
         setRevokeDialog(null);
       });
     }
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [revokeDialog]);
+
+  useEffect(() => {
+    if (revoking) {
+      revokeDialogRef.current?.focus();
+    }
+  }, [revoking]);
 
   async function handleCreate() {
     if (createInFlightRef.current || secretHeldRef.current || revokeDialog || createBlocked) {
@@ -325,17 +337,25 @@ function KeysScreenSession({
   }
 
   async function confirmRevoke() {
-    if (!revokeDialog) {
+    if (!revokeDialog || revokeInFlightRef.current) {
       return;
     }
     const keyId = revokeDialog.keyId;
     const payload = revokeDialog.phase === 'last_usable' ? { confirm_last_usable: true } : {};
+    const attempt = ++revokeAttemptRef.current;
+    revokeInFlightRef.current = true;
     setRevoking(true);
     try {
       await client.revoke(keyId, payload);
+      if (attempt !== revokeAttemptRef.current) {
+        return;
+      }
       setRevokeDialog(null);
       await loadKeys();
     } catch (error) {
+      if (attempt !== revokeAttemptRef.current) {
+        return;
+      }
       const parsed = readError(error);
       if (parsed.code === 'last_usable_key_confirmation_required') {
         setRevokeDialog({ phase: 'last_usable', keyId });
@@ -350,15 +370,22 @@ function KeysScreenSession({
         await loadKeys();
       }
     } finally {
-      setRevoking(false);
+      if (attempt === revokeAttemptRef.current) {
+        revokeInFlightRef.current = false;
+        setRevoking(false);
+      }
     }
   }
 
   function cancelRevoke() {
+    if (revokeInFlightRef.current) {
+      return;
+    }
     const keyId = revokeDialog?.keyId;
     if (keyId) {
       restoreFocusIdRef.current = `revoke-key-${keyId}`;
     }
+    revokeAttemptRef.current += 1;
     setRevokeDialog(null);
   }
 
@@ -503,7 +530,9 @@ function KeysScreenSession({
           ref={revokeDialogRef}
           role="dialog"
           aria-modal="true"
+          aria-busy={revoking}
           aria-labelledby="revoke-key-title"
+          tabIndex={-1}
           className="acx-portal"
         >
           <h2 id="revoke-key-title">{revokeDialog.phase === 'last_usable' ? 'Last usable key' : 'Revoke API key'}</h2>
@@ -512,8 +541,15 @@ function KeysScreenSession({
               ? 'Revoking the last usable key would stop API access until a new key is created. This cannot be undone.'
               : 'Revoke this API key? This cannot be undone.'}
           </p>
+          {revoking ? <p aria-live="polite">Revoking API key…</p> : null}
           <div className="acx-portal-actions">
-            <button id="keep-key" type="button" className="acx-btn" onClick={cancelRevoke}>
+            <button
+              id="keep-key"
+              type="button"
+              className="acx-btn"
+              onClick={cancelRevoke}
+              disabled={revoking}
+            >
               Keep key
             </button>
             <button
@@ -522,7 +558,7 @@ function KeysScreenSession({
               onClick={() => void confirmRevoke()}
               disabled={revoking}
             >
-              Confirm revoke
+              {revoking ? 'Revoking…' : 'Confirm revoke'}
             </button>
           </div>
         </div>

@@ -50,6 +50,17 @@ export interface DescribeOperationRequest {
 
 export type DescribeOperationPersistence = 'durable' | 'memory_only';
 
+export type DescribeSubmitActionScope =
+  | { kind: 'bulk'; selectionKey: string }
+  | { kind: 'warmup_recovery'; sourceRunId: string };
+
+export interface PendingDescribeSubmitAction {
+  version: 1;
+  scope: DescribeSubmitActionScope;
+  mediaIds: number[];
+  idempotencyKey: string;
+}
+
 export interface DescribeOperationContext {
   version: typeof DESCRIBE_OPERATION_CONTEXT_VERSION;
   kind: DescribeOperationKind;
@@ -83,6 +94,19 @@ const describeOperationPendingRunStorageKey = (tenantId: string): string =>
 
 export const describeOperationMediaStorageKey = (tenantId: string, mediaId: number): string =>
   `${DESCRIBE_OPERATION_STORAGE_PREFIX}:${tenantId}:media:${mediaId}`;
+
+const describeSubmitActionScopeKey = (scope: DescribeSubmitActionScope): string =>
+  scope.kind === 'bulk'
+    ? JSON.stringify([scope.kind, scope.selectionKey])
+    : JSON.stringify([scope.kind, scope.sourceRunId]);
+
+export const describeOperationPendingSubmitStorageKey = (
+  tenantId: string,
+  scope: DescribeSubmitActionScope,
+): string =>
+  `${DESCRIBE_OPERATION_STORAGE_PREFIX}:${tenantId}:submit:${encodeURIComponent(
+    describeSubmitActionScopeKey(scope),
+  )}`;
 
 const listeners = new Set<() => void>();
 
@@ -131,6 +155,153 @@ const isDescribeRunSettleOutcome = (value: unknown): value is DescribeRunSettleO
   value === DESCRIBE_RUN_SETTLE_OUTCOME.CANCELLED ||
   value === DESCRIBE_RUN_SETTLE_OUTCOME.MISSING ||
   value === DESCRIBE_RUN_SETTLE_OUTCOME.UNRESOLVED;
+
+const parseDescribeSubmitActionScope = (value: unknown): DescribeSubmitActionScope | null => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    record.kind === 'bulk' &&
+    typeof record.selectionKey === 'string' &&
+    record.selectionKey !== ''
+  ) {
+    return { kind: 'bulk', selectionKey: record.selectionKey };
+  }
+  if (
+    record.kind === 'warmup_recovery' &&
+    typeof record.sourceRunId === 'string' &&
+    record.sourceRunId !== ''
+  ) {
+    return { kind: 'warmup_recovery', sourceRunId: record.sourceRunId };
+  }
+  return null;
+};
+
+const parsePendingDescribeSubmitAction = (
+  value: unknown,
+  expectedScope: DescribeSubmitActionScope,
+): PendingDescribeSubmitAction | null => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const scope = parseDescribeSubmitActionScope(record.scope);
+  if (
+    record.version !== 1 ||
+    scope === null ||
+    describeSubmitActionScopeKey(scope) !== describeSubmitActionScopeKey(expectedScope) ||
+    typeof record.idempotencyKey !== 'string' ||
+    record.idempotencyKey === '' ||
+    !Array.isArray(record.mediaIds) ||
+    record.mediaIds.length === 0 ||
+    record.mediaIds.some(
+      (mediaId) => typeof mediaId !== 'number' || !Number.isInteger(mediaId) || mediaId <= 0,
+    )
+  ) {
+    return null;
+  }
+  return {
+    version: 1,
+    scope,
+    mediaIds: [...new Set(record.mediaIds as number[])].sort((left, right) => left - right),
+    idempotencyKey: record.idempotencyKey,
+  };
+};
+
+const clonePendingDescribeSubmitAction = (
+  action: PendingDescribeSubmitAction,
+): PendingDescribeSubmitAction => ({
+  ...action,
+  scope: { ...action.scope },
+  mediaIds: [...action.mediaIds],
+});
+
+export const getPendingDescribeSubmitAction = (
+  scope: DescribeSubmitActionScope,
+  tenantId: string | null = resolveTenantId(),
+): PendingDescribeSubmitAction | null => {
+  if (tenantId === null) {
+    return null;
+  }
+  const storageKey = describeOperationPendingSubmitStorageKey(tenantId, scope);
+  if (storageTombstones.has(storageKey)) {
+    return null;
+  }
+  const stored = readStorageItem(storageKey);
+  if (stored.kind === 'error') {
+    throw new Error('Could not read the pending describe submit action from sessionStorage.');
+  }
+  if (stored.kind !== 'value') {
+    return null;
+  }
+  try {
+    const parsed = parsePendingDescribeSubmitAction(JSON.parse(stored.raw) as unknown, scope);
+    return parsed === null ? null : clonePendingDescribeSubmitAction(parsed);
+  } catch {
+    return null;
+  }
+};
+
+export const persistPendingDescribeSubmitAction = (
+  scope: DescribeSubmitActionScope,
+  mediaIds: readonly number[],
+  idempotencyKey: string,
+  tenantId: string | null = resolveTenantId(),
+): PendingDescribeSubmitAction | null => {
+  const existing = getPendingDescribeSubmitAction(scope, tenantId);
+  if (existing !== null) {
+    return existing;
+  }
+  if (
+    tenantId === null ||
+    idempotencyKey === '' ||
+    mediaIds.length === 0 ||
+    mediaIds.some((mediaId) => !Number.isInteger(mediaId) || mediaId <= 0)
+  ) {
+    return null;
+  }
+  const action: PendingDescribeSubmitAction = {
+    version: 1,
+    scope: { ...scope },
+    mediaIds: [...new Set(mediaIds)].sort((left, right) => left - right),
+    idempotencyKey,
+  };
+  const storageKey = describeOperationPendingSubmitStorageKey(tenantId, scope);
+  if (!writeStorageItem(storageKey, JSON.stringify(action))) {
+    return null;
+  }
+  storageTombstones.delete(storageKey);
+  return clonePendingDescribeSubmitAction(action);
+};
+
+export const getOrCreatePendingDescribeSubmitAction = (
+  scope: DescribeSubmitActionScope,
+  mediaIds: readonly number[],
+  createIdempotencyKey: () => string,
+  tenantId: string | null = resolveTenantId(),
+): PendingDescribeSubmitAction | null => {
+  try {
+    const existing = getPendingDescribeSubmitAction(scope, tenantId);
+    return (
+      existing ??
+      persistPendingDescribeSubmitAction(scope, mediaIds, createIdempotencyKey(), tenantId)
+    );
+  } catch {
+    return null;
+  }
+};
+
+export const clearPendingDescribeSubmitAction = (
+  scope: DescribeSubmitActionScope,
+  tenantId: string | null = resolveTenantId(),
+): void => {
+  if (tenantId === null) {
+    return;
+  }
+  const storageKey = describeOperationPendingSubmitStorageKey(tenantId, scope);
+  removeStorageWithTombstone(storageKey);
+};
 
 const parseRequest = (value: unknown): DescribeOperationRequest | null => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {

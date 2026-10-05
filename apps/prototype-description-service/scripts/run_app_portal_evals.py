@@ -25,13 +25,14 @@ import shlex
 import stat
 import subprocess
 import sys
+import tempfile
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = SERVICE_ROOT.parent.parent
@@ -65,7 +66,30 @@ _REQUIRED_CASE_KEYS = frozenset({"id", "group", "criterion", "status"})
 _REQUIRED_RELEASE_GATES = ("beta", "expansion", "paid")
 _GATE_ENV_KEYS = frozenset({"CI", "GITHUB_ACTIONS", "PYTEST_ADDOPTS", "PYTEST_PLUGINS"})
 _PYTEST_FILTER_ENV_KEYS = frozenset({"PYTEST_ADDOPTS", "PYTEST_PLUGINS"})
-_SENSITIVE_ENV_PARTS = ("SECRET", "TOKEN", "PASSWORD", "PRIVATE_KEY", "API_KEY")
+_SENSITIVE_ENV_PARTS = ("SECRET", "TOKEN", "PASSWORD", "PRIVATE_KEY", "API_KEY", "CREDENTIAL", "AUTHORIZATION")
+_MAX_RECOGNIZED_CREDENTIAL_CHARS = 8 * 1024
+_RECOGNIZED_LABELED_CREDENTIAL_LABELS = (
+    r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|password|credentials?|authorization)"
+)
+_LABELED_CREDENTIAL_HEADER_PATTERN = re.compile(
+    rf"(?i)\b{_RECOGNIZED_LABELED_CREDENTIAL_LABELS}\s*[:=]\s*['\"]?(?:(?:bearer|basic)\s+)?"
+)
+_RECOGNIZED_CREDENTIAL_PATTERNS = (
+    re.compile(
+        rf"(?i)\b({_RECOGNIZED_LABELED_CREDENTIAL_LABELS}\s*[:=]\s*['\"]?(?:(?:bearer|basic)\s+)?)([^\s,'\";]{{1,{_MAX_RECOGNIZED_CREDENTIAL_CHARS}}})(?=$|[\s,'\";])"
+    ),
+    re.compile(rf"(?i)\bbearer\s+([A-Za-z0-9._~+/-]{{8,{_MAX_RECOGNIZED_CREDENTIAL_CHARS}}}={{0,2}})(?=$|\s)"),
+    re.compile(rf"\b(?:sk|rk|pk)-[A-Za-z0-9_-]{{16,{_MAX_RECOGNIZED_CREDENTIAL_CHARS}}}\b"),
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,255}\b"),
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,255}\b"),
+    re.compile(
+        rf"\beyJ[A-Za-z0-9_-]{{8,{_MAX_RECOGNIZED_CREDENTIAL_CHARS}}}\."
+        rf"[A-Za-z0-9_-]{{8,{_MAX_RECOGNIZED_CREDENTIAL_CHARS}}}\."
+        rf"[A-Za-z0-9_-]{{8,{_MAX_RECOGNIZED_CREDENTIAL_CHARS}}}\b"
+    ),
+)
+_OUTPUT_REDACTION_WINDOW = 3 * _MAX_RECOGNIZED_CREDENTIAL_CHARS + 16
 
 
 class ManifestValidationError(ValueError):
@@ -635,6 +659,151 @@ def _read_capped_tail(path: Path, *, limit: int = CAPTURED_TAIL_BYTES) -> tuple[
     )
 
 
+def _sensitive_environment_values(environment: Mapping[str, str]) -> tuple[str, ...]:
+    values = {
+        value
+        for key, value in environment.items()
+        if value and any(part in key.upper() for part in _SENSITIVE_ENV_PARTS)
+    }
+    return tuple(sorted(values, key=len, reverse=True))
+
+
+def _redact_child_output(text: str, secret_values: Sequence[str]) -> str:
+    for secret in secret_values:
+        text = text.replace(secret, "<redacted>")
+    for pattern in _RECOGNIZED_CREDENTIAL_PATTERNS:
+        if pattern.groups == 2:
+            text = pattern.sub(r"\1<redacted>", text)
+        else:
+            text = pattern.sub("<redacted>", text)
+    return text
+
+
+def _redact_junit_artifact(path: Path, secret_values: Sequence[str]) -> None:
+    """Atomically scrub child secrets from a persistent JUnit report."""
+
+    try:
+        original_stat = path.stat()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise EvalRunnerError(f"cannot inspect child JUnit report {path}: {exc}") from exc
+
+    try:
+        tree = ET.parse(path, parser=ET.XMLParser(target=ET.TreeBuilder(insert_comments=True, insert_pis=True)))
+    except (ET.ParseError, UnicodeError):
+        try:
+            raw_text = path.read_bytes().decode("utf-8", errors="replace")
+        except OSError as exc:
+            raise EvalRunnerError(f"cannot read child JUnit report {path}: {exc}") from exc
+        payload = _redact_child_output(raw_text, secret_values).encode("utf-8")
+    else:
+        for element in tree.getroot().iter():
+            if element.text is not None:
+                element.text = _redact_child_output(element.text, secret_values)
+            if element.tail is not None:
+                element.tail = _redact_child_output(element.tail, secret_values)
+            for name, value in element.attrib.items():
+                element.set(name, _redact_child_output(value, secret_values))
+        payload = ET.tostring(tree.getroot(), encoding="utf-8", xml_declaration=True)
+
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            temporary.write(payload)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.utime(temporary_path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+        os.replace(temporary_path, path)
+    except OSError as exc:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as unlink_error:
+            raise EvalRunnerError(
+                f"cannot redact child JUnit report {path} and cannot remove its unsafe original: {unlink_error}"
+            ) from exc
+        raise EvalRunnerError(f"cannot redact child JUnit report {path}; removed unsafe original: {exc}") from exc
+
+
+def _safe_redaction_boundary(
+    text: str,
+    proposed: int,
+    secret_values: Sequence[str],
+) -> int:
+    boundary = proposed
+    while True:
+        previous_boundary = boundary
+        for secret in secret_values:
+            start = 0
+            while (start := text.find(secret, start)) != -1:
+                end = start + len(secret)
+                if start < boundary < end:
+                    boundary = start
+                start = end
+        for pattern in _RECOGNIZED_CREDENTIAL_PATTERNS:
+            for match in pattern.finditer(text):
+                if match.start() < boundary < match.end():
+                    boundary = match.start()
+        for match in _LABELED_CREDENTIAL_HEADER_PATTERN.finditer(text):
+            if match.end() == len(text) and match.start() < boundary:
+                boundary = match.start()
+        if boundary == previous_boundary:
+            return boundary
+
+
+def _compact_labeled_credential_whitespace(text: str) -> str:
+    """Bound a credential label's arbitrarily long pre-value whitespace run."""
+
+    pieces: list[str] = []
+    previous_end = 0
+    changed = False
+    for match in _LABELED_CREDENTIAL_HEADER_PATTERN.finditer(text):
+        header = match.group()
+        compacted = re.sub(r"\s+", " ", header)
+        pieces.append(text[previous_end : match.start()])
+        pieces.append(compacted)
+        previous_end = match.end()
+        changed = changed or compacted != header
+    if not changed:
+        return text
+    pieces.append(text[previous_end:])
+    return "".join(pieces)
+
+
+def _write_redacted_child_log(
+    source: TextIO,
+    destination: TextIO,
+    *,
+    secret_values: Sequence[str],
+) -> None:
+    """Copy a private raw child stream to its persistent log with bounded buffering."""
+
+    window = max(_OUTPUT_REDACTION_WINDOW, max((len(value) for value in secret_values), default=0))
+    pending = ""
+    source.seek(0)
+    while chunk := source.read(8192):
+        pending = _compact_labeled_credential_whitespace(pending + chunk)
+        if len(pending) <= window:
+            continue
+        boundary = _safe_redaction_boundary(pending, len(pending) - window, secret_values)
+        if boundary:
+            destination.write(_redact_child_output(pending[:boundary], secret_values))
+            pending = pending[boundary:]
+    destination.write(_redact_child_output(pending, secret_values))
+
+
 def _gate_environment(environment: Mapping[str, str]) -> dict[str, str]:
     captured: dict[str, str] = {}
     for key, value in sorted(environment.items()):
@@ -797,6 +966,25 @@ def _provenance_json_evidence(
             verified=False,
             evidence_type=EvidenceType.PROVENANCE_JSON,
             reason=f"required case {case_id} provenance git_sha does not match run HEAD",
+            digest=digest,
+        )
+    provenance = payload.get("provenance")
+    provenance_result = provenance.get("result") if isinstance(provenance, Mapping) else None
+    successful_results = {"pass", "passed", "success", "succeeded"}
+    if not (
+        type(payload.get("runner_exit_status")) is int
+        and payload["runner_exit_status"] == 0
+        and isinstance(provenance_result, str)
+        and provenance_result.strip().casefold() in successful_results
+    ):
+        return ArtifactEvidence(
+            present=True,
+            verified=False,
+            evidence_type=EvidenceType.PROVENANCE_JSON,
+            reason=(
+                f"required case {case_id} provenance JSON must record runner_exit_status 0 "
+                "and a successful provenance.result"
+            ),
             digest=digest,
         )
     database_identity = payload.get("database_identity") or payload.get("database") or payload.get("engine")
@@ -1015,11 +1203,12 @@ def _run_group(
     )
     for key in stripped_env_keys:
         subprocess_environment.pop(key, None)
+    secret_values = _sensitive_environment_values(subprocess_environment)
     raw_exit_status = 1
     timed_out = False
     execution_error: str | None = None
     ran_pytest = bool(test_nodes)
-    with log_path.open("w", encoding="utf-8") as log_file:
+    with tempfile.TemporaryFile(mode="w+t", encoding="utf-8", errors="replace") as child_output:
         if not test_nodes:
             if evidence_only_group:
                 raw_exit_status = 0
@@ -1033,7 +1222,7 @@ def _run_group(
                     cwd=working_directory,
                     env=subprocess_environment,
                     check=False,
-                    stdout=log_file,
+                    stdout=child_output,
                     stderr=subprocess.STDOUT,
                     text=True,
                     timeout=GROUP_TIMEOUT_SECONDS,
@@ -1049,7 +1238,11 @@ def _run_group(
             except OSError as exc:
                 raw_exit_status = COMMAND_NOT_FOUND_EXIT_STATUS
                 execution_error = f"cannot run pytest subprocess: {exc}"
+        child_output.flush()
+        with log_path.open("w", encoding="utf-8") as log_file:
+            _write_redacted_child_log(child_output, log_file, secret_values=secret_values)
 
+    _redact_junit_artifact(xml_path, secret_values)
     junit = _read_junit(xml_path)
     stale_junit = ran_pytest and _junit_is_stale(junit, started_at=started_at)
     usable_junit = (
@@ -1081,6 +1274,7 @@ def _run_group(
     if junit.report_error and not evidence_only_group:
         reasons.append(junit.report_error)
     if execution_error:
+        execution_error = _redact_child_output(execution_error, secret_values)
         reasons.append(execution_error)
     if tail_error:
         reasons.append(tail_error)
@@ -1139,7 +1333,14 @@ def _run_group(
                 "required": required,
                 "status": str(ledger_status),
                 "test_status": str(test_status),
-                "junit_identity": None if not matched else ",".join(item.node_id for item in matched),
+                "junit_identity": (
+                    None
+                    if not matched
+                    else _redact_child_output(
+                        ",".join(item.node_id for item in matched),
+                        secret_values,
+                    )
+                ),
                 "additional_evidence_required": case.additional_evidence_required,
                 "additional_evidence_present": artifact.present if needs_artifact else True,
                 "additional_evidence_verified": artifact.verified if needs_artifact else True,
@@ -1167,7 +1368,10 @@ def _run_group(
         "case_ledger": case_ledger,
         "evidence_only_group": evidence_only_group,
         "passed_testcases": [
-            {"classname": classname, "name": name}
+            {
+                "classname": _redact_child_output(classname, secret_values),
+                "name": _redact_child_output(name, secret_values),
+            }
             for classname, name in sorted(junit.passed_testcases)
         ],
         "stripped_env_keys": stripped_env_keys,

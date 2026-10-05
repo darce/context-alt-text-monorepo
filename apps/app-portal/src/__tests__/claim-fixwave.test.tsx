@@ -82,9 +82,16 @@ describe('APP1-CLAIMUI-RV01 terminal invitation token lifetime [DATA-03][RES-01]
 
       if (retryVisible) {
         await user.type(field, 'replacement-invitation-token');
-        const retry = screen.getByRole('button', { name: /try claim again/i });
-        expect(retry).toBeEnabled();
-        await user.click(retry);
+        expect(screen.queryByRole('button', { name: /try claim again/i })).not.toBeInTheDocument();
+        expect(claim).toHaveBeenCalledTimes(1);
+
+        await user.click(screen.getByRole('button', { name: /^claim access$/i }));
+        expect(screen.getByRole('status')).toHaveTextContent(/this invitation can be used only once/i);
+        const confirm = screen.getByRole('button', { name: /confirm claim access/i });
+        expect(confirm).toBeEnabled();
+        expect(claim).toHaveBeenCalledTimes(1);
+
+        await user.click(confirm);
         await waitFor(() => expect(claim).toHaveBeenCalledTimes(2));
         expect(claim).toHaveBeenLastCalledWith('replacement-invitation-token');
       }

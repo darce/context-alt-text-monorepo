@@ -88,9 +88,11 @@ class _FakeConn:
         self.projection_row = projection_row
         self.collision = collision
         self.updates: list[tuple[str, Any]] = []
+        self.queries: list[str] = []
 
     def execute(self, statement: object, params: object | None = None) -> _Result:
         sql = str(statement).lower()
+        self.queries.append(sql)
         if "current_setting" in sql:
             return _Result(scalar="")
         if "set_config" in sql:
@@ -231,6 +233,36 @@ def test_apply_does_not_write_when_later_entry_is_invalid(migrate: ModuleType) -
     with pytest.raises(ValueError, match="seller_account"):
         migrate.run(conn, mapping, apply=True)
     assert conn.updates == []
+
+
+def test_apply_locks_target_rows_before_namespace_validation(migrate: ModuleType) -> None:
+    conn = _FakeConn(
+        inbox_row={
+            "provider": "polar",
+            "provider_event_id": "evt-1",
+            "environment": None,
+            "seller_account": None,
+        },
+        projection_row={
+            "tenant_id": uuid4(),
+            "provider": "polar",
+            "provider_customer_id": "cus-1",
+            "environment": None,
+            "seller_account": None,
+        },
+    )
+    mapping = _mapping(inbox=[_entry()], projection=[_entry()])
+
+    migrate.run(conn, mapping, apply=True)
+
+    target_reads = [
+        sql
+        for sql in conn.queries
+        if "where id = :id" in sql
+        and ("from billing_webhook_inbox" in sql or "from billing_subscription_projection" in sql)
+    ]
+    assert len(target_reads) == 2
+    assert all("for update" in sql for sql in target_reads)
 
 
 def test_cli_apply_requires_mapping_and_defaults_to_dry_run(migrate: ModuleType) -> None:

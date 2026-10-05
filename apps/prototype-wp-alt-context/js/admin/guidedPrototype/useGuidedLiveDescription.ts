@@ -226,7 +226,10 @@ export const useGuidedLiveDescription = ({
   const generationRef = useRef(0);
   const attemptRef = useRef(0);
   const requestInFlightRef = useRef(false);
-  const pendingIdempotencyRef = useRef<{ mediaId: number; key: string } | null>(null);
+  const pendingIdempotencyRef = useRef<{ mediaId: number; key: string; ownerGeneration: number } | null>(null);
+  // The latest accepted key stays owned by the generation that adopted its
+  // run. A fenced submit response for the same key must not cancel that run.
+  const adoptedIdempotencyRef = useRef<{ key: string; generation: number; runId: string } | null>(null);
   // Set by the tick that crosses the client deadline. Distinct from `waiting`
   // so an in-flight submit that resolves before the queued re-render is not
   // mistaken for a timed-out wait (GR-201).
@@ -317,7 +320,11 @@ export const useGuidedLiveDescription = ({
     requestInFlightRef.current = true;
     let pendingIdempotency = pendingIdempotencyRef.current;
     if (pendingIdempotency === null || pendingIdempotency.mediaId !== mediaId) {
-      pendingIdempotency = { mediaId, key: createDescribeIdempotencyKey() };
+      pendingIdempotency = {
+        mediaId,
+        key: createDescribeIdempotencyKey(),
+        ownerGeneration: generationRef.current + 1,
+      };
       pendingIdempotencyRef.current = pendingIdempotency;
     }
     const idempotencyKey = pendingIdempotency.key;
@@ -335,6 +342,10 @@ export const useGuidedLiveDescription = ({
     const previous = mayBeLive && runId !== null ? runId : null;
     const generation = generationRef.current + 1;
     generationRef.current = generation;
+    // A retry may replay a submit that is still unresolved. Transfer ownership
+    // before it starts so its older response cannot retire the shared key.
+    pendingIdempotencyRef.current = { ...pendingIdempotency, ownerGeneration: generation };
+    adoptedIdempotencyRef.current = null;
     attemptRef.current = 0;
     deadlineElapsedRef.current = false;
     completionInFlightRef.current = false;
@@ -354,14 +365,24 @@ export const useGuidedLiveDescription = ({
         if (run === undefined) {
           return;
         }
-        if (pendingIdempotencyRef.current?.key === idempotencyKey) {
+        const pendingOwner = pendingIdempotencyRef.current;
+        if (pendingOwner?.key === idempotencyKey && pendingOwner.ownerGeneration === generation) {
           pendingIdempotencyRef.current = null;
         }
         if (generationRef.current !== generation) {
           // The learner stopped waiting while the submit was in flight. The run
           // exists on the server now, so a burst it started keeps costing money
-          // unless we cancel the run id we only just learned.
-          void releaseRun(client, run.run_id, 'accepted_after_fence');
+          // unless we cancel it. A newer owner of the same key may be adopting
+          // this very run, so only release it when nobody newer owns it.
+          const newerSubmitOwnsKey =
+            pendingOwner?.key === idempotencyKey && pendingOwner.ownerGeneration > generation;
+          const newerGenerationAdoptedRun =
+            adoptedIdempotencyRef.current?.key === idempotencyKey &&
+            adoptedIdempotencyRef.current.generation > generation &&
+            adoptedIdempotencyRef.current.runId === run.run_id;
+          if (!newerSubmitOwnsKey && !newerGenerationAdoptedRun) {
+            void releaseRun(client, run.run_id, 'accepted_after_fence');
+          }
           return;
         }
         if (deadlineElapsedRef.current) {
@@ -375,6 +396,7 @@ export const useGuidedLiveDescription = ({
           void releaseRun(client, run.run_id, 'accepted_after_deadline');
           return;
         }
+        adoptedIdempotencyRef.current = { key: idempotencyKey, generation, runId: run.run_id };
         // The disclosed budget and the GPU state it was measured against
         // travel together: the reducer needs both to decide whether the
         // warm-up leg is still owed on top of the generation budget.
@@ -393,10 +415,19 @@ export const useGuidedLiveDescription = ({
         if (strandedRunId !== null) {
           // Acceptance consumes the key even when the response is an error.
           // Replaying it would adopt the run we are now cancelling (API-02).
-          if (pendingIdempotencyRef.current?.key === idempotencyKey) {
+          const pendingOwner = pendingIdempotencyRef.current;
+          if (pendingOwner?.key === idempotencyKey && pendingOwner.ownerGeneration === generation) {
             pendingIdempotencyRef.current = null;
           }
-          void releaseRun(client, strandedRunId, 'submit_failed_after_acceptance');
+          const newerSubmitOwnsKey =
+            pendingOwner?.key === idempotencyKey && pendingOwner.ownerGeneration > generation;
+          const newerGenerationAdoptedRun =
+            adoptedIdempotencyRef.current?.key === idempotencyKey &&
+            adoptedIdempotencyRef.current.generation > generation &&
+            adoptedIdempotencyRef.current.runId === strandedRunId;
+          if (!newerSubmitOwnsKey && !newerGenerationAdoptedRun) {
+            void releaseRun(client, strandedRunId, 'submit_failed_after_acceptance');
+          }
         }
         if (generationRef.current === generation) {
           // React may batch requested + failed without rendering waiting=true,

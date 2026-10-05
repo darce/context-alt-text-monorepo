@@ -5,6 +5,7 @@ import json
 import os
 import re
 import stat
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -261,9 +262,51 @@ def _atomic_replace(path: Path, content: bytes, mode: int) -> None:
             os.fsync(stream.fileno())
         os.chmod(temp_path, mode)
         os.replace(temp_path, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     except Exception:
         temp_path.unlink(missing_ok=True)
         raise
+
+
+def _run_git(root: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        ["git", "-C", str(root), *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+
+
+def _unsafe_preimage_fragments(root: Path, fragments: list[Path]) -> list[str]:
+    """Return affected fragment names that are not a clean, tracked HEAD pre-image."""
+    try:
+        root_result = _run_git(root, "rev-parse", "--show-toplevel")
+        if root_result.returncode != 0:
+            return sorted({fragment.name for fragment in fragments})
+        repo_root = Path(root_result.stdout.decode("utf-8").strip()).resolve()
+    except (OSError, UnicodeDecodeError):
+        return sorted({fragment.name for fragment in fragments})
+
+    unsafe: set[str] = set()
+    for fragment in fragments:
+        try:
+            relative = Path(os.path.abspath(fragment)).relative_to(repo_root).as_posix()
+        except ValueError:
+            unsafe.add(fragment.name)
+            continue
+        tracked = _run_git(repo_root, "ls-files", "--error-unmatch", "--", relative)
+        if tracked.returncode != 0:
+            unsafe.add(fragment.name)
+            continue
+        worktree_diff = _run_git(repo_root, "diff", "--quiet", "HEAD", "--", relative)
+        index_diff = _run_git(repo_root, "diff", "--cached", "--quiet", "HEAD", "--", relative)
+        if worktree_diff.returncode != 0 or index_diff.returncode != 0:
+            unsafe.add(fragment.name)
+    return sorted(unsafe)
 
 
 def _input_conflicts(harvested: list[tuple[str, str, dict[str, str]]]) -> bool:
@@ -363,22 +406,30 @@ def _write_and_validate(
     root: Path, updated: dict[Path, bytes], source_bytes: dict[str, bytes], source_modes: dict[str, int]
 ) -> int:
     original_bytes = {root / "manifest.d" / source: raw for source, raw in source_bytes.items()}
+    unsafe = _unsafe_preimage_fragments(root, list(updated))
+    if unsafe:
+        for name in unsafe:
+            print(f"error\tfragment\tunsafe pre-image\t{name}", file=sys.stderr)
+        return 2
+
+    attempted: list[Path] = []
     try:
         for fragment, content in updated.items():
+            attempted.append(fragment)
             source_name = fragment.name
             _atomic_replace(fragment, content, source_modes[source_name])
         load_manifest(root)
     except Exception:
         restore_errors: list[Exception] = []
-        for fragment, original in original_bytes.items():
+        for fragment in reversed(attempted):
             try:
-                _atomic_replace(fragment, original, source_modes[fragment.name])
+                _atomic_replace(fragment, original_bytes[fragment], source_modes[fragment.name])
             except Exception as exc:
                 restore_errors.append(exc)
         if restore_errors:
-            print("error\tmanifest\treload failed; rollback failed", file=sys.stderr)
+            print("error\tmanifest\tapply failed; rollback failed", file=sys.stderr)
         else:
-            print("error\tmanifest\treload failed; files restored", file=sys.stderr)
+            print("error\tmanifest\tapply failed; files restored", file=sys.stderr)
         return 2
 
     return 0

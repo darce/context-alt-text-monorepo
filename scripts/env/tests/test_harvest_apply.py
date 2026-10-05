@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -105,6 +106,36 @@ def _input(tmp_path: Path, content: object) -> Path:
     return path
 
 
+def _init_fixture_git(root: Path) -> None:
+    subprocess.run(["git", "-C", str(root), "init", "--quiet"], check=True)
+    subprocess.run(["git", "-C", str(root), "add", "manifest.d"], check=True)
+    subprocess.run(
+        [
+            "git", "-C", str(root), "-c", "user.name=Test Fixture",
+            "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "fixture",
+        ],
+        check=True,
+    )
+
+
+def _commit_fixture_state(root: Path) -> None:
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    changed = subprocess.run(
+        ["git", "-C", str(root), "diff", "--cached", "--quiet", "HEAD", "--"],
+        check=False,
+    )
+    if changed.returncode == 1:
+        subprocess.run(
+            [
+                "git", "-C", str(root), "-c", "user.name=Test Fixture",
+                "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "fixture setup",
+            ],
+            check=True,
+        )
+    else:
+        assert changed.returncode == 0
+
+
 def _run(root: Path, input_path: Path, capsys, *, prefer: bool = False) -> tuple[int, str, str]:
     module = load_module("harvest_apply")
     args = ["--root", str(root)]
@@ -118,7 +149,9 @@ def _run(root: Path, input_path: Path, capsys, *, prefer: bool = False) -> tuple
 
 @pytest.fixture
 def manifest_root(write_manifest) -> Path:
-    return write_manifest(TARGETS, vars=VARS)
+    root = write_manifest(TARGETS, vars=VARS)
+    _init_fixture_git(root)
+    return root
 
 
 def test_apply_appends_env_in_order_and_emits_one_set_line(manifest_root, tmp_path, capsys):
@@ -207,6 +240,7 @@ def test_empty_manifest_value_is_replaced_without_prefer_flag(manifest_root, tmp
     fragment = manifest_root / "manifest.d" / "vars.toml"
     original = fragment.read_text(encoding="utf-8")
     fragment.write_text(original.replace('values = { dev = "info" }', 'values = { dev = "" }'), encoding="utf-8")
+    _commit_fixture_state(manifest_root)
     source = _input(tmp_path, _harvest({"LOG_LEVEL": "info"}, env="dev"))
 
     code, stdout, stderr = _run(manifest_root, source, capsys)
@@ -233,7 +267,9 @@ def test_prefer_harvest_replaces_manifest_conflict(manifest_root, tmp_path, caps
 def shared_manifest_root(write_manifest) -> Path:
     targets = TARGETS.replace('envs = ["staging"]', 'envs = ["dev", "prod"]')
     variables = VARS.replace('targets = ["vm"]', 'targets = ["vm", "other"]')
-    return write_manifest(targets, vars=variables, extra="version = 1\n")
+    root = write_manifest(targets, vars=variables, extra="version = 1\n")
+    _init_fixture_git(root)
+    return root
 
 
 @pytest.mark.parametrize("prefer", [False, True])
@@ -413,6 +449,7 @@ values = {}
 ''',
         encoding="utf-8",
     )
+    _commit_fixture_state(manifest_root)
     original = {vars_fragment: vars_fragment.read_bytes(), other_fragment: other_fragment.read_bytes()}
     source = _input(tmp_path, _harvest({"LOG_LEVEL": "warning", "SECOND_VALUE": "safe-new"}))
     module = load_module("harvest_apply")
@@ -433,6 +470,6 @@ values = {}
     assert calls == 2
     assert code == 2
     assert captured.out == ""
-    assert "reload failed" in captured.err
+    assert "apply failed" in captured.err
     assert "warning" not in captured.err
     assert {path: path.read_bytes() for path in original} == original

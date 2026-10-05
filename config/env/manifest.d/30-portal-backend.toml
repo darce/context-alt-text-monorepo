@@ -1,0 +1,71 @@
+version = 1
+
+[[var]]
+name = "RECOGNITION_PORTAL_ENABLED"
+class = "config"
+targets = ["svc-local", "svc-vm"]
+section = "API security"
+example = "1"
+doc = 'domain: portal auth config | source: service operator | consumer: apps/prototype-description-service/api/main.py:create_app'
+required = false
+values = { local = "1" }
+
+[[var]]
+name = "ACX_CLERK_ISSUER"
+class = "config"
+targets = ["svc-local", "svc-vm"]
+section = "API security"
+example = "https://issuer.example.test"
+doc = 'domain: portal auth config | source: service operator | consumer: apps/prototype-description-service/recognition/interface_adapters/http/deps/portal_composition.py:_portal_auth_settings'
+required = false
+values = { local = "https://saved-frog-4170.clerk.accounts.dev", prod = "https://clerk.altcontext.com" }
+
+[[var]]
+name = "ACX_CLERK_JWKS_URL"
+class = "config"
+targets = ["svc-local", "svc-vm"]
+section = "API security"
+example = "https://issuer.example.test/.well-known/jwks.json"
+doc = 'domain: portal auth config | source: service operator | consumer: apps/prototype-description-service/recognition/interface_adapters/http/deps/portal_composition.py:_portal_auth_settings'
+required = false
+values = { local = "https://saved-frog-4170.clerk.accounts.dev/.well-known/jwks.json", prod = "https://clerk.altcontext.com/.well-known/jwks.json" }
+
+[[var]]
+name = "ACX_CLERK_AUDIENCE"
+class = "config"
+targets = ["svc-local", "svc-vm"]
+section = "API security"
+example = "portal-audience"
+doc = 'domain: portal auth config | source: service operator | consumer: apps/prototype-description-service/recognition/interface_adapters/http/deps/portal_composition.py:_portal_auth_settings'
+required = false
+values = { local = "altcontext-portal", prod = "altcontext-portal" }
+
+[[var]]
+name = "ACX_CLERK_AUTHORIZED_PARTIES"
+class = "config"
+targets = ["svc-local", "svc-vm"]
+section = "API security"
+example = "https://app.example.test"
+doc = 'domain: portal auth config | source: service operator | consumer: apps/prototype-description-service/recognition/interface_adapters/http/deps/portal_composition.py:_portal_auth_settings'
+required = false
+values = { local = "http://localhost:5173", prod = "https://app.altcontext.com" }
+
+[[var]]
+name = "APP_PUBLIC_ORIGIN"
+class = "config"
+targets = ["svc-local", "svc-vm"]
+section = "API security"
+example = "https://app.example.test"
+doc = 'domain: portal origin config | source: service operator | consumer: apps/prototype-description-service/recognition/interface_adapters/http/deps/portal_composition.py:_app_public_origin'
+required = false
+values = { local = "http://localhost:5173", prod = "https://app.altcontext.com" }
+
+[[var]]
+name = "APP_ALLOWED_ORIGINS"
+class = "config"
+targets = ["svc-local", "svc-vm"]
+section = "API security"
+example = "https://app.example.test"
+doc = 'domain: portal origin config | source: service operator | consumer: apps/prototype-description-service/recognition/interface_adapters/http/deps/portal_composition.py:_app_allowed_origins'
+required = false
+values = { local = "http://localhost:5173", prod = "https://app.altcontext.com" }

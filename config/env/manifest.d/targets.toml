@@ -120,3 +120,25 @@ Annotation format (Slice 4): `# domain: <n> | source: <owner> | consumer: <who r
 Cross-ref: apps/prototype-description-service/docs/secrets-inventory.md
 
 domain: test creds | source: local developer / CI secret store | consumer: Playwright LocalWP auth bootstrap'''
+
+[targets.app-portal-local]
+audience = "public_build"
+envs = ["local"]
+path = "apps/app-portal/.env.local"
+sections = ["Portal public build"]
+doc = '''Local Vite build-time values for app-portal.
+
+Consumed by `apps/app-portal/src/config.ts` through Vite's `import.meta.env`.
+The rendered publishable key and flags are public and ship in the browser bundle.'''
+
+[targets.app-portal-build]
+audience = "public_build"
+envs = ["prod"]
+path = "apps/app-portal/.env.production.local"
+example = "apps/app-portal/.env.example"
+sections = ["Portal public build"]
+doc = '''Production Vite build-time values for app-portal.
+
+Consumed by `apps/app-portal/src/config.ts` through Vite's `import.meta.env`.
+These values are public and ship in the browser bundle. The production Clerk
+publishable key is intentionally unset until the operator adds the live key.'''

@@ -41,12 +41,12 @@ values = { dev = "00000000-0000-7000-8000-000000000002", staging = "00000000-000
 [[var]]
 name = "RECOGNITION_SECRET_BACKEND"
 class = "config"
-targets = ["svc-vm", "svc-fir"]
-section = "Secret backend"
+targets = ["svc-local", "svc-vm", "svc-fir"]
+section = "Runtime mode"
 example = "oci_vault"
 doc = 'Default env in dev/staging/fir. Prod uses oci_vault with a required host-preserved map, whose boot keys are checked by the app at startup. | domain: infra (backend selector) | source: service operator | consumer: shared/secrets.py:get_secret_provider'
 required = false
-values = { dev = "env", staging = "env", prod = "oci_vault", fir = "env" }
+values = { local = "env", dev = "env", staging = "env", prod = "oci_vault", fir = "env" }
 
 [[var]]
 name = "RECOGNITION_VAULT_SECRET_MAP"
@@ -335,6 +335,7 @@ section = "Operator /admin surface"
 example = ""
 doc = 'domain: service root-of-trust | source: OCI Vault (oci_vault) / service operator | consumer: SecuritySettings.admin_token; validate_admin_config; /admin deps (admin_auth)'
 required = false
+required_when = { RECOGNITION_SECRET_BACKEND = ["env"], RECOGNITION_ADMIN_ENABLED = ["true", "1", "yes", "on"] }
 secret = { dev = "host:", staging = "host:", prod = "host:", fir = "host:" }
 
 [[var]]

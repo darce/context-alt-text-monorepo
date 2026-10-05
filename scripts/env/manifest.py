@@ -45,6 +45,7 @@ class Var:
     derive: str | None
     source: str
     derive_vault_map: bool = False
+    required_when: Mapping[str, tuple[str, ...]] | None = None
 
 
 @dataclass(frozen=True)
@@ -71,7 +72,7 @@ _TARGET_KEYS = _TARGET_REQUIRED_KEYS | frozenset({"path", "example", "doc", "rem
 _FRAGMENT_KEYS = frozenset({"version", "var", "override"})
 _VAR_REQUIRED_KEYS = frozenset({"name", "class", "targets", "section", "example"})
 _VAR_KEYS = _VAR_REQUIRED_KEYS | frozenset(
-    {"doc", "required", "values", "secret", "derive", "derive_vault_map"}
+    {"doc", "required", "required_when", "values", "secret", "derive", "derive_vault_map"}
 )
 _DERIVE_REF = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
 _LITERAL_SECRET = re.compile(
@@ -342,6 +343,7 @@ def _load_var(raw: object, source: str) -> Var:
     required = table.get("required", True)
     if not isinstance(required, bool):
         _fail(source, f"{name}.required", "must be a boolean")
+    required_when = _load_required_when(table, source, name)
     values, secret, derive = _load_value_source(table, source, name, cls)
     var = Var(
         name=name,
@@ -356,9 +358,31 @@ def _load_var(raw: object, source: str) -> Var:
         derive=derive,
         source=source,
         derive_vault_map=table.get("derive_vault_map", False),
+        required_when=required_when,
     )
     _validate_var_fields(var)
     return var
+
+
+def _load_required_when(
+    table: Mapping[str, object], source: str, name: str
+) -> Mapping[str, tuple[str, ...]] | None:
+    if "required_when" not in table:
+        return None
+    raw = _mapping(table["required_when"], source, f"{name}.required_when")
+    conditions: dict[str, tuple[str, ...]] = {}
+    for referenced_name, raw_values in raw.items():
+        key = f"{name}.required_when.{referenced_name}"
+        if not isinstance(referenced_name, str):
+            _fail(source, f"{name}.required_when", "variable names must be strings")
+        if not isinstance(raw_values, list):
+            _fail(source, key, "must be a non-empty list of strings")
+        if not raw_values:
+            _fail(source, key, "list must not be empty")
+        if any(not isinstance(value, str) for value in raw_values):
+            _fail(source, key, "list items must be strings")
+        conditions[referenced_name] = tuple(raw_values)
+    return MappingProxyType(conditions)
 
 
 def _load_fragments(manifest_dir: Path) -> tuple[dict[str, Var], list[Var]]:
@@ -387,7 +411,26 @@ def _load_fragments(manifest_dir: Path) -> tuple[dict[str, Var], list[Var]]:
                 _fail(source, var.name, "duplicate variable name")
             vars_by_name[var.name] = var
             ordered_vars.append(var)
+    _validate_required_when_references(vars_by_name)
     return vars_by_name, ordered_vars
+
+
+def _validate_required_when_references(vars_by_name: Mapping[str, Var]) -> None:
+    for var in vars_by_name.values():
+        for referenced_name in var.required_when or {}:
+            referenced = vars_by_name.get(referenced_name)
+            if referenced is None:
+                _fail(var.source, var.name, f"required_when references unknown var {referenced_name}")
+            if referenced.cls != "config":
+                _fail(var.source, var.name, f"required_when var {referenced_name} must have config class")
+            missing_targets = set(var.targets) - set(referenced.targets)
+            if missing_targets:
+                target_name = sorted(missing_targets)[0]
+                _fail(
+                    var.source,
+                    var.name,
+                    f"required_when var {referenced_name} does not target {target_name}",
+                )
 
 
 def effective_var(manifest: Manifest, var: Var, target_name: str) -> Var:
@@ -718,6 +761,10 @@ def target_digest(manifest: Manifest, target_name: str) -> str:
         )
         if var.derive_vault_map:
             var_data[-1]["derive_vault_map"] = True
+        if var.required_when is not None:
+            var_data[-1]["required_when"] = {
+                name: list(values) for name, values in var.required_when.items()
+            }
     encoded = json.dumps(
         {"target": target_data, "vars": var_data, "overrides": [
             {key: value for key, value in vars(override).items() if key != "source"}

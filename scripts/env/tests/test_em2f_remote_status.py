@@ -387,6 +387,26 @@ def test_constructed_remote_command_runs_python_materializer_wrapper(remote, tmp
     assert "stage marker missing or invalid" not in result.stderr
 
 
+def test_constructed_remote_command_runs_real_renderer_module(remote, tmp_path):
+    execute_constructed_remote(remote, tmp_path, fake_python=False)
+    isolated_target = f"/opt/acx-backend/envman-test-{tmp_path.name}/.env"
+    targets_file = Path(remote["ENV_MANIFEST_ROOT"]) / "manifest.d" / "targets.toml"
+    targets_file.write_text(
+        targets_file.read_text().replace(
+            "/opt/acx-backend/dev/.env", isolated_target
+        )
+    )
+    remote.update(SHIM_SUDO_LAUNCH="1")
+
+    result = run(remote)
+
+    assert result.returncode == 2
+    assert "remote materialize refused with status 2" in result.stderr
+    assert "materialize refused: existing file required" in result.stderr
+    assert "remote bootstrap failed" not in result.stderr
+    assert "AttributeError" not in result.stderr
+
+
 @pytest.mark.parametrize(
     "source_mode,diagnostic",
     [

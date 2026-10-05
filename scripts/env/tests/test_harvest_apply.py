@@ -229,6 +229,62 @@ def test_prefer_harvest_replaces_manifest_conflict(manifest_root, tmp_path, caps
     assert load_manifest(manifest_root).vars[0].values["dev"] == "warning"
 
 
+@pytest.fixture
+def shared_manifest_root(write_manifest) -> Path:
+    targets = TARGETS.replace('envs = ["staging"]', 'envs = ["dev", "prod"]')
+    variables = VARS.replace('targets = ["vm"]', 'targets = ["vm", "other"]')
+    return write_manifest(targets, vars=variables, extra="version = 1\n")
+
+
+@pytest.mark.parametrize("prefer", [False, True])
+@pytest.mark.parametrize("env", ["dev", "prod"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_cross_input_disagreement_refuses_all_writes(
+    shared_manifest_root, tmp_path, capsys, prefer, env, reverse
+):
+    originals = {
+        path: path.read_bytes() for path in (shared_manifest_root / "manifest.d").glob("*.toml")
+    }
+    documents = [
+        _harvest({"LOG_LEVEL": "warning", "EXTRA_MODE": "safe-new"}, env=env),
+        _harvest({"LOG_LEVEL": "debug"}, target="other", env=env),
+    ]
+    source = _input(tmp_path, documents[::-1] if reverse else documents)
+
+    code, stdout, stderr = _run(shared_manifest_root, source, capsys, prefer=prefer)
+
+    assert code == 3
+    assert stdout == ""
+    assert stderr == f"conflict\tLOG_LEVEL\t{env}\tinputs\n"
+    assert all(path.read_bytes() == original for path, original in originals.items())
+
+
+@pytest.mark.parametrize("prefer, env, value, expected_code", [
+    (False, "prod", "warning", 0),
+    (False, "dev", "info", 0),
+    (False, "dev", "warning", 3),
+    (True, "dev", "warning", 0),
+])
+def test_identical_cross_input_values_keep_manifest_conflict_policy(
+    shared_manifest_root, tmp_path, capsys, prefer, env, value, expected_code
+):
+    source = _input(tmp_path, [
+        _harvest({"LOG_LEVEL": value}, env=env),
+        _harvest({"LOG_LEVEL": value}, target="other", env=env),
+    ])
+
+    code, stdout, stderr = _run(shared_manifest_root, source, capsys, prefer=prefer)
+
+    assert code == expected_code
+    if expected_code == 3:
+        assert stdout == ""
+        assert stderr == f"conflict\tLOG_LEVEL\t{env}\n"
+    else:
+        assert stderr == ""
+        assert stdout == ("" if value == "info" else f"set\tLOG_LEVEL\t{env}\n")
+        assert load_manifest(shared_manifest_root).vars[0].values[env] == value
+
+
 def test_toml_escaping_round_trips_backslashes_quotes_and_controls(manifest_root, tmp_path, capsys):
     value = 'a\\b"c\tline\nnext\r\x01'
     source = _input(tmp_path, _harvest({"EXTRA_MODE": value}))

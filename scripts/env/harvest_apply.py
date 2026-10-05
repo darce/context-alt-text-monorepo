@@ -257,8 +257,6 @@ def _validate_documents(documents: list[object], manifest: Manifest) -> list[tup
                 raise ApplyError(name, "variable does not target harvest target")
             if var.derive is not None or var.derive_vault_map:
                 raise ApplyError(name, "derived variables cannot be harvested")
-            if env not in target.envs:
-                raise ApplyError(name, "environment is not configured")
             if not isinstance(value, str):
                 raise ApplyError(name, "harvest value must be a string")
             if any(0xD800 <= ord(char) <= 0xDFFF for char in value):
@@ -285,8 +283,24 @@ def _atomic_replace(path: Path, content: bytes, mode: int) -> None:
         raise
 
 
-def _apply_changes(root: Path, manifest: Manifest, harvested: list[tuple[str, str, dict[str, str]]], prefer: bool) -> int:
-    vars_by_name = {var.name: var for var in manifest.vars}
+def _input_conflicts(harvested: list[tuple[str, str, dict[str, str]]]) -> bool:
+    inputs: dict[tuple[str, str], str] = {}
+    conflicts: set[tuple[str, str]] = set()
+    for _, env, values in harvested:
+        for name, value in values.items():
+            pair = (name, env)
+            if pair in inputs and inputs[pair] != value:
+                conflicts.add(pair)
+            else:
+                inputs[pair] = value
+    for name, env in sorted(conflicts):
+        print(f"conflict\t{name}\t{env}\tinputs", file=sys.stderr)
+    return bool(conflicts)
+
+
+def _stage_changes(
+    manifest: Manifest, harvested: list[tuple[str, str, dict[str, str]]], prefer: bool
+) -> tuple[dict[str, dict[str, str]], list[str], list[tuple[str, str]], list[tuple[str, str]]]:
     mentioned: list[str] = []
     seen_names: set[str] = set()
     requested_pairs: list[tuple[str, str]] = []
@@ -312,41 +326,31 @@ def _apply_changes(root: Path, manifest: Manifest, harvested: list[tuple[str, st
                     seen_conflicts.add(pair)
                 continue
             staged[name][env] = new_value
-    root = Path(root)
+    return staged, mentioned, requested_pairs, conflicts
+
+
+def _locate_values_lines(
+    root: Path, vars_by_name: dict[str, Var], mentioned: list[str]
+) -> tuple[dict[str, bytes], dict[str, int], dict[str, _ValuesLine]]:
     source_bytes: dict[str, bytes] = {}
     source_modes: dict[str, int] = {}
     line_locations: dict[str, _ValuesLine] = {}
-    try:
-        for name in mentioned:
-            var = vars_by_name[name]
-            fragment = root / "manifest.d" / var.source
-            if var.source not in source_bytes:
-                source_bytes[var.source] = fragment.read_bytes()
-                source_modes[var.source] = stat.S_IMODE(fragment.stat().st_mode)
-            line_locations[name] = _find_values_line(var, source_bytes[var.source])
-    except (OSError, ApplyError) as exc:
-        if isinstance(exc, ApplyError):
-            print(f"error\t{exc.field}\t{exc.reason}", file=sys.stderr)
-        else:
-            print("error\tfragment\tcannot read", file=sys.stderr)
-        return 2
-    if conflicts:
-        for name, env in conflicts:
-            print(f"conflict\t{name}\t{env}", file=sys.stderr)
-        return 3
+    for name in mentioned:
+        var = vars_by_name[name]
+        fragment = root / "manifest.d" / var.source
+        if var.source not in source_bytes:
+            source_bytes[var.source] = fragment.read_bytes()
+            source_modes[var.source] = stat.S_IMODE(fragment.stat().st_mode)
+        line_locations[name] = _find_values_line(var, source_bytes[var.source])
+    return source_bytes, source_modes, line_locations
 
-    net_changes = [
-        (name, env)
-        for name, env in requested_pairs
-        if vars_by_name[name].values.get(env) != staged[name].get(env)
-    ]
-    if not net_changes:
-        return 0
 
+def _render_changes(
+    root: Path, vars_by_name: dict[str, Var], staged: dict[str, dict[str, str]],
+    net_changes: list[tuple[str, str]], source_bytes: dict[str, bytes],
+    line_locations: dict[str, _ValuesLine],
+) -> dict[Path, bytes]:
     edits: dict[str, dict[int, bytes]] = {}
-    original_bytes: dict[Path, bytes] = {}
-    for source_name, original in source_bytes.items():
-        original_bytes[root / "manifest.d" / source_name] = original
     for name, _ in net_changes:
         var = vars_by_name[name]
         location = line_locations[name]
@@ -355,8 +359,7 @@ def _apply_changes(root: Path, manifest: Manifest, harvested: list[tuple[str, st
         line_body = line.rstrip("\r\n")
         match = _VALUES_ASSIGNMENT.match(line_body)
         if match is None:
-            print(f"error\t{name}\tvalues table must be single-line", file=sys.stderr)
-            return 2
+            raise ApplyError(name, "values table must be single-line")
         _, trailing = _toml_comment_parts(match.group("rhs"))
         edits.setdefault(var.source, {})[location.index] = (
             f"{location.prefix}{rendered}{trailing}{location.newline}".encode("utf-8")
@@ -370,6 +373,13 @@ def _apply_changes(root: Path, manifest: Manifest, harvested: list[tuple[str, st
             lines[index] = replacement.decode("utf-8")
         updated[fragment] = "".join(lines).encode("utf-8")
 
+    return updated
+
+
+def _write_and_validate(
+    root: Path, updated: dict[Path, bytes], source_bytes: dict[str, bytes], source_modes: dict[str, int]
+) -> int:
+    original_bytes = {root / "manifest.d" / source: raw for source, raw in source_bytes.items()}
     try:
         for fragment, content in updated.items():
             source_name = fragment.name
@@ -388,6 +398,41 @@ def _apply_changes(root: Path, manifest: Manifest, harvested: list[tuple[str, st
             print("error\tmanifest\treload failed; files restored", file=sys.stderr)
         return 2
 
+    return 0
+
+
+def _apply_changes(root: Path, manifest: Manifest, harvested: list[tuple[str, str, dict[str, str]]], prefer: bool) -> int:
+    if _input_conflicts(harvested):
+        return 3
+    vars_by_name = {var.name: var for var in manifest.vars}
+    staged, mentioned, requested_pairs, conflicts = _stage_changes(manifest, harvested, prefer)
+    root = Path(root)
+    try:
+        source_bytes, source_modes, line_locations = _locate_values_lines(root, vars_by_name, mentioned)
+    except (OSError, ApplyError) as exc:
+        if isinstance(exc, ApplyError):
+            print(f"error\t{exc.field}\t{exc.reason}", file=sys.stderr)
+        else:
+            print("error\tfragment\tcannot read", file=sys.stderr)
+        return 2
+    if conflicts:
+        for name, env in conflicts:
+            print(f"conflict\t{name}\t{env}", file=sys.stderr)
+        return 3
+    net_changes = [
+        (name, env) for name, env in requested_pairs
+        if vars_by_name[name].values.get(env) != staged[name].get(env)
+    ]
+    if not net_changes:
+        return 0
+    try:
+        updated = _render_changes(root, vars_by_name, staged, net_changes, source_bytes, line_locations)
+    except ApplyError as exc:
+        print(f"error\t{exc.field}\t{exc.reason}", file=sys.stderr)
+        return 2
+    code = _write_and_validate(root, updated, source_bytes, source_modes)
+    if code:
+        return code
     for name, env in net_changes:
         print(f"set\t{name}\t{env}")
     return 0

@@ -81,7 +81,11 @@ automatically read `.env.prod`.
 
 Backend Clerk settings are owned by
 `config/env/manifest.d/30-portal-backend.toml` for target `svc-vm` and are
-materialized to the production runtime file with `make env-materialize`.
+intended to be materialized to the production runtime file with
+`make env-materialize`; VM value harvesting currently blocks this command
+(ENVAUD-1005-H-1). Follow the
+[before production launch checklist](app-portal-deploy.md#before-production-launch)
+for portal enablement, the missing public build key, and the interim writer.
 The four required verifier settings are `ACX_CLERK_ISSUER`,
 `ACX_CLERK_JWKS_URL`, `ACX_CLERK_AUDIENCE`, and
 `ACX_CLERK_AUTHORIZED_PARTIES`. An optional Clerk secret, if configured,
@@ -95,14 +99,33 @@ never put a Clerk secret in this target.
 
 ## 4. Materialize and build
 
-From the repository root, check then apply the production backend manifest:
+From the repository root, these commands currently refuse with a missing-value
+error because VM values have not been harvested (ENVAUD-1005-H-1). After that
+gap is resolved, check then apply the production backend manifest:
 
 ```bash
 make env-materialize ENV=prod TARGET=svc-vm
 make env-materialize ENV=prod TARGET=svc-vm APPLY=1 CONFIRM=prod
 ```
 
-Render the public portal build environment and build the committed app:
+Until then, use the existing Clerk writer on the VM. These commands prompt
+for the live publishable key; the audience and authorized party match the
+manifest's production values. Check that the derived issuer and JWKS URL also
+equal those values before applying. The writer preserves other backend settings
+and does not enable the portal; ensure runtime `RECOGNITION_PORTAL_ENABLED=1`
+matches the launch manifest separately.
+
+```bash
+python3 apps/prototype-description-service/scripts/configure_clerk_production.py \
+  --audience altcontext-portal --authorized-parties https://app.altcontext.com --check
+sudo python3 apps/prototype-description-service/scripts/configure_clerk_production.py \
+  --audience altcontext-portal --authorized-parties https://app.altcontext.com \
+  --apply --backend-env /opt/acx-backend/prod/.env
+```
+
+After committing the public `pk_live_` key's production manifest value as
+described in the [launch checklist](app-portal-deploy.md#before-production-launch),
+render the public portal build environment and build the committed app:
 
 ```bash
 make env-render ENV=prod TARGET=app-portal-build
@@ -120,8 +143,10 @@ sudo systemctl restart acx-prod
 ```
 
 The existing `configure_clerk_production.py` environment writers remain in
-this checkout for now and are scheduled for retirement in a later wave. Use
-the manifest targets above as the production source of truth; do not pass
+this checkout for now and are scheduled for retirement in a later wave. The
+interim backend writer's values must equal the manifest's production values.
+Billing credentials belong only in backend secret storage or runtime injection.
+Use the manifest targets as the production source of truth; do not pass
 `--frontend-env` or write a separate `app-portal.env` artifact.
 
 ## 5. Rotation

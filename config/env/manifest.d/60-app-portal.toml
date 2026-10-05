@@ -1,0 +1,53 @@
+version = 1
+
+[[var]]
+name = "VITE_CLERK_PUBLISHABLE_KEY"
+class = "public"
+targets = ["app-portal-local", "app-portal-build"]
+section = "Portal public build"
+example = ""
+doc = '''Clerk publishable key. This public key is embedded in the browser bundle;
+the local test key is never valid for production builds.'''
+required = true
+values = { local = "pk_test_c2F2ZWQtZnJvZy00MTcwLmNsZXJrLmFjY291bnRzLmRldiQ" }
+
+[[var]]
+name = "VITE_CLERK_FAPI"
+class = "public"
+targets = ["app-portal-local", "app-portal-build"]
+section = "Portal public build"
+example = "https://clerk.altcontext.com"
+doc = '''Clerk Frontend API origin consumed by `apps/app-portal/src/config.ts`.'''
+required = true
+values = { local = "https://saved-frog-4170.clerk.accounts.dev", prod = "https://clerk.altcontext.com" }
+
+[[var]]
+name = "VITE_PORTAL_ENABLED"
+class = "public"
+targets = ["app-portal-local", "app-portal-build"]
+section = "Portal public build"
+example = "true"
+doc = '''Controls whether the portal renders its enabled experience.'''
+required = true
+values = { local = "true", prod = "true" }
+
+[[var]]
+name = "VITE_PAYMENTS_ENABLED"
+class = "public"
+targets = ["app-portal-local", "app-portal-build"]
+section = "Portal public build"
+example = "false"
+doc = '''Controls whether portal checkout and subscription management are enabled.'''
+required = true
+values = { local = "false", prod = "false" }
+
+[[var]]
+name = "VITE_PUBLIC_PLAN_CODE"
+class = "public"
+targets = ["app-portal-local", "app-portal-build"]
+section = "Portal public build"
+example = ""
+doc = '''Optional public plan code accepted by the backend catalog map. Leave unset
+while payments are disabled; an empty value is parsed as no plan code.'''
+required = false
+values = {}

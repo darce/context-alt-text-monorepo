@@ -5,8 +5,8 @@ Filesystem-only: stub caddy/docker on PATH. Never SSH to the OCI host.
 
 from __future__ import annotations
 
-import json
 import base64
+import json
 import os
 import re
 import shlex

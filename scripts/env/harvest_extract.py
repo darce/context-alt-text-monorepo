@@ -94,7 +94,8 @@ def extract(manifest, target_name: str, env: str, text: str) -> dict[str, object
         sensitive_value = any(
             (value := _shell_token(raw_value)) is not None
             and (manifest_module._LITERAL_SECRET.search(value)
-                 or manifest_module._URL_USERINFO_PASSWORD.search(value))
+                 or manifest_module._URL_USERINFO_PASSWORD.search(value)
+                 or manifest_module._url_query_credential(value))
             for raw_value in assignments[name]
         )
         if sensitive_name or sensitive_value:

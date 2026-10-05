@@ -93,6 +93,27 @@ def test_unmanaged_key_refusal_names_key(case):
     assert "UNMANAGED_KEY" in err
 
 
+def test_target_path_mismatch_refusal_names_reason(case):
+    mat = load_module("materialize")
+
+    rc, out, err = case.run(mat, into="/opt/acx-backend/dev/wrong.env")
+
+    assert rc == 2
+    assert out == ""
+    assert err == "materialize refused: target path mismatch\n"
+
+
+def test_existing_file_required_refusal_names_reason(case):
+    mat = load_module("materialize")
+    case.file.unlink()
+
+    rc, out, err = case.run(mat)
+
+    assert rc == 2
+    assert out == ""
+    assert err == "materialize refused: existing file required\n"
+
+
 def test_oserror_refusal_names_path(case, monkeypatch):
     mat = load_module("materialize")
 

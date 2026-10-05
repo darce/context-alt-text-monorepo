@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import stat
 import sys
 import tempfile
@@ -36,6 +37,82 @@ def _target(manifest: Manifest, target_name: str) -> Target:
 def _target_vars(manifest: Manifest, target_name: str) -> tuple[Var, ...]:
     return tuple(effective_var(manifest, var, target_name)
                  for var in manifest.vars if target_name in var.targets)
+
+
+def host_secret_required(var: Var, variables: tuple[Var, ...], env: str) -> bool:
+    # The input is the live host env file: oci_vault must fail closed for an
+    # absent, blank or quoted-empty host map, in both checks and writes.
+    return var.required or (
+        var.name == "RECOGNITION_VAULT_SECRET_MAP" and any(
+            item.name == "RECOGNITION_SECRET_BACKEND" and item.values.get(env) == "oci_vault"
+            for item in variables
+        )
+    )
+
+
+def _shell_line(raw: str, quote: str = "") -> tuple[str, str, bool]:
+    # Live env files are sourced by bash: only actual assignments count, and
+    # lines inside open quotes are never assignments. When unsure, withhold
+    # the value as unparsed/missing rather than emitting it (SECD-01, SECD-05).
+    escaped = False
+    in_word = bool(quote)
+    for index, char in enumerate(raw):
+        if escaped:
+            escaped = False
+        elif char == "\\" and quote != "'":
+            escaped = True
+            in_word = True
+        elif quote:
+            if char == quote:
+                quote = ""
+        elif char in "\"'":
+            quote = char
+            in_word = True
+        elif char == "#" and not in_word:
+            return raw[:index], quote, False
+        else:
+            in_word = char not in " \t\r\n"
+    return raw, quote, escaped
+
+
+def shell_words(raw: str) -> list[str] | None:
+    """Unquote a single physical value line, preserving embedded hashes."""
+    if "\n" in raw:
+        return None
+    raw, _, _ = _shell_line(raw)
+    try:
+        return shlex.split(raw, posix=True)
+    except ValueError:
+        return None
+
+
+def shell_assignments(text: str) -> dict[str, list[str]]:
+    """Collect assignment occurrences without interpreting quoted inner lines."""
+    assignments: dict[str, list[str]] = {}
+    quote = ""
+    continued = False
+    current: list[str] | None = None
+    for line in text.split("\n"):
+        if quote or continued:
+            raw, quote, continued = _shell_line(line, quote)
+            if current is not None:
+                current[-1] += "\n" + raw
+        else:
+            match = _ASSIGNMENT.match(line)
+            raw, quote, continued = _shell_line(match.group(2) if match else line)
+            current = None
+            if match is not None:
+                current = assignments.setdefault(match.group(1), [])
+                current.append(raw)
+    return assignments
+
+
+def _assignment_has_value(line: str) -> bool:
+    match = _ASSIGNMENT.match(line)
+    if match is None:
+        return False
+    tokens = shell_words(match.group(2))
+    return tokens is not None and len(tokens) == 1 and bool(tokens[0])
 
 
 def _format_value(value: str, name: str, *, references: bool = True) -> str:
@@ -162,7 +239,9 @@ def render_target(
                 lines.extend(_doc_lines(var.doc))
             if env is not None and var.secret.get(env) == "host:":
                 rendered_host_lines = (host_lines or {}).get(var.name, [])
-                if var.required and not rendered_host_lines:
+                if host_secret_required(var, variables, env) and not any(
+                    _assignment_has_value(line) for line in rendered_host_lines
+                ):
                     if missing_host_keys is None:
                         raise ManifestError(f"{var.source}: {var.name}: host secret unavailable for env {env}")
                     missing_host_keys.add(var.name)

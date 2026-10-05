@@ -82,7 +82,7 @@ section = "Face pipeline"
 example = "face_pipeline"
 doc = "Both profile + dim are required for the three-way guard\n(face_pipeline_adapter.py:318-329). Models dir must sit under the\nACX_MODELS_PATH -> /data/cache volume mount.\ndomain: recognition | source: OCI deploy | consumer: face_pipeline profile selection"
 required = true
-values = {}
+values = { fir = "face_pipeline" }
 
 [[override]]
 name = "PGVECTOR_DIM"
@@ -99,7 +99,7 @@ section = "Face pipeline"
 example = "/data/cache/face_pipeline"
 doc = "domain: recognition | source: OCI deploy | consumer: face_pipeline settings.resolved_models_dir"
 required = true
-values = {}
+values = { fir = "/data/cache/face_pipeline" }
 
 [[override]]
 name = "INSIGHTFACE_CACHE_DIR"

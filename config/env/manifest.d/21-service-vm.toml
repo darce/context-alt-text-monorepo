@@ -14,8 +14,8 @@ doc = "env (default): the app reads the secret values in this file directly.\noc
 [[override]]
 name = "RECOGNITION_VAULT_SECRET_MAP"
 target = "svc-vm"
-required = true
-doc = "Non-secret JSON map. KEY = the logical secret name the app requests\n(get_secret(\"PGPASSWORD\"), ...) — the SAME name used everywhere in code, NOT\nthe Vault-side secret path. VALUE = that secret's Vault OCID (an identifier,\nnot a secret). Required when RECOGNITION_SECRET_BACKEND=oci_vault. Single\ncompartment, trust-domain namespacing on the Vault side (decision #1882; see\nthe runbook's path table).\n  Boot-REQUIRED keys (eagerly fetched, fail-fast if missing — must be present):\n    PGPASSWORD, RECOGNITION_ADMIN_TOKEN.\n  OPTIONAL keys (add only if you want them Vault-managed / the provider is on):\n    POSTGRES_DSN, POSTGRES_SYNC_DSN (else the DSN is rendered from PGPASSWORD),\n    ACX_GPU_ENDPOINT_API_KEY, ACX_HOSTED_PROVIDER_API_KEY, ACX_EVAL_API_KEY\n    (else they stay env-only; only needed when those providers are enabled).\ndomain: infra (OCID map) | source: OCI deploy | consumer: shared/secrets.py:OciVaultSecretProvider.from_env"
+required = false
+doc = "Host-preserved prod JSON map; dev/staging intentionally omit it with backend env.\nThe oci_vault reader fails startup if the prod map is absent.\nNon-secret JSON map. KEY = the logical secret name the app requests\n(get_secret(\"PGPASSWORD\"), ...) — the SAME name used everywhere in code, NOT\nthe Vault-side secret path. VALUE = that secret's Vault OCID (an identifier,\nnot a secret). Required when RECOGNITION_SECRET_BACKEND=oci_vault. Single\ncompartment, trust-domain namespacing on the Vault side (decision #1882; see\nthe runbook's path table).\n  Boot-REQUIRED keys (eagerly fetched, fail-fast if missing — must be present):\n    PGPASSWORD, RECOGNITION_ADMIN_TOKEN.\n  OPTIONAL keys (add only if you want them Vault-managed / the provider is on):\n    POSTGRES_DSN, POSTGRES_SYNC_DSN (else the DSN is rendered from PGPASSWORD),\n    ACX_GPU_ENDPOINT_API_KEY, ACX_HOSTED_PROVIDER_API_KEY, ACX_EVAL_API_KEY\n    (else they stay env-only; only needed when those providers are enabled).\ndomain: infra (OCID map) | source: OCI deploy | consumer: shared/secrets.py:OciVaultSecretProvider.from_env"
 
 [[override]]
 name = "POSTGRES_USER"
@@ -115,7 +115,7 @@ section = "Operator /admin surface"
 name = "ACX_DESCRIPTION_ADAPTER"
 target = "svc-vm"
 required = true
-doc = "One operator switch selects the description backend. Values:\n  seeded         deterministic fixture captions; forbidden for demo publish.\n  florence_small Florence-2-base-ft, ~14s/image on the OCI A1 CPU (under budget).\n                 Requires the [vlm] extra (build the runtime-vlm image; see\n                 docs/tasks/19.0/E19-1-florence-large-async-worker-impl-notes.md).\n  florence_large Florence-2-large-ft, ~39s/image — STUB until the async worker\n                 exists; selecting it returns 503.\n  gpu_phi4       Phi-4-multimodal-instruct — GPU-only STUB; returns 503 on CPU.\nDefault seeded keeps the recognition-only image torch-free outside the demo.\n\nAllowed live demo values: florence_small | gpu_qwen30b | gpu_qwen30b_ensemble\nFrom the repository root, validate both live files together before every deploy:\n  scripts/deploy/preflight-gpu-env.sh --check-reaper /path/to/prod.env /path/to/demo.env\ndomain: infra | source: service operator | consumer: scene description adapter selection"
+doc = "One operator switch selects the description backend. Values:\n  seeded         deterministic fixture captions; forbidden for demo publish.\n  florence_small Florence-2-base-ft, ~14s/image on the OCI A1 CPU (under budget).\n                 Requires the [vlm] extra (build the runtime-vlm image; see\n                 docs/tasks/19.0/E19-1-florence-large-async-worker-impl-notes.md).\n  florence_large Florence-2-large-ft, ~39s/image — STUB until the async worker\n                 exists; selecting it returns 503.\n  gpu_phi4       Phi-4-multimodal-instruct — GPU-only STUB; returns 503 on CPU.\nReader default florence_small applies to staging; seeded is opt-in for fixtures.\n\nAllowed live demo values: florence_small | gpu_qwen30b | gpu_qwen30b_ensemble\nFrom the repository root, validate both live files together before every deploy:\n  scripts/deploy/preflight-gpu-env.sh --check-reaper /path/to/prod.env /path/to/demo.env\ndomain: infra | source: service operator | consumer: scene description adapter selection"
 
 [[override]]
 name = "ACX_GPU_ENDPOINT_URL"
@@ -127,11 +127,11 @@ section = "Image description"
 name = "ACX_GPU_ENDPOINT_ALLOWLIST"
 class = "config"
 targets = ["svc-vm"]
-example = "acx-gpu-burst,*.oraclevcn.com"
+example = ""
 required = true
-doc = "Optional comma-separated hostname policy. Defaults shown here match the service."
+doc = "Default empty hostname policy, matching scene/config/settings.py:_parse_allowlist; endpoint address validation still applies."
 section = "Image description"
-values = {}
+values = { dev = "", staging = "", prod = "" }
 
 [[var]]
 name = "ACX_GPU_CONNECT_TIMEOUT_SECONDS"
@@ -141,7 +141,7 @@ example = "5"
 required = true
 doc = "Finite request budgets and concurrency consumed by scene/config/settings.py."
 section = "Image description"
-values = {}
+values = { dev = "5", staging = "5", prod = "5" }
 
 [[var]]
 name = "ACX_GPU_READ_TIMEOUT_SECONDS"
@@ -151,7 +151,7 @@ example = "175"
 required = true
 doc = ""
 section = "Image description"
-values = {}
+values = { dev = "175", staging = "175", prod = "175" }
 
 [[var]]
 name = "ACX_GPU_MAX_CONCURRENT_CALLS"
@@ -161,7 +161,7 @@ example = "4"
 required = true
 doc = ""
 section = "Image description"
-values = {}
+values = { dev = "4", staging = "4", prod = "4" }
 
 [[var]]
 name = "ACX_GPU_WARMUP_TIMEOUT_SECONDS"
@@ -171,7 +171,7 @@ example = "510"
 required = true
 doc = "Startup may include instance boot, model load, and readiness probing; max 3600."
 section = "Image description"
-values = {}
+values = { dev = "510", staging = "510", prod = "510" }
 
 [[var]]
 name = "ACX_GPU_PROMPT_VERSION"
@@ -181,7 +181,7 @@ example = "3"
 required = true
 doc = "Bump when the remote GPU prompt/task contract changes."
 section = "Image description"
-values = {}
+values = { dev = "3", staging = "3", prod = "3" }
 
 [[var]]
 name = "ACX_GPU_ENDPOINT_API_KEY"
@@ -216,7 +216,7 @@ example = "/run/acx-write/prod"
 required = true
 doc = "The API publishes DB-derived load in its own writable environment directory;\nlifecycle units aggregate /run/acx-write/*/describe-load.json without granting\nthe container write access to host-owned GPU state.\ndomain: infra | source: OCI deploy | consumer: docker-compose.prod.yml load mount"
 section = "GPU lifecycle"
-values = {}
+values = { dev = "/run/acx-write/dev", staging = "/run/acx-write/staging", prod = "/run/acx-write/prod" }
 
 [[var]]
 name = "ACX_DESCRIBE_LOAD_PATH"
@@ -226,7 +226,7 @@ example = "/run/acx-write/prod/describe-load.json"
 required = true
 doc = "domain: infra | source: OCI deploy | consumer: scene load writer / lifecycle units"
 section = "GPU lifecycle"
-values = {}
+values = { dev = "/run/acx-write/dev/describe-load.json", staging = "/run/acx-write/staging/describe-load.json", prod = "/run/acx-write/prod/describe-load.json" }
 
 [[var]]
 name = "ACX_DESCRIBE_LOAD_REFRESH_SECONDS"
@@ -236,4 +236,4 @@ example = "45"
 required = true
 doc = "Keep two refresh opportunities inside the lifecycle reader's 120s stale guard.\ndomain: infra | source: service operator | consumer: scene load snapshot refresher"
 section = "GPU lifecycle"
-values = {}
+values = { dev = "45", staging = "45", prod = "45" }

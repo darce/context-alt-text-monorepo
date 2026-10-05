@@ -27,7 +27,7 @@ targets = ["svc-vm", "svc-fir"]
 section = "Runtime mode"
 example = "INFO"
 doc = 'domain: infra | source: OCI deploy | consumer: application logging config'
-values = {}
+values = { dev = "DEBUG", staging = "INFO", prod = "INFO", fir = "INFO" }
 
 [[var]]
 name = "TENANT_ID"
@@ -36,7 +36,7 @@ targets = ["svc-vm", "svc-fir"]
 section = "Runtime mode"
 example = "00000000-0000-7000-8000-000000000000"
 doc = 'domain: infra | source: OCI deploy | consumer: runtime default tenant context (deploy bootstrap)'
-values = {}
+values = { dev = "00000000-0000-7000-8000-000000000002", staging = "00000000-0000-7000-8000-000000000001", prod = "00000000-0000-7000-8000-000000000000", fir = "00000000-0000-7000-8000-000000000000" }
 
 [[var]]
 name = "RECOGNITION_SECRET_BACKEND"
@@ -44,19 +44,19 @@ class = "config"
 targets = ["svc-vm", "svc-fir"]
 section = "Secret backend"
 example = "oci_vault"
-doc = 'domain: infra (backend selector) | source: service operator | consumer: shared/secrets.py:get_secret_provider'
+doc = 'Default env in dev/staging/fir. Prod uses oci_vault with a required host-preserved map, whose boot keys are checked by the app at startup. | domain: infra (backend selector) | source: service operator | consumer: shared/secrets.py:get_secret_provider'
 required = false
-values = {}
+values = { dev = "env", staging = "env", prod = "oci_vault", fir = "env" }
 
 [[var]]
 name = "RECOGNITION_VAULT_SECRET_MAP"
-class = "config"
+class = "secret"
 targets = ["svc-vm", "svc-fir"]
 section = "Secret backend"
 example = '{"PGPASSWORD":"ocid1.vaultsecret.oc1..REPLACE","RECOGNITION_ADMIN_TOKEN":"ocid1.vaultsecret.oc1..REPLACE","POSTGRES_DSN":"ocid1.vaultsecret.oc1..REPLACE","POSTGRES_SYNC_DSN":"ocid1.vaultsecret.oc1..REPLACE","ACX_GPU_ENDPOINT_API_KEY":"ocid1.vaultsecret.oc1..REPLACE_GPU_ENDPOINT_KEY"}'
-doc = 'domain: infra (OCID map) | source: OCI deploy | consumer: shared/secrets.py:OciVaultSecretProvider.from_env'
+doc = 'Host-preserved OCID map in prod (not credential material); secret class selects host-line preservation. Dev, staging and fir use backend env and intentionally omit this map. The oci_vault reader requires the live map at startup. | domain: infra (OCID map) | source: OCI deploy | consumer: shared/secrets.py:OciVaultSecretProvider.from_env'
 required = false
-values = {}
+secret = { prod = "host:" }
 
 [[var]]
 name = "POSTGRES_USER"
@@ -65,7 +65,7 @@ targets = ["svc-vm", "svc-fir"]
 section = "Postgres"
 example = "acx_app"
 doc = 'domain: infra | source: OCI Vault (ExecStartPre) / OCI deploy | consumer: docker-compose Postgres bootstrap'
-values = {}
+values = { dev = "acx_dev", staging = "acx_staging", prod = "acx_app", fir = "acx_dev_fir" }
 
 [[var]]
 name = "POSTGRES_PASSWORD"
@@ -83,7 +83,7 @@ targets = ["svc-vm", "svc-fir"]
 section = "Postgres"
 example = "alt_context_service"
 doc = 'domain: infra | source: OCI deploy | consumer: docker-compose Postgres bootstrap (POSTGRES_DB)'
-values = {}
+values = { dev = "alt_context_dev", staging = "alt_context_staging", prod = "alt_context_service", fir = "alt_context_dev_fir" }
 
 [[var]]
 name = "CACHE_BASE"
@@ -92,7 +92,7 @@ targets = ["svc-vm", "svc-fir"]
 section = "Cache directories"
 example = "/data/cache"
 doc = 'domain: infra | source: OCI deploy | consumer: runtime cache path resolution'
-values = {}
+values = { dev = "/data/cache", staging = "/data/cache", prod = "/data/cache", fir = "/data/cache" }
 
 [[var]]
 name = "HF_HOME"
@@ -101,7 +101,7 @@ targets = ["svc-vm", "svc-fir"]
 section = "Cache directories"
 example = "/data/cache/huggingface_cache"
 doc = 'domain: infra | source: OCI deploy | consumer: HuggingFace hub cache'
-values = {}
+values = { dev = "/data/cache/huggingface_cache", staging = "/data/cache/huggingface_cache", prod = "/data/cache/huggingface_cache", fir = "/data/cache/huggingface_cache" }
 
 [[var]]
 name = "HF_HUB_CACHE"
@@ -110,7 +110,7 @@ targets = ["svc-vm", "svc-fir"]
 section = "Cache directories"
 example = "/data/cache/huggingface_cache"
 doc = 'domain: infra | source: OCI deploy | consumer: HuggingFace hub cache'
-values = {}
+values = { dev = "/data/cache/huggingface_cache", staging = "/data/cache/huggingface_cache", prod = "/data/cache/huggingface_cache", fir = "/data/cache/huggingface_cache" }
 
 [[var]]
 name = "INSIGHTFACE_CACHE_DIR"
@@ -119,7 +119,7 @@ targets = ["svc-vm", "svc-fir"]
 section = "Cache directories"
 example = "/data/cache/insightface"
 doc = 'domain: infra | source: OCI deploy | consumer: InsightFace model cache'
-values = {}
+values = { dev = "/data/cache/insightface", staging = "/data/cache/insightface", prod = "/data/cache/insightface", fir = "/data/cache/insightface" }
 
 [[var]]
 name = "INSIGHTFACE_HOME"
@@ -128,7 +128,7 @@ targets = ["svc-vm", "svc-fir"]
 section = "Cache directories"
 example = "/data/cache/insightface"
 doc = 'domain: infra | source: OCI deploy | consumer: InsightFace home path'
-values = {}
+values = { dev = "/data/cache/insightface", staging = "/data/cache/insightface", prod = "/data/cache/insightface", fir = "/data/cache/insightface" }
 
 [[var]]
 name = "PGVECTOR_DIM"
@@ -138,7 +138,7 @@ section = "Database pool tuning"
 example = "512"
 doc = 'domain: infra | source: description-service / DB ops | consumer: db/settings.py pool/vector settings'
 required = false
-values = {}
+values = { fir = "128" }
 
 [[var]]
 name = "DB_POOL_SIZE"
@@ -197,7 +197,7 @@ targets = ["svc-vm", "svc-fir"]
 section = "Operator /admin surface"
 example = "1"
 doc = 'domain: service root-of-trust (ack) | source: service operator | consumer: validate_admin_config (must be 1 in production when admin on)'
-values = {}
+values = { dev = "0", staging = "0", prod = "1", fir = "0" }
 
 [[var]]
 name = "RECOGNITION_API_KEY_HASH_ALGORITHM"
@@ -247,7 +247,7 @@ section = "API security"
 example = ""
 doc = 'domain: service root-of-trust (config) | source: service operator | consumer: CORS middleware (SecuritySettings)'
 required = false
-values = {}
+values = { prod = "https://demo.altcontext.com" }
 
 [[var]]
 name = "ACX_VLM_MAX_IMAGE_EDGE_PX"
@@ -306,7 +306,7 @@ targets = ["svc-local", "svc-vm", "svc-fir"]
 section = "API security"
 example = "true"
 doc = 'domain: service root-of-trust (mode flag) | source: service operator | consumer: SecuritySettings.auth_enabled; HTTP auth deps'
-values = { local = "1" }
+values = { local = "1", dev = "true", staging = "true", prod = "true", fir = "true" }
 
 [[var]]
 name = "RECOGNITION_API_KEY_HEADER"
@@ -315,7 +315,7 @@ targets = ["svc-local", "svc-vm", "svc-fir"]
 section = "API security"
 example = "X-API-Key"
 doc = 'domain: service root-of-trust (config) | source: service operator | consumer: HTTP auth dependency (API key header name)'
-values = { local = "X-API-Key" }
+values = { local = "X-API-Key", dev = "X-API-Key", staging = "X-API-Key", prod = "X-API-Key", fir = "X-API-Key" }
 
 [[var]]
 name = "RECOGNITION_ADMIN_ENABLED"
@@ -325,7 +325,7 @@ section = "Operator /admin surface"
 example = "false"
 doc = 'domain: service root-of-trust (flag) | source: service operator | consumer: SecuritySettings.admin_enabled; /admin router mount'
 required = false
-values = {}
+values = { dev = "false", staging = "false", prod = "true", fir = "false" }
 
 [[var]]
 name = "RECOGNITION_ADMIN_TOKEN"
@@ -344,7 +344,7 @@ targets = ["svc-vm", "svc-fir", "demo"]
 section = "Compose"
 example = "acx-prod"
 doc = 'domain: infra | source: OCI deploy | consumer: docker-compose.env.yml project identity'
-values = {}
+values = { dev = "acx-dev", staging = "acx-staging", prod = "acx-prod", fir = "acx-dev-fir", demo = "acx-demo" }
 
 [[var]]
 name = "ACX_DESCRIPTION_ADAPTER"
@@ -354,7 +354,7 @@ section = "Image description"
 example = "gpu_qwen30b"
 doc = 'domain: infra | source: service operator | consumer: scene description adapter selection'
 required = false
-values = {}
+values = { dev = "gpu_qwen30b", staging = "florence_small", prod = "gpu_qwen30b", demo = "florence_small" }
 
 [[var]]
 name = "ACX_GPU_ENDPOINT_URL"
@@ -363,7 +363,7 @@ targets = ["svc-vm", "demo"]
 section = "GPU lifecycle"
 example = "http://acx-gpu-burst.compute.oraclevcn.com:8000"
 doc = 'domain: infra | source: service operator | consumer: remote GPU description adapter'
-values = {}
+values = { dev = "http://10.0.1.36:8000", staging = "", prod = "http://10.0.1.36:8000", demo = "" }
 
 [[var]]
 name = "ACX_GPU_SNAPSHOT_DIR"
@@ -372,7 +372,7 @@ targets = ["svc-vm", "demo"]
 section = "GPU lifecycle"
 example = "/run/acx"
 doc = 'domain: infra | source: OCI deploy | consumer: docker-compose.prod.yml snapshot mount'
-values = {}
+values = { dev = "/run/acx", staging = "/run/acx", prod = "/run/acx", demo = "/run/acx" }
 
 [[var]]
 name = "ACX_GPU_STATE_PATH"
@@ -381,7 +381,7 @@ targets = ["svc-vm", "demo"]
 section = "GPU lifecycle"
 example = "/run/acx/gpu-state.json"
 doc = 'domain: infra | source: OCI deploy | consumer: lifecycle producer and scene GPU-state reader'
-values = {}
+values = { dev = "/run/acx/gpu-state.json", staging = "/run/acx/gpu-state.json", prod = "/run/acx/gpu-state.json", demo = "/run/acx/gpu-state.json" }
 
 [[var]]
 name = "ACX_GPU_STATE_STALE_SECONDS"
@@ -390,7 +390,7 @@ targets = ["svc-vm", "demo"]
 section = "GPU lifecycle"
 example = "180"
 doc = 'domain: infra | source: service operator | consumer: scene GPU-state reader / snapshot check'
-values = {}
+values = { dev = "180", staging = "180", prod = "180", demo = "180" }
 
 [[var]]
 name = "ACX_ENV"
@@ -399,7 +399,7 @@ targets = ["svc-vm", "svc-fir"]
 section = "Compose"
 example = "prod"
 doc = 'domain: infra | source: OCI deploy | consumer: compose / deploy scripts (environment label)'
-values = {}
+values = { dev = "dev", staging = "staging", prod = "prod", fir = "dev-fir" }
 
 [[var]]
 name = "ACX_IMAGE_TAG"
@@ -408,7 +408,7 @@ targets = ["svc-vm", "svc-fir"]
 section = "Compose"
 example = "latest"
 doc = 'domain: infra | source: OCI deploy | consumer: compose image tag selection'
-values = {}
+values = { dev = "dev", staging = "staging", prod = "latest", fir = "dev-fir" }
 
 [[var]]
 name = "ACX_PGDATA_PATH"
@@ -417,7 +417,7 @@ targets = ["svc-vm", "svc-fir"]
 section = "Compose"
 example = "/opt/acx-backend/data/prod-pgdata"
 doc = 'domain: infra | source: OCI deploy | consumer: compose volume mount for Postgres data'
-values = {}
+values = { dev = "/opt/acx-backend/data/dev-pgdata", staging = "/opt/acx-backend/data/staging-pgdata", prod = "/opt/acx-backend/data/prod-pgdata", fir = "/opt/acx-backend/data/dev-fir-pgdata" }
 
 [[var]]
 name = "ACX_MODELS_PATH"
@@ -426,7 +426,7 @@ targets = ["svc-vm", "svc-fir"]
 section = "Compose"
 example = "/opt/acx-backend/data/prod-models"
 doc = 'domain: infra | source: OCI deploy | consumer: compose volume mount for model cache'
-values = {}
+values = { dev = "/opt/acx-backend/data/dev-models", staging = "/opt/acx-backend/data/staging-models", prod = "/opt/acx-backend/data/prod-models", fir = "/opt/acx-backend/data/dev-models" }
 
 [[var]]
 name = "ACX_NETWORK_NAME"
@@ -435,7 +435,7 @@ targets = ["svc-vm", "svc-fir"]
 section = "Compose"
 example = "acx-prod-net"
 doc = 'domain: infra | source: OCI deploy | consumer: compose network name'
-values = {}
+values = { dev = "acx-dev-net", staging = "acx-staging-net", prod = "acx-prod-net", fir = "acx-dev-fir-net" }
 
 [[var]]
 name = "RECOGNITION_RUNTIME_MODE"
@@ -444,4 +444,4 @@ targets = ["svc-local", "svc-vm", "svc-fir"]
 section = "Runtime mode"
 example = "production"
 doc = 'domain: service root-of-trust (mode flag) | source: service operator | consumer: SecuritySettings / runtime mode gates; validate_required_secrets'
-values = { local = "development" }
+values = { local = "development", dev = "production", staging = "production", prod = "production", fir = "production" }

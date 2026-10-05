@@ -13,7 +13,7 @@ targets = ["demo"]
 section = "Compose"
 example = "/opt/acx-backend/data/demo-wpdata"
 doc = "domain: infra | source: demo stack ops | consumer: compose volume mount for WordPress data"
-values = {}
+values = { demo = "/opt/acx-backend/data/demo-wpdata" }
 
 [[var]]
 name = "ACX_DEMO_DBDATA_PATH"
@@ -22,7 +22,7 @@ targets = ["demo"]
 section = "Compose"
 example = "/opt/acx-backend/data/demo-dbdata"
 doc = "domain: infra | source: demo stack ops | consumer: compose volume mount for MariaDB data"
-values = {}
+values = { demo = "/opt/acx-backend/data/demo-dbdata" }
 
 [[var]]
 name = "MARIADB_DATABASE"
@@ -31,7 +31,7 @@ targets = ["demo"]
 section = "MariaDB"
 example = "acx_demo"
 doc = "domain: infra | source: demo stack ops | consumer: demo compose / MariaDB container bootstrap"
-values = {}
+values = { demo = "acx_demo" }
 
 [[var]]
 name = "MARIADB_USER"
@@ -40,7 +40,7 @@ targets = ["demo"]
 section = "MariaDB"
 example = "acx_demo"
 doc = "domain: infra | source: demo stack ops | consumer: demo compose / MariaDB container bootstrap"
-values = {}
+values = { demo = "acx_demo" }
 
 [[var]]
 name = "MARIADB_PASSWORD"
@@ -67,7 +67,7 @@ targets = ["demo"]
 section = "WordPress"
 example = "acx_demo"
 doc = "domain: infra | source: demo stack ops | consumer: WordPress container DB connection"
-values = {}
+values = { demo = "acx_demo" }
 
 [[var]]
 name = "WORDPRESS_DB_USER"
@@ -76,7 +76,7 @@ targets = ["demo"]
 section = "WordPress"
 example = "acx_demo"
 doc = "domain: infra | source: demo stack ops | consumer: WordPress container DB connection"
-values = {}
+values = { demo = "acx_demo" }
 
 [[var]]
 name = "WORDPRESS_DB_PASSWORD"
@@ -94,7 +94,7 @@ targets = ["demo"]
 section = "Generated secrets"
 example = "acx-demo-admin"
 doc = "Strong generated values — required before bootstrap-wp.sh runs.\ndomain: human accounts | source: demo / site operator | consumer: demo WP bootstrap (bootstrap-wp.sh); WordPress user store"
-values = {}
+values = { demo = "acx-demo-admin" }
 
 [[var]]
 name = "WP_ADMIN_PASSWORD"
@@ -112,7 +112,7 @@ targets = ["demo"]
 section = "Generated secrets"
 example = "ops@altcontext.com"
 doc = "domain: human accounts | source: demo / site operator | consumer: demo WP bootstrap"
-values = {}
+values = { demo = "ops@altcontext.com" }
 
 [[var]]
 name = "WP_CI_USER"
@@ -121,7 +121,7 @@ targets = ["demo"]
 section = "Generated secrets"
 example = "acx-demo-ci"
 doc = "Dedicated CI account. The GitHub Environment secrets map to these VM keys:\n  ACX_E2E_WP_CI_USER -> WP_CI_USER\n  ACX_E2E_WP_CI_PASS -> WP_CI_PASSWORD\ndeploy-demo.yml passes the same values to Playwright through its existing\nACX_E2E_WP_ADMIN_* environment names; those names do not make this account an admin.\ndomain: demo-wp | source: operator secret | consumer: bootstrap-wp.sh WP CI account"
-values = {}
+values = { demo = "acx-ci" }
 
 [[var]]
 name = "WP_CI_PASSWORD"
@@ -139,7 +139,7 @@ targets = ["demo"]
 section = "Generated secrets"
 example = "ci@altcontext.com"
 doc = "domain: demo-wp | source: operator secret | consumer: bootstrap-wp.sh WP CI account"
-values = {}
+values = { demo = "acx-ci@demo.altcontext.com" }
 
 [[override]]
 name = "ACX_DESCRIPTION_ADAPTER"

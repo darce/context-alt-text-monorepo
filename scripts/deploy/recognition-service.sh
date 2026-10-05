@@ -70,6 +70,7 @@
 #   ACX_REMOTE_BUILDER_ENDPOINT
 #                            default unix:///var/run/docker.sock; other endpoints are refused
 #   ACX_ALLOW_DIRTY          set to 1 to allow dirty deploy inputs (dev and dev-fir only)
+#   ACX_ENV_PREFLIGHT        default 0; 1 runs manifest drift check (materialize_remote.sh <env> <target> --check) before deploy and promote
 #   ACX_CUTOVER_HEALTH_ATTEMPTS default 5 (max 60); ACX_CUTOVER_HEALTH_SLEEP default 5 seconds (max 120 s) (candidate admission)
 #   ACX_CANONICAL_HEALTH_ATTEMPTS default 8 (max 60); ACX_CANONICAL_HEALTH_SLEEP default 5 seconds (max 120 s) (restart readiness)
 #   ACX_VERIFY_ATTEMPTS      default 5 (max 60) (post-deploy public verify only)
@@ -981,6 +982,40 @@ preflight_branch_synced() {
     if [[ "$DEPLOY_SHA" != "$upstream" ]]; then
       warn "deploying historical ${DEPLOY_SHA:0:8}; origin/main is ${upstream:0:8}"
     fi
+  fi
+}
+
+preflight_env_manifest() {
+  local env="$1" manifest_env target status rerun_command
+  local -a command
+
+  if [[ "${ACX_ENV_PREFLIGHT:-0}" != "1" ]]; then
+    log "Skipping environment manifest preflight (ACX_ENV_PREFLIGHT is not 1)"
+    return 0
+  fi
+
+  case "$env" in
+    dev | staging | prod)
+      manifest_env="$env"
+      target="svc-vm"
+      ;;
+    dev-fir)
+      manifest_env="fir"
+      target="svc-fir"
+      ;;
+    *)
+      fail "Unknown deploy environment for manifest preflight: ${env}"
+      ;;
+  esac
+
+  command=(bash "${REPO_ROOT}/scripts/env/materialize_remote.sh" "$manifest_env" "$target" --check)
+  if "${command[@]}"; then
+    return 0
+  else
+    status=$?
+    printf -v rerun_command '%q ' "${command[@]}"
+    rerun_command="${rerun_command% }"
+    fail "Environment manifest preflight failed for ${env} (exit ${status}). Re-run: ${rerun_command}"
   fi
 }
 
@@ -4792,6 +4827,7 @@ _ship_selected_env() {
   preflight_remote_face_pipeline_models "$env"
   preflight_git_clean "$env"
   preflight_branch_synced "$env"
+  preflight_env_manifest "$env"
 
   # Snapshot and publish the previous-good digest before building the candidate.
   # Remote builds only tag the SHA; the environment tag changes after smoke.
@@ -4960,6 +4996,7 @@ do_promote() {
     fail "Production promotion requires CONFIRM=PROMOTE. Re-run: CONFIRM=PROMOTE $0 promote $from_env $to_env"
   fi
 
+  preflight_env_manifest "$to_env"
   preflight_remote_ocir_auth
   deploy_env_lease acquire "${to_env}" || fail "deploy lease for ${to_env} unavailable; holder line: ${ACX_DEPLOY_LEASE_LAST_HOLDER:-unknown}; refusing to preserve the rollback tag"
   preserve_rollback_tag "$to_env"

@@ -274,12 +274,18 @@ def merge_env_updates(existing: str, updates: Mapping[str, str]) -> str:
 
 def atomic_write_text(path: Path, content: str) -> None:
     _assert_safe_destination(path)
+    try:
+        original_stat = path.stat()
+    except FileNotFoundError:
+        original_stat = None
     directory = path.parent
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(directory))
     tmp_path = Path(tmp_name)
     try:
-        os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            if original_stat is not None:
+                os.fchown(handle.fileno(), original_stat.st_uid, original_stat.st_gid)
+            os.fchmod(handle.fileno(), 0o600)
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())

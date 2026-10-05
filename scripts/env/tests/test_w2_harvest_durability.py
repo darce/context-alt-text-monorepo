@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import stat
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -318,3 +321,108 @@ def test_directory_fsync_failure_rolls_back_without_success_output(clean_manifes
         ("fsync", "directory"),
     ]
     assert events == replacement_order + replacement_order
+
+
+def test_concurrent_applies_serialize_and_do_not_erase_the_first_update(
+    clean_manifest_root, tmp_path
+):
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    release = marker_dir / "release"
+    script = """
+import os
+import sys
+import time
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import env.harvest_apply as apply
+markers = Path(os.environ["HAPPLY_TEST_MARKERS"])
+(markers / f"started-{os.getpid()}").touch()
+real_write = apply._write_and_validate
+def wait_before_write(*args):
+    (markers / f"entered-{os.getpid()}").touch()
+    while not (markers / "release").exists():
+        time.sleep(0.01)
+    return real_write(*args)
+apply._write_and_validate = wait_before_write
+raise SystemExit(apply.main(sys.argv[2:]))
+"""
+    scripts_dir = Path(__file__).resolve().parents[2]
+    env = {**os.environ, "HAPPLY_TEST_MARKERS": str(marker_dir)}
+    processes: list[subprocess.Popen[str]] = []
+    for index, value in enumerate(("safe-first", "safe-second")):
+        source = tmp_path / f"harvest-{index}.json"
+        source.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "target": "vm",
+                    "env": "prod",
+                    "values": {"LOG_LEVEL": value},
+                    "withheld": {
+                        "secret": [], "derived": [], "unmanaged": [],
+                        "missing": [], "secret_looking": [], "unparsed": [],
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        processes.append(
+            subprocess.Popen(
+                [
+                    sys.executable, "-c", script, str(scripts_dir),
+                    "--root", str(clean_manifest_root), "--prefer-harvest", str(source),
+                ],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        )
+
+    try:
+        deadline = time.monotonic() + 10
+        while len(list(marker_dir.glob("started-*"))) < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert len(list(marker_dir.glob("started-*"))) == 2
+        deadline = time.monotonic() + 0.5
+        while len(list(marker_dir.glob("entered-*"))) < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        entered_before_release = len(list(marker_dir.glob("entered-*")))
+    finally:
+        release.touch()
+        results = [process.communicate(timeout=10) for process in processes]
+
+    fragment = clean_manifest_root / "manifest.d" / "vars.toml"
+    final_text = fragment.read_text(encoding="utf-8")
+    assert entered_before_release == 1
+    assert sorted(process.returncode for process in processes) == [0, 2]
+    assert sum("set\tLOG_LEVEL\tprod\n" in stdout for stdout, _ in results) == 1
+    assert sum("unsafe pre-image" in stderr for _, stderr in results) == 1
+    assert ('prod = "safe-first"' in final_text) != ('prod = "safe-second"' in final_text)
+
+
+def test_edit_after_preimage_check_is_preserved(clean_manifest_root, tmp_path, capsys, monkeypatch):
+    module = load_module("harvest_apply")
+    fragment = clean_manifest_root / "manifest.d" / "vars.toml"
+    external_edit = fragment.read_bytes() + b"# external edit after check\n"
+    real_check = module._unsafe_preimage_fragments
+    injected = False
+
+    def edit_after_check(root: Path, fragments: list[Path]) -> list[str]:
+        nonlocal injected
+        unsafe = real_check(root, fragments)
+        if not injected:
+            fragment.write_bytes(external_edit)
+            injected = True
+        return unsafe
+
+    monkeypatch.setattr(module, "_unsafe_preimage_fragments", edit_after_check)
+    code, stdout, stderr = _apply(clean_manifest_root, _source(tmp_path), capsys)
+
+    assert injected
+    assert code == 2
+    assert stdout == ""
+    assert "unsafe pre-image" in stderr
+    assert "vars.toml" in stderr
+    assert fragment.read_bytes() == external_edit

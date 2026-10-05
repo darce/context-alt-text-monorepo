@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
+import hashlib
 import json
 import os
 import re
@@ -9,8 +11,10 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterator
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS_DIR) not in sys.path:
@@ -37,6 +41,56 @@ class ApplyError(ValueError):
 
 class _DuplicateJSONKey(ValueError):
     pass
+
+
+class _ManifestLockError(Exception):
+    pass
+
+
+class _StalePreimage(Exception):
+    def __init__(self, names: list[str]):
+        super().__init__(", ".join(names))
+        self.names = names
+
+
+class _PublishedReplaceError(Exception):
+    """A replacement reached the destination but its directory fsync failed."""
+
+
+@contextmanager
+def _manifest_write_lock(manifest_path: Path) -> Iterator[None]:
+    manifest_path = Path(manifest_path)
+    try:
+        canonical_directory = (
+            manifest_path.resolve()
+            if manifest_path.is_dir()
+            else manifest_path.parent.resolve()
+        )
+    except (OSError, RuntimeError) as exc:
+        raise _ManifestLockError from exc
+    digest = hashlib.sha256(os.fsencode(str(canonical_directory))).hexdigest()
+    lock_path = Path("/tmp") / f"acx-envman-manifest-write-{os.getuid()}-{digest}.lock"
+    flags = os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        descriptor = os.open(lock_path, flags, 0o600)
+    except OSError as exc:
+        raise _ManifestLockError from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or metadata.st_nlink != 1
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+        ):
+            raise _ManifestLockError
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+        except OSError as exc:
+            raise _ManifestLockError from exc
+        yield
+    finally:
+        os.close(descriptor)
 
 
 @dataclass(frozen=True)
@@ -255,6 +309,7 @@ def _validate_documents(documents: list[object], manifest: Manifest) -> list[tup
 def _atomic_replace(path: Path, content: bytes, mode: int) -> None:
     descriptor, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     temp_path = Path(temp_name)
+    published = False
     try:
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(content)
@@ -262,13 +317,19 @@ def _atomic_replace(path: Path, content: bytes, mode: int) -> None:
             os.fchmod(stream.fileno(), mode)
             os.fsync(stream.fileno())
         os.replace(temp_path, path)
+        published = True
         directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
         try:
             os.fsync(directory_fd)
         finally:
             os.close(directory_fd)
-    except Exception:
-        temp_path.unlink(missing_ok=True)
+    except Exception as exc:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        if published:
+            raise _PublishedReplaceError from exc
         raise
 
 
@@ -319,6 +380,20 @@ def _unsafe_preimage_fragments(root: Path, fragments: list[Path]) -> list[str]:
             repo_root, "--literal-pathspecs", "diff", "--cached", "--quiet", "HEAD", "--", relative
         )
         if worktree_diff.returncode != 0 or index_diff.returncode != 0:
+            unsafe.add(fragment.name)
+    return sorted(unsafe)
+
+
+def _stale_preimage_fragments(
+    root: Path, fragments: list[Path], original_bytes: dict[Path, bytes]
+) -> list[str]:
+    unsafe = set(_unsafe_preimage_fragments(root, fragments))
+    for fragment in fragments:
+        try:
+            matches = original_bytes.get(fragment) == fragment.read_bytes()
+        except OSError:
+            matches = False
+        if not matches:
             unsafe.add(fragment.name)
     return sorted(unsafe)
 
@@ -420,29 +495,48 @@ def _write_and_validate(
     root: Path, updated: dict[Path, bytes], source_bytes: dict[str, bytes], source_modes: dict[str, int]
 ) -> int:
     original_bytes = {root / "manifest.d" / source: raw for source, raw in source_bytes.items()}
-    unsafe = _unsafe_preimage_fragments(root, list(updated))
+    unsafe = _stale_preimage_fragments(root, list(updated), original_bytes)
     if unsafe:
         for name in unsafe:
             print(f"error\tfragment\tunsafe pre-image\t{name}", file=sys.stderr)
         return 2
 
-    attempted: list[Path] = []
+    published: list[Path] = []
+    stale_names: list[str] = []
     try:
         for fragment, content in updated.items():
-            attempted.append(fragment)
+            stale_names = _stale_preimage_fragments(root, [fragment], original_bytes)
+            if stale_names:
+                raise _StalePreimage(stale_names)
             source_name = fragment.name
-            _atomic_replace(fragment, content, source_modes[source_name])
-        load_manifest(root)
-    except Exception:
-        restore_errors: list[Exception] = []
-        for fragment in reversed(attempted):
             try:
+                _atomic_replace(fragment, content, source_modes[source_name])
+            except _PublishedReplaceError:
+                published.append(fragment)
+                raise
+            published.append(fragment)
+        load_manifest(root)
+    except Exception as exc:
+        restore_errors: list[Exception] = []
+        changed_during_rollback: list[str] = []
+        for fragment in reversed(published):
+            try:
+                if fragment.read_bytes() != updated[fragment]:
+                    changed_during_rollback.append(fragment.name)
+                    continue
                 _atomic_replace(fragment, original_bytes[fragment], source_modes[fragment.name])
-            except Exception as exc:
-                restore_errors.append(exc)
-        if restore_errors:
+            except Exception as restore_exc:
+                restore_errors.append(restore_exc)
+        if isinstance(exc, _StalePreimage):
+            for name in exc.names:
+                print(f"error\tfragment\tunsafe pre-image\t{name}", file=sys.stderr)
+        for name in changed_during_rollback:
+            print(f"error\tfragment\tchanged during rollback\t{name}", file=sys.stderr)
+        if restore_errors or changed_during_rollback:
             print("error\tmanifest\tapply failed; rollback failed", file=sys.stderr)
-        else:
+        elif published:
+            print("error\tmanifest\tapply failed; files restored", file=sys.stderr)
+        elif not isinstance(exc, _StalePreimage):
             print("error\tmanifest\tapply failed; files restored", file=sys.stderr)
         return 2
 
@@ -493,20 +587,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("json", nargs="+", type=Path, help="harvest JSON files")
     args = parser.parse_args(argv)
     try:
-        manifest = load_manifest(args.root)
-    except Exception:
-        print("error\tmanifest\tinvalid", file=sys.stderr)
+        with _manifest_write_lock(args.root):
+            try:
+                manifest = load_manifest(args.root)
+            except Exception:
+                print("error\tmanifest\tinvalid", file=sys.stderr)
+                return 2
+            try:
+                documents = [document for path in args.json for document in _decode_input(path)]
+                harvested = _validate_documents(documents, manifest)
+            except ApplyError as exc:
+                print(f"error\t{exc.field}\t{exc.reason}", file=sys.stderr)
+                return 2
+            except Exception:
+                print("error\tinput\tinvalid", file=sys.stderr)
+                return 2
+            return _apply_changes(args.root, manifest, harvested, args.prefer_harvest)
+    except _ManifestLockError:
+        print("error\tmanifest\twrite lock unavailable", file=sys.stderr)
         return 2
-    try:
-        documents = [document for path in args.json for document in _decode_input(path)]
-        harvested = _validate_documents(documents, manifest)
-    except ApplyError as exc:
-        print(f"error\t{exc.field}\t{exc.reason}", file=sys.stderr)
-        return 2
-    except Exception:
-        print("error\tinput\tinvalid", file=sys.stderr)
-        return 2
-    return _apply_changes(args.root, manifest, harvested, args.prefer_harvest)
 
 
 if __name__ == "__main__":

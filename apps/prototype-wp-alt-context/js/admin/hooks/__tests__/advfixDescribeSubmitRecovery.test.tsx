@@ -16,6 +16,7 @@ import {
 } from '../../api/describeApi';
 import * as gpuApi from '../../api/gpuApi';
 import { GPU_INTENT_ACTION, GPU_INTENT_STATUS, type GpuStatusResponse } from '../../api/gpuApi';
+import { AuthExpiredError, HTTPError } from '../../utils/http';
 import {
   _resetDescribeOperationStoreForTests,
   DESCRIBE_OPERATION_CONTEXT_VERSION,
@@ -47,6 +48,14 @@ const submitBulkDescribeRunMock = vi.mocked(describeApi.submitBulkDescribeRun);
 const fetchBulkDescribeRunMock = vi.mocked(describeApi.fetchBulkDescribeRun);
 const fetchDescribeRunItemsMock = vi.mocked(describeApi.fetchDescribeRunItems);
 const fetchGpuStatusMock = vi.mocked(gpuApi.fetchGpuStatus);
+
+const describeHttpError = (status: number): HTTPError =>
+  new HTTPError({
+    status,
+    endpoint: '/acx/v1/describe/runs',
+    bodyPreview: '',
+    message: `Request failed (${status})`,
+  });
 
 const runResponse = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse => ({
   tenant_id: TENANT,
@@ -135,6 +144,11 @@ const installTenant = (): void => {
 describe('describe submit recovery across remounts', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Clear unconsumed once-responses before installing each test's defaults.
+    submitBulkDescribeRunMock.mockReset();
+    fetchBulkDescribeRunMock.mockReset();
+    fetchDescribeRunItemsMock.mockReset();
+    fetchGpuStatusMock.mockReset();
     sessionStorage.clear();
     _resetDescribeOperationStoreForTests();
     installTenant();
@@ -183,6 +197,133 @@ describe('describe submit recovery across remounts', () => {
     expect(submitBulkDescribeRunMock).toHaveBeenCalledTimes(2);
     expect(submitBulkDescribeRunMock.mock.calls[1]?.[0]).toEqual([101, 202]);
     expect(submitBulkDescribeRunMock.mock.calls[1]?.[1]).toBe(firstKey);
+  });
+
+  it.each([
+    ['auth expiry', () => new AuthExpiredError({ endpoint: '/acx/v1/describe/runs', status: 401 })],
+    ['HTTP 401', () => describeHttpError(401)],
+    ['HTTP 403', () => describeHttpError(403)],
+    ['HTTP 408', () => describeHttpError(408)],
+    ['HTTP 425', () => describeHttpError(425)],
+    ['HTTP 429', () => describeHttpError(429)],
+  ] as const)(
+    'keeps the bulk submit key after an ambiguous response and %s refusal',
+    async (_name, refusal) => {
+      submitBulkDescribeRunMock
+        .mockImplementationOnce(async () => {
+          throw new Error('Connection lost after submit');
+        })
+        .mockImplementationOnce(async () => {
+          throw refusal();
+        })
+        .mockResolvedValueOnce(runResponse({ run_id: 'run-recovered' }));
+
+      const wrapper = createQueryWrapper(queryClient);
+      const hook = renderHook(() => useBulkDescribe(), { wrapper });
+      await act(async () => {
+        await expect(hook.result.current.submit.mutateAsync([202, 101])).rejects.toBeDefined();
+      });
+      const firstKey = submitBulkDescribeRunMock.mock.calls[0]?.[1];
+      expect(firstKey).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
+
+      await act(async () => {
+        await expect(hook.result.current.submit.mutateAsync([101, 202])).rejects.toBeDefined();
+      });
+      await act(async () => {
+        await hook.result.current.submit.mutateAsync([101, 202]);
+      });
+
+      expect(submitBulkDescribeRunMock).toHaveBeenCalledTimes(3);
+      expect(submitBulkDescribeRunMock.mock.calls.map(([ids]) => ids)).toEqual([
+        [101, 202],
+        [101, 202],
+        [101, 202],
+      ]);
+      expect(submitBulkDescribeRunMock.mock.calls.map(([, key]) => key)).toEqual([
+        firstKey,
+        firstKey,
+        firstKey,
+      ]);
+    },
+  );
+
+  it('reuses the warmup retry key after an ambiguous response and auth refusal', async () => {
+    putDescribeOperationContext({
+      version: DESCRIBE_OPERATION_CONTEXT_VERSION,
+      kind: DESCRIBE_OPERATION_KIND.RUN,
+      id: 'run-source',
+      startup_id: null,
+      started_at: Date.now(),
+      request: { writeAlt: false, force: false },
+    });
+    fetchDescribeRunItemsMock
+      .mockResolvedValueOnce(itemsResponse('run-source', [describeItem(51)]))
+      .mockResolvedValueOnce(itemsResponse('run-source', [describeItem(99)]));
+    submitBulkDescribeRunMock
+      .mockImplementationOnce(async () => {
+        throw new Error('Connection lost after submit');
+      })
+      .mockImplementationOnce(async () => {
+        throw new AuthExpiredError({ endpoint: '/acx/v1/describe/runs', status: 401 });
+      })
+      .mockResolvedValueOnce(runResponse({ run_id: 'run-retried' }));
+
+    const wrapper = createQueryWrapper(queryClient);
+    const hook = renderHook(() => useActivityStatus(), { wrapper });
+    await waitFor(() =>
+      expect(hook.result.current.status.reason).toBe(ACTIVITY_REASON.GPU_WARMUP_TIMEOUT),
+    );
+
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      act(() => hook.result.current.actions.onRetry?.());
+      await waitFor(() => expect(submitBulkDescribeRunMock).toHaveBeenCalledTimes(attempt));
+      await waitFor(() =>
+        expect(
+          queryClient
+            .getMutationCache()
+            .getAll()
+            .filter((mutation) => mutation.state.status === 'error'),
+        ).toHaveLength(attempt),
+      );
+    }
+
+    const firstKey = submitBulkDescribeRunMock.mock.calls[0]?.[1];
+    expect(submitBulkDescribeRunMock.mock.calls[0]?.[0]).toEqual([51]);
+    expect(submitBulkDescribeRunMock.mock.calls[1]?.[0]).toEqual([51]);
+    expect(submitBulkDescribeRunMock.mock.calls[1]?.[1]).toBe(firstKey);
+
+    act(() => hook.result.current.actions.onRetry?.());
+    await waitFor(() => expect(submitBulkDescribeRunMock).toHaveBeenCalledTimes(3));
+    expect(submitBulkDescribeRunMock.mock.calls[2]?.[0]).toEqual([51]);
+    expect(submitBulkDescribeRunMock.mock.calls[2]?.[1]).toBe(firstKey);
+    expect(fetchDescribeRunItemsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('retires the bulk submit key after an ambiguous response followed by HTTP 422', async () => {
+    submitBulkDescribeRunMock
+      .mockImplementationOnce(async () => {
+        throw new Error('Connection lost after submit');
+      })
+      .mockImplementationOnce(async () => {
+        throw describeHttpError(422);
+      })
+      .mockResolvedValueOnce(runResponse({ run_id: 'run-after-refusal' }));
+
+    const wrapper = createQueryWrapper(queryClient);
+    const hook = renderHook(() => useBulkDescribe(), { wrapper });
+    await act(async () => {
+      await expect(hook.result.current.submit.mutateAsync([101, 202])).rejects.toBeDefined();
+    });
+    const firstKey = submitBulkDescribeRunMock.mock.calls[0]?.[1];
+    await act(async () => {
+      await expect(hook.result.current.submit.mutateAsync([101, 202])).rejects.toBeDefined();
+    });
+    await act(async () => {
+      await hook.result.current.submit.mutateAsync([101, 202]);
+    });
+
+    expect(submitBulkDescribeRunMock.mock.calls[1]?.[1]).toBe(firstKey);
+    expect(submitBulkDescribeRunMock.mock.calls[2]?.[1]).not.toBe(firstKey);
   });
 
   it('reuses warmup retry key and frozen unfinished ids after an ambiguous response and remount', async () => {

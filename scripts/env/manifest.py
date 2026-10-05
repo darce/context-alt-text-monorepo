@@ -86,9 +86,7 @@ _PUBLIC_SENSITIVE_TOKENS = frozenset({
 })
 _URL_USERINFO_PASSWORD = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^/?#\s@:]+:[^/?#\s@]*@")
 # Each input is one env value: retain all base-check flags and add embedded URLs.
-# Scan every scheme start, including those glued to preceding scheme characters.
-# Spans run to the value's end; extra flags are acceptable, missed credentials are not.
-_URL_SPAN = re.compile(r"(?=([A-Za-z][A-Za-z0-9+.-]*://.*))", re.DOTALL)
+# Extra flags are acceptable, missed credentials are not.
 _URL_CREDENTIAL_TOKENS = (
     "password", "passwd", "pwd", "pass", "secret", "token", "access_token",
     "api_key", "apikey", "key", "sig", "signature", "auth", "credential", "credentials",
@@ -96,17 +94,39 @@ _URL_CREDENTIAL_TOKENS = (
 
 
 def _url_query_credential(value: str) -> bool:
-    for match in _URL_SPAN.finditer(value):
-        # Split only the parameter components; malformed authorities must not hide credentials.
-        url, _, fragment = match.group(1).partition("#")
-        _, _, query = url.partition("?")
-        if any(
-            key.lower().replace("-", "_").endswith(_URL_CREDENTIAL_TOKENS)
-            for component in (query, fragment)
-            for key, _ in parse_qsl(component, keep_blank_values=True)
-        ):
-            return True
-    return False
+    first_scheme_delimiter = -1
+    delimiter = value.find("://")
+    while delimiter >= 0:
+        position = delimiter
+        has_ascii_letter = False
+        while position:
+            character = value[position - 1]
+            if (character.isascii() and character.isalnum()) or character in "+.-":
+                has_ascii_letter |= character.isascii() and character.isalpha()
+                position -= 1
+            else:
+                break
+        if has_ascii_letter and first_scheme_delimiter < 0:
+            first_scheme_delimiter = delimiter
+        delimiter = value.find("://", delimiter + 3)
+
+    if first_scheme_delimiter < 0:
+        return False
+
+    query_marker = value.find("?", first_scheme_delimiter + 3)
+    fragment_marker = value.find("#", first_scheme_delimiter + 3)
+    markers = [marker for marker in (query_marker, fragment_marker) if marker >= 0]
+    if not markers:
+        return False
+
+    # Every later URL suffix is covered by this one component suffix. Treating
+    # later query/fragment markers as separators is a superset of parsing each
+    # overlapping suffix and keeps the parse work bounded by the input length.
+    components = value[min(markers) + 1 :].replace("?", "&").replace("#", "&")
+    return any(
+        key.lower().replace("-", "_").endswith(_URL_CREDENTIAL_TOKENS)
+        for key, _ in parse_qsl(components, keep_blank_values=True)
+    )
 
 
 def _fail(source: str, key: str, detail: str) -> NoReturn:

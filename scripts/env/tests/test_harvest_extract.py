@@ -143,6 +143,12 @@ def test_missing_env_file_fails_with_names_only(write_manifest, tmp_path: Path, 
     "https://h/x?client_secret=",
     "https://h/x?%70assword=pw",
     "https://h/x#access_token=abc",
+    " https://h/x?token=abc",
+    "\thttps://h/x?token=abc",
+    "https://h/x?token=abc ",
+    "https://a/x?q=1,https://b/y?token=abc",
+    "see https://h/x?api_key=abc",
+    "https://a/x?q=1 https://b/y#access_token=abc",
 ])
 def test_query_credentials_are_withheld(write_manifest, tmp_path: Path, capsys, value):
     module = load_module("harvest_extract")
@@ -165,6 +171,10 @@ def test_query_credentials_are_withheld(write_manifest, tmp_path: Path, capsys, 
     "postgresql://db/app?sslmode=require",
     "https://h/x?key_id=example",
     "password=pw",
+    " https://h/x?sslmode=require",
+    "https://a/x,https://b/y",
+    "https://h/x?sslmode=require,token=abc",
+    "https://h/x?sslmode=require token=abc",
 ])
 def test_benign_query_values_are_extracted(write_manifest, value):
     module = load_module("harvest_extract")
@@ -175,9 +185,13 @@ def test_benign_query_values_are_extracted(write_manifest, value):
 
 
 @pytest.mark.parametrize("location", ["example", "values", "override"])
-def test_public_build_query_credentials_are_rejected(write_manifest, location):
+@pytest.mark.parametrize("value", [
+    "https://h/x?api_key=abc",
+    " https://h/x?api_key=abc",
+    "https://a/x?q=1,https://b/y?api_key=abc",
+])
+def test_public_build_query_credentials_are_rejected(write_manifest, location, value):
     module = load_module("harvest_extract")
-    value = "https://h/x?api_key=abc"
     variable = _var("VITE_SERVICE_URL", cls="public")
     if location == "example":
         variable = variable.replace("safe-example", value)

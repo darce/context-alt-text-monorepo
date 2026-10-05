@@ -253,7 +253,9 @@ def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypa
         lifecycle_state="ACTIVE",
     )
     current_value = [b"b" * 64]
+    existing_present = [True]
     updates: list[str] = []
+    created_values: list[bytes] = []
     signer = object()
     passed_signers: list[object] = []
 
@@ -264,7 +266,7 @@ def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypa
 
     class VaultsClient(Client):
         def list_secrets(self, **_kwargs):
-            return SimpleNamespace(data=[existing], headers={})
+            return SimpleNamespace(data=[existing] if existing_present[0] else [], headers={})
 
         def list_secret_versions(self, *_args, **_kwargs):
             return SimpleNamespace(data=[], headers={})
@@ -272,8 +274,11 @@ def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypa
         def get_secret(self, *_args, **_kwargs):
             return SimpleNamespace(data=existing, headers={"etag": "etag-current"})
 
-        def create_secret(self, *_args, **_kwargs):
-            pytest.fail("bootstrap or rotation must not create a second secret")
+        def create_secret(self, details, **_kwargs):
+            created_values.append(base64.b64decode(details.secret_content.content))
+            current_value[0] = created_values[-1]
+            existing_present[0] = True
+            return SimpleNamespace(data=existing, headers={"etag": "etag-created"})
 
         def update_secret(self, secret_id, details, **_kwargs):
             updates.append(secret_id)
@@ -351,6 +356,75 @@ def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypa
     assert vault_put_secret.main() == 0
     assert capsys.readouterr().out == f"{existing.id} 64\n"
     assert updates == [existing.id]
+
+    existing_present[0] = False
+    monkeypatch.setattr(sys, "argv", [
+        "_vault_put_secret.py",
+        "--secret-name",
+        "ACX_GPU_ENDPOINT_API_KEY",
+        "--instance-principal",
+        "--key-id",
+        "ocid1.key.test",
+        "--result-only",
+        "--readable-timeout",
+        "0",
+    ])
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        SimpleNamespace(buffer=io.BytesIO(b"e" * 64), isatty=lambda: False),
+    )
+
+    assert vault_put_secret.main() == 0
+    assert capsys.readouterr().out == f"{existing.id} 64\n"
+    assert created_values == [b"e" * 64]
+    assert updates == [existing.id]
+
+    # A GPU write without an explicit mode is a safe bootstrap: it may create
+    # an absent key, but an existing key is read and left unchanged.
+    monkeypatch.setattr(sys, "argv", [
+        "_vault_put_secret.py",
+        "--secret-name",
+        "ACX_GPU_ENDPOINT_API_KEY",
+        "--instance-principal",
+        "--result-only",
+        "--readable-timeout",
+        "0",
+    ])
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        SimpleNamespace(buffer=io.BytesIO(b"d" * 64), isatty=lambda: False),
+    )
+
+    assert vault_put_secret.main() == 0
+    assert capsys.readouterr().out == f"{existing.id} 64\n"
+    assert updates == [existing.id]
+
+
+def test_instance_principal_clients_accept_real_sdk_constructors_without_network() -> None:
+    import oci
+
+    class FakeInstancePrincipalSigner(oci.auth.signers.InstancePrincipalsSecurityTokenSigner):
+        def __init__(self):
+            # The SDK uses signer.region to derive endpoints. Avoid the parent
+            # constructor, which performs instance metadata/token discovery.
+            self.region = "us-ashburn-1"
+
+    signer = FakeInstancePrincipalSigner()
+    no_retry = oci.retry.NoneRetryStrategy()
+    timeout = (1.0, 1.0)
+    clients = (
+        (oci.vault.VaultsClient, oci.vault.VaultsClient),
+        (oci.key_management.KmsVaultClient, oci.key_management.KmsVaultClient),
+        (oci.secrets.SecretsClient, oci.secrets.SecretsClient),
+    )
+
+    for factory, client_type in clients:
+        client = vault_put_secret._make_client(factory, {}, no_retry, timeout, signer=signer)
+        assert isinstance(client, client_type)
+        assert client.base_client.signer is signer
+        assert client.base_client.config == {}
 
 
 def _retry_delays(seed: int) -> list[float]:

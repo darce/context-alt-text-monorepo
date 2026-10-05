@@ -64,12 +64,24 @@ def _write_manifest(
     return root
 
 
-def _run_cli(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _run_cli(
+    root: Path, *args: str, input_data: str | None = None
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(SCRIPT), "--root", str(root), *args],
+        input=input_data,
         text=True,
         capture_output=True,
         check=False,
+    )
+
+
+def _config_module(aliases: str) -> str:
+    return (
+        "function parsePortalConfig(env) { return {"
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f"{aliases}\nparsePortalConfig(env);\n"
     )
 
 
@@ -77,6 +89,85 @@ def test_cli_validates_manifest_without_printing_values_or_writing_files(tmp_pat
     root = _write_manifest(tmp_path)
 
     result = _run_cli(root)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout == ""
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    ("aliases", "expected_name"),
+    [
+        (
+            f'const liveKey = "{FAKE_LIVE_KEY}" + "-STALE-FAKE"; '
+            'const liveFapi = "https://clerk.altcontext.com"; '
+            "const env = { VITE_CLERK_PUBLISHABLE_KEY: liveKey, VITE_CLERK_FAPI: liveFapi, "
+            'VITE_PORTAL_ENABLED: "true" };',
+            "VITE_CLERK_PUBLISHABLE_KEY",
+        ),
+        (
+            f'const expectedKey = "{FAKE_LIVE_KEY}"; const suffix = "-STALE-FAKE"; '
+            "const liveKey = expectedKey + suffix; "
+            'const liveFapi = "https://clerk.altcontext.com"; '
+            "const env = { VITE_CLERK_PUBLISHABLE_KEY: liveKey, VITE_CLERK_FAPI: liveFapi, "
+            'VITE_PORTAL_ENABLED: "true" };',
+            "VITE_CLERK_PUBLISHABLE_KEY",
+        ),
+        (
+            f'const liveKey = "{FAKE_LIVE_KEY}"; '
+            'const liveFapi = "https://clerk.altcontext.com" + ".stale"; '
+            "const env = { VITE_CLERK_PUBLISHABLE_KEY: liveKey, VITE_CLERK_FAPI: liveFapi, "
+            'VITE_PORTAL_ENABLED: "true" };',
+            "VITE_CLERK_FAPI",
+        ),
+        (
+            f'const liveKey = "{FAKE_LIVE_KEY}"; '
+            'const expectedFapi = "https://clerk.altcontext.com"; const suffix = ".stale"; '
+            "const liveFapi = expectedFapi + suffix; "
+            "const env = { VITE_CLERK_PUBLISHABLE_KEY: liveKey, VITE_CLERK_FAPI: liveFapi, "
+            'VITE_PORTAL_ENABLED: "true" };',
+            "VITE_CLERK_FAPI",
+        ),
+        (
+            f'const expectedConfig = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+            'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" }; '
+            f'const otherConfig = {{ ["VITE_CLERK_PUBLISHABLE_KEY"]: "{FAKE_LIVE_KEY}", '
+            '["VITE_CLERK_FAPI"]: "https://other.altcontext.com", '
+            '["VITE_PORTAL_ENABLED"]: "true" }; '
+            "const env = expectedConfig && otherConfig;",
+            "VITE_CLERK_FAPI",
+        ),
+    ],
+    ids=["key-literal-concat", "key-identifier-concat", "fapi-literal-concat", "fapi-identifier-concat", "object-logical-alias"],
+)
+def test_cli_rejects_asset_alias_prefix_expressions(
+    tmp_path: Path, aliases: str, expected_name: str
+) -> None:
+    root = _write_manifest(tmp_path)
+    asset = tmp_path / "entry.js"
+    asset.write_text(_config_module(aliases), encoding="utf-8")
+
+    result = _run_cli(root, "--verify-assets", input_data=f"{asset}\n")
+
+    assert result.returncode != 0
+    assert expected_name in result.stderr
+    assert FAKE_LIVE_KEY not in result.stdout + result.stderr
+
+
+def test_cli_accepts_complete_static_asset_aliases(tmp_path: Path) -> None:
+    root = _write_manifest(tmp_path)
+    asset = tmp_path / "entry.js"
+    asset.write_text(
+        _config_module(
+            f'const expectedKey = "{FAKE_LIVE_KEY}"; const liveKey = expectedKey; '
+            'const expectedFapi = "https://clerk.altcontext.com"; const liveFapi = expectedFapi; '
+            "const env = { VITE_CLERK_PUBLISHABLE_KEY: liveKey, VITE_CLERK_FAPI: liveFapi, "
+            'VITE_PORTAL_ENABLED: "true" };'
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_cli(root, "--verify-assets", input_data=f"{asset}\n")
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout == ""

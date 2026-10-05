@@ -132,6 +132,62 @@ def test_frontend_resolves_static_config_aliases(tmp_path: Path) -> None:
     module.validate_frontend_modules(config, [reachable])
 
 
+@pytest.mark.parametrize(
+    "aliases",
+    [
+        (
+            f'const liveKey = "{FAKE_LIVE_KEY}" + "-STALE-FAKE"; '
+            'const liveFapi = "https://clerk.altcontext.com"; '
+            "const env = { VITE_CLERK_PUBLISHABLE_KEY: liveKey, VITE_CLERK_FAPI: liveFapi, "
+            'VITE_PORTAL_ENABLED: "true" };'
+        ),
+        (
+            f'const expectedKey = "{FAKE_LIVE_KEY}"; const suffix = "-STALE-FAKE"; '
+            "const liveKey = expectedKey + suffix; "
+            'const liveFapi = "https://clerk.altcontext.com"; '
+            "const env = { VITE_CLERK_PUBLISHABLE_KEY: liveKey, VITE_CLERK_FAPI: liveFapi, "
+            'VITE_PORTAL_ENABLED: "true" };'
+        ),
+        (
+            f'const liveKey = "{FAKE_LIVE_KEY}"; '
+            'const liveFapi = "https://clerk.altcontext.com" + ".stale"; '
+            "const env = { VITE_CLERK_PUBLISHABLE_KEY: liveKey, VITE_CLERK_FAPI: liveFapi, "
+            'VITE_PORTAL_ENABLED: "true" };'
+        ),
+        (
+            f'const liveKey = "{FAKE_LIVE_KEY}"; '
+            'const expectedFapi = "https://clerk.altcontext.com"; const suffix = ".stale"; '
+            "const liveFapi = expectedFapi + suffix; "
+            "const env = { VITE_CLERK_PUBLISHABLE_KEY: liveKey, VITE_CLERK_FAPI: liveFapi, "
+            'VITE_PORTAL_ENABLED: "true" };'
+        ),
+        (
+            f'const expectedConfig = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+            'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" }; '
+            f'const otherConfig = {{ ["VITE_CLERK_PUBLISHABLE_KEY"]: "{FAKE_LIVE_KEY}", '
+            '["VITE_CLERK_FAPI"]: "https://other.altcontext.com", '
+            '["VITE_PORTAL_ENABLED"]: "true" }; '
+            "const env = expectedConfig && otherConfig;"
+        ),
+    ],
+    ids=["key-literal-concat", "key-identifier-concat", "fapi-literal-concat", "fapi-identifier-concat", "object-logical-alias"],
+)
+def test_frontend_rejects_incomplete_static_alias_initializers(tmp_path: Path, aliases: str) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function parsePortalConfig(env) { return {"
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f"{aliases}\nparsePortalConfig(env);\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ClerkConfigError):
+        module.validate_frontend_modules(config, [reachable])
+
+
 def test_reachable_pk_test_key_is_rejected_even_if_live_key_is_also_present(tmp_path: Path) -> None:
     module = _load_script()
     config = module.load_production_config(_manifest_root(tmp_path))

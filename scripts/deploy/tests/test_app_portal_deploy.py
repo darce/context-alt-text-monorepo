@@ -89,6 +89,15 @@ def _clerk_config_module(publishable_key: str, fapi: str) -> str:
     )
 
 
+def _clerk_alias_config_module(aliases: str) -> str:
+    return (
+        "function parsePortalConfig(env) { return {"
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f"{aliases}\nparsePortalConfig(env);\n"
+    )
+
+
 def _write_frontend(
     root: Path,
     *,
@@ -1034,6 +1043,11 @@ def test_apply_refuses_invalid_staged_frontend_without_touching_live_or_rollback
         ("fapi-host-prefix", "VITE_CLERK_FAPI"),
         ("mixed-reachable-fapi", "VITE_CLERK_FAPI"),
         ("unreferenced-decoy", "VITE_CLERK_PUBLISHABLE_KEY"),
+        ("key-literal-concat", "VITE_CLERK_PUBLISHABLE_KEY"),
+        ("key-identifier-concat", "VITE_CLERK_PUBLISHABLE_KEY"),
+        ("fapi-literal-concat", "VITE_CLERK_FAPI"),
+        ("fapi-identifier-concat", "VITE_CLERK_FAPI"),
+        ("object-logical-alias", "VITE_CLERK_FAPI"),
     ],
 )
 def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
@@ -1085,6 +1099,60 @@ def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
             f"const clerk = {{ key: '{FAKE_LIVE_KEY}', fapi: 'https://clerk.altcontext.com' }};\n",
             encoding="utf-8",
         )
+    elif failure == "key-literal-concat":
+        module.write_text(
+            _clerk_alias_config_module(
+                f'const liveKey = "{FAKE_LIVE_KEY}" + "-STALE-FAKE"; '
+                'const liveFapi = "https://clerk.altcontext.com"; '
+                "const env = { VITE_CLERK_PUBLISHABLE_KEY: liveKey, VITE_CLERK_FAPI: liveFapi, "
+                'VITE_PORTAL_ENABLED: "true" };'
+            ),
+            encoding="utf-8",
+        )
+    elif failure == "key-identifier-concat":
+        module.write_text(
+            _clerk_alias_config_module(
+                f'const expectedKey = "{FAKE_LIVE_KEY}"; const suffix = "-STALE-FAKE"; '
+                "const liveKey = expectedKey + suffix; "
+                'const liveFapi = "https://clerk.altcontext.com"; '
+                "const env = { VITE_CLERK_PUBLISHABLE_KEY: liveKey, VITE_CLERK_FAPI: liveFapi, "
+                'VITE_PORTAL_ENABLED: "true" };'
+            ),
+            encoding="utf-8",
+        )
+    elif failure == "fapi-literal-concat":
+        module.write_text(
+            _clerk_alias_config_module(
+                f'const liveKey = "{FAKE_LIVE_KEY}"; '
+                'const liveFapi = "https://clerk.altcontext.com" + ".stale"; '
+                "const env = { VITE_CLERK_PUBLISHABLE_KEY: liveKey, VITE_CLERK_FAPI: liveFapi, "
+                'VITE_PORTAL_ENABLED: "true" };'
+            ),
+            encoding="utf-8",
+        )
+    elif failure == "fapi-identifier-concat":
+        module.write_text(
+            _clerk_alias_config_module(
+                f'const liveKey = "{FAKE_LIVE_KEY}"; '
+                'const expectedFapi = "https://clerk.altcontext.com"; const suffix = ".stale"; '
+                "const liveFapi = expectedFapi + suffix; "
+                "const env = { VITE_CLERK_PUBLISHABLE_KEY: liveKey, VITE_CLERK_FAPI: liveFapi, "
+                'VITE_PORTAL_ENABLED: "true" };'
+            ),
+            encoding="utf-8",
+        )
+    elif failure == "object-logical-alias":
+        module.write_text(
+            _clerk_alias_config_module(
+                f'const expectedConfig = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+                'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" }; '
+                f'const otherConfig = {{ ["VITE_CLERK_PUBLISHABLE_KEY"]: "{FAKE_LIVE_KEY}", '
+                '["VITE_CLERK_FAPI"]: "https://other.altcontext.com", '
+                '["VITE_PORTAL_ENABLED"]: "true" }; '
+                "const env = expectedConfig && otherConfig;"
+            ),
+            encoding="utf-8",
+        )
 
     result = _run(
         tmp_path,
@@ -1102,6 +1170,26 @@ def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
     app_root = tmp_path / "opt" / "acx-backend" / "app"
     assert not (app_root / "staging").exists()
     assert not (app_root / "activation.journal").exists()
+
+
+def test_apply_accepts_frontend_with_complete_static_clerk_aliases(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    dist = _write_frontend(tmp_path)
+    (dist / "assets" / "index.js").write_text(
+        _clerk_alias_config_module(
+            f'const expectedKey = "{FAKE_LIVE_KEY}"; const liveKey = expectedKey; '
+            'const expectedFapi = "https://clerk.altcontext.com"; const liveFapi = expectedFapi; '
+            "const env = { VITE_CLERK_PUBLISHABLE_KEY: liveKey, VITE_CLERK_FAPI: liveFapi, "
+            'VITE_PORTAL_ENABLED: "true" };'
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(tmp_path, args=["--apply"], frontend=dist, live_caddy=live)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "applied:" in result.stdout
 
 
 def test_apply_refuses_frontend_with_missing_transitive_module(

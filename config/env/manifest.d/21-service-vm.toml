@@ -10,13 +10,13 @@ name = "RECOGNITION_SECRET_BACKEND"
 target = "svc-vm"
 required = true
 section = "Secret backend"
-doc = "env (default): the app reads the secret values in this file directly.\noci_vault: api/worker fetch POSTGRES_DSN / POSTGRES_SYNC_DSN / PGPASSWORD /\n  RECOGNITION_ADMIN_TOKEN from OCI Vault via the VM's instance principal.\n  Those values MUST stay blank here — no app secret ships as host plaintext.\n  Runbook: infra/oci/vault-instance-principal-runbook.md.\ndomain: infra (backend selector) | source: service operator | consumer: shared/secrets.py:get_secret_provider"
+doc = "env (default): the app reads the secret values in this file directly.\noci_vault: api/worker fetch secret values from OCI Vault via the VM's instance principal.\n  RECOGNITION_VAULT_SECRET_MAP is a host-preserved JSON map of secret OCIDs.\n  Runbook: infra/oci/vault-instance-principal-runbook.md.\ndomain: infra (backend selector) | source: service operator | consumer: shared/secrets.py:get_secret_provider"
 
 [[override]]
 name = "RECOGNITION_VAULT_SECRET_MAP"
 target = "svc-vm"
 required = false
-doc = "Host-preserved prod JSON map; dev/staging intentionally omit it with backend env.\nThe oci_vault reader fails startup if the prod map is absent.\nNon-secret JSON map. KEY = the logical secret name the app requests\n(get_secret(\"PGPASSWORD\"), ...) — the SAME name used everywhere in code, NOT\nthe Vault-side secret path. VALUE = that secret's Vault OCID (an identifier,\nnot a secret). Required when RECOGNITION_SECRET_BACKEND=oci_vault. Single\ncompartment, trust-domain namespacing on the Vault side (decision #1882; see\nthe runbook's path table).\n  Boot-REQUIRED keys (eagerly fetched, fail-fast if missing — must be present):\n    PGPASSWORD, RECOGNITION_ADMIN_TOKEN.\n  OPTIONAL keys (add only if you want them Vault-managed / the provider is on):\n    POSTGRES_DSN, POSTGRES_SYNC_DSN (else the DSN is rendered from PGPASSWORD),\n    ACX_GPU_ENDPOINT_API_KEY, ACX_HOSTED_PROVIDER_API_KEY, ACX_EVAL_API_KEY\n    (else they stay env-only; only needed when those providers are enabled).\ndomain: infra (OCID map) | source: OCI deploy | consumer: shared/secrets.py:OciVaultSecretProvider.from_env"
+doc = "Host-preserved prod JSON map; dev/staging intentionally omit it with backend env.\nThe oci_vault reader fails startup if required entries are absent. KEY is the\nlogical secret name the app requests, such as PGPASSWORD; VALUE is a Vault OCID\n(identifier, not secret material).\n  Boot-REQUIRED keys: PGPASSWORD, RECOGNITION_ADMIN_TOKEN.\n  POSTGRES_DSN and POSTGRES_SYNC_DSN remain in this map.\n  ACX_GPU_ENDPOINT_API_KEY is not yet minted and must be added after operator\n  approval. The enabled default GPU preflight requires that mint first; run\n  make gpu-key-mint after approval, then render/apply with the returned OCID.\n  Runbook: infra/oci/vault-instance-principal-runbook.md.\ndomain: infra (OCID map) | source: OCI deploy | consumer: shared/secrets.py:OciVaultSecretProvider.from_env"
 
 [[override]]
 name = "POSTGRES_USER"
@@ -116,7 +116,7 @@ section = "Operator /admin surface"
 name = "ACX_DESCRIPTION_ADAPTER"
 target = "svc-vm"
 required = true
-doc = "One operator switch selects the description backend. Values:\n  seeded         deterministic fixture captions; forbidden for demo publish.\n  florence_small Florence-2-base-ft, ~14s/image on the OCI A1 CPU (under budget).\n                 Requires the [vlm] extra (build the runtime-vlm image; see\n                 docs/tasks/19.0/E19-1-florence-large-async-worker-impl-notes.md).\n  florence_large Florence-2-large-ft, ~39s/image — STUB until the async worker\n                 exists; selecting it returns 503.\n  gpu_phi4       Phi-4-multimodal-instruct — GPU-only STUB; returns 503 on CPU.\nReader default florence_small applies to staging; seeded is opt-in for fixtures.\n\nAllowed live demo values: florence_small | gpu_qwen30b | gpu_qwen30b_ensemble\nFrom the repository root, validate both live files together before every deploy:\n  scripts/deploy/preflight-gpu-env.sh --check-reaper /path/to/prod.env /path/to/demo.env\ndomain: infra | source: service operator | consumer: scene description adapter selection"
+doc = "One operator switch selects the description backend. Values:\n  seeded         deterministic fixture captions; forbidden for demo publish.\n  florence_small Florence-2-base-ft, ~14s/image on the OCI A1 CPU (under budget).\n                 Requires the [vlm] extra (build the runtime-vlm image; see\n                 docs/tasks/19.0/E19-1-florence-large-async-worker-impl-notes.md).\n  florence_large Florence-2-large-ft, ~39s/image — STUB until the async worker\n                 exists; selecting it returns 503.\n  gpu_phi4       Phi-4-multimodal-instruct — GPU-only STUB; returns 503 on CPU.\nReader default florence_small applies to staging; seeded is opt-in for fixtures.\n\nAllowed live demo values: florence_small | gpu_qwen30b | gpu_qwen30b_ensemble\nAn enabled gpu_* default preflight requires a real Vault API key first. Mint it\nonly after operator approval with make gpu-key-mint.\nFrom the repository root, validate both live files together before every deploy:\n  scripts/deploy/preflight-gpu-env.sh --check-reaper /path/to/prod.env /path/to/demo.env\ndomain: infra | source: service operator | consumer: scene description adapter selection"
 
 [[override]]
 name = "ACX_GPU_ENDPOINT_URL"
@@ -190,7 +190,7 @@ class = "secret"
 targets = ["svc-vm"]
 example = ""
 required = true
-doc = "oci_vault: leave this blank and replace the ACX_GPU_ENDPOINT_API_KEY OCID in\nRECOGNITION_VAULT_SECRET_MAP. env: put the direct value here. Never commit it.\ndomain: service secret | source: OCI Vault / service operator | consumer: remote GPU description adapter"
+doc = "oci_vault: leave blank. After an approved mint, add its real OCID to\nRECOGNITION_VAULT_SECRET_MAP. Until then this remains host-sourced and GPU preflight\nblocks the enabled adapter. env: put the direct value here; never commit it.\ndomain: service secret | source: OCI Vault / service operator | consumer: remote GPU description adapter"
 section = "Image description"
 required_when = { RECOGNITION_SECRET_BACKEND = ["env"], ACX_GPU_ENDPOINT_URL = ["*"] }
 secret = { dev = "host:", staging = "host:", prod = "host:" }

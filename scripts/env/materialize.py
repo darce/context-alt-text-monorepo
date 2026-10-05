@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 import re
-import shlex
 import stat
 import sys
 import tempfile
@@ -166,16 +165,6 @@ def _owned_write(path: Path, data: bytes, owner: os.stat_result, *, backup: bool
         staged.unlink(missing_ok=True)
 
 
-def _assignment_has_value(line: str) -> bool:
-    match = render._ASSIGNMENT.match(line)
-    if match is None:
-        return False
-    try:
-        return any(shlex.split(match.group(2), comments=False))
-    except ValueError:
-        return False
-
-
 def run(
     manifest_root: Path, *, env: str, target: str, into: str,
     check: bool = False, adopt: bool = False, allow_unmanaged: Sequence[str] = (),
@@ -210,8 +199,8 @@ def run(
             managed = {var.name for var in variables}
             missing_host = {
                 var.name for var in variables
-                if var.secret.get(env) == "host:" and var.required
-                and not any(_assignment_has_value(line) for line in actual.get(var.name, ()))
+                if var.secret.get(env) == "host:" and render.host_secret_required(var, variables, env)
+                and not any(render._assignment_has_value(line) for line in actual.get(var.name, ()))
             }
             if missing_host and not check:
                 raise SecretUnavailable("missing host key " + sorted(missing_host)[0])

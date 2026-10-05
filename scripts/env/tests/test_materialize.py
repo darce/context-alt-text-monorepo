@@ -122,6 +122,55 @@ def test_required_host_missing_exits_4(case):
     assert case.file.read_bytes() == before
 
 
+@pytest.fixture
+def vault_case(tmp_path, write_manifest):
+    into = "/opt/acx-backend/prod/.env"
+    root = write_manifest(_targets().replace("dev", "prod"), **{
+        "10-materialize": "version = 1\n" + '\n'.join([
+            _var("RECOGNITION_SECRET_BACKEND", values={"prod": "oci_vault"}),
+            _var("RECOGNITION_VAULT_SECRET_MAP", cls="secret",
+                 secret={"prod": "host:"}, required=False),
+        ])
+    })
+    header = load_module("render_env").HEADER_LINE
+    fs = tmp_path / "fs"
+    file = fs / into.lstrip("/")
+    file.parent.mkdir(parents=True)
+    file.write_text(header + '\n# materialized target=t env=prod digest=x\n'
+                    'RECOGNITION_SECRET_BACKEND=oci_vault\n')
+    file.chmod(0o600)
+    return Case(root, fs, file, tmp_path / "bk", header)
+
+
+@pytest.mark.parametrize("value", [None, "", '""', "''"])
+@pytest.mark.parametrize("check", [True, False])
+def test_materialize_prod_requires_nonempty_host_map(vault_case, value, check):
+    mat = load_module("materialize")
+    if value is not None:
+        with vault_case.file.open("a") as stream:
+            stream.write(f"RECOGNITION_VAULT_SECRET_MAP={value}\n")
+    before = vault_case.file.read_bytes()
+    rc, out, err = vault_case.run(mat, env="prod", into="/opt/acx-backend/prod/.env", check=check)
+    assert rc == (1 if check else 4)
+    if check:
+        assert out == "missing\tRECOGNITION_VAULT_SECRET_MAP\n"
+    else:
+        assert "RECOGNITION_VAULT_SECRET_MAP" in err
+    assert vault_case.file.read_bytes() == before
+
+
+@pytest.mark.parametrize("value", ["", '""', "''"])
+@pytest.mark.parametrize("check", [True, False])
+def test_required_ordinary_host_empty_keeps_outcome(case, value, check):
+    mat = load_module("materialize")
+    before = case.file.read_bytes().replace(b"PGPASSWORD=s3cr3t-value", f"PGPASSWORD={value}".encode())
+    case.file.write_bytes(before)
+    rc, out, err = case.run(mat, check=check)
+    assert rc == (1 if check else 4)
+    assert "PGPASSWORD" in (out if check else err)
+    assert case.file.read_bytes() == before
+
+
 def test_into_mismatch_exits_2(case):
     mat = load_module("materialize")
     before = case.file.read_bytes()

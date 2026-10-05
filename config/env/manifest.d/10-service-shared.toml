@@ -44,9 +44,9 @@ class = "config"
 targets = ["svc-vm", "svc-fir"]
 section = "Secret backend"
 example = "oci_vault"
-doc = 'Default env in dev/staging/fir. Prod uses oci_vault with a host-preserved map; declaring its value is pending manifest.py:_validate_remote_sources support for that map source. | domain: infra (backend selector) | source: service operator | consumer: shared/secrets.py:get_secret_provider'
+doc = 'Default env in dev/staging/fir. Prod uses oci_vault with a required host-preserved map, whose boot keys are checked by the app at startup. | domain: infra (backend selector) | source: service operator | consumer: shared/secrets.py:get_secret_provider'
 required = false
-values = { dev = "env", staging = "env", fir = "env" }
+values = { dev = "env", staging = "env", prod = "oci_vault", fir = "env" }
 
 [[var]]
 name = "RECOGNITION_VAULT_SECRET_MAP"

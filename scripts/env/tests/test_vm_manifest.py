@@ -206,6 +206,70 @@ def test_oci_vault_without_vault_refs_refused(write_manifest):
     _refused(root, FRAGMENT, "RECOGNITION_SECRET_BACKEND")
 
 
+def _host_map():
+    return _var("RECOGNITION_VAULT_SECRET_MAP", cls="secret", required=False,
+                secret={"prod": "host:"})
+
+
+def test_oci_vault_with_host_map_loads(write_manifest):
+    mod = load_module("manifest")
+    root = _root(write_manifest, _vm_targets(), _backend(), _host_map())
+    manifest = mod.load_manifest(root)
+    assert mod.vault_secret_map(manifest, "t", "prod") == {}
+
+
+def test_oci_vault_host_map_mixed_with_vault_refs_refused(write_manifest):
+    root = _root(write_manifest, _vm_targets(), _backend(), _host_map(), _boot_vars())
+    message = _refused(root, FRAGMENT, "RECOGNITION_VAULT_SECRET_MAP")
+    assert "host-preserved map cannot be mixed with vault refs" in message
+
+
+def test_render_oci_vault_copies_host_map(write_manifest):
+    mod = load_module("manifest")
+    render = load_module("render_env")
+    root = _root(write_manifest, _vm_targets(), _backend(), _host_map())
+    manifest = mod.load_manifest(root)
+    line = 'export RECOGNITION_VAULT_SECRET_MAP=\'{"PGPASSWORD":"fake-ocid"}\''
+    output = render.render_target(manifest, "t", "prod",
+                                  host_lines={"RECOGNITION_VAULT_SECRET_MAP": [line]})
+    assert line in output.splitlines()
+
+
+def test_render_oci_vault_requires_host_map(write_manifest):
+    mod = load_module("manifest")
+    render = load_module("render_env")
+    root = _root(write_manifest, _vm_targets(), _backend(), _host_map())
+    manifest = mod.load_manifest(root)
+    with pytest.raises(mod.ManifestError, match="RECOGNITION_VAULT_SECRET_MAP: host secret unavailable"):
+        render.render_target(manifest, "t", "prod")
+    missing = set()
+    render.render_target(manifest, "t", "prod", missing_host_keys=missing)
+    assert missing == {"RECOGNITION_VAULT_SECRET_MAP"}
+
+
+def test_render_env_backend_without_host_map_succeeds(write_manifest):
+    mod = load_module("manifest")
+    render = load_module("render_env")
+    root = _root(write_manifest, _vm_targets(), _backend(), _host_map())
+    output = render.render_target(mod.load_manifest(root), "t", "dev")
+    assert "RECOGNITION_SECRET_BACKEND=env" in output
+    assert "RECOGNITION_VAULT_SECRET_MAP=" not in output
+
+
+@pytest.mark.parametrize("value", ["", '""', "''"])
+def test_render_oci_vault_rejects_empty_host_map(write_manifest, value):
+    mod = load_module("manifest")
+    render = load_module("render_env")
+    root = _root(write_manifest, _vm_targets(), _backend(), _host_map())
+    manifest = mod.load_manifest(root)
+    host_lines = {"RECOGNITION_VAULT_SECRET_MAP": [f"RECOGNITION_VAULT_SECRET_MAP={value}"]}
+    with pytest.raises(mod.ManifestError, match="RECOGNITION_VAULT_SECRET_MAP: host secret unavailable"):
+        render.render_target(manifest, "t", "prod", host_lines=host_lines)
+    missing = set()
+    render.render_target(manifest, "t", "prod", host_lines=host_lines, missing_host_keys=missing)
+    assert missing == {"RECOGNITION_VAULT_SECRET_MAP"}
+
+
 @pytest.mark.parametrize("key", ["PGPASSWORD", "RECOGNITION_ADMIN_TOKEN"])
 def test_oci_vault_requires_boot_keys(write_manifest, key):
     root = _root(write_manifest, _vm_targets(), _boot_vars(**{key: "host:"}), _backend(), _map_var())

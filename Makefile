@@ -730,6 +730,12 @@ test-hooks:
 ocir-token-rotate:
 	@bash scripts/deploy/ocir-token-rotate.sh $(OCIR_ROTATE_ARGS)
 
+# ENVMAN-4: prepare or explicitly rotate the GPU endpoint API key through an
+# approved VM instance-principal writer. The command never prints key material.
+.PHONY: gpu-key-mint
+gpu-key-mint:
+	@bash scripts/deploy/gpu-key-mint.sh $(GPU_KEY_MINT_ARGS)
+
 test-deploy-contract:
 	@python3 -m pytest scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py scripts/test_e15_33_boot_smoke.py scripts/test_deploy_workflow_gate.py scripts/test_ocirv1_vault_readiness.py scripts/deploy/tests/test_gpu_lifecycle_contract_ownership.py scripts/deploy/tests/test_gpu_lifecycle_install.py scripts/deploy/tests/test_gpu_lifecycle_deploy_wiring.py -q --tb=short
 	@bash scripts/deploy/tests/test-smoke-gate.sh

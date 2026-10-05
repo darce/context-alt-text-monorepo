@@ -91,6 +91,24 @@ def test_writer_rejects_unowned_secret_names(name) -> None:
         vault_put_secret.validate_destination(vault_put_secret.DEFAULT_VAULT_OCID, name)
 
 
+def test_writer_allows_gpu_endpoint_key_only_in_owned_vault() -> None:
+    vault_put_secret.validate_destination(
+        vault_put_secret.DEFAULT_VAULT_OCID,
+        "ACX_GPU_ENDPOINT_API_KEY",
+    )
+    with pytest.raises(SystemExit, match="refusing unowned vault"):
+        vault_put_secret.validate_destination(
+            "ocid1.vault.oc1.iad.attacker",
+            "ACX_GPU_ENDPOINT_API_KEY",
+        )
+
+
+def test_writer_requires_a_64_byte_hex_gpu_key() -> None:
+    vault_put_secret.validate_gpu_endpoint_key(b"a" * 64)
+    with pytest.raises(ValueError, match="64 hexadecimal bytes"):
+        vault_put_secret.validate_gpu_endpoint_key(b"not-a-credential")
+
+
 def test_writer_rejects_non_acx_vault() -> None:
     with pytest.raises(SystemExit, match="refusing unowned vault"):
         vault_put_secret.validate_destination("ocid1.vault.oc1.iad.attacker", "OCIR_AUTH_TOKEN")
@@ -225,6 +243,114 @@ def test_main_uses_idempotency_controls_with_stubbed_oci(monkeypatch, capsys) ->
         "OCIR_AUTH_TOKEN",
         b"first-token",
     )
+
+
+def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypatch, capsys) -> None:
+    existing = SimpleNamespace(
+        id="ocid1.vaultsecret.oc1.iad.fakegpuapikey123",
+        secret_name="ACX_GPU_ENDPOINT_API_KEY",
+        key_id="ocid1.key.test",
+        lifecycle_state="ACTIVE",
+    )
+    current_value = [b"b" * 64]
+    updates: list[str] = []
+    signer = object()
+    passed_signers: list[object] = []
+
+    class Client:
+        def __init__(self, *_args, **kwargs):
+            passed_signers.append(kwargs.get("signer"))
+            self.base_client = SimpleNamespace(timeout=None)
+
+    class VaultsClient(Client):
+        def list_secrets(self, **_kwargs):
+            return SimpleNamespace(data=[existing], headers={})
+
+        def list_secret_versions(self, *_args, **_kwargs):
+            return SimpleNamespace(data=[], headers={})
+
+        def get_secret(self, *_args, **_kwargs):
+            return SimpleNamespace(data=existing, headers={"etag": "etag-current"})
+
+        def create_secret(self, *_args, **_kwargs):
+            pytest.fail("bootstrap or rotation must not create a second secret")
+
+        def update_secret(self, secret_id, details, **_kwargs):
+            updates.append(secret_id)
+            current_value[0] = base64.b64decode(details.secret_content.content)
+            return SimpleNamespace(data=existing, headers={"etag": "etag-updated"})
+
+    class KmsVaultClient(Client):
+        def get_vault(self, *_args, **_kwargs):
+            return SimpleNamespace(data=SimpleNamespace(compartment_id="ocid1.compartment.test"))
+
+    class SecretsClient(Client):
+        def get_secret_bundle_by_name(self, **_kwargs):
+            content = SimpleNamespace(content=base64.b64encode(current_value[0]).decode("ascii"))
+            return SimpleNamespace(data=SimpleNamespace(secret_bundle_content=content))
+
+    class Details:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    fake_oci = SimpleNamespace(
+        auth=SimpleNamespace(
+            signers=SimpleNamespace(InstancePrincipalsSecurityTokenSigner=lambda: signer),
+        ),
+        config=SimpleNamespace(from_file=lambda **_kwargs: pytest.fail("instance principal must be used")),
+        retry=SimpleNamespace(NoneRetryStrategy=lambda: object()),
+        vault=SimpleNamespace(
+            VaultsClient=VaultsClient,
+            models=SimpleNamespace(
+                Base64SecretContentDetails=Details,
+                CreateSecretDetails=Details,
+                UpdateSecretDetails=Details,
+            ),
+        ),
+        key_management=SimpleNamespace(KmsVaultClient=KmsVaultClient),
+        secrets=SimpleNamespace(SecretsClient=SecretsClient),
+    )
+    monkeypatch.setitem(sys.modules, "oci", fake_oci)
+    monkeypatch.setattr(sys, "argv", [
+        "_vault_put_secret.py",
+        "--secret-name",
+        "ACX_GPU_ENDPOINT_API_KEY",
+        "--instance-principal",
+        "--bootstrap",
+        "--result-only",
+        "--readable-timeout",
+        "0",
+    ])
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        SimpleNamespace(buffer=io.BytesIO(b"unused-bootstrap-candidate"), isatty=lambda: False),
+    )
+
+    assert vault_put_secret.main() == 0
+    assert capsys.readouterr().out == f"{existing.id} {len(current_value[0])}\n"
+    assert updates == []
+    assert passed_signers and all(item is signer for item in passed_signers)
+
+    monkeypatch.setattr(sys, "argv", [
+        "_vault_put_secret.py",
+        "--secret-name",
+        "ACX_GPU_ENDPOINT_API_KEY",
+        "--instance-principal",
+        "--rotate-existing",
+        "--result-only",
+        "--readable-timeout",
+        "0",
+    ])
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        SimpleNamespace(buffer=io.BytesIO(b"c" * 64), isatty=lambda: False),
+    )
+
+    assert vault_put_secret.main() == 0
+    assert capsys.readouterr().out == f"{existing.id} 64\n"
+    assert updates == [existing.id]
 
 
 def _retry_delays(seed: int) -> list[float]:

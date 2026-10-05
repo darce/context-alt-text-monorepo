@@ -53,8 +53,8 @@ name = "RECOGNITION_VAULT_SECRET_MAP"
 class = "secret"
 targets = ["svc-vm", "svc-fir"]
 section = "Secret backend"
-example = '{"PGPASSWORD":"ocid1.vaultsecret.oc1..REPLACE","RECOGNITION_ADMIN_TOKEN":"ocid1.vaultsecret.oc1..REPLACE","POSTGRES_DSN":"ocid1.vaultsecret.oc1..REPLACE","POSTGRES_SYNC_DSN":"ocid1.vaultsecret.oc1..REPLACE","ACX_GPU_ENDPOINT_API_KEY":"ocid1.vaultsecret.oc1..REPLACE_GPU_ENDPOINT_KEY"}'
-doc = 'Host-preserved OCID map in prod (not credential material); secret class selects host-line preservation. Dev, staging and fir use backend env and intentionally omit this map. The oci_vault reader requires the live map at startup. | domain: infra (OCID map) | source: OCI deploy | consumer: shared/secrets.py:OciVaultSecretProvider.from_env'
+example = '{"PGPASSWORD":"ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqa5ka6inpwivjhrxm2ri4zdar46kdiijw32nzjly2uetzq","POSTGRES_DSN":"ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqaxwiwmhdx52g6obkujhq7ob4wxtp7n2xp5l2eu243wqqa","POSTGRES_SYNC_DSN":"ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqabr4qgl3jnrpfij72o4tv5ajujhwyyb4kd4ke7zwn73jq","RECOGNITION_ADMIN_TOKEN":"ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqaugzdmou5vnlaauvnyfct3qz36qenl72gxqhjkai7a2ea"}'
+doc = 'Host-preserved prod JSON map; values are OCI identifiers, not credential material. Dev, staging and fir use backend env and intentionally omit the map. The enabled GPU adapter requires an approved mint before preflight can pass. | domain: infra (OCID map) | source: OCI deploy | consumer: shared/secrets.py:OciVaultSecretProvider.from_env'
 required = false
 secret = { prod = "host:" }
 

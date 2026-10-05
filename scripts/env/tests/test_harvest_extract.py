@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from conftest import load_module
 
 
@@ -132,3 +134,69 @@ def test_missing_env_file_fails_with_names_only(write_manifest, tmp_path: Path, 
     assert captured.out == ""
     assert "t" in captured.err and "prod" in captured.err
     assert "manifest-value" not in captured.err
+
+
+@pytest.mark.parametrize("value", [
+    "postgresql://db/app?password=pw",
+    "https://h/x?token=abc",
+    "https://h/x?API-KEY=abc",
+    "https://h/x?client_secret=",
+    "https://h/x?%70assword=pw",
+    "https://h/x#access_token=abc",
+])
+def test_query_credentials_are_withheld(write_manifest, tmp_path: Path, capsys, value):
+    module = load_module("harvest_extract")
+    root = _root(write_manifest, _var("SERVICE_DSN"))
+    env_path = tmp_path / "opt/acx-backend/prod/.env"
+    env_path.parent.mkdir(parents=True)
+    env_path.write_text(f'SERVICE_DSN="{value}"\n', encoding="utf-8")
+
+    assert _invoke(module, root, tmp_path) == 0
+
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    assert result["values"] == {}
+    assert result["withheld"]["secret_looking"] == ["SERVICE_DSN"]
+    assert value not in captured.out + captured.err
+    assert captured.err == ""
+
+
+@pytest.mark.parametrize("value", [
+    "postgresql://db/app?sslmode=require",
+    "https://h/x?key_id=example",
+    "password=pw",
+])
+def test_benign_query_values_are_extracted(write_manifest, value):
+    module = load_module("harvest_extract")
+    root = _root(write_manifest, _var("SERVICE_DSN"))
+    result = module.extract(module.load_manifest(root), "t", "prod", f'SERVICE_DSN="{value}"\n')
+    assert result["values"] == {"SERVICE_DSN": value}
+    assert result["withheld"]["secret_looking"] == []
+
+
+@pytest.mark.parametrize("location", ["example", "values", "override"])
+def test_public_build_query_credentials_are_rejected(write_manifest, location):
+    module = load_module("harvest_extract")
+    value = "https://h/x?api_key=abc"
+    variable = _var("VITE_SERVICE_URL", cls="public")
+    if location == "example":
+        variable = variable.replace("safe-example", value)
+    elif location == "values":
+        variable = variable.replace("manifest-value", value)
+    else:
+        variable += f'''\n[[override]]
+name = "VITE_SERVICE_URL"
+target = "t"
+example = "{value}"
+'''
+    root = write_manifest('''version = 1
+[targets.t]
+audience = "public_build"
+envs = ["prod"]
+sections = ["Runtime"]
+''', **{"10-harvest": "version = 1\n" + variable})
+
+    with pytest.raises(module.ManifestError, match="URL credentials") as exc:
+        module.load_manifest(root)
+    assert "VITE_SERVICE_URL" in str(exc.value)
+    assert value not in str(exc.value)

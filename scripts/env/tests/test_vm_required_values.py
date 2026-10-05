@@ -2,16 +2,50 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from conftest import load_module
 
 
 REPO = Path(__file__).resolve().parents[3]
 
 
+def collect_remote_pairs(manifest):
+    return {
+        (target_name, env)
+        for target_name, target in manifest.targets.items()
+        if target.remote_paths
+        for env in target.envs
+    }
+
+
+def assert_required_remote_pairs(remote_pairs):
+    expected_pairs = {
+        ("svc-vm", "dev"),
+        ("svc-vm", "staging"),
+        ("svc-vm", "prod"),
+        ("svc-fir", "fir"),
+        ("demo", "demo"),
+    }
+    missing_pairs = expected_pairs - remote_pairs
+    assert not missing_pairs, "missing remote deployment pairs: " + ", ".join(
+        f"{target_name}:{env}" for target_name, env in sorted(missing_pairs)
+    )
+
+
+def test_remote_deployment_pair_guard_rejects_missing_prod():
+    manifest = load_module("manifest").load_manifest(REPO / "config/env")
+    remote_pairs = collect_remote_pairs(manifest) - {("svc-vm", "prod")}
+
+    with pytest.raises(AssertionError, match="missing remote deployment pairs: svc-vm:prod"):
+        assert_required_remote_pairs(remote_pairs)
+
+
 def test_remote_targets_have_required_nonsecret_values_for_every_env():
     manifest_module = load_module("manifest")
     render_module = load_module("render_env")
     manifest = manifest_module.load_manifest(REPO / "config/env")
+    assert_required_remote_pairs(collect_remote_pairs(manifest))
     missing = []
     remote_envs = []
 

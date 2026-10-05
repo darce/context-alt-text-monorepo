@@ -32,7 +32,7 @@ HTTPS `app.altcontext.com` (Caddy ACME, same edge as `api.altcontext.com`):
 | `/recognition`, `/roster`, `/scene`, `/billing/webhooks`, `/health`, `/ready`, `/metrics`, `/docs`, `/x` | `404` — those surfaces stay on `api.altcontext.com` |
 
 `/portalfoo` and `/portal-admin` are **not** API paths. SPA routes such as
-`/billing/return` are frontend paths; Stripe billing webhooks stay on the API
+`/billing/return` are frontend paths; billing webhooks stay on the API
 host, not the app host.
 
 ## Env ownership (do not put secrets in these files)
@@ -40,14 +40,38 @@ host, not the app host.
 | Surface | Owner | Names |
 | --- | --- | --- |
 | This deploy script | app-host lane | `APP_HOSTNAME`, `APP_UPSTREAM`, `APP_ROOT`, `APP_WWW`, `CADDY_COMPOSE`, `APP_FRONTEND_ROOT`, `CADDYFILE`, `FRONTEND_DIST`, `APP_APPROVED_ROOTS`, `APP_RELOAD_CMD`, `APP_HEALTH_CMD` |
-| Prod API process | `svc-vm` manifest target, including `30-portal-backend.toml` | `RECOGNITION_PORTAL_ENABLED=1` and Clerk runtime settings materialized to `/opt/acx-backend/prod/.env` (mode 0600) |
+| Prod API process | `svc-vm` manifest target, including `30-portal-backend.toml` | Clerk runtime settings and portal enablement belong in `/opt/acx-backend/prod/.env` (mode 0600); production enablement and materialization are launch gaps (see below) |
 | Frontend build | `app-portal-build` public-build manifest target | public `VITE_CLERK_PUBLISHABLE_KEY` and `VITE_CLERK_FAPI`; use the live publishable key variant in production |
 
 `infra/oci/app/env.example` lists the deploy names only. Clerk secret keys and
-Stripe credentials never belong in the snippet, overlay, this runbook's
+billing credentials never belong in the snippet, overlay, this runbook's
 commands, or apply stdout. The existing `configure_clerk_production.py`
 environment writers are scheduled for retirement in a later wave; use the
 manifest targets as the production source of truth.
+
+## Before production launch
+
+- Add `prod = "1"` to the `RECOGNITION_PORTAL_ENABLED` variable's `values`
+  in `config/env/manifest.d/30-portal-backend.toml`. It currently has only
+  `local = "1"`; production rendering does not enable the portal. The API
+  mounts `/portal` only when this setting is `1`, `true`, `yes`, or `on`.
+- Commit the public live production publishable key as the `prod`
+  value of `VITE_CLERK_PUBLISHABLE_KEY` in
+  `config/env/manifest.d/60-app-portal.toml`. It currently has only a local
+  value, so `make env-render ENV=prod TARGET=app-portal-build` fails closed
+  until this is supplied. Use the live key format documented in
+  [Clerk production authentication](clerk-production-auth.md#1-create-the-production-instance-dashboard).
+  This key is public by design; never commit secrets.
+- `make env-materialize ENV=prod TARGET=svc-vm` currently refuses with a
+  missing-value error because VM values have not been harvested
+  (ENVAUD-1005-H-1, next wave). Until that is resolved, use
+  `apps/prototype-description-service/scripts/configure_clerk_production.py`
+  with `--check`, then `--apply --backend-env /opt/acx-backend/prod/.env`
+  as the interim Clerk writer. Its derived Clerk values must equal the
+  manifest's production values; see the runnable commands in
+  [Clerk production authentication](clerk-production-auth.md#4-materialize-and-build).
+  This writer only updates Clerk settings: also ensure the VM's runtime
+  `RECOGNITION_PORTAL_ENABLED=1` matches the launch manifest before restarting.
 
 ## Default dry-run
 
@@ -84,7 +108,8 @@ live under `APP_APPROVED_ROOTS`.
 ## Build and apply
 
 The committed React/Vite portal source lives in `apps/app-portal/`. Render its
-production public build environment, install the locked dependencies, and
+production public build environment after completing the
+[launch checklist](#before-production-launch), install the locked dependencies, and
 build the SPA from the repository root:
 
 ```bash
@@ -227,8 +252,11 @@ docker compose -f docker-compose.caddy.yml exec -T caddy \
 ```
 
 Enable the portal router and Clerk verifier settings in the `svc-vm`
-environment manifest, then check and materialize the production target from
-the repository root:
+environment manifest. These production materialization commands currently
+refuse with a missing-value error until VM values are harvested
+(ENVAUD-1005-H-1); use the interim Clerk writer in the
+[launch checklist](#before-production-launch) meanwhile. Once harvesting is
+complete, check and materialize the production target from the repository root:
 
 ```bash
 make env-materialize ENV=prod TARGET=svc-vm
@@ -241,7 +269,7 @@ Restart the prod API unit on the VM after applying those env changes:
 sudo systemctl restart acx-prod
 ```
 
-Stripe billing webhooks stay on the API host, not the app host.
+Billing webhooks stay on the API host, not the app host.
 
 DNS: operator A-record `app.altcontext.com` → `129.213.40.111`. Caddy issues
 the cert once that name resolves here.

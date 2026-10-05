@@ -6,7 +6,7 @@
 # The Caddyfile keeps its inode for single-file bind mounts; www and overlay
 # promotion use same-directory atomic rename. Interrupted activation is restored
 # from its durable journal at the start of the next --apply run.
-# This script does not open a remote shell and does not mint Clerk or Stripe
+# This script does not open a remote shell and does not mint Clerk or billing
 # credentials.
 #
 # Usage:
@@ -1293,7 +1293,7 @@ $(list_live_hosts | sed 's/^/    /')
   failure trap or next run restores snapshots, reapplies compose, and reloads rollback
   retain only the latest successful apply's rollback set under ${APP_ROOT}/rollback
   render overlay APP_WWW=${APP_WWW} -> /srv/app-portal
-  env ownership: Clerk runtime settings are manifest-owned; Stripe is the billing provider; VITE_CLERK_* is baked into FRONTEND_DIST
+  env ownership: Clerk runtime settings are manifest-owned; billing credentials are managed separately; VITE_CLERK_* is baked into FRONTEND_DIST
 EOF
   if [ ! -f "$CADDY_COMPOSE" ]; then
     echo "CADDY_COMPOSE is absent: ${CADDY_COMPOSE} (required for --apply)"

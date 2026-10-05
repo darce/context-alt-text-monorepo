@@ -71,11 +71,27 @@ with tarfile.open(fileobj=sys.stdout.buffer, mode="w|") as archive:
 PY
 statuses=("${PIPESTATUS[@]}")
 if (( statuses[1] != 0 )); then
-    if (( statuses[0] != 0 )); then
-        printf 'materialize_remote.sh: ssh failed with status %d (tar producer also exited with status %d)\n' \
-            "${statuses[1]}" "${statuses[0]}" >&2
+    if (( statuses[1] == 255 )); then
+        if (( statuses[0] != 0 )); then
+            printf 'materialize_remote.sh: ssh failed with status %d (tar producer also exited with status %d)\n' \
+                "${statuses[1]}" "${statuses[0]}" >&2
+        else
+            printf 'materialize_remote.sh: ssh failed with status %d\n' "${statuses[1]}" >&2
+        fi
     else
-        printf 'materialize_remote.sh: ssh failed with status %d\n' "${statuses[1]}" >&2
+        case "${statuses[1]}" in
+            1) remote_error='drift found (remote check exit 1)' ;;
+            2) remote_error='remote materialize refused with status 2' ;;
+            4) remote_error='required host secret is missing (remote materialize exit 4)' ;;
+            75) remote_error='remote materialize lock or lease busy (exit 75)' ;;
+            *) printf -v remote_error 'remote materialize exited with status %d' "${statuses[1]}" ;;
+        esac
+        if (( statuses[0] != 0 )); then
+            printf 'materialize_remote.sh: %s (tar producer also exited with status %d)\n' \
+                "$remote_error" "${statuses[0]}" >&2
+        else
+            printf 'materialize_remote.sh: %s\n' "$remote_error" >&2
+        fi
     fi
     exit "${statuses[1]}"
 fi

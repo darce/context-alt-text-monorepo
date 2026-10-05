@@ -6,6 +6,7 @@ Filesystem-only: stub caddy/docker on PATH. Never SSH to the OCI host.
 from __future__ import annotations
 
 import json
+import base64
 import os
 import re
 import shlex
@@ -44,6 +45,25 @@ SECRET_MARKERS = (
     "POLAR_WEBHOOK_SECRET",
     "RECOGNITION_ADMIN_TOKEN",
 )
+FAKE_LIVE_KEY = "pk_live_" + base64.b64encode(b"clerk.altcontext.com$").decode("ascii").rstrip("=")
+
+
+def _write_test_manifest(tmp_path: Path, *, publishable_key: str | None = FAKE_LIVE_KEY) -> Path:
+    root = tmp_path / "app-portal-test-config" / "env"
+    if root.parent.exists():
+        shutil.rmtree(root.parent)
+    shutil.copytree(REPO_ROOT / "config" / "env", root)
+    if publishable_key is not None:
+        path = root / "manifest.d" / "60-app-portal.toml"
+        text = path.read_text(encoding="utf-8")
+        text = re.sub(
+            r'(values = \{ local = "[^"]+")\s*\}',
+            rf'\1, prod = "{publishable_key}" }}',
+            text,
+            count=1,
+        )
+        path.write_text(text, encoding="utf-8")
+    return root
 
 
 def _write_executable(path: Path, body: str) -> None:
@@ -69,7 +89,11 @@ def _write_frontend(
     if index is None:
         index = _frontend_index("app")
     (dist / "index.html").write_text(index, encoding="utf-8")
-    (assets / "index.js").write_text("console.log('app-portal');\n", encoding="utf-8")
+    (assets / "index.js").write_text(
+        f"const clerk = {{ key: '{FAKE_LIVE_KEY}', fapi: 'https://clerk.altcontext.com' }};\n"
+        "console.log('app-portal', clerk);\n",
+        encoding="utf-8",
+    )
     (assets / "index.css").write_text("body { color: black; }\n", encoding="utf-8")
     return dist
 
@@ -324,6 +348,7 @@ def _run(
     env.pop("CADDYFILE", None)
     env.pop("APP_UPSTREAM", None)
     env.pop("APP_HOSTNAME", None)
+    env.pop("APP_PORTAL_ENV_ROOT", None)
     env.pop("SSH", None)
     env.pop("OCI_HOST", None)
 
@@ -340,6 +365,8 @@ def _run(
     env["APP_APPROVED_ROOTS"] = str(backend_root)
     env["APP_RELOAD_CMD"] = ""
     env["APP_HEALTH_CMD"] = str(health)
+    if not extra_env or "APP_PORTAL_ENV_ROOT" not in extra_env:
+        env["APP_PORTAL_ENV_ROOT"] = str(_write_test_manifest(tmp_path))
     if extra_env:
         env.update(extra_env)
 
@@ -984,6 +1011,63 @@ def test_apply_refuses_invalid_staged_frontend_without_touching_live_or_rollback
     assert _tree_files(rollback) == rollback_before
     assert not (tmp_path / "opt" / "acx-backend" / "app" / "staging").exists()
     assert not (tmp_path / "opt" / "acx-backend" / "app" / "activation.journal").exists()
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        ("missing-manifest-key", "VITE_CLERK_PUBLISHABLE_KEY"),
+        ("test-bundle-key", "VITE_CLERK_PUBLISHABLE_KEY"),
+        ("mismatched-fapi", "VITE_CLERK_FAPI"),
+        ("unreferenced-decoy", "VITE_CLERK_PUBLISHABLE_KEY"),
+    ],
+)
+def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
+    tmp_path: Path, failure: str, expected: str
+) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    live_before = live.read_bytes()
+    dist = _write_frontend(tmp_path)
+    module = dist / "assets" / "index.js"
+    manifest_root = _write_test_manifest(
+        tmp_path,
+        publishable_key=None if failure == "missing-manifest-key" else FAKE_LIVE_KEY,
+    )
+
+    if failure == "test-bundle-key":
+        module.write_text(
+            "const clerk = { key: 'pk_test_fake', fapi: 'https://clerk.altcontext.com' };\n",
+            encoding="utf-8",
+        )
+    elif failure == "mismatched-fapi":
+        module.write_text(
+            f"const clerk = {{ key: '{FAKE_LIVE_KEY}', fapi: 'https://other.altcontext.com' }};\n",
+            encoding="utf-8",
+        )
+    elif failure == "unreferenced-decoy":
+        module.write_text("console.log('portal bundle without Clerk settings');\n", encoding="utf-8")
+        (dist / "assets" / "unused-decoy.js").write_text(
+            f"const clerk = {{ key: '{FAKE_LIVE_KEY}', fapi: 'https://clerk.altcontext.com' }};\n",
+            encoding="utf-8",
+        )
+
+    result = _run(
+        tmp_path,
+        args=["--apply"],
+        frontend=dist,
+        live_caddy=live,
+        extra_env={"APP_PORTAL_ENV_ROOT": str(manifest_root)},
+    )
+    output = result.stdout + result.stderr
+
+    assert result.returncode != 0, output
+    assert expected in output, output
+    assert FAKE_LIVE_KEY not in output
+    assert live.read_bytes() == live_before
+    app_root = tmp_path / "opt" / "acx-backend" / "app"
+    assert not (app_root / "staging").exists()
+    assert not (app_root / "activation.journal").exists()
 
 
 def test_apply_refuses_frontend_with_missing_transitive_module(

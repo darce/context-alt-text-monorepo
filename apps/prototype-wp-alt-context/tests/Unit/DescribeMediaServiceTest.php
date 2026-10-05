@@ -8,6 +8,7 @@ use AltContext\Api\DescribeController;
 use AltContext\Api\DescribeHostInterface;
 use AltContext\Api\Services\DescribeMediaService;
 use AltContext\Api\Services\DescriptionBudgetService;
+use AltContext\Sovereign\Repositories\DescriptionUsageRepository;
 use AltContext\Sovereign\ProjectionQueryException;
 use AltContext\Tests\Stubs\NullIdentityMembersRepository;
 use AltContext\Tests\TestCase;
@@ -1861,7 +1862,7 @@ class DescribeMediaServiceTest extends TestCase
     public function testOperationIdOutsideBackendAlphabetReturns400WithoutRemoteCall(string $operationId): void
     {
         $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
-        $usageRowsBefore = $GLOBALS['__ac_description_usage_rows'] ?? [];
+        $usageRowsBefore = (new DescriptionUsageRepository())->all();
         $reservationsBefore = get_option('acx_description_budget_reservations', []);
         $req = new DescribeMediaServicePayloadRequest(
             ['idempotency_key' => 'caller-key-1234567', 'operation_id' => $operationId],
@@ -1875,7 +1876,7 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame('invalid_operation_id', $result->get_error_code());
         $this->assertSame(400, $result->get_error_data()['status'] ?? null);
         $this->assertSame([], $this->getHttpCalls());
-        $this->assertSame($usageRowsBefore, $GLOBALS['__ac_description_usage_rows'] ?? []);
+        $this->assertSame($usageRowsBefore, (new DescriptionUsageRepository())->all());
         $this->assertSame($reservationsBefore, get_option('acx_description_budget_reservations', []));
     }
 

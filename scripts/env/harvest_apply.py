@@ -298,18 +298,26 @@ def _unsafe_preimage_fragments(root: Path, fragments: list[Path]) -> list[str]:
         except ValueError:
             unsafe.add(fragment.name)
             continue
-        tracked = _run_git(repo_root, "ls-files", "--error-unmatch", "--", relative)
+        tracked = _run_git(
+            repo_root, "--literal-pathspecs", "ls-files", "--error-unmatch", "--", relative
+        )
         if tracked.returncode != 0:
             unsafe.add(fragment.name)
             continue
-        index_entry = _run_git(repo_root, "ls-files", "-v", "-z", "--", relative)
+        index_entry = _run_git(
+            repo_root, "--literal-pathspecs", "ls-files", "-v", "-z", "--", relative
+        )
         flag_tag = index_entry.stdout.partition(b" ")[0]
         # -v lowercases assume-unchanged tags; S marks skip-worktree entries.
         if index_entry.returncode != 0 or not flag_tag or flag_tag.islower() or flag_tag == b"S":
             unsafe.add(fragment.name)
             continue
-        worktree_diff = _run_git(repo_root, "diff", "--quiet", "HEAD", "--", relative)
-        index_diff = _run_git(repo_root, "diff", "--cached", "--quiet", "HEAD", "--", relative)
+        worktree_diff = _run_git(
+            repo_root, "--literal-pathspecs", "diff", "--quiet", "HEAD", "--", relative
+        )
+        index_diff = _run_git(
+            repo_root, "--literal-pathspecs", "diff", "--cached", "--quiet", "HEAD", "--", relative
+        )
         if worktree_diff.returncode != 0 or index_diff.returncode != 0:
             unsafe.add(fragment.name)
     return sorted(unsafe)

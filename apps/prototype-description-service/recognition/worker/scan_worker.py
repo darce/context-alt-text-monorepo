@@ -380,6 +380,7 @@ class ScanWorker:
                 # Reclaim is deliberately bounded to a small batch; commit it
                 # before acquiring locks for stall maintenance and normal claims.
                 await session.commit()
+                await enable_rls_bypass(session)
                 queue = ScanQueueService(repo)
                 identities_fn = getattr(queue, "terminate_stalled_jobs_with_identities", None)
                 if callable(identities_fn):

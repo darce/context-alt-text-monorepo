@@ -210,25 +210,40 @@ async def test_worker_commits_reclaim_before_stall_maintenance_and_claims(
         scan_worker_module.ScanWorkerConfig(postgres_dsn="sqlite+aiosqlite:///:memory:", poll_interval_seconds=0)
     )
     events: list[str] = []
+    sessions = []
 
     class FakeRepo:
+        def __init__(self, session) -> None:  # noqa: ANN001
+            self.session = session
+
+        def assert_bypass(self, operation: str) -> None:
+            assert self.session.rls_bypass_enabled, f"{operation} ran without the RLS bypass"
+
         async def reclaim_stale_items(self, **_kwargs):  # noqa: ANN001
+            self.assert_bypass("reclaim")
             events.append("reclaim")
             return 1
 
         async def claim_pending_items_any(self, **_kwargs):  # noqa: ANN001
+            self.assert_bypass("claim")
             events.append("claim")
             return []
 
     class FakeQueue:
-        def __init__(self, _repo) -> None:  # noqa: ANN001
-            pass
+        def __init__(self, repo) -> None:  # noqa: ANN001
+            self.repo = repo
 
         async def terminate_stalled_jobs_with_identities(self, **_kwargs):  # noqa: ANN001
+            self.repo.assert_bypass("stall termination")
             events.append("stall")
-            return []
+            return ["stalled-job"]
 
     class FakeSession:
+        def __init__(self) -> None:
+            self.rls_bypass_enabled = False
+            self.transaction_id = 0
+            self.local_statements_by_transaction: dict[int, list[str]] = {}
+
         async def __aenter__(self):
             return self
 
@@ -237,12 +252,28 @@ async def test_worker_commits_reclaim_before_stall_maintenance_and_claims(
 
         async def commit(self):
             events.append("commit")
+            self.rls_bypass_enabled = False
+            self.transaction_id += 1
 
     async def no_op(*_args, **_kwargs):  # noqa: ANN001
         return None
 
+    async def enable_fake_rls_bypass(session):  # noqa: ANN001
+        statement = "SET LOCAL app.bypass_rls = 'true'"
+        session.local_statements_by_transaction.setdefault(session.transaction_id, []).append(statement)
+        session.rls_bypass_enabled = True
+        events.append("bypass")
+
     async def no_clustering(*, session, now):  # noqa: ANN001
+        assert session.rls_bypass_enabled, "clustering selection ran without the RLS bypass"
+        events.append("clustering")
         return False
+
+    async def settle_stalled_usage(session, jobs):  # noqa: ANN001
+        assert session.rls_bypass_enabled, "stalled-usage settlement ran without the RLS bypass"
+        assert jobs == ["stalled-job"]
+        events.append("settle")
+        return []
 
     async def stop_after_tick(_delay):  # noqa: ANN001
         raise asyncio.CancelledError()
@@ -251,14 +282,26 @@ async def test_worker_commits_reclaim_before_stall_maintenance_and_claims(
     monkeypatch.setattr(worker, "_sweep_stale_usage_reservations_if_due", no_op)
     monkeypatch.setattr(worker, "_refresh_mv_if_needed", no_op)
     monkeypatch.setattr(worker, "_process_pending_clustering_jobs", no_clustering)
-    monkeypatch.setattr(worker, "_session_factory", lambda: FakeSession())
-    monkeypatch.setattr(scan_worker_module, "enable_rls_bypass", no_op)
-    monkeypatch.setattr(scan_worker_module, "SqlAlchemyScanQueueRepository", lambda _session: FakeRepo())
+    monkeypatch.setattr(worker, "_settle_stalled_usage", settle_stalled_usage)
+
+    def make_session() -> FakeSession:
+        session = FakeSession()
+        sessions.append(session)
+        return session
+
+    monkeypatch.setattr(worker, "_session_factory", make_session)
+    monkeypatch.setattr(scan_worker_module, "enable_rls_bypass", enable_fake_rls_bypass)
+    monkeypatch.setattr(scan_worker_module, "SqlAlchemyScanQueueRepository", FakeRepo)
     monkeypatch.setattr(scan_worker_module, "ScanQueueService", FakeQueue)
     monkeypatch.setattr(scan_worker_module.asyncio, "sleep", stop_after_tick)
 
     with pytest.raises(asyncio.CancelledError):
         await worker.run_forever()
 
-    assert events.index("commit") < events.index("stall") < events.index("claim")
+    assert events.index("commit") < events.index("stall") < events.index("settle")
+    assert events.index("settle") < events.index("clustering") < events.index("claim")
+    assert sessions[0].local_statements_by_transaction == {
+        0: ["SET LOCAL app.bypass_rls = 'true'"],
+        1: ["SET LOCAL app.bypass_rls = 'true'"],
+    }
     await worker.__aexit__(None, None, None)

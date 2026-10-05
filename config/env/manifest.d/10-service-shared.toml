@@ -44,19 +44,19 @@ class = "config"
 targets = ["svc-vm", "svc-fir"]
 section = "Secret backend"
 example = "oci_vault"
-doc = 'domain: infra (backend selector) | source: service operator | consumer: shared/secrets.py:get_secret_provider'
+doc = 'Default env in dev/staging/fir. Prod uses oci_vault with a host-preserved map; declaring its value is pending manifest.py:_validate_remote_sources support for that map source. | domain: infra (backend selector) | source: service operator | consumer: shared/secrets.py:get_secret_provider'
 required = false
-values = {}
+values = { dev = "env", staging = "env", fir = "env" }
 
 [[var]]
 name = "RECOGNITION_VAULT_SECRET_MAP"
-class = "config"
+class = "secret"
 targets = ["svc-vm", "svc-fir"]
 section = "Secret backend"
 example = '{"PGPASSWORD":"ocid1.vaultsecret.oc1..REPLACE","RECOGNITION_ADMIN_TOKEN":"ocid1.vaultsecret.oc1..REPLACE","POSTGRES_DSN":"ocid1.vaultsecret.oc1..REPLACE","POSTGRES_SYNC_DSN":"ocid1.vaultsecret.oc1..REPLACE","ACX_GPU_ENDPOINT_API_KEY":"ocid1.vaultsecret.oc1..REPLACE_GPU_ENDPOINT_KEY"}'
-doc = 'domain: infra (OCID map) | source: OCI deploy | consumer: shared/secrets.py:OciVaultSecretProvider.from_env'
+doc = 'Host-preserved OCID map in prod (not credential material); secret class selects host-line preservation. Dev, staging and fir use backend env and intentionally omit this map. The oci_vault reader requires the live map at startup. | domain: infra (OCID map) | source: OCI deploy | consumer: shared/secrets.py:OciVaultSecretProvider.from_env'
 required = false
-values = {}
+secret = { prod = "host:" }
 
 [[var]]
 name = "POSTGRES_USER"
@@ -197,7 +197,7 @@ targets = ["svc-vm", "svc-fir"]
 section = "Operator /admin surface"
 example = "1"
 doc = 'domain: service root-of-trust (ack) | source: service operator | consumer: validate_admin_config (must be 1 in production when admin on)'
-values = { prod = "1", fir = "0" }
+values = { dev = "0", staging = "0", prod = "1", fir = "0" }
 
 [[var]]
 name = "RECOGNITION_API_KEY_HASH_ALGORITHM"
@@ -315,7 +315,7 @@ targets = ["svc-local", "svc-vm", "svc-fir"]
 section = "API security"
 example = "X-API-Key"
 doc = 'domain: service root-of-trust (config) | source: service operator | consumer: HTTP auth dependency (API key header name)'
-values = { local = "X-API-Key" }
+values = { local = "X-API-Key", dev = "X-API-Key", staging = "X-API-Key", prod = "X-API-Key", fir = "X-API-Key" }
 
 [[var]]
 name = "RECOGNITION_ADMIN_ENABLED"
@@ -325,7 +325,7 @@ section = "Operator /admin surface"
 example = "false"
 doc = 'domain: service root-of-trust (flag) | source: service operator | consumer: SecuritySettings.admin_enabled; /admin router mount'
 required = false
-values = { prod = "true", fir = "false" }
+values = { dev = "false", staging = "false", prod = "true", fir = "false" }
 
 [[var]]
 name = "RECOGNITION_ADMIN_TOKEN"
@@ -354,7 +354,7 @@ section = "Image description"
 example = "gpu_qwen30b"
 doc = 'domain: infra | source: service operator | consumer: scene description adapter selection'
 required = false
-values = { dev = "gpu_qwen30b", prod = "gpu_qwen30b" }
+values = { dev = "gpu_qwen30b", staging = "florence_small", prod = "gpu_qwen30b", demo = "florence_small" }
 
 [[var]]
 name = "ACX_GPU_ENDPOINT_URL"
@@ -363,7 +363,7 @@ targets = ["svc-vm", "demo"]
 section = "GPU lifecycle"
 example = "http://acx-gpu-burst.compute.oraclevcn.com:8000"
 doc = 'domain: infra | source: service operator | consumer: remote GPU description adapter'
-values = { dev = "http://10.0.1.36:8000", prod = "http://10.0.1.36:8000" }
+values = { dev = "http://10.0.1.36:8000", staging = "", prod = "http://10.0.1.36:8000", demo = "" }
 
 [[var]]
 name = "ACX_GPU_SNAPSHOT_DIR"
@@ -372,7 +372,7 @@ targets = ["svc-vm", "demo"]
 section = "GPU lifecycle"
 example = "/run/acx"
 doc = 'domain: infra | source: OCI deploy | consumer: docker-compose.prod.yml snapshot mount'
-values = {}
+values = { dev = "/run/acx", staging = "/run/acx", prod = "/run/acx", demo = "/run/acx" }
 
 [[var]]
 name = "ACX_GPU_STATE_PATH"
@@ -381,7 +381,7 @@ targets = ["svc-vm", "demo"]
 section = "GPU lifecycle"
 example = "/run/acx/gpu-state.json"
 doc = 'domain: infra | source: OCI deploy | consumer: lifecycle producer and scene GPU-state reader'
-values = {}
+values = { dev = "/run/acx/gpu-state.json", staging = "/run/acx/gpu-state.json", prod = "/run/acx/gpu-state.json", demo = "/run/acx/gpu-state.json" }
 
 [[var]]
 name = "ACX_GPU_STATE_STALE_SECONDS"
@@ -390,7 +390,7 @@ targets = ["svc-vm", "demo"]
 section = "GPU lifecycle"
 example = "180"
 doc = 'domain: infra | source: service operator | consumer: scene GPU-state reader / snapshot check'
-values = {}
+values = { dev = "180", staging = "180", prod = "180", demo = "180" }
 
 [[var]]
 name = "ACX_ENV"

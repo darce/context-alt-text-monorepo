@@ -53,7 +53,27 @@ def test_gpu_instance_uses_configurable_a10_shape_and_dedicated_cloud_init() -> 
     assert "source_id               = var.gpu_image_ocid" in main_tf
     assert "boot_volume_size_in_gbs = var.gpu_boot_volume_size_in_gbs" in main_tf
     assert 'display_name        = "acx-gpu-burst"' in main_tf
-    assert 'user_data           = base64encode(templatefile("${path.module}/gpu-cloud-init.yaml"' in main_tf
+    user_data_match = re.search(
+        r'\buser_data\s*=\s*base64encode\s*\(\s*templatefile\s*\(\s*'
+        r'"(?P<template>[^\"]+)"\s*,\s*\{(?P<variables>.*?)\}\s*\)\s*\)',
+        _gpu_instance_block(),
+        re.DOTALL,
+    )
+    assert user_data_match is not None
+    assert user_data_match.group("template") == "${path.module}/gpu-cloud-init.yaml"
+    template_variables = user_data_match.group("variables")
+    assert re.search(
+        r"\bmax_uptime_seconds\s*=\s*var\.gpu_max_uptime_seconds\b",
+        template_variables,
+    )
+    assert re.search(
+        r"\bself_stop_enabled\s*=\s*var\.gpu_self_stop_enabled\s*\?\s*1\s*:\s*0",
+        template_variables,
+    )
+    assert re.search(
+        r"\bgpu_api_key_secret_ocid\s*=\s*var\.gpu_api_key_secret_ocid\b",
+        template_variables,
+    )
     # First-boot RUNNING so cloud-init finishes; operator stops after bootstrap (S2-05).
     assert 'state = "RUNNING"' in main_tf
     assert "cloud-init" in main_tf.lower() or "gpu-cloud-init" in main_tf

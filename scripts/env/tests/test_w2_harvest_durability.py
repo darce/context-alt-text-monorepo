@@ -222,6 +222,41 @@ values = {}
     assert fragment.read_bytes() == original
 
 
+def test_untracked_wildcard_fragment_cannot_borrow_tracked_preimage(
+    clean_manifest_root, tmp_path, capsys
+):
+    fragment = clean_manifest_root / "manifest.d" / "vars*.toml"
+    fragment.write_text(
+        '''version = 1
+[[var]]
+name = "EXTRA_MODE"
+class = "config"
+targets = ["vm"]
+section = "Runtime"
+example = "safe"
+values = {}
+''',
+        encoding="utf-8",
+    )
+    original = fragment.read_bytes()
+    original_fragments = {
+        path: path.read_bytes() for path in (clean_manifest_root / "manifest.d").glob("*.toml")
+    }
+    source = _source(tmp_path)
+    document = json.loads(source.read_text(encoding="utf-8"))
+    document["values"] = {"EXTRA_MODE": "safe-new"}
+    source.write_text(json.dumps(document), encoding="utf-8")
+
+    code, stdout, stderr = _apply(clean_manifest_root, source, capsys)
+
+    assert code == 2
+    assert stdout == ""
+    assert "vars*.toml" in stderr
+    assert "safe-new" not in stderr
+    assert fragment.read_bytes() == original
+    assert {path: path.read_bytes() for path in original_fragments} == original_fragments
+
+
 def test_non_git_root_refuses_before_writing(clean_manifest_root, tmp_path, capsys):
     shutil.rmtree(clean_manifest_root / ".git")
     fragment = clean_manifest_root / "manifest.d" / "vars.toml"

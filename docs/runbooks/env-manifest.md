@@ -64,9 +64,13 @@ derive = "postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}/${DB_NAME}"
 
 ## Secret references
 
-- `keychain:<service>/<account>` reads a macOS Keychain item.
-- `env:<NAME>` reads a value from the process environment, for example in CI.
-- `vault:` is reserved for ENVMAN-2 and currently refuses to render.
+- `keychain:<service>/<account>` reads a macOS Keychain item. Use this for local values.
+- `env:<NAME>` reads a value from the process environment, for example in CI. Use this for local or CI values.
+- `vault:<vault-secret-ocid>` is an app-time Vault map identifier. The rendered variable is blank (`NAME=`), and its OCID is added to `RECOGNITION_VAULT_SECRET_MAP` for the application to fetch. The VM materializer does not fetch `vault:` values.
+- `oci:<vault-secret-ocid>` is fetched by the VM materializer with the OCI CLI and instance-principal authentication. It decodes the OCI secret-bundle's `BASE64` content and writes the bytes into the backend environment file. It is not added to `RECOGNITION_VAULT_SECRET_MAP`.
+- `host:` has an empty remainder and preserves the existing backend environment-file value byte for byte during materialization. Use it for values maintained on the VM.
+
+`vault:` and `oci:` must contain a vault-secret OCID. The manifest validates `vault:` against `^ocid1\.vaultsecret\.oc1\.[a-z0-9-]*\.[a-z0-9]{20,}$` and `oci:` against `^ocid1\.vaultsecret\.oc1\.[a-z0-9-]+\.[a-z0-9]{20,}$`. `host:` and `oci:` require a `remote_paths` entry for each selected environment. `vault:`, `oci:`, and `host:` are refused on `public_build` and `test` targets; derive expressions cannot reference any of them. `keychain:` and `env:` are refused for environments with a `remote_paths` entry.
 
 Store a secret in the default Keychain service (`acx-local`):
 
@@ -107,6 +111,6 @@ For every target, values and examples matching `sk_(test|live)_`, `\brk_(test|li
 
 Choose the appropriate fragment, class, target, and section. Add a safe example and the per-environment values, secret reference, or derive expression. Run `make env-examples`, commit the fragment and regenerated templates, then run `make env-check`.
 
-## Out of scope: ENVMAN-2
+## VM materialization
 
-Production VM rendering through OCI Vault is out of scope. So is removing prod `app-portal.env` in favour of build-time `VITE_*` arguments.
+Run materialization on the VM for a target/environment with a configured `remote_paths` entry. This is the production path for backend `oci:` references; it keeps OCI retrieval on the VM and writes the resulting environment file with mode `0600`. `oci:` is for materialization-time secret bytes, while `vault:` remains an app-time map reference that renders blank. Removing prod `app-portal.env` in favour of build-time `VITE_*` arguments remains outside this runbook's scope.

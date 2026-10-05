@@ -80,6 +80,7 @@ exit "${SHIM_RC:-0}"
         "SHIM_MKTEMP_RC",
         "SHIM_TAR_RC",
         "SHIM_TAR_FAKE_RENDER",
+        "SHIM_RENDER_SOURCE_MODE",
         "SHIM_SUDO_RC",
         "SHIM_SUDO_LAUNCH",
         "SHIM_MATERIALIZE_RC",
@@ -130,14 +131,30 @@ if [[ ${SHIM_TAR_FAKE_RENDER:-0} == 1 ]]; then
     destination="${@: -1}"
     cat > /dev/null
     mkdir -p "$destination/scripts/env"
-    cat > "$destination/scripts/env/render_env.py" <<'PY'
+    case ${SHIM_RENDER_SOURCE_MODE:-valid} in
+        open)
+            ;;
+        syntax)
+            printf 'this is not valid Python syntax\n' > "$destination/scripts/env/render_env.py"
+            ;;
+        import)
+            printf 'import missing_render_env_startup_module_for_test\n' > "$destination/scripts/env/render_env.py"
+            ;;
+        valid)
+            cat > "$destination/scripts/env/render_env.py" <<'PY'
 import os
 import sys
 
-if os.environ.get("SHIM_MATERIALIZE_STDOUT") == "1":
-    print("materialized stdout")
-sys.exit(int(os.environ.get("SHIM_MATERIALIZE_RC", "0")))
+def main():
+    if os.environ.get("SHIM_MATERIALIZE_STDOUT") == "1":
+        print("materialized stdout")
+    return int(os.environ.get("SHIM_MATERIALIZE_RC", "0"))
 PY
+            ;;
+        *)
+            exit 99
+            ;;
+    esac
     exit 0
 fi
 if [[ ${SHIM_TAR_RC:-0} != 0 ]]; then
@@ -347,3 +364,37 @@ def test_constructed_remote_command_runs_python_materializer_wrapper(remote, tmp
     assert result.returncode == 1
     assert "drift found (remote check exit 1)" in result.stderr
     assert "stage marker missing or invalid" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    "source_mode,diagnostic",
+    [
+        ("open", "FileNotFoundError"),
+        ("syntax", "SyntaxError"),
+        ("import", "ModuleNotFoundError"),
+    ],
+)
+@pytest.mark.parametrize("args", [[], ["--apply"]])
+def test_constructed_remote_command_reports_materializer_startup_failures_as_bootstrap(
+    remote, tmp_path, source_mode, diagnostic, args
+):
+    execute_constructed_remote(remote, tmp_path, fake_python=False)
+    remote.update(
+        SHIM_SUDO_LAUNCH="1",
+        SHIM_TAR_FAKE_RENDER="1",
+        SHIM_RENDER_SOURCE_MODE=source_mode,
+    )
+
+    result = subprocess.run(
+        ["bash", str(WRAPPER), "dev", "t", *args],
+        env=remote,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 1
+    assert "remote bootstrap failed with status 1" in result.stderr
+    assert diagnostic in result.stderr
+    assert "drift found" not in result.stderr
+    assert "remote materialize exited with status 1" not in result.stderr

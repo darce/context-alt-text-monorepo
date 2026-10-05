@@ -72,6 +72,55 @@ def test_command_substitutions_are_withheld_as_one_assignment(write_manifest, te
     assert result["withheld"]["unparsed"] == ["NOTICE"]
 
 
+@pytest.mark.parametrize(
+    "pattern",
+    ["foo", "(foo|bar)"],
+    ids=("case-pattern", "parenthesized-case-pattern"),
+)
+def test_case_pattern_parenthesis_does_not_end_command_substitution(write_manifest, pattern):
+    render = load_module("render_env")
+    module = load_module("harvest_extract")
+    root = _manifest(write_manifest, "NOTICE", "LOG_LEVEL", "AFTER")
+    text = (
+        'NOTICE=$(case "$x" in\n'
+        f"{pattern})\n"
+        "LOG_LEVEL=private-fragment\n"
+        ";;\n"
+        "esac\n"
+        ")\n"
+        "AFTER=visible\n"
+    )
+
+    assignments = render.shell_assignments(text)
+    result = _extract(module, root, text)
+
+    assert set(assignments) == {"NOTICE", "AFTER"}
+    assert result["values"] == {"AFTER": "visible"}
+    assert result["withheld"]["missing"] == ["LOG_LEVEL"]
+    assert result["withheld"]["unparsed"] == ["NOTICE"]
+
+
+def test_unclosed_case_construct_withholds_ambiguous_tail(write_manifest):
+    render = load_module("render_env")
+    module = load_module("harvest_extract")
+    root = _manifest(write_manifest, "NOTICE", "LOG_LEVEL", "AFTER")
+    text = (
+        'NOTICE=$(case "$x" in\n'
+        "foo)\n"
+        "LOG_LEVEL=private-fragment\n"
+        ")\n"
+        "AFTER=also-private\n"
+    )
+
+    assignments = render.shell_assignments(text)
+    result = _extract(module, root, text)
+
+    assert set(assignments) == {"NOTICE"}
+    assert result["values"] == {}
+    assert result["withheld"]["missing"] == ["AFTER", "LOG_LEVEL"]
+    assert result["withheld"]["unparsed"] == ["NOTICE"]
+
+
 def test_malformed_command_substitution_consumes_the_ambiguous_tail(write_manifest):
     module = load_module("harvest_extract")
     root = _manifest(write_manifest, "NOTICE", "LOG_LEVEL", "AFTER")

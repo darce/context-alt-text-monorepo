@@ -162,7 +162,11 @@ def render_target(
                 lines.extend(_doc_lines(var.doc))
             if env is not None and var.secret.get(env) == "host:":
                 rendered_host_lines = (host_lines or {}).get(var.name, [])
-                if var.required and not rendered_host_lines:
+                vault_map_required = var.name == "RECOGNITION_VAULT_SECRET_MAP" and any(
+                    item.name == "RECOGNITION_SECRET_BACKEND" and item.values.get(env) == "oci_vault"
+                    for item in variables
+                )
+                if (var.required or vault_map_required) and not rendered_host_lines:
                     if missing_host_keys is None:
                         raise ManifestError(f"{var.source}: {var.name}: host secret unavailable for env {env}")
                     missing_host_keys.add(var.name)

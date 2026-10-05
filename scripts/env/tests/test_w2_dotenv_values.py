@@ -73,17 +73,17 @@ def test_command_substitutions_are_withheld_as_one_assignment(write_manifest, te
 
 
 @pytest.mark.parametrize(
-    "pattern",
-    ["foo", "(foo|bar)"],
+    "pattern_line",
+    ["foo)", "(foo|bar)"],
     ids=("case-pattern", "parenthesized-case-pattern"),
 )
-def test_case_pattern_parenthesis_does_not_end_command_substitution(write_manifest, pattern):
+def test_case_pattern_parenthesis_does_not_end_command_substitution(write_manifest, pattern_line):
     render = load_module("render_env")
     module = load_module("harvest_extract")
     root = _manifest(write_manifest, "NOTICE", "LOG_LEVEL", "AFTER")
     text = (
         'NOTICE=$(case "$x" in\n'
-        f"{pattern})\n"
+        f"{pattern_line}\n"
         "LOG_LEVEL=private-fragment\n"
         ";;\n"
         "esac\n"
@@ -241,3 +241,99 @@ def test_process_substitution_literals_are_not_scanned_as_executable(operator):
     assert render.shell_words(f"\\{operator}\\(printf\\ literal\\)") == [
         f"{operator}(printf literal)"
     ]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'NOTICE="$(cat <<EOF\n\'")\nLOG_LEVEL=private-fragment\nEOF\n)"\nAFTER=visible\n',
+        'NOTICE="$(cat <<EOF\n\'\nEOF\n)"\nAFTER=visible\n',
+        "NOTICE=$(cat <<EOF\n)\nLOG_LEVEL=private-fragment\nEOF\n)\nAFTER=visible\n",
+    ],
+    ids=("quoted-body-quote-and-close-paren", "quoted-body-single-quote", "body-close-paren"),
+)
+def test_heredoc_bodies_are_opaque_inside_substitutions(write_manifest, text):
+    render = load_module("render_env")
+    module = load_module("harvest_extract")
+    root = _manifest(write_manifest, "NOTICE", "LOG_LEVEL", "AFTER")
+
+    assignments = render.shell_assignments(text)
+    result = _extract(module, root, text)
+
+    assert set(assignments) == {"NOTICE", "AFTER"}
+    assert result["values"] == {"AFTER": "visible"}
+    assert result["withheld"]["missing"] == ["LOG_LEVEL"]
+    assert result["withheld"]["unparsed"] == ["NOTICE"]
+
+
+@pytest.mark.parametrize(
+    ("operator", "terminator", "body_prefix"),
+    [
+        ("<<'END'", "END", ""),
+        ('<<"END"', "END", ""),
+        ("<<-END", "\tEND", "\t"),
+    ],
+    ids=("single-quoted-delimiter", "double-quoted-delimiter", "tab-stripped-delimiter"),
+)
+def test_bounded_heredoc_delimiters_resume_after_the_opaque_body(
+    write_manifest, operator, terminator, body_prefix
+):
+    render = load_module("render_env")
+    module = load_module("harvest_extract")
+    root = _manifest(write_manifest, "NOTICE", "LOG_LEVEL", "AFTER")
+    text = (
+        f"NOTICE=$(cat {operator}\n"
+        f"{body_prefix})\n"
+        f"{body_prefix}LOG_LEVEL=private-fragment\n"
+        f"{terminator}\n"
+        ")\n"
+        "AFTER=visible\n"
+    )
+
+    assignments = render.shell_assignments(text)
+    result = _extract(module, root, text)
+
+    assert set(assignments) == {"NOTICE", "AFTER"}
+    assert result["values"] == {"AFTER": "visible"}
+    assert result["withheld"]["missing"] == ["LOG_LEVEL"]
+    assert result["withheld"]["unparsed"] == ["NOTICE"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "NOTICE=$(cat <<$DELIM\n)\nLOG_LEVEL=private-fragment\nEOF\n)\nAFTER=also-private\n",
+        "NOTICE=$(cat <<EOF\n)\nLOG_LEVEL=private-fragment\nAFTER=also-private\n",
+    ],
+    ids=("unsupported-expanded-delimiter", "unterminated-delimiter"),
+)
+def test_ambiguous_heredocs_quarantine_the_remaining_input(write_manifest, text):
+    render = load_module("render_env")
+    module = load_module("harvest_extract")
+    root = _manifest(write_manifest, "NOTICE", "LOG_LEVEL", "AFTER")
+
+    assignments = render.shell_assignments(text)
+    result = _extract(module, root, text)
+
+    assert set(assignments) == {"NOTICE"}
+    assert result["values"] == {}
+    assert result["withheld"]["missing"] == ["AFTER", "LOG_LEVEL"]
+    assert result["withheld"]["unparsed"] == ["NOTICE"]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("NOTICE='<<EOF'\n", "<<EOF"),
+        (r"NOTICE=\<\<EOF" + "\n", "<<EOF"),
+    ],
+    ids=("quoted-literal", "escaped-literal"),
+)
+def test_heredoc_operators_in_literal_text_remain_values(write_manifest, text, expected):
+    module = load_module("harvest_extract")
+    root = _manifest(write_manifest, "NOTICE")
+
+    result = _extract(module, root, text)
+
+    assert result["values"] == {"NOTICE": expected}
+    assert result["withheld"]["unparsed"] == []

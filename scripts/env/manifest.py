@@ -279,13 +279,15 @@ def _load_value_source(
         _fail(source, f"{name}.secret", "only secret vars can define secret refs")
     for reference in secret.values():
         scheme, separator, remainder = reference.partition(":")
-        if not separator or scheme not in {"keychain", "env", "vault", "host"}:
+        if not separator or scheme not in {"keychain", "env", "vault", "oci", "host"}:
             shown_scheme = scheme if separator else "missing"
             _fail(source, f"{name}.{shown_scheme}", "unsupported secret scheme")
         if scheme == "host" and remainder:
             _fail(source, name, "host ref must have an empty remainder")
         if scheme == "vault" and re.fullmatch(r"ocid1\.vaultsecret\.oc1\.[a-z0-9-]*\.[a-z0-9]{20,}", remainder) is None:
             _fail(source, name, "vault ref requires a valid vault secret OCID")
+        if scheme == "oci" and re.fullmatch(r"ocid1\.vaultsecret\.oc1\.[a-z0-9-]+\.[a-z0-9]{20,}", remainder) is None:
+            _fail(source, name, "oci ref requires a valid vault secret OCID")
     return values, secret, derive
 
 

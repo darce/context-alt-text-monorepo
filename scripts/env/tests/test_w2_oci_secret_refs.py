@@ -136,7 +136,7 @@ def _toml_table(values: dict[str, str]) -> str:
     return "{ " + ", ".join(f'{key} = {json.dumps(value)}' for key, value in values.items()) + " }"
 
 
-def _oci_manifest(tmp_path: Path) -> Path:
+def _oci_manifest(tmp_path: Path, secret_ref: str = f"oci:{SECRET_OCID}") -> Path:
     root = tmp_path / "envroot"
     manifest_dir = root / "manifest.d"
     manifest_dir.mkdir(parents=True)
@@ -161,26 +161,16 @@ def _oci_manifest(tmp_path: Path) -> Path:
             'targets = ["t"]',
             'section = "S"',
             'example = "example-value"',
-            f"secret = {_toml_table({'dev': f'oci:{SECRET_OCID}'})}",
+            f"secret = {_toml_table({'dev': secret_ref})}",
         ]) + "\n",
         encoding="utf-8",
     )
     return root
 
 
-def _run_materialize(tmp_path, monkeypatch, *, runner):
+def _run_materialize(tmp_path, monkeypatch, *, runner, secret_ref: str = f"oci:{SECRET_OCID}"):
     mat = load_module("materialize")
-    manifest_module = importlib.import_module("env.manifest")
     render = load_module("render_env")
-    original_value_source = manifest_module._load_value_source
-
-    # Manifest acceptance belongs to its owner lane; exercise this resolver seam with an OCI ref.
-    def allow_oci_value_source(table, source, name, cls):
-        if "secret" in table and any(value.startswith("oci:") for value in table["secret"].values()):
-            return {}, dict(table["secret"]), None
-        return original_value_source(table, source, name, cls)
-
-    monkeypatch.setattr(manifest_module, "_load_value_source", allow_oci_value_source)
     original_render_target = render.render_target
 
     def render_with_fake_oci(manifest, target, env, **kwargs):
@@ -189,7 +179,7 @@ def _run_materialize(tmp_path, monkeypatch, *, runner):
 
     monkeypatch.setattr(render, "render_target", render_with_fake_oci)
 
-    manifest_root = _oci_manifest(tmp_path)
+    manifest_root = _oci_manifest(tmp_path, secret_ref)
     fs_root = tmp_path / "fs"
     output_path = fs_root / INTO.lstrip("/")
     output_path.parent.mkdir(parents=True)
@@ -247,3 +237,22 @@ def test_oci_unavailable_materialization_exits_4_without_disclosure(tmp_path, mo
     assert output_path.read_bytes() == before
     assert "API_TOKEN=" not in output_path.read_text(encoding="utf-8")
     assert stat.S_IMODE(output_path.stat().st_mode) == 0o600
+
+
+def test_malformed_oci_materialization_is_refused_before_cli(tmp_path, monkeypatch):
+    calls = []
+
+    def runner(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, stdout=_oci_result(), stderr="")
+
+    result, output_path, before, out, err = _run_materialize(
+        tmp_path, monkeypatch, runner=runner,
+        secret_ref="oci:ocid1.vaultsecret.oc1..aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+
+    assert result == 2
+    assert "oci" in err
+    assert calls == []
+    assert output_path.read_bytes() == before
+    assert out == ""

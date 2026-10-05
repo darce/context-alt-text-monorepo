@@ -474,6 +474,81 @@ def test_apply_refuses_prepopulated_frontend_secret_and_writes_nothing(cli: Modu
     assert stat.S_IMODE(frontend.stat().st_mode) == 0o600
 
 
+def test_atomic_write_preserves_existing_owner_before_replace(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "backend.env"
+    target.write_text("KEEP=yes\n", encoding="utf-8")
+    original_stat = target.stat()
+    real_fchown = cli.os.fchown
+    real_replace = cli.os.replace
+    ownership_calls: list[tuple[int, int]] = []
+
+    def record_fchown(fd: int, uid: int, gid: int) -> None:
+        ownership_calls.append((uid, gid))
+        real_fchown(fd, uid, gid)
+
+    def check_replace(src: Path, dst: Path) -> None:
+        assert ownership_calls == [(original_stat.st_uid, original_stat.st_gid)]
+        real_replace(src, dst)
+
+    monkeypatch.setattr(cli.os, "fchown", record_fchown)
+    monkeypatch.setattr(cli.os, "replace", check_replace)
+
+    cli.atomic_write_text(target, "UPDATED=yes\n")
+
+    result_stat = target.stat()
+    assert (result_stat.st_uid, result_stat.st_gid) == (original_stat.st_uid, original_stat.st_gid)
+    assert stat.S_IMODE(result_stat.st_mode) == 0o600
+    assert target.read_text(encoding="utf-8") == "UPDATED=yes\n"
+    assert list(tmp_path.iterdir()) == [target]
+
+
+def test_atomic_write_new_file_does_not_change_owner(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "backend.env"
+
+    def unexpected_fchown(fd: int, uid: int, gid: int) -> None:
+        pytest.fail("new files must keep the caller's ownership")
+
+    monkeypatch.setattr(cli.os, "fchown", unexpected_fchown)
+
+    cli.atomic_write_text(target, "UPDATED=yes\n")
+
+    assert target.stat().st_uid == os.geteuid()
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert target.read_text(encoding="utf-8") == "UPDATED=yes\n"
+    assert list(tmp_path.iterdir()) == [target]
+
+
+def test_atomic_write_owner_permission_failure_preserves_original(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "backend.env"
+    original = b"KEEP=yes\n"
+    target.write_bytes(original)
+    original_stat = target.stat()
+    attempted_fds: list[int] = []
+
+    def deny_fchown(fd: int, uid: int, gid: int) -> None:
+        attempted_fds.append(fd)
+        raise PermissionError("injected ownership failure")
+
+    monkeypatch.setattr(cli.os, "fchown", deny_fchown)
+
+    with pytest.raises(cli.ClerkConfigError, match=str(target)) as error:
+        cli.atomic_write_text(target, "UPDATED=yes\n")
+
+    assert isinstance(error.value.__cause__, PermissionError)
+    assert target.stat() == original_stat
+    assert target.read_bytes() == original
+    assert list(tmp_path.iterdir()) == [target]
+    assert len(attempted_fds) == 1
+    with pytest.raises(OSError):
+        os.fstat(attempted_fds[0])
+
+
 def test_second_write_failure_does_not_leave_partial_config(
     cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

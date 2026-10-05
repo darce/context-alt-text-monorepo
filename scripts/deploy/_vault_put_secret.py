@@ -28,6 +28,7 @@ import inspect
 import math
 import queue
 import random
+import re
 import sys
 import threading
 import time
@@ -40,6 +41,7 @@ ALLOWED_SECRET_NAMES = frozenset({
     "OCIR_CREDENTIAL_GENERATION",
     "ACX_GPU_ENDPOINT_API_KEY",
 })
+VAULT_SECRET_OCID = re.compile(r"ocid1\.vaultsecret\.oc[0-9]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9._-]+")
 
 
 def validate_destination(vault_id: str, secret_name: str) -> None:
@@ -82,6 +84,13 @@ def _positive_float(value):
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be a finite positive number")
     return parsed
+
+
+def _vault_secret_ocid(value: str) -> str:
+    """Parse a complete OCI Vault secret OCID for identity binding."""
+    if not VAULT_SECRET_OCID.fullmatch(value):
+        raise argparse.ArgumentTypeError("must be a full Vault secret OCID")
+    return value
 
 
 class SecretNotReadableError(RuntimeError):
@@ -448,6 +457,12 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--secret-name", required=True)
     ap.add_argument("--vault-id", default=DEFAULT_VAULT_OCID)
+    ap.add_argument(
+        "--expected-secret-id",
+        type=_vault_secret_ocid,
+        default=None,
+        help="require the name-selected secret to have this existing OCID before writing",
+    )
     ap.add_argument("--if-match", default=None, help="require this ETag for a fenced replacement")
     ap.add_argument("--require-current-prefix", default=None, help="require current decoded bytes to start with text")
     ap.add_argument("--key-id", default=None, help="defaults to a sibling secret's key")
@@ -489,7 +504,13 @@ def main() -> int:
     args = ap.parse_args()
 
     validate_destination(args.vault_id, args.secret_name)
-    gpu_only_options = args.bootstrap or args.rotate_existing or args.instance_principal or args.result_only
+    gpu_only_options = (
+        args.bootstrap
+        or args.rotate_existing
+        or args.instance_principal
+        or args.result_only
+        or args.expected_secret_id is not None
+    )
     if gpu_only_options and args.secret_name != "ACX_GPU_ENDPOINT_API_KEY":
         raise SystemExit("GPU writer options require ACX_GPU_ENDPOINT_API_KEY")
     if args.secret_name == "ACX_GPU_ENDPOINT_API_KEY" and not args.rotate_existing:
@@ -570,6 +591,11 @@ def main() -> int:
     )
 
     existing = find_secret(vaults, compartment_id, args.vault_id, args.secret_name, invoke=invoke)
+    if args.expected_secret_id is not None:
+        if existing is None:
+            raise RuntimeError("cannot verify expected secret identity: name-selected secret is missing")
+        if getattr(existing, "id", None) != args.expected_secret_id:
+            raise RuntimeError("name-selected secret does not match expected secret identity")
     update_etag = None
     conditional_update = _accepts_keyword(vaults.update_secret, "if_match")
     if args.rotate_existing and existing is None:

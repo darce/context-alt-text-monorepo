@@ -109,6 +109,34 @@ def test_writer_requires_a_64_byte_hex_gpu_key() -> None:
         vault_put_secret.validate_gpu_endpoint_key(b"not-a-credential")
 
 
+@pytest.mark.parametrize(
+    "secret_id",
+    [
+        "ocid1.vault.oc1.iad." + "a" * 40,
+        "ocid1.vaultsecret.oc1..fakegpuapikey123",
+        "ocid1.vaultsecret.oc1.iad.fakegpuapikey123\nextra",
+        "ocid1.vaultsecret.oc1.iad.",
+    ],
+)
+def test_expected_gpu_secret_id_requires_a_full_vault_secret_ocid(monkeypatch, secret_id) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "_vault_put_secret.py",
+            "--secret-name",
+            "ACX_GPU_ENDPOINT_API_KEY",
+            "--expected-secret-id",
+            secret_id,
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        vault_put_secret.main()
+
+    assert exc_info.value.code == 2
+
+
 def test_writer_rejects_non_acx_vault() -> None:
     with pytest.raises(SystemExit, match="refusing unowned vault"):
         vault_put_secret.validate_destination("ocid1.vault.oc1.iad.attacker", "OCIR_AUTH_TOKEN")
@@ -252,6 +280,12 @@ def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypa
         key_id="ocid1.key.test",
         lifecycle_state="ACTIVE",
     )
+    sibling = SimpleNamespace(
+        id="ocid1.vaultsecret.oc1.iad.fakesiblingsecret123",
+        secret_name="OCIR_USERNAME",
+        key_id="ocid1.key.test",
+        lifecycle_state="ACTIVE",
+    )
     current_value = [b"b" * 64]
     existing_present = [True]
     updates: list[str] = []
@@ -265,8 +299,14 @@ def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypa
             self.base_client = SimpleNamespace(timeout=None)
 
     class VaultsClient(Client):
-        def list_secrets(self, **_kwargs):
-            return SimpleNamespace(data=[existing] if existing_present[0] else [], headers={})
+        def list_secrets(self, **kwargs):
+            if existing_present[0]:
+                data = [existing]
+            elif kwargs.get("name") == "ACX_GPU_ENDPOINT_API_KEY":
+                data = []
+            else:
+                data = [sibling]
+            return SimpleNamespace(data=data, headers={})
 
         def list_secret_versions(self, *_args, **_kwargs):
             return SimpleNamespace(data=[], headers={})
@@ -357,6 +397,59 @@ def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypa
     assert capsys.readouterr().out == f"{existing.id} 64\n"
     assert updates == [existing.id]
 
+    expected_id = existing.id
+
+    def run_with_expected_id(mode: str, remote_id: str | None, candidate: bytes) -> None:
+        existing_present[0] = remote_id is not None
+        if remote_id is not None:
+            existing.id = remote_id
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "_vault_put_secret.py",
+                "--secret-name",
+                "ACX_GPU_ENDPOINT_API_KEY",
+                "--instance-principal",
+                mode,
+                "--expected-secret-id",
+                expected_id,
+                "--result-only",
+                "--readable-timeout",
+                "0",
+            ],
+        )
+        monkeypatch.setattr(
+            sys,
+            "stdin",
+            SimpleNamespace(buffer=io.BytesIO(candidate), isatty=lambda: False),
+        )
+
+    # An expected identity binds the name-selected secret before any write.
+    # Missing and recreated secrets are refusals in both modes.
+    for mode in ("--bootstrap", "--rotate-existing"):
+        before = (len(created_values), len(updates))
+        run_with_expected_id(mode, None, b"g" * 64)
+        with pytest.raises(RuntimeError, match="expected secret identity"):
+            vault_put_secret.main()
+        assert (len(created_values), len(updates)) == before
+
+        run_with_expected_id(mode, "ocid1.vaultsecret.oc1.iad.recreatedgpuapikey456", b"h" * 64)
+        with pytest.raises(RuntimeError, match="expected secret identity"):
+            vault_put_secret.main()
+        assert (len(created_values), len(updates)) == before
+
+    # A matching identity permits bootstrap and explicitly requested rotation.
+    run_with_expected_id("--bootstrap", expected_id, b"i" * 64)
+    assert vault_put_secret.main() == 0
+    assert capsys.readouterr().out == f"{expected_id} 64\n"
+    assert updates == [expected_id]
+
+    run_with_expected_id("--rotate-existing", expected_id, b"f" * 64)
+    assert vault_put_secret.main() == 0
+    assert capsys.readouterr().out == f"{expected_id} 64\n"
+    assert updates == [expected_id, expected_id]
+
     existing_present[0] = False
     monkeypatch.setattr(sys, "argv", [
         "_vault_put_secret.py",
@@ -378,7 +471,7 @@ def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypa
     assert vault_put_secret.main() == 0
     assert capsys.readouterr().out == f"{existing.id} 64\n"
     assert created_values == [b"e" * 64]
-    assert updates == [existing.id]
+    assert updates == [existing.id, existing.id]
 
     # A GPU write without an explicit mode is a safe bootstrap: it may create
     # an absent key, but an existing key is read and left unchanged.
@@ -399,7 +492,7 @@ def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypa
 
     assert vault_put_secret.main() == 0
     assert capsys.readouterr().out == f"{existing.id} 64\n"
-    assert updates == [existing.id]
+    assert updates == [existing.id, existing.id]
 
 
 def test_instance_principal_clients_accept_real_sdk_constructors_without_network() -> None:

@@ -438,7 +438,7 @@ def _make_client(factory, config, no_retry, timeout, signer=None):
         kwargs["retry_strategy"] = no_retry
     if _accepts_keyword(factory, "timeout"):
         kwargs["timeout"] = timeout
-    client = factory(None if signer is not None else config, **kwargs)
+    client = factory({} if signer is not None else config, **kwargs)
     if hasattr(client, "base_client"):
         client.base_client.timeout = timeout
     return client
@@ -492,6 +492,10 @@ def main() -> int:
     gpu_only_options = args.bootstrap or args.rotate_existing or args.instance_principal or args.result_only
     if gpu_only_options and args.secret_name != "ACX_GPU_ENDPOINT_API_KEY":
         raise SystemExit("GPU writer options require ACX_GPU_ENDPOINT_API_KEY")
+    if args.secret_name == "ACX_GPU_ENDPOINT_API_KEY" and not args.rotate_existing:
+        # An omitted mode is a safe bootstrap. Existing GPU keys are never
+        # changed unless the caller explicitly requests rotation.
+        args.bootstrap = True
 
     import oci  # noqa: PLC0415 -- lazy so the readiness gate stays unit-testable
 

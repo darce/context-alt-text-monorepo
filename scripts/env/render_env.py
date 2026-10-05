@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import stat
 import sys
 import tempfile
@@ -36,6 +37,27 @@ def _target(manifest: Manifest, target_name: str) -> Target:
 def _target_vars(manifest: Manifest, target_name: str) -> tuple[Var, ...]:
     return tuple(effective_var(manifest, var, target_name)
                  for var in manifest.vars if target_name in var.targets)
+
+
+def host_secret_required(var: Var, variables: tuple[Var, ...], env: str) -> bool:
+    # The input is the live host env file: oci_vault must fail closed for an
+    # absent, blank or quoted-empty host map, in both checks and writes.
+    return var.required or (
+        var.name == "RECOGNITION_VAULT_SECRET_MAP" and any(
+            item.name == "RECOGNITION_SECRET_BACKEND" and item.values.get(env) == "oci_vault"
+            for item in variables
+        )
+    )
+
+
+def _assignment_has_value(line: str) -> bool:
+    match = _ASSIGNMENT.match(line)
+    if match is None:
+        return False
+    try:
+        return any(shlex.split(match.group(2), comments=False))
+    except ValueError:
+        return False
 
 
 def _format_value(value: str, name: str, *, references: bool = True) -> str:
@@ -162,7 +184,9 @@ def render_target(
                 lines.extend(_doc_lines(var.doc))
             if env is not None and var.secret.get(env) == "host:":
                 rendered_host_lines = (host_lines or {}).get(var.name, [])
-                if var.required and not rendered_host_lines:
+                if host_secret_required(var, variables, env) and not any(
+                    _assignment_has_value(line) for line in rendered_host_lines
+                ):
                     if missing_host_keys is None:
                         raise ManifestError(f"{var.source}: {var.name}: host secret unavailable for env {env}")
                     missing_host_keys.add(var.name)

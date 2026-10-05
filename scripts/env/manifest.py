@@ -644,10 +644,18 @@ def _validate_remote_sources(manifest: Manifest) -> None:
             mapping = vault_secret_map(manifest, target.name, env)
             backend = variables.get("RECOGNITION_SECRET_BACKEND")
             uses_vault = backend is not None and backend.values.get(env) == "oci_vault"
+            map_var = variables.get("RECOGNITION_VAULT_SECRET_MAP")
+            host_map = map_var is not None and map_var.secret.get(env) == "host:"
+            # oci_vault has exactly one map source: derived Vault refs (static boot-key
+            # checks) or a required host line (boot keys checked by the app at startup).
+            if host_map and mapping:
+                _fail(map_var.source, map_var.name, "host-preserved map cannot be mixed with vault refs")
             if mapping and (not uses_vault or not any(var.derive_vault_map for var in variables.values())):
                 var = variables[next(iter(mapping))]
                 _fail(var.source, var.name, "vault refs require derive_vault_map and RECOGNITION_SECRET_BACKEND = oci_vault")
             if uses_vault:
+                if host_map:
+                    continue
                 if not mapping:
                     _fail(backend.source, backend.name, "oci_vault requires vault refs")
                 for name in ("PGPASSWORD", "RECOGNITION_ADMIN_TOKEN"):

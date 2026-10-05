@@ -8,20 +8,26 @@ const stylesPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'styles.c
 function getDeclarations(stylesheet: string, selector: RegExp): string {
   const rule = stylesheet.match(new RegExp(`${selector.source}\\s*\\{([^}]*)\\}`));
   if (!rule) throw new Error(`Missing CSS rule for ${selector}`);
-  return rule[1];
+  const declarations = rule[1];
+  if (declarations === undefined) throw new Error(`Missing declarations for CSS rule ${selector}`);
+  return declarations;
 }
 
 function getDeclaration(rule: string, property: string): string {
   const declaration = rule.match(new RegExp(`(?:^|\\n)\\s*${property}\\s*:\\s*([^;]+);`));
   if (!declaration) throw new Error(`Missing ${property} declaration`);
-  return declaration[1].trim();
+  const value = declaration[1];
+  if (value === undefined) throw new Error(`Missing value for ${property} declaration`);
+  return value.trim();
 }
 
 function getHexColor(value: string, variables: Map<string, string>): string {
   const variable = /^var\((--[\w-]+)\)$/.exec(value);
   if (variable) {
-    const resolved = variables.get(variable[1]);
-    if (!resolved) throw new Error(`Missing CSS variable ${variable[1]}`);
+    const name = variable[1];
+    if (name === undefined) throw new Error(`Missing CSS variable name in ${value}`);
+    const resolved = variables.get(name);
+    if (!resolved) throw new Error(`Missing CSS variable ${name}`);
     return getHexColor(resolved, variables);
   }
   if (/^#[\da-f]{6}$/i.test(value)) return value;
@@ -35,11 +41,15 @@ function luminance(hex: string): number {
     const srgb = Number.parseInt(channel, 16) / 255;
     return srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4;
   });
+  if (red === undefined || green === undefined || blue === undefined) {
+    throw new Error(`Invalid hex color channels: ${hex}`);
+  }
   return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
 }
 
 function contrastRatio(first: string, second: string): number {
   const [lighter, darker] = [luminance(first), luminance(second)].sort((a, b) => b - a);
+  if (lighter === undefined || darker === undefined) throw new Error('Unable to calculate contrast ratio');
   return (lighter + 0.05) / (darker + 0.05);
 }
 
@@ -48,7 +58,10 @@ describe('ADVFIX-1 form-control border contrast', () => {
     const stylesheet = readFileSync(stylesPath, 'utf8');
     const root = getDeclarations(stylesheet, /:root/);
     const variables = new Map<string, string>();
-    for (const [, name, value] of root.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) {
+    for (const match of root.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) {
+      const name = match[1];
+      const value = match[2];
+      if (name === undefined || value === undefined) throw new Error('Invalid CSS variable declaration');
       variables.set(name, value.trim());
     }
     const controls = getDeclarations(stylesheet, /input,\s*select,\s*textarea/);

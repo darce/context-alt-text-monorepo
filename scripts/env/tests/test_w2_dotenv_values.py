@@ -100,6 +100,40 @@ def test_case_pattern_parenthesis_does_not_end_command_substitution(write_manife
     assert result["withheld"]["unparsed"] == ["NOTICE"]
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        'echo "first\nsecond" esac',
+        "echo first \\\nsecond esac",
+    ],
+    ids=("quoted-newline", "escaped-line-continuation"),
+)
+def test_case_argument_esac_does_not_close_multiline_word(write_manifest, command):
+    render = load_module("render_env")
+    module = load_module("harvest_extract")
+    root = _manifest(write_manifest, "NOTICE", "LOG_LEVEL", "AFTER")
+    text = (
+        'NOTICE=$(case "$x" in\n'
+        "foo)\n"
+        f"{command}\n"
+        ";;\n"
+        "bar)\n"
+        "LOG_LEVEL=private-fragment\n"
+        ";;\n"
+        "esac\n"
+        ")\n"
+        "AFTER=visible\n"
+    )
+
+    assignments = render.shell_assignments(text)
+    result = _extract(module, root, text)
+
+    assert set(assignments) == {"NOTICE", "AFTER"}
+    assert result["values"] == {"AFTER": "visible"}
+    assert result["withheld"]["missing"] == ["LOG_LEVEL"]
+    assert result["withheld"]["unparsed"] == ["NOTICE"]
+
+
 def test_unclosed_case_construct_withholds_ambiguous_tail(write_manifest):
     render = load_module("render_env")
     module = load_module("harvest_extract")

@@ -363,11 +363,15 @@ def _scan_shell_line(raw: str, state: _ShellState) -> str:
             state.in_word = True
         index += 1
 
-    if state.contexts and state.contexts[-1].kind == "paren":
+    if (
+        state.contexts
+        and state.contexts[-1].kind == "paren"
+        and not state.quote
+        and not state.escaped
+    ):
         context = state.contexts[-1]
         _finish_shell_word(context)
-        if not state.escaped:
-            context.command_start = True
+        context.command_start = True
     if not state.escaped:
         if state.quote:
             state.in_word = True

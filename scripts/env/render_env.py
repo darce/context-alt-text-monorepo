@@ -66,10 +66,19 @@ def host_secret_required(var: Var, variables: tuple[Var, ...], env: str) -> bool
 
 
 @dataclass
+class _ShellCase:
+    phase: str
+    pattern_started: bool = False
+
+
+@dataclass
 class _ShellContext:
     kind: str
     parent_quote: str
     paren_depth: int = 0
+    case_stack: list[_ShellCase] = field(default_factory=list)
+    word: list[str] = field(default_factory=list)
+    command_start: bool = True
 
 
 @dataclass
@@ -79,6 +88,35 @@ class _ShellState:
     in_word: bool = False
     contexts: list[_ShellContext] = field(default_factory=list)
     has_substitution: bool = False
+
+
+def _finish_shell_word(context: _ShellContext) -> None:
+    if not context.word:
+        return
+    word = "".join(context.word)
+    context.word.clear()
+
+    current_case = context.case_stack[-1] if context.case_stack else None
+    if current_case is not None and current_case.phase == "pattern":
+        if word == "esac" and context.command_start and not current_case.pattern_started:
+            context.case_stack.pop()
+        else:
+            current_case.pattern_started = True
+        context.command_start = False
+    elif word == "case" and context.command_start:
+        context.case_stack.append(_ShellCase("header"))
+        context.command_start = False
+    elif current_case is not None and current_case.phase == "header" and word == "in":
+        current_case.phase = "pattern"
+        current_case.pattern_started = False
+        context.command_start = False
+    elif current_case is not None and current_case.phase == "body" and word == "esac" and context.command_start:
+        context.case_stack.pop()
+        context.command_start = False
+    elif word in {"then", "else", "do", "elif", "!"}:
+        context.command_start = True
+    else:
+        context.command_start = False
 
 
 def _scan_shell_line(raw: str, state: _ShellState) -> str:
@@ -91,6 +129,8 @@ def _scan_shell_line(raw: str, state: _ShellState) -> str:
         if state.escaped:
             state.escaped = False
             state.in_word = True
+            if state.contexts and state.contexts[-1].kind == "paren":
+                state.contexts[-1].word.extend(("\0", char))
             index += 1
             continue
 
@@ -112,12 +152,16 @@ def _scan_shell_line(raw: str, state: _ShellState) -> str:
                 state.quote = ""
             elif char == "$" and index + 1 < len(raw) and raw[index + 1] == "(":
                 state.has_substitution = True
+                if state.contexts and state.contexts[-1].kind == "paren":
+                    state.contexts[-1].word.append("\0")
                 state.contexts.append(_ShellContext("paren", state.quote, 1))
                 state.quote = ""
                 state.in_word = False
                 index += 1
             elif char == "`":
                 state.has_substitution = True
+                if state.contexts and state.contexts[-1].kind == "paren":
+                    state.contexts[-1].word.append("\0")
                 state.contexts.append(_ShellContext("backtick", state.quote))
                 state.quote = ""
                 state.in_word = False
@@ -127,6 +171,8 @@ def _scan_shell_line(raw: str, state: _ShellState) -> str:
             continue
 
         if char in "\"'":
+            if state.contexts and state.contexts[-1].kind == "paren":
+                state.contexts[-1].word.append("\0")
             state.quote = char
             state.in_word = True
             index += 1
@@ -134,6 +180,8 @@ def _scan_shell_line(raw: str, state: _ShellState) -> str:
 
         if char == "$" and index + 1 < len(raw) and raw[index + 1] == "(":
             state.has_substitution = True
+            if state.contexts and state.contexts[-1].kind == "paren":
+                state.contexts[-1].word.append("\0")
             state.contexts.append(_ShellContext("paren", state.quote, 1))
             state.quote = ""
             state.in_word = False
@@ -150,6 +198,8 @@ def _scan_shell_line(raw: str, state: _ShellState) -> str:
 
         if char == "`":
             state.has_substitution = True
+            if state.contexts and state.contexts[-1].kind == "paren":
+                state.contexts[-1].word.append("\0")
             state.contexts.append(_ShellContext("backtick", state.quote))
             state.quote = ""
             state.in_word = False
@@ -161,20 +211,68 @@ def _scan_shell_line(raw: str, state: _ShellState) -> str:
             break
 
         if context is not None and context.kind == "paren":
-            if char == "(":
+            current_case = context.case_stack[-1] if context.case_stack else None
+            if char == "(" and current_case is not None and current_case.phase == "pattern":
+                _finish_shell_word(context)
+                current_case.pattern_started = True
+                state.in_word = True
+            elif char == "(":
+                _finish_shell_word(context)
                 context.paren_depth += 1
+                context.command_start = True
                 state.in_word = False
             elif char == ")":
-                context.paren_depth -= 1
-                if context.paren_depth == 0:
-                    state.contexts.pop()
-                    state.quote = context.parent_quote
-                    state.in_word = True
-                else:
+                _finish_shell_word(context)
+                current_case = context.case_stack[-1] if context.case_stack else None
+                if current_case is not None and current_case.phase == "pattern":
+                    if current_case.pattern_started:
+                        current_case.phase = "body"
+                        context.command_start = True
                     state.in_word = False
-            elif char in " \t\r;|&":
+                elif current_case is not None and context.paren_depth <= 1:
+                    # A case construct without a proven esac boundary keeps the
+                    # substitution open, so malformed input cannot expose its tail.
+                    state.in_word = False
+                else:
+                    context.paren_depth -= 1
+                    if context.paren_depth == 0 and not context.case_stack:
+                        state.contexts.pop()
+                        state.quote = context.parent_quote
+                        state.in_word = True
+                    else:
+                        state.in_word = False
+            elif current_case is not None and current_case.phase == "pattern":
+                if char in " \t\r;|&":
+                    _finish_shell_word(context)
+                    state.in_word = False
+                else:
+                    context.word.append(char)
+                    state.in_word = True
+            elif char in ";|&":
+                _finish_shell_word(context)
+                if char == ";" and raw[index:index + 3] == ";;&":
+                    if current_case is not None and current_case.phase == "body":
+                        current_case.phase = "pattern"
+                        current_case.pattern_started = False
+                    context.command_start = True
+                    state.in_word = False
+                    index += 3
+                    continue
+                if char == ";" and raw[index:index + 2] in {";;", ";&"}:
+                    if current_case is not None and current_case.phase == "body":
+                        current_case.phase = "pattern"
+                        current_case.pattern_started = False
+                    context.command_start = True
+                    state.in_word = False
+                    index += 2
+                    continue
+                context.command_start = True
+                state.in_word = False
+            elif char in " \t\r":
+                _finish_shell_word(context)
                 state.in_word = False
             else:
+                context.word.append(char)
                 state.in_word = True
         elif char in " \t\r;|&":
             state.in_word = False
@@ -182,6 +280,11 @@ def _scan_shell_line(raw: str, state: _ShellState) -> str:
             state.in_word = True
         index += 1
 
+    if state.contexts and state.contexts[-1].kind == "paren":
+        context = state.contexts[-1]
+        _finish_shell_word(context)
+        if not state.escaped:
+            context.command_start = True
     if not state.escaped:
         if state.quote:
             state.in_word = True

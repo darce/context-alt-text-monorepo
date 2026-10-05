@@ -70,6 +70,7 @@
 #   ACX_REMOTE_BUILDER_ENDPOINT
 #                            default unix:///var/run/docker.sock; other endpoints are refused
 #   ACX_ALLOW_DIRTY          set to 1 to allow dirty deploy inputs (dev and dev-fir only)
+#   ACX_ENV_PREFLIGHT        default 0; 1 runs manifest drift check (materialize_remote.sh <env> <target> --check) before deploy and promote
 #   ACX_CUTOVER_HEALTH_ATTEMPTS default 5 (max 60); ACX_CUTOVER_HEALTH_SLEEP default 5 seconds (max 120 s) (candidate admission)
 #   ACX_CANONICAL_HEALTH_ATTEMPTS default 8 (max 60); ACX_CANONICAL_HEALTH_SLEEP default 5 seconds (max 120 s) (restart readiness)
 #   ACX_VERIFY_ATTEMPTS      default 5 (max 60) (post-deploy public verify only)
@@ -4995,6 +4996,7 @@ do_promote() {
     fail "Production promotion requires CONFIRM=PROMOTE. Re-run: CONFIRM=PROMOTE $0 promote $from_env $to_env"
   fi
 
+  preflight_env_manifest "$to_env"
   preflight_remote_ocir_auth
   deploy_env_lease acquire "${to_env}" || fail "deploy lease for ${to_env} unavailable; holder line: ${ACX_DEPLOY_LEASE_LAST_HOLDER:-unknown}; refusing to preserve the rollback tag"
   preserve_rollback_tag "$to_env"

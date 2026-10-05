@@ -72,6 +72,12 @@ class _ShellCase:
 
 
 @dataclass
+class _HereDoc:
+    delimiter: str
+    strip_tabs: bool
+
+
+@dataclass
 class _ShellContext:
     kind: str
     parent_quote: str
@@ -87,7 +93,9 @@ class _ShellState:
     escaped: bool = False
     in_word: bool = False
     contexts: list[_ShellContext] = field(default_factory=list)
+    heredocs: list[_HereDoc] = field(default_factory=list)
     has_substitution: bool = False
+    quarantined: bool = False
 
 
 def _finish_shell_word(context: _ShellContext) -> None:
@@ -119,9 +127,52 @@ def _finish_shell_word(context: _ShellContext) -> None:
         context.command_start = False
 
 
+def _parse_heredoc(raw: str, index: int) -> tuple[_HereDoc, int] | None:
+    """Accept only simple identifier delimiters, optionally singly/doubly quoted."""
+    strip_tabs = raw.startswith("<<-", index)
+    cursor = index + (3 if strip_tabs else 2)
+    while cursor < len(raw) and raw[cursor] in " \t":
+        cursor += 1
+    if cursor >= len(raw):
+        return None
+
+    quote = raw[cursor] if raw[cursor] in "'\"" else ""
+    if quote:
+        end = raw.find(quote, cursor + 1)
+        if end < 0:
+            return None
+        delimiter = raw[cursor + 1:end]
+        cursor = end + 1
+    else:
+        match = re.match(r"[A-Za-z_][A-Za-z0-9_]*", raw[cursor:])
+        if match is None:
+            return None
+        delimiter = match.group(0)
+        cursor += len(delimiter)
+
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", delimiter) is None:
+        return None
+    if cursor < len(raw) and raw[cursor] not in " \t\r;|&()<>":
+        return None
+    return _HereDoc(delimiter, strip_tabs), cursor
+
+
 def _scan_shell_line(raw: str, state: _ShellState) -> str:
     # Track shell quote and substitution context so inner command text cannot
     # become an env assignment. Substitutions are never evaluated (SECD-05).
+    if state.quarantined:
+        return raw
+
+    # Here-document data is not shell syntax. A recognized delimiter starts a
+    # body on the next non-continued physical line; its terminator also stays
+    # opaque, after which substitution scanning resumes.
+    if state.heredocs and not state.escaped:
+        heredoc = state.heredocs[0]
+        candidate = raw.lstrip("\t") if heredoc.strip_tabs else raw
+        if candidate == heredoc.delimiter:
+            state.heredocs.pop(0)
+        return raw
+
     comment_at: int | None = None
     index = 0
     while index < len(raw):
@@ -219,6 +270,28 @@ def _scan_shell_line(raw: str, state: _ShellState) -> str:
         if char == "#" and not state.in_word:
             comment_at = index
             break
+
+        context = state.contexts[-1] if state.contexts else None
+        if (
+            context is not None
+            and context.kind in {"paren", "backtick"}
+            and char == "<"
+            and raw[index:index + 2] == "<<"
+            and raw[index:index + 3] != "<<<"
+        ):
+            parsed = _parse_heredoc(raw, index)
+            if parsed is None:
+                # Expansions, concatenated delimiter words and other shell
+                # forms are intentionally outside this bounded scanner.
+                state.quarantined = True
+                return raw
+            heredoc, end = parsed
+            if context.kind == "paren":
+                _finish_shell_word(context)
+            state.heredocs.append(heredoc)
+            state.in_word = False
+            index = end
+            continue
 
         if context is not None and context.kind == "paren":
             current_case = context.case_stack[-1] if context.case_stack else None
@@ -323,7 +396,10 @@ def shell_words(raw: str) -> list[str] | None:
         return None
     state = _ShellState(in_word=_starts_value_word(raw))
     raw = _scan_shell_line(raw, state)
-    if state.has_substitution or state.quote or state.escaped or state.contexts:
+    if (
+        state.has_substitution or state.quote or state.escaped or state.contexts
+        or state.heredocs or state.quarantined
+    ):
         return None
     try:
         return shlex.split(raw, posix=True)
@@ -337,7 +413,7 @@ def shell_assignments(text: str) -> dict[str, list[str]]:
     state = _ShellState()
     current: list[str] | None = None
     for line in text.split("\n"):
-        if state.quote or state.contexts or state.escaped:
+        if state.quote or state.contexts or state.escaped or state.heredocs or state.quarantined:
             raw = _scan_shell_line(line, state)
             if current is not None:
                 current[-1] += "\n" + raw

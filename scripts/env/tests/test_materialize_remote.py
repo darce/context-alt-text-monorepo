@@ -127,7 +127,8 @@ def test_wrapper_builds_remote_command(remote, environment):
     assert result.returncode == 0, result.stderr
     command = ssh_args(remote)[-1]
     assert "sudo python3 -B" in command
-    for token in ("mktemp -d", "trap", "EXIT", "rm -rf", "tar", "sudo python3",
+    for token in ("mktemp -d", "trap", "EXIT", "rm -rf", "tar", "sudo python3 -B",
+                  "python3 -B",
                   "/scripts/env/render_env.py", "materialize", "--root",
                   "/config/env", "--env", environment, "--target", "t", "--into",
                   f"/opt/acx-backend/{environment}/.env"):

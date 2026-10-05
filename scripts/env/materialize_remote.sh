@@ -47,7 +47,8 @@ PY
 printf -v arguments ' --env %q --target %q --into %q' "$environment" "$target" "$remote_path"
 [[ $mode != --check ]] || arguments+=' --check'
 [[ $adopt != true ]] || arguments+=' --adopt'
-remote_command='set -eu; tmp=$(mktemp -d); trap '\''rm -rf -- "$tmp"'\'' EXIT; tar -xf - -C "$tmp"; sudo python3 -B "$tmp/scripts/env/render_env.py" materialize --root "$tmp/config/env"'
+stage_nonce=$(python3 -c 'import secrets; print(secrets.token_hex(16))')
+remote_command='set -eu; tmp=; stage_file=; trap '\''status=$?; trap - EXIT; if [ -n "$stage_file" ] && [ -e "$stage_file" ]; then stage=materialize; else stage=bootstrap; fi; printf "__MATERIALIZE_REMOTE_STAGE_'"$stage_nonce"'__:%s:%s\n" "$stage" "$status" >&2; if [ -n "$tmp" ]; then rm -rf -- "$tmp"; fi; exit "$status"'\'' EXIT; tmp=$(mktemp -d); stage_file=$tmp/.materialize-stage; tar -xf - -C "$tmp"; sudo python3 -B -c '\''import sys; marker, script = sys.argv[1:3]; open(marker, "x").close(); sys.argv = [script, *sys.argv[3:]]; __file__ = script; exec(compile(open(script, "rb").read(), script, "exec"))'\'' "$stage_file" "$tmp/scripts/env/render_env.py" materialize --root "$tmp/config/env"'
 remote_command+=$arguments
 
 # tarfile maps an arbitrary manifest directory without platform-specific tar transforms.
@@ -57,8 +58,17 @@ ssh_options=(
     -o "ServerAliveCountMax=${ENV_MATERIALIZE_SSH_SERVER_ALIVE_COUNT_MAX:-4}"
     -o "BatchMode=yes"
 )
+# Keep the remote wrapper's stage marker separate from streamed stdout. The nonce makes
+# incidental or malformed diagnostic text insufficient to classify a remote exit.
+ssh_stderr_file=$(mktemp) || {
+    local_status=$?
+    printf 'materialize_remote.sh: cannot capture ssh diagnostics (mktemp exited with status %d)\n' \
+        "$local_status" >&2
+    exit "$local_status"
+}
+trap 'rm -f -- "$ssh_stderr_file"' EXIT
 set +e
-python3 - "$repo_root" "$manifest_root" <<'PY' | ssh "${ssh_options[@]}" "${OCI_USER:-ubuntu}@${OCI_HOST:-acx-backend.tail1a44b8.ts.net}" "$remote_command"
+python3 - "$repo_root" "$manifest_root" <<'PY' | ssh "${ssh_options[@]}" "${OCI_USER:-ubuntu}@${OCI_HOST:-acx-backend.tail1a44b8.ts.net}" "$remote_command" 2>"$ssh_stderr_file"
 import sys
 import tarfile
 from pathlib import Path
@@ -70,6 +80,26 @@ with tarfile.open(fileobj=sys.stdout.buffer, mode="w|") as archive:
     archive.add(sys.argv[2], arcname="config/env")
 PY
 statuses=("${PIPESTATUS[@]}")
+marker_prefix="__MATERIALIZE_REMOTE_STAGE_${stage_nonce}__"
+marker_regex="^${marker_prefix}:(bootstrap|materialize):([0-9]{1,3})$"
+marker_count=0
+marker_stage=''
+marker_status=''
+while IFS= read -r ssh_line || [[ -n $ssh_line ]]; do
+    if [[ $ssh_line == "$marker_prefix"* ]]; then
+        marker_count=$((marker_count + 1))
+        if [[ $ssh_line =~ $marker_regex ]]; then
+            marker_stage=${BASH_REMATCH[1]}
+            marker_status=${BASH_REMATCH[2]}
+            continue
+        fi
+    fi
+    printf '%s\n' "$ssh_line" >&2
+done < "$ssh_stderr_file"
+marker_valid=false
+if (( marker_count == 1 )) && [[ $marker_status == "${statuses[1]}" ]]; then
+    marker_valid=true
+fi
 if (( statuses[1] != 0 )); then
     if (( statuses[1] == 255 )); then
         if (( statuses[0] != 0 )); then
@@ -79,13 +109,26 @@ if (( statuses[1] != 0 )); then
             printf 'materialize_remote.sh: ssh failed with status %d\n' "${statuses[1]}" >&2
         fi
     else
-        case "${statuses[1]}" in
-            1) remote_error='drift found (remote check exit 1)' ;;
-            2) remote_error='remote materialize refused with status 2' ;;
-            4) remote_error='required host secret is missing (remote materialize exit 4)' ;;
-            75) remote_error='remote materialize lock or lease busy (exit 75)' ;;
-            *) printf -v remote_error 'remote materialize exited with status %d' "${statuses[1]}" ;;
-        esac
+        if [[ $marker_valid == true && $marker_stage == bootstrap ]]; then
+            printf -v remote_error 'remote bootstrap failed with status %d' "${statuses[1]}"
+        elif [[ $marker_valid != true || $marker_stage != materialize ]]; then
+            printf -v remote_error 'remote command exited with status %d (stage marker missing or invalid)' \
+                "${statuses[1]}"
+        else
+            case "${statuses[1]}" in
+                1)
+                    if [[ $mode == --check ]]; then
+                        remote_error='drift found (remote check exit 1)'
+                    else
+                        remote_error='remote materialize exited with status 1'
+                    fi
+                    ;;
+                2) remote_error='remote materialize refused with status 2' ;;
+                4) remote_error='required host secret is missing (remote materialize exit 4)' ;;
+                75) remote_error='remote materialize lock or lease busy (exit 75)' ;;
+                *) printf -v remote_error 'remote materialize exited with status %d' "${statuses[1]}" ;;
+            esac
+        fi
         if (( statuses[0] != 0 )); then
             printf 'materialize_remote.sh: %s (tar producer also exited with status %d)\n' \
                 "$remote_error" "${statuses[0]}" >&2

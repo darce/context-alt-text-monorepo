@@ -50,14 +50,69 @@ def host_secret_required(var: Var, variables: tuple[Var, ...], env: str) -> bool
     )
 
 
+def _shell_line(raw: str, quote: str = "") -> tuple[str, str, bool]:
+    # Live env files are sourced by bash: only actual assignments count, and
+    # lines inside open quotes are never assignments. When unsure, withhold
+    # the value as unparsed/missing rather than emitting it (SECD-01, SECD-05).
+    escaped = False
+    in_word = bool(quote)
+    for index, char in enumerate(raw):
+        if escaped:
+            escaped = False
+        elif char == "\\" and quote != "'":
+            escaped = True
+            in_word = True
+        elif quote:
+            if char == quote:
+                quote = ""
+        elif char in "\"'":
+            quote = char
+            in_word = True
+        elif char == "#" and not in_word:
+            return raw[:index], quote, False
+        else:
+            in_word = char not in " \t\r\n"
+    return raw, quote, escaped
+
+
+def shell_words(raw: str) -> list[str] | None:
+    """Unquote a single physical value line, preserving embedded hashes."""
+    if "\n" in raw:
+        return None
+    raw, _, _ = _shell_line(raw)
+    try:
+        return shlex.split(raw, posix=True)
+    except ValueError:
+        return None
+
+
+def shell_assignments(text: str) -> dict[str, list[str]]:
+    """Collect assignment occurrences without interpreting quoted inner lines."""
+    assignments: dict[str, list[str]] = {}
+    quote = ""
+    continued = False
+    current: list[str] | None = None
+    for line in text.split("\n"):
+        if quote or continued:
+            raw, quote, continued = _shell_line(line, quote)
+            if current is not None:
+                current[-1] += "\n" + raw
+        else:
+            match = _ASSIGNMENT.match(line)
+            raw, quote, continued = _shell_line(match.group(2) if match else line)
+            current = None
+            if match is not None:
+                current = assignments.setdefault(match.group(1), [])
+                current.append(raw)
+    return assignments
+
+
 def _assignment_has_value(line: str) -> bool:
     match = _ASSIGNMENT.match(line)
     if match is None:
         return False
-    try:
-        return any(shlex.split(match.group(2), comments=False))
-    except ValueError:
-        return False
+    tokens = shell_words(match.group(2))
+    return tokens is not None and len(tokens) == 1 and bool(tokens[0])
 
 
 def _format_value(value: str, name: str, *, references: bool = True) -> str:

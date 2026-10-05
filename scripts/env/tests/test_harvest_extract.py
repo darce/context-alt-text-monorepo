@@ -164,6 +164,33 @@ def test_multiple_words_with_inline_comment_remain_unparsed(write_manifest):
     assert result["withheld"]["unparsed"] == ["NAME"]
 
 
+@pytest.mark.parametrize("quote", ["'", '"'])
+@pytest.mark.parametrize("cls", ["secret", "config"])
+def test_multiline_quotes_never_extract_inner_assignments(write_manifest, tmp_path, capsys, quote, cls):
+    module = load_module("harvest_extract")
+    name = "DB_PASSWORD" if cls == "secret" else "PUBLIC_NOTICE"
+    source = 'secret = { prod = "host:" }' if cls == "secret" else 'values = { prod = "notice" }'
+    root = _root(write_manifest, _var(name, cls=cls, source=source), _var("LOG_LEVEL"), _var("AFTER"))
+    env_path = tmp_path / "opt/acx-backend/prod/.env"
+    env_path.parent.mkdir(parents=True)
+    env_path.write_text(
+        f"{name}={quote}first\nLOG_LEVEL=private-fragment\nlast{quote}\nAFTER=visible\n",
+        encoding="utf-8",
+    )
+
+    assert _invoke(module, root, tmp_path) == 0
+
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    assert result["values"] == {"AFTER": "visible"}
+    assert result["withheld"]["missing"] == ["LOG_LEVEL"]
+    assert name in result["withheld"]["unparsed"]
+    if cls == "secret":
+        assert result["withheld"]["secret"] == [name]
+    assert "private-fragment" not in captured.out + captured.err
+    assert captured.err == ""
+
+
 def test_missing_env_file_fails_with_names_only(write_manifest, tmp_path: Path, capsys):
     module = load_module("harvest_extract")
     root = _root(write_manifest, _var("LOG_LEVEL"))

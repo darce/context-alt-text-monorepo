@@ -149,6 +149,10 @@ def test_missing_env_file_fails_with_names_only(write_manifest, tmp_path: Path, 
     "https://a/x?q=1,https://b/y?token=abc",
     "see https://h/x?api_key=abc",
     "https://a/x?q=1 https://b/y#access_token=abc",
+    "https://h/a,b?token=abc",
+    "https://h/x?q=a,b&api_key=abc",
+    "https://h/x#a=1,b=2&access_token=abc",
+    "https://a/x,https://b/y?q=1,2&token=abc",
 ])
 def test_query_credentials_are_withheld(write_manifest, tmp_path: Path, capsys, value):
     module = load_module("harvest_extract")
@@ -175,6 +179,7 @@ def test_query_credentials_are_withheld(write_manifest, tmp_path: Path, capsys, 
     "https://a/x,https://b/y",
     "https://h/x?sslmode=require,token=abc",
     "https://h/x?sslmode=require token=abc",
+    "https://h/a,b?q=1,2",
 ])
 def test_benign_query_values_are_extracted(write_manifest, value):
     module = load_module("harvest_extract")
@@ -189,6 +194,7 @@ def test_benign_query_values_are_extracted(write_manifest, value):
     "https://h/x?api_key=abc",
     " https://h/x?api_key=abc",
     "https://a/x?q=1,https://b/y?api_key=abc",
+    "https://h/x?q=a,b&api_key=abc",
 ])
 def test_public_build_query_credentials_are_rejected(write_manifest, location, value):
     module = load_module("harvest_extract")

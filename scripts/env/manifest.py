@@ -84,7 +84,8 @@ _PUBLIC_SENSITIVE_TOKENS = frozenset({
     "CREDENTIAL", "SIGNING", "SECRETS", "CREDENTIALS",
 })
 _URL_USERINFO_PASSWORD = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^/?#\s@:]+:[^/?#\s@]*@")
-_URL_SPAN = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s,]*")
+# Overlap spans to inspect every URL in comma lists while preserving commas inside URLs.
+_URL_SPAN = re.compile(r"(?<![A-Za-z0-9+.-])(?=([A-Za-z][A-Za-z0-9+.-]*://\S*))")
 _URL_CREDENTIAL_TOKENS = (
     "password", "passwd", "pwd", "pass", "secret", "token", "access_token",
     "api_key", "apikey", "key", "sig", "signature", "auth", "credential", "credentials",
@@ -94,7 +95,7 @@ _URL_CREDENTIAL_TOKENS = (
 def _url_query_credential(value: str) -> bool:
     for match in _URL_SPAN.finditer(value):
         # Split only the parameter components; malformed authorities must not hide credentials.
-        url, _, fragment = match.group().partition("#")
+        url, _, fragment = match.group(1).partition("#")
         _, _, query = url.partition("?")
         if any(
             key.lower().replace("-", "_").endswith(_URL_CREDENTIAL_TOKENS)

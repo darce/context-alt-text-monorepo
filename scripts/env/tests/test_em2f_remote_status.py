@@ -138,3 +138,22 @@ def test_wrapper_reports_ssh_failure_when_ssh_closes_stdin(remote):
     assert result.returncode == 255
     assert "ssh failed with status 255" in result.stderr
     assert "tar producer failed" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    "status,meaning",
+    [
+        (1, "drift found (remote check exit 1)"),
+        (2, "remote materialize refused with status 2"),
+        (4, "required host secret is missing (remote materialize exit 4)"),
+        (75, "remote materialize lock or lease busy (exit 75)"),
+    ],
+)
+def test_wrapper_reports_remote_materialize_exit_reason(remote, status, meaning):
+    remote["SHIM_RC"] = str(status)
+
+    result = run(remote)
+
+    assert result.returncode == status
+    assert meaning in result.stderr
+    assert "ssh failed" not in result.stderr

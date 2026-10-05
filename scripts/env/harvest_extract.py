@@ -43,6 +43,16 @@ def _name_is_sensitive(name: str) -> bool:
     return bool(set(remaining) & manifest_module._PUBLIC_SENSITIVE_TOKENS)
 
 
+def secret_looking(name: str, value: str) -> bool:
+    # Apply input may be edited or from an older extract: refuse everything extract withholds.
+    return bool(
+        _name_is_sensitive(name)
+        or manifest_module._LITERAL_SECRET.search(value)
+        or manifest_module._URL_USERINFO_PASSWORD.search(value)
+        or manifest_module._url_query_credential(value)
+    )
+
+
 def _parse_assignment_values(assignments: dict[str, list[str]]) -> tuple[dict[str, str], set[str]]:
     parsed: dict[str, str] = {}
     unparsed: set[str] = set()
@@ -59,11 +69,33 @@ def _parse_assignment_values(assignments: dict[str, list[str]]) -> tuple[dict[st
 
 
 def _shell_token(raw_value: str) -> str | None:
+    # shlex's comments=True also strips embedded hashes (a#b and URL fragments).
+    # Only an unquoted hash at the start of a shell word introduces a comment.
+    quote = ""
+    escaped = False
+    in_word = False
+    for index, char in enumerate(raw_value):
+        if escaped:
+            escaped = False
+        elif char == "\\" and quote != "'":
+            escaped = True
+            in_word = True
+        elif quote:
+            if char == quote:
+                quote = ""
+        elif char in "\"'":
+            quote = char
+            in_word = True
+        elif char == "#" and not in_word:
+            raw_value = raw_value[:index]
+            break
+        else:
+            in_word = char not in " \t\r\n"
     try:
         tokens = shlex.split(raw_value, posix=True)
     except ValueError:
         return None
-    return tokens[0] if len(tokens) == 1 else None
+    return (tokens[0] if tokens else "") if len(tokens) <= 1 else None
 
 
 def extract(manifest, target_name: str, env: str, text: str) -> dict[str, object]:
@@ -90,19 +122,16 @@ def extract(manifest, target_name: str, env: str, text: str) -> dict[str, object
 
         if var.cls not in {"config", "public"}:
             continue
-        sensitive_name = _name_is_sensitive(name)
-        sensitive_value = any(
+        sensitive = secret_looking(name, "") or any(
             (value := _shell_token(raw_value)) is not None
-            and (manifest_module._LITERAL_SECRET.search(value)
-                 or manifest_module._URL_USERINFO_PASSWORD.search(value)
-                 or manifest_module._url_query_credential(value))
+            and secret_looking(name, value)
             for raw_value in assignments[name]
         )
-        if sensitive_name or sensitive_value:
+        if sensitive:
             withheld["secret_looking"].add(name)
 
         if (var.derive is not None or var.derive_vault_map or name in unparsed
-                or sensitive_name or sensitive_value):
+                or sensitive):
             continue
         if var.cls in {"config", "public"}:
             values[name] = parsed[name]

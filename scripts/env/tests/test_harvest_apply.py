@@ -329,6 +329,57 @@ def test_secret_looking_value_is_refused_without_printing_value(manifest_root, t
     assert fragment.read_bytes() == original
 
 
+@pytest.mark.parametrize("value", [
+    "https://example.test/x?token=fake",
+    "https://example.test/x#access_token=fake",
+])
+def test_query_credentials_are_refused_without_any_writes(manifest_root, tmp_path, capsys, value):
+    originals = {path: path.read_bytes() for path in (manifest_root / "manifest.d").glob("*.toml")}
+    source = _input(tmp_path, _harvest({"LOG_LEVEL": value, "EXTRA_MODE": "safe-new"}))
+
+    code, stdout, stderr = _run(manifest_root, source, capsys)
+
+    assert code == 2
+    assert stdout == ""
+    assert "LOG_LEVEL" in stderr
+    assert value not in stdout + stderr
+    assert {path: path.read_bytes() for path in originals} == originals
+
+
+def test_extract_to_apply_preserves_empty_and_inline_comment_values(manifest_root, tmp_path, capsys):
+    module = load_module("harvest_extract")
+    targets = manifest_root / "manifest.d" / "targets.toml"
+    targets.write_text(
+        targets.read_text(encoding="utf-8").replace(
+            '[targets.vm]\n',
+            '[targets.vm]\nremote_paths = { prod = "/opt/acx-backend/prod/.env" }\n',
+        ),
+        encoding="utf-8",
+    )
+    env_path = tmp_path / "opt/acx-backend/prod/.env"
+    env_path.parent.mkdir(parents=True)
+    env_path.write_text(
+        "EXTRA_MODE=\nLOG_LEVEL=https://example.test # endpoint\n", encoding="utf-8",
+    )
+    assert module.main([
+        "--root", str(manifest_root), "--target", "vm", "--env", "prod",
+        "--fs-root", str(tmp_path),
+    ]) == 0
+    extracted = capsys.readouterr()
+    assert extracted.err == ""
+    assert "endpoint" not in extracted.out
+    source = _input(tmp_path, json.loads(extracted.out))
+
+    code, stdout, stderr = _run(manifest_root, source, capsys)
+
+    assert code == 0
+    assert stderr == ""
+    variables = {var.name: var for var in load_manifest(manifest_root).vars}
+    assert variables["EXTRA_MODE"].values["prod"] == ""
+    assert variables["LOG_LEVEL"].values["prod"] == "https://example.test"
+    assert "endpoint" not in stdout + stderr
+
+
 def test_multiline_values_table_is_refused_without_writing(manifest_root, tmp_path, capsys):
     fragment = manifest_root / "manifest.d" / "vars.toml"
     original = fragment.read_text(encoding="utf-8")

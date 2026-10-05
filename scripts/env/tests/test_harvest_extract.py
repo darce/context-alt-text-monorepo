@@ -126,6 +126,44 @@ def test_missing_remote_path_fails_with_names_only(write_manifest, tmp_path: Pat
     assert "manifest-value" not in captured.err
 
 
+@pytest.mark.parametrize(("name", "raw", "expected"), [
+    ("ACX_GPU_ENDPOINT_ALLOWLIST", "", ""),
+    ("NAME", '""', ""),
+    ("SERVICE_URL", "https://example.test # endpoint", "https://example.test"),
+    ("NAME", '"a # b"', "a # b"),
+    ("NAME", "a#b", "a#b"),
+    ("X", "https://h/x #token=fake", "https://h/x"),
+    ("NAME", "# comment only", ""),
+    ("NAME", r"a\#b # comment", "a#b"),
+    ("NAME", '"a"#b # comment', "a#b"),
+])
+def test_extracts_empty_and_commented_values(write_manifest, tmp_path, capsys, name, raw, expected):
+    module = load_module("harvest_extract")
+    root = _root(write_manifest, _var(name))
+    env_path = tmp_path / "opt/acx-backend/prod/.env"
+    env_path.parent.mkdir(parents=True)
+    env_path.write_text(f"{name}={raw}\n", encoding="utf-8")
+
+    assert _invoke(module, root, tmp_path) == 0
+
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    assert result["values"] == {name: expected}
+    assert result["withheld"]["unparsed"] == []
+    assert result["withheld"]["secret_looking"] == []
+    assert captured.err == ""
+    for comment in ("endpoint", "token=fake", "comment"):
+        assert comment not in captured.out + captured.err
+
+
+def test_multiple_words_with_inline_comment_remain_unparsed(write_manifest):
+    module = load_module("harvest_extract")
+    root = _root(write_manifest, _var("NAME"))
+    result = module.extract(module.load_manifest(root), "t", "prod", "NAME=one two # comment\n")
+    assert result["values"] == {}
+    assert result["withheld"]["unparsed"] == ["NAME"]
+
+
 def test_missing_env_file_fails_with_names_only(write_manifest, tmp_path: Path, capsys):
     module = load_module("harvest_extract")
     root = _root(write_manifest, _var("LOG_LEVEL"))

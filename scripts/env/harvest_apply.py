@@ -15,7 +15,7 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
-from env import manifest as manifest_module
+from env.harvest_extract import secret_looking
 from env.manifest import Manifest, Var, load_manifest
 
 
@@ -142,23 +142,6 @@ def _render_values(values: dict[str, str]) -> str:
     return "{ " + ", ".join(members) + " }" if members else "{}"
 
 
-def _secret_looking(name: str, value: str) -> bool:
-    tokens = name.split("_")
-    remaining: list[str] = []
-    index = 0
-    while index < len(tokens):
-        if tokens[index : index + 2] == ["PUBLISHABLE", "KEY"]:
-            index += 2
-        else:
-            remaining.append(tokens[index])
-            index += 1
-    return bool(
-        manifest_module._LITERAL_SECRET.search(value)
-        or manifest_module._URL_USERINFO_PASSWORD.search(value)
-        or set(remaining) & manifest_module._PUBLIC_SENSITIVE_TOKENS
-    )
-
-
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     result: dict[str, object] = {}
     for key, value in pairs:
@@ -261,7 +244,7 @@ def _validate_documents(documents: list[object], manifest: Manifest) -> list[tup
                 raise ApplyError(name, "harvest value must be a string")
             if any(0xD800 <= ord(char) <= 0xDFFF for char in value):
                 raise ApplyError(name, "harvest value contains invalid Unicode")
-            if _secret_looking(name, value):
+            if secret_looking(name, value):
                 raise ApplyError(name, "secret-looking values cannot be applied")
             checked[name] = value
         result.append((target_name, env, checked))

@@ -683,3 +683,204 @@ async def test_sweep_rejected_only_batch_stalls_nonzero() -> None:
     finally:
         await engine.dispose()
         os.unlink(path)
+
+
+@pytest.mark.asyncio
+async def _advfix_ledger_h1_expiry_releases_counters(monkeypatch) -> None:
+    engine, sf, path = await _ledger_sessionmaker()
+    try:
+        async with sf() as session:
+            tenant = await _seed_tenant(session)
+            from recognition.infrastructure.repositories import usage_repository
+
+            monkeypatch.setattr(usage_repository, "USAGE_RESERVATION_LEASE", timedelta(0))
+            admission = UsageAdmissionService(session)
+            abandoned = await admission.reserve(
+                tenant.id,
+                idempotency_key="advfix-expired-a",
+                job_id=str(uuid.uuid4()),
+                cost_units=2,
+                queue_bytes=7,
+            )
+            abandoned_row = await session.get(UsageReservation, abandoned.reservation_id)
+            assert abandoned_row is not None
+            abandoned_row.reserved_at = datetime.now(tz=UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+            await session.flush()
+
+            # Expiry belongs to the sweeper's fenced release path, never admission.
+            stale_rows = await usage_repository.SqlAlchemyUsageRepository(session).list_stale_reservations(
+                0, limit=100
+            )
+            assert abandoned.reservation_id in {row.id for row in stale_rows}
+            await admission.release_fenced(abandoned, fence_token=abandoned.fence_token)
+            await session.refresh(abandoned_row)
+            assert abandoned_row.status == UsageReservationStatus.EXPIRED
+            state = await session.get(GlobalUsageAdmissionState, GLOBAL_USAGE_ADMISSION_STATE_ID)
+            assert state is not None
+            assert int(state.daily_cost_units) == 0
+            assert int(state.inflight_units) == 0
+            assert int(state.queue_depth) == 0
+            assert int(state.queue_bytes) == 0
+
+            admitted = await admission.reserve(
+                tenant.id,
+                idempotency_key="advfix-expired-b",
+                job_id=str(uuid.uuid4()),
+                cost_units=1,
+                queue_bytes=19,
+            )
+            admitted_row = await session.get(UsageReservation, admitted.reservation_id)
+            assert admitted_row is not None
+            assert int(admitted_row.cost_units) == 1
+            assert int(admitted_row.queue_bytes) == 19
+            state = await session.get(GlobalUsageAdmissionState, GLOBAL_USAGE_ADMISSION_STATE_ID)
+            assert state is not None
+            assert int(state.daily_cost_units) == 1
+            assert int(state.inflight_units) == 1
+            assert int(state.queue_depth) == 1
+            assert int(state.queue_bytes) == 19
+
+            await admission.commit(admitted)
+            await session.refresh(abandoned_row)
+            assert abandoned_row.status == UsageReservationStatus.EXPIRED
+            assert int(state.daily_cost_units) == 1
+            assert int(state.inflight_units) == 0
+            assert int(state.queue_depth) == 0
+            assert int(state.queue_bytes) == 0
+            await session.commit()
+    finally:
+        await engine.dispose()
+        os.unlink(path)
+
+
+@pytest.mark.asyncio
+async def _advfix_ledger_h2_terminal_commit_keeps_daily_charge(monkeypatch) -> None:
+    engine, sf, path = await _ledger_sessionmaker()
+    try:
+        async with sf() as session:
+            tenant = await _seed_tenant(session)
+            from recognition.infrastructure.repositories import usage_repository
+
+            monkeypatch.setattr(usage_repository, "USAGE_RESERVATION_LEASE", timedelta(0))
+            job_id = uuid.uuid4()
+            ticket = await UsageAdmissionService(session).reserve(
+                tenant.id,
+                idempotency_key="advfix-terminal-stale",
+                job_id=str(job_id),
+                cost_units=1,
+                operation_id="advfix-terminal-stale",
+                request_fingerprint="fp-advfix-terminal-stale",
+            )
+            reservation = await session.get(UsageReservation, ticket.reservation_id)
+            assert reservation is not None
+            instant = datetime.now(tz=UTC)
+            reservation.reserved_at = instant.replace(hour=0, minute=0, second=0, microsecond=0)
+            session.add(
+                DescribeRun(
+                    id=job_id,
+                    tenant_id=tenant.id,
+                    run_kind=RunKind.SINGLE,
+                    status=DescribeRunStatus.COMPLETED,
+                    phase=DescribeRunPhase.COMPLETE,
+                    media_ids=[1],
+                    total_items=1,
+                    started_at=instant - timedelta(minutes=30),
+                )
+            )
+            await session.flush()
+
+            settlement = UsageSettlementService(session)
+            first = await settlement.settle_job(
+                tenant_id=tenant.id,
+                job_id=str(job_id),
+                fence_token=ticket.fence_token,
+            )
+            second = await settlement.settle_job(
+                tenant_id=tenant.id,
+                job_id=str(job_id),
+                fence_token=ticket.fence_token,
+            )
+            await session.refresh(reservation)
+            state = await session.get(GlobalUsageAdmissionState, GLOBAL_USAGE_ADMISSION_STATE_ID)
+            assert state is not None
+            assert first.outcome is SettlementOutcome.COMMITTED
+            assert second.outcome is SettlementOutcome.ALREADY_SETTLED
+            assert reservation.status == UsageReservationStatus.COMMITTED
+            assert int(state.daily_cost_units) == 1
+            assert int(state.inflight_units) == 0
+            assert int(state.queue_depth) == 0
+            await session.commit()
+    finally:
+        await engine.dispose()
+        os.unlink(path)
+
+
+@pytest.mark.asyncio
+async def _advfix_ledger_m1_sweeper_pages_past_active_prefix() -> None:
+    engine, sf, path = await _ledger_sessionmaker()
+    try:
+        async with sf() as session:
+            tenant = await _seed_tenant(session, allowance=150)
+            instant = datetime.now(tz=UTC)
+            active_tickets = []
+            active_runs = []
+            for index in range(100):
+                job_id = uuid.uuid4()
+                active_tickets.append(
+                    await UsageAdmissionService(session).reserve(
+                        tenant.id,
+                        idempotency_key=f"advfix-active-{index}",
+                        job_id=str(job_id),
+                        cost_units=1,
+                    )
+                )
+                active_runs.append(
+                    DescribeRun(
+                        id=job_id,
+                        tenant_id=tenant.id,
+                        run_kind=RunKind.BULK,
+                        status=DescribeRunStatus.RUNNING,
+                        phase=DescribeRunPhase.DESCRIBING,
+                        media_ids=[index],
+                        total_items=1,
+                        started_at=instant,
+                    )
+                )
+            missing = await UsageAdmissionService(session).reserve(
+                tenant.id,
+                idempotency_key="advfix-job-not-persisted",
+                job_id=str(uuid.uuid4()),
+                cost_units=1,
+            )
+            session.add_all(active_runs)
+            await session.flush()
+            for index, ticket in enumerate(active_tickets):
+                row = await session.get(UsageReservation, ticket.reservation_id)
+                assert row is not None
+                row.reserved_at = instant - timedelta(days=1, seconds=len(active_tickets) - index)
+            missing_row = await session.get(UsageReservation, missing.reservation_id)
+            assert missing_row is not None
+            missing_row.reserved_at = instant - timedelta(days=1)
+            await session.flush()
+
+            report = await sweep_stale_reservations(
+                session,
+                stale_after_seconds=30,
+                max_batches=10,
+                batch_size=100,
+            )
+            await session.commit()
+
+        async with sf() as session:
+            missing_row = await session.get(UsageReservation, missing.reservation_id)
+            assert missing_row is not None and missing_row.status == UsageReservationStatus.RELEASED
+            active_rows = [await session.get(UsageReservation, ticket.reservation_id) for ticket in active_tickets]
+            assert all(row is not None and row.status == UsageReservationStatus.RESERVED for row in active_rows)
+            assert report.released == 1
+            assert report.skipped_active == 100
+            assert report.stale_seen == 101
+            assert report.batches >= 2
+            assert report.exit_code == 0
+    finally:
+        await engine.dispose()
+        os.unlink(path)

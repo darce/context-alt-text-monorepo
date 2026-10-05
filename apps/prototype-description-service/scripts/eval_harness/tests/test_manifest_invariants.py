@@ -21,6 +21,7 @@ from scripts.eval_harness.manifest import (
     legacy_import_lineage,
     load_legacy_manifest,
     load_manifest,
+    require_confirmed_blind_reviews_for_strict_scoring,
 )
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -343,7 +344,10 @@ def test_provenanced_fixture_is_v3_roster_only() -> None:
     assert all(box.lineage is not None for e in manifest.entries for box in e.face_boxes)
 
 
-def test_cli_gate_commands_do_not_call_load_legacy_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("reviewed", [True, False], ids=["confirmed-review", "unreviewed"])
+def test_cli_gate_commands_do_not_call_load_legacy_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reviewed: bool
+) -> None:
     """Behavioural: CLI score never reaches the legacy loader.
 
     Replaces the source-text grep (FIR-11-S2-03). The sentinel must stay
@@ -377,12 +381,28 @@ def test_cli_gate_commands_do_not_call_load_legacy_manifest(tmp_path: Path, monk
     # roster member (manifest.py::load_manifest); reuse the other fixture
     # identity rather than inventing an off-roster name.
     manifest_doc["entries"][0]["easy_wrong"] = ["Quiet Example"]
-    # Strict score-time validation requires human-adjudicated lineage even
-    # for roster-only GT boxes; make this local synthetic input scoreable.
+    # Strict scoring requires confirmed second-human reviews even for
+    # roster-only GT boxes. Exercise both the review gate and downstream gates.
+    manifest_doc["adjudication_records"] = []
     for entry in manifest_doc["entries"]:
-        for box in entry["face_boxes"]:
+        for box_index, box in enumerate(entry["face_boxes"]):
             box["lineage"]["label_source"] = "operator_blind"
             box["lineage"]["saw_machine_proposals"] = False
+            if reviewed:
+                record_id = f"review-{entry['media_id']}-{box_index}"
+                box["adjudication_source"] = f"human_adjudicated:{record_id}"
+                manifest_doc["adjudication_records"].append(
+                    {
+                        "record_id": record_id,
+                        "media_id": entry["media_id"],
+                        "box_index": box_index,
+                        "reviewer_id": f"{box['lineage']['labeler_id']}-independent-reviewer",
+                        "reviewer_kind": "human",
+                        "review_method": "independent_blind_review",
+                        "decision": "confirmed",
+                        "reviewed_at": "2026-06-01T12:00:00+00:00",
+                    }
+                )
     man_path.write_text(json.dumps(manifest_doc), encoding="utf-8")
     # Real score-time manifest sha (VLM6-F-03 / EVAL-13 drift gate; metadata-only
     # load, mirrors cli.py::_manifest_sha).
@@ -444,7 +464,11 @@ def test_cli_gate_commands_do_not_call_load_legacy_manifest(tmp_path: Path, monk
     # score gate (frozenset membership — not a bare crash/traceback) instead
     # of pinning to one specific downstream gate's exit code.
     assert isinstance(exc.value.code, str)
-    assert any(exc.value.code.startswith(prefix) for prefix in cli_mod.SCORE_GATE_PREFIXES)
+    if reviewed:
+        assert any(exc.value.code.startswith(prefix) for prefix in cli_mod.SCORE_GATE_PREFIXES)
+    else:
+        assert exc.value.code.startswith("ManifestError:")
+        assert "adjudication_record_required" in exc.value.code
     assert hits == []
 
 
@@ -622,6 +646,81 @@ def test_real_capture_session_still_loads_exhaustive(tmp_path: Path) -> None:
     manifest = load_manifest(str(path), skip_hash_verification=True)
     assert manifest.annotation_mode is AnnotationMode.EXHAUSTIVE
     assert manifest.entries[0].face_boxes[0].lineage.capture_session_id == REAL_SESSION
+
+
+def test_strict_scoring_requires_a_resolved_confirmed_blind_review(tmp_path: Path) -> None:
+    """An operator-blind label alone cannot enter strict metrics as scored truth."""
+    doc = _exhaustive_doc(session=REAL_SESSION, label_source="operator_blind")
+    box_doc = doc["entries"][0]["face_boxes"][0]
+    box_doc["lineage"]["saw_machine_proposals"] = False
+    path = _write(tmp_path, doc, "unreviewed-strict-ground-truth.json")
+    manifest = load_manifest(str(path), skip_hash_verification=True)
+    box = manifest.entries[0].face_boxes[0]
+
+    with pytest.raises(
+        ManifestError, match="confirmed independent blind review"
+    ) as exc_info:
+        require_confirmed_blind_reviews_for_strict_scoring(manifest.model_dump())
+        detection_pr_strict(
+            [
+                ImageDetection(
+                    image=manifest.entries[0].path,
+                    pred_faces=1,
+                    labeled_faces=1,
+                    detections_bbox_px=((40.0, 25.0, 20.0, 30.0),),
+                    gt_boxes=(box,),
+                    image_size=(100, 100),
+                    detection_frame_size=(100, 100),
+                )
+            ],
+            annotation_mode=manifest.annotation_mode,
+            run_manifest={"iou_threshold": 0.5},
+        )
+
+    assert exc_info.value.invariant == "adjudication_record_required"
+
+
+def test_confirmed_independent_blind_review_allows_strict_scoring(tmp_path: Path) -> None:
+    """Positive pair: resolved second-review evidence keeps strict scoring live."""
+    doc = _exhaustive_doc(session=REAL_SESSION, label_source="operator_blind")
+    box_doc = doc["entries"][0]["face_boxes"][0]
+    box_doc["lineage"]["labeler_id"] = "operator-1"
+    box_doc["lineage"]["saw_machine_proposals"] = False
+    box_doc["adjudication_source"] = "human_adjudicated:review-1"
+    doc["adjudication_records"] = [
+        {
+            "record_id": "review-1",
+            "media_id": 1,
+            "box_index": 0,
+            "reviewer_id": "operator-2",
+            "reviewer_kind": "human",
+            "review_method": "independent_blind_review",
+            "decision": "confirmed",
+            "reviewed_at": "2026-06-01T12:00:00+00:00",
+        }
+    ]
+    path = _write(tmp_path, doc, "reviewed-strict-ground-truth.json")
+    manifest = load_manifest(str(path), skip_hash_verification=True)
+    require_confirmed_blind_reviews_for_strict_scoring(manifest.model_dump())
+    box = manifest.entries[0].face_boxes[0]
+
+    result = detection_pr_strict(
+        [
+            ImageDetection(
+                image=manifest.entries[0].path,
+                pred_faces=1,
+                labeled_faces=1,
+                detections_bbox_px=((40.0, 25.0, 20.0, 30.0),),
+                gt_boxes=(box,),
+                image_size=(100, 100),
+                detection_frame_size=(100, 100),
+            )
+        ],
+        annotation_mode=manifest.annotation_mode,
+        run_manifest={"iou_threshold": 0.5},
+    )
+
+    assert result.true_positives == 1
 
 
 def test_real_session_on_legacy_import_source_still_loads_exhaustive(tmp_path: Path) -> None:

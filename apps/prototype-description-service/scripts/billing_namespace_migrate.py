@@ -134,7 +134,7 @@ def _plan_inbox(conn, entry: Mapping[str, Any], seen: set[tuple[object, ...]]) -
         conn.execute(
             text(
                 "SELECT provider, provider_event_id, environment, seller_account "
-                "FROM billing_webhook_inbox WHERE id = :id"
+                "FROM billing_webhook_inbox WHERE id = :id FOR UPDATE"
             ),
             {"id": row_id},
         )
@@ -173,7 +173,7 @@ def _plan_projection(conn, entry: Mapping[str, Any], seen: set[tuple[object, ...
         conn.execute(
             text(
                 "SELECT tenant_id, provider, provider_customer_id, environment, seller_account "
-                "FROM billing_subscription_projection WHERE id = :id"
+                "FROM billing_subscription_projection WHERE id = :id FOR UPDATE"
             ),
             {"id": row_id},
         )

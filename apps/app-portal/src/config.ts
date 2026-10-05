@@ -48,10 +48,16 @@ function parsePublicPlanCode(value: string | undefined): string | null {
   return raw.length > 0 ? raw : null;
 }
 
-export function parsePortalConfig(env: Record<string, string | undefined>): PortalRuntimeConfig {
+export function parsePortalConfig(
+  env: Record<string, string | undefined>,
+  isProduction = false,
+): PortalRuntimeConfig {
   const publishableKey = trimEnv(env.VITE_CLERK_PUBLISHABLE_KEY);
   const config: PortalRuntimeConfig = {
-    publishableKey: publishableKey.length > 0 ? publishableKey : null,
+    publishableKey:
+      publishableKey.length > 0 && !(isProduction && publishableKey.startsWith('pk_test_'))
+        ? publishableKey
+        : null,
     fapiOrigin: parseFapiOrigin(env.VITE_CLERK_FAPI),
     portalEnabled: parseEnabledFlag(env.VITE_PORTAL_ENABLED),
   };
@@ -72,5 +78,5 @@ export function readPortalConfig(): PortalRuntimeConfig {
     VITE_PORTAL_ENABLED: env.VITE_PORTAL_ENABLED,
     VITE_PAYMENTS_ENABLED: env.VITE_PAYMENTS_ENABLED,
     VITE_PUBLIC_PLAN_CODE: env.VITE_PUBLIC_PLAN_CODE,
-  });
+  }, import.meta.env.PROD);
 }

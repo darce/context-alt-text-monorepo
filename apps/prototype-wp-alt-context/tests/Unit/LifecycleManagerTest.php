@@ -149,6 +149,10 @@ class LifecycleManagerTest extends TestCase
         $this->assertStringContainsString('error_code', $batchFailuresSql);
 
         $this->assertStringContainsString('CREATE TABLE wp_acx_description_usage', $descriptionUsageSql);
+        $this->assertStringContainsString(
+            'operation_id varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL',
+            $descriptionUsageSql
+        );
         $this->assertStringContainsString('media_id', $descriptionUsageSql);
         $this->assertStringContainsString('outcome', $descriptionUsageSql);
         $this->assertStringContainsString('cost_amount', $descriptionUsageSql);

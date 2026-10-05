@@ -37,10 +37,9 @@ from scripts.eval_harness.report import (
     _invariant_is,
     _mode_restrictiveness,
     _resolve_score_annotation_mode,
-    build_reports,
     score_face_run_record,
-    score_run_record,
 )
+from scripts.eval_harness.tests._reviewed_gt_fixtures import build_reports, score_run_record
 
 _LINEAGE = {
     "labeler_id": "test-labeler",
@@ -182,7 +181,19 @@ def _manifest_doc(mode: str) -> dict:
 
 def _write_manifest(tmp_path: Path, mode: str) -> Path:
     path = tmp_path / f"{mode}.json"
-    path.write_text(json.dumps(_manifest_doc(mode)), encoding="utf-8")
+    doc = _manifest_doc(mode)
+    doc["entries"][0]["face_boxes"][0]["adjudication_source"] = "human_adjudicated:review-1"
+    doc["adjudication_records"] = [{
+        "record_id": "review-1",
+        "media_id": 1,
+        "box_index": 0,
+        "reviewer_id": "test-reviewer",
+        "reviewer_kind": "human",
+        "review_method": "independent_blind_review",
+        "decision": "confirmed",
+        "reviewed_at": "2026-08-15T00:00:00Z",
+    }]
+    path.write_text(json.dumps(doc), encoding="utf-8")
     return path
 
 
@@ -1000,6 +1011,7 @@ def test_r6e1_duck_typed_unstamped_entry_still_receives_document_mode(
     """An unstamped duck entry scores through the public face scorer."""
     typed = load_manifest(str(_write_manifest(tmp_path, "exhaustive")), skip_hash_verification=True)
     manifest = _DuckManifest([typed.entries[0].model_dump()])
+    manifest.adjudication_records = typed.adjudication_records
     scored = score_face_run_record(_r6e1_face_run_record(), manifest)
     det = scored["detection"]
     assert det.get("refused") is not True

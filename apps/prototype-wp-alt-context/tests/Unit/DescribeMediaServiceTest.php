@@ -8,6 +8,7 @@ use AltContext\Api\DescribeController;
 use AltContext\Api\DescribeHostInterface;
 use AltContext\Api\Services\DescribeMediaService;
 use AltContext\Api\Services\DescriptionBudgetService;
+use AltContext\Sovereign\Repositories\DescriptionUsageRepository;
 use AltContext\Sovereign\ProjectionQueryException;
 use AltContext\Tests\Stubs\NullIdentityMembersRepository;
 use AltContext\Tests\TestCase;
@@ -36,6 +37,10 @@ class DescribeMediaServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $wpdb = $GLOBALS['wpdb'];
+        $lockName = 'acx_budget_lock_' . md5($wpdb->prefix);
+        $wpdb->queryResults[$wpdb->prepare('SELECT GET_LOCK(%s, %d)', $lockName, 1)] = '1';
+        $wpdb->queryResults[$wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lockName)] = '1';
         $this->setOption('acx_recognition_url', 'http://localhost:8000');
         $this->setOption('acx_recognition_api_key', 'test-key');
         $this->controller = new DescribeController();
@@ -1508,6 +1513,35 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame(array(), $this->getHttpCalls());
     }
 
+    public function testBudgetReservationFixtureGrantsOnlySiteBudgetLock(): void
+    {
+        $wpdb = $GLOBALS['wpdb'];
+        $gate = (new DescriptionBudgetService())->reserve_attempt();
+
+        $this->assertTrue($gate['allowed']);
+        $this->assertIsString($gate['reservation_id']);
+        $this->assertNull($wpdb->mockVar);
+        $this->assertNull($wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, %d)', 'unrelated-lock', 1)));
+    }
+
+    public function testBudgetLockRefusalBlocksBeforeBackendDispatch(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $wpdb = $GLOBALS['wpdb'];
+        $lockName = 'acx_budget_lock_' . md5($wpdb->prefix);
+        $wpdb->queryResults[$wpdb->prepare('SELECT GET_LOCK(%s, %d)', $lockName, 1)] = '0';
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $this->ensureTestIdempotencyKey($req);
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_budget_reservation_unavailable', $result->get_error_code());
+        $this->assertSame(503, $result->get_error_data()['status'] ?? null);
+        $this->assertSame(array(), $this->getHttpCalls());
+    }
+
     public function testBudgetLimitBlocksBeforeBackendDispatch(): void
     {
         $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
@@ -1822,6 +1856,46 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame('invalid_operation_id', $result->get_error_code());
         $this->assertSame(400, $result->get_error_data()['status'] ?? null);
         $this->assertSame([], $this->getHttpCalls());
+    }
+
+    #[DataProvider('invalidOperationIdAlphabetProvider')]
+    public function testOperationIdOutsideBackendAlphabetReturns400WithoutRemoteCall(string $operationId): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $usageRowsBefore = (new DescriptionUsageRepository())->all();
+        $reservationsBefore = get_option('acx_description_budget_reservations', []);
+        $req = new DescribeMediaServicePayloadRequest(
+            ['idempotency_key' => 'caller-key-1234567', 'operation_id' => $operationId],
+            []
+        );
+        $req->set_param('media_id', 42);
+
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('invalid_operation_id', $result->get_error_code());
+        $this->assertSame(400, $result->get_error_data()['status'] ?? null);
+        $this->assertSame([], $this->getHttpCalls());
+        $this->assertSame($usageRowsBefore, (new DescriptionUsageRepository())->all());
+        $this->assertSame($reservationsBefore, get_option('acx_description_budget_reservations', []));
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function invalidOperationIdAlphabetProvider(): array
+    {
+        return [
+            'trailing space'              => ['operation-42 '],
+            'leading space'               => [' operation-42'],
+            'tab'                         => ["operation\t-42"],
+            'non-ASCII byte'              => ["operation-\xE9"],
+            'trailing newline'            => ["operation-42\n"],
+            'embedded NUL'                => ["operation\0-42"],
+            'dot'                         => ['operation.42'],
+            'colon'                       => ['operation:42'],
+            'valid multibyte UTF-8'       => ['operation-é'],
+        ];
     }
 
     public function testNonStringOperationIdReturns400WithoutRemoteCall(): void

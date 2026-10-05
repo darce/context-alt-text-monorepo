@@ -61,8 +61,21 @@ def _manifest_doc() -> dict[str, Any]:
                         "name": "Alice Example",
                         "source": "operator",
                         "lineage": _LINEAGE,
+                        "adjudication_source": "human_adjudicated:fixture-review-1-0",
                     }
                 ],
+            }
+        ],
+        "adjudication_records": [
+            {
+                "record_id": "fixture-review-1-0",
+                "media_id": 1,
+                "box_index": 0,
+                "reviewer_id": "test-reviewer",
+                "reviewer_kind": "human",
+                "review_method": "independent_blind_review",
+                "decision": "confirmed",
+                "reviewed_at": "2026-08-15T00:00:00Z",
             }
         ],
     }

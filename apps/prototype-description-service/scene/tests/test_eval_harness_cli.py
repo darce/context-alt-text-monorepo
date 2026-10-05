@@ -24,6 +24,7 @@ from scripts.eval_harness.cli import (
 from scripts.eval_harness.landmark_cache import LandmarkCacheProvenance
 from scripts.eval_harness.manifest import AnnotationMode, GoldenEntry, GoldenManifest
 from scripts.eval_harness.report import build_reports
+from scripts.eval_harness.tests._reviewed_gt_fixtures import reviewed_report_entries
 
 
 @pytest.fixture(autouse=True)
@@ -770,11 +771,13 @@ def _write_score_manifest(
         }
         for entry in entries
     ]
+    normalized_entries, review_evidence = reviewed_report_entries(normalized_entries)
     payload: dict = {
         "manifest_version": 3,
         "annotation_mode": annotation_mode,
         "roster": roster,
         "entries": normalized_entries,
+        **review_evidence,
     }
     if iou_threshold is not None:
         payload["iou_threshold"] = iou_threshold
@@ -3208,6 +3211,8 @@ def _boxed_golden_manifest(tmp_path, *, name: str = "golden-boxed.json") -> tupl
         entry["face_boxes"] = [
             {"x": 10.0, "y": 40.0, "w": 50.0, "h": 60.0, "name": n, "source": "iptc", "lineage": lineage} for n in names
         ]
+    boxed["entries"], review_evidence = reviewed_report_entries(boxed["entries"])
+    boxed.update(review_evidence)
     manifest_path = tmp_path / name
     manifest_path.write_text(json.dumps(boxed))
     return manifest_path, _manifest_sha(
@@ -4061,6 +4066,8 @@ def _valid_face_manifest_and_record(dim: int = 8) -> tuple[dict, dict]:
             _ent("localwp/uploads/stranger-party.jpg", 3, None, "localwp", False),
         ],
     }
+    manifest["entries"], review_evidence = reviewed_report_entries(manifest["entries"])
+    manifest.update(review_evidence)
     return record, manifest
 
 
@@ -4186,6 +4193,7 @@ def test_face_bakeoff_wires_synthetic_occlusion_twins_end_to_end(tmp_path, monke
                 "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
             }
         )
+    entries, review_evidence = reviewed_report_entries(entries)
     man_path = tmp_path / "man.json"
     man_path.write_text(
         json.dumps(
@@ -4194,6 +4202,7 @@ def test_face_bakeoff_wires_synthetic_occlusion_twins_end_to_end(tmp_path, monke
                 "annotation_mode": "exhaustive",
                 "roster": ["Alice Q", "Bob Z"],
                 "entries": entries,
+                **review_evidence,
             }
         )
     )

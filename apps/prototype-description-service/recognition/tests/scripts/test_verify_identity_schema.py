@@ -6,6 +6,8 @@ import inspect
 import pathlib
 from types import ModuleType
 
+import pytest
+
 
 def _import_script() -> ModuleType:
     path = pathlib.Path(__file__).resolve().parents[3] / "scripts" / "verify_identity_schema.py"
@@ -112,6 +114,8 @@ def _with_approved_operator_policy(script, kwargs: dict, table: str) -> dict:
         policy_key: (script.BYPASS_RLS_EXPR, script.BYPASS_RLS_EXPR)
     }
     kwargs["operator_policy_permissiveness"] = {policy_key: True}
+    kwargs["operator_policy_commands"] = {policy_key: "ALL"}
+    kwargs["operator_policy_roles"] = {policy_key: ("public",)}
     return kwargs
 
 
@@ -360,7 +364,9 @@ def _catalog_connection(
     unique_constraints: set[str] | None = None,
     matview_present: bool = True,
     missing_relations: set[str] | None = None,
-    extra_operator_policy_rows: list[tuple[str, str, str, str | None, str | None]] | None = None,
+    extra_operator_policy_rows: list[
+        tuple[str, str, str, str | None, str | None, str, list[str]]
+    ] | None = None,
 ):
     quoted = current_user_quoted if current_user_quoted is not None else current_user
     missing = set(missing_relations or ())
@@ -383,7 +389,7 @@ def _catalog_connection(
                 )
             if "from pg_policies" in sql:
                 tenant_rows = [
-                    (name, f"tenant_isolation_{name}", "PERMISSIVE", None, None)
+                    (name, f"tenant_isolation_{name}", "PERMISSIVE", None, None, "ALL", ["public"])
                     for name in script.TENANT_TABLES
                 ]
                 operator_rows = [
@@ -393,6 +399,8 @@ def _catalog_connection(
                         "PERMISSIVE",
                         script.BYPASS_RLS_EXPR,
                         script.BYPASS_RLS_EXPR,
+                        "ALL",
+                        ["public"],
                     )
                     for name in script.OPERATOR_SCOPE_TABLES
                 ]
@@ -431,7 +439,7 @@ def _catalog_connection(
             if "has_schema_privilege" in sql or "has_table_privilege" in sql:
                 if missing and "has_table_privilege" in sql and "to_regclass" not in sql:
                     _undefined_table_error(sql, sorted(missing)[0])
-                return _Result(rows=[("public", create_ok, create_ok, create_ok, create_ok, create_ok)])
+                return _Result(rows=[("public", create_ok, create_ok, create_ok, create_ok, create_ok, create_ok)])
             if "aclexplode" in sql:
                 return _Result(rows=list(acl_grant_rows or ()))
             if "from pg_roles" in sql:
@@ -678,7 +686,9 @@ def test_collect_and_validate_reads_permissiveness_for_operator_policies(monkeyp
     connection = _catalog_connection(
         script,
         centroid_typmod=script.EMBEDDING_DIMENSION,
-        extra_operator_policy_rows=[(table, "extra_open_policy", "PERMISSIVE", "true", "true")],
+        extra_operator_policy_rows=[
+            (table, "extra_open_policy", "PERMISSIVE", "true", "true", "ALL", ["public"])
+        ],
     )
     monkeypatch.setattr(script, "inspect", lambda _connection: _Inspector(script))
     monkeypatch.setattr(script, "_expected_columns", lambda: {})
@@ -686,6 +696,61 @@ def test_collect_and_validate_reads_permissiveness_for_operator_policies(monkeyp
     report = script.collect_and_validate(connection)
 
     assert any("permissive" in sql for sql in connection.sql_log if "pg_policies" in sql)
+    assert table in report["policy_gaps"]
+
+
+@pytest.mark.parametrize("role", ["restricted_role", "Public", "PUBLIC"])
+def test_collect_and_validate_rejects_operator_policy_for_unrelated_role(monkeypatch, role) -> None:
+    script = _import_script()
+    table = script.OPERATOR_SCOPE_TABLES[0]
+    policy = f"operator_scope_{table}"
+    connection = _catalog_connection(
+        script,
+        centroid_typmod=script.EMBEDDING_DIMENSION,
+        extra_operator_policy_rows=[
+            (
+                table,
+                policy,
+                "PERMISSIVE",
+                script.BYPASS_RLS_EXPR,
+                script.BYPASS_RLS_EXPR,
+                "ALL",
+                [role],
+            )
+        ],
+    )
+    monkeypatch.setattr(script, "inspect", lambda _connection: _Inspector(script))
+    monkeypatch.setattr(script, "_expected_columns", lambda: {})
+
+    report = script.collect_and_validate(connection)
+
+    assert table in report["policy_gaps"]
+
+
+def test_collect_and_validate_rejects_command_limited_operator_policy(monkeypatch) -> None:
+    script = _import_script()
+    table = script.OPERATOR_SCOPE_TABLES[0]
+    policy = f"operator_scope_{table}"
+    connection = _catalog_connection(
+        script,
+        centroid_typmod=script.EMBEDDING_DIMENSION,
+        extra_operator_policy_rows=[
+            (
+                table,
+                policy,
+                "PERMISSIVE",
+                script.BYPASS_RLS_EXPR,
+                script.BYPASS_RLS_EXPR,
+                "UPDATE",
+                ["public"],
+            )
+        ],
+    )
+    monkeypatch.setattr(script, "inspect", lambda _connection: _Inspector(script))
+    monkeypatch.setattr(script, "_expected_columns", lambda: {})
+
+    report = script.collect_and_validate(connection)
+
     assert table in report["policy_gaps"]
 
 

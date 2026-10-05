@@ -169,6 +169,26 @@ class UsageSettlementService:
                 return None
             raise
 
+    async def _persisted_settlement_result(self, reservation: UsageReservation) -> SettlementResult:
+        await self._session.refresh(reservation, attribute_names=["status"])
+        try:
+            status = UsageReservationStatus(reservation.status)
+        except (TypeError, ValueError):
+            return SettlementResult(
+                SettlementOutcome.FAIL_CLOSED,
+                reservation_id=reservation.id,
+                detail="unknown persisted reservation status",
+            )
+        if status is UsageReservationStatus.COMMITTED:
+            outcome = SettlementOutcome.COMMITTED
+        elif status is UsageReservationStatus.RELEASED:
+            outcome = SettlementOutcome.RELEASED
+        elif status is UsageReservationStatus.EXPIRED:
+            outcome = SettlementOutcome.ALREADY_SETTLED
+        else:
+            outcome = SettlementOutcome.FAIL_CLOSED
+        return SettlementResult(outcome, reservation_id=reservation.id)
+
     async def _get_reservation(self, *, tenant_id: UUID, job_id: str) -> UsageReservation | None:
         return await self._lookup(
             select(UsageReservation)
@@ -450,7 +470,7 @@ class UsageSettlementService:
                 reservation_id=reservation.id,
                 detail="stale fence rejected by G1",
             )
-        return SettlementResult(decision, reservation_id=reservation.id)
+        return await self._persisted_settlement_result(reservation)
 
     async def recover_job(
         self,
@@ -646,7 +666,7 @@ class UsageSettlementService:
                 reservation_id=reservation.id,
                 detail="stale fence rejected by G1",
             )
-        return SettlementResult(job_decision, reservation_id=reservation.id)
+        return await self._persisted_settlement_result(reservation)
 
     async def sweep_stale_reservations(
         self,
@@ -682,10 +702,15 @@ class UsageSettlementService:
         report.notes.append(MISSING_GENERATION_FENCE_CONTRACT)
         repo = SqlAlchemyUsageRepository(self._session)
         no_progress = 0
+        excluded_active_ids: set[UUID] = set()
         for _ in range(max(1, max_batches)):
             report.batches += 1
             try:
-                rows = await repo.list_stale_reservations(stale_after_seconds, limit=batch_size)
+                rows = await repo.list_stale_reservations(
+                    stale_after_seconds,
+                    limit=batch_size,
+                    exclude_reservation_ids=excluded_active_ids,
+                )
             except (OperationalError, ProgrammingError) as exc:
                 if _missing_relation(exc):
                     report.exit_code = 0
@@ -717,6 +742,7 @@ class UsageSettlementService:
                 elif result.outcome is SettlementOutcome.SKIPPED_ACTIVE:
                     report.skipped_active += 1
                     batch_skipped += 1
+                    excluded_active_ids.add(row.id)
                 elif result.outcome is SettlementOutcome.REJECTED:
                     report.rejected += 1
                     batch_rejected += 1
@@ -736,9 +762,9 @@ class UsageSettlementService:
                 and batch_fail_closed == 0
                 and batch_missing == 0
             ):
-                # Active work remains reserved on purpose; that is a successful sweep.
-                report.exit_code = 0
-                return report
+                # Keep active work reserved while advancing to later stale rows.
+                no_progress = 0
+                continue
             if progressed == 0:
                 no_progress += 1
                 report.no_progress_cycles = no_progress
@@ -748,7 +774,7 @@ class UsageSettlementService:
                     return report
             else:
                 no_progress = 0
-        report.exit_code = 0
+        report.exit_code = int(report.fail_closed > 0 or report.rejected > 0)
         return report
 
 

@@ -1,5 +1,6 @@
 """VLM-2A Slice 3: report builder + scoring pipeline — deterministic, golden-file style."""
 
+import copy
 import json
 import math
 import os
@@ -7,12 +8,13 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
 
-from scripts.eval_harness.face_metrics import named_box_name
-from scripts.eval_harness.manifest import ManifestError, ScoreInvariant
+from scripts.eval_harness.face_metrics import has_human_adjudicated_gt_lineage, named_box_name
+from scripts.eval_harness.manifest import GoldenManifest, ManifestError, ScoreInvariant
 from scripts.eval_harness.report import (
     CORPUS_TRAP_AFFECTS_DETECTION_FN,
     DIRECTIONAL_LABEL,
@@ -29,10 +31,10 @@ from scripts.eval_harness.report import (
     _markdown_face,
     build_face_reports,
     build_real_occlusion_pairs,
-    build_reports,
+    build_reports as _build_reports,
     redact_face_report_for_public,
-    score_face_run_record,
-    score_run_record,
+    score_face_run_record as _score_face_run_record,
+    score_run_record as _score_run_record,
     synthetic_real_divergence,
     wilson_half_width,
 )
@@ -136,6 +138,71 @@ def _named_box(name: str) -> dict:
     }
 
 
+def _face_score_fixture_manifest(manifest: dict[str, Any]) -> GoldenManifest:
+    """Return a model-valid, reviewed copy for strict face-report fixtures.
+
+    Face-score fixtures intentionally start as raw mappings so they can pin the
+    scorer's entry-mode resolution. Convert only when invoking the strict scorer:
+    the loaded-manifest path stamps the document mode and requires review records.
+    """
+    fixture = copy.deepcopy(manifest)
+    fixture["manifest_version"] = 3
+    fixture.setdefault("annotation_mode", "exhaustive")
+    records: list[dict[str, Any]] = []
+    original_paths: list[str] = []
+    entries = fixture.get("entries") or []
+    for entry_index, entry in enumerate(entries):
+        original_paths.append(entry["path"])
+        # Absolute paths are intentional in a few redaction fixtures. Validate a
+        # safe relative surrogate, then restore the original path on the model.
+        entry["path"] = f"fixture/entry-{entry_index}.jpg"
+        entry.setdefault("sha256", "a" * 64)
+        entry.setdefault("present_identities", [])
+        entry.setdefault("must_right", [])
+        entry.setdefault("easy_wrong", [])
+        entry.setdefault("policy", {"recognition_enabled": True})
+        entry.pop("annotation_mode", None)
+        for box_index, box in enumerate(entry.get("face_boxes") or []):
+            if box.get("source") not in {"iptc", "mwg", "operator"}:
+                box["source"] = "iptc"
+            lineage = dict(_TEST_LINEAGE)
+            lineage["decision"] = "named" if named_box_name(box) is not None else "stranger"
+            box["lineage"] = lineage
+            record_id = f"fixture-review-{entry['media_id']}-{box_index}"
+            box["adjudication_source"] = f"human_adjudicated:{record_id}"
+            records.append(
+                {
+                    "record_id": record_id,
+                    "media_id": entry["media_id"],
+                    "box_index": box_index,
+                    "reviewer_id": "test-reviewer",
+                    "reviewer_kind": "human",
+                    "review_method": "independent_blind_review",
+                    "decision": "confirmed",
+                    "reviewed_at": "2026-08-15T00:00:00Z",
+                }
+            )
+    fixture["adjudication_records"] = records
+    validated = GoldenManifest.model_validate(fixture)
+    for entry, original_path in zip(validated.entries, original_paths, strict=True):
+        entry.path = original_path
+    return validated
+
+
+def score_face_run_record(
+    face_run_record: dict[str, Any], manifest: Any, **kwargs: Any
+) -> dict[str, Any]:
+    """Apply shared strict-review fixture data before calling the production scorer."""
+    if (
+        isinstance(manifest, dict)
+        and manifest.get("annotation_mode") == "exhaustive"
+        and (entries := manifest.get("entries"))
+        and all(entry.get("annotation_mode") == "exhaustive" for entry in entries)
+    ):
+        manifest = _face_score_fixture_manifest(manifest)
+    return _score_face_run_record(face_run_record, manifest, **kwargs)
+
+
 def _manifest_entries() -> list[dict]:
     return [
         {
@@ -169,6 +236,53 @@ def _manifest_entries() -> list[dict]:
             "face_boxes": [],
         },
     ]
+
+
+def _reviewed_report_entries(entries: list[dict]) -> tuple[list[dict], dict[str, Any]]:
+    """Add explicit confirmed review evidence for strict report fixtures."""
+    reviewed_entries = copy.deepcopy(entries)
+    records: list[dict[str, Any]] = []
+    for entry in reviewed_entries:
+        for box_index, box in enumerate(entry.get("face_boxes") or []):
+            # Review admission validates the complete persisted box shape. A few
+            # report-only fixtures use abbreviated boxes because width/height
+            # and source are irrelevant to those assertions.
+            box.setdefault("w", 0.2)
+            box.setdefault("h", 0.3)
+            box.setdefault("source", "iptc")
+            if not has_human_adjudicated_gt_lineage(box):
+                continue
+            record_id = f"report-fixture-review-{entry['media_id']}-{box_index}"
+            box["adjudication_source"] = f"human_adjudicated:{record_id}"
+            records.append(
+                {
+                    "record_id": record_id,
+                    "media_id": entry["media_id"],
+                    "box_index": box_index,
+                    "reviewer_id": "report-fixture-reviewer",
+                    "reviewer_kind": "human",
+                    "review_method": "independent_blind_review",
+                    "decision": "confirmed",
+                    "reviewed_at": "2026-08-15T00:00:00Z",
+                }
+            )
+    return reviewed_entries, {"adjudication_records": records}
+
+
+def score_run_record(run_record: dict[str, Any], entries: list[dict], *args: Any, **kwargs: Any) -> dict[str, Any]:
+    """Score legacy report fixtures with explicit review-only evidence."""
+    if kwargs.get("run_manifest") is None and kwargs.get("review_manifest") is None:
+        entries, review_manifest = _reviewed_report_entries(entries)
+        kwargs["review_manifest"] = review_manifest
+    return _score_run_record(run_record, entries, *args, **kwargs)
+
+
+def build_reports(run_record: dict[str, Any], entries: list[dict], *args: Any, **kwargs: Any) -> tuple[str, str]:
+    """Build legacy report fixtures with explicit review-only evidence."""
+    if kwargs.get("run_manifest") is None and kwargs.get("review_manifest") is None:
+        entries, review_manifest = _reviewed_report_entries(entries)
+        kwargs["review_manifest"] = review_manifest
+    return _build_reports(run_record, entries, *args, **kwargs)
 
 
 def test_score_run_record_shapes():
@@ -2051,6 +2165,7 @@ def test_synthetic_real_divergence_demotion_and_qualitative():
 
 def test_face_score_check_determinism_cross_process(tmp_path):
     face_run, manifest = _face_fixture_corpus()
+    manifest = _face_score_fixture_manifest(manifest)
     # Write record + a minimal loadable manifest JSON for subprocess path via pure score
     a = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
     b = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
@@ -2065,13 +2180,14 @@ def test_face_score_check_determinism_cross_process(tmp_path):
     # Use in-process score as baseline; subprocess imports score_face_run_record with same dicts
     script = (
         "import json,sys; "
+        "from scripts.eval_harness.manifest import GoldenManifest; "
         "from scripts.eval_harness.report import score_face_run_record; "
         "rec=json.loads(open(sys.argv[1]).read()); "
-        "man=json.loads(open(sys.argv[2]).read()); "
+        "man=GoldenManifest.model_validate(json.loads(open(sys.argv[2]).read())); "
         "print(json.dumps(score_face_run_record(rec,man,score_manifest_sha256='s'*64),sort_keys=True))"
     )
     man_path = tmp_path / "man.json"
-    man_path.write_text(json.dumps(manifest))
+    man_path.write_text(json.dumps(manifest.model_dump(mode="json")))
     baseline = json.dumps(a, sort_keys=True)
     service_root = Path(__file__).resolve().parents[2]  # apps/prototype-description-service
     for seed in ("0", "1", "42"):

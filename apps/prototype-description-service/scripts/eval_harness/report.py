@@ -67,6 +67,7 @@ from .face_metrics import (
     face_identification_pr,
     face_unknown_rejection,
     identification_pr,
+    has_independent_gt_region_source,
     has_human_adjudicated_gt_lineage,
     labeled_order,
     named_box_name,
@@ -87,6 +88,7 @@ from .manifest import (
     compute_corpus_coverage_gaps,
     parse_annotation_mode,
     refusal_explanation,
+    require_confirmed_blind_reviews_for_strict_scoring,
 )
 from .placement_metrics import PlacementScores, placement_accuracy, score_placement
 from .schema import SCHEMA, DocKind
@@ -200,8 +202,15 @@ FACE_BAKEOFF_SAMPLING_FRAMES: dict[str, str] = {
         # surfaced in `failures`/association notes.
         + "; error-item media excluded from association (attributable named GT misses remain in headline FN; listed in failures)"
     ),
-    "full_corpus_identification": "full_corpus_" + SAMPLING_FRAME_FACE_ID,
-    "unknown_rejection": SAMPLING_FRAME_UNKNOWN_REJECTION,
+    "full_corpus_identification": (
+        "full_corpus_"
+        + SAMPLING_FRAME_FACE_ID
+        + "; named complete GT on error-item media count as identification misses"
+    ),
+    "unknown_rejection": (
+        SAMPLING_FRAME_UNKNOWN_REJECTION
+        + "; complete stranger GT on error-item media count as missed rejections"
+    ),
     "occlusion_recovery": SAMPLING_FRAME_OCCLUSION_RECOVERY,
     "clustering": SAMPLING_FRAME_CLUSTERING,
     # VLM6-R2-C-02: detection P/R population (named + anonymous GT boxes).
@@ -210,14 +219,16 @@ FACE_BAKEOFF_SAMPLING_FRAMES: dict[str, str] = {
     # spatial association and are NOT detector FNs — the honest identity is
     # tp+fn+geometry_incomplete_gt = n_gt that entered association (EVAL-03).
     "detection": (
-        "all_gt_boxes_on_scoreable_media_via_association: named and anonymous "
+        "all_gt_boxes_on_manifest_media: named and anonymous "
         "GT share one population (HARM-01 / EVAL-16); TP=IoU-matched pairs; "
-        "FN=unmatched complete GT (named missed_gt + missed_stranger_gt); "
+        "FN=unmatched complete GT plus complete GT on error-item media; "
+        "named misses feed identification and anonymous misses feed unknown rejection; "
         "FP=unmatched detections; geometry_incomplete_gt = GT boxes excluded "
         "from IoU (null/invalid centre-y; not detector FN); "
-        "tp+fn+geometry_incomplete_gt equals GT boxes that reached association; "
+        "tp+fn+geometry_incomplete_gt equals the manifest GT population; "
         "association_complete=false when geometry_incomplete_gt>0; "
-        "error-item media excluded from association (listed in failures)"
+        "error-item media excluded from association (complete GT misses are "
+        "attributed at report boundary; items remain listed in failures)"
     ),
 }
 
@@ -2164,6 +2175,7 @@ def score_run_record(
     rubric_gate: str = "enforce",
     annotation_mode: AnnotationMode | str | None = None,
     run_manifest: Mapping[str, Any] | None = None,
+    review_manifest: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Pure scoring: run record + manifest labels -> metrics dict.
 
@@ -2174,7 +2186,8 @@ def score_run_record(
     to exhaustive. ``roster_only``, a missing stamp, and an unrecognised
     token refuse; they never silently score unlabeled non-roster faces as
     false positives. Caption metrics still run; strict identification refuses
-    GT boxes without human-adjudicated lineage.
+    GT boxes without human-adjudicated lineage. ``review_manifest`` supplies
+    adjudication records without activating ``run_manifest`` localization scoring.
     Face-bakeoff scoring (``score_face_run_record``) raises instead.
     """
     # identity_names lives in this module (VLM6-RH-07) — no lazy cli import.
@@ -2194,6 +2207,39 @@ def score_run_record(
                     break
             if lineage_error is not None:
                 break
+        # Preserve the established mode/coverage/lineage refusals before the
+        # review gate, while still refusing unreviewed GT before any metric.
+        try:
+            strict_mode = _resolve_score_annotation_mode(annotation_mode, manifest_entries)
+            if strict_mode is AnnotationMode.EXHAUSTIVE:
+                require_exhaustive_box_coverage(manifest_entries)
+        except ManifestError as exc:
+            if not _invariant_is(
+                exc.invariant,
+                ScoreInvariant.DETECTION_UNRECOGNISED_ANNOTATION_MODE,
+                ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES,
+                DETECTION_UNCOVERED_FACE_COUNT_INVARIANT,
+            ):
+                raise
+        else:
+            if strict_mode is AnnotationMode.EXHAUSTIVE:
+                if lineage_error is not None:
+                    raise lineage_error
+    # Caught detection refusals still permit downstream metrics. Review every
+    # strict-lineage box even when another box lacks lineage. This admission
+    # gate applies with or without the optional full manifest: otherwise the
+    # default report API could publish strict metrics from unreviewed GT.
+    strict_review_gt_present = any(
+        has_human_adjudicated_gt_lineage(box)
+        for entry in manifest_entries
+        for box in entry.get("face_boxes") or []
+    )
+    if run_manifest is not None or strict_review_gt_present:
+        # A full run manifest also selects strict localization scoring. A
+        # review-only manifest lets count-based report callers supply verified
+        # adjudication records without changing that scoring mode.
+        review_evidence = run_manifest if run_manifest is not None else review_manifest
+        require_confirmed_blind_reviews_for_strict_scoring(review_evidence, entries=manifest_entries)
     eval_mode = str(run_record["provenance"].get("eval_mode", "standard"))
     if eval_mode not in EVAL_MODES:
         raise ReportError(f"unknown eval_mode {eval_mode!r} in run-record provenance; expected one of {EVAL_MODES}")
@@ -3702,6 +3748,7 @@ def build_reports(
     score_manifest_sha256: str | None = None,
     manifest_roster: list[str] | None = None,
     run_manifest: Mapping[str, Any] | None = None,
+    review_manifest: Mapping[str, Any] | None = None,
     annotation_mode: AnnotationMode | str | None = None,
     audience: Audience = Audience.LOCAL,
     rubric_gate: str = "enforce",
@@ -3735,6 +3782,7 @@ def build_reports(
         score_manifest_sha256=score_manifest_sha256,
         manifest_roster=manifest_roster,
         run_manifest=run_manifest,
+        review_manifest=review_manifest,
         rubric_gate=rubric_gate,
         annotation_mode=annotation_mode,
     )
@@ -3747,6 +3795,7 @@ def build_reports(
             score_manifest_sha256=score_manifest_sha256,
             manifest_roster=manifest_roster,
             run_manifest=run_manifest,
+            review_manifest=review_manifest,
             rubric_gate=rubric_gate,
             annotation_mode=annotation_mode,
         )
@@ -3983,7 +4032,8 @@ def _association_counts_for_media(
         boxes = list(gt_by_media.get(mid, ()))
         assoc = by_media.get(mid)
         if assoc is None:
-            named = sum(1 for b in boxes if gt_box_name(b) is not None)
+            # Use the same geometry partition as full-corpus failed items.
+            named = _failed_item_gt_counts({mid}, gt_by_media)["named_misses"]
             if named:
                 missed += named
                 notes.append(
@@ -4127,6 +4177,40 @@ def _gt_by_media(entries: Sequence[Mapping[str, Any]]) -> dict[int, list[Any]]:
 
 def _total_gt_boxes(entries: Sequence[Mapping[str, Any]]) -> int:
     return sum(len(e.get("face_boxes") or []) for e in entries)
+
+
+def _failed_item_gt_counts(
+    media_ids: set[int],
+    gt_by_media: Mapping[int, Sequence[Any]],
+) -> dict[str, int]:
+    """Count complete GT on errored media as upstream detection/ID misses.
+
+    An errored item never reaches assignment. Reuse its association geometry
+    partition with no detections so null/invalid-y GT remains geometry-incomplete
+    rather than becoming an FN, while every complete box is attributed to the
+    appropriate end-to-end miss population (EVAL-16).
+    """
+    counts = {
+        "detection_misses": 0,
+        "named_misses": 0,
+        "stranger_misses": 0,
+        "geometry_incomplete_gt": 0,
+        "association_incomplete_media": 0,
+    }
+    for media_id in sorted(media_ids):
+        boxes = list(gt_by_media.get(media_id, ()))
+        if not boxes:
+            continue
+        association = associate_detections([], boxes, [1, 1])
+        complete_indices = association.unmatched_gt
+        named = sum(1 for index in complete_indices if gt_box_name(boxes[index]) is not None)
+        counts["detection_misses"] += len(complete_indices)
+        counts["named_misses"] += named
+        counts["stranger_misses"] += len(complete_indices) - named
+        counts["geometry_incomplete_gt"] += len(association.geometry_incomplete_gt)
+        if association.geometry_incomplete_gt:
+            counts["association_incomplete_media"] += 1
+    return counts
 
 
 def _sort_nested_lists(obj: Any) -> Any:
@@ -4464,6 +4548,29 @@ def score_face_run_record(
             invariant=ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE,
         )
     require_exhaustive_box_coverage(entries)
+    for entry_index, entry in enumerate(entries):
+        for box_index, box in enumerate(entry.get("face_boxes") or []):
+            if not has_independent_gt_region_source(box):
+                raise ManifestError(
+                    "strict detection scoring requires an independent supported source "
+                    "on every GT box "
+                    f"(entry_index={entry_index}, box_index={box_index})",
+                    invariant=ScoreInvariant.DETECTION_REQUIRES_INDEPENDENT_GT_SOURCE,
+                    entry_index=entry_index,
+                    entry_path=str(entry.get("path", "")),
+                )
+    for entry_index, entry in enumerate(entries):
+        for box_index, box in enumerate(entry.get("face_boxes") or []):
+            if not has_human_adjudicated_gt_lineage(box):
+                raise ManifestError(
+                    "strict detection scoring requires human-adjudicated lineage "
+                    "on every GT box "
+                    f"(entry_index={entry_index}, box_index={box_index})",
+                    invariant=ScoreInvariant.DETECTION_REQUIRES_HUMAN_ADJUDICATED_GT_LINEAGE,
+                    entry_index=entry_index,
+                    entry_path=str(entry.get("path", "")),
+                )
+    require_confirmed_blind_reviews_for_strict_scoring(manifest)
     entry_by_id = _entry_index(entries)
     gt_by_media = _gt_by_media(entries)
     total_boxes = _total_gt_boxes(entries)
@@ -4471,7 +4578,23 @@ def score_face_run_record(
 
     items = list(face_run_record.get("items") or [])
     _assert_no_occlusion_marked_items(items)  # FIR5RR-08 / EVAL-16
-    # Keep error items out of assignment but count them as failures.
+    manifest_media_ids = {int(entry["media_id"]) for entry in entries}
+    run_media_ids = [int(item["media_id"]) for item in items]
+    run_media_counts = Counter(run_media_ids)
+    missing_media_ids = sorted(manifest_media_ids - set(run_media_ids))
+    unexpected_media_ids = sorted(set(run_media_ids) - manifest_media_ids)
+    duplicate_media_ids = sorted(media_id for media_id, n in run_media_counts.items() if n > 1)
+    if missing_media_ids or unexpected_media_ids or duplicate_media_ids:
+        raise ManifestError(
+            "score_face_run_record requires exactly one run-record item for every "
+            "score-time manifest entry; population mismatch: "
+            f"missing_media_ids={missing_media_ids}, "
+            f"unexpected_media_ids={unexpected_media_ids}, "
+            f"duplicate_media_ids={duplicate_media_ids}",
+            invariant="face_run_population_mismatch",
+        )
+    # Keep error items out of assignment but count them as failures and retain
+    # their complete manifest GT as end-to-end misses (EVAL-16).
     scoreable: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     for item in items:
@@ -4524,12 +4647,12 @@ def score_face_run_record(
         elif isinstance(raw_twin_errors, list):
             twin_errors = [str(error) for error in raw_twin_errors]
             twin_pass_status = "complete" if not twin_errors else "incomplete"
-        elif raw_twin_errors:
-            twin_errors = [str(raw_twin_errors)]
-            twin_pass_status = "incomplete"
         else:
-            twin_errors = []
-            twin_pass_status = "complete"
+            twin_errors = [
+                "occlusion_twin_pass.errors must be a list "
+                f"(got {type(raw_twin_errors).__name__})"
+            ]
+            twin_pass_status = "incomplete"
     else:
         twin_errors = []
         twin_pass_status = "unattested"
@@ -4543,13 +4666,27 @@ def score_face_run_record(
     # and the freeze could not pin labeled_y_missing_* (wF4 residual).
     identity_ordering = _identity_ordering_block_for_face(scoreable, entry_by_id)
 
+    failed_item_gt = _failed_item_gt_counts(
+        {int(failure["media_id"]) for failure in failures}, gt_by_media
+    )
+
     assignment = score_face_assignment(scoreable, gt_by_media)
     detection = _detection_from_assignment(assignment)
+    detection["fn"] += failed_item_gt["detection_misses"]
+    detection["recall"] = (
+        detection["tp"] / (detection["tp"] + detection["fn"])
+        if detection["tp"] + detection["fn"]
+        else 0.0
+    )
+    detection["geometry_incomplete_gt"] += failed_item_gt["geometry_incomplete_gt"]
+    detection["association_incomplete_media"] += failed_item_gt[
+        "association_incomplete_media"
+    ]
+    detection["association_complete"] = detection["geometry_incomplete_gt"] == 0
 
     try:
-        require_boxed_identification_gt(
-            [entry_by_id[int(item["media_id"])] for item in scoreable]
-        )
+        # Failed items contribute to the full-corpus denominator too (EVAL-16).
+        require_boxed_identification_gt(entries)
     except ManifestError as exc:
         if not _invariant_is(exc.invariant, IDENTIFICATION_UNBOXED_INVARIANT):
             raise
@@ -4571,13 +4708,15 @@ def score_face_run_record(
     if identification_invariant is None:
         id_pr = face_identification_pr(
             assignment.decisions,
-            missed_gt=assignment.missed_gt,
+            missed_gt=assignment.missed_gt + failed_item_gt["named_misses"],
             unmatched_detections=assignment.false_detections,
             sampling_frame=FACE_BAKEOFF_SAMPLING_FRAMES["full_corpus_identification"],
         )
         unknown = face_unknown_rejection(
             assignment.decisions,
-            missed_stranger_gt=assignment.missed_stranger_gt,
+            missed_stranger_gt=(
+                assignment.missed_stranger_gt + failed_item_gt["stranger_misses"]
+            ),
         )
 
         # Headline = celebs01 named probes only (provenance.source == CELEB).
@@ -4933,7 +5072,9 @@ def score_face_run_record(
             "rate_denominator": unknown.rate_denominator,
             # HARM-09 / AUDIT-07: disclose the stranger-miss term folded into
             # rate_denominator (already required into face_unknown_rejection).
-            "missed_stranger_gt": int(assignment.missed_stranger_gt),
+            "missed_stranger_gt": int(
+                assignment.missed_stranger_gt + failed_item_gt["stranger_misses"]
+            ),
             **unknown_status,
         }
         full_id_block = _face_pr_dict(id_pr)

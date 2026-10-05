@@ -57,8 +57,14 @@ from recognition.worker.handlers.scan import ScanItemHandler
 from recognition.worker.handlers.utils import ensure_job_context
 from scripts.usage_reservation_sweeper import (
     DEFAULT_BATCH_SIZE as _USAGE_SWEEP_BATCH_SIZE,
+)
+from scripts.usage_reservation_sweeper import (
     DEFAULT_MAX_BATCHES as _USAGE_SWEEP_MAX_BATCHES,
+)
+from scripts.usage_reservation_sweeper import (
     DEFAULT_NO_PROGRESS_LIMIT as _USAGE_SWEEP_NO_PROGRESS_LIMIT,
+)
+from scripts.usage_reservation_sweeper import (
     DEFAULT_STALE_AFTER_SECONDS as _USAGE_SWEEP_STALE_AFTER_SECONDS,
 )
 
@@ -144,9 +150,7 @@ def _validate_usage_sweep_interval_seconds(value: object) -> float:
         except (TypeError, ValueError):
             interval = float("nan")
     if not math.isfinite(interval) or interval <= 0:
-        raise ValueError(
-            f"Invalid RECOGNITION_USAGE_SWEEP_INTERVAL_S={value!r}; must be a positive finite number"
-        )
+        raise ValueError(f"Invalid RECOGNITION_USAGE_SWEEP_INTERVAL_S={value!r}; must be a positive finite number")
     return interval
 
 
@@ -373,6 +377,10 @@ class ScanWorker:
                     max_attempts=self._config.max_attempts,
                     now=now,
                 )
+                # Reclaim is deliberately bounded to a small batch; commit it
+                # before acquiring locks for stall maintenance and normal claims.
+                await session.commit()
+                await enable_rls_bypass(session)
                 queue = ScanQueueService(repo)
                 identities_fn = getattr(queue, "terminate_stalled_jobs_with_identities", None)
                 if callable(identities_fn):

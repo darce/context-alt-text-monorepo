@@ -48,6 +48,38 @@ def _named_box(
     }
 
 
+def _add_confirmed_blind_reviews(manifest: dict[str, Any]) -> None:
+    records: list[dict[str, Any]] = []
+    strict_sources = {"operator_blind", "operator_repass", "arbitration", "gold_reference"}
+    strict_decisions = {"named", "stranger", "inconclusive"}
+    for entry in manifest["entries"]:
+        media_id = entry["media_id"]
+        for box_index, box in enumerate(entry.get("face_boxes") or []):
+            lineage = box.get("lineage") or {}
+            if (
+                lineage.get("label_source") not in strict_sources
+                or lineage.get("saw_machine_proposals") is not False
+                or lineage.get("decision") not in strict_decisions
+            ):
+                continue
+
+            record_id = f"cli-fixture-review-{media_id}-{box_index}"
+            box["adjudication_source"] = f"human_adjudicated:{record_id}"
+            records.append(
+                {
+                    "record_id": record_id,
+                    "media_id": media_id,
+                    "box_index": box_index,
+                    "reviewer_id": f"independent-reviewer-{media_id}-{box_index}",
+                    "reviewer_kind": "human",
+                    "review_method": "independent_blind_review",
+                    "decision": "confirmed",
+                    "reviewed_at": "2026-08-15T00:00:00Z",
+                }
+            )
+    manifest["adjudication_records"] = records
+
+
 def _cli_exit_status(main: Any, argv: list[str]) -> Any:
     """Mirror running main as a script: fall-through is success (status 0)."""
     try:
@@ -67,7 +99,7 @@ def _manifest_doc(
     # VLM6-DELTA-03: n>1 replicates the single canonical entry under distinct
     # media_ids/paths so a test can clear SCORE_PASS_MIN_SCORED_IMAGES (=5,
     # branch-only category-vacuity gate) without changing per-entry semantics.
-    return {
+    manifest = {
         "manifest_version": 3,
         "annotation_mode": mode,
         "iou_threshold": 0.5,
@@ -129,6 +161,8 @@ def _manifest_doc(
             for i in range(1, n + 1)
         ],
     }
+    _add_confirmed_blind_reviews(manifest)
+    return manifest
 
 
 def _run_record(
@@ -897,6 +931,7 @@ def _partial_id_face_inputs(tmp_path: Path) -> tuple[Path, Path]:
             }
         ],
     }
+    _add_confirmed_blind_reviews(manifest)
     record = {
         "schema": "acx-eval/v1",
         "kind": "face_run_record",

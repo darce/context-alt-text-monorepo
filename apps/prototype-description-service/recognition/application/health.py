@@ -111,6 +111,13 @@ class CheckResult:
         return {"name": self.name, "status": self.status.value, "detail": self.detail}
 
 
+_InsightFaceFileIdentity = tuple[tuple[str, int, int, int, int], ...]
+_INSIGHTFACE_PROBE_CACHE: dict[
+    tuple[str, str], tuple[_InsightFaceFileIdentity, CheckResult]
+] = {}
+_INSIGHTFACE_PROBE_CACHE_LOCK = threading.Lock()
+
+
 def check_health() -> HealthReport:
     """Return a static health signal for the recognition service."""
     return HealthReport.ok("recognition")
@@ -560,21 +567,107 @@ def check_breaker(breaker: SessionDependencyCircuitBreaker) -> CheckResult:
     return CheckResult("breaker", HealthStatus.OK, breaker.state.value)
 
 
-def check_model_cache(cache_dir: Path, model_name: str = "buffalo_l") -> CheckResult:
-    """Stat the InsightFace bundle on every call (PA-10: no caching).
+def _insightface_bundle_identity(onnx_files: Sequence[Path]) -> _InsightFaceFileIdentity | None:
+    """Return a stable identity for the files loaded by InsightFace."""
+    identities: list[tuple[str, int, int, int, int]] = []
+    for path in onnx_files:
+        try:
+            stat = path.stat()
+            if not path.is_file():
+                return None
+            identities.append(
+                (
+                    str(path.resolve()),
+                    int(stat.st_dev),
+                    int(stat.st_ino),
+                    int(stat.st_mtime_ns),
+                    int(stat.st_size),
+                )
+            )
+        except (OSError, RuntimeError):
+            return None
+    return tuple(identities) if identities else None
 
-    The bundle must be a directory containing at least one .onnx file;
-    a missing directory or empty bundle flips /ready to UNHEALTHY.
+
+def _verify_insightface_bundle(cache_dir: Path, model_name: str, bundle: Path) -> CheckResult:
+    """Construct and prepare InsightFace on a probe-cache miss."""
+    try:
+        from insightface.app import FaceAnalysis
+
+        from recognition.config import get_settings
+
+        insightface = get_settings().insightface
+        providers = list(insightface.providers)
+        if not providers:
+            if insightface.device == "auto":
+                providers = ["CUDAExecutionProvider", "CoreMLExecutionProvider", "CPUExecutionProvider"]
+            elif insightface.device == "cuda":
+                providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            elif insightface.device == "mps":
+                providers = ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+            else:
+                providers = ["CPUExecutionProvider"]
+        ctx_id = 0 if insightface.device in ("cuda", "auto") else -1
+
+        # ``cache_dir`` is the parent of ``<model_name>/``; InsightFace
+        # expects its root one level above the configured ``models/`` folder.
+        runtime = FaceAnalysis(
+            name=model_name,
+            root=str(cache_dir.parent),
+            providers=providers,
+        )
+        runtime.prepare(
+            ctx_id=ctx_id,
+            det_size=insightface.det_size,
+            det_thresh=insightface.det_thresh,
+        )
+        missing_tasks = {"detection", "recognition"} - set(runtime.models)
+        if missing_tasks:
+            return CheckResult(
+                "model_cache",
+                HealthStatus.UNHEALTHY,
+                f"missing_model_tasks: {', '.join(sorted(missing_tasks))} @ {bundle}",
+            )
+    except Exception as exc:  # noqa: BLE001 - health must fail closed on invalid models
+        return CheckResult("model_cache", HealthStatus.UNHEALTHY, f"runtime unavailable: {exc}")
+
+    return _with_numeric_runtime_fingerprint(
+        CheckResult("model_cache", HealthStatus.OK, f"verified: detector+recognition @ {bundle}")
+    )
+
+
+def check_model_cache(cache_dir: Path, model_name: str = "buffalo_l") -> CheckResult:
+    """Verify the configured InsightFace bundle, reusing a stable success.
+
+    The process-local cache is keyed by model name, resolved cache directory,
+    and ONNX file identity. Failed preparations are never cached.
     """
     bundle = cache_dir / model_name
-    if not bundle.is_dir():
-        return CheckResult("model_cache", HealthStatus.UNHEALTHY, f"missing: {bundle}")
-    onnx_files = list(bundle.glob("*.onnx"))
-    if not onnx_files:
-        return CheckResult("model_cache", HealthStatus.UNHEALTHY, f"no_onnx_files: {bundle}")
-    return _with_numeric_runtime_fingerprint(
-        CheckResult("model_cache", HealthStatus.OK, f"{len(onnx_files)} bundle file(s)")
-    )
+    try:
+        cache_key = (model_name, str(cache_dir.resolve()))
+    except (OSError, RuntimeError) as exc:
+        return CheckResult("model_cache", HealthStatus.UNHEALTHY, f"runtime unavailable: {exc}")
+
+    with _INSIGHTFACE_PROBE_CACHE_LOCK:
+        if not bundle.is_dir():
+            _INSIGHTFACE_PROBE_CACHE.pop(cache_key, None)
+            return CheckResult("model_cache", HealthStatus.UNHEALTHY, f"missing: {bundle}")
+        onnx_files = sorted(bundle.glob("*.onnx"))
+        if not onnx_files:
+            _INSIGHTFACE_PROBE_CACHE.pop(cache_key, None)
+            return CheckResult("model_cache", HealthStatus.UNHEALTHY, f"no_onnx_files: {bundle}")
+
+        identity = _insightface_bundle_identity(onnx_files)
+        cached = _INSIGHTFACE_PROBE_CACHE.get(cache_key)
+        if identity is not None and cached is not None and cached[0] == identity:
+            return cached[1]
+
+        result = _verify_insightface_bundle(cache_dir, model_name, bundle)
+        if result.status is HealthStatus.OK and identity is not None:
+            _INSIGHTFACE_PROBE_CACHE[cache_key] = (identity, result)
+        else:
+            _INSIGHTFACE_PROBE_CACHE.pop(cache_key, None)
+        return result
 
 
 def expected_embedding_dimension(space: ModelSpace) -> int:
@@ -785,9 +878,11 @@ def check_model_space(space: ModelSpace, store: Path, /) -> CheckResult:
 
 
 def reset_face_pipeline_verify_cache_for_tests() -> None:
-    """Clear the process-local verify cache (unit tests only)."""
+    """Clear process-local model verification caches (unit tests only)."""
     with _FACE_PIPELINE_VERIFY_CACHE_LOCK:
         _FACE_PIPELINE_VERIFY_CACHE.clear()
+    with _INSIGHTFACE_PROBE_CACHE_LOCK:
+        _INSIGHTFACE_PROBE_CACHE.clear()
 
 
 def aggregate_status(checks: list[CheckResult]) -> HealthStatus:

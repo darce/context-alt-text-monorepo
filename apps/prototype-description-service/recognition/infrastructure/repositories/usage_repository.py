@@ -486,33 +486,14 @@ class SqlAlchemyUsageRepository:
         if existing is not None:
             return self._replay_or_conflict(existing, normalized_fingerprint)
 
-        lease_cutoff = datetime.now(tz=UTC) - USAGE_RESERVATION_LEASE
-        expire_stmt = (
-            update(UsageReservation)
-            .where(
-                UsageReservation.tenant_id == tenant_id,
-                UsageReservation.period_start == entitlement.period_start,
-                UsageReservation.status == UsageReservationStatus.RESERVED,
-                UsageReservation.reserved_at < lease_cutoff,
-            )
-            .values(status=UsageReservationStatus.EXPIRED, settled_at=func.now())
-        )
-        await _with_timeout(
-            self._session.execute(expire_stmt),
-            timeout_s=self._timeout_s,
-            operation="expire stale usage reservations",
-        )
-
+        # Age alone is not evidence that work stopped. Keep stale reservations
+        # chargeable and their global holds in place until recovery resolves them.
         used_stmt = (
             select(func.coalesce(func.sum(UsageReservation.cost_units), 0))
             .where(
                 UsageReservation.tenant_id == tenant_id,
                 UsageReservation.period_start == entitlement.period_start,
                 UsageReservation.status.in_(_CHARGEABLE_RESERVATION_STATUSES),
-                or_(
-                    UsageReservation.status == UsageReservationStatus.COMMITTED,
-                    UsageReservation.reserved_at >= lease_cutoff,
-                ),
             )
             .limit(1)
         )
@@ -613,7 +594,13 @@ class SqlAlchemyUsageRepository:
         if reserved_at.tzinfo is None:
             reserved_at = reserved_at.replace(tzinfo=UTC)
         stale_reservation = reserved_at < lease_cutoff
-        settled_status = UsageReservationStatus.EXPIRED if stale_reservation else target_status
+        # A commit is proof of terminal work and remains chargeable after the
+        # reservation lease; the lease only expires abandoned or released work.
+        settled_status = (
+            UsageReservationStatus.EXPIRED
+            if stale_reservation and target_status is not UsageReservationStatus.COMMITTED
+            else target_status
+        )
         lease_guard = (
             UsageReservation.reserved_at < lease_cutoff
             if stale_reservation
@@ -707,13 +694,6 @@ class SqlAlchemyUsageRepository:
         )
         return result.scalar_one_or_none()
 
-    def _assert_period_current(self, global_state: GlobalUsageAdmissionState, *, now: datetime) -> None:
-        period_end = global_state.period_end
-        if period_end.tzinfo is None:
-            period_end = period_end.replace(tzinfo=UTC)
-        if now >= period_end:
-            raise UsageAdmissionUnavailableError("global usage period has elapsed; recovery is unsafe")
-
     async def assert_fence_current(self, ticket: UsageTicket, *, fence_token: str) -> None:
         """Reject a captured token whose epoch no longer matches global state."""
         global_state = await self._lock_global_state()
@@ -725,20 +705,20 @@ class SqlAlchemyUsageRepository:
     async def begin_recovery(self, ticket: UsageTicket) -> UsageReservation:
         """Lock global state, entitlement, then reservation for trusted recovery.
 
-        Does not mint a new reservation. Period rollover is fail-closed rather
-        than settled against reset counters. [RES-01][DATA-03]
+        Recovery uses the reservation's recorded entitlement period, because
+        the singleton entitlement may have advanced since admission. A daily
+        rollover resets only daily accounting; inflight and queue holds remain
+        available for recovery to release. [RES-19][DATA-03]
         """
         now = datetime.now(tz=UTC)
         global_state = await self._lock_global_state()
-        self._assert_period_current(global_state, now=now)
+        self._roll_global_period_if_needed(global_state, now)
         entitlement = await self._lock_entitlement_row(ticket.tenant_id)
         if entitlement is None:
             raise UsageAdmissionUnavailableError("tenant entitlement is missing; recovery is unsafe")
         reservation = await self._lock_reservation(ticket)
         if reservation is None or not self._ticket_identity_matches(reservation, ticket):
             raise ReservationNotFoundError("usage ticket does not identify a reservation")
-        if reservation.period_start != entitlement.period_start:
-            raise UsageAdmissionUnavailableError("reservation period is not the current entitlement period")
         return reservation
 
     async def complete_recovery(
@@ -752,7 +732,7 @@ class SqlAlchemyUsageRepository:
             raise InvalidUsageRequestError("recovery target must be committed or released")
         now = datetime.now(tz=UTC)
         global_state = await self._lock_global_state()
-        self._assert_period_current(global_state, now=now)
+        self._roll_global_period_if_needed(global_state, now)
         try:
             current_status = UsageReservationStatus(reservation.status)
         except (TypeError, ValueError):
@@ -813,6 +793,7 @@ class SqlAlchemyUsageRepository:
         *,
         limit: int = 100,
         now: datetime | None = None,
+        exclude_reservation_ids: Iterable[UUID] = (),
     ) -> list[UsageReservation]:
         """Return a bounded, oldest-first batch of reservations still held open."""
         if isinstance(stale_after_seconds, bool) or not isinstance(stale_after_seconds, (int, float)):
@@ -827,15 +808,14 @@ class SqlAlchemyUsageRepository:
         if reference_time.tzinfo is None:
             reference_time = reference_time.replace(tzinfo=UTC)
         cutoff = reference_time - timedelta(seconds=stale_after)
-        stmt = (
-            select(UsageReservation)
-            .where(
-                UsageReservation.status == UsageReservationStatus.RESERVED,
-                UsageReservation.reserved_at <= cutoff,
-            )
-            .order_by(UsageReservation.reserved_at.asc(), UsageReservation.id.asc())
-            .limit(limit)
+        stmt = select(UsageReservation).where(
+            UsageReservation.status == UsageReservationStatus.RESERVED,
+            UsageReservation.reserved_at <= cutoff,
         )
+        excluded_ids = tuple(set(exclude_reservation_ids))
+        if excluded_ids:
+            stmt = stmt.where(UsageReservation.id.not_in(excluded_ids))
+        stmt = stmt.order_by(UsageReservation.reserved_at.asc(), UsageReservation.id.asc()).limit(limit)
         result = await _with_timeout(
             self._session.execute(stmt),
             timeout_s=self._timeout_s,

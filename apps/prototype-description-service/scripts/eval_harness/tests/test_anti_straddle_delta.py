@@ -13,10 +13,9 @@ import pytest
 from scripts.eval_harness.manifest import ScoreInvariant
 from scripts.eval_harness.report import (
     ReportError,
-    build_reports,
     compare_scored_runs,
-    score_run_record,
 )
+from scripts.eval_harness.tests._reviewed_gt_fixtures import build_reports, score_run_record
 
 
 def _named_box(name: str | None, *, x: float = 0.5) -> dict:

@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 
 # Stored job.status values that are terminal; finalizers must never overwrite them.
 _TERMINAL_JOB_STATUS_VALUES = tuple(status.value for status in TERMINAL_JOB_STATUSES)
+# Keep this aligned with the identity batch returned by ScanQueueService.
+_STALLED_JOB_BATCH_SIZE = 100
+_STALE_ITEM_RECLAIM_BATCH_SIZE = 100
 
 
 class SqlAlchemyScanQueueRepository(ScanQueueRepository):
@@ -245,26 +248,56 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
             stale_before = now - timedelta(seconds=stale_after_seconds)
             reclaim_sql = text(
                 """
-                UPDATE identity_scan_job_items
+                WITH stale_items AS (
+                    SELECT id
+                    FROM identity_scan_job_items
+                    WHERE status = 'processing'
+                      AND started_at IS NOT NULL
+                      AND started_at < :stale_before
+                      AND attempts < :max_attempts
+                    ORDER BY started_at, id
+                    LIMIT :batch_size
+                    FOR UPDATE SKIP LOCKED
+                )
+                UPDATE identity_scan_job_items AS item
                 SET status = 'pending',
                     started_at = NULL
-                WHERE status = 'processing'
-                  AND started_at IS NOT NULL
-                  AND started_at < :stale_before
-                  AND attempts < :max_attempts
+                FROM stale_items
+                WHERE item.id = stale_items.id
                 """
             )
             result = await execute_dml(
                 self._session,
                 reclaim_sql,
-                {"stale_before": stale_before, "max_attempts": max_attempts},
+                {
+                    "stale_before": stale_before,
+                    "max_attempts": max_attempts,
+                    "batch_size": _STALE_ITEM_RECLAIM_BATCH_SIZE,
+                },
             )
             return get_rowcount(result)
 
         stale_before_ts = now.timestamp() - stale_after_seconds
+        stale_items_stmt = (
+            select(IdentityScanJobItem.id)
+            .where(
+                IdentityScanJobItem.status == ScanItemStatus.PROCESSING.value,
+                IdentityScanJobItem.started_at.is_not(None),
+                timestamp_as_epoch(IdentityScanJobItem.started_at, self._session) < int(stale_before_ts),
+                IdentityScanJobItem.attempts < max_attempts,
+            )
+            .order_by(IdentityScanJobItem.started_at, IdentityScanJobItem.id)
+            .limit(_STALE_ITEM_RECLAIM_BATCH_SIZE)
+            .with_for_update(skip_locked=True)
+        )
+        stale_item_ids = list((await self._session.execute(stale_items_stmt)).scalars().all())
+        if not stale_item_ids:
+            return 0
+
         reclaim_stmt = (
             update(IdentityScanJobItem)
             .where(
+                IdentityScanJobItem.id.in_(stale_item_ids),
                 IdentityScanJobItem.status == ScanItemStatus.PROCESSING.value,
                 IdentityScanJobItem.started_at.is_not(None),
                 timestamp_as_epoch(IdentityScanJobItem.started_at, self._session) < int(stale_before_ts),
@@ -541,8 +574,32 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         stale_after_seconds: int,
         now: datetime,
     ) -> int:
+        self._last_stalled_job_transitions: list[tuple[uuid.UUID, uuid.UUID] | uuid.UUID] = []
+        transitions = await self._fail_stalled_running_jobs(
+            stale_after_seconds=stale_after_seconds,
+            now=now,
+        )
+        self._last_stalled_job_transitions = transitions
+        return len(transitions)
+
+    async def fail_stalled_running_jobs_with_identities(
+        self,
+        *,
+        stale_after_seconds: int,
+        now: datetime,
+    ) -> list[tuple[uuid.UUID, uuid.UUID] | uuid.UUID]:
+        """Return job identities for the jobs actually transitioned by this batch."""
+        await self.fail_stalled_running_jobs(stale_after_seconds=stale_after_seconds, now=now)
+        return list(getattr(self, "_last_stalled_job_transitions", []))
+
+    async def _fail_stalled_running_jobs(
+        self,
+        *,
+        stale_after_seconds: int,
+        now: datetime,
+    ) -> list[tuple[uuid.UUID, uuid.UUID] | uuid.UUID]:
         if stale_after_seconds <= 0:
-            return 0
+            return []
 
         stale_before = now - timedelta(seconds=stale_after_seconds)
         incomplete_items = exists(
@@ -556,19 +613,44 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
                 ),
             )
         )
-        stmt = select(IdentityScanJob.id).where(
-            IdentityScanJob.status == JobStatus.RUNNING.value,
-            IdentityScanJob.started_at.is_not(None),
-            IdentityScanJob.started_at < stale_before,
-            incomplete_items,
+        stmt = (
+            select(IdentityScanJob.id, IdentityScanJob.tenant_id)
+            .where(
+                IdentityScanJob.status == JobStatus.RUNNING.value,
+                IdentityScanJob.started_at.is_not(None),
+                IdentityScanJob.started_at < stale_before,
+                incomplete_items,
+            )
+            .order_by(IdentityScanJob.started_at, IdentityScanJob.id)
+            .limit(_STALLED_JOB_BATCH_SIZE)
+            .with_for_update(
+                skip_locked=True,
+                of=IdentityScanJob,
+            )
         )
         result = await self._session.execute(stmt)
-        stalled_job_ids = list(result.scalars().all())
-        if not stalled_job_ids:
-            return 0
+        stalled_rows = list(result.all())
+        if not stalled_rows:
+            return []
 
-        for job_id in stalled_job_ids:
-            await self.fail_job(job_id=job_id, completed_at=now, error_message="stalled")
+        transitioned: list[tuple[uuid.UUID, uuid.UUID] | uuid.UUID] = []
+        for row in stalled_rows:
+            if hasattr(row, "_mapping") or isinstance(row, (tuple, list)):
+                job_id, tenant_id = row
+                identity: tuple[uuid.UUID, uuid.UUID] | uuid.UUID = (job_id, tenant_id)
+            else:
+                # A UUID-only result is supported by lightweight repository test
+                # doubles; real SQLAlchemy rows include both selected columns.
+                job_id = row
+                identity = job_id
+            did_transition = await self.fail_job_if_active(
+                job_id=job_id,
+                completed_at=now,
+                error_message="stalled",
+            )
+            if not did_transition:
+                continue
+            transitioned.append(identity)
             await execute_dml(
                 self._session,
                 update(IdentityScanJobItem)
@@ -587,7 +669,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
                 )
                 .values(status=ScanItemStatus.FAILED.value, completed_at=now, last_error="stalled"),
             )
-        return len(stalled_job_ids)
+        return transitioned
 
 
 def _to_item(row: IdentityScanJobItem) -> ScanQueueItem:

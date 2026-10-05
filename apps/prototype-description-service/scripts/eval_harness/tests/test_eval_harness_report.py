@@ -20,14 +20,13 @@ from scripts.eval_harness.bakeoff import BakeoffClient, _stamp_stage_costs
 from scripts.eval_harness.build_bakeoff_report import _format_durable_stage_costs
 from scripts.eval_harness.cli import BoundedStallError
 from scripts.eval_harness.cli import _extract_detection_boxes, _extract_identities
-from scripts.eval_harness.manifest import ManifestError, ScoreInvariant, compute_corpus_coverage_gaps
+from scripts.eval_harness.manifest import GoldenManifest, ManifestError, ScoreInvariant, compute_corpus_coverage_gaps
 from scripts.eval_harness.report import (
     Audience,
     ReportError,
-    build_reports,
     build_score_verdict,
-    score_run_record,
 )
+from scripts.eval_harness.tests._reviewed_gt_fixtures import build_reports, score_run_record
 
 _TEST_MODEL_STAMPS = {
     "adapter": "seeded",
@@ -956,8 +955,37 @@ def test_strict_detection_uses_wire_boxes_for_unrecognized_faces() -> None:
         "exhaustive",
     )
 
+    adjudication_records = []
+    for box_index, box in enumerate(entry["face_boxes"]):
+        record_id = f"report-review-{box_index}"
+        box["adjudication_source"] = f"human_adjudicated:{record_id}"
+        adjudication_records.append(
+            {
+                "record_id": record_id,
+                "media_id": 1,
+                "box_index": box_index,
+                "reviewer_id": "test-reviewer",
+                "reviewer_kind": "human",
+                "review_method": "independent_blind_review",
+                "decision": "confirmed",
+                "reviewed_at": "2026-08-15T00:00:00Z",
+            }
+        )
+    run_manifest_entry = {key: value for key, value in entry.items() if key != "annotation_mode"}
+    run_manifest_entry["sha256"] = "a" * 64
+    run_manifest = GoldenManifest.model_validate(
+        {
+            "manifest_version": 3,
+            "annotation_mode": "exhaustive",
+            "iou_threshold": 0.5,
+            "roster": ["Alice Example"],
+            "entries": [run_manifest_entry],
+            "adjudication_records": adjudication_records,
+        }
+    ).model_dump()
+
     try:
-        scored = score_run_record(record, [entry], run_manifest={"iou_threshold": 0.5})
+        scored = score_run_record(record, [entry], run_manifest=run_manifest)
     except ManifestError as exc:
         pytest.fail(f"strict detection refused mixed recognized/unrecognized faces: {exc}", pytrace=False)
 

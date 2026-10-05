@@ -146,6 +146,7 @@ export function ClaimScreen({ client, onClaimed }: ClaimScreenProps) {
   });
   const [retry, setRetry] = useState(false);
   const epochRef = useRef(0);
+  const confirmedTokenRef = useRef<string | null>(null);
   const tokenRef = useRef<HTMLInputElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
   const statusRef = useRef<HTMLDivElement>(null);
@@ -157,6 +158,7 @@ export function ClaimScreen({ client, onClaimed }: ClaimScreenProps) {
     setPreview(false);
     setBusy(false);
     setRetry(false);
+    confirmedTokenRef.current = null;
     setStatus({ tone: 'ok', message: 'Ready to claim' });
   }, [client]);
 
@@ -178,6 +180,7 @@ export function ClaimScreen({ client, onClaimed }: ClaimScreenProps) {
       if (epoch !== epochRef.current) {
         return;
       }
+      confirmedTokenRef.current = null;
       setToken('');
       setBusy(false);
       setStatus({ tone: 'ok', message: response.replayed ? 'Invitation already claimed.' : 'Invitation claimed.' });
@@ -207,7 +210,9 @@ export function ClaimScreen({ client, onClaimed }: ClaimScreenProps) {
     if (busy || !token.trim()) {
       return;
     }
+    confirmedTokenRef.current = token;
     setPreview(true);
+    setRetry(false);
     setStatus({
       tone: 'info',
       message: 'This invitation can be used only once. Confirm to claim access.',
@@ -222,8 +227,17 @@ export function ClaimScreen({ client, onClaimed }: ClaimScreenProps) {
     setToken('');
     setPreview(false);
     setRetry(false);
+    confirmedTokenRef.current = null;
     setStatus({ tone: 'ok', message: 'Ready to claim' });
     tokenRef.current?.focus();
+  };
+
+  const onRetry = () => {
+    if (busy || preview || !token.trim() || token !== confirmedTokenRef.current) {
+      setRetry(false);
+      return;
+    }
+    void submitClaim();
   };
 
   return (
@@ -277,7 +291,14 @@ export function ClaimScreen({ client, onClaimed }: ClaimScreenProps) {
             spellCheck={false}
             value={token}
             readOnly={busy || preview}
-            onChange={(event) => setToken(event.target.value)}
+            onChange={(event) => {
+              const nextToken = event.target.value;
+              setToken(nextToken);
+              if (nextToken !== confirmedTokenRef.current) {
+                confirmedTokenRef.current = null;
+                setRetry(false);
+              }
+            }}
           />
         </div>
         <div ref={statusRef} tabIndex={-1}>
@@ -309,9 +330,7 @@ export function ClaimScreen({ client, onClaimed }: ClaimScreenProps) {
               type="button"
               className="acx-btn"
               disabled={busy || !token.trim()}
-              onClick={() => {
-                void submitClaim();
-              }}
+              onClick={onRetry}
             >
               Try claim again
             </button>

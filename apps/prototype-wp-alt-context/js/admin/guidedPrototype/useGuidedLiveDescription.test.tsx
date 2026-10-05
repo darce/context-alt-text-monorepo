@@ -681,6 +681,42 @@ describe('useGuidedLiveDescription', () => {
       expect(result.current.state.runId).toBeNull();
     });
 
+    it('does not cancel a run adopted by a newer generation using the same pending key', async () => {
+      let releaseFirst: (run: DescribeRunResponse) => void = () => undefined;
+      const client = stubClient({
+        submit: vi
+          .fn<GuidedLiveDescriptionClient['submit']>()
+          .mockImplementationOnce(
+            () =>
+              new Promise<DescribeRunResponse>((resolve) => {
+                releaseFirst = resolve;
+              }),
+          )
+          .mockResolvedValueOnce(runResponse({ run_id: 'run-shared' })),
+      });
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      const firstActionKey = client.submit.mock.calls[0]?.[1];
+      expect(firstActionKey).toMatch(IDEMPOTENCY_KEY_PATTERN);
+
+      await press(() => result.current.cancel());
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.CANCELLED);
+
+      await press(() => result.current.request());
+      expect(client.submit).toHaveBeenCalledTimes(2);
+      expect(client.submit.mock.calls[1]?.[1]).toBe(firstActionKey);
+      expect(result.current.state.runId).toBe('run-shared');
+
+      await act(async () => {
+        releaseFirst(runResponse({ run_id: 'run-shared' }));
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(client.cancel).not.toHaveBeenCalledWith('run-shared');
+      expect(result.current.state.runId).toBe('run-shared');
+    });
+
     it('cancels the late first submit when the learner retries after the deadline', async () => {
       // Same uncancelled-run risk on the retry path: the first submit is still
       // on the wire when the wait times out (runId null), so retry has nothing

@@ -15,7 +15,7 @@ from scripts.eval_harness.fusion_runner import (
     run_fusion_eval,
 )
 from scripts.eval_harness.manifest import load_manifest
-from scripts.eval_harness.report import build_reports
+from scripts.eval_harness.tests._reviewed_gt_fixtures import build_reports
 from scripts.eval_harness.tests.test_cli_exit_gates import _manifest_doc
 
 

@@ -268,6 +268,7 @@ class BillingRepository:
             .where(BillingSubscriptionProjection.tenant_id == tenant_id)
             .limit(1)
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         result = await self._session.execute(statement)
         projection = result.scalar_one_or_none()

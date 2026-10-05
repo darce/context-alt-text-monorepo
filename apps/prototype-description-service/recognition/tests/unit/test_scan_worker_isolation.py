@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from db.models import IdentityScanJobItem, Tenant
@@ -16,6 +19,13 @@ from recognition.application.scan.queue_repository import ScanQueueItem
 from recognition.domain.job import ScanItemStatus
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
 from recognition.worker.handlers.scan import ScanItemHandler
+
+
+class _ClaimHeldSession:
+    """Failure-path fence queries return the claim held by these unit fakes."""
+
+    async def execute(self, _stmt):  # noqa: ANN001
+        return SimpleNamespace(scalar_one_or_none=lambda: uuid.uuid4())
 
 
 def _claimed_item(
@@ -170,7 +180,7 @@ async def test_persist_integrity_error_is_terminal_no_retry(
             failed["error_message"] = error_message
             failed["completed_at"] = completed_at
 
-    class _Session:
+    class _Session(_ClaimHeldSession):
         def add(self, obj) -> None:
             pending.append(obj)
             ops.append("add")
@@ -284,7 +294,7 @@ async def test_generic_exception_still_releases_for_retry_under_max_attempts(
         async def mark_item_failed(self, **kwargs):  # noqa: ANN001
             failed.update(kwargs)
 
-    class _Session:
+    class _Session(_ClaimHeldSession):
         async def rollback(self) -> None:
             return None
 
@@ -381,7 +391,7 @@ async def test_failure_path_restores_rls_bypass_after_rollback(
             failed["error_message"] = error_message
             failed["completed_at"] = completed_at
 
-    class _Session:
+    class _Session(_ClaimHeldSession):
         async def rollback(self) -> None:
             ops.append("rollback")
 
@@ -403,6 +413,8 @@ async def test_failure_path_restores_rls_bypass_after_rollback(
 
     class _ScanService:
         async def process_media_item(self, **_kwargs):  # noqa: ANN001
+            # Model the fenced service reaching persistence before it fails.
+            await self.check_claim()
             ops.append("process_media_item")
             raise RuntimeError("adapter boom")
 
@@ -504,7 +516,7 @@ async def test_release_plumbs_non_one_attempt_count(
         async def mark_item_failed(self, **_kwargs):  # noqa: ANN001
             raise AssertionError("attempts=3 < max=5 must retry, not fail")
 
-    class _Session:
+    class _Session(_ClaimHeldSession):
         async def rollback(self) -> None:
             return None
 
@@ -586,7 +598,7 @@ async def test_failure_backoff_anchor_is_after_slow_process(
         async def mark_item_failed(self, **_kwargs):  # noqa: ANN001
             raise AssertionError("must retry")
 
-    class _Session:
+    class _Session(_ClaimHeldSession):
         async def rollback(self) -> None:
             return None
 
@@ -639,3 +651,73 @@ async def test_failure_backoff_anchor_is_after_slow_process(
     assert failure_now >= started + timedelta(milliseconds=40), (
         f"backoff now={failure_now} should be after process start+delay ({started})"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("attempts", [1, 3])
+@pytest.mark.parametrize("fence_outcome", ["lock_busy", "driver_error", "bypass_error", "stale"])
+async def test_failure_fence_unavailable_skips_without_queue_writes(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    attempts: int,
+    fence_outcome: str,
+) -> None:
+    """An unverifiable attempt must roll back and log a skip, never release/fail."""
+    item = _claimed_item(
+        item_id=uuid.uuid4(), job_id=uuid.uuid4(), tenant_id=uuid.uuid4(), media_id=42,
+    )
+    item = replace(item, attempts=attempts)
+    fence_error = (
+        OperationalError("SELECT FOR UPDATE NOWAIT", {}, RuntimeError("lock not available"))
+        if fence_outcome == "lock_busy" else RuntimeError("database unavailable")
+    )
+
+    class _Session:
+        rollback = AsyncMock()
+        commit = AsyncMock()
+        execute = AsyncMock(
+            return_value=SimpleNamespace(scalar_one_or_none=lambda: None),
+            side_effect=fence_error if fence_outcome in {"lock_busy", "driver_error"} else None,
+        )
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    session = _Session()
+    repo = SimpleNamespace(
+        mark_item_completed=AsyncMock(),
+        release_item_for_retry=AsyncMock(),
+        mark_item_failed=AsyncMock(),
+    )
+    bypass = AsyncMock(side_effect=fence_error if fence_outcome == "bypass_error" else None)
+    monkeypatch.setattr("recognition.worker.handlers.scan.enable_rls_bypass", bypass)
+    monkeypatch.setattr("recognition.worker.handlers.scan.SqlAlchemyScanQueueRepository", lambda _: repo)
+    service = SimpleNamespace(
+        process_media_item=AsyncMock(side_effect=RuntimeError("processing failed")),
+        emit_pending_scan_media_reconciled=AsyncMock(),
+    )
+    handler = ScanItemHandler(
+        session_factory=lambda: session, detector=AsyncMock(), generator=AsyncMock(),
+        max_attempts=3, max_concurrency=1,
+    )
+    handler._build_scan_service = lambda _: service
+    handler._refresh_job_progress = AsyncMock()
+
+    with caplog.at_level(logging.INFO, logger="recognition.worker.handlers.scan"):
+        await handler.process_items(claimed=[item])
+
+    repo.mark_item_completed.assert_not_awaited()
+    repo.release_item_for_retry.assert_not_awaited()
+    repo.mark_item_failed.assert_not_awaited()
+    session.commit.assert_not_awaited()
+    assert session.rollback.await_count == 2
+    skips = [record for record in caplog.records if "SKIP" in record.message]
+    assert len(skips) == 1
+    assert str(item.id) in skips[0].message
+    assert f"attempts={attempts}" in skips[0].message
+    assert "scan_item task failed" not in caplog.text
+    if fence_outcome != "stale":
+        assert skips[0].exc_info is not None

@@ -18,6 +18,8 @@ import hashlib
 import json
 import math
 from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -99,8 +101,15 @@ def decode_image_bytes_bgr(image_bytes: bytes) -> np.ndarray:
     return img
 
 
+def _manifest_json_default(value: object) -> str:
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
 def _manifest_sha(manifest: GoldenManifest) -> str:
-    canonical = json.dumps(manifest.model_dump(), sort_keys=True).encode()
+    # Preserve existing anchor hashes; only extend serialization for review dates.
+    canonical = json.dumps(manifest.model_dump(), sort_keys=True, default=_manifest_json_default).encode()
     return hashlib.sha256(canonical).hexdigest()
 
 
@@ -148,55 +157,69 @@ def process_image_bgr(
     return faces
 
 
+@dataclass(frozen=True, kw_only=True)
+class FaceRunOptions:
+    """Run-level bounds and provenance shared by candidate and baseline walks."""
+
+    head_sha: str
+    model_id: str = CANDIDATE_MODEL_ID
+    limit: int | None = None
+    stall_limit: int = DEFAULT_STALL_LIMIT
+    started_at: str = "1970-01-01T00:00:00Z"
+    embedding_dim: int | None = None
+    detector_score_threshold: float | None = None
+    leg: str = "candidate"
+    leg_mode: str | None = None
+
+
 def walk_face_run_record(
     manifest: GoldenManifest,
     images_dir: str | Path,
     *,
     detector: FaceDetector,
     embedder: FaceEmbedder,
+    options: FaceRunOptions,
     aligner: FivePointAligner | None = None,
-    model_id: str = CANDIDATE_MODEL_ID,
-    head_sha: str,
-    limit: int | None = None,
-    stall_limit: int = DEFAULT_STALL_LIMIT,
-    started_at: str = "1970-01-01T00:00:00Z",
-    embedding_dim: int | None = None,
-    leg: str = "candidate",
-    leg_mode: str | None = None,
 ) -> dict[str, Any]:
     """Walk manifest entries; isolate per-item failures; bound stalls (rg-007).
 
     Returns a ``DocKind.FACE_RUN_RECORD`` document. Raises ``BoundedStallError``
     (with ``partial_record``) after ``stall_limit`` consecutive failures.
 
-    ``leg``/``model_id``/``embedding_dim`` are caller-supplied provenance (never
+    ``options`` carries caller-supplied leg/model/dimension provenance (never
     hardcoded to the candidate — the buffalo baseline walks this same loop);
     ``leg_mode`` is stamped only when set (e.g. ``"fused"`` when the leg's
     detect/embed are one pipeline call and must not be read as separable stages).
     """
-    if stall_limit < 1:
-        raise ValueError(f"stall_limit must be >= 1, got {stall_limit}")
-    if limit is not None and limit < 1:
-        raise ValueError(f"limit must be >= 1, got {limit}")
+    if options.stall_limit < 1:
+        raise ValueError(f"stall_limit must be >= 1, got {options.stall_limit}")
+    if options.limit is not None and options.limit < 1:
+        raise ValueError(f"limit must be >= 1, got {options.limit}")
 
     images_root = Path(images_dir)
-    entries = manifest.entries[:limit] if limit is not None else manifest.entries
+    entries = manifest.entries[: options.limit] if options.limit is not None else manifest.entries
     aligner = aligner if aligner is not None else FivePointAligner()
-    dim = int(embedding_dim) if embedding_dim is not None else int(resolve_sface_embedding_dim())
+    dim = (
+        int(options.embedding_dim)
+        if options.embedding_dim is not None
+        else int(resolve_sface_embedding_dim())
+    )
     items: list[dict[str, Any]] = []
     consecutive_failures = 0
 
     def _record(*, aborted: bool = False) -> dict[str, Any]:
         provenance: dict[str, Any] = {
             "manifest_sha256": _manifest_sha(manifest),
-            "head_sha": head_sha,
-            "started_at": started_at,
-            "leg": leg,
-            "model_id": model_id,
+            "head_sha": options.head_sha,
+            "started_at": options.started_at,
+            "leg": options.leg,
+            "model_id": options.model_id,
             "embedding_dim": dim,
         }
-        if leg_mode is not None:
-            provenance["leg_mode"] = leg_mode
+        if options.leg_mode is not None:
+            provenance["leg_mode"] = options.leg_mode
+        if options.detector_score_threshold is not None:
+            provenance["detector_score_threshold"] = float(options.detector_score_threshold)
         return build_face_run_record(items, provenance=provenance, aborted=aborted)
 
     for entry in entries:
@@ -222,7 +245,7 @@ def walk_face_run_record(
             item = build_face_run_item(
                 media_id=entry.media_id,
                 path=entry_path,
-                model_id=model_id,
+                model_id=options.model_id,
                 embedding_dim=dim,
                 image_size=image_size,
                 faces=faces,
@@ -232,13 +255,13 @@ def walk_face_run_record(
             item = build_face_run_item(
                 media_id=entry.media_id,
                 path=entry_path,
-                model_id=model_id,
+                model_id=options.model_id,
                 embedding_dim=dim,
                 image_size=image_size,
                 error=f"{type(exc).__name__}: {_printable_exc(exc)}",
             )
             items.append(item)
-            if consecutive_failures >= stall_limit:
+            if consecutive_failures >= options.stall_limit:
                 raise BoundedStallError(
                     f"{consecutive_failures} consecutive item failures "
                     f"(last: {entry_path}); aborting run",
@@ -442,6 +465,7 @@ __all__ = [
     "DEFAULT_STALL_LIMIT",
     "FaceDetector",
     "FaceEmbedder",
+    "FaceRunOptions",
     "build_candidate_leg",
     "build_occlusion_twin_pairs",
     "build_pinned_cache_detector",

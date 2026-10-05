@@ -731,7 +731,7 @@ def _backfill_usage_reservation_identity_locked(op) -> None:
 
 
 def _seed_usage_admission_global_state(op) -> None:
-    """Insert or reconcile the singleton from current-period reservation rows."""
+    """Insert or reconcile daily usage and outstanding reservation counters."""
     if not _is_postgres_op(op):
         return
     if _relkind(op, "usage_admission_global_state") not in {"r", "p"}:
@@ -749,7 +749,11 @@ def _seed_usage_admission_global_state_locked(op) -> None:
     reservation_from = (
         "FROM usage_reservation"
         if _relkind(op, "usage_reservation") in {"r", "p"}
-        else "FROM (SELECT NULL::integer AS cost_units, NULL::text AS status, NULL::timestamptz AS period_start, NULL::integer AS queue_bytes WHERE false) usage_reservation"
+        else (
+            "FROM (SELECT NULL::integer AS cost_units, NULL::text AS status, "
+            "NULL::timestamptz AS period_start, NULL::timestamptz AS reserved_at, "
+            "NULL::integer AS queue_bytes WHERE false) usage_reservation"
+        )
     )
     bind.execute(
         sa.text(
@@ -771,29 +775,23 @@ def _seed_usage_admission_global_state_locked(op) -> None:
                 COALESCE((
                     SELECT SUM(cost_units) {reservation_from}
                     WHERE status IN ('reserved', 'committed')
-                      AND period_start >= {period_start_sql}
-                      AND period_start < {period_end_sql}
+                      AND reserved_at >= {period_start_sql}
+                      AND reserved_at < {period_end_sql}
                 ), 0),
                 1000,
                 COALESCE((
                     SELECT SUM(cost_units) {reservation_from}
                     WHERE status = 'reserved'
-                      AND period_start >= {period_start_sql}
-                      AND period_start < {period_end_sql}
                 ), 0),
                 1000,
                 COALESCE((
                     SELECT COUNT(*) {reservation_from}
                     WHERE status = 'reserved'
-                      AND period_start >= {period_start_sql}
-                      AND period_start < {period_end_sql}
                 ), 0),
                 268435456,
                 COALESCE((
                     SELECT SUM(queue_bytes) {reservation_from}
                     WHERE status = 'reserved'
-                      AND period_start >= {period_start_sql}
-                      AND period_start < {period_end_sql}
                 ), 0),
                 false, 1,
                 'v1',
@@ -814,26 +812,20 @@ def _seed_usage_admission_global_state_locked(op) -> None:
                 daily_cost_units = COALESCE((
                     SELECT SUM(r.cost_units) FROM usage_reservation r
                     WHERE r.status IN ('reserved', 'committed')
-                      AND r.period_start >= g.period_start
-                      AND r.period_start < g.period_end
+                      AND r.reserved_at >= g.period_start
+                      AND r.reserved_at < g.period_end
                 ), 0),
                 inflight_units = COALESCE((
                     SELECT SUM(r.cost_units) FROM usage_reservation r
                     WHERE r.status = 'reserved'
-                      AND r.period_start >= g.period_start
-                      AND r.period_start < g.period_end
                 ), 0),
                 queue_depth = COALESCE((
                     SELECT COUNT(*) FROM usage_reservation r
                     WHERE r.status = 'reserved'
-                      AND r.period_start >= g.period_start
-                      AND r.period_start < g.period_end
                 ), 0),
                 queue_bytes = COALESCE((
                     SELECT SUM(r.queue_bytes) FROM usage_reservation r
                     WHERE r.status = 'reserved'
-                      AND r.period_start >= g.period_start
-                      AND r.period_start < g.period_end
                 ), 0),
                 updated_at = timezone('utc', now())
             WHERE g.id = 'global'
@@ -861,6 +853,61 @@ def _heal_checkout_provider_key_unique(op) -> None:
         "billing_checkout_attempt",
         sa.UniqueConstraint(*expected, name="uq_billing_checkout_attempt_provider_key"),
     )
+
+
+def _heal_checkout_attempt_active_index(op) -> None:
+    """Reject conflicting open purchases before creating the tenant-wide index."""
+    index_name = "uq_billing_checkout_attempt_one_active"
+    table_name = "billing_checkout_attempt"
+    if not _is_postgres_op(op) or _relkind(op, table_name) not in {"r", "p"}:
+        return
+    index_present = _relkind(op, index_name) in {"i", "I"}
+    definition = (
+        (
+            op.get_bind()
+            .execute(
+                sa.text(
+                    "SELECT pg_get_indexdef(c.oid) FROM pg_class c "
+                    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "WHERE n.nspname = current_schema() AND c.relname = :name"
+                ),
+                {"name": index_name},
+            )
+            .scalar()
+        )
+        if index_present
+        else None
+    )
+    previous_columns = "(tenant_id, provider, environment, seller_account, plan_code)"
+    old_index = definition is not None and previous_columns in str(definition).lower()
+    if index_present and not old_index:
+        return
+
+    def preflight() -> None:
+        bind = op.get_bind()
+        # Block writers until the transaction creates the narrowed unique index (CON-11).
+        bind.execute(sa.text("LOCK TABLE billing_checkout_attempt IN SHARE MODE"))
+        conflicts = bind.execute(
+            sa.text(
+                "SELECT tenant_id, provider, environment, seller_account "
+                "FROM billing_checkout_attempt "
+                "WHERE status IN ('created', 'provider_requested', 'pending', 'ambiguous') "
+                "GROUP BY tenant_id, provider, environment, seller_account "
+                "HAVING COUNT(*) > 1 "
+                "ORDER BY tenant_id, provider, environment, seller_account"
+            )
+        ).all()
+        if conflicts:
+            groups = [tuple(str(value) for value in row) for row in conflicts]
+            raise RuntimeError(
+                f"{index_name}: conflicting open checkout groups "
+                f"(tenant, provider, environment, seller_account)={groups!r}; "
+                "close the older open attempts, or wipe the dev database, then retry schema healing"
+            )
+        if old_index:
+            op.drop_index(index_name, table_name=table_name)
+
+    _with_migration_rls_bypass(op, preflight)
 
 
 def _heal_portal_tenant_invitation_tenant_nullable(op) -> None:
@@ -1425,11 +1472,12 @@ def ensure_tables(op) -> None:
         unique=True,
         postgresql_where=sa.text("client_idempotency_key IS NOT NULL"),
     )
+    _heal_checkout_attempt_active_index(op)
     _ensure_index(
         op,
         "uq_billing_checkout_attempt_one_active",
         "billing_checkout_attempt",
-        ["tenant_id", "provider", "environment", "seller_account", "plan_code"],
+        ["tenant_id", "provider", "environment", "seller_account"],
         unique=True,
         postgresql_where=sa.text("status IN ('created', 'provider_requested', 'pending', 'ambiguous')"),
     )

@@ -17,6 +17,8 @@ from recognition.application.settings.scan import ScanSettings
 from recognition.config import get_settings
 from recognition.domain.job import JobStatus, ScanItemStatus
 
+_STALLED_JOB_BATCH_SIZE = 100
+
 
 @dataclass(frozen=True, slots=True)
 class EnqueueScanResult:
@@ -306,10 +308,27 @@ class ScanQueueService:
             stale_after_seconds=stale_after_seconds,
             now=effective_now,
         )
-        await self._repository.fail_stalled_running_jobs(
-            stale_after_seconds=stale_after_seconds,
-            now=effective_now,
-        )
+        transition_with_identities = getattr(self._repository, "fail_stalled_running_jobs_with_identities", None)
+        if callable(transition_with_identities):
+            transitions = await transition_with_identities(
+                stale_after_seconds=stale_after_seconds,
+                now=effective_now,
+            )
+            snapshot_by_id = {identity.job_id: identity for identity in identities}
+            transitioned_identities: list[TerminatedJobIdentity] = []
+            for transition in transitions:
+                if isinstance(transition, tuple):
+                    job_id, tenant_id = transition
+                    transitioned_identities.append(TerminatedJobIdentity(job_id=job_id, tenant_id=tenant_id))
+                else:
+                    # Repositories that return only transitioned job IDs can
+                    # resolve tenants from the bounded pre-transition snapshot.
+                    identity = snapshot_by_id.get(transition)
+                    if identity is not None:
+                        transitioned_identities.append(identity)
+            return transitioned_identities
+
+        await self._repository.fail_stalled_running_jobs(stale_after_seconds=stale_after_seconds, now=effective_now)
         return identities
 
     async def _list_stalled_running_identities(
@@ -337,11 +356,16 @@ class ScanQueueService:
                 ),
             )
         )
-        stmt = select(IdentityScanJob.id, IdentityScanJob.tenant_id).where(
-            IdentityScanJob.status == JobStatus.RUNNING.value,
-            IdentityScanJob.started_at.is_not(None),
-            IdentityScanJob.started_at < stale_before,
-            incomplete_items,
+        stmt = (
+            select(IdentityScanJob.id, IdentityScanJob.tenant_id)
+            .where(
+                IdentityScanJob.status == JobStatus.RUNNING.value,
+                IdentityScanJob.started_at.is_not(None),
+                IdentityScanJob.started_at < stale_before,
+                incomplete_items,
+            )
+            .order_by(IdentityScanJob.started_at, IdentityScanJob.id)
+            .limit(_STALLED_JOB_BATCH_SIZE)
         )
         rows = (await session.execute(stmt)).all()
         return [TerminatedJobIdentity(job_id=job_id, tenant_id=tenant_id) for job_id, tenant_id in rows]

@@ -1,4 +1,4 @@
-"""Opt-in remote environment-manifest drift checks before a deploy."""
+"""Opt-in remote environment-manifest drift checks before deploy and promote."""
 
 from __future__ import annotations
 
@@ -173,3 +173,57 @@ _ship_selected_env dev aggregate
         "materialize_remote",
         "preflight_remote_ocir_auth",
     ]
+
+
+@pytest.mark.parametrize(
+    ("enabled", "stub_exit", "confirm", "expected_status", "checks_manifest", "reaches_auth"),
+    [
+        pytest.param(True, 0, "PROMOTE", 97, True, True, id="enabled"),
+        pytest.param(True, 7, "PROMOTE", 1, True, False, id="drift-fails"),
+        pytest.param(None, 0, "PROMOTE", 97, False, True, id="off-by-default"),
+        pytest.param(True, 0, "", 1, False, False, id="confirmation-required"),
+    ],
+)
+def test_promote_manifest_preflight_before_remote_auth(
+    tmp_path: Path,
+    enabled: bool | None,
+    stub_exit: int,
+    confirm: str,
+    expected_status: int,
+    checks_manifest: bool,
+    reaches_auth: bool,
+) -> None:
+    order_file = tmp_path / "order.txt"
+    result, record_file, _ = _run(
+        tmp_path,
+        "prod",
+        enabled=enabled,
+        extra=f"""
+export STUB_EXIT={stub_exit}
+export ORDER_FILE={shlex.quote(str(order_file))}
+CONFIRM={shlex.quote(confirm)}
+record() {{ printf '%s\\n' "$1" >> "$ORDER_FILE"; }}
+init_deploy_ocir_docker_config() {{ :; }}
+preflight_ssh() {{ record preflight_ssh; }}
+preflight_remote_face_pipeline_models() {{ record preflight_remote_face_pipeline_models; }}
+preflight_remote_ocir_auth() {{ record preflight_remote_ocir_auth; exit 97; }}
+deploy_env_lease() {{ record deploy_env_lease; exit 98; }}
+do_promote staging prod
+echo PROMOTE_CONTINUED
+""",
+    )
+    assert result.returncode == expected_status, result.stdout + result.stderr
+    assert "PROMOTE_CONTINUED" not in result.stdout
+    expected_order = ["preflight_ssh", "preflight_remote_face_pipeline_models"]
+    if checks_manifest:
+        assert record_file.read_text(encoding="utf-8").splitlines() == [
+            "prod",
+            "svc-vm",
+            "--check",
+        ]
+        expected_order.append("materialize_remote")
+    else:
+        assert not record_file.exists()
+    if reaches_auth:
+        expected_order.append("preflight_remote_ocir_auth")
+    assert order_file.read_text(encoding="utf-8").splitlines() == expected_order

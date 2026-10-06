@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import io
 import importlib.util
 import os
 import stat
 import subprocess
+import sys
+import time
 import tomllib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,14 +21,20 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 HELPER_PATH = REPO_ROOT / "scripts/deploy/_gpu_key_manifest.py"
 SCRIPT_PATH = REPO_ROOT / "scripts/deploy/gpu-key-mint.sh"
+WRITER_PATH = REPO_ROOT / "scripts/deploy/_vault_put_secret.py"
 SPEC = importlib.util.spec_from_file_location("gpu_key_manifest", HELPER_PATH)
 assert SPEC is not None and SPEC.loader is not None
 gpu_key_manifest = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(gpu_key_manifest)
+WRITER_SPEC = importlib.util.spec_from_file_location("vault_put_secret", WRITER_PATH)
+assert WRITER_SPEC is not None and WRITER_SPEC.loader is not None
+vault_put_secret = importlib.util.module_from_spec(WRITER_SPEC)
+WRITER_SPEC.loader.exec_module(vault_put_secret)
 
 FAKE_OCID = "ocid1.vaultsecret.oc1.iad.fakegpuapikey123"
 OTHER_FAKE_OCID = "ocid1.vaultsecret.oc1.iad.otherfakegpuapikey456"
 FAKE_KEY = "a" * 64
+MANIFEST_LOCK_TIMEOUT_SECONDS = 5
 MANIFEST_TEXT = '''version = 1
 
 [[var]]
@@ -394,6 +405,230 @@ def test_manifest_write_lock_uses_shared_directory_abi(tmp_path: Path) -> None:
     finally:
         os.close(descriptor)
     assert expected.is_file()
+
+
+def test_manifest_lock_contention_times_out_before_remote_writer(tmp_path: Path) -> None:
+    bin_dir = _fake_cli(tmp_path)
+    manifest = tmp_path / "10-service-shared.toml"
+    manifest.write_text(MANIFEST_TEXT, encoding="utf-8")
+    terraform_input = tmp_path / "gpu-api-key.tfvars"
+    argument_capture = tmp_path / "writer-arguments"
+    stdin_capture = tmp_path / "writer-stdin"
+    lock_descriptor = gpu_key_manifest._open_manifest_write_lock(manifest)
+    process = None
+    try:
+        process = subprocess.Popen(
+            [
+                "bash",
+                str(SCRIPT_PATH),
+                "--approve-mint",
+                "--ssh-target",
+                "ubuntu@gpu.example",
+                "--manifest",
+                str(manifest),
+                "--terraform-input",
+                str(terraform_input),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env={
+                **os.environ,
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+                "GPU_KEY_TEST_OCID": FAKE_OCID,
+                "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
+                "GPU_KEY_TEST_STDIN_CAPTURE": str(stdin_capture),
+                "TMPDIR": str(tmp_path),
+            },
+        )
+        try:
+            stdout, stderr = process.communicate(timeout=MANIFEST_LOCK_TIMEOUT_SECONDS + 1)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+            pytest.fail("mint transaction waited indefinitely for the manifest lock")
+    finally:
+        os.close(lock_descriptor)
+
+    assert process is not None and process.returncode != 0
+    assert "timed out acquiring GPU key manifest write lock" in stderr
+    assert stdout == ""
+    assert not argument_capture.exists()
+    assert not stdin_capture.exists()
+    assert not terraform_input.exists()
+
+
+def test_manifest_lock_release_allows_transaction_to_reach_fake_writer(tmp_path: Path) -> None:
+    bin_dir = _fake_cli(tmp_path)
+    manifest = tmp_path / "10-service-shared.toml"
+    manifest.write_text(MANIFEST_TEXT, encoding="utf-8")
+    terraform_input = tmp_path / "gpu-api-key.tfvars"
+    argument_capture = tmp_path / "writer-arguments"
+    lock_descriptor = gpu_key_manifest._open_manifest_write_lock(manifest)
+    process = subprocess.Popen(
+        [
+            "bash",
+            str(SCRIPT_PATH),
+            "--approve-mint",
+            "--ssh-target",
+            "ubuntu@gpu.example",
+            "--manifest",
+            str(manifest),
+            "--terraform-input",
+            str(terraform_input),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+            "GPU_KEY_TEST_OCID": FAKE_OCID,
+            "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
+            "GPU_KEY_TEST_STDIN_CAPTURE": str(tmp_path / "writer-stdin"),
+            "TMPDIR": str(tmp_path),
+        },
+    )
+    try:
+        time.sleep(0.2)
+        waited_for_lock = process.poll() is None
+    finally:
+        os.close(lock_descriptor)
+
+    stdout, stderr = process.communicate(timeout=MANIFEST_LOCK_TIMEOUT_SECONDS + 5)
+    assert waited_for_lock
+    assert process.returncode == 0, stderr
+    assert stdout == f"{FAKE_OCID} 64\n"
+    assert "--secret-name ACX_GPU_ENDPOINT_API_KEY" in argument_capture.read_text(encoding="utf-8")
+    assert terraform_input.is_file()
+
+
+def test_real_vault_writer_parser_binds_existing_secret_identity(monkeypatch, capsys) -> None:
+    current_secret = [None]
+    current_value = [b"b" * 64]
+    writes: list[tuple[str, str]] = []
+    sibling = SimpleNamespace(
+        id="ocid1.vaultsecret.oc1.iad.fakewriteridentitysibling",
+        secret_name="OCIR_USERNAME",
+        key_id="ocid1.key.test",
+        lifecycle_state="ACTIVE",
+    )
+
+    class Client:
+        def __init__(self, *_args, **_kwargs):
+            self.base_client = SimpleNamespace(timeout=None)
+
+    class VaultsClient(Client):
+        def get_vault(self, _vault_id):
+            return SimpleNamespace(data=SimpleNamespace(compartment_id="ocid1.compartment.test"))
+
+        def list_secrets(self, **kwargs):
+            selected = [sibling, current_secret[0]] if current_secret[0] is not None else [sibling]
+            name = kwargs.get("name")
+            data = [item for item in selected if name is None or item.secret_name == name]
+            return SimpleNamespace(data=data, headers={})
+
+        def list_secret_versions(self, *_args, **_kwargs):
+            return SimpleNamespace(data=[], headers={})
+
+        def get_secret(self, _secret_id):
+            return SimpleNamespace(data=current_secret[0], headers={"etag": "fake-etag"})
+
+        def create_secret(self, details, **_kwargs):
+            value = base64.b64decode(details.secret_content.content)
+            writes.append(("create", FAKE_OCID))
+            current_value[0] = value
+            current_secret[0] = SimpleNamespace(
+                id=FAKE_OCID,
+                secret_name="ACX_GPU_ENDPOINT_API_KEY",
+                key_id="ocid1.key.test",
+                lifecycle_state="ACTIVE",
+            )
+            return SimpleNamespace(data=current_secret[0], headers={"etag": "created-etag"})
+
+        def update_secret(self, secret_id, details, *, if_match=None, **_kwargs):
+            assert if_match == "fake-etag"
+            writes.append(("update", secret_id))
+            current_value[0] = base64.b64decode(details.secret_content.content)
+            return SimpleNamespace(data=current_secret[0], headers={"etag": "updated-etag"})
+
+    class KmsVaultClient(Client):
+        def get_vault(self, _vault_id):
+            return SimpleNamespace(data=SimpleNamespace(compartment_id="ocid1.compartment.test"))
+
+    class SecretsClient(Client):
+        def get_secret_bundle_by_name(self, **_kwargs):
+            content = SimpleNamespace(content=base64.b64encode(current_value[0]).decode("ascii"))
+            return SimpleNamespace(data=SimpleNamespace(secret_bundle_content=content))
+
+    class Details:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    fake_oci = SimpleNamespace(
+        auth=SimpleNamespace(signers=SimpleNamespace(InstancePrincipalsSecurityTokenSigner=object)),
+        config=SimpleNamespace(from_file=lambda **_kwargs: pytest.fail("instance principal must be used")),
+        retry=SimpleNamespace(NoneRetryStrategy=object),
+        vault=SimpleNamespace(
+            VaultsClient=VaultsClient,
+            models=SimpleNamespace(
+                Base64SecretContentDetails=Details,
+                CreateSecretDetails=Details,
+                UpdateSecretDetails=Details,
+            ),
+        ),
+        key_management=SimpleNamespace(KmsVaultClient=KmsVaultClient),
+        secrets=SimpleNamespace(SecretsClient=SecretsClient),
+    )
+    monkeypatch.setitem(sys.modules, "oci", fake_oci)
+
+    def run_writer(mode: str, secret_id: str | None, candidate: bytes) -> int:
+        current_secret[0] = None if secret_id is None else SimpleNamespace(
+            id=secret_id,
+            secret_name="ACX_GPU_ENDPOINT_API_KEY",
+            key_id="ocid1.key.test",
+            lifecycle_state="ACTIVE",
+        )
+        current_value[0] = b"b" * 64
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "_vault_put_secret.py",
+                "--secret-name",
+                "ACX_GPU_ENDPOINT_API_KEY",
+                "--instance-principal",
+                mode,
+                "--expected-secret-id",
+                FAKE_OCID,
+                "--result-only",
+                "--readable-timeout",
+                "0",
+            ],
+        )
+        monkeypatch.setattr(
+            sys,
+            "stdin",
+            SimpleNamespace(buffer=io.BytesIO(candidate), isatty=lambda: False),
+        )
+        return vault_put_secret.main()
+
+    assert run_writer("--bootstrap", FAKE_OCID, b"a" * 64) == 0
+    assert capsys.readouterr().out == f"{FAKE_OCID} 64\n"
+    assert writes == []
+
+    assert run_writer("--rotate-existing", FAKE_OCID, b"a" * 64) == 0
+    assert capsys.readouterr().out == f"{FAKE_OCID} 64\n"
+    assert writes == [("update", FAKE_OCID)]
+
+    for mode in ("--bootstrap", "--rotate-existing"):
+        for remote_id in (None, OTHER_FAKE_OCID):
+            before = list(writes)
+            with pytest.raises(RuntimeError, match="expected secret identity"):
+                run_writer(mode, remote_id, b"c" * 64)
+            assert writes == before
 
 
 def _manifest_with_gpu_ocid(ocid: str) -> str:
@@ -850,8 +1085,10 @@ def test_cloud_init_fetches_key_at_runtime_and_gates_docker() -> None:
     assert "ATTEMPT_TIMEOUT=20" in cloud_init and "ATTEMPTS=5" in cloud_init
     assert "chmod 0600 \"$temporary\"" in cloud_init
     assert "ExecStartPre=/usr/local/bin/acx-gpu-fetch-api-key.sh" in cloud_init
-    assert "--api-key \"$key\"" in cloud_init
-    assert "gpu_api_key_secret_ocid  = var.gpu_api_key_secret_ocid" in terraform
+    assert '-v "$KEY_PATH:/run/secrets/acx-gpu-api-key:ro"' in cloud_init
+    assert "--api-key-file /run/secrets/acx-gpu-api-key" in cloud_init
+    assert "--api-key \"$key\"" not in cloud_init
+    assert "gpu_api_key_secret_ocid = var.gpu_api_key_secret_ocid" in terraform
     assert 'default     = ""' in terraform_vars
     assert "make gpu-key-mint" in prod_example
     assert "REPLACE_GPU_ENDPOINT_KEY" not in prod_example

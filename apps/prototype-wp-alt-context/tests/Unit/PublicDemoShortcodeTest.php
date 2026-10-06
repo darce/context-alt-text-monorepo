@@ -7,6 +7,7 @@ namespace AltContext\Tests\Unit;
 require_once __DIR__ . '/../../src/public/class-public-demo-shortcode.php';
 
 use AltContext\PublicSite\PublicDemoShortcode;
+use AltContext\Support\ViteManifest;
 use AltContext\Tests\TestCase;
 
 final class PublicDemoShortcodeTest extends TestCase
@@ -44,6 +45,69 @@ final class PublicDemoShortcodeTest extends TestCase
         self::assertStringContainsString('/wp-json/acx/v1/public/demo/describe', $html);
         self::assertSame('module', $GLOBALS['__ac_scripts']['acx-public-demo-describe']['data']['type']);
         self::assertArrayHasKey('acx-public-demo-describe', $GLOBALS['__ac_styles']);
+    }
+
+    public function testDemoStylesheetDependsOnCompiledTokenStylesheetWhenManifestEntryExists(): void
+    {
+        $this->setOption('acx_public_demo_enabled', true);
+        $this->setOption('acx_public_demo_media_ids', [41]);
+        $GLOBALS['__ac_attachment_urls'][41] = 'https://example.test/uploads/lake.jpg';
+
+        $manifestPath = $this->writeManifest([
+            'js/public/demo-tokens.scss' => [
+                'file' => 'assets/public-demo-tokens-a1b2c3.css',
+                'src' => 'js/public/demo-tokens.scss',
+                'isEntry' => true,
+            ],
+        ]);
+        $manifest = new ViteManifest(
+            $manifestPath,
+            static fn(string $relative): string => 'https://example.test/assets/' . ltrim($relative, '/')
+        );
+
+        try {
+            $html = (new PublicDemoShortcode(
+                static fn(string $entry): ?array => $manifest->entry_assets($entry)
+            ))->render();
+
+            self::assertStringContainsString('data-acx-demo', $html);
+            self::assertSame(
+                'https://example.test/assets/assets/public-demo-tokens-a1b2c3.css',
+                $GLOBALS['__ac_styles']['acx-public-demo-tokens']['src'] ?? null
+            );
+            self::assertContains(
+                'acx-public-demo-tokens',
+                $GLOBALS['__ac_styles']['acx-public-demo-describe']['deps'] ?? []
+            );
+        } finally {
+            unlink($manifestPath);
+        }
+    }
+
+    public function testDemoStillRendersWhenTokenManifestEntryIsMissing(): void
+    {
+        $this->setOption('acx_public_demo_enabled', true);
+        $this->setOption('acx_public_demo_media_ids', [41]);
+        $GLOBALS['__ac_attachment_urls'][41] = 'https://example.test/uploads/lake.jpg';
+
+        $manifestPath = $this->writeManifest([]);
+        $manifest = new ViteManifest(
+            $manifestPath,
+            static fn(string $relative): string => 'https://example.test/assets/' . ltrim($relative, '/')
+        );
+
+        try {
+            $html = (new PublicDemoShortcode(
+                static fn(string $entry): ?array => $manifest->entry_assets($entry)
+            ))->render();
+
+            self::assertStringContainsString('data-acx-demo', $html);
+            self::assertArrayHasKey('acx-public-demo-describe', $GLOBALS['__ac_styles']);
+            self::assertArrayNotHasKey('acx-public-demo-tokens', $GLOBALS['__ac_styles']);
+            self::assertSame([], $GLOBALS['__ac_styles']['acx-public-demo-describe']['deps']);
+        } finally {
+            unlink($manifestPath);
+        }
     }
 
     public function testMultipleInstancesUseDistinctRadioGroupsAndLabelIds(): void
@@ -114,5 +178,21 @@ final class PublicDemoShortcodeTest extends TestCase
         self::assertStringNotContainsString('data-acx-demo-preview', $html);
         self::assertStringNotContainsString('Alex stands beside a bicycle outside a cafe.', $html);
         self::assertStringNotContainsString('acx-demo__submit', $html);
+    }
+
+    /** @param array<string, mixed> $entries */
+    private function writeManifest(array $entries): string
+    {
+        $path = tempnam(sys_get_temp_dir(), 'acx-demo-manifest-');
+        if (false === $path) {
+            self::fail('Unable to create a temporary Vite manifest.');
+        }
+
+        if (false === file_put_contents($path, json_encode($entries, JSON_THROW_ON_ERROR))) {
+            unlink($path);
+            self::fail('Unable to write a temporary Vite manifest.');
+        }
+
+        return $path;
     }
 }

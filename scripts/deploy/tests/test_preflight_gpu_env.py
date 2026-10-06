@@ -1052,6 +1052,34 @@ def test_09_honors_producer_endpoint_allowlist(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_09_empty_allowlist_accepts_private_ip_endpoint(tmp_path: Path) -> None:
+    producer = valid_env()
+    demo = valid_demo_env()
+    producer["ACX_GPU_ENDPOINT_ALLOWLIST"] = ""
+    producer["ACX_GPU_ENDPOINT_URL"] = "http://10.20.30.40:8000"
+    demo["ACX_GPU_ENDPOINT_URL"] = producer["ACX_GPU_ENDPOINT_URL"]
+
+    result = run_preflight(tmp_path, producer=producer, demo=demo)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_09_empty_allowlist_rejects_hostname_endpoint_without_disclosure(tmp_path: Path) -> None:
+    producer = valid_env()
+    demo = valid_demo_env()
+    producer["ACX_GPU_ENDPOINT_ALLOWLIST"] = ""
+    producer["ACX_GPU_ENDPOINT_URL"] = "https://gpu-a1.internal.example:8000"
+    demo["ACX_GPU_ENDPOINT_URL"] = producer["ACX_GPU_ENDPOINT_URL"]
+
+    result = run_preflight(tmp_path, producer=producer, demo=demo)
+    output = result.stdout + result.stderr
+
+    assert result.returncode != 0
+    assert "ERROR [9] producer ACX_GPU_ENDPOINT_URL" in result.stderr
+    assert producer["ACX_GPU_ENDPOINT_URL"] not in output
+    assert "gpu-a1.internal.example" not in output
+
+
 @pytest.mark.parametrize(
     "endpoint",
     [
@@ -2325,9 +2353,10 @@ def test_15_deploy_shell_surface_remains_bash_3_2_compatible() -> None:
 
 
 def test_worked_examples_form_valid_pair_after_documented_replacements(tmp_path: Path) -> None:
-    producer_text = PRODUCER_EXAMPLE.read_text(encoding="utf-8").replace(
-        '"ACX_GPU_ENDPOINT_API_KEY":"ocid1.vaultsecret.oc1..REPLACE_GPU_ENDPOINT_KEY"',
-        '"ACX_GPU_ENDPOINT_API_KEY":"ocid1.vaultsecret.oc1.iad.fakegpuendpointkey"',
+    # Rendering derives the map from the GPU key's vault ref after minting.
+    producer_text = PRODUCER_EXAMPLE.read_text(encoding="utf-8") + (
+        '\nRECOGNITION_VAULT_SECRET_MAP=\'{"ACX_GPU_ENDPOINT_API_KEY":'
+        '"ocid1.vaultsecret.oc1.iad.fakegpuendpointkey"}\'\n'
     )
     demo_text = (
         DEMO_EXAMPLE.read_text(encoding="utf-8")

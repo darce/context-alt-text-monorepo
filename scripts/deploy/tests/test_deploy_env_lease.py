@@ -502,6 +502,7 @@ record() {{ printf '%s\\n' "$*" >>"$RECORDS"; }}
 pin_deploy_sha() {{ DEPLOY_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; }}
 init_deploy_ocir_docker_config() {{ install_deploy_interrupt_traps; }}
 preflight_ssh() {{ :; }}
+preflight_env_manifest() {{ :; }}
 preflight_remote_face_pipeline_models() {{ :; }}
 preflight_git_clean() {{ :; }}
 preflight_branch_synced() {{ :; }}
@@ -544,6 +545,7 @@ def test_lost_lease_after_promote_gate_stops_before_tag_push(tmp_path: Path) -> 
 pin_deploy_sha() {{ DEPLOY_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; }}
 init_deploy_ocir_docker_config() {{ install_deploy_interrupt_traps; }}
 preflight_ssh() {{ :; }}
+preflight_env_manifest() {{ :; }}
 preflight_remote_face_pipeline_models() {{ :; }}
 preflight_git_clean() {{ :; }}
 preflight_branch_synced() {{ :; }}

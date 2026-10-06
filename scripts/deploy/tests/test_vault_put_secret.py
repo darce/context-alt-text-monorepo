@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import http.client
 import importlib.util
 import io
 import random
@@ -170,6 +171,102 @@ def test_generation_lock_rejects_non_stable_current_value() -> None:
         )
 
 
+@pytest.mark.parametrize("secret_name", ["ACX_GPU_ENDPOINT_API_KEY", "OCIR_AUTH_TOKEN"])
+def test_main_disables_operator_config_and_global_http_logging(monkeypatch, capsys, secret_name) -> None:
+    profile_config = {"profile": "DEFAULT", "log_requests": True}
+    passed_configs = []
+    logging_switch_calls = []
+    existing = SimpleNamespace(
+        id="ocid1.vaultsecret.oc1.iad.FAKE_LOGGING_TEST_SECRET_000000000001",
+        secret_name=secret_name,
+        key_id="ocid1.key.test",
+        lifecycle_state="ACTIVE",
+    )
+    current_value = [b"b" * 64]
+
+    def disable_http_logging(enabled):
+        logging_switch_calls.append((enabled, len(passed_configs)))
+        http.client.HTTPConnection.debuglevel = int(enabled)
+
+    class Client:
+        def __init__(self, config, **_kwargs):
+            assert config["log_requests"] is False
+            passed_configs.append(config)
+            self.base_client = SimpleNamespace(timeout=None)
+            # Simulate global debug enabled independently during SDK setup,
+            # including construction of the lazy Secrets client.
+            http.client.HTTPConnection.debuglevel = 1
+
+    class VaultsClient(Client):
+        def list_secrets(self, **_kwargs):
+            assert http.client.HTTPConnection.debuglevel == 0
+            return SimpleNamespace(data=[existing], headers={})
+
+        def get_secret(self, *_args, **_kwargs):
+            return SimpleNamespace(data=existing, headers={"etag": "fake-etag"})
+
+        def list_secret_versions(self, *_args, **_kwargs):
+            return SimpleNamespace(data=[], headers={})
+
+        def update_secret(self, _secret_id, details, **_kwargs):
+            assert http.client.HTTPConnection.debuglevel == 0
+            current_value[0] = base64.b64decode(details.secret_content.content)
+            return SimpleNamespace(data=existing, headers={"etag": "fake-updated-etag"})
+
+    class KmsVaultClient(Client):
+        def get_vault(self, *_args, **_kwargs):
+            assert http.client.HTTPConnection.debuglevel == 0
+            return SimpleNamespace(data=SimpleNamespace(compartment_id="ocid1.compartment.test"))
+
+    class SecretsClient(Client):
+        def get_secret_bundle_by_name(self, **_kwargs):
+            assert http.client.HTTPConnection.debuglevel == 0
+            content = SimpleNamespace(content=base64.b64encode(current_value[0]).decode("ascii"))
+            return SimpleNamespace(data=SimpleNamespace(secret_bundle_content=content))
+
+    fake_oci = SimpleNamespace(
+        config=SimpleNamespace(from_file=lambda **_kwargs: profile_config),
+        base_client=SimpleNamespace(is_http_log_enabled=disable_http_logging),
+        retry=SimpleNamespace(NoneRetryStrategy=object),
+        vault=SimpleNamespace(
+            VaultsClient=VaultsClient,
+            models=SimpleNamespace(
+                Base64SecretContentDetails=SimpleNamespace,
+                UpdateSecretDetails=SimpleNamespace,
+            ),
+        ),
+        key_management=SimpleNamespace(KmsVaultClient=KmsVaultClient),
+        secrets=SimpleNamespace(SecretsClient=SecretsClient),
+    )
+    monkeypatch.setitem(sys.modules, "oci", fake_oci)
+    monkeypatch.setattr(http.client.HTTPConnection, "debuglevel", 1)
+    argv = ["_vault_put_secret.py", "--secret-name", secret_name, "--readable-timeout", "0"]
+    if secret_name == "ACX_GPU_ENDPOINT_API_KEY":
+        argv.extend(["--rotate-existing", "--result-only"])
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=io.BytesIO(b"a" * 64), isatty=lambda: False))
+
+    assert vault_put_secret.main() == 0
+    assert len(passed_configs) == 3
+    assert all(config is not profile_config for config in passed_configs)
+    assert all(config == {"profile": "DEFAULT", "log_requests": False} for config in passed_configs)
+    assert profile_config == {"profile": "DEFAULT", "log_requests": True}
+    assert logging_switch_calls == [(False, 2), (False, 3)]
+    assert http.client.HTTPConnection.debuglevel == 0
+    assert current_value[0] == b"a" * 64
+    output = capsys.readouterr()
+    assert output.err == ""
+    if secret_name == "ACX_GPU_ENDPOINT_API_KEY":
+        assert output.out == f"{existing.id} 64\n"
+    else:
+        assert output.out == (
+            f"new version: {secret_name} (64 bytes)\n"
+            f"  secret_id: {existing.id}\n"
+            "  write_etag: fake-updated-etag\n"
+            "  readable: ACCEPTED-BUT-UNVERIFIED (--readable-timeout 0)\n"
+        )
+
+
 def test_main_uses_idempotency_controls_with_stubbed_oci(monkeypatch, capsys) -> None:
     existing = SimpleNamespace(
         id="ocid1.vaultsecret.oc1.iad.FAKE_OCIR_AUTH_TOKEN_TEST_000000000001",
@@ -223,6 +320,7 @@ def test_main_uses_idempotency_controls_with_stubbed_oci(monkeypatch, capsys) ->
 
     fake_oci = SimpleNamespace(
         config=SimpleNamespace(from_file=lambda **_kwargs: {}),
+        base_client=SimpleNamespace(is_http_log_enabled=Mock()),
         retry=SimpleNamespace(NoneRetryStrategy=lambda: object()),
         vault=SimpleNamespace(
             VaultsClient=VaultsClient,
@@ -292,6 +390,19 @@ def test_main_uses_idempotency_controls_with_stubbed_oci(monkeypatch, capsys) ->
     )
 
 
+def test_instance_principal_option_is_rejected_by_argparse(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["_vault_put_secret.py", "--secret-name", "ACX_GPU_ENDPOINT_API_KEY", "--instance-principal"],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        vault_put_secret.main()
+
+    assert exc_info.value.code == 2
+
+
 def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypatch, capsys) -> None:
     existing = SimpleNamespace(
         id="ocid1.vaultsecret.oc22..FAKE_GPU_API_KEY_TEST_000000000001",
@@ -310,12 +421,13 @@ def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypa
     create_response_id: list[str | None] = [None]
     updates: list[str] = []
     created_values: list[bytes] = []
-    signer = object()
-    passed_signers: list[object] = []
+    profile_config = {"profile": "DEFAULT"}
+    loaded_profiles: list[str] = []
+    passed_configs: list[object] = []
 
     class Client:
-        def __init__(self, *_args, **kwargs):
-            passed_signers.append(kwargs.get("signer"))
+        def __init__(self, config, **_kwargs):
+            passed_configs.append(config)
             self.base_client = SimpleNamespace(timeout=None)
 
     class VaultsClient(Client):
@@ -361,11 +473,13 @@ def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypa
         def __init__(self, **kwargs):
             self.__dict__.update(kwargs)
 
+    def from_file(*, profile_name):
+        loaded_profiles.append(profile_name)
+        return profile_config
+
     fake_oci = SimpleNamespace(
-        auth=SimpleNamespace(
-            signers=SimpleNamespace(InstancePrincipalsSecurityTokenSigner=lambda: signer),
-        ),
-        config=SimpleNamespace(from_file=lambda **_kwargs: pytest.fail("instance principal must be used")),
+        config=SimpleNamespace(from_file=from_file),
+        base_client=SimpleNamespace(is_http_log_enabled=Mock()),
         retry=SimpleNamespace(NoneRetryStrategy=lambda: object()),
         vault=SimpleNamespace(
             VaultsClient=VaultsClient,
@@ -383,7 +497,6 @@ def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypa
         "_vault_put_secret.py",
         "--secret-name",
         "ACX_GPU_ENDPOINT_API_KEY",
-        "--instance-principal",
         "--bootstrap",
         "--result-only",
         "--readable-timeout",
@@ -398,13 +511,16 @@ def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypa
     assert vault_put_secret.main() == 0
     assert capsys.readouterr().out == f"{existing.id} {len(current_value[0])}\n"
     assert updates == []
-    assert passed_signers and all(item is signer for item in passed_signers)
+    assert loaded_profiles == ["DEFAULT"]
+    assert len(passed_configs) >= 2
+    assert all(config is not profile_config for config in passed_configs)
+    assert all(config == {**profile_config, "log_requests": False} for config in passed_configs)
+    assert profile_config == {"profile": "DEFAULT"}
 
     monkeypatch.setattr(sys, "argv", [
         "_vault_put_secret.py",
         "--secret-name",
         "ACX_GPU_ENDPOINT_API_KEY",
-        "--instance-principal",
         "--rotate-existing",
         "--result-only",
         "--readable-timeout",
@@ -433,7 +549,6 @@ def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypa
                 "_vault_put_secret.py",
                 "--secret-name",
                 "ACX_GPU_ENDPOINT_API_KEY",
-                "--instance-principal",
                 mode,
                 "--expected-secret-id",
                 expected_id,
@@ -478,7 +593,6 @@ def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypa
         "_vault_put_secret.py",
         "--secret-name",
         "ACX_GPU_ENDPOINT_API_KEY",
-        "--instance-principal",
         "--key-id",
         "ocid1.key.test",
         "--result-only",
@@ -502,7 +616,6 @@ def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypa
         "_vault_put_secret.py",
         "--secret-name",
         "ACX_GPU_ENDPOINT_API_KEY",
-        "--instance-principal",
         "--result-only",
         "--readable-timeout",
         "0",
@@ -530,7 +643,6 @@ def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypa
                 "_vault_put_secret.py",
                 "--secret-name",
                 "ACX_GPU_ENDPOINT_API_KEY",
-                "--instance-principal",
                 mode,
                 "--result-only",
                 "--readable-timeout",
@@ -552,7 +664,6 @@ def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypa
         "_vault_put_secret.py",
         "--secret-name",
         "ACX_GPU_ENDPOINT_API_KEY",
-        "--instance-principal",
         "--result-only",
         "--readable-timeout",
         "0",
@@ -568,18 +679,32 @@ def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypa
     assert len(created_values) == before_creates + 1
     assert created_values[-1] == b"f" * 64
     assert capsys.readouterr().out == ""
+    assert loaded_profiles and all(profile == "DEFAULT" for profile in loaded_profiles)
+    assert len(passed_configs) >= 2 * len(loaded_profiles)
+    assert all(config is not profile_config for config in passed_configs)
+    assert all(config == {**profile_config, "log_requests": False} for config in passed_configs)
+    assert profile_config == {"profile": "DEFAULT"}
 
 
-def test_instance_principal_clients_accept_real_sdk_constructors_without_network() -> None:
+def test_profile_config_constructs_real_sdk_clients_without_network() -> None:
     import oci
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
 
-    class FakeInstancePrincipalSigner(oci.auth.signers.InstancePrincipalsSecurityTokenSigner):
-        def __init__(self):
-            # The SDK uses signer.region to derive endpoints. Avoid the parent
-            # constructor, which performs instance metadata/token discovery.
-            self.region = "us-ashburn-1"
-
-    signer = FakeInstancePrincipalSigner()
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_key_content = private_key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode("ascii")
+    profile_config = {
+        "user": "ocid1.user.oc1..aaaaaaaa",
+        "tenancy": "ocid1.tenancy.oc1..aaaaaaaa",
+        "fingerprint": "00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00",
+        "key_file": "/unused/test-key.pem",
+        "key_content": private_key_content,
+        "region": "us-ashburn-1",
+    }
     no_retry = oci.retry.NoneRetryStrategy()
     timeout = (1.0, 1.0)
     clients = (
@@ -589,10 +714,9 @@ def test_instance_principal_clients_accept_real_sdk_constructors_without_network
     )
 
     for factory, client_type in clients:
-        client = vault_put_secret._make_client(factory, {}, no_retry, timeout, signer=signer)
+        client = vault_put_secret._make_client(factory, profile_config, no_retry, timeout)
         assert isinstance(client, client_type)
-        assert client.base_client.signer is signer
-        assert client.base_client.config == {}
+        assert client.base_client.config == profile_config
 
 
 def _retry_delays(seed: int) -> list[float]:

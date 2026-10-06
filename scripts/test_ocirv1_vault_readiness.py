@@ -361,7 +361,7 @@ def test_blocking_read_cannot_overrun_the_outer_deadline():
 class _FakeVaultStore:
     """Shared Vault state: submitted versions propagate to the read API later."""
 
-    SECRET_ID = "ocid1.vaultsecret.oc1..target"
+    SECRET_ID = "ocid1.vaultsecret.oc1..fake-target-00000000000000000000"
 
     def __init__(self, not_ready_reads, existing_value=None):
         self.not_ready_reads = not_ready_reads
@@ -455,6 +455,12 @@ class _FakeVaultStore:
         return self.active_value
 
 
+def test_fake_vault_store_uses_a_well_formed_secret_ocid():
+    # Keep the SDK fixture compatible with the writer's identity checks so the
+    # wiring tests exercise rotation/readiness instead of failing at selection.
+    assert vps._vault_secret_ocid(_FakeVaultStore.SECRET_ID) == _FakeVaultStore.SECRET_ID
+
+
 class _FakeSecretsClient:
     """Consumer API backed by the content actually submitted to fake Vault."""
 
@@ -518,9 +524,12 @@ def _install_fake_oci(
             )
         ]
     secrets_clients = []
+    sdk_events = []
+    store.sdk_events = sdk_events
 
     class _Vaults:
         def __init__(self, config, **kwargs):
+            sdk_events.append(("client_built", "vaults"))
             self.init_kwargs = kwargs
             self.base_client = types.SimpleNamespace(timeout=kwargs.get("timeout"))
 
@@ -572,7 +581,7 @@ def _install_fake_oci(
 
     class _Kms:
         def __init__(self, config):
-            pass
+            sdk_events.append(("client_built", "kms"))
 
         def get_vault(self, vault_id):
             return types.SimpleNamespace(data=types.SimpleNamespace(compartment_id="ocid1.compartment.oc1..c"))
@@ -586,12 +595,16 @@ def _install_fake_oci(
     )
     fake = types.ModuleType("oci")
     fake.config = types.SimpleNamespace(from_file=lambda profile_name: {})
+    fake.base_client = types.SimpleNamespace(
+        is_http_log_enabled=lambda enabled: sdk_events.append(("http_log_enabled", enabled))
+    )
     fake.vault = types.SimpleNamespace(VaultsClient=_Vaults, models=models)
     fake.key_management = types.SimpleNamespace(KmsVaultClient=_Kms)
     no_retry = object()
     fake.retry = types.SimpleNamespace(NoneRetryStrategy=lambda: no_retry)
 
     def make_secrets_client(config, **kwargs):
+        sdk_events.append(("client_built", "secrets"))
         client = _FakeSecretsClient(store, **kwargs)
         secrets_clients.append(client)
         return client
@@ -644,6 +657,16 @@ def test_main_disables_sdk_retries_and_bounds_each_request(monkeypatch):
     assert secrets_client.init_kwargs["timeout"] == (5.0, 120.0)
     assert all(kwargs["retry_strategy"] is no_retry for kwargs in secrets_client.read_kwargs)
     assert all(connect <= read <= 120 for connect, read in secrets_client.request_timeouts)
+
+
+def test_main_disables_sdk_http_logging_before_building_secrets_client(monkeypatch):
+    rc, store, _, _, _ = _run_main(monkeypatch, b"token", 0)
+
+    assert rc == 0
+    assert ("http_log_enabled", False) in store.sdk_events
+    assert store.sdk_events.index(("http_log_enabled", False)) < store.sdk_events.index(
+        ("client_built", "secrets")
+    )
 
 
 def test_main_reports_the_byte_count_but_never_the_token(monkeypatch, capsys):

@@ -1,13 +1,15 @@
-"""Tests for GPU Vault key minting without live OCI, SSH, or GPU calls."""
+"""Tests for GPU Vault key minting without live OCI or GPU calls."""
 
 from __future__ import annotations
 
 import base64
 import hashlib
+import http.client
 import io
 import importlib.util
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -241,13 +243,11 @@ def test_mint_rejects_invalid_required_declarations_before_writer(
     bin_dir = _fake_cli(tmp_path)
     stdin_capture = tmp_path / "writer-stdin"
     argument_capture = tmp_path / "writer-arguments"
-    mutations = tmp_path / "remote-mutations"
+    mutations = tmp_path / "vault-mutations"
     args = [
         "bash",
         str(SCRIPT_PATH),
         "--approve-mint",
-        "--ssh-target",
-        "ubuntu@gpu.example",
         "--manifest",
         str(shared),
         "--terraform-input",
@@ -264,7 +264,7 @@ def test_mint_rejects_invalid_required_declarations_before_writer(
         env={
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+            "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
             "GPU_KEY_TEST_OCID": OTHER_FAKE_OCID,
             "GPU_KEY_TEST_STDIN_CAPTURE": str(stdin_capture),
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
@@ -389,11 +389,11 @@ def test_mint_rejects_malformed_fragment_targets_before_writer(
     bin_dir = _fake_cli(tmp_path)
     input_capture = tmp_path / "writer-stdin"
     argument_capture = tmp_path / "writer-arguments"
-    mutations = tmp_path / "remote-mutations"
+    mutations = tmp_path / "vault-mutations"
 
     result = subprocess.run(
         [
-            "bash", str(SCRIPT_PATH), "--approve-mint", "--ssh-target", "ubuntu@gpu.example",
+            "bash", str(SCRIPT_PATH), "--approve-mint",
             "--manifest", str(paths["10-service-shared.toml"]),
             "--terraform-input", str(terraform_input),
         ],
@@ -403,7 +403,7 @@ def test_mint_rejects_malformed_fragment_targets_before_writer(
         env={
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+            "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
@@ -454,11 +454,11 @@ def test_mint_rejects_malformed_gpu_refs_before_writer(
     bin_dir = _fake_cli(tmp_path)
     input_capture = tmp_path / "writer-stdin"
     argument_capture = tmp_path / "writer-arguments"
-    mutations = tmp_path / "remote-mutations"
+    mutations = tmp_path / "vault-mutations"
 
     result = subprocess.run(
         [
-            "bash", str(SCRIPT_PATH), "--approve-mint", "--ssh-target", "ubuntu@gpu.example",
+            "bash", str(SCRIPT_PATH), "--approve-mint",
             "--manifest", str(paths["10-service-shared.toml"]),
             "--terraform-input", str(terraform_input),
         ],
@@ -468,7 +468,7 @@ def test_mint_rejects_malformed_gpu_refs_before_writer(
         env={
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+            "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
@@ -556,7 +556,7 @@ def test_terraform_input_artifact_contains_only_durable_identifier(tmp_path: Pat
 
 
 @pytest.mark.parametrize("destination", ["conflict", "invalid-input", "invalid-manifest-owner"])
-def test_mint_preflights_output_destinations_before_remote_writer(
+def test_mint_preflights_output_destinations_before_local_writer(
     tmp_path: Path,
     destination: str,
 ) -> None:
@@ -594,8 +594,6 @@ def test_mint_preflights_output_destinations_before_remote_writer(
             "bash",
             str(SCRIPT_PATH),
             "--approve-mint",
-            "--ssh-target",
-            "ubuntu@gpu.example",
             "--manifest",
             str(manifest),
             "--terraform-input",
@@ -607,7 +605,7 @@ def test_mint_preflights_output_destinations_before_remote_writer(
         env={
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+            "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
@@ -623,7 +621,7 @@ def test_mint_preflights_output_destinations_before_remote_writer(
 
 
 @pytest.mark.parametrize("rotate", [False, True])
-def test_mint_rejects_unpublishable_gpu_owner_before_remote_writer(
+def test_mint_rejects_unpublishable_gpu_owner_before_local_writer(
     tmp_path: Path,
     rotate: bool,
 ) -> None:
@@ -668,13 +666,11 @@ def test_mint_rejects_unpublishable_gpu_owner_before_remote_writer(
     bin_dir = _fake_cli(tmp_path)
     input_capture = tmp_path / "writer-stdin"
     argument_capture = tmp_path / "writer-arguments"
-    mutations = tmp_path / "remote-mutations"
+    mutations = tmp_path / "vault-mutations"
     args = [
         "bash",
         str(SCRIPT_PATH),
         "--approve-mint",
-        "--ssh-target",
-        "ubuntu@gpu.example",
         "--manifest",
         str(paths["10-service-shared.toml"]),
         "--terraform-input",
@@ -691,7 +687,7 @@ def test_mint_rejects_unpublishable_gpu_owner_before_remote_writer(
         env={
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+            "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
@@ -714,7 +710,7 @@ def test_mint_rejects_unpublishable_gpu_owner_before_remote_writer(
 
 
 @pytest.mark.parametrize("quote", ['"""', "'''"])
-def test_mint_rejects_multiline_gpu_ref_quotes_before_remote_writer(
+def test_mint_rejects_multiline_gpu_ref_quotes_before_local_writer(
     tmp_path: Path,
     quote: str,
 ) -> None:
@@ -733,7 +729,7 @@ def test_mint_rejects_multiline_gpu_ref_quotes_before_remote_writer(
     terraform_input = tmp_path / "gpu-api-key.tfvars"
     input_capture = tmp_path / "writer-stdin"
     argument_capture = tmp_path / "writer-arguments"
-    mutations = tmp_path / "remote-mutations"
+    mutations = tmp_path / "vault-mutations"
     bin_dir = _fake_cli(tmp_path)
 
     result = subprocess.run(
@@ -741,8 +737,6 @@ def test_mint_rejects_multiline_gpu_ref_quotes_before_remote_writer(
             "bash",
             str(SCRIPT_PATH),
             "--approve-mint",
-            "--ssh-target",
-            "ubuntu@gpu.example",
             "--manifest",
             str(paths["10-service-shared.toml"]),
             "--terraform-input",
@@ -754,7 +748,7 @@ def test_mint_rejects_multiline_gpu_ref_quotes_before_remote_writer(
         env={
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+            "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
@@ -797,13 +791,11 @@ def test_inherited_transaction_flag_cannot_skip_preflight_or_identity_binding(
     if terraform_text:
         terraform_input.write_text(terraform_text, encoding="utf-8")
     argument_capture = tmp_path / "writer-arguments"
-    mutations = tmp_path / "remote-mutations"
+    mutations = tmp_path / "vault-mutations"
     args = [
         "bash",
         str(SCRIPT_PATH),
         "--approve-mint",
-        "--ssh-target",
-        "ubuntu@gpu.example",
         "--manifest",
         str(manifest),
         "--terraform-input",
@@ -820,8 +812,8 @@ def test_inherited_transaction_flag_cannot_skip_preflight_or_identity_binding(
         env={
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
             "GPU_KEY_MINT_TRANSACTION_LOCKED": "1",
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
             "GPU_KEY_TEST_MUTATIONS": str(mutations),
@@ -852,8 +844,6 @@ def test_internal_handoff_rejects_stale_hash_before_writer_contact(tmp_path: Pat
                 "bash",
                 str(SCRIPT_PATH),
                 "--approve-mint",
-                "--ssh-target",
-                "ubuntu@gpu.example",
                 "--manifest",
                 str(manifest),
                 "--terraform-input",
@@ -870,9 +860,9 @@ def test_internal_handoff_rejects_stale_hash_before_writer_contact(tmp_path: Pat
             env={
                 **os.environ,
                 "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
                 "GPU_KEY_MINT_TRANSACTION_LOCKED": "1",
                 "GPU_KEY_MINT_TRANSACTION_LOCK_FD": str(lock_descriptor),
-                "GPU_KEY_TEST_RANDOM": FAKE_KEY,
                 "GPU_KEY_TEST_OCID": FAKE_OCID,
                 "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
                 "TMPDIR": str(tmp_path),
@@ -1029,12 +1019,12 @@ def test_harvest_cli_waits_for_mint_publication_across_canonical_symlink_lock(
     release_writer = tmp_path / "release-writer"
     writer_stdin = tmp_path / "writer-stdin"
     writer_arguments = tmp_path / "writer-arguments"
-    mutations = tmp_path / "remote-mutations"
+    mutations = tmp_path / "vault-mutations"
     bin_dir = _fake_cli(tmp_path)
     mint_environment = {
         **os.environ,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+        "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
         "GPU_KEY_TEST_OCID": FAKE_OCID,
         "GPU_KEY_TEST_STDIN_CAPTURE": str(writer_stdin),
         "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(writer_arguments),
@@ -1045,7 +1035,7 @@ def test_harvest_cli_waits_for_mint_publication_across_canonical_symlink_lock(
     }
     mint = subprocess.Popen(
         [
-            "bash", str(SCRIPT_PATH), "--approve-mint", "--ssh-target", "ubuntu@gpu.example",
+            "bash", str(SCRIPT_PATH), "--approve-mint",
             "--manifest", str(alias_manifest), "--terraform-input", str(terraform_input),
         ],
         stdout=subprocess.PIPE,
@@ -1138,9 +1128,10 @@ def test_harvest_cli_waits_for_mint_publication_across_canonical_symlink_lock(
             harvest.communicate(timeout=5)
 
     assert mint.returncode == 0, mint_stderr
+    _assert_key_only_in_stdin(tmp_path, writer_stdin)
     assert mint_stdout == f"{FAKE_OCID} 64\n"
     assert FAKE_KEY not in mint_stdout + mint_stderr
-    assert writer_stdin.read_text(encoding="utf-8") == FAKE_KEY
+    assert writer_stdin.read_text(encoding="utf-8") == "True\n"
     assert writer_arguments.exists()
     assert mutations.read_text(encoding="utf-8") == "create\n"
     assert harvest.returncode == 0, harvest_stderr
@@ -1170,7 +1161,7 @@ def test_harvest_cli_waits_for_mint_publication_across_canonical_symlink_lock(
     assert harvested["values"]["prod"] == "16"
 
 
-def test_manifest_lock_contention_times_out_before_remote_writer(tmp_path: Path) -> None:
+def test_manifest_lock_contention_times_out_before_local_writer(tmp_path: Path) -> None:
     bin_dir = _fake_cli(tmp_path)
     manifest = tmp_path / "10-service-shared.toml"
     manifest.write_text(MANIFEST_TEXT, encoding="utf-8")
@@ -1185,8 +1176,6 @@ def test_manifest_lock_contention_times_out_before_remote_writer(tmp_path: Path)
                 "bash",
                 str(SCRIPT_PATH),
                 "--approve-mint",
-                "--ssh-target",
-                "ubuntu@gpu.example",
                 "--manifest",
                 str(manifest),
                 "--terraform-input",
@@ -1198,7 +1187,7 @@ def test_manifest_lock_contention_times_out_before_remote_writer(tmp_path: Path)
             env={
                 **os.environ,
                 "PATH": f"{bin_dir}:{os.environ['PATH']}",
-                "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+                "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
                 "GPU_KEY_TEST_OCID": FAKE_OCID,
                 "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
                 "GPU_KEY_TEST_STDIN_CAPTURE": str(stdin_capture),
@@ -1234,8 +1223,6 @@ def test_manifest_lock_release_allows_transaction_to_reach_fake_writer(tmp_path:
             "bash",
             str(SCRIPT_PATH),
             "--approve-mint",
-            "--ssh-target",
-            "ubuntu@gpu.example",
             "--manifest",
             str(manifest),
             "--terraform-input",
@@ -1247,7 +1234,7 @@ def test_manifest_lock_release_allows_transaction_to_reach_fake_writer(tmp_path:
         env={
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+            "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
             "GPU_KEY_TEST_STDIN_CAPTURE": str(tmp_path / "writer-stdin"),
@@ -1263,6 +1250,7 @@ def test_manifest_lock_release_allows_transaction_to_reach_fake_writer(tmp_path:
     stdout, stderr = process.communicate(timeout=MANIFEST_LOCK_TIMEOUT_SECONDS + 5)
     assert waited_for_lock
     assert process.returncode == 0, stderr
+    _assert_key_only_in_stdin(tmp_path, tmp_path / "writer-stdin")
     assert stdout == f"{FAKE_OCID} 64\n"
     assert "--secret-name ACX_GPU_ENDPOINT_API_KEY" in argument_capture.read_text(encoding="utf-8")
     assert terraform_input.is_file()
@@ -1280,7 +1268,9 @@ def test_real_vault_writer_parser_binds_existing_secret_identity(monkeypatch, ca
     )
 
     class Client:
-        def __init__(self, *_args, **_kwargs):
+        def __init__(self, config, **_kwargs):
+            assert config is not operator_config
+            assert config == {**operator_config, "log_requests": False}
             self.base_client = SimpleNamespace(timeout=None)
 
     class VaultsClient(Client):
@@ -1330,9 +1320,24 @@ def test_real_vault_writer_parser_binds_existing_secret_identity(monkeypatch, ca
         def __init__(self, **kwargs):
             self.__dict__.update(kwargs)
 
+    operator_config = {"user": "fake-operator", "tenancy": "fake-tenancy", "log_requests": True}
+    config_calls = []
+    original_http_debuglevel = http.client.HTTPConnection.debuglevel
+    http_log_calls: list[bool] = []
+
+    def is_http_log_enabled(enabled: bool) -> None:
+        http_log_calls.append(enabled)
+        http.client.HTTPConnection.debuglevel = int(enabled)
+
+    def from_file(*, profile_name):
+        config_calls.append(profile_name)
+        return operator_config
+
     fake_oci = SimpleNamespace(
-        auth=SimpleNamespace(signers=SimpleNamespace(InstancePrincipalsSecurityTokenSigner=object)),
-        config=SimpleNamespace(from_file=lambda **_kwargs: pytest.fail("instance principal must be used")),
+        config=SimpleNamespace(from_file=from_file),
+        base_client=SimpleNamespace(
+            is_http_log_enabled=is_http_log_enabled,
+        ),
         retry=SimpleNamespace(NoneRetryStrategy=object),
         vault=SimpleNamespace(
             VaultsClient=VaultsClient,
@@ -1362,7 +1367,6 @@ def test_real_vault_writer_parser_binds_existing_secret_identity(monkeypatch, ca
                 "_vault_put_secret.py",
                 "--secret-name",
                 "ACX_GPU_ENDPOINT_API_KEY",
-                "--instance-principal",
                 mode,
                 "--expected-secret-id",
                 FAKE_OCID,
@@ -1378,20 +1382,36 @@ def test_real_vault_writer_parser_binds_existing_secret_identity(monkeypatch, ca
         )
         return vault_put_secret.main()
 
-    assert run_writer("--bootstrap", FAKE_OCID, b"a" * 64) == 0
-    assert capsys.readouterr().out == f"{FAKE_OCID} 64\n"
-    assert writes == []
+    with monkeypatch.context() as restore_http_debuglevel:
+        restore_http_debuglevel.setattr(
+            http.client.HTTPConnection,
+            "debuglevel",
+            1,
+        )
 
-    assert run_writer("--rotate-existing", FAKE_OCID, b"a" * 64) == 0
-    assert capsys.readouterr().out == f"{FAKE_OCID} 64\n"
-    assert writes == [("update", FAKE_OCID)]
+        assert run_writer("--bootstrap", FAKE_OCID, b"a" * 64) == 0
+        assert http.client.HTTPConnection.debuglevel == 0
+        assert http_log_calls == [False, False]
+        assert capsys.readouterr().out == f"{FAKE_OCID} 64\n"
+        assert writes == []
 
-    for mode in ("--bootstrap", "--rotate-existing"):
-        for remote_id in (None, OTHER_FAKE_OCID):
-            before = list(writes)
-            with pytest.raises(RuntimeError, match="expected secret identity"):
-                run_writer(mode, remote_id, b"c" * 64)
-            assert writes == before
+        restore_http_debuglevel.setattr(http.client.HTTPConnection, "debuglevel", 1)
+        http_log_calls.clear()
+        assert run_writer("--rotate-existing", FAKE_OCID, b"a" * 64) == 0
+        assert http.client.HTTPConnection.debuglevel == 0
+        assert http_log_calls == [False, False]
+        assert capsys.readouterr().out == f"{FAKE_OCID} 64\n"
+        assert writes == [("update", FAKE_OCID)]
+        assert config_calls == ["DEFAULT", "DEFAULT"]
+
+        for mode in ("--bootstrap", "--rotate-existing"):
+            for vault_id in (None, OTHER_FAKE_OCID):
+                before = list(writes)
+                with pytest.raises(RuntimeError, match="expected secret identity"):
+                    run_writer(mode, vault_id, b"c" * 64)
+                assert writes == before
+
+    assert http.client.HTTPConnection.debuglevel == original_http_debuglevel
 
 
 def _manifest_with_gpu_ocid(ocid: str) -> str:
@@ -1402,11 +1422,11 @@ def _manifest_with_gpu_ocid(ocid: str) -> str:
 
 
 @pytest.mark.parametrize("rotate", [False, True])
-@pytest.mark.parametrize("remote_state", ["missing", "recreated"])
-def test_bound_remote_identity_conflicts_refuse_bootstrap_and_rotation_without_mutation(
+@pytest.mark.parametrize("vault_state", ["missing", "recreated"])
+def test_bound_vault_identity_conflicts_refuse_bootstrap_and_rotation_without_mutation(
     tmp_path: Path,
     rotate: bool,
-    remote_state: str,
+    vault_state: str,
 ) -> None:
     bin_dir = _fake_cli(tmp_path)
     manifest = tmp_path / "10-service-shared.toml"
@@ -1415,13 +1435,11 @@ def test_bound_remote_identity_conflicts_refuse_bootstrap_and_rotation_without_m
     terraform_input = tmp_path / "gpu-api-key.tfvars"
     input_capture = tmp_path / "writer-stdin"
     argument_capture = tmp_path / "writer-arguments"
-    mutations = tmp_path / "remote-mutations"
+    mutations = tmp_path / "vault-mutations"
     args = [
         "bash",
         str(SCRIPT_PATH),
         "--approve-mint",
-        "--ssh-target",
-        "ubuntu@gpu.example",
         "--manifest",
         str(manifest),
         "--terraform-input",
@@ -1438,10 +1456,10 @@ def test_bound_remote_identity_conflicts_refuse_bootstrap_and_rotation_without_m
         env={
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+            "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_EXPECTED_ID": FAKE_OCID,
-            "GPU_KEY_TEST_REMOTE_STATE": remote_state,
+            "GPU_KEY_TEST_VAULT_STATE": vault_state,
             "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
             "GPU_KEY_TEST_MUTATIONS": str(mutations),
@@ -1459,7 +1477,7 @@ def test_bound_remote_identity_conflicts_refuse_bootstrap_and_rotation_without_m
 
 
 @pytest.mark.parametrize("rotate", [False, True])
-def test_matching_remote_identity_is_bound_for_bootstrap_and_rotation(
+def test_matching_vault_identity_is_bound_for_bootstrap_and_rotation(
     tmp_path: Path,
     rotate: bool,
 ) -> None:
@@ -1468,13 +1486,11 @@ def test_matching_remote_identity_is_bound_for_bootstrap_and_rotation(
     manifest.write_text(_manifest_with_gpu_ocid(FAKE_OCID), encoding="utf-8")
     terraform_input = tmp_path / "gpu-api-key.tfvars"
     argument_capture = tmp_path / "writer-arguments"
-    mutations = tmp_path / "remote-mutations"
+    mutations = tmp_path / "vault-mutations"
     args = [
         "bash",
         str(SCRIPT_PATH),
         "--approve-mint",
-        "--ssh-target",
-        "ubuntu@gpu.example",
         "--manifest",
         str(manifest),
         "--terraform-input",
@@ -1491,10 +1507,10 @@ def test_matching_remote_identity_is_bound_for_bootstrap_and_rotation(
         env={
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+            "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_EXPECTED_ID": FAKE_OCID,
-            "GPU_KEY_TEST_REMOTE_STATE": "matching",
+            "GPU_KEY_TEST_VAULT_STATE": "matching",
             "GPU_KEY_TEST_STDIN_CAPTURE": str(tmp_path / "writer-stdin"),
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
             "GPU_KEY_TEST_MUTATIONS": str(mutations),
@@ -1503,6 +1519,7 @@ def test_matching_remote_identity_is_bound_for_bootstrap_and_rotation(
     )
 
     assert result.returncode == 0, result.stderr
+    _assert_key_only_in_stdin(tmp_path, tmp_path / "writer-stdin")
     assert result.stdout == f"{FAKE_OCID} 64\n"
     assert f"--expected-secret-id {FAKE_OCID}" in argument_capture.read_text(encoding="utf-8")
     assert mutations.exists() is rotate
@@ -1545,8 +1562,6 @@ def test_malformed_or_inconsistent_local_identity_refuses_before_writer(
             "bash",
             str(SCRIPT_PATH),
             "--approve-mint",
-            "--ssh-target",
-            "ubuntu@gpu.example",
             "--manifest",
             str(manifest),
             "--terraform-input",
@@ -1558,7 +1573,7 @@ def test_malformed_or_inconsistent_local_identity_refuses_before_writer(
         env={
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+            "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
             "TMPDIR": str(tmp_path),
@@ -1570,7 +1585,7 @@ def test_malformed_or_inconsistent_local_identity_refuses_before_writer(
     assert not argument_capture.exists()
 
 
-def test_stale_manifest_edit_during_remote_write_is_rejected(tmp_path: Path) -> None:
+def test_stale_manifest_edit_during_vault_write_is_rejected(tmp_path: Path) -> None:
     manifest = tmp_path / "10-service-shared.toml"
     manifest.write_text(MANIFEST_TEXT, encoding="utf-8")
     terraform_input = tmp_path / "gpu-api-key.tfvars"
@@ -1595,16 +1610,16 @@ def test_stale_manifest_edit_during_remote_write_is_rejected(tmp_path: Path) -> 
     assert not terraform_input.exists()
 
 
-def test_run_locked_rotation_without_recorded_ocid_refuses_before_ssh(tmp_path: Path) -> None:
+def test_run_locked_rotation_without_recorded_ocid_refuses_before_writer(tmp_path: Path) -> None:
     manifest_dir = tmp_path / "manifest.d"
     manifest_dir.mkdir()
     paths = _write_fake_committed_manifest(manifest_dir)
     before = {path: path.read_bytes() for path in paths.values()}
     terraform_input = tmp_path / "gpu-api-key.tfvars"
-    ssh_capture = tmp_path / "ssh-contact"
+    writer_capture = tmp_path / "writer-contact"
     argument_capture = tmp_path / "writer-arguments"
     stdin_capture = tmp_path / "writer-stdin"
-    mutations = tmp_path / "remote-mutations"
+    mutations = tmp_path / "vault-mutations"
     bin_dir = _fake_cli(tmp_path)
 
     result = subprocess.run(
@@ -1613,8 +1628,6 @@ def test_run_locked_rotation_without_recorded_ocid_refuses_before_ssh(tmp_path: 
             str(HELPER_PATH),
             "--run-locked",
             "--approve-mint",
-            "--ssh-target",
-            "ubuntu@gpu.example",
             "--manifest",
             str(paths["10-service-shared.toml"]),
             "--terraform-input",
@@ -1627,9 +1640,9 @@ def test_run_locked_rotation_without_recorded_ocid_refuses_before_ssh(tmp_path: 
         env={
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+            "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
             "GPU_KEY_TEST_OCID": FAKE_OCID,
-            "GPU_KEY_TEST_SSH_CAPTURE": str(ssh_capture),
+            "GPU_KEY_TEST_WRITER_CAPTURE": str(writer_capture),
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
             "GPU_KEY_TEST_STDIN_CAPTURE": str(stdin_capture),
             "GPU_KEY_TEST_MUTATIONS": str(mutations),
@@ -1639,7 +1652,7 @@ def test_run_locked_rotation_without_recorded_ocid_refuses_before_ssh(tmp_path: 
 
     assert result.returncode != 0
     assert "rotation requires a recorded GPU secret OCID" in result.stderr
-    assert not ssh_capture.exists()
+    assert not writer_capture.exists()
     assert not argument_capture.exists()
     assert not stdin_capture.exists()
     assert not mutations.exists()
@@ -1647,7 +1660,7 @@ def test_run_locked_rotation_without_recorded_ocid_refuses_before_ssh(tmp_path: 
     assert not terraform_input.exists()
 
 
-def test_locked_shell_rotation_without_recorded_ocid_refuses_before_ssh(tmp_path: Path) -> None:
+def test_locked_shell_rotation_without_recorded_ocid_refuses_before_writer(tmp_path: Path) -> None:
     manifest_dir = tmp_path / "manifest.d"
     manifest_dir.mkdir()
     paths = _write_fake_committed_manifest(manifest_dir)
@@ -1659,10 +1672,10 @@ def test_locked_shell_rotation_without_recorded_ocid_refuses_before_ssh(tmp_path
         terraform_input,
     )
     assert expected_secret_id is None
-    ssh_capture = tmp_path / "ssh-contact"
+    writer_capture = tmp_path / "writer-contact"
     argument_capture = tmp_path / "writer-arguments"
     stdin_capture = tmp_path / "writer-stdin"
-    mutations = tmp_path / "remote-mutations"
+    mutations = tmp_path / "vault-mutations"
     bin_dir = _fake_cli(tmp_path)
     descriptor = gpu_key_manifest._open_manifest_write_lock(manifest)
     try:
@@ -1671,8 +1684,6 @@ def test_locked_shell_rotation_without_recorded_ocid_refuses_before_ssh(tmp_path
                 "bash",
                 str(SCRIPT_PATH),
                 "--approve-mint",
-                "--ssh-target",
-                "ubuntu@gpu.example",
                 "--manifest",
                 str(manifest),
                 "--terraform-input",
@@ -1692,9 +1703,9 @@ def test_locked_shell_rotation_without_recorded_ocid_refuses_before_ssh(tmp_path
                 "GPU_KEY_MINT_TRANSACTION_LOCKED": "1",
                 "GPU_KEY_MINT_TRANSACTION_LOCK_FD": str(descriptor),
                 "PATH": f"{bin_dir}:{os.environ['PATH']}",
-                "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+                "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
                 "GPU_KEY_TEST_OCID": FAKE_OCID,
-                "GPU_KEY_TEST_SSH_CAPTURE": str(ssh_capture),
+                "GPU_KEY_TEST_WRITER_CAPTURE": str(writer_capture),
                 "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
                 "GPU_KEY_TEST_STDIN_CAPTURE": str(stdin_capture),
                 "GPU_KEY_TEST_MUTATIONS": str(mutations),
@@ -1706,7 +1717,7 @@ def test_locked_shell_rotation_without_recorded_ocid_refuses_before_ssh(tmp_path
 
     assert result.returncode != 0
     assert "rotation requires a recorded GPU secret OCID" in result.stderr
-    assert not ssh_capture.exists()
+    assert not writer_capture.exists()
     assert not argument_capture.exists()
     assert not stdin_capture.exists()
     assert not mutations.exists()
@@ -1725,8 +1736,6 @@ def test_mint_does_not_overwrite_external_manifest_edit_after_writer(tmp_path: P
             "bash",
             str(SCRIPT_PATH),
             "--approve-mint",
-            "--ssh-target",
-            "ubuntu@gpu.example",
             "--manifest",
             str(manifest),
             "--terraform-input",
@@ -1738,11 +1747,11 @@ def test_mint_does_not_overwrite_external_manifest_edit_after_writer(tmp_path: P
         env={
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+            "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_STDIN_CAPTURE": str(tmp_path / "writer-stdin"),
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(tmp_path / "writer-arguments"),
-            "GPU_KEY_TEST_MUTATIONS": str(tmp_path / "remote-mutations"),
+            "GPU_KEY_TEST_MUTATIONS": str(tmp_path / "vault-mutations"),
             "GPU_KEY_TEST_EDIT_MANIFEST": str(manifest),
             "TMPDIR": str(tmp_path),
         },
@@ -1750,10 +1759,10 @@ def test_mint_does_not_overwrite_external_manifest_edit_after_writer(tmp_path: P
 
     assert result.returncode != 0
     assert "changed during GPU key mint transaction" in result.stderr
-    assert "# external edit during remote writer" in manifest.read_text(encoding="utf-8")
+    assert "# external edit during local writer" in manifest.read_text(encoding="utf-8")
     assert original_gpu_refs in manifest.read_text(encoding="utf-8")
     assert not terraform_input.exists()
-    assert (tmp_path / "remote-mutations").read_text(encoding="utf-8") == "create\n"
+    assert (tmp_path / "vault-mutations").read_text(encoding="utf-8") == "create\n"
     assert FAKE_KEY not in result.stdout + result.stderr
 
 
@@ -1761,59 +1770,75 @@ def _fake_cli(tmp_path: Path) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     commands = {
-        "timeout": "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\n  case \"$1\" in\n    --kill-after=*) shift ;;\n    *s) shift; break ;;\n    *) exit 97 ;;\n  esac\ndone\nexec \"$@\"\n",
-        "openssl": "#!/bin/sh\nprintf '%s' \"$GPU_KEY_TEST_RANDOM\"\n",
-        "scp": "#!/bin/sh\nexit 0\n",
-        "ssh": (
-            "#!/bin/sh\n"
-            "if [ -n \"${GPU_KEY_TEST_SSH_CAPTURE:-}\" ]; then printf '%s\\n' \"$*\" >>\"$GPU_KEY_TEST_SSH_CAPTURE\"; fi\n"
-            "while [ \"$#\" -gt 0 ]; do\n"
-            "  case \"$1\" in\n"
-            "    -T) shift ;;\n"
-            "    -o) shift 2 ;;\n"
-            "    *) break ;;\n"
-            "  esac\n"
-            "done\n"
-            "[ \"$#\" -ge 2 ] || exit 96\n"
-            "target=\"$1\"\n"
-            "shift\n"
-            "command=\"$1\"\n"
-            "case \"$command\" in\n"
-            "  *'mktemp -d'*) printf '%s\\n' /tmp/acx-gpu-key-mint.fixture ;;\n"
-            "  *'--secret-name ACX_GPU_ENDPOINT_API_KEY'*)\n"
-            "    if [ -n \"${GPU_KEY_TEST_ARGUMENT_CAPTURE:-}\" ]; then\n"
-            "      printf '%s\\n' \"$command\" >\"$GPU_KEY_TEST_ARGUMENT_CAPTURE\"\n"
-            "    fi\n"
-            "    if [ -n \"${GPU_KEY_TEST_EXPECTED_ID:-}\" ]; then\n"
-            "      case \"$command\" in\n"
-            "        *\"--expected-secret-id $GPU_KEY_TEST_EXPECTED_ID\"*) ;;\n"
-            "        *) exit 94 ;;\n"
-            "      esac\n"
-            "    fi\n"
-            "    case \"${GPU_KEY_TEST_REMOTE_STATE:-initial}\" in\n"
-            "      missing) cat >/dev/null; echo 'expected remote secret is missing' >&2; exit 42 ;;\n"
-            "      recreated) cat >/dev/null; echo 'remote secret was recreated under another OCID' >&2; exit 42 ;;\n"
-            "    esac\n"
-            "    cat >\"$GPU_KEY_TEST_STDIN_CAPTURE\"\n"
-            "    if [ -n \"${GPU_KEY_TEST_WRITER_STARTED:-}\" ]; then\n"
-            "      : >\"$GPU_KEY_TEST_WRITER_STARTED\"\n"
-            "      while [ ! -e \"$GPU_KEY_TEST_WRITER_RELEASE\" ]; do sleep 0.01; done\n"
-            "    fi\n"
-            "    if [ -n \"${GPU_KEY_TEST_EDIT_MANIFEST:-}\" ]; then\n"
-            "      printf '%s\\n' '# external edit during remote writer' >>\"$GPU_KEY_TEST_EDIT_MANIFEST\"\n"
-            "    fi\n"
-            "    printf '%s %s\\n' \"$GPU_KEY_TEST_OCID\" 64\n"
-            "    if [ -n \"${GPU_KEY_TEST_MUTATIONS:-}\" ]; then\n"
-            "      case \"$command\" in\n"
-            "        *'--rotate-existing'*) printf '%s\\n' rotate >>\"$GPU_KEY_TEST_MUTATIONS\" ;;\n"
-            "        *) if [ \"${GPU_KEY_TEST_REMOTE_STATE:-initial}\" = initial ]; then printf '%s\\n' create >>\"$GPU_KEY_TEST_MUTATIONS\"; fi ;;\n"
-            "      esac\n"
-            "    fi\n"
-            "    ;;\n"
-            "  *'rm -rf --'*) exit 0 ;;\n"
-            "  *) exit 95 ;;\n"
-            "esac\n"
-        ),
+        "timeout": '''#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --kill-after=*) shift ;;
+    *s) shift; break ;;
+    *) exit 97 ;;
+  esac
+done
+exec "$@"
+''',
+        "openssl": '''#!/bin/sh
+# Generate the fixed fake value without storing it in env or this script.
+printf '%064d' 0 | tr '0' 'a'
+''',
+        "oci": f"#!{bin_dir / 'oci-python'}\n",
+        "writer-probe": f"#!{sys.executable}\n" + '''import os
+import sys
+from pathlib import Path
+
+root = Path(__file__).resolve().parents[1]
+key = b"a" * 64
+value = sys.stdin.buffer.read()
+# Check credentials in memory; persist only boolean observations.
+environment_contains_key = any(key.decode("ascii") in item for pair in os.environ.items() for item in pair)
+(root / "writer-environment").write_text(str(environment_contains_key) + "\\n")
+Path(os.environ["GPU_KEY_TEST_STDIN_CAPTURE"]).write_text(str(value == key) + "\\n")
+# The writer still owns the pipe, so the mint has not run its EXIT cleanup.
+files_contain_key = any(key in path.read_bytes() for path in root.rglob("*") if path.is_file())
+(root / "writer-files-before-cleanup").write_text(str(files_contain_key) + "\\n")
+''',
+        "oci-python": """#!/bin/sh
+if [ "$1" = -c ] && [ "$2" = 'import oci' ]; then exit 0; fi
+case "$1" in
+  */_vault_put_secret.py) ;;
+  *) exit 95 ;;
+esac
+if [ -n "${GPU_KEY_TEST_WRITER_CAPTURE:-}" ]; then
+    printf '%s\\n' "$*" >>"$GPU_KEY_TEST_WRITER_CAPTURE"
+fi
+command="$*"
+if [ -n "${GPU_KEY_TEST_ARGUMENT_CAPTURE:-}" ]; then
+    printf '%s\\n' "$command" >"$GPU_KEY_TEST_ARGUMENT_CAPTURE"
+fi
+if [ -n "${GPU_KEY_TEST_EXPECTED_ID:-}" ]; then
+    case "$command" in
+        *"--expected-secret-id $GPU_KEY_TEST_EXPECTED_ID"*) ;;
+        *) exit 94 ;;
+    esac
+fi
+case "${GPU_KEY_TEST_VAULT_STATE:-initial}" in
+    missing) cat >/dev/null; echo 'expected Vault secret is missing' >&2; exit 42 ;;
+    recreated) cat >/dev/null; echo 'Vault secret was recreated under another OCID' >&2; exit 42 ;;
+esac
+""" + shlex.quote(sys.executable) + """ "$(dirname "$0")/writer-probe"
+if [ -n "${GPU_KEY_TEST_WRITER_STARTED:-}" ]; then
+    : >"$GPU_KEY_TEST_WRITER_STARTED"
+    while [ ! -e "$GPU_KEY_TEST_WRITER_RELEASE" ]; do sleep 0.01; done
+fi
+if [ -n "${GPU_KEY_TEST_EDIT_MANIFEST:-}" ]; then
+    printf '%s\\n' '# external edit during local writer' >>"$GPU_KEY_TEST_EDIT_MANIFEST"
+fi
+printf '%s %s\\n' "$GPU_KEY_TEST_OCID" 64
+if [ -n "${GPU_KEY_TEST_MUTATIONS:-}" ]; then
+    case "$command" in
+        *'--rotate-existing'*) printf '%s\\n' rotate >>"$GPU_KEY_TEST_MUTATIONS" ;;
+        *) if [ "${GPU_KEY_TEST_VAULT_STATE:-initial}" = initial ]; then printf '%s\\n' create >>"$GPU_KEY_TEST_MUTATIONS"; fi ;;
+    esac
+fi
+""",
     }
     for name, content in commands.items():
         path = bin_dir / name
@@ -1822,19 +1847,123 @@ def _fake_cli(tmp_path: Path) -> Path:
     return bin_dir
 
 
+def _assert_key_only_in_stdin(tmp_path: Path, stdin_capture: Path) -> None:
+    environment_capture = tmp_path / "writer-environment"
+    assert environment_capture.is_file()
+    assert environment_capture.read_text(encoding="utf-8") == "False\n", "key leaked to writer environment"
+    assert (tmp_path / "writer-files-before-cleanup").read_text(encoding="utf-8") == "False\n", (
+        "key leaked to a file before mint cleanup"
+    )
+    assert stdin_capture.read_text(encoding="utf-8") == "True\n", "writer did not receive the fake key on stdin"
+    for path in sorted(tmp_path.rglob("*")):
+        if path.is_file():
+            file_contains_key = FAKE_KEY.encode("ascii") in path.read_bytes()
+            assert not file_contains_key, f"key leaked to {path}"
+
+
 def test_mint_requires_approval_before_contacting_writer(tmp_path: Path) -> None:
     bin_dir = _fake_cli(tmp_path)
     result = subprocess.run(
-        ["bash", str(SCRIPT_PATH), "--ssh-target", "ubuntu@gpu.example"],
+        ["bash", str(SCRIPT_PATH)],
         check=False,
         capture_output=True,
         text=True,
-        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "ACX_OCI_PYTHON": str(bin_dir / "oci-python")},
     )
 
     assert result.returncode != 0
     assert "requires explicit --approve-mint" in result.stderr
-    assert "gpu-key-mint.fixture" not in result.stderr
+    assert not (tmp_path / "writer-arguments").exists()
+
+
+@pytest.mark.parametrize("prerequisite", ["oci-cli", "oci-sdk"])
+@pytest.mark.parametrize("existing_input", [False, True])
+def test_mint_refuses_missing_oci_prerequisite_before_lock_or_writer(
+    tmp_path: Path,
+    prerequisite: str,
+    existing_input: bool,
+) -> None:
+    bin_dir = _fake_cli(tmp_path)
+    manifest = tmp_path / "10-service-shared.toml"
+    original = _manifest_with_gpu_ocid(FAKE_OCID) if existing_input else MANIFEST_TEXT
+    manifest.write_text(original, encoding="utf-8")
+    terraform_input = tmp_path / "gpu-api-key.tfvars"
+    if existing_input:
+        terraform_input.write_text(f'gpu_api_key_secret_ocid = "{FAKE_OCID}"\n', encoding="utf-8")
+    before_input = terraform_input.read_bytes() if existing_input else None
+    argument_capture = tmp_path / "writer-arguments"
+    stdin_capture = tmp_path / "writer-stdin"
+    environment = {
+        **os.environ,
+        "PATH": str(bin_dir),
+        "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
+        "GPU_KEY_TEST_STDIN_CAPTURE": str(stdin_capture),
+        "GPU_KEY_TEST_OCID": FAKE_OCID,
+    }
+    environment.pop("ACX_OCI_PYTHON", None)
+    # Only these local commands may run before the prerequisite check. Do not
+    # expose an ambient oci executable when checking the missing-CLI path.
+    dirname = shutil.which("dirname")
+    assert dirname is not None
+    (bin_dir / "dirname").symlink_to(dirname)
+    if prerequisite == "oci-cli":
+        (bin_dir / "oci").unlink()
+        message = "oci CLI not found in PATH. brew install oci-cli"
+    else:
+        interpreter = bin_dir / "oci-python"
+        interpreter.write_text(
+            '#!/bin/sh\nif [ "$1" = -c ]; then exit 1; fi\n'
+            ': >"$GPU_KEY_TEST_ARGUMENT_CAPTURE"\nexit 99\n',
+            encoding="utf-8",
+        )
+        environment["ACX_OCI_PYTHON"] = str(interpreter)
+        message = f"no OCI SDK in {interpreter}; set ACX_OCI_PYTHON"
+
+    bash = shutil.which("bash")
+    assert bash is not None
+    lock_path = gpu_key_manifest.manifest_write_lock_path(manifest)
+    assert not lock_path.exists()
+    result = subprocess.run(
+        [
+            bash, str(SCRIPT_PATH), "--approve-mint",
+            "--manifest", str(manifest), "--terraform-input", str(terraform_input),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert result.returncode != 0
+    assert message in result.stderr
+    assert result.stdout == ""
+    assert not argument_capture.exists() and not stdin_capture.exists()
+    assert not lock_path.exists()
+    assert manifest.read_text(encoding="utf-8") == original
+    assert (terraform_input.read_bytes() if terraform_input.exists() else None) == before_input
+    assert FAKE_KEY not in result.stdout + result.stderr
+
+
+def test_mint_rejects_obsolete_ssh_target_as_unknown_argument(tmp_path: Path) -> None:
+    bin_dir = _fake_cli(tmp_path)
+    argument_capture = tmp_path / "writer-arguments"
+    result = subprocess.run(
+        ["bash", str(SCRIPT_PATH), "--approve-mint", "--ssh-target", "x@y"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
+            "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
+        },
+    )
+
+    assert result.returncode != 0
+    assert "unknown argument: --ssh-target" in result.stderr
+    assert result.stdout == ""
+    assert not argument_capture.exists()
 
 
 @pytest.mark.parametrize("rotate", [False, True])
@@ -1857,12 +1986,12 @@ def test_run_locked_helper_requires_explicit_approval_before_writer(
     terraform_input = tmp_path / "gpu-api-key.tfvars"
     argument_capture = tmp_path / "writer-arguments"
     stdin_capture = tmp_path / "writer-stdin"
-    mutations = tmp_path / "remote-mutations"
+    mutations = tmp_path / "vault-mutations"
     bin_dir = _fake_cli(tmp_path)
     environment = {
         **os.environ,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+        "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
         "GPU_KEY_TEST_OCID": FAKE_OCID,
         "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
         "GPU_KEY_TEST_STDIN_CAPTURE": str(stdin_capture),
@@ -1875,8 +2004,6 @@ def test_run_locked_helper_requires_explicit_approval_before_writer(
         sys.executable,
         str(HELPER_PATH),
         "--run-locked",
-        "--ssh-target",
-        "ubuntu@gpu.example",
         "--manifest",
         str(paths["10-service-shared.toml"]),
         "--terraform-input",
@@ -1916,12 +2043,12 @@ def test_run_locked_helper_with_approval_publishes_complete_fragments(
     terraform_input = tmp_path / "gpu-api-key.tfvars"
     argument_capture = tmp_path / "writer-arguments"
     stdin_capture = tmp_path / "writer-stdin"
-    mutations = tmp_path / "remote-mutations"
+    mutations = tmp_path / "vault-mutations"
     bin_dir = _fake_cli(tmp_path)
     environment = {
         **os.environ,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+        "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
         "GPU_KEY_TEST_OCID": FAKE_OCID,
         "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
         "GPU_KEY_TEST_STDIN_CAPTURE": str(stdin_capture),
@@ -1935,8 +2062,6 @@ def test_run_locked_helper_with_approval_publishes_complete_fragments(
         str(HELPER_PATH),
         "--run-locked",
         "--approve-mint",
-        "--ssh-target",
-        "ubuntu@gpu.example",
         "--manifest",
         str(paths["10-service-shared.toml"]),
         "--terraform-input",
@@ -1948,9 +2073,10 @@ def test_run_locked_helper_with_approval_publishes_complete_fragments(
     result = subprocess.run(args, check=False, capture_output=True, text=True, env=environment)
 
     assert result.returncode == 0, result.stderr
+    _assert_key_only_in_stdin(tmp_path, stdin_capture)
     assert result.stdout == f"{FAKE_OCID} 64\n"
     assert FAKE_KEY not in result.stdout + result.stderr
-    assert stdin_capture.read_text(encoding="utf-8") == FAKE_KEY
+    assert stdin_capture.read_text(encoding="utf-8") == "True\n"
     assert mutations.read_text(encoding="utf-8") == ("rotate\n" if rotate else "create\n")
     writer_arguments = argument_capture.read_text(encoding="utf-8")
     assert FAKE_KEY not in writer_arguments
@@ -1988,29 +2114,30 @@ def test_mint_refuses_unready_manifest_before_contacting_writer(tmp_path: Path) 
             "bash",
             str(SCRIPT_PATH),
             "--approve-mint",
-            "--ssh-target",
-            "ubuntu@gpu.example",
             "--manifest",
             str(manifest),
         ],
         check=False,
         capture_output=True,
         text=True,
-        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "ACX_OCI_PYTHON": str(bin_dir / "oci-python")},
     )
 
     assert result.returncode != 0
     assert "requires the svc-vm derived Vault secret map" in result.stderr
-    assert "gpu-key-mint.fixture" not in result.stderr
+    assert not (tmp_path / "writer-arguments").exists()
 
 
 @pytest.mark.parametrize("rotate", [False, True])
 @pytest.mark.parametrize("trace", [False, True])
+@pytest.mark.parametrize("interpreter_source", ["override", "cli-shebang"])
 def test_mint_pipes_fake_random_input_and_prints_only_ocid_and_length(
     tmp_path: Path,
     rotate: bool,
     trace: bool,
+    interpreter_source: str,
 ) -> None:
+    inherited_credential = "fake-inherited-credential-" + "z" * 32
     bin_dir = _fake_cli(tmp_path)
     manifest = tmp_path / "10-service-shared.toml"
     manifest.write_text(_manifest_with_gpu_ocid(FAKE_OCID) if rotate else MANIFEST_TEXT, encoding="utf-8")
@@ -2023,8 +2150,6 @@ def test_mint_pipes_fake_random_input_and_prints_only_ocid_and_length(
     args.extend([
         str(SCRIPT_PATH),
         "--approve-mint",
-        "--ssh-target",
-        "ubuntu@gpu.example",
         "--manifest",
         str(manifest),
         "--terraform-input",
@@ -2034,26 +2159,50 @@ def test_mint_pipes_fake_random_input_and_prints_only_ocid_and_length(
         args.append("--rotate")
     environment = {
         **os.environ,
+        "GPU_KEY_TEST_INHERITED_CREDENTIAL": inherited_credential,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+        "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
         "GPU_KEY_TEST_OCID": FAKE_OCID,
         "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
         "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
         "TMPDIR": str(tmp_path),
     }
+    if interpreter_source == "cli-shebang":
+        environment.pop("ACX_OCI_PYTHON")
+    if trace:
+        environment["SHELLOPTS"] = "xtrace"
+        # set +x updates exported SHELLOPTS, so re-enable xtrace at every Bash
+        # entry, including the locked script and its nested writer shell.
+        bash_startup = tmp_path / "bash-startup"
+        bash_startup.write_text("set -x\n", encoding="utf-8")
+        environment["BASH_ENV"] = str(bash_startup)
     if rotate:
         environment["GPU_KEY_TEST_EXPECTED_ID"] = FAKE_OCID
 
     result = subprocess.run(args, check=False, capture_output=True, text=True, env=environment)
 
     assert result.returncode == 0, result.stderr
+    _assert_key_only_in_stdin(tmp_path, input_capture)
+    for path in tmp_path.rglob("*"):
+        if path.is_file():
+            contains_inherited_credential = inherited_credential.encode("ascii") in path.read_bytes()
+            assert not contains_inherited_credential, "test persisted an inherited credential"
     assert result.stdout == f"{FAKE_OCID} 64\n"
     assert FAKE_KEY not in result.stdout
     assert FAKE_KEY not in result.stderr
-    assert input_capture.read_text(encoding="utf-8") == FAKE_KEY
-    remote_args = argument_capture.read_text(encoding="utf-8")
-    assert FAKE_KEY not in remote_args
-    assert ("--rotate-existing" in remote_args) is rotate
+    if trace:
+        # The outer script, locked script, and writer shell each disable tracing.
+        assert result.stderr.count("+ set +x\n") >= 3
+    assert input_capture.read_text(encoding="utf-8") == "True\n"
+    vault_args = argument_capture.read_text(encoding="utf-8")
+    assert FAKE_KEY not in vault_args
+    assert "--result-only" in vault_args
+    assert "--instance-principal" not in vault_args
+    assert "sudo" not in vault_args and "ssh" not in vault_args
+    assert "--readable-timeout 90" in vault_args
+    assert "--operation-timeout 150" in vault_args
+    assert ("--bootstrap" in vault_args) is not rotate
+    assert ("--rotate-existing" in vault_args) is rotate
     refs = tomllib.loads(manifest.read_text(encoding="utf-8"))["var"][0]["secret"]
     assert refs["dev"] == f"oci:{FAKE_OCID}"
     assert refs["prod"] == f"vault:{FAKE_OCID}"
@@ -2077,8 +2226,6 @@ def test_mint_checks_fragmented_manifest_and_updates_gpu_owner(tmp_path: Path) -
             "bash",
             str(SCRIPT_PATH),
             "--approve-mint",
-            "--ssh-target",
-            "ubuntu@gpu.example",
             "--manifest",
             str(paths["10-service-shared.toml"]),
             "--terraform-input",
@@ -2090,7 +2237,7 @@ def test_mint_checks_fragmented_manifest_and_updates_gpu_owner(tmp_path: Path) -
         env={
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+            "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
@@ -2099,8 +2246,9 @@ def test_mint_checks_fragmented_manifest_and_updates_gpu_owner(tmp_path: Path) -
     )
 
     assert result.returncode == 0, result.stderr
+    _assert_key_only_in_stdin(tmp_path, input_capture)
     assert result.stdout == f"{FAKE_OCID} 64\n"
-    assert input_capture.read_text(encoding="utf-8") == FAKE_KEY
+    assert input_capture.read_text(encoding="utf-8") == "True\n"
     gpu = next(
         row
         for row in tomllib.loads(paths["21-service-vm.toml"].read_text(encoding="utf-8"))["var"]
@@ -2143,14 +2291,12 @@ def test_mint_persists_complete_fragmented_manifest_with_original_newlines(
     terraform_input = tmp_path / "gpu-api-key.tfvars"
     input_capture = tmp_path / "writer-stdin"
     argument_capture = tmp_path / "writer-arguments"
-    mutations = tmp_path / "remote-mutations"
+    mutations = tmp_path / "vault-mutations"
     bin_dir = _fake_cli(tmp_path)
     args = [
         "bash",
         str(SCRIPT_PATH),
         "--approve-mint",
-        "--ssh-target",
-        "ubuntu@gpu.example",
         "--manifest",
         str(paths["10-service-shared.toml"]),
         "--terraform-input",
@@ -2161,7 +2307,7 @@ def test_mint_persists_complete_fragmented_manifest_with_original_newlines(
     environment = {
         **os.environ,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+        "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
         "GPU_KEY_TEST_OCID": FAKE_OCID,
         "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
         "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
@@ -2174,11 +2320,12 @@ def test_mint_persists_complete_fragmented_manifest_with_original_newlines(
     result = subprocess.run(args, check=False, capture_output=True, text=True, env=environment)
 
     assert result.returncode == 0, result.stderr
+    _assert_key_only_in_stdin(tmp_path, input_capture)
     assert result.stdout == f"{FAKE_OCID} 64\n"
-    assert input_capture.read_text(encoding="utf-8") == FAKE_KEY
+    assert input_capture.read_text(encoding="utf-8") == "True\n"
     assert mutations.read_text(encoding="utf-8") == ("rotate\n" if rotate else "create\n")
-    remote_arguments = argument_capture.read_text(encoding="utf-8")
-    assert (f"--expected-secret-id {FAKE_OCID}" in remote_arguments) == rotate
+    vault_arguments = argument_capture.read_text(encoding="utf-8")
+    assert (f"--expected-secret-id {FAKE_OCID}" in vault_arguments) == rotate
     assert stat.S_IMODE(terraform_input.stat().st_mode) == 0o600
     assert terraform_input.read_text(encoding="utf-8") == (
         '# Generated by scripts/deploy/gpu-key-mint.sh; identifier only.\n'
@@ -2230,13 +2377,11 @@ def test_mint_publishes_writer_supported_ocids_through_bootstrap_retry_and_rotat
     terraform_input = tmp_path / "gpu-api-key.tfvars"
     input_capture = tmp_path / "writer-stdin"
     argument_capture = tmp_path / "writer-arguments"
-    mutations = tmp_path / "remote-mutations"
+    mutations = tmp_path / "vault-mutations"
     base_args = [
         "bash",
         str(SCRIPT_PATH),
         "--approve-mint",
-        "--ssh-target",
-        "ubuntu@gpu.example",
         "--manifest",
         str(paths["10-service-shared.toml"]),
         "--terraform-input",
@@ -2247,12 +2392,12 @@ def test_mint_publishes_writer_supported_ocids_through_bootstrap_retry_and_rotat
         environment = {
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+            "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
             "GPU_KEY_TEST_OCID": secret_ocid,
             "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
             "GPU_KEY_TEST_MUTATIONS": str(mutations),
-            "GPU_KEY_TEST_REMOTE_STATE": state,
+            "GPU_KEY_TEST_VAULT_STATE": state,
             "TMPDIR": str(tmp_path),
         }
         if state == "existing":
@@ -2264,10 +2409,11 @@ def test_mint_publishes_writer_supported_ocids_through_bootstrap_retry_and_rotat
         result = subprocess.run(args, check=False, capture_output=True, text=True, env=environment)
 
         assert result.returncode == 0, result.stderr
+        _assert_key_only_in_stdin(tmp_path, input_capture)
         assert result.stdout == f"{secret_ocid} 64\n"
         assert FAKE_KEY not in result.stdout + result.stderr
 
-    assert input_capture.read_text(encoding="utf-8") == FAKE_KEY
+    assert input_capture.read_text(encoding="utf-8") == "True\n"
     assert mutations.read_text(encoding="utf-8") == "create\nrotate\n"
     assert f"--expected-secret-id {secret_ocid}" in argument_capture.read_text(encoding="utf-8")
     assert stat.S_IMODE(terraform_input.stat().st_mode) == 0o600

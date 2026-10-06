@@ -31,6 +31,10 @@ class AltTextWriteStatusVocabularyTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $wpdb = $GLOBALS['wpdb'];
+        $lockName = 'acx_budget_lock_' . md5($wpdb->prefix);
+        $wpdb->queryResults[$wpdb->prepare('SELECT GET_LOCK(%s, %d)', $lockName, 1)] = '1';
+        $wpdb->queryResults[$wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lockName)] = '1';
         \WP_CLI::reset_cli_messages();
         $this->setOption('acx_recognition_url', 'http://localhost:8000');
         $this->setOption('acx_recognition_api_key', 'test-key');
@@ -712,6 +716,7 @@ class AltTextWriteStatusVocabularyTest extends TestCase
     {
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', $media_id);
+        $req->set_body_params(['idempotency_key' => 'phpred1-test-key-0001']);
         $req->set_param('write_alt', true);
         if ($force) {
             $req->set_param('force', true);

@@ -1322,6 +1322,12 @@ def test_real_vault_writer_parser_binds_existing_secret_identity(monkeypatch, ca
 
     operator_config = {"user": "fake-operator", "tenancy": "fake-tenancy", "log_requests": True}
     config_calls = []
+    original_http_debuglevel = http.client.HTTPConnection.debuglevel
+    http_log_calls: list[bool] = []
+
+    def is_http_log_enabled(enabled: bool) -> None:
+        http_log_calls.append(enabled)
+        http.client.HTTPConnection.debuglevel = int(enabled)
 
     def from_file(*, profile_name):
         config_calls.append(profile_name)
@@ -1330,7 +1336,7 @@ def test_real_vault_writer_parser_binds_existing_secret_identity(monkeypatch, ca
     fake_oci = SimpleNamespace(
         config=SimpleNamespace(from_file=from_file),
         base_client=SimpleNamespace(
-            is_http_log_enabled=lambda enabled: setattr(http.client.HTTPConnection, "debuglevel", int(enabled)),
+            is_http_log_enabled=is_http_log_enabled,
         ),
         retry=SimpleNamespace(NoneRetryStrategy=object),
         vault=SimpleNamespace(
@@ -1376,21 +1382,36 @@ def test_real_vault_writer_parser_binds_existing_secret_identity(monkeypatch, ca
         )
         return vault_put_secret.main()
 
-    assert run_writer("--bootstrap", FAKE_OCID, b"a" * 64) == 0
-    assert capsys.readouterr().out == f"{FAKE_OCID} 64\n"
-    assert writes == []
+    with monkeypatch.context() as restore_http_debuglevel:
+        restore_http_debuglevel.setattr(
+            http.client.HTTPConnection,
+            "debuglevel",
+            1,
+        )
 
-    assert run_writer("--rotate-existing", FAKE_OCID, b"a" * 64) == 0
-    assert capsys.readouterr().out == f"{FAKE_OCID} 64\n"
-    assert writes == [("update", FAKE_OCID)]
-    assert config_calls == ["DEFAULT", "DEFAULT"]
+        assert run_writer("--bootstrap", FAKE_OCID, b"a" * 64) == 0
+        assert http.client.HTTPConnection.debuglevel == 0
+        assert http_log_calls == [False, False]
+        assert capsys.readouterr().out == f"{FAKE_OCID} 64\n"
+        assert writes == []
 
-    for mode in ("--bootstrap", "--rotate-existing"):
-        for vault_id in (None, OTHER_FAKE_OCID):
-            before = list(writes)
-            with pytest.raises(RuntimeError, match="expected secret identity"):
-                run_writer(mode, vault_id, b"c" * 64)
-            assert writes == before
+        restore_http_debuglevel.setattr(http.client.HTTPConnection, "debuglevel", 1)
+        http_log_calls.clear()
+        assert run_writer("--rotate-existing", FAKE_OCID, b"a" * 64) == 0
+        assert http.client.HTTPConnection.debuglevel == 0
+        assert http_log_calls == [False, False]
+        assert capsys.readouterr().out == f"{FAKE_OCID} 64\n"
+        assert writes == [("update", FAKE_OCID)]
+        assert config_calls == ["DEFAULT", "DEFAULT"]
+
+        for mode in ("--bootstrap", "--rotate-existing"):
+            for vault_id in (None, OTHER_FAKE_OCID):
+                before = list(writes)
+                with pytest.raises(RuntimeError, match="expected secret identity"):
+                    run_writer(mode, vault_id, b"c" * 64)
+                assert writes == before
+
+    assert http.client.HTTPConnection.debuglevel == original_http_debuglevel
 
 
 def _manifest_with_gpu_ocid(ocid: str) -> str:

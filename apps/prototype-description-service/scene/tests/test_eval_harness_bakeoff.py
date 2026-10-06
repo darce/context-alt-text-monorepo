@@ -307,6 +307,14 @@ def test_entries_present_identities_match_golden_corpus() -> None:
             f"{entry.sha256}: full golden path {gold.path!r} does not match selection "
             f"path {entry.path!r}"
         )
+        assert entry.media_id == gold.media_id, (
+            f"{entry.path}: media_id {entry.media_id!r} does not match full golden "
+            f"media_id {gold.media_id!r}"
+        )
+        assert entry.face_count == gold.face_count, (
+            f"{entry.path}: face_count {entry.face_count!r} does not match full golden "
+            f"face_count {gold.face_count!r}"
+        )
     drifted_paths = _present_identity_drift_paths(selection, full_golden)
     assert not drifted_paths, f"present_identities drifted from full golden corpus: {drifted_paths}"
 

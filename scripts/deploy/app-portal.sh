@@ -740,6 +740,7 @@ frontend_module_references() {
       pending_control_header = 0
       token_line = line
       token_value = ""
+      token_escaped = 0
       if (position > source_length) {
         if (template_depth > 0) {
           failed = 1
@@ -777,6 +778,7 @@ frontend_module_references() {
             return
           }
           if (c == "\\") {
+            token_escaped = 1
             position++
             if (position > source_length) break
             c = substr(source, position, 1)
@@ -908,7 +910,20 @@ frontend_module_references() {
         }
         if (declaration == "import" && token_type == "punctuation" && token_value == "(") {
           next_token()
-          if (token_type == "string") emit_reference(token_value)
+          if (token_type != "string" || token_escaped) {
+            failed = 1
+            print "unsupported dynamic import specifier" > "/dev/stderr"
+            continue
+          }
+          dynamic_specifier = token_value
+          next_token()
+          if (token_type != "punctuation" || token_value != ")" ||
+              dynamic_specifier !~ /^(\.\/|\.\.\/|\/assets\/)/) {
+            failed = 1
+            print "unsupported dynamic import specifier" > "/dev/stderr"
+            continue
+          }
+          emit_reference(dynamic_specifier)
           continue
         }
         if (declaration == "import" && token_type == "string") {

@@ -110,7 +110,11 @@ final class RecognitionTransport {
 				[ '0.0.0.0', 8 ],
 				[ '224.0.0.0', 4 ],
 				[ '192.0.0.0', 24 ],
+				[ '192.0.2.0', 24 ],
+				[ '192.88.99.0', 24 ],
 				[ '198.18.0.0', 15 ],
+				[ '198.51.100.0', 24 ],
+				[ '203.0.113.0', 24 ],
 			]
 			: [
 				[ 'fc00::', 7 ],
@@ -121,9 +125,12 @@ final class RecognitionTransport {
 				[ '64:ff9b:1::', 48 ],
 				[ '2002::', 16 ],
 				[ '2001::', 32 ],
+				[ '2001:2::', 48 ],
 				[ '::', 96 ],
 				[ '::ffff:0:0:0', 96 ],
 				[ '100::', 64 ],
+				[ '3fff::', 20 ],
+				[ '5f00::', 16 ],
 				[ 'fec0::', 10 ],
 			];
 
@@ -303,7 +310,32 @@ final class RecognitionTransport {
 			return ( self::$curl_capability_probe )( $scheme );
 		}
 
-		if ( ! function_exists( 'curl_init' ) || ! is_callable( 'curl_exec' ) ) {
+		$version = null;
+		if ( 'https' === $scheme && function_exists( 'curl_version' ) && defined( 'CURL_VERSION_SSL' ) ) {
+			$curl_version = curl_version();
+			if ( is_array( $curl_version ) ) {
+				$version = [
+					'features'    => (int) ( $curl_version['features'] ?? 0 ),
+					'ssl_feature' => CURL_VERSION_SSL,
+				];
+			}
+		}
+
+		return self::curl_capability(
+			function_exists( 'curl_init' ),
+			is_callable( 'curl_exec' ),
+			$version,
+			$scheme
+		);
+	}
+
+	/**
+	 * Make the cURL capability decision from normalized, deterministic inputs.
+	 *
+	 * @param array{features?: int, ssl_feature?: int}|null $version
+	 */
+	private static function curl_capability( bool $has_init, bool $has_exec, ?array $version, string $scheme ): bool {
+		if ( ! $has_init || ! $has_exec ) {
 			return false;
 		}
 
@@ -311,14 +343,11 @@ final class RecognitionTransport {
 			return true;
 		}
 
-		if ( ! function_exists( 'curl_version' ) || ! defined( 'CURL_VERSION_SSL' ) ) {
+		if ( null === $version || ! isset( $version['features'], $version['ssl_feature'] ) ) {
 			return false;
 		}
 
-		$version = curl_version();
-		return is_array( $version )
-			&& isset( $version['features'] )
-			&& 0 !== ( ( (int) $version['features'] ) & CURL_VERSION_SSL );
+		return 0 !== ( ( (int) $version['features'] ) & ( (int) $version['ssl_feature'] ) );
 	}
 
 	/**
@@ -326,13 +355,13 @@ final class RecognitionTransport {
 	 *
 	 * @param mixed $handle
 	 */
-	private static function apply_curl_resolve_option( &$handle, string $pin ): void {
+	private static function apply_curl_resolve_option( &$handle, string $pin ): bool {
 		if ( null !== self::$curl_resolve_applier ) {
 			( self::$curl_resolve_applier )( $handle, [ $pin ] );
-			return;
+			return true;
 		}
 
-		curl_setopt( $handle, CURLOPT_RESOLVE, [ $pin ] );
+		return curl_setopt( $handle, CURLOPT_RESOLVE, [ $pin ] );
 	}
 
 	private static function default_port( string $scheme ): int {

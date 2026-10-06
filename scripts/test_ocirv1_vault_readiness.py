@@ -361,7 +361,7 @@ def test_blocking_read_cannot_overrun_the_outer_deadline():
 class _FakeVaultStore:
     """Shared Vault state: submitted versions propagate to the read API later."""
 
-    SECRET_ID = "ocid1.vaultsecret.oc1..target"
+    SECRET_ID = "ocid1.vaultsecret.oc1..fake-target-00000000000000000000"
 
     def __init__(self, not_ready_reads, existing_value=None):
         self.not_ready_reads = not_ready_reads
@@ -453,6 +453,12 @@ class _FakeVaultStore:
             raise AssertionError("read attempted before a version was submitted")
         self.read_history.append(self.active_value)
         return self.active_value
+
+
+def test_fake_vault_store_uses_a_well_formed_secret_ocid():
+    # Keep the SDK fixture compatible with the writer's identity checks so the
+    # wiring tests exercise rotation/readiness instead of failing at selection.
+    assert vps._vault_secret_ocid(_FakeVaultStore.SECRET_ID) == _FakeVaultStore.SECRET_ID
 
 
 class _FakeSecretsClient:

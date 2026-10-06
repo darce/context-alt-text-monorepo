@@ -70,6 +70,7 @@ class AnalysisJobsControllerTest extends TestCase
         ]);
 
         $analyzeRequest = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $analyzeRequest->set_param('idempotency_key', 'phpred1-test-key-0001');
         $analyzeRequest->set_param('batch_run_id', $runId);
         $analyzeRequest->set_param('batch_index', 0);
         $analyzeRequest->set_param('submitted_total', 2);
@@ -129,6 +130,7 @@ class AnalysisJobsControllerTest extends TestCase
         ]);
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $request->set_param('idempotency_key', 'phpred1-test-key-0002');
         $request->set_param('batch_run_id', $runId);
         $request->set_param('batch_index', 0);
         $request->set_param('submitted_total', 2);
@@ -186,6 +188,7 @@ class AnalysisJobsControllerTest extends TestCase
         ]);
 
         $analyzeRequest = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $analyzeRequest->set_param('idempotency_key', 'phpred1-test-key-0003');
         $analyzeRequest->set_param('batch_run_id', $runId);
         $analyzeRequest->set_param('batch_index', 0);
         $analyzeRequest->set_param('submitted_total', 2);
@@ -235,6 +238,7 @@ class AnalysisJobsControllerTest extends TestCase
         ]);
 
         $analyzeRequest = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $analyzeRequest->set_param('idempotency_key', 'phpred1-test-key-0004');
         $analyzeRequest->set_param('batch_run_id', $runId);
         $analyzeRequest->set_param('batch_index', 0);
         $analyzeRequest->set_param('submitted_total', 1);
@@ -269,6 +273,7 @@ class AnalysisJobsControllerTest extends TestCase
         $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $request->set_param('idempotency_key', 'phpred1-test-key-0005');
         $request->set_param('batch_run_id', $runId);
         $request->set_param('batch_index', 1);
         $request->set_param('submitted_total', 2);
@@ -341,6 +346,7 @@ class AnalysisJobsControllerTest extends TestCase
         ]);
 
         $analyzeRequest = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $analyzeRequest->set_param('idempotency_key', 'phpred1-test-key-0006');
         $analyzeRequest->set_param('batch_run_id', $runId);
         $analyzeRequest->set_param('batch_index', 0);
         $analyzeRequest->set_param('submitted_total', 2);
@@ -413,6 +419,7 @@ class AnalysisJobsControllerTest extends TestCase
         ]);
 
         $analyzeRequest = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $analyzeRequest->set_param('idempotency_key', 'phpred1-test-key-0007');
         $analyzeRequest->set_param('batch_run_id', $runId);
         $analyzeRequest->set_param('batch_index', 0);
         $analyzeRequest->set_param('submitted_total', 1);
@@ -432,6 +439,7 @@ class AnalysisJobsControllerTest extends TestCase
     public function testAnalyzeMediaRejectsMissingPayload(): void
     {
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $request->set_param('idempotency_key', 'phpred1-test-key-0008');
 
         $result = $this->controller->analyze_media($request);
 

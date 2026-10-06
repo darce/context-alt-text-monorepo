@@ -7,6 +7,8 @@ import hashlib
 import io
 import importlib.util
 import os
+import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -31,8 +33,8 @@ assert WRITER_SPEC is not None and WRITER_SPEC.loader is not None
 vault_put_secret = importlib.util.module_from_spec(WRITER_SPEC)
 WRITER_SPEC.loader.exec_module(vault_put_secret)
 
-FAKE_OCID = "ocid1.vaultsecret.oc1.iad.fakegpuapikey123"
-OTHER_FAKE_OCID = "ocid1.vaultsecret.oc1.iad.otherfakegpuapikey456"
+FAKE_OCID = "ocid1.vaultsecret.oc1.iad." + "f" * 24
+OTHER_FAKE_OCID = "ocid1.vaultsecret.oc1.iad." + "e" * 24
 FAKE_KEY = "a" * 64
 MANIFEST_LOCK_TIMEOUT_SECONDS = 5
 MANIFEST_TEXT = '''version = 1
@@ -53,25 +55,25 @@ derive_vault_map = true
 name = "PGPASSWORD"
 class = "secret"
 targets = ["svc-vm"]
-secret = { prod = "vault:ocid1.vaultsecret.oc1.iad.fakepgpassword" }
+secret = { prod = "vault:ocid1.vaultsecret.oc1.iad.fakepgpasswordaaaaaaaaaa" }
 
 [[var]]
 name = "POSTGRES_DSN"
 class = "secret"
 targets = ["svc-vm"]
-secret = { prod = "vault:ocid1.vaultsecret.oc1.iad.fakepostgresdsn" }
+secret = { prod = "vault:ocid1.vaultsecret.oc1.iad.fakepostgresdsnaaaaaaaaa" }
 
 [[var]]
 name = "POSTGRES_SYNC_DSN"
 class = "secret"
 targets = ["svc-vm"]
-secret = { prod = "vault:ocid1.vaultsecret.oc1.iad.fakepostgressyncdsn" }
+secret = { prod = "vault:ocid1.vaultsecret.oc1.iad.fakepostgressyncdsnaaaaa" }
 
 [[var]]
 name = "RECOGNITION_ADMIN_TOKEN"
 class = "secret"
 targets = ["svc-vm"]
-secret = { prod = "vault:ocid1.vaultsecret.oc1.iad.fakeadmintoken" }
+secret = { prod = "vault:ocid1.vaultsecret.oc1.iad.fakeadmintokenaaaaaaaaaa" }
 '''
 
 FRAGMENTED_MANIFEST = {
@@ -87,13 +89,13 @@ derive_vault_map = true
 name = "POSTGRES_DSN"
 class = "secret"
 targets = ["svc-vm"]
-secret = { prod = "vault:ocid1.vaultsecret.oc1.iad.fakepostgresdsn" }
+secret = { prod = "vault:ocid1.vaultsecret.oc1.iad.fakepostgresdsnaaaaaaaaa" }
 
 [[var]]
 name = "POSTGRES_SYNC_DSN"
 class = "secret"
 targets = ["svc-vm"]
-secret = { prod = "vault:ocid1.vaultsecret.oc1.iad.fakepostgressyncdsn" }
+secret = { prod = "vault:ocid1.vaultsecret.oc1.iad.fakepostgressyncdsnaaaaa" }
 ''',
     "20-service-local.toml": '''version = 1
 
@@ -101,7 +103,7 @@ secret = { prod = "vault:ocid1.vaultsecret.oc1.iad.fakepostgressyncdsn" }
 name = "PGPASSWORD"
 class = "secret"
 targets = ["svc-local", "svc-vm"]
-secret = { local = "keychain:acx-local/PGPASSWORD", prod = "vault:ocid1.vaultsecret.oc1.iad.fakepgpassword" }
+secret = { local = "keychain:acx-local/PGPASSWORD", prod = "vault:ocid1.vaultsecret.oc1.iad.fakepgpasswordaaaaaaaaaa" }
 ''',
     "21-service-vm.toml": '''version = 1
 
@@ -109,7 +111,7 @@ secret = { local = "keychain:acx-local/PGPASSWORD", prod = "vault:ocid1.vaultsec
 name = "RECOGNITION_ADMIN_TOKEN"
 class = "secret"
 targets = ["svc-vm"]
-secret = { prod = "vault:ocid1.vaultsecret.oc1.iad.fakeadmintoken" }
+secret = { prod = "vault:ocid1.vaultsecret.oc1.iad.fakeadmintokenaaaaaaaaaa" }
 
 [[var]]
 name = "ACX_GPU_ENDPOINT_API_KEY"
@@ -136,6 +138,48 @@ def _write_fragmented_manifest(directory: Path) -> dict[str, Path]:
     ):
         (directory / name).write_text("version = 1\n", encoding="utf-8")
     return paths
+
+
+def _write_fake_committed_manifest(directory: Path) -> dict[str, Path]:
+    """Copy the checked-in fragment layout while replacing identifiers with fakes."""
+    source_dir = REPO_ROOT / "config/env/manifest.d"
+    fake_ids: dict[str, str] = {}
+    paths = {}
+    for source in sorted(source_dir.glob("*.toml")):
+        text = source.read_text(encoding="utf-8")
+
+        def replace_ocid(match: re.Match[str]) -> str:
+            original = match.group(0)
+            if original not in fake_ids:
+                fake_ids[original] = (
+                    "ocid1.vaultsecret.oc1.iad.f" + f"{len(fake_ids) + 1:02d}" + "a" * 20
+                )
+            return fake_ids[original]
+
+        text = re.sub(
+            r"ocid1\.vaultsecret\.oc1\.[a-z0-9-]*\.[a-z0-9]{20,}",
+            replace_ocid,
+            text,
+        )
+        target = directory / source.name
+        shutil.copy2(source, target)
+        target.write_text(text, encoding="utf-8")
+        paths[source.name] = target
+    return paths
+
+
+def _replace_var_field(path: Path, var_name: str, field: str, value: str) -> None:
+    text = path.read_text(encoding="utf-8")
+    marker = f'name = "{var_name}"'
+    marker_index = text.index(marker)
+    start = text.rfind("[[var]]", 0, marker_index)
+    end = text.find("\n[[", marker_index)
+    if end == -1:
+        end = len(text)
+    block = text[start:end]
+    updated, count = re.subn(rf"(?m)^{re.escape(field)}\s*=.*$", value, block, count=1)
+    assert count == 1
+    path.write_text(text[:start] + updated + text[end:], encoding="utf-8")
 
 
 def test_manifest_persists_valid_ocid_for_dev_and_prod_only(tmp_path: Path) -> None:
@@ -213,6 +257,151 @@ def test_fragmented_manifest_readiness_and_update_find_gpu_owner(tmp_path: Path,
     }
 
 
+@pytest.mark.parametrize(
+    ("var_name", "target_value"),
+    [
+        (name, value)
+        for name in ("ACX_GPU_ENDPOINT_API_KEY", "RECOGNITION_VAULT_SECRET_MAP", "PGPASSWORD")
+        for value in ('targets = "svc-vm"', 'targets = "prefix-svc-vm-suffix"', 'targets = [17, "svc-vm"]')
+    ],
+    ids=[
+        f"{name.lower().replace('_', '-')}-{case}"
+        for name in ("gpu", "map", "pgpassword")
+        for case in ("scalar", "substring", "non-string-element")
+    ],
+)
+def test_mint_rejects_malformed_fragment_targets_before_writer(
+    tmp_path: Path,
+    var_name: str,
+    target_value: str,
+) -> None:
+    manifest_dir = tmp_path / "manifest.d"
+    manifest_dir.mkdir()
+    paths = _write_fake_committed_manifest(manifest_dir)
+    owner = paths["21-service-vm.toml"]
+    _replace_var_field(paths["21-service-vm.toml"] if var_name == "ACX_GPU_ENDPOINT_API_KEY" else (
+        paths["10-service-shared.toml"] if var_name == "RECOGNITION_VAULT_SECRET_MAP" else paths["20-service-local.toml"]
+    ), var_name, "targets", target_value)
+    terraform_input = tmp_path / "gpu-api-key.tfvars"
+    fragments_before = {path: path.read_text(encoding="utf-8") for path in manifest_dir.glob("*.toml")}
+    bin_dir = _fake_cli(tmp_path)
+    input_capture = tmp_path / "writer-stdin"
+    argument_capture = tmp_path / "writer-arguments"
+    mutations = tmp_path / "remote-mutations"
+
+    result = subprocess.run(
+        [
+            "bash", str(SCRIPT_PATH), "--approve-mint", "--ssh-target", "ubuntu@gpu.example",
+            "--manifest", str(paths["10-service-shared.toml"]),
+            "--terraform-input", str(terraform_input),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+            "GPU_KEY_TEST_OCID": FAKE_OCID,
+            "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
+            "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
+            "GPU_KEY_TEST_MUTATIONS": str(mutations),
+            "TMPDIR": str(tmp_path),
+        },
+    )
+
+    assert result.returncode != 0
+    assert not argument_capture.exists()
+    assert not input_capture.exists()
+    assert not mutations.exists()
+    assert {path: path.read_text(encoding="utf-8") for path in manifest_dir.glob("*.toml")} == fragments_before
+    assert not terraform_input.exists()
+
+
+@pytest.mark.parametrize(
+    ("environment", "reference"),
+    [
+        (environment, reference)
+        for environment in ("dev", "staging", "prod")
+        for reference in (17, "bogus:obviousfake", "keychain:", "env:", "vault:not-an-ocid", "oci:not-an-ocid")
+    ],
+    ids=[
+        f"{environment}-{case}"
+        for environment in ("dev", "staging", "prod")
+        for case in ("number", "unknown-scheme", "empty-keychain", "empty-env", "bad-vault-ocid", "bad-oci-ocid")
+    ],
+)
+def test_mint_rejects_malformed_gpu_refs_before_writer(
+    tmp_path: Path,
+    environment: str,
+    reference: object,
+) -> None:
+    manifest_dir = tmp_path / "manifest.d"
+    manifest_dir.mkdir()
+    paths = _write_fake_committed_manifest(manifest_dir)
+    owner = paths["21-service-vm.toml"]
+    secret_line = next(line for line in owner.read_text(encoding="utf-8").splitlines() if line.startswith("secret = "))
+    current_refs = tomllib.loads(f"{secret_line}\n")["secret"]
+    current_refs[environment] = reference
+    serialized_refs = ", ".join(f'{key} = {value!r}' for key, value in current_refs.items())
+    # Use TOML double-quoted strings for the valid refs while leaving the malformed number numeric.
+    serialized_refs = re.sub(r"= '([^']*)'(?=,|$)", lambda match: '= "' + match.group(1) + '"', serialized_refs)
+    _replace_var_field(owner, "ACX_GPU_ENDPOINT_API_KEY", "secret", f"secret = {{ {serialized_refs} }}")
+    terraform_input = tmp_path / "gpu-api-key.tfvars"
+    fragments_before = {path: path.read_text(encoding="utf-8") for path in manifest_dir.glob("*.toml")}
+    bin_dir = _fake_cli(tmp_path)
+    input_capture = tmp_path / "writer-stdin"
+    argument_capture = tmp_path / "writer-arguments"
+    mutations = tmp_path / "remote-mutations"
+
+    result = subprocess.run(
+        [
+            "bash", str(SCRIPT_PATH), "--approve-mint", "--ssh-target", "ubuntu@gpu.example",
+            "--manifest", str(paths["10-service-shared.toml"]),
+            "--terraform-input", str(terraform_input),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+            "GPU_KEY_TEST_OCID": FAKE_OCID,
+            "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
+            "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
+            "GPU_KEY_TEST_MUTATIONS": str(mutations),
+            "TMPDIR": str(tmp_path),
+        },
+    )
+
+    assert result.returncode != 0
+    assert not argument_capture.exists()
+    assert not input_capture.exists()
+    assert not mutations.exists()
+    assert {path: path.read_text(encoding="utf-8") for path in manifest_dir.glob("*.toml")} == fragments_before
+    assert not terraform_input.exists()
+
+
+def test_readiness_accepts_valid_staging_keychain_and_bound_oci_refs(tmp_path: Path) -> None:
+    manifest_dir = tmp_path / "manifest.d"
+    manifest_dir.mkdir()
+    paths = _write_fake_committed_manifest(manifest_dir)
+    _replace_var_field(
+        paths["21-service-vm.toml"],
+        "ACX_GPU_ENDPOINT_API_KEY",
+        "secret",
+        f'secret = {{ dev = "oci:{FAKE_OCID}", staging = "keychain:acx-gpu/staging", prod = "vault:{FAKE_OCID}" }}',
+    )
+
+    gpu_key_manifest.check_manifest_ready(paths["10-service-shared.toml"])
+
+    document, _, _, _ = gpu_key_manifest._manifest_gpu_owner(paths["10-service-shared.toml"])
+    gpu = next(row for row in document["var"] if row["name"] == "ACX_GPU_ENDPOINT_API_KEY")
+    assert gpu["secret"]["dev"] == f"oci:{FAKE_OCID}"
+    assert gpu["secret"]["staging"] == "keychain:acx-gpu/staging"
+
+
 def test_fragmented_manifest_refuses_duplicate_gpu_owner_without_changes(tmp_path: Path) -> None:
     paths = _write_fragmented_manifest(tmp_path)
     duplicate = '''
@@ -261,7 +450,7 @@ def test_terraform_input_artifact_contains_only_durable_identifier(tmp_path: Pat
     assert events == ["fsync", "replace", "fsync"]
 
     with pytest.raises(ValueError, match="refusing to replace existing Terraform GPU key input"):
-        gpu_key_manifest.write_terraform_input(path, "ocid1.vaultsecret.oc1.iad.differentfakekey")
+        gpu_key_manifest.write_terraform_input(path, OTHER_FAKE_OCID)
 
 
 @pytest.mark.parametrize("destination", ["conflict", "invalid-input", "invalid-manifest-owner"])
@@ -675,7 +864,7 @@ def test_manifest_refuses_to_change_a_different_minted_ocid(tmp_path: Path) -> N
     after_first_mint = path.read_text(encoding="utf-8")
 
     with pytest.raises(ValueError, match="refusing to replace existing dev GPU key ref"):
-        gpu_key_manifest.set_gpu_key_ocid(path, "ocid1.vaultsecret.oc1.iad.anotherfakekey")
+        gpu_key_manifest.set_gpu_key_ocid(path, OTHER_FAKE_OCID)
 
     assert path.read_text(encoding="utf-8") == after_first_mint
 
@@ -1043,18 +1232,23 @@ def test_matching_remote_identity_is_bound_for_bootstrap_and_rotation(
 
 
 @pytest.mark.parametrize(
-    "gpu_refs",
+    ("gpu_refs", "expected_error"),
     [
-        'dev = "oci:not-an-ocid", staging = "host:", prod = "vault:not-an-ocid"',
         (
-            'dev = "oci:ocid1.vaultsecret.oc1.iad.firstfakeid", '
-            'staging = "host:", prod = "vault:ocid1.vaultsecret.oc1.iad.secondfakeid"'
+            'dev = "oci:not-an-ocid", staging = "host:", prod = "vault:not-an-ocid"',
+            "GPU key manifest contains an invalid secret ref",
+        ),
+        (
+            'dev = "oci:ocid1.vaultsecret.oc1.iad.' + "a" * 24 + '", '
+            'staging = "host:", prod = "vault:ocid1.vaultsecret.oc1.iad.' + "b" * 24 + '"',
+            "GPU key manifest dev/prod refs are inconsistent",
         ),
     ],
 )
 def test_malformed_or_inconsistent_local_identity_refuses_before_writer(
     tmp_path: Path,
     gpu_refs: str,
+    expected_error: str,
 ) -> None:
     bin_dir = _fake_cli(tmp_path)
     manifest = tmp_path / "10-service-shared.toml"
@@ -1090,7 +1284,7 @@ def test_malformed_or_inconsistent_local_identity_refuses_before_writer(
     )
 
     assert result.returncode != 0
-    assert "GPU key manifest dev/prod refs are inconsistent" in result.stderr
+    assert expected_error in result.stderr
     assert not argument_capture.exists()
 
 

@@ -142,8 +142,8 @@ class ViteManifestTest extends TestCase
         $pluginDirectory = $this->temporaryPluginDirectory();
         $primary = $pluginDirectory . 'public/assets/dist/.vite/manifest.json';
         $fallback = $pluginDirectory . 'public/assets/dist/manifest.json';
-        mkdir(dirname($primary), 0777, true);
-        mkdir(dirname($fallback), 0777, true);
+        self::assertTrue(mkdir(dirname($primary), 0777, true));
+        self::assertDirectoryExists(dirname($fallback));
         self::assertNotFalse(file_put_contents($primary, '{}'));
         self::assertNotFalse(file_put_contents($fallback, '{}'));
 

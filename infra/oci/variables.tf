@@ -77,6 +77,20 @@ variable "gpu_self_stop_enabled" {
   default     = true
 }
 
+variable "gpu_api_key_secret_ocid" {
+  description = "Vault secret OCID for the GPU endpoint key; empty fails closed until an approved mint is recorded"
+  type        = string
+  default     = ""
+
+  validation {
+    condition = var.gpu_api_key_secret_ocid == "" || can(regex(
+      "^ocid1\\.vaultsecret\\.oc[0-9]+\\.[A-Za-z0-9_-]*\\.[A-Za-z0-9._-]{20,}$",
+      var.gpu_api_key_secret_ocid
+    ))
+    error_message = "gpu_api_key_secret_ocid must be empty or a valid OCI Vault secret OCID."
+  }
+}
+
 variable "ssh_allowed_cidrs" {
   description = "CIDR blocks allowed to SSH into the instance"
   type        = list(string)

@@ -242,33 +242,24 @@ assert_eq "R2-11 describe suite guards BASH_VERSION before pipefail" \
 # VLMHEAL-1: boot-smoke must retain and print the last /health body before the
 # throwaway container's EXIT trap removes it, so a 503 body is not lost.
 recognition_deploy="${script_dir}/../recognition-service.sh"
-boot_smoke_heredoc=$(awk '
-    /^do_boot_smoke\(\) \{/ { in_fn=1 }
-    in_fn && /<<.*SMOKE/ { in_smoke=1; next }
-    in_smoke && /^SMOKE$/ { exit }
-    in_smoke { print }
-' "$recognition_deploy")
+boot_smoke_payload="${script_dir}/../lib/recognition-boot-smoke.sh"
+boot_smoke_src=$(<"$boot_smoke_payload")
 assert_eq "VLMHEAL-1 boot smoke prints last /health body on failure" \
-    "1" "$(printf '%s\n' "$boot_smoke_heredoc" | grep -cF '${last_health_body:0:2000}' || true)"
+    "1" "$(printf '%s\n' "$boot_smoke_src" | grep -cF '${last_health_body:0:2000}' || true)"
 
 # GR-263: grep-only stays green if the trap string is dead. Compose sanitizer +
-# inner SMOKE, bash -n it, then bash it with stubbed docker/curl so the EXIT
-# trap actually prints the last /health body.
+# the external smoke payload, bash -n it, then bash it with stubbed docker/curl
+# so the EXIT trap actually prints the last /health body.
 sanitizer_src=$(awk '
     /^sanitize_deploy_diagnostic\(\) \{/ { p=1 }
     p { print }
     p && /^}$/ { exit }
 ' "$recognition_deploy")
-inner_smoke=$(awk '
-    /<<'\''SMOKE'\''/ { in_smoke=1; next }
-    in_smoke && /^SMOKE$/ { exit }
-    in_smoke { print }
-' "$recognition_deploy")
 gr263_dir=$(mktemp -d)
 gr263_wrap="${gr263_dir}/wrap.sh"
 {
     printf '%s\n' "$sanitizer_src"
-    printf '%s\n' "$inner_smoke"
+    printf '%s\n' "$boot_smoke_src"
 } >"$gr263_wrap"
 gr263_n_rc=0
 bash -n "$gr263_wrap" || gr263_n_rc=$?
@@ -472,8 +463,14 @@ else
     # R2-04: the remote heredoc concatenates three libraries in a
     # load-bearing order (later definition wins). Pin file order by
     # reading sync-demo.sh itself — do not source or execute it.
+    smoke_source_block=$(awk '
+        /^echo "==> Smoke four vhosts/ { in_smoke=1 }
+        in_smoke && $0 == "} | $SSH bash -se" { print; exit }
+        in_smoke { print }
+    ' "$sync_demo")
     cat_order=$(
-        grep -n 'cat "\$' "$sync_demo" \
+        printf '%s\n' "$smoke_source_block" \
+            | grep -n 'cat "\$' \
             | sed 's/.*cat "\$//;s/"$//' \
             | paste -sd' ' -
     )
@@ -909,6 +906,18 @@ if [[ "$joined" == *"wp eval"* ]]; then
             printf '%s\n' 'A woman in a red coat speaks at a podium in front of a blue backdrop.'
         fi
     fi
+    exit 0
+fi
+if [[ "$joined" == *"wp option update acx_recognition_enabled"* ]]; then
+    printf '1\n' >"${state}.recognition_enabled"
+    exit 0
+fi
+if [[ "$joined" == *"wp option get acx_recognition_enabled"* ]]; then
+    cat "${state}.recognition_enabled"
+    exit 0
+fi
+if [[ "$joined" == *"wp option get acx_public_guide_enabled"* ]]; then
+    printf '0\n'
     exit 0
 fi
 if [[ "$joined" == *"--field=user_email"* ]]; then

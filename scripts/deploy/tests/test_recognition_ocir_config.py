@@ -549,10 +549,12 @@ REMOTE_BUILD=1
 record() {{ printf '%s\\n' "$*" >>"{records}"; }}
 init_deploy_ocir_docker_config() {{ :; }}
 preflight_ssh() {{ :; }}
+preflight_env_manifest() {{ :; }}
 preflight_remote_face_pipeline_models() {{ :; }}
 preflight_git_clean() {{ :; }}
 preflight_branch_synced() {{ :; }}
 preflight_remote_ocir_auth() {{ :; }}
+deploy_env_lease() {{ :; }}
 preserve_rollback_tag() {{ record preserve "$@"; }}
 do_build_remote() {{ record build "$@"; }}
 do_push_sha() {{ ACX_CANDIDATE_DIGEST_REF="{digest}"; record push-sha "$ACX_CANDIDATE_DIGEST_REF"; }}

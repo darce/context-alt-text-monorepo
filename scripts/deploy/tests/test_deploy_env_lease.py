@@ -10,7 +10,20 @@ import subprocess
 import time
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).resolve().parents[1] / "recognition-service.sh"
+
+DEFAULT_REMOTE_BUILD_SETUP = """
+unset ACX_PUSH_TIMEOUT ACX_PULL_TIMEOUT ACX_REMOTE_COMMAND_TIMEOUT
+unset ACX_CUTOVER_HEALTH_ATTEMPTS ACX_CUTOVER_HEALTH_SLEEP
+unset ACX_CANONICAL_HEALTH_ATTEMPTS ACX_CANONICAL_HEALTH_SLEEP
+unset ACX_VERIFY_ATTEMPTS ACX_VERIFY_SLEEP
+unset ACX_GPU_SNAPSHOT_GATE_ATTEMPTS ACX_GPU_SNAPSHOT_GATE_SLEEP
+unset ACX_GPU_SNAPSHOT_GATE_TIMEOUT_SECONDS ACX_REMOTE_BUILD_TIMEOUT
+REMOTE_BUILD=1
+ship_remote_build="${REMOTE_BUILD}"
+"""
 
 
 def _lease_path(tmp_path: Path, env: str = "dev") -> Path:
@@ -45,7 +58,10 @@ source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
 export PATH={shlex.quote(str(bin_dir))}:$PATH
 run_with_deadline() {{ shift 2; "$@"; }}
-ssh() {{ bash -c "${{@: -1}}"; }}
+ssh() {{
+  printf '%s\\n' "${{@: -1}}" >>{shlex.quote(str(tmp_path / "lease-ssh.log"))}
+  bash -c "${{@: -1}}"
+}}
 ACX_DEPLOY_BACKUP_ROOT={shlex.quote(str(tmp_path / "vm-backups"))}
 {statements}
 '''
@@ -267,6 +283,38 @@ def test_ttl_covers_default_restart_budget(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "ttl_setting",
+    ["unset ACX_DEPLOY_LOCK_TTL_SECONDS", "ACX_DEPLOY_LOCK_TTL_SECONDS="],
+    ids=["unset", "empty"],
+)
+def test_default_ttl_covers_default_remote_build_budget(
+    tmp_path: Path,
+    ttl_setting: str,
+) -> None:
+    result = _run_driver(
+        tmp_path,
+        f"{DEFAULT_REMOTE_BUILD_SETUP}\n{ttl_setting}\ndeploy_env_lease acquire dev",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    lease_command = shlex.split((tmp_path / "lease-ssh.log").read_text())
+    assert int(lease_command[-3]) >= 7225
+
+
+def test_explicit_ttl_below_default_remote_build_floor_is_refused(tmp_path: Path) -> None:
+    result = _run_driver(
+        tmp_path,
+        f"{DEFAULT_REMOTE_BUILD_SETUP}\ndeploy_env_lease acquire dev",
+        ACX_DEPLOY_LOCK_TTL_SECONDS="7200",
+    )
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "ACX_DEPLOY_LOCK_TTL_SECONDS (7200) must be at least computed floor 7225" in (
+        result.stdout + result.stderr
+    )
 
 
 def test_ttl_rejects_restart_budget_beyond_default_and_accepts_exact_floor(
@@ -502,6 +550,7 @@ record() {{ printf '%s\\n' "$*" >>"$RECORDS"; }}
 pin_deploy_sha() {{ DEPLOY_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; }}
 init_deploy_ocir_docker_config() {{ install_deploy_interrupt_traps; }}
 preflight_ssh() {{ :; }}
+preflight_env_manifest() {{ :; }}
 preflight_remote_face_pipeline_models() {{ :; }}
 preflight_git_clean() {{ :; }}
 preflight_branch_synced() {{ :; }}
@@ -544,6 +593,7 @@ def test_lost_lease_after_promote_gate_stops_before_tag_push(tmp_path: Path) -> 
 pin_deploy_sha() {{ DEPLOY_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; }}
 init_deploy_ocir_docker_config() {{ install_deploy_interrupt_traps; }}
 preflight_ssh() {{ :; }}
+preflight_env_manifest() {{ :; }}
 preflight_remote_face_pipeline_models() {{ :; }}
 preflight_git_clean() {{ :; }}
 preflight_branch_synced() {{ :; }}

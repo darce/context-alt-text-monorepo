@@ -75,6 +75,9 @@ _VAR_KEYS = _VAR_REQUIRED_KEYS | frozenset(
     {"doc", "required", "required_when", "values", "secret", "derive", "derive_vault_map"}
 )
 _DERIVE_REF = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
+_VAULT_SECRET_OCID = re.compile(
+    r"ocid1\.vaultsecret\.oc[0-9]+\.[A-Za-z0-9_-]*\.[A-Za-z0-9._-]{20,}"
+)
 _LITERAL_SECRET = re.compile(
     r"sk_(?:test|live)_|\brk_(?:test|live)_|whsec_|-----BEGIN"
     r"|gh[pos]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,}"
@@ -304,9 +307,9 @@ def _load_value_source(
             _fail(source, f"{name}.{shown_scheme}", "unsupported secret scheme")
         if scheme == "host" and remainder:
             _fail(source, name, "host ref must have an empty remainder")
-        if scheme == "vault" and re.fullmatch(r"ocid1\.vaultsecret\.oc1\.[a-z0-9-]*\.[a-z0-9]{20,}", remainder) is None:
+        if scheme == "vault" and _VAULT_SECRET_OCID.fullmatch(remainder) is None:
             _fail(source, name, "vault ref requires a valid vault secret OCID")
-        if scheme == "oci" and re.fullmatch(r"ocid1\.vaultsecret\.oc1\.[a-z0-9-]+\.[a-z0-9]{20,}", remainder) is None:
+        if scheme == "oci" and _VAULT_SECRET_OCID.fullmatch(remainder) is None:
             _fail(source, name, "oci ref requires a valid vault secret OCID")
     return values, secret, derive
 

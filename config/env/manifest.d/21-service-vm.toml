@@ -137,7 +137,7 @@ class = "config"
 targets = ["svc-vm"]
 example = "acx-gpu-burst.compute.oraclevcn.com"
 required = true
-doc = "Comma-separated hostname patterns for a hostname ACX_GPU_ENDPOINT_URL.\nEmpty is valid when ACX_GPU_ENDPOINT_URL is a private non-loopback IP literal; preflight rejects loopback, unspecified and public addresses."
+doc = "Comma-separated hostname patterns for a hostname ACX_GPU_ENDPOINT_URL.\nAn empty value falls back to the built-in patterns localhost, acx-gpu-burst and *.oraclevcn.com in both preflight and runtime.\nAn IP-literal URL is accepted only for a private non-loopback address; preflight rejects loopback, unspecified and public addresses."
 section = "Image description"
 values = { dev = "", staging = "", prod = "" }
 

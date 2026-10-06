@@ -2911,6 +2911,7 @@ GREEN=; YELLOW=; RED=; RESET=
 ACX_VERIFY_OPTIONAL=1
 init_deploy_ocir_docker_config() {{ return 0; }}
 preflight_ssh() {{ return 0; }}
+preflight_env_manifest() {{ return 0; }}
 deploy_env_lease() {{ return 0; }}
 preflight_remote_face_pipeline_models() {{ return 0; }}
 preflight_git_clean() {{ return 0; }}
@@ -3373,6 +3374,7 @@ ACX_ROLLBACK_VERIFY_SLEEP=0
 ACX_IMAGE_REPO="$IMAGE_BASE"
 init_deploy_ocir_docker_config() {{ ACX_DEPLOY_OCIR_CONFIG_DIR="{tmp_path / "docker-config"}"; mkdir -p "$ACX_DEPLOY_OCIR_CONFIG_DIR"; return 0; }}
 preflight_ssh() {{ return 0; }}
+preflight_env_manifest() {{ return 0; }}
 deploy_env_lease() {{ return 0; }}
 preflight_remote_face_pipeline_models() {{ return 0; }}
 preflight_git_clean() {{ return 0; }}
@@ -4147,6 +4149,7 @@ GREEN=; YELLOW=; RED=; RESET=
 ACX_IMAGE_REPO="$IMAGE_BASE"
 init_deploy_ocir_docker_config() {{ return 0; }}
 preflight_ssh() {{ printf 'preflight\\n' >>"{records}"; return 0; }}
+preflight_env_manifest() {{ return 0; }}
 deploy_env_lease() {{ return 0; }}
 preflight_remote_face_pipeline_models() {{ return 0; }}
 preflight_git_clean() {{ return 0; }}
@@ -4505,6 +4508,7 @@ ACX_VERIFY_OPTIONAL=1
 ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{"a" * 64}"
 ACX_ROLLBACK_IMAGE_BASE="$IMAGE_BASE"
 ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{"b" * 64}"
+preflight_env_manifest() {{ return 0; }}
 deploy_env_lease() {{ return 0; }}
 for fn in init_deploy_ocir_docker_config preflight_ssh preflight_remote_face_pipeline_models preflight_git_clean preflight_branch_synced preflight_remote_ocir_auth preflight_remote_docker preflight_docker preflight_ocir_auth assert_remote_disk_headroom_for_pull preserve_rollback_tag do_build do_build_remote do_push_sha promote_gate _pull_ref _pull_ref_remote capture_failure_evidence capture_prior_runtime_identity {"assert_rollback_fence" if fence_kind == "late" else ""}; do
   eval "$fn() {{ :; }}"

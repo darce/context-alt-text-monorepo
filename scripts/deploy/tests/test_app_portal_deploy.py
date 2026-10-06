@@ -98,6 +98,17 @@ def _clerk_alias_config_module(aliases: str) -> str:
     )
 
 
+def _clerk_mutating_consumer_module(mutation: str) -> str:
+    return (
+        "function parsePortalConfig(env) { "
+        f"{mutation} return {{ publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        "parsePortalConfig(env);\n"
+    )
+
+
 def _write_frontend(
     root: Path,
     *,
@@ -1056,6 +1067,13 @@ def test_apply_refuses_invalid_staged_frontend_without_touching_live_or_rollback
         ("shadowed-fapi-param", "VITE_CLERK_FAPI"),
         ("shadowed-fapi-let", "VITE_CLERK_FAPI"),
         ("shadowed-fapi-arrow", "VITE_CLERK_FAPI"),
+        ("consumer-property-write", "VITE_CLERK_FAPI"),
+        ("consumer-dynamic-key-write", "VITE_CLERK_FAPI"),
+        ("consumer-alias-write", "VITE_CLERK_FAPI"),
+        ("consumer-delete", "VITE_CLERK_FAPI"),
+        ("consumer-object-assign", "VITE_CLERK_FAPI"),
+        ("consumer-mutator-escape", "VITE_CLERK_FAPI"),
+        ("consumer-parameter-reassign", "VITE_CLERK_FAPI"),
     ],
 )
 def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
@@ -1064,6 +1082,8 @@ def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
     live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
     _write_live_caddy(live)
     live_before = live.read_bytes()
+    www = _prior_www(tmp_path)
+    www_before = {path.relative_to(www): path.read_bytes() for path in www.rglob("*") if path.is_file()}
     dist = _write_frontend(tmp_path)
     module = dist / "assets" / "index.js"
     manifest_root = _write_test_manifest(
@@ -1234,6 +1254,19 @@ def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
             f"{binding}\n",
             encoding="utf-8",
         )
+    elif failure.startswith("consumer-"):
+        mutation = {
+            "consumer-property-write": 'env.VITE_CLERK_FAPI = "https://stale.fake-review.invalid";',
+            "consumer-dynamic-key-write": (
+                'const field = "VITE_CLERK_FAPI"; env[field] = "https://stale.fake-review.invalid";'
+            ),
+            "consumer-alias-write": 'const alias = env; alias.VITE_CLERK_FAPI = "https://stale.fake-review.invalid";',
+            "consumer-delete": "delete env.VITE_CLERK_FAPI;",
+            "consumer-object-assign": "Object.assign(env, getOverrides());",
+            "consumer-mutator-escape": 'env.set("VITE_CLERK_FAPI", "https://stale.fake-review.invalid");',
+            "consumer-parameter-reassign": "env = {};",
+        }[failure]
+        module.write_text(_clerk_mutating_consumer_module(mutation), encoding="utf-8")
 
     result = _run(
         tmp_path,
@@ -1248,6 +1281,7 @@ def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
     assert expected in output, output
     assert FAKE_LIVE_KEY not in output
     assert live.read_bytes() == live_before
+    assert {path.relative_to(www): path.read_bytes() for path in www.rglob("*") if path.is_file()} == www_before
     app_root = tmp_path / "opt" / "acx-backend" / "app"
     assert not (app_root / "staging").exists()
     assert not (app_root / "activation.journal").exists()

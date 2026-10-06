@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\RecognitionApiKeyStore;
+use AltContext\Api\RecognitionEndpointResolver;
 use AltContext\Api\SettingsController;
 use AltContext\Tests\TestCase;
 use WP_Error;
@@ -46,7 +47,7 @@ class SettingsSaveDeploymentKeyBindingTest extends TestCase
         $response = $this->saveUrl( 'https://attacker.example' );
 
         $this->assertInstanceOf( WP_Error::class, $response );
-        $this->assertSame( 'deployment_key_requires_deployment_url', $response->get_error_code() );
+        $this->assertSame( RecognitionEndpointResolver::URL_REJECTION_DEPLOYMENT_KEY_REQUIRES_DEPLOYMENT_URL, $response->get_error_code() );
         $this->assertSame( 400, $response->get_error_data()['status'] );
         $this->assertSame(
             'A deployment-managed recognition API key is configured; set the recognition URL with ACX_RECOGNITION_URL or the acx_recognition_base_url filter instead of saving it here.',
@@ -123,7 +124,7 @@ class SettingsSaveDeploymentKeyBindingTest extends TestCase
         $response = $this->saveUrl( 'https://attacker.example' );
 
         $this->assertInstanceOf( WP_Error::class, $response );
-        $this->assertSame( 'deployment_key_requires_deployment_url', $response->get_error_code() );
+        $this->assertSame( RecognitionEndpointResolver::URL_REJECTION_DEPLOYMENT_KEY_REQUIRES_DEPLOYMENT_URL, $response->get_error_code() );
         $this->assertSame( 400, $response->get_error_data()['status'] );
         $this->assertSame( 'https://existing.example', get_option( 'acx_recognition_url' ) );
     }

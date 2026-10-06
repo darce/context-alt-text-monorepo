@@ -140,6 +140,7 @@ class RecognitionControllerTest extends TestCase
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
         $request->set_param('media_ids', $mediaIds);
+        $request->set_param('idempotency_key', 'phpred1-test-key-0001');
 
         $response = $this->controller->analyze_media($request);
 

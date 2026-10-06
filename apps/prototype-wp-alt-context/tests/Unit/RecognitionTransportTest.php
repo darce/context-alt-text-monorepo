@@ -638,4 +638,125 @@ class RecognitionTransportTest extends TestCase
         $this->assertSame(0, $calls[0]['args']['redirection'] ?? null);
         $this->assertStringNotContainsString('attacker.example', $calls[0]['url']);
     }
+
+    /**
+     * @dataProvider nonGlobalResolutionProvider
+     *
+     * @param list<string> $addresses
+     */
+    public function testGetAndRequestDenyNonGlobalResolvedAddresses(array $addresses): void
+    {
+        RecognitionTransport::set_resolver(static fn (string $host): array => $addresses);
+
+        foreach (['get', 'request'] as $method) {
+            $GLOBALS['__ac_http_calls'] = [];
+            $result = 'get' === $method
+                ? RecognitionTransport::get('https://api.example.test/health', ['timeout' => 5])
+                : RecognitionTransport::request('https://api.example.test/health', ['method' => 'GET', 'timeout' => 5]);
+
+            $this->assertInstanceOf(\WP_Error::class, $result, $method . ' must reject non-global DNS results');
+            $this->assertSame('acx_egress_denied', $result->get_error_code());
+            $this->assertSame([], $this->getHttpCalls(), $method . ' must not make an HTTP call after rejection');
+        }
+    }
+
+    /**
+     * @return array<string, array{0: list<string>}>
+     */
+    public static function nonGlobalResolutionProvider(): array
+    {
+        return [
+            'cloud_metadata' => [['169.254.169.254']],
+            'private_ipv4' => [['10.0.0.5']],
+            'shared_address_space' => [['100.64.0.1']],
+            'private_lan' => [['192.168.1.2']],
+            'unspecified_ipv4' => [['0.0.0.0']],
+            'unique_local_ipv6' => [['fd00::1']],
+            'link_local_ipv6' => [['fe80::1']],
+            'mapped_metadata_ipv4' => [['::ffff:169.254.169.254']],
+            'empty_result' => [[]],
+            'mixed_public_and_private' => [['93.184.216.34', '10.0.0.5']],
+        ];
+    }
+
+    public function testPublicResolutionStillUsesSafeHttpAndRemovesCurlAction(): void
+    {
+        RecognitionTransport::set_resolver(static fn (string $host): array => ['93.184.216.34']);
+
+        foreach (['get', 'request'] as $method) {
+            $GLOBALS['__ac_http_calls'] = [];
+            $before = self::httpApiCurlActionCount();
+            $this->queueHttpResponse([
+                'response' => ['code' => 200, 'message' => 'OK'],
+                'body' => 'ok',
+            ]);
+
+            if ('get' === $method) {
+                RecognitionTransport::get('https://api.example.test/health', ['timeout' => 5]);
+            } else {
+                RecognitionTransport::request('https://api.example.test/health', ['method' => 'GET', 'timeout' => 5]);
+            }
+
+            $calls = $this->getHttpCalls();
+            $this->assertCount(1, $calls);
+            $this->assertTrue(!empty($calls[0]['safe']), $method . ' must reach the safe WordPress HTTP API');
+            $this->assertSame($before, self::httpApiCurlActionCount(), 'request-scoped cURL action must be removed');
+        }
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: bool}>
+     */
+    public static function globalAddressProvider(): array
+    {
+        return [
+            'public_ipv4' => ['93.184.216.34', true],
+            'public_ipv6' => ['2001:4860::1', true],
+            'private_ipv4' => ['10.0.0.5', false],
+            'shared_address_space' => ['100.64.0.1', false],
+            'link_local_ipv4' => ['169.254.169.254', false],
+            'unspecified_ipv4' => ['0.0.0.0', false],
+            'multicast_ipv4' => ['224.0.0.1', false],
+            'unique_local_ipv6' => ['fd00::1', false],
+            'link_local_ipv6' => ['fe80::1', false],
+            'multicast_ipv6' => ['ff02::1', false],
+            'unspecified_ipv6' => ['::', false],
+            'mapped_private_ipv4' => ['::ffff:169.254.169.254', false],
+            'invalid_address' => ['not-an-ip', false],
+        ];
+    }
+
+    /**
+     * @dataProvider globalAddressProvider
+     */
+    public function testIsGlobalAddress(string $address, bool $expected): void
+    {
+        $this->assertSame($expected, RecognitionTransport::is_global_address($address));
+    }
+
+    public function testResolvePinFormatsIpv4Ipv6AndDefaultPorts(): void
+    {
+        $this->assertSame(
+            'api.example.test:443:93.184.216.34',
+            RecognitionTransport::resolve_pin('api.example.test', 443, '93.184.216.34')
+        );
+        $this->assertSame(
+            'api.example.test:80:93.184.216.34',
+            RecognitionTransport::resolve_pin('api.example.test', 80, '93.184.216.34')
+        );
+        $this->assertSame(
+            'api.example.test:443:[2001:4860::1]',
+            RecognitionTransport::resolve_pin('api.example.test', 443, '2001:4860::1')
+        );
+    }
+
+    private static function httpApiCurlActionCount(): int
+    {
+        $count = 0;
+        foreach ($GLOBALS['__ac_actions']['http_api_curl'] ?? [] as $callbacks) {
+            $count += count($callbacks);
+        }
+
+        return $count;
+    }
 }

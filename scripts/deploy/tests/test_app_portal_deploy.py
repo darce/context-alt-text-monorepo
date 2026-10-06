@@ -53,16 +53,21 @@ def _write_test_manifest(tmp_path: Path, *, publishable_key: str | None = FAKE_L
     if root.parent.exists():
         shutil.rmtree(root.parent)
     shutil.copytree(REPO_ROOT / "config" / "env", root)
-    if publishable_key is not None:
-        path = root / "manifest.d" / "60-app-portal.toml"
-        text = path.read_text(encoding="utf-8")
-        text = re.sub(
-            r'(values = \{ local = "[^"]+")\s*\}',
-            rf'\1, prod = "{publishable_key}" }}',
-            text,
-            count=1,
-        )
-        path.write_text(text, encoding="utf-8")
+    path = root / "manifest.d" / "60-app-portal.toml"
+    text = path.read_text(encoding="utf-8")
+    publishable_key_values = re.compile(
+        r'(?ms)(^\[\[var\]\]\n(?:(?!^\[\[var\]\]).)*?^name = "VITE_CLERK_PUBLISHABLE_KEY"\n'
+        r'(?:(?!^\[\[var\]\]).)*?^values = \{ local = "[^"]+")'
+        r'(?:, prod = "[^"]+")?'
+        r'( \})'
+    )
+    prod_value = f', prod = "{publishable_key}"' if publishable_key is not None else ""
+    text, replacements = publishable_key_values.subn(rf"\g<1>{prod_value}\g<2>", text)
+    assert replacements == 1, (
+        "expected exactly one VITE_CLERK_PUBLISHABLE_KEY values line, "
+        f"found {replacements}"
+    )
+    path.write_text(text, encoding="utf-8")
     return root
 
 

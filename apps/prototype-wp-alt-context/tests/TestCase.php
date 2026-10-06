@@ -28,7 +28,35 @@ abstract class TestCase extends PHPUnitTestCase
         // Default recognition config so proxy controllers don't fail on missing API key.
         // Individual tests override these when testing config resolution behavior.
         $this->setOption('acx_recognition_api_key', 'test-key');
-        RecognitionTransport::set_resolver( static fn ( string $host ): array => [ '93.184.216.34' ] );
+        RecognitionTransport::set_resolver(self::resolveFixtureHost(...));
+    }
+
+    /**
+     * Fake DNS only for named fixtures; preserve literal addresses for the
+     * production egress check and fail closed for every other host.
+     *
+     * @return list<string>
+     */
+    protected static function resolveFixtureHost(string $host): array
+    {
+        $ip = trim($host, '[]');
+        if (false !== filter_var($ip, FILTER_VALIDATE_IP)) {
+            return [$ip];
+        }
+
+        $fixtureHosts = [
+            'api.example.test',
+            'cdn.other-org.example',
+            'api.example.com',
+            'filter.example.com',
+            'const.example.com',
+            'filtered.example',
+            'constant.example',
+            'example.internal',
+            'recognition.test',
+        ];
+
+        return in_array($host, $fixtureHosts, true) ? ['93.184.216.34'] : [];
     }
 
     protected function tearDown(): void

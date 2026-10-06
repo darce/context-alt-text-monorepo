@@ -100,7 +100,7 @@ if [[ ! "${REMOTE_PYTHON}" =~ ^/[A-Za-z0-9_./-]+$ || "${REMOTE_PYTHON}" == *"/..
     fail "GPU_KEY_WRITER_PYTHON must be an absolute executable path"
 fi
 if [ -n "${EXPECTED_SECRET_ID}" ] && \
-    [[ ! "${EXPECTED_SECRET_ID}" =~ ^ocid1\.vaultsecret\.oc[0-9]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9._-]+$ ]]; then
+    [[ ! "${EXPECTED_SECRET_ID}" =~ ^ocid1\.vaultsecret\.oc[0-9]+\.[A-Za-z0-9_-]*\.[A-Za-z0-9._-]{20,}$ ]]; then
     fail "expected GPU key secret ID is invalid"
 fi
 if [ -n "${EXPECTED_OWNER_SHA256}" ] && [[ ! "${EXPECTED_OWNER_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
@@ -217,7 +217,7 @@ if ! bounded "${SSH_TIMEOUT_SECONDS}" bash -c '
 fi
 
 RESULT="$(<"${RESULT_FILE}")"
-if [[ ! "${RESULT}" =~ ^(ocid1\.vaultsecret\.oc[0-9]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9._-]+)[[:space:]]+([0-9]+)$ ]]; then
+if [[ ! "${RESULT}" =~ ^(ocid1\.vaultsecret\.oc[0-9]+\.[A-Za-z0-9_-]*\.[A-Za-z0-9._-]{20,})[[:space:]]+([0-9]+)$ ]]; then
     fail "Vault writer returned an invalid result"
 fi
 SECRET_OCID="${BASH_REMATCH[1]}"

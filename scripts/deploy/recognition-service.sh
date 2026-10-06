@@ -70,7 +70,8 @@
 #   ACX_REMOTE_BUILDER_ENDPOINT
 #                            default unix:///var/run/docker.sock; other endpoints are refused
 #   ACX_ALLOW_DIRTY          set to 1 to allow dirty deploy inputs (dev and dev-fir only)
-#   ACX_ENV_PREFLIGHT        default 0; 1 runs manifest drift check (materialize_remote.sh <env> <target> --check) before deploy and promote
+#   ACX_ENV_PREFLIGHT        default 1; 0 skips manifest drift check
+#                            (materialize_remote.sh <env> <target> --check) before deploy and promote
 #   ACX_CUTOVER_HEALTH_ATTEMPTS default 5 (max 60); ACX_CUTOVER_HEALTH_SLEEP default 5 seconds (max 120 s) (candidate admission)
 #   ACX_CANONICAL_HEALTH_ATTEMPTS default 8 (max 60); ACX_CANONICAL_HEALTH_SLEEP default 5 seconds (max 120 s) (restart readiness)
 #   ACX_VERIFY_ATTEMPTS      default 5 (max 60) (post-deploy public verify only)
@@ -986,13 +987,17 @@ preflight_branch_synced() {
 }
 
 preflight_env_manifest() {
-  local env="$1" manifest_env target status rerun_command
+  local env="$1" manifest_env target status rerun_command enabled="${ACX_ENV_PREFLIGHT-1}"
   local -a command
 
-  if [[ "${ACX_ENV_PREFLIGHT:-0}" != "1" ]]; then
-    log "Skipping environment manifest preflight (ACX_ENV_PREFLIGHT is not 1)"
-    return 0
-  fi
+  case "$enabled" in
+    1) ;;
+    0)
+      log "Skipping environment manifest preflight (ACX_ENV_PREFLIGHT is 0)"
+      return 0
+      ;;
+    *) fail "Invalid ACX_ENV_PREFLIGHT value '${enabled}' (expected 0 or 1)" ;;
+  esac
 
   case "$env" in
     dev | staging | prod)

@@ -1076,6 +1076,8 @@ def test_apply_refuses_invalid_staged_frontend_without_touching_live_or_rollback
         ("consumer-object-assign", "VITE_CLERK_FAPI"),
         ("consumer-mutator-escape", "VITE_CLERK_FAPI"),
         ("consumer-parameter-reassign", "VITE_CLERK_FAPI"),
+        ("computed-dynamic-import", "unsupported dynamic import specifier"),
+        ("concatenated-dynamic-import", "unsupported dynamic import specifier"),
     ],
 )
 def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
@@ -1121,6 +1123,26 @@ def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
         )
         (dist / "assets" / "chunk.js").write_text(
             _clerk_config_module(FAKE_LIVE_KEY, "https://other.altcontext.com"),
+            encoding="utf-8",
+        )
+    elif failure == "computed-dynamic-import":
+        module.write_text(
+            _clerk_config_module(FAKE_LIVE_KEY, "https://clerk.altcontext.com")
+            + 'const modulePath = "./chunk.js"; import(modulePath);\n',
+            encoding="utf-8",
+        )
+        (dist / "assets" / "chunk.js").write_text(
+            _clerk_config_module(FAKE_LIVE_KEY, "https://stale.fake-review.invalid"),
+            encoding="utf-8",
+        )
+    elif failure == "concatenated-dynamic-import":
+        module.write_text(
+            _clerk_config_module(FAKE_LIVE_KEY, "https://clerk.altcontext.com")
+            + 'import("" + "./chunk.js");\n',
+            encoding="utf-8",
+        )
+        (dist / "assets" / "chunk.js").write_text(
+            _clerk_config_module(FAKE_LIVE_KEY, "https://stale.fake-review.invalid"),
             encoding="utf-8",
         )
     elif failure == "unreferenced-decoy":
@@ -1332,6 +1354,27 @@ def test_apply_accepts_frontend_with_complete_static_clerk_aliases_and_valid_syn
             "const env = { VITE_CLERK_PUBLISHABLE_KEY: liveKey, VITE_CLERK_FAPI: liveFapi, "
             'VITE_PORTAL_ENABLED: "true" };'
         ) + suffix,
+        encoding="utf-8",
+    )
+
+    result = _run(tmp_path, args=["--apply"], frontend=dist, live_caddy=live)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "applied:" in result.stdout
+
+
+def test_apply_accepts_frontend_with_literal_dynamic_import_of_matching_chunk(
+    tmp_path: Path,
+) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    dist = _write_frontend(tmp_path)
+    (dist / "assets" / "index.js").write_text(
+        'import("./chunk.js");\n',
+        encoding="utf-8",
+    )
+    (dist / "assets" / "chunk.js").write_text(
+        _clerk_config_module(FAKE_LIVE_KEY, "https://clerk.altcontext.com"),
         encoding="utf-8",
     )
 

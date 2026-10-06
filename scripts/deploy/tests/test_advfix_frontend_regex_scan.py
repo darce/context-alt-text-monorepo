@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import base64
+import os
+import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -9,6 +13,34 @@ import pytest
 
 
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "deploy" / "app-portal.sh"
+REPO_ROOT = SCRIPT.parents[2]
+FAKE_LIVE_KEY = "pk_live_" + base64.b64encode(b"clerk.altcontext.com$").decode("ascii").rstrip("=")
+
+
+def _write_manifest(tmp_path: Path) -> Path:
+    root = tmp_path / "app-portal-test-config" / "env"
+    shutil.copytree(REPO_ROOT / "config" / "env", root)
+    portal_manifest = root / "manifest.d" / "60-app-portal.toml"
+    portal_text = portal_manifest.read_text(encoding="utf-8")
+    portal_text = re.sub(
+        r'(values = \{ local = "[^"]+")\s*\}',
+        rf'\1, prod = "{FAKE_LIVE_KEY}" }}',
+        portal_text,
+        count=1,
+    )
+    portal_manifest.write_text(portal_text, encoding="utf-8")
+    return root
+
+
+def _clerk_config_module() -> str:
+    return (
+        "function parsePortalConfig(env) { return {"
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        "parsePortalConfig(env);\n"
+    )
 
 
 def _scan(tmp_path: Path, source: str) -> subprocess.CompletedProcess[str]:
@@ -41,7 +73,7 @@ def _validate(
     (tmp_path / "index.html").write_text(
         '<script type="module" src="/assets/index.js"></script>', encoding="utf-8",
     )
-    (assets / "index.js").write_text(source, encoding="utf-8")
+    (assets / "index.js").write_text(source + _clerk_config_module(), encoding="utf-8")
     if target is not None:
         (assets / target).write_text("export const a=1;", encoding="utf-8")
     script = SCRIPT.read_text(encoding="utf-8")
@@ -51,6 +83,11 @@ def _validate(
         ["bash", "-c", f'{script[start:end]}\nvalidate_frontend "$1"',
          "module-validation", str(tmp_path)],
         text=True, capture_output=True, check=False,
+        env={
+            **os.environ,
+            "APP_PORTAL_ENV_ROOT": str(_write_manifest(tmp_path)),
+            "REPO_ROOT": str(REPO_ROOT),
+        },
     )
 
 

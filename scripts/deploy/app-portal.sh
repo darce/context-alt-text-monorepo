@@ -76,6 +76,7 @@ Environment:
   APP_RELOAD_CMD       optional absolute executable run after host promote
   APP_HEALTH_CMD       required for --apply: absolute executable checking live
                        frontend and portal upstream after reload (nonzero on failure)
+  APP_PORTAL_ENV_ROOT  optional config/env manifest root (default repository config/env)
 EOF
 }
 
@@ -739,6 +740,7 @@ frontend_module_references() {
       pending_control_header = 0
       token_line = line
       token_value = ""
+      token_escaped = 0
       if (position > source_length) {
         if (template_depth > 0) {
           failed = 1
@@ -776,6 +778,7 @@ frontend_module_references() {
             return
           }
           if (c == "\\") {
+            token_escaped = 1
             position++
             if (position > source_length) break
             c = substr(source, position, 1)
@@ -883,6 +886,15 @@ frontend_module_references() {
       print value
     }
 
+    function emit_static_reference(value) {
+      if (token_escaped) {
+        failed = 1
+        print "unsupported static import specifier" > "/dev/stderr"
+        return
+      }
+      emit_reference(value)
+    }
+
     {
       source = source $0 "\n"
       if (NR == 1) line = 1
@@ -907,18 +919,31 @@ frontend_module_references() {
         }
         if (declaration == "import" && token_type == "punctuation" && token_value == "(") {
           next_token()
-          if (token_type == "string") emit_reference(token_value)
+          if (token_type != "string" || token_escaped) {
+            failed = 1
+            print "unsupported dynamic import specifier" > "/dev/stderr"
+            continue
+          }
+          dynamic_specifier = token_value
+          next_token()
+          if (token_type != "punctuation" || token_value != ")" ||
+              dynamic_specifier !~ /^(\.\/|\.\.\/|\/assets\/)/) {
+            failed = 1
+            print "unsupported dynamic import specifier" > "/dev/stderr"
+            continue
+          }
+          emit_reference(dynamic_specifier)
           continue
         }
         if (declaration == "import" && token_type == "string") {
-          emit_reference(token_value)
+          emit_static_reference(token_value)
           continue
         }
 
         while (token_type != "eof" && token_value != ";") {
           if (token_type == "identifier" && token_value == "from") {
             next_token()
-            if (token_type == "string") emit_reference(token_value)
+            if (token_type == "string") emit_static_reference(token_value)
             break
           }
           if (token_type == "identifier" &&
@@ -978,6 +1003,8 @@ resolve_frontend_asset_reference() {
 validate_frontend() {
   local _frontend_dir="${1:-${FRONTEND_DIST}}"
   local _symlink_paths _asset_refs _module_refs _asset_ref _asset _module_file _dependency _module_files
+  local _module_ref _module_path _add_module
+  local -a _pending_module_files=() _reachable_module_files=()
 
   if [ -z "$_frontend_dir" ]; then
     echo "ERROR: FRONTEND_DIST is required for --apply" >&2
@@ -1046,6 +1073,69 @@ validate_frontend() {
     echo "ERROR: could not inspect FRONTEND_DIST for JavaScript modules: ${_frontend_dir}/assets" >&2
     return 1
   fi
+
+  # Build the transitive module graph starting from index.html's actual module
+  # scripts. Orphaned bundles and copied decoys must not satisfy the Clerk check.
+  while IFS= read -r _module_ref; do
+    [ -n "$_module_ref" ] || continue
+    if ! _module_path="$(resolve_frontend_asset_reference "$_frontend_dir" "index.html" "$_module_ref")"; then
+      echo "ERROR: FRONTEND_DIST has an unsafe module entry ${_module_ref}" >&2
+      return 1
+    fi
+    case "$_module_path" in
+      *.js|*.mjs) _pending_module_files+=("$_module_path") ;;
+    esac
+  done <<< "$_module_refs"
+
+  while [ "${#_pending_module_files[@]}" -gt 0 ]; do
+    _module_file="${_pending_module_files[0]}"
+    _pending_module_files=("${_pending_module_files[@]:1}")
+    _add_module=1
+    for _dependency in "${_reachable_module_files[@]}"; do
+      if [ "$_dependency" = "$_module_file" ]; then
+        _add_module=0
+        break
+      fi
+    done
+    if [ "$_add_module" -eq 0 ]; then
+      continue
+    fi
+    _reachable_module_files+=("$_module_file")
+    if ! _module_refs="$(frontend_module_references "$_module_file")"; then
+      echo "ERROR: could not inspect JavaScript module dependencies: ${_module_file}" >&2
+      return 1
+    fi
+    while IFS= read -r _module_ref; do
+      [ -n "$_module_ref" ] || continue
+      case "$_module_ref" in
+        ./*|../*|/assets/*) ;;
+        *) continue ;;
+      esac
+      if ! _module_path="$(resolve_frontend_asset_reference "$_frontend_dir" "${_module_file#"$_frontend_dir"/}" "$_module_ref")"; then
+        echo "ERROR: FRONTEND_DIST has an unsafe module dependency ${_module_ref} in ${_module_file}" >&2
+        return 1
+      fi
+      if [ ! -f "$_module_path" ] || [ ! -s "$_module_path" ]; then
+        echo "ERROR: FRONTEND_DIST has a missing module dependency ${_module_ref} imported from ${_module_file}" >&2
+        return 1
+      fi
+      case "$_module_path" in
+        *.js|*.mjs)
+          _add_module=1
+          for _dependency in "${_reachable_module_files[@]}" "${_pending_module_files[@]}"; do
+            if [ "$_dependency" = "$_module_path" ]; then
+              _add_module=0
+              break
+            fi
+          done
+          if [ "$_add_module" -eq 1 ]; then
+            _pending_module_files+=("$_module_path")
+          fi
+          ;;
+      esac
+    done <<< "$_module_refs"
+  done
+
   while IFS= read -r _module_file; do
     [ -n "$_module_file" ] || continue
     if ! _module_refs="$(frontend_module_references "$_module_file")"; then
@@ -1068,6 +1158,10 @@ validate_frontend() {
       fi
     done <<< "$_module_refs"
   done <<< "$_module_files"
+
+  if ! printf '%s\n' "${_reachable_module_files[@]}" | python3 "${REPO_ROOT}/apps/prototype-description-service/scripts/configure_clerk_production.py" --root "${APP_PORTAL_ENV_ROOT:-${REPO_ROOT}/config/env}" --verify-assets; then
+    return 1
+  fi
 }
 
 sync_path() {

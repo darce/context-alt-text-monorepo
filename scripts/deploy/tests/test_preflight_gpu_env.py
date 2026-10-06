@@ -2625,6 +2625,8 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
     from fastapi import BackgroundTasks
     from starlette.datastructures import FormData, Headers, UploadFile
 
+    from recognition.application.services.usage_admission_service import UsageAdmissionService
+    from recognition.domain.portal_contracts import UsageTicket
     import scene.application.describe_run_worker as worker
     import scene.interface_adapters.http.routers.describe_run as route
     from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier
@@ -2672,7 +2674,45 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
         tier=None,
         result_generation=0,
     )
-    created_operations = []
+    created_runs = []
+
+    class UsageRepository:
+        """Fake usage persistence while exercising real admission logic."""
+
+        def __init__(self):
+            self.reservations = []
+
+        async def reserve(
+            self,
+            tenant_id,
+            *,
+            idempotency_key,
+            job_id,
+            cost_units,
+            operation_id=None,
+            request_fingerprint=None,
+            queue_bytes=0,
+        ):
+            self.reservations.append((tenant_id, idempotency_key, job_id, cost_units, operation_id))
+            return UsageTicket(
+                reservation_id=uuid.uuid4(),
+                tenant_id=tenant_id,
+                idempotency_key=idempotency_key,
+                cost_units=cost_units,
+                operation_id=operation_id or "",
+                request_fingerprint=request_fingerprint or "",
+                job_id=job_id,
+                fence_token="fake-fence",
+            )
+
+        async def commit(self, ticket, *, fence_token=None):
+            pass
+
+        async def release(self, ticket, *, fence_token=None):
+            pass
+
+    usage_repository = UsageRepository()
+    usage_admission_service = UsageAdmissionService(repository=usage_repository)
 
     class Session:
         async def __aenter__(self):
@@ -2701,7 +2741,8 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
             assert kwargs["images"][item.media_id] == (b"fake-image", "image/png")
             assert kwargs["recognition_enabled"] is False
             assert kwargs["idempotency_key"] == data["idempotency_key"]
-            created_operations.append(kwargs["operation_id"])
+            created_runs.append(kwargs["run_id"])
+            run.id = kwargs["run_id"]
             run.idempotency_key = kwargs["idempotency_key"]
             run.operation_id = kwargs["operation_id"]
             run.request_digest = kwargs["request_digest"]
@@ -2710,7 +2751,7 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
         async def get_run_by_idempotency_key(self, *, tenant_id, idempotency_key):
             assert tenant_id == run.tenant_id
             assert idempotency_key == data["idempotency_key"]
-            return run if created_operations else None
+            return run if created_runs else None
 
         async def get_run(self, **kwargs):
             return run
@@ -2780,22 +2821,6 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
 
     monkeypatch.setattr(route, "_build_describe_one", lambda **kwargs: describe_one)
 
-    async def find_run_by_operation(session, *, tenant_id, operation_id):
-        assert tenant_id == run.tenant_id
-        assert operation_id == data["idempotency_key"]
-        return run if created_operations else None
-
-    monkeypatch.setattr(route, "_run_by_usage_operation", find_run_by_operation)
-
-    class UsageAdmission:
-        async def __aenter__(self):
-            return None
-
-        async def __aexit__(self, *args):
-            pass
-
-    monkeypatch.setattr(route, "_maybe_admit_usage", lambda *args, **kwargs: UsageAdmission())
-
     with tempfile.SpooledTemporaryFile() as image:
         image.write(b"fake-image")
         image.seek(0)
@@ -2818,9 +2843,10 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
                 background_tasks=background,
                 auth=auth,
                 session=Session(),
+                usage_admission_service=usage_admission_service,
             )
             assert response.run_id == str(run.id)
-            assert response.operation_id == data["idempotency_key"]
+            assert isinstance(response.operation_id, str) and response.operation_id.strip()
             await asyncio.wait_for(background(), timeout=3)
             image.seek(0)
             replay = await endpoint(
@@ -2828,10 +2854,12 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
                 background_tasks=BackgroundTasks(),
                 auth=auth,
                 session=Session(),
+                usage_admission_service=usage_admission_service,
             )
             assert replay.run_id == response.run_id
             assert replay.operation_id == response.operation_id
-            assert created_operations == [data["idempotency_key"]], "operation replay created duplicate work"
+            assert len(created_runs) == 1, "operation replay created duplicate work"
+            assert len(usage_repository.reservations) == 1, "new run did not use real usage admission"
             for path in paths[1:]:
                 endpoint = next(
                     r.endpoint for r in route.router.routes if "GET" in r.methods and r.path_regex.match(path)

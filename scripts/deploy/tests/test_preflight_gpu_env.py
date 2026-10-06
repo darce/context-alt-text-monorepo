@@ -2203,7 +2203,7 @@ def test_live_gpu_verifier_accepts_only_a_fresh_pinned_gpu_result(tmp_path: Path
 
 def test_live_gpu_verifier_consecutive_requests_have_unique_image_hashes(tmp_path: Path) -> None:
     hashes = []
-    operation_ids = []
+    idempotency_keys = []
     for invocation in ("first", "second"):
         request_dir = tmp_path / invocation
         request_dir.mkdir()
@@ -2214,10 +2214,11 @@ def test_live_gpu_verifier_consecutive_requests_have_unique_image_hashes(tmp_pat
         hashes.append(hashlib.sha256(image).hexdigest())
         argv = (request_dir / "curl-argv.log").read_bytes().decode().split("\0")
         data = dict(argv[i + 1].split("=", 1) for i, arg in enumerate(argv) if arg == "--form-string")
-        operation_ids.append(data["operation_id"])
+        assert "operation_id" not in data
+        idempotency_keys.append(data["idempotency_key"])
     assert hashes[0] != hashes[1], "Repeated smoke images hit the description cache"
-    assert all(re.fullmatch(r"live-gpu-verify-[0-9a-f]{32}", value) for value in operation_ids)
-    assert operation_ids[0] != operation_ids[1], "Repeated verifier runs reused their operation_id"
+    assert all(re.fullmatch(r"live-gpu-verify-[0-9a-f]{32}", value) for value in idempotency_keys)
+    assert idempotency_keys[0] != idempotency_keys[1], "Repeated verifier runs reused their idempotency_key"
 
 
 def test_live_gpu_verifier_queues_work_before_polling_for_gpu_start(tmp_path: Path) -> None:
@@ -2605,7 +2606,8 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
     assert result.returncode == 0, result.stderr
     argv = (tmp_path / "curl-argv.log").read_bytes().decode().split("\0")
     data = dict(argv[i + 1].split("=", 1) for i, arg in enumerate(argv) if arg == "--form-string")
-    assert re.fullmatch(r"live-gpu-verify-[0-9a-f]{32}", data["operation_id"])
+    assert "operation_id" not in data
+    assert re.fullmatch(r"live-gpu-verify-[0-9a-f]{32}", data["idempotency_key"])
     image_field = next(argv[i + 1].split("=", 1)[0] for i, arg in enumerate(argv) if arg == "-F")
     paths = [urlsplit(url).path.removeprefix("/scene") for url in (tmp_path / "curl.log").read_text().splitlines()]
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
@@ -2669,8 +2671,17 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
         async def create_run(self, **kwargs):
             assert kwargs["images"][item.media_id] == (b"fake-image", "image/png")
             assert kwargs["recognition_enabled"] is False
+            assert kwargs["idempotency_key"] == data["idempotency_key"]
             created_operations.append(kwargs["operation_id"])
+            run.idempotency_key = kwargs["idempotency_key"]
+            run.operation_id = kwargs["operation_id"]
+            run.request_digest = kwargs["request_digest"]
             return run.id
+
+        async def get_run_by_idempotency_key(self, *, tenant_id, idempotency_key):
+            assert tenant_id == run.tenant_id
+            assert idempotency_key == data["idempotency_key"]
+            return run if created_operations else None
 
         async def get_run(self, **kwargs):
             return run
@@ -2742,7 +2753,7 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
 
     async def find_run_by_operation(session, *, tenant_id, operation_id):
         assert tenant_id == run.tenant_id
-        assert operation_id == data["operation_id"]
+        assert operation_id == data["idempotency_key"]
         return run if created_operations else None
 
     monkeypatch.setattr(route, "_run_by_usage_operation", find_run_by_operation)
@@ -2780,7 +2791,7 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
                 session=Session(),
             )
             assert response.run_id == str(run.id)
-            assert response.operation_id == data["operation_id"]
+            assert response.operation_id == data["idempotency_key"]
             await asyncio.wait_for(background(), timeout=3)
             image.seek(0)
             replay = await endpoint(
@@ -2791,7 +2802,7 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
             )
             assert replay.run_id == response.run_id
             assert replay.operation_id == response.operation_id
-            assert created_operations == [data["operation_id"]], "operation replay created duplicate work"
+            assert created_operations == [data["idempotency_key"]], "operation replay created duplicate work"
             for path in paths[1:]:
                 endpoint = next(
                     r.endpoint for r in route.router.routes if "GET" in r.methods and r.path_regex.match(path)

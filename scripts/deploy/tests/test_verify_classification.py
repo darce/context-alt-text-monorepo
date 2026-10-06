@@ -146,7 +146,9 @@ preflight_ssh() {{ :; }}
 preflight_remote_face_pipeline_models() {{ :; }}
 preflight_git_clean() {{ :; }}
 preflight_branch_synced() {{ :; }}
+preflight_env_manifest() {{ :; }}
 preflight_remote_ocir_auth() {{ :; }}
+deploy_env_lease() {{ :; }}
 preserve_rollback_tag() {{ :; }}
 do_build() {{ :; }}
 do_push_sha() {{ :; }}

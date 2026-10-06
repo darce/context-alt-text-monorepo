@@ -809,8 +809,9 @@ class RecognitionTransportTest extends TestCase
         $appliedPins = [];
         $before = 0;
         RecognitionTransport::set_curl_resolve_applier(
-            static function ($handle, array $value) use (&$appliedPins): void {
+            static function ($handle, array $value) use (&$appliedPins): bool {
                 $appliedPins[] = $value;
+                return true;
             }
         );
         RecognitionTransport::set_http_api_curl_runner(
@@ -862,8 +863,7 @@ class RecognitionTransportTest extends TestCase
         RecognitionTransport::set_curl_capability_probe(null);
         RecognitionTransport::set_curl_resolve_applier(null);
         if (!function_exists('curl_init')) {
-            $this->assertFalse(function_exists('curl_init'), 'cURL is unavailable in this PHP runtime');
-            return;
+            $this->markTestSkipped('ext-curl not loaded');
         }
 
         $handle = curl_init();
@@ -878,6 +878,136 @@ class RecognitionTransportTest extends TestCase
         } finally {
             curl_close($handle);
         }
+    }
+
+    public function testProductionCurlResolvePinTakesEffectOnLoopbackWhenCurlIsLoaded(): void
+    {
+        RecognitionTransport::set_curl_capability_probe(null);
+        RecognitionTransport::set_curl_resolve_applier(null);
+        if (!function_exists('curl_init')) {
+            $this->markTestSkipped('ext-curl not loaded');
+        }
+
+        $handle = curl_init('https://acx-pin-probe.invalid:1/');
+        $this->assertNotFalse($handle, 'curl_init must return a handle when ext-curl is loaded');
+
+        try {
+            $configured = curl_setopt_array($handle, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT => 2,
+                CURLOPT_CONNECTTIMEOUT => 2,
+                CURLOPT_PROXY => '',
+            ]);
+            $this->assertTrue($configured, 'the loopback-only cURL probe options must be accepted');
+
+            $method = new ReflectionMethod(RecognitionTransport::class, 'apply_curl_resolve_option');
+            $method->setAccessible(true);
+            $applied = $method->invokeArgs(null, [&$handle, 'acx-pin-probe.invalid:1:127.0.0.1']);
+            $this->assertTrue($applied, 'the production pin path must accept the loopback pin');
+
+            curl_exec($handle);
+            $this->assertSame(
+                7,
+                curl_errno($handle),
+                'the hostname must connect to loopback and fail with connection refused'
+            );
+        } finally {
+            curl_close($handle);
+        }
+    }
+
+    public function testProductionCurlTransportAvailabilityUsesRealRuntimeWhenCurlIsLoaded(): void
+    {
+        RecognitionTransport::set_curl_capability_probe(null);
+        $method = new ReflectionMethod(RecognitionTransport::class, 'curl_transport_available');
+        $method->setAccessible(true);
+        $expected = function_exists('curl_init') && is_callable('curl_exec');
+        if ($expected) {
+            $version = function_exists('curl_version') && defined('CURL_VERSION_SSL') ? curl_version() : false;
+            $expected = is_array($version) && 0 !== (((int) ($version['features'] ?? 0)) & CURL_VERSION_SSL);
+        }
+
+        $this->assertSame(
+            $expected,
+            $method->invoke(null, 'https'),
+            'the production wrapper must report the HTTPS cURL capabilities present on this runtime'
+        );
+    }
+
+    public function testProductionCurlTransportAvailabilityFailsWhenCurlExecIsDisabled(): void
+    {
+        $pluginRoot = dirname(__DIR__, 2);
+        $script = sprintf(
+            <<<'PHP'
+$pluginRoot = %s;
+require $pluginRoot . '/vendor/autoload.php';
+require_once $pluginRoot . '/src/support/class-recognition-transport.php';
+$method = new \ReflectionMethod(\AltContext\Support\RecognitionTransport::class, 'curl_transport_available');
+$method->setAccessible(true);
+echo $method->invoke(null, 'https') ? 'true' : 'false';
+PHP,
+            var_export($pluginRoot, true)
+        );
+        $descriptors = [
+            0 => ['pipe', 'r'],
+            1 => ['pipe', 'w'],
+            2 => ['pipe', 'w'],
+        ];
+        $process = proc_open(
+            [PHP_BINARY, '-d', 'disable_functions=curl_exec', '-r', $script],
+            $descriptors,
+            $pipes,
+            $pluginRoot
+        );
+        $this->assertIsResource($process, 'the child PHP process must start');
+
+        fclose($pipes[0]);
+        $stdout = stream_get_contents($pipes[1]);
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        $exitCode = proc_close($process);
+
+        $this->assertSame(0, $exitCode, 'the child PHP process must exit successfully: ' . $stderr);
+        $this->assertSame('false', trim($stdout), 'the production wrapper must fail closed when curl_exec is disabled');
+    }
+
+    public function testPublicResolutionFailsClosedWhenCurlResolveCannotBeApplied(): void
+    {
+        RecognitionTransport::set_resolver(static fn (string $host): array => ['93.184.216.34']);
+        $attemptedPins = [];
+        RecognitionTransport::set_curl_resolve_applier(
+            static function ($handle, array $pins) use (&$attemptedPins): bool {
+                $attemptedPins = $pins;
+                return false;
+            }
+        );
+        RecognitionTransport::set_http_api_curl_runner(
+            static function (callable $callback, callable $request, string $url): mixed {
+                $handle = (object) [];
+                $callback($handle, [], $url);
+                return $request();
+            }
+        );
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => 'must not be sent without a pin',
+        ]);
+
+        $result = RecognitionTransport::get('https://api.example.test/health', [
+            'headers' => ['X-API-Key' => 'fake-test-key'],
+            'timeout' => 5,
+        ]);
+
+        $this->assertInstanceOf(\WP_Error::class, $result);
+        $this->assertSame('acx_egress_pin_failed', $result->get_error_code());
+        $this->assertSame(['api.example.test:443:93.184.216.34'], $attemptedPins);
+        $this->assertSame([], $this->getHttpCalls(), 'a request must not send credentials if CURLOPT_RESOLVE fails');
+        $this->assertSame(
+            0,
+            self::httpApiCurlActionCount(),
+            'the request-scoped cURL action must be removed after failure'
+        );
     }
 
     public function testPublicResolutionFailsClosedWhenRequestsCannotUseCurl(): void
@@ -989,7 +1119,9 @@ class RecognitionTransportTest extends TestCase
     public static function curlCapabilityProvider(): array
     {
         return [
+            'missing_init' => [false, true, ['features' => 4, 'ssl_feature' => 4], 'https', false],
             'missing_exec' => [true, false, ['features' => 4, 'ssl_feature' => 4], 'https', false],
+            'https_without_version' => [true, true, null, 'https', false],
             'https_without_ssl' => [true, true, ['features' => 0, 'ssl_feature' => 4], 'https', false],
             'http_without_ssl' => [true, true, null, 'http', true],
             'all_https_capabilities' => [true, true, ['features' => 4, 'ssl_feature' => 4], 'https', true],

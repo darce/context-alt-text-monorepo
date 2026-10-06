@@ -263,7 +263,6 @@ def test_mint_rejects_invalid_required_declarations_before_writer(
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
             "GPU_KEY_TEST_OCID": OTHER_FAKE_OCID,
             "GPU_KEY_TEST_STDIN_CAPTURE": str(stdin_capture),
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
@@ -403,7 +402,6 @@ def test_mint_rejects_malformed_fragment_targets_before_writer(
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
@@ -469,7 +467,6 @@ def test_mint_rejects_malformed_gpu_refs_before_writer(
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
@@ -607,7 +604,6 @@ def test_mint_preflights_output_destinations_before_local_writer(
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
@@ -690,7 +686,6 @@ def test_mint_rejects_unpublishable_gpu_owner_before_local_writer(
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
@@ -752,7 +747,6 @@ def test_mint_rejects_multiline_gpu_ref_quotes_before_local_writer(
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
@@ -818,7 +812,6 @@ def test_inherited_transaction_flag_cannot_skip_preflight_or_identity_binding(
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
             "GPU_KEY_MINT_TRANSACTION_LOCKED": "1",
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
             "GPU_KEY_TEST_MUTATIONS": str(mutations),
@@ -868,7 +861,6 @@ def test_internal_handoff_rejects_stale_hash_before_writer_contact(tmp_path: Pat
                 "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
                 "GPU_KEY_MINT_TRANSACTION_LOCKED": "1",
                 "GPU_KEY_MINT_TRANSACTION_LOCK_FD": str(lock_descriptor),
-                "GPU_KEY_TEST_RANDOM": FAKE_KEY,
                 "GPU_KEY_TEST_OCID": FAKE_OCID,
                 "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
                 "TMPDIR": str(tmp_path),
@@ -1031,7 +1023,6 @@ def test_harvest_cli_waits_for_mint_publication_across_canonical_symlink_lock(
         **os.environ,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
-        "GPU_KEY_TEST_RANDOM": FAKE_KEY,
         "GPU_KEY_TEST_OCID": FAKE_OCID,
         "GPU_KEY_TEST_STDIN_CAPTURE": str(writer_stdin),
         "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(writer_arguments),
@@ -1135,6 +1126,7 @@ def test_harvest_cli_waits_for_mint_publication_across_canonical_symlink_lock(
             harvest.communicate(timeout=5)
 
     assert mint.returncode == 0, mint_stderr
+    _assert_key_only_in_stdin(tmp_path, writer_stdin)
     assert mint_stdout == f"{FAKE_OCID} 64\n"
     assert FAKE_KEY not in mint_stdout + mint_stderr
     assert writer_stdin.read_text(encoding="utf-8") == FAKE_KEY
@@ -1194,7 +1186,6 @@ def test_manifest_lock_contention_times_out_before_local_writer(tmp_path: Path) 
                 **os.environ,
                 "PATH": f"{bin_dir}:{os.environ['PATH']}",
                 "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
-                "GPU_KEY_TEST_RANDOM": FAKE_KEY,
                 "GPU_KEY_TEST_OCID": FAKE_OCID,
                 "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
                 "GPU_KEY_TEST_STDIN_CAPTURE": str(stdin_capture),
@@ -1242,7 +1233,6 @@ def test_manifest_lock_release_allows_transaction_to_reach_fake_writer(tmp_path:
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
             "GPU_KEY_TEST_STDIN_CAPTURE": str(tmp_path / "writer-stdin"),
@@ -1258,6 +1248,7 @@ def test_manifest_lock_release_allows_transaction_to_reach_fake_writer(tmp_path:
     stdout, stderr = process.communicate(timeout=MANIFEST_LOCK_TIMEOUT_SECONDS + 5)
     assert waited_for_lock
     assert process.returncode == 0, stderr
+    _assert_key_only_in_stdin(tmp_path, tmp_path / "writer-stdin")
     assert stdout == f"{FAKE_OCID} 64\n"
     assert "--secret-name ACX_GPU_ENDPOINT_API_KEY" in argument_capture.read_text(encoding="utf-8")
     assert terraform_input.is_file()
@@ -1439,7 +1430,6 @@ def test_bound_vault_identity_conflicts_refuse_bootstrap_and_rotation_without_mu
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_EXPECTED_ID": FAKE_OCID,
             "GPU_KEY_TEST_VAULT_STATE": vault_state,
@@ -1491,7 +1481,6 @@ def test_matching_vault_identity_is_bound_for_bootstrap_and_rotation(
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_EXPECTED_ID": FAKE_OCID,
             "GPU_KEY_TEST_VAULT_STATE": "matching",
@@ -1503,6 +1492,7 @@ def test_matching_vault_identity_is_bound_for_bootstrap_and_rotation(
     )
 
     assert result.returncode == 0, result.stderr
+    _assert_key_only_in_stdin(tmp_path, tmp_path / "writer-stdin")
     assert result.stdout == f"{FAKE_OCID} 64\n"
     assert f"--expected-secret-id {FAKE_OCID}" in argument_capture.read_text(encoding="utf-8")
     assert mutations.exists() is rotate
@@ -1557,7 +1547,6 @@ def test_malformed_or_inconsistent_local_identity_refuses_before_writer(
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
             "TMPDIR": str(tmp_path),
@@ -1625,7 +1614,6 @@ def test_run_locked_rotation_without_recorded_ocid_refuses_before_writer(tmp_pat
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_WRITER_CAPTURE": str(writer_capture),
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
@@ -1689,7 +1677,6 @@ def test_locked_shell_rotation_without_recorded_ocid_refuses_before_writer(tmp_p
                 "GPU_KEY_MINT_TRANSACTION_LOCK_FD": str(descriptor),
                 "PATH": f"{bin_dir}:{os.environ['PATH']}",
                 "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
-                "GPU_KEY_TEST_RANDOM": FAKE_KEY,
                 "GPU_KEY_TEST_OCID": FAKE_OCID,
                 "GPU_KEY_TEST_WRITER_CAPTURE": str(writer_capture),
                 "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
@@ -1734,7 +1721,6 @@ def test_mint_does_not_overwrite_external_manifest_edit_after_writer(tmp_path: P
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_STDIN_CAPTURE": str(tmp_path / "writer-stdin"),
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(tmp_path / "writer-arguments"),
@@ -1768,7 +1754,8 @@ done
 exec "$@"
 ''',
         "openssl": '''#!/bin/sh
-printf '%s' "$GPU_KEY_TEST_RANDOM"
+# Generate the fixed fake value without storing it in env or this script.
+printf '%064d' 0 | tr '0' 'a'
 ''',
         "oci": f"#!{bin_dir / 'oci-python'}\n",
         "oci-python": """#!/bin/sh
@@ -1777,6 +1764,7 @@ case "$1" in
   */_vault_put_secret.py) ;;
   *) exit 95 ;;
 esac
+env >"$(dirname "$0")/../writer-environment"
 if [ -n "${GPU_KEY_TEST_WRITER_CAPTURE:-}" ]; then
     printf '%s\\n' "$*" >>"$GPU_KEY_TEST_WRITER_CAPTURE"
 fi
@@ -1818,6 +1806,18 @@ fi
     return bin_dir
 
 
+def _assert_key_only_in_stdin(tmp_path: Path, stdin_capture: Path) -> None:
+    environment_capture = tmp_path / "writer-environment"
+    assert environment_capture.is_file()
+    # Keep pytest's failure diagnostics from printing the captured environment.
+    environment_contains_key = FAKE_KEY.encode("ascii") in environment_capture.read_bytes()
+    assert not environment_contains_key, "key leaked to writer environment"
+    for path in sorted(tmp_path.rglob("*")):
+        if path.is_file() and path != stdin_capture:
+            file_contains_key = FAKE_KEY.encode("ascii") in path.read_bytes()
+            assert not file_contains_key, f"key leaked to {path}"
+
+
 def test_mint_requires_approval_before_contacting_writer(tmp_path: Path) -> None:
     bin_dir = _fake_cli(tmp_path)
     result = subprocess.run(
@@ -1855,7 +1855,6 @@ def test_mint_refuses_missing_oci_prerequisite_before_lock_or_writer(
         "PATH": str(bin_dir),
         "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
         "GPU_KEY_TEST_STDIN_CAPTURE": str(stdin_capture),
-        "GPU_KEY_TEST_RANDOM": FAKE_KEY,
         "GPU_KEY_TEST_OCID": FAKE_OCID,
     }
     environment.pop("ACX_OCI_PYTHON", None)
@@ -1950,7 +1949,6 @@ def test_run_locked_helper_requires_explicit_approval_before_writer(
         **os.environ,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
-        "GPU_KEY_TEST_RANDOM": FAKE_KEY,
         "GPU_KEY_TEST_OCID": FAKE_OCID,
         "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
         "GPU_KEY_TEST_STDIN_CAPTURE": str(stdin_capture),
@@ -2008,7 +2006,6 @@ def test_run_locked_helper_with_approval_publishes_complete_fragments(
         **os.environ,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
-        "GPU_KEY_TEST_RANDOM": FAKE_KEY,
         "GPU_KEY_TEST_OCID": FAKE_OCID,
         "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
         "GPU_KEY_TEST_STDIN_CAPTURE": str(stdin_capture),
@@ -2033,6 +2030,7 @@ def test_run_locked_helper_with_approval_publishes_complete_fragments(
     result = subprocess.run(args, check=False, capture_output=True, text=True, env=environment)
 
     assert result.returncode == 0, result.stderr
+    _assert_key_only_in_stdin(tmp_path, stdin_capture)
     assert result.stdout == f"{FAKE_OCID} 64\n"
     assert FAKE_KEY not in result.stdout + result.stderr
     assert stdin_capture.read_text(encoding="utf-8") == FAKE_KEY
@@ -2119,7 +2117,6 @@ def test_mint_pipes_fake_random_input_and_prints_only_ocid_and_length(
         **os.environ,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
-        "GPU_KEY_TEST_RANDOM": FAKE_KEY,
         "GPU_KEY_TEST_OCID": FAKE_OCID,
         "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
         "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
@@ -2127,15 +2124,26 @@ def test_mint_pipes_fake_random_input_and_prints_only_ocid_and_length(
     }
     if interpreter_source == "cli-shebang":
         environment.pop("ACX_OCI_PYTHON")
+    if trace:
+        environment["SHELLOPTS"] = "xtrace"
+        # set +x updates exported SHELLOPTS, so re-enable xtrace at every Bash
+        # entry, including the locked script and its nested writer shell.
+        bash_startup = tmp_path / "bash-startup"
+        bash_startup.write_text("set -x\n", encoding="utf-8")
+        environment["BASH_ENV"] = str(bash_startup)
     if rotate:
         environment["GPU_KEY_TEST_EXPECTED_ID"] = FAKE_OCID
 
     result = subprocess.run(args, check=False, capture_output=True, text=True, env=environment)
 
     assert result.returncode == 0, result.stderr
+    _assert_key_only_in_stdin(tmp_path, input_capture)
     assert result.stdout == f"{FAKE_OCID} 64\n"
     assert FAKE_KEY not in result.stdout
     assert FAKE_KEY not in result.stderr
+    if trace:
+        # The outer script, locked script, and writer shell each disable tracing.
+        assert result.stderr.count("+ set +x\n") >= 3
     assert input_capture.read_text(encoding="utf-8") == FAKE_KEY
     vault_args = argument_capture.read_text(encoding="utf-8")
     assert FAKE_KEY not in vault_args
@@ -2181,7 +2189,6 @@ def test_mint_checks_fragmented_manifest_and_updates_gpu_owner(tmp_path: Path) -
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
             "GPU_KEY_TEST_OCID": FAKE_OCID,
             "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
@@ -2190,6 +2197,7 @@ def test_mint_checks_fragmented_manifest_and_updates_gpu_owner(tmp_path: Path) -
     )
 
     assert result.returncode == 0, result.stderr
+    _assert_key_only_in_stdin(tmp_path, input_capture)
     assert result.stdout == f"{FAKE_OCID} 64\n"
     assert input_capture.read_text(encoding="utf-8") == FAKE_KEY
     gpu = next(
@@ -2251,7 +2259,6 @@ def test_mint_persists_complete_fragmented_manifest_with_original_newlines(
         **os.environ,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
-        "GPU_KEY_TEST_RANDOM": FAKE_KEY,
         "GPU_KEY_TEST_OCID": FAKE_OCID,
         "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
         "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
@@ -2264,6 +2271,7 @@ def test_mint_persists_complete_fragmented_manifest_with_original_newlines(
     result = subprocess.run(args, check=False, capture_output=True, text=True, env=environment)
 
     assert result.returncode == 0, result.stderr
+    _assert_key_only_in_stdin(tmp_path, input_capture)
     assert result.stdout == f"{FAKE_OCID} 64\n"
     assert input_capture.read_text(encoding="utf-8") == FAKE_KEY
     assert mutations.read_text(encoding="utf-8") == ("rotate\n" if rotate else "create\n")
@@ -2336,7 +2344,6 @@ def test_mint_publishes_writer_supported_ocids_through_bootstrap_retry_and_rotat
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
-            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
             "GPU_KEY_TEST_OCID": secret_ocid,
             "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
             "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
@@ -2353,6 +2360,7 @@ def test_mint_publishes_writer_supported_ocids_through_bootstrap_retry_and_rotat
         result = subprocess.run(args, check=False, capture_output=True, text=True, env=environment)
 
         assert result.returncode == 0, result.stderr
+        _assert_key_only_in_stdin(tmp_path, input_capture)
         assert result.stdout == f"{secret_ocid} 64\n"
         assert FAKE_KEY not in result.stdout + result.stderr
 

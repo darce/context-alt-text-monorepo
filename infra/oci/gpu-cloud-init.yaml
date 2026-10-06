@@ -300,7 +300,8 @@ write_files:
         exit 1
       fi
       unset secret_b64
-      if ! /usr/bin/grep -Eq '^[[:xdigit:]]{64}$' "$temporary"; then
+      if [[ "$(/usr/bin/wc -c <"$temporary")" -ne 64 ]] \
+        || ! /usr/bin/grep -Eq '^[[:xdigit:]]{64}$' "$temporary"; then
         echo "GPU Vault key has invalid content; refusing to start llama.cpp" >&2
         exit 1
       fi
@@ -321,9 +322,8 @@ write_files:
         echo "GPU Vault key file is missing; refusing to start llama.cpp" >&2
         exit 1
       fi
-      key="$(<"$KEY_PATH")"
-      if [[ ! "$key" =~ ^[[:xdigit:]]{64}$ ]]; then
-        unset key
+      if [[ "$(/usr/bin/wc -c <"$KEY_PATH")" -ne 64 ]] \
+        || ! /usr/bin/grep -Eq '^[[:xdigit:]]{64}$' "$KEY_PATH"; then
         echo "GPU Vault key file is invalid; refusing to start llama.cpp" >&2
         exit 1
       fi
@@ -331,13 +331,14 @@ write_files:
         --name acx-gpu-vlm \
         -p 8000:8000 \
         -v /opt/acx-gpu/models:/models:ro \
+        -v "$KEY_PATH:/run/secrets/acx-gpu-api-key:ro" \
         ghcr.io/ggerganov/llama.cpp:server-cuda \
         --host 0.0.0.0 \
         --port 8000 \
         --model /models/qwen3-vl-30b-a3b-instruct-q4.gguf \
         --mmproj /models/qwen3-vl-30b-a3b-instruct-mmproj.gguf \
         --ctx-size 8192 \
-        --api-key "$key"
+        --api-key-file /run/secrets/acx-gpu-api-key
 
   - path: /etc/systemd/system/acx-gpu-vlm.service
     permissions: "0644"

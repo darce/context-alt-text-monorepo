@@ -187,6 +187,71 @@ def test_frontend_rejects_config_mutation_or_escape_before_consumption(tmp_path:
 
 
 @pytest.mark.parametrize(
+    "mutation",
+    [
+        'env.VITE_CLERK_FAPI = "https://stale.fake-review.invalid";',
+        'const field = "VITE_CLERK_FAPI"; env[field] = "https://stale.fake-review.invalid";',
+        'const alias = env; alias.VITE_CLERK_FAPI = "https://stale.fake-review.invalid";',
+        "delete env.VITE_CLERK_FAPI;",
+        "Object.assign(env, getOverrides());",
+        'env.set("VITE_CLERK_FAPI", "https://stale.fake-review.invalid");',
+        "env = {};",
+    ],
+    ids=[
+        "property-write",
+        "dynamic-key-write",
+        "alias-write",
+        "delete",
+        "object-assign",
+        "mutator-escape",
+        "parameter-reassign",
+    ],
+)
+def test_frontend_rejects_mutation_inside_config_consumer(tmp_path: Path, mutation: str) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function parsePortalConfig(env) { "
+        f"{mutation} return {{ publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        "parsePortalConfig(env);\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ClerkConfigError):
+        module.validate_frontend_modules(config, [reachable])
+
+
+def test_frontend_accepts_portal_parse_config_forwarding_form(tmp_path: Path) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function parsePortalConfig(env, isProduction = false) { "
+        "const publishableKey = trimEnv(env.VITE_CLERK_PUBLISHABLE_KEY); "
+        "const config = { publishableKey: publishableKey.length > 0 "
+        "&& !(isProduction && publishableKey.startsWith('pk_test_')) ? publishableKey : null, "
+        "fapiOrigin: parseFapiOrigin(env.VITE_CLERK_FAPI), "
+        "portalEnabled: parseEnabledFlag(env.VITE_PORTAL_ENABLED) }; "
+        "if (Object.prototype.hasOwnProperty.call(env, 'VITE_PAYMENTS_ENABLED')) "
+        "config.paymentsEnabled = parsePaymentsEnabled(env.VITE_PAYMENTS_ENABLED); "
+        "if (Object.prototype.hasOwnProperty.call(env, 'VITE_PUBLIC_PLAN_CODE')) "
+        "config.publicPlanCode = parsePublicPlanCode(env.VITE_PUBLIC_PLAN_CODE); "
+        "return config; }\n"
+        "parsePortalConfig({ "
+        f'VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true", '
+        'VITE_PAYMENTS_ENABLED: "false", VITE_PUBLIC_PLAN_CODE: "portal" });\n',
+        encoding="utf-8",
+    )
+
+    module.validate_frontend_modules(config, [reachable])
+
+
+@pytest.mark.parametrize(
     "member",
     [
         '["VITE_CLERK_FAPI"]: "https://stale.fake-review.invalid"',

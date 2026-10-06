@@ -38,6 +38,8 @@ _CLERK_KEY_FIELD = "VITE_CLERK_PUBLISHABLE_KEY"
 _CLERK_FAPI_FIELD = "VITE_CLERK_FAPI"
 _PORTAL_ENABLED_FIELD = "VITE_PORTAL_ENABLED"
 _FRONTEND_CONFIG_FIELDS = frozenset({_CLERK_KEY_FIELD, _CLERK_FAPI_FIELD, _PORTAL_ENABLED_FIELD})
+_OPTIONAL_FRONTEND_CONFIG_FIELDS = frozenset({"VITE_PAYMENTS_ENABLED", "VITE_PUBLIC_PLAN_CODE"})
+_CONSUMER_CONFIG_FIELDS = _FRONTEND_CONFIG_FIELDS | _OPTIONAL_FRONTEND_CONFIG_FIELDS
 _HOSTNAME_RE = re.compile(
     r"^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?"
     r"(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$"
@@ -722,8 +724,10 @@ def _static_field_value(
     raise ClerkConfigError(f"{name}: configuration value is not a supported static string")
 
 
-def _function_parameter_consumers(tokens: Sequence[_JSToken], pairs: dict[int, int]) -> dict[str, str]:
-    consumers: dict[str, str] = {}
+def _function_parameter_consumers(
+    tokens: Sequence[_JSToken], pairs: dict[int, int]
+) -> dict[str, tuple[str, int, int]]:
+    consumers: dict[str, tuple[str, int, int]] = {}
 
     def add_consumer(name: str | None, params_open: int, body_open: int) -> None:
         if name is None or body_open not in pairs or params_open >= len(tokens):
@@ -745,7 +749,7 @@ def _function_parameter_consumers(tokens: Sequence[_JSToken], pairs: dict[int, i
             ):
                 fields.add(tokens[index + 2].value)
         if {_CLERK_KEY_FIELD, _CLERK_FAPI_FIELD}.issubset(fields):
-            consumers[name] = first_param.value
+            consumers[name] = (first_param.value, body_open, body_close)
 
     for index, token in enumerate(tokens):
         if token.kind == "identifier" and token.value == "function":
@@ -795,6 +799,55 @@ def _function_parameter_consumers(tokens: Sequence[_JSToken], pairs: dict[int, i
             if arrow < len(tokens) and _is_punct(tokens[arrow], "=>") and body_open < len(tokens) and _is_punct(tokens[body_open], "{"):
                 add_consumer(name, params_open, body_open)
     return consumers
+
+
+def _validate_consumer_parameter(
+    tokens: Sequence[_JSToken], parameter: str, body_open: int, body_close: int
+) -> None:
+    reads: set[str] = set()
+    assignment_operators = {"=", "+=", "-=", "*=", "/=", "++", "--"}
+    logical_assignment_operators = {"||", "&&", "??", "|", "&", "^"}
+    for index in range(body_open + 1, body_close):
+        if tokens[index].kind != "identifier" or tokens[index].value != parameter:
+            continue
+        if (
+            index >= body_open + 9
+            and [token.value for token in tokens[index - 8 : index]]
+            == ["Object", ".", "prototype", ".", "hasOwnProperty", ".", "call", "("]
+            and index + 3 < body_close
+            and _is_punct(tokens[index + 1], ",")
+            and tokens[index + 2].kind == "string"
+            and tokens[index + 2].value in _OPTIONAL_FRONTEND_CONFIG_FIELDS
+            and _is_punct(tokens[index + 3], ")")
+        ):
+            continue
+        field_index = index + 2
+        if (
+            field_index >= body_close
+            or not _is_punct(tokens[index + 1], ".")
+            or tokens[field_index].kind != "identifier"
+            or tokens[field_index].value not in _CONSUMER_CONFIG_FIELDS
+        ):
+            raise ClerkConfigError("VITE_CLERK_FAPI: portal config consumer parameter is mutated or escapes")
+        previous = tokens[index - 1] if index > body_open + 1 else None
+        following = tokens[field_index + 1] if field_index + 1 < body_close else None
+        following_next = tokens[field_index + 2] if field_index + 2 < body_close else None
+        if (
+            (previous is not None and previous.kind == "identifier" and previous.value == "delete")
+            or (previous is not None and previous.kind == "punct" and previous.value in {"++", "--"})
+            or (following is not None and following.kind == "punct" and following.value in assignment_operators)
+            or (
+                following is not None
+                and following.kind == "punct"
+                and following.value in logical_assignment_operators
+                and following_next is not None
+                and _is_punct(following_next, "=")
+            )
+        ):
+            raise ClerkConfigError("VITE_CLERK_FAPI: portal config consumer parameter is mutated or escapes")
+        reads.add(tokens[field_index].value or "")
+    if not {_CLERK_KEY_FIELD, _CLERK_FAPI_FIELD}.issubset(reads):
+        raise ClerkConfigError("VITE_CLERK_FAPI: portal config consumer does not read the required fields")
 
 
 def _resolve_config_object(
@@ -1190,6 +1243,9 @@ def _portal_config_records(tokens: Sequence[_JSToken]) -> tuple[list[dict[str, s
         raise ClerkConfigError("VITE_CLERK_FAPI: portal configuration record is not consumed by the Clerk config parser")
 
     for call_index, object_index, direct_use in consumer_calls:
+        consumer_name = tokens[call_index].value or ""
+        parameter, body_open, body_close = consumer_functions[consumer_name]
+        _validate_consumer_parameter(tokens, parameter, body_open, body_close)
         _reject_config_object_mutation_or_escape(
             tokens,
             scopes,

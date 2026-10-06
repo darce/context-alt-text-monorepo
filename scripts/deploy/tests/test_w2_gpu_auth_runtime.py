@@ -9,6 +9,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -241,6 +242,60 @@ def test_gpu_secret_ocid_variable_rejects_invalid_identifier_artifacts(
         output = planned.stdout + planned.stderr
         assert planned.returncode != 0, f"{name} unexpectedly planned successfully"
         assert "gpu_api_key_secret_ocid must be empty or a valid OCI Vault secret OCID" in output
+
+
+def test_generated_secret_var_file_must_follow_stale_operator_file(
+    tmp_path: Path,
+) -> None:
+    terraform = shutil.which("terraform")
+    if terraform is None:
+        pytest.skip("Terraform is required for the provider-free variable plan check")
+
+    fixture = tmp_path / "var-file-precedence"
+    fixture.mkdir()
+    (fixture / "main.tf").write_text(
+        _gpu_secret_ocid_variable_block()
+        + '\noutput "effective_gpu_api_key_secret_ocid" {\n'
+        + "  value = var.gpu_api_key_secret_ocid\n}\n"
+    )
+
+    stale_identifier = "ocid1.vaultsecret.oc1.iad.FAKE_GPU_API_KEY_STALE_0020"
+    generated_identifier = FAKE_SECRET_OCID
+    stale_file = fixture / "operator.tfvars"
+    stale_file.write_text(
+        "gpu_api_key_secret_ocid = " + json.dumps(stale_identifier) + "\n"
+    )
+    generated_file = fixture / "gpu-api-key-secret.tfvars"
+    generated_file.write_text(
+        "gpu_api_key_secret_ocid = " + json.dumps(generated_identifier) + "\n"
+    )
+
+    def plan_with(*var_files: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                terraform,
+                f"-chdir={fixture}",
+                "plan",
+                "-input=false",
+                "-no-color",
+                *(f"-var-file={path}" for path in var_files),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    generated_last = plan_with(stale_file, generated_file)
+    generated_output = generated_last.stdout + generated_last.stderr
+    assert generated_last.returncode == 0, generated_output
+    assert f'"{generated_identifier}"' in generated_output
+    assert stale_identifier not in generated_output
+
+    stale_last = plan_with(generated_file, stale_file)
+    stale_output = stale_last.stdout + stale_last.stderr
+    assert stale_last.returncode == 0, stale_output
+    assert f'"{stale_identifier}"' in stale_output
+    assert generated_identifier not in stale_output
 
 
 def test_gpu_key_fetch_fails_closed_after_five_instance_principal_attempts(

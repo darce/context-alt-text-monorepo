@@ -16,7 +16,7 @@ from typing import Callable, Sequence, TextIO
 
 from env import render_env as render
 from env.manifest import ManifestError, load_manifest
-from env.secret_refs import SecretUnavailable
+from env.secret_refs import OciCliUnavailable, OciResolutionFailed, SecretUnavailable
 
 
 class _InvalidLeaseEnv(ValueError):
@@ -48,6 +48,19 @@ def _refusal_reason(exc: OSError | ValueError) -> str:
     if source_module in {"env.manifest", "env.render_env", __name__}:
         return str(exc)
     return type(exc).__name__
+
+
+def _wrapped_oci_failure(exc: SecretUnavailable) -> OciCliUnavailable | OciResolutionFailed | None:
+    # render._resolve_runtime_secret sanitizes SecretUnavailable subclasses but
+    # retains their type in __context__; use it to preserve OCI exit diagnosis.
+    current = exc.__context__
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (OciCliUnavailable, OciResolutionFailed)):
+            return current
+        current = current.__context__
+    return None
 
 
 def _lease_path(backup_root: Path, lease_env: str | None) -> Path | None:
@@ -239,7 +252,20 @@ def run(
                 _owned_write(Path(f"{path}.pre-envman"), plan.backup, owner, backup=True)
             _owned_write(path, plan.data, owner)
         return 0
+    except OciCliUnavailable as exc:
+        print(str(exc), file=err)
+        return 5
+    except OciResolutionFailed as exc:
+        print(str(exc), file=err)
+        return 6
     except SecretUnavailable as exc:
+        oci_failure = _wrapped_oci_failure(exc)
+        if isinstance(oci_failure, OciCliUnavailable):
+            print(str(oci_failure), file=err)
+            return 5
+        if isinstance(oci_failure, OciResolutionFailed):
+            print(str(oci_failure), file=err)
+            return 6
         print(str(exc), file=err)
         return 4
     except _InvalidLeaseEnv as exc:

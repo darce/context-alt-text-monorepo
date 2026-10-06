@@ -306,8 +306,13 @@ def _scan_shell_line(raw: str, state: _ShellState) -> str:
             and context.kind in {"paren", "backtick"}
             and char == "<"
             and scan_raw[index:index + 2] == "<<"
-            and scan_raw[index:index + 3] != "<<<"
         ):
+            if scan_raw[index:index + 3] == "<<<":
+                if context.kind == "paren":
+                    _finish_shell_word(context)
+                state.in_word = False
+                index += 3
+                continue
             parsed = _parse_heredoc(scan_raw, index)
             if parsed is None:
                 # Expansions, concatenated delimiter words and other shell

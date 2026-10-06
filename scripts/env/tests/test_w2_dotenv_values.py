@@ -462,3 +462,26 @@ def test_heredoc_operators_in_literal_text_remain_values(write_manifest, text, e
 
     assert result["values"] == {"NOTICE": expected}
     assert result["withheld"]["unparsed"] == []
+
+
+@pytest.mark.parametrize(
+    "substitution",
+    [
+        "$(cat <<<fake)",
+        "<(cat <<<fake)",
+        "`cat <<<fake`",
+    ],
+    ids=("command-substitution", "process-substitution", "backticks"),
+)
+def test_here_strings_do_not_hide_following_assignments(write_manifest, substitution):
+    render = load_module("render_env")
+    module = load_module("harvest_extract")
+    root = _manifest(write_manifest, "NOTICE", "AFTER")
+    text = f"NOTICE={substitution}\nAFTER=visible\n"
+
+    assignments = render.shell_assignments(text)
+    result = _extract(module, root, text)
+
+    assert set(assignments) == {"NOTICE", "AFTER"}
+    assert result["values"] == {"AFTER": "visible"}
+    assert result["withheld"]["unparsed"] == ["NOTICE"]

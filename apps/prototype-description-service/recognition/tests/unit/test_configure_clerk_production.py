@@ -132,6 +132,59 @@ def test_frontend_resolves_static_config_aliases(tmp_path: Path) -> None:
     module.validate_frontend_modules(config, [reachable])
 
 
+def test_frontend_resolves_vite_object_alias_property_forwarding(tmp_path: Path) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function parsePortalConfig(env) { return {"
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f'const ef = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        f'const IT = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        "const a = IT;\n"
+        'const diagnostic = "React reported } ] ) in a message";\n'
+        "parsePortalConfig({"
+        "VITE_CLERK_PUBLISHABLE_KEY: a.VITE_CLERK_PUBLISHABLE_KEY, "
+        "VITE_CLERK_FAPI: a.VITE_CLERK_FAPI, "
+        "VITE_PORTAL_ENABLED: a.VITE_PORTAL_ENABLED });\n",
+        encoding="utf-8",
+    )
+
+    module.validate_frontend_modules(config, [reachable])
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        'env.VITE_CLERK_FAPI = "https://stale.fake-review.invalid";',
+        'delete env.VITE_CLERK_FAPI;',
+        'env["VITE_CLERK_FAPI"] = "https://stale.fake-review.invalid";',
+        'const alias = env; alias.VITE_CLERK_FAPI = "https://stale.fake-review.invalid";',
+        "inspect(env);",
+    ],
+    ids=["property-write", "delete", "computed-write", "alias-write", "unsupported-escape"],
+)
+def test_frontend_rejects_config_mutation_or_escape_before_consumption(tmp_path: Path, mutation: str) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function parsePortalConfig(env) { return {"
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        f"{mutation}\nparsePortalConfig(env);\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ClerkConfigError):
+        module.validate_frontend_modules(config, [reachable])
+
+
 @pytest.mark.parametrize(
     "aliases",
     [

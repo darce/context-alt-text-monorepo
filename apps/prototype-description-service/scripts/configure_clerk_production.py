@@ -354,6 +354,10 @@ def _tokenize_javascript(source: str) -> list[_JSToken]:
     return tokens
 
 
+def _is_punct(token: _JSToken, value: str) -> bool:
+    return token.kind == "punct" and token.value == value
+
+
 def _javascript_delimiters(tokens: Sequence[_JSToken]) -> tuple[dict[int, int], list[tuple[int, ...]]]:
     closing = {"{": "}", "[": "]", "(": ")"}
     reverse = {value: key for key, value in closing.items()}
@@ -361,7 +365,7 @@ def _javascript_delimiters(tokens: Sequence[_JSToken]) -> tuple[dict[int, int], 
     pairs: dict[int, int] = {}
     scopes: list[tuple[int, ...]] = []
     for index, token in enumerate(tokens):
-        value = token.value
+        value = token.value if token.kind == "punct" else None
         scopes.append(tuple(position for opener, position in stack if opener == "{"))
         if value in closing:
             stack.append((value, index))
@@ -378,19 +382,23 @@ def _javascript_delimiters(tokens: Sequence[_JSToken]) -> tuple[dict[int, int], 
 
 def _object_fields(
     tokens: Sequence[_JSToken], pairs: dict[int, int], open_index: int
-) -> tuple[dict[str, tuple[_JSToken, int]], bool]:
+) -> tuple[dict[str, tuple[int, int]], bool]:
     close_index = pairs[open_index]
-    fields: dict[str, tuple[_JSToken, int]] = {}
+    fields: dict[str, tuple[int, int]] = {}
     has_spread = False
     index = open_index + 1
     while index < close_index:
         token = tokens[index]
-        if token.value == ",":
+        if _is_punct(token, ","):
             index += 1
             continue
-        if token.value == "...":
+        if _is_punct(token, "..."):
             has_spread = True
-        if token.kind in {"identifier", "string"} and index + 1 < close_index and tokens[index + 1].value == ":":
+        if (
+            token.kind in {"identifier", "string"}
+            and index + 1 < close_index
+            and _is_punct(tokens[index + 1], ":")
+        ):
             name = token.value
             if name in _FRONTEND_CONFIG_FIELDS:
                 if name in fields:
@@ -399,19 +407,16 @@ def _object_fields(
                 value_end = value_start
                 while value_end < close_index:
                     value_token = tokens[value_end]
-                    if value_token.value in {"{", "[", "("}:
+                    if value_token.kind == "punct" and value_token.value in {"{", "[", "("}:
                         value_end = pairs[value_end] + 1
-                    elif value_token.value == ",":
+                    elif _is_punct(value_token, ","):
                         break
                     else:
                         value_end += 1
-                if value_end - value_start != 1:
-                    fields[name] = (_JSToken("unsupported", None, ""), value_start)
-                else:
-                    fields[name] = (tokens[value_start], value_start)
+                fields[name] = (value_start, value_end)
                 index = value_end + 1
                 continue
-        if token.value in {"{", "[", "("}:
+        if token.kind == "punct" and token.value in {"{", "[", "("}:
             index = pairs[index] + 1
         else:
             index += 1
@@ -425,17 +430,24 @@ _INITIALIZER_CONTINUATIONS = frozenset(
         "as", "satisfies",
     }
 )
+_INITIALIZER_WORD_CONTINUATIONS = frozenset({"in", "instanceof", "of", "as", "satisfies"})
 
 
 def _initializer_ends_here(tokens: Sequence[_JSToken], next_index: int) -> bool:
     if next_index == len(tokens):
         return True
     following = tokens[next_index]
-    if following.value in {";", ",", "}"}:
+    if following.kind == "punct" and following.value in {";", ",", "}"}:
         return True
     if not following.line_break_before:
         return False
-    return following.kind != "template" and following.value not in _INITIALIZER_CONTINUATIONS
+    if following.kind == "template":
+        return False
+    if following.kind == "punct" and following.value in _INITIALIZER_CONTINUATIONS:
+        return False
+    if following.kind == "identifier" and following.value in _INITIALIZER_WORD_CONTINUATIONS:
+        return False
+    return True
 
 
 def _resolve_static_alias(
@@ -450,10 +462,11 @@ def _resolve_static_alias(
     index = 0
     while index + 3 < before_index:
         if (
-            tokens[index].value == "const"
+            tokens[index].kind == "identifier"
+            and tokens[index].value == "const"
             and tokens[index + 1].kind == "identifier"
             and tokens[index + 1].value == name
-            and tokens[index + 2].value == "="
+            and _is_punct(tokens[index + 2], "=")
         ):
             initializer = tokens[index + 3]
             declarations.append((index, scopes[index], initializer))
@@ -490,17 +503,62 @@ def _resolve_static_alias(
 
 def _static_field_value(
     name: str,
-    field: tuple[_JSToken, int],
+    field: tuple[int, int],
     tokens: Sequence[_JSToken],
     scopes: Sequence[tuple[int, ...]],
     use_scope: tuple[int, ...],
-) -> str:
-    token, value_index = field
-    if token.kind == "string" and token.value is not None:
-        return token.value
-    if token.kind == "identifier" and token.value is not None:
+    object_fields: dict[int, dict[str, tuple[int, int]]],
+    pairs: dict[int, int],
+    seen_objects: frozenset[int] = frozenset(),
+) -> tuple[str, set[int], set[int]]:
+    value_start, value_end = field
+    expression_size = value_end - value_start
+    token = tokens[value_start] if expression_size else None
+    if expression_size == 1 and token is not None and token.kind == "string" and token.value is not None:
+        return token.value, set(), set()
+    if expression_size == 1 and token is not None and token.kind == "identifier" and token.value is not None:
         try:
-            return _resolve_static_alias(token.value, tokens, scopes, use_scope, value_index)
+            value = _resolve_static_alias(token.value, tokens, scopes, use_scope, value_start)
+            return value, set(), set()
+        except ClerkConfigError as exc:
+            message = str(exc)
+            if message.startswith("VITE_CLERK_FAPI:"):
+                raise ClerkConfigError(message.replace("VITE_CLERK_FAPI:", f"{name}:", 1)) from None
+            raise
+    if (
+        expression_size == 3
+        and token is not None
+        and token.kind == "identifier"
+        and _is_punct(tokens[value_start + 1], ".")
+        and tokens[value_start + 2].kind == "identifier"
+    ):
+        try:
+            object_index = _resolve_config_object(
+                token.value or "",
+                tokens,
+                scopes,
+                use_scope,
+                value_start,
+                set(object_fields),
+                pairs,
+            )
+            if object_index in seen_objects or len(seen_objects) >= 16:
+                raise ClerkConfigError("VITE_CLERK_FAPI: portal config object property chain is cyclic or too deep")
+            property_name = tokens[value_start + 2].value
+            object_field = object_fields[object_index].get(property_name or "")
+            if object_field is None:
+                raise ClerkConfigError("VITE_CLERK_FAPI: portal config object property is unsupported")
+            resolved, supporting_objects, member_uses = _static_field_value(
+                name,
+                object_field,
+                tokens,
+                scopes,
+                scopes[object_index],
+                object_fields,
+                pairs,
+                seen_objects | {object_index},
+            )
+            return resolved, supporting_objects | {object_index}, member_uses | {value_start}
         except ClerkConfigError as exc:
             message = str(exc)
             if message.startswith("VITE_CLERK_FAPI:"):
@@ -515,52 +573,62 @@ def _function_parameter_consumers(tokens: Sequence[_JSToken], pairs: dict[int, i
     def add_consumer(name: str | None, params_open: int, body_open: int) -> None:
         if name is None or body_open not in pairs or params_open >= len(tokens):
             return
-        if tokens[params_open].value == "(":
+        if _is_punct(tokens[params_open], "("):
             first_param = tokens[params_open + 1] if params_open + 1 < pairs[params_open] else None
         else:
             first_param = tokens[params_open]
         if first_param is None or first_param.kind != "identifier":
             return
         body_close = pairs[body_open]
-        fields = {
-            tokens[index + 2].value
-            for index in range(body_open + 1, body_close - 2)
-            if tokens[index].value == first_param.value
-            and tokens[index + 1].value == "."
-            and tokens[index + 2].kind == "identifier"
-        }
+        fields = set()
+        for index in range(body_open + 1, body_close - 2):
+            if (
+                tokens[index].kind == "identifier"
+                and tokens[index].value == first_param.value
+                and _is_punct(tokens[index + 1], ".")
+                and tokens[index + 2].kind == "identifier"
+            ):
+                fields.add(tokens[index + 2].value)
         if {_CLERK_KEY_FIELD, _CLERK_FAPI_FIELD}.issubset(fields):
             consumers[name] = first_param.value
 
     for index, token in enumerate(tokens):
-        if token.value == "function":
+        if token.kind == "identifier" and token.value == "function":
             name_index = index + 1
-            if name_index < len(tokens) and tokens[name_index].value == "*":
+            if name_index < len(tokens) and _is_punct(tokens[name_index], "*"):
                 name_index += 1
             if name_index >= len(tokens) or tokens[name_index].kind != "identifier":
                 continue
             params_open = name_index + 1
-            if params_open >= len(tokens) or tokens[params_open].value != "(":
+            if params_open >= len(tokens) or not _is_punct(tokens[params_open], "("):
                 continue
             body_open = pairs.get(params_open, -1) + 1
-            if body_open < len(tokens) and tokens[body_open].value == "{":
+            if body_open < len(tokens) and _is_punct(tokens[body_open], "{"):
                 add_consumer(tokens[name_index].value, params_open, body_open)
         if (
-            token.value == "const"
+            token.kind == "identifier"
+            and token.value == "const"
             and index + 3 < len(tokens)
             and tokens[index + 1].kind == "identifier"
-            and tokens[index + 2].value == "="
+            and _is_punct(tokens[index + 2], "=")
+            and tokens[index + 3].kind == "identifier"
             and tokens[index + 3].value == "function"
         ):
             params_open = index + 4
-            if params_open < len(tokens) and tokens[params_open].value == "(":
+            if params_open < len(tokens) and _is_punct(tokens[params_open], "("):
                 body_open = pairs.get(params_open, -1) + 1
-                if body_open < len(tokens) and tokens[body_open].value == "{":
+                if body_open < len(tokens) and _is_punct(tokens[body_open], "{"):
                     add_consumer(tokens[index + 1].value, params_open, body_open)
-        if token.value == "const" and index + 4 < len(tokens) and tokens[index + 1].kind == "identifier" and tokens[index + 2].value == "=":
+        if (
+            token.kind == "identifier"
+            and token.value == "const"
+            and index + 4 < len(tokens)
+            and tokens[index + 1].kind == "identifier"
+            and _is_punct(tokens[index + 2], "=")
+        ):
             name = tokens[index + 1].value
             params_open = index + 3
-            if tokens[params_open].value == "(":
+            if _is_punct(tokens[params_open], "("):
                 params_close = pairs.get(params_open, -1)
                 arrow = params_close + 1
             elif tokens[params_open].kind == "identifier":
@@ -569,7 +637,7 @@ def _function_parameter_consumers(tokens: Sequence[_JSToken], pairs: dict[int, i
             else:
                 continue
             body_open = arrow + 1
-            if arrow < len(tokens) and tokens[arrow].value == "=>" and body_open < len(tokens) and tokens[body_open].value == "{":
+            if arrow < len(tokens) and _is_punct(tokens[arrow], "=>") and body_open < len(tokens) and _is_punct(tokens[body_open], "{"):
                 add_consumer(name, params_open, body_open)
     return consumers
 
@@ -587,10 +655,11 @@ def _resolve_config_object(
     declarations: list[tuple[int, tuple[int, ...], int]] = []
     for index in range(before_index - 3):
         if (
-            tokens[index].value == "const"
+            tokens[index].kind == "identifier"
+            and tokens[index].value == "const"
             and tokens[index + 1].kind == "identifier"
             and tokens[index + 1].value == name
-            and tokens[index + 2].value == "="
+            and _is_punct(tokens[index + 2], "=")
         ):
             declarations.append((index, scopes[index], index + 3))
     visible = [item for item in declarations if len(item[1]) <= len(use_scope) and use_scope[: len(item[1])] == item[1]]
@@ -605,7 +674,7 @@ def _resolve_config_object(
     if identity in seen or len(seen) >= 16:
         raise ClerkConfigError("VITE_CLERK_FAPI: portal config object alias is cyclic or too deep")
     initializer = tokens[initializer_index]
-    if initializer.value == "{":
+    if _is_punct(initializer, "{"):
         close_index = pairs.get(initializer_index)
         if (
             initializer_index not in config_objects
@@ -629,32 +698,216 @@ def _resolve_config_object(
     )
 
 
+def _config_object_bindings(
+    tokens: Sequence[_JSToken],
+    scopes: Sequence[tuple[int, ...]],
+    pairs: dict[int, int],
+    object_fields: dict[int, dict[str, tuple[int, int]]],
+    before_index: int,
+) -> tuple[list[tuple[str, tuple[int, ...], int, int]], set[int], set[int]]:
+    bindings: list[tuple[str, tuple[int, ...], int, int]] = []
+    alias_uses: set[int] = set()
+    declaration_names: set[int] = set()
+
+    for index in range(before_index - 3):
+        if (
+            tokens[index].kind != "identifier"
+            or tokens[index].value != "const"
+            or tokens[index + 1].kind != "identifier"
+            or not _is_punct(tokens[index + 2], "=")
+        ):
+            continue
+        name = tokens[index + 1].value
+        initializer_index = index + 3
+        initializer = tokens[initializer_index]
+        object_index: int | None = None
+        if _is_punct(initializer, "{"):
+            close_index = pairs.get(initializer_index)
+            if (
+                initializer_index in object_fields
+                and close_index is not None
+                and _initializer_ends_here(tokens, close_index + 1)
+            ):
+                object_index = initializer_index
+        elif initializer.kind == "identifier" and initializer.value is not None:
+            if _initializer_ends_here(tokens, initializer_index + 1):
+                visible = [
+                    item
+                    for item in bindings
+                    if item[0] == initializer.value
+                    and index > item[2]
+                    and len(item[1]) <= len(scopes[initializer_index])
+                    and scopes[initializer_index][: len(item[1])] == item[1]
+                ]
+                if visible:
+                    max_scope = max(len(item[1]) for item in visible)
+                    nearest = [item for item in visible if len(item[1]) == max_scope]
+                    if len(nearest) != 1:
+                        raise ClerkConfigError("VITE_CLERK_FAPI: portal config object alias is ambiguous")
+                    object_index = nearest[0][3]
+                    alias_uses.add(initializer_index)
+        if object_index is not None:
+            bindings.append((name or "", scopes[index], index + 1, object_index))
+            declaration_names.add(index + 1)
+    return bindings, alias_uses, declaration_names
+
+
+def _config_binding_shadows(
+    tokens: Sequence[_JSToken], scopes: Sequence[tuple[int, ...]], pairs: dict[int, int]
+) -> tuple[list[tuple[str, tuple[int, ...], int]], set[int]]:
+    shadows: list[tuple[str, tuple[int, ...], int]] = []
+    declaration_names: set[int] = set()
+    for index, token in enumerate(tokens):
+        if (
+            token.kind == "identifier"
+            and token.value in {"const", "let", "var"}
+            and index + 1 < len(tokens)
+            and tokens[index + 1].kind == "identifier"
+        ):
+            name_index = index + 1
+            shadows.append((tokens[name_index].value or "", scopes[index], name_index))
+            declaration_names.add(name_index)
+
+        if token.kind == "identifier" and token.value == "function":
+            name_index = index + 1
+            if name_index < len(tokens) and tokens[name_index].kind == "identifier":
+                shadows.append((tokens[name_index].value or "", scopes[index], name_index))
+                declaration_names.add(name_index)
+                params_open = name_index + 1
+            else:
+                params_open = name_index
+            if params_open >= len(tokens) or not _is_punct(tokens[params_open], "("):
+                continue
+            params_close = pairs.get(params_open, -1)
+            body_open = params_close + 1
+            if params_close < 0 or body_open >= len(tokens) or not _is_punct(tokens[body_open], "{"):
+                continue
+            body_scope = scopes[body_open] + (body_open,)
+            for parameter_index in range(params_open + 1, params_close):
+                if tokens[parameter_index].kind == "identifier" and (
+                    parameter_index == params_open + 1 or _is_punct(tokens[parameter_index - 1], ",")
+                ):
+                    shadows.append((tokens[parameter_index].value or "", body_scope, parameter_index))
+                    declaration_names.add(parameter_index)
+
+    return shadows, declaration_names
+
+
+def _reject_config_object_mutation_or_escape(
+    tokens: Sequence[_JSToken],
+    scopes: Sequence[tuple[int, ...]],
+    pairs: dict[int, int],
+    object_fields: dict[int, dict[str, tuple[int, int]]],
+    tracked_objects: set[int],
+    before_index: int,
+    allowed_member_uses: set[int],
+    allowed_direct_use: int | None,
+) -> None:
+    bindings, alias_uses, binding_declarations = _config_object_bindings(
+        tokens, scopes, pairs, object_fields, before_index
+    )
+    shadows, shadow_declarations = _config_binding_shadows(tokens, scopes, pairs)
+    for use_index in range(before_index):
+        token = tokens[use_index]
+        if token.kind != "identifier" or use_index in binding_declarations | shadow_declarations:
+            continue
+        if use_index and _is_punct(tokens[use_index - 1], "."):
+            continue
+        if use_index + 1 < before_index and _is_punct(tokens[use_index + 1], ":"):
+            continue
+        visible = [
+            item
+            for item in bindings
+            if item[0] == token.value
+            and item[3] in tracked_objects
+            and item[2] < use_index
+            and len(item[1]) <= len(scopes[use_index])
+            and scopes[use_index][: len(item[1])] == item[1]
+        ]
+        if not visible:
+            continue
+        max_scope = max(len(item[1]) for item in visible)
+        nearest = [item for item in visible if len(item[1]) == max_scope]
+        if len(nearest) != 1:
+            raise ClerkConfigError("VITE_CLERK_FAPI: portal config object alias is ambiguous")
+        binding = nearest[0]
+        visible_shadows = [
+            item
+            for item in shadows
+            if item[0] == token.value
+            and item[2] != binding[2]
+            and len(item[1]) <= len(scopes[use_index])
+            and scopes[use_index][: len(item[1])] == item[1]
+        ]
+        if visible_shadows and max(len(item[1]) for item in visible_shadows) >= max_scope:
+            continue
+        if (
+            use_index in alias_uses
+            or use_index in allowed_member_uses
+            or use_index == allowed_direct_use
+        ):
+            continue
+        raise ClerkConfigError("VITE_CLERK_FAPI: portal config object is mutated or escapes before consumption")
+
+
 def _portal_config_records(tokens: Sequence[_JSToken]) -> tuple[list[dict[str, str]], set[str]]:
     pairs, scopes = _javascript_delimiters(tokens)
     consumer_functions = _function_parameter_consumers(tokens, pairs)
-    object_records: dict[int, dict[str, str]] = {}
+    object_fields: dict[int, dict[str, tuple[int, int]]] = {}
     for open_index, token in enumerate(tokens):
-        if token.value != "{" or open_index not in pairs:
+        if not _is_punct(token, "{") or open_index not in pairs:
             continue
         previous = tokens[open_index - 1] if open_index else None
-        if previous is not None and previous.value not in {"=", "(", "[", ",", ":", "return", "=>"}:
+        if previous is not None and not (
+            (previous.kind == "punct" and previous.value in {"=", "(", "[", ",", ":", "=>"})
+            or (previous.kind == "identifier" and previous.value == "return")
+        ):
             continue
         fields, has_spread = _object_fields(tokens, pairs, open_index)
         if not (_FRONTEND_CONFIG_FIELDS & fields.keys()):
             continue
         if has_spread or not _FRONTEND_CONFIG_FIELDS.issubset(fields):
             raise ClerkConfigError("VITE_CLERK_FAPI: portal configuration record is incomplete or unsupported")
-        use_scope = scopes[open_index]
-        object_records[open_index] = {
-            name: _static_field_value(name, fields[name], tokens, scopes, use_scope)
-            for name in _FRONTEND_CONFIG_FIELDS
-        }
+        object_fields[open_index] = fields
 
-    consumed_objects: set[int] = set()
+    object_records: dict[int, dict[str, str]] = {}
+    supporting_objects: dict[int, set[int]] = {}
+    member_reads: dict[int, set[int]] = {}
+    for open_index in sorted(object_fields):
+        record: dict[str, str] = {}
+        supports: set[int] = set()
+        reads: set[int] = set()
+        for name in _FRONTEND_CONFIG_FIELDS:
+            value, property_objects, property_reads = _static_field_value(
+                name,
+                object_fields[open_index][name],
+                tokens,
+                scopes,
+                scopes[open_index],
+                object_fields,
+                pairs,
+            )
+            record[name] = value
+            supports.update(property_objects)
+            reads.update(property_reads)
+        object_records[open_index] = record
+        supporting_objects[open_index] = supports
+        member_reads[open_index] = reads
+
+    consumer_calls: list[tuple[int, int, int | None]] = []
     for call_index, token in enumerate(tokens):
-        if token.value not in consumer_functions or call_index + 1 >= len(tokens) or tokens[call_index + 1].value != "(":
+        if (
+            token.kind != "identifier"
+            or token.value not in consumer_functions
+            or call_index + 1 >= len(tokens)
+            or not _is_punct(tokens[call_index + 1], "(")
+        ):
             continue
-        if call_index and tokens[call_index - 1].value in {"function", ".", "?."}:
+        if call_index and (
+            (tokens[call_index - 1].kind == "identifier" and tokens[call_index - 1].value == "function")
+            or _is_punct(tokens[call_index - 1], ".")
+            or _is_punct(tokens[call_index - 1], "?.")
+        ):
             continue
         call_open = call_index + 1
         if call_open not in pairs:
@@ -663,39 +916,61 @@ def _portal_config_records(tokens: Sequence[_JSToken]) -> tuple[list[dict[str, s
         argument_start = call_open + 1
         argument_end = argument_start
         while argument_end < call_close:
-            value = tokens[argument_end].value
-            if value in {"{", "[", "("}:
+            value_token = tokens[argument_end]
+            if value_token.kind == "punct" and value_token.value in {"{", "[", "("}:
                 argument_end = pairs[argument_end] + 1
-            elif value == ",":
+            elif _is_punct(value_token, ","):
                 break
             else:
                 argument_end += 1
         if argument_end == argument_start:
             continue
+        direct_use: int | None = None
         if (
-            tokens[argument_start].value == "{"
+            _is_punct(tokens[argument_start], "{")
             and argument_start in pairs
             and pairs[argument_start] + 1 == argument_end
         ):
             object_index = argument_start
         elif argument_end - argument_start == 1 and tokens[argument_start].kind == "identifier":
+            direct_use = argument_start
             object_index = _resolve_config_object(
                 tokens[argument_start].value or "",
                 tokens,
                 scopes,
                 scopes[call_index],
                 call_index,
-                set(object_records),
+                set(object_fields),
                 pairs,
             )
         else:
             continue
         if object_index in object_records:
-            consumed_objects.add(object_index)
+            consumer_calls.append((call_index, object_index, direct_use))
 
-    if object_records.keys() != consumed_objects:
+    consumed_objects = {object_index for _, object_index, _ in consumer_calls}
+    consumed_records = [object_records[index] for index in sorted(consumed_objects)]
+    if (not consumed_records and object_records) or any(
+        object_records[index] not in consumed_records for index in object_records.keys() - consumed_objects
+    ):
         raise ClerkConfigError("VITE_CLERK_FAPI: portal configuration record is not consumed by the Clerk config parser")
-    return list(object_records.values()), {_CLERK_KEY_FIELD, _CLERK_FAPI_FIELD} if consumer_functions else set()
+
+    for call_index, object_index, direct_use in consumer_calls:
+        _reject_config_object_mutation_or_escape(
+            tokens,
+            scopes,
+            pairs,
+            object_fields,
+            supporting_objects[object_index] | {object_index},
+            call_index,
+            member_reads[object_index],
+            direct_use,
+        )
+
+    return (
+        consumed_records,
+        {_CLERK_KEY_FIELD, _CLERK_FAPI_FIELD} if consumer_functions else set(),
+    )
 
 
 def validate_frontend_modules(config: DerivedClerkConfig, module_paths: Sequence[Path]) -> None:

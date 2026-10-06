@@ -31,6 +31,10 @@ class AltTextWriteStatusVocabularyTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $wpdb = $GLOBALS['wpdb'];
+        $lockName = 'acx_budget_lock_' . md5($wpdb->prefix);
+        $wpdb->queryResults[$wpdb->prepare('SELECT GET_LOCK(%s, %d)', $lockName, 1)] = '1';
+        $wpdb->queryResults[$wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lockName)] = '1';
         \WP_CLI::reset_cli_messages();
         $this->setOption('acx_recognition_url', 'http://localhost:8000');
         $this->setOption('acx_recognition_api_key', 'test-key');

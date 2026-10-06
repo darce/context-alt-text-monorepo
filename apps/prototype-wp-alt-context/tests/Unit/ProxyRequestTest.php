@@ -1202,6 +1202,9 @@ PHP;
     }
 
     /**
+     * SECHARD-1 / SECD-05: sh-ranges intentionally denies documentation IPv4;
+     * keep a separate global literal to exercise admitted bare IPv4.
+     *
      * @return array<string, array{0: string, 1: bool}>
      */
     public static function nonLoopbackProxyBaseProvider(): array
@@ -1209,7 +1212,8 @@ PHP;
         return [
             'public_dns' => ['https://api.example.test', false],
             'unrelated_tld' => ['https://cdn.other-org.example', false],
-            'bare_public_ipv4' => ['https://203.0.113.10', false],
+            'bare_public_ipv4' => ['https://8.8.8.8', false],
+            'documentation_ipv4' => ['https://203.0.113.10', true],
             'global_ipv4' => ['https://93.184.216.34', false],
             'public_ipv6' => ['https://[2606:4700:4700::1111]', false],
             'bracketed_ipv6' => ['https://[2001:db8::1]', true],

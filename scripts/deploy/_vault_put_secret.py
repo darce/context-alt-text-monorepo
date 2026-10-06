@@ -4,15 +4,17 @@
 Companion to scripts/deploy/lib/ocir-auth.sh (OCIRV-1). Used by
 `make ocir-token-rotate` and `make gpu-key-mint` to land credentials in Vault without them ever
 reaching argv (ps-visible to every user on the host), a shell history file, or
-a temp file on disk. The value is read from stdin, base64-encoded in memory,
-and handed to the Vaults API.
+a temp file on disk. `make gpu-key-mint` runs this writer locally with the
+operator's OCI CLI configuration, like `make ocir-token-rotate`. The value is
+read from stdin, base64-encoded in memory, and handed to the Vaults API.
 
 Creates the secret on first use; on subsequent runs it adds a version only when
 the active value differs. The OCID is stable across versions, so nothing
 downstream needs reconfiguring on rotation
 (vault-instance-principal-runbook.md section 5).
 
-Run with the OCI CLI's bundled interpreter, which already has the SDK:
+Run with the OCI CLI's bundled interpreter, which already has the SDK and uses
+the operator's local OCI CLI configuration:
     printf '%s' "$TOKEN" | "$(head -1 "$(command -v oci)" | sed 's|^#!||')" \\
         scripts/deploy/_vault_put_secret.py --secret-name OCIR_AUTH_TOKEN
 
@@ -439,15 +441,13 @@ def _accepts_keyword(call, keyword: str) -> bool:
     )
 
 
-def _make_client(factory, config, no_retry, timeout, signer=None):
+def _make_client(factory, config, no_retry, timeout):
     kwargs = {}
-    if signer is not None:
-        kwargs["signer"] = signer
     if _accepts_keyword(factory, "retry_strategy"):
         kwargs["retry_strategy"] = no_retry
     if _accepts_keyword(factory, "timeout"):
         kwargs["timeout"] = timeout
-    client = factory({} if signer is not None else config, **kwargs)
+    client = factory(config, **kwargs)
     if hasattr(client, "base_client"):
         client.base_client.timeout = timeout
     return client
@@ -480,11 +480,6 @@ def main() -> int:
         help="require an existing secret and add a version using its stable OCID",
     )
     ap.add_argument(
-        "--instance-principal",
-        action="store_true",
-        help="authenticate with this VM's instance principal (GPU key writer only)",
-    )
-    ap.add_argument(
         "--result-only",
         action="store_true",
         help="print only '<secret OCID> <value byte length>' after success",
@@ -507,7 +502,6 @@ def main() -> int:
     gpu_only_options = (
         args.bootstrap
         or args.rotate_existing
-        or args.instance_principal
         or args.result_only
         or args.expected_secret_id is not None
     )
@@ -536,17 +530,12 @@ def main() -> int:
     if not candidate_value:
         raise SystemExit("refusing to store an empty value")
 
-    if args.instance_principal:
-        signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
-        config = None
-    else:
-        signer = None
-        config = oci.config.from_file(profile_name=args.profile)
+    config = oci.config.from_file(profile_name=args.profile)
     no_retry = oci.retry.NoneRetryStrategy()
     initial_timeout = deadline.remaining("client setup")
     client_timeout = (min(5.0, initial_timeout), initial_timeout)
-    vaults = _make_client(oci.vault.VaultsClient, config, no_retry, client_timeout, signer=signer)
-    kms = _make_client(oci.key_management.KmsVaultClient, config, no_retry, client_timeout, signer=signer)
+    vaults = _make_client(oci.vault.VaultsClient, config, no_retry, client_timeout)
+    kms = _make_client(oci.key_management.KmsVaultClient, config, no_retry, client_timeout)
     if args.readable_timeout == 0:
         readable_client_timeout = initial_timeout
     else:
@@ -561,7 +550,6 @@ def main() -> int:
                 config,
                 no_retry,
                 (min(5.0, readable_client_timeout), readable_client_timeout),
-                signer=signer,
             )
         return secrets_client
 

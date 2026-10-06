@@ -874,12 +874,16 @@ def test_manifest_write_lock_uses_shared_directory_abi(tmp_path: Path) -> None:
     manifest_dir.mkdir()
     fragment = manifest_dir / "10-service-shared.toml"
     fragment.write_text(MANIFEST_TEXT, encoding="utf-8")
-    canonical_directory = manifest_dir.resolve()
+    canonical_directory = tmp_path.resolve()
     digest = hashlib.sha256(os.fsencode(str(canonical_directory))).hexdigest()
     expected = Path(f"/tmp/acx-envman-manifest-write-{os.getuid()}-{digest}.lock")
+    alias_directory = tmp_path / "manifest-alias"
+    alias_directory.symlink_to(manifest_dir, target_is_directory=True)
 
     assert gpu_key_manifest.manifest_write_lock_path(fragment) == expected
     assert gpu_key_manifest.manifest_write_lock_path(manifest_dir) == expected
+    assert gpu_key_manifest.manifest_write_lock_path(alias_directory / fragment.name) == expected
+    assert gpu_key_manifest.manifest_write_lock_path(alias_directory) == expected
     descriptor = gpu_key_manifest._open_manifest_write_lock(fragment)
     try:
         lock_stat = os.fstat(descriptor)
@@ -891,6 +895,177 @@ def test_manifest_write_lock_uses_shared_directory_abi(tmp_path: Path) -> None:
     finally:
         os.close(descriptor)
     assert expected.is_file()
+
+
+def test_harvest_cli_waits_for_mint_publication_across_canonical_symlink_lock(
+    tmp_path: Path,
+) -> None:
+    env_root = tmp_path / "env"
+    manifest_dir = env_root / "manifest.d"
+    manifest_dir.mkdir(parents=True)
+    paths = _write_fake_committed_manifest(manifest_dir)
+    alias_dir = tmp_path / "manifest-alias"
+    alias_dir.symlink_to(manifest_dir, target_is_directory=True)
+    alias_manifest = alias_dir / "10-service-shared.toml"
+
+    canonical_lock = gpu_key_manifest.manifest_write_lock_path(paths["10-service-shared.toml"])
+    assert gpu_key_manifest.manifest_write_lock_path(alias_manifest) == canonical_lock
+    assert gpu_key_manifest.manifest_write_lock_path(alias_dir) == canonical_lock
+
+    subprocess.run(["git", "-C", str(env_root), "init", "--quiet"], check=True)
+    subprocess.run(["git", "-C", str(env_root), "add", "manifest.d"], check=True)
+    subprocess.run(
+        [
+            "git", "-C", str(env_root), "-c", "user.name=Fixture",
+            "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "fixture",
+        ],
+        check=True,
+    )
+
+    terraform_input = tmp_path / "gpu-api-key.tfvars"
+    writer_started = tmp_path / "writer-started"
+    release_writer = tmp_path / "release-writer"
+    writer_stdin = tmp_path / "writer-stdin"
+    writer_arguments = tmp_path / "writer-arguments"
+    mutations = tmp_path / "remote-mutations"
+    bin_dir = _fake_cli(tmp_path)
+    mint_environment = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+        "GPU_KEY_TEST_OCID": FAKE_OCID,
+        "GPU_KEY_TEST_STDIN_CAPTURE": str(writer_stdin),
+        "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(writer_arguments),
+        "GPU_KEY_TEST_MUTATIONS": str(mutations),
+        "GPU_KEY_TEST_WRITER_STARTED": str(writer_started),
+        "GPU_KEY_TEST_WRITER_RELEASE": str(release_writer),
+        "TMPDIR": str(tmp_path),
+    }
+    mint = subprocess.Popen(
+        [
+            "bash", str(SCRIPT_PATH), "--approve-mint", "--ssh-target", "ubuntu@gpu.example",
+            "--manifest", str(alias_manifest), "--terraform-input", str(terraform_input),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=mint_environment,
+    )
+
+    probe_dir = tmp_path / "harvest-probe"
+    probe_dir.mkdir()
+    (probe_dir / "sitecustomize.py").write_text(
+        "import os\n"
+        "from contextlib import contextmanager\n"
+        "from pathlib import Path\n"
+        "from env import harvest_apply\n"
+        "_original_lock = harvest_apply._manifest_write_lock\n"
+        "@contextmanager\n"
+        "def _tracked_lock(path):\n"
+        "    Path(os.environ['HARVEST_LOCK_ATTEMPT']).touch()\n"
+        "    with _original_lock(path):\n"
+        "        yield\n"
+        "harvest_apply._manifest_write_lock = _tracked_lock\n"
+        "_original_load = harvest_apply.load_manifest\n"
+        "def _tracked_load(root):\n"
+        "    Path(os.environ['HARVEST_LOAD_ENTERED']).touch()\n"
+        "    return _original_load(root)\n"
+        "harvest_apply.load_manifest = _tracked_load\n",
+        encoding="utf-8",
+    )
+    harvest_lock_attempt = tmp_path / "harvest-lock-attempt"
+    harvest_load_entered = tmp_path / "harvest-load-entered"
+    harvest_input = tmp_path / "harvest.json"
+    harvest_input.write_text(
+        '{"version":1,"target":"svc-vm","env":"prod",'
+        '"values":{"DB_POOL_SIZE":"16"},'
+        '"withheld":{"secret":[],"derived":[],"unmanaged":[],"missing":[],'
+        '"secret_looking":[],"unparsed":[]}}',
+        encoding="utf-8",
+    )
+    harvest_environment = {
+        **os.environ,
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONPATH": os.pathsep.join((str(REPO_ROOT / "scripts"), str(probe_dir))),
+        "HARVEST_LOCK_ATTEMPT": str(harvest_lock_attempt),
+        "HARVEST_LOAD_ENTERED": str(harvest_load_entered),
+    }
+    harvest = None
+    try:
+        deadline = time.monotonic() + 10
+        while not writer_started.exists() and mint.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert writer_started.exists(), "fake Vault writer did not reach the pause point"
+
+        harvest = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "from env import harvest_apply; raise SystemExit(harvest_apply.main())",
+                "--root",
+                str(env_root),
+                str(harvest_input),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=harvest_environment,
+        )
+        deadline = time.monotonic() + 10
+        while (
+            not harvest_lock_attempt.exists()
+            and harvest.poll() is None
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.01)
+        assert harvest_lock_attempt.exists(), "harvest did not attempt the shared lock"
+        time.sleep(0.1)
+        assert harvest.poll() is None, "harvest should wait while mint owns the lock"
+        assert not harvest_load_entered.exists(), "harvest loaded stale fragments before locking"
+
+        release_writer.touch()
+        mint_stdout, mint_stderr = mint.communicate(timeout=20)
+        harvest_stdout, harvest_stderr = harvest.communicate(timeout=20)
+    finally:
+        release_writer.touch()
+        if mint.poll() is None:
+            mint.kill()
+            mint.communicate(timeout=5)
+        if harvest is not None and harvest.poll() is None:
+            harvest.kill()
+            harvest.communicate(timeout=5)
+
+    assert mint.returncode == 0, mint_stderr
+    assert mint_stdout == f"{FAKE_OCID} 64\n"
+    assert FAKE_KEY not in mint_stdout + mint_stderr
+    assert writer_stdin.read_text(encoding="utf-8") == FAKE_KEY
+    assert writer_arguments.exists()
+    assert mutations.read_text(encoding="utf-8") == "create\n"
+    assert harvest.returncode == 0, harvest_stderr
+    assert harvest_load_entered.exists()
+    assert "set\tDB_POOL_SIZE\tprod\n" == harvest_stdout
+
+    scripts_dir = str(REPO_ROOT / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    from env.manifest import load_manifest, vault_secret_map
+
+    manifest = load_manifest(env_root)
+    gpu = next(var for var in manifest.vars if var.name == "ACX_GPU_ENDPOINT_API_KEY")
+    assert gpu.secret == {
+        "dev": f"oci:{FAKE_OCID}",
+        "staging": "host:",
+        "prod": f"vault:{FAKE_OCID}",
+    }
+    assert vault_secret_map(manifest, "svc-vm", "prod")["ACX_GPU_ENDPOINT_API_KEY"] == FAKE_OCID
+    assert terraform_input.read_text(encoding="utf-8") == (
+        '# Generated by scripts/deploy/gpu-key-mint.sh; identifier only.\n'
+        f'gpu_api_key_secret_ocid = "{FAKE_OCID}"\n'
+    )
+    assert stat.S_IMODE(terraform_input.stat().st_mode) == 0o600
+    shared_doc = tomllib.loads(paths["10-service-shared.toml"].read_text(encoding="utf-8"))
+    harvested = next(var for var in shared_doc["var"] if var["name"] == "DB_POOL_SIZE")
+    assert harvested["values"]["prod"] == "16"
 
 
 def test_manifest_lock_contention_times_out_before_remote_writer(tmp_path: Path) -> None:
@@ -1393,6 +1568,10 @@ def _fake_cli(tmp_path: Path) -> Path:
             "      recreated) cat >/dev/null; echo 'remote secret was recreated under another OCID' >&2; exit 42 ;;\n"
             "    esac\n"
             "    cat >\"$GPU_KEY_TEST_STDIN_CAPTURE\"\n"
+            "    if [ -n \"${GPU_KEY_TEST_WRITER_STARTED:-}\" ]; then\n"
+            "      : >\"$GPU_KEY_TEST_WRITER_STARTED\"\n"
+            "      while [ ! -e \"$GPU_KEY_TEST_WRITER_RELEASE\" ]; do sleep 0.01; done\n"
+            "    fi\n"
             "    if [ -n \"${GPU_KEY_TEST_EDIT_MANIFEST:-}\" ]; then\n"
             "      printf '%s\\n' '# external edit during remote writer' >>\"$GPU_KEY_TEST_EDIT_MANIFEST\"\n"
             "    fi\n"

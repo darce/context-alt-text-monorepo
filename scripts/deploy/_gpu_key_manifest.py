@@ -263,9 +263,11 @@ def _load_manifest_fragments(
 
 
 def manifest_write_lock_path(manifest_path: Path) -> Path:
-    """Return the cooperative manifest-directory lock path shared with happly."""
+    """Return the environment-root lock path shared with the harvest CLI."""
     directory = manifest_path if manifest_path.is_dir() else manifest_path.parent
     canonical_directory = directory.resolve()
+    if canonical_directory.name == "manifest.d":
+        canonical_directory = canonical_directory.parent
     digest = hashlib.sha256(os.fsencode(str(canonical_directory))).hexdigest()
     return Path(f"/tmp/acx-envman-manifest-write-{os.getuid()}-{digest}.lock")
 

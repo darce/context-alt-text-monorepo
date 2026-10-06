@@ -135,9 +135,9 @@ section = "Image description"
 name = "ACX_GPU_ENDPOINT_ALLOWLIST"
 class = "config"
 targets = ["svc-vm"]
-example = ""
+example = "acx-gpu-burst.compute.oraclevcn.com"
 required = true
-doc = "Default empty hostname policy, matching scene/config/settings.py:_parse_allowlist; endpoint address validation still applies."
+doc = "Comma-separated hostname patterns for a hostname ACX_GPU_ENDPOINT_URL.\nEmpty is valid for a private/loopback IP literal; endpoint address validation still applies."
 section = "Image description"
 values = { dev = "", staging = "", prod = "" }
 

@@ -1052,6 +1052,34 @@ def test_09_honors_producer_endpoint_allowlist(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_09_empty_allowlist_accepts_private_ip_endpoint(tmp_path: Path) -> None:
+    producer = valid_env()
+    demo = valid_demo_env()
+    producer["ACX_GPU_ENDPOINT_ALLOWLIST"] = ""
+    producer["ACX_GPU_ENDPOINT_URL"] = "http://10.20.30.40:8000"
+    demo["ACX_GPU_ENDPOINT_URL"] = producer["ACX_GPU_ENDPOINT_URL"]
+
+    result = run_preflight(tmp_path, producer=producer, demo=demo)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_09_empty_allowlist_rejects_hostname_endpoint_without_disclosure(tmp_path: Path) -> None:
+    producer = valid_env()
+    demo = valid_demo_env()
+    producer["ACX_GPU_ENDPOINT_ALLOWLIST"] = ""
+    producer["ACX_GPU_ENDPOINT_URL"] = "https://gpu-a1.internal.example:8000"
+    demo["ACX_GPU_ENDPOINT_URL"] = producer["ACX_GPU_ENDPOINT_URL"]
+
+    result = run_preflight(tmp_path, producer=producer, demo=demo)
+    output = result.stdout + result.stderr
+
+    assert result.returncode != 0
+    assert "ERROR [9] producer ACX_GPU_ENDPOINT_URL" in result.stderr
+    assert producer["ACX_GPU_ENDPOINT_URL"] not in output
+    assert "gpu-a1.internal.example" not in output
+
+
 @pytest.mark.parametrize(
     "endpoint",
     [
@@ -2203,6 +2231,7 @@ def test_live_gpu_verifier_accepts_only_a_fresh_pinned_gpu_result(tmp_path: Path
 
 def test_live_gpu_verifier_consecutive_requests_have_unique_image_hashes(tmp_path: Path) -> None:
     hashes = []
+    idempotency_keys = []
     for invocation in ("first", "second"):
         request_dir = tmp_path / invocation
         request_dir.mkdir()
@@ -2211,7 +2240,13 @@ def test_live_gpu_verifier_consecutive_requests_have_unique_image_hashes(tmp_pat
         image = (request_dir / "smoke.png").read_bytes()
         assert image.startswith(b"\x89PNG\r\n\x1a\n")
         hashes.append(hashlib.sha256(image).hexdigest())
+        argv = (request_dir / "curl-argv.log").read_bytes().decode().split("\0")
+        data = dict(argv[i + 1].split("=", 1) for i, arg in enumerate(argv) if arg == "--form-string")
+        assert "operation_id" not in data
+        idempotency_keys.append(data["idempotency_key"])
     assert hashes[0] != hashes[1], "Repeated smoke images hit the description cache"
+    assert all(re.fullmatch(r"live-gpu-verify-[0-9a-f]{32}", value) for value in idempotency_keys)
+    assert idempotency_keys[0] != idempotency_keys[1], "Repeated verifier runs reused their idempotency_key"
 
 
 def test_live_gpu_verifier_queues_work_before_polling_for_gpu_start(tmp_path: Path) -> None:
@@ -2318,9 +2353,10 @@ def test_15_deploy_shell_surface_remains_bash_3_2_compatible() -> None:
 
 
 def test_worked_examples_form_valid_pair_after_documented_replacements(tmp_path: Path) -> None:
-    producer_text = PRODUCER_EXAMPLE.read_text(encoding="utf-8").replace(
-        '"ACX_GPU_ENDPOINT_API_KEY":"ocid1.vaultsecret.oc1..REPLACE_GPU_ENDPOINT_KEY"',
-        '"ACX_GPU_ENDPOINT_API_KEY":"ocid1.vaultsecret.oc1.iad.fakegpuendpointkey"',
+    # Rendering derives the map from the GPU key's vault ref after minting.
+    producer_text = PRODUCER_EXAMPLE.read_text(encoding="utf-8") + (
+        '\nRECOGNITION_VAULT_SECRET_MAP=\'{"ACX_GPU_ENDPOINT_API_KEY":'
+        '"ocid1.vaultsecret.oc1.iad.fakegpuendpointkey"}\'\n'
     )
     demo_text = (
         DEMO_EXAMPLE.read_text(encoding="utf-8")
@@ -2599,6 +2635,8 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
     assert result.returncode == 0, result.stderr
     argv = (tmp_path / "curl-argv.log").read_bytes().decode().split("\0")
     data = dict(argv[i + 1].split("=", 1) for i, arg in enumerate(argv) if arg == "--form-string")
+    assert "operation_id" not in data
+    assert re.fullmatch(r"live-gpu-verify-[0-9a-f]{32}", data["idempotency_key"])
     image_field = next(argv[i + 1].split("=", 1)[0] for i, arg in enumerate(argv) if arg == "-F")
     paths = [urlsplit(url).path.removeprefix("/scene") for url in (tmp_path / "curl.log").read_text().splitlines()]
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
@@ -2634,6 +2672,7 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
         tier=None,
         result_generation=0,
     )
+    created_operations = []
 
     class Session:
         async def __aenter__(self):
@@ -2651,6 +2690,9 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
         async def scalar(self, *args, **kwargs):
             return None
 
+        async def get(self, model, run_id):
+            return run if run_id == run.id else None
+
     class Repository:
         def __init__(self, session):
             pass
@@ -2658,7 +2700,17 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
         async def create_run(self, **kwargs):
             assert kwargs["images"][item.media_id] == (b"fake-image", "image/png")
             assert kwargs["recognition_enabled"] is False
+            assert kwargs["idempotency_key"] == data["idempotency_key"]
+            created_operations.append(kwargs["operation_id"])
+            run.idempotency_key = kwargs["idempotency_key"]
+            run.operation_id = kwargs["operation_id"]
+            run.request_digest = kwargs["request_digest"]
             return run.id
+
+        async def get_run_by_idempotency_key(self, *, tenant_id, idempotency_key):
+            assert tenant_id == run.tenant_id
+            assert idempotency_key == data["idempotency_key"]
+            return run if created_operations else None
 
         async def get_run(self, **kwargs):
             return run
@@ -2727,6 +2779,23 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
         )
 
     monkeypatch.setattr(route, "_build_describe_one", lambda **kwargs: describe_one)
+
+    async def find_run_by_operation(session, *, tenant_id, operation_id):
+        assert tenant_id == run.tenant_id
+        assert operation_id == data["idempotency_key"]
+        return run if created_operations else None
+
+    monkeypatch.setattr(route, "_run_by_usage_operation", find_run_by_operation)
+
+    class UsageAdmission:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, *args):
+            pass
+
+    monkeypatch.setattr(route, "_maybe_admit_usage", lambda *args, **kwargs: UsageAdmission())
+
     with tempfile.SpooledTemporaryFile() as image:
         image.write(b"fake-image")
         image.seek(0)
@@ -2751,7 +2820,18 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
                 session=Session(),
             )
             assert response.run_id == str(run.id)
+            assert response.operation_id == data["idempotency_key"]
             await asyncio.wait_for(background(), timeout=3)
+            image.seek(0)
+            replay = await endpoint(
+                request=SimpleNamespace(form=AsyncMock(return_value=form)),
+                background_tasks=BackgroundTasks(),
+                auth=auth,
+                session=Session(),
+            )
+            assert replay.run_id == response.run_id
+            assert replay.operation_id == response.operation_id
+            assert created_operations == [data["idempotency_key"]], "operation replay created duplicate work"
             for path in paths[1:]:
                 endpoint = next(
                     r.endpoint for r in route.router.routes if "GET" in r.methods and r.path_regex.match(path)

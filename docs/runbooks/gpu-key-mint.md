@@ -56,6 +56,9 @@ value source:
 
 ```sh
 terraform -chdir=infra/oci plan -var-file=terraform.tfvars -var-file=gpu-api-key.tfvars
+```
+
+```sh
 terraform -chdir=infra/oci apply -var-file=terraform.tfvars -var-file=gpu-api-key.tfvars
 ```
 
@@ -83,6 +86,9 @@ rotation sequence below when changing the value of an existing secret.
 
    ```sh
    terraform -chdir=infra/oci plan -var-file=terraform.tfvars -var-file=gpu-api-key.tfvars
+   ```
+
+   ```sh
    terraform -chdir=infra/oci apply -var-file=terraform.tfvars -var-file=gpu-api-key.tfvars
    ```
 
@@ -106,26 +112,64 @@ rotation sequence below when changing the value of an existing secret.
    materialization; do not hand-edit the generated runtime files. Run
    `make env-examples` again and commit the endpoint fragment and regenerated
    examples before materializing, so neither environment retains the old IP.
-5. Check, then apply, the materialized environment for production and
+5. With the replacement host healthy, converge the backend lifecycle configuration
+   before refreshing API consumers. The old `/etc/acx/gpu-lifecycle.env` still
+   names the terminated instance and its readiness URL. From the repository
+   root, dry-run the existing installer with the new Terraform outputs:
+
+   ```sh
+   GPU_INSTANCE_ID="$(terraform -chdir=infra/oci output -raw gpu_instance_id)" \
+     ACX_DEPLOY_GPU_LIFECYCLE=1 ACX_GPU_LIFECYCLE_DRY_RUN=1 \
+     ACX_GPU_READY_URL="$(terraform -chdir=infra/oci output -raw gpu_endpoint_url)/health" \
+     scripts/deploy/recognition-service.sh gpu-lifecycle
+   ```
+
+   Review the instance OCID and `/health` URL, then reinstall and verify:
+
+   ```sh
+   GPU_INSTANCE_ID="$(terraform -chdir=infra/oci output -raw gpu_instance_id)" \
+     ACX_DEPLOY_GPU_LIFECYCLE=1 ACX_GPU_LIFECYCLE_DRY_RUN=0 \
+     ACX_GPU_READY_URL="$(terraform -chdir=infra/oci output -raw gpu_endpoint_url)/health" \
+     scripts/deploy/recognition-service.sh gpu-lifecycle
+   ```
+
+   Require the installer's verification that `acx-gpu-start.timer` and
+   `acx-gpu-reap.timer` are enabled and active. Follow the lifecycle convergence
+   and timer verification guidance in [GPU demo env flip](gpu-demo-env-flip.md#3-deploy-in-producer-then-consumer-order)
+   if verification fails; do not refresh consumers until it succeeds. This
+   entrypoint can be rerun to converge the same declared instance and URL.
+6. Check, then apply, the materialized environment for production and
    development (the Make target transfers the manifest to the backend VM):
 
    ```sh
    make env-materialize ENV=prod TARGET=svc-vm
+   ```
+
+   ```sh
    APPLY=1 CONFIRM=prod make env-materialize ENV=prod TARGET=svc-vm
+   ```
+
+   ```sh
    make env-materialize ENV=dev TARGET=svc-vm
+   ```
+
+   ```sh
    APPLY=1 make env-materialize ENV=dev TARGET=svc-vm
    ```
 
-6. Restart the API and worker containers for both environments so they read
+7. Restart the API and worker containers for both environments so they read
    the refreshed values. On the backend VM, restart the corresponding
    `acx-prod.service` and `acx-dev.service` units:
 
    ```sh
    sudo systemctl restart acx-prod.service
+   ```
+
+   ```sh
    sudo systemctl restart acx-dev.service
    ```
 
-7. From the backend VM, verify the current GPU endpoint with an authenticated
+8. From the backend VM, verify the current GPU endpoint with an authenticated
    probe using the refreshed key. Require success before normal GPU
    description traffic; an unauthenticated readiness check is insufficient.
 
@@ -141,33 +185,47 @@ uses its materialized `.env` copy. Until every consumer refreshes, the API and
 GPU endpoint can hold different keys and requests can fail with HTTP 401.
 Begin this sequence before minting the rotated value. Keep GPU description
 traffic quiesced until the authenticated probe passes, including across the
-API/worker restarts:
+API/worker restarts. Changing `ACX_DESCRIPTION_ADAPTER` alone does not quiesce
+explicit GPU-tier or async GPU-final requests; both resolve the GPU adapter
+from `ACX_GPU_ENDPOINT_URL` independently of the default adapter:
 
-1. Record the current `dev` and `prod` values of `ACX_DESCRIPTION_ADAPTER`
-   in `config/env/manifest.d/10-service-shared.toml`, then temporarily set
-   both to `florence_small`, preserving all other environments. This is the
-   description-backend operator switch documented in
-   `config/env/manifest.d/21-service-vm.toml`; confirm the deployed runtime
-   supports its required `[vlm]` extra before switching. Run
-   `make env-examples`, then check and apply both environments:
+1. Record the current `dev` and `prod` values of `ACX_GPU_ENDPOINT_URL`
+   in `config/env/manifest.d/10-service-shared.toml`, retaining them separately
+   for the direct probe and restoration. Temporarily set both values to `""`,
+   preserving all other environments. A blank endpoint makes both GPU-tier
+   and async GPU-final adapters unavailable without sending GPU HTTP requests.
+   Run `make env-examples`, then check and apply both environments:
 
    ```sh
    make env-materialize ENV=prod TARGET=svc-vm
+   ```
+
+   ```sh
    APPLY=1 CONFIRM=prod make env-materialize ENV=prod TARGET=svc-vm
+   ```
+
+   ```sh
    make env-materialize ENV=dev TARGET=svc-vm
+   ```
+
+   ```sh
    APPLY=1 make env-materialize ENV=dev TARGET=svc-vm
    ```
 
-   On the backend VM, activate the CPU adapter in both API/worker services:
+   On the backend VM, activate the blank endpoint in both API/worker services:
 
    ```sh
    sudo systemctl restart acx-prod.service
+   ```
+
+   ```sh
    sudo systemctl restart acx-dev.service
    ```
 
-   Confirm both environments are using `florence_small` and any in-flight GPU
-   requests have drained before rotating. Leave this switch in place through
-   step 6; if any refresh or probe fails, keep GPU traffic quiesced.
+   Confirm GPU-tier and async GPU-final requests in both environments fail
+   closed as unavailable. Drain or let finish any GPU jobs already in flight
+   before rotating. Leave the endpoints blank through step 4; if any refresh
+   or probe fails, keep GPU traffic quiesced.
 2. Mint the rotated value with the approved writer target:
 
    ```sh
@@ -177,35 +235,24 @@ API/worker restarts:
    Run `make env-examples` after the mint and commit the changed manifest
    fragments and regenerated examples. The dev `oci:` / prod `vault:` refs
    still name the same OCID, and the Vault map remains automatically derived.
-3. Check and apply the updated development environment:
-
-   ```sh
-   make env-materialize ENV=dev TARGET=svc-vm
-   APPLY=1 make env-materialize ENV=dev TARGET=svc-vm
-   ```
-
-4. Restart the production and development API/worker services so production
-   drops its cached Vault value and development reads its updated `.env`.
-   Keep `ACX_DESCRIPTION_ADAPTER=florence_small` for both environments:
-
-   ```sh
-   sudo systemctl restart acx-prod.service
-   sudo systemctl restart acx-dev.service
-   ```
-
-5. Restart `acx-gpu-vlm.service` on the GPU host to rerun its key-fetch
+3. Restart `acx-gpu-vlm.service` on the GPU host to rerun its key-fetch
    `ExecStartPre` (or restart the GPU instance):
 
    ```sh
    sudo systemctl restart acx-gpu-vlm.service
    ```
 
-6. From the backend VM, verify the GPU endpoint with an authenticated probe
-   using the refreshed key while normal GPU traffic remains quiesced. Require
-   success; an HTTP 401 or an unauthenticated readiness check does not pass.
-7. Only after the probe passes, restore the recorded `dev` and `prod`
-   `ACX_DESCRIPTION_ADAPTER` values in the shared manifest. Run
+4. From the backend VM, probe the recorded GPU endpoint directly with the
+   current Vault key, while both manifest endpoint values remain blank. Do
+   not use the API's unavailable adapter, its cached key, or the old dev
+   `.env` key for this probe. Require authenticated success; an HTTP 401 or
+   an unauthenticated readiness check does not pass.
+5. Only after the probe passes, restore the recorded `dev` and `prod`
+   `ACX_GPU_ENDPOINT_URL` values in the shared manifest. Run
    `make env-examples`, commit the restored fragment and regenerated examples,
    and check then apply both environments with the step 1 materialization
-   commands. Restart `acx-prod.service` and `acx-dev.service` on the backend VM
-   with the step 4 commands to return GPU description traffic to normal use.
+   commands. This re-materializes dev with the rotated key. Restart
+   `acx-prod.service` and `acx-dev.service` on the backend VM with the step 1
+   commands so production drops its per-process Vault cache and development
+   reads the updated `.env`. These restarts return GPU description traffic
+   to normal use; keep the URLs blank until the direct probe has passed.

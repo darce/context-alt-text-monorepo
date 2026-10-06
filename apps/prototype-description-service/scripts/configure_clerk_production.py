@@ -11,9 +11,9 @@ import re
 import sys
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TextIO
+from typing import NamedTuple, TextIO
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -67,6 +67,12 @@ class _JSToken:
     value: str | None
     raw: str
     line_break_before: bool = False
+
+
+class _ConfigBinding(NamedTuple):
+    name: str
+    scope: tuple[int, ...]
+    token_index: int
 
 
 def decode_publishable_key(raw: str) -> str:
@@ -949,10 +955,10 @@ def _validate_consumer_binding(
             raise ClerkConfigError("VITE_CLERK_FAPI: portal config consumer call is unsupported")
 
 
-def _validate_consumer_parameter(tokens: Sequence[_JSToken], parameter: str, body_open: int, body_close: int) -> None:
+def _validate_consumer_parameter(
+    tokens: Sequence[_JSToken], parameter: str, body_open: int, body_close: int, pairs: dict[int, int]
+) -> None:
     reads: set[str] = set()
-    assignment_operators = {"=", "+=", "-=", "*=", "/=", "++", "--"}
-    logical_assignment_operators = {"||", "&&", "??", "|", "&", "^"}
     for index in range(body_open + 1, body_close):
         if tokens[index].kind != "identifier" or tokens[index].value != parameter:
             continue
@@ -975,20 +981,14 @@ def _validate_consumer_parameter(tokens: Sequence[_JSToken], parameter: str, bod
             or tokens[field_index].value not in _CONSUMER_CONFIG_FIELDS
         ):
             raise ClerkConfigError("VITE_CLERK_FAPI: portal config consumer parameter is mutated or escapes")
-        previous = tokens[index - 1] if index > body_open + 1 else None
-        following = tokens[field_index + 1] if field_index + 1 < body_close else None
-        following_next = tokens[field_index + 2] if field_index + 2 < body_close else None
+        previous, following = _member_access_mutation_neighbors(
+            tokens, index, field_index, body_open + 1, body_close, pairs
+        )
         if (
             (previous is not None and previous.kind == "identifier" and previous.value == "delete")
             or (previous is not None and previous.kind == "punct" and previous.value in {"++", "--"})
-            or (following is not None and following.kind == "punct" and following.value in assignment_operators)
-            or (
-                following is not None
-                and following.kind == "punct"
-                and following.value in logical_assignment_operators
-                and following_next is not None
-                and _is_punct(following_next, "=")
-            )
+            or (following is not None and following.kind == "punct" and following.value in _JS_ASSIGNMENT_OPERATORS)
+            or (following is not None and following.kind == "punct" and following.value in {"++", "--"})
         ):
             raise ClerkConfigError("VITE_CLERK_FAPI: portal config consumer parameter is mutated or escapes")
         reads.add(tokens[field_index].value or "")
@@ -1020,6 +1020,31 @@ _JS_ASSIGNMENT_OPERATORS = frozenset(
         "??=",
     }
 )
+
+
+def _member_access_mutation_neighbors(
+    tokens: Sequence[_JSToken],
+    base_index: int,
+    member_index: int,
+    lower_bound: int,
+    upper_bound: int,
+    pairs: dict[int, int],
+) -> tuple[_JSToken | None, _JSToken | None]:
+    parenthesis_opens: set[int] = set()
+    expression_start = base_index
+    while expression_start > lower_bound and _is_punct(tokens[expression_start - 1], "("):
+        opener = expression_start - 1
+        if pairs.get(opener, -1) < member_index:
+            break
+        parenthesis_opens.add(opener)
+        expression_start = opener
+    closing_indexes = {pairs[opener] for opener in parenthesis_opens}
+    following_index = member_index + 1
+    while following_index in closing_indexes and following_index < upper_bound:
+        following_index += 1
+    previous = tokens[expression_start - 1] if expression_start > lower_bound else None
+    following = tokens[following_index] if following_index < upper_bound else None
+    return previous, following
 
 
 def _expression_end(tokens: Sequence[_JSToken], start: int, limit: int, pairs: dict[int, int]) -> int:
@@ -1954,26 +1979,13 @@ def _validate_returned_object_bindings(
                 continue
             if index + 1 < body_close and _is_punct(tokens[index + 1], ".") and index + 2 < body_close:
                 member = tokens[index + 2].value or ""
-                prefix_cursor = index - 1
-                while (
-                    prefix_cursor > body_open + 1
-                    and _is_punct(tokens[prefix_cursor], "(")
-                    and pairs.get(prefix_cursor, -1) >= index + 2
-                ):
-                    prefix_cursor -= 1
-                previous = tokens[prefix_cursor] if prefix_cursor > body_open else None
-                suffix_cursor = index + 3
-                while (
-                    suffix_cursor < body_close
-                    and _is_punct(tokens[suffix_cursor], ")")
-                    and pairs.get(suffix_cursor, body_close) < index
-                ):
-                    suffix_cursor += 1
-                following = tokens[suffix_cursor] if suffix_cursor < body_close else None
                 if member not in _RETURNED_CONFIG_MEMBERS:
                     raise ClerkConfigError(
                         "VITE_CLERK_FAPI: returned portal config escapes through an unsupported member"
                     )
+                previous, following = _member_access_mutation_neighbors(
+                    tokens, index, index + 2, body_open + 1, body_close, pairs
+                )
                 if member in _RETURNED_CLERK_FIELDS and (
                     (
                         previous is not None
@@ -2151,241 +2163,274 @@ def _config_object_bindings(
     return bindings, alias_uses, declaration_names
 
 
-def _config_binding_shadows(
-    tokens: Sequence[_JSToken], scopes: Sequence[tuple[int, ...]], pairs: dict[int, int]
-) -> tuple[list[tuple[str, tuple[int, ...], int]], set[int]]:
-    shadows: list[tuple[str, tuple[int, ...], int]] = []
-    declaration_names: set[int] = set()
+@dataclass(slots=True)
+class _ConfigBindingCollector:
+    tokens: Sequence[_JSToken]
+    bindings: list[_ConfigBinding] = field(default_factory=list)
+    declaration_names: set[int] = field(default_factory=set)
 
-    def add_name(name_index: int, scope: tuple[int, ...]) -> None:
-        if 0 <= name_index < len(tokens) and tokens[name_index].kind == "identifier":
-            shadows.append((tokens[name_index].value or "", scope, name_index))
-            declaration_names.add(name_index)
+    def add(self, name_index: int, scope: tuple[int, ...]) -> None:
+        if 0 <= name_index < len(self.tokens) and self.tokens[name_index].kind == "identifier":
+            self.bindings.append(_ConfigBinding(self.tokens[name_index].value or "", scope, name_index))
+            self.declaration_names.add(name_index)
 
-    def add_comma_declarators(first_name_index: int, scope: tuple[int, ...]) -> None:
-        cursor = first_name_index + 1
-        while cursor < len(tokens):
-            token = tokens[cursor]
-            if token.kind == "template_expr_start":
-                cursor = _skip_template_expression_tokens(tokens, cursor)
-                continue
-            if _is_punct(token, "{") or _is_punct(token, "[") or _is_punct(token, "("):
-                close_index = pairs.get(cursor)
-                if close_index is None:
-                    return
-                cursor = close_index + 1
-                continue
-            if _is_punct(token, ",") and scopes[cursor] == scope:
-                name_index = cursor + 1
-                if (
-                    name_index + 1 < len(tokens)
-                    and tokens[name_index].kind == "identifier"
-                    and _is_punct(tokens[name_index + 1], "=")
-                ):
-                    add_name(name_index, scope)
-                    cursor = name_index + 2
-                    continue
-            if _is_punct(token, ";") or (_is_punct(token, "}") and scopes[cursor] == scope):
+
+def _add_config_comma_declarators(
+    first_name_index: int,
+    scope: tuple[int, ...],
+    tokens: Sequence[_JSToken],
+    scopes: Sequence[tuple[int, ...]],
+    pairs: dict[int, int],
+    collector: _ConfigBindingCollector,
+) -> None:
+    cursor = first_name_index + 1
+    while cursor < len(tokens):
+        token = tokens[cursor]
+        if token.kind == "template_expr_start":
+            cursor = _skip_template_expression_tokens(tokens, cursor)
+            continue
+        if _is_punct(token, "{") or _is_punct(token, "[") or _is_punct(token, "("):
+            close_index = pairs.get(cursor)
+            if close_index is None:
                 return
-            if token.line_break_before and _initializer_ends_here(tokens, cursor):
-                return
-            cursor += 1
+            cursor = close_index + 1
+            continue
+        name_index = cursor + 1
+        if _is_punct(token, ",") and scopes[cursor] == scope and name_index + 1 < len(tokens):
+            if tokens[name_index].kind == "identifier" and _is_punct(tokens[name_index + 1], "="):
+                collector.add(name_index, scope)
+                cursor = name_index + 2
+                continue
+        if _is_punct(token, ";") or (_is_punct(token, "}") and scopes[cursor] == scope):
+            return
+        if token.line_break_before and _initializer_ends_here(tokens, cursor):
+            return
+        cursor += 1
 
-    def method_signature(params_open: int) -> tuple[int, int] | None:
-        params_close = pairs.get(params_open, -1)
-        body_open = params_close + 1
-        if params_close < 0 or body_open >= len(tokens) or not _is_punct(tokens[body_open], "{"):
-            return None
-        key_index = params_open - 1
-        if key_index < 0:
-            return None
-        if tokens[key_index].kind == "identifier" and tokens[key_index].value in {
-            "function",
-            "if",
-            "for",
-            "while",
-            "switch",
-            "catch",
-            "with",
-        }:
-            return None
-        if _is_punct(tokens[key_index], "]"):
-            key_index = pairs.get(key_index, -1)
-            if key_index < 0 or not _is_punct(tokens[key_index], "["):
-                return None
-        elif tokens[key_index].kind not in {"identifier", "string"}:
-            return None
 
-        prefix_start = key_index
-        while prefix_start > 0:
-            previous = tokens[prefix_start - 1]
-            if (
-                _is_punct(previous, "#")
-                or _is_punct(previous, "*")
-                or (previous.kind == "identifier" and previous.value in {"async", "get", "set", "static"})
-            ):
-                prefix_start -= 1
-            else:
-                break
-        if prefix_start > 0:
-            previous = tokens[prefix_start - 1]
-            if previous.kind == "identifier" and previous.value in {
-                "function",
-                "if",
-                "for",
-                "while",
-                "switch",
-                "catch",
-                "with",
-            }:
-                return None
-            if (
-                previous.kind == "identifier"
-                and previous.value == "await"
-                and prefix_start > 1
-                and tokens[prefix_start - 2].kind == "identifier"
-                and tokens[prefix_start - 2].value == "for"
-            ):
-                return None
-        return params_close, body_open
+_CONTROL_KEYWORDS = frozenset({"function", "if", "for", "while", "switch", "catch", "with"})
 
-    function_bodies: list[int] = []
+
+def _config_method_key_index(tokens: Sequence[_JSToken], pairs: dict[int, int], params_open: int) -> int | None:
+    key_index = params_open - 1
+    if key_index < 0:
+        return None
+    key = tokens[key_index]
+    if key.kind == "identifier" and key.value in _CONTROL_KEYWORDS:
+        return None
+    if _is_punct(key, "]"):
+        key_index = pairs.get(key_index, -1)
+        if key_index < 0 or not _is_punct(tokens[key_index], "["):
+            return None
+    elif key.kind not in {"identifier", "string"}:
+        return None
+    return key_index
+
+
+def _config_method_has_control_prefix(tokens: Sequence[_JSToken], key_index: int) -> bool:
+    prefix_start = key_index
+    while prefix_start > 0:
+        previous = tokens[prefix_start - 1]
+        if _is_punct(previous, "#") or _is_punct(previous, "*"):
+            prefix_start -= 1
+        elif previous.kind == "identifier" and previous.value in {"async", "get", "set", "static"}:
+            prefix_start -= 1
+        else:
+            break
+    if prefix_start == 0:
+        return False
+    previous = tokens[prefix_start - 1]
+    if previous.kind == "identifier" and previous.value in _CONTROL_KEYWORDS:
+        return True
+    return (
+        previous.kind == "identifier"
+        and previous.value == "await"
+        and prefix_start > 1
+        and tokens[prefix_start - 2].kind == "identifier"
+        and tokens[prefix_start - 2].value == "for"
+    )
+
+
+def _config_method_signature(tokens: Sequence[_JSToken], pairs: dict[int, int], params_open: int) -> tuple[int, int] | None:
+    params_close = pairs.get(params_open, -1)
+    body_open = params_close + 1
+    if params_close < 0 or body_open >= len(tokens) or not _is_punct(tokens[body_open], "{"):
+        return None
+    key_index = _config_method_key_index(tokens, pairs, params_open)
+    if key_index is None or _config_method_has_control_prefix(tokens, key_index):
+        return None
+    return params_close, body_open
+
+
+def _config_function_params_open(tokens: Sequence[_JSToken], function_index: int) -> int:
+    name_index = function_index + 1
+    if name_index < len(tokens) and _is_punct(tokens[name_index], "*"):
+        name_index += 1
+    if name_index < len(tokens) and tokens[name_index].kind == "identifier":
+        return name_index + 1
+    return name_index
+
+
+def _config_function_body_opens(tokens: Sequence[_JSToken], pairs: dict[int, int]) -> list[int]:
+    bodies: list[int] = []
     for index, token in enumerate(tokens):
         if token.kind == "identifier" and token.value == "function":
-            name_index = index + 1
-            if name_index < len(tokens) and _is_punct(tokens[name_index], "*"):
-                name_index += 1
-            params_open = (
-                name_index + 1 if name_index < len(tokens) and tokens[name_index].kind == "identifier" else name_index
-            )
-            if params_open < len(tokens) and _is_punct(tokens[params_open], "("):
-                params_close = pairs.get(params_open, -1)
-                body_open = params_close + 1
-                if params_close >= 0 and body_open < len(tokens) and _is_punct(tokens[body_open], "{"):
-                    function_bodies.append(body_open)
-        if _is_punct(token, "=>") and index + 1 < len(tokens) and _is_punct(tokens[index + 1], "{"):
-            function_bodies.append(index + 1)
-        if _is_punct(token, "("):
-            method = method_signature(index)
-            if method is not None:
-                function_bodies.append(method[1])
-
-    def add_parameters(params_open: int, params_close: int, scope: tuple[int, ...]) -> None:
-        for parameter_index in range(params_open + 1, params_close):
-            if tokens[parameter_index].kind == "identifier":
-                add_name(parameter_index, scope)
-
-    for index, token in enumerate(tokens):
-        if (
-            token.kind == "identifier"
-            and token.value in {"const", "let", "var"}
-            and index + 1 < len(tokens)
-            and tokens[index + 1].kind == "identifier"
-        ):
-            name_index = index + 1
-            binding_scope = scopes[index]
-            if token.value == "var":
-                enclosing_functions = [body for body in function_bodies if body in scopes[index]]
-                if enclosing_functions:
-                    function_body = max(enclosing_functions, key=lambda body: len(scopes[body]) + 1)
-                    binding_scope = scopes[function_body] + (function_body,)
-            add_name(name_index, binding_scope)
-            add_comma_declarators(name_index, binding_scope)
-        elif (
-            token.kind == "identifier"
-            and token.value in {"const", "let", "var"}
-            and index + 1 < len(tokens)
-            and tokens[index + 1].kind == "punct"
-            and tokens[index + 1].value in {"{", "["}
-            and index + 1 in pairs
-        ):
-            close_index = pairs[index + 1]
-            for binding_index in range(index + 2, close_index):
-                if tokens[binding_index].kind == "identifier":
-                    add_name(binding_index, scopes[index])
-
-        if token.kind == "identifier" and token.value == "function":
-            name_index = index + 1
-            if name_index < len(tokens) and _is_punct(tokens[name_index], "*"):
-                name_index += 1
-            if name_index < len(tokens) and tokens[name_index].kind == "identifier":
-                add_name(name_index, scopes[index])
-                params_open = name_index + 1
-            else:
-                params_open = name_index
-            if params_open >= len(tokens) or not _is_punct(tokens[params_open], "("):
-                continue
+            params_open = _config_function_params_open(tokens, index)
             params_close = pairs.get(params_open, -1)
             body_open = params_close + 1
-            if params_close < 0 or body_open >= len(tokens) or not _is_punct(tokens[body_open], "{"):
-                continue
-            body_scope = scopes[body_open] + (body_open,)
-            add_parameters(params_open, params_close, body_scope)
-
+            if params_close >= 0 and body_open < len(tokens) and _is_punct(tokens[body_open], "{"):
+                bodies.append(body_open)
+        if _is_punct(token, "=>") and index + 1 < len(tokens) and _is_punct(tokens[index + 1], "{"):
+            bodies.append(index + 1)
         if _is_punct(token, "("):
-            method = method_signature(index)
+            method = _config_method_signature(tokens, pairs, index)
             if method is not None:
-                params_close, body_open = method
-                body_scope = scopes[body_open] + (body_open,)
-                # The bounded parser conservatively treats every parameter
-                # identifier as a binder, including identifiers in defaults or
-                # destructuring patterns. This prevents outer aliases from
-                # being used as evidence when parameter binding is uncertain.
-                for parameter_index in range(index + 1, params_close):
-                    if tokens[parameter_index].kind == "identifier":
-                        add_name(parameter_index, body_scope)
+                bodies.append(method[1])
+    return bodies
 
-        if _is_punct(token, "=>"):
-            if index and _is_punct(tokens[index - 1], ")"):
-                params_close = index - 1
-                params_open = pairs.get(params_close, -1)
-                if params_open >= 0:
-                    body_open = index + 1
-                    body_scope = (
-                        scopes[body_open] + (body_open,)
-                        if body_open < len(tokens) and _is_punct(tokens[body_open], "{")
-                        else scopes[index]
-                    )
-                    add_parameters(params_open, params_close, body_scope)
-            elif index and tokens[index - 1].kind == "identifier":
-                body_open = index + 1
-                body_scope = (
-                    scopes[body_open] + (body_open,)
-                    if body_open < len(tokens) and _is_punct(tokens[body_open], "{")
-                    else scopes[index]
-                )
-                add_name(index - 1, body_scope)
 
-        if token.kind == "identifier" and token.value == "catch" and index + 1 < len(tokens):
-            params_open = index + 1
-            if _is_punct(tokens[params_open], "(") and params_open in pairs:
-                params_close = pairs[params_open]
-                body_open = params_close + 1
-                if body_open < len(tokens) and _is_punct(tokens[body_open], "{"):
-                    add_parameters(params_open, params_close, scopes[body_open] + (body_open,))
+def _add_config_parameters(
+    params_open: int, params_close: int, scope: tuple[int, ...], tokens: Sequence[_JSToken], collector: _ConfigBindingCollector
+) -> None:
+    # Treat defaults and destructuring identifiers as binders when their exact pattern is uncertain.
+    for parameter_index in range(params_open + 1, params_close):
+        if tokens[parameter_index].kind == "identifier":
+            collector.add(parameter_index, scope)
 
-        if token.kind == "identifier" and token.value == "class" and index + 1 < len(tokens):
-            add_name(index + 1, scopes[index])
 
-        if (
-            token.kind == "identifier"
-            and token.value == "import"
-            and index + 1 < len(tokens)
-            and not (
-                _is_punct(tokens[index + 1], ".")
-                or _is_punct(tokens[index + 1], "?.")
-                or _is_punct(tokens[index + 1], "(")
-            )
-        ):
-            import_end = index + 1
-            while import_end < len(tokens) and not _is_punct(tokens[import_end], ";"):
-                if tokens[import_end].kind == "string":
-                    break
-                if tokens[import_end].kind == "identifier" and tokens[import_end].value not in {"as", "from", "type"}:
-                    add_name(import_end, scopes[index])
-                import_end += 1
+def _add_config_variable_bindings(
+    index: int,
+    tokens: Sequence[_JSToken],
+    scopes: Sequence[tuple[int, ...]],
+    pairs: dict[int, int],
+    function_bodies: Sequence[int],
+    collector: _ConfigBindingCollector,
+) -> None:
+    if tokens[index].kind != "identifier" or tokens[index].value not in {"const", "let", "var"}:
+        return
+    if index + 1 >= len(tokens):
+        return
+    name_index = index + 1
+    if tokens[name_index].kind == "identifier":
+        scope = scopes[index]
+        enclosing = [body for body in function_bodies if body in scopes[index]]
+        if tokens[index].value == "var" and enclosing:
+            function_body = max(enclosing, key=lambda body: len(scopes[body]) + 1)
+            scope = scopes[function_body] + (function_body,)
+        collector.add(name_index, scope)
+        _add_config_comma_declarators(name_index, scope, tokens, scopes, pairs, collector)
+    elif _is_punct(tokens[name_index], "{") or _is_punct(tokens[name_index], "["):
+        close_index = pairs.get(name_index)
+        if close_index is not None:
+            for binding_index in range(name_index + 1, close_index):
+                if tokens[binding_index].kind == "identifier":
+                    collector.add(binding_index, scopes[index])
 
-    return shadows, declaration_names
+
+def _add_config_function_bindings(
+    index: int, tokens: Sequence[_JSToken], scopes: Sequence[tuple[int, ...]], pairs: dict[int, int], collector: _ConfigBindingCollector
+) -> None:
+    if tokens[index].kind != "identifier" or tokens[index].value != "function":
+        return
+    name_index = index + 1
+    if name_index < len(tokens) and _is_punct(tokens[name_index], "*"):
+        name_index += 1
+    if name_index < len(tokens) and tokens[name_index].kind == "identifier":
+        collector.add(name_index, scopes[index])
+        params_open = name_index + 1
+    else:
+        params_open = name_index
+    if params_open >= len(tokens) or not _is_punct(tokens[params_open], "("):
+        return
+    params_close = pairs.get(params_open, -1)
+    body_open = params_close + 1
+    if params_close >= 0 and body_open < len(tokens) and _is_punct(tokens[body_open], "{"):
+        _add_config_parameters(params_open, params_close, scopes[body_open] + (body_open,), tokens, collector)
+
+
+def _add_config_method_parameters(
+    index: int, tokens: Sequence[_JSToken], pairs: dict[int, int], scopes: Sequence[tuple[int, ...]], collector: _ConfigBindingCollector
+) -> None:
+    if not _is_punct(tokens[index], "("):
+        return
+    method = _config_method_signature(tokens, pairs, index)
+    if method is None:
+        return
+    params_close, body_open = method
+    _add_config_parameters(index, params_close, scopes[body_open] + (body_open,), tokens, collector)
+
+
+def _add_config_arrow_parameters(
+    index: int, tokens: Sequence[_JSToken], pairs: dict[int, int], scopes: Sequence[tuple[int, ...]], collector: _ConfigBindingCollector
+) -> None:
+    if not _is_punct(tokens[index], "=>") or index == 0:
+        return
+    if _is_punct(tokens[index - 1], ")"):
+        params_close = index - 1
+        params_open = pairs.get(params_close, -1)
+        if params_open < 0:
+            return
+        body_open = index + 1
+        scope = scopes[body_open] + (body_open,) if body_open < len(tokens) and _is_punct(tokens[body_open], "{") else scopes[index]
+        _add_config_parameters(params_open, params_close, scope, tokens, collector)
+    elif tokens[index - 1].kind == "identifier":
+        body_open = index + 1
+        scope = scopes[body_open] + (body_open,) if body_open < len(tokens) and _is_punct(tokens[body_open], "{") else scopes[index]
+        collector.add(index - 1, scope)
+
+
+def _add_config_catch_parameters(
+    index: int, tokens: Sequence[_JSToken], pairs: dict[int, int], scopes: Sequence[tuple[int, ...]], collector: _ConfigBindingCollector
+) -> None:
+    if tokens[index].kind != "identifier" or tokens[index].value != "catch" or index + 1 >= len(tokens):
+        return
+    params_open = index + 1
+    if not _is_punct(tokens[params_open], "(") or params_open not in pairs:
+        return
+    params_close = pairs[params_open]
+    body_open = params_close + 1
+    if body_open < len(tokens) and _is_punct(tokens[body_open], "{"):
+        _add_config_parameters(params_open, params_close, scopes[body_open] + (body_open,), tokens, collector)
+
+
+def _add_config_class_binding(
+    index: int, tokens: Sequence[_JSToken], scopes: Sequence[tuple[int, ...]], collector: _ConfigBindingCollector
+) -> None:
+    if tokens[index].kind == "identifier" and tokens[index].value == "class" and index + 1 < len(tokens):
+        collector.add(index + 1, scopes[index])
+
+
+def _add_config_import_bindings(
+    index: int, tokens: Sequence[_JSToken], scopes: Sequence[tuple[int, ...]], collector: _ConfigBindingCollector
+) -> None:
+    if tokens[index].kind != "identifier" or tokens[index].value != "import" or index + 1 >= len(tokens):
+        return
+    next_token = tokens[index + 1]
+    if _is_punct(next_token, ".") or _is_punct(next_token, "?.") or _is_punct(next_token, "("):
+        return
+    cursor = index + 1
+    while cursor < len(tokens) and not _is_punct(tokens[cursor], ";"):
+        if tokens[cursor].kind == "string":
+            break
+        if tokens[cursor].kind == "identifier" and tokens[cursor].value not in {"as", "from", "type"}:
+            collector.add(cursor, scopes[index])
+        cursor += 1
+
+
+def _config_binding_shadows(
+    tokens: Sequence[_JSToken], scopes: Sequence[tuple[int, ...]], pairs: dict[int, int]
+) -> tuple[list[_ConfigBinding], set[int]]:
+    collector = _ConfigBindingCollector(tokens)
+    function_bodies = _config_function_body_opens(tokens, pairs)
+    for index in range(len(tokens)):
+        _add_config_variable_bindings(index, tokens, scopes, pairs, function_bodies, collector)
+        _add_config_function_bindings(index, tokens, scopes, pairs, collector)
+        _add_config_method_parameters(index, tokens, pairs, scopes, collector)
+        _add_config_arrow_parameters(index, tokens, pairs, scopes, collector)
+        _add_config_catch_parameters(index, tokens, pairs, scopes, collector)
+        _add_config_class_binding(index, tokens, scopes, collector)
+        _add_config_import_bindings(index, tokens, scopes, collector)
+    return collector.bindings, collector.declaration_names
 
 
 def _reject_config_object_mutation_or_escape(
@@ -2565,7 +2610,7 @@ def _portal_config_records(tokens: Sequence[_JSToken]) -> tuple[list[dict[str, s
         if binding_identity not in validated_bindings:
             _validate_consumer_binding(binding_identity, tokens, scopes, pairs)
             validated_bindings.add(binding_identity)
-        _validate_consumer_parameter(tokens, parameter, body_open, body_close)
+        _validate_consumer_parameter(tokens, parameter, body_open, body_close, pairs)
         _validate_consumer_output(
             parameter,
             body_open,

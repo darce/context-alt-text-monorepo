@@ -4,19 +4,24 @@ declare(strict_types=1);
 
 namespace AltContext\PublicSite;
 
+use AltContext\Support\ViteManifest;
+
 use function absint;
 use function add_shortcode;
 use function array_filter;
 use function array_map;
 use function array_unique;
 use function array_values;
+use function class_exists;
 use function esc_attr;
 use function esc_html;
 use function esc_url;
 use function get_option;
 use function get_the_title;
 use function is_array;
+use function is_string;
 use function rest_url;
+use function str_ends_with;
 use function wp_create_nonce;
 use function wp_enqueue_script;
 use function wp_enqueue_style;
@@ -26,6 +31,18 @@ use function wp_script_add_data;
 /** Registers and renders the [acx_demo_describe] public demo. */
 final class PublicDemoShortcode {
 	private const SCRIPT_HANDLE = 'acx-public-demo-describe';
+	private const TOKEN_STYLE_HANDLE = 'acx-public-demo-tokens';
+	private const TOKEN_ENTRY_POINT = 'js/public/demo-tokens.scss';
+
+	/** @var callable(string): ?array{js: string, css: list<string>} */
+	private $tokenAssetResolver;
+
+	/**
+	 * @param callable(string): ?array{js: string, css: list<string>}|null $tokenAssetResolver
+	 */
+	public function __construct( ?callable $tokenAssetResolver = null ) {
+		$this->tokenAssetResolver = $tokenAssetResolver ?? self::default_token_asset_resolver();
+	}
 
 	public function init(): void {
 		add_shortcode( 'acx_demo_describe', array( $this, 'render' ) );
@@ -51,10 +68,19 @@ final class PublicDemoShortcode {
 			true
 		);
 		wp_script_add_data( self::SCRIPT_HANDLE, 'type', 'module' );
+		$style_dependencies = array();
+		$token_assets       = ( $this->tokenAssetResolver )( self::TOKEN_ENTRY_POINT );
+		$token_css_url      = is_array( $token_assets ) ? ( $token_assets['js'] ?? null ) : null;
+		if ( is_string( $token_css_url ) && str_ends_with( $token_css_url, '.css' ) ) {
+			// CSS-only Vite entries expose their compiled stylesheet through the manifest's file URL.
+			wp_enqueue_style( self::TOKEN_STYLE_HANDLE, $token_css_url, array(), ACX_VERSION );
+			$style_dependencies[] = self::TOKEN_STYLE_HANDLE;
+		}
+
 		wp_enqueue_style(
 			self::SCRIPT_HANDLE,
 			esc_url( ACX_PLUGIN_URL . 'js/public/demo-describe.css' ),
-			array(),
+			$style_dependencies,
 			ACX_VERSION
 		);
 
@@ -117,5 +143,18 @@ final class PublicDemoShortcode {
 		}
 
 		return $choices;
+	}
+
+	/**
+	 * @return callable(string): ?array{js: string, css: list<string>}
+	 */
+	private static function default_token_asset_resolver(): callable {
+		return static function ( string $entry ): ?array {
+			if ( ! class_exists( ViteManifest::class ) ) {
+				return null;
+			}
+
+			return ViteManifest::from_plugin()->entry_assets( $entry );
+		};
 	}
 }

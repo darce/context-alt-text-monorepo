@@ -449,6 +449,93 @@ def test_cli_verify_assets_rejects_stale_method_parameter(tmp_path: Path, method
     assert FAKE_LIVE_KEY not in result.stdout + result.stderr
 
 
+@pytest.mark.parametrize("include_safe_decoy", [False, True], ids=["without-decoy", "with-decoy"])
+def test_cli_verify_assets_binds_nested_consumer_to_its_lexical_definition(
+    tmp_path: Path, include_safe_decoy: bool
+) -> None:
+    root = _manifest_root(tmp_path)
+    reachable = tmp_path / "entry.js"
+    unsafe_consumer = (
+        "function outer() { function parsePortalConfig(env) { "
+        'env.VITE_CLERK_FAPI = "https://stale.fake-review.invalid"; '
+        "return { publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; } "
+        f'parsePortalConfig({{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" }); }\n'
+    )
+    safe_decoy = (
+        "function unrelated() { function parsePortalConfig(env) { return { "
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; } }\n"
+        if include_safe_decoy
+        else ""
+    )
+    reachable.write_text(
+        "function parsePortalConfig(env) { return {"
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        + unsafe_consumer
+        + safe_decoy,
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--root", str(root), "--verify-assets"],
+        input=f"{reachable}\n",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "VITE_CLERK_FAPI" in result.stderr
+    assert FAKE_LIVE_KEY not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "binding_case",
+    ["parameter-shadow", "const-shadow", "reassignment", "escape"],
+)
+def test_cli_verify_assets_refuses_shadowed_or_escaped_consumer_bindings(
+    tmp_path: Path, binding_case: str
+) -> None:
+    root = _manifest_root(tmp_path)
+    reachable = tmp_path / "entry.js"
+    config = (
+        f'{{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" }'
+    )
+    source = (
+        "function parsePortalConfig(env) { return {"
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+    )
+    if binding_case == "parameter-shadow":
+        source += f"function outer(parsePortalConfig) {{ parsePortalConfig({config}); }}\n"
+    elif binding_case == "const-shadow":
+        source += (
+            "function outer() { const parsePortalConfig = () => null; "
+            f"parsePortalConfig({config}); }}\n"
+        )
+    else:
+        source += f"const env = {config};\n"
+        if binding_case == "reassignment":
+            source += "parsePortalConfig = replacement; parsePortalConfig(env);\n"
+        else:
+            source += "register(parsePortalConfig); parsePortalConfig(env);\n"
+    reachable.write_text(source, encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--root", str(root), "--verify-assets"],
+        input=f"{reachable}\n",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "VITE_CLERK_FAPI" in result.stderr
+    assert FAKE_LIVE_KEY not in result.stdout + result.stderr
+
+
 def test_cli_verify_assets_accepts_matching_static_bundle(tmp_path: Path) -> None:
     root = _manifest_root(tmp_path)
     reachable = tmp_path / "entry.js"

@@ -725,11 +725,19 @@ def _static_field_value(
 
 
 def _function_parameter_consumers(
-    tokens: Sequence[_JSToken], pairs: dict[int, int]
-) -> dict[str, tuple[str, int, int]]:
-    consumers: dict[str, tuple[str, int, int]] = {}
+    tokens: Sequence[_JSToken],
+    pairs: dict[int, int],
+    scopes: Sequence[tuple[int, ...]],
+) -> dict[tuple[str, tuple[int, ...], int], tuple[str, int, int]]:
+    consumers: dict[tuple[str, tuple[int, ...], int], tuple[str, int, int]] = {}
 
-    def add_consumer(name: str | None, params_open: int, body_open: int) -> None:
+    def add_consumer(
+        name: str | None,
+        binding_scope: tuple[int, ...],
+        binding_index: int,
+        params_open: int,
+        body_open: int,
+    ) -> None:
         if name is None or body_open not in pairs or params_open >= len(tokens):
             return
         if _is_punct(tokens[params_open], "("):
@@ -749,7 +757,7 @@ def _function_parameter_consumers(
             ):
                 fields.add(tokens[index + 2].value)
         if {_CLERK_KEY_FIELD, _CLERK_FAPI_FIELD}.issubset(fields):
-            consumers[name] = (first_param.value, body_open, body_close)
+            consumers[(name, binding_scope, binding_index)] = (first_param.value, body_open, body_close)
 
     for index, token in enumerate(tokens):
         if token.kind == "identifier" and token.value == "function":
@@ -763,7 +771,7 @@ def _function_parameter_consumers(
                 continue
             body_open = pairs.get(params_open, -1) + 1
             if body_open < len(tokens) and _is_punct(tokens[body_open], "{"):
-                add_consumer(tokens[name_index].value, params_open, body_open)
+                add_consumer(tokens[name_index].value, scopes[name_index], name_index, params_open, body_open)
         if (
             token.kind == "identifier"
             and token.value == "const"
@@ -777,7 +785,13 @@ def _function_parameter_consumers(
             if params_open < len(tokens) and _is_punct(tokens[params_open], "("):
                 body_open = pairs.get(params_open, -1) + 1
                 if body_open < len(tokens) and _is_punct(tokens[body_open], "{"):
-                    add_consumer(tokens[index + 1].value, params_open, body_open)
+                    add_consumer(
+                        tokens[index + 1].value,
+                        scopes[index],
+                        index + 1,
+                        params_open,
+                        body_open,
+                    )
         if (
             token.kind == "identifier"
             and token.value == "const"
@@ -797,8 +811,38 @@ def _function_parameter_consumers(
                 continue
             body_open = arrow + 1
             if arrow < len(tokens) and _is_punct(tokens[arrow], "=>") and body_open < len(tokens) and _is_punct(tokens[body_open], "{"):
-                add_consumer(name, params_open, body_open)
+                add_consumer(name, scopes[index], index + 1, params_open, body_open)
     return consumers
+
+
+def _validate_consumer_binding(
+    identity: tuple[str, tuple[int, ...], int],
+    tokens: Sequence[_JSToken],
+    scopes: Sequence[tuple[int, ...]],
+    pairs: dict[int, int],
+) -> None:
+    name, _, declaration_index = identity
+    for index, token in enumerate(tokens):
+        if token.kind != "identifier" or token.value != name or index == declaration_index:
+            continue
+        if index and _is_punct(tokens[index - 1], "."):
+            continue
+        if index and _is_punct(tokens[index - 1], "?."):
+            continue
+        if index + 1 < len(tokens) and _is_punct(tokens[index + 1], ":"):
+            continue
+        try:
+            reference_identity = _nearest_lexical_binding(name, tokens, scopes, scopes[index], pairs)
+        except ClerkConfigError as exc:
+            if "configuration alias is ambiguous" in str(exc):
+                raise ClerkConfigError("VITE_CLERK_FAPI: portal config consumer binding is ambiguous") from None
+            continue
+        if reference_identity != identity:
+            continue
+        if index + 1 >= len(tokens) or not _is_punct(tokens[index + 1], "("):
+            raise ClerkConfigError("VITE_CLERK_FAPI: portal config consumer binding is reassigned or escapes")
+        if index + 1 not in pairs:
+            raise ClerkConfigError("VITE_CLERK_FAPI: portal config consumer call is unsupported")
 
 
 def _validate_consumer_parameter(
@@ -1202,7 +1246,8 @@ def _reject_config_object_mutation_or_escape(
 
 def _portal_config_records(tokens: Sequence[_JSToken]) -> tuple[list[dict[str, str]], set[str]]:
     pairs, scopes = _javascript_delimiters(tokens)
-    consumer_functions = _function_parameter_consumers(tokens, pairs)
+    consumer_functions = _function_parameter_consumers(tokens, pairs, scopes)
+    consumer_names = {identity[0] for identity in consumer_functions}
     object_fields: dict[int, dict[str, tuple[int, int]]] = {}
     for open_index, token in enumerate(tokens):
         if not _is_punct(token, "{") or open_index not in pairs:
@@ -1244,11 +1289,13 @@ def _portal_config_records(tokens: Sequence[_JSToken]) -> tuple[list[dict[str, s
         supporting_objects[open_index] = supports
         member_reads[open_index] = reads
 
-    consumer_calls: list[tuple[int, int, int | None]] = []
+    consumer_calls: list[
+        tuple[int, int, int | None, tuple[str, tuple[int, ...], int]]
+    ] = []
     for call_index, token in enumerate(tokens):
         if (
             token.kind != "identifier"
-            or token.value not in consumer_functions
+            or token.value not in consumer_names
             or call_index + 1 >= len(tokens)
             or not _is_punct(tokens[call_index + 1], "(")
         ):
@@ -1296,18 +1343,33 @@ def _portal_config_records(tokens: Sequence[_JSToken]) -> tuple[list[dict[str, s
         else:
             continue
         if object_index in object_records:
-            consumer_calls.append((call_index, object_index, direct_use))
+            consumer_name = token.value or ""
+            binding_identity = _nearest_lexical_binding(
+                consumer_name,
+                tokens,
+                scopes,
+                scopes[call_index],
+                pairs,
+            )
+            if binding_identity not in consumer_functions:
+                raise ClerkConfigError(
+                    "VITE_CLERK_FAPI: portal config consumer binding is shadowed or unsupported"
+                )
+            consumer_calls.append((call_index, object_index, direct_use, binding_identity))
 
-    consumed_objects = {object_index for _, object_index, _ in consumer_calls}
+    consumed_objects = {object_index for _, object_index, _, _ in consumer_calls}
     consumed_records = [object_records[index] for index in sorted(consumed_objects)]
     if (not consumed_records and object_records) or any(
         object_records[index] not in consumed_records for index in object_records.keys() - consumed_objects
     ):
         raise ClerkConfigError("VITE_CLERK_FAPI: portal configuration record is not consumed by the Clerk config parser")
 
-    for call_index, object_index, direct_use in consumer_calls:
-        consumer_name = tokens[call_index].value or ""
-        parameter, body_open, body_close = consumer_functions[consumer_name]
+    validated_bindings: set[tuple[str, tuple[int, ...], int]] = set()
+    for call_index, object_index, direct_use, binding_identity in consumer_calls:
+        parameter, body_open, body_close = consumer_functions[binding_identity]
+        if binding_identity not in validated_bindings:
+            _validate_consumer_binding(binding_identity, tokens, scopes, pairs)
+            validated_bindings.add(binding_identity)
         _validate_consumer_parameter(tokens, parameter, body_open, body_close)
         _reject_config_object_mutation_or_escape(
             tokens,
@@ -1322,7 +1384,7 @@ def _portal_config_records(tokens: Sequence[_JSToken]) -> tuple[list[dict[str, s
 
     return (
         consumed_records,
-        {_CLERK_KEY_FIELD, _CLERK_FAPI_FIELD} if consumer_functions else set(),
+        {_CLERK_KEY_FIELD, _CLERK_FAPI_FIELD} if consumer_names else set(),
     )
 
 

@@ -21,6 +21,7 @@ source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
 RECORDS={shlex.quote(str(records))}
 record() {{ printf '%s\\n' "$*" >>"$RECORDS"; }}
+preflight_env_manifest() {{ return 0; }}
 deploy_env_lease() {{ return 0; }}
 restore_runtime_topology() {{ record restore_runtime_topology "$@"; }}
 restore_prior_image_repo_env() {{ record restore_prior_image_repo_env "$@"; }}
@@ -88,6 +89,7 @@ source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
 RECORDS={shlex.quote(str(records))}
 record() {{ printf '%s\\n' "$*" >>"$RECORDS"; }}
+preflight_env_manifest() {{ return 0; }}
 restore_runtime_topology() {{ record restore_runtime_topology "$@"; }}
 restore_prior_image_repo_env() {{ record restore_prior_image_repo_env "$@"; }}
 restore_env_tag_to_rollback() {{ record restore_env_tag_to_rollback "$@"; return "${{RESTORE_ENV_RC:-0}}"; }}

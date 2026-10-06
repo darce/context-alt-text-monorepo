@@ -69,9 +69,12 @@ Exit: green round-trip; run log has before/after screenshots of plugin state.
 
 Exit: CORS rejection evidence + 429 evidence filed in the run log.
 
-### Slice 4 -- Sovereign local-read fallback (RFC5737 deterministic timeout)
+### Slice 4 -- Sovereign local-read fallback (public-firewall deterministic timeout)
 
-- Temporarily set the plugin backend URL to an RFC5737 address (`https://192.0.2.1`) to force a deterministic connect timeout.
+- Choose a public (global) address and port whose firewall silently drops SYNs.
+- Before pointing the plugin at it, run `curl -sS -m 5 -o /dev/null https://<that-address>:<port>/` and confirm it exits 28 (timeout). Proceed only when this pre-check proves that the selected endpoint takes the connect-timeout path.
+- RFC 5737/3849 documentation addresses now fail before any connection with `acx_egress_denied`, so they cannot stand in for the timeout path.
+- Temporarily set the plugin backend URL to `https://<that-address>:<port>/` to force a deterministic connect timeout.
 - Confirm the plugin renders cached state and surfaces the canonical outage-facing sync status used by the current UI (`sync_health=offline`, label `Waiting for service…`; see `docs/workbay/contracts/conflict-resolution-sync-contract.md` and `apps/prototype-wp-alt-context/js/admin/pages/workbench/SyncStatusIndicator.tsx`).
 - Revert the URL to `https://api.altcontext.com` before finishing the slice.
 - Capture fallback-render screenshot / annotated transcript.
@@ -96,7 +99,7 @@ Exit: fallback behavior verified; plugin restored to production URL.
 
 - **LocalWP origin not on production CORS allowlist** -- probe returns CORS error, gate fails spuriously. Mitigation: Slice 1 includes an allowlist-update step before calling the gate failed, requires the pre-change allowlist to be captured in the run log, and defines the rollback path for temporary origins.
 - **Raw API key leak into run log / repo** -- production key exposure. Mitigation: fingerprint-only in run log (same discipline as E15-3); run log reviewed before commit.
-- **RFC5737 timeout misreads as hard failure** -- plugin might render a different error state than the canonical outage status (`sync_health=offline`, "Waiting for service…") per `docs/workbay/contracts/conflict-resolution-sync-contract.md` and the `SyncStatus` surface. Mitigation: Slice 4 captures whatever the plugin actually does, and any gap vs. the expected fallback UX becomes a new finding against E15-7 (local sync correctness), not a gate failure here.
+- **RFC 5737/3849 documentation addresses are denied before timeout** -- the plugin might render a different error state than the canonical outage status (`sync_health=offline`, "Waiting for service…") per `docs/workbay/contracts/conflict-resolution-sync-contract.md` and the `SyncStatus` surface. Mitigation: Slice 4 uses a public (global) address and port whose firewall silently drops SYNs, and proceeds only after the curl pre-check exits 28; capture whatever the plugin actually does, and any gap vs. the expected fallback UX becomes a new finding against E15-7 (local sync correctness), not a gate failure here.
 - **Slice 3 rate-limit test burns production key budget** -- only relevant if the key has a cost ceiling. Mitigation: use a throwaway production-scoped test key whose revocation is scheduled immediately after the slice, and bound the drive to 50 requests / 5 minutes so a misconfigured limiter cannot run indefinitely.
 
 ## Consolidated Checklist
@@ -128,9 +131,10 @@ Exit: fallback behavior verified; plugin restored to production URL.
 - [ ] Create a throwaway production-scoped test key, drive a deterministic 429 on that key, and record the rate-limit headers/body evidence.
 - [ ] Revoke the throwaway key immediately after capture and record the revocation timestamp in the run log.
 
-### Checklist for Slice 4: Sovereign local-read fallback (RFC5737 deterministic timeout)
+### Checklist for Slice 4: Sovereign local-read fallback (public-firewall deterministic timeout)
 
-- [ ] Point the plugin temporarily at `https://192.0.2.1` to force the deterministic connect-timeout path.
+- [ ] Choose a public (global) address and port whose firewall silently drops SYNs, and confirm `curl -sS -m 5 -o /dev/null https://<that-address>:<port>/` exits 28 (timeout) before pointing the plugin at it; RFC 5737/3849 documentation addresses fail with `acx_egress_denied` and cannot stand in for this timeout path.
+- [ ] Point the plugin temporarily at `https://<that-address>:<port>/` to force the deterministic connect-timeout path.
 - [ ] Capture the observed cached-state render plus the current degraded sync-status evidence.
 - [ ] Restore `https://api.altcontext.com` before closing the slice and attach the fallback screenshot / annotated transcript.
 

@@ -86,7 +86,7 @@ Exit: Settings page reports a successful probe against the live backend.
 - Capture a short run log (`E15-3-mvp-run-log.md`) with: scan timestamp, number of images, observed latency, any errors, and a screenshot or annotated transcript.
 - Include the [E15-22](./E15-22-workbench-avatar-and-progress-readiness-task-plan.md) proof bundle in that run log: at least one representative avatar render from the backend `thumb_url` path or an explicit fallback screenshot/transcript, the processed-count progression, and the point at which `Scan complete` appears.
 - Reuse the E15-3a seeded-media proof artifacts when they still match the public-demo build; if any artifact must be recaptured on the public site, keep the same proof-bundle headings so E15-5 can consume the public-demo evidence without redefining acceptance criteria.
-- Verify the sovereign local-read path renders cached state when the backend is intentionally unreachable by temporarily setting the plugin backend URL to an RFC5737 address (for example `https://192.0.2.1`) to force a deterministic connect timeout; confirm the plugin renders cached state and surfaces the expected degraded-sync indicator; revert the URL before finishing.
+- Verify the sovereign local-read path renders cached state when the backend is intentionally unreachable by choosing a public (global) address and port whose firewall silently drops SYNs. Before pointing the plugin at it, run `curl -sS -m 5 -o /dev/null https://<that-address>:<port>/` and proceed only if it exits 28 (timeout). RFC 5737/3849 documentation addresses now fail before any connection with `acx_egress_denied` and cannot stand in for the timeout path. Temporarily set the plugin backend URL to `https://<that-address>:<port>/`; confirm the plugin renders cached state and surfaces the expected degraded-sync indicator; revert the URL before finishing.
 
 Exit: run log filed with the E15-22 avatar/progress proof bundle; local-read path verified; Phase 3 MVP exit criteria fully satisfied.
 
@@ -141,7 +141,7 @@ Exit: run log filed with the E15-22 avatar/progress proof bundle; local-read pat
 - [ ] File `E15-3-mvp-run-log.md` with timestamp, image count, latency, errors, and screenshot or annotated transcript evidence.
 - [ ] Include the E15-22 avatar/progress proof bundle in that run log: representative avatar render from `thumb_url` or explicit fallback evidence, monotonic processed-count evidence, and the `Scan complete` timing.
 - [ ] Preserve the E15-22 proof-bundle headings so E15-5 can reuse the artifact without redefining avatar/progress success criteria.
-- [ ] Verify the deterministic local-read fallback via an RFC5737 backend URL, then restore the production backend URL before closing the slice.
+- [ ] Verify the deterministic local-read fallback via a public (global) address and port whose firewall silently drops SYNs; confirm `curl -sS -m 5 -o /dev/null https://<that-address>:<port>/` exits 28 (timeout) before pointing the plugin at it. RFC 5737/3849 documentation addresses fail with `acx_egress_denied` and cannot stand in for this timeout path; restore the production backend URL before closing the slice.
 
 ## Review Readiness
 

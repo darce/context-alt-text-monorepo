@@ -730,8 +730,9 @@ test-hooks:
 ocir-token-rotate:
 	@bash scripts/deploy/ocir-token-rotate.sh $(OCIR_ROTATE_ARGS)
 
-# ENVMAN-4: prepare or explicitly rotate the GPU endpoint API key through an
-# approved VM instance-principal writer. The command never prints key material.
+# ENVMAN-4: prepare or explicitly rotate the GPU endpoint API key with the
+# operator's local OCI CLI config (same writer as ocir-token-rotate). The command
+# never prints key material.
 .PHONY: gpu-key-mint
 gpu-key-mint:
 	@bash scripts/deploy/gpu-key-mint.sh $(GPU_KEY_MINT_ARGS)

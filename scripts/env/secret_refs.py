@@ -17,7 +17,9 @@ class SecretNotFound(SecretUnavailable):
     pass
 
 
-_OCI_SECRET_OCID = re.compile(r"ocid1\.vaultsecret\.oc1\.[a-z0-9-]+\.[a-z0-9]{20,}")
+_OCI_SECRET_OCID = re.compile(
+    r"ocid1\.vaultsecret\.oc[0-9]+\.[A-Za-z0-9_-]*\.[A-Za-z0-9._-]{20,}"
+)
 _OCI_TIMEOUT_SECONDS = 30
 
 

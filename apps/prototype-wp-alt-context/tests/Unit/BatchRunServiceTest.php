@@ -70,6 +70,7 @@ class BatchRunServiceTest extends TestCase
         ]);
 
         $analyzeRequest = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $analyzeRequest->set_param('idempotency_key', 'phpred1-test-key-0001');
         $analyzeRequest->set_param('batch_run_id', $runId);
         $analyzeRequest->set_param('batch_index', 0);
         $analyzeRequest->set_param('submitted_total', 1);

@@ -1995,30 +1995,49 @@ def test_runbook_activates_backend_before_first_frontend_apply() -> None:
     assert check < materialize < restart < confirm < frontend_apply
 
 
+@pytest.mark.parametrize(
+    "heading",
+    ["Activate the production API before frontend apply", "Backend back-out"],
+)
+@pytest.mark.parametrize("suffix", ["", " APPLY=1 CONFIRM=prod"])
+def test_runbook_env_materialize_is_not_introduced_as_a_vm_command(heading: str, suffix: str) -> None:
+    text = RUNBOOK.read_text(encoding="utf-8")
+    section = text.split(f"### {heading}\n", 1)[1].split("### ", 1)[0]
+    command = f"```bash\nmake env-materialize ENV=prod TARGET=svc-vm{suffix}\n```"
+    introduction = section[: section.index(command)].rsplit("```", 1)[-1]
+    assert "on the vm" not in " ".join(introduction.lower().split())
+
+
 def test_runbook_checker_documents_all_three_probes() -> None:
     text = RUNBOOK.read_text(encoding="utf-8")
     checker = text.split("It returns zero only when", 1)[1].split("The deploy script passes", 1)[0]
-    assert all(fragment in checker for fragment in (
-        "https://app.altcontext.com/",
-        "https://api.altcontext.com/ready",
-        "https://app.altcontext.com/portal/me",
-        "HTTP **401**",
-    ))
+    assert all(
+        fragment in checker
+        for fragment in (
+            "https://app.altcontext.com/",
+            "https://api.altcontext.com/ready",
+            "https://app.altcontext.com/portal/me",
+            "HTTP **401**",
+        )
+    )
 
 
 def test_runbook_rollback_disables_backend_through_manifest() -> None:
     text = RUNBOOK.read_text(encoding="utf-8")
     rollback = text.split("## Rollback", 1)[1].split("### Frontend back-out", 1)[0]
-    assert all(fragment in rollback for fragment in (
-        '`RECOGNITION_PORTAL_ENABLED` to `prod = "0"`',
-        "config/env/manifest.d/30-portal-backend.toml",
-        "normal reviewed merge",
-        "manifest is the only writer",
-        "reverted as drift at the next materialize",
-        "make env-materialize ENV=prod TARGET=svc-vm APPLY=1 CONFIRM=prod",
-        "sudo systemctl restart acx-prod",
-        "[frontend back-out](#frontend-back-out)",
-    ))
+    assert all(
+        fragment in rollback
+        for fragment in (
+            '`RECOGNITION_PORTAL_ENABLED` to `prod = "0"`',
+            "config/env/manifest.d/30-portal-backend.toml",
+            "normal reviewed merge",
+            "manifest is the only writer",
+            "reverted as drift at the next materialize",
+            "make env-materialize ENV=prod TARGET=svc-vm APPLY=1 CONFIRM=prod",
+            "sudo systemctl restart acx-prod",
+            "[frontend back-out](#frontend-back-out)",
+        )
+    )
 
 
 def test_runbook_rollback_has_no_unsafe_caddyfile_placeholder() -> None:
@@ -2028,15 +2047,18 @@ def test_runbook_rollback_has_no_unsafe_caddyfile_placeholder() -> None:
 
 def test_runbook_rollback_documents_guarded_in_place_caddyfile_restore() -> None:
     rollback = RUNBOOK.read_text(encoding="utf-8").split("## Rollback", 1)[1]
-    assert all(fragment in rollback for fragment in (
-        "**in place**",
-        "set -euo pipefail",
-        "find /opt/acx-backend/app/rollback -maxdepth 1 -type f",
-        "-name 'Caddyfile.*' -printf '%T@ %p\\n' | sort -nr",
-        'if [ ! -f "$snapshot" ] || [ ! -s "$snapshot" ]; then',
-        "refusing restore",
-        'cp -- "$snapshot" /opt/acx-backend/Caddyfile',
-    ))
+    assert all(
+        fragment in rollback
+        for fragment in (
+            "**in place**",
+            "set -euo pipefail",
+            "find /opt/acx-backend/app/rollback -maxdepth 1 -type f",
+            "-name 'Caddyfile.*' -printf '%T@ %p\\n' | sort -nr",
+            'if [ ! -f "$snapshot" ] || [ ! -s "$snapshot" ]; then',
+            "refusing restore",
+            'cp -- "$snapshot" /opt/acx-backend/Caddyfile',
+        )
+    )
 
 
 def test_checked_in_health_check_covers_root_ready_and_portal_api(tmp_path: Path) -> None:

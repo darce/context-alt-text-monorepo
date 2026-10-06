@@ -279,6 +279,8 @@ def test_wrapper_reports_ssh_failure_when_ssh_closes_stdin(remote):
         (1, "drift found (remote check exit 1)"),
         (2, "remote materialize refused with status 2"),
         (4, "required host secret is missing (remote materialize exit 4)"),
+        (5, "OCI CLI unavailable on remote host (remote materialize exit 5)"),
+        (6, "OCI Vault secret resolution failed (remote materialize exit 6)"),
         (75, "remote materialize lock or lease busy (exit 75)"),
     ],
 )
@@ -345,6 +347,8 @@ def test_constructed_remote_command_reports_bootstrap_failures(remote, tmp_path,
         (["--apply"], 1, "remote materialize exited with status 1"),
         ([], 2, "remote materialize refused with status 2"),
         ([], 4, "required host secret is missing (remote materialize exit 4)"),
+        ([], 5, "OCI CLI unavailable on remote host (remote materialize exit 5)"),
+        ([], 6, "OCI Vault secret resolution failed (remote materialize exit 6)"),
         ([], 75, "remote materialize lock or lease busy (exit 75)"),
     ],
 )

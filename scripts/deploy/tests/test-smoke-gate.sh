@@ -909,7 +909,9 @@ if [[ "$joined" == *"wp eval"* ]]; then
     exit 0
 fi
 if [[ "$joined" == *"wp option update acx_recognition_enabled"* ]]; then
-    printf '1\n' >"${state}.recognition_enabled"
+    update_value=""
+    for arg in "$@"; do update_value="$arg"; done
+    printf '%s\n' "$update_value" >"${state}.recognition_enabled"
     exit 0
 fi
 if [[ "$joined" == *"wp option get acx_recognition_enabled"* ]]; then
@@ -937,7 +939,7 @@ printf '200'
 EOF
 chmod 700 "$burst_root/bin/docker" "$burst_root/bin/curl"
 run_bootstrap_burst() {
-    local mode="$1" output_file="$2" total="${3:-25}" initial_alt="${4:-0}" log_file
+    local mode="$1" output_file="$2" total="${3:-25}" initial_alt="${4:-0}" bootstrap_script="${5:-$bootstrap_file}" log_file
     log_file="$burst_root/${mode}.log"
     printf '%s\n' "$initial_alt" >"$burst_root/state"
     rm -f "$burst_root/state.force"
@@ -953,7 +955,7 @@ run_bootstrap_burst() {
         PLUGIN_ZIP="$burst_root/plugin.zip" \
         ACX_DEMO_DESCRIBE_CHUNK=10 \
         ACX_DEMO_DESCRIBE_MAX=25 \
-        "$burst_bash" "$bootstrap_file" 2>&1
+        "$burst_bash" "$bootstrap_script" 2>&1
     ); then
         rc=0
     else
@@ -968,6 +970,7 @@ positive_output="$burst_root/positive.out"
 positive_rc=0
 run_bootstrap_burst positive "$positive_output" || positive_rc=$?
 assert_eq "describe burst positive rc" 0 "$positive_rc"
+assert_eq "recognition option fake stores the requested update value" 1 "$(cat "$burst_root/state.recognition_enabled")"
 positive_limits=$(sed -n 's/.*--limit=\([0-9][0-9]*\).*/\1/p' "$burst_root/positive.log" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
 assert_eq "describe burst trims final chunk" "10 10 5" "$positive_limits"
 if grep -q 'Describe burst bounded: admitted=25/25 chunks=3' "$positive_output"; then
@@ -994,6 +997,26 @@ force_limits=$(sed -n 's/.*--limit=\([0-9][0-9]*\).*/\1/p' "$burst_root/force.lo
 assert_eq "describe burst RUN_FORCE caps first chunk to live media total" "5" "$force_limits"
 force_marker=$(tr -d '\r\n' <"$burst_root/demo/.acx-describe-first-burst.count")
 assert_eq "describe burst RUN_FORCE marker stays within media total" "5" "$force_marker"
+
+# Run a test-only bootstrap copy whose option update writes 0. The fake stores
+# that passed value, and the read-back must fail closed with the returned value.
+recognition_zero_output="$burst_root/recognition-zero.out"
+recognition_zero_rc=0
+recognition_zero_bootstrap="$burst_root/demo/bootstrap-wp-recognition-zero.sh"
+sed "s/wpcli wp option update acx_recognition_enabled '1'/wpcli wp option update acx_recognition_enabled '0'/" "$bootstrap_file" >"$recognition_zero_bootstrap"
+if grep -Fq "wpcli wp option update acx_recognition_enabled '0'" "$recognition_zero_bootstrap"; then
+    run_bootstrap_burst recognition-zero "$recognition_zero_output" 25 0 "$recognition_zero_bootstrap" || recognition_zero_rc=$?
+else
+    echo "FAIL recognition option zero-write fixture was not created"
+    failures=$((failures + 1))
+fi
+assert_eq "recognition option read-back rejects persisted zero" 2 "$recognition_zero_rc"
+if grep -Fq 'ERROR: failed to persist acx_recognition_enabled=1 for the demo tenant (got 0)' "$recognition_zero_output"; then
+    echo "ok   recognition option read-back reports persisted zero"
+else
+    echo "FAIL recognition option read-back reports persisted zero"
+    failures=$((failures + 1))
+fi
 
 negative_output="$burst_root/negative.out"
 negative_rc=0

@@ -91,6 +91,7 @@ class _ShellContext:
 class _ShellState:
     quote: str = ""
     escaped: bool = False
+    pending_opener: str = ""
     in_word: bool = False
     contexts: list[_ShellContext] = field(default_factory=list)
     heredocs: list[_HereDoc] = field(default_factory=list)
@@ -121,7 +122,9 @@ def _finish_shell_word(context: _ShellContext) -> None:
     elif current_case is not None and current_case.phase == "body" and word == "esac" and context.command_start:
         context.case_stack.pop()
         context.command_start = False
-    elif word in {"then", "else", "do", "elif", "!"}:
+    elif word == "{" and context.command_start:
+        context.command_start = True
+    elif word in {"then", "else", "do", "elif", "!"} and context.command_start:
         context.command_start = True
     else:
         context.command_start = False
@@ -173,10 +176,19 @@ def _scan_shell_line(raw: str, state: _ShellState) -> str:
             state.heredocs.pop(0)
         return raw
 
+    prefix = ""
+    if state.escaped:
+        # Backslash-newline vanishes before shell tokenization; a pending
+        # possible opener rejoins its following parenthesis here.
+        state.escaped = False
+        prefix, state.pending_opener = state.pending_opener, ""
+    scan_raw = prefix + raw
+    prefix_length = len(prefix)
+
     comment_at: int | None = None
     index = 0
-    while index < len(raw):
-        char = raw[index]
+    while index < len(scan_raw):
+        char = scan_raw[index]
         if state.escaped:
             state.escaped = False
             state.in_word = True
@@ -199,9 +211,17 @@ def _scan_shell_line(raw: str, state: _ShellState) -> str:
             continue
 
         if state.quote == '"':
+            if (
+                char == "$"
+                and index + 2 == len(scan_raw)
+                and scan_raw[index + 1] == "\\"
+            ):
+                state.pending_opener = char
+                index += 1
+                continue
             if char == '"':
                 state.quote = ""
-            elif char == "$" and index + 1 < len(raw) and raw[index + 1] == "(":
+            elif char == "$" and index + 1 < len(scan_raw) and scan_raw[index + 1] == "(":
                 state.has_substitution = True
                 if state.contexts and state.contexts[-1].kind == "paren":
                     state.contexts[-1].word.append("\0")
@@ -229,7 +249,16 @@ def _scan_shell_line(raw: str, state: _ShellState) -> str:
             index += 1
             continue
 
-        if char == "$" and index + 1 < len(raw) and raw[index + 1] == "(":
+        if (
+            char in "$<>"
+            and index + 2 == len(scan_raw)
+            and scan_raw[index + 1] == "\\"
+        ):
+            state.pending_opener = char
+            index += 1
+            continue
+
+        if char == "$" and index + 1 < len(scan_raw) and scan_raw[index + 1] == "(":
             state.has_substitution = True
             if state.contexts and state.contexts[-1].kind == "paren":
                 state.contexts[-1].word.append("\0")
@@ -239,7 +268,7 @@ def _scan_shell_line(raw: str, state: _ShellState) -> str:
             index += 2
             continue
 
-        if char in "<>" and index + 1 < len(raw) and raw[index + 1] == "(":
+        if char in "<>" and index + 1 < len(scan_raw) and scan_raw[index + 1] == "(":
             state.has_substitution = True
             if state.contexts and state.contexts[-1].kind == "paren":
                 state.contexts[-1].word.append("\0")
@@ -276,10 +305,10 @@ def _scan_shell_line(raw: str, state: _ShellState) -> str:
             context is not None
             and context.kind in {"paren", "backtick"}
             and char == "<"
-            and raw[index:index + 2] == "<<"
-            and raw[index:index + 3] != "<<<"
+            and scan_raw[index:index + 2] == "<<"
+            and scan_raw[index:index + 3] != "<<<"
         ):
-            parsed = _parse_heredoc(raw, index)
+            parsed = _parse_heredoc(scan_raw, index)
             if parsed is None:
                 # Expansions, concatenated delimiter words and other shell
                 # forms are intentionally outside this bounded scanner.
@@ -333,7 +362,7 @@ def _scan_shell_line(raw: str, state: _ShellState) -> str:
                     state.in_word = True
             elif char in ";|&":
                 _finish_shell_word(context)
-                if char == ";" and raw[index:index + 3] == ";;&":
+                if char == ";" and scan_raw[index:index + 3] == ";;&":
                     if current_case is not None and current_case.phase == "body":
                         current_case.phase = "pattern"
                         current_case.pattern_started = False
@@ -341,7 +370,7 @@ def _scan_shell_line(raw: str, state: _ShellState) -> str:
                     state.in_word = False
                     index += 3
                     continue
-                if char == ";" and raw[index:index + 2] in {";;", ";&"}:
+                if char == ";" and scan_raw[index:index + 2] in {";;", ";&"}:
                     if current_case is not None and current_case.phase == "body":
                         current_case.phase = "pattern"
                         current_case.pattern_started = False
@@ -377,20 +406,16 @@ def _scan_shell_line(raw: str, state: _ShellState) -> str:
             state.in_word = True
         else:
             state.in_word = False
-    return raw[:comment_at] if comment_at is not None else raw
-
-
-def _shell_line(raw: str, quote: str = "") -> tuple[str, str, bool]:
-    state = _ShellState(quote=quote, in_word=bool(quote))
-    clean = _scan_shell_line(raw, state)
-    return clean, state.quote, state.escaped
+    if comment_at is None:
+        return raw
+    return raw[:max(0, comment_at - prefix_length)]
 
 
 def _starts_value_word(raw: str) -> bool:
     return bool(
         raw
         and not raw[0].isspace()
-        and not (raw.startswith("#") and (len(raw) == 1 or raw[1] in " \t\r\n"))
+        and not (raw.startswith("#") and len(raw) > 1 and raw[1] in " \t\r\n")
     )
 
 

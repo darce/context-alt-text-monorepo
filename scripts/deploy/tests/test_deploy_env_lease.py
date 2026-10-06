@@ -312,9 +312,7 @@ def test_explicit_ttl_below_default_remote_build_floor_is_refused(tmp_path: Path
     )
 
     assert result.returncode != 0, result.stdout + result.stderr
-    assert "ACX_DEPLOY_LOCK_TTL_SECONDS (7200) must be at least computed floor 7225" in (
-        result.stdout + result.stderr
-    )
+    assert "ACX_DEPLOY_LOCK_TTL_SECONDS (7200) must be at least computed floor 7225" in result.stdout + result.stderr
 
 
 def test_ttl_rejects_restart_budget_beyond_default_and_accepts_exact_floor(

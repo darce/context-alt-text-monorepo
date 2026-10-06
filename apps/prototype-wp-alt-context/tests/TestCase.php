@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace AltContext\Tests;
 
 require_once __DIR__ . '/../src/api/class-recognition-api-key-store.php';
+require_once __DIR__ . '/../src/support/class-recognition-transport.php';
 
 use AltContext\Api\RecognitionApiKeyStore;
+use AltContext\Support\RecognitionTransport;
 use PHPUnit\Framework\TestCase as PHPUnitTestCase;
 
 /**
@@ -26,10 +28,12 @@ abstract class TestCase extends PHPUnitTestCase
         // Default recognition config so proxy controllers don't fail on missing API key.
         // Individual tests override these when testing config resolution behavior.
         $this->setOption('acx_recognition_api_key', 'test-key');
+        RecognitionTransport::set_resolver( static fn ( string $host ): array => [ '93.184.216.34' ] );
     }
 
     protected function tearDown(): void
     {
+        RecognitionTransport::set_resolver( null );
         $this->resetGlobalState();
         parent::tearDown();
     }

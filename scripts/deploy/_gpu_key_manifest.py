@@ -796,7 +796,10 @@ def _run_locked_transaction(
     terraform_input_path: Path,
     ssh_target: str,
     rotate: bool,
+    approve_mint: bool,
 ) -> int:
+    if not approve_mint:
+        raise ValueError("--run-locked requires explicit --approve-mint")
     if not ssh_target:
         raise ValueError("--run-locked requires an SSH target")
     descriptor = -1
@@ -809,7 +812,10 @@ def _run_locked_transaction(
         command = [
             "bash",
             str(Path(__file__).with_name("gpu-key-mint.sh")),
-            "--approve-mint",
+        ]
+        if approve_mint:
+            command.append("--approve-mint")
+        command.extend([
             "--ssh-target",
             ssh_target,
             "--manifest",
@@ -820,7 +826,7 @@ def _run_locked_transaction(
             expected_preimages[owner_path] or "missing",
             "--expected-terraform-input-sha256",
             expected_preimages[terraform_input_path] or "missing",
-        ]
+        ])
         if expected_secret_id is not None:
             command.extend(["--expected-secret-id", expected_secret_id])
         if rotate:
@@ -874,6 +880,7 @@ def main() -> int:
     parser.add_argument("--terraform-input", type=Path)
     parser.add_argument("--check-ready", action="store_true")
     parser.add_argument("--run-locked", action="store_true")
+    parser.add_argument("--approve-mint", action="store_true")
     parser.add_argument("--validate-transaction", action="store_true")
     parser.add_argument("--ssh-target")
     parser.add_argument("--rotate", action="store_true")
@@ -892,12 +899,21 @@ def main() -> int:
             or args.expected_secret_id is not None
         ):
             parser.error("--run-locked requires --terraform-input and does not accept other modes")
-        return _run_locked_transaction(args.manifest, args.terraform_input, args.ssh_target or "", args.rotate)
+        if not args.approve_mint:
+            parser.error("--run-locked requires explicit --approve-mint")
+        return _run_locked_transaction(
+            args.manifest,
+            args.terraform_input,
+            args.ssh_target or "",
+            args.rotate,
+            args.approve_mint,
+        )
     if args.validate_transaction:
         if (
             args.secret_ocid is not None
             or args.check_ready
             or args.run_locked
+            or args.approve_mint
             or args.terraform_input is None
             or args.ssh_target
             or args.rotate
@@ -919,6 +935,7 @@ def main() -> int:
         if (
             args.secret_ocid is not None
             or args.terraform_input is not None
+            or args.approve_mint
             or args.ssh_target
             or args.rotate
             or args.expected_owner_sha256 is not None
@@ -928,6 +945,8 @@ def main() -> int:
             parser.error("--check-ready does not accept mint arguments")
         check_manifest_ready(args.manifest)
         return 0
+    if args.approve_mint:
+        parser.error("--approve-mint requires --run-locked")
     if args.secret_ocid is None:
         parser.error("secret_ocid is required")
     if args.expected_secret_id is not None:

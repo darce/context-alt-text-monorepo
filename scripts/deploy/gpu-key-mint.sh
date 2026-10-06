@@ -132,6 +132,9 @@ if [ "${GPU_KEY_MINT_TRANSACTION_LOCKED:-0}" != "1" ]; then
         --manifest "${MANIFEST_PATH}"
         --terraform-input "${TERRAFORM_INPUT_PATH}"
     )
+    if [ "${APPROVED}" -eq 1 ]; then
+        LOCK_ARGS+=(--approve-mint)
+    fi
     if [ "${MODE}" = "rotate" ]; then
         LOCK_ARGS+=(--rotate)
     fi

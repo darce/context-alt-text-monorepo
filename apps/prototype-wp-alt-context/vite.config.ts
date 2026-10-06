@@ -78,6 +78,7 @@ export default defineConfig(({ mode }) => ({
         'attachment-edit': path.resolve(__dirname, 'js/attachment-edit/main.tsx'),
         guide: path.resolve(__dirname, 'js/guide/main.tsx'),
         'guide-watch': path.resolve(__dirname, 'js/guide/publicGuideWatch.ts'),
+        'public-demo-tokens': path.resolve(__dirname, 'js/public/demo-tokens.scss'),
       },
     },
   },

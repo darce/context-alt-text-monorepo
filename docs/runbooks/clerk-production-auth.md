@@ -24,8 +24,23 @@ Credentials do not exist until this step. In the [Clerk Dashboard](https://dashb
 3. When Clerk asks Primary vs Secondary for the `app.` subdomain, choose
    **Primary application**: users hit `app.altcontext.com`; Clerk FAPI stays
    on the root domain as `clerk.altcontext.com`.
-4. Configure DNS as the Dashboard shows (CNAME for FAPI, plus email DNS for
-   `@altcontext.com`). Wait until Clerk reports DNS/SSL ready.
+4. The `altcontext.com` zone is served by Unstoppable Domains nameservers
+   (`ns1.unstoppabledomains.com` and `ns2.unstoppabledomains.com`), so add
+   records in that registrar's DNS panel, not in this repo or OCI. In
+   **Dashboard > Domains**, copy every target exactly for these five CNAMEs:
+   `clerk` (Frontend API; `frontend-api.clerk.services`), `accounts` (Account
+   Portal; `accounts.clerk.services`), `clkmail`, `clk._domainkey`, and
+   `clk2._domainkey` (email sending and DKIM; each has an instance-specific
+   `*.clerk.services` target). Do not add an A record for `clerk`. Press
+   **Verify** and wait for DNS and SSL to show ready. Existing A records
+   (`api`, `app`, `demo`, and others) are unaffected. Check the Frontend API
+   CNAME with:
+
+   ```bash
+   dig +short CNAME clerk.altcontext.com
+   ```
+
+   Expected output: `frontend-api.clerk.services.`
 5. Enable **Allowed Subdomains** and allowlist `app.altcontext.com`. The
    primary domain remains allowed; other subdomains are rejected.
 6. Copy the **publishable** key (`pk_live_…`) from **API keys**. Optionally
@@ -110,9 +125,9 @@ make env-materialize ENV=prod TARGET=svc-vm
 make env-materialize ENV=prod TARGET=svc-vm APPLY=1 CONFIRM=prod
 ```
 
-The portal key is public. Add the operator-supplied `pk_live_` key as the
-`prod` value of `VITE_CLERK_PUBLISHABLE_KEY` in
-`config/env/manifest.d/60-app-portal.toml`, then validate the complete contract.
+The portal key is public. The operator-supplied live publishable key is
+committed as the `prod` value of `VITE_CLERK_PUBLISHABLE_KEY` in
+`config/env/manifest.d/60-app-portal.toml`; validate the complete contract.
 The validator reads the manifest and never writes runtime env files. Its
 optional `--check` flag makes a bounded network request to the derived JWKS URL;
 the default validation is offline.

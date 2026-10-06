@@ -44,6 +44,7 @@ preserve_rollback_tag() { exit 0; }
 _ship_selected_env dev aggregate
 """,
         REMOTE_BUILD=remote,
+        ACX_ENV_PREFLIGHT="0",
         ACX_REMOTE_BUILD_TIMEOUT="7200",
         ACX_DEPLOY_LOCK_TTL_SECONDS="7200",
     )

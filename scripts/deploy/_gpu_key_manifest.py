@@ -112,8 +112,7 @@ def _valid_secret_reference(reference: object) -> bool:
         service, slash, account = location.partition("/")
         return bool(slash and service and account)
     if scheme in {"vault", "oci"}:
-        # `oci` is the identifier form emitted by this updater; normal manifest
-        # loading accepts the same OCID only under `vault`.
+        # The shared manifest loader accepts this OCID under either `vault` or `oci`.
         return _SECRET_OCID.fullmatch(location) is not None
     return False
 

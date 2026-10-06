@@ -978,6 +978,13 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(f"unknown target {args.target}")
         if args.env is not None and args.env not in target.envs:
             parser.error(f"target {args.target} does not support env {args.env}")
+        if args.env is not None:
+            for var in _target_vars(manifest, args.target):
+                if var.cls == "secret" and var.secret.get(args.env, "").startswith("oci:"):
+                    raise ManifestError(
+                        f"{var.source}: {var.name}: oci secret refs cannot be rendered by the normal CLI "
+                        f"for target {target.name}"
+                    )
         if args.env is None:
             if target.example is None:
                 parser.error(f"target {args.target} has no example path configured")

@@ -39,15 +39,15 @@ host, not the app host.
 
 | Surface | Owner | Names |
 | --- | --- | --- |
-| This deploy script | app-host lane | `APP_HOSTNAME`, `APP_UPSTREAM`, `APP_ROOT`, `APP_WWW`, `CADDY_COMPOSE`, `APP_FRONTEND_ROOT`, `CADDYFILE`, `FRONTEND_DIST`, `APP_APPROVED_ROOTS`, `APP_RELOAD_CMD`, `APP_HEALTH_CMD` |
+| This deploy script | app-host lane | `APP_HOSTNAME`, `APP_UPSTREAM`, `APP_ROOT`, `APP_WWW`, `CADDY_COMPOSE`, `APP_FRONTEND_ROOT`, `CADDYFILE`, `FRONTEND_DIST`, `APP_APPROVED_ROOTS`, `APP_RELOAD_CMD`, `APP_HEALTH_CMD`, `APP_PORTAL_ENV_ROOT` |
 | Prod API process | `svc-vm` manifest target, including `30-portal-backend.toml` | Clerk runtime settings and portal enablement belong in `/opt/acx-backend/prod/.env` (mode 0600); production enablement and materialization are launch gaps (see below) |
 | Frontend build | `app-portal-build` public-build manifest target | public `VITE_CLERK_PUBLISHABLE_KEY` and `VITE_CLERK_FAPI`; use the live publishable key variant in production |
 
 `infra/oci/app/env.example` lists the deploy names only. Clerk secret keys and
 billing credentials never belong in the snippet, overlay, this runbook's
-commands, or apply stdout. The existing `configure_clerk_production.py`
-environment writers are scheduled for retirement in a later wave; use the
-manifest targets as the production source of truth.
+commands, or apply stdout. The `configure_clerk_production.py` command is a
+read-only manifest validator; use the manifest targets as the production
+source of truth.
 
 ## Before production launch
 
@@ -55,22 +55,18 @@ manifest targets as the production source of truth.
   in `config/env/manifest.d/30-portal-backend.toml`. It currently has only
   `local = "1"`; production rendering does not enable the portal. The API
   mounts `/portal` only when this setting is `1`, `true`, `yes`, or `on`.
-- Commit the public live production publishable key as the `prod`
+- Supply the public live production publishable key as the `prod`
   value of `VITE_CLERK_PUBLISHABLE_KEY` in
   `config/env/manifest.d/60-app-portal.toml`. It currently has only a local
   value, so `make env-render ENV=prod TARGET=app-portal-build` fails closed
   until this is supplied. Use the live key format documented in
   [Clerk production authentication](clerk-production-auth.md#1-create-the-production-instance-dashboard).
-  This key is public by design; never commit secrets.
-- `make env-materialize ENV=prod TARGET=svc-vm` currently refuses with a
-  missing-value error because VM values have not been harvested
-  (ENVAUD-1005-H-1, next wave). Until that is resolved, use
-  `apps/prototype-description-service/scripts/configure_clerk_production.py`
-  with `--check`, then `--apply --backend-env /opt/acx-backend/prod/.env`
-  as the interim Clerk writer. Its derived Clerk values must equal the
-  manifest's production values; see the runnable commands in
-  [Clerk production authentication](clerk-production-auth.md#4-materialize-and-build).
-  This writer only updates Clerk settings: also ensure the VM's runtime
+  This key is public by design. Do not add a Clerk secret to the manifest.
+- The VM's Clerk values are already harvested into
+  `config/env/manifest.d/30-portal-backend.toml`. Check and materialize that
+  target with `make env-materialize ENV=prod TARGET=svc-vm`; resolve any
+  reported runtime drift or missing host-only secrets before applying. There
+  is no interim VM writer. Also ensure the VM's runtime
   `RECOGNITION_PORTAL_ENABLED=1` matches the launch manifest before restarting.
 
 ## Default dry-run
@@ -114,6 +110,7 @@ build the SPA from the repository root:
 
 ```bash
 make env-render ENV=prod TARGET=app-portal-build
+python3 apps/prototype-description-service/scripts/configure_clerk_production.py
 npm ci --prefix apps/app-portal
 npm --prefix apps/app-portal run build
 ```
@@ -121,8 +118,12 @@ npm --prefix apps/app-portal run build
 The manifest writes `apps/app-portal/.env.production.local`; it contains only
 public build values. `VITE_CLERK_PUBLISHABLE_KEY` is public and must be the
 live production key variant. Never put a Clerk secret in the browser build.
-The build output is `apps/app-portal/dist/`. `--apply` refuses a missing dist,
-empty `index.html`, or empty `assets/`.
+The build output is `apps/app-portal/dist/`. `--apply` checks the production
+manifest and confirms that reachable JavaScript modules contain the same live
+key and FAPI before staging; missing, test, mismatched, or decoy unreferenced
+values fail before activation. `APP_PORTAL_ENV_ROOT` can select a manifest
+root other than the repository's `config/env` when a deployment uses a
+separately checked-out manifest.
 
 The checked-in `scripts/deploy/app-portal.sh` also provides the health-check
 implementation when installed under the name `app-portal-health-check`. Install
@@ -252,11 +253,9 @@ docker compose -f docker-compose.caddy.yml exec -T caddy \
 ```
 
 Enable the portal router and Clerk verifier settings in the `svc-vm`
-environment manifest. These production materialization commands currently
-refuse with a missing-value error until VM values are harvested
-(ENVAUD-1005-H-1); use the interim Clerk writer in the
-[launch checklist](#before-production-launch) meanwhile. Once harvesting is
-complete, check and materialize the production target from the repository root:
+environment manifest. The VM values are already harvested; check and
+materialize the production target from the repository root after resolving any
+runtime drift or missing host-only secrets:
 
 ```bash
 make env-materialize ENV=prod TARGET=svc-vm

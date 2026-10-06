@@ -1888,6 +1888,10 @@ class DescriptionHistoryServiceTest extends TestCase
      */
     public function testSingleImageDescribeClearsDecorativeMarkerWhenWritingNonEmptyAlt(): void
     {
+        $wpdb = $GLOBALS['wpdb'];
+        $lockName = 'acx_budget_lock_' . md5($wpdb->prefix);
+        $wpdb->queryResults[$wpdb->prepare('SELECT GET_LOCK(%s, %d)', $lockName, 1)] = '1';
+        $wpdb->queryResults[$wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lockName)] = '1';
         $mediaId = 640;
         $tempDir = sys_get_temp_dir() . '/acx-f5b-desc-' . uniqid();
         mkdir($tempDir, 0o755, true);

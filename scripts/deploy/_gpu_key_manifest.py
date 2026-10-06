@@ -20,6 +20,8 @@ from typing import Iterator
 
 
 _SECRET_OCID = re.compile(r"^ocid1\.vaultsecret\.oc[0-9]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9._-]+$")
+# Used only to exercise the updater before writer contact; its result is discarded.
+_PREFLIGHT_PROBE_OCID = "ocid1.vaultsecret.oc1.iad.gpukeypreflightprobe"
 _TABLE_HEADER = re.compile(r"(?m)^\[\[[^\]]+\]\][ \t]*$")
 _VAR_HEADER = re.compile(r"(?m)^\[\[var\]\][ \t]*$")
 _SECRET_LINE = re.compile(r"(?m)^secret\s*=\s*\{[^\n]*\}$")
@@ -146,6 +148,11 @@ def _update_gpu_key_text(text: str, secret_ocid: str) -> str:
             raise ValueError(f"refusing to replace existing {env} GPU key OCID")
     updated_block = block[:secret_lines[0].start()] + secret_line + block[secret_lines[0].end():]
     return text[:start] + updated_block + text[end:]
+
+
+def _validate_gpu_owner_publishable(owner_text: str, current_ocid: str | None) -> None:
+    """Run the persistence updater before contacting the remote writer."""
+    _update_gpu_key_text(owner_text, current_ocid or _PREFLIGHT_PROBE_OCID)
 
 
 def _manifest_fragment_paths(path: Path) -> list[Path]:
@@ -321,8 +328,8 @@ def _validate_transaction_handoff(
 
 def check_manifest_ready(path: Path) -> None:
     with _manifest_write_lock(path):
-        document, _ = _load_manifest_fragments(path)
-        validate_manifest_ready(document)
+        document, _, owner_text, _ = _manifest_gpu_owner(path)
+        _validate_gpu_owner_publishable(owner_text, _current_gpu_key_ocid(document))
 
 
 def _durable_replace(path: Path, updated_text: str, mode: int) -> None:
@@ -611,6 +618,7 @@ def _preflight_mint_transaction(
     if owner_path.resolve() == terraform_input_path.resolve():
         raise ValueError("GPU manifest and Terraform input destinations must differ")
     current_ocid = _current_gpu_key_ocid(document)
+    _validate_gpu_owner_publishable(owner_text, current_ocid)
     artifact_ocid = _existing_terraform_input_ocid(terraform_input_path)
     if artifact_ocid is not None and artifact_ocid != current_ocid:
         raise ValueError("refusing conflicting or stale Terraform GPU key input")

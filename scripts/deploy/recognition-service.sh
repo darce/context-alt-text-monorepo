@@ -113,7 +113,8 @@
 #   ACX_PUSH_TIMEOUT         positive integer wall-clock seconds for each registry push (default 900).
 #   ACX_PULL_TIMEOUT         positive integer wall-clock seconds for each registry pull (default 900).
 #   ACX_REMOTE_COMMAND_TIMEOUT positive integer wall-clock seconds for ordinary remote calls (default 120).
-#   ACX_DEPLOY_LOCK_TTL_SECONDS default 7200; at least max(600,
+#   ACX_DEPLOY_LOCK_TTL_SECONDS unset/empty defaults to max(7200, computed floor) for acquire/renew;
+#                              release defaults to 7200. Explicit values must be at least max(600,
 #                              3 × max(ACX_PUSH_TIMEOUT, ACX_PULL_TIMEOUT) + restart health budgets
 #                              + ACX_GPU_SNAPSHOT_GATE attempts×sleep + one ACX_VERIFY_SLEEP + 300
 #                              + ACX_REMOTE_BUILD_TIMEOUT when shipping a remote build).
@@ -2246,7 +2247,11 @@ deploy_env_lease() {
       ttl_required=600
     fi
     if ((${#ttl} < ${#ttl_required})) || { ((${#ttl} == ${#ttl_required})) && [[ "${ttl}" < "${ttl_required}" ]]; }; then
-      fail "ACX_DEPLOY_LOCK_TTL_SECONDS (${ttl}) must be at least computed floor ${ttl_required} seconds (three times max of ACX_PUSH_TIMEOUT (${push_timeout}) and ACX_PULL_TIMEOUT (${pull_timeout}) plus restart probe attempts×ACX_REMOTE_COMMAND_TIMEOUT (${remote_command_timeout}), health sleeps, ACX_GPU_SNAPSHOT_GATE attempts×timeout (${gpu_gate_timeout}) and sleep, one ACX_VERIFY_SLEEP, remote build budget (${build_budget}) and 300 seconds; minimum 600)"
+      if [[ -z "${ACX_DEPLOY_LOCK_TTL_SECONDS:-}" ]]; then
+        ttl="${ttl_required}"
+      else
+        fail "ACX_DEPLOY_LOCK_TTL_SECONDS (${ttl}) must be at least computed floor ${ttl_required} seconds (three times max of ACX_PUSH_TIMEOUT (${push_timeout}) and ACX_PULL_TIMEOUT (${pull_timeout}) plus restart probe attempts×ACX_REMOTE_COMMAND_TIMEOUT (${remote_command_timeout}), health sleeps, ACX_GPU_SNAPSHOT_GATE attempts×timeout (${gpu_gate_timeout}) and sleep, one ACX_VERIFY_SLEEP, remote build budget (${build_budget}) and 300 seconds; minimum 600)"
+      fi
     fi
   fi
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"

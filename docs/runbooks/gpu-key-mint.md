@@ -26,15 +26,16 @@ command binds the remote request to that identifier. The writer must refuse a
 missing or recreated name-selected secret before create or update. Initial
 bootstrap from the checked-in host refs has no prior identifier to bind.
 
-Before contacting the writer, the command takes the per-manifest-directory
+Before contacting the writer, the command takes the canonical environment-root
 cooperative write lock shared with harvest and checks that both output
-destinations can be updated. The lock serializes cooperating tools; it does
-not exclude arbitrary editors. The helper rechecks captured destination bytes
-before replacement and refuses stale external edits. An unknown or stale
-Terraform input fails closed before the Vault write; when an existing input
-matches the manifest OCID, rerunning with that OCID is idempotent. If the
-second local publication fails, the helper restores and fsyncs the earlier
-file's preimage.
+destinations can be updated. Fragment paths resolve through symlinks to the
+environment root, matching harvest's `--root` lock identity. The lock serializes
+cooperating tools; it does not exclude arbitrary editors. The helper rechecks
+captured destination bytes before replacement and refuses stale external edits.
+An unknown or stale Terraform input fails closed before the Vault write; when
+an existing input matches the manifest OCID, rerunning with that OCID is
+idempotent. If the second local publication fails, the helper restores and
+fsyncs the earlier file's preimage.
 
 After the operator reviews the Terraform plan and separately approves apply,
 use this exact input-file order so the generated GPU OCID is the last variable

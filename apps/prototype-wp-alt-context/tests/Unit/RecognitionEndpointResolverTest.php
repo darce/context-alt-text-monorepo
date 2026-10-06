@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Unit;
 
+use AltContext\Api\RecognitionApiKeyStore;
 use AltContext\Api\RecognitionEndpointResolver;
 use AltContext\Support\LoopbackHost;
 use AltContext\Tests\TestCase;
@@ -14,11 +15,25 @@ use AltContext\Tests\TestCase;
 class RecognitionEndpointResolverTest extends TestCase
 {
     private RecognitionEndpointResolver $resolver;
+    private string|false $originalRecognitionApiKeyEnvironment;
 
     protected function setUp(): void
     {
+        $this->originalRecognitionApiKeyEnvironment = getenv('ACX_RECOGNITION_API_KEY');
+        putenv('ACX_RECOGNITION_API_KEY');
         parent::setUp();
         $this->resolver = new RecognitionEndpointResolver();
+    }
+
+    protected function tearDown(): void
+    {
+        if (false === $this->originalRecognitionApiKeyEnvironment) {
+            putenv('ACX_RECOGNITION_API_KEY');
+        } else {
+            putenv('ACX_RECOGNITION_API_KEY=' . $this->originalRecognitionApiKeyEnvironment);
+        }
+
+        parent::tearDown();
     }
 
     public function testDefaultsToServiceTargetWhenNothingConfigured(): void
@@ -253,11 +268,9 @@ class RecognitionEndpointResolverTest extends TestCase
     }
 
     /**
-     * BR-138: when a higher tier is rejected but a lower tier is valid, the
-     * valid URL wins and no rejection is surfaced (reporting is for the empty
-     * effective-target case only).
+     * A rejected filter URL fails closed even when the admin option is valid.
      */
-    public function testValidLowerTierWinsOverRejectedHigherTier(): void
+    public function testRejectedFilterFailsClosedInsteadOfFallingBackToValidOption(): void
     {
         add_filter(
             'acx_recognition_base_url',
@@ -267,34 +280,156 @@ class RecognitionEndpointResolverTest extends TestCase
 
         $snapshot = $this->resolver->resolve_settings_snapshot();
 
-        $this->assertSame('https://api.altcontext.com', $snapshot['service_url']);
-        $this->assertSame('option', $snapshot['service_url_source']);
-        $this->assertNull($snapshot['service_url_rejection_reason']);
-        $this->assertNull($snapshot['service_url_rejection_source']);
-        $this->assertNull($snapshot['service_url_rejection_value']);
+        $this->assertSame('', $snapshot['service_url']);
+        $this->assertSame('', $snapshot['effective_target_url']);
+        $this->assertSame('default', $snapshot['service_url_source']);
+        $this->assertSame(
+            RecognitionEndpointResolver::URL_REJECTION_NON_LOOPBACK_HTTP,
+            $snapshot['service_url_rejection_reason']
+        );
+        $this->assertSame('filter', $snapshot['service_url_rejection_source']);
+        $this->assertSame('http://10.0.0.5:8000', $snapshot['service_url_rejection_value']);
+        $this->assertSame('', $this->resolver->get_effective_base_url());
     }
 
     /**
-     * BR-138: highest-precedence rejected tier wins the diagnostic when all
-     * present values fail validation (constant > filter > option).
+     * A rejected filter URL also fails closed when the lower option is a
+     * valid loopback target.
      */
-    public function testHighestPrecedenceRejectionWinsWhenAllTiersFail(): void
+    public function testFilterRejectionRemainsAuthoritativeWhenLowerOptionIsLoopback(): void
     {
         add_filter(
             'acx_recognition_base_url',
             static fn (): string => 'http://filter.internal:8000'
         );
-        $this->setOption('acx_recognition_url', 'http://option.internal:8000');
+        $this->setOption('acx_recognition_url', 'http://localhost:8000');
 
         $snapshot = $this->resolver->resolve_settings_snapshot();
 
         $this->assertSame('', $snapshot['service_url']);
+        $this->assertSame('default', $snapshot['service_url_source']);
         $this->assertSame('filter', $snapshot['service_url_rejection_source']);
         $this->assertSame('http://filter.internal:8000', $snapshot['service_url_rejection_value']);
         $this->assertSame(
             RecognitionEndpointResolver::URL_REJECTION_NON_LOOPBACK_HTTP,
             $snapshot['service_url_rejection_reason']
         );
+    }
+
+    public function testDeploymentManagedFilterKeyRequiresDeploymentUrlForRemoteOption(): void
+    {
+        add_filter('acx_recognition_api_key', static fn (): string => 'test-key');
+        $this->setOption('acx_recognition_url', 'https://api.example.com');
+
+        $snapshot = $this->resolver->resolve_settings_snapshot();
+
+        $this->assertSame('', $snapshot['service_url']);
+        $this->assertSame('', $snapshot['effective_target_url']);
+        $this->assertSame('default', $snapshot['service_url_source']);
+        $this->assertSame(
+            RecognitionEndpointResolver::URL_REJECTION_DEPLOYMENT_KEY_REQUIRES_DEPLOYMENT_URL,
+            $snapshot['service_url_rejection_reason']
+        );
+        $this->assertSame('option', $snapshot['service_url_rejection_source']);
+        $this->assertSame('https://api.example.com', $snapshot['service_url_rejection_value']);
+    }
+
+    public function testEnvironmentManagedKeyRequiresDeploymentUrlForRemoteOption(): void
+    {
+        putenv('ACX_RECOGNITION_API_KEY=test-key');
+        $this->setOption('acx_recognition_url', 'https://api.example.com');
+
+        $snapshot = $this->resolver->resolve_settings_snapshot();
+
+        $this->assertSame('', $snapshot['service_url']);
+        $this->assertSame(
+            RecognitionEndpointResolver::URL_REJECTION_DEPLOYMENT_KEY_REQUIRES_DEPLOYMENT_URL,
+            $snapshot['service_url_rejection_reason']
+        );
+        $this->assertSame('option', $snapshot['service_url_rejection_source']);
+        $this->assertSame('https://api.example.com', $snapshot['service_url_rejection_value']);
+    }
+
+    public function testDeploymentManagedFilterKeyAllowsLoopbackOptionUrl(): void
+    {
+        add_filter('acx_recognition_api_key', static fn (): string => 'test-key');
+        $this->setOption('acx_recognition_url', 'http://localhost:8000');
+
+        $snapshot = $this->resolver->resolve_settings_snapshot();
+
+        $this->assertSame('http://localhost:8000', $snapshot['service_url']);
+        $this->assertSame('option', $snapshot['service_url_source']);
+        $this->assertNull($snapshot['service_url_rejection_reason']);
+        $this->assertNull($snapshot['service_url_rejection_source']);
+        $this->assertNull($snapshot['service_url_rejection_value']);
+    }
+
+    public function testAdminOptionKeyDoesNotCountAsDeploymentManagedForRemoteOptionUrl(): void
+    {
+        $this->setOption(RecognitionApiKeyStore::OPTION_NAME, 'option-key');
+        $this->setOption('acx_recognition_url', 'https://api.example.com');
+
+        $snapshot = $this->resolver->resolve_settings_snapshot();
+
+        $this->assertSame('https://api.example.com', $snapshot['service_url']);
+        $this->assertSame('option', $snapshot['service_url_source']);
+        $this->assertNull($snapshot['service_url_rejection_reason']);
+    }
+
+    public function testDeploymentManagedFilterKeyAllowsFilterServiceUrl(): void
+    {
+        add_filter('acx_recognition_api_key', static fn (): string => 'test-key');
+        add_filter('acx_recognition_base_url', static fn (): string => 'https://filter.example.com');
+        $this->setOption('acx_recognition_url', 'https://admin.example.com');
+
+        $snapshot = $this->resolver->resolve_settings_snapshot();
+
+        $this->assertSame('https://filter.example.com', $snapshot['service_url']);
+        $this->assertSame('filter', $snapshot['service_url_source']);
+        $this->assertNull($snapshot['service_url_rejection_reason']);
+    }
+
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testRejectedConstantServiceUrlFailsClosedInsteadOfFallingBack(): void
+    {
+        define('ACX_RECOGNITION_URL', 'http://host.docker.internal:8000');
+        add_filter('acx_recognition_base_url', static fn (): string => 'https://filter.example.com');
+        $this->setOption('acx_recognition_url', 'https://option.example.com');
+
+        $resolver = new RecognitionEndpointResolver();
+        $snapshot = $resolver->resolve_settings_snapshot();
+
+        $this->assertSame('', $snapshot['service_url']);
+        $this->assertSame('', $snapshot['effective_target_url']);
+        $this->assertSame(
+            RecognitionEndpointResolver::URL_REJECTION_NON_LOOPBACK_HTTP,
+            $snapshot['service_url_rejection_reason']
+        );
+        $this->assertSame('constant', $snapshot['service_url_rejection_source']);
+        $this->assertSame('http://host.docker.internal:8000', $snapshot['service_url_rejection_value']);
+    }
+
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testConstantManagedKeyRequiresDeploymentUrlForRemoteOption(): void
+    {
+        define('ACX_RECOGNITION_API_KEY', 'test-key');
+        $this->setOption('acx_recognition_url', 'https://api.example.com');
+
+        $resolver = new RecognitionEndpointResolver();
+        $snapshot = $resolver->resolve_settings_snapshot();
+
+        $this->assertSame('', $snapshot['service_url']);
+        $this->assertSame(
+            RecognitionEndpointResolver::URL_REJECTION_DEPLOYMENT_KEY_REQUIRES_DEPLOYMENT_URL,
+            $snapshot['service_url_rejection_reason']
+        );
+        $this->assertSame('option', $snapshot['service_url_rejection_source']);
     }
 
     /**

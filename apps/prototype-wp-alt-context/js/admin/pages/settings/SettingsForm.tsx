@@ -35,6 +35,10 @@ const URL_REJECTION_REASON_LABELS: Record<UrlRejectionReasonValue, string> = {
     'alt-context',
   ),
   [UrlRejectionReason.INVALID_URL]: __('the configured value is not a valid URL', 'alt-context'),
+  [UrlRejectionReason.DEPLOYMENT_KEY_REQUIRES_DEPLOYMENT_URL]: __(
+    'a deployment-managed API key is configured, so the recognition URL must come from ACX_RECOGNITION_URL or the acx_recognition_base_url filter',
+    'alt-context',
+  ),
 };
 
 const urlRejectionStatusText = (data: SettingsResponse): string => {

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import base64
+import json
 import os
+import re
 import subprocess
 from collections.abc import Mapping
 from typing import Callable
@@ -12,6 +15,19 @@ class SecretUnavailable(RuntimeError):
 
 class SecretNotFound(SecretUnavailable):
     pass
+
+
+_OCI_SECRET_OCID = re.compile(r"ocid1\.vaultsecret\.oc1\.[a-z0-9-]+\.[a-z0-9]{20,}")
+_OCI_TIMEOUT_SECONDS = 30
+
+
+def _json_object_without_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
 
 
 def _unavailable(var_name: str, scheme: str) -> SecretUnavailable:
@@ -68,5 +84,36 @@ def resolve_secret(
 
     if scheme == "vault":
         raise SecretUnavailable(f"secret {var_name!r} for scheme 'vault' is deferred to ENVMAN-2")
+
+    if scheme == "oci":
+        if _OCI_SECRET_OCID.fullmatch(location) is None:
+            raise _unavailable(var_name, scheme)
+        try:
+            result = runner(
+                [
+                    "oci", "secrets", "secret-bundle", "get", "--auth", "instance_principal",
+                    "--secret-id", location,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=_OCI_TIMEOUT_SECONDS,
+            )
+            if result.returncode != 0 or not isinstance(result.stdout, str):
+                raise ValueError("OCI secret retrieval failed")
+            payload = json.loads(result.stdout, object_pairs_hook=_json_object_without_duplicate_keys)
+            content = payload["data"]["secret-bundle-content"]
+            if not isinstance(content, dict) or content.get("content-type") != "BASE64":
+                raise ValueError("unsupported OCI secret content")
+            encoded = content.get("content")
+            if not isinstance(encoded, str) or not encoded:
+                raise ValueError("empty OCI secret content")
+            raw_value = base64.b64decode(encoded, validate=True)
+            if not raw_value:
+                raise ValueError("empty OCI secret content")
+            value = raw_value.decode("utf-8", errors="strict")
+        except Exception:
+            raise _unavailable(var_name, scheme) from None
+        return value
 
     raise SecretUnavailable(f"secret {var_name!r} has unsupported scheme {scheme!r}")

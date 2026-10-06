@@ -10,6 +10,7 @@ use AltContext\Support\LoopbackHost;
 
 use function apply_filters;
 use function defined;
+use function getenv;
 use function get_option;
 use function in_array;
 use function parse_url;
@@ -26,11 +27,16 @@ final class RecognitionEndpointResolver {
 	 * BR-138: why a present service-URL value was discarded by is_valid_base_url.
 	 * Single definition for the wire contract (sr-007) — mirror in settingsApi.ts.
 	 */
-	public const URL_REJECTION_REJECTED_SCHEME   = 'rejected_scheme';
-	public const URL_REJECTION_NON_LOOPBACK_HTTP = 'non_loopback_http';
-	public const URL_REJECTION_INVALID_URL       = 'invalid_url';
+	public const URL_REJECTION_REJECTED_SCHEME                              = 'rejected_scheme';
+	public const URL_REJECTION_NON_LOOPBACK_HTTP                            = 'non_loopback_http';
+	public const URL_REJECTION_INVALID_URL                                  = 'invalid_url';
+	public const URL_REJECTION_DEPLOYMENT_KEY_REQUIRES_DEPLOYMENT_URL       = 'deployment_key_requires_deployment_url';
 
 	/**
+	 * Resolve in constant -> filter -> option order. A present deployment URL
+	 * fails closed when rejected and never falls through to a lower tier. An
+	 * option URL is available with a deployment-managed key only for loopback.
+	 *
 	 * @return array{
 	 *   value: string,
 	 *   source: string,
@@ -40,19 +46,13 @@ final class RecognitionEndpointResolver {
 	 * }
 	 */
 	public function resolve_service_url_source(): array {
-		$rejection = null;
-
 		$constant = $this->get_constant_value( 'ACX_RECOGNITION_URL' );
 		if ( '' !== $constant ) {
 			$reason = $this->base_url_rejection_reason( $constant );
 			if ( null === $reason ) {
 				return $this->accepted_service_url( $constant, 'constant' );
 			}
-			$rejection = array(
-				'reason' => $reason,
-				'source' => 'constant',
-				'value'  => $constant,
-			);
+			return $this->rejected_service_url( $reason, 'constant', $constant );
 		}
 
 		$filter = trim( (string) apply_filters( 'acx_recognition_base_url', '' ) );
@@ -61,38 +61,26 @@ final class RecognitionEndpointResolver {
 			if ( null === $reason ) {
 				return $this->accepted_service_url( $filter, 'filter' );
 			}
-			if ( null === $rejection ) {
-				$rejection = array(
-					'reason' => $reason,
-					'source' => 'filter',
-					'value'  => $filter,
-				);
-			}
+			return $this->rejected_service_url( $reason, 'filter', $filter );
 		}
 
 		$option = trim( (string) get_option( 'acx_recognition_url', '' ) );
 		if ( '' !== $option ) {
 			$reason = $this->base_url_rejection_reason( $option );
 			if ( null === $reason ) {
+				$parts = parse_url( $option );
+				$host  = is_array( $parts ) ? strtolower( (string) ( $parts['host'] ?? '' ) ) : '';
+				if ( $this->deployment_managed_key_present() && ! LoopbackHost::is_loopback( $host ) ) {
+					return $this->rejected_service_url(
+						self::URL_REJECTION_DEPLOYMENT_KEY_REQUIRES_DEPLOYMENT_URL,
+						'option',
+						$option
+					);
+				}
+
 				return $this->accepted_service_url( $option, 'option' );
 			}
-			if ( null === $rejection ) {
-				$rejection = array(
-					'reason' => $reason,
-					'source' => 'option',
-					'value'  => $option,
-				);
-			}
-		}
-
-		if ( null !== $rejection ) {
-			return array(
-				'value'            => '',
-				'source'           => 'default',
-				'rejection_reason' => $rejection['reason'],
-				'rejection_source' => $rejection['source'],
-				'rejection_value'  => $rejection['value'],
-			);
+			return $this->rejected_service_url( $reason, 'option', $option );
 		}
 
 		return array(
@@ -200,6 +188,12 @@ final class RecognitionEndpointResolver {
 		return '';
 	}
 
+	private function deployment_managed_key_present(): bool {
+		return '' !== $this->get_constant_value( 'ACX_RECOGNITION_API_KEY' )
+			|| '' !== trim( (string) getenv( 'ACX_RECOGNITION_API_KEY' ) )
+			|| '' !== trim( (string) apply_filters( 'acx_recognition_api_key', '' ) );
+	}
+
 	/**
 	 * @return array{
 	 *   value: string,
@@ -220,6 +214,25 @@ final class RecognitionEndpointResolver {
 	}
 
 	/**
+	 * @return array{
+	 *   value: '',
+	 *   source: 'default',
+	 *   rejection_reason: string,
+	 *   rejection_source: string,
+	 *   rejection_value: string
+	 * }
+	 */
+	private function rejected_service_url( string $reason, string $source, string $value ): array {
+		return array(
+			'value'            => '',
+			'source'           => 'default',
+			'rejection_reason' => $reason,
+			'rejection_source' => $source,
+			'rejection_value'  => $value,
+		);
+	}
+
+	/**
 	 * BR-131: require https for remote recognition endpoints. Permit http only
 	 * for loopback hosts used by the local dev hatch (DEFAULT_LOCAL_URL /
 	 * ACX_RECOGNITION_LOCAL_URL → localhost:8000) so LocalWP and the local
@@ -233,7 +246,7 @@ final class RecognitionEndpointResolver {
 	/**
 	 * Same acceptance rule as {@see is_valid_base_url}, with a structured reason
 	 * when the value is discarded. Returns null when the URL is accepted.
-	 * Reporting only — does not change which URLs resolve (BR-138).
+	 * A non-null result prevents this tier from resolving.
 	 */
 	private function base_url_rejection_reason( string $url ): ?string {
 		$parts = parse_url( $url );

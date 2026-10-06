@@ -134,12 +134,13 @@ class BlobsControllerTest extends TestCase
     }
 
     /**
-     * BR-137: non-loopback blob proxy must use wp_safe_remote_get.
+     * BR-137: admitted non-loopback blob proxy uses wp_safe_remote_get;
+     * non-global literals fail before HTTP.
      * Data-driven so a fixture-host-only chooser goes RED (R4G-BR-02).
      *
      * @dataProvider nonLoopbackBlobBaseProvider
      */
-    public function testBlobUsesSafeRemoteGetForNonLoopbackHttpsBase(string $baseUrl): void
+    public function testBlobUsesSafeRemoteGetForNonLoopbackHttpsBase(string $baseUrl, bool $expectedDenied = false): void
     {
         $this->setOption('acx_recognition_url', $baseUrl);
         $this->setOption('acx_recognition_source', 'service');
@@ -153,7 +154,17 @@ class BlobsControllerTest extends TestCase
             'job_id' => 'job-x',
             'media_id' => '42',
         ]);
-        (new BlobsController())->serve_blob($request);
+        $result = (new BlobsController())->serve_blob($request);
+
+        if ($expectedDenied) {
+            $this->assertInstanceOf(\WP_Error::class, $result);
+            // BlobsController:302-308 wraps the acx_egress_denied error while
+            // preserving its message; it never serves the queued image bytes.
+            $this->assertSame('recognition_blob_unavailable', $result->get_error_code());
+            $this->assertSame('Recognition host resolves to a non-public address.', $result->get_error_message());
+            $this->assertCount(0, $this->getHttpCalls());
+            return;
+        }
 
         $calls = $this->getHttpCalls();
         $this->assertCount(1, $calls);
@@ -167,15 +178,17 @@ class BlobsControllerTest extends TestCase
     }
 
     /**
-     * @return array<string, array{0: string}>
+     * @return array<string, array{0: string, 1: bool}>
      */
     public static function nonLoopbackBlobBaseProvider(): array
     {
         return [
-            'public_dns' => ['https://api.example.test'],
-            'unrelated_tld' => ['https://cdn.other-org.example'],
-            'bare_public_ipv4' => ['https://203.0.113.10'],
-            'bracketed_ipv6' => ['https://[2001:db8::1]'],
+            'public_dns' => ['https://api.example.test', false],
+            'unrelated_tld' => ['https://cdn.other-org.example', false],
+            'bare_public_ipv4' => ['https://203.0.113.10', false],
+            'global_ipv4' => ['https://93.184.216.34', false],
+            'public_ipv6' => ['https://[2606:4700:4700::1111]', false],
+            'bracketed_ipv6' => ['https://[2001:db8::1]', true],
         ];
     }
 

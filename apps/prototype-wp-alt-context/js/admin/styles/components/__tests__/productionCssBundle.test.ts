@@ -34,6 +34,7 @@ const ROLLUP_ENTRY_POINTS = [
   'js/attachment-edit/main.tsx',
   'js/guide/main.tsx',
   'js/guide/publicGuideWatch.ts',
+  'js/public/demo-tokens.scss',
 ] as const;
 const GUIDED_ASSETS = [
   'js/admin/assets/guided/guided-justin-trudeau-2023.jpg',

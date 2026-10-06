@@ -9,7 +9,7 @@ example = ""
 doc = '''Clerk publishable key. This public key is embedded in the browser bundle;
 the local test key is never valid for production builds.'''
 required = true
-values = { local = "pk_test_c2F2ZWQtZnJvZy00MTcwLmNsZXJrLmFjY291bnRzLmRldiQ" }
+values = { local = "pk_test_c2F2ZWQtZnJvZy00MTcwLmNsZXJrLmFjY291bnRzLmRldiQ", prod = "pk_live_Y2xlcmsuYWx0Y29udGV4dC5jb20k" }
 
 [[var]]
 name = "VITE_CLERK_FAPI"

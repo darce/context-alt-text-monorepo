@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import base64
+import json
 import os
+import re
 import subprocess
 from collections.abc import Mapping
 from typing import Callable
@@ -14,12 +17,58 @@ class SecretNotFound(SecretUnavailable):
     pass
 
 
+class OciCliUnavailable(SecretUnavailable):
+    pass
+
+
+class OciResolutionFailed(SecretUnavailable):
+    pass
+
+
+_OCI_SECRET_OCID = re.compile(
+    r"ocid1\.vaultsecret\.oc[0-9]+\.[A-Za-z0-9_-]*\.[A-Za-z0-9._-]{20,}"
+)
+_OCI_BIN_DEFAULT = "/home/ubuntu/.oci-venv/bin/oci"
+_OCI_BIN_ALLOWED = re.compile(r"/[A-Za-z0-9._+/-]+")
+_OCI_TIMEOUT_SECONDS = 30
+
+
+def _json_object_without_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
 def _unavailable(var_name: str, scheme: str) -> SecretUnavailable:
     return SecretUnavailable(f"secret {var_name!r} unavailable for scheme {scheme!r}")
 
 
 def _not_found(var_name: str, scheme: str) -> SecretNotFound:
     return SecretNotFound(f"secret {var_name!r} unavailable for scheme {scheme!r}")
+
+
+def _oci_cli_unavailable(var_name: str) -> OciCliUnavailable:
+    return OciCliUnavailable(
+        f"secret {var_name!r} unavailable for scheme 'oci': OCI CLI unavailable (check ACX_OCI_BIN)"
+    )
+
+
+def _oci_cli_path(environment: Mapping[str, str], var_name: str) -> str:
+    value = environment.get("ACX_OCI_BIN")
+    if value is None or value == "":
+        return _OCI_BIN_DEFAULT
+    if (
+        not isinstance(value, str)
+        or not value.startswith("/")
+        or _OCI_BIN_ALLOWED.fullmatch(value) is None
+        or os.path.normpath(value) != value
+        or ".." in value.split("/")
+    ):
+        raise _oci_cli_unavailable(var_name)
+    return value
 
 
 def resolve_secret(
@@ -68,5 +117,43 @@ def resolve_secret(
 
     if scheme == "vault":
         raise SecretUnavailable(f"secret {var_name!r} for scheme 'vault' is deferred to ENVMAN-2")
+
+    if scheme == "oci":
+        if _OCI_SECRET_OCID.fullmatch(location) is None:
+            raise _unavailable(var_name, scheme)
+        environment = os.environ if environ is None else environ
+        cli_path = _oci_cli_path(environment, var_name)
+        try:
+            result = runner(
+                [
+                    cli_path, "secrets", "secret-bundle", "get", "--auth", "instance_principal",
+                    "--secret-id", location,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=_OCI_TIMEOUT_SECONDS,
+            )
+        except (FileNotFoundError, PermissionError, NotADirectoryError):
+            raise _oci_cli_unavailable(var_name) from None
+        except Exception:
+            raise OciResolutionFailed(str(_unavailable(var_name, scheme))) from None
+        try:
+            if result.returncode != 0 or not isinstance(result.stdout, str):
+                raise ValueError("OCI secret retrieval failed")
+            payload = json.loads(result.stdout, object_pairs_hook=_json_object_without_duplicate_keys)
+            content = payload["data"]["secret-bundle-content"]
+            if not isinstance(content, dict) or content.get("content-type") != "BASE64":
+                raise ValueError("unsupported OCI secret content")
+            encoded = content.get("content")
+            if not isinstance(encoded, str) or not encoded:
+                raise ValueError("empty OCI secret content")
+            raw_value = base64.b64decode(encoded, validate=True)
+            if not raw_value:
+                raise ValueError("empty OCI secret content")
+            value = raw_value.decode("utf-8", errors="strict")
+        except Exception:
+            raise OciResolutionFailed(str(_unavailable(var_name, scheme))) from None
+        return value
 
     raise SecretUnavailable(f"secret {var_name!r} has unsupported scheme {scheme!r}")

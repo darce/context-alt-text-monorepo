@@ -45,6 +45,7 @@ class Var:
     derive: str | None
     source: str
     derive_vault_map: bool = False
+    required_when: Mapping[str, tuple[str, ...]] | None = None
 
 
 @dataclass(frozen=True)
@@ -71,9 +72,12 @@ _TARGET_KEYS = _TARGET_REQUIRED_KEYS | frozenset({"path", "example", "doc", "rem
 _FRAGMENT_KEYS = frozenset({"version", "var", "override"})
 _VAR_REQUIRED_KEYS = frozenset({"name", "class", "targets", "section", "example"})
 _VAR_KEYS = _VAR_REQUIRED_KEYS | frozenset(
-    {"doc", "required", "values", "secret", "derive", "derive_vault_map"}
+    {"doc", "required", "required_when", "values", "secret", "derive", "derive_vault_map"}
 )
 _DERIVE_REF = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
+_VAULT_SECRET_OCID = re.compile(
+    r"ocid1\.vaultsecret\.oc[0-9]+\.[A-Za-z0-9_-]*\.[A-Za-z0-9._-]{20,}"
+)
 _LITERAL_SECRET = re.compile(
     r"sk_(?:test|live)_|\brk_(?:test|live)_|whsec_|-----BEGIN"
     r"|gh[pos]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,}"
@@ -85,9 +89,7 @@ _PUBLIC_SENSITIVE_TOKENS = frozenset({
 })
 _URL_USERINFO_PASSWORD = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^/?#\s@:]+:[^/?#\s@]*@")
 # Each input is one env value: retain all base-check flags and add embedded URLs.
-# Scan every scheme start, including those glued to preceding scheme characters.
-# Spans run to the value's end; extra flags are acceptable, missed credentials are not.
-_URL_SPAN = re.compile(r"(?=([A-Za-z][A-Za-z0-9+.-]*://.*))", re.DOTALL)
+# Extra flags are acceptable, missed credentials are not.
 _URL_CREDENTIAL_TOKENS = (
     "password", "passwd", "pwd", "pass", "secret", "token", "access_token",
     "api_key", "apikey", "key", "sig", "signature", "auth", "credential", "credentials",
@@ -95,17 +97,39 @@ _URL_CREDENTIAL_TOKENS = (
 
 
 def _url_query_credential(value: str) -> bool:
-    for match in _URL_SPAN.finditer(value):
-        # Split only the parameter components; malformed authorities must not hide credentials.
-        url, _, fragment = match.group(1).partition("#")
-        _, _, query = url.partition("?")
-        if any(
-            key.lower().replace("-", "_").endswith(_URL_CREDENTIAL_TOKENS)
-            for component in (query, fragment)
-            for key, _ in parse_qsl(component, keep_blank_values=True)
-        ):
-            return True
-    return False
+    first_scheme_delimiter = -1
+    delimiter = value.find("://")
+    while delimiter >= 0:
+        position = delimiter
+        has_ascii_letter = False
+        while position:
+            character = value[position - 1]
+            if (character.isascii() and character.isalnum()) or character in "+.-":
+                has_ascii_letter |= character.isascii() and character.isalpha()
+                position -= 1
+            else:
+                break
+        if has_ascii_letter and first_scheme_delimiter < 0:
+            first_scheme_delimiter = delimiter
+        delimiter = value.find("://", delimiter + 3)
+
+    if first_scheme_delimiter < 0:
+        return False
+
+    query_marker = value.find("?", first_scheme_delimiter + 3)
+    fragment_marker = value.find("#", first_scheme_delimiter + 3)
+    markers = [marker for marker in (query_marker, fragment_marker) if marker >= 0]
+    if not markers:
+        return False
+
+    # Every later URL suffix is covered by this one component suffix. Treating
+    # later query/fragment markers as separators is a superset of parsing each
+    # overlapping suffix and keeps the parse work bounded by the input length.
+    components = value[min(markers) + 1 :].replace("?", "&").replace("#", "&")
+    return any(
+        key.lower().replace("-", "_").endswith(_URL_CREDENTIAL_TOKENS)
+        for key, _ in parse_qsl(components, keep_blank_values=True)
+    )
 
 
 def _fail(source: str, key: str, detail: str) -> NoReturn:
@@ -278,13 +302,15 @@ def _load_value_source(
         _fail(source, f"{name}.secret", "only secret vars can define secret refs")
     for reference in secret.values():
         scheme, separator, remainder = reference.partition(":")
-        if not separator or scheme not in {"keychain", "env", "vault", "host"}:
+        if not separator or scheme not in {"keychain", "env", "vault", "oci", "host"}:
             shown_scheme = scheme if separator else "missing"
             _fail(source, f"{name}.{shown_scheme}", "unsupported secret scheme")
         if scheme == "host" and remainder:
             _fail(source, name, "host ref must have an empty remainder")
-        if scheme == "vault" and re.fullmatch(r"ocid1\.vaultsecret\.oc1\.[a-z0-9-]*\.[a-z0-9]{20,}", remainder) is None:
+        if scheme == "vault" and _VAULT_SECRET_OCID.fullmatch(remainder) is None:
             _fail(source, name, "vault ref requires a valid vault secret OCID")
+        if scheme == "oci" and _VAULT_SECRET_OCID.fullmatch(remainder) is None:
+            _fail(source, name, "oci ref requires a valid vault secret OCID")
     return values, secret, derive
 
 
@@ -342,6 +368,7 @@ def _load_var(raw: object, source: str) -> Var:
     required = table.get("required", True)
     if not isinstance(required, bool):
         _fail(source, f"{name}.required", "must be a boolean")
+    required_when = _load_required_when(table, source, name)
     values, secret, derive = _load_value_source(table, source, name, cls)
     var = Var(
         name=name,
@@ -356,9 +383,31 @@ def _load_var(raw: object, source: str) -> Var:
         derive=derive,
         source=source,
         derive_vault_map=table.get("derive_vault_map", False),
+        required_when=required_when,
     )
     _validate_var_fields(var)
     return var
+
+
+def _load_required_when(
+    table: Mapping[str, object], source: str, name: str
+) -> Mapping[str, tuple[str, ...]] | None:
+    if "required_when" not in table:
+        return None
+    raw = _mapping(table["required_when"], source, f"{name}.required_when")
+    conditions: dict[str, tuple[str, ...]] = {}
+    for referenced_name, raw_values in raw.items():
+        key = f"{name}.required_when.{referenced_name}"
+        if not isinstance(referenced_name, str):
+            _fail(source, f"{name}.required_when", "variable names must be strings")
+        if not isinstance(raw_values, list):
+            _fail(source, key, "must be a non-empty list of strings")
+        if not raw_values:
+            _fail(source, key, "list must not be empty")
+        if any(not isinstance(value, str) for value in raw_values):
+            _fail(source, key, "list items must be strings")
+        conditions[referenced_name] = tuple(raw_values)
+    return MappingProxyType(conditions)
 
 
 def _load_fragments(manifest_dir: Path) -> tuple[dict[str, Var], list[Var]]:
@@ -387,7 +436,26 @@ def _load_fragments(manifest_dir: Path) -> tuple[dict[str, Var], list[Var]]:
                 _fail(source, var.name, "duplicate variable name")
             vars_by_name[var.name] = var
             ordered_vars.append(var)
+    _validate_required_when_references(vars_by_name)
     return vars_by_name, ordered_vars
+
+
+def _validate_required_when_references(vars_by_name: Mapping[str, Var]) -> None:
+    for var in vars_by_name.values():
+        for referenced_name in var.required_when or {}:
+            referenced = vars_by_name.get(referenced_name)
+            if referenced is None:
+                _fail(var.source, var.name, f"required_when references unknown var {referenced_name}")
+            if referenced.cls != "config":
+                _fail(var.source, var.name, f"required_when var {referenced_name} must have config class")
+            missing_targets = set(var.targets) - set(referenced.targets)
+            if missing_targets:
+                target_name = sorted(missing_targets)[0]
+                _fail(
+                    var.source,
+                    var.name,
+                    f"required_when var {referenced_name} does not target {target_name}",
+                )
 
 
 def effective_var(manifest: Manifest, var: Var, target_name: str) -> Var:
@@ -635,12 +703,14 @@ def _validate_remote_sources(manifest: Manifest) -> None:
                 scheme = var.secret.get(env, "").partition(":")[0]
                 if scheme == "host" and env not in target.remote_paths:
                     _fail(var.source, var.name, f"host secret refs require a remote path on target {target.name}")
-                if scheme in {"vault", "host"} and target.audience in {"public_build", "test"}:
+                if scheme == "oci" and env not in target.remote_paths:
+                    _fail(var.source, var.name, f"oci secret refs require a remote path on target {target.name}")
+                if scheme in {"vault", "oci", "host"} and target.audience in {"public_build", "test"}:
                     _fail(var.source, var.name, f"remote secret refs are forbidden on target {target.name}")
                 if scheme in {"keychain", "env"} and env in target.remote_paths:
                     _fail(var.source, var.name, f"local secret refs are forbidden on remote target {target.name}")
                 for name in _parse_derive_references(var):
-                    if variables[name].secret.get(env, "").partition(":")[0] in {"vault", "host"}:
+                    if variables[name].secret.get(env, "").partition(":")[0] in {"vault", "oci", "host"}:
                         _fail(var.source, var.name, f"derive references remote secret var {name}")
             mapping = vault_secret_map(manifest, target.name, env)
             backend = variables.get("RECOGNITION_SECRET_BACKEND")
@@ -718,6 +788,10 @@ def target_digest(manifest: Manifest, target_name: str) -> str:
         )
         if var.derive_vault_map:
             var_data[-1]["derive_vault_map"] = True
+        if var.required_when is not None:
+            var_data[-1]["required_when"] = {
+                name: list(values) for name, values in var.required_when.items()
+            }
     encoded = json.dumps(
         {"target": target_data, "vars": var_data, "overrides": [
             {key: value for key, value in vars(override).items() if key != "source"}

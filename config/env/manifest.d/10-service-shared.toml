@@ -8,7 +8,7 @@ section = "Database DSNs"
 example = ""
 doc = 'domain: infra | source: OCI Vault (oci_vault) / env | consumer: db/settings.py:get_database_settings'
 required = false
-secret = { dev = "host:", staging = "host:", prod = "host:", fir = "host:" }
+secret = { dev = "host:", staging = "host:", prod = "vault:ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqaxwiwmhdx52g6obkujhq7ob4wxtp7n2xp5l2eu243wqqa", fir = "host:" }
 
 [[var]]
 name = "POSTGRES_SYNC_DSN"
@@ -18,7 +18,7 @@ section = "Database DSNs"
 example = ""
 doc = 'domain: infra | source: OCI Vault (oci_vault) / env | consumer: db/settings.py:get_database_settings'
 required = false
-secret = { dev = "host:", staging = "host:", prod = "host:", fir = "host:" }
+secret = { dev = "host:", staging = "host:", prod = "vault:ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqabr4qgl3jnrpfij72o4tv5ajujhwyyb4kd4ke7zwn73jq", fir = "host:" }
 
 [[var]]
 name = "LOG_LEVEL"
@@ -41,22 +41,22 @@ values = { dev = "00000000-0000-7000-8000-000000000002", staging = "00000000-000
 [[var]]
 name = "RECOGNITION_SECRET_BACKEND"
 class = "config"
-targets = ["svc-vm", "svc-fir"]
-section = "Secret backend"
+targets = ["svc-local", "svc-vm", "svc-fir"]
+section = "Runtime mode"
 example = "oci_vault"
 doc = 'Default env in dev/staging/fir. Prod uses oci_vault with a required host-preserved map, whose boot keys are checked by the app at startup. | domain: infra (backend selector) | source: service operator | consumer: shared/secrets.py:get_secret_provider'
 required = false
-values = { dev = "env", staging = "env", prod = "oci_vault", fir = "env" }
+values = { local = "env", dev = "env", staging = "env", prod = "oci_vault", fir = "env" }
 
 [[var]]
 name = "RECOGNITION_VAULT_SECRET_MAP"
-class = "secret"
+class = "config"
 targets = ["svc-vm", "svc-fir"]
 section = "Secret backend"
-example = '{"PGPASSWORD":"ocid1.vaultsecret.oc1..REPLACE","RECOGNITION_ADMIN_TOKEN":"ocid1.vaultsecret.oc1..REPLACE","POSTGRES_DSN":"ocid1.vaultsecret.oc1..REPLACE","POSTGRES_SYNC_DSN":"ocid1.vaultsecret.oc1..REPLACE","ACX_GPU_ENDPOINT_API_KEY":"ocid1.vaultsecret.oc1..REPLACE_GPU_ENDPOINT_KEY"}'
-doc = 'Host-preserved OCID map in prod (not credential material); secret class selects host-line preservation. Dev, staging and fir use backend env and intentionally omit this map. The oci_vault reader requires the live map at startup. | domain: infra (OCID map) | source: OCI deploy | consumer: shared/secrets.py:OciVaultSecretProvider.from_env'
+example = '{"PGPASSWORD":"ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqa5ka6inpwivjhrxm2ri4zdar46kdiijw32nzjly2uetzq","POSTGRES_DSN":"ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqaxwiwmhdx52g6obkujhq7ob4wxtp7n2xp5l2eu243wqqa","POSTGRES_SYNC_DSN":"ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqabr4qgl3jnrpfij72o4tv5ajujhwyyb4kd4ke7zwn73jq","RECOGNITION_ADMIN_TOKEN":"ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqaugzdmou5vnlaauvnyfct3qz36qenl72gxqhjkai7a2ea"}'
+doc = 'Derived JSON map of Vault OCIDs from secret refs for the current target and environment. Dev, staging and fir use backend env and derive an empty map. The enabled GPU adapter requires an approved mint before preflight can pass. | domain: infra (OCID map) | source: OCI deploy | consumer: shared/secrets.py:OciVaultSecretProvider.from_env'
 required = false
-secret = { prod = "host:" }
+derive_vault_map = true
 
 [[var]]
 name = "POSTGRES_USER"
@@ -335,7 +335,8 @@ section = "Operator /admin surface"
 example = ""
 doc = 'domain: service root-of-trust | source: OCI Vault (oci_vault) / service operator | consumer: SecuritySettings.admin_token; validate_admin_config; /admin deps (admin_auth)'
 required = false
-secret = { dev = "host:", staging = "host:", prod = "host:", fir = "host:" }
+required_when = { RECOGNITION_SECRET_BACKEND = ["env"], RECOGNITION_ADMIN_ENABLED = ["true", "1", "yes", "on"] }
+secret = { dev = "host:", staging = "host:", prod = "vault:ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqaugzdmou5vnlaauvnyfct3qz36qenl72gxqhjkai7a2ea", fir = "host:" }
 
 [[var]]
 name = "COMPOSE_PROJECT_NAME"

@@ -7,6 +7,7 @@ namespace AltContext\Tests\Unit;
 use AltContext\Support\LoopbackHost;
 use AltContext\Support\RecognitionTransport;
 use AltContext\Tests\TestCase;
+use ReflectionMethod;
 
 /**
  * BR-137 / R4G: shared credentialed recognition egress.
@@ -847,6 +848,29 @@ class RecognitionTransportTest extends TestCase
         }
     }
 
+    public function testProductionCurlResolveOptionUsesRealHandleWhenCurlIsLoaded(): void
+    {
+        RecognitionTransport::set_curl_capability_probe(null);
+        RecognitionTransport::set_curl_resolve_applier(null);
+        if (!function_exists('curl_init')) {
+            $this->assertFalse(function_exists('curl_init'), 'cURL is unavailable in this PHP runtime');
+            return;
+        }
+
+        $handle = curl_init();
+        $this->assertNotFalse($handle, 'curl_init must return a handle when ext-curl is loaded');
+
+        try {
+            $method = new ReflectionMethod(RecognitionTransport::class, 'apply_curl_resolve_option');
+            $method->setAccessible(true);
+            $applied = $method->invokeArgs(null, [&$handle, 'api.example.test:443:93.184.216.34']);
+
+            $this->assertTrue($applied, 'the real CURLOPT_RESOLVE option must accept the validated pin');
+        } finally {
+            curl_close($handle);
+        }
+    }
+
     public function testPublicResolutionFailsClosedWhenRequestsCannotUseCurl(): void
     {
         RecognitionTransport::set_resolver(static fn (string $host): array => ['93.184.216.34']);
@@ -931,10 +955,48 @@ class RecognitionTransportTest extends TestCase
             'site_local_ipv6' => ['fec0::1', false],
             'protocol_assignment_ipv4' => ['192.0.0.170', false],
             'benchmark_ipv4' => ['198.18.0.1', false],
+            'test_net_1_ipv4' => ['192.0.2.1', false],
+            'test_net_1_ipv4_adjacent' => ['192.0.3.1', true],
+            'test_net_2_ipv4' => ['198.51.100.1', false],
+            'test_net_2_ipv4_adjacent' => ['198.51.101.1', true],
+            'test_net_3_ipv4' => ['203.0.113.1', false],
+            'test_net_3_ipv4_adjacent' => ['203.0.112.1', true],
+            'six_to_four_relay_anycast' => ['192.88.99.1', false],
+            'six_to_four_relay_anycast_adjacent' => ['192.88.98.1', true],
+            'benchmark_ipv6' => ['2001:2::1', false],
+            'benchmark_ipv6_adjacent' => ['2001:2:1::1', true],
+            'documentation_ipv6_rfc9637' => ['3fff::1', false],
+            'srv6_sid_ipv6' => ['5f00::1', false],
+            'srv6_sid_ipv6_adjacent' => ['5f01::1', true],
             'mapped_private_ipv4' => ['::ffff:169.254.169.254', false],
             'mapped_public_ipv4' => ['::ffff:93.184.216.34', true],
             'invalid_address' => ['not-an-ip', false],
         ];
+    }
+
+    /**
+     * @return array<string, array{0: bool, 1: bool, 2: array{features?: int, ssl_feature?: int}|null, 3: string, 4: bool}>
+     */
+    public static function curlCapabilityProvider(): array
+    {
+        return [
+            'missing_exec' => [true, false, ['features' => 4, 'ssl_feature' => 4], 'https', false],
+            'https_without_ssl' => [true, true, ['features' => 0, 'ssl_feature' => 4], 'https', false],
+            'http_without_ssl' => [true, true, null, 'http', true],
+            'all_https_capabilities' => [true, true, ['features' => 4, 'ssl_feature' => 4], 'https', true],
+        ];
+    }
+
+    /**
+     * @dataProvider curlCapabilityProvider
+     * @param array{features?: int, ssl_feature?: int}|null $version
+     */
+    public function testCurlCapabilityDecision(bool $hasInit, bool $hasExec, ?array $version, string $scheme, bool $expected): void
+    {
+        $method = new ReflectionMethod(RecognitionTransport::class, 'curl_capability');
+        $method->setAccessible(true);
+
+        $this->assertSame($expected, $method->invoke(null, $hasInit, $hasExec, $version, $scheme));
     }
 
     /**

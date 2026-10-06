@@ -137,7 +137,7 @@ class = "config"
 targets = ["svc-vm"]
 example = "acx-gpu-burst.compute.oraclevcn.com"
 required = true
-doc = "Comma-separated hostname patterns allowed for the private GPU endpoint above; the endpoint hostname must be included."
+doc = "Comma-separated hostname patterns for a hostname ACX_GPU_ENDPOINT_URL.\nEmpty is valid for a private/loopback IP literal; endpoint address validation still applies."
 section = "Image description"
 values = { dev = "", staging = "", prod = "" }
 

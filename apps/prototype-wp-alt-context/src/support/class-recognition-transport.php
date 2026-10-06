@@ -30,12 +30,19 @@ use function wp_safe_remote_request;
  * Shared HTTP transport for credentialed recognition API calls.
  */
 final class RecognitionTransport {
+	private const ERROR_EGRESS_DENIED       = 'acx_egress_denied';
+	private const ERROR_PIN_UNAVAILABLE     = 'acx_egress_pin_unavailable';
+	private const PIN_UNAVAILABLE_MESSAGE   = 'Recognition egress pin is unavailable because the WordPress HTTP transport cannot use cURL.';
+
 	/**
 	 * Optional DNS resolver seam for deterministic transport tests.
 	 *
 	 * @var Closure(string):array<string>|null
 	 */
 	private static ?Closure $resolver = null;
+	private static ?Closure $curl_capability_probe = null;
+	private static ?Closure $curl_resolve_applier = null;
+	private static ?Closure $http_api_curl_runner = null;
 
 	/**
 	 * Override DNS resolution. Passing null restores the system resolver.
@@ -44,6 +51,33 @@ final class RecognitionTransport {
 	 */
 	public static function set_resolver( ?callable $resolver ): void {
 		self::$resolver = null === $resolver ? null : Closure::fromCallable( $resolver );
+	}
+
+	/**
+	 * Override the Requests cURL capability check for deterministic tests.
+	 *
+	 * @param callable(string):bool|null $probe
+	 */
+	public static function set_curl_capability_probe( ?callable $probe ): void {
+		self::$curl_capability_probe = null === $probe ? null : Closure::fromCallable( $probe );
+	}
+
+	/**
+	 * Override CURLOPT_RESOLVE application for deterministic transport tests.
+	 *
+	 * @param callable(mixed,list<string>):void|null $applier
+	 */
+	public static function set_curl_resolve_applier( ?callable $applier ): void {
+		self::$curl_resolve_applier = null === $applier ? null : Closure::fromCallable( $applier );
+	}
+
+	/**
+	 * Emulate WordPress firing http_api_curl while its HTTP request is active.
+	 *
+	 * @param callable(callable,callable,string):mixed|null $runner
+	 */
+	public static function set_http_api_curl_runner( ?callable $runner ): void {
+		self::$http_api_curl_runner = null === $runner ? null : Closure::fromCallable( $runner );
 	}
 
 	/**
@@ -75,12 +109,22 @@ final class RecognitionTransport {
 				[ '169.254.0.0', 16 ],
 				[ '0.0.0.0', 8 ],
 				[ '224.0.0.0', 4 ],
+				[ '192.0.0.0', 24 ],
+				[ '198.18.0.0', 15 ],
 			]
 			: [
 				[ 'fc00::', 7 ],
 				[ 'fe80::', 10 ],
 				[ 'ff00::', 8 ],
 				[ '::', 128 ],
+				[ '64:ff9b::', 96 ],
+				[ '64:ff9b:1::', 48 ],
+				[ '2002::', 16 ],
+				[ '2001::', 32 ],
+				[ '::', 96 ],
+				[ '::ffff:0:0:0', 96 ],
+				[ '100::', 64 ],
+				[ 'fec0::', 10 ],
 			];
 
 		foreach ( $blocked_ranges as [ $network, $prefix ] ) {
@@ -209,12 +253,12 @@ final class RecognitionTransport {
 	 * @return array<string,mixed>|WP_Error
 	 */
 	private static function with_pinned_address( string $url, string $host, string $ip, callable $request ) {
-		if ( ! function_exists( 'curl_init' ) ) {
-			return self::egress_denied();
-		}
-
 		$parsed_url = parse_url( $url );
 		$scheme     = strtolower( (string) ( $parsed_url['scheme'] ?? '' ) );
+		if ( ! self::curl_transport_available( $scheme ) ) {
+			return self::pin_unavailable();
+		}
+
 		$port       = isset( $parsed_url['port'] ) ? (int) $parsed_url['port'] : self::default_port( $scheme );
 		$pin        = self::resolve_pin( $host, $port, $ip );
 		$pin_host   = self::normalize_host( $host );
@@ -236,15 +280,59 @@ final class RecognitionTransport {
 				return;
 			}
 
-			curl_setopt( $handle, CURLOPT_RESOLVE, [ $pin ] );
+			self::apply_curl_resolve_option( $handle, $pin );
 		};
 
 		add_action( 'http_api_curl', $callback, 10, 3 );
 		try {
+			if ( null !== self::$http_api_curl_runner ) {
+				return ( self::$http_api_curl_runner )( $callback, $request, $url );
+			}
+
 			return $request();
 		} finally {
 			remove_action( 'http_api_curl', $callback, 10 );
 		}
+	}
+
+	/**
+	 * Match the WordPress Requests cURL transport's capability selection.
+	 */
+	private static function curl_transport_available( string $scheme ): bool {
+		if ( null !== self::$curl_capability_probe ) {
+			return ( self::$curl_capability_probe )( $scheme );
+		}
+
+		if ( ! function_exists( 'curl_init' ) || ! is_callable( 'curl_exec' ) ) {
+			return false;
+		}
+
+		if ( 'https' !== $scheme ) {
+			return true;
+		}
+
+		if ( ! function_exists( 'curl_version' ) || ! defined( 'CURL_VERSION_SSL' ) ) {
+			return false;
+		}
+
+		$version = curl_version();
+		return is_array( $version )
+			&& isset( $version['features'] )
+			&& 0 !== ( ( (int) $version['features'] ) & CURL_VERSION_SSL );
+	}
+
+	/**
+	 * Apply the pin through the real cURL API or the test seam.
+	 *
+	 * @param mixed $handle
+	 */
+	private static function apply_curl_resolve_option( &$handle, string $pin ): void {
+		if ( null !== self::$curl_resolve_applier ) {
+			( self::$curl_resolve_applier )( $handle, [ $pin ] );
+			return;
+		}
+
+		curl_setopt( $handle, CURLOPT_RESOLVE, [ $pin ] );
 	}
 
 	private static function default_port( string $scheme ): int {
@@ -281,6 +369,10 @@ final class RecognitionTransport {
 	}
 
 	private static function egress_denied(): WP_Error {
-		return new WP_Error( 'acx_egress_denied', 'Recognition host resolves to a non-public address.' );
+		return new WP_Error( self::ERROR_EGRESS_DENIED, 'Recognition host resolves to a non-public address.' );
+	}
+
+	private static function pin_unavailable(): WP_Error {
+		return new WP_Error( self::ERROR_PIN_UNAVAILABLE, self::PIN_UNAVAILABLE_MESSAGE );
 	}
 }

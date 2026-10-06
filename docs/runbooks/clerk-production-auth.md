@@ -167,6 +167,11 @@ truth; do not write a separate `app-portal.env` artifact.
 The offline validator and the unauthenticated `/portal/me` health check
 (expected `401`) cannot verify the session token's audience claim.
 
+The account must have a primary email verified in Clerk and an existing local
+tenant identity. Before this read-only check, complete the portal's first
+sign-in onboarding claim (`POST /portal/onboarding/claim`) through the portal,
+then reload. Do not print an API key during the check.
+
 1. Sign in at `https://app.altcontext.com` with a real account.
 2. In browser developer tools, open the **Network** tab and confirm the
    portal's own `/portal/me` request returns `200`.
@@ -175,6 +180,14 @@ The offline validator and the unauthenticated `/portal/me` health check
    `https://app.altcontext.com`. Never paste a token into a website or this
    repo. Correct the session-token template in the Clerk Dashboard using
    section 2 above, then sign in again and repeat the check.
+4. If it returns `403`, decode the session token's payload locally (never
+   paste a token into a website or this repo) and confirm it carries `email`
+   and boolean `email_verified: true`, using the section 2 template. Confirm
+   the account's primary email is verified in Clerk and the portal's
+   onboarding claim completed, then reload and repeat the check.
+5. If it returns `503` with `portal identity unavailable`, the local identity
+   store is unavailable. Check API logs and readiness; this is an identity
+   store issue, not a Clerk session-token template issue.
 
 ## 5. Rotation
 

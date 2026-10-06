@@ -11,6 +11,7 @@ import re
 import stat
 import subprocess
 import tempfile
+import time
 import tomllib
 from contextlib import contextmanager
 from pathlib import Path
@@ -27,6 +28,8 @@ _TERRAFORM_INPUT_LINE = re.compile(
 )
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _TRANSACTION_LOCKED_ENV = "GPU_KEY_MINT_TRANSACTION_LOCKED"
+_MANIFEST_LOCK_TIMEOUT_SECONDS = 5.0
+_MANIFEST_LOCK_RETRY_SECONDS = 0.05
 
 
 def _replace_env_ref(secret_line: str, env: str, value: str) -> str:
@@ -225,8 +228,16 @@ def _open_manifest_write_lock(manifest_path: Path) -> int:
         lock_stat = os.fstat(descriptor)
         if stat.S_IMODE(lock_stat.st_mode) != 0o600:
             raise ValueError("manifest write lock must be owner-only")
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
-        return descriptor
+        deadline = time.monotonic() + _MANIFEST_LOCK_TIMEOUT_SECONDS
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ValueError("timed out acquiring GPU key manifest write lock")
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return descriptor
+            except BlockingIOError:
+                time.sleep(min(_MANIFEST_LOCK_RETRY_SECONDS, remaining))
     except OSError as exc:
         if descriptor >= 0:
             os.close(descriptor)

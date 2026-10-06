@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import fcntl
 import hashlib
 import os
@@ -37,7 +38,10 @@ _MANIFEST_LOCK_RETRY_SECONDS = 0.05
 
 
 def _replace_env_ref(secret_line: str, env: str, value: str) -> str:
-    pattern = re.compile(rf"(?<![A-Za-z0-9_])({re.escape(env)}\s*=\s*)\"[^\"]*\"")
+    pattern = re.compile(
+        rf"(?<![A-Za-z0-9_])({re.escape(env)}\s*=\s*)"
+        r"(?P<quote>[\"'])(?P<value>[^\"'\n]*)(?P=quote)(?=\s*(?:,|\}))"
+    )
     updated, count = pattern.subn(rf'\g<1>"{value}"', secret_line)
     if count != 1:
         raise ValueError(f"GPU key manifest must contain exactly one {env} secret ref")
@@ -147,7 +151,19 @@ def _update_gpu_key_text(text: str, secret_ocid: str) -> str:
         elif existing_ocid != secret_ocid:
             raise ValueError(f"refusing to replace existing {env} GPU key OCID")
     updated_block = block[:secret_lines[0].start()] + secret_line + block[secret_lines[0].end():]
-    return text[:start] + updated_block + text[end:]
+    updated_text = text[:start] + updated_block + text[end:]
+    try:
+        updated_document = tomllib.loads(updated_text)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError("GPU key update would produce invalid TOML") from exc
+
+    expected_document = copy.deepcopy(document)
+    expected_refs = _unique_gpu_key_var(expected_document)["secret"]
+    expected_refs["dev"] = f"oci:{secret_ocid}"
+    expected_refs["prod"] = f"vault:{secret_ocid}"
+    if updated_document != expected_document:
+        raise ValueError("GPU key update changed unrelated manifest values")
+    return updated_text
 
 
 def _validate_gpu_owner_publishable(owner_text: str, current_ocid: str | None) -> None:

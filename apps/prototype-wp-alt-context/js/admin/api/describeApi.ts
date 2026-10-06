@@ -1049,7 +1049,11 @@ export interface DescribeRunResponse {
    * default (rg-005, rg-015).
    */
   deadline_seconds?: number | null;
-  /** Opaque service-minted id bound to tenant and request digest. */
+  /**
+   * Tenant-scoped usage key from idempotency_key, then operation_id; trimmed
+   * and limited to 128 characters. Metered paths reject missing or oversized
+   * keys; only unmetered paths mint a 32-hex id when neither caller key is usable.
+   */
   operation_id?: string;
   /** Opaque shared startup id; null for warm/cache work. */
   startup_id?: string | null;

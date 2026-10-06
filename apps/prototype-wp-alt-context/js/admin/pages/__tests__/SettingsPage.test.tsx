@@ -835,6 +835,26 @@ describe('SettingsPage', () => {
     expect(banner.getAttribute('role')).toBe('alert');
   });
 
+  it('surfaces the server deployment-key URL message when save is rejected (SECFIX-1)', () => {
+    const deploymentKeyUrlMessage =
+      'A deployment-managed recognition API key is configured; set the recognition URL with ACX_RECOGNITION_URL or the acx_recognition_base_url filter instead of saving it here.';
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPageWithRouter />);
+
+    expect(capturedSaveOptions?.onError).toBeDefined();
+    act(() => {
+      capturedSaveOptions!.onError!(
+        new Error(
+          `Request to /acx/v1/settings failed (400): {"code":"deployment_key_requires_deployment_url","message":"${deploymentKeyUrlMessage}","data":{"status":400}}`,
+        ),
+      );
+    });
+
+    const banner = screen.getByTestId('acx-settings-save-message');
+    expect(banner.textContent).toBe(deploymentKeyUrlMessage);
+    expect(banner.getAttribute('role')).toBe('alert');
+  });
+
   it('falls back to the generic save failure when the rejection is unstructured', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
     render(<SettingsPageWithRouter />);
@@ -959,6 +979,30 @@ describe('SettingsPage', () => {
     expect(routing).not.toHaveTextContent('not configured');
     // Status is text, not decoration alone (A11Y-21).
     expect(routing).toHaveAttribute('role', 'status');
+  });
+
+  it('explains when an option URL is rejected because a deployment key requires a deployment URL (SECFIX-1)', () => {
+    mockUseQuery.mockReturnValue(
+      createMockQuery({
+        data: {
+          ...defaultSettings,
+          url: '',
+          url_source: 'default',
+          url_rejection_reason: UrlRejectionReason.DEPLOYMENT_KEY_REQUIRES_DEPLOYMENT_URL,
+          url_rejection_source: 'option',
+          url_rejection_value: 'https://attacker.example',
+          effective_target_url: '',
+          effective_target_mode: 'service',
+          recognition_source: 'service',
+        },
+      }),
+    );
+    render(<SettingsPageWithRouter />);
+
+    const rejection = screen.getByTestId('acx-url-rejection');
+    expect(rejection).toHaveTextContent(
+      'a deployment-managed API key is configured, so the recognition URL must come from ACX_RECOGNITION_URL or the acx_recognition_base_url filter',
+    );
   });
 
   // R16-BR-09: rejection sentence must appear exactly once (live region only).

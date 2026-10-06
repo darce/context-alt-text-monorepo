@@ -42,7 +42,10 @@ def test_timed_out_mutation_is_unknown() -> None:
 
 
 def test_identical_existing_value_skips_update() -> None:
-    existing = SimpleNamespace(id="ocid1.vaultsecret.test", secret_name="OCIR_AUTH_TOKEN")
+    existing = SimpleNamespace(
+        id="ocid1.vaultsecret.oc1.iad.FAKE_OCIR_AUTH_TOKEN_TEST_000000000001",
+        secret_name="OCIR_AUTH_TOKEN",
+    )
     updates: list[bytes] = []
 
     secret, action = vault_put_secret.write_secret_if_needed(
@@ -114,11 +117,16 @@ def test_writer_requires_a_64_byte_hex_gpu_key() -> None:
     [
         "ocid1.vault.oc1.iad." + "a" * 40,
         "ocid1.vaultsecret.oc1..fakegpuapikey123",
+        "ocid1.vaultsecret.oc1.iad.fakegpuapikey123",
         "ocid1.vaultsecret.oc1.iad.fakegpuapikey123\nextra",
+        "ocid1.vaultsecret.oc1.iad.fakegpuapikey123/extra",
+        'ocid1.vaultsecret.oc1.iad.fakegpuapikey123"suffix0123456789',
+        "ocid1.vaultsecret.oc1.iad.fakegpuapikey123 suffix0123456789",
         "ocid1.vaultsecret.oc1.iad.",
     ],
 )
 def test_expected_gpu_secret_id_requires_a_full_vault_secret_ocid(monkeypatch, secret_id) -> None:
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(isatty=lambda: True))
     monkeypatch.setattr(
         sys,
         "argv",
@@ -137,6 +145,17 @@ def test_expected_gpu_secret_id_requires_a_full_vault_secret_ocid(monkeypatch, s
     assert exc_info.value.code == 2
 
 
+@pytest.mark.parametrize(
+    "secret_id",
+    [
+        "ocid1.vaultsecret.oc1.iad.FAKE_GPU_KEY_0123456789_abcd-efgh.ijkl",
+        "ocid1.vaultsecret.oc22..Fake_Global_Secret.Part-0123456789",
+    ],
+)
+def test_expected_gpu_secret_id_accepts_the_complete_vault_grammar(secret_id) -> None:
+    assert vault_put_secret._vault_secret_ocid(secret_id) == secret_id
+
+
 def test_writer_rejects_non_acx_vault() -> None:
     with pytest.raises(SystemExit, match="refusing unowned vault"):
         vault_put_secret.validate_destination("ocid1.vault.oc1.iad.attacker", "OCIR_AUTH_TOKEN")
@@ -153,7 +172,7 @@ def test_generation_lock_rejects_non_stable_current_value() -> None:
 
 def test_main_uses_idempotency_controls_with_stubbed_oci(monkeypatch, capsys) -> None:
     existing = SimpleNamespace(
-        id="ocid1.vaultsecret.test",
+        id="ocid1.vaultsecret.oc1.iad.FAKE_OCIR_AUTH_TOKEN_TEST_000000000001",
         secret_name="OCIR_AUTH_TOKEN",
         key_id="ocid1.key.test",
         lifecycle_state="ACTIVE",
@@ -275,19 +294,20 @@ def test_main_uses_idempotency_controls_with_stubbed_oci(monkeypatch, capsys) ->
 
 def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypatch, capsys) -> None:
     existing = SimpleNamespace(
-        id="ocid1.vaultsecret.oc1.iad.fakegpuapikey123",
+        id="ocid1.vaultsecret.oc22..FAKE_GPU_API_KEY_TEST_000000000001",
         secret_name="ACX_GPU_ENDPOINT_API_KEY",
         key_id="ocid1.key.test",
         lifecycle_state="ACTIVE",
     )
     sibling = SimpleNamespace(
-        id="ocid1.vaultsecret.oc1.iad.fakesiblingsecret123",
+        id="ocid1.vaultsecret.oc1.iad.FAKE_SIBLING_SECRET_TEST_000000000001",
         secret_name="OCIR_USERNAME",
         key_id="ocid1.key.test",
         lifecycle_state="ACTIVE",
     )
     current_value = [b"b" * 64]
     existing_present = [True]
+    create_response_id: list[str | None] = [None]
     updates: list[str] = []
     created_values: list[bytes] = []
     signer = object()
@@ -318,7 +338,10 @@ def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypa
             created_values.append(base64.b64decode(details.secret_content.content))
             current_value[0] = created_values[-1]
             existing_present[0] = True
-            return SimpleNamespace(data=existing, headers={"etag": "etag-created"})
+            created = existing
+            if create_response_id[0] is not None:
+                created = SimpleNamespace(id=create_response_id[0], secret_name=existing.secret_name)
+            return SimpleNamespace(data=created, headers={"etag": "etag-created"})
 
         def update_secret(self, secret_id, details, **_kwargs):
             updates.append(secret_id)
@@ -434,7 +457,7 @@ def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypa
             vault_put_secret.main()
         assert (len(created_values), len(updates)) == before
 
-        run_with_expected_id(mode, "ocid1.vaultsecret.oc1.iad.recreatedgpuapikey456", b"h" * 64)
+        run_with_expected_id(mode, "ocid1.vaultsecret.oc1.iad.RECREATED_GPU_API_KEY_TEST_000000000001", b"h" * 64)
         with pytest.raises(RuntimeError, match="expected secret identity"):
             vault_put_secret.main()
         assert (len(created_values), len(updates)) == before
@@ -493,6 +516,58 @@ def test_gpu_bootstrap_reuses_existing_key_and_rotation_reuses_its_ocid(monkeypa
     assert vault_put_secret.main() == 0
     assert capsys.readouterr().out == f"{existing.id} 64\n"
     assert updates == [existing.id, existing.id]
+
+    # A malformed discovered identity must fail before either bootstrap or an
+    # explicitly requested rotation can create or update a secret.
+    for malformed_id in (
+        "ocid1.vaultsecret.oc1.iad.short",
+        "ocid1.vaultsecret.oc1.iad.invalid/secret-id-0123456789",
+    ):
+        existing.id = malformed_id
+        for mode in ("--bootstrap", "--rotate-existing"):
+            before = (len(created_values), len(updates))
+            monkeypatch.setattr(sys, "argv", [
+                "_vault_put_secret.py",
+                "--secret-name",
+                "ACX_GPU_ENDPOINT_API_KEY",
+                "--instance-principal",
+                mode,
+                "--result-only",
+                "--readable-timeout",
+                "0",
+            ])
+            monkeypatch.setattr(
+                sys,
+                "stdin",
+                SimpleNamespace(buffer=io.BytesIO(b"z" * 64), isatty=lambda: False),
+            )
+            with pytest.raises(RuntimeError, match="invalid Vault secret OCID"):
+                vault_put_secret.main()
+            assert (len(created_values), len(updates)) == before
+
+    existing.id = expected_id
+    existing_present[0] = False
+    create_response_id[0] = "ocid1.vaultsecret.oc1.iad.malformed/secret-id-0123456789"
+    monkeypatch.setattr(sys, "argv", [
+        "_vault_put_secret.py",
+        "--secret-name",
+        "ACX_GPU_ENDPOINT_API_KEY",
+        "--instance-principal",
+        "--result-only",
+        "--readable-timeout",
+        "0",
+    ])
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        SimpleNamespace(buffer=io.BytesIO(b"f" * 64), isatty=lambda: False),
+    )
+    before_creates = len(created_values)
+    with pytest.raises(RuntimeError, match="did not return a valid secret OCID"):
+        vault_put_secret.main()
+    assert len(created_values) == before_creates + 1
+    assert created_values[-1] == b"f" * 64
+    assert capsys.readouterr().out == ""
 
 
 def test_instance_principal_clients_accept_real_sdk_constructors_without_network() -> None:

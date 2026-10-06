@@ -41,7 +41,7 @@ ALLOWED_SECRET_NAMES = frozenset({
     "OCIR_CREDENTIAL_GENERATION",
     "ACX_GPU_ENDPOINT_API_KEY",
 })
-VAULT_SECRET_OCID = re.compile(r"ocid1\.vaultsecret\.oc[0-9]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9._-]+")
+VAULT_SECRET_OCID = re.compile(r"ocid1\.vaultsecret\.oc[0-9]+\.[A-Za-z0-9_-]*\.[A-Za-z0-9._-]{20,}")
 
 
 def validate_destination(vault_id: str, secret_name: str) -> None:
@@ -591,10 +591,15 @@ def main() -> int:
     )
 
     existing = find_secret(vaults, compartment_id, args.vault_id, args.secret_name, invoke=invoke)
+    existing_secret_id = None
+    if existing is not None:
+        existing_secret_id = getattr(existing, "id", None)
+        if not isinstance(existing_secret_id, str) or not VAULT_SECRET_OCID.fullmatch(existing_secret_id):
+            raise RuntimeError("name-selected secret has an invalid Vault secret OCID")
     if args.expected_secret_id is not None:
         if existing is None:
             raise RuntimeError("cannot verify expected secret identity: name-selected secret is missing")
-        if getattr(existing, "id", None) != args.expected_secret_id:
+        if existing_secret_id != args.expected_secret_id:
             raise RuntimeError("name-selected secret does not match expected secret identity")
     update_etag = None
     conditional_update = _accepts_keyword(vaults.update_secret, "if_match")
@@ -763,7 +768,7 @@ def main() -> int:
 
     secret_id = getattr(secret, "id", "<accepted; id unavailable before reconciliation deadline>")
     if args.result_only:
-        if not isinstance(secret_id, str) or not secret_id.startswith("ocid1.vaultsecret."):
+        if not isinstance(secret_id, str) or not VAULT_SECRET_OCID.fullmatch(secret_id):
             raise RuntimeError("Vault writer did not return a valid secret OCID")
         print(f"{secret_id} {len(value)}")
     else:

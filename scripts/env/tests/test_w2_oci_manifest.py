@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import importlib
+import json
 
 import pytest
 
 
-SECRET_OCID = "ocid1.vaultsecret.oc1.phx.aaaaaaaaaaaaaaaaaaaaaaaaaa"
+SECRET_OCID = "ocid1.vaultsecret.oc1.phx.FAKE_TEST_SECRET_00000000000000000001"
 
 
 def _manifest_root(
@@ -20,7 +21,7 @@ def _manifest_root(
                 targets = ["t"]
                 section = "S"
                 example = "example-value"
-                secret = {{ dev = "{secret_ref}" }}
+                secret = {{ dev = {json.dumps(secret_ref)} }}
             '''
     if derive_from_secret:
         secret_fragment += '''
@@ -109,7 +110,7 @@ def test_manifest_loader_rejects_derive_from_oci_remote_secret(write_manifest):
     [
         "",
         "ocid1.vaultsecret.oc1.phx.too-short",
-        "ocid1.vaultsecret.oc1..aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ocid1.vaultsecret.oc.phx.FAKE_IDENTIFIER_000000000001",
         "ocid1.vaultsecret.oc1.phx.aaaaaaaaaaaaaaaaaaaaaaaaaa/extra",
     ],
 )

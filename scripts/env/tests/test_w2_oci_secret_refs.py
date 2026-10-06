@@ -13,7 +13,7 @@ import pytest
 from conftest import load_module
 
 
-SECRET_OCID = "ocid1.vaultsecret.oc1.phx.aaaaaaaaaaaaaaaaaaaaaaaaaa"
+SECRET_OCID = "ocid1.vaultsecret.oc1.phx.FAKE_TEST_SECRET_00000000000000000001"
 FAKE_SECRET = "fake-oci-secret-value"
 INTO = "/opt/acx-backend/dev/.env"
 
@@ -54,7 +54,7 @@ def test_oci_resolution_fetches_secret_bundle_with_instance_principal():
     [
         "oci:",
         "oci:ocid1.vaultsecret.oc1.phx.too-short",
-        "oci:ocid1.vaultsecret.oc1..aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "oci:ocid1.vaultsecret.oc.phx.FAKE_IDENTIFIER_000000000001",
         "oci:ocid1.vaultsecret.oc1.phx.aaaaaaaaaaaaaaaaaaaaaaaaaa/extra",
     ],
 )
@@ -243,6 +243,36 @@ def test_oci_secret_materializes_to_private_backend_env(tmp_path, monkeypatch):
     assert len(calls) == 1
 
 
+@pytest.mark.parametrize(
+    "identifier",
+    [
+        "ocid1.vaultsecret.oc1.phx.ABCDEFGHIJKLMNOPQRST",
+        "ocid1.vaultsecret.oc1.phx.FAKE_UPPERCASE_SUFFIX_000000000001",
+        "ocid1.vaultsecret.oc10.eu-fr_1.FAKE_Mixed_Underscore-Hyphen.Dot_000001",
+        "ocid1.vaultsecret.oc42..FAKE_Global_Identifier.With-Dots_000001",
+    ],
+)
+def test_accepted_grammar_materializes_through_real_loader_and_resolver(
+    tmp_path, monkeypatch, identifier,
+):
+    calls = []
+
+    def runner(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, stdout=_oci_result(), stderr="")
+
+    result, output_path, _, out, err = _run_materialize(
+        tmp_path, monkeypatch, runner=runner, secret_ref=f"oci:{identifier}",
+    )
+
+    assert result == 0
+    assert "API_TOKEN=fake-oci-secret-value" in output_path.read_text(encoding="utf-8")
+    assert out == ""
+    assert err == ""
+    assert len(calls) == 1
+    assert calls[0][0][-1] == identifier
+
+
 def test_oci_unavailable_materialization_exits_4_without_disclosure(tmp_path, monkeypatch):
     marker = "fake-cli-output-must-not-leak"
 
@@ -297,7 +327,7 @@ def test_malformed_oci_materialization_is_refused_before_cli(tmp_path, monkeypat
 
     result, output_path, before, out, err = _run_materialize(
         tmp_path, monkeypatch, runner=runner,
-        secret_ref="oci:ocid1.vaultsecret.oc1..aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        secret_ref="oci:ocid1.vaultsecret.oc1..too-short",
     )
 
     assert result == 2

@@ -51,17 +51,14 @@ source of truth.
 
 ## Before production launch
 
-- Add `prod = "1"` to the `RECOGNITION_PORTAL_ENABLED` variable's `values`
-  in `config/env/manifest.d/30-portal-backend.toml`. It currently has only
-  `local = "1"`; production rendering does not enable the portal. The API
-  mounts `/portal` only when this setting is `1`, `true`, `yes`, or `on`.
-- Supply the public live production publishable key as the `prod`
-  value of `VITE_CLERK_PUBLISHABLE_KEY` in
-  `config/env/manifest.d/60-app-portal.toml`. It currently has only a local
-  value, so `make env-render ENV=prod TARGET=app-portal-build` fails closed
-  until this is supplied. Use the live key format documented in
-  [Clerk production authentication](clerk-production-auth.md#1-create-the-production-instance-dashboard).
-  This key is public by design. Do not add a Clerk secret to the manifest.
+- The production value `prod = "1"` for `RECOGNITION_PORTAL_ENABLED` is
+  committed in `config/env/manifest.d/30-portal-backend.toml`. The API mounts
+  `/portal` only when this setting is `1`, `true`, `yes`, or `on`.
+- The operator-supplied public live publishable key is committed as the
+  `prod` value of `VITE_CLERK_PUBLISHABLE_KEY` in
+  `config/env/manifest.d/60-app-portal.toml`; a production build now renders
+  the live key. This key is public by design. Do not add a Clerk secret to the
+  manifest.
 - The VM's Clerk values are already harvested into
   `config/env/manifest.d/30-portal-backend.toml`. Check and materialize that
   target with `make env-materialize ENV=prod TARGET=svc-vm`; resolve any

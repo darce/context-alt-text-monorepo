@@ -422,6 +422,66 @@ def test_mint_rejects_unpublishable_gpu_owner_before_remote_writer(
         assert terraform_input.read_text(encoding="utf-8") == terraform_before
 
 
+@pytest.mark.parametrize("quote", ['"""', "'''"])
+def test_mint_rejects_multiline_gpu_ref_quotes_before_remote_writer(
+    tmp_path: Path,
+    quote: str,
+) -> None:
+    manifest_dir = tmp_path / "manifest.d"
+    manifest_dir.mkdir()
+    paths = _write_fragmented_manifest(manifest_dir)
+    owner = paths["21-service-vm.toml"]
+    owner_text = owner.read_text(encoding="utf-8").replace(
+        'dev = "host:"',
+        f"dev = {quote}host:{quote}",
+        1,
+    )
+    assert tomllib.loads(owner_text)["var"][-1]["secret"]["dev"] == "host:"
+    owner.write_text(owner_text, encoding="utf-8")
+    fragments_before = {path: path.read_text(encoding="utf-8") for path in manifest_dir.glob("*.toml")}
+    terraform_input = tmp_path / "gpu-api-key.tfvars"
+    input_capture = tmp_path / "writer-stdin"
+    argument_capture = tmp_path / "writer-arguments"
+    mutations = tmp_path / "remote-mutations"
+    bin_dir = _fake_cli(tmp_path)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(SCRIPT_PATH),
+            "--approve-mint",
+            "--ssh-target",
+            "ubuntu@gpu.example",
+            "--manifest",
+            str(paths["10-service-shared.toml"]),
+            "--terraform-input",
+            str(terraform_input),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+            "GPU_KEY_TEST_OCID": FAKE_OCID,
+            "GPU_KEY_TEST_STDIN_CAPTURE": str(input_capture),
+            "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
+            "GPU_KEY_TEST_MUTATIONS": str(mutations),
+            "TMPDIR": str(tmp_path),
+        },
+    )
+
+    assert result.returncode != 0
+    assert "exactly one dev secret ref" in result.stderr
+    assert not input_capture.exists()
+    assert not argument_capture.exists()
+    assert not mutations.exists()
+    assert {path: path.read_text(encoding="utf-8") for path in manifest_dir.glob("*.toml")} == fragments_before
+    assert not terraform_input.exists()
+    assert "gpukeypreflightprobe" not in result.stdout + result.stderr
+
+
 @pytest.mark.parametrize("rotate", [False, True])
 @pytest.mark.parametrize("conflicting_input", [False, True])
 def test_inherited_transaction_flag_cannot_skip_preflight_or_identity_binding(

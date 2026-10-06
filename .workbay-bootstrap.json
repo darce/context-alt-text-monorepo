@@ -278,8 +278,8 @@
   "embeddings_operator_policy": {
     "embeddings_policy": "preferred",
     "reinjection_policy": "on",
-    "policy_revision": 1,
-    "origin": "migrated",
+    "policy_revision": 2,
+    "origin": "explicit",
     "intent": "known"
   },
   "codemap_mode": "available"

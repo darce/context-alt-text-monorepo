@@ -40,7 +40,7 @@ host, not the app host.
 | Surface | Owner | Names |
 | --- | --- | --- |
 | This deploy script | app-host lane | `APP_HOSTNAME`, `APP_UPSTREAM`, `APP_ROOT`, `APP_WWW`, `CADDY_COMPOSE`, `APP_FRONTEND_ROOT`, `CADDYFILE`, `FRONTEND_DIST`, `APP_APPROVED_ROOTS`, `APP_RELOAD_CMD`, `APP_HEALTH_CMD`, `APP_PORTAL_ENV_ROOT` |
-| Prod API process | `svc-vm` manifest target, including `30-portal-backend.toml` | Clerk runtime settings and portal enablement belong in `/opt/acx-backend/prod/.env` (mode 0600); production enablement and materialization are launch gaps (see below) |
+| Prod API process | `svc-vm` manifest target, including `30-portal-backend.toml` | Clerk runtime settings and production portal enablement are committed in the manifest; materialize `/opt/acx-backend/prod/.env` (mode 0600) and restart the prod API before frontend apply |
 | Frontend build | `app-portal-build` public-build manifest target | public `VITE_CLERK_PUBLISHABLE_KEY` and `VITE_CLERK_FAPI`; use the live publishable key variant in production |
 
 `infra/oci/app/env.example` lists the deploy names only. Clerk secret keys and
@@ -60,11 +60,10 @@ source of truth.
   the live key. This key is public by design. Do not add a Clerk secret to the
   manifest.
 - The VM's Clerk values are already harvested into
-  `config/env/manifest.d/30-portal-backend.toml`. Check and materialize that
-  target with `make env-materialize ENV=prod TARGET=svc-vm`; resolve any
-  reported runtime drift or missing host-only secrets before applying. There
-  is no interim VM writer. Also ensure the VM's runtime
-  `RECOGNITION_PORTAL_ENABLED=1` matches the launch manifest before restarting.
+  `config/env/manifest.d/30-portal-backend.toml`. Materialization and restart
+  are the remaining operator steps; follow the API activation sequence below
+  before frontend apply. Resolve any reported runtime drift or missing
+  host-only secrets before applying. There is no interim VM writer.
 
 ## Default dry-run
 
@@ -122,6 +121,40 @@ values fail before activation. `APP_PORTAL_ENV_ROOT` can select a manifest
 root other than the repository's `config/env` when a deployment uses a
 separately checked-out manifest.
 
+### Activate the production API before frontend apply
+
+The portal router enablement and Clerk verifier settings are already committed
+in the `svc-vm` environment manifest. From the repository root on the VM,
+check the production target first; resolve any runtime drift or missing
+host-only secrets before continuing:
+
+```bash
+make env-materialize ENV=prod TARGET=svc-vm
+```
+
+Materialize the committed production settings:
+
+```bash
+make env-materialize ENV=prod TARGET=svc-vm APPLY=1 CONFIRM=prod
+```
+
+Restart the shared prod API so it mounts `/portal` with
+`RECOGNITION_PORTAL_ENABLED=1` before frontend health runs:
+
+```bash
+sudo systemctl restart acx-prod
+```
+
+Confirm an unauthenticated `/portal/me` request returns HTTP **401**, not 404,
+before running frontend apply. Use the API host for the first deployment,
+when the app vhost may not yet exist:
+
+```bash
+test "$(curl -sS -o /dev/null -w '%{http_code}' https://api.altcontext.com/portal/me)" = 401
+```
+
+### Install the checker and apply the frontend
+
 The checked-in `scripts/deploy/app-portal.sh` also provides the health-check
 implementation when installed under the name `app-portal-health-check`. Install
 that versioned script as a regular executable on the VM:
@@ -130,10 +163,11 @@ that versioned script as a regular executable on the VM:
 sudo install -m 0755 scripts/deploy/app-portal.sh /usr/local/bin/app-portal-health-check
 ```
 
-It returns zero only when both the live frontend at
+It returns zero only when all three probes pass: the live frontend at
 `https://app.altcontext.com/` and the production API readiness endpoint at
-`https://api.altcontext.com/ready` return successful HTTP responses. It returns
-nonzero if either check fails.
+`https://api.altcontext.com/ready` return successful HTTP responses, and the
+unauthenticated `https://app.altcontext.com/portal/me` returns HTTP **401**.
+It returns nonzero if any check fails.
 The deploy script passes the selected `APP_HOSTNAME` to the checker; hostname
 overrides probe that frontend instead. Standalone checks default to
 `app.altcontext.com` unless `APP_HOSTNAME` is set.
@@ -236,12 +270,8 @@ The mount exposes the chosen `APP_WWW` (default `/opt/acx-backend/app/www`) at
 TLS/network owner. A custom `APP_WWW` is already baked into the published
 overlay; do not compose the `__APP_WWW__` template.
 
-Reload or recreate Caddy if its mounted Caddyfile does not match the host
-configuration. Use `docker compose -f /opt/acx-backend/docker-compose.caddy.yml
--f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy caddy reload
---config /etc/caddy/Caddyfile --adapter caddyfile` when the inode already
-matches; recreate when the mount hash diverges (same check as `sync-demo.sh`).
-Compare:
+Confirm Caddy's mounted Caddyfile matches the host configuration (same check
+as `sync-demo.sh`). Both hashes must match before declaring the apply verified:
 
 ```bash
 sha256sum /opt/acx-backend/Caddyfile
@@ -249,23 +279,16 @@ docker compose -f docker-compose.caddy.yml exec -T caddy \
   sha256sum /etc/caddy/Caddyfile
 ```
 
-Enable the portal router and Clerk verifier settings in the `svc-vm`
-environment manifest. The VM values are already harvested; check and
-materialize the production target from the repository root after resolving any
-runtime drift or missing host-only secrets:
+Verify all three live probes with the installed checker; backend settings were
+materialized and the API restarted before frontend apply:
 
 ```bash
-make env-materialize ENV=prod TARGET=svc-vm
-make env-materialize ENV=prod TARGET=svc-vm APPLY=1 CONFIRM=prod
-```
-
-Restart the prod API unit on the VM after applying those env changes:
-
-```bash
-sudo systemctl restart acx-prod
+/usr/local/bin/app-portal-health-check
 ```
 
 Billing webhooks stay on the API host, not the app host.
+
+## Shared-edge maintenance
 
 DNS: operator A-record `app.altcontext.com` → `129.213.40.111`. Caddy issues
 the cert once that name resolves here.
@@ -278,13 +301,66 @@ lane; [GRPH-09]).
 
 ## Rollback
 
+### Backend back-out
+
+The portal flag mounts both `/portal` and the billing webhooks router in the
+shared prod API; missing Clerk verifier settings can prevent API startup.
+To back out backend enablement, change the production value of
+`RECOGNITION_PORTAL_ENABLED` to `prod = "0"` in
+`config/env/manifest.d/30-portal-backend.toml` through the normal reviewed merge.
+The manifest is the only writer: there is no interim VM writer, and a hand edit
+of `/opt/acx-backend/prod/.env` is reverted as drift at the next materialize.
+From the repository root on the VM, check the merged target and resolve drift
+or missing host-only secrets:
+
+```bash
+make env-materialize ENV=prod TARGET=svc-vm
+```
+
+Then materialize the disabled flag and restart the shared prod API:
+
+```bash
+make env-materialize ENV=prod TARGET=svc-vm APPLY=1 CONFIRM=prod
+```
+
+```bash
+sudo systemctl restart acx-prod
+```
+
+Confirm API readiness recovers and `/portal/me` returns 404 with the router
+disabled. Roll the frontend back using the [frontend back-out](#frontend-back-out)
+sequence below; the frontend checker expects 401 and will fail while the
+backend portal is disabled.
+
+### Frontend back-out
+
 `/opt/acx-backend/app/rollback/Caddyfile.<ts>` plus `www.<ts>` and
 `docker-compose.app.yml.<ts>` are the pre-activation copies. Automatic restore
 runs on promote/compose/reload/health failure and reapplies the restored compose
-state before the rollback reload. Manual restore: write the Caddyfile back
-**in place** (`cat rollback > Caddyfile`), restore www/overlay, then reapply
-the prior compose overlay and reload Caddy. Use these commands only when a prior
-overlay snapshot was restored:
+state before the rollback reload. Manual restore: select the newest Caddyfile
+snapshot and refuse a missing or empty snapshot before writing the Caddyfile
+back **in place**, preserving its bind-mounted inode:
+
+```bash
+(
+  set -euo pipefail
+  snapshot="$(find /opt/acx-backend/app/rollback -maxdepth 1 -type f \
+    -name 'Caddyfile.*' -printf '%T@ %p\n' | sort -nr | sed -n '1s/^[^ ]* //p')"
+  if [ ! -f "$snapshot" ] || [ ! -s "$snapshot" ]; then
+    echo 'No non-empty Caddyfile rollback snapshot; refusing restore' >&2
+    exit 1
+  fi
+  if [ ! -f /opt/acx-backend/Caddyfile ] || [ -L /opt/acx-backend/Caddyfile ]; then
+    echo 'Live Caddyfile must be an existing regular file; refusing restore' >&2
+    exit 1
+  fi
+  cp -- "$snapshot" /opt/acx-backend/Caddyfile
+)
+```
+
+Restore www/overlay from the same snapshot timestamp, then reapply the prior
+compose overlay and reload Caddy. Use these commands only when a prior overlay
+snapshot was restored:
 
 ```bash
 cd /opt/acx-backend

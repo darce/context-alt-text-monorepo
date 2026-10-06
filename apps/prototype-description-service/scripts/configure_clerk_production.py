@@ -412,6 +412,13 @@ def _tokenize_javascript(source: str, template_depth: int = 0) -> list[_JSToken]
     paren_context: list[bool] = []
     regex_after_control_header = False
     operators = (
+        ">>>=",
+        "&&=",
+        "||=",
+        "??=",
+        "<<=",
+        ">>=",
+        "**=",
         "===",
         "!==",
         "=>",
@@ -425,6 +432,10 @@ def _tokenize_javascript(source: str, template_depth: int = 0) -> list[_JSToken]
         "-=",
         "*=",
         "/=",
+        "%=",
+        "&=",
+        "|=",
+        "^=",
         "&&",
         "||",
         "??",
@@ -989,6 +1000,26 @@ _RETURNED_CLERK_FIELDS = frozenset({"publishableKey", "fapiOrigin"})
 _RETURNED_CONFIG_MEMBERS = frozenset(
     {"publishableKey", "fapiOrigin", "portalEnabled", "paymentsEnabled", "publicPlanCode"}
 )
+_JS_ASSIGNMENT_OPERATORS = frozenset(
+    {
+        "=",
+        "+=",
+        "-=",
+        "*=",
+        "/=",
+        "%=",
+        "**=",
+        "<<=",
+        ">>=",
+        ">>>=",
+        "&=",
+        "|=",
+        "^=",
+        "&&=",
+        "||=",
+        "??=",
+    }
+)
 
 
 def _expression_end(tokens: Sequence[_JSToken], start: int, limit: int, pairs: dict[int, int]) -> int:
@@ -1006,6 +1037,27 @@ def _expression_end(tokens: Sequence[_JSToken], start: int, limit: int, pairs: d
             return index + 1
         index += 1
     return limit
+
+
+def _return_comma_expression_segments(
+    tokens: Sequence[_JSToken], start: int, body_close: int, pairs: dict[int, int]
+) -> list[tuple[int, int]]:
+    segments: list[tuple[int, int]] = []
+    cursor = start
+    while cursor < body_close:
+        end = _expression_end(tokens, cursor, body_close, pairs)
+        if end <= cursor:
+            raise ClerkConfigError("VITE_CLERK_FAPI: portal config return expression is unsupported")
+        segments.append((cursor, end))
+        if end < body_close and _is_punct(tokens[end], ","):
+            cursor = end + 1
+            continue
+        if end < body_close and _is_punct(tokens[end], ";") and end + 1 == body_close:
+            return segments
+        if end == body_close:
+            return segments
+        raise ClerkConfigError("VITE_CLERK_FAPI: portal config return expression is unsupported")
+    raise ClerkConfigError("VITE_CLERK_FAPI: portal config return expression is incomplete")
 
 
 def _split_conditional_expression(
@@ -1078,6 +1130,51 @@ def _output_object_fields(
     return fields
 
 
+def _const_declarator_start(
+    name_index: int,
+    binding_scope: tuple[int, ...],
+    tokens: Sequence[_JSToken],
+    scopes: Sequence[tuple[int, ...]],
+    pairs: dict[int, int],
+) -> int | None:
+    declaration_index = name_index - 1
+    if (
+        declaration_index >= 0
+        and tokens[declaration_index].kind == "identifier"
+        and tokens[declaration_index].value == "const"
+        and scopes[declaration_index] == binding_scope
+    ):
+        return declaration_index
+    if declaration_index < 0 or not _is_punct(tokens[declaration_index], ","):
+        return None
+    cursor = declaration_index - 1
+    while cursor >= 0:
+        token = tokens[cursor]
+        if token.kind == "template_expr_start":
+            cursor = _skip_template_expression_tokens(tokens, cursor) - 1
+            continue
+        if _is_punct(token, "}") and scopes[cursor] == binding_scope:
+            return None
+        if _is_punct(token, ")") or _is_punct(token, "]") or _is_punct(token, "}"):
+            opener = pairs.get(cursor, -1)
+            if opener >= 0:
+                cursor = opener - 1
+                continue
+        if _is_punct(token, ";"):
+            return None
+        if token.kind == "identifier" and token.value in {"const", "let", "var"} and scopes[cursor] == binding_scope:
+            return cursor if token.value == "const" else None
+        if (
+            token.line_break_before
+            and _initializer_ends_here(tokens, cursor)
+            and token.kind == "identifier"
+            and token.value in {"const", "let", "var", "return", "function"}
+        ):
+            return None
+        cursor -= 1
+    return None
+
+
 def _local_const_initializer(
     name: str,
     tokens: Sequence[_JSToken],
@@ -1089,12 +1186,11 @@ def _local_const_initializer(
 ) -> tuple[tuple[str, tuple[int, ...], int], int, int]:
     identity = _nearest_lexical_binding(name, tokens, scopes, scopes[use_index], pairs)
     _, binding_scope, name_index = identity
-    declaration_index = name_index - 1
+    declaration_index = _const_declarator_start(name_index, binding_scope, tokens, scopes, pairs)
     body_scope = scopes[body_open] + (body_open,)
     if (
         not (len(body_scope) <= len(binding_scope) and binding_scope[: len(body_scope)] == body_scope)
-        or declaration_index < 0
-        or tokens[declaration_index].value != "const"
+        or declaration_index is None
         or name_index + 2 >= body_close
         or not _is_punct(tokens[name_index + 1], "=")
     ):
@@ -1139,31 +1235,135 @@ def _resolve_output_object(
     raise ClerkConfigError("VITE_CLERK_FAPI: returned portal configuration alias is unsupported")
 
 
+def _validate_optional_return_segment(
+    segment: tuple[int, int],
+    parameter: str,
+    returned_name: str,
+    tokens: Sequence[_JSToken],
+    scopes: Sequence[tuple[int, ...]],
+    pairs: dict[int, int],
+) -> str:
+    start, end = segment
+    if end - start != 25:
+        raise ClerkConfigError("VITE_CLERK_FAPI: returned portal optional-field assignment is unsupported")
+    actual = [(tokens[index].kind, tokens[index].value) for index in range(start, end)]
+    optional_inputs = {
+        "VITE_PAYMENTS_ENABLED": "paymentsEnabled",
+        "VITE_PUBLIC_PLAN_CODE": "publicPlanCode",
+    }
+    input_name = actual[10][1] if actual[10][0] == "string" else None
+    member_name = optional_inputs.get(input_name or "")
+    if member_name is None or tokens[start + 18].kind != "identifier":
+        raise ClerkConfigError("VITE_CLERK_FAPI: returned portal optional-field assignment is unsupported")
+    expected_prefix = [
+        ("identifier", "Object"),
+        ("punct", "."),
+        ("identifier", "prototype"),
+        ("punct", "."),
+        ("identifier", "hasOwnProperty"),
+        ("punct", "."),
+        ("identifier", "call"),
+        ("punct", "("),
+        ("identifier", parameter),
+        ("punct", ","),
+        ("string", input_name),
+        ("punct", ")"),
+        ("punct", "&&"),
+        ("punct", "("),
+        ("identifier", returned_name),
+        ("punct", "."),
+        ("identifier", member_name),
+        ("punct", "="),
+    ]
+    expected_suffix = [
+        ("punct", "("),
+        ("identifier", parameter),
+        ("punct", "."),
+        ("identifier", input_name),
+        ("punct", ")"),
+        ("punct", ")"),
+    ]
+    if actual[:18] != expected_prefix or actual[19:] != expected_suffix:
+        raise ClerkConfigError("VITE_CLERK_FAPI: returned portal optional-field assignment is unsupported")
+    try:
+        _nearest_lexical_binding("Object", tokens, scopes, scopes[start], pairs)
+    except ClerkConfigError as exc:
+        if "configuration alias is unsupported" not in str(exc):
+            raise ClerkConfigError("VITE_CLERK_FAPI: returned portal optional-field guard is ambiguous") from None
+    else:
+        raise ClerkConfigError("VITE_CLERK_FAPI: returned portal optional-field guard is shadowed")
+    try:
+        _nearest_lexical_binding(tokens[start + 18].value or "", tokens, scopes, scopes[start + 18], pairs)
+    except ClerkConfigError:
+        raise ClerkConfigError("VITE_CLERK_FAPI: returned portal optional-field normalizer is unsupported") from None
+    return member_name
+
+
 def _consumer_returned_object(
+    parameter: str,
     tokens: Sequence[_JSToken],
     scopes: Sequence[tuple[int, ...]],
     body_open: int,
     body_close: int,
     pairs: dict[int, int],
-) -> tuple[int, tuple[tuple[str, tuple[int, ...], int], ...]]:
+) -> tuple[int, tuple[tuple[str, tuple[int, ...], int], ...], int | None]:
     body_scope = scopes[body_open] + (body_open,)
+    nested_function_bodies = _nested_function_body_opens(tokens, body_open, body_close, pairs)
     returns = [
         index
         for index in range(body_open + 1, body_close)
-        if tokens[index].kind == "identifier" and tokens[index].value == "return" and scopes[index] == body_scope
+        if tokens[index].kind == "identifier"
+        and tokens[index].value == "return"
+        and len(scopes[index]) >= len(body_scope)
+        and scopes[index][: len(body_scope)] == body_scope
+        and not nested_function_bodies.intersection(scopes[index])
     ]
-    if len(returns) != 1:
+    if len(returns) != 1 or scopes[returns[0]] != body_scope:
         raise ClerkConfigError("VITE_CLERK_FAPI: portal config consumer must have one unambiguous return")
     return_index = returns[0]
     value_index = return_index + 1
-    if value_index >= body_close:
+    if value_index >= body_close or tokens[value_index].line_break_before:
         raise ClerkConfigError("VITE_CLERK_FAPI: portal config consumer return is unsupported")
     if _is_punct(tokens[value_index], "{"):
         close_index = pairs.get(value_index)
         if close_index is None or not _initializer_ends_here(tokens, close_index + 1):
             raise ClerkConfigError("VITE_CLERK_FAPI: portal config consumer return is ambiguous")
-        return value_index, ()
+        return value_index, (), None
     if tokens[value_index].kind == "identifier" and tokens[value_index].value is not None:
+        expression_end = _expression_end(tokens, value_index, body_close, pairs)
+        if expression_end < body_close and _is_punct(tokens[expression_end], ","):
+            segments = _return_comma_expression_segments(tokens, value_index, body_close, pairs)
+            final_start, final_end = segments[-1]
+            if (
+                final_end - final_start != 1
+                or tokens[final_start].kind != "identifier"
+                or tokens[final_start].value is None
+            ):
+                raise ClerkConfigError("VITE_CLERK_FAPI: portal config comma return has no config object")
+            returned_name = tokens[final_start].value
+            assigned_optional_fields: set[str] = set()
+            for segment in segments[:-1]:
+                member_name = _validate_optional_return_segment(
+                    segment,
+                    parameter=parameter,
+                    returned_name=returned_name,
+                    tokens=tokens,
+                    scopes=scopes,
+                    pairs=pairs,
+                )
+                if member_name in assigned_optional_fields:
+                    raise ClerkConfigError("VITE_CLERK_FAPI: returned portal optional fields are ambiguous")
+                assigned_optional_fields.add(member_name)
+            object_index, identities = _resolve_output_object(
+                returned_name,
+                tokens,
+                scopes,
+                final_start,
+                body_open,
+                body_close,
+                pairs,
+            )
+            return object_index, identities, final_start
         object_index, identities = _resolve_output_object(
             tokens[value_index].value,
             tokens,
@@ -1173,8 +1373,47 @@ def _consumer_returned_object(
             body_close,
             pairs,
         )
-        return object_index, identities
+        return object_index, identities, value_index
     raise ClerkConfigError("VITE_CLERK_FAPI: portal config consumer does not return a configuration object")
+
+
+def _nested_function_body_opens(
+    tokens: Sequence[_JSToken], body_open: int, body_close: int, pairs: dict[int, int]
+) -> set[int]:
+    body_opens: set[int] = set()
+    control_headers = {"catch", "for", "if", "switch", "while", "with"}
+    for index in range(body_open + 1, body_close):
+        token = tokens[index]
+        candidate: int | None = None
+        if token.kind == "identifier" and token.value == "function":
+            cursor = index + 1
+            if cursor < body_close and _is_punct(tokens[cursor], "*"):
+                cursor += 1
+            if cursor < body_close and tokens[cursor].kind == "identifier":
+                cursor += 1
+            if cursor < body_close and _is_punct(tokens[cursor], "("):
+                params_close = pairs.get(cursor, -1)
+                if params_close >= 0:
+                    candidate = params_close + 1
+        elif _is_punct(token, "=>"):
+            candidate = index + 1
+        elif _is_punct(token, "{") and index > body_open + 1 and _is_punct(tokens[index - 1], ")"):
+            params_open = pairs.get(index - 1, -1)
+            before_params = tokens[params_open - 1] if params_open > body_open + 1 else None
+            if (
+                before_params is not None
+                and before_params.kind == "identifier"
+                and before_params.value not in control_headers
+            ) or (before_params is not None and _is_punct(before_params, "]")):
+                candidate = index
+        if (
+            candidate is not None
+            and body_open < candidate < body_close
+            and _is_punct(tokens[candidate], "{")
+            and candidate in pairs
+        ):
+            body_opens.add(candidate)
+    return body_opens
 
 
 def _function_definition(
@@ -1361,6 +1600,29 @@ def _canonical_fapi_normalizer(
         next_cursor = parse_null_return(body_cursor, limit)
         return (condition, next_cursor) if next_cursor is not None else None
 
+    def parse_null_conditional_return(cursor: int, limit: int) -> tuple[tuple[int, int], tuple[int, int], int] | None:
+        if cursor + 1 >= limit or tokens[cursor].value != "return" or tokens[cursor + 1].line_break_before:
+            return None
+        expression_start = cursor + 1
+        expression_end = _expression_end(tokens, expression_start, limit, pairs)
+        conditional = _split_conditional_expression(tokens, expression_start, expression_end, pairs)
+        if conditional is None:
+            return None
+        condition, consequent, alternate = conditional
+        if (
+            consequent[1] - consequent[0] != 1
+            or tokens[consequent[0]].kind != "identifier"
+            or tokens[consequent[0]].value != "null"
+            or alternate[0] >= alternate[1]
+        ):
+            return None
+        next_cursor = (
+            expression_end + 1 if expression_end < limit and _is_punct(tokens[expression_end], ";") else expression_end
+        )
+        if next_cursor != limit:
+            return None
+        return condition, alternate, next_cursor
+
     cursor = body_open + 1
     raw_declaration = parse_const(cursor, body_close)
     if raw_declaration is None:
@@ -1453,8 +1715,17 @@ def _canonical_fapi_normalizer(
 
     scheme_guard = parse_if_null(try_cursor, try_close)
     if scheme_guard is None:
-        return False
-    scheme_condition, try_cursor = scheme_guard
+        conditional_return = parse_null_conditional_return(try_cursor, try_close)
+        if conditional_return is None:
+            return False
+        scheme_condition, (result_start, result_end), try_cursor = conditional_return
+    else:
+        scheme_condition, try_cursor = scheme_guard
+        if try_cursor + 1 >= try_close or tokens[try_cursor].value != "return":
+            return False
+        result_start = try_cursor + 1
+        result_end = _expression_end(tokens, result_start, try_close, pairs)
+        try_cursor = result_end + 1 if result_end < try_close and _is_punct(tokens[result_end], ";") else result_end
     scheme_tokens = [
         (tokens[index].kind, tokens[index].value)
         for index in range(*scheme_condition)
@@ -1474,10 +1745,6 @@ def _canonical_fapi_normalizer(
         ("string", "http:"),
     ]:
         return False
-    if try_cursor + 1 >= try_close or tokens[try_cursor].value != "return":
-        return False
-    result_start = try_cursor + 1
-    result_end = _expression_end(tokens, result_start, try_close, pairs)
     if result_end - result_start != 11 or tokens[result_start].kind != "template":
         return False
     result_raw = tokens[result_start].raw
@@ -1501,7 +1768,6 @@ def _canonical_fapi_normalizer(
         or tokens[result_start + 10].kind != "template_expr_end"
     ):
         return False
-    try_cursor = result_end + 1 if result_end < try_close and _is_punct(tokens[result_end], ";") else result_end
     if try_cursor != try_close:
         return False
 
@@ -1521,25 +1787,32 @@ def _canonical_fapi_normalizer(
 
 def _canonical_key_guard(condition: tuple[int, int], value_alias: str, tokens: Sequence[_JSToken]) -> bool:
     start, end = condition
-    actual = [
-        (tokens[index].kind, tokens[index].value)
-        for index in range(start, end)
-        if not (_is_punct(tokens[index], "(") or _is_punct(tokens[index], ")"))
-    ]
-    if len(actual) != 13:
-        return False
-    values = [value for _, value in actual]
-    kinds = [kind for kind, _ in actual]
+    actual = [(tokens[index].kind, tokens[index].value) for index in range(start, end)]
     return (
-        values[0:5] == [value_alias, ".", "length", ">", "0"]
-        and values[5:7] == ["&&", "!"]
-        and kinds[7] == "identifier"
-        and values[8:11] == ["&&", value_alias, "."]
-        and values[11] == "startsWith"
-        and kinds[12] == "string"
-        and values[12] == "pk_test_"
-        and kinds[0] == "identifier"
-        and kinds[4] == "punct"
+        len(actual) == 17
+        and actual[:8]
+        == [
+            ("identifier", value_alias),
+            ("punct", "."),
+            ("identifier", "length"),
+            ("punct", ">"),
+            ("punct", "0"),
+            ("punct", "&&"),
+            ("punct", "!"),
+            ("punct", "("),
+        ]
+        and actual[8][0] == "identifier"
+        and actual[9:]
+        == [
+            ("punct", "&&"),
+            ("identifier", value_alias),
+            ("punct", "."),
+            ("identifier", "startsWith"),
+            ("punct", "("),
+            ("string", "pk_test_"),
+            ("punct", ")"),
+            ("punct", ")"),
+        ]
     )
 
 
@@ -1658,9 +1931,8 @@ def _validate_returned_object_bindings(
     body_open: int,
     body_close: int,
     pairs: dict[int, int],
+    allowed_return_object_use: int | None = None,
 ) -> None:
-    assignment_operators = {"=", "+=", "-=", "*=", "/=", "++", "--"}
-    logical_assignment_operators = {"||", "&&", "??"}
     aliases = {identity[0]: identity for identity in identities}
     for identity in identities:
         name, _, declaration_index = identity
@@ -1676,25 +1948,44 @@ def _validate_returned_object_bindings(
                     continue
             except ClerkConfigError:
                 raise ClerkConfigError("VITE_CLERK_FAPI: returned portal config binding is ambiguous") from None
+            if index == allowed_return_object_use:
+                continue
             if index > body_open + 1 and tokens[index - 1].kind == "identifier" and tokens[index - 1].value == "return":
                 continue
             if index + 1 < body_close and _is_punct(tokens[index + 1], ".") and index + 2 < body_close:
                 member = tokens[index + 2].value or ""
-                following = tokens[index + 3] if index + 3 < body_close else None
+                prefix_cursor = index - 1
+                while (
+                    prefix_cursor > body_open + 1
+                    and _is_punct(tokens[prefix_cursor], "(")
+                    and pairs.get(prefix_cursor, -1) >= index + 2
+                ):
+                    prefix_cursor -= 1
+                previous = tokens[prefix_cursor] if prefix_cursor > body_open else None
+                suffix_cursor = index + 3
+                while (
+                    suffix_cursor < body_close
+                    and _is_punct(tokens[suffix_cursor], ")")
+                    and pairs.get(suffix_cursor, body_close) < index
+                ):
+                    suffix_cursor += 1
+                following = tokens[suffix_cursor] if suffix_cursor < body_close else None
                 if member not in _RETURNED_CONFIG_MEMBERS:
                     raise ClerkConfigError(
                         "VITE_CLERK_FAPI: returned portal config escapes through an unsupported member"
                     )
-                if (
-                    member in _RETURNED_CLERK_FIELDS
-                    and following is not None
-                    and (
-                        following.value in assignment_operators
-                        or (
-                            following.value in logical_assignment_operators
-                            and index + 4 < body_close
-                            and _is_punct(tokens[index + 4], "=")
+                if member in _RETURNED_CLERK_FIELDS and (
+                    (
+                        previous is not None
+                        and (
+                            (previous.kind == "identifier" and previous.value == "delete")
+                            or (previous.kind == "punct" and previous.value in {"++", "--"})
                         )
+                    )
+                    or (
+                        following is not None
+                        and following.kind == "punct"
+                        and (following.value in _JS_ASSIGNMENT_OPERATORS or following.value in {"++", "--"})
                     )
                 ):
                     field_name = _CLERK_KEY_FIELD if member == "publishableKey" else _CLERK_FAPI_FIELD
@@ -1722,9 +2013,11 @@ def _validate_consumer_output(
     scopes: Sequence[tuple[int, ...]],
     pairs: dict[int, int],
 ) -> None:
-    object_index, identities = _consumer_returned_object(tokens, scopes, body_open, body_close, pairs)
+    object_index, identities, returned_object_use = _consumer_returned_object(
+        parameter, tokens, scopes, body_open, body_close, pairs
+    )
     fields = _output_object_fields(tokens, pairs, object_index)
-    _validate_returned_object_bindings(identities, tokens, scopes, body_open, body_close, pairs)
+    _validate_returned_object_bindings(identities, tokens, scopes, body_open, body_close, pairs, returned_object_use)
     expected_values = {
         "publishableKey": input_record[_CLERK_KEY_FIELD],
         "fapiOrigin": _https_origin(input_record[_CLERK_FAPI_FIELD], _CLERK_FAPI_FIELD),
@@ -1869,6 +2162,35 @@ def _config_binding_shadows(
             shadows.append((tokens[name_index].value or "", scope, name_index))
             declaration_names.add(name_index)
 
+    def add_comma_declarators(first_name_index: int, scope: tuple[int, ...]) -> None:
+        cursor = first_name_index + 1
+        while cursor < len(tokens):
+            token = tokens[cursor]
+            if token.kind == "template_expr_start":
+                cursor = _skip_template_expression_tokens(tokens, cursor)
+                continue
+            if _is_punct(token, "{") or _is_punct(token, "[") or _is_punct(token, "("):
+                close_index = pairs.get(cursor)
+                if close_index is None:
+                    return
+                cursor = close_index + 1
+                continue
+            if _is_punct(token, ",") and scopes[cursor] == scope:
+                name_index = cursor + 1
+                if (
+                    name_index + 1 < len(tokens)
+                    and tokens[name_index].kind == "identifier"
+                    and _is_punct(tokens[name_index + 1], "=")
+                ):
+                    add_name(name_index, scope)
+                    cursor = name_index + 2
+                    continue
+            if _is_punct(token, ";") or (_is_punct(token, "}") and scopes[cursor] == scope):
+                return
+            if token.line_break_before and _initializer_ends_here(tokens, cursor):
+                return
+            cursor += 1
+
     def method_signature(params_open: int) -> tuple[int, int] | None:
         params_close = pairs.get(params_open, -1)
         body_open = params_close + 1
@@ -1968,6 +2290,7 @@ def _config_binding_shadows(
                     function_body = max(enclosing_functions, key=lambda body: len(scopes[body]) + 1)
                     binding_scope = scopes[function_body] + (function_body,)
             add_name(name_index, binding_scope)
+            add_comma_declarators(name_index, binding_scope)
         elif (
             token.kind == "identifier"
             and token.value in {"const", "let", "var"}
@@ -2296,7 +2619,7 @@ def validate_frontend_modules(config: DerivedClerkConfig, module_paths: Sequence
         if total_tokens > MAX_FRONTEND_TOKENS:
             raise ClerkConfigError("reachable JavaScript modules exceed the static inspection limit")
         key_tokens: list[str] = []
-        for token_index, token in enumerate(tokens):
+        for token in tokens:
             if token.kind not in {"string", "template"}:
                 continue
             for prefix in re.finditer(r"\bpk_(?:live|test)_", token.raw):
@@ -2309,16 +2632,9 @@ def validate_frontend_modules(config: DerivedClerkConfig, module_paths: Sequence
                     len(token.raw),
                 )
                 candidate = token.raw[prefix.start() : end_index]
-                is_test_prefix_check = (
-                    candidate == "pk_test_"
-                    and token.kind == "string"
-                    and token_index >= 2
-                    and _is_punct(tokens[token_index - 1], "(")
-                    and tokens[token_index - 2].kind == "identifier"
-                    and tokens[token_index - 2].value == "startsWith"
-                )
-                if not is_test_prefix_check:
-                    key_tokens.append(candidate)
+                if candidate in {"pk_live_", "pk_test_", "pk_live_...", "pk_test_..."}:
+                    continue
+                key_tokens.append(candidate)
         if any(token != config.publishable_key for token in key_tokens):
             raise ClerkConfigError("VITE_CLERK_PUBLISHABLE_KEY: reachable module contains a different Clerk key")
         has_expected_key = has_expected_key or config.publishable_key in key_tokens

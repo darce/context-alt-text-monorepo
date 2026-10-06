@@ -2,13 +2,15 @@ import { fetchRequiredApi } from '../utils/http';
 import { getEndpoint, getConfig } from './config';
 
 /**
- * BR-138: why a present service-URL value was discarded by is_valid_base_url.
+ * BR-138: why a present service-URL value was discarded by is_valid_base_url,
+ * including deployment-key URL restrictions.
  * Mirrors RecognitionEndpointResolver::URL_REJECTION_* (sr-007).
  */
 export const UrlRejectionReason = {
   REJECTED_SCHEME: 'rejected_scheme',
   NON_LOOPBACK_HTTP: 'non_loopback_http',
   INVALID_URL: 'invalid_url',
+  DEPLOYMENT_KEY_REQUIRES_DEPLOYMENT_URL: 'deployment_key_requires_deployment_url',
 } as const;
 
 export type UrlRejectionReasonValue = (typeof UrlRejectionReason)[keyof typeof UrlRejectionReason];

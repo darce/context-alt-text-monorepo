@@ -1436,6 +1436,33 @@ class SettingsControllerTest extends TestCase
 
     // --- POST /settings/test (probe dispatch) ---
 
+    public function testProbeNeverSendsDeploymentKeyToSavedRemoteOptionUrl(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        putenv('ACX_RECOGNITION_API_KEY=deployment-key-must-not-leak');
+        $this->setOption('acx_recognition_url', 'https://[2001:db8::1]');
+        $this->queueHttpResponse($this->buildOkResponse());
+
+        $snapshot = (new RecognitionEndpointResolver())->resolve_settings_snapshot();
+        $this->assertSame(
+            RecognitionEndpointResolver::URL_REJECTION_DEPLOYMENT_KEY_REQUIRES_DEPLOYMENT_URL,
+            $snapshot['service_url_rejection_reason']
+        );
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        // EndpointResolver:73-79 rejects this option before transport; the
+        // settings probe reports NOT_CONFIGURED (SettingsController:709-718).
+        $this->assertSame(ProbeOutcome::NOT_CONFIGURED, $data['outcome']);
+        $this->assertSame('', $data['probed_url']);
+        $calls = $this->getHttpCalls();
+        $this->assertCount(0, $calls);
+        $sentHeaders = array_merge([], ...array_column(array_column($calls, 'args'), 'headers'));
+        $this->assertArrayNotHasKey('X-API-Key', $sentHeaders, 'No deployment key may leave the process.');
+    }
+
     public function testProbeDispatchHitsAuthenticatedPoolEndpoint(): void
     {
         $this->configureProbe();

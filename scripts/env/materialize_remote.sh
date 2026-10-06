@@ -21,6 +21,27 @@ for flag in "$@"; do
 done
 [[ $adopt == false || $mode == --apply ]] || usage
 
+oci_bin=${ENV_MATERIALIZE_OCI_BIN:-/home/ubuntu/.oci-venv/bin/oci}
+if ! python3 - "$oci_bin" <<'PY'
+import os
+import re
+import sys
+
+path = sys.argv[1]
+valid = (
+    os.path.isabs(path)
+    and os.path.normpath(path) == path
+    and ".." not in path.split("/")
+    and re.fullmatch(r"/[A-Za-z0-9._+/-]+", path) is not None
+)
+sys.exit(0 if valid else 1)
+PY
+then
+    printf 'materialize_remote.sh: invalid ENV_MATERIALIZE_OCI_BIN; expected a normalized absolute OCI CLI path\n' >&2
+    exit 2
+fi
+printf -v oci_bin_quoted '%q' "$oci_bin"
+
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 manifest_root=${ENV_MANIFEST_ROOT:-$repo_root/config/env}
 remote_path=$(python3 - "$repo_root" "$manifest_root" "$environment" "$target" <<'PY'
@@ -48,7 +69,8 @@ printf -v arguments ' --env %q --target %q --into %q' "$environment" "$target" "
 [[ $mode != --check ]] || arguments+=' --check'
 [[ $adopt != true ]] || arguments+=' --adopt'
 stage_nonce=$(python3 -c 'import secrets; print(secrets.token_hex(16))')
-remote_command='set -eu; tmp=; stage_file=; trap '\''status=$?; trap - EXIT; if [ -n "$stage_file" ] && [ -e "$stage_file" ]; then stage=materialize; else stage=bootstrap; fi; printf "__MATERIALIZE_REMOTE_STAGE_'"$stage_nonce"'__:%s:%s\n" "$stage" "$status" >&2; if [ -n "$tmp" ]; then rm -rf -- "$tmp"; fi; exit "$status"'\'' EXIT; tmp=$(mktemp -d); stage_file=$tmp/.materialize-stage; tar -xf - -C "$tmp"; sudo python3 -B -c '\''import importlib, sys, types; marker, script = sys.argv[1:3]; (sys.stderr.write("Python 3.11 or newer is required\n"), sys.exit(2)) if sys.version_info < (3, 11) else None; sys.argv = [script, *sys.argv[3:]]; module = types.ModuleType("_materialize_remote"); module.__file__ = script; sys.modules[module.__name__] = module; exec(compile(open(script, "rb").read(), script, "exec"), module.__dict__); importlib.import_module("env.materialize"); open(marker, "x").close(); raise SystemExit(module.main())'\'' "$stage_file" "$tmp/scripts/env/render_env.py" materialize --root "$tmp/config/env"'
+remote_command='set -eu; tmp=; stage_file=; trap '\''status=$?; trap - EXIT; if [ -n "$stage_file" ] && [ -e "$stage_file" ]; then stage=materialize; else stage=bootstrap; fi; printf "__MATERIALIZE_REMOTE_STAGE_'"$stage_nonce"'__:%s:%s\n" "$stage" "$status" >&2; if [ -n "$tmp" ]; then rm -rf -- "$tmp"; fi; exit "$status"'\'' EXIT; tmp=$(mktemp -d); stage_file=$tmp/.materialize-stage; tar -xf - -C "$tmp"; sudo env ACX_OCI_BIN=__ACX_OCI_BIN__ python3 -B -c '\''import importlib, sys, types; marker, script = sys.argv[1:3]; (sys.stderr.write("Python 3.11 or newer is required\n"), sys.exit(2)) if sys.version_info < (3, 11) else None; sys.argv = [script, *sys.argv[3:]]; module = types.ModuleType("_materialize_remote"); module.__file__ = script; sys.modules[module.__name__] = module; exec(compile(open(script, "rb").read(), script, "exec"), module.__dict__); importlib.import_module("env.materialize"); open(marker, "x").close(); raise SystemExit(module.main())'\'' "$stage_file" "$tmp/scripts/env/render_env.py" materialize --root "$tmp/config/env"'
+remote_command=${remote_command/__ACX_OCI_BIN__/$oci_bin_quoted}
 remote_command+=$arguments
 
 # tarfile maps an arbitrary manifest directory without platform-specific tar transforms.
@@ -125,6 +147,8 @@ if (( statuses[1] != 0 )); then
                     ;;
                 2) remote_error='remote materialize refused with status 2' ;;
                 4) remote_error='required host secret is missing (remote materialize exit 4)' ;;
+                5) remote_error='OCI CLI unavailable on remote host (remote materialize exit 5)' ;;
+                6) remote_error='OCI Vault secret resolution failed (remote materialize exit 6)' ;;
                 75) remote_error='remote materialize lock or lease busy (exit 75)' ;;
                 *) printf -v remote_error 'remote materialize exited with status %d' "${statuses[1]}" ;;
             esac

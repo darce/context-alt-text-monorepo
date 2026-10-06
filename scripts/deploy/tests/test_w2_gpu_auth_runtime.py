@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -12,8 +14,51 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 OCI_ROOT = REPO_ROOT / "infra" / "oci"
-FAKE_SECRET_OCID = "ocid1.vaultsecret.oc1.iad.fakeGpuRuntimeKey"
+FAKE_SECRET_OCID = "ocid1.vaultsecret.oc1.iad.FAKE_GPU_API_KEY_RUNTIME_0001"
 FAKE_KEY = b"a" * 64
+
+
+def _gpu_secret_ocid_variable_block() -> str:
+    variables_tf = (OCI_ROOT / "variables.tf").read_text()
+    match = re.search(
+        r'(?ms)^variable "gpu_api_key_secret_ocid" \{\n.*?^\}', variables_tf
+    )
+    assert match is not None, "expected the committed GPU Vault OCID variable block"
+    return match.group(0)
+
+
+def _plan_gpu_secret_ocid_fixture(
+    tmp_path: Path, *, name: str, identifier: str | None
+) -> subprocess.CompletedProcess[str]:
+    terraform = shutil.which("terraform")
+    if terraform is None:
+        pytest.skip("Terraform is required for the provider-free variable plan check")
+
+    fixture = tmp_path / name
+    fixture.mkdir()
+    (fixture / "main.tf").write_text(_gpu_secret_ocid_variable_block() + "\n")
+    var_file_arg: list[str] = []
+    if identifier is not None:
+        # This is the identifier-only artifact shape emitted by the mint helper.
+        var_file = fixture / "gpu-api-key-secret.tfvars"
+        var_file.write_text(
+            "gpu_api_key_secret_ocid = " + json.dumps(identifier) + "\n"
+        )
+        var_file_arg = [f"-var-file={var_file}"]
+
+    return subprocess.run(
+        [
+            terraform,
+            f"-chdir={fixture}",
+            "plan",
+            "-input=false",
+            "-no-color",
+            *var_file_arg,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def _cloud_init_files() -> dict[str, str]:
@@ -149,6 +194,53 @@ def test_gpu_secret_read_policy_is_root_scoped_to_one_configured_secret() -> Non
     ) in body
     assert "secret-family" not in body
     assert not re.search(r"\b(?:create|update|manage)\s+(?:secret|secret-family)", body)
+
+
+def test_gpu_secret_ocid_variable_accepts_agreed_identifier_artifacts(
+    tmp_path: Path,
+) -> None:
+    # The omitted value preserves the empty bootstrap default. Each explicit
+    # value is written as a generated identifier-only tfvars artifact.
+    cases = {
+        "bootstrap": None,
+        "standard-region": "ocid1.vaultsecret.oc1.iad.FAKE_GPU_API_KEY_ID_0001",
+        "global": "ocid1.vaultsecret.oc1..FAKE_GPU_API_KEY_ID_0002",
+        "broad-grammar": (
+            "ocid1.vaultsecret.oc123.eu-fr_1.XY.z-FAKE_GPU_API_KEY_ID.0003"
+        ),
+    }
+
+    for name, identifier in cases.items():
+        planned = _plan_gpu_secret_ocid_fixture(
+            tmp_path, name=name, identifier=identifier
+        )
+        assert planned.returncode == 0, f"{name}: {planned.stdout}\n{planned.stderr}"
+
+
+def test_gpu_secret_ocid_variable_rejects_invalid_identifier_artifacts(
+    tmp_path: Path,
+) -> None:
+    cases = {
+        "malformed": "not-an-ocid",
+        "wrong-kind": "ocid1.vault.oc1.iad.FAKE_GPU_API_KEY_ID_0004",
+        "bad-realm": "ocid1.vaultsecret.ocx.iad.FAKE_GPU_API_KEY_ID_0005",
+        "short-unique-part": "ocid1.vaultsecret.oc1.iad.abcdefghijklmnopqrs",
+        "whitespace": "ocid1.vaultsecret.oc1.iad.FAKE_GPU_API_KEY_ID 0006",
+        "slash": "ocid1.vaultsecret.oc1.iad.FAKE/GPU/API/KEY/ID/0007",
+        "quote": 'ocid1.vaultsecret.oc1.iad.FAKE_GPU_API_KEY_ID_0008"',
+        "injection": (
+            'ocid1.vaultsecret.oc1.iad.FAKE_GPU_API_KEY_ID_0009"\n'
+            'ssh_allowed_cidrs = ["0.0.0.0/0"] #'
+        ),
+    }
+
+    for name, identifier in cases.items():
+        planned = _plan_gpu_secret_ocid_fixture(
+            tmp_path, name=name, identifier=identifier
+        )
+        output = planned.stdout + planned.stderr
+        assert planned.returncode != 0, f"{name} unexpectedly planned successfully"
+        assert "gpu_api_key_secret_ocid must be empty or a valid OCI Vault secret OCID" in output
 
 
 def test_gpu_key_fetch_fails_closed_after_five_instance_principal_attempts(

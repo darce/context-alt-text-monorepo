@@ -71,15 +71,16 @@ Exit: CORS rejection evidence + 429 evidence filed in the run log.
 
 ### Slice 4 -- Sovereign local-read fallback (public-firewall deterministic timeout)
 
-- Choose a public (global) address and port whose firewall silently drops SYNs.
-- Before pointing the plugin at it, run `curl -sS -m 5 -o /dev/null https://<that-address>:<port>/` and confirm it exits 28 (timeout). Proceed only when this pre-check proves that the selected endpoint takes the connect-timeout path.
+- Before changing the backend URL, record the current production API key fingerprint in the run log (fingerprint only, never the raw key), then replace the stored API key with the obviously fake, non-empty placeholder `acx_offline_probe_placeholder`. Keep this placeholder set throughout the offline probe so no real credential can be sent to the test endpoint.
+- Choose the public (global) IP of an operator-owned OCI instance and a TCP port that its VCN security list does not open; OCI silently drops unsolicited SYNs to that port. Never use a third-party address. Replace ADDRESS and PORT below with those operator-chosen values.
+- On the WordPress host itself (the LocalWP machine, not only a separate operator laptop), run `curl -sS --connect-timeout 5 --max-time 10 -o /dev/null -w '%{time_connect}\n' https://ADDRESS:PORT/`. Proceed only if it exits 28 with a connect-phase error ("Connection timed out after ..." or "Failed to connect ... Timeout was reached") and prints `0.000000` for `time_connect`. "Operation timed out ... bytes received", a TLS error, or any other result does not prove the connect-timeout path: choose another port and repeat the pre-check; do not proceed.
 - RFC 5737/3849 documentation addresses now fail before any connection with `acx_egress_denied`, so they cannot stand in for the timeout path.
-- Temporarily set the plugin backend URL to `https://<that-address>:<port>/` to force a deterministic connect timeout.
+- With the placeholder key still stored, temporarily set the plugin backend URL to the verified `https://ADDRESS:PORT/` to exercise the connect-timeout path.
 - Confirm the plugin renders cached state and surfaces the canonical outage-facing sync status used by the current UI (`sync_health=offline`, label `Waiting for service…`; see `docs/workbay/contracts/conflict-resolution-sync-contract.md` and `apps/prototype-wp-alt-context/js/admin/pages/workbench/SyncStatusIndicator.tsx`).
-- Revert the URL to `https://api.altcontext.com` before finishing the slice.
 - Capture fallback-render screenshot / annotated transcript.
+- Before finishing the slice (including if fallback verification fails), restore the URL to `https://api.altcontext.com`, then restore the real API key and confirm its fingerprint matches the one recorded before the probe.
 
-Exit: fallback behavior verified; plugin restored to production URL.
+Exit: fallback behavior verified; plugin restored to production URL and real API key, with matching fingerprint.
 
 ## Deliverables
 
@@ -99,7 +100,7 @@ Exit: fallback behavior verified; plugin restored to production URL.
 
 - **LocalWP origin not on production CORS allowlist** -- probe returns CORS error, gate fails spuriously. Mitigation: Slice 1 includes an allowlist-update step before calling the gate failed, requires the pre-change allowlist to be captured in the run log, and defines the rollback path for temporary origins.
 - **Raw API key leak into run log / repo** -- production key exposure. Mitigation: fingerprint-only in run log (same discipline as E15-3); run log reviewed before commit.
-- **RFC 5737/3849 documentation addresses are denied before timeout** -- the plugin might render a different error state than the canonical outage status (`sync_health=offline`, "Waiting for service…") per `docs/workbay/contracts/conflict-resolution-sync-contract.md` and the `SyncStatus` surface. Mitigation: Slice 4 uses a public (global) address and port whose firewall silently drops SYNs, and proceeds only after the curl pre-check exits 28; capture whatever the plugin actually does, and any gap vs. the expected fallback UX becomes a new finding against E15-7 (local sync correctness), not a gate failure here.
+- **Offline probe leaks credentials or exercises the wrong failure phase** -- RFC 5737/3849 documentation addresses return `acx_egress_denied` before connection, and curl exit 28 alone can reflect a timeout after TCP connection. Mitigation: record only the original key fingerprint and replace the stored key with `acx_offline_probe_placeholder` before changing the URL; use only an operator-owned OCI public IP on a TCP port unopened in its VCN security list. On the LocalWP machine, require the Slice 4 curl pre-check with `--connect-timeout 5 --max-time 10` to exit 28 with a connect-phase error and `time_connect=0.000000` before proceeding; reject transfer timeouts and TLS errors. Restore the production URL and real key, checking the original fingerprint, even if verification fails. Capture the actual fallback UX; any gap vs. the canonical outage status (`sync_health=offline`, "Waiting for service…") per `docs/workbay/contracts/conflict-resolution-sync-contract.md` and the `SyncStatus` surface becomes a new finding against E15-7 (local sync correctness), not a gate failure here.
 - **Slice 3 rate-limit test burns production key budget** -- only relevant if the key has a cost ceiling. Mitigation: use a throwaway production-scoped test key whose revocation is scheduled immediately after the slice, and bound the drive to 50 requests / 5 minutes so a misconfigured limiter cannot run indefinitely.
 
 ## Consolidated Checklist
@@ -133,10 +134,12 @@ Exit: fallback behavior verified; plugin restored to production URL.
 
 ### Checklist for Slice 4: Sovereign local-read fallback (public-firewall deterministic timeout)
 
-- [ ] Choose a public (global) address and port whose firewall silently drops SYNs, and confirm `curl -sS -m 5 -o /dev/null https://<that-address>:<port>/` exits 28 (timeout) before pointing the plugin at it; RFC 5737/3849 documentation addresses fail with `acx_egress_denied` and cannot stand in for this timeout path.
-- [ ] Point the plugin temporarily at `https://<that-address>:<port>/` to force the deterministic connect-timeout path.
+- [ ] Before changing the backend URL, record only the current production key fingerprint in the run log and replace the stored key with `acx_offline_probe_placeholder`.
+- [ ] Choose an operator-owned OCI instance's public (global) IP and a TCP port unopened in its VCN security list, which silently drops unsolicited SYNs; never use a third-party address. RFC 5737/3849 documentation addresses fail with `acx_egress_denied` and cannot stand in for this timeout path.
+- [ ] Replace ADDRESS and PORT with the chosen values and, on the LocalWP machine itself, run `curl -sS --connect-timeout 5 --max-time 10 -o /dev/null -w '%{time_connect}\n' https://ADDRESS:PORT/`; require exit 28, a connect-phase error ("Connection timed out after ..." or "Failed to connect ... Timeout was reached"), and `time_connect=0.000000`. For "Operation timed out ... bytes received", a TLS error, or any other result, choose another port and repeat; do not proceed.
+- [ ] With the placeholder key still stored, point the plugin temporarily at the verified `https://ADDRESS:PORT/` to exercise the connect-timeout path.
 - [ ] Capture the observed cached-state render plus the current degraded sync-status evidence.
-- [ ] Restore `https://api.altcontext.com` before closing the slice and attach the fallback screenshot / annotated transcript.
+- [ ] Restore `https://api.altcontext.com`, then the real API key, and confirm the restored fingerprint matches the original before closing the slice, including if verification fails; attach the fallback screenshot / annotated transcript.
 
 ## Review Readiness
 

@@ -62,6 +62,33 @@ def test_decode_publishable_key_requires_live_custom_domain() -> None:
         module.decode_publishable_key("pk_live_not-base64-host")
 
 
+@pytest.mark.parametrize(
+    "malformed_key",
+    [
+        FAKE_LIVE_KEY.replace("pk_live_", "pk_live_!!!", 1),
+        FAKE_LIVE_KEY + "!",
+        FAKE_LIVE_KEY + "=A",
+    ],
+    ids=["invalid-prefix-payload", "invalid-suffix", "invalid-padding"],
+)
+def test_decode_publishable_key_rejects_noncanonical_base64(malformed_key: str) -> None:
+    module = _load_script()
+
+    with pytest.raises(module.ClerkConfigError):
+        module.decode_publishable_key(malformed_key)
+
+
+def test_manifest_rejects_malformed_live_key_with_names_only(tmp_path: Path) -> None:
+    module = _load_script()
+    malformed_key = FAKE_LIVE_KEY.replace("pk_live_", "pk_live_!!!", 1)
+
+    with pytest.raises(module.ClerkConfigError, match="VITE_CLERK_PUBLISHABLE_KEY") as exc:
+        module.load_production_config(_manifest_root(tmp_path, key=malformed_key))
+
+    assert malformed_key not in str(exc.value)
+    assert "!!!" not in str(exc.value)
+
+
 def test_manifest_values_validate_as_one_production_contract(tmp_path: Path) -> None:
     module = _load_script()
 
@@ -115,6 +142,122 @@ def test_deployment_checks_only_reachable_module_content(tmp_path: Path) -> None
     module.validate_frontend_modules(config, [reachable])
 
 
+@pytest.mark.parametrize(
+    "consumer",
+    [
+        "function parsePortalConfig(env) { const key = env.VITE_CLERK_PUBLISHABLE_KEY; "
+        "const fapi = env.VITE_CLERK_FAPI; return null; }",
+        "function parsePortalConfig(env) { const fapi = env.VITE_CLERK_FAPI; return { "
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        'fapiOrigin: "https://stale.fake-review.invalid" }; }',
+        'function parseFapiOrigin(value) { return "https://stale.fake-review.invalid"; } '
+        "function parsePortalConfig(env) { return { publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: parseFapiOrigin(env.VITE_CLERK_FAPI) }; }",
+    ],
+    ids=["null-return", "stale-returned-fapi", "replacement-normalizer"],
+)
+def test_frontend_requires_matching_values_in_returned_portal_config(tmp_path: Path, consumer: str) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        f'{consumer}\nconst env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        "parsePortalConfig(env);\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ClerkConfigError, match="VITE_CLERK_FAPI"):
+        module.validate_frontend_modules(config, [reachable])
+
+
+def test_frontend_rejects_stale_returned_publishable_key(tmp_path: Path) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function parsePortalConfig(env) { const key = env.VITE_CLERK_PUBLISHABLE_KEY; "
+        "const fapi = env.VITE_CLERK_FAPI; return {"
+        'publishableKey: "not-a-production-key", fapiOrigin: env.VITE_CLERK_FAPI }; }\n'
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        "parsePortalConfig(env);\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ClerkConfigError, match="VITE_CLERK_PUBLISHABLE_KEY"):
+        module.validate_frontend_modules(config, [reachable])
+
+
+@pytest.mark.parametrize(
+    "consumer",
+    [
+        "function parsePortalConfig(env) { const config = { publishableKey: "
+        "env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: env.VITE_CLERK_FAPI }; "
+        'config.fapiOrigin = "https://stale.fake-review.invalid"; return config; }',
+        "function parsePortalConfig(env) { const config = { publishableKey: "
+        "env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: env.VITE_CLERK_FAPI }; "
+        "register(config); return config; }",
+    ],
+    ids=["returned-field-overwrite", "returned-object-escape"],
+)
+def test_frontend_rejects_mutated_or_escaped_returned_config(tmp_path: Path, consumer: str) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        f'{consumer}\nconst env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        "parsePortalConfig(env);\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ClerkConfigError):
+        module.validate_frontend_modules(config, [reachable])
+
+
+def test_frontend_accepts_bounded_production_config_normalizers(tmp_path: Path) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function trimEnv(value) { return typeof value === 'string' ? value.trim() : ''; }\n"
+        "function parseFapiOrigin(value) { const raw = trimEnv(value); if (!raw) return null; "
+        "const withProtocol = raw.includes('://') ? raw : `https://${raw}`; try { "
+        "const url = new URL(withProtocol); if (url.protocol !== 'https:' && url.protocol !== 'http:') "
+        "return null; return `${url.protocol}//${url.host}`; } catch { return null; } }\n"
+        "function parsePortalConfig(env, isProduction = false) { const publishableKey = "
+        "trimEnv(env.VITE_CLERK_PUBLISHABLE_KEY); const config = { publishableKey: "
+        "publishableKey.length > 0 && !(isProduction && publishableKey.startsWith('pk_test_')) "
+        "? publishableKey : null, fapiOrigin: parseFapiOrigin(env.VITE_CLERK_FAPI) }; "
+        "return config; }\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        "parsePortalConfig(env, true);\n",
+        encoding="utf-8",
+    )
+
+    module.validate_frontend_modules(config, [reachable])
+
+
+def test_frontend_rejects_malformed_clerk_key_decoy(tmp_path: Path) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function parsePortalConfig(env) { return {"
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        f'const malformed = "pk_live_!!!{FAKE_LIVE_KEY.removeprefix("pk_live_")}";\n'
+        "parsePortalConfig(env);\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ClerkConfigError, match="VITE_CLERK_PUBLISHABLE_KEY"):
+        module.validate_frontend_modules(config, [reachable])
+
+
 def test_frontend_resolves_static_config_aliases(tmp_path: Path) -> None:
     module = _load_script()
     config = module.load_production_config(_manifest_root(tmp_path))
@@ -124,7 +267,7 @@ def test_frontend_resolves_static_config_aliases(tmp_path: Path) -> None:
         "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
         "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
         f'const liveKey = "{FAKE_LIVE_KEY}"; const liveFapi = "https://clerk.altcontext.com";\n'
-        'const env = { VITE_CLERK_PUBLISHABLE_KEY: liveKey, VITE_CLERK_FAPI: liveFapi, '
+        "const env = { VITE_CLERK_PUBLISHABLE_KEY: liveKey, VITE_CLERK_FAPI: liveFapi, "
         'VITE_PORTAL_ENABLED: "true" };\n'
         "parsePortalConfig(env);\n",
         encoding="utf-8",
@@ -161,7 +304,7 @@ def test_frontend_resolves_vite_object_alias_property_forwarding(tmp_path: Path)
     "mutation",
     [
         'env.VITE_CLERK_FAPI = "https://stale.fake-review.invalid";',
-        'delete env.VITE_CLERK_FAPI;',
+        "delete env.VITE_CLERK_FAPI;",
         'env["VITE_CLERK_FAPI"] = "https://stale.fake-review.invalid";',
         'const alias = env; alias.VITE_CLERK_FAPI = "https://stale.fake-review.invalid";',
         "inspect(env);",
@@ -230,6 +373,11 @@ def test_frontend_accepts_portal_parse_config_forwarding_form(tmp_path: Path) ->
     config = module.load_production_config(_manifest_root(tmp_path))
     reachable = tmp_path / "entry.js"
     reachable.write_text(
+        "function trimEnv(value) { return typeof value === 'string' ? value.trim() : ''; }\n"
+        "function parseFapiOrigin(value) { const raw = trimEnv(value); if (!raw) return null; "
+        "const withProtocol = raw.includes('://') ? raw : `https://${raw}`; try { "
+        "const url = new URL(withProtocol); if (url.protocol !== 'https:' && url.protocol !== 'http:') "
+        "return null; return `${url.protocol}//${url.host}`; } catch { return null; } }\n"
         "function parsePortalConfig(env, isProduction = false) { "
         "const publishableKey = trimEnv(env.VITE_CLERK_PUBLISHABLE_KEY); "
         "const config = { publishableKey: publishableKey.length > 0 "
@@ -424,10 +572,10 @@ def test_cli_verify_assets_rejects_stale_method_parameter(tmp_path: Path, method
         'VITE_CLERK_FAPI: fapi, VITE_PORTAL_ENABLED: "true" });'
     )
     if method == "object":
-        binding = 'const builder = { build(fapi) { ' + record + '} }; '
+        binding = "const builder = { build(fapi) { " + record + "} }; "
         binding += 'builder.build("https://stale.fake-review.invalid");'
     else:
-        binding = 'class Builder { build(fapi) { ' + record + '} } '
+        binding = "class Builder { build(fapi) { " + record + "} } "
         binding += 'new Builder().build("https://stale.fake-review.invalid");'
     reachable.write_text(
         "function parsePortalConfig(env) { return {"
@@ -495,9 +643,7 @@ def test_cli_verify_assets_binds_nested_consumer_to_its_lexical_definition(
     "binding_case",
     ["parameter-shadow", "const-shadow", "reassignment", "escape"],
 )
-def test_cli_verify_assets_refuses_shadowed_or_escaped_consumer_bindings(
-    tmp_path: Path, binding_case: str
-) -> None:
+def test_cli_verify_assets_refuses_shadowed_or_escaped_consumer_bindings(tmp_path: Path, binding_case: str) -> None:
     root = _manifest_root(tmp_path)
     reachable = tmp_path / "entry.js"
     config = (
@@ -511,10 +657,7 @@ def test_cli_verify_assets_refuses_shadowed_or_escaped_consumer_bindings(
     if binding_case == "parameter-shadow":
         source += f"function outer(parsePortalConfig) {{ parsePortalConfig({config}); }}\n"
     elif binding_case == "const-shadow":
-        source += (
-            "function outer() { const parsePortalConfig = () => null; "
-            f"parsePortalConfig({config}); }}\n"
-        )
+        source += f"function outer() {{ const parsePortalConfig = () => null; parsePortalConfig({config}); }}\n"
     else:
         source += f"const env = {config};\n"
         if binding_case == "reassignment":
@@ -581,9 +724,9 @@ def test_frontend_accepts_matching_static_alias_inside_getter(tmp_path: Path) ->
     "suffix",
     [
         'if (true) /[}]/.test("}");',
-        'const unused = typeof /[}]/;',
-        'const unused = void /[/]/;',
-        'const quotient = 12 / 3;',
+        "const unused = typeof /[}]/;",
+        "const unused = void /[/]/;",
+        "const quotient = 12 / 3;",
     ],
     ids=["control-header-regex", "typeof-regex", "void-regex-class", "division"],
 )
@@ -646,7 +789,13 @@ def test_frontend_accepts_valid_regex_and_division_syntax(tmp_path: Path, suffix
             "const env = expectedConfig && otherConfig;"
         ),
     ],
-    ids=["key-literal-concat", "key-identifier-concat", "fapi-literal-concat", "fapi-identifier-concat", "object-logical-alias"],
+    ids=[
+        "key-literal-concat",
+        "key-identifier-concat",
+        "fapi-literal-concat",
+        "fapi-identifier-concat",
+        "object-logical-alias",
+    ],
 )
 def test_frontend_rejects_incomplete_static_alias_initializers(tmp_path: Path, aliases: str) -> None:
     module = _load_script()

@@ -18,6 +18,15 @@ Copy `.env.example`. Vite bakes these at build time:
 
 Never put `CLERK_SECRET_KEY`, Polar OATs, invitation tokens, or API keys in this package.
 
+## Run against the dev API
+
+```bash
+PORTAL_API_PROXY_TARGET=https://dev.api.altcontext.com npm --prefix apps/app-portal run dev
+```
+
+The browser env comes from `make env-render ENV=local TARGET=app-portal-local` with the Clerk development publishable key.
+The dev API must have the portal enabled. Never paste tokens or API keys anywhere.
+
 ## Scripts
 
 ```bash

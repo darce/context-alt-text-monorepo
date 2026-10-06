@@ -1047,8 +1047,16 @@ def test_apply_refuses_invalid_staged_frontend_without_touching_live_or_rollback
     ("failure", "expected"),
     [
         ("missing-manifest-key", "VITE_CLERK_PUBLISHABLE_KEY"),
+        ("malformed-manifest-key", "VITE_CLERK_PUBLISHABLE_KEY"),
         ("test-bundle-key", "VITE_CLERK_PUBLISHABLE_KEY"),
+        ("malformed-bundle-key-decoy", "VITE_CLERK_PUBLISHABLE_KEY"),
         ("mismatched-fapi", "VITE_CLERK_FAPI"),
+        ("null-config-return", "VITE_CLERK_FAPI"),
+        ("stale-returned-fapi", "VITE_CLERK_FAPI"),
+        ("stale-returned-key", "VITE_CLERK_PUBLISHABLE_KEY"),
+        ("replacement-fapi-normalizer", "VITE_CLERK_FAPI"),
+        ("mutated-returned-fapi", "VITE_CLERK_FAPI"),
+        ("escaped-returned-config", "VITE_CLERK_FAPI"),
         ("unrelated-fapi-decoy", "VITE_CLERK_FAPI"),
         ("comment-fapi-decoy", "VITE_CLERK_FAPI"),
         ("fapi-host-prefix", "VITE_CLERK_FAPI"),
@@ -1094,10 +1102,80 @@ def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
     module = dist / "assets" / "index.js"
     manifest_root = _write_test_manifest(
         tmp_path,
-        publishable_key=None if failure == "missing-manifest-key" else FAKE_LIVE_KEY,
+        publishable_key=(
+            None
+            if failure == "missing-manifest-key"
+            else FAKE_LIVE_KEY.replace("pk_live_", "pk_live_!!!", 1)
+            if failure == "malformed-manifest-key"
+            else FAKE_LIVE_KEY
+        ),
     )
 
-    if failure == "test-bundle-key":
+    if failure == "malformed-manifest-key":
+        malformed_key = FAKE_LIVE_KEY.replace("pk_live_", "pk_live_!!!", 1)
+        module.write_text(_clerk_config_module(malformed_key, "https://clerk.altcontext.com"), encoding="utf-8")
+    elif failure == "malformed-bundle-key-decoy":
+        module.write_text(
+            _clerk_config_module(FAKE_LIVE_KEY, "https://clerk.altcontext.com")
+            + f'const malformed = "pk_live_!!!{FAKE_LIVE_KEY.removeprefix("pk_live_")}";\n',
+            encoding="utf-8",
+        )
+    elif failure == "null-config-return":
+        module.write_text(
+            "function parsePortalConfig(env) { const key = env.VITE_CLERK_PUBLISHABLE_KEY; "
+            "const fapi = env.VITE_CLERK_FAPI; return null; }\n"
+            f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+            'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+            "parsePortalConfig(env);\n",
+            encoding="utf-8",
+        )
+    elif failure == "stale-returned-fapi":
+        module.write_text(
+            "function parsePortalConfig(env) { const fapi = env.VITE_CLERK_FAPI; return {"
+            "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+            'fapiOrigin: "https://stale.fake-review.invalid" }; }\n'
+            f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+            'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+            "parsePortalConfig(env);\n",
+            encoding="utf-8",
+        )
+    elif failure == "stale-returned-key":
+        module.write_text(
+            "function parsePortalConfig(env) { const key = env.VITE_CLERK_PUBLISHABLE_KEY; "
+            "const fapi = env.VITE_CLERK_FAPI; return {"
+            'publishableKey: "not-a-production-key", fapiOrigin: env.VITE_CLERK_FAPI }; }\n'
+            f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+            'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+            "parsePortalConfig(env);\n",
+            encoding="utf-8",
+        )
+    elif failure == "replacement-fapi-normalizer":
+        module.write_text(
+            'function parseFapiOrigin(value) { return "https://stale.fake-review.invalid"; }\n'
+            "function parsePortalConfig(env) { return {"
+            "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+            "fapiOrigin: parseFapiOrigin(env.VITE_CLERK_FAPI) }; }\n"
+            f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+            'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+            "parsePortalConfig(env);\n",
+            encoding="utf-8",
+        )
+    elif failure in {"mutated-returned-fapi", "escaped-returned-config"}:
+        post_return_object_use = (
+            'config.fapiOrigin = "https://stale.fake-review.invalid";'
+            if failure == "mutated-returned-fapi"
+            else "register(config);"
+        )
+        module.write_text(
+            "function parsePortalConfig(env) { const config = { publishableKey: "
+            "env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: env.VITE_CLERK_FAPI }; "
+            f"{post_return_object_use} return config; }}\n"
+            f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+            'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+            "parsePortalConfig(env);\n",
+            encoding="utf-8",
+        )
+    elif failure == "test-bundle-key":
         module.write_text(_clerk_config_module("pk_test_fake", "https://clerk.altcontext.com"), encoding="utf-8")
     elif failure == "mismatched-fapi":
         module.write_text(_clerk_config_module(FAKE_LIVE_KEY, "https://other.altcontext.com"), encoding="utf-8")

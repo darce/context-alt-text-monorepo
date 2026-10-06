@@ -1888,6 +1888,10 @@ class DescriptionHistoryServiceTest extends TestCase
      */
     public function testSingleImageDescribeClearsDecorativeMarkerWhenWritingNonEmptyAlt(): void
     {
+        $wpdb = $GLOBALS['wpdb'];
+        $lockName = 'acx_budget_lock_' . md5($wpdb->prefix);
+        $wpdb->queryResults[$wpdb->prepare('SELECT GET_LOCK(%s, %d)', $lockName, 1)] = '1';
+        $wpdb->queryResults[$wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lockName)] = '1';
         $mediaId = 640;
         $tempDir = sys_get_temp_dir() . '/acx-f5b-desc-' . uniqid();
         mkdir($tempDir, 0o755, true);
@@ -1935,6 +1939,7 @@ class DescriptionHistoryServiceTest extends TestCase
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', $mediaId);
         $req->set_param('write_alt', true);
+        $req->set_body_params(['idempotency_key' => 'phpred1-test-key-0001']);
         $result = (new DescribeController())->describe_media($req);
 
         $this->assertInstanceOf(WP_REST_Response::class, $result);

@@ -210,7 +210,7 @@ def _update_gpu_key_text(text: str, secret_ocid: str) -> str:
 
 
 def _validate_gpu_owner_publishable(owner_text: str, current_ocid: str | None) -> None:
-    """Run the persistence updater before contacting the remote writer."""
+    """Run the persistence updater before contacting the local Vault writer."""
     _update_gpu_key_text(owner_text, current_ocid or _PREFLIGHT_PROBE_OCID)
 
 
@@ -800,14 +800,11 @@ def set_gpu_key_ocid(path: Path, secret_ocid: str) -> None:
 def _run_locked_transaction(
     manifest_path: Path,
     terraform_input_path: Path,
-    ssh_target: str,
     rotate: bool,
     approve_mint: bool,
 ) -> int:
     if not approve_mint:
         raise ValueError("--run-locked requires explicit --approve-mint")
-    if not ssh_target:
-        raise ValueError("--run-locked requires an SSH target")
     descriptor = -1
     try:
         descriptor = _open_manifest_write_lock(manifest_path)
@@ -824,8 +821,6 @@ def _run_locked_transaction(
         if approve_mint:
             command.append("--approve-mint")
         command.extend([
-            "--ssh-target",
-            ssh_target,
             "--manifest",
             str(manifest_path),
             "--terraform-input",
@@ -890,7 +885,6 @@ def main() -> int:
     parser.add_argument("--run-locked", action="store_true")
     parser.add_argument("--approve-mint", action="store_true")
     parser.add_argument("--validate-transaction", action="store_true")
-    parser.add_argument("--ssh-target")
     parser.add_argument("--rotate", action="store_true")
     parser.add_argument("--expected-owner-sha256")
     parser.add_argument("--expected-terraform-input-sha256")
@@ -912,7 +906,6 @@ def main() -> int:
         return _run_locked_transaction(
             args.manifest,
             args.terraform_input,
-            args.ssh_target or "",
             args.rotate,
             args.approve_mint,
         )
@@ -923,7 +916,6 @@ def main() -> int:
             or args.run_locked
             or args.approve_mint
             or args.terraform_input is None
-            or args.ssh_target
             or args.rotate
             or args.expected_owner_sha256 is None
             or args.expected_terraform_input_sha256 is None
@@ -944,7 +936,6 @@ def main() -> int:
             args.secret_ocid is not None
             or args.terraform_input is not None
             or args.approve_mint
-            or args.ssh_target
             or args.rotate
             or args.expected_owner_sha256 is not None
             or args.expected_terraform_input_sha256 is not None

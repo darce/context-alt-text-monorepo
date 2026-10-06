@@ -84,7 +84,7 @@ variable "gpu_api_key_secret_ocid" {
 
   validation {
     condition = var.gpu_api_key_secret_ocid == "" || can(regex(
-      "^ocid1\\.vaultsecret\\.oc[0-9]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9._-]+$",
+      "^ocid1\\.vaultsecret\\.oc[0-9]+\\.[A-Za-z0-9_-]*\\.[A-Za-z0-9._-]{20,}$",
       var.gpu_api_key_secret_ocid
     ))
     error_message = "gpu_api_key_secret_ocid must be empty or a valid OCI Vault secret OCID."

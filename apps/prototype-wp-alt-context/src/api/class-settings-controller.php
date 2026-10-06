@@ -265,7 +265,7 @@ class SettingsController {
 					&& '' === trim( (string) apply_filters( 'acx_recognition_base_url', '' ) )
 				) {
 					return new WP_Error(
-						'deployment_key_requires_deployment_url',
+						RecognitionEndpointResolver::URL_REJECTION_DEPLOYMENT_KEY_REQUIRES_DEPLOYMENT_URL,
 						'A deployment-managed recognition API key is configured; set the recognition URL with ACX_RECOGNITION_URL or the acx_recognition_base_url filter instead of saving it here.',
 						array( 'status' => 400 )
 					);

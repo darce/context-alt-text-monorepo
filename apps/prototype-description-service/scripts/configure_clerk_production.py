@@ -965,6 +965,52 @@ def _config_binding_shadows(
             shadows.append((tokens[name_index].value or "", scope, name_index))
             declaration_names.add(name_index)
 
+    def method_signature(params_open: int) -> tuple[int, int] | None:
+        params_close = pairs.get(params_open, -1)
+        body_open = params_close + 1
+        if params_close < 0 or body_open >= len(tokens) or not _is_punct(tokens[body_open], "{"):
+            return None
+        key_index = params_open - 1
+        if key_index < 0:
+            return None
+        if tokens[key_index].kind == "identifier" and tokens[key_index].value in {
+            "function", "if", "for", "while", "switch", "catch", "with",
+        }:
+            return None
+        if _is_punct(tokens[key_index], "]"):
+            key_index = pairs.get(key_index, -1)
+            if key_index < 0 or not _is_punct(tokens[key_index], "["):
+                return None
+        elif tokens[key_index].kind not in {"identifier", "string"}:
+            return None
+
+        prefix_start = key_index
+        while prefix_start > 0:
+            previous = tokens[prefix_start - 1]
+            if (
+                _is_punct(previous, "#")
+                or _is_punct(previous, "*")
+                or (previous.kind == "identifier" and previous.value in {"async", "get", "set", "static"})
+            ):
+                prefix_start -= 1
+            else:
+                break
+        if prefix_start > 0:
+            previous = tokens[prefix_start - 1]
+            if previous.kind == "identifier" and previous.value in {
+                "function", "if", "for", "while", "switch", "catch", "with",
+            }:
+                return None
+            if (
+                previous.kind == "identifier"
+                and previous.value == "await"
+                and prefix_start > 1
+                and tokens[prefix_start - 2].kind == "identifier"
+                and tokens[prefix_start - 2].value == "for"
+            ):
+                return None
+        return params_close, body_open
+
     function_bodies: list[int] = []
     for index, token in enumerate(tokens):
         if token.kind == "identifier" and token.value == "function":
@@ -979,6 +1025,10 @@ def _config_binding_shadows(
                     function_bodies.append(body_open)
         if _is_punct(token, "=>") and index + 1 < len(tokens) and _is_punct(tokens[index + 1], "{"):
             function_bodies.append(index + 1)
+        if _is_punct(token, "("):
+            method = method_signature(index)
+            if method is not None:
+                function_bodies.append(method[1])
 
     def add_parameters(params_open: int, params_close: int, scope: tuple[int, ...]) -> None:
         for parameter_index in range(params_open + 1, params_close):
@@ -1030,6 +1080,19 @@ def _config_binding_shadows(
                 continue
             body_scope = scopes[body_open] + (body_open,)
             add_parameters(params_open, params_close, body_scope)
+
+        if _is_punct(token, "("):
+            method = method_signature(index)
+            if method is not None:
+                params_close, body_open = method
+                body_scope = scopes[body_open] + (body_open,)
+                # The bounded parser conservatively treats every parameter
+                # identifier as a binder, including identifiers in defaults or
+                # destructuring patterns. This prevents outer aliases from
+                # being used as evidence when parameter binding is uncertain.
+                for parameter_index in range(index + 1, params_close):
+                    if tokens[parameter_index].kind == "identifier":
+                        add_name(parameter_index, body_scope)
 
         if _is_punct(token, "=>"):
             if index and _is_punct(tokens[index - 1], ")"):

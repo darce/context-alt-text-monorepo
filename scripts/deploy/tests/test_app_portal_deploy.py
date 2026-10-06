@@ -1067,6 +1067,8 @@ def test_apply_refuses_invalid_staged_frontend_without_touching_live_or_rollback
         ("shadowed-fapi-param", "VITE_CLERK_FAPI"),
         ("shadowed-fapi-let", "VITE_CLERK_FAPI"),
         ("shadowed-fapi-arrow", "VITE_CLERK_FAPI"),
+        ("shadowed-fapi-object-method", "VITE_CLERK_FAPI"),
+        ("shadowed-fapi-class-method", "VITE_CLERK_FAPI"),
         ("consumer-property-write", "VITE_CLERK_FAPI"),
         ("consumer-dynamic-key-write", "VITE_CLERK_FAPI"),
         ("consumer-alias-write", "VITE_CLERK_FAPI"),
@@ -1226,7 +1228,13 @@ def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
             ),
             encoding="utf-8",
         )
-    elif failure in {"shadowed-fapi-param", "shadowed-fapi-let", "shadowed-fapi-arrow"}:
+    elif failure in {
+        "shadowed-fapi-param",
+        "shadowed-fapi-let",
+        "shadowed-fapi-arrow",
+        "shadowed-fapi-object-method",
+        "shadowed-fapi-class-method",
+    }:
         if failure == "shadowed-fapi-param":
             binding = (
                 f'const fapi = "https://clerk.altcontext.com"; function build(fapi) {{ '
@@ -1241,12 +1249,26 @@ def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
                 f'parsePortalConfig({{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
                 'VITE_CLERK_FAPI: fapi, VITE_PORTAL_ENABLED: "true" }); } build();'
             )
-        else:
+        elif failure == "shadowed-fapi-arrow":
             binding = (
                 f'const fapi = "https://clerk.altcontext.com"; const build = (fapi) => {{ '
                 f'parsePortalConfig({{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
                 'VITE_CLERK_FAPI: fapi, VITE_PORTAL_ENABLED: "true" }); }; '
                 'build("https://stale.fake-review.invalid");'
+            )
+        elif failure == "shadowed-fapi-object-method":
+            binding = (
+                f'const fapi = "https://clerk.altcontext.com"; const builder = {{ build(fapi) {{ '
+                f'parsePortalConfig({{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+                'VITE_CLERK_FAPI: fapi, VITE_PORTAL_ENABLED: "true" }); } }; '
+                'builder.build("https://stale.fake-review.invalid");'
+            )
+        else:
+            binding = (
+                f'const fapi = "https://clerk.altcontext.com"; class Builder {{ build(fapi) {{ '
+                f'parsePortalConfig({{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+                'VITE_CLERK_FAPI: fapi, VITE_PORTAL_ENABLED: "true" }); } } '
+                'new Builder().build("https://stale.fake-review.invalid");'
             )
         module.write_text(
             "function parsePortalConfig(env) { return {"

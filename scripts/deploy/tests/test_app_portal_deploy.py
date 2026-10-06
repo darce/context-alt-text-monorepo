@@ -1985,6 +1985,60 @@ def test_runbook_documents_later_integration_and_env_ownership() -> None:
         assert marker.lower() not in lowered, marker
 
 
+def test_runbook_activates_backend_before_first_frontend_apply() -> None:
+    text = RUNBOOK.read_text(encoding="utf-8")
+    check = text.index("make env-materialize ENV=prod TARGET=svc-vm\n")
+    materialize = text.index("make env-materialize ENV=prod TARGET=svc-vm APPLY=1 CONFIRM=prod")
+    restart = text.index("sudo systemctl restart acx-prod")
+    confirm = text.index("https://api.altcontext.com/portal/me)")
+    frontend_apply = text.index("scripts/deploy/app-portal.sh --apply")
+    assert check < materialize < restart < confirm < frontend_apply
+
+
+def test_runbook_checker_documents_all_three_probes() -> None:
+    text = RUNBOOK.read_text(encoding="utf-8")
+    checker = text.split("It returns zero only when", 1)[1].split("The deploy script passes", 1)[0]
+    assert all(fragment in checker for fragment in (
+        "https://app.altcontext.com/",
+        "https://api.altcontext.com/ready",
+        "https://app.altcontext.com/portal/me",
+        "HTTP **401**",
+    ))
+
+
+def test_runbook_rollback_disables_backend_through_manifest() -> None:
+    text = RUNBOOK.read_text(encoding="utf-8")
+    rollback = text.split("## Rollback", 1)[1].split("### Frontend back-out", 1)[0]
+    assert all(fragment in rollback for fragment in (
+        '`RECOGNITION_PORTAL_ENABLED` to `prod = "0"`',
+        "config/env/manifest.d/30-portal-backend.toml",
+        "normal reviewed merge",
+        "manifest is the only writer",
+        "reverted as drift at the next materialize",
+        "make env-materialize ENV=prod TARGET=svc-vm APPLY=1 CONFIRM=prod",
+        "sudo systemctl restart acx-prod",
+        "[frontend back-out](#frontend-back-out)",
+    ))
+
+
+def test_runbook_rollback_has_no_unsafe_caddyfile_placeholder() -> None:
+    rollback = RUNBOOK.read_text(encoding="utf-8").split("## Rollback", 1)[1]
+    assert "cat rollback > Caddyfile" not in rollback
+
+
+def test_runbook_rollback_documents_guarded_in_place_caddyfile_restore() -> None:
+    rollback = RUNBOOK.read_text(encoding="utf-8").split("## Rollback", 1)[1]
+    assert all(fragment in rollback for fragment in (
+        "**in place**",
+        "set -euo pipefail",
+        "find /opt/acx-backend/app/rollback -maxdepth 1 -type f",
+        "-name 'Caddyfile.*' -printf '%T@ %p\\n' | sort -nr",
+        'if [ ! -f "$snapshot" ] || [ ! -s "$snapshot" ]; then',
+        "refusing restore",
+        'cp -- "$snapshot" /opt/acx-backend/Caddyfile',
+    ))
+
+
 def test_checked_in_health_check_covers_root_ready_and_portal_api(tmp_path: Path) -> None:
     health = tmp_path / "app-portal-health-check"
     _write_executable(health, SCRIPT.read_text(encoding="utf-8"))

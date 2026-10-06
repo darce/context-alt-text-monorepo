@@ -532,8 +532,10 @@ class AnalysisJobsControllerTest extends TestCase
         ]);
 
         $analyzeRequest = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $analyzeRequest->set_param('idempotency_key', 'phpred1-test-key-0009');
         $analyzeRequest->set_param('media_ids', [101, 202]);
-        $this->controller->analyze_media($analyzeRequest);
+        $analyzeResult = $this->controller->analyze_media($analyzeRequest);
+        $this->assertFalse(is_wp_error($analyzeResult));
 
         $completedPayload = [
             'id' => $jobId,

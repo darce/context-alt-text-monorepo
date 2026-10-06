@@ -37,17 +37,23 @@ def _extract(module, root: Path, text: str) -> dict[str, object]:
     ("raw", "expected"),
     [
         ("#foo", "#foo"),
+        ("#", "#"),
         (" # comment", ""),
         ('"#quoted"', "#quoted"),
         (r"\#escaped", "#escaped"),
     ],
 )
 def test_leading_hash_values_keep_assignment_whitespace(write_manifest, raw, expected):
+    render = load_module("render_env")
     module = load_module("harvest_extract")
     root = _manifest(write_manifest, "NAME")
 
-    result = _extract(module, root, f"NAME={raw}\n")
+    text = f"NAME={raw}\n"
+    assignments = render.shell_assignments(text)
+    result = _extract(module, root, text)
 
+    assert set(assignments) == {"NAME"}
+    assert render.shell_words(assignments["NAME"][0]) == ([] if expected == "" else [expected])
     assert result["values"] == {"NAME": expected}
     assert result["withheld"]["unparsed"] == []
 
@@ -69,6 +75,91 @@ def test_command_substitutions_are_withheld_as_one_assignment(write_manifest, te
 
     assert result["values"] == {"AFTER": "visible"}
     assert result["withheld"]["missing"] == ["LOG_LEVEL"]
+    assert result["withheld"]["unparsed"] == ["NOTICE"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "NOTICE=\\\n$(printf first\nLOG_LEVEL=private-fragment\nlast)\nAFTER=visible\n",
+        "NOTICE=\\\n`printf first\nLOG_LEVEL=private-fragment\nlast`\nAFTER=visible\n",
+        "NOTICE=\\\n<(printf first\nLOG_LEVEL=private-fragment\nlast\n)\nAFTER=visible\n",
+        "NOTICE=\\\n>(printf first\nLOG_LEVEL=private-fragment\nlast\n)\nAFTER=visible\n",
+    ],
+    ids=("continued-dollar-paren", "continued-backtick", "continued-input-process", "continued-output-process"),
+)
+def test_continuation_before_substitution_does_not_expose_inner_assignment(write_manifest, text):
+    render = load_module("render_env")
+    module = load_module("harvest_extract")
+    root = _manifest(write_manifest, "NOTICE", "LOG_LEVEL", "AFTER")
+
+    assignments = render.shell_assignments(text)
+    result = _extract(module, root, text)
+
+    assert set(assignments) == {"NOTICE", "AFTER"}
+    assert assignments["NOTICE"][0].startswith("\\\n")
+    assert result["values"] == {"AFTER": "visible"}
+    assert result["withheld"]["missing"] == ["LOG_LEVEL"]
+    assert result["withheld"]["unparsed"] == ["NOTICE"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "NOTICE=$\\\n(printf first\nLOG_LEVEL=private-fragment\nlast)\nAFTER=visible\n",
+        "NOTICE=<\\\n(printf first\nLOG_LEVEL=private-fragment\nlast\n)\nAFTER=visible\n",
+        "NOTICE=>\\\n(printf first\nLOG_LEVEL=private-fragment\nlast\n)\nAFTER=visible\n",
+    ],
+    ids=("split-dollar-paren-opener", "split-input-process-opener", "split-output-process-opener"),
+)
+def test_substitution_openers_split_by_continuation_are_recognized(write_manifest, text):
+    render = load_module("render_env")
+    module = load_module("harvest_extract")
+    root = _manifest(write_manifest, "NOTICE", "LOG_LEVEL", "AFTER")
+
+    assignments = render.shell_assignments(text)
+    result = _extract(module, root, text)
+
+    assert set(assignments) == {"NOTICE", "AFTER"}
+    assert result["values"] == {"AFTER": "visible"}
+    assert result["withheld"]["missing"] == ["LOG_LEVEL"]
+    assert result["withheld"]["unparsed"] == ["NOTICE"]
+
+
+def test_braced_command_boundary_preserves_case_context(write_manifest):
+    render = load_module("render_env")
+    module = load_module("harvest_extract")
+    root = _manifest(write_manifest, "NOTICE", "LOG_LEVEL", "AFTER")
+    text = (
+        "NOTICE=$({ case fake in\n"
+        "foo)\n"
+        "LOG_LEVEL=private-fragment\n"
+        ";;\n"
+        "esac\n"
+        "})\n"
+        "AFTER=visible\n"
+    )
+
+    assignments = render.shell_assignments(text)
+    result = _extract(module, root, text)
+
+    assert set(assignments) == {"NOTICE", "AFTER"}
+    assert result["values"] == {"AFTER": "visible"}
+    assert result["withheld"]["missing"] == ["LOG_LEVEL"]
+    assert result["withheld"]["unparsed"] == ["NOTICE"]
+
+
+def test_ordinary_keyword_arguments_do_not_create_case_context(write_manifest):
+    render = load_module("render_env")
+    module = load_module("harvest_extract")
+    root = _manifest(write_manifest, "NOTICE", "AFTER")
+    text = "NOTICE=$(printf then case)\nAFTER=visible\n"
+
+    assignments = render.shell_assignments(text)
+    result = _extract(module, root, text)
+
+    assert set(assignments) == {"NOTICE", "AFTER"}
+    assert result["values"] == {"AFTER": "visible"}
     assert result["withheld"]["unparsed"] == ["NOTICE"]
 
 

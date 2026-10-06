@@ -412,6 +412,7 @@ PHP;
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
         $request->set_param('media_ids', [123]);
+        $request->set_param('idempotency_key', 'phpred1-test-key-0001');
 
         $result = $this->controller->analyze_media($request);
 
@@ -647,6 +648,7 @@ PHP;
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
         $request->set_body_params(['media_ids' => [1]]);
+        $request->set_param('idempotency_key', 'phpred1-test-key-0002');
 
         // Stub attachment metadata so build_media_items doesn't bail early
         $GLOBALS['__ac_attachment_urls'][1] = 'http://example.com/image.jpg';

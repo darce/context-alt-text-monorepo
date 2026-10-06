@@ -886,6 +886,15 @@ frontend_module_references() {
       print value
     }
 
+    function emit_static_reference(value) {
+      if (token_escaped) {
+        failed = 1
+        print "unsupported static import specifier" > "/dev/stderr"
+        return
+      }
+      emit_reference(value)
+    }
+
     {
       source = source $0 "\n"
       if (NR == 1) line = 1
@@ -927,14 +936,14 @@ frontend_module_references() {
           continue
         }
         if (declaration == "import" && token_type == "string") {
-          emit_reference(token_value)
+          emit_static_reference(token_value)
           continue
         }
 
         while (token_type != "eof" && token_value != ";") {
           if (token_type == "identifier" && token_value == "from") {
             next_token()
-            if (token_type == "string") emit_reference(token_value)
+            if (token_type == "string") emit_static_reference(token_value)
             break
           }
           if (token_type == "identifier" &&

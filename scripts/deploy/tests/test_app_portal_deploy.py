@@ -1088,6 +1088,14 @@ def test_apply_refuses_invalid_staged_frontend_without_touching_live_or_rollback
         ("shadowed-mutating-consumer", "VITE_CLERK_FAPI"),
         ("computed-dynamic-import", "unsupported dynamic import specifier"),
         ("concatenated-dynamic-import", "unsupported dynamic import specifier"),
+        ("escaped-static-import", "unsupported static import specifier"),
+        ("escaped-export-from", "unsupported static import specifier"),
+        ("nested-alternate-return", "VITE_CLERK_FAPI"),
+        ("return-newline-asi", "VITE_CLERK_FAPI"),
+        ("unsupported-key-guard", "VITE_CLERK_PUBLISHABLE_KEY"),
+        ("returned-delete", "VITE_CLERK_FAPI"),
+        ("returned-prefix-update", "VITE_CLERK_FAPI"),
+        ("returned-compound-assignment", "VITE_CLERK_FAPI"),
     ],
 )
 def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
@@ -1223,6 +1231,65 @@ def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
         )
         (dist / "assets" / "chunk.js").write_text(
             _clerk_config_module(FAKE_LIVE_KEY, "https://stale.fake-review.invalid"),
+            encoding="utf-8",
+        )
+    elif failure in {"escaped-static-import", "escaped-export-from"}:
+        escaped_specifier = (
+            r'import "\x2e/chunk.js";' + "\n"
+            if failure == "escaped-static-import"
+            else r'export { value } from "\x2e/chunk.js";' + "\n"
+        )
+        module.write_text(
+            _clerk_config_module(FAKE_LIVE_KEY, "https://clerk.altcontext.com") + escaped_specifier,
+            encoding="utf-8",
+        )
+        (dist / "assets" / "chunk.js").write_text(
+            _clerk_config_module(FAKE_LIVE_KEY, "https://stale.fake-review.invalid"),
+            encoding="utf-8",
+        )
+    elif failure == "nested-alternate-return":
+        module.write_text(
+            "function parsePortalConfig(env) { if (true) { return { publishableKey: "
+            "env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: 'https://stale.fake-review.invalid' }; } "
+            "return { publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+            f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+            'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+            "parsePortalConfig(env);\n",
+            encoding="utf-8",
+        )
+    elif failure == "return-newline-asi":
+        module.write_text(
+            "function parsePortalConfig(env) { return\n{ publishableKey: "
+            "env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+            f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+            'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+            "parsePortalConfig(env);\n",
+            encoding="utf-8",
+        )
+    elif failure == "unsupported-key-guard":
+        module.write_text(
+            "function parsePortalConfig(env, isProduction = false) { const publishableKey = "
+            "env.VITE_CLERK_PUBLISHABLE_KEY; return { publishableKey: publishableKey.length > 0 "
+            "&& !isProduction && publishableKey.startsWith('pk_test_') ? publishableKey : null, "
+            "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+            f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+            'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+            "parsePortalConfig(env, true);\n",
+            encoding="utf-8",
+        )
+    elif failure in {"returned-delete", "returned-prefix-update", "returned-compound-assignment"}:
+        mutation = {
+            "returned-delete": "delete config.fapiOrigin;",
+            "returned-prefix-update": "++config.fapiOrigin;",
+            "returned-compound-assignment": "config.fapiOrigin &= 0;",
+        }[failure]
+        module.write_text(
+            "function parsePortalConfig(env) { const config = { publishableKey: "
+            "env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: env.VITE_CLERK_FAPI }; "
+            f"{mutation} return config; }}\n"
+            f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+            'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+            "parsePortalConfig(env);\n",
             encoding="utf-8",
         )
     elif failure == "unreferenced-decoy":
@@ -1438,8 +1505,9 @@ def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
         'const unused = typeof /[}]/;',
         'const unused = void /[/]/;',
         'const quotient = 12 / 3;',
+        'const testKeyPrefix = "pk_test_"; const liveKeyPrefix = "pk_live_";',
     ],
-    ids=["control-header-regex", "typeof-regex", "void-regex-class", "division"],
+    ids=["control-header-regex", "typeof-regex", "void-regex-class", "division", "clerk-prefix-discriminators"],
 )
 def test_apply_accepts_frontend_with_complete_static_clerk_aliases_and_valid_syntax(
     tmp_path: Path, suffix: str
@@ -1454,6 +1522,38 @@ def test_apply_accepts_frontend_with_complete_static_clerk_aliases_and_valid_syn
             "const env = { VITE_CLERK_PUBLISHABLE_KEY: liveKey, VITE_CLERK_FAPI: liveFapi, "
             'VITE_PORTAL_ENABLED: "true" };'
         ) + suffix,
+        encoding="utf-8",
+    )
+
+    result = _run(tmp_path, args=["--apply"], frontend=dist, live_caddy=live)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "applied:" in result.stdout
+
+
+def test_apply_accepts_bounded_minified_vite_clerk_config(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    dist = _write_frontend(tmp_path)
+    (dist / "assets" / "index.js").write_text(
+        'function trimEnv(e){return typeof e==="string"?e.trim():""}'
+        "function parseFapiOrigin(e){const n=trimEnv(e);if(!n)return null;"
+        'const r=n.includes("://")?n:`https://${n}`;try{const s=new URL(r);'
+        'return s.protocol!=="https:"&&s.protocol!=="http:"?null:`${s.protocol}//${s.host}`}'
+        "catch{return null}}"
+        'function parsePaymentsEnabled(e){return e==="true"}'
+        "function parsePublicPlanCode(e){return e.trim()}"
+        "function parsePortalConfig(e,p=false){const k=trimEnv(e.VITE_CLERK_PUBLISHABLE_KEY),"
+        'r={publishableKey:k.length>0&&!(p&&k.startsWith("pk_test_"))?k:null,'
+        "fapiOrigin:parseFapiOrigin(e.VITE_CLERK_FAPI),portalEnabled:true};"
+        'return Object.prototype.hasOwnProperty.call(e,"VITE_PAYMENTS_ENABLED")&&'
+        "(r.paymentsEnabled=parsePaymentsEnabled(e.VITE_PAYMENTS_ENABLED)),"
+        'Object.prototype.hasOwnProperty.call(e,"VITE_PUBLIC_PLAN_CODE")&&'
+        "(r.publicPlanCode=parsePublicPlanCode(e.VITE_PUBLIC_PLAN_CODE)),r}"
+        f'const env={{VITE_CLERK_PUBLISHABLE_KEY:"{FAKE_LIVE_KEY}",'
+        'VITE_CLERK_FAPI:"https://clerk.altcontext.com",VITE_PORTAL_ENABLED:"true",'
+        'VITE_PAYMENTS_ENABLED:"true",VITE_PUBLIC_PLAN_CODE:"portal"};parsePortalConfig(env,true);'
+        'const testKeyPrefix="pk_test_",liveKeyPrefix="pk_live_";',
         encoding="utf-8",
     )
 

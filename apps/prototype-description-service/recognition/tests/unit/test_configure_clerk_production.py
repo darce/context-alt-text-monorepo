@@ -216,6 +216,48 @@ def test_frontend_rejects_mutated_or_escaped_returned_config(tmp_path: Path, con
         module.validate_frontend_modules(config, [reachable])
 
 
+@pytest.mark.parametrize(
+    "consumer",
+    [
+        "function parsePortalConfig(env) { if (true) { return { publishableKey: "
+        "env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: 'https://stale.fake-review.invalid' }; } "
+        "return { publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: env.VITE_CLERK_FAPI }; }",
+        "function parsePortalConfig(env) { return\n{ publishableKey: "
+        "env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: env.VITE_CLERK_FAPI }; }",
+    ],
+    ids=["nested-alternate-return", "return-newline-asi"],
+)
+def test_frontend_rejects_ambiguous_or_asi_consumer_returns(tmp_path: Path, consumer: str) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        f'{consumer}\nconst env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        "parsePortalConfig(env);\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ClerkConfigError, match="VITE_CLERK_FAPI"):
+        module.validate_frontend_modules(config, [reachable])
+
+
+def test_frontend_ignores_returns_in_nested_unrelated_functions(tmp_path: Path) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function parsePortalConfig(env) { function diagnostic() { return null; } "
+        "return { publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        "parsePortalConfig(env);\n",
+        encoding="utf-8",
+    )
+
+    module.validate_frontend_modules(config, [reachable])
+
+
 def test_frontend_accepts_bounded_production_config_normalizers(tmp_path: Path) -> None:
     module = _load_script()
     config = module.load_production_config(_manifest_root(tmp_path))
@@ -240,6 +282,168 @@ def test_frontend_accepts_bounded_production_config_normalizers(tmp_path: Path) 
     module.validate_frontend_modules(config, [reachable])
 
 
+def test_frontend_rejects_grouping_changing_test_key_guard(tmp_path: Path) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function parsePortalConfig(env, isProduction = false) { const publishableKey = "
+        "env.VITE_CLERK_PUBLISHABLE_KEY; return { publishableKey: publishableKey.length > 0 "
+        "&& !isProduction && publishableKey.startsWith('pk_test_') ? publishableKey : null, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        "parsePortalConfig(env, true);\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ClerkConfigError, match="VITE_CLERK_PUBLISHABLE_KEY"):
+        module.validate_frontend_modules(config, [reachable])
+
+
+def test_frontend_accepts_minified_supported_test_key_guard(tmp_path: Path) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function parsePortalConfig(e,p=false){const k=e.VITE_CLERK_PUBLISHABLE_KEY;return{"
+        "publishableKey:k.length>0&&!(p&&k.startsWith('pk_test_'))?k:null,"
+        "fapiOrigin:e.VITE_CLERK_FAPI}}\n"
+        f'const env={{VITE_CLERK_PUBLISHABLE_KEY:"{FAKE_LIVE_KEY}",'
+        'VITE_CLERK_FAPI:"https://clerk.altcontext.com",VITE_PORTAL_ENABLED:"true"};\n'
+        "parsePortalConfig(env,true);\n",
+        encoding="utf-8",
+    )
+
+    module.validate_frontend_modules(config, [reachable])
+
+
+def test_frontend_accepts_bounded_minified_optional_config_assignments(tmp_path: Path) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function trimEnv(value) { return typeof value === 'string' ? value.trim() : ''; }\n"
+        "function parseFapiOrigin(value) { const raw = trimEnv(value); if (!raw) return null; "
+        "const withProtocol = raw.includes('://') ? raw : `https://${raw}`; try { "
+        "const url = new URL(withProtocol); return url.protocol !== 'https:' && url.protocol !== 'http:' "
+        "? null : `${url.protocol}//${url.host}`; } catch { return null; } }\n"
+        "function parsePaymentsEnabled(value) { return value === 'true'; }\n"
+        "function parsePublicPlanCode(value) { return value.trim(); }\n"
+        "function parsePortalConfig(env, isProduction = false) { const publishableKey = "
+        "env.VITE_CLERK_PUBLISHABLE_KEY, config = { publishableKey: "
+        "publishableKey.length > 0 && !(isProduction && publishableKey.startsWith('pk_test_')) "
+        "? publishableKey : null, fapiOrigin: parseFapiOrigin(env.VITE_CLERK_FAPI), portalEnabled: true }; "
+        "return Object.prototype.hasOwnProperty.call(env, 'VITE_PAYMENTS_ENABLED') && "
+        "(config.paymentsEnabled = parsePaymentsEnabled(env.VITE_PAYMENTS_ENABLED)), "
+        "Object.prototype.hasOwnProperty.call(env, 'VITE_PUBLIC_PLAN_CODE') && "
+        "(config.publicPlanCode = parsePublicPlanCode(env.VITE_PUBLIC_PLAN_CODE)), config; }\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true", '
+        'VITE_PAYMENTS_ENABLED: "true", VITE_PUBLIC_PLAN_CODE: "portal" };\n'
+        "parsePortalConfig(env, true);\n",
+        encoding="utf-8",
+    )
+
+    module.validate_frontend_modules(config, [reachable])
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "delete config.fapiOrigin;",
+        "delete (config.fapiOrigin);",
+        "++config.fapiOrigin;",
+        "++(config.fapiOrigin);",
+        "--config.fapiOrigin;",
+        "config.fapiOrigin++;",
+        "(config.fapiOrigin)++;",
+        "config.fapiOrigin--;",
+        "config.fapiOrigin += 'x';",
+        "config.fapiOrigin -= 1;",
+        "config.fapiOrigin *= 1;",
+        "config.fapiOrigin /= 1;",
+        "config.fapiOrigin %= 1;",
+        "config.fapiOrigin &= 0;",
+        "(config.fapiOrigin) &= 0;",
+        "config.fapiOrigin |= 0;",
+        "config.fapiOrigin ^= 0;",
+        "config.fapiOrigin <<= 0;",
+        "config.fapiOrigin >>= 0;",
+        "config.fapiOrigin >>>= 0;",
+        "config.fapiOrigin **= 1;",
+        "config.fapiOrigin &&= 'https://stale.fake-review.invalid';",
+        "config.fapiOrigin ||= 'https://stale.fake-review.invalid';",
+        "config.fapiOrigin ??= 'https://stale.fake-review.invalid';",
+    ],
+    ids=[
+        "delete",
+        "parenthesized-delete",
+        "prefix-increment",
+        "parenthesized-prefix-increment",
+        "prefix-decrement",
+        "postfix-increment",
+        "parenthesized-postfix-increment",
+        "postfix-decrement",
+        "add-assignment",
+        "subtract-assignment",
+        "multiply-assignment",
+        "divide-assignment",
+        "remainder-assignment",
+        "bitwise-and-assignment",
+        "parenthesized-bitwise-and-assignment",
+        "bitwise-or-assignment",
+        "bitwise-xor-assignment",
+        "left-shift-assignment",
+        "right-shift-assignment",
+        "unsigned-right-shift-assignment",
+        "exponent-assignment",
+        "logical-and-assignment",
+        "logical-or-assignment",
+        "nullish-assignment",
+    ],
+)
+def test_frontend_rejects_all_returned_clerk_field_mutations(tmp_path: Path, mutation: str) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function parsePortalConfig(env) { const config = { publishableKey: "
+        "env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: env.VITE_CLERK_FAPI }; "
+        f"{mutation} return config; }}\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        "parsePortalConfig(env);\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ClerkConfigError, match="VITE_CLERK_FAPI"):
+        module.validate_frontend_modules(config, [reachable])
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["delete config.publishableKey;", "++config.publishableKey;", "config.publishableKey ^= 0;"],
+    ids=["delete", "prefix-update", "bitwise-assignment"],
+)
+def test_frontend_rejects_mutations_of_returned_publishable_key(tmp_path: Path, mutation: str) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function parsePortalConfig(env) { const config = { publishableKey: "
+        "env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: env.VITE_CLERK_FAPI }; "
+        f"{mutation} return config; }}\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        "parsePortalConfig(env);\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ClerkConfigError, match="VITE_CLERK_PUBLISHABLE_KEY"):
+        module.validate_frontend_modules(config, [reachable])
+
+
 def test_frontend_rejects_malformed_clerk_key_decoy(tmp_path: Path) -> None:
     module = _load_script()
     config = module.load_production_config(_manifest_root(tmp_path))
@@ -250,6 +454,41 @@ def test_frontend_rejects_malformed_clerk_key_decoy(tmp_path: Path) -> None:
         f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
         'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
         f'const malformed = "pk_live_!!!{FAKE_LIVE_KEY.removeprefix("pk_live_")}";\n'
+        "parsePortalConfig(env);\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ClerkConfigError, match="VITE_CLERK_PUBLISHABLE_KEY"):
+        module.validate_frontend_modules(config, [reachable])
+
+
+def test_frontend_ignores_bare_clerk_prefix_discriminators(tmp_path: Path) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function parsePortalConfig(env) { return {"
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        'const testKeyPrefix = "pk_test_"; const liveKeyPrefix = "pk_live_"; '
+        'const testKeyPlaceholder = "pk_test_..."; const liveKeyPlaceholder = "pk_live_...";\n'
+        "parsePortalConfig(env);\n",
+        encoding="utf-8",
+    )
+
+    module.validate_frontend_modules(config, [reachable])
+
+
+def test_frontend_rejects_bare_prefix_as_the_consumed_key(tmp_path: Path) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function parsePortalConfig(env) { return {"
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        'const env = { VITE_CLERK_PUBLISHABLE_KEY: "pk_live_", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
         "parsePortalConfig(env);\n",
         encoding="utf-8",
     )
@@ -702,6 +941,73 @@ def test_cli_verify_assets_accepts_matching_static_bundle(tmp_path: Path) -> Non
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout == ""
     assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "nested-alternate-return",
+        "return-newline-asi",
+        "grouping-changing-key-guard",
+        "returned-delete",
+        "returned-prefix-update",
+        "returned-compound-assignment",
+    ],
+)
+def test_cli_verify_assets_rejects_ambiguous_or_mutated_clerk_config(tmp_path: Path, failure: str) -> None:
+    root = _manifest_root(tmp_path)
+    reachable = tmp_path / "entry.js"
+    if failure == "nested-alternate-return":
+        consumer = (
+            "function parsePortalConfig(env) { if (true) { return { publishableKey: "
+            "env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: 'https://stale.fake-review.invalid' }; } "
+            "return { publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        )
+        call = "parsePortalConfig(env);\n"
+    elif failure == "return-newline-asi":
+        consumer = (
+            "function parsePortalConfig(env) { return\n{ publishableKey: "
+            "env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        )
+        call = "parsePortalConfig(env);\n"
+    elif failure == "grouping-changing-key-guard":
+        consumer = (
+            "function parsePortalConfig(env, isProduction = false) { const publishableKey = "
+            "env.VITE_CLERK_PUBLISHABLE_KEY; return { publishableKey: publishableKey.length > 0 "
+            "&& !isProduction && publishableKey.startsWith('pk_test_') ? publishableKey : null, "
+            "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        )
+        call = "parsePortalConfig(env, true);\n"
+    else:
+        mutation = {
+            "returned-delete": "delete config.fapiOrigin;",
+            "returned-prefix-update": "++config.fapiOrigin;",
+            "returned-compound-assignment": "config.fapiOrigin &= 0;",
+        }[failure]
+        consumer = (
+            "function parsePortalConfig(env) { const config = { publishableKey: "
+            f"env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: env.VITE_CLERK_FAPI }}; {mutation} "
+            "return config; }\n"
+        )
+        call = "parsePortalConfig(env);\n"
+    reachable.write_text(
+        consumer + f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n' + call,
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--root", str(root), "--verify-assets"],
+        input=f"{reachable}\n",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    expected = "VITE_CLERK_PUBLISHABLE_KEY" if failure == "grouping-changing-key-guard" else "VITE_CLERK_FAPI"
+    assert expected in result.stderr
+    assert FAKE_LIVE_KEY not in result.stdout + result.stderr
 
 
 def test_frontend_accepts_matching_static_alias_inside_getter(tmp_path: Path) -> None:

@@ -9,7 +9,10 @@ writer. The key declaration stays in its owning fragment, currently
 `21-service-vm.toml`.
 
 Bootstrap creates the secret only when it does not exist. Rotation is a
-separate action and must include `--rotate`; it reuses the existing OCID.
+separate action and must include `--rotate`; it reuses the existing OCID. If
+the manifest still has host refs, run bootstrap first and let it record the
+returned OCID. Rotation then refuses before SSH unless the complete manifest
+contains matching dev OCI and prod Vault refs for that OCID.
 Provide the approved VM's SSH target when running the command:
 
 ```sh
@@ -24,7 +27,8 @@ references atomically, and writes the identifier-only file
 If the manifest already contains a consistent dev OCI and prod Vault OCID, the
 command binds the remote request to that identifier. The writer must refuse a
 missing or recreated name-selected secret before create or update. Initial
-bootstrap from the checked-in host refs has no prior identifier to bind.
+bootstrap from the checked-in host refs has no prior identifier to bind;
+rotation is unavailable until bootstrap records one.
 
 Before contacting the writer, the command takes the canonical environment-root
 cooperative write lock shared with harvest and checks that both output

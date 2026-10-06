@@ -144,6 +144,9 @@ fi
 if [ -z "${EXPECTED_OWNER_SHA256}" ] || [ -z "${EXPECTED_TERRAFORM_INPUT_SHA256}" ]; then
     fail "internal GPU key transaction handoff is incomplete"
 fi
+if [ "${MODE}" = "rotate" ] && [ -z "${EXPECTED_SECRET_ID}" ]; then
+    fail "GPU key rotation requires a recorded GPU secret OCID; bootstrap first"
+fi
 VALIDATE_ARGS=(
     --validate-transaction
     --manifest "${MANIFEST_PATH}"

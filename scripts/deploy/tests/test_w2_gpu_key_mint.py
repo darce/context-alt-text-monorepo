@@ -1595,6 +1595,125 @@ def test_stale_manifest_edit_during_remote_write_is_rejected(tmp_path: Path) -> 
     assert not terraform_input.exists()
 
 
+def test_run_locked_rotation_without_recorded_ocid_refuses_before_ssh(tmp_path: Path) -> None:
+    manifest_dir = tmp_path / "manifest.d"
+    manifest_dir.mkdir()
+    paths = _write_fake_committed_manifest(manifest_dir)
+    before = {path: path.read_bytes() for path in paths.values()}
+    terraform_input = tmp_path / "gpu-api-key.tfvars"
+    ssh_capture = tmp_path / "ssh-contact"
+    argument_capture = tmp_path / "writer-arguments"
+    stdin_capture = tmp_path / "writer-stdin"
+    mutations = tmp_path / "remote-mutations"
+    bin_dir = _fake_cli(tmp_path)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(HELPER_PATH),
+            "--run-locked",
+            "--approve-mint",
+            "--ssh-target",
+            "ubuntu@gpu.example",
+            "--manifest",
+            str(paths["10-service-shared.toml"]),
+            "--terraform-input",
+            str(terraform_input),
+            "--rotate",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+            "GPU_KEY_TEST_OCID": FAKE_OCID,
+            "GPU_KEY_TEST_SSH_CAPTURE": str(ssh_capture),
+            "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
+            "GPU_KEY_TEST_STDIN_CAPTURE": str(stdin_capture),
+            "GPU_KEY_TEST_MUTATIONS": str(mutations),
+            "TMPDIR": str(tmp_path),
+        },
+    )
+
+    assert result.returncode != 0
+    assert "rotation requires a recorded GPU secret OCID" in result.stderr
+    assert not ssh_capture.exists()
+    assert not argument_capture.exists()
+    assert not stdin_capture.exists()
+    assert not mutations.exists()
+    assert {path: path.read_bytes() for path in paths.values()} == before
+    assert not terraform_input.exists()
+
+
+def test_locked_shell_rotation_without_recorded_ocid_refuses_before_ssh(tmp_path: Path) -> None:
+    manifest_dir = tmp_path / "manifest.d"
+    manifest_dir.mkdir()
+    paths = _write_fake_committed_manifest(manifest_dir)
+    before = {path: path.read_bytes() for path in paths.values()}
+    manifest = paths["10-service-shared.toml"]
+    terraform_input = tmp_path / "gpu-api-key.tfvars"
+    expected_secret_id, owner, preimages = gpu_key_manifest._preflight_mint_transaction(
+        manifest,
+        terraform_input,
+    )
+    assert expected_secret_id is None
+    ssh_capture = tmp_path / "ssh-contact"
+    argument_capture = tmp_path / "writer-arguments"
+    stdin_capture = tmp_path / "writer-stdin"
+    mutations = tmp_path / "remote-mutations"
+    bin_dir = _fake_cli(tmp_path)
+    descriptor = gpu_key_manifest._open_manifest_write_lock(manifest)
+    try:
+        result = subprocess.run(
+            [
+                "bash",
+                str(SCRIPT_PATH),
+                "--approve-mint",
+                "--ssh-target",
+                "ubuntu@gpu.example",
+                "--manifest",
+                str(manifest),
+                "--terraform-input",
+                str(terraform_input),
+                "--expected-owner-sha256",
+                preimages[owner] or "missing",
+                "--expected-terraform-input-sha256",
+                preimages[terraform_input] or "missing",
+                "--rotate",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            pass_fds=(descriptor,),
+            env={
+                **os.environ,
+                "GPU_KEY_MINT_TRANSACTION_LOCKED": "1",
+                "GPU_KEY_MINT_TRANSACTION_LOCK_FD": str(descriptor),
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                "GPU_KEY_TEST_RANDOM": FAKE_KEY,
+                "GPU_KEY_TEST_OCID": FAKE_OCID,
+                "GPU_KEY_TEST_SSH_CAPTURE": str(ssh_capture),
+                "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
+                "GPU_KEY_TEST_STDIN_CAPTURE": str(stdin_capture),
+                "GPU_KEY_TEST_MUTATIONS": str(mutations),
+                "TMPDIR": str(tmp_path),
+            },
+        )
+    finally:
+        os.close(descriptor)
+
+    assert result.returncode != 0
+    assert "rotation requires a recorded GPU secret OCID" in result.stderr
+    assert not ssh_capture.exists()
+    assert not argument_capture.exists()
+    assert not stdin_capture.exists()
+    assert not mutations.exists()
+    assert {path: path.read_bytes() for path in paths.values()} == before
+    assert not terraform_input.exists()
+
+
 def test_mint_does_not_overwrite_external_manifest_edit_after_writer(tmp_path: Path) -> None:
     bin_dir = _fake_cli(tmp_path)
     manifest = tmp_path / "10-service-shared.toml"
@@ -1647,6 +1766,7 @@ def _fake_cli(tmp_path: Path) -> Path:
         "scp": "#!/bin/sh\nexit 0\n",
         "ssh": (
             "#!/bin/sh\n"
+            "if [ -n \"${GPU_KEY_TEST_SSH_CAPTURE:-}\" ]; then printf '%s\\n' \"$*\" >>\"$GPU_KEY_TEST_SSH_CAPTURE\"; fi\n"
             "while [ \"$#\" -gt 0 ]; do\n"
             "  case \"$1\" in\n"
             "    -T) shift ;;\n"
@@ -1893,7 +2013,7 @@ def test_mint_pipes_fake_random_input_and_prints_only_ocid_and_length(
 ) -> None:
     bin_dir = _fake_cli(tmp_path)
     manifest = tmp_path / "10-service-shared.toml"
-    manifest.write_text(MANIFEST_TEXT, encoding="utf-8")
+    manifest.write_text(_manifest_with_gpu_ocid(FAKE_OCID) if rotate else MANIFEST_TEXT, encoding="utf-8")
     terraform_input = tmp_path / "gpu-api-key.tfvars"
     input_capture = tmp_path / "writer-stdin"
     argument_capture = tmp_path / "writer-arguments"
@@ -1921,6 +2041,8 @@ def test_mint_pipes_fake_random_input_and_prints_only_ocid_and_length(
         "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
         "TMPDIR": str(tmp_path),
     }
+    if rotate:
+        environment["GPU_KEY_TEST_EXPECTED_ID"] = FAKE_OCID
 
     result = subprocess.run(args, check=False, capture_output=True, text=True, env=environment)
 

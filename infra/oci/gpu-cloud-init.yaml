@@ -267,7 +267,7 @@ write_files:
       readonly ATTEMPT_TIMEOUT=20
       readonly RETRY_DELAY=2
 
-      if [[ ! "$SECRET_ID" =~ ^ocid1\.vaultsecret\.oc[0-9]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9._-]+$ ]]; then
+      if [[ ! "$SECRET_ID" =~ ^ocid1\.vaultsecret\.oc[0-9]+\.[A-Za-z0-9_-]*\.[A-Za-z0-9._-]{20,}$ ]]; then
         echo "GPU Vault key OCID is missing or invalid; refusing to start llama.cpp" >&2
         exit 1
       fi

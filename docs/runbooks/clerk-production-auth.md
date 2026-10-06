@@ -101,8 +101,11 @@ ready to materialize from the values already harvested into that manifest.
 `make env-materialize ENV=prod TARGET=svc-vm` checks the runtime file against
 the manifest. Resolve any reported drift and provide required host-only values
 before applying; VM value harvesting is complete and is not a prerequisite.
-Follow the [before production launch checklist](app-portal-deploy.md#before-production-launch)
-for portal enablement and the missing public build key.
+The production values for `RECOGNITION_PORTAL_ENABLED` and
+`VITE_CLERK_PUBLISHABLE_KEY` are both committed. The remaining launch steps
+are to materialize the backend settings, restart the production API unit,
+and deploy the portal as described in
+[`app-portal-deploy.md`](app-portal-deploy.md).
 The four required verifier settings are `ACX_CLERK_ISSUER`,
 `ACX_CLERK_JWKS_URL`, `ACX_CLERK_AUDIENCE`, and
 `ACX_CLERK_AUTHORIZED_PARTIES`. An optional Clerk secret, if configured,
@@ -158,6 +161,20 @@ modules contain the same live key and FAPI as the production manifest before
 staging the build. Billing credentials belong only in backend secret storage
 or runtime injection. Use the manifest targets as the production source of
 truth; do not write a separate `app-portal.env` artifact.
+
+### Post-launch signed-in smoke check
+
+The offline validator and the unauthenticated `/portal/me` health check
+(expected `401`) cannot verify the session token's audience claim.
+
+1. Sign in at `https://app.altcontext.com` with a real account.
+2. In browser developer tools, open the **Network** tab and confirm the
+   portal's own `/portal/me` request returns `200`.
+3. If it returns `401`, decode the session token's payload locally and check
+   that `aud` is `altcontext-portal` and `azp` is
+   `https://app.altcontext.com`. Never paste a token into a website or this
+   repo. Correct the session-token template in the Clerk Dashboard using
+   section 2 above, then sign in again and repeat the check.
 
 ## 5. Rotation
 

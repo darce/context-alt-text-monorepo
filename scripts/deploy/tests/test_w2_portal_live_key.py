@@ -33,11 +33,49 @@ def _write_manifest(
 
     portal = root / "manifest.d" / "60-app-portal.toml"
     portal_text = portal.read_text(encoding="utf-8")
-    portal_text = re.sub(
-        r'(values = \{ local = "[^"]+")\s*\}',
-        rf'\1, prod = "{publishable_key}" }}',
-        portal_text,
-        count=1,
+    table_pattern = re.compile(r"(?ms)^\[\[var\]\][ \t]*\n.*?(?=^\[\[var\]\][ \t]*$|\Z)")
+    var_tables = list(table_pattern.finditer(portal_text))
+    publishable_tables = [
+        table
+        for table in var_tables
+        if re.search(
+            r'(?m)^name[ \t]*=[ \t]*"VITE_CLERK_PUBLISHABLE_KEY"[ \t]*$',
+            table.group(),
+        )
+    ]
+    assert len(publishable_tables) == 1, "expected exactly one VITE_CLERK_PUBLISHABLE_KEY table"
+
+    publishable_table = publishable_tables[0]
+    values_pattern = re.compile(
+        r"(?m)^(?P<prefix>[ \t]*values[ \t]*=[ \t]*\{)"
+        r"(?P<entries>[^}\n]*)(?P<suffix>\}[ \t]*)$"
+    )
+    values_lines = list(values_pattern.finditer(publishable_table.group()))
+    assert len(values_lines) == 1, "expected exactly one values line in the publishable-key table"
+
+    values_line = values_lines[0]
+    entries = values_line.group("entries")
+    prod_pattern = re.compile(r'(?P<prefix>\bprod[ \t]*=[ \t]*)"[^"\n]*"')
+    prod_values = list(prod_pattern.finditer(entries))
+    assert len(prod_values) <= 1, "expected at most one prod value in the publishable-key table"
+    if prod_values:
+        entries, prod_count = prod_pattern.subn(
+            lambda match: f'{match.group("prefix")}"{publishable_key}"', entries, count=1
+        )
+        assert prod_count == 1, "expected to replace the publishable-key prod value exactly once"
+    else:
+        separator = ", " if entries.strip() else ""
+        entries = f'{entries.rstrip()}{separator}prod = "{publishable_key}"'
+
+    updated_values_line = values_line.group("prefix") + entries + values_line.group("suffix")
+    updated_table, values_count = values_pattern.subn(
+        lambda _: updated_values_line, publishable_table.group(), count=1
+    )
+    assert values_count == 1, "expected to update the publishable-key values line exactly once"
+    portal_text = (
+        portal_text[: publishable_table.start()]
+        + updated_table
+        + portal_text[publishable_table.end() :]
     )
     portal_text = portal_text.replace(
         'values = { local = "https://saved-frog-4170.clerk.accounts.dev", prod = "https://clerk.altcontext.com" }',

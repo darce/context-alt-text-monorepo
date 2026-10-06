@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import http.client
 import io
 import importlib.util
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -1129,7 +1131,7 @@ def test_harvest_cli_waits_for_mint_publication_across_canonical_symlink_lock(
     _assert_key_only_in_stdin(tmp_path, writer_stdin)
     assert mint_stdout == f"{FAKE_OCID} 64\n"
     assert FAKE_KEY not in mint_stdout + mint_stderr
-    assert writer_stdin.read_text(encoding="utf-8") == FAKE_KEY
+    assert writer_stdin.read_text(encoding="utf-8") == "True\n"
     assert writer_arguments.exists()
     assert mutations.read_text(encoding="utf-8") == "create\n"
     assert harvest.returncode == 0, harvest_stderr
@@ -1267,7 +1269,8 @@ def test_real_vault_writer_parser_binds_existing_secret_identity(monkeypatch, ca
 
     class Client:
         def __init__(self, config, **_kwargs):
-            assert config is operator_config
+            assert config is not operator_config
+            assert config == {**operator_config, "log_requests": False}
             self.base_client = SimpleNamespace(timeout=None)
 
     class VaultsClient(Client):
@@ -1317,7 +1320,7 @@ def test_real_vault_writer_parser_binds_existing_secret_identity(monkeypatch, ca
         def __init__(self, **kwargs):
             self.__dict__.update(kwargs)
 
-    operator_config = {"user": "fake-operator", "tenancy": "fake-tenancy"}
+    operator_config = {"user": "fake-operator", "tenancy": "fake-tenancy", "log_requests": True}
     config_calls = []
 
     def from_file(*, profile_name):
@@ -1326,6 +1329,9 @@ def test_real_vault_writer_parser_binds_existing_secret_identity(monkeypatch, ca
 
     fake_oci = SimpleNamespace(
         config=SimpleNamespace(from_file=from_file),
+        base_client=SimpleNamespace(
+            is_http_log_enabled=lambda enabled: setattr(http.client.HTTPConnection, "debuglevel", int(enabled)),
+        ),
         retry=SimpleNamespace(NoneRetryStrategy=object),
         vault=SimpleNamespace(
             VaultsClient=VaultsClient,
@@ -1758,13 +1764,27 @@ exec "$@"
 printf '%064d' 0 | tr '0' 'a'
 ''',
         "oci": f"#!{bin_dir / 'oci-python'}\n",
+        "writer-probe": f"#!{sys.executable}\n" + '''import os
+import sys
+from pathlib import Path
+
+root = Path(__file__).resolve().parents[1]
+key = b"a" * 64
+value = sys.stdin.buffer.read()
+# Check credentials in memory; persist only boolean observations.
+environment_contains_key = any(key.decode("ascii") in item for pair in os.environ.items() for item in pair)
+(root / "writer-environment").write_text(str(environment_contains_key) + "\\n")
+Path(os.environ["GPU_KEY_TEST_STDIN_CAPTURE"]).write_text(str(value == key) + "\\n")
+# The writer still owns the pipe, so the mint has not run its EXIT cleanup.
+files_contain_key = any(key in path.read_bytes() for path in root.rglob("*") if path.is_file())
+(root / "writer-files-before-cleanup").write_text(str(files_contain_key) + "\\n")
+''',
         "oci-python": """#!/bin/sh
 if [ "$1" = -c ] && [ "$2" = 'import oci' ]; then exit 0; fi
 case "$1" in
   */_vault_put_secret.py) ;;
   *) exit 95 ;;
 esac
-env >"$(dirname "$0")/../writer-environment"
 if [ -n "${GPU_KEY_TEST_WRITER_CAPTURE:-}" ]; then
     printf '%s\\n' "$*" >>"$GPU_KEY_TEST_WRITER_CAPTURE"
 fi
@@ -1782,7 +1802,7 @@ case "${GPU_KEY_TEST_VAULT_STATE:-initial}" in
     missing) cat >/dev/null; echo 'expected Vault secret is missing' >&2; exit 42 ;;
     recreated) cat >/dev/null; echo 'Vault secret was recreated under another OCID' >&2; exit 42 ;;
 esac
-cat >"$GPU_KEY_TEST_STDIN_CAPTURE"
+""" + shlex.quote(sys.executable) + """ "$(dirname "$0")/writer-probe"
 if [ -n "${GPU_KEY_TEST_WRITER_STARTED:-}" ]; then
     : >"$GPU_KEY_TEST_WRITER_STARTED"
     while [ ! -e "$GPU_KEY_TEST_WRITER_RELEASE" ]; do sleep 0.01; done
@@ -1809,11 +1829,13 @@ fi
 def _assert_key_only_in_stdin(tmp_path: Path, stdin_capture: Path) -> None:
     environment_capture = tmp_path / "writer-environment"
     assert environment_capture.is_file()
-    # Keep pytest's failure diagnostics from printing the captured environment.
-    environment_contains_key = FAKE_KEY.encode("ascii") in environment_capture.read_bytes()
-    assert not environment_contains_key, "key leaked to writer environment"
+    assert environment_capture.read_text(encoding="utf-8") == "False\n", "key leaked to writer environment"
+    assert (tmp_path / "writer-files-before-cleanup").read_text(encoding="utf-8") == "False\n", (
+        "key leaked to a file before mint cleanup"
+    )
+    assert stdin_capture.read_text(encoding="utf-8") == "True\n", "writer did not receive the fake key on stdin"
     for path in sorted(tmp_path.rglob("*")):
-        if path.is_file() and path != stdin_capture:
+        if path.is_file():
             file_contains_key = FAKE_KEY.encode("ascii") in path.read_bytes()
             assert not file_contains_key, f"key leaked to {path}"
 
@@ -2033,7 +2055,7 @@ def test_run_locked_helper_with_approval_publishes_complete_fragments(
     _assert_key_only_in_stdin(tmp_path, stdin_capture)
     assert result.stdout == f"{FAKE_OCID} 64\n"
     assert FAKE_KEY not in result.stdout + result.stderr
-    assert stdin_capture.read_text(encoding="utf-8") == FAKE_KEY
+    assert stdin_capture.read_text(encoding="utf-8") == "True\n"
     assert mutations.read_text(encoding="utf-8") == ("rotate\n" if rotate else "create\n")
     writer_arguments = argument_capture.read_text(encoding="utf-8")
     assert FAKE_KEY not in writer_arguments
@@ -2094,6 +2116,7 @@ def test_mint_pipes_fake_random_input_and_prints_only_ocid_and_length(
     trace: bool,
     interpreter_source: str,
 ) -> None:
+    inherited_credential = "fake-inherited-credential-" + "z" * 32
     bin_dir = _fake_cli(tmp_path)
     manifest = tmp_path / "10-service-shared.toml"
     manifest.write_text(_manifest_with_gpu_ocid(FAKE_OCID) if rotate else MANIFEST_TEXT, encoding="utf-8")
@@ -2115,6 +2138,7 @@ def test_mint_pipes_fake_random_input_and_prints_only_ocid_and_length(
         args.append("--rotate")
     environment = {
         **os.environ,
+        "GPU_KEY_TEST_INHERITED_CREDENTIAL": inherited_credential,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
         "GPU_KEY_TEST_OCID": FAKE_OCID,
@@ -2138,13 +2162,17 @@ def test_mint_pipes_fake_random_input_and_prints_only_ocid_and_length(
 
     assert result.returncode == 0, result.stderr
     _assert_key_only_in_stdin(tmp_path, input_capture)
+    for path in tmp_path.rglob("*"):
+        if path.is_file():
+            contains_inherited_credential = inherited_credential.encode("ascii") in path.read_bytes()
+            assert not contains_inherited_credential, "test persisted an inherited credential"
     assert result.stdout == f"{FAKE_OCID} 64\n"
     assert FAKE_KEY not in result.stdout
     assert FAKE_KEY not in result.stderr
     if trace:
         # The outer script, locked script, and writer shell each disable tracing.
         assert result.stderr.count("+ set +x\n") >= 3
-    assert input_capture.read_text(encoding="utf-8") == FAKE_KEY
+    assert input_capture.read_text(encoding="utf-8") == "True\n"
     vault_args = argument_capture.read_text(encoding="utf-8")
     assert FAKE_KEY not in vault_args
     assert "--result-only" in vault_args
@@ -2199,7 +2227,7 @@ def test_mint_checks_fragmented_manifest_and_updates_gpu_owner(tmp_path: Path) -
     assert result.returncode == 0, result.stderr
     _assert_key_only_in_stdin(tmp_path, input_capture)
     assert result.stdout == f"{FAKE_OCID} 64\n"
-    assert input_capture.read_text(encoding="utf-8") == FAKE_KEY
+    assert input_capture.read_text(encoding="utf-8") == "True\n"
     gpu = next(
         row
         for row in tomllib.loads(paths["21-service-vm.toml"].read_text(encoding="utf-8"))["var"]
@@ -2273,7 +2301,7 @@ def test_mint_persists_complete_fragmented_manifest_with_original_newlines(
     assert result.returncode == 0, result.stderr
     _assert_key_only_in_stdin(tmp_path, input_capture)
     assert result.stdout == f"{FAKE_OCID} 64\n"
-    assert input_capture.read_text(encoding="utf-8") == FAKE_KEY
+    assert input_capture.read_text(encoding="utf-8") == "True\n"
     assert mutations.read_text(encoding="utf-8") == ("rotate\n" if rotate else "create\n")
     vault_arguments = argument_capture.read_text(encoding="utf-8")
     assert (f"--expected-secret-id {FAKE_OCID}" in vault_arguments) == rotate
@@ -2364,7 +2392,7 @@ def test_mint_publishes_writer_supported_ocids_through_bootstrap_retry_and_rotat
         assert result.stdout == f"{secret_ocid} 64\n"
         assert FAKE_KEY not in result.stdout + result.stderr
 
-    assert input_capture.read_text(encoding="utf-8") == FAKE_KEY
+    assert input_capture.read_text(encoding="utf-8") == "True\n"
     assert mutations.read_text(encoding="utf-8") == "create\nrotate\n"
     assert f"--expected-secret-id {secret_ocid}" in argument_capture.read_text(encoding="utf-8")
     assert stat.S_IMODE(terraform_input.stat().st_mode) == 0o600

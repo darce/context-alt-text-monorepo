@@ -23,19 +23,27 @@ class RecognitionTransportTest extends TestCase
     }
 
     /**
-     * Non-loopback hosts must take the safe transport. A fixture-host-only
+     * Public non-loopback hosts must take the safe transport; non-global
+     * literals must be denied before HTTP. A fixture-host-only
      * implementation (api.example.test hard-code) goes RED on other public hosts.
      *
      * @dataProvider nonLoopbackHostProvider
      */
-    public function testGetUsesSafeTransportForNonLoopbackHosts(string $url): void
+    public function testGetUsesSafeTransportForNonLoopbackHosts(string $url, bool $expectedDenied = false): void
     {
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => 'ok',
         ]);
 
-        RecognitionTransport::get($url, ['headers' => ['X-API-Key' => 'k'], 'timeout' => 5]);
+        $result = RecognitionTransport::get($url, ['headers' => ['X-API-Key' => 'k'], 'timeout' => 5]);
+
+        if ($expectedDenied) {
+            $this->assertInstanceOf(\WP_Error::class, $result);
+            $this->assertSame('acx_egress_denied', $result->get_error_code());
+            $this->assertCount(0, $this->getHttpCalls());
+            return;
+        }
 
         $calls = $this->getHttpCalls();
         $this->assertCount(1, $calls);
@@ -48,18 +56,25 @@ class RecognitionTransportTest extends TestCase
     /**
      * @dataProvider nonLoopbackHostProvider
      */
-    public function testRequestUsesSafeTransportForNonLoopbackHosts(string $url): void
+    public function testRequestUsesSafeTransportForNonLoopbackHosts(string $url, bool $expectedDenied = false): void
     {
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => 'ok',
         ]);
 
-        RecognitionTransport::request($url, [
+        $result = RecognitionTransport::request($url, [
             'method' => 'GET',
             'headers' => ['X-API-Key' => 'k'],
             'timeout' => 5,
         ]);
+
+        if ($expectedDenied) {
+            $this->assertInstanceOf(\WP_Error::class, $result);
+            $this->assertSame('acx_egress_denied', $result->get_error_code());
+            $this->assertCount(0, $this->getHttpCalls());
+            return;
+        }
 
         $calls = $this->getHttpCalls();
         $this->assertCount(1, $calls);
@@ -70,15 +85,17 @@ class RecognitionTransportTest extends TestCase
     }
 
     /**
-     * @return array<string, array{0: string}>
+     * @return array<string, array{0: string, 1: bool}>
      */
     public static function nonLoopbackHostProvider(): array
     {
         return [
-            'public_dns' => ['https://api.example.test/health'],
-            'unrelated_tld' => ['https://cdn.other-org.example/v1'],
-            'bare_public_ipv4' => ['https://203.0.113.10/probe'],
-            'bracketed_ipv6' => ['https://[2001:db8::1]/probe'],
+            'public_dns' => ['https://api.example.test/health', false],
+            'unrelated_tld' => ['https://cdn.other-org.example/v1', false],
+            'bare_public_ipv4' => ['https://203.0.113.10/probe', false],
+            'global_ipv4' => ['https://93.184.216.34/probe', false],
+            'public_ipv6' => ['https://[2606:4700:4700::1111]/probe', false],
+            'bracketed_ipv6' => ['https://[2001:db8::1]/probe', true],
         ];
     }
 
@@ -138,7 +155,8 @@ class RecognitionTransportTest extends TestCase
 
     /**
      * R7 / FIX-6: hardcoded correctness pin for the transport safe-vs-plain
-     * chooser. Expectations are literal true/false — never derived from
+     * chooser and egress gate. Expectations are literal true/false/null (deny),
+     * never derived from
      * LoopbackHost::is_loopback — so a predicate widen moves the chooser red
      * here even when the consistency oracle still agrees with itself.
      *
@@ -147,7 +165,7 @@ class RecognitionTransportTest extends TestCase
      *
      * @dataProvider transportSafeChoiceHardcodedProvider
      */
-    public function testTransportSafeChoiceHardcodedExpectations(string $url, bool $expectedPlain): void
+    public function testTransportSafeChoiceHardcodedExpectations(string $url, ?bool $expectedPlain): void
     {
         foreach (['get', 'request'] as $method) {
             $GLOBALS['__ac_http_calls'] = [];
@@ -157,12 +175,20 @@ class RecognitionTransportTest extends TestCase
             ]);
 
             if ('get' === $method) {
-                RecognitionTransport::get($url, ['timeout' => 5]);
+                $result = RecognitionTransport::get($url, ['headers' => ['X-API-Key' => 'k'], 'timeout' => 5]);
             } else {
-                RecognitionTransport::request($url, ['method' => 'GET', 'timeout' => 5]);
+                $result = RecognitionTransport::request($url, ['method' => 'GET', 'headers' => ['X-API-Key' => 'k'], 'timeout' => 5]);
             }
 
             $calls = $this->getHttpCalls();
+            if (null === $expectedPlain) {
+                // class-recognition-transport.php:126-135,156-165 rejects empty
+                // resolution and non-global addresses before either safe call.
+                $this->assertInstanceOf(\WP_Error::class, $result);
+                $this->assertSame('acx_egress_denied', $result->get_error_code());
+                $this->assertCount(0, $calls, "denied {$method} must not send credentials for url={$url}");
+                continue;
+            }
             $this->assertCount(1, $calls, "hardcoded {$method} must issue one call for url={$url}");
 
             $usedSafe = !empty($calls[0]['safe']);
@@ -181,26 +207,33 @@ class RecognitionTransportTest extends TestCase
     }
 
     /**
-     * @return array<string, array{0: string, 1: bool}>
+     * @return array<string, array{0: string, 1: bool|null}>
      */
     public static function transportSafeChoiceHardcodedProvider(): array
     {
         return [
+            // Explicit loopback remains the development exception:
+            // transport:122-124,152-154 and endpoint resolver:73,269-271.
             // Four loopback forms — must take plain transport (expectedPlain=true).
             'loopback_localhost' => ['http://localhost:8000/health', true],
             'loopback_ipv4' => ['http://127.0.0.1:8000/health', true],
             'loopback_ipv6_bare_bracketed_in_url' => ['http://[::1]:8000/health', true],
             'loopback_ipv6_bracketed' => ['https://[::1]/oracle-probe', true],
-            // Adversarial near-loopback — must take safe transport (expectedPlain=false).
-            'reject_0_0_0_0' => ['https://0.0.0.0/oracle-probe', false],
-            'reject_127_1' => ['https://127.1/oracle-probe', false],
-            'reject_ipv4_mapped' => ['https://[::ffff:127.0.0.1]/oracle-probe', false],
-            'reject_dword' => ['https://2130706433/oracle-probe', false],
-            'reject_localhost_trailing_dot' => ['https://localhost./oracle-probe', false],
-            'reject_loopback_trailing_dot' => ['https://127.0.0.1./oracle-probe', false],
-            'reject_localhost_evil' => ['https://localhost.evil.test/oracle-probe', false],
+            // Public destinations still exercise the safe chooser.
+            'public_dns' => ['https://api.example.test/oracle-probe', false],
+            'public_ipv4' => ['https://93.184.216.34/oracle-probe', false],
+            'public_ipv6' => ['https://[2606:4700:4700::1111]/oracle-probe', false],
+            // Adversarial near-loopback and unknown hosts must be denied.
+            'reject_0_0_0_0' => ['https://0.0.0.0/oracle-probe', null],
+            'reject_127_1' => ['https://127.1/oracle-probe', null],
+            'reject_ipv4_mapped' => ['https://[::ffff:127.0.0.1]/oracle-probe', null],
+            'reject_dword' => ['https://2130706433/oracle-probe', null],
+            'reject_localhost_trailing_dot' => ['https://localhost./oracle-probe', null],
+            'reject_loopback_trailing_dot' => ['https://127.0.0.1./oracle-probe', null],
+            'reject_localhost_evil' => ['https://localhost.evil.test/oracle-probe', null],
+            'reject_documentation_ipv6' => ['https://[2001:db8::1]/oracle-probe', null],
             // Userinfo-bearing: parse_url host is evil.test, not localhost.
-            'reject_userinfo_localhost_at_evil' => ['https://localhost@evil.test/oracle-probe', false],
+            'reject_userinfo_localhost_at_evil' => ['https://localhost@evil.test/oracle-probe', null],
         ];
     }
 
@@ -209,13 +242,20 @@ class RecognitionTransportTest extends TestCase
      * agree with LoopbackHost::is_loopback for a large programmatically
      * generated host corpus (anti-allowlist device). Expected values are
      * computed from the same parse_url-extracted, lowercased host the
-     * transport uses, so corpus input and transport input agree (e.g.
-     * userinfo-bearing hosts). Correctness of the loopback set is pinned by
+     * transport uses for admitted destinations. Denial expectations for the
+     * non-global and unresolved corpus entries are independent of production.
+     * Correctness of the loopback set is pinned by
      * the hardcoded table and RecognitionEndpointResolverTest matrix, not here.
      */
     public function testTransportSafeChoiceAgreesWithLoopbackHostOracle(): void
     {
         $hosts = self::generateOracleHostCorpus();
+        $dnsHosts = self::generateOracleDnsHostCorpus();
+        // This corpus owns its named DNS fixtures. Literal IPs still reach
+        // the real address validator; adversarial names remain unresolved.
+        RecognitionTransport::set_resolver(static function (string $host) use ($dnsHosts): array {
+            return in_array($host, $dnsHosts, true) ? ['93.184.216.34'] : self::resolveFixtureHost($host);
+        });
         $this->assertGreaterThanOrEqual(
             40,
             count($hosts),
@@ -227,6 +267,10 @@ class RecognitionTransportTest extends TestCase
             // Match RecognitionTransport: parse_url host, lowercased.
             $parsedHost = strtolower((string) (parse_url($url, PHP_URL_HOST) ?? ''));
             $expectedPlain = LoopbackHost::is_loopback($parsedHost);
+            $expectedDenied = str_starts_with($parsedHost, '[2001:db8:') || in_array($parsedHost, [
+                'localhost.evil.test', 'localhost.', '127.1', '0.0.0.0',
+                '2130706433', '[::ffff:127.0.0.1]', '127.0.0.1.attacker.invalid',
+            ], true);
 
             foreach (['get', 'request'] as $method) {
                 $GLOBALS['__ac_http_calls'] = [];
@@ -236,12 +280,18 @@ class RecognitionTransportTest extends TestCase
                 ]);
 
                 if ('get' === $method) {
-                    RecognitionTransport::get($url, ['timeout' => 5]);
+                    $result = RecognitionTransport::get($url, ['headers' => ['X-API-Key' => 'k'], 'timeout' => 5]);
                 } else {
-                    RecognitionTransport::request($url, ['method' => 'GET', 'timeout' => 5]);
+                    $result = RecognitionTransport::request($url, ['method' => 'GET', 'headers' => ['X-API-Key' => 'k'], 'timeout' => 5]);
                 }
 
                 $calls = $this->getHttpCalls();
+                if ($expectedDenied) {
+                    $this->assertInstanceOf(\WP_Error::class, $result);
+                    $this->assertSame('acx_egress_denied', $result->get_error_code());
+                    $this->assertCount(0, $calls, "denied oracle {$method} must not send for host={$host}");
+                    continue;
+                }
                 $this->assertCount(1, $calls, "oracle {$method} must issue one call for host={$host}");
 
                 $usedSafe = !empty($calls[0]['safe']);
@@ -262,18 +312,13 @@ class RecognitionTransportTest extends TestCase
     }
 
     /**
-     * Programmatic host corpus: public DNS names, unrelated TLDs, bare IPv4,
-     * bracketed IPv6, plus the loopback forms. Not a hand-written allowlist.
-     * Userinfo-bearing and other adversarial forms that need hardcoded
-     * expectations live in transportSafeChoiceHardcodedProvider.
+     * Programmatic named DNS fixtures for the oracle's external resolver seam.
      *
      * @return list<string>
      */
-    private static function generateOracleHostCorpus(): array
+    private static function generateOracleDnsHostCorpus(): array
     {
         $hosts = [];
-
-        // Public DNS names over several TLD / label shapes.
         $labels = [
             'api', 'cdn', 'recognition', 'svc', 'edge', 'origin', 'health',
             'altcontext', 'other-org', 'prod', 'staging', 'media', 'blob',
@@ -289,17 +334,35 @@ class RecognitionTransportTest extends TestCase
             $hosts[] = $label . $i . '.' . $tld;
         }
 
-        // Bare public / documentation IPv4 ranges (RFC 5737 + misc non-loopback).
+        return $hosts;
+    }
+
+    /**
+     * Programmatic host corpus: DNS fixtures, bare public IPv4,
+     * bracketed IPv6 (including denied documentation addresses), and loopback.
+     * Userinfo-bearing and other adversarial forms that need hardcoded
+     * expectations live in transportSafeChoiceHardcodedProvider.
+     *
+     * @return list<string>
+     */
+    private static function generateOracleHostCorpus(): array
+    {
+        $hosts = self::generateOracleDnsHostCorpus();
+
+        // Preserve the existing IPv4 corpus (the production PHP validator
+        // admits these documentation ranges), and add a public range.
         foreach ([10, 20, 30, 40, 50, 100, 113, 200] as $third) {
             $hosts[] = '203.0.' . $third . '.10';
             $hosts[] = '198.51.100.' . $third;
             $hosts[] = '192.0.2.' . $third;
+            $hosts[] = '93.184.' . $third . '.10';
         }
 
         // Bracketed documentation / non-loopback IPv6.
         foreach (['1', '2', 'a', 'f', '10', 'ff'] as $nibble) {
             $hosts[] = '[2001:db8::' . $nibble . ']';
             $hosts[] = '[2001:db8:1::' . $nibble . ']';
+            $hosts[] = '[2606:4700::' . $nibble . ']';
         }
 
         // Adversarial near-loopback forms that must NOT take plain transport.
@@ -658,6 +721,48 @@ class RecognitionTransportTest extends TestCase
             $this->assertSame('acx_egress_denied', $result->get_error_code());
             $this->assertSame([], $this->getHttpCalls(), $method . ' must not make an HTTP call after rejection');
         }
+    }
+
+    /**
+     * @dataProvider nonGlobalLiteralProvider
+     */
+    public function testNonGlobalLiteralsAreDeniedWithDefaultAndProductionResolver(string $url): void
+    {
+        foreach (['fixture', 'production'] as $resolver) {
+            if ('production' === $resolver) {
+                // Canonical literals take resolve_host():182-185 without DNS.
+                RecognitionTransport::set_resolver(null);
+            }
+            foreach (['get', 'request'] as $method) {
+                $GLOBALS['__ac_http_calls'] = [];
+                $args = ['headers' => ['X-API-Key' => 'secret-must-not-leave'], 'timeout' => 5];
+                $result = 'get' === $method
+                    ? RecognitionTransport::get($url, $args)
+                    : RecognitionTransport::request($url, ['method' => 'GET'] + $args);
+
+                // Removing the non-global check at transport:132/162 would
+                // send 0.0.0.0 or mapped loopback, failing these assertions.
+                $this->assertInstanceOf(\WP_Error::class, $result, "{$resolver} {$method} must deny {$url}");
+                $this->assertSame('acx_egress_denied', $result->get_error_code());
+                $this->assertCount(0, $this->getHttpCalls(), "{$resolver} {$method} must not send X-API-Key");
+            }
+        }
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function nonGlobalLiteralProvider(): array
+    {
+        return [
+            'unspecified_ipv4' => ['https://0.0.0.0/health'],
+            'private_ipv4' => ['https://10.0.0.5/health'],
+            'metadata_ipv4' => ['https://169.254.169.254/health'],
+            'mapped_loopback' => ['https://[::ffff:127.0.0.1]/health'],
+            'documentation_ipv6' => ['https://[2001:db8::1]/health'],
+            'unique_local_ipv6' => ['https://[fd00::1]/health'],
+            'link_local_ipv6' => ['https://[fe80::1]/health'],
+        ];
     }
 
     /**

@@ -1157,13 +1157,14 @@ PHP;
     }
 
     /**
-     * BR-137: non-loopback credentialed proxy must use wp_safe_remote_request
-     * so unsafe redirect hops are validated. Data-driven over several public
+     * BR-137: admitted non-loopback credentialed proxy uses wp_safe_remote_request;
+     * non-global literals fail before HTTP and surface the offline job status.
+     * Data-driven over several public
      * hosts so a fixture-host-only chooser goes RED (R4G-BR-02).
      *
      * @dataProvider nonLoopbackProxyBaseProvider
      */
-    public function testProxyUsesSafeRemoteRequestForNonLoopbackHttpsBase(string $baseUrl): void
+    public function testProxyUsesSafeRemoteRequestForNonLoopbackHttpsBase(string $baseUrl, bool $expectedDenied = false): void
     {
         $this->setOption('acx_recognition_url', $baseUrl);
         $this->setOption('acx_recognition_source', 'service');
@@ -1175,7 +1176,17 @@ PHP;
 
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
         $request->set_param('job_id', 'test-123');
-        $this->controller->get_job_status($request);
+        $result = $this->controller->get_job_status($request);
+
+        if ($expectedDenied) {
+            // JobStatusService:51-52 wraps transport errors as an offline
+            // response; cancellation below preserves acx_egress_denied.
+            $this->assertInstanceOf(WP_REST_Response::class, $result);
+            $this->assertSame('failed', $result->get_data()['status']);
+            $this->assertSame('Recognition backend unavailable.', $result->get_data()['message']);
+            $this->assertCount(0, $this->getHttpCalls());
+            return;
+        }
 
         $calls = $this->getHttpCalls();
         $this->assertCount(1, $calls);
@@ -1189,16 +1200,36 @@ PHP;
     }
 
     /**
-     * @return array<string, array{0: string}>
+     * @return array<string, array{0: string, 1: bool}>
      */
     public static function nonLoopbackProxyBaseProvider(): array
     {
         return [
-            'public_dns' => ['https://api.example.test'],
-            'unrelated_tld' => ['https://cdn.other-org.example'],
-            'bare_public_ipv4' => ['https://203.0.113.10'],
-            'bracketed_ipv6' => ['https://[2001:db8::1]'],
+            'public_dns' => ['https://api.example.test', false],
+            'unrelated_tld' => ['https://cdn.other-org.example', false],
+            'bare_public_ipv4' => ['https://203.0.113.10', false],
+            'global_ipv4' => ['https://93.184.216.34', false],
+            'public_ipv6' => ['https://[2606:4700:4700::1111]', false],
+            'bracketed_ipv6' => ['https://[2001:db8::1]', true],
         ];
+    }
+
+    public function testProxyCancellationPropagatesNonGlobalLiteralDenialWithoutSendingKey(): void
+    {
+        $this->setOption('acx_recognition_url', 'https://[::ffff:127.0.0.1]');
+        $this->setOption('acx_recognition_api_key', 'secret-must-not-leave');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"status":"cancelled"}',
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/jobs/test-123/cancel');
+        $request->set_param('job_id', 'test-123');
+        $result = $this->controller->cancel_job($request);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('acx_egress_denied', $result->get_error_code());
+        $this->assertCount(0, $this->getHttpCalls(), 'No outbound call may carry X-API-Key to mapped loopback.');
     }
 
     /**

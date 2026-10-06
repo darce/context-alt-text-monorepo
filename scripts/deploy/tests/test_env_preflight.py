@@ -1,4 +1,4 @@
-"""Opt-in remote environment-manifest drift checks before deploy and promote."""
+"""Remote environment-manifest drift checks before deploy and promote."""
 
 from __future__ import annotations
 
@@ -28,11 +28,15 @@ def _repo_with_stub(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def _run(
-    tmp_path: Path, env_name: str, *, enabled: bool | None = True, extra: str = ""
+    tmp_path: Path, env_name: str, *, enabled: bool | str | None = True, extra: str = ""
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     repo, _ = _repo_with_stub(tmp_path)
     record_file = tmp_path / "argv.txt"
-    setup = "unset ACX_ENV_PREFLIGHT" if enabled is None else f"ACX_ENV_PREFLIGHT={int(enabled)}"
+    setup = (
+        "unset ACX_ENV_PREFLIGHT"
+        if enabled is None
+        else f"ACX_ENV_PREFLIGHT={shlex.quote(str(int(enabled) if isinstance(enabled, bool) else enabled))}"
+    )
     driver = f"""
 set -euo pipefail
 source {shlex.quote(str(SCRIPT))}
@@ -57,7 +61,7 @@ REPO_ROOT={shlex.quote(str(repo))}
     return result, record_file, repo
 
 
-def test_manifest_preflight_is_off_by_default(tmp_path: Path) -> None:
+def test_manifest_preflight_runs_by_default(tmp_path: Path) -> None:
     result, record_file, _ = _run(
         tmp_path,
         "dev",
@@ -66,7 +70,38 @@ def test_manifest_preflight_is_off_by_default(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "PREFLIGHT_OK" in result.stdout
-    assert "ACX_ENV_PREFLIGHT is not 1" in result.stdout
+    assert "Skipping environment manifest preflight" not in result.stdout
+    assert record_file.read_text(encoding="utf-8").splitlines() == [
+        "dev",
+        "svc-vm",
+        "--check",
+    ]
+
+
+def test_manifest_preflight_can_be_disabled_explicitly(tmp_path: Path) -> None:
+    result, record_file, _ = _run(
+        tmp_path,
+        "dev",
+        enabled=False,
+        extra="preflight_env_manifest dev\necho PREFLIGHT_OK",
+    )
+    assert result.returncode == 0, result.stderr
+    assert "PREFLIGHT_OK" in result.stdout
+    assert "ACX_ENV_PREFLIGHT is 0" in result.stdout
+    assert not record_file.exists()
+
+
+def test_manifest_preflight_rejects_unknown_flag_value(tmp_path: Path) -> None:
+    result, record_file, _ = _run(
+        tmp_path,
+        "dev",
+        enabled="maybe",
+        extra="preflight_env_manifest dev\necho PREFLIGHT_OK",
+    )
+    assert result.returncode != 0
+    assert "ACX_ENV_PREFLIGHT" in result.stderr
+    assert "maybe" in result.stderr
+    assert "PREFLIGHT_OK" not in result.stdout
     assert not record_file.exists()
 
 
@@ -108,13 +143,17 @@ def test_manifest_preflight_rejects_unmapped_deploy_env(tmp_path: Path) -> None:
     assert not record_file.exists()
 
 
-def test_manifest_preflight_failure_stops_deploy_before_remote_auth(tmp_path: Path) -> None:
+@pytest.mark.parametrize("stub_exit", [2, 4, 75])
+def test_manifest_preflight_failure_stops_deploy_before_remote_auth(
+    tmp_path: Path, stub_exit: int
+) -> None:
     order_file = tmp_path / "order.txt"
     result, record_file, repo = _run(
         tmp_path,
         "dev",
+        enabled=None,
         extra=f"""
-export STUB_EXIT=7
+    export STUB_EXIT={stub_exit}
 export ORDER_FILE={shlex.quote(str(order_file))}
 record() {{ printf '%s\\n' "$1" >> "$ORDER_FILE"; }}
 pin_deploy_sha() {{ DEPLOY_SHA=0000000000000000000000000000000000000000; }}
@@ -138,6 +177,7 @@ echo DEPLOY_CONTINUED
     ]
     diagnostic = result.stdout + result.stderr
     assert "dev" in diagnostic
+    assert f"exit {stub_exit}" in diagnostic
     assert f"bash {repo}/scripts/env/materialize_remote.sh dev svc-vm --check" in diagnostic
 
 
@@ -146,6 +186,7 @@ def test_manifest_preflight_runs_between_branch_sync_and_remote_auth(tmp_path: P
     result, record_file, _ = _run(
         tmp_path,
         "dev",
+        enabled=None,
         extra=f"""
 export ORDER_FILE={shlex.quote(str(order_file))}
 record() {{ printf '%s\\n' "$1" >> "$ORDER_FILE"; }}
@@ -180,7 +221,7 @@ _ship_selected_env dev aggregate
     [
         pytest.param(True, 0, "PROMOTE", 97, True, True, id="enabled"),
         pytest.param(True, 7, "PROMOTE", 1, True, False, id="drift-fails"),
-        pytest.param(None, 0, "PROMOTE", 97, False, True, id="off-by-default"),
+        pytest.param(None, 0, "PROMOTE", 97, True, True, id="unset-default-enabled"),
         pytest.param(True, 0, "", 1, False, False, id="confirmation-required"),
     ],
 )

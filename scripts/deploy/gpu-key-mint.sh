@@ -31,9 +31,10 @@ Bootstrap creates the secret only when absent. Rotation requires the explicit
 --rotate flag and reuses the existing secret OCID. The generated key travels
 only on the local writer's stdin and never enters argv, environment, files, or
 logs. The writer uses the operator's ~/.oci/config (DEFAULT profile); that identity
-needs permission to create/update secrets in acx-vault and use its encryption key.
-The backend VM's instance principal stays read-only. Requires a configured OCI
-CLI, GNU timeout (gtimeout from coreutils on macOS), and openssl. ACX_OCI_PYTHON
+needs manage secret-family, use vaults, and use keys in the compartment containing
+acx-vault. The backend VM's instance principal stays secret-read only (no Vault
+write grant). Requires a configured OCI CLI, GNU timeout (gtimeout from coreutils
+on macOS), and openssl. ACX_OCI_PYTHON
 may select an interpreter with the OCI SDK. On success, stdout is "<secret ocid> 64".
 USAGE
 }

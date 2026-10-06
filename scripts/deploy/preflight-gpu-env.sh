@@ -934,7 +934,7 @@ validate_side() {
         exit 1
     fi
     if [[ "$adapter" == gpu_* ]] && ! is_private_gpu_endpoint "$endpoint_url" "$endpoint_allowlist"; then
-        echo "ERROR [9] ${role} ACX_GPU_ENDPOINT_URL must use a private/loopback IP or an ACX_GPU_ENDPOINT_ALLOWLIST hostname (redacted length=${#endpoint_url})." >&2
+        echo "ERROR [9] ${role} ACX_GPU_ENDPOINT_URL must use a private non-loopback IP or an ACX_GPU_ENDPOINT_ALLOWLIST hostname (redacted length=${#endpoint_url})." >&2
         exit 1
     fi
 

@@ -87,11 +87,13 @@ PY
 # start timer before the worker waits for GPU readiness. The response must still
 # report cached=false, so a collision fails closed.
 media_id="$(python3 -c 'import secrets; print(secrets.randbelow(2_000_000_000) + 1)')"
+operation_id="live-gpu-verify-$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
 curl --fail-with-body --silent --show-error --max-time 30 \
     --config "$curl_config" \
     --form-string "tenant_id=${tenant_id}" \
     --form-string "media_ids=[${media_id}]" \
     --form-string "recognition_enabled=false" \
+    --form-string "operation_id=${operation_id}" \
     -F "image_${media_id}=@${smoke_image};type=image/png" \
     --output "$response_file" \
     "${base_url%/}/scene/describe/run"

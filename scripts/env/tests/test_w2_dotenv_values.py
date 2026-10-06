@@ -79,6 +79,34 @@ def test_command_substitutions_are_withheld_as_one_assignment(write_manifest, te
 
 
 @pytest.mark.parametrize(
+    "value",
+    [
+        "$((8 << 1))",
+        "$(echo $((8 << 1)))",
+        "$(echo $((16 >> 2)))",
+        "$(( (8 << (1 + 1)) ))",
+        "$( ((8 << 1)) )",
+    ],
+    ids=(
+        "arithmetic-expansion", "nested-left-shift", "nested-right-shift", "grouped-arithmetic",
+        "arithmetic-command",
+    ),
+)
+def test_arithmetic_shifts_keep_following_assignments_harvestable(write_manifest, value):
+    render = load_module("render_env")
+    module = load_module("harvest_extract")
+    root = _manifest(write_manifest, "NOTICE", "AFTER")
+    text = f"NOTICE={value}\nAFTER=visible\n"
+
+    assignments = render.shell_assignments(text)
+    result = _extract(module, root, text)
+
+    assert set(assignments) == {"NOTICE", "AFTER"}
+    assert result["values"] == {"AFTER": "visible"}
+    assert result["withheld"]["unparsed"] == ["NOTICE"]
+
+
+@pytest.mark.parametrize(
     "text",
     [
         "NOTICE=\\\n$(printf first\nLOG_LEVEL=private-fragment\nlast)\nAFTER=visible\n",

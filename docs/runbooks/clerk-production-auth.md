@@ -46,11 +46,12 @@ own variable names to a local env file; it does not write the service's
 Clerk session tokens include `azp` by default. They do **not** include `aud`,
 `email`, or boolean `email_verified` unless you add them.
 
-In **Sessions → Customize session token**, set:
+In **Sessions → Customize session token**, set `aud` to the production
+`ACX_CLERK_AUDIENCE` manifest value (`altcontext-portal`), then set:
 
 ```json
 {
-  "aud": "<the same string you will pass as --audience>",
+  "aud": "altcontext-portal",
   "email": "{{user.primary_email_address}}",
   "email_verified": "{{user.email_verified}}"
 }

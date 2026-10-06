@@ -20,6 +20,15 @@ class RecognitionTransportTest extends TestCase
         parent::setUp();
         require_once dirname(__DIR__, 2) . '/src/support/class-recognition-transport.php';
         require_once dirname(__DIR__, 2) . '/src/support/class-loopback-host.php';
+        RecognitionTransport::set_curl_capability_probe(static fn (string $scheme): bool => true);
+    }
+
+    protected function tearDown(): void
+    {
+        RecognitionTransport::set_curl_capability_probe(null);
+        RecognitionTransport::set_curl_resolve_applier(null);
+        RecognitionTransport::set_http_api_curl_runner(null);
+        parent::tearDown();
     }
 
     /**
@@ -787,10 +796,39 @@ class RecognitionTransportTest extends TestCase
     public function testPublicResolutionStillUsesSafeHttpAndRemovesCurlAction(): void
     {
         RecognitionTransport::set_resolver(static fn (string $host): array => ['93.184.216.34']);
+        $appliedPins = [];
+        $before = 0;
+        RecognitionTransport::set_curl_resolve_applier(
+            static function ($handle, array $value) use (&$appliedPins): void {
+                $appliedPins[] = $value;
+            }
+        );
+        RecognitionTransport::set_http_api_curl_runner(
+            function (callable $callback, callable $request, string $url) use (&$appliedPins, &$before): mixed {
+                $registered = $GLOBALS['__ac_actions']['http_api_curl'][10] ?? [];
+                $this->assertCount($before + 1, $registered, 'the pin callback must be registered during transport');
+                $this->assertSame($callback, $registered[0]['callback'] ?? null);
+
+                $handle = (object) [];
+                $callback($handle, [], 'https://other.example.test/health');
+                $this->assertSame([], $appliedPins, 'a different host must remain unpinned');
+                $callback($handle, [], 'https://api.example.test:8443/health');
+                $this->assertSame([], $appliedPins, 'a different port must remain unpinned');
+                $callback($handle, [], $url);
+                $this->assertSame(
+                    [['api.example.test:443:93.184.216.34']],
+                    $appliedPins,
+                    'the matching host and port must receive the validated CURLOPT_RESOLVE pin'
+                );
+
+                return $request();
+            }
+        );
 
         foreach (['get', 'request'] as $method) {
             $GLOBALS['__ac_http_calls'] = [];
             $before = self::httpApiCurlActionCount();
+            $appliedPins = [];
             $this->queueHttpResponse([
                 'response' => ['code' => 200, 'message' => 'OK'],
                 'body' => 'ok',
@@ -807,6 +845,61 @@ class RecognitionTransportTest extends TestCase
             $this->assertTrue(!empty($calls[0]['safe']), $method . ' must reach the safe WordPress HTTP API');
             $this->assertSame($before, self::httpApiCurlActionCount(), 'request-scoped cURL action must be removed');
         }
+    }
+
+    public function testPublicResolutionFailsClosedWhenRequestsCannotUseCurl(): void
+    {
+        RecognitionTransport::set_resolver(static fn (string $host): array => ['93.184.216.34']);
+        $probedSchemes = [];
+        RecognitionTransport::set_curl_capability_probe(
+            static function (string $scheme) use (&$probedSchemes): bool {
+                $probedSchemes[] = $scheme;
+                return false;
+            }
+        );
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => 'must not be sent',
+        ]);
+
+        $result = RecognitionTransport::get('https://api.example.test/health', [
+            'headers' => ['X-API-Key' => 'fake-test-key'],
+            'timeout' => 5,
+        ]);
+
+        $this->assertInstanceOf(\WP_Error::class, $result);
+        $this->assertSame('acx_egress_pin_unavailable', $result->get_error_code());
+        $this->assertSame(
+            'Recognition egress pin is unavailable because the WordPress HTTP transport cannot use cURL.',
+            $result->get_error_message()
+        );
+        $this->assertSame(['https'], $probedSchemes, 'HTTPS capability must include the TLS cURL check');
+        $this->assertCount(0, $this->getHttpCalls(), 'a request without a usable pin must not send credentials');
+        $this->assertSame(0, self::httpApiCurlActionCount());
+    }
+
+    public function testLoopbackStillSendsWhenCurlPinIsUnavailable(): void
+    {
+        $probedSchemes = [];
+        RecognitionTransport::set_curl_capability_probe(
+            static function (string $scheme) use (&$probedSchemes): bool {
+                $probedSchemes[] = $scheme;
+                return false;
+            }
+        );
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => 'ok',
+        ]);
+
+        $result = RecognitionTransport::get('http://[::1]:8000/health', ['timeout' => 5]);
+
+        $this->assertIsArray($result);
+        $this->assertSame([], $probedSchemes, 'loopback must bypass the remote cURL pin gate');
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertArrayNotHasKey('safe', $calls[0], 'loopback must keep using the plain local transport');
+        $this->assertSame(0, self::httpApiCurlActionCount());
     }
 
     /**
@@ -826,7 +919,20 @@ class RecognitionTransportTest extends TestCase
             'link_local_ipv6' => ['fe80::1', false],
             'multicast_ipv6' => ['ff02::1', false],
             'unspecified_ipv6' => ['::', false],
+            'ipv6_loopback' => ['::1', false],
+            'nat64_well_known_private_embedding' => ['64:ff9b::a9fe:a9fe', false],
+            'nat64_well_known_rfc1918_embedding' => ['64:ff9b::a00:5', false],
+            'nat64_local_use' => ['64:ff9b:1::a00:5', false],
+            'six_to_four_private_embedding' => ['2002:a9fe:a9fe::1', false],
+            'teredo_private_embedding' => ['2001:0:a9fe:a9fe::1', false],
+            'ipv4_compatible_private_embedding' => ['::a9fe:a9fe', false],
+            'ipv4_translated_private_embedding' => ['::ffff:0:a9fe:a9fe', false],
+            'discard_only_ipv6' => ['100::1', false],
+            'site_local_ipv6' => ['fec0::1', false],
+            'protocol_assignment_ipv4' => ['192.0.0.170', false],
+            'benchmark_ipv4' => ['198.18.0.1', false],
             'mapped_private_ipv4' => ['::ffff:169.254.169.254', false],
+            'mapped_public_ipv4' => ['::ffff:93.184.216.34', true],
             'invalid_address' => ['not-an-ip', false],
         ];
     }

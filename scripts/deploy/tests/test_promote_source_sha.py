@@ -43,8 +43,10 @@ fail() {{ printf 'xx %s\\n' "$*" >&2; exit 1; }}
 record() {{ printf '%s\\n' "$1" >> "$RECORD"; }}
 init_deploy_ocir_docker_config() {{ record init_deploy_ocir_docker_config; }}
 preflight_ssh() {{ record preflight_ssh; }}
+preflight_env_manifest() {{ record preflight_env_manifest; }}
 preflight_remote_face_pipeline_models() {{ record preflight_remote_face_pipeline_models; }}
 preflight_remote_ocir_auth() {{ record preflight_remote_ocir_auth; }}
+deploy_env_lease() {{ record deploy_env_lease; }}
 preserve_rollback_tag() {{ record preserve_rollback_tag; ACX_ROLLBACK_DIGEST_REF=rollback-ref; }}
 capture_prior_runtime_identity() {{ record capture_prior_runtime_identity; }}
 preflight_remote_docker() {{ record preflight_remote_docker; }}

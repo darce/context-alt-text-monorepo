@@ -918,6 +918,87 @@ def test_cli_verify_assets_refuses_shadowed_or_escaped_consumer_bindings(tmp_pat
     assert FAKE_LIVE_KEY not in result.stdout + result.stderr
 
 
+@pytest.mark.parametrize("field", ["VITE_CLERK_PUBLISHABLE_KEY", "VITE_CLERK_FAPI"], ids=["key", "fapi"])
+@pytest.mark.parametrize(
+    "operator",
+    ["%=", "**=", "<<=", ">>=", ">>>=", "&=", "|=", "^=", "&&=", "||=", "??="],
+    ids=["remainder", "exponent", "left-shift", "right-shift", "unsigned-right-shift", "and", "or", "xor", "logical-and", "logical-or", "nullish"],
+)
+@pytest.mark.parametrize("parenthesized", [False, True], ids=["direct", "parenthesized"])
+def test_cli_verify_assets_rejects_all_consumer_parameter_assignments(
+    tmp_path: Path, field: str, operator: str, parenthesized: bool
+) -> None:
+    root = _manifest_root(tmp_path)
+    reachable = tmp_path / "entry.js"
+    stale_value = '"https://stale.fake-review.invalid"'
+    target = f"env.{field}"
+    if parenthesized:
+        target = f"(({target}))"
+    reachable.write_text(
+        "function parsePortalConfig(env) { "
+        f"{target} {operator} {stale_value}; "
+        "return { publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        "parsePortalConfig(env);\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--root", str(root), "--verify-assets"],
+        input=f"{reachable}\n",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "VITE_CLERK_FAPI" in result.stderr
+    assert FAKE_LIVE_KEY not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("field", ["VITE_CLERK_PUBLISHABLE_KEY", "VITE_CLERK_FAPI"], ids=["key", "fapi"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "delete (({target}));",
+        "++(({target}));",
+        "--(({target}));",
+        "(({target}))++;",
+        "(({target}))--;",
+    ],
+    ids=["delete", "prefix-increment", "prefix-decrement", "postfix-increment", "postfix-decrement"],
+)
+def test_cli_verify_assets_rejects_parenthesized_consumer_parameter_updates(
+    tmp_path: Path, field: str, mutation: str
+) -> None:
+    root = _manifest_root(tmp_path)
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function parsePortalConfig(env) { "
+        f"{mutation.format(target=f'env.{field}')} "
+        "return { publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        "parsePortalConfig(env);\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--root", str(root), "--verify-assets"],
+        input=f"{reachable}\n",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "VITE_CLERK_FAPI" in result.stderr
+    assert FAKE_LIVE_KEY not in result.stdout + result.stderr
+
+
 def test_cli_verify_assets_accepts_matching_static_bundle(tmp_path: Path) -> None:
     root = _manifest_root(tmp_path)
     reachable = tmp_path / "entry.js"

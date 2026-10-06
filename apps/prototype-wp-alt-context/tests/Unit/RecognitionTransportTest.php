@@ -95,6 +95,9 @@ class RecognitionTransportTest extends TestCase
     }
 
     /**
+     * SECHARD-1 / SECD-05: sh-ranges intentionally denies documentation IPv4;
+     * keep a separate global literal to exercise admitted bare IPv4.
+     *
      * @return array<string, array{0: string, 1: bool}>
      */
     public static function nonLoopbackHostProvider(): array
@@ -102,7 +105,8 @@ class RecognitionTransportTest extends TestCase
         return [
             'public_dns' => ['https://api.example.test/health', false],
             'unrelated_tld' => ['https://cdn.other-org.example/v1', false],
-            'bare_public_ipv4' => ['https://203.0.113.10/probe', false],
+            'bare_public_ipv4' => ['https://8.8.8.8/probe', false],
+            'documentation_ipv4' => ['https://203.0.113.10/probe', true],
             'global_ipv4' => ['https://93.184.216.34/probe', false],
             'public_ipv6' => ['https://[2606:4700:4700::1111]/probe', false],
             'bracketed_ipv6' => ['https://[2001:db8::1]/probe', true],
@@ -277,7 +281,12 @@ class RecognitionTransportTest extends TestCase
             // Match RecognitionTransport: parse_url host, lowercased.
             $parsedHost = strtolower((string) (parse_url($url, PHP_URL_HOST) ?? ''));
             $expectedPlain = LoopbackHost::is_loopback($parsedHost);
-            $expectedDenied = str_starts_with($parsedHost, '[2001:db8:') || in_array($parsedHost, [
+            // SECHARD-1 / SECD-05: independently pin sh-ranges' intended
+            // documentation IPv4 denial without consulting the production validator.
+            $expectedDenied = str_starts_with($parsedHost, '192.0.2.')
+                || str_starts_with($parsedHost, '198.51.100.')
+                || str_starts_with($parsedHost, '203.0.113.')
+                || str_starts_with($parsedHost, '[2001:db8:') || in_array($parsedHost, [
                 'localhost.evil.test', 'localhost.', '127.1', '0.0.0.0',
                 '2130706433', '[::ffff:127.0.0.1]', '127.0.0.1.attacker.invalid',
             ], true);
@@ -348,7 +357,7 @@ class RecognitionTransportTest extends TestCase
     }
 
     /**
-     * Programmatic host corpus: DNS fixtures, bare public IPv4,
+     * Programmatic host corpus: DNS fixtures, global and documentation IPv4,
      * bracketed IPv6 (including denied documentation addresses), and loopback.
      * Userinfo-bearing and other adversarial forms that need hardcoded
      * expectations live in transportSafeChoiceHardcodedProvider.
@@ -359,8 +368,8 @@ class RecognitionTransportTest extends TestCase
     {
         $hosts = self::generateOracleDnsHostCorpus();
 
-        // Preserve the existing IPv4 corpus (the production PHP validator
-        // admits these documentation ranges), and add a public range.
+        // Preserve the existing IPv4 corpus, including documentation ranges
+        // denied by SECHARD-1 / SECD-05, alongside global ranges.
         foreach ([10, 20, 30, 40, 50, 100, 113, 200] as $third) {
             $hosts[] = '203.0.' . $third . '.10';
             $hosts[] = '198.51.100.' . $third;

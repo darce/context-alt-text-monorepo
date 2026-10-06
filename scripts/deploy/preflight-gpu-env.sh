@@ -322,16 +322,14 @@ validate_runtime_gpu_settings() {
     fi
 
     value="$(env_get "$file" ACX_GPU_ENDPOINT_ALLOWLIST)"
-    [[ -n "$value" ]] || {
-        echo "ERROR [10] producer ACX_GPU_ENDPOINT_ALLOWLIST must be a non-empty comma-separated hostname pattern list." >&2
-        exit 1
-    }
-    while IFS= read -r entry || [[ -n "$entry" ]]; do
-        if [[ -z "$entry" || "$entry" =~ [[:space:]] || ! "$entry" =~ ^(\*\.)?[A-Za-z0-9][A-Za-z0-9._?-]*$ ]]; then
-            echo "ERROR [10] producer ACX_GPU_ENDPOINT_ALLOWLIST contains an invalid hostname pattern; values are redacted." >&2
-            exit 1
-        fi
-    done < <(printf '%s' "$value" | tr ',' '\n')
+    if [[ -n "$value" ]]; then
+        while IFS= read -r entry || [[ -n "$entry" ]]; do
+            if [[ -z "$entry" || "$entry" =~ [[:space:]] || ! "$entry" =~ ^(\*\.)?[A-Za-z0-9][A-Za-z0-9._?-]*$ ]]; then
+                echo "ERROR [10] producer ACX_GPU_ENDPOINT_ALLOWLIST contains an invalid hostname pattern; values are redacted." >&2
+                exit 1
+            fi
+        done < <(printf '%s' "$value" | tr ',' '\n')
+    fi
 
     value="$(env_get "$file" ACX_GPU_PROMPT_VERSION)"
     if is_placeholder "$value"; then

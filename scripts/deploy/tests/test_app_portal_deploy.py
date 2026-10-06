@@ -1048,6 +1048,14 @@ def test_apply_refuses_invalid_staged_frontend_without_touching_live_or_rollback
         ("fapi-literal-concat", "VITE_CLERK_FAPI"),
         ("fapi-identifier-concat", "VITE_CLERK_FAPI"),
         ("object-logical-alias", "VITE_CLERK_FAPI"),
+        ("computed-fapi-override", "VITE_CLERK_FAPI"),
+        ("getter-fapi-override", "VITE_CLERK_FAPI"),
+        ("unknown-computed-member", "VITE_CLERK_FAPI"),
+        ("template-fapi-mutation", "VITE_CLERK_FAPI"),
+        ("nested-template-alias-mutation", "VITE_CLERK_FAPI"),
+        ("shadowed-fapi-param", "VITE_CLERK_FAPI"),
+        ("shadowed-fapi-let", "VITE_CLERK_FAPI"),
+        ("shadowed-fapi-arrow", "VITE_CLERK_FAPI"),
     ],
 )
 def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
@@ -1153,6 +1161,79 @@ def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
             ),
             encoding="utf-8",
         )
+    elif failure == "computed-fapi-override":
+        module.write_text(
+            _clerk_alias_config_module(
+                f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+                'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true", '
+                '["VITE_CLERK_FAPI"]: "https://stale.fake-review.invalid" };'
+            ),
+            encoding="utf-8",
+        )
+    elif failure == "getter-fapi-override":
+        module.write_text(
+            _clerk_alias_config_module(
+                f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+                'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true", '
+                'get VITE_CLERK_FAPI() { return "https://stale.fake-review.invalid"; } };'
+            ),
+            encoding="utf-8",
+        )
+    elif failure == "unknown-computed-member":
+        module.write_text(
+            _clerk_alias_config_module(
+                f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+                'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true", '
+                '[overrideName]: "https://stale.fake-review.invalid" };'
+            ),
+            encoding="utf-8",
+        )
+    elif failure == "template-fapi-mutation":
+        module.write_text(
+            _clerk_alias_config_module(
+                f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+                'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" }; '
+                'const note = `${env.VITE_CLERK_FAPI = "https://stale.fake-review.invalid"}`;'
+            ),
+            encoding="utf-8",
+        )
+    elif failure == "nested-template-alias-mutation":
+        module.write_text(
+            _clerk_alias_config_module(
+                f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+                'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" }; '
+                'const alias = env; const note = `${`${alias.VITE_CLERK_FAPI = "https://stale.fake-review.invalid"}`}`;'
+            ),
+            encoding="utf-8",
+        )
+    elif failure in {"shadowed-fapi-param", "shadowed-fapi-let", "shadowed-fapi-arrow"}:
+        if failure == "shadowed-fapi-param":
+            binding = (
+                f'const fapi = "https://clerk.altcontext.com"; function build(fapi) {{ '
+                f'parsePortalConfig({{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+                'VITE_CLERK_FAPI: fapi, VITE_PORTAL_ENABLED: "true" }); } '
+                'build("https://stale.fake-review.invalid");'
+            )
+        elif failure == "shadowed-fapi-let":
+            binding = (
+                f'const fapi = "https://clerk.altcontext.com"; function build() {{ '
+                'let fapi = "https://stale.fake-review.invalid"; '
+                f'parsePortalConfig({{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+                'VITE_CLERK_FAPI: fapi, VITE_PORTAL_ENABLED: "true" }); } build();'
+            )
+        else:
+            binding = (
+                f'const fapi = "https://clerk.altcontext.com"; const build = (fapi) => {{ '
+                f'parsePortalConfig({{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+                'VITE_CLERK_FAPI: fapi, VITE_PORTAL_ENABLED: "true" }); }; '
+                'build("https://stale.fake-review.invalid");'
+            )
+        module.write_text(
+            "function parsePortalConfig(env) { return {"
+            "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+            f"{binding}\n",
+            encoding="utf-8",
+        )
 
     result = _run(
         tmp_path,
@@ -1172,7 +1253,19 @@ def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
     assert not (app_root / "activation.journal").exists()
 
 
-def test_apply_accepts_frontend_with_complete_static_clerk_aliases(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        'if (true) /[}]/.test("}");',
+        'const unused = typeof /[}]/;',
+        'const unused = void /[/]/;',
+        'const quotient = 12 / 3;',
+    ],
+    ids=["control-header-regex", "typeof-regex", "void-regex-class", "division"],
+)
+def test_apply_accepts_frontend_with_complete_static_clerk_aliases_and_valid_syntax(
+    tmp_path: Path, suffix: str
+) -> None:
     live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
     _write_live_caddy(live)
     dist = _write_frontend(tmp_path)
@@ -1182,7 +1275,7 @@ def test_apply_accepts_frontend_with_complete_static_clerk_aliases(tmp_path: Pat
             'const expectedFapi = "https://clerk.altcontext.com"; const liveFapi = expectedFapi; '
             "const env = { VITE_CLERK_PUBLISHABLE_KEY: liveKey, VITE_CLERK_FAPI: liveFapi, "
             'VITE_PORTAL_ENABLED: "true" };'
-        ),
+        ) + suffix,
         encoding="utf-8",
     )
 

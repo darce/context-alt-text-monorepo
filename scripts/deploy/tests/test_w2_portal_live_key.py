@@ -175,6 +175,33 @@ def test_cli_accepts_complete_static_asset_aliases(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    "aliases",
+    [
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true", '
+        '["VITE_CLERK_FAPI"]: "https://stale.fake-review.invalid" };',
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true", '
+        'get VITE_CLERK_FAPI() { return "https://stale.fake-review.invalid"; } };',
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" }; '
+        'const note = `${env.VITE_CLERK_FAPI = "https://stale.fake-review.invalid"}`;',
+    ],
+    ids=["computed-fapi-override", "getter-fapi-override", "template-fapi-mutation"],
+)
+def test_cli_rejects_dynamic_portal_config_overrides(tmp_path: Path, aliases: str) -> None:
+    root = _write_manifest(tmp_path)
+    asset = tmp_path / "entry.js"
+    asset.write_text(_config_module(aliases), encoding="utf-8")
+
+    result = _run_cli(root, "--verify-assets", input_data=f"{asset}\n")
+
+    assert result.returncode != 0
+    assert "VITE_CLERK_FAPI" in result.stderr
+    assert FAKE_LIVE_KEY not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
     ("field", "value", "expected_name"),
     [
         ("publishable_key", "pk_test_not-production", "VITE_CLERK_PUBLISHABLE_KEY"),

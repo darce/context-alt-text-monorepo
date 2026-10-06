@@ -33,6 +33,7 @@ MAX_FRONTEND_MODULES = 512
 MAX_FRONTEND_MODULE_BYTES = 16 * 1024 * 1024
 MAX_FRONTEND_TOTAL_BYTES = 128 * 1024 * 1024
 MAX_FRONTEND_TOKENS = 2_000_000
+MAX_FRONTEND_TEMPLATE_DEPTH = 32
 _CLERK_KEY_FIELD = "VITE_CLERK_PUBLISHABLE_KEY"
 _CLERK_FAPI_FIELD = "VITE_CLERK_FAPI"
 _PORTAL_ENABLED_FIELD = "VITE_PORTAL_ENABLED"
@@ -208,14 +209,63 @@ def _skip_quoted_javascript(source: str, start: int) -> tuple[int, str, str | No
     raise ClerkConfigError("reachable JavaScript module has an unterminated string")
 
 
-def _template_regex_can_start(source: str, expression_start: int, index: int) -> bool:
-    prefix = source[expression_start:index].rstrip()
-    return bool(prefix) and (
-        prefix[-1] in "=(:,[!&|?{};" or prefix.endswith(("return", "throw", "case", "yield", "await"))
+_CONTROL_PAREN_KEYWORDS = frozenset({"catch", "for", "if", "switch", "while", "with"})
+_REGEX_PREFIX_KEYWORDS = frozenset({"await", "case", "delete", "return", "throw", "typeof", "void", "yield"})
+
+
+def _control_header_precedes_paren(tokens: Sequence[_JSToken]) -> bool:
+    previous_index = len(tokens) - 2
+    if (
+        previous_index < 0
+        or tokens[previous_index].kind != "identifier"
+        or tokens[previous_index].value not in _CONTROL_PAREN_KEYWORDS
+    ):
+        if (
+            previous_index < 1
+            or tokens[previous_index].kind != "identifier"
+            or tokens[previous_index].value != "await"
+        ):
+            return False
+        if tokens[previous_index - 1].kind != "identifier" or tokens[previous_index - 1].value != "for":
+            return False
+        keyword_index = previous_index - 1
+    else:
+        keyword_index = previous_index
+    return keyword_index == 0 or not (
+        tokens[keyword_index - 1].kind == "punct" and tokens[keyword_index - 1].value in {".", "?."}
     )
 
 
-def _skip_template_expression(source: str, start: int) -> int:
+def _template_regex_can_start(source: str, expression_start: int, index: int) -> bool:
+    prefix = source[expression_start:index].rstrip()
+    if not prefix:
+        return True
+    if prefix[-1] in "=(:,[!&|?{};+-*/%^~<>":
+        return True
+    keyword = re.search(r"\b(" + "|".join(sorted(_REGEX_PREFIX_KEYWORDS)) + r")\s*$", prefix)
+    if keyword and not prefix[: keyword.start()].rstrip().endswith((".", "?.")):
+        return True
+    if not prefix.endswith(")"):
+        return False
+    depth = 0
+    for open_index in range(len(prefix) - 1, -1, -1):
+        if prefix[open_index] == ")":
+            depth += 1
+        elif prefix[open_index] == "(":
+            depth -= 1
+            if depth == 0:
+                keyword = re.search(r"([A-Za-z_$][A-Za-z0-9_$]*)\s*$", prefix[:open_index])
+                if keyword is None:
+                    return False
+                word = keyword.group(1)
+                if word == "await":
+                    return bool(re.search(r"\bfor\s+$", prefix[: keyword.start()]))
+                before_keyword = prefix[: keyword.start()].rstrip()
+                return word in _CONTROL_PAREN_KEYWORDS and not before_keyword.endswith((".", "?."))
+    return False
+
+
+def _skip_template_expression(source: str, start: int, depth: int = 0) -> int:
     depth = 0
     index = start
     while index < len(source):
@@ -224,7 +274,7 @@ def _skip_template_expression(source: str, start: int) -> int:
             index, _, _ = _skip_quoted_javascript(source, index)
             continue
         if char == "`":
-            index = _skip_template_javascript(source, index)
+            index = _skip_template_javascript(source, index, depth + 1)
             continue
         if source.startswith("//", index):
             newline = source.find("\n", index + 2)
@@ -251,20 +301,31 @@ def _skip_template_expression(source: str, start: int) -> int:
     raise ClerkConfigError("reachable JavaScript module has an unterminated template expression")
 
 
-def _skip_template_javascript(source: str, start: int) -> int:
+def _template_interpolations(source: str, start: int, depth: int = 0) -> tuple[int, list[str]]:
+    if depth > MAX_FRONTEND_TEMPLATE_DEPTH:
+        raise ClerkConfigError("reachable JavaScript template nesting exceeds the static inspection limit")
     index = start + 1
+    expressions: list[str] = []
     while index < len(source):
         char = source[index]
         if char == "\\":
             index += 2
             continue
         if char == "`":
-            return index + 1
+            return index + 1, expressions
         if source.startswith("${", index):
-            index = _skip_template_expression(source, index + 2)
+            expression_start = index + 2
+            expression_end = _skip_template_expression(source, expression_start, depth + 1)
+            expressions.append(source[expression_start : expression_end - 1])
+            index = expression_end
             continue
         index += 1
     raise ClerkConfigError("reachable JavaScript module has an unterminated template")
+
+
+def _skip_template_javascript(source: str, start: int, depth: int = 0) -> int:
+    end, _ = _template_interpolations(source, start, depth)
+    return end
 
 
 def _regex_can_start(tokens: Sequence[_JSToken]) -> bool:
@@ -272,8 +333,11 @@ def _regex_can_start(tokens: Sequence[_JSToken]) -> bool:
         return True
     previous = tokens[-1]
     return previous.kind == "punct" and previous.value in {
-        "=", "(", "[", "{", ",", ":", ";", "!", "?", "=>", "&&", "||", "??"
-    } or previous.kind == "identifier" and previous.value in {"return", "throw", "case", "yield", "await"}
+        "=", "(", "[", "{", ",", ":", ";", "!", "?", "=>", "&&", "||", "??", "+", "-", "*", "/", "%", "^", "~",
+        "<", ">", "<=", ">=", "==", "===", "!=", "!==", "&", "|",
+    } or previous.kind == "identifier" and previous.value in _REGEX_PREFIX_KEYWORDS and not (
+        len(tokens) > 1 and tokens[-2].kind == "punct" and tokens[-2].value in {".", "?."}
+    )
 
 
 def _skip_regex_javascript(source: str, start: int) -> int:
@@ -301,10 +365,12 @@ def _skip_regex_javascript(source: str, start: int) -> int:
     raise ClerkConfigError("reachable JavaScript module has an unterminated regular expression")
 
 
-def _tokenize_javascript(source: str) -> list[_JSToken]:
+def _tokenize_javascript(source: str, template_depth: int = 0) -> list[_JSToken]:
     tokens: list[_JSToken] = []
     index = 0
     last_token_end = 0
+    paren_context: list[bool] = []
+    regex_after_control_header = False
     operators = ("===", "!==", "=>", "==", "!=", "<=", ">=", "++", "--", "+=", "-=", "*=", "/=", "&&", "||", "??", "...", "?.")
     while index < len(source):
         char = source[index]
@@ -323,14 +389,21 @@ def _tokenize_javascript(source: str) -> list[_JSToken]:
             continue
         token_start = index
         line_break_before = any(char in source[last_token_end:token_start] for char in "\r\n")
+        first_token_index = len(tokens)
         if char in "'\"":
             index, raw, value = _skip_quoted_javascript(source, index)
             tokens.append(_JSToken("string", value, raw, line_break_before))
         elif char == "`":
-            end = _skip_template_javascript(source, index)
+            end, expressions = _template_interpolations(source, index, template_depth + 1)
             tokens.append(_JSToken("template", None, source[index + 1 : end - 1], line_break_before))
+            for expression in expressions:
+                tokens.append(_JSToken("template_expr_start", None, ""))
+                tokens.extend(_tokenize_javascript(expression, template_depth + 1))
+                tokens.append(_JSToken("template_expr_end", None, ""))
+                if len(tokens) > MAX_FRONTEND_TOKENS:
+                    raise ClerkConfigError("reachable JavaScript module exceeds the static inspection limit")
             index = end
-        elif char == "/" and _regex_can_start(tokens):
+        elif char == "/" and (regex_after_control_header or _regex_can_start(tokens)):
             end = _skip_regex_javascript(source, index)
             tokens.append(_JSToken("regex", None, source[index:end], line_break_before))
             index = end
@@ -348,6 +421,14 @@ def _tokenize_javascript(source: str) -> list[_JSToken]:
             else:
                 tokens.append(_JSToken("punct", char, char, line_break_before))
                 index += 1
+        token = tokens[first_token_index]
+        if _is_punct(token, "("):
+            paren_context.append(_control_header_precedes_paren(tokens))
+            regex_after_control_header = False
+        elif _is_punct(token, ")"):
+            regex_after_control_header = paren_context.pop() if paren_context else False
+        else:
+            regex_after_control_header = False
         last_token_end = index
         if len(tokens) > MAX_FRONTEND_TOKENS:
             raise ClerkConfigError("reachable JavaScript module exceeds the static inspection limit")
@@ -356,6 +437,18 @@ def _tokenize_javascript(source: str) -> list[_JSToken]:
 
 def _is_punct(token: _JSToken, value: str) -> bool:
     return token.kind == "punct" and token.value == value
+
+
+def _skip_template_expression_tokens(tokens: Sequence[_JSToken], start: int) -> int:
+    depth = 0
+    for index in range(start, len(tokens)):
+        if tokens[index].kind == "template_expr_start":
+            depth += 1
+        elif tokens[index].kind == "template_expr_end":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    raise ClerkConfigError("reachable JavaScript module has an unterminated template expression")
 
 
 def _javascript_delimiters(tokens: Sequence[_JSToken]) -> tuple[dict[int, int], list[tuple[int, ...]]]:
@@ -386,40 +479,85 @@ def _object_fields(
     close_index = pairs[open_index]
     fields: dict[str, tuple[int, int]] = {}
     has_spread = False
+    has_computed = False
+    has_accessor = False
+    has_unsupported_member = False
+    supported_names: set[str] = set()
+    members: list[tuple[int, int]] = []
     index = open_index + 1
     while index < close_index:
-        token = tokens[index]
-        if _is_punct(token, ","):
+        member_start = index
+        while index < close_index:
+            if tokens[index].kind == "template_expr_start":
+                index = _skip_template_expression_tokens(tokens, index)
+            elif tokens[index].kind == "punct" and tokens[index].value in {"{", "[", "("}:
+                index = pairs[index] + 1
+            elif _is_punct(tokens[index], ","):
+                break
+            else:
+                index += 1
+        if index > member_start:
+            members.append((member_start, index))
+        if index < close_index and _is_punct(tokens[index], ","):
             index += 1
-            continue
+
+    def note_supported_name(name: str | None) -> None:
+        if name not in _FRONTEND_CONFIG_FIELDS:
+            return
+        if name in supported_names:
+            raise ClerkConfigError(f"{name}: portal configuration binding is ambiguous")
+        supported_names.add(name)
+
+    for member_start, member_end in members:
+        token = tokens[member_start]
         if _is_punct(token, "..."):
             has_spread = True
+            continue
+        if _is_punct(token, "["):
+            has_computed = True
+            if member_start + 2 < member_end and _is_punct(tokens[member_start + 2], "]"):
+                note_supported_name(tokens[member_start + 1].value)
+            continue
+
+        property_index = member_start
+        accessor = False
         if (
-            token.kind in {"identifier", "string"}
-            and index + 1 < close_index
-            and _is_punct(tokens[index + 1], ":")
+            token.kind == "identifier"
+            and token.value in {"get", "set"}
+            and member_start + 2 < member_end
+            and not _is_punct(tokens[member_start + 1], ":")
         ):
-            name = token.value
-            if name in _FRONTEND_CONFIG_FIELDS:
-                if name in fields:
-                    raise ClerkConfigError(f"{name}: portal configuration binding is ambiguous")
-                value_start = index + 2
-                value_end = value_start
-                while value_end < close_index:
-                    value_token = tokens[value_end]
-                    if value_token.kind == "punct" and value_token.value in {"{", "[", "("}:
-                        value_end = pairs[value_end] + 1
-                    elif _is_punct(value_token, ","):
-                        break
-                    else:
-                        value_end += 1
-                fields[name] = (value_start, value_end)
-                index = value_end + 1
+            accessor = True
+            property_index = member_start + 1
+            if _is_punct(tokens[property_index], "["):
+                has_computed = True
                 continue
-        if token.kind == "punct" and token.value in {"{", "[", "("}:
-            index = pairs[index] + 1
-        else:
-            index += 1
+        property_token = tokens[property_index]
+        name = property_token.value if property_token.kind in {"identifier", "string"} else None
+        if accessor:
+            has_accessor = True
+            note_supported_name(name)
+            continue
+        if property_index + 1 < member_end and _is_punct(tokens[property_index + 1], "("):
+            has_accessor = True
+            note_supported_name(name)
+            continue
+        if property_index + 1 < member_end and _is_punct(tokens[property_index + 1], ":"):
+            if name in _FRONTEND_CONFIG_FIELDS:
+                note_supported_name(name)
+                fields[name] = (property_index + 2, member_end)
+            elif name is None:
+                has_unsupported_member = True
+            continue
+        if name in _FRONTEND_CONFIG_FIELDS:
+            note_supported_name(name)
+            has_unsupported_member = True
+        elif property_index != member_start or member_end - member_start != 1:
+            has_unsupported_member = True
+
+    is_candidate = bool(supported_names or fields)
+    if is_candidate and (has_spread or has_computed or has_accessor or has_unsupported_member):
+        raise ClerkConfigError("VITE_CLERK_FAPI: portal configuration record contains unsupported members")
     return fields, has_spread
 
 
@@ -450,41 +588,57 @@ def _initializer_ends_here(tokens: Sequence[_JSToken], next_index: int) -> bool:
     return True
 
 
+def _nearest_lexical_binding(
+    name: str,
+    tokens: Sequence[_JSToken],
+    scopes: Sequence[tuple[int, ...]],
+    use_scope: tuple[int, ...],
+    pairs: dict[int, int],
+) -> tuple[str, tuple[int, ...], int]:
+    bindings, _ = _config_binding_shadows(tokens, scopes, pairs)
+    visible = [
+        binding
+        for binding in bindings
+        if binding[0] == name
+        and len(binding[1]) <= len(use_scope)
+        and use_scope[: len(binding[1])] == binding[1]
+    ]
+    if not visible:
+        raise ClerkConfigError("VITE_CLERK_FAPI: configuration alias is unsupported")
+    nearest_scope_size = max(len(binding[1]) for binding in visible)
+    nearest = [binding for binding in visible if len(binding[1]) == nearest_scope_size]
+    if len(nearest) != 1:
+        raise ClerkConfigError("VITE_CLERK_FAPI: configuration alias is ambiguous")
+    return nearest[0]
+
+
 def _resolve_static_alias(
     name: str,
     tokens: Sequence[_JSToken],
     scopes: Sequence[tuple[int, ...]],
     use_scope: tuple[int, ...],
     before_index: int,
+    pairs: dict[int, int],
     seen: frozenset[tuple[str, tuple[int, ...], int]] = frozenset(),
 ) -> str:
-    declarations: list[tuple[int, tuple[int, ...], _JSToken]] = []
-    index = 0
-    while index + 3 < before_index:
-        if (
-            tokens[index].kind == "identifier"
-            and tokens[index].value == "const"
-            and tokens[index + 1].kind == "identifier"
-            and tokens[index + 1].value == name
-            and _is_punct(tokens[index + 2], "=")
-        ):
-            initializer = tokens[index + 3]
-            declarations.append((index, scopes[index], initializer))
-        index += 1
-    visible = [item for item in declarations if len(item[1]) <= len(use_scope) and use_scope[: len(item[1])] == item[1]]
-    if not visible:
-        raise ClerkConfigError("VITE_CLERK_FAPI: configuration alias is unsupported")
-    max_scope = max(len(item[1]) for item in visible)
-    nearest = [item for item in visible if len(item[1]) == max_scope]
-    if len(nearest) != 1:
-        raise ClerkConfigError("VITE_CLERK_FAPI: configuration alias is ambiguous")
-    declaration_index, declaration_scope, initializer = nearest[0]
-    identity = (name, declaration_scope, declaration_index)
+    _, declaration_scope, name_index = _nearest_lexical_binding(name, tokens, scopes, use_scope, pairs)
+    declaration_index = name_index - 1
+    if (
+        name_index >= before_index
+        or declaration_index < 0
+        or tokens[declaration_index].kind != "identifier"
+        or tokens[declaration_index].value != "const"
+        or name_index + 2 >= len(tokens)
+        or not _is_punct(tokens[name_index + 1], "=")
+    ):
+        raise ClerkConfigError("VITE_CLERK_FAPI: configuration alias binding is not a supported const")
+    initializer = tokens[name_index + 2]
+    identity = (name, declaration_scope, name_index)
     if identity in seen:
         raise ClerkConfigError("VITE_CLERK_FAPI: configuration alias is cyclic")
     if len(seen) >= 16:
         raise ClerkConfigError("VITE_CLERK_FAPI: configuration alias chain is too deep")
-    if initializer.kind not in {"string", "identifier"} or not _initializer_ends_here(tokens, declaration_index + 4):
+    if initializer.kind not in {"string", "identifier"} or not _initializer_ends_here(tokens, name_index + 3):
         raise ClerkConfigError("VITE_CLERK_FAPI: configuration alias initializer is unsupported")
     if initializer.kind == "string":
         if initializer.value is None:
@@ -497,6 +651,7 @@ def _resolve_static_alias(
         scopes,
         declaration_scope,
         declaration_index,
+        pairs,
         seen | {identity},
     )
 
@@ -518,7 +673,7 @@ def _static_field_value(
         return token.value, set(), set()
     if expression_size == 1 and token is not None and token.kind == "identifier" and token.value is not None:
         try:
-            value = _resolve_static_alias(token.value, tokens, scopes, use_scope, value_start)
+            value = _resolve_static_alias(token.value, tokens, scopes, use_scope, value_start, pairs)
             return value, set(), set()
         except ClerkConfigError as exc:
             message = str(exc)
@@ -652,25 +807,19 @@ def _resolve_config_object(
     pairs: dict[int, int],
     seen: frozenset[tuple[str, tuple[int, ...], int]] = frozenset(),
 ) -> int:
-    declarations: list[tuple[int, tuple[int, ...], int]] = []
-    for index in range(before_index - 3):
-        if (
-            tokens[index].kind == "identifier"
-            and tokens[index].value == "const"
-            and tokens[index + 1].kind == "identifier"
-            and tokens[index + 1].value == name
-            and _is_punct(tokens[index + 2], "=")
-        ):
-            declarations.append((index, scopes[index], index + 3))
-    visible = [item for item in declarations if len(item[1]) <= len(use_scope) and use_scope[: len(item[1])] == item[1]]
-    if not visible:
-        raise ClerkConfigError("VITE_CLERK_FAPI: portal config object alias is unsupported")
-    max_scope = max(len(item[1]) for item in visible)
-    nearest = [item for item in visible if len(item[1]) == max_scope]
-    if len(nearest) != 1:
-        raise ClerkConfigError("VITE_CLERK_FAPI: portal config object alias is ambiguous")
-    declaration_index, declaration_scope, initializer_index = nearest[0]
-    identity = (name, declaration_scope, declaration_index)
+    _, declaration_scope, name_index = _nearest_lexical_binding(name, tokens, scopes, use_scope, pairs)
+    declaration_index = name_index - 1
+    if (
+        name_index >= before_index
+        or declaration_index < 0
+        or tokens[declaration_index].kind != "identifier"
+        or tokens[declaration_index].value != "const"
+        or name_index + 2 >= len(tokens)
+        or not _is_punct(tokens[name_index + 1], "=")
+    ):
+        raise ClerkConfigError("VITE_CLERK_FAPI: portal config object alias binding is not a supported const")
+    initializer_index = name_index + 2
+    identity = (name, declaration_scope, name_index)
     if identity in seen or len(seen) >= 16:
         raise ClerkConfigError("VITE_CLERK_FAPI: portal config object alias is cyclic or too deep")
     initializer = tokens[initializer_index]
@@ -757,6 +906,32 @@ def _config_binding_shadows(
 ) -> tuple[list[tuple[str, tuple[int, ...], int]], set[int]]:
     shadows: list[tuple[str, tuple[int, ...], int]] = []
     declaration_names: set[int] = set()
+
+    def add_name(name_index: int, scope: tuple[int, ...]) -> None:
+        if 0 <= name_index < len(tokens) and tokens[name_index].kind == "identifier":
+            shadows.append((tokens[name_index].value or "", scope, name_index))
+            declaration_names.add(name_index)
+
+    function_bodies: list[int] = []
+    for index, token in enumerate(tokens):
+        if token.kind == "identifier" and token.value == "function":
+            name_index = index + 1
+            if name_index < len(tokens) and _is_punct(tokens[name_index], "*"):
+                name_index += 1
+            params_open = name_index + 1 if name_index < len(tokens) and tokens[name_index].kind == "identifier" else name_index
+            if params_open < len(tokens) and _is_punct(tokens[params_open], "("):
+                params_close = pairs.get(params_open, -1)
+                body_open = params_close + 1
+                if params_close >= 0 and body_open < len(tokens) and _is_punct(tokens[body_open], "{"):
+                    function_bodies.append(body_open)
+        if _is_punct(token, "=>") and index + 1 < len(tokens) and _is_punct(tokens[index + 1], "{"):
+            function_bodies.append(index + 1)
+
+    def add_parameters(params_open: int, params_close: int, scope: tuple[int, ...]) -> None:
+        for parameter_index in range(params_open + 1, params_close):
+            if tokens[parameter_index].kind == "identifier":
+                add_name(parameter_index, scope)
+
     for index, token in enumerate(tokens):
         if (
             token.kind == "identifier"
@@ -765,14 +940,32 @@ def _config_binding_shadows(
             and tokens[index + 1].kind == "identifier"
         ):
             name_index = index + 1
-            shadows.append((tokens[name_index].value or "", scopes[index], name_index))
-            declaration_names.add(name_index)
+            binding_scope = scopes[index]
+            if token.value == "var":
+                enclosing_functions = [body for body in function_bodies if body in scopes[index]]
+                if enclosing_functions:
+                    function_body = max(enclosing_functions, key=lambda body: len(scopes[body]) + 1)
+                    binding_scope = scopes[function_body] + (function_body,)
+            add_name(name_index, binding_scope)
+        elif (
+            token.kind == "identifier"
+            and token.value in {"const", "let", "var"}
+            and index + 1 < len(tokens)
+            and tokens[index + 1].kind == "punct"
+            and tokens[index + 1].value in {"{", "["}
+            and index + 1 in pairs
+        ):
+            close_index = pairs[index + 1]
+            for binding_index in range(index + 2, close_index):
+                if tokens[binding_index].kind == "identifier":
+                    add_name(binding_index, scopes[index])
 
         if token.kind == "identifier" and token.value == "function":
             name_index = index + 1
+            if name_index < len(tokens) and _is_punct(tokens[name_index], "*"):
+                name_index += 1
             if name_index < len(tokens) and tokens[name_index].kind == "identifier":
-                shadows.append((tokens[name_index].value or "", scopes[index], name_index))
-                declaration_names.add(name_index)
+                add_name(name_index, scopes[index])
                 params_open = name_index + 1
             else:
                 params_open = name_index
@@ -783,12 +976,53 @@ def _config_binding_shadows(
             if params_close < 0 or body_open >= len(tokens) or not _is_punct(tokens[body_open], "{"):
                 continue
             body_scope = scopes[body_open] + (body_open,)
-            for parameter_index in range(params_open + 1, params_close):
-                if tokens[parameter_index].kind == "identifier" and (
-                    parameter_index == params_open + 1 or _is_punct(tokens[parameter_index - 1], ",")
-                ):
-                    shadows.append((tokens[parameter_index].value or "", body_scope, parameter_index))
-                    declaration_names.add(parameter_index)
+            add_parameters(params_open, params_close, body_scope)
+
+        if _is_punct(token, "=>"):
+            if index and _is_punct(tokens[index - 1], ")"):
+                params_close = index - 1
+                params_open = pairs.get(params_close, -1)
+                if params_open >= 0:
+                    body_open = index + 1
+                    body_scope = (
+                        scopes[body_open] + (body_open,)
+                        if body_open < len(tokens) and _is_punct(tokens[body_open], "{")
+                        else scopes[index]
+                    )
+                    add_parameters(params_open, params_close, body_scope)
+            elif index and tokens[index - 1].kind == "identifier":
+                body_open = index + 1
+                body_scope = (
+                    scopes[body_open] + (body_open,)
+                    if body_open < len(tokens) and _is_punct(tokens[body_open], "{")
+                    else scopes[index]
+                )
+                add_name(index - 1, body_scope)
+
+        if token.kind == "identifier" and token.value == "catch" and index + 1 < len(tokens):
+            params_open = index + 1
+            if _is_punct(tokens[params_open], "(") and params_open in pairs:
+                params_close = pairs[params_open]
+                body_open = params_close + 1
+                if body_open < len(tokens) and _is_punct(tokens[body_open], "{"):
+                    add_parameters(params_open, params_close, scopes[body_open] + (body_open,))
+
+        if token.kind == "identifier" and token.value == "class" and index + 1 < len(tokens):
+            add_name(index + 1, scopes[index])
+
+        if (
+            token.kind == "identifier"
+            and token.value == "import"
+            and index + 1 < len(tokens)
+            and not (_is_punct(tokens[index + 1], ".") or _is_punct(tokens[index + 1], "?.") or _is_punct(tokens[index + 1], "("))
+        ):
+            import_end = index + 1
+            while import_end < len(tokens) and not _is_punct(tokens[import_end], ";"):
+                if tokens[import_end].kind == "string":
+                    break
+                if tokens[import_end].kind == "identifier" and tokens[import_end].value not in {"as", "from", "type"}:
+                    add_name(import_end, scopes[index])
+                import_end += 1
 
     return shadows, declaration_names
 

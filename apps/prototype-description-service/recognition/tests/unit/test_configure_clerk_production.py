@@ -7,6 +7,7 @@ import importlib.util
 import json
 import re
 import shutil
+import subprocess
 import sys
 from io import StringIO
 from pathlib import Path
@@ -183,6 +184,148 @@ def test_frontend_rejects_config_mutation_or_escape_before_consumption(tmp_path:
 
     with pytest.raises(module.ClerkConfigError):
         module.validate_frontend_modules(config, [reachable])
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        '["VITE_CLERK_FAPI"]: "https://stale.fake-review.invalid"',
+        'get VITE_CLERK_FAPI() { return "https://stale.fake-review.invalid"; }',
+        '[overrideName]: "https://stale.fake-review.invalid"',
+    ],
+    ids=["computed-duplicate", "getter-override", "unknown-computed-member"],
+)
+def test_frontend_rejects_computed_and_accessor_config_members(tmp_path: Path, member: str) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function parsePortalConfig(env) { return {"
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        f'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true", {member} }};\n'
+        "parsePortalConfig(env);\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ClerkConfigError, match="VITE_CLERK_FAPI"):
+        module.validate_frontend_modules(config, [reachable])
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        'const note = `${env.VITE_CLERK_FAPI = "https://stale.fake-review.invalid"}`;',
+        'const alias = env; const note = `${`${alias.VITE_CLERK_FAPI = "https://stale.fake-review.invalid"}`}`;',
+    ],
+    ids=["template-mutation", "nested-template-alias-mutation"],
+)
+def test_frontend_rejects_config_mutation_in_template_expressions(tmp_path: Path, mutation: str) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function parsePortalConfig(env) { return {"
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        f"{mutation}\nparsePortalConfig(env);\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ClerkConfigError, match="VITE_CLERK_FAPI"):
+        module.validate_frontend_modules(config, [reachable])
+
+
+def test_frontend_keeps_template_text_opaque(tmp_path: Path) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function parsePortalConfig(env) { return {"
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        'const note = `text mentioning env.VITE_CLERK_FAPI = "https://stale.fake-review.invalid"`;\n'
+        "parsePortalConfig(env);\n",
+        encoding="utf-8",
+    )
+
+    module.validate_frontend_modules(config, [reachable])
+
+
+@pytest.mark.parametrize(
+    "aliases",
+    [
+        (
+            f'const fapi = "https://clerk.altcontext.com"; '
+            f'function build(fapi) {{ parsePortalConfig({{VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+            'VITE_CLERK_FAPI: fapi, VITE_PORTAL_ENABLED: "true"}); } '
+            'build("https://stale.fake-review.invalid");'
+        ),
+        (
+            f'const fapi = "https://clerk.altcontext.com"; '
+            f'function build() {{ let fapi = "https://stale.fake-review.invalid"; '
+            f'parsePortalConfig({{VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+            'VITE_CLERK_FAPI: fapi, VITE_PORTAL_ENABLED: "true"}); } build();'
+        ),
+        (
+            f'const fapi = "https://clerk.altcontext.com"; '
+            f'const build = (fapi) => {{ parsePortalConfig({{VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+            'VITE_CLERK_FAPI: fapi, VITE_PORTAL_ENABLED: "true"}); }; '
+            'build("https://stale.fake-review.invalid");'
+        ),
+    ],
+    ids=["function-parameter", "let-shadow", "arrow-parameter"],
+)
+def test_frontend_rejects_static_alias_shadowed_by_nearer_binding(tmp_path: Path, aliases: str) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function parsePortalConfig(env) { return {"
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f"{aliases}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ClerkConfigError, match="VITE_CLERK_FAPI"):
+        module.validate_frontend_modules(config, [reachable])
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        'if (true) /[}]/.test("}");',
+        'const unused = typeof /[}]/;',
+        'const unused = void /[/]/;',
+        'const quotient = 12 / 3;',
+    ],
+    ids=["control-header-regex", "typeof-regex", "void-regex-class", "division"],
+)
+def test_frontend_accepts_valid_regex_and_division_syntax(tmp_path: Path, suffix: str) -> None:
+    module = _load_script()
+    config = module.load_production_config(_manifest_root(tmp_path))
+    reachable = tmp_path / "entry.js"
+    reachable.write_text(
+        "function parsePortalConfig(env) { return {"
+        "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+        "fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+        f'const env = {{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+        'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" };\n'
+        f"parsePortalConfig(env);\n{suffix}\n",
+        encoding="utf-8",
+    )
+    node = shutil.which("node")
+    if node:
+        checked = subprocess.run([node, "--check", str(reachable)], capture_output=True, text=True, check=False)
+        assert checked.returncode == 0, checked.stdout + checked.stderr
+
+    module.validate_frontend_modules(config, [reachable])
 
 
 @pytest.mark.parametrize(

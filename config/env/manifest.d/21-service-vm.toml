@@ -15,8 +15,9 @@ doc = "env (default): the app reads the secret values in this file directly.\noc
 [[override]]
 name = "RECOGNITION_VAULT_SECRET_MAP"
 target = "svc-vm"
-required = false
-doc = "Derived automatically from secret refs; never set a value or hand-edit this map.\nThe ACX_GPU_ENDPOINT_API_KEY entry comes from that variable's dev oci:<ocid>\nand prod vault:<ocid> refs (staging ref is preserved). KEY is the logical name\nrequested by the app, such as PGPASSWORD; VALUE is a Vault OCID, not secret\nmaterial. Prod boot-required: PGPASSWORD and RECOGNITION_ADMIN_TOKEN;\nPOSTGRES_DSN and POSTGRES_SYNC_DSN are also included.\nMint after approval: make gpu-key-mint GPU_KEY_MINT_ARGS=\"--approve-mint --ssh-target user@approved-vm\".\nAfter mint, run make env-examples and commit the fragment and generated examples.\nFull procedure and rotation refresh: docs/runbooks/gpu-key-mint.md.\ndomain: infra (OCID map) | source: OCI deploy | consumer: shared/secrets.py:OciVaultSecretProvider.from_env"
+required = true
+example = '{"ACX_GPU_ENDPOINT_API_KEY":"ocid1.vaultsecret.oc1..REPLACE_GPU_ENDPOINT_KEY","PGPASSWORD":"ocid1.vaultsecret.oc1..REPLACE_PGPASSWORD","POSTGRES_DSN":"ocid1.vaultsecret.oc1..REPLACE_POSTGRES_DSN","POSTGRES_SYNC_DSN":"ocid1.vaultsecret.oc1..REPLACE_POSTGRES_SYNC_DSN","RECOGNITION_ADMIN_TOKEN":"ocid1.vaultsecret.oc1..REPLACE_ADMIN_TOKEN"}'
+doc = "Runtime map derives automatically from secret refs; never set a value or hand-edit it.\nThe example-only placeholder OCIDs below are not secret refs and must not be deployed.\nThe ACX_GPU_ENDPOINT_API_KEY entry comes from that variable's dev oci:<ocid>\nand prod vault:<ocid> refs (staging ref is preserved). KEY is the logical name\nrequested by the app, such as PGPASSWORD; VALUE is a Vault OCID, not secret\nmaterial. Prod boot-required: PGPASSWORD and RECOGNITION_ADMIN_TOKEN;\nPOSTGRES_DSN and POSTGRES_SYNC_DSN are also included.\nMint after approval: make gpu-key-mint GPU_KEY_MINT_ARGS=\"--approve-mint --ssh-target user@approved-vm\".\nAfter mint, run make env-examples and commit the fragment and generated examples.\nFull procedure and rotation refresh: docs/runbooks/gpu-key-mint.md.\ndomain: infra (OCID map) | source: OCI deploy | consumer: shared/secrets.py:OciVaultSecretProvider.from_env"
 
 [[override]]
 name = "POSTGRES_USER"

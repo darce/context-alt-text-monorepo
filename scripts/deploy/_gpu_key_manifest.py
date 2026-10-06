@@ -61,12 +61,16 @@ def validate_manifest_ready(document: dict[str, object]) -> None:
         or not _targets_include_svc_vm(map_var)
     ):
         raise ValueError("GPU mint requires the svc-vm derived Vault secret map")
+    if any(source in map_var for source in ("values", "secret", "derive", "secret_refs")):
+        raise ValueError("GPU mint requires an exclusive derived Vault secret map")
 
     required_names = ("PGPASSWORD", "POSTGRES_DSN", "POSTGRES_SYNC_DSN", "RECOGNITION_ADMIN_TOKEN")
     for name in required_names:
         refs = [row for row in document.get("var", []) if row.get("name") == name]
         if len(refs) != 1 or not _targets_include_svc_vm(refs[0]):
             raise ValueError(f"GPU mint requires a svc-vm {name} Vault ref")
+        if refs[0].get("class") != "secret":
+            raise ValueError(f"GPU mint requires a secret-class {name} Vault ref")
         secret_refs = refs[0].get("secret")
         if not isinstance(secret_refs, dict):
             raise ValueError(f"GPU mint requires a prod Vault ref for {name}")

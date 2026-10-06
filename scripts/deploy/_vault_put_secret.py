@@ -2,7 +2,7 @@
 """Store a secret value into acx-vault, reading the value from stdin only.
 
 Companion to scripts/deploy/lib/ocir-auth.sh (OCIRV-1). Used by
-`make ocir-token-rotate` to land an OCI auth token in the vault without it ever
+`make ocir-token-rotate` and `make gpu-key-mint` to land credentials in Vault without them ever
 reaching argv (ps-visible to every user on the host), a shell history file, or
 a temp file on disk. The value is read from stdin, base64-encoded in memory,
 and handed to the Vaults API.
@@ -28,21 +28,34 @@ import inspect
 import math
 import queue
 import random
+import re
 import sys
 import threading
 import time
 
 # acx-vault, root compartment, us-ashburn-1. An OCID is not a secret (ADR-013).
 DEFAULT_VAULT_OCID = "ocid1.vault.oc1.iad.ejvffpzlaafc4.abuwcljr3j4chidobdkiqx6igrzb4p3wffl43bjelxzfghkehdpuzle7cjla"
-ALLOWED_SECRET_NAMES = frozenset({"OCIR_AUTH_TOKEN", "OCIR_USERNAME", "OCIR_CREDENTIAL_GENERATION"})
+ALLOWED_SECRET_NAMES = frozenset({
+    "OCIR_AUTH_TOKEN",
+    "OCIR_USERNAME",
+    "OCIR_CREDENTIAL_GENERATION",
+    "ACX_GPU_ENDPOINT_API_KEY",
+})
+VAULT_SECRET_OCID = re.compile(r"ocid1\.vaultsecret\.oc[0-9]+\.[A-Za-z0-9_-]*\.[A-Za-z0-9._-]{20,}")
 
 
 def validate_destination(vault_id: str, secret_name: str) -> None:
-    """Enforce the writer's narrow acx-vault/OCIR mutation authority."""
+    """Enforce the writer's narrow acx-vault mutation authority."""
     if vault_id != DEFAULT_VAULT_OCID:
         raise SystemExit(f"refusing unowned vault: {vault_id}")
     if secret_name not in ALLOWED_SECRET_NAMES:
         raise SystemExit(f"refusing unowned secret name: {secret_name}")
+
+
+def validate_gpu_endpoint_key(value: bytes) -> None:
+    """Require the documented 32-byte random key's lowercase/uppercase hex encoding."""
+    if len(value) != 64 or any(byte not in b"0123456789abcdef" for byte in value.lower()):
+        raise ValueError("GPU endpoint API key must be 64 hexadecimal bytes")
 
 
 def validate_current_prefix(current_value: bytes | None, required_prefix: str | None, secret_name: str) -> None:
@@ -71,6 +84,13 @@ def _positive_float(value):
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be a finite positive number")
     return parsed
+
+
+def _vault_secret_ocid(value: str) -> str:
+    """Parse a complete OCI Vault secret OCID for identity binding."""
+    if not VAULT_SECRET_OCID.fullmatch(value):
+        raise argparse.ArgumentTypeError("must be a full Vault secret OCID")
+    return value
 
 
 class SecretNotReadableError(RuntimeError):
@@ -419,13 +439,15 @@ def _accepts_keyword(call, keyword: str) -> bool:
     )
 
 
-def _make_client(factory, config, no_retry, timeout):
+def _make_client(factory, config, no_retry, timeout, signer=None):
     kwargs = {}
+    if signer is not None:
+        kwargs["signer"] = signer
     if _accepts_keyword(factory, "retry_strategy"):
         kwargs["retry_strategy"] = no_retry
     if _accepts_keyword(factory, "timeout"):
         kwargs["timeout"] = timeout
-    client = factory(config, **kwargs)
+    client = factory({} if signer is not None else config, **kwargs)
     if hasattr(client, "base_client"):
         client.base_client.timeout = timeout
     return client
@@ -435,11 +457,38 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--secret-name", required=True)
     ap.add_argument("--vault-id", default=DEFAULT_VAULT_OCID)
+    ap.add_argument(
+        "--expected-secret-id",
+        type=_vault_secret_ocid,
+        default=None,
+        help="require the name-selected secret to have this existing OCID before writing",
+    )
     ap.add_argument("--if-match", default=None, help="require this ETag for a fenced replacement")
     ap.add_argument("--require-current-prefix", default=None, help="require current decoded bytes to start with text")
     ap.add_argument("--key-id", default=None, help="defaults to a sibling secret's key")
     ap.add_argument("--profile", default="DEFAULT")
     ap.add_argument("--description", default=None, help="only applied when creating the secret")
+    modes = ap.add_mutually_exclusive_group()
+    modes.add_argument(
+        "--bootstrap",
+        action="store_true",
+        help="create only if absent; an existing GPU key is read and never rotated",
+    )
+    modes.add_argument(
+        "--rotate-existing",
+        action="store_true",
+        help="require an existing secret and add a version using its stable OCID",
+    )
+    ap.add_argument(
+        "--instance-principal",
+        action="store_true",
+        help="authenticate with this VM's instance principal (GPU key writer only)",
+    )
+    ap.add_argument(
+        "--result-only",
+        action="store_true",
+        help="print only '<secret OCID> <value byte length>' after success",
+    )
     ap.add_argument(
         "--readable-timeout",
         type=_non_negative_float,
@@ -455,6 +504,19 @@ def main() -> int:
     args = ap.parse_args()
 
     validate_destination(args.vault_id, args.secret_name)
+    gpu_only_options = (
+        args.bootstrap
+        or args.rotate_existing
+        or args.instance_principal
+        or args.result_only
+        or args.expected_secret_id is not None
+    )
+    if gpu_only_options and args.secret_name != "ACX_GPU_ENDPOINT_API_KEY":
+        raise SystemExit("GPU writer options require ACX_GPU_ENDPOINT_API_KEY")
+    if args.secret_name == "ACX_GPU_ENDPOINT_API_KEY" and not args.rotate_existing:
+        # An omitted mode is a safe bootstrap. Existing GPU keys are never
+        # changed unless the caller explicitly requests rotation.
+        args.bootstrap = True
 
     import oci  # noqa: PLC0415 -- lazy so the readiness gate stays unit-testable
 
@@ -467,19 +529,24 @@ def main() -> int:
 
     # Read raw bytes so a token containing non-UTF8 or a trailing newline the
     # operator did not intend is handled explicitly rather than silently.
-    value = sys.stdin.buffer.read()
+    candidate_value = sys.stdin.buffer.read()
     # A trailing newline from `read`/`printf` would be stored as part of the
     # token and produce an OCIR rejection that looks like a bad token.
-    value = value.rstrip(b"\r\n")
-    if not value:
+    candidate_value = candidate_value.rstrip(b"\r\n")
+    if not candidate_value:
         raise SystemExit("refusing to store an empty value")
 
-    config = oci.config.from_file(profile_name=args.profile)
+    if args.instance_principal:
+        signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+        config = None
+    else:
+        signer = None
+        config = oci.config.from_file(profile_name=args.profile)
     no_retry = oci.retry.NoneRetryStrategy()
     initial_timeout = deadline.remaining("client setup")
     client_timeout = (min(5.0, initial_timeout), initial_timeout)
-    vaults = _make_client(oci.vault.VaultsClient, config, no_retry, client_timeout)
-    kms = _make_client(oci.key_management.KmsVaultClient, config, no_retry, client_timeout)
+    vaults = _make_client(oci.vault.VaultsClient, config, no_retry, client_timeout, signer=signer)
+    kms = _make_client(oci.key_management.KmsVaultClient, config, no_retry, client_timeout, signer=signer)
     if args.readable_timeout == 0:
         readable_client_timeout = initial_timeout
     else:
@@ -494,6 +561,7 @@ def main() -> int:
                 config,
                 no_retry,
                 (min(5.0, readable_client_timeout), readable_client_timeout),
+                signer=signer,
             )
         return secrets_client
 
@@ -522,17 +590,21 @@ def main() -> int:
         invoke=invoke,
     )
 
-    version_name = mutation_version_name(value)
-    content = oci.vault.models.Base64SecretContentDetails(
-        content_type="BASE64",
-        name=version_name,
-        content=base64.b64encode(value).decode("ascii"),
-    )
-    retry_token = mutation_retry_token(args.vault_id, args.secret_name, value)
-
     existing = find_secret(vaults, compartment_id, args.vault_id, args.secret_name, invoke=invoke)
+    existing_secret_id = None
+    if existing is not None:
+        existing_secret_id = getattr(existing, "id", None)
+        if not isinstance(existing_secret_id, str) or not VAULT_SECRET_OCID.fullmatch(existing_secret_id):
+            raise RuntimeError("name-selected secret has an invalid Vault secret OCID")
+    if args.expected_secret_id is not None:
+        if existing is None:
+            raise RuntimeError("cannot verify expected secret identity: name-selected secret is missing")
+        if existing_secret_id != args.expected_secret_id:
+            raise RuntimeError("name-selected secret does not match expected secret identity")
     update_etag = None
     conditional_update = _accepts_keyword(vaults.update_secret, "if_match")
+    if args.rotate_existing and existing is None:
+        raise RuntimeError(f"cannot rotate missing secret {args.secret_name}; bootstrap it first")
     if args.if_match is not None and existing is None:
         raise RuntimeError(f"cannot conditionally update missing secret {args.secret_name}")
     if args.if_match is not None and not conditional_update:
@@ -559,6 +631,25 @@ def main() -> int:
 
     current_value = read_bundle() if existing is not None else None
     validate_current_prefix(current_value, args.require_current_prefix, args.secret_name)
+
+    if args.bootstrap and existing is not None:
+        # The candidate arriving on stdin is deliberately discarded; bootstrap
+        # reads the stable current value and never rotates an existing secret.
+        value = current_value
+    else:
+        value = candidate_value
+    if not value:
+        raise SystemExit("refusing to store an empty value")
+    if args.secret_name == "ACX_GPU_ENDPOINT_API_KEY":
+        validate_gpu_endpoint_key(value)
+
+    version_name = mutation_version_name(value)
+    content = oci.vault.models.Base64SecretContentDetails(
+        content_type="BASE64",
+        name=version_name,
+        content=base64.b64encode(value).decode("ascii"),
+    )
+    retry_token = mutation_retry_token(args.vault_id, args.secret_name, value)
 
     pending_version = None
     historical_version = None
@@ -643,7 +734,9 @@ def main() -> int:
         return response.data
 
     try:
-        if pending_version is not None:
+        if args.bootstrap and existing is not None:
+            secret, action = existing, "already current"
+        elif pending_version is not None:
             secret, action = existing, "existing version pending"
         elif historical_version is not None:
             secret, action = reactivate_historical_version(), "reactivated historical version"
@@ -673,14 +766,20 @@ def main() -> int:
         secret = existing
         action = "reconciled after unknown mutation outcome"
 
-    print(f"{action}: {args.secret_name} ({len(value)} bytes)")
     secret_id = getattr(secret, "id", "<accepted; id unavailable before reconciliation deadline>")
-    print(f"  secret_id: {secret_id}")
-    if mutation_etag is not None:
-        print(f"  write_etag: {mutation_etag}")
+    if args.result_only:
+        if not isinstance(secret_id, str) or not VAULT_SECRET_OCID.fullmatch(secret_id):
+            raise RuntimeError("Vault writer did not return a valid secret OCID")
+        print(f"{secret_id} {len(value)}")
+    else:
+        print(f"{action}: {args.secret_name} ({len(value)} bytes)")
+        print(f"  secret_id: {secret_id}")
+        if mutation_etag is not None:
+            print(f"  write_etag: {mutation_etag}")
 
     if args.readable_timeout == 0:
-        print("  readable: ACCEPTED-BUT-UNVERIFIED (--readable-timeout 0)")
+        if not args.result_only:
+            print("  readable: ACCEPTED-BUT-UNVERIFIED (--readable-timeout 0)")
     else:
 
         def prepare_attempt(remaining):
@@ -691,7 +790,8 @@ def main() -> int:
                 min(remaining, deadline.remaining("read-back")),
             )
 
-        print(f"  waiting for {args.secret_name} to become readable ...", flush=True)
+        if not args.result_only:
+            print(f"  waiting for {args.secret_name} to become readable ...", flush=True)
         try:
             wait_until_readable(
                 read_bundle,
@@ -706,7 +806,8 @@ def main() -> int:
                     f"{args.secret_name} write was accepted but read-back did not confirm it: {exc}"
                 ) from exc
             raise
-        print("  readable: value matches what was written")
+        if not args.result_only:
+            print("  readable: value matches what was written")
     return 0
 
 

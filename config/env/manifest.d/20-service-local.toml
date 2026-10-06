@@ -13,12 +13,12 @@ values = { local = "context" }
 [[var]]
 name = "PGPASSWORD"
 class = "secret"
-targets = ["svc-local"]
+targets = ["svc-local", "svc-vm"]
 section = "Postgres connection"
 example = "context"
 doc = "domain: infra | source: description-service / DB ops | consumer: db/settings.py (get_database_settings, DSN render); scripts/reset_dev_db.sh; scripts/db_shell.sh"
 required = true
-secret = { local = "keychain:acx-local/PGPASSWORD" }
+secret = { local = "keychain:acx-local/PGPASSWORD", dev = "host:", staging = "host:", prod = "vault:ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqa5ka6inpwivjhrxm2ri4zdar46kdiijw32nzjly2uetzq" }
 
 [[var]]
 name = "PGHOST"

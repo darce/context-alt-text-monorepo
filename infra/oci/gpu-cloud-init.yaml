@@ -252,6 +252,94 @@ write_files:
       [Install]
       WantedBy=timers.target
 
+  - path: /usr/local/bin/acx-gpu-fetch-api-key.sh
+    owner: root:root
+    permissions: "0750"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      set +x
+      readonly SECRET_ID='${gpu_api_key_secret_ocid}'
+      readonly OCI_BIN=/usr/bin/oci
+      readonly RUNTIME_DIR=/run/acx-gpu-vlm
+      readonly KEY_PATH=/run/acx-gpu-vlm/api-key
+      readonly ATTEMPTS=5
+      readonly ATTEMPT_TIMEOUT=20
+      readonly RETRY_DELAY=2
+
+      if [[ ! "$SECRET_ID" =~ ^ocid1\.vaultsecret\.oc[0-9]+\.[A-Za-z0-9_-]*\.[A-Za-z0-9._-]{20,}$ ]]; then
+        echo "GPU Vault key OCID is missing or invalid; refusing to start llama.cpp" >&2
+        exit 1
+      fi
+
+      umask 077
+      install -d -o root -g root -m 0700 "$RUNTIME_DIR"
+      temporary="$(mktemp "$RUNTIME_DIR/api-key.XXXXXX")"
+      trap 'rm -f -- "$temporary"' EXIT
+      secret_b64=""
+      fetched=0
+      for attempt in 1 2 3 4 5; do
+        if secret_b64="$(/usr/bin/timeout --kill-after=2s "$${ATTEMPT_TIMEOUT}s" \
+          "$OCI_BIN" --auth instance_principal secrets secret-bundle get \
+          --secret-id "$SECRET_ID" \
+          --query 'data."secret-bundle-content".content' --raw-output 2>/dev/null)" \
+          && [ -n "$secret_b64" ]; then
+          fetched=1
+          break
+        fi
+        unset secret_b64
+        if [ "$attempt" -lt "$ATTEMPTS" ]; then sleep "$RETRY_DELAY"; fi
+      done
+      if [ "$fetched" -ne 1 ]; then
+        echo "GPU Vault key fetch failed after bounded retries; refusing to start llama.cpp" >&2
+        exit 1
+      fi
+      if ! printf '%s' "$secret_b64" | /usr/bin/base64 --decode >"$temporary" 2>/dev/null; then
+        unset secret_b64
+        echo "GPU Vault key content is invalid; refusing to start llama.cpp" >&2
+        exit 1
+      fi
+      unset secret_b64
+      if [[ "$(/usr/bin/wc -c <"$temporary")" -ne 64 ]] \
+        || ! /usr/bin/grep -Eq '^[[:xdigit:]]{64}$' "$temporary"; then
+        echo "GPU Vault key has invalid content; refusing to start llama.cpp" >&2
+        exit 1
+      fi
+      chown root:root "$temporary"
+      chmod 0600 "$temporary"
+      mv -f -- "$temporary" "$KEY_PATH"
+      trap - EXIT
+
+  - path: /usr/local/bin/acx-gpu-vlm-start.sh
+    owner: root:root
+    permissions: "0750"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      set +x
+      readonly KEY_PATH=/run/acx-gpu-vlm/api-key
+      if [ ! -f "$KEY_PATH" ] || [ ! -r "$KEY_PATH" ]; then
+        echo "GPU Vault key file is missing; refusing to start llama.cpp" >&2
+        exit 1
+      fi
+      if [[ "$(/usr/bin/wc -c <"$KEY_PATH")" -ne 64 ]] \
+        || ! /usr/bin/grep -Eq '^[[:xdigit:]]{64}$' "$KEY_PATH"; then
+        echo "GPU Vault key file is invalid; refusing to start llama.cpp" >&2
+        exit 1
+      fi
+      exec /usr/bin/docker run --rm --gpus all \
+        --name acx-gpu-vlm \
+        -p 8000:8000 \
+        -v /opt/acx-gpu/models:/models:ro \
+        -v "$KEY_PATH:/run/secrets/acx-gpu-api-key:ro" \
+        ghcr.io/ggerganov/llama.cpp:server-cuda \
+        --host 0.0.0.0 \
+        --port 8000 \
+        --model /models/qwen3-vl-30b-a3b-instruct-q4.gguf \
+        --mmproj /models/qwen3-vl-30b-a3b-instruct-mmproj.gguf \
+        --ctx-size 8192 \
+        --api-key-file /run/secrets/acx-gpu-api-key
+
   - path: /etc/systemd/system/acx-gpu-vlm.service
     permissions: "0644"
     content: |
@@ -269,16 +357,8 @@ write_files:
       [Service]
       Type=exec
       ExecStartPre=/usr/local/bin/acx-gpu-runtime-check.sh
-      ExecStart=/usr/bin/docker run --rm --gpus all \
-        --name acx-gpu-vlm \
-        -p 8000:8000 \
-        -v /opt/acx-gpu/models:/models:ro \
-        ghcr.io/ggerganov/llama.cpp:server-cuda \
-        --host 0.0.0.0 \
-        --port 8000 \
-        --model /models/qwen3-vl-30b-a3b-instruct-q4.gguf \
-        --mmproj /models/qwen3-vl-30b-a3b-instruct-mmproj.gguf \
-        --ctx-size 8192
+      ExecStartPre=/usr/local/bin/acx-gpu-fetch-api-key.sh
+      ExecStart=/usr/local/bin/acx-gpu-vlm-start.sh
       ExecStop=/usr/bin/docker stop acx-gpu-vlm
       Restart=on-failure
       RestartSec=10

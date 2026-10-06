@@ -221,6 +221,14 @@ def _scan_shell_line(raw: str, state: _ShellState) -> str:
                 continue
             if char == '"':
                 state.quote = ""
+            elif char == "$" and scan_raw[index + 1:index + 3] == "((":
+                state.has_substitution = True
+                if state.contexts and state.contexts[-1].kind == "paren":
+                    state.contexts[-1].word.append("\0")
+                state.contexts.append(_ShellContext("arithmetic", state.quote))
+                state.quote = ""
+                state.in_word = False
+                index += 2
             elif char == "$" and index + 1 < len(scan_raw) and scan_raw[index + 1] == "(":
                 state.has_substitution = True
                 if state.contexts and state.contexts[-1].kind == "paren":
@@ -258,6 +266,16 @@ def _scan_shell_line(raw: str, state: _ShellState) -> str:
             index += 1
             continue
 
+        if char == "$" and scan_raw[index + 1:index + 3] == "((":
+            state.has_substitution = True
+            if state.contexts and state.contexts[-1].kind == "paren":
+                state.contexts[-1].word.append("\0")
+            state.contexts.append(_ShellContext("arithmetic", state.quote))
+            state.quote = ""
+            state.in_word = False
+            index += 3
+            continue
+
         if char == "$" and index + 1 < len(scan_raw) and scan_raw[index + 1] == "(":
             state.has_substitution = True
             if state.contexts and state.contexts[-1].kind == "paren":
@@ -279,6 +297,25 @@ def _scan_shell_line(raw: str, state: _ShellState) -> str:
             continue
 
         context = state.contexts[-1] if state.contexts else None
+        if context is not None and context.kind == "arithmetic":
+            # Consume arithmetic delimiters before heredoc detection; shifts stay opaque.
+            if char == "(":
+                context.paren_depth += 1
+            elif char == ")":
+                if context.paren_depth:
+                    context.paren_depth -= 1
+                elif scan_raw[index:index + 2] == "))":
+                    state.contexts.pop()
+                    state.quote = context.parent_quote
+                    state.in_word = True
+                    index += 2
+                    continue
+                else:
+                    state.quarantined = True
+                    return raw
+            index += 1
+            continue
+
         if context is not None and context.kind == "backtick" and char == "`":
             state.contexts.pop()
             state.quote = context.parent_quote
@@ -325,6 +362,21 @@ def _scan_shell_line(raw: str, state: _ShellState) -> str:
             state.heredocs.append(heredoc)
             state.in_word = False
             index = end
+            continue
+
+        if (
+            context is not None
+            and context.kind == "paren"
+            and char == "("
+            and scan_raw[index:index + 2] == "(("
+            and context.command_start
+            and not (context.case_stack and context.case_stack[-1].phase == "pattern")
+        ):
+            # Arithmetic commands are opaque contexts, not nested subshells.
+            context.command_start = False
+            state.contexts.append(_ShellContext("arithmetic", state.quote))
+            state.in_word = False
+            index += 2
             continue
 
         if context is not None and context.kind == "paren":

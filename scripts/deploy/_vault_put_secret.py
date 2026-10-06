@@ -530,12 +530,16 @@ def main() -> int:
     if not candidate_value:
         raise SystemExit("refusing to store an empty value")
 
-    config = oci.config.from_file(profile_name=args.profile)
+    # Operator configuration must never enable logging of secret request bodies.
+    config = dict(oci.config.from_file(profile_name=args.profile))
+    config["log_requests"] = False
     no_retry = oci.retry.NoneRetryStrategy()
     initial_timeout = deadline.remaining("client setup")
     client_timeout = (min(5.0, initial_timeout), initial_timeout)
     vaults = _make_client(oci.vault.VaultsClient, config, no_retry, client_timeout)
     kms = _make_client(oci.key_management.KmsVaultClient, config, no_retry, client_timeout)
+    # Also clear global HTTP debug state independently of the profile setting.
+    oci.base_client.is_http_log_enabled(False)
     if args.readable_timeout == 0:
         readable_client_timeout = initial_timeout
     else:
@@ -551,6 +555,7 @@ def main() -> int:
                 no_retry,
                 (min(5.0, readable_client_timeout), readable_client_timeout),
             )
+            oci.base_client.is_http_log_enabled(False)
         return secrets_client
 
     def invoke(phase, call, *call_args, mutation=False, **call_kwargs):

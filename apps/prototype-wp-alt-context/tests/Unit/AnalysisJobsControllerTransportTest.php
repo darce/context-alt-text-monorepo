@@ -74,6 +74,7 @@ class AnalysisJobsControllerTransportTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
         $req->set_param('media_ids', [101, 202]);
+        $req->set_param('idempotency_key', 'phpred1-transport-01');
         $result = $this->controller->analyze_media($req);
 
         $this->assertNotInstanceOf(\WP_Error::class, $result, var_export($result, true));
@@ -131,6 +132,7 @@ class AnalysisJobsControllerTransportTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
         $req->set_param('media_ids', [101]);
+        $req->set_param('idempotency_key', 'phpred1-transport-02');
         $result = $this->controller->analyze_media($req);
         $this->assertNotInstanceOf(\WP_Error::class, $result, var_export($result, true));
 
@@ -165,6 +167,7 @@ class AnalysisJobsControllerTransportTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
         $req->set_param('media_ids', [1, 2]);
+        $req->set_param('idempotency_key', 'phpred1-transport-03');
         $result = $this->controller->analyze_media($req);
         $this->assertNotInstanceOf(\WP_Error::class, $result, var_export($result, true));
 
@@ -177,6 +180,7 @@ class AnalysisJobsControllerTransportTest extends TestCase
     {
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
         $req->set_param('media_ids', [9001]);
+        $req->set_param('idempotency_key', 'phpred1-transport-04');
         $result = $this->controller->analyze_media($req);
         $this->assertInstanceOf(\WP_Error::class, $result);
         $this->assertSame('no_media_items', $result->get_error_code());
@@ -195,6 +199,7 @@ class AnalysisJobsControllerTransportTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
         $req->set_param('media_ids', range(1, 6));
+        $req->set_param('idempotency_key', 'phpred1-transport-05');
         $result = $this->controller->analyze_media($req);
 
         $this->assertInstanceOf(\WP_Error::class, $result);
@@ -215,6 +220,7 @@ class AnalysisJobsControllerTransportTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
         $req->set_param('media_ids', range(1, 5));
+        $req->set_param('idempotency_key', 'phpred1-transport-06');
         $result = $this->controller->analyze_media($req);
 
         $this->assertNotInstanceOf(\WP_Error::class, $result, var_export($result, true));
@@ -231,6 +237,7 @@ class AnalysisJobsControllerTransportTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
         $req->set_param('media_ids', range(1, 5));
+        $req->set_param('idempotency_key', 'phpred1-transport-07');
         $result = $this->controller->analyze_media($req);
 
         $this->assertInstanceOf(\WP_Error::class, $result);
@@ -252,6 +259,7 @@ class AnalysisJobsControllerTransportTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
         $req->set_param('media_ids', range(1, 5));
+        $req->set_param('idempotency_key', 'phpred1-transport-08');
         $result = $this->controller->analyze_media($req);
 
         $this->assertNotInstanceOf(\WP_Error::class, $result, var_export($result, true));
@@ -273,6 +281,7 @@ class AnalysisJobsControllerTransportTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
         $req->set_param('media_ids', [1]);
+        $req->set_param('idempotency_key', 'phpred1-transport-09');
         $this->controller->analyze_media($req);
 
         $logs = $this->getErrorLog();
@@ -298,6 +307,7 @@ class AnalysisJobsControllerTransportTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
         $req->set_param('media_ids', [1]);
+        $req->set_param('idempotency_key', 'phpred1-transport-10');
         $this->controller->analyze_media($req);
 
         $logs = $this->getErrorLog();
@@ -328,6 +338,7 @@ class AnalysisJobsControllerTransportTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
         $req->set_param('media_ids', [1]);
+        $req->set_param('idempotency_key', 'phpred1-transport-11');
         $result = $this->controller->analyze_media($req);
 
         $this->assertInstanceOf(\WP_Error::class, $result);
@@ -346,6 +357,7 @@ class AnalysisJobsControllerTransportTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
         $req->set_param('media_ids', range(1, 6));
+        $req->set_param('idempotency_key', 'phpred1-transport-12');
         $result = $this->controller->analyze_media($req);
         $this->assertInstanceOf(\WP_Error::class, $result);
 

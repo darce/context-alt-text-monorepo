@@ -1935,6 +1935,7 @@ class DescriptionHistoryServiceTest extends TestCase
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', $mediaId);
         $req->set_param('write_alt', true);
+        $req->set_body_params(['idempotency_key' => 'phpred1-test-key-0001']);
         $result = (new DescribeController())->describe_media($req);
 
         $this->assertInstanceOf(WP_REST_Response::class, $result);

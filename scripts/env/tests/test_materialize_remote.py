@@ -54,6 +54,7 @@ exit "${SHIM_RC:-0}"
     for key in ("OCI_USER", "OCI_HOST", "SHIM_RC", "ENV", "TARGET", "APPLY",
                 "ADOPT", "CONFIRM", "MAKEFLAGS", "MFLAGS", "MAKEOVERRIDES"):
         env.pop(key, None)
+    env.pop("ENV_MATERIALIZE_OCI_BIN", None)
     env.update(PATH=f"{bindir}:{REPO / '.venv/bin'}:{env.get('PATH', '')}",
                ENV_MANIFEST_ROOT=str(root), PGPASSWORD=SECRET,
                SHIM_ARGV=str(tmp_path / "argv"),
@@ -126,13 +127,40 @@ def test_wrapper_builds_remote_command(remote, environment):
     result = run(remote, environment, "t")
     assert result.returncode == 0, result.stderr
     command = ssh_args(remote)[-1]
-    assert "sudo python3 -B" in command
-    for token in ("mktemp -d", "trap", "EXIT", "rm -rf", "tar", "sudo python3 -B",
+    assert "sudo env ACX_OCI_BIN=/home/ubuntu/.oci-venv/bin/oci python3 -B" in command
+    for token in ("mktemp -d", "trap", "EXIT", "rm -rf", "tar",
                   "python3 -B",
                   "/scripts/env/render_env.py", "materialize", "--root",
                   "/config/env", "--env", environment, "--target", "t", "--into",
                   f"/opt/acx-backend/{environment}/.env"):
         assert token in command
+
+
+def test_wrapper_passes_oci_cli_override_to_remote_command(remote, tmp_path):
+    cli_bin = tmp_path / "oci-venv" / "bin" / "oci"
+    remote["ENV_MATERIALIZE_OCI_BIN"] = str(cli_bin)
+
+    result = run(remote, "dev", "t")
+
+    assert result.returncode == 0, result.stderr
+    command = ssh_args(remote)[-1]
+    assert f"sudo env ACX_OCI_BIN={cli_bin} python3 -B" in command
+
+
+@pytest.mark.parametrize("cli_bin", [
+    "relative/oci",
+    "/tmp/../oci",
+    "/tmp/invalid path/oci",
+    "/tmp/oci;whoami",
+])
+def test_wrapper_refuses_invalid_oci_cli_override_before_ssh(remote, cli_bin):
+    remote["ENV_MATERIALIZE_OCI_BIN"] = cli_bin
+
+    result = run(remote, "dev", "t")
+
+    no_ssh(remote)
+    assert result.returncode == 2
+    assert "ENV_MATERIALIZE_OCI_BIN" in result.stderr
 
 
 def test_wrapper_streams_code_and_fixture_manifest(remote):

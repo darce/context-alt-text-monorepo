@@ -124,21 +124,21 @@ separately checked-out manifest.
 ### Activate the production API before frontend apply
 
 The portal router enablement and Clerk verifier settings are already committed
-in the `svc-vm` environment manifest. From the repository root on the VM,
-check the production target first; resolve any runtime drift or missing
-host-only secrets before continuing:
+in the `svc-vm` environment manifest. From the repository root on the operator
+workstation, check the production target first; resolve any runtime drift or
+missing host-only secrets before continuing:
 
 ```bash
 make env-materialize ENV=prod TARGET=svc-vm
 ```
 
-Materialize the committed production settings:
+Still on the operator workstation, materialize the committed production settings:
 
 ```bash
 make env-materialize ENV=prod TARGET=svc-vm APPLY=1 CONFIRM=prod
 ```
 
-Restart the shared prod API so it mounts `/portal` with
+On the VM, restart the shared prod API so it mounts `/portal` with
 `RECOGNITION_PORTAL_ENABLED=1` before frontend health runs:
 
 ```bash
@@ -310,18 +310,20 @@ To back out backend enablement, change the production value of
 `config/env/manifest.d/30-portal-backend.toml` through the normal reviewed merge.
 The manifest is the only writer: there is no interim VM writer, and a hand edit
 of `/opt/acx-backend/prod/.env` is reverted as drift at the next materialize.
-From the repository root on the VM, check the merged target and resolve drift
-or missing host-only secrets:
+From the repository root on the operator workstation, check the merged target
+and resolve drift or missing host-only secrets:
 
 ```bash
 make env-materialize ENV=prod TARGET=svc-vm
 ```
 
-Then materialize the disabled flag and restart the shared prod API:
+Still on the operator workstation, materialize the disabled flag:
 
 ```bash
 make env-materialize ENV=prod TARGET=svc-vm APPLY=1 CONFIRM=prod
 ```
+
+On the VM, restart the shared prod API:
 
 ```bash
 sudo systemctl restart acx-prod

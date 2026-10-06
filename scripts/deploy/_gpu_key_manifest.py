@@ -210,7 +210,7 @@ def _update_gpu_key_text(text: str, secret_ocid: str) -> str:
 
 
 def _validate_gpu_owner_publishable(owner_text: str, current_ocid: str | None) -> None:
-    """Run the persistence updater before contacting the remote writer."""
+    """Run the persistence updater before contacting the local Vault writer."""
     _update_gpu_key_text(owner_text, current_ocid or _PREFLIGHT_PROBE_OCID)
 
 

@@ -816,6 +816,8 @@ def _run_locked_transaction(
             manifest_path,
             terraform_input_path,
         )
+        if rotate and expected_secret_id is None:
+            raise ValueError("GPU key rotation requires a recorded GPU secret OCID; bootstrap first")
         command = [
             "bash",
             str(Path(__file__).with_name("gpu-key-mint.sh")),

@@ -15,10 +15,13 @@ returned OCID. Rotation then refuses before contacting Vault unless the
 complete manifest contains matching dev OCI and prod Vault refs for that OCID.
 Run the mint from the operator workstation. The writer uses the operator's
 local OCI CLI config (`~/.oci/config`, profile `DEFAULT`); the backend VM's
-instance principal remains read-only and is not used for minting. Configure the
-local OCI CLI identity with permission to create (bootstrap) and update
-(rotation) secrets in `acx-vault` and to use its encryption key. The workstation
-also needs `openssl` and GNU `timeout` (`gtimeout` from coreutils on macOS).
+instance principal remains secret-read only (no Vault write grant) and is not
+used for minting. Configure the local OCI CLI identity with `manage secret-family`,
+`use vaults`, and `use keys` in the compartment containing `acx-vault`. These
+grants cover vault lookup, secret listing, metadata and version reads, secret
+bundle read-back, bootstrap creation, rotation updates, and encryption-key use.
+The workstation also needs `openssl` and GNU `timeout` (`gtimeout` from
+coreutils on macOS).
 
 The writer uses the shebang interpreter of `oci` found on `PATH`, unless
 `ACX_OCI_PYTHON` selects an interpreter explicitly. That interpreter must be

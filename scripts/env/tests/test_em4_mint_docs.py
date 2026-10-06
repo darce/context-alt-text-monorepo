@@ -33,6 +33,13 @@ def test_gpu_mint_manifest_docs_match_mint_flow() -> None:
     for text in (*manifest_docs, rendered_example):
         assert "--ssh-target" not in text
         assert "approved-vm" not in text
+    mint_command = 'make gpu-key-mint GPU_KEY_MINT_ARGS="--approve-mint"'
+    for doc in manifest_docs:
+        assert mint_command in [line.strip() for line in doc.splitlines()]
+    rendered_lines = [
+        line.removeprefix("# ").strip() for line in rendered_example.splitlines()
+    ]
+    assert rendered_lines.count(mint_command) == len(manifest_docs)
     assert "make env-examples" in docs
     assert "derives automatically" in docs
     assert re.search(

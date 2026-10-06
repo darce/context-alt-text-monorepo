@@ -9,6 +9,7 @@ require_once __DIR__ . '/../../src/public/class-public-demo-shortcode.php';
 use AltContext\PublicSite\PublicDemoShortcode;
 use AltContext\Support\ViteManifest;
 use AltContext\Tests\TestCase;
+use ReflectionClass;
 
 final class PublicDemoShortcodeTest extends TestCase
 {
@@ -73,6 +74,47 @@ final class PublicDemoShortcodeTest extends TestCase
             self::assertStringContainsString('data-acx-demo', $html);
             self::assertSame(
                 'https://example.test/assets/assets/public-demo-tokens-a1b2c3.css',
+                $GLOBALS['__ac_styles']['acx-public-demo-tokens']['src'] ?? null
+            );
+            self::assertContains(
+                'acx-public-demo-tokens',
+                $GLOBALS['__ac_styles']['acx-public-demo-describe']['deps'] ?? []
+            );
+        } finally {
+            unlink($manifestPath);
+        }
+    }
+
+    public function testDefaultTokenResolverUsesManifestEntryAndEnqueuesCss(): void
+    {
+        $this->setOption('acx_public_demo_enabled', true);
+        $this->setOption('acx_public_demo_media_ids', [41]);
+        $GLOBALS['__ac_attachment_urls'][41] = 'https://example.test/uploads/lake.jpg';
+
+        $manifestPath = $this->writeManifest([
+            'js/public/demo-tokens.scss' => [
+                'file' => 'assets/public-demo-tokens-default.css',
+                'src' => 'js/public/demo-tokens.scss',
+                'isEntry' => true,
+            ],
+        ]);
+        $manifest = new ViteManifest(
+            $manifestPath,
+            static fn(string $relative): string => 'https://example.test/assets/' . ltrim($relative, '/')
+        );
+
+        try {
+            $entryPoint = (new ReflectionClass(PublicDemoShortcode::class))
+                ->getReflectionConstant('TOKEN_ENTRY_POINT');
+            self::assertNotFalse($entryPoint);
+            self::assertSame('js/public/demo-tokens.scss', $entryPoint->getValue());
+
+            // The resolver is deliberately omitted; only its manifest dependency uses the fixture seam.
+            $html = (new PublicDemoShortcode(null, $manifest))->render();
+
+            self::assertStringContainsString('data-acx-demo', $html);
+            self::assertSame(
+                'https://example.test/assets/assets/public-demo-tokens-default.css',
                 $GLOBALS['__ac_styles']['acx-public-demo-tokens']['src'] ?? null
             );
             self::assertContains(

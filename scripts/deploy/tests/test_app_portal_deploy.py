@@ -1076,6 +1076,8 @@ def test_apply_refuses_invalid_staged_frontend_without_touching_live_or_rollback
         ("consumer-object-assign", "VITE_CLERK_FAPI"),
         ("consumer-mutator-escape", "VITE_CLERK_FAPI"),
         ("consumer-parameter-reassign", "VITE_CLERK_FAPI"),
+        ("nested-mutating-consumer", "VITE_CLERK_FAPI"),
+        ("shadowed-mutating-consumer", "VITE_CLERK_FAPI"),
         ("computed-dynamic-import", "unsupported dynamic import specifier"),
         ("concatenated-dynamic-import", "unsupported dynamic import specifier"),
     ],
@@ -1311,6 +1313,26 @@ def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
             "consumer-parameter-reassign": "env = {};",
         }[failure]
         module.write_text(_clerk_mutating_consumer_module(mutation), encoding="utf-8")
+    elif failure in {"nested-mutating-consumer", "shadowed-mutating-consumer"}:
+        safe_decoy = (
+            "function unrelated() { function parsePortalConfig(env) { return { "
+            "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+            "fapiOrigin: env.VITE_CLERK_FAPI }; } }\n"
+            if failure == "shadowed-mutating-consumer"
+            else ""
+        )
+        module.write_text(
+            "function parsePortalConfig(env) { return {"
+            "publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, fapiOrigin: env.VITE_CLERK_FAPI }; }\n"
+            "function outer() { function parsePortalConfig(env) { "
+            'env.VITE_CLERK_FAPI = "https://stale.fake-review.invalid"; '
+            "return { publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
+            "fapiOrigin: env.VITE_CLERK_FAPI }; } "
+            f'parsePortalConfig({{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
+            'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" }); }\n'
+            + safe_decoy,
+            encoding="utf-8",
+        )
 
     result = _run(
         tmp_path,

@@ -123,7 +123,8 @@ command -v ssh >/dev/null 2>&1 || fail "ssh is required"
 command -v scp >/dev/null 2>&1 || fail "scp is required"
 
 # Hold one transaction lock across local preflight, the remote Vault write, and
-# both durable local updates. The helper runs this script once more under lock.
+# both durable local updates. The helper passes the locked descriptor and
+# captured preimage hashes to this internal invocation.
 if [ "${GPU_KEY_MINT_TRANSACTION_LOCKED:-0}" != "1" ]; then
     LOCK_ARGS=(
         --run-locked
@@ -137,7 +138,20 @@ if [ "${GPU_KEY_MINT_TRANSACTION_LOCKED:-0}" != "1" ]; then
     exec python3 "${SCRIPT_DIR}/_gpu_key_manifest.py" "${LOCK_ARGS[@]}"
 fi
 
-python3 "${SCRIPT_DIR}/_gpu_key_manifest.py" --check-ready --manifest "${MANIFEST_PATH}"
+if [ -z "${EXPECTED_OWNER_SHA256}" ] || [ -z "${EXPECTED_TERRAFORM_INPUT_SHA256}" ]; then
+    fail "internal GPU key transaction handoff is incomplete"
+fi
+VALIDATE_ARGS=(
+    --validate-transaction
+    --manifest "${MANIFEST_PATH}"
+    --terraform-input "${TERRAFORM_INPUT_PATH}"
+    --expected-owner-sha256 "${EXPECTED_OWNER_SHA256}"
+    --expected-terraform-input-sha256 "${EXPECTED_TERRAFORM_INPUT_SHA256}"
+)
+if [ -n "${EXPECTED_SECRET_ID}" ]; then
+    VALIDATE_ARGS+=(--expected-secret-id "${EXPECTED_SECRET_ID}")
+fi
+python3 "${SCRIPT_DIR}/_gpu_key_manifest.py" "${VALIDATE_ARGS[@]}"
 
 umask 077
 RESULT_FILE="$(mktemp "${TMPDIR:-/tmp}/acx-gpu-key-mint.XXXXXX")"
@@ -209,8 +223,4 @@ if [ "${BYTE_LENGTH}" != "64" ]; then
     fail "existing or minted GPU key has invalid byte length ${BYTE_LENGTH}"
 fi
 
-python3 "${SCRIPT_DIR}/_gpu_key_manifest.py" "${SECRET_OCID}" \
-    --manifest "${MANIFEST_PATH}" --terraform-input "${TERRAFORM_INPUT_PATH}" \
-    --expected-owner-sha256 "${EXPECTED_OWNER_SHA256}" \
-    --expected-terraform-input-sha256 "${EXPECTED_TERRAFORM_INPUT_SHA256}"
 printf '%s %s\n' "${SECRET_OCID}" "${BYTE_LENGTH}"

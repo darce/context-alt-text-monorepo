@@ -10,6 +10,7 @@ import os
 import re
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import tomllib
@@ -28,6 +29,7 @@ _TERRAFORM_INPUT_LINE = re.compile(
 )
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _TRANSACTION_LOCKED_ENV = "GPU_KEY_MINT_TRANSACTION_LOCKED"
+_TRANSACTION_LOCK_FD_ENV = "GPU_KEY_MINT_TRANSACTION_LOCK_FD"
 _MANIFEST_LOCK_TIMEOUT_SECONDS = 5.0
 _MANIFEST_LOCK_RETRY_SECONDS = 0.05
 
@@ -250,15 +252,71 @@ def _open_manifest_write_lock(manifest_path: Path) -> int:
 
 @contextmanager
 def _manifest_write_lock(manifest_path: Path) -> Iterator[None]:
-    """Lock unless a parent mint transaction already holds this ABI lock."""
-    if os.environ.get(_TRANSACTION_LOCKED_ENV) == "1":
-        yield
-        return
+    """Acquire the shared ABI lock for standalone manifest operations."""
     descriptor = _open_manifest_write_lock(manifest_path)
     try:
         yield
     finally:
         os.close(descriptor)
+
+
+def _verify_transaction_lock_handoff(manifest_path: Path) -> None:
+    """Require the internal caller's inherited descriptor to hold this lock."""
+    raw_descriptor = os.environ.get(_TRANSACTION_LOCK_FD_ENV, "")
+    if not raw_descriptor.isascii() or not raw_descriptor.isdecimal() or len(raw_descriptor) > 10:
+        raise ValueError("GPU key transaction lock handoff is missing")
+    descriptor = int(raw_descriptor)
+    lock_path = manifest_write_lock_path(manifest_path)
+    try:
+        inherited_stat = os.fstat(descriptor)
+        path_stat = lock_path.lstat()
+    except OSError as exc:
+        raise ValueError("GPU key transaction lock handoff is invalid") from exc
+    if (
+        not stat.S_ISREG(inherited_stat.st_mode)
+        or inherited_stat.st_uid != os.getuid()
+        or inherited_stat.st_nlink != 1
+        or stat.S_IMODE(inherited_stat.st_mode) != 0o600
+        or (inherited_stat.st_dev, inherited_stat.st_ino)
+        != (path_stat.st_dev, path_stat.st_ino)
+    ):
+        raise ValueError("GPU key transaction lock handoff is invalid")
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        raise ValueError("GPU key transaction lock is not held") from exc
+    except OSError as exc:
+        raise ValueError("GPU key transaction lock handoff is invalid") from exc
+
+
+def _validate_transaction_handoff(
+    manifest_path: Path,
+    terraform_input_path: Path,
+    expected_owner_sha256: str,
+    expected_terraform_input_sha256: str,
+    expected_secret_id: str | None,
+) -> None:
+    _verify_transaction_lock_handoff(manifest_path)
+    if not _SHA256.fullmatch(expected_owner_sha256):
+        raise ValueError("invalid expected manifest preimage hash")
+    if expected_terraform_input_sha256 != "missing" and not _SHA256.fullmatch(
+        expected_terraform_input_sha256
+    ):
+        raise ValueError("invalid expected Terraform input preimage hash")
+    current_secret_id, owner_path, preimages = _preflight_mint_transaction(
+        manifest_path,
+        terraform_input_path,
+    )
+    if expected_secret_id != current_secret_id:
+        raise ValueError("GPU key secret identity changed before writer contact")
+    expected_input_hash = (
+        None if expected_terraform_input_sha256 == "missing" else expected_terraform_input_sha256
+    )
+    if (
+        preimages[owner_path] != expected_owner_sha256
+        or preimages[terraform_input_path] != expected_input_hash
+    ):
+        raise ValueError("GPU key mint transaction preimage changed before writer contact")
 
 
 def check_manifest_ready(path: Path) -> None:
@@ -705,7 +763,35 @@ def _run_locked_transaction(
             command.append("--rotate")
         environment = os.environ.copy()
         environment["GPU_KEY_MINT_TRANSACTION_LOCKED"] = "1"
-        return subprocess.run(command, check=False, env=environment).returncode
+        environment[_TRANSACTION_LOCK_FD_ENV] = str(descriptor)
+        completed = subprocess.run(
+            command,
+            check=False,
+            env=environment,
+            pass_fds=(descriptor,),
+            capture_output=True,
+            text=True,
+        )
+        if completed.stderr:
+            sys.stderr.write(completed.stderr)
+        if completed.returncode != 0:
+            return completed.returncode
+        result = completed.stdout
+        if not result.endswith("\n") or result.count("\n") != 1:
+            raise ValueError("GPU key writer returned an invalid result")
+        fields = result[:-1].split()
+        if len(fields) != 2 or not _SECRET_OCID.fullmatch(fields[0]) or fields[1] != "64":
+            raise ValueError("GPU key writer returned an invalid result")
+        if expected_secret_id is not None and fields[0] != expected_secret_id:
+            raise ValueError("Vault writer returned a different GPU key secret identity")
+        _persist_mint_result_unlocked(
+            manifest_path,
+            terraform_input_path,
+            fields[0],
+            expected_preimages,
+        )
+        sys.stdout.write(result)
+        return 0
     except OSError as exc:
         raise ValueError("cannot lock or run GPU key mint transaction") from exc
     finally:
@@ -724,21 +810,47 @@ def main() -> int:
     parser.add_argument("--terraform-input", type=Path)
     parser.add_argument("--check-ready", action="store_true")
     parser.add_argument("--run-locked", action="store_true")
+    parser.add_argument("--validate-transaction", action="store_true")
     parser.add_argument("--ssh-target")
     parser.add_argument("--rotate", action="store_true")
     parser.add_argument("--expected-owner-sha256")
     parser.add_argument("--expected-terraform-input-sha256")
+    parser.add_argument("--expected-secret-id")
     args = parser.parse_args()
     if args.run_locked:
         if (
             args.secret_ocid is not None
             or args.check_ready
+            or args.validate_transaction
             or args.terraform_input is None
             or args.expected_owner_sha256 is not None
             or args.expected_terraform_input_sha256 is not None
+            or args.expected_secret_id is not None
         ):
             parser.error("--run-locked requires --terraform-input and does not accept other modes")
         return _run_locked_transaction(args.manifest, args.terraform_input, args.ssh_target or "", args.rotate)
+    if args.validate_transaction:
+        if (
+            args.secret_ocid is not None
+            or args.check_ready
+            or args.run_locked
+            or args.terraform_input is None
+            or args.ssh_target
+            or args.rotate
+            or args.expected_owner_sha256 is None
+            or args.expected_terraform_input_sha256 is None
+        ):
+            parser.error("--validate-transaction requires preimage hashes and --terraform-input")
+        if args.expected_secret_id is not None and not _SECRET_OCID.fullmatch(args.expected_secret_id):
+            parser.error("invalid expected GPU key secret ID")
+        _validate_transaction_handoff(
+            args.manifest,
+            args.terraform_input,
+            args.expected_owner_sha256,
+            args.expected_terraform_input_sha256,
+            args.expected_secret_id,
+        )
+        return 0
     if args.check_ready:
         if (
             args.secret_ocid is not None
@@ -747,12 +859,15 @@ def main() -> int:
             or args.rotate
             or args.expected_owner_sha256 is not None
             or args.expected_terraform_input_sha256 is not None
+            or args.expected_secret_id is not None
         ):
             parser.error("--check-ready does not accept mint arguments")
         check_manifest_ready(args.manifest)
         return 0
     if args.secret_ocid is None:
         parser.error("secret_ocid is required")
+    if args.expected_secret_id is not None:
+        parser.error("--expected-secret-id requires --validate-transaction")
     if args.terraform_input is not None:
         if (args.expected_owner_sha256 is None) != (args.expected_terraform_input_sha256 is None):
             parser.error("expected both manifest and Terraform input preimage hashes")

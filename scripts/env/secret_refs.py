@@ -17,9 +17,19 @@ class SecretNotFound(SecretUnavailable):
     pass
 
 
+class OciCliUnavailable(SecretUnavailable):
+    pass
+
+
+class OciResolutionFailed(SecretUnavailable):
+    pass
+
+
 _OCI_SECRET_OCID = re.compile(
     r"ocid1\.vaultsecret\.oc[0-9]+\.[A-Za-z0-9_-]*\.[A-Za-z0-9._-]{20,}"
 )
+_OCI_BIN_DEFAULT = "/home/ubuntu/.oci-venv/bin/oci"
+_OCI_BIN_ALLOWED = re.compile(r"/[A-Za-z0-9._+/-]+")
 _OCI_TIMEOUT_SECONDS = 30
 
 
@@ -38,6 +48,27 @@ def _unavailable(var_name: str, scheme: str) -> SecretUnavailable:
 
 def _not_found(var_name: str, scheme: str) -> SecretNotFound:
     return SecretNotFound(f"secret {var_name!r} unavailable for scheme {scheme!r}")
+
+
+def _oci_cli_unavailable(var_name: str) -> OciCliUnavailable:
+    return OciCliUnavailable(
+        f"secret {var_name!r} unavailable for scheme 'oci': OCI CLI unavailable (check ACX_OCI_BIN)"
+    )
+
+
+def _oci_cli_path(environment: Mapping[str, str], var_name: str) -> str:
+    value = environment.get("ACX_OCI_BIN")
+    if value is None or value == "":
+        return _OCI_BIN_DEFAULT
+    if (
+        not isinstance(value, str)
+        or not value.startswith("/")
+        or _OCI_BIN_ALLOWED.fullmatch(value) is None
+        or os.path.normpath(value) != value
+        or ".." in value.split("/")
+    ):
+        raise _oci_cli_unavailable(var_name)
+    return value
 
 
 def resolve_secret(
@@ -90,10 +121,12 @@ def resolve_secret(
     if scheme == "oci":
         if _OCI_SECRET_OCID.fullmatch(location) is None:
             raise _unavailable(var_name, scheme)
+        environment = os.environ if environ is None else environ
+        cli_path = _oci_cli_path(environment, var_name)
         try:
             result = runner(
                 [
-                    "oci", "secrets", "secret-bundle", "get", "--auth", "instance_principal",
+                    cli_path, "secrets", "secret-bundle", "get", "--auth", "instance_principal",
                     "--secret-id", location,
                 ],
                 capture_output=True,
@@ -101,6 +134,11 @@ def resolve_secret(
                 check=False,
                 timeout=_OCI_TIMEOUT_SECONDS,
             )
+        except (FileNotFoundError, PermissionError, NotADirectoryError):
+            raise _oci_cli_unavailable(var_name) from None
+        except Exception:
+            raise OciResolutionFailed(str(_unavailable(var_name, scheme))) from None
+        try:
             if result.returncode != 0 or not isinstance(result.stdout, str):
                 raise ValueError("OCI secret retrieval failed")
             payload = json.loads(result.stdout, object_pairs_hook=_json_object_without_duplicate_keys)
@@ -115,7 +153,7 @@ def resolve_secret(
                 raise ValueError("empty OCI secret content")
             value = raw_value.decode("utf-8", errors="strict")
         except Exception:
-            raise _unavailable(var_name, scheme) from None
+            raise OciResolutionFailed(str(_unavailable(var_name, scheme))) from None
         return value
 
     raise SecretUnavailable(f"secret {var_name!r} has unsupported scheme {scheme!r}")

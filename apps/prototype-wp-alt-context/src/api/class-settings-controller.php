@@ -252,6 +252,25 @@ class SettingsController {
 					array( 'status' => 400 )
 				);
 			}
+			if ( '' !== $url ) {
+				$url_parts = parse_url( $url );
+				$url_host  = is_array( $url_parts ) && isset( $url_parts['host'] )
+					? strtolower( (string) $url_parts['host'] )
+					: '';
+
+				if (
+					! LoopbackHost::is_loopback( $url_host )
+					&& in_array( $this->resolve_key_source()['source'], array( 'constant', 'filter' ), true )
+					&& '' === $this->get_constant_value( 'ACX_RECOGNITION_URL' )
+					&& '' === trim( (string) apply_filters( 'acx_recognition_base_url', '' ) )
+				) {
+					return new WP_Error(
+						'deployment_key_requires_deployment_url',
+						'A deployment-managed recognition API key is configured; set the recognition URL with ACX_RECOGNITION_URL or the acx_recognition_base_url filter instead of saving it here.',
+						array( 'status' => 400 )
+					);
+				}
+			}
 			// R23-BR-14: do not trust update_option's return (false on no-op *and*
 			// failure). Read back and compare against the intended value; a no-op
 			// re-save still matches. option_matches_intended() verifies effect, not

@@ -398,20 +398,57 @@ async def test_cli_created_invitation_round_trips_through_onboarding_claim(
         SqlAlchemyPortalIdentityRepository,
     )
 
-    repository = SqlAlchemyPortalIdentityRepository(db_session)
-    with pytest.raises(PortalIdentityClaimError):
-        await repository.claim_onboarding(
+    # CLI and API requests use separate sessions. The suite's db_session
+    # restarts savepoints in after_transaction_end, which is incompatible
+    # with onboarding's own begin_nested() context manager on that session.
+    async with AsyncSession(bind=db_session.bind, expire_on_commit=False) as claim_session:
+        repository = SqlAlchemyPortalIdentityRepository(claim_session)
+        with pytest.raises(PortalIdentityClaimError) as mismatch:
+            await repository.claim_onboarding(
+                issuer="https://issuer.example.test",
+                subject="fake-subject",
+                email="someone-else@example.test",
+                invitation_token=raw_token,
+            )
+        _require(mismatch.value.code == "not_admitted", "mismatched email must be refused before acceptance")
+        await claim_session.rollback()
+
+        claim = await repository.claim_onboarding(
             issuer="https://issuer.example.test",
             subject="fake-subject",
-            email="someone-else@example.test",
+            email="CLAIM.USER@EXAMPLE.TEST",
             invitation_token=raw_token,
         )
-    claim = await repository.claim_onboarding(
-        issuer="https://issuer.example.test",
-        subject="fake-subject",
-        email="CLAIM.USER@EXAMPLE.TEST",
-        invitation_token=raw_token,
-    )
-    await db_session.commit()
-    _require(claim.identity.email == "claim.user@example.test", "matching email must be normalized during claim")
-    _require(claim.identity.tenant_id is not None, "NULL-tenant invitation must create a tenant during claim")
+        await claim_session.commit()
+        _require(claim.identity.email == "claim.user@example.test", "matching email must be normalized during claim")
+        _require(claim.identity.tenant_id is not None, "NULL-tenant invitation must create a tenant during claim")
+        _require(not claim.replayed, "first matching-email claim must redeem the pending invitation")
+        claimed_identity_id = claim.identity.id
+        claimed_tenant_id = claim.identity.tenant_id
+
+    # Read committed acceptance through another request session, rather than
+    # trusting only the repository's in-memory claim result.
+    async with AsyncSession(bind=db_session.bind, expire_on_commit=False) as verification_session:
+        invitation = await verification_session.scalar(select(PortalTenantInvitation))
+        _require(invitation is not None, "claimed invitation must remain stored")
+        assert invitation is not None
+        _require(invitation.accepted_at is not None, "successful claim must persist acceptance")
+        _require(invitation.accepted_by_identity_id == claimed_identity_id, "acceptance must identify the claimant")
+        _require(invitation.tenant_id == claimed_tenant_id, "acceptance must bind the newly created tenant")
+        _require(
+            invitation.token_hash == hashlib.sha256(raw_token.encode("utf-8")).hexdigest(),
+            "claim must retain hash-only token storage",
+        )
+        _require(
+            await verification_session.get(Tenant, claimed_tenant_id) is not None, "claimed tenant must be durable"
+        )
+
+        repository = SqlAlchemyPortalIdentityRepository(verification_session)
+        with pytest.raises(PortalIdentityClaimError) as consumed:
+            await repository.claim_onboarding(
+                issuer="https://issuer.example.test",
+                subject="another-subject",
+                email="claim.user@example.test",
+                invitation_token=raw_token,
+            )
+        _require(consumed.value.code == "invitation_consumed", "another identity must not redeem an accepted token")

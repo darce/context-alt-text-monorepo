@@ -20,6 +20,8 @@ use function plugins_url;
  * Resolves Vite 5 build-manifest entry JS and recursively imported CSS.
  */
 final class ViteManifest {
+	private static ?string $pluginManifestDirectoryOverride = null;
+
 	private string $manifestPath;
 
 	/** @var callable(string):string */
@@ -51,10 +53,20 @@ final class ViteManifest {
 	}
 
 	public static function plugin_manifest_path(): string {
-		$primary  = ACX_PLUGIN_DIR . 'public/assets/dist/.vite/manifest.json';
-		$fallback = ACX_PLUGIN_DIR . 'public/assets/dist/manifest.json';
+		$plugin_directory = self::$pluginManifestDirectoryOverride ?? ACX_PLUGIN_DIR;
+		$primary           = $plugin_directory . 'public/assets/dist/.vite/manifest.json';
+		$fallback          = $plugin_directory . 'public/assets/dist/manifest.json';
 
 		return is_readable( $primary ) ? $primary : $fallback;
+	}
+
+	/**
+	 * Test seam for resolving manifests from an isolated plugin directory.
+	 *
+	 * @param string|null $pluginDirectory Directory ending in a path separator, or null for ACX_PLUGIN_DIR.
+	 */
+	public static function set_plugin_manifest_directory_override( ?string $pluginDirectory ): void {
+		self::$pluginManifestDirectoryOverride = $pluginDirectory;
 	}
 
 	public function manifest_path(): string {

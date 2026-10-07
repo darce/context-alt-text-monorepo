@@ -32,7 +32,9 @@ use function wp_safe_remote_request;
 final class RecognitionTransport {
 	private const ERROR_EGRESS_DENIED       = 'acx_egress_denied';
 	private const ERROR_PIN_UNAVAILABLE     = 'acx_egress_pin_unavailable';
+	private const ERROR_PIN_FAILED          = 'acx_egress_pin_failed';
 	private const PIN_UNAVAILABLE_MESSAGE   = 'Recognition egress pin is unavailable because the WordPress HTTP transport cannot use cURL.';
+	private const PIN_FAILED_MESSAGE        = 'Recognition egress pin could not be applied to the cURL request.';
 
 	/**
 	 * Optional DNS resolver seam for deterministic transport tests.
@@ -65,7 +67,7 @@ final class RecognitionTransport {
 	/**
 	 * Override CURLOPT_RESOLVE application for deterministic transport tests.
 	 *
-	 * @param callable(mixed,list<string>):void|null $applier
+	 * @param callable(mixed,list<string>):bool|null $applier
 	 */
 	public static function set_curl_resolve_applier( ?callable $applier ): void {
 		self::$curl_resolve_applier = null === $applier ? null : Closure::fromCallable( $applier );
@@ -270,7 +272,13 @@ final class RecognitionTransport {
 		$pin        = self::resolve_pin( $host, $port, $ip );
 		$pin_host   = self::normalize_host( $host );
 		$pin_port   = $port;
-		$callback   = static function ( &$handle, $parsed_args, $request_url ) use ( $pin, $pin_host, $pin_port ): void {
+		$pin_application_failed = false;
+		$callback   = static function ( &$handle, $parsed_args, $request_url ) use (
+			$pin,
+			$pin_host,
+			$pin_port,
+			&$pin_application_failed
+		): void {
 			if ( ! is_string( $request_url ) ) {
 				return;
 			}
@@ -287,7 +295,10 @@ final class RecognitionTransport {
 				return;
 			}
 
-			self::apply_curl_resolve_option( $handle, $pin );
+			if ( ! self::apply_curl_resolve_option( $handle, $pin ) ) {
+				$pin_application_failed = true;
+				throw new \RuntimeException( self::PIN_FAILED_MESSAGE );
+			}
 		};
 
 		add_action( 'http_api_curl', $callback, 10, 3 );
@@ -297,6 +308,12 @@ final class RecognitionTransport {
 			}
 
 			return $request();
+		} catch ( \Throwable $exception ) {
+			if ( ! $pin_application_failed ) {
+				throw $exception;
+			}
+
+			return self::pin_failed();
 		} finally {
 			remove_action( 'http_api_curl', $callback, 10 );
 		}
@@ -357,8 +374,7 @@ final class RecognitionTransport {
 	 */
 	private static function apply_curl_resolve_option( &$handle, string $pin ): bool {
 		if ( null !== self::$curl_resolve_applier ) {
-			( self::$curl_resolve_applier )( $handle, [ $pin ] );
-			return true;
+			return ( self::$curl_resolve_applier )( $handle, [ $pin ] );
 		}
 
 		return curl_setopt( $handle, CURLOPT_RESOLVE, [ $pin ] );
@@ -403,5 +419,9 @@ final class RecognitionTransport {
 
 	private static function pin_unavailable(): WP_Error {
 		return new WP_Error( self::ERROR_PIN_UNAVAILABLE, self::PIN_UNAVAILABLE_MESSAGE );
+	}
+
+	private static function pin_failed(): WP_Error {
+		return new WP_Error( self::ERROR_PIN_FAILED, self::PIN_FAILED_MESSAGE );
 	}
 }

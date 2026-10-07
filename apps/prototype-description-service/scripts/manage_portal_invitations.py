@@ -23,7 +23,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import PortalTenantInvitation
@@ -170,13 +170,22 @@ async def _list(args: argparse.Namespace, session: AsyncSession) -> None:
 
 
 async def _revoke(args: argparse.Namespace, session: AsyncSession) -> PortalTenantInvitation | None:
-    invitation = await session.get(PortalTenantInvitation, args.invitation_id)
     now = datetime.now(UTC)
-    if invitation is None or _state(invitation, now) != "pending":
-        return None
-    invitation.expires_at = now
-    await session.flush()
-    return invitation
+    # Check pending state in the write itself: a claimant may commit after
+    # an unlocked read, and its acceptance must retain the original expiry.
+    statement = (
+        update(PortalTenantInvitation)
+        .where(
+            PortalTenantInvitation.id == args.invitation_id,
+            PortalTenantInvitation.accepted_at.is_(None),
+            PortalTenantInvitation.expires_at > now,
+        )
+        .values(expires_at=now)
+        .returning(PortalTenantInvitation)
+        .execution_options(synchronize_session="fetch", populate_existing=True)
+    )
+    # RETURNING yields no row when the compare-and-set refuses the revoke.
+    return (await session.execute(statement)).scalar_one_or_none()
 
 
 async def run(argv: Sequence[str] | None = None, *, session: AsyncSession | None = None) -> int:

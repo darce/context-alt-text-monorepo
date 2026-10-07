@@ -114,6 +114,36 @@ The test user has:
 - Ability to set `log_min_duration_statement` for debugging
 - **NOT** a SUPERUSER (so RLS policies remain enforced)
 
+## `manage_api_keys.py` environment labels
+
+`--env` names the database stack the command will target. For an OCI command,
+run it inside that stack's API container and use its exact label:
+
+| Target | CLI `--env` | Runtime `ACX_ENV` in API container | DSN host and guard |
+|---|---|---|---|
+| OCI production | `prod` | `prod` | Compose `postgres` is allowed; loopback and `.local` hosts are refused. |
+| OCI staging | `staging` | `staging` | Compose `postgres` is allowed when the runtime label matches. |
+| OCI development | `dev` | `dev` | Compose `postgres` is allowed when the runtime label matches. |
+| OCI dev-fir | `dev-fir` | `dev-fir` | Compose `postgres` is allowed when the runtime label matches. |
+| Local development | `local` | `local` (or unset for legacy invocations) | A local host is required; remote hosts are refused. |
+
+The API service receives `ACX_ENV` from the target stack's `.env` via Compose's
+`env_file: .env`; `--env` must match that trusted in-container value. The
+operator's Make `ENV` selects a stack on the host and is not the CLI runtime
+setting. If `ACX_ENV` is unset, the existing strict DSN-based fallback applies;
+in particular, it does not authorize a non-production command to use the
+Compose `postgres` host without a matching runtime label. Production continues
+to reject local DSN hosts, and local commands continue to reject remote DSNs.
+
+For example, run a staging command from the staging directory so Compose uses
+that stack's configuration and API container:
+
+```bash
+cd /opt/acx-backend/staging
+docker compose -f docker-compose.env.yml exec -T api \
+  python -m scripts.manage_api_keys --env staging tenant list < /dev/null
+```
+
 ## Testing with RLS
 
 To run tests with Row-Level Security enabled:

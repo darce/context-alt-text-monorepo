@@ -56,18 +56,18 @@ def test_portal_backend_vars_are_optional_config_for_both_service_targets():
         assert var.section == "API security"
         assert var.required is False
         assert consumer in var.doc
-        assert "dev" not in var.values
         assert "staging" not in var.values
 
     assert set(manifest.targets["svc-local"].sections) >= {"API security"}
     assert set(manifest.targets["svc-vm"].sections) >= {"API security"}
 
 
-def test_portal_backend_values_render_for_local_and_prod_only():
+def test_portal_backend_values_render_for_local_dev_and_prod():
     manifest, vars_by_name = _portal_manifest()
     render_target = load_module("render_env").render_target
 
     local = _assignments(_render_target(render_target, manifest, "svc-local", "local"))
+    dev = _assignments(_render_target(render_target, manifest, "svc-vm", "dev"))
     assert local["RECOGNITION_PORTAL_ENABLED"] == "1"
     assert local["ACX_CLERK_ISSUER"] == "https://saved-frog-4170.clerk.accounts.dev"
     assert local["ACX_CLERK_JWKS_URL"] == "https://saved-frog-4170.clerk.accounts.dev/.well-known/jwks.json"
@@ -75,6 +75,23 @@ def test_portal_backend_values_render_for_local_and_prod_only():
     assert local["ACX_CLERK_AUTHORIZED_PARTIES"] == "http://localhost:5173"
     assert local["APP_PUBLIC_ORIGIN"] == "http://localhost:5173"
     assert local["APP_ALLOWED_ORIGINS"] == "http://localhost:5173"
+
+    expected_dev = {
+        "RECOGNITION_PORTAL_ENABLED": "1",
+        "ACX_CLERK_ISSUER": "https://saved-frog-4170.clerk.accounts.dev",
+        "ACX_CLERK_JWKS_URL": "https://saved-frog-4170.clerk.accounts.dev/.well-known/jwks.json",
+        "ACX_CLERK_AUDIENCE": "altcontext-portal",
+        "ACX_CLERK_AUTHORIZED_PARTIES": "http://localhost:5173",
+        "APP_PUBLIC_ORIGIN": "http://localhost:5173",
+        "APP_ALLOWED_ORIGINS": "http://localhost:5173",
+    }
+    assert dev["ACX_CLERK_ISSUER"] == local["ACX_CLERK_ISSUER"]
+    assert dev["ACX_CLERK_JWKS_URL"] == dev["ACX_CLERK_ISSUER"] + "/.well-known/jwks.json"
+    assert dev["ACX_CLERK_AUTHORIZED_PARTIES"].split(",") == ["http://localhost:5173"]
+    assert dev["APP_PUBLIC_ORIGIN"].split(",") == ["http://localhost:5173"]
+    assert dev["APP_ALLOWED_ORIGINS"].split(",") == ["http://localhost:5173"]
+    assert {name: vars_by_name[name].values.get("dev") for name in PORTAL_CONSUMERS} == expected_dev
+    assert {name: dev[name] for name in PORTAL_CONSUMERS} == expected_dev
 
     prod = {name: vars_by_name[name].values.get("prod") for name in PORTAL_CONSUMERS}
     assert prod == {
@@ -93,6 +110,21 @@ def test_portal_backend_values_render_for_local_and_prod_only():
     ):
         assert prod[name].startswith("https://")
 
-    for env in ("dev", "staging"):
-        assert all(env not in vars_by_name[name].values for name in PORTAL_CONSUMERS)
-    assert vars_by_name["RECOGNITION_PORTAL_ENABLED"].values == {"local": "1"}
+    assert all("staging" not in vars_by_name[name].values for name in PORTAL_CONSUMERS)
+    assert vars_by_name["RECOGNITION_PORTAL_ENABLED"].values == {"local": "1", "dev": "1"}
+
+
+def test_portal_backend_dev_svc_vm_renders_expected_values():
+    manifest, _ = _portal_manifest()
+    render_target = load_module("render_env").render_target
+    rendered = _render_target(render_target, manifest, "svc-vm", "dev")
+    expected_lines = {
+        "RECOGNITION_PORTAL_ENABLED=1",
+        "ACX_CLERK_ISSUER=https://saved-frog-4170.clerk.accounts.dev",
+        "ACX_CLERK_JWKS_URL=https://saved-frog-4170.clerk.accounts.dev/.well-known/jwks.json",
+        "ACX_CLERK_AUDIENCE=altcontext-portal",
+        "ACX_CLERK_AUTHORIZED_PARTIES=http://localhost:5173",
+        "APP_PUBLIC_ORIGIN=http://localhost:5173",
+        "APP_ALLOWED_ORIGINS=http://localhost:5173",
+    }
+    assert expected_lines <= set(rendered.splitlines())

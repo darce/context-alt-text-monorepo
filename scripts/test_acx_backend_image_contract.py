@@ -1383,9 +1383,7 @@ def test_dev_fir_mint_recipe_is_paste_safe() -> None:
         if line.split("#", 1)[0].strip().startswith("ACX_ENV=")
     ]
     assert runtime_envs == ["dev-fir"], runtime_envs
-    mint_commands = [
-        line for line in recipe_lines if "python -m scripts.manage_api_keys " in line
-    ]
+    mint_commands = [line for line in recipe_lines if "python -m scripts.manage_api_keys " in line]
     assert len(mint_commands) == 2, mint_commands
     mint_envs = []
     for line in mint_commands:

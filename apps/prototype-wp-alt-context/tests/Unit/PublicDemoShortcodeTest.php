@@ -13,6 +13,18 @@ use ReflectionClass;
 
 final class PublicDemoShortcodeTest extends TestCase
 {
+    /** @var list<string> */
+    private array $temporaryPluginDirectories = [];
+
+    protected function tearDown(): void
+    {
+        ViteManifest::set_plugin_manifest_directory_override(null);
+        foreach ($this->temporaryPluginDirectories as $directory) {
+            $this->removeDirectory($directory);
+        }
+        parent::tearDown();
+    }
+
     public function testRegistersExpectedShortcode(): void
     {
         $shortcode = new PublicDemoShortcode();
@@ -91,39 +103,25 @@ final class PublicDemoShortcodeTest extends TestCase
         $this->setOption('acx_public_demo_media_ids', [41]);
         $GLOBALS['__ac_attachment_urls'][41] = 'https://example.test/uploads/lake.jpg';
 
-        $manifestPath = $this->writeManifest([
-            'js/public/demo-tokens.scss' => [
-                'file' => 'assets/public-demo-tokens-default.css',
-                'src' => 'js/public/demo-tokens.scss',
-                'isEntry' => true,
-            ],
-        ]);
-        $manifest = new ViteManifest(
-            $manifestPath,
-            static fn(string $relative): string => 'https://example.test/assets/' . ltrim($relative, '/')
+        $entryPoint = (new ReflectionClass(PublicDemoShortcode::class))
+            ->getReflectionConstant('TOKEN_ENTRY_POINT');
+        self::assertNotFalse($entryPoint);
+        self::assertSame('js/public/demo-tokens.scss', $entryPoint->getValue());
+
+        ViteManifest::set_plugin_manifest_directory_override(
+            $this->pluginDirectoryWithManifestFixture('demo-tokens.json')
         );
+        $html = (new PublicDemoShortcode())->render();
 
-        try {
-            $entryPoint = (new ReflectionClass(PublicDemoShortcode::class))
-                ->getReflectionConstant('TOKEN_ENTRY_POINT');
-            self::assertNotFalse($entryPoint);
-            self::assertSame('js/public/demo-tokens.scss', $entryPoint->getValue());
-
-            // The resolver is deliberately omitted; only its manifest dependency uses the fixture seam.
-            $html = (new PublicDemoShortcode(null, $manifest))->render();
-
-            self::assertStringContainsString('data-acx-demo', $html);
-            self::assertSame(
-                'https://example.test/assets/assets/public-demo-tokens-default.css',
-                $GLOBALS['__ac_styles']['acx-public-demo-tokens']['src'] ?? null
-            );
-            self::assertContains(
-                'acx-public-demo-tokens',
-                $GLOBALS['__ac_styles']['acx-public-demo-describe']['deps'] ?? []
-            );
-        } finally {
-            unlink($manifestPath);
-        }
+        self::assertStringContainsString('data-acx-demo', $html);
+        self::assertSame(
+            'http://example.test/wp-content/plugins/alt-context/public/assets/dist/assets/public-demo-tokens-default.css',
+            $GLOBALS['__ac_styles']['acx-public-demo-tokens']['src'] ?? null
+        );
+        self::assertContains(
+            'acx-public-demo-tokens',
+            $GLOBALS['__ac_styles']['acx-public-demo-describe']['deps'] ?? []
+        );
     }
 
     public function testDemoStillRendersWhenTokenManifestEntryIsMissing(): void
@@ -132,24 +130,13 @@ final class PublicDemoShortcodeTest extends TestCase
         $this->setOption('acx_public_demo_media_ids', [41]);
         $GLOBALS['__ac_attachment_urls'][41] = 'https://example.test/uploads/lake.jpg';
 
-        $manifestPath = $this->writeManifest([]);
-        $manifest = new ViteManifest(
-            $manifestPath,
-            static fn(string $relative): string => 'https://example.test/assets/' . ltrim($relative, '/')
-        );
+        ViteManifest::set_plugin_manifest_directory_override($this->temporaryPluginDirectory());
+        $html = (new PublicDemoShortcode())->render();
 
-        try {
-            $html = (new PublicDemoShortcode(
-                static fn(string $entry): ?array => $manifest->entry_assets($entry)
-            ))->render();
-
-            self::assertStringContainsString('data-acx-demo', $html);
-            self::assertArrayHasKey('acx-public-demo-describe', $GLOBALS['__ac_styles']);
-            self::assertArrayNotHasKey('acx-public-demo-tokens', $GLOBALS['__ac_styles']);
-            self::assertSame([], $GLOBALS['__ac_styles']['acx-public-demo-describe']['deps']);
-        } finally {
-            unlink($manifestPath);
-        }
+        self::assertStringContainsString('data-acx-demo', $html);
+        self::assertArrayHasKey('acx-public-demo-describe', $GLOBALS['__ac_styles']);
+        self::assertArrayNotHasKey('acx-public-demo-tokens', $GLOBALS['__ac_styles']);
+        self::assertSame([], $GLOBALS['__ac_styles']['acx-public-demo-describe']['deps']);
     }
 
     public function testMultipleInstancesUseDistinctRadioGroupsAndLabelIds(): void
@@ -236,5 +223,65 @@ final class PublicDemoShortcodeTest extends TestCase
         }
 
         return $path;
+    }
+
+    private function pluginDirectoryWithManifestFixture(string $fixture): string
+    {
+        $pluginDirectory = $this->temporaryPluginDirectory();
+        $manifestDirectory = $pluginDirectory . 'public/assets/dist/.vite';
+        mkdir($manifestDirectory, 0777, true);
+        self::assertTrue(copy(
+            $this->fixturePath($fixture),
+            $manifestDirectory . '/manifest.json'
+        ));
+
+        return $pluginDirectory;
+    }
+
+    private function temporaryPluginDirectory(): string
+    {
+        $temporaryFile = tempnam(sys_get_temp_dir(), 'acx-demo-plugin-');
+        if (false === $temporaryFile) {
+            self::fail('Unable to create a temporary plugin directory.');
+        }
+        unlink($temporaryFile);
+
+        $pluginDirectory = $temporaryFile . '/';
+        mkdir($pluginDirectory, 0777, true);
+        $this->temporaryPluginDirectories[] = $pluginDirectory;
+
+        return $pluginDirectory;
+    }
+
+    private function fixturePath(string $name): string
+    {
+        return __DIR__ . '/../fixtures/vite-manifest/' . $name;
+    }
+
+    private function removeDirectory(string $directory): void
+    {
+        if (!is_dir($directory)) {
+            return;
+        }
+
+        $items = scandir($directory);
+        if (false === $items) {
+            return;
+        }
+
+        foreach ($items as $item) {
+            if ('.' === $item || '..' === $item) {
+                continue;
+            }
+
+            $path = $directory . $item;
+            if (is_dir($path)) {
+                $this->removeDirectory($path . '/');
+            } else {
+                unlink($path);
+            }
+        }
+
+        rmdir($directory);
     }
 }

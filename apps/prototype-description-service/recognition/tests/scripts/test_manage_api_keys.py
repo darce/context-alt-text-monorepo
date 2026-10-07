@@ -546,3 +546,172 @@ async def test_dev_docker_list_and_revoke_persist_rollback(
     await db_session.refresh(created)
     assert created.revoked_at is not None
     assert await repo.get_by_hash(raw_hash) is None
+
+
+class _FakeStackSession(_FakeSession):
+    """Exercise command dispatch and output without connecting to a stack DB."""
+
+    def __init__(self) -> None:
+        super().__init__([])
+        self.tenant = None
+        self.closed = False
+
+    async def get(self, model, tenant_id):
+        assert model is Tenant
+        return self.tenant if self.tenant is not None and self.tenant.id == tenant_id else None
+
+    def add(self, tenant) -> None:
+        self.tenant = tenant
+        tenant.created_at = None
+
+    async def refresh(self, tenant) -> None:
+        assert tenant is self.tenant
+
+    async def execute(self, statement):
+        assert "tenants" in str(statement)
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [self.tenant]))
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("env", ["dev", "staging", "dev-fir"])
+@pytest.mark.parametrize("injected", [False, True])
+async def test_stack_labels_bootstrap_and_manage_keys(env, injected, monkeypatch, capsys) -> None:
+    monkeypatch.setenv("ACX_ENV", env)
+    _set_database_dsn(monkeypatch, "postgresql+asyncpg://u:p@postgres:5432/test")
+    from db import session as db_session_module
+
+    cli = _import_cli()
+    session = _FakeStackSession()
+    monkeypatch.setattr(db_session_module, "async_session_factory", lambda: session)
+    monkeypatch.setattr(cli, "SqlAlchemyApiKeyRepository", _FakeApiKeyRepository)
+    tenant_id = uuid.uuid4()
+    raw = "temporary-fake-api-key"
+    record = SimpleNamespace(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        api_key_hash=hashlib.sha256(raw.encode()).hexdigest(),
+        created_at=None,
+        last_used_at=None,
+        expires_at=None,
+        revoked_at=None,
+    )
+
+    async def fake_mint(actual_session, *, tenant_id, tier, expires_in_days):
+        assert actual_session is session
+        assert session.tenant.id == tenant_id == record.tenant_id
+        assert tier is cli.RateLimitTier.STANDARD
+        assert expires_in_days is None
+        session.records.append(record)
+        return record, raw
+
+    monkeypatch.setattr(cli, "mint_api_key", fake_mint)
+
+    async def invoke(command):
+        session.closed = False
+        result = await cli.run(["--env", env, *command], session=session if injected else None)
+        assert result == 0
+        assert session.closed is (not injected)
+        return capsys.readouterr()
+
+    output = await invoke(["tenant", "create", "--tenant", str(tenant_id), "--site-url", "http://stack.test"])
+    assert output.out == ""
+    assert output.err == f"created tenant_id={tenant_id} site_url=http://stack.test\n"
+    output = await invoke(["tenant", "list"])
+    assert output.out == f"{tenant_id}\thttp://stack.test\t\n"
+    output = await invoke(["create", "--tenant", str(tenant_id)])
+    assert output.out == f"api_key={raw}\n"
+    assert output.err == f"key_id={record.id}\n"
+    output = await invoke(["list", "--tenant", str(tenant_id)])
+    assert output.out.split("\t", 1)[0] == str(record.id)
+    assert f"hash:{record.api_key_hash[-4:]}" in output.out
+    assert raw not in output.out and record.api_key_hash not in output.out
+    output = await invoke(["revoke", "--key-id", str(record.id)])
+    assert output.out == ""
+    assert f"revoked key_id={record.id} revoked_at=" in output.err
+    assert record.revoked_at is not None
+    assert session.commits == 3
+    assert session.listed_tenant_id == tenant_id
+    assert session.revoked_key_id == record.id
+
+
+_STACK_COMMANDS = [
+    ["create", "--tenant", str(uuid.UUID(int=1))],
+    ["list", "--tenant", str(uuid.UUID(int=1))],
+    ["revoke", "--key-id", str(uuid.UUID(int=2))],
+    ["tenant", "create", "--tenant", str(uuid.UUID(int=1)), "--site-url", "http://stack.test"],
+    ["tenant", "list"],
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", _STACK_COMMANDS, ids=["create", "list", "revoke", "tenant-create", "tenant-list"])
+@pytest.mark.parametrize("injected", [False, True])
+@pytest.mark.parametrize(
+    ("env", "configured_env"),
+    [
+        ("prod", "dev"),
+        ("prod", "staging"),
+        ("prod", "dev-fir"),
+        ("dev", "staging"),
+        ("staging", "dev-fir"),
+        ("dev-fir", "staging"),
+        ("dev-fir", "DEV-FIR"),
+        ("staging", " staging"),
+        ("staging", "unknown"),
+        ("dev-fir", ""),
+        ("staging", None),
+        ("dev-fir", None),
+    ],
+)
+async def test_stack_runtime_mismatch_refuses_all_commands(env, configured_env, command, injected, monkeypatch, capsys):
+    if configured_env is None:
+        monkeypatch.delenv("ACX_ENV", raising=False)
+    else:
+        monkeypatch.setenv("ACX_ENV", configured_env)
+    from db import session as db_session_module
+    from db import settings as db_settings
+
+    def unexpected_access(*_args, **_kwargs):
+        raise AssertionError("runtime binding must refuse before settings, session creation, or command mutation")
+
+    monkeypatch.setattr(db_settings, "get_database_settings", unexpected_access)
+    monkeypatch.setattr(db_session_module, "async_session_factory", unexpected_access)
+    cli = _import_cli()
+    for name in ["_cmd_create", "_cmd_list", "_cmd_revoke", "_cmd_tenant_create", "_cmd_tenant_list"]:
+        monkeypatch.setattr(cli, name, unexpected_access)
+
+    result = await cli.run(["--env", env, *command], session=object() if injected else None)
+    assert result == 1
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "ACX_ENV" in output.err and "refusing to run" in output.err
+    if configured_env in {"prod", "dev", "local", "staging", "dev-fir"}:
+        assert "does not match" in output.err
+
+
+@pytest.mark.parametrize("env", ["prod", "dev", "local", "staging", "dev-fir"])
+@pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "[::1]", "host.local", "postgres", "remote.test", ""])
+def test_stack_matched_runtime_preserves_dsn_guards(env, host, monkeypatch) -> None:
+    monkeypatch.setenv("ACX_ENV", env)
+    _set_database_dsn(monkeypatch, f"postgresql+asyncpg://u:p@{host}/test")
+    is_local = host in {"localhost", "127.0.0.1", "[::1]", "host.local"}
+    allowed = bool(host) and (
+        (env == "prod" and not is_local)
+        or (env == "local" and is_local)
+        or (env in {"dev", "staging", "dev-fir"} and (is_local or host == "postgres"))
+    )
+    error = _import_cli()._validate_runtime_env(env)
+    assert (error is None) is allowed
+
+
+@pytest.mark.parametrize("env", ["prod", "dev", "local"])
+@pytest.mark.parametrize("host", ["localhost", "postgres", "remote.test", ""])
+def test_stack_unset_legacy_runtime_retains_strict_dsn_fallback(env, host, monkeypatch) -> None:
+    monkeypatch.delenv("ACX_ENV", raising=False)
+    _set_database_dsn(monkeypatch, f"postgresql+asyncpg://u:p@{host}/test")
+    allowed = bool(host) and (host != "localhost" if env == "prod" else host == "localhost")
+    error = _import_cli()._validate_runtime_env(env)
+    assert (error is None) is allowed

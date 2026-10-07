@@ -1539,7 +1539,8 @@ reclaim_rollback_snapshots() {
   # Called only after the activation journal is cleared; keep the current set
   # and leave operator files alone. Never prune recovery's active snapshots.
   local _snapshot _snapshot_name _stamp
-  for _snapshot in "$ROLLBACK_DIR"/Caddyfile.* "$ROLLBACK_DIR"/www.* "$ROLLBACK_DIR"/docker-compose.app.yml.*; do
+  for _snapshot in "$ROLLBACK_DIR"/Caddyfile.* "$ROLLBACK_DIR"/www.* "$ROLLBACK_DIR"/docker-compose.app.yml.* \
+    "$ROLLBACK_DIR"/absent-www.* "$ROLLBACK_DIR"/absent-overlay.*; do
     _snapshot_name="${_snapshot##*/}"
     case "$_snapshot_name" in
       Caddyfile.*)
@@ -1552,6 +1553,10 @@ reclaim_rollback_snapshots() {
         ;;
       docker-compose.app.yml.*)
         _stamp="${_snapshot_name#docker-compose.app.yml.}"
+        [ -f "$_snapshot" ] && [ ! -L "$_snapshot" ] || continue
+        ;;
+      absent-www.*|absent-overlay.*)
+        _stamp="${_snapshot_name#*.}"
         [ -f "$_snapshot" ] && [ ! -L "$_snapshot" ] || continue
         ;;
       *)
@@ -1735,7 +1740,17 @@ guard_dest_path ROLLBACK_DIR "$ROLLBACK_DIR" dir
 mkdir -p "$ROLLBACK_DIR"
 ts="$(date +%s)"
 # Separate snapshots even for deployments in the same second (or clock rollback).
-while [ -e "${ROLLBACK_DIR}/Caddyfile.${ts}" ] || [ -e "${ROLLBACK_DIR}/www.${ts}" ] || [ -e "${ROLLBACK_DIR}/docker-compose.app.yml.${ts}" ]; do
+while :; do
+  _collision=0
+  for _candidate in "${ROLLBACK_DIR}/Caddyfile.${ts}" "${ROLLBACK_DIR}/www.${ts}" \
+    "${ROLLBACK_DIR}/docker-compose.app.yml.${ts}" "${ROLLBACK_DIR}/absent-www.${ts}" \
+    "${ROLLBACK_DIR}/absent-overlay.${ts}"; do
+    if [ -e "$_candidate" ] || [ -L "$_candidate" ]; then
+      _collision=1
+      break
+    fi
+  done
+  [ "$_collision" -eq 1 ] || break
   ts=$((ts + 1))
 done
 ROLLBACK_CADDY="${ROLLBACK_DIR}/Caddyfile.${ts}"
@@ -1746,11 +1761,16 @@ if [ -d "$APP_WWW" ]; then
   cp -a "$APP_WWW" "$ROLLBACK_WWW"
 else
   ROLLBACK_WWW="-"
+  # Keep explicit absence evidence after successful activation clears the journal.
+  (umask 077; printf 'app-portal-absent-www-v1\n' > "${ROLLBACK_DIR}/absent-www.${ts}")
+  sync_path "${ROLLBACK_DIR}/absent-www.${ts}"
 fi
 if [ -f "$OVERLAY_DEST" ]; then
   cp -a "$OVERLAY_DEST" "$ROLLBACK_OVERLAY"
 else
   ROLLBACK_OVERLAY="-"
+  (umask 077; printf 'app-portal-absent-overlay-v1\n' > "${ROLLBACK_DIR}/absent-overlay.${ts}")
+  sync_path "${ROLLBACK_DIR}/absent-overlay.${ts}"
 fi
 sync_path "$ROLLBACK_DIR"
 sync_path "$APP_ROOT"

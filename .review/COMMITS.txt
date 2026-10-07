@@ -1,2 +1,22 @@
-a9c1081bb107 APP-1: land browser-integration after scoped VM verification
-79156a29f39b offload: I1 shell wires /keys /usage /claim /billing plus bounded
+5e596dcf38ed Merge branch 'feature/sechard-2'
+6b25cbd2749e Merge feature/sechard-2-sh2-e153d (SECHARD-2 sh2-e153d)
+bee49f0cbc0a offload: Committed independent environment-only export instructions in
+c0ffd5bc5bc5 Merge feature/sechard-2-sh2-e153c (SECHARD-2 sh2-e153c)
+bb0f6cbe3b45 offload: Committed CLI configuration parity checks in both owned
+08de276c3bb8 Merge feature/sechard-2-sh2-e153b (SECHARD-2 sh2-e153b)
+31fe4b035b20 offload: Committed both offline-probe plan fixes as 326c2e7.
+65551a56358b Merge feature/sechard-2-sh2-e153a (SECHARD-2 sh2-e153a)
+a894170c068b offload: Committed both plan corrections in 6be5f03; verification
+5c09c26764c1 Merge feature/sechard-2-sh2-vitewarn (SECHARD-2 sh2-vitewarn)
+d0bf239173a9 offload: Fixed the duplicate mkdir warning and committed the change;
+f4eb5d3ee5c5 offload: Committed both plans with permitted-port and
+e36d284a4e24 offload: Committed both plans with credential isolation and
+58ad4876ac05 Merge feature/sechard-2-sh2-allowlistdoc (SECHARD-2 sh2-allowlistdoc)
+c5d598305734 Merge feature/sechard-2-sh2-verifier (SECHARD-2 sh2-verifier)
+9dcedee57cfa Merge feature/sechard-2-sh2-demoresolver (SECHARD-2 sh2-demoresolver)
+9f2a2d8d7af9 Merge feature/sechard-2-sh2-curl (SECHARD-2 sh2-curl)
+1fdf6c7642b6 offload: Added fail-closed cURL pin handling and coverage; commit
+7109e1c984b6 offload: Updated the caller-key operation_id contract and regression
+15eae495f815 offload: Documented the built-in GPU allowlist fallback and committed
+8ee30380a793 offload: Production ViteManifest coverage is committed, but the required
+767d3e1fbd3e offload: Updated both plans to verify timeouts through a public endpoint

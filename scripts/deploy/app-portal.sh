@@ -1266,7 +1266,7 @@ load_activation_journal() {
   exec 3<&-
 
   case "$JOURNAL_PHASE" in
-    prepared|caddy_promoted|www_promoted|overlay_promoted) ;;
+    prepared|caddy_promoted|www_promoted|overlay_promoted|restored) ;;
     *) echo "ERROR: invalid activation journal phase: ${JOURNAL_PHASE}" >&2; return 1 ;;
   esac
   if [ "$JOURNAL_CADDYFILE" != "$CADDYFILE" ] || [ "$JOURNAL_WWW" != "$APP_WWW" ] || [ "$JOURNAL_OVERLAY" != "$OVERLAY_DEST" ] || [ "$JOURNAL_CADDY_COMPOSE" != "$CADDY_COMPOSE" ]; then
@@ -1277,15 +1277,32 @@ load_activation_journal() {
   case "$_journal_stamp" in
     ''|*[!0-9]*) echo "ERROR: invalid Caddy snapshot path in activation journal" >&2; return 1 ;;
   esac
-  if [ "$ROLLBACK_CADDY" != "${ROLLBACK_DIR}/Caddyfile.${_journal_stamp}" ] || [ -L "$ROLLBACK_CADDY" ] || [ ! -f "$ROLLBACK_CADDY" ]; then
+  if [ "$ROLLBACK_CADDY" != "${ROLLBACK_DIR}/Caddyfile.${_journal_stamp}" ]; then
+    echo "ERROR: invalid Caddy snapshot path in activation journal" >&2
+    return 1
+  fi
+  if [ "$ROLLBACK_WWW" != "-" ] && [ "$ROLLBACK_WWW" != "${ROLLBACK_DIR}/www.${_journal_stamp}" ]; then
+    echo "ERROR: invalid frontend snapshot path in activation journal" >&2
+    return 1
+  fi
+  if [ "$ROLLBACK_OVERLAY" != "-" ] && [ "$ROLLBACK_OVERLAY" != "${ROLLBACK_DIR}/docker-compose.app.yml.${_journal_stamp}" ]; then
+    echo "ERROR: invalid overlay snapshot path in activation journal" >&2
+    return 1
+  fi
+  # Restoration and reload are durable before this phase is published. Its
+  # snapshots may already be partly removed; recovery only retries cleanup.
+  if [ "$JOURNAL_PHASE" = restored ]; then
+    return 0
+  fi
+  if [ -L "$ROLLBACK_CADDY" ] || [ ! -f "$ROLLBACK_CADDY" ]; then
     echo "ERROR: Caddy snapshot is missing or invalid: ${ROLLBACK_CADDY}" >&2
     return 1
   fi
-  if [ "$ROLLBACK_WWW" != "-" ] && { [ "$ROLLBACK_WWW" != "${ROLLBACK_DIR}/www.${_journal_stamp}" ] || [ -L "$ROLLBACK_WWW" ] || [ ! -d "$ROLLBACK_WWW" ]; }; then
+  if [ "$ROLLBACK_WWW" != "-" ] && { [ -L "$ROLLBACK_WWW" ] || [ ! -d "$ROLLBACK_WWW" ]; }; then
     echo "ERROR: frontend snapshot is missing or invalid: ${ROLLBACK_WWW}" >&2
     return 1
   fi
-  if [ "$ROLLBACK_OVERLAY" != "-" ] && { [ "$ROLLBACK_OVERLAY" != "${ROLLBACK_DIR}/docker-compose.app.yml.${_journal_stamp}" ] || [ -L "$ROLLBACK_OVERLAY" ] || [ ! -f "$ROLLBACK_OVERLAY" ]; }; then
+  if [ "$ROLLBACK_OVERLAY" != "-" ] && { [ -L "$ROLLBACK_OVERLAY" ] || [ ! -f "$ROLLBACK_OVERLAY" ]; }; then
     echo "ERROR: overlay snapshot is missing or invalid: ${ROLLBACK_OVERLAY}" >&2
     return 1
   fi
@@ -1294,6 +1311,22 @@ load_activation_journal() {
 clear_activation_journal() {
   rm -f "$ACTIVATION_JOURNAL" "${ACTIVATION_JOURNAL}.new."*
   sync_path "$APP_ROOT"
+}
+
+finish_activation_rollback() {
+  # The failed set duplicates the restored live state. Retain every input until
+  # restoration/reload and this journal transition have completed successfully.
+  # Keep the journal through deletion and its directory sync so a crash or
+  # cleanup failure resumes idempotently without needing deleted snapshots.
+  write_activation_journal restored || return 1
+  local _failed_stamp="${ROLLBACK_CADDY##*.}"
+  rm -rf -- "${ROLLBACK_DIR}/Caddyfile.${_failed_stamp}" \
+    "${ROLLBACK_DIR}/www.${_failed_stamp}" \
+    "${ROLLBACK_DIR}/docker-compose.app.yml.${_failed_stamp}" \
+    "${ROLLBACK_DIR}/absent-www.${_failed_stamp}" \
+    "${ROLLBACK_DIR}/absent-overlay.${_failed_stamp}" || return 1
+  sync_path "$ROLLBACK_DIR" || return 1
+  clear_activation_journal
 }
 
 restore_from_rollback() {
@@ -1349,10 +1382,10 @@ recover_interrupted_activation() {
     return 1
   fi
   echo "recovering interrupted activation from ${ACTIVATION_JOURNAL}"
-  if ! restore_from_rollback; then
+  if [ "$JOURNAL_PHASE" != restored ] && ! restore_from_rollback; then
     return 1
   fi
-  clear_activation_journal
+  finish_activation_rollback
 }
 
 list_live_hosts() {
@@ -1782,8 +1815,8 @@ activation_fail() {
     echo "ERROR: activation rollback is incomplete; journal retained for next run" >&2
     exit 5
   fi
-  if ! clear_activation_journal; then
-    echo "ERROR: activation rollback completed but journal cleanup failed" >&2
+  if ! finish_activation_rollback; then
+    echo "ERROR: activation rollback completed but snapshot/journal cleanup failed" >&2
   fi
   exit 5
 }

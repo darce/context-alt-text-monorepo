@@ -5,6 +5,24 @@ under `apps/app-portal/`, and `scripts/deploy/app-portal.sh` deploys its build
 to the existing edge. This runbook covers Clerk claims and the manifest-owned
 runtime and build settings; it does **not** mint Clerk secrets.
 
+## Production LAUNCH prerequisite (before A3/deployment)
+
+Current PROD-only tree does **not** include the invitation CLI. PORTALDEV-1
+supplies it; the production configuration changes alone cannot issue a portal
+invitation or complete the first-sign-in smoke check.
+
+**STOP: do not begin A3/deployment or production LAUNCH** until
+`main` contains `apps/prototype-description-service/scripts/manage_portal_invitations.py`
+from PORTALDEV-1 and the production service release to deploy includes that CLI.
+Before issuance and signed-in smoke, confirm the deployed production API also
+includes it. A configuration materialization or process restart alone does not
+add this missing code.
+
+Preserve the merge order: **PORTALPROD-1 config mainmerge**, then
+**PORTALDEV-1 union/mainmerge**, then A3/deployment and production LAUNCH from
+the combined main candidate. The PROD config merge does not wait for the DEV
+branch; this is a launch prerequisite, not a circular branch merge dependency.
+
 Official references:
 
 - [Clerk environment variables](https://clerk.com/docs/guides/development/clerk-environment-variables)
@@ -102,9 +120,11 @@ ready to materialize from the values already harvested into that manifest.
 the manifest. Resolve any reported drift and provide required host-only values
 before applying; VM value harvesting is complete and is not a prerequisite.
 The production values for `RECOGNITION_PORTAL_ENABLED` and
-`VITE_CLERK_PUBLISHABLE_KEY` are both committed. The remaining launch steps
-are to materialize the backend settings, restart the production API unit,
-and deploy the portal as described in
+`VITE_CLERK_PUBLISHABLE_KEY` are both committed. After the production LAUNCH
+prerequisite above is satisfied, the remaining launch steps are to materialize
+the backend settings, deploy the combined main service release including the
+PORTALDEV-1 invitation CLI, restart the production API unit, and deploy the
+portal as described in
 [`app-portal-deploy.md`](app-portal-deploy.md).
 The four required verifier settings are `ACX_CLERK_ISSUER`,
 `ACX_CLERK_JWKS_URL`, `ACX_CLERK_AUDIENCE`, and
@@ -118,6 +138,10 @@ values. The `app-portal-build` manifest target renders them into
 never put a Clerk secret in this target.
 
 ## 4. Materialize and build
+
+Complete the production LAUNCH prerequisite above before A3/deployment.
+Do not proceed with launch commands from this PROD-only tree while the
+PORTALDEV-1 invitation CLI is absent from main or the service release.
 
 From the repository root, check and apply the production backend manifest.
 Materialization can still refuse if the runtime file has drifted or required
@@ -167,10 +191,28 @@ truth; do not write a separate `app-portal.env` artifact.
 The offline validator and the unauthenticated `/portal/me` health check
 (expected `401`) cannot verify the session token's audience claim.
 
-The account must have a primary email verified in Clerk and an existing local
-tenant identity. Before this read-only check, complete the portal's first
-sign-in onboarding claim (`POST /portal/onboarding/claim`) through the portal,
-then reload. Do not print an API key during the check.
+STOP this signed-in smoke check until PORTALDEV-1's invitation CLI has landed
+on `main` and the deployed production API includes it, as required by the
+production LAUNCH prerequisite above.
+
+The account must have a primary email verified in Clerk and an operator-issued,
+unexpired portal invitation whose invited email matches that verified primary
+email. Only after the dependency has landed and the production service has
+been deployed with it, an operator runs this supported issuance command in the
+production API container, from `/opt/acx-backend/prod` on the service VM. Replace
+`you@example.com` with the smoke account's verified primary email:
+
+```bash
+cd /opt/acx-backend/prod
+docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_portal_invitations --env prod create --email you@example.com --ttl-hours 72
+```
+
+The CLI displays the raw invitation token only once. Copy it directly into the
+portal's invitation claim field; do not paste it into this repo, logs, or another
+website. Before this read-only check, redeem it through the portal's claim
+screen to complete the first-sign-in onboarding claim
+(`POST /portal/onboarding/claim`) and establish the local tenant identity, then
+reload. Do not print an API key during the check.
 
 1. Sign in at `https://app.altcontext.com` with a real account.
 2. In browser developer tools, open the **Network** tab and confirm the
@@ -185,7 +227,18 @@ then reload. Do not print an API key during the check.
    and boolean `email_verified: true`, using the section 2 template. Confirm
    the account's primary email is verified in Clerk and the portal's
    onboarding claim completed, then reload and repeat the check.
-5. If it returns `503` with `portal identity unavailable`, the local identity
+   If the onboarding claim returns `403` with `not_admitted`, check for an
+   email mismatch, unknown token, expired invitation, or revoked invitation.
+   Ask the operator to verify the invited email against the verified primary
+   email and issue a replacement invitation when needed; redeem it through the
+   portal's claim screen, then reload and repeat the check.
+5. If the onboarding claim returns `409` with `invitation_consumed` or
+   `identity_already_bound`, ask the operator to inspect the existing identity
+   and tenant binding. Use the account already bound to the intended tenant or
+   have the operator resolve the conflict and supply an appropriate invitation;
+   then complete onboarding, reload, and repeat the check. These consumed/bound
+   conflicts are `409`, not `403`.
+6. If it returns `503` with `portal identity unavailable`, the local identity
    store is unavailable. Check API logs and readiness; this is an identity
    store issue, not a Clerk session-token template issue.
 

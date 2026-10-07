@@ -25,7 +25,7 @@ PORTAL_API_PROXY_TARGET=https://dev.api.altcontext.com npm --prefix apps/app-por
 ```
 
 The browser env comes from `make env-render ENV=local TARGET=app-portal-local` with the Clerk development publishable key.
-The dev API must have the portal enabled. Never paste tokens or API keys anywhere.
+The dev API must have the portal enabled. Paste invitation token values directly into the portal's Invitation token field and newly created API key secrets directly into the local WordPress AltContext settings. Never put secret values in files, notes, chat, logs, or commits. Nonsecret key and tenant IDs may be recorded for independent rollback revocation.
 
 ## Scripts
 

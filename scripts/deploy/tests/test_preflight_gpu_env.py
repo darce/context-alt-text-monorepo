@@ -2625,10 +2625,10 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
     from fastapi import BackgroundTasks
     from starlette.datastructures import FormData, Headers, UploadFile
 
-    from recognition.application.services.usage_admission_service import UsageAdmissionService
-    from recognition.domain.portal_contracts import UsageTicket
     import scene.application.describe_run_worker as worker
     import scene.interface_adapters.http.routers.describe_run as route
+    from recognition.application.services.usage_admission_service import UsageAdmissionService
+    from recognition.domain.portal_contracts import UsageTicket
     from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier
 
     # Replay the shell-generated multipart fields through the real route and
@@ -2792,7 +2792,6 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
         worker, "get_tenant_record", AsyncMock(return_value=SimpleNamespace(naming_agreement_enabled=False))
     )
     monkeypatch.setattr(route, "require_tenant_record", AsyncMock())
-    monkeypatch.setattr(route, "maybe_consume_demo_quota", AsyncMock())
     monkeypatch.setattr(route, "worker_session_factory", lambda session: Session)
 
     def health(request):
@@ -2846,7 +2845,7 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
                 usage_admission_service=usage_admission_service,
             )
             assert response.run_id == str(run.id)
-            assert isinstance(response.operation_id, str) and response.operation_id.strip()
+            assert response.operation_id == data["idempotency_key"].strip()
             await asyncio.wait_for(background(), timeout=3)
             image.seek(0)
             replay = await endpoint(

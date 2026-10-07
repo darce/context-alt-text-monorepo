@@ -51,6 +51,15 @@ source of truth.
 
 ## Before production launch
 
+- **STOP:** before materialization or deployment, `main` must contain
+  `apps/prototype-description-service/scripts/manage_portal_invitations.py`
+  from PORTALDEV-1, and the combined-main production service release to deploy
+  must include that CLI. Follow the
+  [Clerk production LAUNCH prerequisite](clerk-production-auth.md#production-launch-prerequisite-before-a3deployment):
+  PORTALPROD-1 config mainmerge, then PORTALDEV-1 union/mainmerge, then launch
+  from that combined main candidate. Before public frontend apply or signed-in
+  smoke, the combined-main service release must be deployed and its invitation
+  CLI verified in the running production API. A restart alone does not install code.
 - The production value `prod = "1"` for `RECOGNITION_PORTAL_ENABLED` is
   committed in `config/env/manifest.d/30-portal-backend.toml`. The API mounts
   `/portal` only when this setting is `1`, `true`, `yes`, or `on`.
@@ -60,9 +69,13 @@ source of truth.
   the live key. This key is public by design. Do not add a Clerk secret to the
   manifest.
 - The VM's Clerk values are already harvested into
-  `config/env/manifest.d/30-portal-backend.toml`. Materialization and restart
-  are the remaining operator steps; follow the API activation sequence below
-  before frontend apply. Resolve any reported runtime drift or missing
+  `config/env/manifest.d/30-portal-backend.toml`. The remaining operator steps
+  are: confirm the combined-main source/release prerequisite; check and
+  materialize the production manifest; deploy the combined-main service with
+  `make deploy-prod CONFIRM=PROMOTE`; restart the production API; verify the
+  deployed invitation CLI and API mounting; apply the frontend; then issue a
+  matching, unexpired invitation and perform signed-in smoke. Follow the API
+  activation sequence below. Resolve any reported runtime drift or missing
   host-only secrets before applying. There is no interim VM writer.
 
 ## Default dry-run
@@ -123,6 +136,14 @@ separately checked-out manifest.
 
 ### Activate the production API before frontend apply
 
+**STOP:** before the first materialization below, `main` must contain
+`apps/prototype-description-service/scripts/manage_portal_invitations.py` from
+PORTALDEV-1 and the combined-main production service release to deploy must
+include it. Follow the
+[Clerk production LAUNCH prerequisite](clerk-production-auth.md#production-launch-prerequisite-before-a3deployment).
+Do not apply the public frontend or begin signed-in smoke until that release
+has been deployed and the container CLI check below succeeds.
+
 The portal router enablement and Clerk verifier settings are already committed
 in the `svc-vm` environment manifest. From the repository root on the operator
 workstation, check the production target first; resolve any runtime drift or
@@ -138,12 +159,51 @@ Still on the operator workstation, materialize the committed production settings
 make env-materialize ENV=prod TARGET=svc-vm APPLY=1 CONFIRM=prod
 ```
 
-On the VM, restart the shared prod API so it mounts `/portal` with
+Next, from a clean, synced combined-main checkout on the operator workstation,
+deploy the production service release including PORTALDEV-1's invitation CLI:
+
+```bash
+make deploy-prod CONFIRM=PROMOTE
+```
+
+This is the supported target in `mk/deploy.mk`; it invokes
+`scripts/deploy/recognition-service.sh deploy prod`. Its
+`preflight_env_manifest` runs `materialize_remote.sh prod svc-vm --check`
+before building or promoting, and refuses runtime drift or missing host-only
+secrets. Therefore check/materialize **before** service deployment: requiring
+the new release to be deployed before materialization would block the deploy
+on the very manifest change being activated. Do not bypass the manifest
+preflight or any other deployment safety gate. The source/release prerequisite
+precedes materialization; the deployed-code prerequisite precedes public launch.
+
+The deploy target builds, ships, restarts `acx-prod`, and verifies the service.
+A restart alone does not install code. On the VM, restart the shared prod API
+after deployment so it mounts `/portal` with
 `RECOGNITION_PORTAL_ENABLED=1` before frontend health runs:
 
 ```bash
 sudo systemctl restart acx-prod
 ```
+
+On the VM, fail closed if the running production container cannot load the
+invitation CLI. This checks deployed code without issuing an invitation:
+
+```bash
+(
+  set -euo pipefail
+  if ! (cd /opt/acx-backend/prod && docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_portal_invitations --help); then
+    echo 'STOP: deployed production invitation CLI unavailable; do not apply frontend or begin signed-in smoke' >&2
+    exit 1
+  fi
+)
+```
+
+Any directory, Compose, container, or CLI failure is a STOP; resolve the failed
+service deployment and rerun this check before continuing. After frontend
+apply, follow the [Clerk signed-in smoke check](clerk-production-auth.md#post-launch-signed-in-smoke-check):
+the smoke account needs a matching, unexpired operator-issued portal invitation
+for its verified primary email. Configuration materialization and process
+restart cannot substitute for deploying the invitation CLI.
 
 Confirm an unauthenticated `/portal/me` request returns HTTP **401**, not 404,
 before running frontend apply. Use the API host for the first deployment,
@@ -222,8 +282,9 @@ overrides.
    `absent-overlay.<ts>`, containing exactly `app-portal-absent-www-v1` or
    `app-portal-absent-overlay-v1` plus a newline. These markers are synced before
    activation and remain after success clears the journal. Numeric snapshots
-   and markers from older applies are reclaimed, retaining the current set;
-   nonnumeric operator files are untouched.
+   and markers from older applies are reclaimed only after a successful apply,
+   retaining that apply's prestate set; nonnumeric operator files are untouched.
+   A failed apply must not displace the last successful apply's prestate set.
 6. Promotes under an ERR/INT/TERM trap:
    - Caddyfile: write a complete sibling, then `cat` into the live inode
      (same bind-mount inode rule as `sync-demo.sh` / GUIDEDEPLOY-1-BR-04).
@@ -248,7 +309,11 @@ overrides.
    required `APP_HEALTH_CMD` against the live frontend and production API.
 10. Any failure at write/move/copy/compose/reload/health restores all three
     rollback artifacts, recreates Caddy with the restored compose state, attempts a
-    rollback reload, and **does not** print `applied:`.
+    rollback reload, and **does not** print `applied:`. Successful failed-apply
+    restore clears its journal and removes only its duplicate timestamp set,
+    preserving the last successful apply's prestate set for manual back-out.
+    Failed restore retains the journal and all snapshot/absence-marker inputs
+    for retry; it does not reclaim rollback sets.
 
 Interrupted recovery also recreates Caddy after restoring the frontend snapshot,
 including interruptions before overlay promotion, to refresh the directory mount.
@@ -401,7 +466,13 @@ backend portal is disabled.
 missing artifact, a validated `absent-www.<ts>` or `absent-overlay.<ts>` replaces
 its snapshot. Missing snapshots alone never prove prior absence. Automatic restore
 runs on promote/compose/reload/health failure and reapplies the restored compose
-state before the rollback reload. On the VM, manual restore selects only
+state before the rollback reload. Successful failed-apply restore removes only
+its duplicate timestamp set after clearing the journal, preserving the last
+successful apply's prestate set. Thus a failed re-apply does not replace the
+manual back-out target with copies of the still-live successful frontend.
+Failed restore retains the journal and all snapshot/absence-marker inputs for
+retry; resolve that interrupted activation before attempting manual back-out.
+On the VM, manual restore selects only
 `Caddyfile.<digits>` names and sorts by the numeric filename suffix, never mtime
 (`cp -a` preserves the live file's older mtime). It prints the chosen timestamp
 and refuses missing, empty, incomplete, or contradictory marker/snapshot sets

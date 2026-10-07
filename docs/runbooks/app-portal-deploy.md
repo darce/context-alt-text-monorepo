@@ -218,6 +218,12 @@ overrides.
 4. On validate failure: live Caddyfile, www, and overlay are left untouched.
 5. On success: copies complete rollback state to
    `/opt/acx-backend/app/rollback/{Caddyfile,www,docker-compose.app.yml}.<ts>`.
+   A previously absent frontend or overlay instead gets `absent-www.<ts>` or
+   `absent-overlay.<ts>`, containing exactly `app-portal-absent-www-v1` or
+   `app-portal-absent-overlay-v1` plus a newline. These markers are synced before
+   activation and remain after success clears the journal. Numeric snapshots
+   and markers from older applies are reclaimed, retaining the current set;
+   nonnumeric operator files are untouched.
 6. Promotes under an ERR/INT/TERM trap:
    - Caddyfile: write a complete sibling, then `cat` into the live inode
      (same bind-mount inode rule as `sync-demo.sh` / GUIDEDEPLOY-1-BR-04).
@@ -291,6 +297,48 @@ docker compose -f docker-compose.caddy.yml exec -T caddy \
   sha256sum /etc/caddy/Caddyfile
 ```
 
+If the hashes differ, recreate Caddy to refresh its bind mount, wait for its
+admin endpoint with the deployment script's bounded probe, then reload:
+
+```bash
+(
+  set -euo pipefail
+  docker compose -f docker-compose.caddy.yml \
+    -f /opt/acx-backend/app/docker-compose.app.yml up -d --force-recreate --no-deps caddy
+  ready=0
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if docker compose -f docker-compose.caddy.yml \
+      -f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy \
+      wget -q -T 1 -O /dev/null http://127.0.0.1:2019/config/; then
+      ready=1
+      break
+    fi
+    if [ "$attempt" -lt 10 ]; then
+      sleep 1
+    fi
+  done
+  if [ "$ready" -ne 1 ]; then
+    echo 'STOP: Caddy admin endpoint not ready after 10 attempts; refusing reload/verification; follow frontend back-out' >&2
+    exit 1
+  fi
+  docker compose -f docker-compose.caddy.yml \
+    -f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy \
+    caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+  sha256sum /opt/acx-backend/Caddyfile
+  docker compose -f docker-compose.caddy.yml exec -T caddy \
+    sha256sum /etc/caddy/Caddyfile
+  /usr/local/bin/app-portal-health-check
+)
+```
+
+The subshell stops on recreation/reload failure or readiness exhaustion, before
+hash/health verification. The probe uses container-local BusyBox `wget`, a
+one-second request timeout, and at most nine one-second pauses between ten
+attempts. On exhaustion, follow frontend back-out. Recheck both hashes and
+health after recovery. If the hashes still differ or
+health fails, follow the [frontend back-out](#frontend-back-out) below before
+declaring the apply verified.
+
 Verify all three live probes with the installed checker; backend settings were
 materialized and the API restarted before frontend apply:
 
@@ -349,28 +397,46 @@ backend portal is disabled.
 ### Frontend back-out
 
 `/opt/acx-backend/app/rollback/Caddyfile.<ts>` plus `www.<ts>` and
-`docker-compose.app.yml.<ts>` are the pre-activation copies. Automatic restore
+`docker-compose.app.yml.<ts>` are the pre-activation copies. For each previously
+missing artifact, a validated `absent-www.<ts>` or `absent-overlay.<ts>` replaces
+its snapshot. Missing snapshots alone never prove prior absence. Automatic restore
 runs on promote/compose/reload/health failure and reapplies the restored compose
 state before the rollback reload. On the VM, manual restore selects only
 `Caddyfile.<digits>` names and sorts by the numeric filename suffix, never mtime
 (`cp -a` preserves the live file's older mtime). It prints the chosen timestamp
-and refuses missing, empty, or incomplete snapshots before changing live files.
+and refuses missing, empty, incomplete, or contradictory marker/snapshot sets
+before changing live files. Markers must be regular files without symlinks and
+match the exact versioned contents written by deployment, including the newline.
 The snapshot's `index.html` must be a non-empty regular file, not a symlink.
 The live overlay must be a regular file or absent, never a symlink; its parent
 must be an existing directory, not a symlink, even when the overlay is absent.
 The commands below use the default paths; substitute the same paths used at
 apply if they were overridden. Restore the Caddyfile back **in place**,
-preserving its bind-mounted inode, and www/overlay from that same timestamp:
+preserving its bind-mounted inode, and www/overlay from that same timestamp.
+The executable branches below restore each snapshot or remove the newly added
+artifact only when its absence marker is validated. They support a full snapshot,
+first deployment with both artifacts absent, and either mixed prior state:
 
 ```bash
 (
   set -euo pipefail
+  # Reject symlinked parents for every source and destination before any mutation.
+  parent=/opt/acx-backend/app/rollback
+  while [ "$parent" != / ]; do
+    if [ ! -d "$parent" ] || [ -L "$parent" ]; then
+      echo 'STOP: rollback/live parent missing or unsafe; refusing restore' >&2
+      exit 1
+    fi
+    parent="$(dirname -- "$parent")"
+  done
   if [ ! -d /opt/acx-backend/app/rollback ] || [ -L /opt/acx-backend/app/rollback ]; then
     echo 'STOP: rollback directory missing or unsafe; refusing restore' >&2
     exit 1
   fi
   ts="$(find /opt/acx-backend/app/rollback -maxdepth 1 -type f \
-    -name 'Caddyfile.*' -printf '%f\n' | sed -n 's/^Caddyfile\.\([0-9][0-9]*\)$/\1/p' \
+    -name 'Caddyfile.*' -printf '%f\n' -o \
+    ! -type f -name 'Caddyfile.*' -printf '%f\n' \
+    | sed -n 's/^Caddyfile\.\([0-9][0-9]*\)$/\1/p' \
     | sort -nr | sed -n '1p')"
   if [ -z "$ts" ]; then
     echo 'STOP: no numeric Caddyfile rollback snapshot; refusing restore' >&2
@@ -380,14 +446,37 @@ preserving its bind-mounted inode, and www/overlay from that same timestamp:
   snapshot="/opt/acx-backend/app/rollback/Caddyfile.$ts"
   www_snapshot="/opt/acx-backend/app/rollback/www.$ts"
   overlay_snapshot="/opt/acx-backend/app/rollback/docker-compose.app.yml.$ts"
+  www_absent="/opt/acx-backend/app/rollback/absent-www.$ts"
+  overlay_absent="/opt/acx-backend/app/rollback/absent-overlay.$ts"
   if [ ! -f "$snapshot" ] || [ ! -s "$snapshot" ] || [ -L "$snapshot" ]; then
     echo 'STOP: no non-empty regular Caddyfile rollback snapshot; refusing restore' >&2
     exit 1
   fi
-  if [ ! -d "$www_snapshot" ] || [ -L "$www_snapshot" ] \
+  restore_www=1
+  if [ -e "$www_absent" ] || [ -L "$www_absent" ]; then
+    if [ ! -f "$www_absent" ] || [ -L "$www_absent" ] \
+      || ! cmp -s -- "$www_absent" <(printf 'app-portal-absent-www-v1\n') \
+      || [ -e "$www_snapshot" ] || [ -L "$www_snapshot" ]; then
+      echo "STOP: invalid or contradictory frontend absence marker at $ts; refusing restore" >&2
+      exit 1
+    fi
+    restore_www=0
+  elif [ ! -d "$www_snapshot" ] || [ -L "$www_snapshot" ] \
     || [ ! -f "$www_snapshot/index.html" ] || [ ! -s "$www_snapshot/index.html" ] \
-    || [ -L "$www_snapshot/index.html" ] \
-    || [ ! -f "$overlay_snapshot" ] || [ ! -s "$overlay_snapshot" ] || [ -L "$overlay_snapshot" ]; then
+    || [ -L "$www_snapshot/index.html" ]; then
+    echo "STOP: incomplete rollback snapshot at $ts; refusing restore" >&2
+    exit 1
+  fi
+  restore_overlay=1
+  if [ -e "$overlay_absent" ] || [ -L "$overlay_absent" ]; then
+    if [ ! -f "$overlay_absent" ] || [ -L "$overlay_absent" ] \
+      || ! cmp -s -- "$overlay_absent" <(printf 'app-portal-absent-overlay-v1\n') \
+      || [ -e "$overlay_snapshot" ] || [ -L "$overlay_snapshot" ]; then
+      echo "STOP: invalid or contradictory overlay absence marker at $ts; refusing restore" >&2
+      exit 1
+    fi
+    restore_overlay=0
+  elif [ ! -f "$overlay_snapshot" ] || [ ! -s "$overlay_snapshot" ] || [ -L "$overlay_snapshot" ]; then
     echo "STOP: incomplete rollback snapshot at $ts; refusing restore" >&2
     exit 1
   fi
@@ -405,38 +494,70 @@ preserving its bind-mounted inode, and www/overlay from that same timestamp:
     echo 'STOP: live overlay must be a regular file or absent without symlinks; refusing restore' >&2
     exit 1
   fi
+  if [ -L /opt/acx-backend/app/www ] \
+    || { [ -e /opt/acx-backend/app/www ] && [ ! -d /opt/acx-backend/app/www ]; }; then
+    echo 'STOP: live frontend must be a directory or absent without symlinks; refusing restore' >&2
+    exit 1
+  fi
   cp -- "$snapshot" /opt/acx-backend/Caddyfile
   rm -rf -- /opt/acx-backend/app/www
-  cp -a -- "$www_snapshot" /opt/acx-backend/app/www
-  cp -- "$overlay_snapshot" /opt/acx-backend/app/docker-compose.app.yml
+  if [ "$restore_www" -eq 1 ]; then
+    cp -a -- "$www_snapshot" /opt/acx-backend/app/www
+  fi
+  if [ "$restore_overlay" -eq 1 ]; then
+    cp -- "$overlay_snapshot" /opt/acx-backend/app/docker-compose.app.yml
+  else
+    rm -f -- /opt/acx-backend/app/docker-compose.app.yml
+  fi
+  cd /opt/acx-backend
+  compose=(docker compose -f docker-compose.caddy.yml)
+  if [ "$restore_overlay" -eq 1 ]; then
+    compose+=(-f /opt/acx-backend/app/docker-compose.app.yml)
+    docker compose -f docker-compose.caddy.yml \
+      -f /opt/acx-backend/app/docker-compose.app.yml up -d --force-recreate --no-deps caddy
+  else
+    docker compose -f docker-compose.caddy.yml up -d --force-recreate --no-deps caddy
+  fi
+  ready=0
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if "${compose[@]}" exec -T caddy wget -q -T 1 -O /dev/null \
+      http://127.0.0.1:2019/config/; then
+      ready=1
+      break
+    fi
+    if [ "$attempt" -lt 10 ]; then
+      sleep 1
+    fi
+  done
+  if [ "$ready" -ne 1 ]; then
+    echo 'STOP: Caddy admin endpoint not ready after 10 attempts; restored files retained; refusing reload; investigate Caddy startup before retry' >&2
+    exit 1
+  fi
+  if [ "$restore_overlay" -eq 1 ]; then
+    docker compose -f docker-compose.caddy.yml \
+      -f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy \
+      caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+  else
+    docker compose -f docker-compose.caddy.yml exec -T caddy \
+      caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+  fi
 )
 ```
 
-Only after the full restore succeeds, reapply the prior compose overlay and
-reload Caddy:
-
-```bash
-cd /opt/acx-backend
-docker compose -f docker-compose.caddy.yml \
-  -f /opt/acx-backend/app/docker-compose.app.yml up -d --force-recreate --no-deps caddy
-docker compose -f docker-compose.caddy.yml \
-  -f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy \
-  caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
-```
+The block reapplies the prior compose overlay and reloads Caddy only after every
+guard, the full restore, and bounded admin readiness polling succeed. With a prior
+overlay, it uses both compose files for recreation, probing, and reload. As in
+fix-forward, it attempts the container-local admin probe up to ten times with a
+one-second request timeout and at most nine one-second pauses. Exhaustion prints
+STOP and leaves the restored files in place without reloading Caddy; investigate
+Caddy startup before retrying, and do not declare recovery verified.
 
 If there was no prior overlay (first deployment), automatic rollback uses its
-activation journal's recorded absence to remove the newly installed overlay
-and frontend directory. Missing manual snapshots alone do not prove prior
-absence: STOP rather than delete live files or mix timestamps. After automatic
-rollback has restored the Caddyfile in place and removed the overlay/frontend,
-use the base compose file alone:
-
-```bash
-cd /opt/acx-backend
-docker compose -f docker-compose.caddy.yml up -d --force-recreate --no-deps caddy
-docker compose -f docker-compose.caddy.yml exec -T caddy \
-  caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
-```
+activation journal's recorded absence. Manual rollback uses the durable validated
+absence markers even after a successful apply has cleared that journal. With both
+markers it removes the newly installed overlay and frontend directory after all
+guards pass, restores the Caddyfile in place, and uses the base compose file alone
+for recreation, the same bounded readiness probe, and reload in the block above.
 
 Failed validation never replaces the live files, so rollback is only needed
 after activation has started.

@@ -1,15 +1,26 @@
 // @vitest-environment node
 // Importing Vite loads esbuild, which requires TextEncoder and Uint8Array from the same realm.
-import { describe, expect, it } from 'vitest';
-import viteConfig from '../../vite.config';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolvePortalProxyTarget } from '../devProxy';
 
+beforeEach(() => {
+  vi.stubEnv('PORTAL_API_PROXY_TARGET', undefined);
+  vi.resetModules();
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.resetModules();
+});
+
 describe('Vite development server', () => {
-  it('uses port 5173 to match the authorized browser origin', () => {
+  it('uses port 5173 to match the authorized browser origin', async () => {
+    const { default: viteConfig } = await import('../../vite.config');
     expect(viteConfig.server?.port).toBe(5173);
   });
 
-  it('fails when the authorized port is occupied', () => {
+  it('fails when the authorized port is occupied', async () => {
+    const { default: viteConfig } = await import('../../vite.config');
     expect(viteConfig.server?.strictPort).toBe(true);
   });
 });
@@ -52,11 +63,23 @@ describe('resolvePortalProxyTarget', () => {
     expect(() => resolvePortalProxyTarget(target)).toThrow(/PORTAL_API_PROXY_TARGET/);
   });
 
-  it('configures the Vite /portal proxy with the default target when unset', () => {
+  it('configures the Vite /portal proxy with the default target when unset', async () => {
+    const { default: viteConfig } = await import('../../vite.config');
     const proxy = viteConfig.server?.proxy as
       | Record<string, { target?: string; changeOrigin?: boolean; secure?: boolean }>
       | undefined;
     expect(proxy?.['/portal']?.target).toBe('http://127.0.0.1:8000');
+    expect(proxy?.['/portal']?.changeOrigin).toBe(true);
+    expect(proxy?.['/portal']?.secure).toBe(true);
+  });
+
+  it('configures the Vite /portal proxy with an HTTPS target override', async () => {
+    vi.stubEnv('PORTAL_API_PROXY_TARGET', 'https://dev.api.altcontext.com');
+    const { default: viteConfig } = await import('../../vite.config');
+    const proxy = viteConfig.server?.proxy as
+      | Record<string, { target?: string; changeOrigin?: boolean; secure?: boolean }>
+      | undefined;
+    expect(proxy?.['/portal']?.target).toBe('https://dev.api.altcontext.com');
     expect(proxy?.['/portal']?.changeOrigin).toBe(true);
     expect(proxy?.['/portal']?.secure).toBe(true);
   });

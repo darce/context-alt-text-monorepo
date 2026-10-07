@@ -150,7 +150,19 @@ before running frontend apply. Use the API host for the first deployment,
 when the app vhost may not yet exist:
 
 ```bash
-test "$(curl -sS -o /dev/null -w '%{http_code}' https://api.altcontext.com/portal/me)" = 401
+(
+  if code="$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' https://api.altcontext.com/portal/me)"; then
+    if [ "$code" = 401 ]; then
+      echo 'portal API mounted (401)'
+    else
+      echo "STOP: expected 401, got ${code:-none}; do not apply frontend" >&2
+      exit 1
+    fi
+  else
+    echo "STOP: portal API probe failed (${code:-none}); do not apply frontend" >&2
+    exit 1
+  fi
+)
 ```
 
 ### Install the checker and apply the frontend
@@ -339,30 +351,69 @@ backend portal is disabled.
 `/opt/acx-backend/app/rollback/Caddyfile.<ts>` plus `www.<ts>` and
 `docker-compose.app.yml.<ts>` are the pre-activation copies. Automatic restore
 runs on promote/compose/reload/health failure and reapplies the restored compose
-state before the rollback reload. Manual restore: select the newest Caddyfile
-snapshot and refuse a missing or empty snapshot before writing the Caddyfile
-back **in place**, preserving its bind-mounted inode:
+state before the rollback reload. On the VM, manual restore selects only
+`Caddyfile.<digits>` names and sorts by the numeric filename suffix, never mtime
+(`cp -a` preserves the live file's older mtime). It prints the chosen timestamp
+and refuses missing, empty, or incomplete snapshots before changing live files.
+The snapshot's `index.html` must be a non-empty regular file, not a symlink.
+The live overlay must be a regular file or absent, never a symlink; its parent
+must be an existing directory, not a symlink, even when the overlay is absent.
+The commands below use the default paths; substitute the same paths used at
+apply if they were overridden. Restore the Caddyfile back **in place**,
+preserving its bind-mounted inode, and www/overlay from that same timestamp:
 
 ```bash
 (
   set -euo pipefail
-  snapshot="$(find /opt/acx-backend/app/rollback -maxdepth 1 -type f \
-    -name 'Caddyfile.*' -printf '%T@ %p\n' | sort -nr | sed -n '1s/^[^ ]* //p')"
-  if [ ! -f "$snapshot" ] || [ ! -s "$snapshot" ]; then
-    echo 'No non-empty Caddyfile rollback snapshot; refusing restore' >&2
+  if [ ! -d /opt/acx-backend/app/rollback ] || [ -L /opt/acx-backend/app/rollback ]; then
+    echo 'STOP: rollback directory missing or unsafe; refusing restore' >&2
+    exit 1
+  fi
+  ts="$(find /opt/acx-backend/app/rollback -maxdepth 1 -type f \
+    -name 'Caddyfile.*' -printf '%f\n' | sed -n 's/^Caddyfile\.\([0-9][0-9]*\)$/\1/p' \
+    | sort -nr | sed -n '1p')"
+  if [ -z "$ts" ]; then
+    echo 'STOP: no numeric Caddyfile rollback snapshot; refusing restore' >&2
+    exit 1
+  fi
+  echo "Selected rollback timestamp: $ts"
+  snapshot="/opt/acx-backend/app/rollback/Caddyfile.$ts"
+  www_snapshot="/opt/acx-backend/app/rollback/www.$ts"
+  overlay_snapshot="/opt/acx-backend/app/rollback/docker-compose.app.yml.$ts"
+  if [ ! -f "$snapshot" ] || [ ! -s "$snapshot" ] || [ -L "$snapshot" ]; then
+    echo 'STOP: no non-empty regular Caddyfile rollback snapshot; refusing restore' >&2
+    exit 1
+  fi
+  if [ ! -d "$www_snapshot" ] || [ -L "$www_snapshot" ] \
+    || [ ! -f "$www_snapshot/index.html" ] || [ ! -s "$www_snapshot/index.html" ] \
+    || [ -L "$www_snapshot/index.html" ] \
+    || [ ! -f "$overlay_snapshot" ] || [ ! -s "$overlay_snapshot" ] || [ -L "$overlay_snapshot" ]; then
+    echo "STOP: incomplete rollback snapshot at $ts; refusing restore" >&2
     exit 1
   fi
   if [ ! -f /opt/acx-backend/Caddyfile ] || [ -L /opt/acx-backend/Caddyfile ]; then
-    echo 'Live Caddyfile must be an existing regular file; refusing restore' >&2
+    echo 'STOP: live Caddyfile must be an existing regular file; refusing restore' >&2
+    exit 1
+  fi
+  if [ ! -d /opt/acx-backend/app ] || [ -L /opt/acx-backend/app ]; then
+    echo 'STOP: live overlay parent must be an existing directory without symlinks; refusing restore' >&2
+    exit 1
+  fi
+  if [ -L /opt/acx-backend/app/docker-compose.app.yml ] \
+    || { [ -e /opt/acx-backend/app/docker-compose.app.yml ] \
+      && [ ! -f /opt/acx-backend/app/docker-compose.app.yml ]; }; then
+    echo 'STOP: live overlay must be a regular file or absent without symlinks; refusing restore' >&2
     exit 1
   fi
   cp -- "$snapshot" /opt/acx-backend/Caddyfile
+  rm -rf -- /opt/acx-backend/app/www
+  cp -a -- "$www_snapshot" /opt/acx-backend/app/www
+  cp -- "$overlay_snapshot" /opt/acx-backend/app/docker-compose.app.yml
 )
 ```
 
-Restore www/overlay from the same snapshot timestamp, then reapply the prior
-compose overlay and reload Caddy. Use these commands only when a prior overlay
-snapshot was restored:
+Only after the full restore succeeds, reapply the prior compose overlay and
+reload Caddy:
 
 ```bash
 cd /opt/acx-backend
@@ -373,10 +424,12 @@ docker compose -f docker-compose.caddy.yml \
   caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 ```
 
-If there was no prior overlay (first deployment), remove the newly installed
-`/opt/acx-backend/app/docker-compose.app.yml` and frontend directory instead of
-restoring absent snapshots. After restoring the Caddyfile in place, use the base
-compose file alone:
+If there was no prior overlay (first deployment), automatic rollback uses its
+activation journal's recorded absence to remove the newly installed overlay
+and frontend directory. Missing manual snapshots alone do not prove prior
+absence: STOP rather than delete live files or mix timestamps. After automatic
+rollback has restored the Caddyfile in place and removed the overlay/frontend,
+use the base compose file alone:
 
 ```bash
 cd /opt/acx-backend

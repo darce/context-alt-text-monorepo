@@ -2129,10 +2129,17 @@ def test_runbook_rollback_documents_guarded_in_place_caddyfile_restore() -> None
         "missing-www",
         "empty-www",
         "symlink-www",
+        "directory-index",
+        "symlink-index",
         "missing-overlay",
         "empty-overlay",
         "symlink-overlay",
         "missing-live-caddyfile",
+        "symlink-live-overlay",
+        "directory-live-overlay",
+        "dangling-live-overlay",
+        "absent-live-overlay",
+        "absent-live-overlay-symlink-parent",
     ],
 )
 def test_runbook_rollback_selects_numeric_timestamp_and_refuses_incomplete_snapshots(
@@ -2177,6 +2184,12 @@ def test_runbook_rollback_selects_numeric_timestamp_and_refuses_incomplete_snaps
     elif failure == "symlink-www":
         shutil.rmtree(rollback / "www.10")
         (rollback / "www.10").symlink_to(rollback / "www.9", target_is_directory=True)
+    elif failure == "directory-index":
+        (rollback / "www.10" / "index.html").unlink()
+        (rollback / "www.10" / "index.html").mkdir()
+    elif failure == "symlink-index":
+        (rollback / "www.10" / "index.html").unlink()
+        (rollback / "www.10" / "index.html").symlink_to(live_www / "index.html")
     elif failure == "missing-overlay":
         (rollback / "docker-compose.app.yml.10").unlink()
     elif failure == "empty-overlay":
@@ -2186,6 +2199,25 @@ def test_runbook_rollback_selects_numeric_timestamp_and_refuses_incomplete_snaps
         (rollback / "docker-compose.app.yml.10").symlink_to(rollback / "docker-compose.app.yml.9")
     elif failure == "missing-live-caddyfile":
         live_caddy.unlink()
+    elif failure == "symlink-live-overlay":
+        overlay_target = tmp_path / "unrelated-overlay.yml"
+        live_overlay.rename(overlay_target)
+        live_overlay.symlink_to(overlay_target)
+    elif failure == "directory-live-overlay":
+        live_overlay.unlink()
+        live_overlay.mkdir()
+        (live_overlay / "keep.yml").write_text("live overlay\n", encoding="utf-8")
+    elif failure == "dangling-live-overlay":
+        live_overlay.unlink()
+        overlay_target = tmp_path / "absent-overlay.yml"
+        live_overlay.symlink_to(overlay_target)
+    elif failure in ("absent-live-overlay", "absent-live-overlay-symlink-parent"):
+        live_overlay.unlink()
+        if failure == "absent-live-overlay-symlink-parent":
+            app_target = live_root / "real-app"
+            live_overlay.parent.rename(app_target)
+            live_overlay.parent.symlink_to(app_target, target_is_directory=True)
+    before_www = {path.name: path.read_bytes() for path in live_www.iterdir()}
     section = RUNBOOK.read_text(encoding="utf-8").split("### Frontend back-out", 1)[1]
     restore = section.split("```bash\n", 1)[1].split("```", 1)[0]
     restore = restore.replace("/opt/acx-backend", str(live_root))
@@ -2197,7 +2229,7 @@ def test_runbook_rollback_selects_numeric_timestamp_and_refuses_incomplete_snaps
         check=False,
         timeout=5,
     )
-    if failure is None:
+    if failure in (None, "absent-live-overlay"):
         assert result.returncode == 0, result.stdout + result.stderr
         assert "Selected rollback timestamp: 10" in result.stdout
         assert live_caddy.read_text(encoding="utf-8") == "caddy 10\n"
@@ -2213,10 +2245,32 @@ def test_runbook_rollback_selects_numeric_timestamp_and_refuses_incomplete_snaps
             assert not live_caddy.exists()
         else:
             assert live_caddy.read_text(encoding="utf-8") == "live caddy\n"
+            assert live_caddy.read_bytes() == b"live caddy\n"
             assert live_caddy.stat().st_ino == caddy_inode
         assert (live_www / "index.html").read_text(encoding="utf-8") == "live frontend\n"
         assert (live_www / "new-asset.js").read_text(encoding="utf-8") == "new asset\n"
-        assert live_overlay.read_text(encoding="utf-8") == "live overlay\n"
+        assert {path.name: path.read_bytes() for path in live_www.iterdir()} == before_www
+        if failure == "directory-live-overlay":
+            assert live_overlay.is_dir()
+            assert {path.name: path.read_bytes() for path in live_overlay.iterdir()} == {
+                "keep.yml": b"live overlay\n"
+            }
+        elif failure == "dangling-live-overlay":
+            assert live_overlay.is_symlink()
+            assert live_overlay.readlink() == overlay_target
+            assert not overlay_target.exists()
+        elif failure == "absent-live-overlay-symlink-parent":
+            assert not live_overlay.exists()
+            assert not live_overlay.is_symlink()
+            assert live_overlay.parent.is_symlink()
+            assert live_overlay.parent.readlink() == app_target
+        else:
+            assert live_overlay.read_text(encoding="utf-8") == "live overlay\n"
+            assert live_overlay.read_bytes() == b"live overlay\n"
+            if failure == "symlink-live-overlay":
+                assert live_overlay.is_symlink()
+                assert live_overlay.readlink() == overlay_target
+                assert overlay_target.read_bytes() == b"live overlay\n"
 
 
 def test_checked_in_health_check_covers_root_ready_and_portal_api(tmp_path: Path) -> None:

@@ -4,6 +4,16 @@ import { describe, expect, it } from 'vitest';
 import viteConfig from '../../vite.config';
 import { resolvePortalProxyTarget } from '../devProxy';
 
+describe('Vite development server', () => {
+  it('uses port 5173 to match the authorized browser origin', () => {
+    expect(viteConfig.server?.port).toBe(5173);
+  });
+
+  it('fails when the authorized port is occupied', () => {
+    expect(viteConfig.server?.strictPort).toBe(true);
+  });
+});
+
 describe('resolvePortalProxyTarget', () => {
   it('uses the local API default when the value is unset or blank', () => {
     expect(resolvePortalProxyTarget(undefined)).toBe('http://127.0.0.1:8000');

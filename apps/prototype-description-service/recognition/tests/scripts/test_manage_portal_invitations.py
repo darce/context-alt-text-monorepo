@@ -12,8 +12,8 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import event, select
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from db.base import Base
 from db.models import PortalIdentity, PortalTenantInvitation, Tenant
@@ -310,6 +310,123 @@ async def test_revoke_refuses_accepted_and_unknown_invitations(
     _require(unknown_result == 1, "unknown invitation revoke must be refused")
     await db_session.refresh(invitation)
     _require(_as_utc(invitation.expires_at) == original_expiry, "refused revoke must not change accepted expiry")
+
+
+@pytest.mark.asyncio
+async def test_claim_committed_before_revoke_write_preserves_acceptance_and_replay(
+    tmp_path: pathlib.Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    from recognition.infrastructure.repositories.portal_identity_repository import SqlAlchemyPortalIdentityRepository
+
+    _configure_local_env(monkeypatch)
+    cli = _import_cli()
+    # A file-backed database gives the claimant and revoker independent
+    # connections, without changing the shared db_session/savepoint fixture.
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'revoke-claim.sqlite'}")
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def enforce_foreign_keys(connection, _record) -> None:
+        cursor = connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(
+                lambda sync_connection: Base.metadata.create_all(
+                    sync_connection,
+                    tables=[Tenant.__table__, PortalIdentity.__table__, PortalTenantInvitation.__table__],
+                )
+            )
+        raw_token = "fake-interleaved-claim-token"
+        original_expiry = datetime.now(UTC) + timedelta(days=1)
+        async with AsyncSession(engine, expire_on_commit=False) as setup_session:
+            invitation = PortalTenantInvitation(
+                invited_email="interleaved@example.test",
+                token_hash=hashlib.sha256(raw_token.encode()).hexdigest(),
+                expires_at=original_expiry,
+            )
+            setup_session.add(invitation)
+            await setup_session.commit()
+            invitation_id = invitation.id
+
+        claim_arguments = {
+            "issuer": "https://issuer.example.test",
+            "subject": "fake-interleaved-subject",
+            "email": "interleaved@example.test",
+            "invitation_token": raw_token,
+        }
+        async with (
+            AsyncSession(engine, expire_on_commit=False) as revoke_session,
+            AsyncSession(engine, expire_on_commit=False) as claim_session,
+        ):
+            # Reproduce the stale pending view the old unlocked read could see.
+            pending = await revoke_session.get(PortalTenantInvitation, invitation_id)
+            assert pending is not None and pending.accepted_at is None
+            revoke_connection = await revoke_session.connection()
+            claim_connection = await claim_session.connection()
+            assert (
+                revoke_connection.sync_connection.connection.dbapi_connection
+                is not claim_connection.sync_connection.connection.dbapi_connection
+            )
+            repository = SqlAlchemyPortalIdentityRepository(claim_session)
+            claim = None
+
+            async def commit_claim_before_write() -> None:
+                nonlocal claim
+                if claim is None:
+                    claim = await repository.claim_onboarding(**claim_arguments)
+                    await claim_session.commit()
+                    assert not claim.replayed
+
+            real_execute = revoke_session.execute
+            real_flush = revoke_session.flush
+
+            async def execute_after_claim(statement, *args, **kwargs):
+                if getattr(statement, "is_update", False):
+                    await commit_claim_before_write()
+                return await real_execute(statement, *args, **kwargs)
+
+            async def flush_after_claim(*args, **kwargs):
+                # Also intercept the old ORM dirty-row write, so this regression
+                # runs against the original implementation and proves it fails.
+                await commit_claim_before_write()
+                return await real_flush(*args, **kwargs)
+
+            monkeypatch.setattr(revoke_session, "execute", execute_after_claim)
+            monkeypatch.setattr(revoke_session, "flush", flush_after_claim)
+            exit_code = await cli.run(
+                argv=["--env", "local", "revoke", "--invitation-id", str(invitation_id)],
+                session=revoke_session,
+            )
+            assert claim is not None, "claim must commit at the revoke write boundary"
+            claimed_identity_id = claim.identity.id
+            claimed_tenant_id = claim.identity.tenant_id
+
+        # Inspect durable rows and exercise actual repository replay through a
+        # fresh session; neither the write nor its outcome is a SQL-shaped fake.
+        async with AsyncSession(engine, expire_on_commit=False) as verification_session:
+            accepted = await verification_session.get(PortalTenantInvitation, invitation_id)
+            assert accepted is not None
+            assert accepted.accepted_at is not None
+            assert accepted.accepted_by_identity_id == claimed_identity_id
+            assert accepted.tenant_id == claimed_tenant_id
+            assert _as_utc(accepted.expires_at) == original_expiry
+            assert await verification_session.get(Tenant, claimed_tenant_id) is not None
+            replay = await SqlAlchemyPortalIdentityRepository(verification_session).claim_onboarding(**claim_arguments)
+            await verification_session.commit()
+            assert replay.replayed
+            assert replay.identity.id == claimed_identity_id
+            assert replay.identity.tenant_id == claimed_tenant_id
+
+        assert exit_code == 1, "revoke must refuse an invitation accepted before its write"
+        output = capsys.readouterr()
+        assert output.out == ""
+        assert output.err == "error: invitation not found or not pending\n"
+    finally:
+        await engine.dispose()
 
 
 class _UntouchedSession:

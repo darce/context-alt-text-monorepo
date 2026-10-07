@@ -235,8 +235,7 @@ def test_reset_dry_run_bootstrap_uses_actual_stack_env(stack_env: str) -> None:
     out = result.stdout
 
     assert f"bash -s -- /opt/acx-backend/{stack_env} {stack_env} " in out, (
-        "the quoted bootstrap heredoc must receive the validated reset env "
-        f"as a positional argument; got: {out!r}"
+        f"the quoted bootstrap heredoc must receive the validated reset env as a positional argument; got: {out!r}"
     )
     assert f"--env {stack_env} tenant create" in out, (
         f"tenant creation must use the reset stack env {stack_env}; got: {out!r}"
@@ -247,9 +246,7 @@ def test_reset_dry_run_bootstrap_uses_actual_stack_env(stack_env: str) -> None:
 
 
 @pytest.mark.parametrize("stack_env", ["dev", "dev-fir", "staging", "prod"])
-def test_reset_live_bootstrap_transports_stack_env_through_quoted_heredoc(
-    tmp_path: Path, stack_env: str
-) -> None:
+def test_reset_live_bootstrap_transports_stack_env_through_quoted_heredoc(tmp_path: Path, stack_env: str) -> None:
     """Execute the captured SSH heredoc with fakes and verify both CLI calls."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
@@ -272,7 +269,7 @@ def test_reset_live_bootstrap_transports_stack_env_through_quoted_heredoc(
         '  "sudo python3 -c "*) exec bash -c "$1" ;;\n'
         "esac\n"
         'if [ "${1:-}" = "bash -s" ]; then\n'
-        "  if [ -f \"" + str(lease_path) + "\" ]; then echo LEASE-PRESENT >> \"" + str(ssh_log) + "\"; fi\n"
+        '  if [ -f "' + str(lease_path) + '" ]; then echo LEASE-PRESENT >> "' + str(ssh_log) + '"; fi\n'
         "  cat >/dev/null\n"
         "  exit 0\n"
         "fi\n"
@@ -285,7 +282,7 @@ def test_reset_live_bootstrap_transports_stack_env_through_quoted_heredoc(
         f'exec bash -s -- "{remote_dir}" "$2" "$3" "$4" < "{bootstrap_body}"\n'
     )
     (bindir / "ssh").chmod(0o755)
-    (bindir / "sudo").write_text("#!/bin/sh\nexec \"$@\"\n")
+    (bindir / "sudo").write_text('#!/bin/sh\nexec "$@"\n')
     (bindir / "sudo").chmod(0o755)
     (bindir / "docker").write_text(
         "#!/bin/sh\n"
@@ -326,20 +323,16 @@ def test_reset_live_bootstrap_transports_stack_env_through_quoted_heredoc(
     assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
 
     ssh_calls = ssh_log.read_text()
-    bootstrap_ssh_call = next(
-        line for line in ssh_calls.splitlines() if " <bash> <-s> <--> " in line
-    )
-    assert (
-        f"<{remote_dir}> <{stack_env}> <{tenant_id}> <{site_url}>" in bootstrap_ssh_call
-    ), bootstrap_ssh_call
+    bootstrap_ssh_call = next(line for line in ssh_calls.splitlines() if " <bash> <-s> <--> " in line)
+    assert f"<{remote_dir}> <{stack_env}> <{tenant_id}> <{site_url}>" in bootstrap_ssh_call, bootstrap_ssh_call
     assert "LEASE-PRESENT" in ssh_calls, ssh_calls
     assert not lease_path.exists()
 
     heredoc_body = bootstrap_body.read_text()
-    assert "remote_dir=\"$1\"" in heredoc_body
-    assert "env=\"$2\"" in heredoc_body
-    assert "tenant_id=\"$3\"" in heredoc_body
-    assert "site_url=\"$4\"" in heredoc_body
+    assert 'remote_dir="$1"' in heredoc_body
+    assert 'env="$2"' in heredoc_body
+    assert 'tenant_id="$3"' in heredoc_body
+    assert 'site_url="$4"' in heredoc_body
     assert heredoc_body.count('--env "${env}"') == 2
     script_text = SCRIPT.read_text()
     assert 'bash -s -- "${remote_dir}" "${env}" "${tenant_id}" "${site_url}"' in script_text

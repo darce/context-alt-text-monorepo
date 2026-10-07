@@ -169,32 +169,32 @@ lifecycle starts a stopped instance when work is queued and stops it when idle.
 
 ## 8. Rollback (RLSE-08)
 
-Revoke the API key in the portal. Revoke any unused invitations using the list
-and revoke commands in section 4. In local WordPress **Settings > Alt Context**,
-restore the settings that were in place before this run.
+Revoke the API key in the portal. Revoke any unused invitations using the list and revoke commands in section 4. In local WordPress **Settings > Alt Context**, restore the settings that were in place before this run.
 
-To disable the dev portal durably (RLSE-19), use a workstation branch or
-maintenance task to remove only the seven `dev` entries from the `values` maps
-in `config/env/manifest.d/30-portal-backend.toml`, restoring the pre-launch dev
-configuration. Commit the change, obtain review, and merge it to `main` before
-materializing. From a clean, updated `main` at the workstation repository root,
-check the dev environment:
+To disable the dev portal durably (RLSE-19), from clean, updated `main` at the workstation repository root run `make task-start TASK=PORTALDEV-2 OBJECTIVE="Disable dev portal" MODE=worktree`. This creates maintenance branch `feature/portaldev-2` and its linked worktree; the invoking shell stays on `main`. Before editing, run `cd ../context-alt-text-monorepo-portaldev-2` and confirm `git branch --show-current` reports `feature/portaldev-2`. If that task ref is already in use, choose an unused digit-bearing ref with the same command and enter its reported `worktree_path`, confirming its corresponding feature branch.
+Remove only the seven `dev` entries from the `values` maps in `config/env/manifest.d/30-portal-backend.toml`; preserve all local and existing or subsequently merged production settings.
+In `scripts/env/tests/test_portal_backend_vars.py`, replace DEV-only expectations (`expected_dev`, DEV render assertions, and the enable-flag values check) with assertions that all seven DEV manifest values and rendered assignments are absent (portal disabled). Preserve all local/prod assertions, including any added since rollout; in the enable-flag values check remove only the `dev` entry from its expected map.
+From that branch's workstation repository root, regenerate the example digests and pass both gates before committing all four files:
+```bash
+make env-examples &&
+make env-check &&
+LC_ALL=C uv run --no-project --with pytest python -m pytest scripts/env/tests -q &&
+git add config/env/manifest.d/30-portal-backend.toml scripts/env/tests/test_portal_backend_vars.py apps/prototype-description-service/.env.example apps/prototype-description-service/.env.prod.example &&
+git diff --cached --check && git commit -m "fix(portal): disable dev portal"
+```
 
+Obtain review and merge the complete change set to `main` before materializing. From clean, updated `main` at the workstation repository root, check:
 ```bash
 make env-materialize ENV=dev TARGET=svc-vm
 ```
-
 Expect seven `stale` lines; stop on other drift or failures. Review, then apply from the same workstation checkout:
-
 ```bash
 APPLY=1 make env-materialize ENV=dev TARGET=svc-vm
 ```
 
 After APPLY succeeds, restart the service on the dev VM:
-
 ```bash
 sudo systemctl restart acx-dev
 ```
 
-Keep later materializations and deployments on the updated `main`: an older
-manifest can re-enable the portal on APPLY, or fail deploy's drift preflight.
+Keep later materializations and deployments on updated `main`: an older manifest can re-enable the portal on APPLY, or fail deploy's drift preflight.

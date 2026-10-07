@@ -5,17 +5,18 @@ Referenced from `.env.prod.example`. Delegates persistence to
 except the single labeled post-create line on stdout.
 
 Usage:
-    python -m scripts.manage_api_keys --env {prod,dev,local} create --tenant <uuid> [--expires-in <days>] [--tier STANDARD|PRO|ENTERPRISE]
-    python -m scripts.manage_api_keys --env {prod,dev,local} list --tenant <uuid> [--include-revoked]
-    python -m scripts.manage_api_keys --env {prod,dev,local} revoke --key-id <uuid>
-    python -m scripts.manage_api_keys --env {prod,dev,local} tenant create --tenant <uuid> --site-url <url>
-    python -m scripts.manage_api_keys --env {prod,dev,local} tenant list [--limit <n>]
+    python -m scripts.manage_api_keys --env {prod,dev,local,staging,dev-fir} create --tenant <uuid> [--expires-in <days>] [--tier STANDARD|PRO|ENTERPRISE]
+    python -m scripts.manage_api_keys --env {prod,dev,local,staging,dev-fir} list --tenant <uuid> [--include-revoked]
+    python -m scripts.manage_api_keys --env {prod,dev,local,staging,dev-fir} revoke --key-id <uuid>
+    python -m scripts.manage_api_keys --env {prod,dev,local,staging,dev-fir} tenant create --tenant <uuid> --site-url <url>
+    python -m scripts.manage_api_keys --env {prod,dev,local,staging,dev-fir} tenant list [--limit <n>]
 
 `--env` is mandatory (E15-3a-BR-02): the CLI refuses to run against a DSN
 whose host does not match the declared environment. If `ACX_ENV` is set, it
 must name a supported environment and match `--env` before database settings
-are read. A matched dev environment may use the Compose `postgres` service
-host; DSN-only dev/local still require a local host. Prod always refuses
+are read. Matched dev, staging and dev-fir environments may use the Compose
+`postgres` service host; staging/dev-fir require explicit matching `ACX_ENV`.
+DSN-only dev/local still require a local host. Prod always refuses
 loopback or *.local hosts, and local refuses remote hosts. This prevents the
 original BR-02 incident where a "prod" key was silently written to a local
 dev DB because DSN resolution fell through to whatever the shell happened
@@ -42,7 +43,7 @@ from recognition.application.services.api_key_admin_service import mint_api_key
 from recognition.config.security import RateLimitTier
 from recognition.infrastructure.repositories.api_key_repository import SqlAlchemyApiKeyRepository
 
-_ENV_CHOICES = ("prod", "dev", "local")
+_ENV_CHOICES = ("prod", "dev", "local", "staging", "dev-fir")
 
 
 def _dsn_host(dsn: str) -> str:
@@ -62,8 +63,12 @@ def _validate_env_vs_dsn(env: str, dsn: str, *, configured_env: str | None = Non
         return f"env=prod but DSN host '{host}' looks local; refusing to run"
     if env == "local" and not _is_local_host(host):
         return f"env={env} but DSN host '{host}' is not a local host; refusing to run"
-    if env == "dev" and not _is_local_host(host) and not (configured_env == "dev" and host == "postgres"):
-        return f"env={env} but DSN host '{host}' is not a local or dev Compose postgres host; refusing to run"
+    if (
+        env in {"dev", "staging", "dev-fir"}
+        and not _is_local_host(host)
+        and not (configured_env == env and host == "postgres")
+    ):
+        return f"env={env} but DSN host '{host}' is not a local or {env} Compose postgres host; refusing to run"
     return None
 
 
@@ -75,9 +80,11 @@ def _validate_runtime_env(env: str) -> str | None:
             return f"ACX_ENV={configured_env!r} is not a supported CLI environment; refusing to run"
         if configured_env != env:
             return f"ACX_ENV={configured_env!r} does not match --env={env!r}; refusing to run"
+    elif env in {"staging", "dev-fir"}:
+        return f"ACX_ENV must be set to {env!r} to match --env; refusing to run"
 
     # Keep production and local DSN protections even when ACX_ENV is set.
-    # The matching dev runtime may use the Docker Compose postgres service.
+    # Matching dev/staging/dev-fir runtimes may use Docker Compose postgres.
     from db.settings import get_database_settings
 
     dsn = get_database_settings().postgres_dsn

@@ -2,11 +2,10 @@
 
 ## 1. Scope
 
-This runbook covers the dev rung of the launch ladder: sign in to the local
-portal with Clerk's development instance, claim an invitation, create an API
-key, configure a local WordPress site, and describe an image through the dev
-API. Production follows [Clerk production authentication](clerk-production-auth.md)
-and [portal deployment](app-portal-deploy.md).
+The dev rung covers Clerk sign-in, invitation claim, API key creation, and
+image description through the dev API from local WordPress. Production follows
+[Clerk production authentication](clerk-production-auth.md) and
+[portal deployment](app-portal-deploy.md).
 
 ## 2. Clerk development instance
 
@@ -28,41 +27,40 @@ never needs a Clerk secret key.
 
 ## 3. Dev API
 
-Use a repository checkout of `main`. From the workstation repository root,
-deploy the dev API:
-
-```bash
-make deploy-dev
-```
-
-From the workstation repository root, check the dev backend environment against
-the manifest:
+Use a clean, updated checkout of `main`. From the workstation repository root,
+check the dev backend environment against the manifest before deploying:
 
 ```bash
 make env-materialize ENV=dev TARGET=svc-vm
 ```
 
-After reviewing the check and resolving any reported drift, apply it from the
-workstation repository root:
+On the first rollout, GNU Make exits 2 when the materializer exits 1 for drift.
+Expected drift requires exactly seven `missing` lines for the keys below and
+`materialize_remote.sh: drift found (remote check exit 1)` (Make reports `Error 1`).
+An already configured environment checks clean (Make exit 0). Stop on any other
+drift (`missing`, `stale`, `unmanaged`, `differs`, or `mode`) or transport/config/check error before applying or deploying.
+The seven `svc-vm` dev values must be:
+
+- `RECOGNITION_PORTAL_ENABLED=1`
+- `ACX_CLERK_ISSUER=https://saved-frog-4170.clerk.accounts.dev`
+- `ACX_CLERK_JWKS_URL=https://saved-frog-4170.clerk.accounts.dev/.well-known/jwks.json`
+- `ACX_CLERK_AUDIENCE=altcontext-portal`
+- `ACX_CLERK_AUTHORIZED_PARTIES`, `APP_PUBLIC_ORIGIN`, and `APP_ALLOWED_ORIGINS`:
+  exactly `http://localhost:5173`.
+
+After reviewing those seven additions (or a clean check), apply from the workstation root:
 
 ```bash
 APPLY=1 make env-materialize ENV=dev TARGET=svc-vm
 ```
 
-For `svc-vm` in `dev`, the manifest must enable the portal with
-`RECOGNITION_PORTAL_ENABLED=1`, set `ACX_CLERK_ISSUER` to
-`https://saved-frog-4170.clerk.accounts.dev` and
-`ACX_CLERK_JWKS_URL` to
-`https://saved-frog-4170.clerk.accounts.dev/.well-known/jwks.json`, and set
-`ACX_CLERK_AUDIENCE=altcontext-portal`.
-Set `ACX_CLERK_AUTHORIZED_PARTIES`, `APP_PUBLIC_ORIGIN`, and
-`APP_ALLOWED_ORIGINS` to exactly `http://localhost:5173`.
-
-On the dev VM, restart the API after deployment and environment application:
+Only after APPLY succeeds, deploy from that same workstation checkout:
 
 ```bash
-sudo systemctl restart acx-dev
+make deploy-dev
 ```
+
+Deploy checks for zero drift, restarts and verifies `acx-dev`; a separate VM restart is optional.
 
 From the workstation, probe the dev endpoint:
 
@@ -70,15 +68,13 @@ From the workstation, probe the dev endpoint:
 curl -s -o /dev/null -w '%{http_code}\n' https://dev.api.altcontext.com/portal/me
 ```
 
-An unauthenticated `401` means `/portal` is mounted. A `404` means it is not;
-recheck `RECOGNITION_PORTAL_ENABLED` in the dev manifest, apply the environment,
-and restart `acx-dev` again.
+An unauthenticated `401` means `/portal` is mounted. For `404`, recheck the dev
+manifest, repeat the reviewed apply from the workstation, and restart `acx-dev` on the dev VM.
 
 ## 4. Invitation
 
-In one VM shell, create the invitation for the same address used to sign in to
-Clerk. The invitation is single-use and expires after 72 hours. Begin in the
-API directory:
+On the dev VM, create a single-use invitation for the Clerk sign-in address
+(expires in 72 hours). Begin in the API directory:
 
 ```bash
 cd /opt/acx-backend/dev
@@ -100,8 +96,7 @@ invitations, in the same VM shell and directory run:
 docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_portal_invitations --env dev list --include-inactive
 ```
 
-To revoke one, first select its ID from the list. In the same VM shell, read
-that ID:
+To revoke one, select its ID from the list and read it in the same VM shell:
 
 ```bash
 read -r -p 'Invitation ID to revoke: ' invitation_id
@@ -115,8 +110,7 @@ docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_po
 
 ## 5. Portal
 
-From the workstation repository root, render the local portal's public Clerk
-settings:
+From the workstation repository root, render the local portal's public Clerk settings:
 
 ```bash
 make env-render ENV=local TARGET=app-portal-local
@@ -158,9 +152,15 @@ lifecycle starts a stopped instance when work is queued and stops it when idle.
 - **401 from `/portal`:** check the session template's `aud` and the token's
   `azp` against `ACX_CLERK_AUTHORIZED_PARTIES`, which must be exactly
   `http://localhost:5173`. Clerk supplies `azp` from the portal origin.
-- **403 while claiming:** confirm the signed-in primary email is verified and
-  `email_verified` is a boolean claim, then confirm the invitation has not
-  already been claimed and is still active.
+- **403 while claiming:** `email_unverified` requires a verified primary email
+  and boolean `email_verified`; `csrf_origin_denied` requires the browser's
+  `Origin` to match `APP_ALLOWED_ORIGINS` exactly: `http://localhost:5173`.
+  `not_admitted` means the invited address differs from the Clerk primary email,
+  or the token is expired, revoked, or unknown. `tenant_header_forbidden` means
+  the request attempted to select a tenant.
+- **409 while claiming:** `invitation_consumed` or `identity_already_bound`;
+  inspect the invitation and existing identity binding before retrying.
+- **422 while claiming:** `invalid_claim_request`; correct the claim payload.
 - **503 from `/portal`:** inspect the API logs for the identity-store failure;
   this is a backend identity-store issue, not a Clerk sign-in failure.
 - **Description remains queued:** follow the lifecycle checks in
@@ -173,23 +173,28 @@ Revoke the API key in the portal. Revoke any unused invitations using the list
 and revoke commands in section 4. In local WordPress **Settings > Alt Context**,
 restore the settings that were in place before this run.
 
-To disable the dev portal, restore the pre-launch dev values in
-`config/env/manifest.d/30-portal-backend.toml`. From the workstation repository
-root, check the dev environment:
+To disable the dev portal durably (RLSE-19), use a workstation branch or
+maintenance task to remove only the seven `dev` entries from the `values` maps
+in `config/env/manifest.d/30-portal-backend.toml`, restoring the pre-launch dev
+configuration. Commit the change, obtain review, and merge it to `main` before
+materializing. From a clean, updated `main` at the workstation repository root,
+check the dev environment:
 
 ```bash
 make env-materialize ENV=dev TARGET=svc-vm
 ```
 
-After reviewing the check, apply the restored values from the workstation
-repository root:
+Expect seven `stale` lines; stop on other drift or failures. Review, then apply from the same workstation checkout:
 
 ```bash
 APPLY=1 make env-materialize ENV=dev TARGET=svc-vm
 ```
 
-Finally, restart the service on the dev VM:
+After APPLY succeeds, restart the service on the dev VM:
 
 ```bash
 sudo systemctl restart acx-dev
 ```
+
+Keep later materializations and deployments on the updated `main`: an older
+manifest can re-enable the portal on APPLY, or fail deploy's drift preflight.

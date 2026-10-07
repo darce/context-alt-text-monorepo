@@ -1,3 +1,5 @@
+// @vitest-environment node
+// Importing Vite loads esbuild, which requires TextEncoder and Uint8Array from the same realm.
 import { describe, expect, it } from 'vitest';
 import viteConfig from '../../vite.config';
 import { resolvePortalProxyTarget } from '../devProxy';

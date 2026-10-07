@@ -10,6 +10,8 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
+    port: 5173,
+    strictPort: true,
     proxy: {
       '/portal': {
         target: resolvePortalProxyTarget(process.env.PORTAL_API_PROXY_TARGET),

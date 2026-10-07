@@ -1,10 +1,17 @@
- apps/app-portal/.env.example                       |   7 +
- apps/app-portal/src/App.tsx                        | 193 +++++++++-
- .../src/__tests__/account-navigation.test.tsx      | 422 +++++++++++++++++++++
- .../src/__tests__/portal-request.test.ts           | 188 +++++++++
- apps/app-portal/src/api/portalRequest.ts           | 157 ++++++++
- apps/app-portal/src/config.ts                      |  30 +-
- apps/app-portal/src/screens/AccountScreen.tsx      |  19 +
- apps/app-portal/src/screens/NotAdmittedScreen.tsx  |   7 +
- apps/app-portal/src/styles.css                     |  76 +++-
- 9 files changed, 1081 insertions(+), 18 deletions(-)
+ .../.env.prod.example                              |   5 +-
+ .../js/admin/api/describeApi.ts                    |   6 +-
+ .../src/public/class-public-demo-shortcode.php     |  13 +-
+ .../src/support/class-recognition-transport.php    |  30 ++++-
+ .../src/support/class-vite-manifest.php            |  16 ++-
+ .../tests/Unit/PublicDemoShortcodeTest.php         | 143 ++++++++++++++-------
+ .../tests/Unit/RecognitionTransportTest.php        | 138 +++++++++++++++++++-
+ .../tests/Unit/ViteManifestTest.php                |  76 +++++++++++
+ .../tests/fixtures/vite-manifest/demo-tokens.json  |   7 +
+ config/env/manifest.d/21-service-vm.toml           |   2 +-
+ .../E15-3-wordpress-demo-provisioning-task-plan.md |  42 +++++-
+ .../15.0/E15-3a-localwp-oci-roundtrip-task-plan.md |  66 +++++++---
+ docs/workbay/reports/deployred-1-frontend.md       |   2 +-
+ .../schemas/scene-describe-run.schema.json         |   2 +-
+ scripts/deploy/tests/test_preflight_gpu_env.py     |   7 +-
+ scripts/env/tests/test_gpu_allowlist_doc_parity.py |  56 ++++++++
+ 16 files changed, 515 insertions(+), 96 deletions(-)

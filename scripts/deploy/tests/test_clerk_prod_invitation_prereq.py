@@ -58,9 +58,7 @@ def test_smoke_requires_deployed_cli_and_matching_unexpired_operator_invitation(
 def test_documented_issuance_command_runs_in_prod_api_with_supported_flags(tmp_path: Path) -> None:
     smoke = _smoke()
     blocks = [
-        block
-        for block in re.findall(r"```bash\n(.*?)```", smoke, re.DOTALL)
-        if "manage_portal_invitations" in block
+        block for block in re.findall(r"```bash\n(.*?)```", smoke, re.DOTALL) if "manage_portal_invitations" in block
     ]
     assert len(blocks) == 1, "expected one supported invitation issuance command"
     lines = blocks[0].strip().splitlines()
@@ -111,9 +109,8 @@ def test_documented_issuance_command_runs_in_prod_api_with_supported_flags(tmp_p
     assert result.returncode == 0, result.stderr
     assert result.stdout == "fake-one-time-token\n"
     assert argv_log.read_text(encoding="utf-8").splitlines() == [str(fake_prod), *command[1:]]
-    assert (
-        "Only after the dependency has landed and the production service has been deployed with it"
-        in " ".join(smoke.split())
+    assert "Only after the dependency has landed and the production service has been deployed with it" in " ".join(
+        smoke.split()
     )
 
 

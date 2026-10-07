@@ -67,7 +67,7 @@ def test_portal_backend_values_render_for_local_dev_and_prod():
     render_target = load_module("render_env").render_target
 
     local = _assignments(_render_target(render_target, manifest, "svc-local", "local"))
-    dev = _assignments(_render_target(render_target, manifest, "svc-local", "dev"))
+    dev = _assignments(_render_target(render_target, manifest, "svc-vm", "dev"))
     assert local["RECOGNITION_PORTAL_ENABLED"] == "1"
     assert local["ACX_CLERK_ISSUER"] == "https://saved-frog-4170.clerk.accounts.dev"
     assert local["ACX_CLERK_JWKS_URL"] == "https://saved-frog-4170.clerk.accounts.dev/.well-known/jwks.json"

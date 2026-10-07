@@ -2820,6 +2820,168 @@ def test_failed_activation_cleanup_can_resume_without_snapshots(
     assert syncs.index(f"{rollback} journal=yes") < syncs.index(f"{app} journal=no")
 
 
+@pytest.mark.parametrize("mode", ["--apply", "--dry-run"])
+@pytest.mark.parametrize("alias", ["rollback", "app"])
+@pytest.mark.parametrize(
+    "phase,missing_snapshots",
+    [
+        ("prepared", False),
+        ("caddy_promoted", False),
+        ("www_promoted", False),
+        ("overlay_promoted", False),
+        ("restored", False),
+        ("restored", True),
+    ],
+)
+def test_activation_recovery_refuses_symlink_snapshot_directory_before_mutation(
+    tmp_path: Path, phase: str, missing_snapshots: bool, alias: str, mode: str
+) -> None:
+    from test_app_portal_activation_journal import _interrupt_after_caddy
+
+    live = tmp_path / "opt/acx-backend/Caddyfile"
+    _, _, app, _, _ = _interrupt_after_caddy(tmp_path, live)
+    journal = app / "activation.journal"
+    if phase == "restored":
+        # Stop after durable restoration but before any snapshot deletion.
+        hook = tmp_path / "stop-cleanup.sh"
+        _write_executable(
+            hook,
+            "sync() {\n"
+            '  if [ "${@: -1}" = "$APP_ROOT" ] && '
+            'grep -qx "phase=restored" "$ACTIVATION_JOURNAL"; then return 1; fi\n'
+            '  /bin/sync "$@"\n}\n',
+        )
+        stopped = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=None, extra_env={"BASH_ENV": str(hook)})
+        assert stopped.returncode != 0, stopped.stdout + stopped.stderr
+        assert "phase=restored\n" in journal.read_text()
+    else:
+        journal.write_text(journal.read_text().replace("phase=prepared\n", f"phase={phase}\n"))
+    stamp = next((app / "rollback").glob("Caddyfile.*")).name.split(".")[-1]
+    if missing_snapshots:
+        (app / "rollback" / f"Caddyfile.{stamp}").unlink()
+        shutil.rmtree(app / "rollback" / f"www.{stamp}")
+    # Include every cleanup target and an unrelated set in the external tree.
+    for kind in ("www", "overlay"):
+        (app / "rollback" / f"absent-{kind}.{stamp}").write_text(f"app-portal-absent-{kind}-v1\n")
+    (app / "rollback" / "Caddyfile.1").write_text("unrelated snapshot\n")
+    aliased = app / "rollback" if alias == "rollback" else app
+    external = tmp_path / "external"
+    aliased.rename(external)
+    aliased.symlink_to(external, target_is_directory=True)
+    before_external = _rollback_tree_state(external)
+    before_journal = journal.read_bytes()
+    before_caddy = (live.stat().st_ino, live.read_bytes())
+    before_www = _rollback_tree_state(app / "www")
+    before_overlay = (app / "docker-compose.app.yml").read_bytes()
+    before_log = _log(tmp_path)
+
+    refused = _run(tmp_path, args=[mode], live_caddy=live, frontend=None, extra_env={"BASH_ENV": ""})
+
+    assert _rollback_tree_state(external) == before_external, "recovery mutated external snapshot bytes or inodes"
+    assert journal.is_file(), "recovery cleared the journal through an unsafe rollback path"
+    assert journal.read_bytes() == before_journal
+    assert (live.stat().st_ino, live.read_bytes()) == before_caddy
+    assert _rollback_tree_state(app / "www") == before_www
+    assert (app / "docker-compose.app.yml").read_bytes() == before_overlay
+    assert _log(tmp_path) == before_log, "unsafe recovery contacted Docker or reloaded Caddy"
+    output = refused.stdout + refused.stderr
+    assert refused.returncode != 0, output
+    assert "rejects symlink component" in output, output
+    assert aliased.is_symlink() and aliased.readlink() == external
+
+
+def test_activation_cleanup_rechecks_snapshot_directory_after_restored_journal(tmp_path: Path) -> None:
+    from test_app_portal_activation_journal import _interrupt_after_caddy
+
+    live = tmp_path / "opt/acx-backend/Caddyfile"
+    original_caddy, _, app, _, _ = _interrupt_after_caddy(tmp_path, live)
+    before_snapshots = _rollback_tree_state(app / "rollback")
+    external = tmp_path / "external"
+    retained_journal = tmp_path / "restored-journal"
+    retained_log = tmp_path / "commands-at-swap"
+    hook = tmp_path / "swap-after-restored.sh"
+    _write_executable(
+        hook,
+        "sync() {\n"
+        '  /bin/sync "$@" || return $?\n'
+        '  if [ "${@: -1}" = "$APP_ROOT" ] && '
+        'grep -qx "phase=restored" "$ACTIVATION_JOURNAL" && [ ! -L "$ROLLBACK_DIR" ]; then\n'
+        f'    /bin/mv "$ROLLBACK_DIR" {shlex.quote(str(external))}\n'
+        f'    ln -s {shlex.quote(str(external))} "$ROLLBACK_DIR"\n'
+        f'    cp "$ACTIVATION_JOURNAL" {shlex.quote(str(retained_journal))}\n'
+        f"    cp {shlex.quote(str(tmp_path / 'commands.log'))} {shlex.quote(str(retained_log))}\n"
+        "  fi\n}\n",
+    )
+
+    refused = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=None, extra_env={"BASH_ENV": str(hook)})
+
+    assert external.is_dir(), "test did not replace the rollback directory after restoration"
+    assert _rollback_tree_state(external) == before_snapshots, "cleanup deleted through a newly symlinked directory"
+    assert (app / "activation.journal").read_bytes() == retained_journal.read_bytes()
+    assert "phase=restored\n" in retained_journal.read_text()
+    assert _log(tmp_path) == retained_log.read_text()
+    assert live.read_text() == original_caddy
+    assert refused.returncode != 0 and "rejects symlink component" in refused.stderr
+
+
+def test_successful_activation_rechecks_snapshot_directory_before_clearing_journal(tmp_path: Path) -> None:
+    live = tmp_path / "opt/acx-backend/Caddyfile"
+    _write_live_caddy(live)
+    app = live.parent / "app"
+    external = tmp_path / "external"
+    retained_journal = tmp_path / "active-journal"
+    health = tmp_path / "swap-during-health"
+    _write_executable(
+        health,
+        "#!/bin/sh\nset -eu\n"
+        f'mv "$APP_ROOT/rollback" {shlex.quote(str(external))}\n'
+        f'ln -s {shlex.quote(str(external))} "$APP_ROOT/rollback"\n'
+        f'cp "$APP_ROOT/activation.journal" {shlex.quote(str(retained_journal))}\n',
+    )
+
+    refused = _run(tmp_path, args=["--apply"], live_caddy=live, extra_env={"APP_HEALTH_CMD": str(health)})
+
+    assert retained_journal.is_file(), "test did not reach health checking"
+    assert (app / "activation.journal").is_file(), "success cleanup cleared journal through an unsafe rollback path"
+    assert (app / "activation.journal").read_bytes() == retained_journal.read_bytes()
+    assert list(external.glob("Caddyfile.*"))
+    assert refused.returncode != 0 and "rejects symlink component" in refused.stderr
+
+
+def test_snapshot_reclamation_rechecks_directory_before_each_deletion(tmp_path: Path) -> None:
+    live = tmp_path / "opt/acx-backend/Caddyfile"
+    _write_live_caddy(live)
+    app = live.parent / "app"
+    rollback = app / "rollback"
+    rollback.mkdir(parents=True)
+    for stamp in (1, 2):
+        (rollback / f"Caddyfile.{stamp}").write_text(f"old caddy {stamp}\n")
+        (rollback / f"www.{stamp}").mkdir()
+        (rollback / f"www.{stamp}/index.html").write_text(f"old frontend {stamp}\n")
+    external = tmp_path / "external"
+    hook = tmp_path / "swap-during-reclamation.sh"
+    _write_executable(
+        hook,
+        "rm() {\n"
+        '  /bin/rm "$@" || return $?\n'
+        '  if [ "${@: -1}" = "$ROLLBACK_DIR/Caddyfile.1" ] && '
+        '[ ! -f "$ACTIVATION_JOURNAL" ] && [ ! -L "$ROLLBACK_DIR" ]; then\n'
+        f'    /bin/mv "$ROLLBACK_DIR" {shlex.quote(str(external))}\n'
+        f'    ln -s {shlex.quote(str(external))} "$ROLLBACK_DIR"\n'
+        "  fi\n}\n",
+    )
+
+    refused = _run(tmp_path, args=["--apply"], live_caddy=live, extra_env={"BASH_ENV": str(hook)})
+
+    assert external.is_dir(), "test did not swap the directory between snapshot deletions"
+    assert not (external / "Caddyfile.1").exists()
+    assert (external / "Caddyfile.2").read_text() == "old caddy 2\n"
+    for stamp in (1, 2):
+        assert (external / f"www.{stamp}/index.html").read_text() == f"old frontend {stamp}\n"
+    assert not (app / "activation.journal").exists()
+    assert refused.returncode != 0 and "rejects symlink component" in refused.stderr
+
+
 def test_interrupted_activation_failed_restore_retains_all_inputs(tmp_path: Path) -> None:
     from test_app_portal_activation_journal import _interrupt_after_caddy
 

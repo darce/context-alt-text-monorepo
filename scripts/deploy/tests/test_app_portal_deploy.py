@@ -2475,7 +2475,9 @@ def test_runbook_post_apply_mismatch_recreates_reloads_and_reverifies() -> None:
 
 @pytest.mark.parametrize("readiness_polls,never_ready", [(2, False), (9, False), (0, True)])
 def test_runbook_fix_forward_waits_for_admin_before_reload_and_verification(
-    tmp_path: Path, readiness_polls: int, never_ready: bool,
+    tmp_path: Path,
+    readiness_polls: int,
+    never_ready: bool,
 ) -> None:
     backend = tmp_path / "opt" / "acx-backend"
     backend.mkdir(parents=True)
@@ -2483,12 +2485,26 @@ def test_runbook_fix_forward_waits_for_admin_before_reload_and_verification(
     verification = RUNBOOK.read_text(encoding="utf-8").split("If the hashes differ", 1)[1]
     commands = verification.split("```bash\n", 1)[1].split("```", 1)[0]
     result = _run_runbook_commands(
-        tmp_path, commands, readiness_polls=readiness_polls, never_ready=never_ready,
+        tmp_path,
+        commands,
+        readiness_polls=readiness_polls,
+        never_ready=never_ready,
     )
     assert (result.returncode == 0) == (not never_ready), result.stdout + result.stderr
     calls = [shlex.split(line) for line in (tmp_path / "rollback-commands.log").read_text().splitlines()]
     compose = ["docker", "compose", "-f", "docker-compose.caddy.yml", "-f", str(backend / "app/docker-compose.app.yml")]
-    probe = compose + ["exec", "-T", "caddy", "wget", "-q", "-T", "1", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+    probe = compose + [
+        "exec",
+        "-T",
+        "caddy",
+        "wget",
+        "-q",
+        "-T",
+        "1",
+        "-O",
+        "/dev/null",
+        "http://127.0.0.1:2019/config/",
+    ]
     expected = [compose + ["up", "-d", "--force-recreate", "--no-deps", "caddy"]]
     for attempt in range(10 if never_ready else readiness_polls + 1):
         expected.append(probe)
@@ -2499,8 +2515,19 @@ def test_runbook_fix_forward_waits_for_admin_before_reload_and_verification(
         assert result.stdout == "", "host hash verification must not run on exhaustion"
     else:
         expected += [
-            compose + ["exec", "-T", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"],
-            ["docker", "compose", "-f", "docker-compose.caddy.yml", "exec", "-T", "caddy", "sha256sum", "/etc/caddy/Caddyfile"],
+            compose
+            + ["exec", "-T", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"],
+            [
+                "docker",
+                "compose",
+                "-f",
+                "docker-compose.caddy.yml",
+                "exec",
+                "-T",
+                "caddy",
+                "sha256sum",
+                "/etc/caddy/Caddyfile",
+            ],
             ["health-check"],
         ]
         assert "Caddyfile" in result.stdout, "host hash verification must run after readiness"

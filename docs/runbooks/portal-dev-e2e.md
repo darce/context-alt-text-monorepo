@@ -2,17 +2,11 @@
 
 ## 1. Scope
 
-The dev rung covers Clerk sign-in, invitation claim, API key creation, and
-image description through the dev API from local WordPress. Production follows
-[Clerk production authentication](clerk-production-auth.md) and
-[portal deployment](app-portal-deploy.md).
+The dev rung covers Clerk sign-in, invitation claim, API key creation, and image description through the dev API from local WordPress. Production follows [Clerk production authentication](clerk-production-auth.md) and [portal deployment](app-portal-deploy.md).
 
 ## 2. Clerk development instance
 
-In the Clerk Dashboard, select the existing **Development** instance
-`saved-frog-4170.clerk.accounts.dev`. No DNS setup is needed. Enable email-code
-sign-in. Under **Sessions > Customize session token**, set the template to
-exactly:
+In the Clerk Dashboard, select the existing **Development** instance `saved-frog-4170.clerk.accounts.dev`. No DNS setup is needed. Enable email-code sign-in. Under **Sessions > Customize session token**, set the template to exactly:
 
 ```json
 {
@@ -22,8 +16,7 @@ exactly:
 }
 ```
 
-The publishable key is public and is rendered for the local portal. This flow
-never needs a Clerk secret key.
+The publishable key is public and is rendered for the local portal. This flow never needs a Clerk secret key.
 
 ## 3. Dev API
 
@@ -73,8 +66,7 @@ manifest, repeat the reviewed apply from the workstation, and restart `acx-dev` 
 
 ## 4. Invitation
 
-On the dev VM, create a single-use invitation for the Clerk sign-in address
-(expires in 72 hours). Begin in the API directory:
+On the dev VM, create a single-use invitation for the Clerk sign-in address (expires in 72 hours). Begin in the API directory:
 
 ```bash
 cd /opt/acx-backend/dev
@@ -87,10 +79,7 @@ Run the CLI inside the API container, with `--env dev` matching the container's
 docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_portal_invitations --env dev create --email you@example.com --ttl-hours 72
 ```
 
-On success, the raw invitation token appears once in a line named
-`invitation_token`. Copy it directly into the local portal's **Invitation
-token** field; do not put its value in notes or this runbook. To inspect
-invitations, in the same VM shell and directory run:
+On success, the raw invitation token appears once in a line named `invitation_token`. Copy it directly into the local portal's **Invitation token** field; do not put its value in notes or this runbook. To inspect invitations, in the same VM shell and directory run:
 
 ```bash
 docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_portal_invitations --env dev list --include-inactive
@@ -129,23 +118,13 @@ the dev API:
 PORTAL_API_PROXY_TARGET=https://dev.api.altcontext.com npm --prefix apps/app-portal run dev
 ```
 
-In the browser, open `http://localhost:5173`, sign in with the invited email
-using the email code, paste the invitation into **Invitation token**, and
-claim it. Create an API key and copy it directly to the local WordPress
-settings; it is shown only once.
+In the browser, open `http://localhost:5173`, sign in with the invited email using the email code, paste the invitation into **Invitation token**, and claim it. Create an API key and copy it directly to the local WordPress settings; it is shown only once. Record the key UUID and tenant UUID (nonsecret metadata) for rollback; never record the raw API key or invitation token in notes.
 
 ## 6. WordPress
 
-Before testing, the GPU endpoint key must already be minted and installed on
-the GPU host and in the dev environment. Follow
-[GPU endpoint key minting](gpu-key-mint.md) for that prerequisite.
+Before testing, the GPU endpoint key must already be minted and installed on the GPU host and in the dev environment. Follow [GPU endpoint key minting](gpu-key-mint.md) for that prerequisite.
 
-In the local WordPress site, open **Settings > Alt Context**. Set Recognition
-URL to `https://dev.api.altcontext.com` and enter the API key created in the
-portal. Save the settings to pair the tenant, then describe one image. The
-first request can wait while the GPU starts: dev uses
-`ACX_DESCRIPTION_ADAPTER=gpu_qwen30b` and the private GPU endpoint. The backend
-lifecycle starts a stopped instance when work is queued and stops it when idle.
+In the local WordPress site, open **Settings > Alt Context**. Set Recognition URL to `https://dev.api.altcontext.com` and enter the API key created in the portal. Save the settings to pair the tenant, then describe one image. The first request can wait while the GPU starts: dev uses `ACX_DESCRIPTION_ADAPTER=gpu_qwen30b` and the private GPU endpoint. The backend lifecycle starts a stopped instance when work is queued and stops it when idle.
 
 ## 7. Troubleshooting by status
 
@@ -169,7 +148,15 @@ lifecycle starts a stopped instance when work is queued and stops it when idle.
 
 ## 8. Rollback (RLSE-08)
 
-Revoke the API key in the portal. Revoke any unused invitations using the list and revoke commands in section 4. In local WordPress **Settings > Alt Context**, restore the settings that were in place before this run.
+Disabling the portal does **not** revoke already-issued API keys; they remain valid for API requests. Revoke the test key in the portal, or independently on the dev VM from `/opt/acx-backend/dev`. Use the recorded key UUID; if needed, list keys for the recorded tenant UUID and select the correct key ID (first column; the `hash:` column is not a raw key):
+```bash
+cd /opt/acx-backend/dev
+read -r -p 'Tenant UUID: ' tenant_id
+docker compose -f docker-compose.env.yml exec -T api sh -c 'test "$ACX_ENV" = dev && exec python -m scripts.manage_api_keys --env dev list --tenant "$1"' sh "$tenant_id"
+read -r -p 'Key UUID to revoke: ' key_id
+docker compose -f docker-compose.env.yml exec -T api sh -c 'test "$ACX_ENV" = dev && exec python -m scripts.manage_api_keys --env dev revoke --key-id "$1"' sh "$key_id"
+```
+The in-container shell guard requires `ACX_ENV=dev` before the CLI runs; this CLI otherwise checks only the DSN host. Require exit 0 and `revoked key_id=<selected UUID> revoked_at=...`; STOP on a guard, DSN, unknown-key, or other failure. Revoke any unused invitations with section 4's list/revoke commands. In local WordPress **Settings > Alt Context**, restore the previous settings.
 
 To disable the dev portal durably (RLSE-19), from clean, updated `main` at the workstation repository root run `make task-start TASK=PORTALDEV-2 OBJECTIVE="Disable dev portal" MODE=worktree`. This creates maintenance branch `feature/portaldev-2` and its linked worktree; the invoking shell stays on `main`. Before editing, run `cd ../context-alt-text-monorepo-portaldev-2` and confirm `git branch --show-current` reports `feature/portaldev-2`. If that task ref is already in use, choose an unused digit-bearing ref with the same command and enter its reported `worktree_path`, confirming its corresponding feature branch.
 Remove only the seven `dev` entries from the `values` maps in `config/env/manifest.d/30-portal-backend.toml`; preserve all local and existing or subsequently merged production settings.
@@ -187,7 +174,7 @@ Obtain review and merge the complete change set to `main` before materializing. 
 ```bash
 make env-materialize ENV=dev TARGET=svc-vm
 ```
-Expect seven `stale` lines; stop on other drift or failures. Review, then apply from the same workstation checkout:
+Expected rollback drift is exactly seven `stale` lines for the seven portal keys in section 3, plus `materialize_remote.sh: drift found (remote check exit 1)`: the materializer exits 1, GNU Make reports `Error 1` and exits 2. An already-disabled environment checks clean (Make exit 0). STOP on any other drift line, transport/config/check error, or diagnostic. Review the seven removals (or clean check), then apply from the same workstation checkout:
 ```bash
 APPLY=1 make env-materialize ENV=dev TARGET=svc-vm
 ```
@@ -195,6 +182,19 @@ APPLY=1 make env-materialize ENV=dev TARGET=svc-vm
 After APPLY succeeds, restart the service on the dev VM:
 ```bash
 sudo systemctl restart acx-dev
+```
+
+The unit uses `Type=exec`: restart success means Compose started, not that the API is healthy or recreated. Back on the workstation, allow asynchronous startup with 30 bounded attempts (at most 450 seconds); require `/portal/me` **404 AND** `/health` **200** in the same attempt:
+```bash
+ready=0
+for attempt in {1..30}; do
+  portal_status=$(curl -sS --connect-timeout 2 --max-time 5 -o /dev/null -w '%{http_code}' https://dev.api.altcontext.com/portal/me) || portal_status=000
+  health_status=$(curl -sS --connect-timeout 2 --max-time 5 -o /dev/null -w '%{http_code}' https://dev.api.altcontext.com/health) || health_status=000
+  printf 'portal/me=%s health=%s\n' "$portal_status" "$health_status"
+  if [ "$portal_status" = 404 ] && [ "$health_status" = 200 ]; then ready=1; break; fi
+  [ "$attempt" -eq 30 ] || sleep 5
+done
+[ "$ready" -eq 1 ] || { echo 'STOP: rollback readiness bound exceeded; investigate dev API recreation/health' >&2; exit 1; }
 ```
 
 Keep later materializations and deployments on updated `main`: an older manifest can re-enable the portal on APPLY, or fail deploy's drift preflight.

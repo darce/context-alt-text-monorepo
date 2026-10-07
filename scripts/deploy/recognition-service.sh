@@ -5792,10 +5792,9 @@ do_status() {
 }
 
 #---------------------------------------------------------------- reset
-# Destructive remote reset for an OCI environment. This sub-slice (E15-12 slice
-# 2a) lands the validation gates and the affirmative dry-run path. The actual
-# stop/reset/start sequence + bootstrap + /ready verify is implemented in the
-# follow-on slice; that path runs only when ACX_RESET_DRY_RUN!=1.
+# Destructive remote reset for an OCI environment. The dry-run reports the
+# validated reset plan; the live path stops the unit, clears only its PGDATA,
+# restarts it, recreates the service-mode key, and verifies /ready.
 do_reset() {
   local env="$1"
   local unit remote_dir ready_url
@@ -5843,12 +5842,11 @@ do_reset() {
   # destructive reset wipes the credentials table.
   #
   # Contract notes (E15-12-BR-03):
-  #   - manage_api_keys.py requires a top-level --env {prod,dev,local}. The
-  #     CLI validates --env against the configured DSN host: 'prod' rejects
-  #     loopback hosts, 'dev|local' rejects non-loopback. Inside the api
-  #     container on the OCI VM the DSN host is 'postgres' (compose service),
-  #     which is non-loopback, so --env prod is the only choice that passes
-  #     the validation guard regardless of OCI deployment env (dev/staging/prod).
+  #   - manage_api_keys.py requires --env to exactly match ACX_ENV for the
+  #     selected stack. The validated reset env is passed as a positional
+  #     argument into the single-quoted heredoc and used for both CLI calls.
+  #     The API container receives ACX_ENV from that stack's Compose config;
+  #     its postgres service host is valid for matched deployed stack labels.
   #   - The CLI uses `--tenant <uuid>`, NOT `--tenant-id <string>`. Tenant
   #     identifiers must be UUIDs.
   #   - There is no `--name` flag.
@@ -5889,17 +5887,17 @@ do_reset() {
 
   # E15-12-BR-05: each `docker compose exec -T` reads from the remote script's stdin.
   # Without `< /dev/null` on each exec, the first call swallows remaining lines and the
-  # second call never runs. Tenant/site values are positional args to `bash -s` (quoted
-  # heredoc) — never interpolated into the remote command string (S2-A-02).
+  # second call never runs. Env, tenant, and site values are positional args to `bash -s`
+  # (quoted heredoc) — never interpolated into the remote command string (S2-A-02).
   # Audit text for dry-run / operator review. The LIVE path never interpolates these into a
   # remote shell string — it passes them as bash -s positional args (see ssh below).
   local bootstrap_summary
   printf -v bootstrap_summary '%s\n' \
-    "bash -s -- ${remote_dir} ${tenant_id} ${site_url}" \
-    "  # remote body (quoted heredoc): \$1=remote_dir \$2=tenant_id \$3=site_url" \
+    "bash -s -- ${remote_dir} ${env} ${tenant_id} ${site_url}" \
+    "  # remote body (quoted heredoc; env=${env}): \$1=remote_dir \$2=env \$3=tenant_id \$4=site_url" \
     "  cd \"\$1\"" \
-    "  sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod tenant create --tenant ${tenant_id} --site-url ${site_url} < /dev/null" \
-    "  sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod create --tenant ${tenant_id} < /dev/null"
+    "  sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env ${env} tenant create --tenant ${tenant_id} --site-url ${site_url} < /dev/null" \
+    "  sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env ${env} create --tenant ${tenant_id} < /dev/null"
 
   # /ready verification: distinct from /health because reset specifically needs
   # dependency readiness (postgres up, schema migrated, models loaded) before
@@ -5941,19 +5939,21 @@ do_reset() {
 
   log "Running post-reset bootstrap on ${SSH_TARGET} (tenant create + key create)"
   # Positional args — quoted heredoc body never expands local shell values into the
-  # remote command string. tenant_id / site_url reach remote only as argv after --.
+  # remote command string. env / tenant_id / site_url reach remote only as argv after --.
   # Unquoted multi-word form: OpenSSH joins destination args into the remote command, so
-  # remote argv is: bash -s -- <remote_dir> <tenant_id> <site_url> (charset-validated above).
-  ssh -l "${OCI_USER}" -- "${OCI_HOST}" bash -s -- "${remote_dir}" "${tenant_id}" "${site_url}" <<'BOOTSTRAP'
+  # remote argv is: bash -s -- <remote_dir> <env> <tenant_id> <site_url>. The env label
+  # was validated by env_to_unit above; tenant_id and site_url were charset-validated above.
+  ssh -l "${OCI_USER}" -- "${OCI_HOST}" bash -s -- "${remote_dir}" "${env}" "${tenant_id}" "${site_url}" <<'BOOTSTRAP'
 set -euo pipefail
 remote_dir="$1"
-tenant_id="$2"
-site_url="$3"
+env="$2"
+tenant_id="$3"
+site_url="$4"
 cd "${remote_dir}"
 echo "==> Ensuring tenant row exists for service-mode key bootstrap"
-sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod tenant create --tenant "${tenant_id}" --site-url "${site_url}" < /dev/null
+sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env "${env}" tenant create --tenant "${tenant_id}" --site-url "${site_url}" < /dev/null
 echo "==> Creating post-reset service-mode API key (operator: copy api_key= line into the plugin)"
-sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod create --tenant "${tenant_id}" < /dev/null
+sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env "${env}" create --tenant "${tenant_id}" < /dev/null
 BOOTSTRAP
 
   deploy_env_lease release "$env" || fail "deploy lease for ${env} could not be released after reset"

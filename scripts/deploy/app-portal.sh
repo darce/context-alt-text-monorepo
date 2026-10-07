@@ -1232,6 +1232,9 @@ read_journal_field() {
 }
 
 load_activation_journal() {
+  # All phases require a safe rollback directory and ancestor chain, even when
+  # restored-phase inputs are legitimately gone after partial cleanup.
+  guard_dest_path ROLLBACK_DIR "$ROLLBACK_DIR" dir
   if [ -L "$ACTIVATION_JOURNAL" ] || [ ! -f "$ACTIVATION_JOURNAL" ]; then
     echo "ERROR: activation journal is not a regular file: ${ACTIVATION_JOURNAL}" >&2
     return 1
@@ -1309,6 +1312,7 @@ load_activation_journal() {
 }
 
 clear_activation_journal() {
+  guard_dest_path ROLLBACK_DIR "$ROLLBACK_DIR" dir
   rm -f "$ACTIVATION_JOURNAL" "${ACTIVATION_JOURNAL}.new."*
   sync_path "$APP_ROOT"
 }
@@ -1318,8 +1322,11 @@ finish_activation_rollback() {
   # restoration/reload and this journal transition have completed successfully.
   # Keep the journal through deletion and its directory sync so a crash or
   # cleanup failure resumes idempotently without needing deleted snapshots.
+  guard_dest_path ROLLBACK_DIR "$ROLLBACK_DIR" dir
   write_activation_journal restored || return 1
   local _failed_stamp="${ROLLBACK_CADDY##*.}"
+  # Recheck after the journal durability barrier, immediately before deletion.
+  guard_dest_path ROLLBACK_DIR "$ROLLBACK_DIR" dir
   rm -rf -- "${ROLLBACK_DIR}/Caddyfile.${_failed_stamp}" \
     "${ROLLBACK_DIR}/www.${_failed_stamp}" \
     "${ROLLBACK_DIR}/docker-compose.app.yml.${_failed_stamp}" \
@@ -1330,6 +1337,7 @@ finish_activation_rollback() {
 }
 
 restore_from_rollback() {
+  guard_dest_path ROLLBACK_DIR "$ROLLBACK_DIR" dir
   echo "restoring Caddyfile, static root, and overlay from activation snapshot"
   if ! cmp -s "$ROLLBACK_CADDY" "$CADDYFILE"; then
     if ! copy_file_in_place "$ROLLBACK_CADDY" "$CADDYFILE"; then
@@ -1571,6 +1579,7 @@ run_health() {
 reclaim_rollback_snapshots() {
   # Called only after the activation journal is cleared; keep the current set
   # and leave operator files alone. Never prune recovery's active snapshots.
+  guard_dest_path ROLLBACK_DIR "$ROLLBACK_DIR" dir
   local _snapshot _snapshot_name _stamp
   for _snapshot in "$ROLLBACK_DIR"/Caddyfile.* "$ROLLBACK_DIR"/www.* "$ROLLBACK_DIR"/docker-compose.app.yml.* \
     "$ROLLBACK_DIR"/absent-www.* "$ROLLBACK_DIR"/absent-overlay.*; do
@@ -1598,6 +1607,7 @@ reclaim_rollback_snapshots() {
     esac
     case "$_stamp" in ''|*[!0-9]*) continue ;; esac
     [ "$_stamp" != "$ts" ] || continue
+    guard_dest_path ROLLBACK_DIR "$ROLLBACK_DIR" dir
     rm -rf -- "$_snapshot" || return 1
   done
   sync_path "$ROLLBACK_DIR"

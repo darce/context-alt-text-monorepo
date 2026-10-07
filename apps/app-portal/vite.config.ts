@@ -1,5 +1,6 @@
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
+import { resolvePortalProxyTarget } from './src/devProxy';
 
 export default defineConfig({
   plugins: [react()],
@@ -11,8 +12,9 @@ export default defineConfig({
   server: {
     proxy: {
       '/portal': {
-        target: 'http://127.0.0.1:8000',
+        target: resolvePortalProxyTarget(process.env.PORTAL_API_PROXY_TARGET),
         changeOrigin: true,
+        secure: true,
       },
     },
   },

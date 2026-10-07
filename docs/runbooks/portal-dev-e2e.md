@@ -34,10 +34,11 @@ check the dev backend environment against the manifest before deploying:
 make env-materialize ENV=dev TARGET=svc-vm
 ```
 
-On the first rollout, expect exit 1 and seven `missing` lines for the keys
-below; an already configured environment should check clean (exit 0).
-Stop on any other drift (`missing`, `stale`, `unmanaged`, `differs`, or `mode`)
-or check failure and investigate before applying or deploying.
+On the first rollout, GNU Make exits 2 when the materializer exits 1 for drift.
+Expected drift requires exactly seven `missing` lines for the keys below and
+`materialize_remote.sh: drift found (remote check exit 1)` (Make reports `Error 1`).
+An already configured environment checks clean (Make exit 0). Stop on any other
+drift (`missing`, `stale`, `unmanaged`, `differs`, or `mode`) or transport/config/check error before applying or deploying.
 The seven `svc-vm` dev values must be:
 
 - `RECOGNITION_PORTAL_ENABLED=1`

@@ -1269,7 +1269,7 @@ def test_dev_fir_env_example_pins_sface_128d_contract() -> None:
         if a.startswith("RECOGNITION_AUTH_ENABLED=")
     ]
     assert auth_values == ["true"], auth_values
-    assert "python -m scripts.manage_api_keys --env prod create --tenant" in text
+    assert "python -m scripts.manage_api_keys --env dev-fir create --tenant" in text
     assert not any(a.startswith("RECOGNITION_VAULT_SECRET_MAP=") for a in assignments)
     assert not any(
         a.startswith("RECOGNITION_SECRET_BACKEND=") and "oci_vault" in a
@@ -1301,6 +1301,26 @@ def test_dev_fir_mint_recipe_is_paste_safe() -> None:
         "apps/prototype-description-service/.env.fir.example must contain "
         "indented recipe command lines (rg-006)"
     )
+    runtime_envs = [
+        line.split("=", 1)[1].strip()
+        for line in text.splitlines()
+        if line.split("#", 1)[0].strip().startswith("ACX_ENV=")
+    ]
+    assert runtime_envs == ["dev-fir"], runtime_envs
+    mint_commands = [
+        line for line in recipe_lines if "python -m scripts.manage_api_keys " in line
+    ]
+    assert len(mint_commands) == 2, mint_commands
+    mint_envs = []
+    for line in mint_commands:
+        match = re.search(r"(?:^|\s)--env\s+([^\s]+)", line)
+        assert match is not None, (
+            "apps/prototype-description-service/.env.fir.example mint command "
+            f"must pass --env matching ACX_ENV={runtime_envs[0]}: {line!r}"
+        )
+        mint_envs.append(match.group(1))
+    assert mint_envs == runtime_envs * len(mint_commands), mint_envs
+
     placeholder = re.compile(r"<[A-Za-z][A-Za-z0-9_-]*>")
     for line in recipe_lines:
         match = placeholder.search(line)

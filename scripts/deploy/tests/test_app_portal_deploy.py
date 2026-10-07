@@ -179,26 +179,30 @@ def _docker_stub(
     readiness_state = shlex.quote(f"{compose_marker}.readiness")
     startup_state = shlex.quote(f"{compose_marker}.startups")
     readiness_rule = (
-        '  if [ "$compose_up" -eq 1 ]; then\n'
-        f'    startup=$(cat {startup_state} 2>/dev/null || echo 0)\n'
-        f'    echo "$((startup + 1))" > {startup_state}\n'
-        f'    polls={1 if never_ready else readiness_polls}\n'
-        # An exhausted first startup still allows rollback to become ready.
-        + ("" if never_ready else '    [ "$startup" -eq 0 ] || polls=2\n')
-        + f'    echo "$polls" > {readiness_state}\n'
-        '  fi\n'
-        '  if [ "$compose_probe" -eq 1 ]; then\n'
-        f'    polls=$(cat {readiness_state})\n'
-        '    if [ "$polls" -gt 0 ]; then\n'
-        + ("" if never_ready else f'      echo "$((polls - 1))" > {readiness_state}\n')
-        + '      exit 1\n'
-        '    fi\n'
-        '  fi\n'
-        '  if [ "$compose_reload" -eq 1 ] || [ "$compose_verify" -eq 1 ]; then\n'
-        f'    polls=$(cat {readiness_state} 2>/dev/null || echo 0)\n'
-        '    [ "$polls" -eq 0 ] || exit 1\n'
-        '  fi\n'
-    ) if readiness_polls or never_ready else ""
+        (
+            '  if [ "$compose_up" -eq 1 ]; then\n'
+            f"    startup=$(cat {startup_state} 2>/dev/null || echo 0)\n"
+            f'    echo "$((startup + 1))" > {startup_state}\n'
+            f"    polls={1 if never_ready else readiness_polls}\n"
+            # An exhausted first startup still allows rollback to become ready.
+            + ("" if never_ready else '    [ "$startup" -eq 0 ] || polls=2\n')
+            + f'    echo "$polls" > {readiness_state}\n'
+            "  fi\n"
+            '  if [ "$compose_probe" -eq 1 ]; then\n'
+            f"    polls=$(cat {readiness_state})\n"
+            '    if [ "$polls" -gt 0 ]; then\n'
+            + ("" if never_ready else f'      echo "$((polls - 1))" > {readiness_state}\n')
+            + "      exit 1\n"
+            "    fi\n"
+            "  fi\n"
+            '  if [ "$compose_reload" -eq 1 ] || [ "$compose_verify" -eq 1 ]; then\n'
+            f"    polls=$(cat {readiness_state} 2>/dev/null || echo 0)\n"
+            '    [ "$polls" -eq 0 ] || exit 1\n'
+            "  fi\n"
+        )
+        if readiness_polls or never_ready
+        else ""
+    )
     # Model a bind mount that retains the original directory after a host swap.
     # Only creating/recreating the service captures the new frontend contents.
     mount_rule = ""
@@ -2123,7 +2127,11 @@ def test_runbook_rollback_documents_guarded_in_place_caddyfile_restore() -> None
 
 
 def _run_runbook_commands(
-    tmp_path: Path, commands: str, *, readiness_polls: int = 0, never_ready: bool = False,
+    tmp_path: Path,
+    commands: str,
+    *,
+    readiness_polls: int = 0,
+    never_ready: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     live_root = tmp_path / "opt" / "acx-backend"
     bin_dir = tmp_path / "rollback-bin"
@@ -2131,8 +2139,10 @@ def _run_runbook_commands(
     _write_executable(
         bin_dir / "docker",
         _docker_stub(
-            shlex.quote(str(tmp_path / "rollback-commands.log")), str(tmp_path / "rollback-compose"),
-            readiness_polls=readiness_polls, never_ready=never_ready,
+            shlex.quote(str(tmp_path / "rollback-commands.log")),
+            str(tmp_path / "rollback-compose"),
+            readiness_polls=readiness_polls,
+            never_ready=never_ready,
         ),
     )
     log_path = shlex.quote(str(tmp_path / "rollback-commands.log"))
@@ -2143,17 +2153,26 @@ def _run_runbook_commands(
     return subprocess.run(
         ["bash", "-c", commands],
         env={**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "BASH_ENV": "", "LC_ALL": "C"},
-        text=True, capture_output=True, check=False, timeout=5,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=5,
     )
 
 
 def _run_documented_rollback(
-    tmp_path: Path, *, readiness_polls: int = 0, never_ready: bool = False,
+    tmp_path: Path,
+    *,
+    readiness_polls: int = 0,
+    never_ready: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     section = RUNBOOK.read_text(encoding="utf-8").split("### Frontend back-out", 1)[1]
     restore = section.split("```bash\n", 1)[1].split("```", 1)[0]
     return _run_runbook_commands(
-        tmp_path, restore, readiness_polls=readiness_polls, never_ready=never_ready,
+        tmp_path,
+        restore,
+        readiness_polls=readiness_polls,
+        never_ready=never_ready,
     )
 
 
@@ -2547,7 +2566,11 @@ def _rollback_tree_state(root: Path) -> dict[str, tuple[int, int, bytes | str | 
 @pytest.mark.parametrize("readiness_polls,never_ready", [(0, False), (2, False), (9, False), (0, True)])
 @pytest.mark.parametrize("prior_www,prior_overlay", [(False, False), (True, False), (False, True), (True, True)])
 def test_successful_apply_markers_support_documented_rollback(
-    tmp_path: Path, prior_www: bool, prior_overlay: bool, readiness_polls: int, never_ready: bool,
+    tmp_path: Path,
+    prior_www: bool,
+    prior_overlay: bool,
+    readiness_polls: int,
+    never_ready: bool,
 ) -> None:
     backend = tmp_path / "opt" / "acx-backend"
     live = backend / "Caddyfile"
@@ -2567,7 +2590,10 @@ def test_successful_apply_markers_support_documented_rollback(
     assert not (app / "activation.journal").exists()
     rollback = app / "rollback"
     stamp = next(rollback.glob("Caddyfile.*")).name.split(".")[-1]
-    for kind, present, snapshot_name in (("www", prior_www, "www"), ("overlay", prior_overlay, "docker-compose.app.yml")):
+    for kind, present, snapshot_name in (
+        ("www", prior_www, "www"),
+        ("overlay", prior_overlay, "docker-compose.app.yml"),
+    ):
         marker = rollback / f"absent-{kind}.{stamp}"
         snapshot = rollback / f"{snapshot_name}.{stamp}"
         assert snapshot.exists() == present
@@ -2592,7 +2618,18 @@ def test_successful_apply_markers_support_documented_rollback(
     if prior_overlay:
         expected += ["-f", str(app / "docker-compose.app.yml")]
     expected_calls = [expected + ["up", "-d", "--force-recreate", "--no-deps", "caddy"]]
-    probe = expected + ["exec", "-T", "caddy", "wget", "-q", "-T", "1", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+    probe = expected + [
+        "exec",
+        "-T",
+        "caddy",
+        "wget",
+        "-q",
+        "-T",
+        "1",
+        "-O",
+        "/dev/null",
+        "http://127.0.0.1:2019/config/",
+    ]
     for attempt in range(10 if never_ready else readiness_polls + 1):
         expected_calls.append(probe)
         if attempt < (9 if never_ready else readiness_polls):
@@ -2600,7 +2637,10 @@ def test_successful_apply_markers_support_documented_rollback(
     if never_ready:
         assert "STOP: Caddy admin endpoint not ready after 10 attempts" in result.stderr
     else:
-        expected_calls.append(expected + ["exec", "-T", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"])
+        expected_calls.append(
+            expected
+            + ["exec", "-T", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+        )
     assert calls == expected_calls
 
 
@@ -2626,12 +2666,27 @@ def test_first_successful_apply_marker_tamper_preserves_live_state(tmp_path: Pat
 
 
 @pytest.mark.parametrize("kind", ["www", "overlay"])
-@pytest.mark.parametrize("fault", [
-    "missing", "empty", "wrong-content", "missing-newline", "extra-content", "directory", "fifo",
-    "symlink", "dangling-symlink", "contradictory-file", "contradictory-directory", "contradictory-dangling",
-])
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "missing",
+        "empty",
+        "wrong-content",
+        "missing-newline",
+        "extra-content",
+        "directory",
+        "fifo",
+        "symlink",
+        "dangling-symlink",
+        "contradictory-file",
+        "contradictory-directory",
+        "contradictory-dangling",
+    ],
+)
 def test_documented_rollback_refuses_invalid_absence_evidence_without_mutation(
-    tmp_path: Path, kind: str, fault: str,
+    tmp_path: Path,
+    kind: str,
+    fault: str,
 ) -> None:
     backend = tmp_path / "opt" / "acx-backend"
     app = backend / "app"
@@ -2681,21 +2736,42 @@ def test_documented_rollback_refuses_invalid_absence_evidence_without_mutation(
 
 
 @pytest.mark.parametrize("absence", [False, True])
-@pytest.mark.parametrize("destination,fault", [
-    ("www", "symlink"), ("www", "dangling-symlink"), ("www", "file"), ("www", "fifo"),
-    ("docker-compose.app.yml", "symlink"), ("docker-compose.app.yml", "dangling-symlink"),
-    ("docker-compose.app.yml", "directory"), ("docker-compose.app.yml", "fifo"),
-    ("Caddyfile", "symlink"), ("Caddyfile", "dangling-symlink"), ("Caddyfile", "directory"),
-    ("rollback/Caddyfile.10", "symlink"), ("rollback/Caddyfile.10", "dangling-symlink"),
-    ("rollback/Caddyfile.10", "directory"), ("rollback/Caddyfile.10", "fifo"), ("rollback/Caddyfile.10", "empty"),
-    ("rollback/www.10", "symlink"), ("rollback/www.10", "dangling-symlink"),
-    ("rollback/www.10", "file"), ("rollback/www.10", "fifo"),
-    ("rollback/www.10/index.html", "symlink"), ("rollback/www.10/index.html", "dangling-symlink"),
-    ("rollback/www.10/index.html", "directory"), ("rollback/www.10/index.html", "fifo"),
-    ("rollback/docker-compose.app.yml.10", "directory"), ("rollback/docker-compose.app.yml.10", "fifo"),
-])
+@pytest.mark.parametrize(
+    "destination,fault",
+    [
+        ("www", "symlink"),
+        ("www", "dangling-symlink"),
+        ("www", "file"),
+        ("www", "fifo"),
+        ("docker-compose.app.yml", "symlink"),
+        ("docker-compose.app.yml", "dangling-symlink"),
+        ("docker-compose.app.yml", "directory"),
+        ("docker-compose.app.yml", "fifo"),
+        ("Caddyfile", "symlink"),
+        ("Caddyfile", "dangling-symlink"),
+        ("Caddyfile", "directory"),
+        ("rollback/Caddyfile.10", "symlink"),
+        ("rollback/Caddyfile.10", "dangling-symlink"),
+        ("rollback/Caddyfile.10", "directory"),
+        ("rollback/Caddyfile.10", "fifo"),
+        ("rollback/Caddyfile.10", "empty"),
+        ("rollback/www.10", "symlink"),
+        ("rollback/www.10", "dangling-symlink"),
+        ("rollback/www.10", "file"),
+        ("rollback/www.10", "fifo"),
+        ("rollback/www.10/index.html", "symlink"),
+        ("rollback/www.10/index.html", "dangling-symlink"),
+        ("rollback/www.10/index.html", "directory"),
+        ("rollback/www.10/index.html", "fifo"),
+        ("rollback/docker-compose.app.yml.10", "directory"),
+        ("rollback/docker-compose.app.yml.10", "fifo"),
+    ],
+)
 def test_documented_rollback_guards_live_destinations_before_any_mutation(
-    tmp_path: Path, absence: bool, destination: str, fault: str,
+    tmp_path: Path,
+    absence: bool,
+    destination: str,
+    fault: str,
 ) -> None:
     backend = tmp_path / "opt" / "acx-backend"
     app = backend / "app"
@@ -2986,10 +3062,19 @@ def test_successful_applies_reclaim_old_snapshot_sets(tmp_path: Path) -> None:
         stamp = caddy_backups[0].name.split(".")[-1]
         assert caddy_backups[0].read_bytes() == before
         assert {p.name for p in rollback.iterdir()} == {
-            f"Caddyfile.{stamp}", f"www.{stamp}", f"docker-compose.app.yml.{stamp}", "operator-notes",
-            "Caddyfile.operator-copy.1", "www.backup.2", "docker-compose.app.yml.local.3",
-            "Caddyfile.4.bak", "Caddyfile.9001", "www.9002", "docker-compose.app.yml.9003",
-            "absent-www.operator", "absent-overlay.4.bak",
+            f"Caddyfile.{stamp}",
+            f"www.{stamp}",
+            f"docker-compose.app.yml.{stamp}",
+            "operator-notes",
+            "Caddyfile.operator-copy.1",
+            "www.backup.2",
+            "docker-compose.app.yml.local.3",
+            "Caddyfile.4.bak",
+            "Caddyfile.9001",
+            "www.9002",
+            "docker-compose.app.yml.9003",
+            "absent-www.operator",
+            "absent-overlay.4.bak",
         }
         assert all(marker.read_text() == "operator absence note" for marker in operator_markers)
         assert operator_caddy.read_text() == "operator caddy copy"
@@ -3042,8 +3127,7 @@ def test_absence_markers_are_synced_before_activation(tmp_path: Path) -> None:
     assert real_sync is not None
     _write_executable(
         bin_dir / "sync",
-        f'#!/bin/sh\nprintf "%s\\n" "$2" >> {shlex.quote(str(sync_log))}\n'
-        f'exec {shlex.quote(real_sync)} "$@"\n',
+        f'#!/bin/sh\nprintf "%s\\n" "$2" >> {shlex.quote(str(sync_log))}\nexec {shlex.quote(real_sync)} "$@"\n',
     )
     result = _run(tmp_path, args=["--apply"])
     assert result.returncode == 0, result.stdout + result.stderr

@@ -158,6 +158,7 @@ def _caddy_stub(log_path: str, *, fail: bool = False) -> str:
 def _docker_stub(
     log_path: str, compose_marker: str, *, fail_first_reload: bool = False,
     mount_root: Path | None = None, readiness_polls: int = 0,
+    never_ready: bool = False,
     compose_config: str | None = None,
     compose_overlay_config: str | None = None,
 ) -> str:
@@ -181,23 +182,23 @@ def _docker_stub(
         '  if [ "$compose_up" -eq 1 ]; then\n'
         f'    startup=$(cat {startup_state} 2>/dev/null || echo 0)\n'
         f'    echo "$((startup + 1))" > {startup_state}\n'
-        f'    polls={readiness_polls}\n'
+        f'    polls={1 if never_ready else readiness_polls}\n'
         # An exhausted first startup still allows rollback to become ready.
-        '    [ "$startup" -eq 0 ] || polls=2\n'
-        f'    echo "$polls" > {readiness_state}\n'
+        + ("" if never_ready else '    [ "$startup" -eq 0 ] || polls=2\n')
+        + f'    echo "$polls" > {readiness_state}\n'
         '  fi\n'
         '  if [ "$compose_probe" -eq 1 ]; then\n'
         f'    polls=$(cat {readiness_state})\n'
         '    if [ "$polls" -gt 0 ]; then\n'
-        f'      echo "$((polls - 1))" > {readiness_state}\n'
-        '      exit 1\n'
+        + ("" if never_ready else f'      echo "$((polls - 1))" > {readiness_state}\n')
+        + '      exit 1\n'
         '    fi\n'
         '  fi\n'
-        '  if [ "$compose_reload" -eq 1 ]; then\n'
+        '  if [ "$compose_reload" -eq 1 ] || [ "$compose_verify" -eq 1 ]; then\n'
         f'    polls=$(cat {readiness_state} 2>/dev/null || echo 0)\n'
         '    [ "$polls" -eq 0 ] || exit 1\n'
         '  fi\n'
-    ) if readiness_polls else ""
+    ) if readiness_polls or never_ready else ""
     # Model a bind mount that retains the original directory after a host swap.
     # Only creating/recreating the service captures the new frontend contents.
     mount_rule = ""
@@ -223,6 +224,7 @@ def _docker_stub(
         "  compose_up=0\n"
         "  compose_probe=0\n"
         "  compose_reload=0\n"
+        "  compose_verify=0\n"
         "  compose_recreate=0\n"
         "  compose_config_request=0\n"
         f"  resolved_config={shlex.quote(compose_config)}\n"
@@ -234,6 +236,7 @@ def _docker_stub(
         '    [ "$arg" = "wget" ] && compose_probe=1\n'
         '    [ "$arg" = "up" ] && compose_up=1\n'
         '    [ "$arg" = "reload" ] && compose_reload=1\n'
+        '    [ "$arg" = "sha256sum" ] && compose_verify=1\n'
         '    [ "$arg" = "--force-recreate" ] && compose_recreate=1\n'
         "  done\n"
         '  if [ "$compose_config_request" -eq 1 ]; then\n'
@@ -2119,21 +2122,38 @@ def test_runbook_rollback_documents_guarded_in_place_caddyfile_restore() -> None
     )
 
 
-def _run_documented_rollback(tmp_path: Path) -> subprocess.CompletedProcess[str]:
+def _run_runbook_commands(
+    tmp_path: Path, commands: str, *, readiness_polls: int = 0, never_ready: bool = False,
+) -> subprocess.CompletedProcess[str]:
     live_root = tmp_path / "opt" / "acx-backend"
     bin_dir = tmp_path / "rollback-bin"
     bin_dir.mkdir(exist_ok=True)
     _write_executable(
         bin_dir / "docker",
-        _docker_stub(shlex.quote(str(tmp_path / "rollback-commands.log")), str(tmp_path / "rollback-compose")),
+        _docker_stub(
+            shlex.quote(str(tmp_path / "rollback-commands.log")), str(tmp_path / "rollback-compose"),
+            readiness_polls=readiness_polls, never_ready=never_ready,
+        ),
     )
-    section = RUNBOOK.read_text(encoding="utf-8").split("### Frontend back-out", 1)[1]
-    restore = section.split("```bash\n", 1)[1].split("```", 1)[0]
-    restore = restore.replace("/opt/acx-backend", str(live_root))
+    log_path = shlex.quote(str(tmp_path / "rollback-commands.log"))
+    _write_executable(bin_dir / "sleep", f"#!/bin/sh\nprintf 'sleep %s\\n' \"$*\" >> {log_path}\n")
+    _write_executable(bin_dir / "health-check", f"#!/bin/sh\nprintf 'health-check\\n' >> {log_path}\n")
+    commands = commands.replace("/opt/acx-backend", str(live_root))
+    commands = commands.replace("/usr/local/bin/app-portal-health-check", str(bin_dir / "health-check"))
     return subprocess.run(
-        ["bash", "-c", restore],
+        ["bash", "-c", commands],
         env={**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "BASH_ENV": "", "LC_ALL": "C"},
         text=True, capture_output=True, check=False, timeout=5,
+    )
+
+
+def _run_documented_rollback(
+    tmp_path: Path, *, readiness_polls: int = 0, never_ready: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    section = RUNBOOK.read_text(encoding="utf-8").split("### Frontend back-out", 1)[1]
+    restore = section.split("```bash\n", 1)[1].split("```", 1)[0]
+    return _run_runbook_commands(
+        tmp_path, restore, readiness_polls=readiness_polls, never_ready=never_ready,
     )
 
 
@@ -2453,6 +2473,40 @@ def test_runbook_post_apply_mismatch_recreates_reloads_and_reverifies() -> None:
     assert "[frontend back-out](#frontend-back-out)" in recovery
 
 
+@pytest.mark.parametrize("readiness_polls,never_ready", [(2, False), (9, False), (0, True)])
+def test_runbook_fix_forward_waits_for_admin_before_reload_and_verification(
+    tmp_path: Path, readiness_polls: int, never_ready: bool,
+) -> None:
+    backend = tmp_path / "opt" / "acx-backend"
+    backend.mkdir(parents=True)
+    (backend / "Caddyfile").write_text("host caddy\n")
+    verification = RUNBOOK.read_text(encoding="utf-8").split("If the hashes differ", 1)[1]
+    commands = verification.split("```bash\n", 1)[1].split("```", 1)[0]
+    result = _run_runbook_commands(
+        tmp_path, commands, readiness_polls=readiness_polls, never_ready=never_ready,
+    )
+    assert (result.returncode == 0) == (not never_ready), result.stdout + result.stderr
+    calls = [shlex.split(line) for line in (tmp_path / "rollback-commands.log").read_text().splitlines()]
+    compose = ["docker", "compose", "-f", "docker-compose.caddy.yml", "-f", str(backend / "app/docker-compose.app.yml")]
+    probe = compose + ["exec", "-T", "caddy", "wget", "-q", "-T", "1", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+    expected = [compose + ["up", "-d", "--force-recreate", "--no-deps", "caddy"]]
+    for attempt in range(10 if never_ready else readiness_polls + 1):
+        expected.append(probe)
+        if attempt < (9 if never_ready else readiness_polls):
+            expected.append(["sleep", "1"])
+    if never_ready:
+        assert "STOP: Caddy admin endpoint not ready after 10 attempts" in result.stderr
+        assert result.stdout == "", "host hash verification must not run on exhaustion"
+    else:
+        expected += [
+            compose + ["exec", "-T", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"],
+            ["docker", "compose", "-f", "docker-compose.caddy.yml", "exec", "-T", "caddy", "sha256sum", "/etc/caddy/Caddyfile"],
+            ["health-check"],
+        ]
+        assert "Caddyfile" in result.stdout, "host hash verification must run after readiness"
+    assert calls == expected
+
+
 def _rollback_tree_state(root: Path) -> dict[str, tuple[int, int, bytes | str | None]]:
     """Capture types, inodes, contents, and dangling links without following them."""
     state = {}
@@ -2463,9 +2517,10 @@ def _rollback_tree_state(root: Path) -> dict[str, tuple[int, int, bytes | str | 
     return state
 
 
+@pytest.mark.parametrize("readiness_polls,never_ready", [(0, False), (2, False), (9, False), (0, True)])
 @pytest.mark.parametrize("prior_www,prior_overlay", [(False, False), (True, False), (False, True), (True, True)])
 def test_successful_apply_markers_support_documented_rollback(
-    tmp_path: Path, prior_www: bool, prior_overlay: bool,
+    tmp_path: Path, prior_www: bool, prior_overlay: bool, readiness_polls: int, never_ready: bool,
 ) -> None:
     backend = tmp_path / "opt" / "acx-backend"
     live = backend / "Caddyfile"
@@ -2493,8 +2548,8 @@ def test_successful_apply_markers_support_documented_rollback(
         if not present:
             assert marker.is_file() and not marker.is_symlink()
             assert marker.read_bytes() == f"app-portal-absent-{kind}-v1\n".encode()
-    result = _run_documented_rollback(tmp_path)
-    assert result.returncode == 0, result.stdout + result.stderr
+    result = _run_documented_rollback(tmp_path, readiness_polls=readiness_polls, never_ready=never_ready)
+    assert (result.returncode == 0) == (not never_ready), result.stdout + result.stderr
     assert live.read_bytes() == prior_caddy
     assert live.stat().st_ino == caddy_inode
     if prior_www:
@@ -2509,10 +2564,17 @@ def test_successful_apply_markers_support_documented_rollback(
     expected = ["docker", "compose", "-f", "docker-compose.caddy.yml"]
     if prior_overlay:
         expected += ["-f", str(app / "docker-compose.app.yml")]
-    assert calls == [
-        expected + ["up", "-d", "--force-recreate", "--no-deps", "caddy"],
-        expected + ["exec", "-T", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"],
-    ]
+    expected_calls = [expected + ["up", "-d", "--force-recreate", "--no-deps", "caddy"]]
+    probe = expected + ["exec", "-T", "caddy", "wget", "-q", "-T", "1", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+    for attempt in range(10 if never_ready else readiness_polls + 1):
+        expected_calls.append(probe)
+        if attempt < (9 if never_ready else readiness_polls):
+            expected_calls.append(["sleep", "1"])
+    if never_ready:
+        assert "STOP: Caddy admin endpoint not ready after 10 attempts" in result.stderr
+    else:
+        expected_calls.append(expected + ["exec", "-T", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"])
+    assert calls == expected_calls
 
 
 @pytest.mark.parametrize("kind", ["www", "overlay"])

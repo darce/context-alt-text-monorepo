@@ -138,7 +138,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 128,
-      "description": "Opaque service-minted id bound to tenant and request digest."
+      "description": "Tenant-scoped usage operation key selected from caller-supplied idempotency_key, then operation_id; the selected value is trimmed and limited to 128 characters. Metered paths reject missing or oversized keys; only unmetered paths generate a 32-character hexadecimal id when neither caller key is usable."
     },
     "startup_id": {
       "type": [

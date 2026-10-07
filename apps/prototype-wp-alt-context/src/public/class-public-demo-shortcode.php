@@ -39,10 +39,9 @@ final class PublicDemoShortcode {
 
 	/**
 	 * @param callable(string): ?array{js: string, css: list<string>}|null $tokenAssetResolver
-	 * @param ViteManifest|null $tokenManifest Optional manifest seam for the default resolver.
 	 */
-	public function __construct( ?callable $tokenAssetResolver = null, ?ViteManifest $tokenManifest = null ) {
-		$this->tokenAssetResolver = $tokenAssetResolver ?? self::default_token_asset_resolver( $tokenManifest );
+	public function __construct( ?callable $tokenAssetResolver = null ) {
+		$this->tokenAssetResolver = $tokenAssetResolver ?? self::default_token_asset_resolver();
 	}
 
 	public function init(): void {
@@ -149,12 +148,8 @@ final class PublicDemoShortcode {
 	/**
 	 * @return callable(string): ?array{js: string, css: list<string>}
 	 */
-	private static function default_token_asset_resolver( ?ViteManifest $manifest = null ): callable {
-		return static function ( string $entry ) use ( $manifest ): ?array {
-			if ( null !== $manifest ) {
-				return $manifest->entry_assets( $entry );
-			}
-
+	private static function default_token_asset_resolver(): callable {
+		return static function ( string $entry ): ?array {
 			if ( ! class_exists( ViteManifest::class ) ) {
 				return null;
 			}

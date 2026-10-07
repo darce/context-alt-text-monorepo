@@ -15,6 +15,23 @@ use ReflectionClass;
  */
 class ViteManifestTest extends TestCase
 {
+    /** @var list<string> */
+    private array $temporaryPluginDirectories = [];
+
+    protected function tearDown(): void
+    {
+        ViteManifest::set_plugin_manifest_directory_override(null);
+        foreach ($this->temporaryPluginDirectories as $directory) {
+            $this->removeDirectory($directory);
+        }
+
+        $primary = ACX_PLUGIN_DIR . 'public/assets/dist/.vite/manifest.json';
+        $fallback = ACX_PLUGIN_DIR . 'public/assets/dist/manifest.json';
+        $expected = is_readable($primary) ? $primary : $fallback;
+        parent::tearDown();
+        self::assertSame($expected, ViteManifest::plugin_manifest_path());
+    }
+
     private function fixturePath(string $name): string
     {
         return dirname(__DIR__) . '/fixtures/vite-manifest/' . $name;
@@ -120,6 +137,23 @@ class ViteManifestTest extends TestCase
         );
     }
 
+    public function testPluginManifestPathPrefersReadablePrimaryAndFallsBackWhenMissing(): void
+    {
+        $pluginDirectory = $this->temporaryPluginDirectory();
+        $primary = $pluginDirectory . 'public/assets/dist/.vite/manifest.json';
+        $fallback = $pluginDirectory . 'public/assets/dist/manifest.json';
+        self::assertTrue(mkdir(dirname($primary), 0777, true));
+        self::assertDirectoryExists(dirname($fallback));
+        self::assertNotFalse(file_put_contents($primary, '{}'));
+        self::assertNotFalse(file_put_contents($fallback, '{}'));
+
+        ViteManifest::set_plugin_manifest_directory_override($pluginDirectory);
+        self::assertSame($primary, ViteManifest::plugin_manifest_path());
+
+        unlink($primary);
+        self::assertSame($fallback, ViteManifest::plugin_manifest_path());
+    }
+
     public function testAdminRequireOnceTargetDeclaresViteManifestWithoutAutoload(): void
     {
         $adminFile = realpath(__DIR__ . '/../../src/admin/class-admin.php');
@@ -155,5 +189,47 @@ class ViteManifestTest extends TestCase
             'class-admin.php require_once target must declare ViteManifest with autoload disabled; got: '
                 . var_export($output, true)
         );
+    }
+
+    private function temporaryPluginDirectory(): string
+    {
+        $temporaryFile = tempnam(sys_get_temp_dir(), 'acx-vite-plugin-');
+        if (false === $temporaryFile) {
+            self::fail('Unable to create a temporary plugin directory.');
+        }
+        unlink($temporaryFile);
+
+        $pluginDirectory = $temporaryFile . '/';
+        mkdir($pluginDirectory, 0777, true);
+        $this->temporaryPluginDirectories[] = $pluginDirectory;
+
+        return $pluginDirectory;
+    }
+
+    private function removeDirectory(string $directory): void
+    {
+        if (!is_dir($directory)) {
+            return;
+        }
+
+        $items = scandir($directory);
+        if (false === $items) {
+            return;
+        }
+
+        foreach ($items as $item) {
+            if ('.' === $item || '..' === $item) {
+                continue;
+            }
+
+            $path = $directory . $item;
+            if (is_dir($path)) {
+                $this->removeDirectory($path . '/');
+            } else {
+                unlink($path);
+            }
+        }
+
+        rmdir($directory);
     }
 }

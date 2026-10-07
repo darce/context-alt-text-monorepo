@@ -58,15 +58,11 @@ def _write_test_manifest(tmp_path: Path, *, publishable_key: str | None = FAKE_L
     publishable_key_values = re.compile(
         r'(?ms)(^\[\[var\]\]\n(?:(?!^\[\[var\]\]).)*?^name = "VITE_CLERK_PUBLISHABLE_KEY"\n'
         r'(?:(?!^\[\[var\]\]).)*?^values = \{ local = "[^"]+")'
-        r'(?:, prod = "[^"]+")?'
-        r'( \})'
+        r'(?:, prod = "[^"]+")?( \})'
     )
     prod_value = f', prod = "{publishable_key}"' if publishable_key is not None else ""
     text, replacements = publishable_key_values.subn(rf"\g<1>{prod_value}\g<2>", text)
-    assert replacements == 1, (
-        "expected exactly one VITE_CLERK_PUBLISHABLE_KEY values line, "
-        f"found {replacements}"
-    )
+    assert replacements == 1, f"expected exactly one VITE_CLERK_PUBLISHABLE_KEY values line, found {replacements}"
     path.write_text(text, encoding="utf-8")
     return root
 
@@ -1996,6 +1992,60 @@ def test_runbook_activates_backend_before_first_frontend_apply() -> None:
 
 
 @pytest.mark.parametrize(
+    ("status", "curl_exit", "expected"),
+    [
+        ("401", 0, "portal API mounted (401)"),
+        ("404", 0, "STOP: expected 401, got 404"),
+        ("503", 0, "STOP: expected 401, got 503"),
+        ("200", 0, "STOP: expected 401, got 200"),
+        ("401", 28, "STOP: portal API probe failed (401)"),
+        ("000", 28, "STOP: portal API probe failed (000)"),
+        ("", 7, "STOP: portal API probe failed (none)"),
+    ],
+)
+def test_runbook_pre_apply_probe_is_bounded_and_visible(
+    tmp_path: Path, status: str, curl_exit: int, expected: str
+) -> None:
+    section = RUNBOOK.read_text(encoding="utf-8").split("Confirm an unauthenticated", 1)[1]
+    probe = section.split("```bash\n", 1)[1].split("```", 1)[0]
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    curl_log = tmp_path / "curl.log"
+    _write_executable(
+        bin_dir / "curl",
+        '#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$CURL_LOG"\nprintf "%s" "$CURL_STATUS"\nexit "$CURL_EXIT"\n',
+    )
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "CURL_LOG": str(curl_log),
+        "CURL_STATUS": status,
+        "CURL_EXIT": str(curl_exit),
+        "BASH_ENV": "",
+    }
+    result = subprocess.run(["bash", "-c", probe], env=env, text=True, capture_output=True, check=False, timeout=5)
+    assert curl_log.read_text(encoding="utf-8").splitlines() == [
+        "-sS",
+        "--max-time",
+        "15",
+        "-o",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
+        "https://api.altcontext.com/portal/me",
+    ]
+    if status == "401" and curl_exit == 0:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert expected in result.stdout
+        assert result.stderr == ""
+    else:
+        assert result.returncode != 0, result.stdout + result.stderr
+        assert expected in result.stderr
+        assert "do not apply frontend" in result.stderr
+        assert "portal API mounted" not in result.stdout
+
+
+@pytest.mark.parametrize(
     "heading",
     ["Activate the production API before frontend apply", "Backend back-out"],
 )
@@ -2053,12 +2103,120 @@ def test_runbook_rollback_documents_guarded_in_place_caddyfile_restore() -> None
             "**in place**",
             "set -euo pipefail",
             "find /opt/acx-backend/app/rollback -maxdepth 1 -type f",
-            "-name 'Caddyfile.*' -printf '%T@ %p\\n' | sort -nr",
-            'if [ ! -f "$snapshot" ] || [ ! -s "$snapshot" ]; then',
+            "-name 'Caddyfile.*' -printf '%f\\n'",
+            "sed -n 's/^Caddyfile\\.\\([0-9][0-9]*\\)$/\\1/p'",
+            "| sort -nr | sed -n '1p'",
+            'echo "Selected rollback timestamp: $ts"',
+            'if [ ! -f "$snapshot" ] || [ ! -s "$snapshot" ] || [ -L "$snapshot" ]; then',
             "refusing restore",
             'cp -- "$snapshot" /opt/acx-backend/Caddyfile',
+            'www_snapshot="/opt/acx-backend/app/rollback/www.$ts"',
+            'overlay_snapshot="/opt/acx-backend/app/rollback/docker-compose.app.yml.$ts"',
+            "rm -rf -- /opt/acx-backend/app/www",
+            'cp -a -- "$www_snapshot" /opt/acx-backend/app/www',
+            'cp -- "$overlay_snapshot" /opt/acx-backend/app/docker-compose.app.yml',
         )
     )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        None,
+        "missing-directory",
+        "no-numeric-snapshot",
+        "empty-caddyfile",
+        "missing-www",
+        "empty-www",
+        "symlink-www",
+        "missing-overlay",
+        "empty-overlay",
+        "symlink-overlay",
+        "missing-live-caddyfile",
+    ],
+)
+def test_runbook_rollback_selects_numeric_timestamp_and_refuses_incomplete_snapshots(
+    tmp_path: Path, failure: str | None
+) -> None:
+    live_root = tmp_path / "opt" / "acx-backend"
+    rollback = live_root / "app" / "rollback"
+    rollback.mkdir(parents=True)
+    live_caddy = live_root / "Caddyfile"
+    live_caddy.write_text("live caddy\n", encoding="utf-8")
+    caddy_inode = live_caddy.stat().st_ino
+    live_www = live_root / "app" / "www"
+    live_www.mkdir()
+    (live_www / "index.html").write_text("live frontend\n", encoding="utf-8")
+    (live_www / "new-asset.js").write_text("new asset\n", encoding="utf-8")
+    live_overlay = live_root / "app" / "docker-compose.app.yml"
+    live_overlay.write_text("live overlay\n", encoding="utf-8")
+    # Numeric 10 beats 9 even though cp -a preserved an older mtime for 10.
+    for stamp, mtime in (("9", 200), ("10", 100)):
+        caddy_snapshot = rollback / f"Caddyfile.{stamp}"
+        caddy_snapshot.write_text(f"caddy {stamp}\n", encoding="utf-8")
+        os.utime(caddy_snapshot, (mtime, mtime))
+        www_snapshot = rollback / f"www.{stamp}"
+        www_snapshot.mkdir()
+        (www_snapshot / "index.html").write_text(f"frontend {stamp}\n", encoding="utf-8")
+        (rollback / f"docker-compose.app.yml.{stamp}").write_text(f"overlay {stamp}\n", encoding="utf-8")
+    for name in ("Caddyfile.pre-launch", "Caddyfile.999operator", "Caddyfile.999.extra", "Caddyfile."):
+        operator_file = rollback / name
+        operator_file.write_text("operator copy\n", encoding="utf-8")
+        os.utime(operator_file, (300, 300))
+    if failure == "missing-directory":
+        shutil.rmtree(rollback)
+    elif failure == "no-numeric-snapshot":
+        (rollback / "Caddyfile.9").unlink()
+        (rollback / "Caddyfile.10").unlink()
+    elif failure == "empty-caddyfile":
+        (rollback / "Caddyfile.10").write_text("", encoding="utf-8")
+    elif failure == "missing-www":
+        shutil.rmtree(rollback / "www.10")
+    elif failure == "empty-www":
+        (rollback / "www.10" / "index.html").write_text("", encoding="utf-8")
+    elif failure == "symlink-www":
+        shutil.rmtree(rollback / "www.10")
+        (rollback / "www.10").symlink_to(rollback / "www.9", target_is_directory=True)
+    elif failure == "missing-overlay":
+        (rollback / "docker-compose.app.yml.10").unlink()
+    elif failure == "empty-overlay":
+        (rollback / "docker-compose.app.yml.10").write_text("", encoding="utf-8")
+    elif failure == "symlink-overlay":
+        (rollback / "docker-compose.app.yml.10").unlink()
+        (rollback / "docker-compose.app.yml.10").symlink_to(rollback / "docker-compose.app.yml.9")
+    elif failure == "missing-live-caddyfile":
+        live_caddy.unlink()
+    section = RUNBOOK.read_text(encoding="utf-8").split("### Frontend back-out", 1)[1]
+    restore = section.split("```bash\n", 1)[1].split("```", 1)[0]
+    restore = restore.replace("/opt/acx-backend", str(live_root))
+    result = subprocess.run(
+        ["bash", "-c", restore],
+        env={**os.environ, "BASH_ENV": "", "LC_ALL": "C"},
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=5,
+    )
+    if failure is None:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "Selected rollback timestamp: 10" in result.stdout
+        assert live_caddy.read_text(encoding="utf-8") == "caddy 10\n"
+        assert live_caddy.stat().st_ino == caddy_inode
+        assert (live_www / "index.html").read_text(encoding="utf-8") == "frontend 10\n"
+        assert not (live_www / "new-asset.js").exists()
+        assert live_overlay.read_text(encoding="utf-8") == "overlay 10\n"
+    else:
+        assert result.returncode != 0, result.stdout + result.stderr
+        assert "STOP:" in result.stderr
+        assert "refusing restore" in result.stderr
+        if failure == "missing-live-caddyfile":
+            assert not live_caddy.exists()
+        else:
+            assert live_caddy.read_text(encoding="utf-8") == "live caddy\n"
+            assert live_caddy.stat().st_ino == caddy_inode
+        assert (live_www / "index.html").read_text(encoding="utf-8") == "live frontend\n"
+        assert (live_www / "new-asset.js").read_text(encoding="utf-8") == "new asset\n"
+        assert live_overlay.read_text(encoding="utf-8") == "live overlay\n"
 
 
 def test_checked_in_health_check_covers_root_ready_and_portal_api(tmp_path: Path) -> None:

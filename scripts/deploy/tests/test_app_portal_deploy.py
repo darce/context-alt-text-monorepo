@@ -156,25 +156,41 @@ def _caddy_stub(log_path: str, *, fail: bool = False) -> str:
 
 
 def _docker_stub(
-    log_path: str, compose_marker: str, *, fail_first_reload: bool = False,
-    mount_root: Path | None = None, readiness_polls: int = 0,
+    log_path: str,
+    compose_marker: str,
+    *,
+    fail_first_reload: bool = False,
+    mount_root: Path | None = None,
+    readiness_polls: int = 0,
     never_ready: bool = False,
     compose_config: str | None = None,
     compose_overlay_config: str | None = None,
 ) -> str:
     if compose_config is None:
-        compose_config = json.dumps({"services": {"caddy": {"volumes": [{
-            "type": "bind", "source": str(Path(compose_marker).parent / "opt/acx-backend/Caddyfile"),
-            "target": "/etc/caddy/Caddyfile",
-        }]}}})
+        compose_config = json.dumps(
+            {
+                "services": {
+                    "caddy": {
+                        "volumes": [
+                            {
+                                "type": "bind",
+                                "source": str(Path(compose_marker).parent / "opt/acx-backend/Caddyfile"),
+                                "target": "/etc/caddy/Caddyfile",
+                            }
+                        ]
+                    }
+                }
+            }
+        )
     compose_marker_quoted = shlex.quote(compose_marker)
     reload_failure_marker = shlex.quote(f"{compose_marker}.failed-first-reload")
     failure_rule = (
         f'  if [ "$compose_reload" -eq 1 ] && [ ! -e {reload_failure_marker} ]; then\n'
-        f'    : > {reload_failure_marker}\n'
+        f"    : > {reload_failure_marker}\n"
         "    exit 1\n"
         "  fi\n"
-        if fail_first_reload else ""
+        if fail_first_reload
+        else ""
     )
     readiness_state = shlex.quote(f"{compose_marker}.readiness")
     startup_state = shlex.quote(f"{compose_marker}.startups")
@@ -212,7 +228,7 @@ def _docker_stub(
         mount_rule = (
             '  if [ "$compose_up" -eq 1 ] && '
             f'{{ [ "$compose_recreate" -eq 1 ] || [ ! -e {snapshot} ]; }}; then\n'
-            f'    cp {source} {snapshot} || exit 1\n'
+            f"    cp {source} {snapshot} || exit 1\n"
             "  fi\n"
             '  if [ "$compose_reload" -eq 1 ]; then\n'
             f"    printf 'mounted-index %q\\n' \"$(cat {snapshot})\" >> {log_path}\n"
@@ -234,8 +250,11 @@ def _docker_stub(
         f"  resolved_config={shlex.quote(compose_config)}\n"
         '  for arg in "$@"; do\n'
         '    [ "$arg" != "config" ] || compose_config_request=1\n'
-        + (f'    case "$arg" in -|*/docker-compose.app.yml) resolved_config={shlex.quote(compose_overlay_config)} ;; esac\n'
-           if compose_overlay_config is not None else "")
+        + (
+            f'    case "$arg" in -|*/docker-compose.app.yml) resolved_config={shlex.quote(compose_overlay_config)} ;; esac\n'
+            if compose_overlay_config is not None
+            else ""
+        )
         + '    [ "$arg" != "-" ] || cat >/dev/null\n'
         '    [ "$arg" = "wget" ] && compose_probe=1\n'
         '    [ "$arg" = "up" ] && compose_up=1\n'
@@ -245,10 +264,12 @@ def _docker_stub(
         "  done\n"
         '  if [ "$compose_config_request" -eq 1 ]; then\n'
         '    printf "%s\\n" "$resolved_config"\n'
-        '    exit 0\n'
-        '  fi\n'
+        "    exit 0\n"
+        "  fi\n"
         f'  [ "$compose_up" -eq 0 ] || : > {compose_marker_quoted}\n'
-        + readiness_rule + mount_rule + failure_rule
+        + readiness_rule
+        + mount_rule
+        + failure_rule
         + "fi\n"
         + "exit 0\n"
     )
@@ -260,8 +281,15 @@ def _expected_compose_reload(backend_root: Path, overlay: Path | None = None) ->
         argv.extend(["-f", str(overlay)])
     argv.extend(
         [
-            "exec", "-T", "caddy", "caddy", "reload", "--config",
-            "/etc/caddy/Caddyfile", "--adapter", "caddyfile",
+            "exec",
+            "-T",
+            "caddy",
+            "caddy",
+            "reload",
+            "--config",
+            "/etc/caddy/Caddyfile",
+            "--adapter",
+            "caddyfile",
         ]
     )
     return argv
@@ -435,15 +463,13 @@ def _tree_files(root: Path) -> set[str]:
 
 
 def _mounted_indexes(tmp_path: Path) -> list[str]:
-    return [
-        shlex.split(line)[1] for line in _log(tmp_path).splitlines()
-        if line.startswith("mounted-index ")
-    ]
+    return [shlex.split(line)[1] for line in _log(tmp_path).splitlines() if line.startswith("mounted-index ")]
 
 
 def _assert_caddy_recreated(tmp_path: Path, count: int) -> None:
     calls = [
-        shlex.split(line) for line in _log(tmp_path).splitlines()
+        shlex.split(line)
+        for line in _log(tmp_path).splitlines()
         if line.startswith("docker compose ") and " up -d" in line
     ]
     assert len(calls) == count
@@ -463,12 +489,19 @@ def test_second_apply_and_rollback_refresh_container_mount(tmp_path: Path) -> No
     failed_index = _frontend_index("failed frontend")
     (frontend / "index.html").write_text(failed_index)
     failed = _run(
-        tmp_path, args=["--apply"], live_caddy=live, frontend=frontend,
-        model_mount=True, docker_fail_first_reload=True,
+        tmp_path,
+        args=["--apply"],
+        live_caddy=live,
+        frontend=frontend,
+        model_mount=True,
+        docker_fail_first_reload=True,
     )
     assert failed.returncode != 0
     assert _mounted_indexes(tmp_path) == [
-        first_index, second_index, failed_index, second_index,
+        first_index,
+        second_index,
+        failed_index,
+        second_index,
     ]
     assert (live.parent / "app" / "www" / "index.html").read_text() == second_index
     assert not (live.parent / "app" / "activation.journal").exists()
@@ -490,8 +523,7 @@ def test_recovery_precedes_replacement_frontend_validation(tmp_path: Path, inval
         assert not frontend.exists()
     before_log = _log(tmp_path)
 
-    result = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=frontend,
-                  extra_env={"BASH_ENV": ""})
+    result = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=frontend, extra_env={"BASH_ENV": ""})
 
     assert result.returncode != 0, result.stdout + result.stderr
     assert "FRONTEND_DIST" in result.stderr
@@ -501,19 +533,18 @@ def test_recovery_precedes_replacement_frontend_validation(tmp_path: Path, inval
     assert not (www / "index.html").exists()
     assert overlay.read_text() == original_overlay
     assert not journal.exists()
-    calls = _log(tmp_path)[len(before_log):]
+    calls = _log(tmp_path)[len(before_log) :]
     assert " up -d --force-recreate --no-deps caddy" in calls
     assert " reload " in calls
     assert " validate " not in calls
 
     # A retry still rejects the build, without repeating completed recovery.
     before_retry_log = _log(tmp_path)
-    retry = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=frontend,
-                 extra_env={"BASH_ENV": ""})
+    retry = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=frontend, extra_env={"BASH_ENV": ""})
     assert retry.returncode != 0, retry.stdout + retry.stderr
     assert live.read_text() == original_caddy
     assert not journal.exists()
-    retry_calls = _log(tmp_path)[len(before_retry_log):]
+    retry_calls = _log(tmp_path)[len(before_retry_log) :]
     assert " up " not in retry_calls and " reload " not in retry_calls
 
 
@@ -537,20 +568,31 @@ def test_recovery_refreshes_container_mount_after_restore(tmp_path: Path, phase:
         "  fi\n}\n",
     )
     interrupted = _run(
-        tmp_path, args=["--apply"], live_caddy=live, frontend=frontend,
-        model_mount=True, extra_env={"BASH_ENV": str(hook)},
+        tmp_path,
+        args=["--apply"],
+        live_caddy=live,
+        frontend=frontend,
+        model_mount=True,
+        extra_env={"BASH_ENV": str(hook)},
     )
     assert interrupted.returncode == -9, interrupted.stdout + interrupted.stderr
     prior_probes = _log(tmp_path).count(" wget ")
     recovered = _run(
-        tmp_path, args=["--apply"], live_caddy=live, frontend=frontend,
-        model_mount=True, readiness_polls=2, extra_env={"BASH_ENV": ""},
+        tmp_path,
+        args=["--apply"],
+        live_caddy=live,
+        frontend=frontend,
+        model_mount=True,
+        readiness_polls=2,
+        extra_env={"BASH_ENV": ""},
     )
     assert recovered.returncode == 0, recovered.stdout + recovered.stderr
     assert _log(tmp_path).count(" wget ") - prior_probes == 6
     # Recovery must recreate after copying the snapshot, before the next apply.
     assert _mounted_indexes(tmp_path) == [
-        original_index, original_index, replacement_index,
+        original_index,
+        original_index,
+        replacement_index,
     ]
     _assert_caddy_recreated(tmp_path, 3)
 
@@ -598,8 +640,9 @@ def test_missing_compose_plans_but_refuses_apply_without_mutation(tmp_path: Path
     missing = backend / "not-installed" / "docker-compose.caddy.yml"
     before = _tree_files(tmp_path / "opt")
     live_before = live.read_bytes()
-    result = _run(tmp_path, args=["--apply" if apply else "--dry-run"],
-                  live_caddy=live, extra_env={"CADDY_COMPOSE": str(missing)})
+    result = _run(
+        tmp_path, args=["--apply" if apply else "--dry-run"], live_caddy=live, extra_env={"CADDY_COMPOSE": str(missing)}
+    )
     output = result.stdout + result.stderr
     if apply:
         assert result.returncode != 0, output
@@ -676,14 +719,12 @@ def test_apply_refuses_missing_assets(tmp_path: Path) -> None:
             "app.js",
         ),
         (
-            '<script type="module" src="/assets/ready.js"></script>'
-            '<link rel="stylesheet" href="/assets/app.css">',
+            '<script type="module" src="/assets/ready.js"></script><link rel="stylesheet" href="/assets/app.css">',
             {"ready.js": "app bundle\n", "old.css": "old stylesheet\n"},
             "app.css",
         ),
         (
-            '<script type="module" src="/assets/app.js"></script>'
-            '<link rel="stylesheet" href="/assets/empty.css">',
+            '<script type="module" src="/assets/app.js"></script><link rel="stylesheet" href="/assets/empty.css">',
             {"app.js": "app bundle\n", "empty.css": ""},
             "empty asset",
         ),
@@ -736,9 +777,7 @@ def test_apply_refuses_css_only_frontend_without_touching_live_tree(tmp_path: Pa
     dist = tmp_path / "css-only-dist"
     assets = dist / "assets"
     assets.mkdir(parents=True)
-    (dist / "index.html").write_text(
-        '<link rel="stylesheet" href="/assets/old.css">\n', encoding="utf-8"
-    )
+    (dist / "index.html").write_text('<link rel="stylesheet" href="/assets/old.css">\n', encoding="utf-8")
     (assets / "old.css").write_text("body { color: black; }\n", encoding="utf-8")
 
     result = _run(tmp_path, args=["--apply"], frontend=dist, live_caddy=live)
@@ -808,9 +847,7 @@ def test_apply_refuses_css_only_frontend_without_touching_live_tree(tmp_path: Pa
         ),
     ],
 )
-def test_apply_refuses_inert_module_frontend_before_staging(
-    tmp_path: Path, module_markup: str
-) -> None:
+def test_apply_refuses_inert_module_frontend_before_staging(tmp_path: Path, module_markup: str) -> None:
     live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
     _write_live_caddy(live)
     www = _prior_www(tmp_path)
@@ -852,8 +889,7 @@ def test_apply_refuses_inert_module_frontend_before_staging(
             id="unclosed-module-script",
         ),
         pytest.param(
-            '<script type="module" src="/assets/index.js"></script>'
-            '<style>body { color: red; }',
+            '<script type="module" src="/assets/index.js"></script><style>body { color: red; }',
             id="unclosed-style",
         ),
         pytest.param(
@@ -861,15 +897,12 @@ def test_apply_refuses_inert_module_frontend_before_staging(
             id="unclosed-comment",
         ),
         pytest.param(
-            '<script type="module" src="/assets/index.js"></script>'
-            '<link rel="stylesheet" href="/assets/ind',
+            '<script type="module" src="/assets/index.js"></script><link rel="stylesheet" href="/assets/ind',
             id="unclosed-tag",
         ),
     ],
 )
-def test_apply_refuses_truncated_frontend_before_staging(
-    tmp_path: Path, module_markup: str
-) -> None:
+def test_apply_refuses_truncated_frontend_before_staging(tmp_path: Path, module_markup: str) -> None:
     live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
     _write_live_caddy(live)
     www = _prior_www(tmp_path)
@@ -908,14 +941,12 @@ def test_apply_refuses_truncated_frontend_before_staging(
     "module_markup, expected_message",
     [
         pytest.param(
-            '<script><!--<script></script>'
-            '<script type="module" src="/assets/index.js"></script>',
+            '<script><!--<script></script><script type="module" src="/assets/index.js"></script>',
             "index.html contains undecidable <script> data",
             id="script-double-escaped-body",
         ),
         pytest.param(
-            '<script><!--<SCRIPT ></scriptx></script>'
-            '<script type="module" src="/assets/index.js"></script>',
+            '<script><!--<SCRIPT ></scriptx></script><script type="module" src="/assets/index.js"></script>',
             "index.html contains undecidable <script> data",
             id="script-double-escaped-body-with-invalid-close",
         ),
@@ -925,14 +956,12 @@ def test_apply_refuses_truncated_frontend_before_staging(
             id="plaintext-body",
         ),
         pytest.param(
-            '<script type="module" src="/assets/index.js"></script>'
-            '<script><!--<script></script><div id="root"></div>',
+            '<script type="module" src="/assets/index.js"></script><script><!--<script></script><div id="root"></div>',
             "index.html contains undecidable <script> data",
             id="active-module-before-double-escaped-script",
         ),
         pytest.param(
-            '<script type="module" src="/assets/index.js"></script>'
-            '<template><div id="root"></div>',
+            '<script type="module" src="/assets/index.js"></script><template><div id="root"></div>',
             "index.html ends inside an unterminated <template>",
             id="active-module-before-unclosed-template",
         ),
@@ -1203,8 +1232,7 @@ def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
         )
     elif failure == "comment-fapi-decoy":
         module.write_text(
-            _clerk_config_module(FAKE_LIVE_KEY, "https://other.altcontext.com")
-            + "// https://clerk.altcontext.com\n",
+            _clerk_config_module(FAKE_LIVE_KEY, "https://other.altcontext.com") + "// https://clerk.altcontext.com\n",
             encoding="utf-8",
         )
     elif failure == "fapi-host-prefix":
@@ -1233,8 +1261,7 @@ def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
         )
     elif failure == "concatenated-dynamic-import":
         module.write_text(
-            _clerk_config_module(FAKE_LIVE_KEY, "https://clerk.altcontext.com")
-            + 'import("" + "./chunk.js");\n',
+            _clerk_config_module(FAKE_LIVE_KEY, "https://clerk.altcontext.com") + 'import("" + "./chunk.js");\n',
             encoding="utf-8",
         )
         (dist / "assets" / "chunk.js").write_text(
@@ -1482,8 +1509,7 @@ def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
             "return { publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY, "
             "fapiOrigin: env.VITE_CLERK_FAPI }; } "
             f'parsePortalConfig({{ VITE_CLERK_PUBLISHABLE_KEY: "{FAKE_LIVE_KEY}", '
-            'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" }); }\n'
-            + safe_decoy,
+            'VITE_CLERK_FAPI: "https://clerk.altcontext.com", VITE_PORTAL_ENABLED: "true" }); }\n' + safe_decoy,
             encoding="utf-8",
         )
 
@@ -1510,9 +1536,9 @@ def test_apply_refuses_frontend_without_matching_reachable_clerk_values(
     "suffix",
     [
         'if (true) /[}]/.test("}");',
-        'const unused = typeof /[}]/;',
-        'const unused = void /[/]/;',
-        'const quotient = 12 / 3;',
+        "const unused = typeof /[}]/;",
+        "const unused = void /[/]/;",
+        "const quotient = 12 / 3;",
         'const testKeyPrefix = "pk_test_"; const liveKeyPrefix = "pk_live_";',
     ],
     ids=["control-header-regex", "typeof-regex", "void-regex-class", "division", "clerk-prefix-discriminators"],
@@ -1529,7 +1555,8 @@ def test_apply_accepts_frontend_with_complete_static_clerk_aliases_and_valid_syn
             'const expectedFapi = "https://clerk.altcontext.com"; const liveFapi = expectedFapi; '
             "const env = { VITE_CLERK_PUBLISHABLE_KEY: liveKey, VITE_CLERK_FAPI: liveFapi, "
             'VITE_PORTAL_ENABLED: "true" };'
-        ) + suffix,
+        )
+        + suffix,
         encoding="utf-8",
     )
 
@@ -1600,9 +1627,7 @@ def test_apply_refuses_frontend_with_missing_transitive_module(
     live_before = live.read_bytes()
     www = _prior_www(tmp_path)
     dist = _write_frontend(tmp_path)
-    (dist / "assets" / "index.js").write_text(
-        'import "./missing-chunk.js";\n', encoding="utf-8"
-    )
+    (dist / "assets" / "index.js").write_text('import "./missing-chunk.js";\n', encoding="utf-8")
 
     result = _run(tmp_path, args=["--apply"], frontend=dist, live_caddy=live)
     output = result.stdout + result.stderr
@@ -1679,23 +1704,17 @@ def test_apply_refuses_protected_existing_hostname(tmp_path: Path) -> None:
     [
         '<script type="module" nomodule src="/assets/index.js"></script>',
         '<script\ttype="module" \nsrc="/assets/index.js"\f></script\r>',
-        '<noscript><textarea>Please enable JavaScript</noscript>'
-        '<script type="module" src="/assets/index.js"></script>',
+        '<noscript><textarea>Please enable JavaScript</noscript><script type="module" src="/assets/index.js"></script>',
         '<template!><script type="module" src="/assets/index.js"></script>',
     ],
     ids=["nomodule", "html-whitespace", "noscript-raw-text", "template-punctuated-open"],
 )
-def test_apply_accepts_active_module_frontend(
-    tmp_path: Path, module_markup: str
-) -> None:
+def test_apply_accepts_active_module_frontend(tmp_path: Path, module_markup: str) -> None:
     live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
     _write_live_caddy(live)
     dist = _write_frontend(
         tmp_path,
-        index=(
-            '<link rel="stylesheet" href="/assets/index.css">'
-            f'{module_markup}'
-        ),
+        index=(f'<link rel="stylesheet" href="/assets/index.css">{module_markup}'),
     )
 
     result = _run(tmp_path, args=["--apply"], frontend=dist, live_caddy=live)
@@ -1735,9 +1754,7 @@ def test_apply_merges_vhost_preserves_existing_hosts_and_copies_frontend(tmp_pat
     assert "caddy" in log
     assert "validate" in log
     assert not any(line.startswith("caddy reload ") for line in log.splitlines())
-    assert _compose_reload_calls(tmp_path) == [
-        _expected_compose_reload(tmp_path / "opt" / "acx-backend", overlay_dest)
-    ]
+    assert _compose_reload_calls(tmp_path) == [_expected_compose_reload(tmp_path / "opt" / "acx-backend", overlay_dest)]
     assert "ssh" not in log
     rollback_dir = tmp_path / "opt" / "acx-backend" / "app" / "rollback"
     assert rollback_dir.is_dir()
@@ -1757,9 +1774,7 @@ def test_apply_mounts_static_root_before_live_health_check(tmp_path: Path) -> No
     health.parent.mkdir()
     _write_executable(
         health,
-        "#!/usr/bin/env bash\n"
-        f"[ -f {shlex.quote(str(marker))} ] || exit 1\n"
-        f"printf 'health\\n' >> {log_path}\n",
+        f"#!/usr/bin/env bash\n[ -f {shlex.quote(str(marker))} ] || exit 1\nprintf 'health\\n' >> {log_path}\n",
     )
 
     result = _run(
@@ -1771,9 +1786,12 @@ def test_apply_mounts_static_root_before_live_health_check(tmp_path: Path) -> No
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
     log_lines = _log(tmp_path).splitlines()
-    compose_index = next(i for i, line in enumerate(log_lines) if line.startswith("docker compose ") and " up -d" in line)
+    compose_index = next(
+        i for i, line in enumerate(log_lines) if line.startswith("docker compose ") and " up -d" in line
+    )
     reload_index = next(
-        i for i, line in enumerate(log_lines)
+        i
+        for i, line in enumerate(log_lines)
         if line.startswith("docker compose ") and " exec -T caddy caddy reload " in line
     )
     health_index = log_lines.index("health")
@@ -1781,9 +1799,7 @@ def test_apply_mounts_static_root_before_live_health_check(tmp_path: Path) -> No
     assert "docker-compose.app.yml" in log_lines[compose_index]
     assert compose_index < reload_index < health_index
     overlay = tmp_path / "opt" / "acx-backend" / "app" / "docker-compose.app.yml"
-    assert shlex.split(log_lines[reload_index]) == _expected_compose_reload(
-        tmp_path / "opt" / "acx-backend", overlay
-    )
+    assert shlex.split(log_lines[reload_index]) == _expected_compose_reload(tmp_path / "opt" / "acx-backend", overlay)
     assert not any(line.startswith("caddy reload ") for line in log_lines)
 
 
@@ -1847,9 +1863,7 @@ def test_apply_staging_caddy_hardlink_to_live_preserves_active_files(tmp_path: P
 
 
 @pytest.mark.parametrize("alias_kind", ["symlink", "hardlink"])
-def test_apply_staging_overlay_alias_to_live_caddy_preserves_live_config(
-    tmp_path: Path, alias_kind: str
-) -> None:
+def test_apply_staging_overlay_alias_to_live_caddy_preserves_live_config(tmp_path: Path, alias_kind: str) -> None:
     live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
     _write_live_caddy(live)
     before = live.read_bytes()
@@ -1873,8 +1887,7 @@ def test_apply_staging_overlay_alias_to_live_caddy_preserves_live_config(
 
     assert result.returncode != 0, output
     assert (
-        "staged Caddy validation failed" in output
-        or "staged overlay path is the same file as CADDYFILE" in output
+        "staged Caddy validation failed" in output or "staged overlay path is the same file as CADDYFILE" in output
     ), output
     assert live.read_bytes() == before
 
@@ -2321,9 +2334,7 @@ def test_runbook_rollback_selects_numeric_timestamp_and_refuses_incomplete_snaps
         assert {path.name: path.read_bytes() for path in live_www.iterdir()} == before_www
         if failure == "directory-live-overlay":
             assert live_overlay.is_dir()
-            assert {path.name: path.read_bytes() for path in live_overlay.iterdir()} == {
-                "keep.yml": b"live overlay\n"
-            }
+            assert {path.name: path.read_bytes() for path in live_overlay.iterdir()} == {"keep.yml": b"live overlay\n"}
         elif failure == "dangling-live-overlay":
             assert live_overlay.is_symlink()
             assert live_overlay.readlink() == overlay_target
@@ -2373,7 +2384,11 @@ def test_checked_in_health_check_covers_root_ready_and_portal_api(tmp_path: Path
     curl_log.unlink()
     portal_missing_env = {**env, "CURL_PORTAL_STATUS": "404"}
     portal_missing = subprocess.run(
-        [str(health)], env=portal_missing_env, text=True, capture_output=True, check=False,
+        [str(health)],
+        env=portal_missing_env,
+        text=True,
+        capture_output=True,
+        check=False,
     )
     portal_url = "https://app.altcontext.com/portal/me"
     assert portal_missing.returncode != 0, portal_missing.stdout + portal_missing.stderr
@@ -2387,7 +2402,11 @@ def test_checked_in_health_check_covers_root_ready_and_portal_api(tmp_path: Path
     curl_log.unlink()
     spa_fallback_env = {**env, "CURL_PORTAL_STATUS": "200"}
     spa_fallback = subprocess.run(
-        [str(health)], env=spa_fallback_env, text=True, capture_output=True, check=False,
+        [str(health)],
+        env=spa_fallback_env,
+        text=True,
+        capture_output=True,
+        check=False,
     )
     assert spa_fallback.returncode != 0, spa_fallback.stdout + spa_fallback.stderr
     assert portal_url in spa_fallback.stderr
@@ -2459,7 +2478,9 @@ def test_recovery_refuses_changed_base_compose_without_mutation(tmp_path: Path) 
     before_log = _log(tmp_path)
     alternate = _write_caddy_compose(live.parent / "alternate-compose.yml")
     result = _run(
-        tmp_path, args=["--apply"], live_caddy=live,
+        tmp_path,
+        args=["--apply"],
+        live_caddy=live,
         extra_env={"BASH_ENV": "", "CADDY_COMPOSE": str(alternate)},
     )
     assert result.returncode != 0, result.stdout + result.stderr
@@ -2561,6 +2582,271 @@ def _rollback_tree_state(root: Path) -> dict[str, tuple[int, int, bytes | str | 
         contents = str(path.readlink()) if path.is_symlink() else path.read_bytes() if path.is_file() else None
         state[str(path.relative_to(root))] = (info.st_mode, info.st_ino, contents)
     return state
+
+
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_failed_second_apply_keeps_first_deploy_documented_backout(tmp_path: Path, interrupted: bool) -> None:
+    backend = tmp_path / "opt/acx-backend"
+    live = backend / "Caddyfile"
+    _write_live_caddy(live)
+    pre_portal = live.read_bytes()
+    caddy_inode = live.stat().st_ino
+    first = _run(tmp_path, args=["--apply"], live_caddy=live)
+    assert first.returncode == 0, first.stdout + first.stderr
+    app = backend / "app"
+    rollback = app / "rollback"
+    first_set = _rollback_tree_state(rollback)
+    first_stamp = next(rollback.glob("Caddyfile.*")).name.split(".")[-1]
+    live_before_failure = live.read_bytes()
+    overlay_before_failure = (app / "docker-compose.app.yml").read_bytes()
+    www_before_failure = _tree_files(app / "www")
+    health = tmp_path / "health-fail"
+    _write_executable(health, "#!/bin/sh\nexit 1\n")
+    hook = tmp_path / "interrupt.sh"
+    _write_executable(
+        hook,
+        "sync() {\n"
+        '  /bin/sync "$@" || return $?\n'
+        '  if [ "${@: -1}" = "$APP_ROOT" ] && [ -f "$ACTIVATION_JOURNAL" ] && '
+        'grep -qx "phase=overlay_promoted" "$ACTIVATION_JOURNAL"; then\n'
+        '    kill -KILL "$BASHPID"\n'
+        "  fi\n}\n",
+    )
+    second = _run(
+        tmp_path,
+        args=["--apply"],
+        live_caddy=live,
+        extra_env={
+            "APP_HEALTH_CMD": str(health),
+            "APP_UPSTREAM": "replacement-api:8000",
+            "BASH_ENV": str(hook) if interrupted else "",
+        },
+    )
+    assert second.returncode == (-9 if interrupted else 5), second.stdout + second.stderr
+    if interrupted:
+        recovered = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=None, extra_env={"BASH_ENV": ""})
+        assert recovered.returncode != 0, recovered.stdout + recovered.stderr
+        assert "FRONTEND_DIST is required" in recovered.stderr
+    assert live.read_bytes() == live_before_failure
+    assert live.stat().st_ino == caddy_inode
+    assert (app / "docker-compose.app.yml").read_bytes() == overlay_before_failure
+    assert _tree_files(app / "www") == www_before_failure
+    assert not (app / "activation.journal").exists()
+    result = _run_documented_rollback(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"Selected rollback timestamp: {first_stamp}" in result.stdout
+    assert live.read_bytes() == pre_portal
+    assert live.stat().st_ino == caddy_inode
+    assert not (app / "www").exists()
+    assert not (app / "docker-compose.app.yml").exists()
+    assert _rollback_tree_state(rollback) == first_set
+
+
+@pytest.mark.parametrize("interrupted", [False, True])
+@pytest.mark.parametrize("prior_www,prior_overlay", [(False, False), (True, False), (False, True), (True, True)])
+def test_failed_activation_cleans_only_its_own_snapshot_set(
+    tmp_path: Path, interrupted: bool, prior_www: bool, prior_overlay: bool
+) -> None:
+    backend = tmp_path / "opt/acx-backend"
+    live = backend / "Caddyfile"
+    _write_live_caddy(live)
+    app = backend / "app"
+    rollback = app / "rollback"
+    rollback.mkdir(parents=True)
+    (rollback / "Caddyfile.1").write_text("earlier successful prestate")
+    (rollback / "www.1").mkdir()
+    (rollback / "www.1/index.html").write_text("earlier frontend")
+    (rollback / "docker-compose.app.yml.1").write_text("earlier overlay")
+    for kind in ("www", "overlay"):
+        (rollback / f"absent-{kind}.2").write_text(f"app-portal-absent-{kind}-v1\n")
+    (rollback / "Caddyfile.200.bak").write_text("operator copy")
+    (rollback / "www.200.bak").mkdir()
+    (rollback / "www.200.bak/keep.txt").write_text("operator frontend")
+    before = _rollback_tree_state(rollback)
+    pre_caddy = live.read_bytes()
+    inode = live.stat().st_ino
+    if prior_www:
+        _prior_www(tmp_path)
+    if prior_overlay:
+        (app / "docker-compose.app.yml").write_text("services: {}\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_executable(bin_dir / "date", "#!/bin/sh\nprintf '200\\n'\n")
+    health = tmp_path / "fail-health"
+    _write_executable(health, "#!/bin/sh\nexit 1\n")
+    hook = tmp_path / "interrupt.sh"
+    _write_executable(
+        hook,
+        "sync() {\n"
+        '  /bin/sync "$@" || return $?\n'
+        '  if [ "${@: -1}" = "$APP_ROOT" ] && [ -f "$ACTIVATION_JOURNAL" ] && '
+        'grep -qx "phase=overlay_promoted" "$ACTIVATION_JOURNAL"; then kill -KILL "$BASHPID"; fi\n'
+        "}\n",
+    )
+    result = _run(
+        tmp_path,
+        args=["--apply"],
+        live_caddy=live,
+        extra_env={"APP_HEALTH_CMD": str(health), "BASH_ENV": str(hook) if interrupted else ""},
+    )
+    assert result.returncode == (-9 if interrupted else 5), result.stdout + result.stderr
+    if interrupted:
+        result = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=None, extra_env={"BASH_ENV": ""})
+        assert result.returncode != 0 and "FRONTEND_DIST is required" in result.stderr
+    assert _rollback_tree_state(rollback) == before
+    assert live.read_bytes() == pre_caddy and live.stat().st_ino == inode
+    assert (app / "www").exists() == prior_www
+    if prior_www:
+        assert (app / "www/keep.txt").read_text() == "active\n"
+    assert (app / "docker-compose.app.yml").exists() == prior_overlay
+    if prior_overlay:
+        assert (app / "docker-compose.app.yml").read_text() == "services: {}\n"
+    assert not (app / "activation.journal").exists()
+
+
+@pytest.mark.parametrize("interrupted", [False, True])
+@pytest.mark.parametrize("prior_artifacts", [False, True])
+@pytest.mark.parametrize("fault", ["journal-sync", "partial-delete", "directory-sync", "crash-after-delete"])
+def test_failed_activation_cleanup_can_resume_without_snapshots(
+    tmp_path: Path, interrupted: bool, prior_artifacts: bool, fault: str
+) -> None:
+    backend = tmp_path / "opt/acx-backend"
+    live = backend / "Caddyfile"
+    _write_live_caddy(live)
+    pre_caddy = live.read_bytes()
+    inode = live.stat().st_ino
+    app = backend / "app"
+    rollback = app / "rollback"
+    rollback.mkdir(parents=True)
+    (rollback / "Caddyfile.1").write_text("last successful prestate")
+    unrelated = _rollback_tree_state(rollback)
+    if prior_artifacts:
+        _prior_www(tmp_path)
+        (app / "docker-compose.app.yml").write_text("services: {}\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_executable(bin_dir / "date", "#!/bin/sh\nprintf '200\\n'\n")
+    health = tmp_path / "fail-health"
+    _write_executable(health, "#!/bin/sh\nexit 1\n")
+    hook = tmp_path / "cleanup-fault.sh"
+    # Simulate errors at both durability barriers, a partial deletion, and a
+    # process death after deletion but before its directory is synced.
+    fault_sync = (
+        '  if [ -f "$ACTIVATION_JOURNAL" ] && grep -qx "phase=restored" "$ACTIVATION_JOURNAL"; then\n'
+        f'    if [ "${{@: -1}}" = "${"APP_ROOT" if fault == "journal-sync" else "ROLLBACK_DIR"}" ]; then return 1; fi\n'
+        "  fi\n"
+        if fault in ("journal-sync", "directory-sync")
+        else ""
+    )
+    fault_rm = (
+        '  if [ -f "$ACTIVATION_JOURNAL" ] && grep -qx "phase=restored" "$ACTIVATION_JOURNAL"; then\n'
+        + (
+            '    /bin/rm -f -- "$ROLLBACK_CADDY"\n    return 1\n'
+            if fault == "partial-delete"
+            else '    /bin/rm "$@" || return $?\n    kill -KILL "$BASHPID"\n'
+        )
+        + "  fi\n"
+        if fault in ("partial-delete", "crash-after-delete")
+        else ""
+    )
+    _write_executable(
+        hook,
+        "sync() {\n" + fault_sync + '  /bin/sync "$@"\n}\nrm() {\n' + fault_rm + '  /bin/rm "$@"\n}\n',
+    )
+    if interrupted:
+        initial_hook = tmp_path / "initial-interrupt.sh"
+        _write_executable(
+            initial_hook,
+            "sync() {\n"
+            '  /bin/sync "$@" || return $?\n'
+            '  if [ "${@: -1}" = "$APP_ROOT" ] && [ -f "$ACTIVATION_JOURNAL" ] && '
+            'grep -qx "phase=overlay_promoted" "$ACTIVATION_JOURNAL"; then kill -KILL "$BASHPID"; fi\n'
+            "}\n",
+        )
+        initial = _run(tmp_path, args=["--apply"], live_caddy=live, extra_env={"BASH_ENV": str(initial_hook)})
+        assert initial.returncode == -9, initial.stdout + initial.stderr
+    result = _run(
+        tmp_path,
+        args=["--apply"],
+        live_caddy=live,
+        frontend=None if interrupted else "",
+        extra_env={"APP_HEALTH_CMD": str(health), "BASH_ENV": str(hook)},
+    )
+    assert result.returncode != 0, result.stdout + result.stderr
+    if fault == "crash-after-delete":
+        assert result.returncode == -9
+    journal = app / "activation.journal"
+    assert "phase=restored\n" in journal.read_text()
+    if fault == "journal-sync":
+        assert (rollback / "Caddyfile.200").is_file()
+        if prior_artifacts:
+            assert (rollback / "www.200/keep.txt").read_text() == "active\n"
+            assert (rollback / "docker-compose.app.yml.200").read_text() == "services: {}\n"
+        else:
+            for kind in ("www", "overlay"):
+                assert (rollback / f"absent-{kind}.200").read_text() == f"app-portal-absent-{kind}-v1\n"
+    else:
+        assert not (rollback / "Caddyfile.200").exists()
+    assert live.read_bytes() == pre_caddy and live.stat().st_ino == inode
+    restored_www = _rollback_tree_state(app / "www") if prior_artifacts else None
+    before_log = _log(tmp_path)
+    # Dry-run must accept the restored phase even if the inputs are gone.
+    dry_run = _run(tmp_path, args=["--dry-run"], live_caddy=live, frontend=None, extra_env={"BASH_ENV": ""})
+    assert dry_run.returncode == 0, dry_run.stdout + dry_run.stderr
+    assert "phase=restored" in dry_run.stdout
+    assert journal.exists() and _log(tmp_path) == before_log
+    sync_log = tmp_path / "cleanup-order.log"
+    resume_hook = tmp_path / "resume.sh"
+    _write_executable(
+        resume_hook,
+        "sync() {\n"
+        f'  printf "%s journal=%s\\n" "${{@: -1}}" "$(test -f "$ACTIVATION_JOURNAL" && echo yes || echo no)" >> {shlex.quote(str(sync_log))}\n'
+        '  /bin/sync "$@"\n}\n',
+    )
+    resumed = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=None, extra_env={"BASH_ENV": str(resume_hook)})
+    assert resumed.returncode != 0 and "FRONTEND_DIST is required" in resumed.stderr
+    assert not journal.exists()
+    assert _rollback_tree_state(rollback) == unrelated
+    assert live.read_bytes() == pre_caddy and live.stat().st_ino == inode
+    if prior_artifacts:
+        assert _rollback_tree_state(app / "www") == restored_www
+        assert (app / "docker-compose.app.yml").read_text() == "services: {}\n"
+    else:
+        assert not (app / "www").exists() and not (app / "docker-compose.app.yml").exists()
+    calls = _log(tmp_path)[len(before_log) :]
+    assert " up " not in calls and " reload " not in calls
+    syncs = sync_log.read_text().splitlines()
+    assert f"{rollback} journal=yes" in syncs
+    assert syncs.index(f"{rollback} journal=yes") < syncs.index(f"{app} journal=no")
+
+
+def test_interrupted_activation_failed_restore_retains_all_inputs(tmp_path: Path) -> None:
+    from test_app_portal_activation_journal import _interrupt_after_caddy
+
+    live = tmp_path / "opt/acx-backend/Caddyfile"
+    original_caddy, www, app, overlay, original_overlay = _interrupt_after_caddy(tmp_path, live)
+    before = _rollback_tree_state(app / "rollback")
+    journal = app / "activation.journal"
+    before_journal = journal.read_bytes()
+    reload = tmp_path / "fail-reload"
+    _write_executable(reload, "#!/bin/sh\nexit 1\n")
+    failed = _run(
+        tmp_path,
+        args=["--apply"],
+        live_caddy=live,
+        frontend=None,
+        extra_env={"BASH_ENV": "", "APP_RELOAD_CMD": str(reload)},
+    )
+    assert failed.returncode != 0 and "rollback reload failed" in failed.stderr
+    assert _rollback_tree_state(app / "rollback") == before
+    assert journal.read_bytes() == before_journal
+    assert live.read_text() == original_caddy
+    assert (www / "keep.txt").read_text() == "active\n"
+    assert overlay.read_text() == original_overlay
+    recovered = _run(tmp_path, args=["--apply"], live_caddy=live, frontend=None, extra_env={"BASH_ENV": ""})
+    assert recovered.returncode != 0 and "FRONTEND_DIST is required" in recovered.stderr
+    assert not journal.exists()
+    assert list((app / "rollback").iterdir()) == []
 
 
 @pytest.mark.parametrize("readiness_polls,never_ready", [(0, False), (2, False), (9, False), (0, True)])
@@ -2765,6 +3051,8 @@ def test_documented_rollback_refuses_invalid_absence_evidence_without_mutation(
         ("rollback/www.10/index.html", "fifo"),
         ("rollback/docker-compose.app.yml.10", "directory"),
         ("rollback/docker-compose.app.yml.10", "fifo"),
+        ("backend", "symlink"),
+        ("backend-parent", "symlink"),
     ],
 )
 def test_documented_rollback_guards_live_destinations_before_any_mutation(
@@ -2780,6 +3068,11 @@ def test_documented_rollback_guards_live_destinations_before_any_mutation(
     (backend / "Caddyfile").write_text("live caddy")
     _prior_www(tmp_path)
     (app / "docker-compose.app.yml").write_text("live overlay")
+    # A stale but complete set must never hide a newer nonregular Caddy snapshot.
+    (rollback / "Caddyfile.9").write_text("stale caddy")
+    (rollback / "www.9").mkdir()
+    (rollback / "www.9/index.html").write_text("stale frontend")
+    (rollback / "docker-compose.app.yml.9").write_text("stale overlay")
     (rollback / "Caddyfile.10").write_text("prior caddy")
     if absence:
         for kind in ("www", "overlay"):
@@ -2788,6 +3081,19 @@ def test_documented_rollback_guards_live_destinations_before_any_mutation(
         (rollback / "www.10").mkdir()
         (rollback / "www.10" / "index.html").write_text("prior frontend")
         (rollback / "docker-compose.app.yml.10").write_text("prior overlay")
+    if destination in ("backend", "backend-parent"):
+        path = backend if destination == "backend" else backend.parent
+        target = tmp_path / "ancestor-target"
+        path.rename(target)
+        path.symlink_to(target, target_is_directory=True)
+        before_target = _rollback_tree_state(target)
+        result = _run_documented_rollback(tmp_path)
+        assert result.returncode != 0, result.stdout + result.stderr
+        assert "STOP:" in result.stderr and "refusing restore" in result.stderr
+        assert _rollback_tree_state(target) == before_target
+        assert path.is_symlink() and path.readlink() == target
+        assert not (tmp_path / "rollback-commands.log").exists()
+        return
     path = backend / "Caddyfile" if destination == "Caddyfile" else app / destination
     if path.is_dir():
         shutil.rmtree(path)
@@ -2975,9 +3281,7 @@ def test_apply_default_reload_uses_compose_without_host_caddy(tmp_path: Path) ->
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
     overlay = tmp_path / "opt" / "acx-backend" / "app" / "docker-compose.app.yml"
-    assert _compose_reload_calls(tmp_path) == [
-        _expected_compose_reload(tmp_path / "opt" / "acx-backend", overlay)
-    ]
+    assert _compose_reload_calls(tmp_path) == [_expected_compose_reload(tmp_path / "opt" / "acx-backend", overlay)]
     assert any(line.startswith("docker run ") and "validate" in line for line in _log(tmp_path).splitlines())
     assert not any(line.startswith("caddy ") for line in _log(tmp_path).splitlines())
 
@@ -2999,7 +3303,9 @@ def test_docker_validation_with_explicit_reload_succeeds(tmp_path: Path) -> None
     marker = tmp_path / "reloaded"
     _write_executable(reload_cmd, f"#!/bin/sh\ntouch {shlex.quote(str(marker))}\n")
     result = _run(
-        tmp_path, args=["--apply"], include_caddy=False,
+        tmp_path,
+        args=["--apply"],
+        include_caddy=False,
         extra_env={"APP_RELOAD_CMD": str(reload_cmd)},
     )
     assert result.returncode == 0, result.stdout + result.stderr
@@ -3055,8 +3361,7 @@ def test_successful_applies_reclaim_old_snapshot_sets(tmp_path: Path) -> None:
         result = _run(tmp_path, args=["--apply"], live_caddy=live)
         assert result.returncode == 0, result.stdout + result.stderr
         caddy_backups = [
-            p for p in rollback.glob("Caddyfile.*")
-            if re.fullmatch(r"Caddyfile\.\d+", p.name) and p.is_file()
+            p for p in rollback.glob("Caddyfile.*") if re.fullmatch(r"Caddyfile\.\d+", p.name) and p.is_file()
         ]
         assert len(caddy_backups) == 1
         stamp = caddy_backups[0].name.split(".")[-1]
@@ -3153,7 +3458,8 @@ def test_apply_refuses_symlink_rollback_directory(tmp_path: Path) -> None:
     assert snapshot.read_text() == "do not delete"
 
 
-def test_apply_failed_health_restores_caddy_www_and_overlay(tmp_path: Path) -> None:
+@pytest.mark.parametrize("rollback_reload_fails", [False, True])
+def test_apply_failed_health_restores_caddy_www_and_overlay(tmp_path: Path, rollback_reload_fails: bool) -> None:
     live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
     _write_live_caddy(live)
     before = live.read_text(encoding="utf-8")
@@ -3166,11 +3472,17 @@ def test_apply_failed_health_restores_caddy_www_and_overlay(tmp_path: Path) -> N
     old_snapshot.write_text("previous recovery config")
     health = tmp_path / "opt" / "acx-backend" / "health-fail"
     _write_executable(health, "#!/usr/bin/env bash\nexit 1\n")
+    reload = tmp_path / "reload"
+    reload_seen = tmp_path / "reload-seen"
+    _write_executable(
+        reload,
+        f"#!/bin/sh\n[ ! -f {shlex.quote(str(reload_seen))} ] || exit 1\ntouch {shlex.quote(str(reload_seen))}\n",
+    )
     result = _run(
         tmp_path,
         args=["--apply"],
         live_caddy=live,
-        extra_env={"APP_HEALTH_CMD": str(health)},
+        extra_env={"APP_HEALTH_CMD": str(health), **({"APP_RELOAD_CMD": str(reload)} if rollback_reload_fails else {})},
     )
     output = result.stdout + result.stderr
     assert result.returncode != 0, output
@@ -3184,8 +3496,17 @@ def test_apply_failed_health_restores_caddy_www_and_overlay(tmp_path: Path) -> N
     compose_up_lines = [line for line in _log(tmp_path).splitlines() if " compose " in line and " up -d" in line]
     assert len(compose_up_lines) == 2, _log(tmp_path)
     current_backups = [p for p in rollback.glob("Caddyfile.*") if p != old_snapshot]
-    assert len(current_backups) == 1
-    assert current_backups[0].read_text() == before
+    if rollback_reload_fails:
+        assert len(current_backups) == 1
+        assert current_backups[0].read_text() == before
+        assert (overlay_dest.parent / "activation.journal").is_file()
+        stamp = current_backups[0].name.split(".")[-1]
+        assert (rollback / f"www.{stamp}/keep.txt").read_text() == "active\n"
+        assert (rollback / f"docker-compose.app.yml.{stamp}").read_text() == "services: {}\n"
+    else:
+        assert current_backups == []
+        assert {p.name for p in rollback.iterdir()} == {old_snapshot.name}
+        assert not (overlay_dest.parent / "activation.journal").exists()
 
 
 def test_apply_failed_www_move_restores_caddyfile(tmp_path: Path) -> None:
@@ -3232,10 +3553,11 @@ def test_dry_run_refuses_symlink_and_root_without_writes(tmp_path: Path) -> None
 
 @pytest.mark.parametrize("polls,fail_reload", [(2, False), (2, True), (10, False)])
 def test_recreation_waits_for_admin_and_exhaustion_rolls_back(
-    tmp_path: Path, polls: int, fail_reload: bool,
+    tmp_path: Path,
+    polls: int,
+    fail_reload: bool,
 ) -> None:
-    result = _run(tmp_path, args=["--apply"], readiness_polls=polls,
-                  docker_fail_first_reload=fail_reload)
+    result = _run(tmp_path, args=["--apply"], readiness_polls=polls, docker_fail_first_reload=fail_reload)
     assert (result.returncode == 0) == (polls == 2 and not fail_reload), result.stdout + result.stderr
     calls = [shlex.split(line) for line in _log(tmp_path).splitlines()]
     probes = [call for call in calls if "wget" in call]
@@ -3250,17 +3572,29 @@ def test_recreation_waits_for_admin_and_exhaustion_rolls_back(
         assert not (app_root / "docker-compose.app.yml").exists()
 
 
-@pytest.mark.parametrize("relative", [
-    "app/staging/base.yml", "app/rollback/base.yml", "app/www/base.yml",
-    "app/www.prev/base.yml", "Caddyfile", "app/docker-compose.app.yml",
-    "app/activation.journal", "app/activation.journal.lock",
-])
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "app/staging/base.yml",
+        "app/rollback/base.yml",
+        "app/www/base.yml",
+        "app/www.prev/base.yml",
+        "Caddyfile",
+        "app/docker-compose.app.yml",
+        "app/activation.journal",
+        "app/activation.journal.lock",
+    ],
+)
 def test_base_compose_refuses_activation_paths_without_mutation(tmp_path: Path, relative: str) -> None:
     source = tmp_path / "opt" / "acx-backend" / relative
     _write_caddy_compose(source)
     before = source.read_bytes()
-    result = _run(tmp_path, args=["--apply"], live_caddy=source if relative == "Caddyfile" else "",
-                  extra_env={"CADDY_COMPOSE": str(source)})
+    result = _run(
+        tmp_path,
+        args=["--apply"],
+        live_caddy=source if relative == "Caddyfile" else "",
+        extra_env={"CADDY_COMPOSE": str(source)},
+    )
     assert result.returncode != 0, result.stdout + result.stderr
     assert "CADDY_COMPOSE collides with activation paths" in result.stderr
     assert source.read_bytes() == before
@@ -3287,12 +3621,23 @@ def test_caddyfile_bind_mismatch_refused_before_mutation(tmp_path: Path, pending
     _write_caddy_compose(backend / "docker-compose.caddy.yml")
     before = _tree_snapshot(backend)
     other = backend / "OtherCaddyfile"
-    config = json.dumps({"services": {"caddy": {"volumes": [{
-        "type": "bind", "source": str(other), "target": "/etc/caddy/Caddyfile",
-    }]}}})
+    config = json.dumps(
+        {
+            "services": {
+                "caddy": {
+                    "volumes": [
+                        {
+                            "type": "bind",
+                            "source": str(other),
+                            "target": "/etc/caddy/Caddyfile",
+                        }
+                    ]
+                }
+            }
+        }
+    )
     before_log = _log(tmp_path)
-    result = _run(tmp_path, args=["--apply"], live_caddy=live,
-                  compose_config=config, extra_env={"BASH_ENV": ""})
+    result = _run(tmp_path, args=["--apply"], live_caddy=live, compose_config=config, extra_env={"BASH_ENV": ""})
     assert result.returncode != 0, result.stdout + result.stderr
     assert str(other) in result.stderr and str(live) in result.stderr
     assert "applied:" not in result.stdout
@@ -3301,16 +3646,20 @@ def test_caddyfile_bind_mismatch_refused_before_mutation(tmp_path: Path, pending
     after.pop("app/activation.journal.lock", None)
     before.pop("app/activation.journal.lock", None)
     # Creating the lock may update the parent directory metadata.
-    assert {k: v for k, v in after.items() if k != "app"} == {
-        k: v for k, v in before.items() if k != "app"
-    }
-    calls = _log(tmp_path)[len(before_log):]
+    assert {k: v for k, v in after.items() if k != "app"} == {k: v for k, v in before.items() if k != "app"}
+    calls = _log(tmp_path)[len(before_log) :]
     assert " up " not in calls and " exec " not in calls and " validate " not in calls
 
 
-@pytest.mark.parametrize("config", ["not json", "{}", '{"services":{"caddy":{"volumes":[]}}}',
-    '{"services":{"caddy":{"volumes":[{"type":"volume","source":"config","target":"/etc/caddy/Caddyfile"}]}}}',
-])
+@pytest.mark.parametrize(
+    "config",
+    [
+        "not json",
+        "{}",
+        '{"services":{"caddy":{"volumes":[]}}}',
+        '{"services":{"caddy":{"volumes":[{"type":"volume","source":"config","target":"/etc/caddy/Caddyfile"}]}}}',
+    ],
+)
 def test_caddyfile_binding_requires_resolved_bind(tmp_path: Path, config: str) -> None:
     result = _run(tmp_path, args=["--apply"], compose_config=config)
     assert result.returncode != 0, result.stdout + result.stderr
@@ -3327,9 +3676,21 @@ def test_overlay_caddyfile_bind_override_refused(tmp_path: Path, installed: bool
         app_root.mkdir(parents=True)
         (app_root / "docker-compose.app.yml").write_text("services: {}\n")
     other = backend / "OtherCaddyfile"
-    config = json.dumps({"services": {"caddy": {"volumes": [{
-        "type": "bind", "source": str(other), "target": "/etc/caddy/Caddyfile",
-    }]}}})
+    config = json.dumps(
+        {
+            "services": {
+                "caddy": {
+                    "volumes": [
+                        {
+                            "type": "bind",
+                            "source": str(other),
+                            "target": "/etc/caddy/Caddyfile",
+                        }
+                    ]
+                }
+            }
+        }
+    )
     result = _run(tmp_path, args=["--apply"], compose_overlay_config=config)
     assert result.returncode != 0, result.stdout + result.stderr
     assert str(other) in result.stderr and str(backend / "Caddyfile") in result.stderr
@@ -3339,9 +3700,21 @@ def test_overlay_caddyfile_bind_override_refused(tmp_path: Path, installed: bool
 
 def test_selected_caddyfile_matching_compose_binding_applies(tmp_path: Path) -> None:
     live = tmp_path / "opt/acx-backend/SelectedCaddyfile"
-    config = json.dumps({"services": {"caddy": {"volumes": [{
-        "type": "bind", "source": str(live), "target": "/etc/caddy/Caddyfile",
-    }]}}})
+    config = json.dumps(
+        {
+            "services": {
+                "caddy": {
+                    "volumes": [
+                        {
+                            "type": "bind",
+                            "source": str(live),
+                            "target": "/etc/caddy/Caddyfile",
+                        }
+                    ]
+                }
+            }
+        }
+    )
     result = _run(tmp_path, args=["--apply"], live_caddy=live, compose_config=config)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "applied:" in result.stdout

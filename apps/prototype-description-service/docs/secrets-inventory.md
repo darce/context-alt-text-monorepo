@@ -67,12 +67,18 @@ rate-limit / CORS knobs (`RECOGNITION_RATE_LIMIT_*`, `RECOGNITION_MAX_PAGE_SIZE`
 **Canonical issuer of record:** the **OCI/prod `--env prod` tenant DB** is the
 source of truth for real customer keys. Key issuers today: prod `/admin`
 (tailnet-bound; the admin compose overlay is prod-only), `make admin-oci-mint`
-(prod api container, no token), `make provision-customer`, and in-container
-`python -m scripts.manage_api_keys --env prod ...` on any VM stack (`--env prod`
-is the CLI's DSN-host guard label, not the target env; `infra/oci/README.md`
-reset step 8). Each VM stack has its own DB and keys; a pgdata reset orphans
-them. `make dev-mint-key` and the local `admin-dev` console mint **local test
-fixtures only** — never real tenants.
+(prod API container, no token), `make provision-customer`, and the in-container
+`manage_api_keys` CLI. In each VM API container, pass the exact stack label as
+`--env` (`prod`, `staging`, `dev`, or `dev-fir`); the stack's `.env` supplies
+the matching runtime `ACX_ENV` through Compose's `env_file`. `ACX_ENV` here is
+the container setting, distinct from the operator's Make `ENV` selector. The
+CLI accepts the Compose `postgres` DSN host only with a matching runtime
+environment for non-production stacks, while production still rejects
+loopback DSNs and local remains local-only. If `ACX_ENV` is unset, the strict
+legacy DSN checks apply. See reset step 8 in `infra/oci/README.md`. Each VM
+stack has its own DB and keys; a pgdata reset orphans them. Mint non-production
+keys in their own stack only. `make dev-mint-key` and the local `admin-dev`
+console mint **local test fixtures only** — never real tenants.
 
 **Allowlist removed (decision `#1882`):** `RECOGNITION_ALLOWED_API_KEYS` /
 `dev_api_keys` is gone from runtime code and every template (Phase 1 Slice 3
@@ -168,7 +174,7 @@ widens the blast radius of one leak to every env; CARD-10).
 |---|---|---|
 | DB password | `ALTER ROLE <POSTGRES_USER> PASSWORD '<new>'` in the env's postgres container, then set the same value in `POSTGRES_PASSWORD`, `POSTGRES_DSN` and `POSTGRES_SYNC_DSN`, then `systemctl restart acx-<env>` | New Vault secret version, then `ALTER ROLE`, then restart; see `infra/oci/vault-instance-principal-runbook.md` § 5 |
 | `RECOGNITION_ADMIN_TOKEN` | Edit the value (≥32 chars), restart | New Vault secret version, restart |
-| Tenant API keys | Not in any env file. `/admin` exists only on prod, so revoke/re-mint with `python -m scripts.manage_api_keys --env prod ...` inside the stack's api container (`infra/oci/README.md` reset step 8); a pgdata reset orphans keys | prod `/admin`, `make admin-oci-mint`, or `manage_api_keys` in the prod api container; target: `/portal` rotate/revoke (APP-1) |
+| Tenant API keys | Not in any env file. `/admin` exists only on prod; revoke/re-mint with `manage_api_keys --env <stack-env>` inside the target stack's API container, where `<stack-env>` exactly matches its runtime `ACX_ENV` (`prod`, `staging`, `dev`, or `dev-fir`; see `infra/oci/README.md` reset step 8). A pgdata reset orphans keys. | prod `/admin`, `make admin-oci-mint`, or `manage_api_keys --env prod` in the prod API container; target: `/portal` rotate/revoke (APP-1) |
 | `POLAR_WEBHOOK_SECRET` / `POLAR_ACCESS_TOKEN` | env value, restart | Vault secret mapped in `RECOGNITION_VAULT_SECRET_MAP`, new version + restart; map before enabling `RECOGNITION_PORTAL_ENABLED` |
 | `OCIR_AUTH_TOKEN` | — | `make ocir-token-rotate` |
 

@@ -297,21 +297,45 @@ docker compose -f docker-compose.caddy.yml exec -T caddy \
   sha256sum /etc/caddy/Caddyfile
 ```
 
-If the hashes differ, recreate Caddy to refresh its bind mount, then reload:
+If the hashes differ, recreate Caddy to refresh its bind mount, wait for its
+admin endpoint with the deployment script's bounded probe, then reload:
 
 ```bash
-docker compose -f docker-compose.caddy.yml \
-  -f /opt/acx-backend/app/docker-compose.app.yml up -d --force-recreate --no-deps caddy
-docker compose -f docker-compose.caddy.yml \
-  -f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy \
-  caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
-sha256sum /opt/acx-backend/Caddyfile
-docker compose -f docker-compose.caddy.yml exec -T caddy \
-  sha256sum /etc/caddy/Caddyfile
-/usr/local/bin/app-portal-health-check
+(
+  set -euo pipefail
+  docker compose -f docker-compose.caddy.yml \
+    -f /opt/acx-backend/app/docker-compose.app.yml up -d --force-recreate --no-deps caddy
+  ready=0
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if docker compose -f docker-compose.caddy.yml \
+      -f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy \
+      wget -q -T 1 -O /dev/null http://127.0.0.1:2019/config/; then
+      ready=1
+      break
+    fi
+    if [ "$attempt" -lt 10 ]; then
+      sleep 1
+    fi
+  done
+  if [ "$ready" -ne 1 ]; then
+    echo 'STOP: Caddy admin endpoint not ready after 10 attempts; refusing reload/verification; follow frontend back-out' >&2
+    exit 1
+  fi
+  docker compose -f docker-compose.caddy.yml \
+    -f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy \
+    caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+  sha256sum /opt/acx-backend/Caddyfile
+  docker compose -f docker-compose.caddy.yml exec -T caddy \
+    sha256sum /etc/caddy/Caddyfile
+  /usr/local/bin/app-portal-health-check
+)
 ```
 
-Recheck both hashes and health after recovery. If the hashes still differ or
+The subshell stops on recreation/reload failure or readiness exhaustion, before
+hash/health verification. The probe uses container-local BusyBox `wget`, a
+one-second request timeout, and at most nine one-second pauses between ten
+attempts. On exhaustion, follow frontend back-out. Recheck both hashes and
+health after recovery. If the hashes still differ or
 health fails, follow the [frontend back-out](#frontend-back-out) below before
 declaring the apply verified.
 
@@ -486,14 +510,34 @@ first deployment with both artifacts absent, and either mixed prior state:
     rm -f -- /opt/acx-backend/app/docker-compose.app.yml
   fi
   cd /opt/acx-backend
+  compose=(docker compose -f docker-compose.caddy.yml)
   if [ "$restore_overlay" -eq 1 ]; then
+    compose+=(-f /opt/acx-backend/app/docker-compose.app.yml)
     docker compose -f docker-compose.caddy.yml \
       -f /opt/acx-backend/app/docker-compose.app.yml up -d --force-recreate --no-deps caddy
+  else
+    docker compose -f docker-compose.caddy.yml up -d --force-recreate --no-deps caddy
+  fi
+  ready=0
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if "${compose[@]}" exec -T caddy wget -q -T 1 -O /dev/null \
+      http://127.0.0.1:2019/config/; then
+      ready=1
+      break
+    fi
+    if [ "$attempt" -lt 10 ]; then
+      sleep 1
+    fi
+  done
+  if [ "$ready" -ne 1 ]; then
+    echo 'STOP: Caddy admin endpoint not ready after 10 attempts; restored files retained; refusing reload; investigate Caddy startup before retry' >&2
+    exit 1
+  fi
+  if [ "$restore_overlay" -eq 1 ]; then
     docker compose -f docker-compose.caddy.yml \
       -f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy \
       caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
   else
-    docker compose -f docker-compose.caddy.yml up -d --force-recreate --no-deps caddy
     docker compose -f docker-compose.caddy.yml exec -T caddy \
       caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
   fi
@@ -501,29 +545,19 @@ first deployment with both artifacts absent, and either mixed prior state:
 ```
 
 The block reapplies the prior compose overlay and reloads Caddy only after every
-guard and the full restore succeed. With a prior overlay, these are the commands:
-
-```bash
-cd /opt/acx-backend
-docker compose -f docker-compose.caddy.yml \
-  -f /opt/acx-backend/app/docker-compose.app.yml up -d --force-recreate --no-deps caddy
-docker compose -f docker-compose.caddy.yml \
-  -f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy \
-  caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
-```
+guard, the full restore, and bounded admin readiness polling succeed. With a prior
+overlay, it uses both compose files for recreation, probing, and reload. As in
+fix-forward, it attempts the container-local admin probe up to ten times with a
+one-second request timeout and at most nine one-second pauses. Exhaustion prints
+STOP and leaves the restored files in place without reloading Caddy; investigate
+Caddy startup before retrying, and do not declare recovery verified.
 
 If there was no prior overlay (first deployment), automatic rollback uses its
 activation journal's recorded absence. Manual rollback uses the durable validated
 absence markers even after a successful apply has cleared that journal. With both
 markers it removes the newly installed overlay and frontend directory after all
-guards pass, restores the Caddyfile in place, and uses the base compose file alone:
-
-```bash
-cd /opt/acx-backend
-docker compose -f docker-compose.caddy.yml up -d --force-recreate --no-deps caddy
-docker compose -f docker-compose.caddy.yml exec -T caddy \
-  caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
-```
+guards pass, restores the Caddyfile in place, and uses the base compose file alone
+for recreation, the same bounded readiness probe, and reload in the block above.
 
 Failed validation never replaces the live files, so rollback is only needed
 after activation has started.

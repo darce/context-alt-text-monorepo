@@ -43,9 +43,9 @@ def _manifest_root(
     portal = root / "manifest.d" / "60-app-portal.toml"
     text = portal.read_text(encoding="utf-8")
     publishable_key_values = re.compile(
-        r'(?ms)(?P<table>^\[\[var\]\]\n'
+        r"(?ms)(?P<table>^\[\[var\]\]\n"
         r'(?:(?!^\[\[var\]\]).)*?^name = "VITE_CLERK_PUBLISHABLE_KEY"\n'
-        r'(?:(?!^\[\[var\]\]).)*?)'
+        r"(?:(?!^\[\[var\]\]).)*?)"
         r'(?P<local>^values = \{ local = "[^"]+")'
         r'(?:, prod = "[^"]+")?(?P<close> \})$'
     )

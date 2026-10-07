@@ -68,15 +68,9 @@ def _write_manifest(
         entries = f'{entries.rstrip()}{separator}prod = "{publishable_key}"'
 
     updated_values_line = values_line.group("prefix") + entries + values_line.group("suffix")
-    updated_table, values_count = values_pattern.subn(
-        lambda _: updated_values_line, publishable_table.group(), count=1
-    )
+    updated_table, values_count = values_pattern.subn(lambda _: updated_values_line, publishable_table.group(), count=1)
     assert values_count == 1, "expected to update the publishable-key values line exactly once"
-    portal_text = (
-        portal_text[: publishable_table.start()]
-        + updated_table
-        + portal_text[publishable_table.end() :]
-    )
+    portal_text = portal_text[: publishable_table.start()] + updated_table + portal_text[publishable_table.end() :]
     portal_text = portal_text.replace(
         'values = { local = "https://saved-frog-4170.clerk.accounts.dev", prod = "https://clerk.altcontext.com" }',
         f'values = {{ local = "https://saved-frog-4170.clerk.accounts.dev", prod = "{fapi}" }}',

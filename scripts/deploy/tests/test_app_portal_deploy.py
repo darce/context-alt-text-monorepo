@@ -3175,6 +3175,8 @@ def test_documented_rollback_refuses_invalid_absence_evidence_without_mutation(
             marker.symlink_to(target)
         elif fault == "dangling-symlink":
             marker.symlink_to(tmp_path / "missing-marker")
+    # A prior deployment leaves this lock behind; refusal must preserve its inode and bytes.
+    (app / "activation.journal.lock").write_text("persistent deployment lock\n")
     before = _rollback_tree_state(backend)
     result = _run_documented_rollback(tmp_path)
     assert result.returncode != 0, result.stdout + result.stderr
@@ -3274,6 +3276,8 @@ def test_documented_rollback_guards_live_destinations_before_any_mutation(
         path.write_text("keep live file" if fault == "file" else "")
     else:
         os.mkfifo(path)
+    # The unsafe-parent cases above must refuse before opening or creating a lock.
+    (app / "activation.journal.lock").write_text("persistent deployment lock\n")
     before = _rollback_tree_state(backend)
     result = _run_documented_rollback(tmp_path)
     assert result.returncode != 0, result.stdout + result.stderr
@@ -3282,6 +3286,46 @@ def test_documented_rollback_guards_live_destinations_before_any_mutation(
     assert not (tmp_path / "rollback-commands.log").exists()
     if fault == "symlink":
         assert target.read_text() == "keep target"
+
+
+@pytest.mark.parametrize("refusal", ["invalid-absence", "unsafe-destination"])
+def test_documented_rollback_first_lock_creation_preserves_sources_and_retry_lock(tmp_path: Path, refusal: str) -> None:
+    backend = tmp_path / "opt" / "acx-backend"
+    app = backend / "app"
+    rollback = app / "rollback"
+    rollback.mkdir(parents=True)
+    (backend / "Caddyfile").write_text("live caddy")
+    _prior_www(tmp_path)
+    (app / "docker-compose.app.yml").write_text("live overlay")
+    (rollback / "Caddyfile.10").write_text("prior caddy")
+    for kind in ("www", "overlay"):
+        (rollback / f"absent-{kind}.10").write_text(f"app-portal-absent-{kind}-v1\n")
+    if refusal == "invalid-absence":
+        (rollback / "absent-www.10").write_text("unvalidated absence\n")
+    else:
+        shutil.rmtree(app / "www")
+        (app / "www").symlink_to(tmp_path / "missing-frontend")
+    lock = app / "activation.journal.lock"
+    assert not lock.exists()
+    before = _rollback_tree_state(backend)
+
+    result = _run_documented_rollback(tmp_path)
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "STOP:" in result.stderr and "refusing restore" in result.stderr
+    info = lock.lstat()
+    assert stat.S_ISREG(info.st_mode)
+    expected = before | {"app/activation.journal.lock": (info.st_mode, info.st_ino, b"")}
+    assert _rollback_tree_state(backend) == expected
+    assert not (tmp_path / "rollback-commands.log").exists()
+    # Keep the inode open across a retry so unlink/recreate cannot reuse it unnoticed.
+    with lock.open("rb") as retained_lock:
+        retried = _run_documented_rollback(tmp_path)
+        assert retried.returncode != 0, retried.stdout + retried.stderr
+        assert "STOP:" in retried.stderr and "refusing restore" in retried.stderr
+        assert lock.stat().st_ino == os.fstat(retained_lock.fileno()).st_ino
+        assert _rollback_tree_state(backend) == expected
+        assert not (tmp_path / "rollback-commands.log").exists()
 
 
 def test_apply_refuses_filesystem_root_paths(tmp_path: Path) -> None:

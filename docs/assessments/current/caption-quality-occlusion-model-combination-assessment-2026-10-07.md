@@ -26,6 +26,19 @@ The labels below distinguish **observed code** (O), **existing recorded measurem
 
 The model cards and the registry establish what is being compared, not a caption-quality ranking. Existing Qwen bake-off payload sizes and the repository's older CPU detection timing remain historical context; neither is a new Qwen3.8 quality or caption-latency measurement.
 
+### Optional Qwen3.8 quantization comparisons
+
+The publisher's [immutable Qwen3.8 artifact tree at the registered pin](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/tree/1cff334a4a228324d4ee1f76d55d372588f0d556) lists these displayed artifact sizes. UD-Q4_K_XL remains the only registered challenger; the other quant arms are proposals.
+
+| Quant arm | Pinned weight artifact size | Candidate purpose and limit |
+|---|---:|---|
+| UD-Q3_K_XL | 13.4 GB | Proposed memory-budget arm; test target-task numerical regressions. |
+| UD-Q4_K_XL | 17.9 GB | Registered first challenger; keep its pinned recipe as the comparison anchor. |
+| UD-Q5_K_XL | 20.2 GB | Proposed higher-precision comparison if headroom permits; no monotonic accepted-caption quality gain is promised. |
+| UD-Q6_K_XL | 25.9 GB | Proposed larger-memory or offload experiment only if the hardware budget permits; not a default. |
+
+These are publisher-displayed artifact sizes, not measured VRAM or downloaded-hash results. On a nominal 24 GB GPU, Q5 needs explicit headroom profiling and Q6's weights alone exceed the budget; also account for the 928 MB projector, vision activations, runtime/KV state, and concurrency. Offload can add latency. No speed or caption-quality effect has been measured or is guaranteed by a smaller GGUF, and higher precision cannot restore face pixels hidden by masks or sunglasses.
+
 ## What the checked-in pipeline currently does
 
 These are bounded observations from direct reads of the source in this checkout; they do not establish a measured failure rate.

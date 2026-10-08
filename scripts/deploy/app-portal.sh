@@ -1200,8 +1200,11 @@ copy_file_in_place() {
 }
 
 write_activation_journal() {
+  guard_dest_path ROLLBACK_DIR "$ROLLBACK_DIR" dir
+  guard_dest_path ACTIVATION_JOURNAL "$ACTIVATION_JOURNAL" file
   _phase="$1"
   _tmp="${ACTIVATION_JOURNAL}.new.$$"
+  guard_dest_path _tmp "$_tmp" file
   if ! (
     umask 077
     printf 'version=2\nphase=%s\ncaddyfile=%s\napp_www=%s\noverlay=%s\ncaddy_compose=%s\nrollback_caddy=%s\nrollback_www=%s\nrollback_overlay=%s\n' \
@@ -1261,7 +1264,7 @@ load_activation_journal() {
   ROLLBACK_WWW="$JOURNAL_VALUE"
   read_journal_field rollback_overlay || { exec 3<&-; return 1; }
   ROLLBACK_OVERLAY="$JOURNAL_VALUE"
-  if IFS= read -r _journal_line <&3; then
+  if IFS= read -r _journal_line <&3 || [ -n "$_journal_line" ]; then
     exec 3<&-
     echo "ERROR: extra data in activation journal: ${ACTIVATION_JOURNAL}" >&2
     return 1
@@ -1269,7 +1272,7 @@ load_activation_journal() {
   exec 3<&-
 
   case "$JOURNAL_PHASE" in
-    prepared|caddy_promoted|www_promoted|overlay_promoted|restored) ;;
+    snapshotting|prepared|caddy_promoted|www_promoted|overlay_promoted|restored) ;;
     *) echo "ERROR: invalid activation journal phase: ${JOURNAL_PHASE}" >&2; return 1 ;;
   esac
   if [ "$JOURNAL_CADDYFILE" != "$CADDYFILE" ] || [ "$JOURNAL_WWW" != "$APP_WWW" ] || [ "$JOURNAL_OVERLAY" != "$OVERLAY_DEST" ] || [ "$JOURNAL_CADDY_COMPOSE" != "$CADDY_COMPOSE" ]; then
@@ -1292,6 +1295,16 @@ load_activation_journal() {
     echo "ERROR: invalid overlay snapshot path in activation journal" >&2
     return 1
   fi
+  # Before snapshots exist, record the entire planned set, including paths
+  # whose live inputs are absent. Never infer recovery inputs from partial copies.
+  if [ "$JOURNAL_PHASE" = snapshotting ]; then
+    if [ "$ROLLBACK_WWW" = "-" ] || [ "$ROLLBACK_OVERLAY" = "-" ]; then
+      echo "ERROR: snapshotting journal must record every planned snapshot path" >&2
+      return 1
+    fi
+    guard_failed_snapshot_set
+    return 0
+  fi
   # Restoration and reload are durable before this phase is published. Its
   # snapshots may already be partly removed; recovery only retries cleanup.
   if [ "$JOURNAL_PHASE" = restored ]; then
@@ -1313,8 +1326,42 @@ load_activation_journal() {
 
 clear_activation_journal() {
   guard_dest_path ROLLBACK_DIR "$ROLLBACK_DIR" dir
+  guard_dest_path ACTIVATION_JOURNAL "$ACTIVATION_JOURNAL" file
   rm -f "$ACTIVATION_JOURNAL" "${ACTIVATION_JOURNAL}.new."*
   sync_path "$APP_ROOT"
+}
+
+guard_failed_snapshot_set() {
+  guard_dest_path ROLLBACK_DIR "$ROLLBACK_DIR" dir
+  local _failed_stamp="${ROLLBACK_CADDY##*.}" _snapshot _snapshot_prefix
+  for _snapshot_prefix in Caddyfile www docker-compose.app.yml absent-www absent-overlay; do
+    _snapshot="${ROLLBACK_DIR}/${_snapshot_prefix}.${_failed_stamp}"
+    if [ "$_snapshot_prefix" = www ]; then
+      guard_dest_path _snapshot "$_snapshot" dir
+    else
+      guard_dest_path _snapshot "$_snapshot" file
+    fi
+  done
+}
+
+cleanup_failed_snapshot_set() {
+  # Both snapshotting and restored recovery tolerate a partly deleted set.
+  # Validate all entries before cleanup, then recheck ancestors and each entry
+  # immediately before deletion. Never reclaim any other timestamp here.
+  guard_failed_snapshot_set
+  local _failed_stamp="${ROLLBACK_CADDY##*.}" _snapshot _snapshot_prefix
+  for _snapshot_prefix in Caddyfile www docker-compose.app.yml absent-www absent-overlay; do
+    guard_dest_path ROLLBACK_DIR "$ROLLBACK_DIR" dir
+    _snapshot="${ROLLBACK_DIR}/${_snapshot_prefix}.${_failed_stamp}"
+    if [ "$_snapshot_prefix" = www ]; then
+      guard_dest_path _snapshot "$_snapshot" dir
+    else
+      guard_dest_path _snapshot "$_snapshot" file
+    fi
+    rm -rf -- "$_snapshot" || return 1
+  done
+  sync_path "$ROLLBACK_DIR" || return 1
+  clear_activation_journal
 }
 
 finish_activation_rollback() {
@@ -1324,16 +1371,7 @@ finish_activation_rollback() {
   # cleanup failure resumes idempotently without needing deleted snapshots.
   guard_dest_path ROLLBACK_DIR "$ROLLBACK_DIR" dir
   write_activation_journal restored || return 1
-  local _failed_stamp="${ROLLBACK_CADDY##*.}"
-  # Recheck after the journal durability barrier, immediately before deletion.
-  guard_dest_path ROLLBACK_DIR "$ROLLBACK_DIR" dir
-  rm -rf -- "${ROLLBACK_DIR}/Caddyfile.${_failed_stamp}" \
-    "${ROLLBACK_DIR}/www.${_failed_stamp}" \
-    "${ROLLBACK_DIR}/docker-compose.app.yml.${_failed_stamp}" \
-    "${ROLLBACK_DIR}/absent-www.${_failed_stamp}" \
-    "${ROLLBACK_DIR}/absent-overlay.${_failed_stamp}" || return 1
-  sync_path "$ROLLBACK_DIR" || return 1
-  clear_activation_journal
+  cleanup_failed_snapshot_set
 }
 
 restore_from_rollback() {
@@ -1390,6 +1428,12 @@ recover_interrupted_activation() {
     return 1
   fi
   echo "recovering interrupted activation from ${ACTIVATION_JOURNAL}"
+  if [ "$JOURNAL_PHASE" = snapshotting ]; then
+    # No promotion was allowed before prepared. Only discard the planned set;
+    # do not copy snapshots back, recreate Compose, or reload the live edge.
+    cleanup_failed_snapshot_set
+    return $?
+  fi
   if [ "$JOURNAL_PHASE" != restored ] && ! restore_from_rollback; then
     return 1
   fi
@@ -1799,6 +1843,26 @@ done
 ROLLBACK_CADDY="${ROLLBACK_DIR}/Caddyfile.${ts}"
 ROLLBACK_WWW="${ROLLBACK_DIR}/www.${ts}"
 ROLLBACK_OVERLAY="${ROLLBACK_DIR}/docker-compose.app.yml.${ts}"
+activation_fail() {
+  echo "ERROR: ${1:-activation step failed}" >&2
+  trap - ERR
+  # Let one recovery finish coherently instead of reentering it on another
+  # disconnect or interrupt. SIGKILL/power loss still resumes from the journal.
+  trap '' HUP INT TERM
+  if [ -e "$ACTIVATION_JOURNAL" ] || [ -L "$ACTIVATION_JOURNAL" ]; then
+    if ! recover_interrupted_activation; then
+      echo "ERROR: activation rollback is incomplete; journal retained for next run" >&2
+    fi
+  fi
+  exit 5
+}
+
+trap 'activation_fail "interrupted during activation"' HUP INT TERM
+trap 'activation_fail "activation step failed"' ERR
+
+# Publish and sync intent BEFORE any snapshot or absence marker is created.
+# A failure here has no live changes and no unjournaled snapshot set.
+write_activation_journal snapshotting
 cp -a "$CADDYFILE" "$ROLLBACK_CADDY"
 if [ -d "$APP_WWW" ]; then
   cp -a "$APP_WWW" "$ROLLBACK_WWW"
@@ -1817,22 +1881,6 @@ else
 fi
 sync_path "$ROLLBACK_DIR"
 sync_path "$APP_ROOT"
-
-activation_fail() {
-  echo "ERROR: ${1:-activation step failed}" >&2
-  trap - ERR INT TERM
-  if ! restore_from_rollback; then
-    echo "ERROR: activation rollback is incomplete; journal retained for next run" >&2
-    exit 5
-  fi
-  if ! finish_activation_rollback; then
-    echo "ERROR: activation rollback completed but snapshot/journal cleanup failed" >&2
-  fi
-  exit 5
-}
-
-trap 'activation_fail "interrupted during activation"' INT TERM
-trap 'activation_fail "activation step failed"' ERR
 
 write_activation_journal prepared
 if ! copy_file_in_place "$STAGED_CADDY" "$CADDYFILE"; then
@@ -1867,7 +1915,7 @@ if ! run_health; then
 fi
 
 clear_activation_journal
-trap - ERR INT TERM
+trap - ERR HUP INT TERM
 if ! reclaim_rollback_snapshots; then
   echo "ERROR: activation succeeded but rollback snapshot reclamation failed" >&2
   exit 6

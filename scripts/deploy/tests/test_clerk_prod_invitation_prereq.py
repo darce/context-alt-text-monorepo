@@ -161,6 +161,7 @@ def _assert_deploy_launch_contract(runbook: str) -> None:
     checklist = " ".join(checklist.split())
     assert "service release must be deployed and its invitation CLI verified" in checklist
     assert "A restart alone does not install code" in checklist
+    assert "; restart the production API;" not in checklist, "redundant restart in launch checklist"
     assert "Materialization and restart are the remaining operator steps" not in " ".join(runbook.split())
 
     blocks = re.findall(r"```bash\n(.*?)```", activation, re.DOTALL)
@@ -168,7 +169,6 @@ def _assert_deploy_launch_contract(runbook: str) -> None:
         "make env-materialize ENV=prod TARGET=svc-vm\n",
         "make env-materialize ENV=prod TARGET=svc-vm APPLY=1 CONFIRM=prod\n",
         "make deploy-prod CONFIRM=PROMOTE\n",
-        "sudo systemctl restart acx-prod\n",
         CLI_HELP_COMMAND,
         "https://api.altcontext.com/portal/me",
     )
@@ -179,8 +179,14 @@ def _assert_deploy_launch_contract(runbook: str) -> None:
         positions.append(matches[0])
     assert positions == sorted(set(positions)), "materialize/deploy/CLI/API order is unsafe"
     assert runbook.index(CLI_HELP_COMMAND) < runbook.index("scripts/deploy/app-portal.sh --apply")
+    assert "systemctl restart acx-prod" not in activation, "redundant post-deploy restart bypasses verification"
+    backend_backout = runbook.split("### Backend back-out", 1)[1]
+    backend_backout = backend_backout.split("### Recover an interrupted frontend activation", 1)[0]
+    assert "sudo systemctl restart acx-prod" in backend_backout
     normalized = " ".join(activation.split())
     for required in (
+        "restarts `acx-prod` with the materialized environment",
+        "CLI check and the HTTP 401 probe below follow that verification",
         "preflight_env_manifest",
         "materialize_remote.sh prod svc-vm --check",
         "refuses runtime drift or missing host-only secrets",
@@ -244,6 +250,23 @@ def test_deploy_runbook_pins_reject_deploy_before_materialization() -> None:
     mutant = runbook.replace(deploy_block, "").replace(materialize_block, deploy_block + "\n" + materialize_block)
     with pytest.raises(AssertionError, match="materialize/deploy/CLI/API order is unsafe"):
         _assert_deploy_launch_contract(mutant)
+
+
+def test_deploy_runbook_pins_reject_redundant_restart_after_verified_deploy() -> None:
+    runbook = DEPLOY_RUNBOOK.read_text(encoding="utf-8")
+    deploy_block = "```bash\nmake deploy-prod CONFIRM=PROMOTE\n```"
+    mutant = runbook.replace(deploy_block, deploy_block + "\n```bash\nsudo systemctl restart acx-prod\n```")
+    with pytest.raises(AssertionError, match="redundant post-deploy restart"):
+        _assert_deploy_launch_contract(mutant)
+
+
+def test_deploy_target_restarts_and_verifies_before_operator_checks() -> None:
+    source = (REPO_ROOT / "scripts/deploy/recognition-service.sh").read_text(encoding="utf-8")
+    deploy = source.split("do_deploy() {", 1)[1].split("\ndo_promote() {", 1)[0]
+    assert '_ship_selected_env "$env" aggregate' in deploy
+    ship = source.split("_ship_selected_env() {", 1)[1].split("\ndo_deploy() {", 1)[0]
+    assert ship.index('do_restart "$env"') < ship.index('do_verify "$env"')
+    assert 'if [[ "${completion}" == "aggregate" ]]' in ship
 
 
 @pytest.mark.parametrize("cli_status,missing_directory", [(0, False), (1, False), (127, False), (0, True)])

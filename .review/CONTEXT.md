@@ -1,8 +1,8 @@
 # Orchestrator review context
 
-- Base ref: `a331a10bd3e5b5e0c2f6ea40f2d6dccf5b45524d` (`a331a10bd3e5b5e0c2f6ea40f2d6dccf5b45524d`)
-- Tip ref: `a9c1081bb1071a330e0ada1ed93c29494f12e3ba` (`a9c1081bb1071a330e0ada1ed93c29494f12e3ba`)
-- Merge base: `a331a10bd3e5b5e0c2f6ea40f2d6dccf5b45524d`
-- Scope: complete `a331a10bd3e5b5e0c2f6ea40f2d6dccf5b45524d..a9c1081bb1071a330e0ada1ed93c29494f12e3ba` diff; paths are derived, never requested by a brief
+- Base ref: `28bc888afe073943ae9685c1bcee27a123ffef6b` (`28bc888afe073943ae9685c1bcee27a123ffef6b`)
+- Tip ref: `0fa6b1946f8bc1602155512da283099abbb6903f` (`0fa6b1946f8bc1602155512da283099abbb6903f`)
+- Merge base: `28bc888afe073943ae9685c1bcee27a123ffef6b`
+- Scope: complete `28bc888afe073943ae9685c1bcee27a123ffef6b..0fa6b1946f8bc1602155512da283099abbb6903f` diff; paths are derived, never requested by a brief
 - Redaction policy: `sha-subject-only+strip-index-blob-oids-v1`
 - Resolved backend trust tier: `trusted_remote`

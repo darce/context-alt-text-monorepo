@@ -8,7 +8,7 @@ section = "API security"
 example = "1"
 doc = 'domain: portal auth config | source: service operator | consumer: apps/prototype-description-service/api/main.py:create_app'
 required = false
-values = { local = "1", dev = "1" }
+values = { local = "1", dev = "1", prod = "1" }
 
 [[var]]
 name = "ACX_CLERK_ISSUER"

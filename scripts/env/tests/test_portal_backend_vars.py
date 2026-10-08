@@ -95,7 +95,7 @@ def test_portal_backend_values_render_for_local_dev_and_prod():
 
     prod = {name: vars_by_name[name].values.get("prod") for name in PORTAL_CONSUMERS}
     assert prod == {
-        "RECOGNITION_PORTAL_ENABLED": None,
+        "RECOGNITION_PORTAL_ENABLED": "1",
         "ACX_CLERK_ISSUER": "https://clerk.altcontext.com",
         "ACX_CLERK_JWKS_URL": "https://clerk.altcontext.com/.well-known/jwks.json",
         "ACX_CLERK_AUDIENCE": "altcontext-portal",
@@ -111,7 +111,11 @@ def test_portal_backend_values_render_for_local_dev_and_prod():
         assert prod[name].startswith("https://")
 
     assert all("staging" not in vars_by_name[name].values for name in PORTAL_CONSUMERS)
-    assert vars_by_name["RECOGNITION_PORTAL_ENABLED"].values == {"local": "1", "dev": "1"}
+    assert vars_by_name["RECOGNITION_PORTAL_ENABLED"].values == {
+        "local": "1",
+        "dev": "1",
+        "prod": "1",
+    }
 
 
 def test_portal_backend_dev_svc_vm_renders_expected_values():

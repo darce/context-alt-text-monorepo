@@ -46,10 +46,37 @@ def test_app_portal_targets_are_public_builds_and_local_key_renders():
     assert "VITE_CLERK_PUBLISHABLE_KEY=pk_test_" in rendered
 
 
-def test_app_portal_prod_build_requires_publishable_key():
+def test_app_portal_prod_build_renders_live_publishable_key():
     manifest_module = load_module("manifest")
     render = load_module("render_env")
     manifest = manifest_module.load_manifest(_repo_env_root())
+    rendered = render.render_target(manifest, "app-portal-build", "prod")
+
+    assert "VITE_CLERK_PUBLISHABLE_KEY=pk_live_" in rendered
+    assert "VITE_CLERK_FAPI=https://clerk.altcontext.com" in rendered
+    assert "pk_test_" not in rendered
+
+
+def test_app_portal_prod_build_requires_publishable_key(tmp_path: Path):
+    manifest_module = load_module("manifest")
+    render = load_module("render_env")
+    root = _copy_env_root(tmp_path)
+    app_portal_fragment = root / "manifest.d/60-app-portal.toml"
+    text = app_portal_fragment.read_text(encoding="utf-8")
+    configured_value = (
+        'values = { local = "pk_test_c2F2ZWQtZnJvZy00MTcwLmNsZXJrLmFjY291bnRzLmRldiQ", '
+        'prod = "pk_live_Y2xlcmsuYWx0Y29udGV4dC5jb20k" }'
+    )
+    assert text.count(configured_value) == 1
+    app_portal_fragment.write_text(
+        text.replace(
+            configured_value,
+            'values = { local = "pk_test_c2F2ZWQtZnJvZy00MTcwLmNsZXJrLmFjY291bnRzLmRldiQ" }',
+            1,
+        ),
+        encoding="utf-8",
+    )
+    manifest = manifest_module.load_manifest(root)
 
     with pytest.raises(manifest_module.ManifestError, match="VITE_CLERK_PUBLISHABLE_KEY: missing value for env prod"):
         render.render_target(manifest, "app-portal-build", "prod")

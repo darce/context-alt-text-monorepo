@@ -1,15 +1,108 @@
 from __future__ import annotations
 
 import io
+import json
 from pathlib import Path
 
 import pytest
 
 from conftest import load_module
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MANIFEST_ROOT = REPO_ROOT / "config/env"
+GPU_OCID = "ocid1.vaultsecret.oc1.iad." + "g" * 60
+PG_OCID = "ocid1.vaultsecret.oc1.iad." + "p" * 60
+ADMIN_OCID = "ocid1.vaultsecret.oc1.iad." + "a" * 60
+
+
+def _gpu_manifest(write_manifest, *, minted):
+    """Pin consumer switches and fake refs independently of the live mint state."""
+    return write_manifest(
+        """
+        version = 1
+        [targets.vm]
+        audience = "backend"
+        envs = ["dev", "staging", "prod"]
+        remote_paths = { dev = "/opt/acx-backend/dev/.env", staging = "/opt/acx-backend/staging/.env", prod = "/opt/acx-backend/prod/.env" }
+        sections = ["S"]
+        """,
+        **{
+            "10-consumers": f'''
+                version = 1
+                [[var]]
+                name = "RECOGNITION_SECRET_BACKEND"
+                class = "config"
+                targets = ["vm"]
+                section = "S"
+                example = "env"
+                values = {{ dev = "env", staging = "env", prod = "oci_vault" }}
+
+                [[var]]
+                name = "RECOGNITION_ADMIN_ENABLED"
+                class = "config"
+                targets = ["vm"]
+                section = "S"
+                example = "false"
+                values = {{ dev = "false", staging = "false", prod = "true" }}
+
+                [[var]]
+                name = "ACX_GPU_ENDPOINT_URL"
+                class = "config"
+                targets = ["vm"]
+                section = "S"
+                example = ""
+                values = {{ dev = "https://gpu.example.invalid", staging = "", prod = "https://gpu.example.invalid" }}
+
+                [[var]]
+                name = "RECOGNITION_VAULT_SECRET_MAP"
+                class = "config"
+                targets = ["vm"]
+                section = "S"
+                example = "{{}}"
+                derive_vault_map = true
+
+                [[var]]
+                name = "PGPASSWORD"
+                class = "secret"
+                targets = ["vm"]
+                section = "S"
+                example = ""
+                required = false
+                secret = {{ dev = "host:", staging = "host:", prod = "vault:{PG_OCID}" }}
+
+                [[var]]
+                name = "RECOGNITION_ADMIN_TOKEN"
+                class = "secret"
+                targets = ["vm"]
+                section = "S"
+                example = ""
+                required_when = {{ RECOGNITION_SECRET_BACKEND = ["env"], RECOGNITION_ADMIN_ENABLED = ["true", "1", "yes", "on"] }}
+                secret = {{ dev = "host:", staging = "host:", prod = "vault:{ADMIN_OCID}" }}
+
+                [[var]]
+                name = "ACX_GPU_ENDPOINT_API_KEY"
+                class = "secret"
+                targets = ["vm"]
+                section = "S"
+                example = ""
+                required_when = {{ RECOGNITION_SECRET_BACKEND = ["env"], ACX_GPU_ENDPOINT_URL = ["*"] }}
+                secret = {{ dev = "{"oci:" + GPU_OCID if minted else "host:"}", staging = "host:", prod = "{"vault:" + GPU_OCID if minted else "host:"}" }}
+            ''',
+            "20-postgres": "version = 1\n"
+            + "\n".join(
+                f'''
+                [[var]]
+                name = "{name}"
+                class = "secret"
+                targets = ["vm"]
+                section = "S"
+                example = ""
+                secret = {{ dev = "host:", staging = "host:", prod = "host:" }}
+                '''
+                for name in ("POSTGRES_PASSWORD", "POSTGRES_DSN", "POSTGRES_SYNC_DSN")
+            ),
+        },
+    )
 
 
 def _repo_host_requirements():
@@ -33,11 +126,63 @@ def test_repo_host_secrets_are_required_only_when_consumers_read_them():
     requirements = _repo_host_requirements()
 
     assert not any(name == "RECOGNITION_ADMIN_TOKEN" for _, _, name in requirements)
-    assert {
-        (target, env)
-        for target, env, name in requirements
-        if name == "ACX_GPU_ENDPOINT_API_KEY"
-    } == {("svc-vm", "dev")}
+    assert {(target, env) for target, env, name in requirements if name == "ACX_GPU_ENDPOINT_API_KEY"} == set()
+    # The source now records the minted refs; staging still has an unused HOST key.
+    manifest = load_module("manifest").load_manifest(MANIFEST_ROOT)
+    gpu = next(var for var in manifest.vars if var.name == "ACX_GPU_ENDPOINT_API_KEY")
+    assert {env: ref.partition(":")[0] for env, ref in gpu.secret.items()} == {
+        "dev": "oci",
+        "staging": "host",
+        "prod": "vault",
+    }
+
+
+@pytest.mark.parametrize("minted", [False, True], ids=["unminted", "minted"])
+@pytest.mark.parametrize("env", ["dev", "staging", "prod"])
+def test_gpu_host_requirement_tracks_source_and_consumer(write_manifest, minted, env):
+    manifest_module = load_module("manifest")
+    render = load_module("render_env")
+    manifest = manifest_module.load_manifest(_gpu_manifest(write_manifest, minted=minted))
+    variables = render._target_vars(manifest, "vm")
+    postgres_names = {"POSTGRES_PASSWORD", "POSTGRES_DSN", "POSTGRES_SYNC_DSN"}
+    host_required = {
+        var.name
+        for var in variables
+        if var.secret.get(env) == "host:" and render.host_secret_required(var, variables, env)
+    }
+    gpu_required = not minted and env == "dev"
+    assert host_required == postgres_names | ({"ACX_GPU_ENDPOINT_API_KEY"} if gpu_required else set())
+
+    calls = []
+
+    def resolve(name, ref):
+        # No OCI process, operator credentials, or secret bytes are used.
+        assert (name, ref) == ("ACX_GPU_ENDPOINT_API_KEY", f"oci:{GPU_OCID}")
+        calls.append((name, ref))
+        return "test-placeholder"
+
+    host_lines = {name: [f"{name}=test-placeholder"] for name in postgres_names}
+    if gpu_required:
+        with pytest.raises(manifest_module.ManifestError, match="ACX_GPU_ENDPOINT_API_KEY: host secret unavailable"):
+            render.render_target(manifest, "vm", env, host_lines=host_lines, resolve=resolve)
+        host_lines["ACX_GPU_ENDPOINT_API_KEY"] = ["ACX_GPU_ENDPOINT_API_KEY=test-placeholder"]
+
+    rendered = render.render_target(manifest, "vm", env, host_lines=host_lines, resolve=resolve)
+    assignments = render.shell_assignments(rendered)
+    assert calls == ([("ACX_GPU_ENDPOINT_API_KEY", f"oci:{GPU_OCID}")] if minted and env == "dev" else [])
+    if env == "dev":
+        assert assignments["ACX_GPU_ENDPOINT_API_KEY"] == ["test-placeholder"]
+    elif minted and env == "prod":
+        assert assignments["ACX_GPU_ENDPOINT_API_KEY"] == [""]
+    else:
+        assert "ACX_GPU_ENDPOINT_API_KEY" not in assignments
+    if env == "prod":
+        expected_map = {"PGPASSWORD": PG_OCID, "RECOGNITION_ADMIN_TOKEN": ADMIN_OCID}
+        if minted:
+            expected_map["ACX_GPU_ENDPOINT_API_KEY"] = GPU_OCID
+        assert json.loads(assignments["RECOGNITION_VAULT_SECRET_MAP"][0]) == expected_map
+    else:
+        assert "RECOGNITION_ADMIN_TOKEN" not in assignments
 
 
 def test_admin_token_is_required_when_backend_and_admin_flag_enable_it(write_manifest):
@@ -91,7 +236,8 @@ def test_admin_token_is_required_when_backend_and_admin_flag_enable_it(write_man
     assert render.host_secret_required(token, variables, "dev")
 
 
-def test_staging_materialize_succeeds_without_admin_or_gpu_host_lines(tmp_path):
+@pytest.mark.parametrize("minted", [False, True], ids=["unminted", "minted"])
+def test_staging_materialize_succeeds_without_admin_or_gpu_host_lines(tmp_path, write_manifest, minted):
     materialize = load_module("materialize")
     render = load_module("render_env")
     into = "/opt/acx-backend/staging/.env"
@@ -100,7 +246,7 @@ def test_staging_materialize_succeeds_without_admin_or_gpu_host_lines(tmp_path):
     host_file.parent.mkdir(parents=True)
     host_file.write_text(
         render.HEADER_LINE
-        + "\n# materialized target=svc-vm env=staging digest=test\n"
+        + "\n# materialized target=vm env=staging digest=test\n"
         + "POSTGRES_PASSWORD=test-placeholder\n"
         + "POSTGRES_DSN='postgresql://test.invalid/db'\n"
         + "POSTGRES_SYNC_DSN='postgresql://test.invalid/db'\n",
@@ -109,9 +255,9 @@ def test_staging_materialize_succeeds_without_admin_or_gpu_host_lines(tmp_path):
     out, err = io.StringIO(), io.StringIO()
 
     result = materialize.run(
-        MANIFEST_ROOT,
+        _gpu_manifest(write_manifest, minted=minted),
         env="staging",
-        target="svc-vm",
+        target="vm",
         into=into,
         check=False,
         fs_root=fs_root,

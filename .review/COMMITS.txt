@@ -1,2 +1,4 @@
-a9c1081bb107 APP-1: land browser-integration after scoped VM verification
-79156a29f39b offload: I1 shell wires /keys /usage /claim /billing plus bounded
+0fa6b1946f8b wip(offload): caption-occlusion-research checkpoint 1
+fc33addfe8de wip(offload): caption-occlusion-research checkpoint 1
+dc9f6d341cc2 wip(offload): caption-occlusion-research checkpoint 1
+5a83721de416 offload: Added the caption/occlusion assessment and v13 FIR summary;

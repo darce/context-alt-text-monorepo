@@ -1,1333 +1,214 @@
-diff --git a/apps/app-portal/.env.example b/apps/app-portal/.env.example
---- a/apps/app-portal/.env.example
-+++ b/apps/app-portal/.env.example
-@@ -7,3 +7,10 @@ VITE_CLERK_FAPI=https://clerk.altcontext.com
+diff --git a/benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html b/benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html
+--- a/benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html
++++ b/benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html
+@@ -3,7 +3,7 @@
+ <head>
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+-<title>FIR — Decision, Task &amp; Benchmark Registers + Research Q&amp;A (2026-09-22, v12)</title>
++<title>FIR — Decision, Task &amp; Benchmark Registers + Research Q&amp;A (2026-10-07, v13)</title>
+ <style>
+ :root{--bg:#fff;--fg:#1a1d21;--mut:#5c6570;--line:#d8dde3;--card:#f6f8fa;--acc:#0b6bcb;--warn:#9a3412;--ok:#166534;--bad:#b91c1c;}
+ @media (prefers-color-scheme:dark){:root{--bg:#14171a;--fg:#e6e9ec;--mut:#9aa4af;--line:#333a42;--card:#1d2126;--acc:#5aa2e8;--warn:#f59e0b;--ok:#4ade80;--bad:#f87171;}}
+@@ -30,10 +30,12 @@ blockquote{border-left:3px solid var(--acc);margin:.6rem 0;padding:.2rem .9rem;c
+ </style>
+ </head>
+ <body><main>
+-<h1>FIR — decision, task &amp; benchmark registers, over the operator Q&amp;A <span class="tag wr">v12</span></h1>
+-<div class="sub"><b>Start at <a href="#v12">the current v12 AuraFace-v1 512D status</a> (2026-09-22).</b> v12 does <b>not</b> claim the space is usable, deployed, or quality-qualified. The <a href="#v11">2026-09-04 v11 plan</a> and the July register below are retained as history. §§1–19 are the research warrant; §0a–0e are the working surface for task decomposition and benchmarking. · 2026-07-23, revised 2026-07-28 (v5 added §19 detector training corpus; v6 reflows into registers and applies heuristics canon to the open findings — <b>rule IDs only, never a canon version</b>) · 2026-09-22 v12 adds the in-house AuraFace 512D candidate path and corrects “retrain is the only 512D route.” · FIR wave (fir-unblock) · sources: four grok web-research lanes (URL-graded JSON: <code>fir-dims-research-20260723.json</code>, <code>fir-gtm-legal-research-20260723.json</code>, <code>fir-licensing-research-20260723.json</code>, <code>fir-projects-eval-20260723.json</code>, <code>fir-umap-dcface-econ-20260723.json</code>), coordinator-verified primary pages, Golden-150 head-to-head (decision <code>fir1_buffalo_head_to_head_measured</code>), heuristics canon + <code>distilled/</code> (handbook-face-recognition, adaface, sface-synthetic-data, video-to-video-face-surveillance, bruch-vector-retrieval, zezula-similarity-search, model-cards, gender-shades, nist-frvt-demographics). <span class="tag ok">VERIFIED</span> = coordinator re-checked against the primary source. Legal sections are research summaries, <b>not legal advice</b> — counsel review before GTM.</div>
++<h1>FIR — decision, task &amp; benchmark registers, over the operator Q&amp;A <span class="tag wr">v13</span></h1>
++<div class="sub"><b>Start at <a href="#v13-caption">the current v13 caption/occlusion synthesis</a> (2026-10-07).</b> v13 adds a research-only caption/occlusion assessment; it claims <b>no measured quality or speed gain</b> and changes no serving or AuraFace activation status. Its current published-rule reference is heuristics canon <code>v0.25.6</code> (22 source files digest-verified); mutable research lexicons are not rule authority. The <a href="#v12">2026-09-22 v12 AuraFace-v1 status</a>, <a href="#v11">2026-09-04 v11 plan</a>, and the July register below remain as dated history. §§1–19 are the research warrant; §0a–0e are the working surface for task decomposition and benchmarking. · 2026-07-23, revised 2026-07-28 (v5 added §19 detector training corpus; v6 reflowed into registers using then-current rule IDs without pinning a canon version — a dated historical convention, not current guidance) · 2026-09-22 v12 adds the in-house AuraFace 512D candidate path and corrects “retrain is the only 512D route.” · 2026-10-07 v13 adds caption/occlusion model-combination research synthesis. · FIR wave (fir-unblock) · sources: four grok web-research lanes (URL-graded JSON: <code>fir-dims-research-20260723.json</code>, <code>fir-gtm-legal-research-20260723.json</code>, <code>fir-licensing-research-20260723.json</code>, <code>fir-projects-eval-20260723.json</code>, <code>fir-umap-dcface-econ-20260723.json</code>), coordinator-verified primary pages, Golden-150 head-to-head (decision <code>fir1_buffalo_head_to_head_measured</code>), heuristics canon + <code>distilled/</code> (handbook-face-recognition, adaface, sface-synthetic-data, video-to-video-face-surveillance, bruch-vector-retrieval, zezula-similarity-search, model-cards, gender-shades, nist-frvt-demographics). <span class="tag ok">VERIFIED</span> = coordinator re-checked against the primary source. Legal sections are research summaries, <b>not legal advice</b> — counsel review before GTM.</div>
  
- # Public build-time portal flag. false/0/off renders the designed unavailable screen.
- VITE_PORTAL_ENABLED=true
-+
-+# Public billing flag. Only explicit true/1/on/yes enables checkout and manage.
-+# Default is disabled. Do not invent a price, catalog, or product ID here.
-+VITE_PAYMENTS_ENABLED=false
-+
-+# Public plan code accepted by the backend catalog map. Leave blank when payments are disabled.
-+VITE_PUBLIC_PLAN_CODE=
-diff --git a/apps/app-portal/src/App.tsx b/apps/app-portal/src/App.tsx
---- a/apps/app-portal/src/App.tsx
-+++ b/apps/app-portal/src/App.tsx
-@@ -1,9 +1,19 @@
- import { ClerkProvider, SignIn, SignUp, UserButton, useAuth, useUser } from '@clerk/react';
--import { useCallback, useEffect, useRef, useState } from 'react';
-+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
- import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-+import { createPortalBillingClient } from './api/portalBilling';
-+import { createPortalClaimClient } from './api/portalClaim';
-+import { createPortalKeyClient } from './api/portalKeys';
- import { fetchPortalMe, PortalMeOutcome, type PortalMeResult } from './api/portalMe';
-+import { createPortalRequest } from './api/portalRequest';
-+import { createPortalUsageClient } from './api/portalUsage';
-+import { WordPressTestConnectionGuidance } from './components/WordPressTestConnectionGuidance';
- import { readPortalConfig, type PortalRuntimeConfig } from './config';
- import { AccountScreen } from './screens/AccountScreen';
-+import { BillingReturnScreen } from './screens/BillingReturnScreen';
-+import { BillingScreen } from './screens/BillingScreen';
-+import { ClaimScreen } from './screens/ClaimScreen';
-+import { KeysScreen } from './screens/KeysScreen';
- import { LogoutScreen } from './screens/LogoutScreen';
- import { NotAdmittedScreen } from './screens/NotAdmittedScreen';
- import { OutageScreen } from './screens/OutageScreen';
-@@ -11,6 +21,7 @@ import { SignInScreen } from './screens/SignInScreen';
- import { SignUpScreen } from './screens/SignUpScreen';
- import { SignedOutScreen } from './screens/SignedOutScreen';
- import { UnavailableScreen } from './screens/UnavailableScreen';
-+import { UsageScreen } from './screens/UsageScreen';
- 
- export type AppProps = {
-   config?: PortalRuntimeConfig;
-@@ -37,6 +48,7 @@ type AccountView =
- type LogoutView = 'idle' | 'loading' | 'error';
- 
- const CLERK_LOAD_TIMEOUT_MS = 8_000;
-+const PORTAL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
- 
- function isEmailVerified(user: ReturnType<typeof useUser>['user']): boolean {
-   const status = user?.primaryEmailAddress?.verification?.status;
-@@ -82,15 +94,45 @@ function ownedAccount(account: AccountView, owner: AccountOwner | null): Account
-   return { status: 'loading', owner };
- }
- 
-+function readAttemptId(value: string | null | undefined): string | null {
-+  if (typeof value !== 'string' || !PORTAL_UUID_RE.test(value)) {
-+    return null;
-+  }
-+  return value;
-+}
-+
-+function paymentsFromConfig(config: PortalRuntimeConfig): { paymentsEnabled: boolean; publicPlanCode: string | null } {
-+  const plan = typeof config.publicPlanCode === 'string' ? config.publicPlanCode.trim() : '';
-+  return {
-+    paymentsEnabled: config.paymentsEnabled === true,
-+    publicPlanCode: plan.length > 0 ? plan : null,
-+  };
-+}
-+
-+function SessionEscape({ userMenu, onSignOut }: { userMenu: ReactNode; onSignOut: () => void }) {
-+  return (
-+    <div className="acx-session-bar">
-+      {userMenu}
-+      <button type="button" className="acx-btn" onClick={onSignOut}>
-+        Sign out
-+      </button>
-+    </div>
-+  );
-+}
-+
- function PortalShell({
-   fetchImpl,
-   clerkLoadTimeoutMs,
-   portalMeTimeoutMs,
-+  paymentsEnabled,
-+  publicPlanCode,
-   onRetryClerk,
- }: {
-   fetchImpl: typeof fetch;
-   clerkLoadTimeoutMs: number;
-   portalMeTimeoutMs: number;
-+  paymentsEnabled: boolean;
-+  publicPlanCode: string | null;
-   onRetryClerk: () => void;
- }) {
-   const { isLoaded, isSignedIn, userId, sessionId, getToken, signOut } = useAuth();
-@@ -101,6 +143,7 @@ function PortalShell({
-   const [account, setAccount] = useState<AccountView>({ status: 'idle' });
-   const [logout, setLogout] = useState<LogoutView>('idle');
-   const [fetchEpoch, setFetchEpoch] = useState(0);
-+  const [returnAttemptId, setReturnAttemptId] = useState<string | null>(null);
-   const epochRef = useRef(0);
-   const ownerRef = useRef<AccountOwner | null>(null);
-   const logoutRef = useRef<LogoutView>('idle');
-@@ -109,8 +152,10 @@ function PortalShell({
-   const activeOwner = isSignedIn ? readOwner(userId, sessionId) : null;
-   if (activeOwner && account.status !== 'idle' && !ownersMatch(account.owner, activeOwner)) {
-     setAccount({ status: 'loading', owner: activeOwner });
-+    setReturnAttemptId(null);
-   } else if (!isSignedIn && account.status !== 'idle') {
-     setAccount({ status: 'idle' });
-+    setReturnAttemptId(null);
-   }
-   const displayAccount = ownedAccount(account, activeOwner);
- 
-@@ -119,6 +164,27 @@ function PortalShell({
-   logoutRef.current = logout;
-   getTokenRef.current = getToken;
- 
-+  const ownerUserId = activeOwner?.userId ?? '';
-+  const ownerSessionId = activeOwner?.sessionId ?? '';
-+  const request = useMemo(() => {
-+    if (!ownerUserId) {
-+      return null;
-+    }
-+    const captured = { userId: ownerUserId, sessionId: ownerSessionId };
-+    return createPortalRequest({
-+      getToken: () => getTokenRef.current(),
-+      fetchImpl,
-+      timeoutMs: portalMeTimeoutMs,
-+      owner: captured,
-+      currentOwner: () => ownerRef.current,
-+    });
-+  }, [fetchImpl, ownerSessionId, ownerUserId, portalMeTimeoutMs]);
-+
-+  const keyClient = useMemo(() => (request ? createPortalKeyClient(request) : null), [request]);
-+  const usageClient = useMemo(() => (request ? createPortalUsageClient(request) : null), [request]);
-+  const claimClient = useMemo(() => (request ? createPortalClaimClient(request) : null), [request]);
-+  const billingClient = useMemo(() => (request ? createPortalBillingClient(request) : null), [request]);
-+
-   useEffect(() => {
-     if (isLoaded) {
-       setClerkTimedOut(false);
-@@ -185,6 +251,7 @@ function PortalShell({
-   }, [fetchEpoch, fetchImpl, isLoaded, isSignedIn, logout, portalMeTimeoutMs, sessionId, user, userId]);
- 
-   const handleSignOut = useCallback(async () => {
-+    setReturnAttemptId(null);
-     setAccount({ status: 'idle' });
-     setLogout('loading');
-     setFetchEpoch((value) => value + 1);
-@@ -201,8 +268,25 @@ function PortalShell({
-     setFetchEpoch((value) => value + 1);
-   }, []);
- 
-+  const handleClaimed = useCallback(() => {
-+    if (!ownersMatch(activeOwner, ownerRef.current)) {
-+      return;
-+    }
-+    if (logoutRef.current !== 'idle') {
-+      return;
-+    }
-+    setFetchEpoch((value) => value + 1);
-+  }, [activeOwner]);
-+
-+  const signOutNow = () => void handleSignOut();
-   const userMenu = <UserButton />;
-   const path = location.pathname;
-+  const wrapPrivate = (node: ReactNode) => (
-+    <div className="acx-private-shell">
-+      <SessionEscape userMenu={userMenu} onSignOut={signOutNow} />
-+      {node}
-+    </div>
-+  );
- 
-   if (clerkTimedOut && !isLoaded) {
-     return <OutageScreen kind="clerk" onRetry={onRetryClerk} />;
-@@ -237,21 +321,30 @@ function PortalShell({
-     return <Navigate to="/" replace />;
-   }
-   if (displayAccount.status === 'email_unverified') {
--    return <NotAdmittedScreen reason="email_unverified" userMenu={userMenu} onSignOut={() => void handleSignOut()} />;
-+    return <NotAdmittedScreen reason="email_unverified" userMenu={userMenu} onSignOut={signOutNow} />;
-   }
-   if (displayAccount.status === 'not_admitted') {
--    return <NotAdmittedScreen reason="not_admitted" userMenu={userMenu} onSignOut={() => void handleSignOut()} />;
--  }
--  if (displayAccount.status === 'outage') {
-+    if (path.startsWith('/claim') && claimClient) {
-+      return wrapPrivate(
-+        <ClaimScreen
-+          key={`${displayAccount.owner.userId}:${displayAccount.owner.sessionId}`}
-+          client={claimClient}
-+          onClaimed={handleClaimed}
-+        />,
-+      );
-+    }
-     return (
--      <OutageScreen
--        kind="backend"
--        onRetry={handleRetryFetch}
-+      <NotAdmittedScreen
-+        reason="not_admitted"
-         userMenu={userMenu}
--        onSignOut={() => void handleSignOut()}
-+        onSignOut={signOutNow}
-+        onClaimAccess={() => navigate('/claim')}
-       />
-     );
-   }
-+  if (displayAccount.status === 'outage') {
-+    return <OutageScreen kind="backend" onRetry={handleRetryFetch} userMenu={userMenu} onSignOut={signOutNow} />;
-+  }
-   if (displayAccount.status === 'unauthorized') {
-     return (
-       <AccountScreen
-@@ -259,18 +352,89 @@ function PortalShell({
-         tenantId={null}
-         mode="error"
-         userMenu={userMenu}
--        onSignOut={() => void handleSignOut()}
-+        onSignOut={signOutNow}
-         onRetry={handleRetryFetch}
-       />
-     );
-   }
-+  if (displayAccount.status !== 'ok') {
-+    return (
-+      <AccountScreen
-+        personName={personName(user)}
-+        tenantId={null}
-+        mode={displayAccount.status === 'empty' ? 'empty' : 'loading'}
-+        userMenu={userMenu}
-+        onSignOut={signOutNow}
-+      />
-+    );
-+  }
-+
-+  const featureKey = `${displayAccount.owner.userId}:${displayAccount.owner.sessionId}:${displayAccount.tenantId}`;
-+  if (path.startsWith('/claim')) {
-+    return <Navigate to="/" replace />;
-+  }
-+  if (path.startsWith('/keys/wordpress')) {
-+    return wrapPrivate(
-+      <WordPressTestConnectionGuidance onClose={() => navigate('/keys')} onReturnToKeys={() => navigate('/keys')} />,
-+    );
-+  }
-+  if (path.startsWith('/keys') && keyClient) {
-+    return wrapPrivate(
-+      <KeysScreen
-+        client={keyClient}
-+        sessionKey={featureKey}
-+        onNavigateToUsage={() => navigate('/usage')}
-+        onNavigateToBilling={() => navigate('/billing')}
-+        onOpenWordPressGuidance={() => navigate('/keys/wordpress')}
-+      />,
-+    );
-+  }
-+  if (path.startsWith('/usage') && usageClient) {
-+    return wrapPrivate(
-+      <UsageScreen
-+        client={usageClient}
-+        sessionKey={featureKey}
-+        onNavigateToKeys={() => navigate('/keys')}
-+        onNavigateToBilling={() => navigate('/billing')}
-+      />,
-+    );
-+  }
-+  if (path.startsWith('/billing/return') && billingClient) {
-+    return wrapPrivate(
-+      <BillingReturnScreen
-+        client={billingClient}
-+        publicPlanCode={publicPlanCode}
-+        paymentsEnabled={paymentsEnabled}
-+        attemptId={returnAttemptId}
-+        onNavigateToBilling={() => navigate('/billing')}
-+        onNavigateToUsage={() => navigate('/usage')}
-+      />,
-+    );
-+  }
-+  if (path.startsWith('/billing') && billingClient) {
-+    return wrapPrivate(
-+      <BillingScreen
-+        client={billingClient}
-+        publicPlanCode={publicPlanCode}
-+        paymentsEnabled={paymentsEnabled}
-+        onNavigateToReturn={(attemptId) => {
-+          setReturnAttemptId(readAttemptId(attemptId));
-+          navigate('/billing/return');
-+        }}
-+        onNavigateToUsage={() => navigate('/usage')}
-+      />,
-+    );
-+  }
-   return (
-     <AccountScreen
-       personName={personName(user)}
--      tenantId={displayAccount.status === 'ok' ? displayAccount.tenantId : null}
--      mode={displayAccount.status === 'ok' ? 'default' : displayAccount.status === 'empty' ? 'empty' : 'loading'}
-+      tenantId={displayAccount.tenantId}
-+      mode="default"
-       userMenu={userMenu}
--      onSignOut={() => void handleSignOut()}
-+      onSignOut={signOutNow}
-+      onNavigateToKeys={() => navigate('/keys')}
-+      onNavigateToUsage={() => navigate('/usage')}
-+      onNavigateToBilling={() => navigate('/billing')}
-     />
-   );
- }
-@@ -283,6 +447,7 @@ export function App({
- }: AppProps = {}) {
-   const navigate = useNavigate();
-   const [providerEpoch, setProviderEpoch] = useState(0);
-+  const payments = paymentsFromConfig(config);
- 
-   if (!config.portalEnabled) {
-     return <UnavailableScreen mode="degraded" />;
-@@ -315,6 +480,8 @@ export function App({
-               fetchImpl={fetchImpl}
-               clerkLoadTimeoutMs={clerkLoadTimeoutMs}
-               portalMeTimeoutMs={portalMeTimeoutMs}
-+              paymentsEnabled={payments.paymentsEnabled}
-+              publicPlanCode={payments.publicPlanCode}
-               onRetryClerk={() => setProviderEpoch((value) => value + 1)}
-             />
-           }
-diff --git a/apps/app-portal/src/__tests__/account-navigation.test.tsx b/apps/app-portal/src/__tests__/account-navigation.test.tsx
+ <nav>
++<a href="#v13-caption">Current synthesis · v13 caption and occlusion</a>
++<a href="../../docs/assessments/current/caption-quality-occlusion-model-combination-assessment-2026-10-07.md">Durable v13 assessment and experiment contract</a>
+ <a href="#v12">Current plan · v12 AuraFace-v1 512D</a>
+ <a href="#v12-status">Activation status (not deployed)</a>
+ <a href="#v12-space">Separate 128D SFace / 512D AuraFace spaces</a>
+@@ -82,6 +84,23 @@ blockquote{border-left:3px solid var(--acc);margin:.6rem 0;padding:.2rem .9rem;c
+ <a href="#feasibility" style="font-weight:600">0f · Cluster structure &amp; feasibility <b>NEW</b></a>
+ <a href="#downstream" style="font-weight:600">0g · Downstream impact <b>NEW</b></a>
+ </nav>
++<!-- BEGIN FIR V13 CAPTION/OCCLUSION SYNTHESIS 2026-10-07 -->
++<h2 id="v13-caption">Caption quality and occlusion model-combination synthesis <span class="tag wr">v13 · 2026-10-07</span></h2>
++<div class="card">
++<p><b>Recommendation:</b> preserve the pinned <b>Qwen3-VL-30B-A3B-Instruct Q4_K_M</b> as the caption comparator. Evaluate the raw single-view profile separately from the existing asynchronous four-view ensemble. Then test candidate-level semantic ranking, bounded unmarked person/head views, optional numbered markers, and only later the registered <b>Qwen3.8-27B UD-Q4_K_XL</b> challenger on the same recipe. This is a research sequence, not model promotion; no caption-quality, recognition, latency, or cost gain has been measured here. See the <a href="../../docs/assessments/current/caption-quality-occlusion-model-combination-assessment-2026-10-07.md">durable assessment, evidence ledger, and evaluation contract</a>.</p>
++<div class="wrap"><table>
++<tr><th>Question</th><th>Observed baseline and bounded implication</th></tr>
++<tr><td>Which caption model?</td><td><a href="../../apps/prototype-description-service/scene/config/profiles.py#L105"><code>PROFILE_SPECS</code></a> pins Qwen3-VL-30B-A3B-Instruct Q4_K_M at <code>0af19e…</code>. Raw and async ensemble are distinct arms. Florence profile availability is not the operating caption baseline. The <a href="../../apps/prototype-description-service/scripts/eval_harness/bakeoff_candidates.yaml#L71">registry's Qwen3.8-27B UD-Q4_K_XL pin</a> at <code>1cff33…</code> is a candidate, not a measured replacement. The <a href="https://huggingface.co/Qwen/Qwen3.8-27B">official card</a> describes a dense 27B native vision model with hybrid Gated DeltaNet/Gated Attention; thinking is on by default, so validate that the registered <code>--no-think</code> recipe is honored by the pinned runtime/projector/template.</td></tr>
++<tr><td>Can semantic ranking help?</td><td><a href="https://huggingface.co/google/embeddinggemma-2">EmbeddingGemma 2</a> is a shared image/text embedding model, not a caption generator or face recognizer. Compare lexical selection against separate image and text encodes over the same caption candidates; treat similarity as a rank signal, not truth or calibrated confidence. Add original-scene, counterfactual and blind human checks.</td></tr>
++<tr><td>What does occlusion support?</td><td>The face path detects, aligns with five YuNet landmarks and embeds before computing an eye-patch activity proxy. A detector miss cannot be rescued by that later proxy. Use face-level visibility labels and matched visible support before testing partial-region recognition; pose-guided crops can test localization, not reconstruct hidden identity.</td></tr>
++<tr><td>What must crop views preserve?</td><td>The ensemble runs sequential independent caption passes and selects one completed caption. It keeps phrase boxes and other structured fields from the full-image pass. Any new ROI/ranker must reground selected claims to the original source coordinates and person before attaching boxes or names. Existing roster, consent and one-to-one geometry checks remain the naming boundary.</td></tr>
++<tr><td>How should localized head and occlusion cues be used?</td><td>COCO body keypoints can provide localized evidence for proposing a head ROI when relevant points are labeled and visible; they are not face-visibility labels. A periocular hypothesis can apply to a lower-face mask when the eyes are visibly clear, but not to opaque sunglasses. Pixel-number overlays do not implement Lin et al.'s learned spatial embedding map.</td></tr>
++<tr><td>What is the evaluation contract?</td><td>Reuse existing <a href="../../apps/prototype-description-service/scripts/eval_harness/face_metrics.py#L782"><code>detection_pr_strict</code></a> (exhaustive GT, independent supported source and human-adjudicated lineage for every GT box, plus run-manifest IoU) with <a href="../../apps/prototype-description-service/scripts/eval_harness/face_assignment.py#L215"><code>associate_detections</code></a>; do not rebuild strict detection scoring. The open-set gate is FNIR at a ratified fixed FPIR, with gallery size and non-mated population named and threshold fixed from calibration. <a href="../../apps/prototype-description-service/scripts/eval_harness/open_set_identification.py#L128"><code>fnir_fpi_at_threshold</code></a> reports FNIR at fixed score threshold plus integer FPI count, not an FPIR rate. FAR/FMR is a separate 1:1 verification diagnostic; do not conflate the measures.</td></tr>
++</table></div>
++<p><b>Evaluation gate:</b> first freeze raw and four-view Qwen outputs, then compare candidate rankers on identical captions, then add unmarked pose/person ROIs and controlled marker views, and only after those ablations compare Qwen3.8. The existing grid config rejects <code>n_views=2</code>; a four-to-two call proposal needs a new targeted ROI/view policy. Each completion currently accepts one image, so original-plus-marked paired input needs an adapter/request-contract extension or separate mapped requests. Use blind paired accepted-caption review, real face-level mask/sunglasses slices, unknowns and decoy context. A proposed adoption threshold is at least +5 percentage points in accepted captions with non-inferiority on critical factual and person-binding errors; it is not an approved gate or a forecast. Report p50/p95/p99 end-to-end cost and cache hits separately. The assessment records direct source anchors, paper locators, falsifiers, and the no-gain boundary.</p>
++<p><b>Optional quantization arms:</b> Q3/Q5/Q6 are paired experiments on the same preregistered recipe, each requiring separate memory, quality, and runtime validation; see the <a href="https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/tree/1cff334a4a228324d4ee1f76d55d372588f0d556">publisher tree at the registered pin</a>.</p>
++</div>
++<!-- END FIR V13 CAPTION/OCCLUSION SYNTHESIS 2026-10-07 -->
+ <!-- BEGIN FIR V12 AURAFACE 512D STATUS 2026-09-22 -->
+ <h2 id="v12">Current plan · AuraFace-v1 512D activation status <span class="tag wr">v12 · 2026-09-22</span></h2>
+ <div class="card">
+diff --git a/docs/assessments/current/caption-quality-occlusion-model-combination-assessment-2026-10-07.md b/docs/assessments/current/caption-quality-occlusion-model-combination-assessment-2026-10-07.md
 new file mode 100644
 --- /dev/null
-+++ b/apps/app-portal/src/__tests__/account-navigation.test.tsx
-@@ -0,0 +1,422 @@
-+import { screen, waitFor } from '@testing-library/react';
-+import userEvent from '@testing-library/user-event';
-+import { flushSync } from 'react-dom';
-+import { afterEach, describe, expect, it, vi } from 'vitest';
-+import { parsePortalConfig } from '../config';
-+import { clerkDouble } from './clerkDouble';
-+import { renderPortal } from './renderPortal';
-+
-+vi.mock('@clerk/react', async () => {
-+  const doubles = await import('./clerkDouble');
-+  return {
-+    ClerkProvider: doubles.ClerkProviderStub,
-+    SignIn: doubles.SignInStub,
-+    SignUp: doubles.SignUpStub,
-+    UserButton: doubles.UserButtonStub,
-+    useAuth: doubles.useAuthStub,
-+    useUser: doubles.useUserStub,
-+  };
-+});
-+
-+const TENANT = '11111111-1111-4111-8111-111111111111';
-+const KEY_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-+const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
-+const INVITATION = 'raw-invitation-token-once';
-+
-+function jsonResponse(status: number, body: unknown): Response {
-+  return new Response(JSON.stringify(body), {
-+    status,
-+    headers: { 'Content-Type': 'application/json' },
-+  });
-+}
-+
-+function meBody(tenantId = TENANT) {
-+  return {
-+    tenant_id: tenantId,
-+    issuer: 'https://clerk.altcontext.com',
-+    subject: 'user_1',
-+    email: 'ada@example.test',
-+  };
-+}
-+
-+function keysPage() {
-+  return {
-+    data: [
-+      {
-+        id: KEY_ID,
-+        tenant_id: TENANT,
-+        created_at: '2026-09-01T00:00:00Z',
-+        expires_at: '2026-12-01T00:00:00Z',
-+        revoked_at: null,
-+        rate_limit_tier: 'standard',
-+        lifetime_seconds: 3600,
-+      },
-+    ],
-+    next_cursor: null,
-+    cursor: null,
-+    limit: 25,
-+    total: 1,
-+  };
-+}
-+
-+function usageBody() {
-+  return {
-+    tenant_id: TENANT,
-+    used: 1,
-+    reserved: 0,
-+    remaining: 9,
-+    allowance: 10,
-+    period_start: '2026-09-01T00:00:00Z',
-+    period_end: '2026-10-01T00:00:00Z',
-+    period: { start: '2026-09-01T00:00:00Z', end: '2026-10-01T00:00:00Z' },
-+    as_of: '2026-09-22T12:00:00Z',
-+    status: 'beta_active',
-+    data_source: 'authoritative',
-+  };
-+}
-+
-+function signInVerified(sessionId = 'sess_1') {
-+  clerkDouble.setState({
-+    isLoaded: true,
-+    isSignedIn: true,
-+    userId: 'user_1',
-+    sessionId,
-+    user: {
-+      fullName: 'Ada Lovelace',
-+      primaryEmailAddress: {
-+        emailAddress: 'ada@example.test',
-+        verification: { status: 'verified' },
-+      },
-+    },
-+    getToken: async () => 'session-jwt',
-+  });
-+}
-+
-+function portalFetch(options: { me?: () => Response | Promise<Response>; claimAdmitted?: { current: boolean } } = {}) {
-+  return vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
-+    const url = String(input);
-+    const path = url.split('?')[0];
-+    if (path === '/portal/me') {
-+      if (options.me) {
-+        return options.me();
-+      }
-+      if (options.claimAdmitted?.current) {
-+        return jsonResponse(200, meBody());
-+      }
-+      return jsonResponse(200, meBody());
-+    }
-+    if (path === '/portal/keys') {
-+      return jsonResponse(200, keysPage());
-+    }
-+    if (path === '/portal/usage') {
-+      return jsonResponse(200, usageBody());
-+    }
-+    if (path === '/portal/onboarding/claim') {
-+      if (options.claimAdmitted) {
-+        options.claimAdmitted.current = true;
-+      }
-+      return jsonResponse(201, {
-+        tenant_id: TENANT,
-+        issuer: 'https://clerk.altcontext.com',
-+        subject: 'user_1',
-+        email: 'ada@example.test',
-+        replayed: false,
-+      });
-+    }
-+    if (path === '/portal/billing/checkout' || path === '/portal/billing/manage') {
-+      throw new Error(`billing call must be absent when payments are disabled: ${path}`);
-+    }
-+    return jsonResponse(404, { detail: 'missing fixture' });
-+  });
-+}
-+
-+afterEach(() => {
-+  clerkDouble.reset();
-+});
-+
-+describe('public payments config [HAI-01]', () => {
-+  it('defaults payments disabled and empty plan, enabling only explicit recognized true', () => {
-+    expect(
-+      parsePortalConfig({
-+        VITE_CLERK_PUBLISHABLE_KEY: 'pk_test',
-+        VITE_CLERK_FAPI: 'https://clerk.altcontext.com',
-+        VITE_PORTAL_ENABLED: 'true',
-+        VITE_PAYMENTS_ENABLED: '',
-+        VITE_PUBLIC_PLAN_CODE: '',
-+      }),
-+    ).toEqual({
-+      publishableKey: 'pk_test',
-+      fapiOrigin: 'https://clerk.altcontext.com',
-+      portalEnabled: true,
-+      paymentsEnabled: false,
-+      publicPlanCode: null,
-+    });
-+
-+    expect(
-+      parsePortalConfig({
-+        VITE_CLERK_PUBLISHABLE_KEY: 'pk_test',
-+        VITE_CLERK_FAPI: 'https://clerk.altcontext.com',
-+        VITE_PORTAL_ENABLED: 'true',
-+        VITE_PAYMENTS_ENABLED: 'maybe',
-+        VITE_PUBLIC_PLAN_CODE: '  starter_monthly  ',
-+      }).paymentsEnabled,
-+    ).toBe(false);
-+
-+    expect(
-+      parsePortalConfig({
-+        VITE_CLERK_PUBLISHABLE_KEY: 'pk_test',
-+        VITE_CLERK_FAPI: 'https://clerk.altcontext.com',
-+        VITE_PORTAL_ENABLED: 'true',
-+        VITE_PAYMENTS_ENABLED: 'TRUE',
-+        VITE_PUBLIC_PLAN_CODE: '  starter_monthly  ',
-+      }),
-+    ).toMatchObject({
-+      paymentsEnabled: true,
-+      publicPlanCode: 'starter_monthly',
-+    });
-+  });
-+});
-+
-+describe('admitted shell navigation [NAV-08][NAV-11]', () => {
-+  it('wires keys, usage, billing, billing return, and WordPress guidance with sign-out', async () => {
-+    signInVerified();
-+    const fetchImpl = portalFetch();
-+    const user = userEvent.setup();
-+    renderPortal({ fetchImpl: fetchImpl as unknown as typeof fetch });
-+
-+    await waitFor(() => {
-+      expect(screen.getByText(TENANT)).toBeInTheDocument();
-+    });
-+    expect(screen.getByRole('navigation', { name: /account/i })).toBeInTheDocument();
-+
-+    await user.click(screen.getByRole('button', { name: /api keys/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /api keys/i })).toBeInTheDocument();
-+    });
-+    expect(screen.getByRole('main')).toHaveTextContent(KEY_ID);
-+    expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
-+
-+    await user.click(screen.getByRole('button', { name: /wordpress test connection guidance/i }));
-+    expect(screen.getByRole('heading', { name: /wordpress test connection/i })).toBeInTheDocument();
-+    expect(screen.queryByText(/acx_live|raw_key/i)).not.toBeInTheDocument();
-+    expect(window.location.href).not.toMatch(/acx_live|raw_key|secret=/i);
-+
-+    await user.click(screen.getByRole('button', { name: /back to api keys/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /api keys/i })).toBeInTheDocument();
-+    });
-+
-+    await user.click(screen.getByRole('button', { name: /^usage$/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /^usage$/i })).toBeInTheDocument();
-+    });
-+
-+    await user.click(screen.getByRole('button', { name: /^billing$/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /^billing$/i })).toBeInTheDocument();
-+    });
-+    expect(screen.getByRole('status')).toHaveTextContent(/payments are disabled/i);
-+    expect(screen.getByRole('button', { name: /continue to checkout/i })).toBeDisabled();
-+    expect(screen.getByRole('button', { name: /manage billing/i })).toBeDisabled();
-+  });
-+
-+  it('keeps billing return pending and never grants entitlement or posts checkout [HAI-01]', async () => {
-+    signInVerified();
-+    const fetchImpl = portalFetch();
-+    renderPortal({
-+      path: '/billing/return?checkout=success',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+    });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /billing return/i })).toBeInTheDocument();
-+    });
-+    expect(screen.getByRole('status')).toHaveTextContent(/pending reconciliation|backend confirmation/i);
-+    expect(screen.queryByText(/paid_active|you are now paid|subscription is active/i)).not.toBeInTheDocument();
-+    expect(fetchImpl.mock.calls.some((call) => String(call[0]).includes('/portal/billing'))).toBe(false);
-+  });
-+});
-+
-+describe('claim admission boundary [HAI-01][DOM-03]', () => {
-+  it('lets a verified not-admitted identity claim and refetches /portal/me before admission', async () => {
-+    signInVerified();
-+    const admitted = { current: false };
-+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
-+      const path = String(input).split('?')[0];
-+      if (path === '/portal/me') {
-+        if (admitted.current) {
-+          return jsonResponse(200, meBody());
-+        }
-+        return jsonResponse(403, { detail: 'portal access denied' });
-+      }
-+      if (path === '/portal/onboarding/claim') {
-+        return jsonResponse(201, {
-+          tenant_id: TENANT,
-+          issuer: 'https://clerk.altcontext.com',
-+          subject: 'user_1',
-+          email: 'ada@example.test',
-+          replayed: false,
-+        });
-+      }
-+      throw new Error(`unexpected path ${path}`);
-+    });
-+    const user = userEvent.setup();
-+    renderPortal({ fetchImpl: fetchImpl as unknown as typeof fetch });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('status')).toHaveTextContent(/not ready for access/i);
-+    });
-+    expect(screen.queryByText(TENANT)).not.toBeInTheDocument();
-+    await user.click(screen.getByRole('button', { name: /claim access/i }));
-+    expect(screen.getByLabelText(/invitation token/i)).toBeInTheDocument();
-+    expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
-+
-+    await user.type(screen.getByLabelText(/invitation token/i), INVITATION);
-+    await user.click(screen.getByRole('button', { name: /^claim access$/i }));
-+    await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
-+
-+    await waitFor(() => {
-+      expect(fetchImpl.mock.calls.some((call) => String(call[0]).includes('/portal/onboarding/claim'))).toBe(true);
-+      expect(
-+        fetchImpl.mock.calls.filter((call) => String(call[0]).split('?')[0] === '/portal/me').length,
-+      ).toBeGreaterThan(1);
-+    });
-+    expect(screen.queryByRole('heading', { name: /api keys/i })).not.toBeInTheDocument();
-+    expect(screen.queryByText(TENANT)).not.toBeInTheDocument();
-+    expect(window.location.href).not.toContain(INVITATION);
-+    expect(window.location.hash).not.toContain(INVITATION);
-+    admitted.current = true;
-+    expect(screen.queryByText(TENANT)).not.toBeInTheDocument();
-+  });
-+
-+  it('admits only after a post-claim /portal/me tenant, never from the claim body [HAI-01]', async () => {
-+    signInVerified();
-+    const admitted = { current: false };
-+    const fetchImpl = portalFetch({ claimAdmitted: admitted });
-+    fetchImpl.mockImplementation(async (input: RequestInfo | URL) => {
-+      const path = String(input).split('?')[0];
-+      if (path === '/portal/me') {
-+        return admitted.current ? jsonResponse(200, meBody()) : jsonResponse(403, { detail: 'portal access denied' });
-+      }
-+      if (path === '/portal/onboarding/claim') {
-+        admitted.current = true;
-+        return jsonResponse(201, {
-+          tenant_id: TENANT,
-+          issuer: 'https://clerk.altcontext.com',
-+          subject: 'user_1',
-+          email: 'ada@example.test',
-+          replayed: false,
-+        });
-+      }
-+      if (path === '/portal/keys') {
-+        return jsonResponse(200, keysPage());
-+      }
-+      return jsonResponse(404, {});
-+    });
-+    const user = userEvent.setup();
-+    renderPortal({ path: '/claim', fetchImpl: fetchImpl as unknown as typeof fetch });
-+
-+    await waitFor(() => {
-+      expect(screen.getByLabelText(/invitation token/i)).toBeInTheDocument();
-+    });
-+    await user.type(screen.getByLabelText(/invitation token/i), INVITATION);
-+    await user.click(screen.getByRole('button', { name: /^claim access$/i }));
-+    await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
-+
-+    await waitFor(() => {
-+      expect(screen.getByText(TENANT)).toBeInTheDocument();
-+    });
-+    expect(
-+      fetchImpl.mock.calls.filter((call) => String(call[0]).split('?')[0] === '/portal/me').length,
-+    ).toBeGreaterThan(1);
-+  });
-+
-+  it('does not offer claim to an unverified identity', async () => {
-+    clerkDouble.setState({
-+      isLoaded: true,
-+      isSignedIn: true,
-+      userId: 'user_1',
-+      sessionId: 'sess_1',
-+      user: {
-+        fullName: 'Ada Lovelace',
-+        primaryEmailAddress: {
-+          emailAddress: 'ada@example.test',
-+          verification: { status: 'unverified' },
-+        },
-+      },
-+      getToken: async () => 'session-jwt',
-+    });
-+    renderPortal({
-+      path: '/claim',
-+      fetchImpl: vi.fn(async () =>
-+        jsonResponse(403, { detail: { code: 'email_unverified' } }),
-+      ) as unknown as typeof fetch,
-+    });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('status')).toHaveTextContent(/verify your email/i);
-+    });
-+    expect(screen.queryByLabelText(/invitation token/i)).not.toBeInTheDocument();
-+    expect(screen.queryByRole('button', { name: /claim access/i })).not.toBeInTheDocument();
-+    expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
-+  });
-+});
-+
-+describe('private subtree ownership [DATA-03][CARD-15]', () => {
-+  it('clears keys metadata synchronously when the same user gets a new session', async () => {
-+    signInVerified('sess_a');
-+    const fetchImpl = portalFetch();
-+    renderPortal({ path: '/keys', fetchImpl: fetchImpl as unknown as typeof fetch });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('main')).toHaveTextContent(KEY_ID);
-+    });
-+
-+    flushSync(() => {
-+      clerkDouble.setState({ sessionId: 'sess_a_replaced' });
-+    });
-+
-+    expect(screen.getByRole('main')).not.toHaveTextContent(KEY_ID);
-+    expect(screen.getByRole('status')).toHaveTextContent(/checking account/i);
-+    await waitFor(() => {
-+      expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
-+    });
-+  });
-+
-+  it('hides private modules immediately when sign-out fails [RLSE-04]', async () => {
-+    signInVerified();
-+    clerkDouble.state.signOut = vi.fn(async () => {
-+      throw new Error('network');
-+    });
-+    const fetchImpl = portalFetch();
-+    const user = userEvent.setup();
-+    renderPortal({ path: '/keys', fetchImpl: fetchImpl as unknown as typeof fetch });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('main')).toHaveTextContent(KEY_ID);
-+    });
-+
-+    await user.click(screen.getByRole('button', { name: /sign out/i }));
-+
-+    expect(screen.getByRole('main')).not.toHaveTextContent(KEY_ID);
-+    expect(screen.queryByRole('heading', { name: /api keys/i })).not.toBeInTheDocument();
-+    expect(screen.getByRole('status')).toHaveTextContent(/sign out failed|could not sign out/i);
-+    expect(screen.getByRole('button', { name: /try again/i })).toBeEnabled();
-+  });
-+});
-+
-+describe('opaque attempt id [HAI-01]', () => {
-+  it('does not put attempt, invite, or raw key material in search or hash', async () => {
-+    signInVerified();
-+    renderPortal({
-+      path: `/billing/return?attempt_id=${ATTEMPT_ID}&invitation=${INVITATION}`,
-+      fetchImpl: portalFetch() as unknown as typeof fetch,
-+    });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /billing return/i })).toBeInTheDocument();
-+    });
-+    expect(screen.queryByText(INVITATION)).not.toBeInTheDocument();
-+    expect(screen.queryByText(ATTEMPT_ID)).not.toBeInTheDocument();
-+  });
-+});
-diff --git a/apps/app-portal/src/__tests__/portal-request.test.ts b/apps/app-portal/src/__tests__/portal-request.test.ts
-new file mode 100644
---- /dev/null
-+++ b/apps/app-portal/src/__tests__/portal-request.test.ts
-@@ -0,0 +1,188 @@
-+import { afterEach, describe, expect, it, vi } from 'vitest';
-+import { createPortalRequest } from '../api/portalRequest';
-+
-+const OWNER_A = { userId: 'user_a', sessionId: 'sess_a' };
-+const OWNER_B = { userId: 'user_b', sessionId: 'sess_b' };
-+
-+function jsonResponse(status: number, body: unknown): Response {
-+  return new Response(JSON.stringify(body), {
-+    status,
-+    headers: { 'Content-Type': 'application/json' },
-+  });
-+}
-+
-+afterEach(() => {
-+  vi.useRealTimers();
-+});
-+
-+describe('createPortalRequest bounded bearer transport [RES-02][RLSE-04][DATA-03]', () => {
-+  it('bounds a hanging getToken with the total deadline and never calls fetch [RES-02]', async () => {
-+    vi.useFakeTimers();
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken: () => new Promise<string | null>(() => undefined),
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      timeoutMs: 40,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    const pending = expect(request('/portal/usage')).rejects.toMatchObject({ name: 'AbortError' });
-+    await vi.advanceTimersByTimeAsync(40);
-+    await pending;
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
-+
-+  it('bounds a hanging fetch with the same total deadline [RES-02]', async () => {
-+    vi.useFakeTimers();
-+    const fetchImpl = vi.fn(() => new Promise<Response>(() => undefined));
-+    const request = createPortalRequest({
-+      getToken: async () => 'session-jwt',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      timeoutMs: 40,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    const pending = expect(request('/portal/usage')).rejects.toMatchObject({ name: 'AbortError' });
-+    await vi.advanceTimersByTimeAsync(40);
-+    await pending;
-+    expect(fetchImpl).toHaveBeenCalledTimes(1);
-+  });
-+
-+  it('aborts during getToken without sending a bearer request [RES-02]', async () => {
-+    const controller = new AbortController();
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken: () => new Promise<string | null>(() => undefined),
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      timeoutMs: 8_000,
-+      signal: controller.signal,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    const pending = expect(request('/portal/me')).rejects.toMatchObject({ name: 'AbortError' });
-+    controller.abort();
-+    await pending;
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
-+
-+  it('does not fetch when getToken rejects [RLSE-04]', async () => {
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken: async () => {
-+        throw new Error('token refresh failed');
-+      },
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      timeoutMs: 1_000,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    await expect(request('/portal/me')).rejects.toThrow(/token refresh failed|portal identity/i);
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
-+
-+  it('forces cache no-store, omits credentials, and never sets Origin [DATA-03]', async () => {
-+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-+      expect(String(input)).toBe('/portal/usage');
-+      expect(init?.cache).toBe('no-store');
-+      expect(init?.credentials).toBe('omit');
-+      const headers = new Headers(init?.headers);
-+      expect(headers.get('Authorization')).toBe('Bearer session-jwt');
-+      expect([...headers.keys()].some((key) => key.toLowerCase() === 'origin')).toBe(false);
-+      return jsonResponse(200, { ok: true });
-+    });
-+
-+    const request = createPortalRequest({
-+      getToken: async () => 'session-jwt',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    await expect(
-+      request('/portal/usage', { method: 'GET', headers: { Origin: 'https://evil.example' } }),
-+    ).resolves.toBeInstanceOf(Response);
-+    expect(fetchImpl).toHaveBeenCalledTimes(1);
-+  });
-+
-+  it('rejects external, protocol-relative, and non-allowlisted paths before getToken [DATA-03]', async () => {
-+    const getToken = vi.fn(async () => 'session-jwt');
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken,
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    const rejected = [
-+      'https://evil.example/portal/me',
-+      'http://app.altcontext.com/portal/me',
-+      '//evil.example/portal/me',
-+      '/api/portal/me',
-+      '/portal',
-+      'portal/me',
-+      '/portal/../keys',
-+      '/portal/%2e%2e/keys',
-+      'https://app.altcontext.com/portal/me',
-+    ];
-+
-+    for (const path of rejected) {
-+      await expect(request(path)).rejects.toThrow(/not allowed|portal request/i);
-+    }
-+    expect(getToken).not.toHaveBeenCalled();
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
-+
-+  it('allows same-origin relative /portal/ paths including key list query [DATA-03]', async () => {
-+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
-+      expect(String(input)).toBe('/portal/keys?limit=25');
-+      expect(String(input)).not.toMatch(/^https?:/i);
-+      return jsonResponse(200, { data: [] });
-+    });
-+    const request = createPortalRequest({
-+      getToken: async () => 'session-jwt',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    await request('/portal/keys?limit=25');
-+    expect(fetchImpl).toHaveBeenCalledTimes(1);
-+  });
-+
-+  it('does not send when the captured owner is no longer current [DDIA][DATA-03]', async () => {
-+    const getToken = vi.fn(async () => 'session-jwt');
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken,
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_B,
-+    });
-+
-+    await expect(request('/portal/usage')).rejects.toMatchObject({ name: 'AbortError' });
-+    expect(getToken).not.toHaveBeenCalled();
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
-+
-+  it('drops a completed response after a session replacement [DDIA][DATA-03]', async () => {
-+    let current = OWNER_A;
-+    const fetchImpl = vi.fn(async () => {
-+      current = OWNER_B;
-+      return jsonResponse(200, { tenant_id: '11111111-1111-4111-8111-111111111111' });
-+    });
-+    const request = createPortalRequest({
-+      getToken: async () => 'session-jwt',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => current,
-+    });
-+
-+    await expect(request('/portal/me')).rejects.toMatchObject({ name: 'AbortError' });
-+    expect(fetchImpl).toHaveBeenCalledTimes(1);
-+  });
-+});
-diff --git a/apps/app-portal/src/api/portalRequest.ts b/apps/app-portal/src/api/portalRequest.ts
-new file mode 100644
---- /dev/null
-+++ b/apps/app-portal/src/api/portalRequest.ts
-@@ -0,0 +1,157 @@
-+export type PortalRequest = (path: string, init?: RequestInit) => Promise<Response>;
-+
-+export type PortalRequestOwner = {
-+  userId: string;
-+  sessionId: string;
-+};
-+
-+export type CreatePortalRequestOptions = {
-+  getToken: () => Promise<string | null>;
-+  fetchImpl?: typeof fetch;
-+  timeoutMs?: number;
-+  signal?: AbortSignal;
-+  owner: PortalRequestOwner;
-+  currentOwner: () => PortalRequestOwner | null;
-+};
-+
-+const DEFAULT_TIMEOUT_MS = 8_000;
-+const PORTAL_PATH_RE = /^\/portal\/[A-Za-z0-9/_-]+$/;
-+
-+function abortError(): DOMException {
-+  return new DOMException('The operation was aborted.', 'AbortError');
-+}
-+
-+function ownersMatch(
-+  left: PortalRequestOwner | null | undefined,
-+  right: PortalRequestOwner | null | undefined,
-+): boolean {
-+  return Boolean(left && right && left.userId === right.userId && left.sessionId === right.sessionId);
-+}
-+
-+export function resolvePortalPath(path: string): string | null {
-+  if (typeof path !== 'string' || path.length === 0) {
-+    return null;
-+  }
-+  if (!path.startsWith('/portal/')) {
-+    return null;
-+  }
-+  if (path.startsWith('//') || path.includes('://') || path.includes('\\')) {
-+    return null;
-+  }
-+  if (path.includes('..') || /%2e/i.test(path)) {
-+    return null;
-+  }
-+  let url: URL;
-+  try {
-+    url = new URL(path, 'https://app.altcontext.com');
-+  } catch {
-+    return null;
-+  }
-+  if (url.origin !== 'https://app.altcontext.com') {
-+    return null;
-+  }
-+  if (url.username || url.password) {
-+    return null;
-+  }
-+  if (url.protocol !== 'https:') {
-+    return null;
-+  }
-+  if (!PORTAL_PATH_RE.test(url.pathname)) {
-+    return null;
-+  }
-+  return `${url.pathname}${url.search}`;
-+}
-+
-+function assertCurrentOwner(owner: PortalRequestOwner, currentOwner: () => PortalRequestOwner | null): void {
-+  if (!ownersMatch(owner, currentOwner())) {
-+    throw abortError();
-+  }
-+}
-+
-+export function createPortalRequest(options: CreatePortalRequestOptions): PortalRequest {
-+  const fetchImpl = options.fetchImpl ?? fetch;
-+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-+
-+  return async (path, init) => {
-+    const resolved = resolvePortalPath(path);
-+    if (!resolved) {
-+      throw new TypeError('portal request path is not allowed');
-+    }
-+    assertCurrentOwner(options.owner, options.currentOwner);
-+    if (options.signal?.aborted || init?.signal?.aborted) {
-+      throw abortError();
-+    }
-+
-+    const controller = new AbortController();
-+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
-+    const onAbort = () => controller.abort();
-+    if (options.signal) {
-+      if (options.signal.aborted) {
-+        controller.abort();
-+      } else {
-+        options.signal.addEventListener('abort', onAbort, { once: true });
-+      }
-+    }
-+    if (init?.signal) {
-+      if (init.signal.aborted) {
-+        controller.abort();
-+      } else {
-+        init.signal.addEventListener('abort', onAbort, { once: true });
-+      }
-+    }
-+
-+    const abortGate = new Promise<void>((resolve) => {
-+      if (controller.signal.aborted) {
-+        resolve();
-+        return;
-+      }
-+      controller.signal.addEventListener('abort', () => resolve(), { once: true });
-+    });
-+
-+    try {
-+      assertCurrentOwner(options.owner, options.currentOwner);
-+      const tokenResult = await Promise.race([
-+        Promise.resolve()
-+          .then(() => options.getToken())
-+          .then((token) => ({ token })),
-+        abortGate.then(() => ({ aborted: true as const })),
-+      ]);
-+      if ('aborted' in tokenResult || controller.signal.aborted) {
-+        throw abortError();
-+      }
-+      assertCurrentOwner(options.owner, options.currentOwner);
-+      if (!tokenResult.token) {
-+        throw new Error('portal identity unavailable');
-+      }
-+
-+      const headers = new Headers(init?.headers);
-+      headers.delete('Origin');
-+      headers.delete('Authorization');
-+      headers.set('Authorization', `Bearer ${tokenResult.token}`);
-+
-+      const fetchResult = await Promise.race([
-+        fetchImpl(resolved, {
-+          ...init,
-+          headers,
-+          cache: 'no-store',
-+          credentials: 'omit',
-+          redirect: 'error',
-+          signal: controller.signal,
-+        }).then((response) => ({ response })),
-+        abortGate.then(() => ({ aborted: true as const })),
-+      ]);
-+      if ('aborted' in fetchResult || controller.signal.aborted) {
-+        throw abortError();
-+      }
-+      assertCurrentOwner(options.owner, options.currentOwner);
-+      if (options.signal?.aborted || init?.signal?.aborted) {
-+        throw abortError();
-+      }
-+      return fetchResult.response;
-+    } finally {
-+      window.clearTimeout(timer);
-+      options.signal?.removeEventListener('abort', onAbort);
-+      init?.signal?.removeEventListener('abort', onAbort);
-+    }
-+  };
-+}
-diff --git a/apps/app-portal/src/config.ts b/apps/app-portal/src/config.ts
---- a/apps/app-portal/src/config.ts
-+++ b/apps/app-portal/src/config.ts
-@@ -2,6 +2,8 @@ export type PortalRuntimeConfig = {
-   publishableKey: string | null;
-   fapiOrigin: string | null;
-   portalEnabled: boolean;
-+  paymentsEnabled?: boolean;
-+  publicPlanCode?: string | null;
- };
- 
- function trimEnv(value: string | undefined): string {
-@@ -36,19 +38,39 @@ export function parseFapiOrigin(value: string | undefined): string | null {
-   }
- }
- 
-+function parsePaymentsEnabled(value: string | undefined): boolean {
-+  const normalized = trimEnv(value).toLowerCase();
-+  return normalized === '1' || normalized === 'true' || normalized === 'on' || normalized === 'yes';
-+}
-+
-+function parsePublicPlanCode(value: string | undefined): string | null {
-+  const raw = trimEnv(value);
-+  return raw.length > 0 ? raw : null;
-+}
-+
- export function parsePortalConfig(env: Record<string, string | undefined>): PortalRuntimeConfig {
-   const publishableKey = trimEnv(env.VITE_CLERK_PUBLISHABLE_KEY);
--  return {
-+  const config: PortalRuntimeConfig = {
-     publishableKey: publishableKey.length > 0 ? publishableKey : null,
-     fapiOrigin: parseFapiOrigin(env.VITE_CLERK_FAPI),
-     portalEnabled: parseEnabledFlag(env.VITE_PORTAL_ENABLED),
-   };
-+  if (Object.prototype.hasOwnProperty.call(env, 'VITE_PAYMENTS_ENABLED')) {
-+    config.paymentsEnabled = parsePaymentsEnabled(env.VITE_PAYMENTS_ENABLED);
-+  }
-+  if (Object.prototype.hasOwnProperty.call(env, 'VITE_PUBLIC_PLAN_CODE')) {
-+    config.publicPlanCode = parsePublicPlanCode(env.VITE_PUBLIC_PLAN_CODE);
-+  }
-+  return config;
- }
- 
- export function readPortalConfig(): PortalRuntimeConfig {
-+  const env = import.meta.env as Record<string, string | undefined>;
-   return parsePortalConfig({
--    VITE_CLERK_PUBLISHABLE_KEY: import.meta.env.VITE_CLERK_PUBLISHABLE_KEY,
--    VITE_CLERK_FAPI: import.meta.env.VITE_CLERK_FAPI,
--    VITE_PORTAL_ENABLED: import.meta.env.VITE_PORTAL_ENABLED,
-+    VITE_CLERK_PUBLISHABLE_KEY: env.VITE_CLERK_PUBLISHABLE_KEY,
-+    VITE_CLERK_FAPI: env.VITE_CLERK_FAPI,
-+    VITE_PORTAL_ENABLED: env.VITE_PORTAL_ENABLED,
-+    VITE_PAYMENTS_ENABLED: env.VITE_PAYMENTS_ENABLED,
-+    VITE_PUBLIC_PLAN_CODE: env.VITE_PUBLIC_PLAN_CODE,
-   });
- }
-diff --git a/apps/app-portal/src/screens/AccountScreen.tsx b/apps/app-portal/src/screens/AccountScreen.tsx
---- a/apps/app-portal/src/screens/AccountScreen.tsx
-+++ b/apps/app-portal/src/screens/AccountScreen.tsx
-@@ -8,6 +8,9 @@ export function AccountScreen({
-   userMenu,
-   onSignOut,
-   onRetry,
-+  onNavigateToKeys,
-+  onNavigateToUsage,
-+  onNavigateToBilling,
- }: {
-   personName: string | null;
-   tenantId: string | null;
-@@ -15,6 +18,9 @@ export function AccountScreen({
-   userMenu: ReactNode;
-   onSignOut: () => void;
-   onRetry?: () => void;
-+  onNavigateToKeys?: () => void;
-+  onNavigateToUsage?: () => void;
-+  onNavigateToBilling?: () => void;
- }) {
-   const status =
-     mode === 'loading'
-@@ -46,6 +52,19 @@ export function AccountScreen({
-       ) : (
-         <p>Account access: Waiting for account</p>
-       )}
-+      {mode === 'default' && onNavigateToKeys && onNavigateToUsage && onNavigateToBilling ? (
-+        <nav className="acx-account-nav" aria-label="Account">
-+          <button type="button" className="acx-btn" onClick={onNavigateToKeys}>
-+            API keys
-+          </button>
-+          <button type="button" className="acx-btn" onClick={onNavigateToUsage}>
-+            Usage
-+          </button>
-+          <button type="button" className="acx-btn" onClick={onNavigateToBilling}>
-+            Billing
-+          </button>
-+        </nav>
-+      ) : null}
-       <StatusMessage tone={mode === 'error' ? 'error' : mode === 'default' ? 'ok' : 'info'}>{status}</StatusMessage>
-       {mode === 'error' && onRetry ? (
-         <button type="button" className="acx-btn acx-btn-primary" onClick={onRetry}>
-diff --git a/apps/app-portal/src/screens/NotAdmittedScreen.tsx b/apps/app-portal/src/screens/NotAdmittedScreen.tsx
---- a/apps/app-portal/src/screens/NotAdmittedScreen.tsx
-+++ b/apps/app-portal/src/screens/NotAdmittedScreen.tsx
-@@ -5,10 +5,12 @@ export function NotAdmittedScreen({
-   reason,
-   userMenu,
-   onSignOut,
-+  onClaimAccess,
- }: {
-   reason: 'email_unverified' | 'not_admitted';
-   userMenu: ReactNode;
-   onSignOut: () => void;
-+  onClaimAccess?: () => void;
- }) {
-   const copy =
-     reason === 'email_unverified'
-@@ -29,6 +31,11 @@ export function NotAdmittedScreen({
-         </div>
-       </header>
-       <StatusMessage tone="error">{copy}</StatusMessage>
-+      {reason === 'not_admitted' && onClaimAccess ? (
-+        <button type="button" className="acx-btn acx-btn-primary" onClick={onClaimAccess}>
-+          Claim access
-+        </button>
-+      ) : null}
-     </main>
-   );
- }
-diff --git a/apps/app-portal/src/styles.css b/apps/app-portal/src/styles.css
---- a/apps/app-portal/src/styles.css
-+++ b/apps/app-portal/src/styles.css
-@@ -141,10 +141,61 @@ body {
-   margin-top: var(--acx-space-lg);
- }
- 
-+.acx-private-shell {
-+  min-height: 100%;
-+}
-+
-+.acx-session-bar {
-+  display: flex;
-+  flex-wrap: wrap;
-+  justify-content: flex-end;
-+  align-items: center;
-+  gap: var(--acx-space-sm);
-+  padding: var(--acx-space-md) var(--acx-space-lg);
-+}
-+
-+.acx-account-nav {
-+  display: flex;
-+  flex-wrap: wrap;
-+  gap: var(--acx-space-sm);
-+  margin: var(--acx-space-md) 0;
-+}
-+
-+label {
-+  display: block;
-+  font-weight: var(--acx-font-weight-medium);
-+  margin: var(--acx-space-sm) 0;
-+}
-+
-+input,
-+select,
-+textarea {
-+  min-height: 2.75rem;
-+  width: 100%;
-+  max-width: 100%;
-+  padding: 0.5rem 0.75rem;
-+  border: 1px solid var(--acx-color-border);
-+  border-radius: var(--acx-radius-md);
-+  background: var(--acx-color-surface-alt);
-+  color: var(--acx-color-text);
-+  font: inherit;
-+}
-+
-+[role='dialog'] {
-+  background: var(--acx-color-surface-alt);
-+  border: 1px solid var(--acx-color-border);
-+  border-radius: var(--acx-radius-md);
-+  box-shadow: var(--acx-shadow-1);
-+  padding: var(--acx-space-lg);
-+  margin-top: var(--acx-space-md);
-+}
-+
- @media (max-width: 40rem) {
-   .acx-portal-header,
-   .acx-portal-actions,
--  .acx-escape {
-+  .acx-escape,
-+  .acx-session-bar,
-+  .acx-account-nav {
-     flex-direction: column;
-     align-items: stretch;
-   }
-@@ -153,3 +204,26 @@ body {
-     width: 100%;
-   }
- }
-+
-+@media (max-width: 360px) {
-+  .acx-portal,
-+  .acx-session-bar {
-+    padding: var(--acx-space-md);
-+  }
-+
-+  .acx-portal-header,
-+  .acx-portal-actions,
-+  .acx-escape,
-+  .acx-session-bar,
-+  .acx-account-nav {
-+    flex-direction: column;
-+    align-items: stretch;
-+  }
-+
-+  .acx-btn,
-+  input,
-+  select,
-+  textarea {
-+    width: 100%;
-+  }
-+}
++++ b/docs/assessments/current/caption-quality-occlusion-model-combination-assessment-2026-10-07.md
+@@ -0,0 +1,158 @@
++# Caption quality and occlusion model-combination assessment
++
++**Assessment date:** 2026-10-07
++**Scope:** Remote-only review of caption selection, occlusion-aware face/head evidence, and candidate model combinations in this checkout.
++**Decision status:** Research recommendation only. No production change, model promotion, measured quality gain, or speed gain is claimed.
++
++## Recommendation
++
++Keep the repository's pinned **Qwen3-VL-30B-A3B-Instruct Q4_K_M** as the caption comparator. Treat its raw single-view profile and existing asynchronous four-view ensemble as distinct baselines. Evaluate additions in a frozen, offline sequence: (1) compare the existing caption selector with a candidate-level semantic ranker, (2) test bounded, unmarked person/head views with source-coordinate grounding, (3) test numbered markers only as a controlled auxiliary view, and (4) compare **Qwen3.8-27B** on the same arms. Keep EmbeddingGemma 2 on the caption-retrieval/ranking side; it is not a caption generator, a face recognizer, a visibility estimator, or proof that a caption is true.
++
++For occluded identity, first measure whether a real visible face cue is available and whether the detector found it. A pose-derived ROI may improve localization; it cannot restore a cue hidden by sunglasses or a mask. Qwen may describe a visibly supported person, clothing, or accessory, but it must not guess a name or reconstruct hidden facial traits. Keep whole-face, periocular, head, body, and image-text semantic representations in separate comparison contracts. Clothing or whole-image similarity can at most support provisional, bounded within-event review; an upload batch alone is not an event, and appearance vectors must not update persistent face centroids. Preserve the current unknown/abstain and roster-grounded naming rules. No branch is ready for activation on the evidence reviewed here.
++
++I decline to forecast a repository effect size. The checked-in materials do not provide a matched, blind human-caption baseline for these proposed arms, and the existing occlusion labels are image-level rather than face-level. The values below are experiment gates, not predicted outcomes.
++
++## Evidence labels and baseline
++
++The labels below distinguish **observed code** (O), **existing recorded measurements** (M), **primary research** (P), and **proposed hypotheses or gates** (H). A paper result is not a repository measurement.
++
++| System or claim | Evidence and disposition |
++|---|---|
++| Operating caption comparator | **O:** `PROFILE_SPECS` pins `Qwen3-VL-30B-A3B-Instruct`, `unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF`, revision `0af19e7479857aa7f3246466a4ad16c7e7299639`, Q4_K_M. The async ensemble profile names the same artifact. The sync/raw route and optional async four-view route are different baseline arms; do not call one a result for the other. See [profiles.py:105](../../../apps/prototype-description-service/scene/config/profiles.py#L105) and the route wrapper at [deps.py:262](../../../apps/prototype-description-service/scene/interface_adapters/http/deps.py#L262). |
++| Florence status | **O:** Florence profiles remain in configuration, including a pinned small profile, but their presence or an unset-environment fallback does not make Florence the operating caption baseline for this assessment. The Qwen pin above is the comparator, consistent with the recorded baseline correction. |
++| Qwen3.8 challenger | **O:** The bake-off registry lists `qwen38-27b` as a competing candidate: `unsloth/Qwen3.8-27B-GGUF` at `1cff334a4a228324d4ee1f76d55d372588f0d556`, UD-Q4_K_XL, declared 17.9 GB plus `mmproj-F16.gguf`, context 8192, image budget 1536, parallelism 1, `--no-think`, prompt template v3, and minimum runtime build `b6887` explicitly marked a lower bound. See [bakeoff_candidates.yaml:71](../../../apps/prototype-description-service/scripts/eval_harness/bakeoff_candidates.yaml#L71). It is Qwen3.8-27B, not Qwen3-VL-8B. The official [Qwen3.8-27B model card](https://huggingface.co/Qwen/Qwen3.8-27B) describes a dense 27B native vision-language model with alternating Gated DeltaNet/Gated Attention blocks; thinking is enabled by default. Pin and validate the actual runtime, projector, tokenizer, prompt template, and effective no-think behavior before comparison. The declared runtime floor does not establish that this hybrid family works on that build. |
++| Qwen3.8 size and quality | The 17.9 GB value is the repository's declared artifact size, not a fresh download or a measurement. Smaller weights do not establish lower latency or higher accepted-caption quality. A dense 27B decoder is not inherently faster than the incumbent's approximately 3B-active MoE. The Blackwell/NVFP4 runtime fork was previously declined; A10 Ampere does not provide native NVFP4 tensor cores, and this experiment does not reopen that branch. Compare the registered Q4_K_XL arm on the same GPU, prompt, crops, token limits, warm/cold-cache conditions, and serving path. |
++| EmbeddingGemma 2 | The official [Google model card](https://huggingface.co/google/embeddinggemma-2) describes a 740M multimodal embedding model: 270M text, 170M vision, and 300M audio modules, with a shared 768D space and MRL dimensions 512/256/128. Loading text plus vision is declared as 440M parameters; BF16/FP32 weight-only lower bounds are about 0.88/1.76 GB before activations, KV state, and image-token cost. The card recommends BF16 or FP32 and warns against FP16; truncated vectors must be re-normalized, and 128D is weak for multimodal use. Start a caption-ranking study at 768D or 512D. Pin revision, preprocessing, published text task prefixes, image handling without a text-side prefix, normalization, dimension, and vision-token budget. It is retrieval/embedding infrastructure, not generation or face identity. Do not compare its vectors to SFace 128D, AuraFace 512D, or InsightFace vectors merely because dimensions coincide. |
++
++The model cards and the registry establish what is being compared, not a caption-quality ranking. Existing Qwen bake-off payload sizes and the repository's older CPU detection timing remain historical context; neither is a new Qwen3.8 quality or caption-latency measurement.
++
++### Optional Qwen3.8 quantization comparisons
++
++The publisher's [immutable Qwen3.8 artifact tree at the registered pin](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/tree/1cff334a4a228324d4ee1f76d55d372588f0d556) lists these displayed artifact sizes. UD-Q4_K_XL remains the only registered challenger; the other quant arms are proposals.
++
++| Quant arm | Pinned weight artifact size | Candidate purpose and limit |
++|---|---:|---|
++| UD-Q3_K_XL | 13.4 GB | Proposed memory-budget arm; test target-task numerical regressions. |
++| UD-Q4_K_XL | 17.9 GB | Registered first challenger; keep its pinned recipe as the comparison anchor. |
++| UD-Q5_K_XL | 20.2 GB | Proposed higher-precision comparison if headroom permits; no monotonic accepted-caption quality gain is promised. |
++| UD-Q6_K_XL | 25.9 GB | Proposed larger-memory or offload experiment only if the hardware budget permits; not a default. |
++
++These are publisher-displayed artifact sizes, not measured VRAM or downloaded-hash results. On a nominal 24 GB GPU, Q5 needs explicit headroom profiling and Q6's weights alone exceed the budget; also account for the 928 MB projector, vision activations, runtime/KV state, and concurrency. Offload can add latency. No speed or caption-quality effect has been measured or is guaranteed by a smaller GGUF, and higher precision cannot restore face pixels hidden by masks or sunglasses.
++
++## What the checked-in pipeline currently does
++
++These are bounded observations from direct reads of the source in this checkout; they do not establish a measured failure rate.
++
++| Surface | Observed behavior | Consequence for the experiment |
++|---|---|---|
++| Face detection order | [`_detect_sync`](../../../apps/prototype-description-service/recognition/infrastructure/embeddings/face_pipeline_adapter.py#L721) detects first and returns an empty list on a miss, then clamps boxes, aligns, embeds, computes quality factors, and applies confidence/face-count filters. | An occlusion score computed after alignment and embedding cannot recover a missed face. Report detector recall separately from crop-conditional recognition. |
++| Raw landmarks and alignment | [`RawDetection`](../../../apps/prototype-description-service/recognition/infrastructure/face_pipeline/_common.py#L84) contains an `xywh` box, five YuNet landmarks, and one scalar score. [`FivePointAligner.align`](../../../apps/prototype-description-service/recognition/infrastructure/face_pipeline/aligner.py#L277) uses those points for a 112×112 affine crop; there is no per-point visibility input. | Do not reinterpret detector confidence as landmark visibility. A new landmark/visibility model needs its own coordinate, confidence, visibility, and calibration contract; it cannot silently replace the five alignment points. |
++| Occlusion quality | [`compute_occlusion_severity`](../../../apps/prototype-description-service/recognition/infrastructure/embeddings/face_quality_factors.py#L82) compares variance and edge activity in two canonical eye patches with whole-crop activity. | This is an appearance proxy, not a mask, per-landmark visibility, or lossless identity support. It does not identify the occluder or establish what is visibly knowable. |
++| Existing caption ensemble | [`EnsembleDescriptionAdapter`](../../../apps/prototype-description-service/scene/infrastructure/vlm/ensemble_decode.py#L185) makes sequential full-image plus grid-view calls. [`_select_caption`](../../../apps/prototype-description-service/scene/infrastructure/vlm/ensemble_decode.py#L284) picks one completed caption by exact-string majority or word-set Jaccard; it accepts a sequence of adapter results, not image/view provenance, and does not combine token traces. Objects, OCR, context fields, and phrase boxes are copied from the full-image pass even when a crop caption wins. | A future image-grounded selector must receive image/view provenance, map claims and people back to the original image, and reground the final selected caption before reusing source-coordinate fields. This is a provenance risk to control, not a newly reproduced bug. Measure the additional calls and caption value. |
++| View/request contract | [`EnsembleDecodeConfig`](../../../apps/prototype-description-service/scene/infrastructure/vlm/ensemble_decode.py#L62) rejects `n_views == 2` for the current grid strategy because its only sub-view duplicates the full image. [`_completion_payload`](../../../apps/prototype-description-service/scene/infrastructure/vlm/gpu_remote_adapter.py#L267) sends one `image_url` per completion request. | A four-to-two call forecast is arithmetic for a proposed targeted-ROI/view policy and requires a builder/config change; it is not achieved by setting this grid config to two. Sending original and marked views in one completion requires a future request/adapter contract extension. Separate requests are possible today, with explicit view mapping. |
++| Decoder outputs | [`_completion_payload`](../../../apps/prototype-description-service/scene/infrastructure/vlm/gpu_remote_adapter.py#L267) can request token log probabilities. The adapter's [`_describe`](../../../apps/prototype-description-service/scene/infrastructure/vlm/gpu_remote_adapter.py#L440) separately requests phrase boxes, but exposes no shared-prefix image-attention map. | Completed-caption ranking is not Cho et al.'s attention-guided Ensemble Decoding. That method needs runtime-internal shared-prefix/logit/attention orchestration; do not label a semantic reranker as an implementation of it. |
++| Cache identity | [`VisualFactsService._describe`](../../../apps/prototype-description-service/scene/application/visual_facts_service.py#L243) checks the exact image/context/model/prompt cache key before adapter work. | Any later ROI, pose, marker, ranker, or grounding policy needs versioned cache identity for crop transforms, pose/proposer revision, ranker revision and scoring weights, visibility policy, grounding version, prompt, and model. Do not bypass the cache for this study; report cache hits separately from compute. |
++| Names and context | [`reconcile_context_facts`](../../../apps/prototype-description-service/scene/application/fusion/reconcile.py#L118) and [`_reconcile_one_identity`](../../../apps/prototype-description-service/scene/application/fusion/reconcile.py#L290) require roster-bound, eligible detected faces and surviving geometric association; ambiguous and undetected identities are rejected. The bulk endpoint intentionally sends `context=None` ([describe_run.py:345](../../../apps/prototype-description-service/scene/interface_adapters/http/routers/describe_run.py#L345)); WordPress builds bounded attachment and public-parent metadata separately ([class-describe-media-service.php:1004](../../../apps/prototype-wp-alt-context/src/api/services/class-describe-media-service.php#L1004)). | An ROI or nearest-neighbor semantic score can never name a person. Keep names attached only through existing consent, roster, face and grounding checks. Pair context-on with no-context and decoy-context arms; metadata is not visual proof. |
++
++The earlier [FIR report v11 section](../../../benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html#v11-methods) already narrows COCO-guided head localization, periocular matching, and S³POT's mask-label role. The [v12 section](../../../benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html#v12) records the AuraFace 512D candidate path and its non-deployment status. This assessment builds on those sections; it does not restate them as new findings or change AuraFace activation status. Any future contribution here would be a repository-specific integration and evaluation, not a novelty claim; WordPress can supply bounded source metadata/context to the backend, with no PHP model runtime needed.
++
++## Proposed diagnostic sequence
++
++Each stage uses a frozen source image set, prompt, token budget, serving hardware and baseline outputs. Change one factor at a time and retain a full-image answer for every arm.
++
++| Stage | Controlled comparison | Primary question and stop condition |
++|---|---|---|
++| 0. Freeze baselines | Raw single-view Qwen3-VL vs the current four-view lexical selector, with identical view generation and outputs retained. | Establish paired, source-hashed candidates. No new quality claim until blind adjudication exists. |
++| 1. Candidate-level semantic ranker | Re-rank those same captions with word-Jaccard and an EmbeddingGemma 2 arm. Encode original image and unmarked ROIs separately from candidate text; use the model's documented task formatting and image-text space. Score explicit visible-fact support and view consistency, and preserve a scene-level coverage check. | Tests ranking only; it adds embedding work to a one-pass request. Similarity is neither truth nor a probability. Include unsupported but fluent candidate captions and image/crop counterfactuals. Stop if shared hallucinations rank higher, scene content is lost, or person binding becomes worse. |
++| 2. Unmarked person/head ROIs | One full-scene view plus zero to two bounded, unmarked head/person crops. Compare full image, person box, predicted pose proposals, and oracle head boxes. Use reliable visible COCO-style head landmarks where present; otherwise use calibrated shoulder/body-axis geometry with uncertainty, not a fixed head-height fraction. If face recognition is evaluated on a crop, rerun the native detector on the crop, map detections through the crop transform to source coordinates, and deduplicate. | Separates localization from conditional recognition. If oracle head boxes do not improve crop-conditional identity, better pose proposals alone should not be expected to improve identity; caption detail and localization utility remain separate outcomes. If predicted proposals add calls without true recovered faces or accepted caption facts, stop. No landmark filled through an occluder is marked observed. |
++| 3. Marker auxiliary view | Add a SoM-like numbered overlay only after the unmarked ROI arm. Keep original pixels authoritative; use fixed total views/tokens and include a marker-only non-occluding control, shuffled/misplaced marker, and blank/wrong-ROI negative. | Tests reference correspondence, not hidden semantic recovery or guaranteed model attention. Stop if marker pixels leak into generated facts, face cues are covered, or the result is indistinguishable from a larger unmarked crop. |
++| 4. Visibility specialist or mask assist | Only after stages 1–2 demonstrate a relevant gain, test human-verified versus predicted masks and a separately trained region/periocular matcher with its own gallery, embedding space and preprocessing. Calibrate any 1:1 verification FAR/FMR diagnostic separately from the open-set identification policy. | The periocular branch is a hypothesis for lower-face masks when eyes remain visible; it is invalid evidence under opaque sunglasses. S³POT-style generated reference pixels may suggest a segmentation mask, but never enter enrollment, identity embeddings, or emitted visible facts. Stop when mask errors suppress visible identity pixels or downstream recognition does not improve. |
++| 5. Generator challenger | Run Qwen3.8-27B UD-Q4_K_XL on the same preregistered arms only after the Qwen3-VL baseline is frozen. Validate its runtime/build and no-think behavior, and report quality, latency, VRAM and failures separately. A higher-precision or different-quant arm must use the same model family and recipe. | Isolates model/quantization from crop, marker, and ranker changes. Stop on critical-fact or person-binding regression, unsupported runtime behavior, or cost outside the declared budget. No quantization conclusion from unrelated general-knowledge tests. |
++
++Typed ROI/fact evidence should retain the source-image hash, person instance, source-coordinate box, crop transform, proposer/model revision, keypoint confidence and *visibility* separately, coverage/uncertainty, view ID, and the fact/caption source. A model-filled landmark under an occluder is a proposal, not an observation. A caption selected from a crop must be grounded against the original scene before source-coordinate phrase boxes or named-person attachments are reused.
++
++```text
++original image ──┬── full-scene Qwen baseline ─────────────┐
++                 ├── bounded unmarked ROI views ───────────┤
++                 ├── optional numbered auxiliary view ─────┤── candidate captions
++                 └── source-coordinate / person mapping ───┘          │
++                                                                      ▼
++                                            text/image ranker + abstain/grounding gate
++                                                                      │
++                                                                      ▼
++                                      caption facts → existing roster and consent checks
++```
++
++The ranker must not compare an image-plus-caption interleaved input with that same caption as if this were independent confirmation. Prefer separate image-only and text-only vectors, explicit source-view/person indices, counterfactual negatives and human adjudication. A closed fact ledger can identify the supported and unsupported nouns/actions/accessories/person references in each caption; it does not turn cosine similarity into a truth detector.
++
++## Evaluation contract and proposed adoption gate
++
++1. **Build the face-level gold set before scoring.** Include real clean, mask, sunglasses, both, other occluders, profile, tiny head, overlapping people, blur and out-of-domain cases. Annotate every face/person instance independently of proposals: source-coordinate face/head/person boxes, identity or explicit unknown, person↔head↔face links, occluder region/type, visible/occluded/self-occluded/out-of-frame/uncertain state by anatomical landmark, and annotator disagreement. Keep consent scope explicit for evaluation and for any later training. Group by identity, capture event/session, duplicate source and synthetic descendant before split. Preserve a deployment-probability sample alongside an enriched challenge set.
++2. **Treat historic tags as mining hints only.** The existing 646-image inventory has 591 consent-on-file personal images and 55 celebrity fixtures; the old hand labels cover only 150 images and are image-level. Historical counts of 13 sunglasses, 5 mask, and 19 other-occlusion positives are too small and too weakly attributed to establish face-level condition coverage. The prior 13/13 or 5/5 caption-keyword retrieval figures are shortlist recall against old image tags, not true occlusion recall or caption precision. Recheck the current manifest and image files before acquisition; the August finding that 449 images had no captions is not a current readiness statement.
++3. **Adjudicate captions blind and paired.** Score supported specificity, scene/action completeness, accessories and relations; unsupported object/person/name/location/intent/emotion/cause; crop coverage; and which person each phrase describes. “Face mask” may be visible; COVID intent is not. Include an unknown/abstain choice. Separate no-context, authorized-context and decoy-context cases, and never award a context echo as a visual fact.
++4. **Measure the failure stages separately.** Report face/head recall at matched FPPI, localization and person-association precision/recall, crop-conditional recognition, end-to-end correct names with missed detections in the denominator, and unknown rate. Reuse the existing [`detection_pr_strict`](../../../apps/prototype-description-service/scripts/eval_harness/face_metrics.py#L782) contract and [`associate_detections`](../../../apps/prototype-description-service/scripts/eval_harness/face_assignment.py#L215) assignment; strict detection scoring already requires exhaustive annotations, independently supported and human-adjudicated GT, and the IoU threshold in the run manifest. Do not rebuild these metrics. The end-to-end open-set identification gate is FNIR at a ratified fixed FPIR, with the gallery size and non-mated population named and the threshold fixed from calibration before sealed-test scoring. The current [`fnir_fpi_at_threshold`](../../../apps/prototype-description-service/scripts/eval_harness/open_set_identification.py#L128) diagnostic reports FNIR at a fixed score threshold and FPI as an integer count; FPI is not an FPIR rate and must not be silently normalized or substituted for that gate. FAR/FMR belongs to a separately labeled 1:1 verification diagnostic with its own threshold and trial population. Compare corresponding visible support on both probe and gallery for partial-face recognition; do not relax a false-accept limit to buy recall. The rule of three (about 30,000 independent negative trials for a 10⁻⁴ zero-error bound) applies to an appropriately independent 1:1 pair-FMR diagnostic, not automatically to correlated 1:N searches.
++5. **Record service cost end to end.** Measure p50/p95/p99 for proposal, embedding, generation and grounding, queue and warm/cold paths, cache hit rates, peak VRAM, GPU cost per accepted caption, failures/timeouts, and fraction escalated to multiview. Embedding encoding is not a free cosine operation; cache hits do not count as fast model inference. Four generation calls falling to two means two fewer calls arithmetically, not a measured 2× speedup.
++
++**Proposed, not approved, adoption gate:** seek at least a 5 percentage-point paired gain in human-accepted captions and non-inferiority on preregistered critical factuality and person-binding errors, with same pins/hardware, group-aware intervals or design-effect sizing, a declared compute budget, and successful negative perturbation tests. This threshold is a decision proposal, not a forecast. Do not claim a gain until the paired run is adequately powered and the margin/holdout design was fixed before inspecting outcomes.
++
++| Kill condition | Interpretation |
++|---|---|
++| Shared unsupported details rise after ranker selection | Similarity is reinforcing correlated hallucinations, not verifying them. |
++| Cross-person name or phrase binding increases | Crop/person evidence does not satisfy the existing one-to-one grounding boundary. |
++| Marker, inpainted, or generated face texture appears as a visible fact | Artificial pixels crossed into the evidence contract. |
++| Oracle ROI provides no conditional improvement | Pose-proposal engineering cannot repair the downstream missing-cue problem. |
++| Proposal overhead yields no accepted-fact or localization benefit | Keep the extra routing work out of the request path. |
++| Quant/model challenger regresses a critical slice or breaks runtime/template contract | Do not promote it based on model size, aggregate benchmark scores, or a different task. |
++
++## Literature and canon applied to decisions
++
++| Evidence | What it supports here | Limit retained |
++|---|---|---|
++| Zeng, Veldhuis & Spreeuwers, [A Survey of Face Recognition Techniques under Occlusion](https://arxiv.org/abs/2006.11366), §§II, IV, V, VII. | **P:** detection is upstream; spatial exclusion/correspondence and reconstruction are separate families. This assessment starts with visible-support comparison and stages recovery after it. | Survey taxonomy does not establish which module improves this service. Recovery pixels are not observed identity evidence. |
++| Li, Jain & Deng, *Handbook of Face Recognition*, 3rd ed., ch. 1, “Face Recognition Research and Development,” §1.4.3 (PDF pp. 27–28; print pp. 14–15), and ch. 11 on quality/ambiguity. | **P:** real and synthetic occlusion data are different transfer conditions; degradation can separate same-person descriptors and compress different-person distances. Evaluate occlusion on both probe and gallery. | These book locators were coordinator-verified, not re-read from this remote mount. They are not a local performance result. |
++| Xiang et al., [OccFace](https://arxiv.org/abs/2602.10728), §3, Tables 4–7 (PDF pp. 12–14), Fig. 5 (PDF p. 13). | **P:** a dense 100-point landmark contract pairs coordinates with per-point visibility; evaluation separates visible/occluded landmark error and visibility AP/F1. | Evidence for a visibility interface and metrics, not a replacement for five-point YuNet alignment or a face-ID gain. COCO semantic points cannot simply substitute for YuNet's five fit points. |
++| [DirectMHP](https://arxiv.org/abs/2302.01110) and Miao et al., [Pose-Guided Feature Alignment for Occluded Person Re-Identification](https://openaccess.thecvf.com/content_ICCV_2019/html/Miao_Pose-Guided_Feature_Alignment_for_Occluded_Person_Re-Identification_ICCV_2019_paper.html), ICCV 2019. | **P:** prior work already addresses invisible-face head localization and pose-guided visible body-part re-identification. | These support the bounded localization/visible-part comparison family as prior art; they do not establish a gain for this repository's shoulder/body-axis proposal. |
++| Abdullah, *PLGSA-Transformer: Periocular Landmark-Guided Attention with Occlusion-Adaptive Cosine Thresholding*, coordinator-read 35-page manuscript, §§3.3–3.6 (pp. 14–17), §§5.1, 5.2, 5.6. | **P:** a periocular prior plus learned gate is a mask-specific hypothesis when the eye region is visible. | The reported 834/858 genuine accepts (97.2%) use the authors' pair protocol, not end-to-end service recognition; Rank-1 (~78%) and Rank-5 (~96%) are results on that dataset, not this repository's forecast. The severity output is narrow (~0.43–0.52), changes the threshold by roughly 3–4%, and lacks an isolated component ablation. OACT's distance-threshold direction cannot justify global cosine-threshold relaxation. The coordinator's extraction manifest did not establish a venue; none is claimed here. |
++| Wang et al., [S³POT](https://arxiv.org/abs/2602.00635), §3, Figs. 3–4, Tables 1–3 (pp. 6–8), limitations §5 (p. 9). | **P:** de-occluded reference features can guide an occlusion-segmentation mask proposal. | Its reported IoU is segmentation on its author corpus, not identity recovery or caption improvement. Keep reference pixels out of gallery, embedding, and caption facts; retain mask audit and fine/translucent failure checks. |
++| Song et al., [Occlusion Robust Face Recognition Based on Mask Learning with Pairwise Differential Siamese Network](https://arxiv.org/abs/1908.06290) (PDSN), ICCV 2019, pp. 7–8. | **P:** learned feature suppression for corresponding occluded facial blocks is prior art. | It is not a pixel mask applied to a frozen opaque SFace/AuraFace vector; it requires a compatible trained embedding and gallery contract. |
++| Tevissen et al., [Inserting Faces inside Captions](https://arxiv.org/abs/2405.02305) (AstroCaptions), pp. 5, 12. | **P:** caption insertion is grounded in already detected/identified people and aligns with keeping name fusion downstream of face/phrase grounding. | The reported 93.2% is not occluded face identification. This is not a novelty claim for name insertion. |
++| Cho et al., [Do You Keep an Eye on What I Ask?](https://arxiv.org/abs/2505.17529), ICLR 2025. | **P:** attention-guided Ensemble Decoding/FastED uses shared-prefix attention/logit orchestration. | Existing independent full/crop generation plus completed-caption selection is a different method; no paper gain transfers to current Qwen. |
++| Yang et al., [Set-of-Mark Prompting](https://arxiv.org/abs/2310.11441); Xu et al., [VP-Bench](https://arxiv.org/abs/2511.11438); Lin et al., [Rethinking Visual Prompting with External Knowledge](https://arxiv.org/abs/2407.04681); and [official COCO keypoint format](https://cocodataset.org/#format-data). | **P:** SoM overlays alphanumeric marks on proposed image regions; VP-Bench studies how MLLMs perceive and use visual prompts; external spatial cues are a separate prompting pathway. COCO's 17 body keypoints can provide localized evidence for proposing head ROIs when the relevant points are labeled, but are not face-landmark visibility labels. | The original SoM evidence targets GPT-4V and does not establish a Qwen3.8 occlusion gain. Lin et al.'s learned spatial embedding map is not implemented by drawing pixel-number overlays. The cited visual-prompting studies do not establish this crop/occlusion use case. COCO visibility codes do not establish face visibility; COCO has no face box or YuNet alignment mouth corners, and a model confidence is not a human visibility label. |
++| Amerehi & Healy, IMVIP 2024, DOI [10.1049/icp.2024.3291]. | **P:** synthetic virtual-occlusion labels can be disclosed as a later training arm for small-image classification. | The reported 49.26% is not a caption or face-recognition gain. Keep synthetic artifacts and real masks as separate arms. |
++| Huyen, *AI Engineering*, ch. 7 (PDF pp. 352–356; print pp. 328–332) and ch. 10 (PDF p. 492; print p. 468). | **P:** quantization memory, numerical behavior and hardware effects are distinct; evaluate retrieval/generation and TTFT/TPOT/end-to-end latency separately. | No local speed bound follows from parameter count or a model card. |
++
++### Published heuristics canon: decision-linked use
++
++The rule names below come only from the read-only published `heuristics-canon-v0.25.6` snapshot (`~/Development/heuristics-canon-current`); its 22 source files were hash-checked against the release manifest. Mutable research lexicons and distilled notes are discovery/context sources, not rule authority. The remote VM cannot mount the coordinator's local research directory. Research files are under `~/Development/heuristics-canon-research/`; this table records their corpus-relative paths for provenance. The primary book and paper PDFs were read and page-located by the coordinator from `/Volumes/Chimay/___Books` and `~/Documents/__research_papers/`; those local details are supplied, not claimed as fresh remote reads. The original distilled-corpus correction in decision 15965 supersedes the earlier missing-corpus assumption selected during semantic reinjection (15963).
++
++| Research note | Extracted text |
++|---|---|
++| `distilled/ml-systems/occluded-face-recognition-survey.md` | `literature/extracted/ml-systems/occluded-face-recognition-survey.txt` |
++| `distilled/ml-systems/occface-per-point-visibility.md` | `literature/extracted/ml-systems/occface-per-point-visibility.txt` |
++| `distilled/ml-systems/plgsa-periocular-attention.md` | `literature/extracted/ml-systems/plgsa-periocular-attention.txt` |
++| `distilled/ml-systems/s3pot-occlusion-segmentation.md` | `literature/extracted/ml-systems/s3pot-occlusion-segmentation.txt` |
++| `distilled/ml-systems/handbook-face-recognition.md` | `literature/extracted/ml-systems/handbook-face-recognition.txt` |
++
++| Canon rule and source as printed | Decision it changes |
++|---|---|
++| **EMB-01 One embedding space per comparison** — *Foundations of Vector Retrieval*, ch. 1; **EMB-05 Pin embedding and mapping versions** — *Hidden Technical Debt in ML Systems*. | Keep face/head/periocular/body/image-text spaces separate; pin crop mapping, preprocessing, dimension, normalization and version alongside vectors. |
++| **EMB-06 Recognition is a differential comparison** — *NIST FRVT Part 3 Demographic Effects* + *A novel Facial Recognition technique with Focusing on Masked Faces*. | Compare matched visible support across probe and gallery; do not reuse a full-face cosine calibration for partial crops. |
++| **EMB-11 Occlusion is spatial support, not a scalar penalty** and **EMB-12 Correspondence before partial compare** — *A survey of face recognition techniques under occlusion*. | Replace “severity means lower threshold” reasoning with explicit region correspondence and a visible-support experiment; preserve the proxy only as a separately tested shortlist signal. Primary-paper locators are kept in the literature ledger above, not added to this canon source cell. |
++| **EMB-14 Per-point visibility on the stage contract** and **EVAL-27 Visibility-split localization metrics** — *OccFace: Per-Point Visibility*. | Require point visibility and report visible versus occluded landmark error plus visibility AP/F1 before claiming a visibility-aware detector. Primary-paper locators are kept in the literature ledger above, not added to this canon source cell. |
++| **EMB-15 Anatomical visible-band prior** — *PLGSA-Transformer periocular attention and occlusion-adaptive thresholding*. | Restrict periocular routing to actually visible eyes under lower-face cover; reject it for opaque sunglasses and retain the source's weak/no-ablation limits. Primary-paper locators are kept in the literature ledger above, not added to this canon source cell. |
++| **EVAL-01 Require offline baselines; EVAL-04 Slice-based gate; EVAL-06 Perturbation eval gate; CAL-02 Unknown is a valid result** — *Designing Machine Learning Systems*. | Freeze raw and current ensemble outputs; stratify real conditions and include decoys, perturbations and abstention before comparing arms. |
++| **EVAL-28 Real-occlusion protocol for real-occlusion claims** — *A survey of face recognition techniques under occlusion*. | Use consent-scoped real masks/sunglasses as evaluation evidence; report synthetic masks in a separate transfer arm. Primary-paper locators are kept in the literature ledger above, not added to this canon source cell. |
++| **SERVE-07 Quality-gate behaviour-changing serving optimizations** and **FM-04 Structured output is a contract** — *AI Engineering*. | Put ROI/ranker/marker version and source-coordinate grounding into an explicit output/cache contract; keep the change behind measured quality checks. |
++| **PERF-01 Percentiles, not averages** — *Latency: Reduce Delay in Software Systems*, ch. 2; *Designing Data-Intensive Applications*, ch. 1. | Measure end-to-end p50/p95/p99 including queue and optional-stage costs, not a GPU kernel or cache-hit average. |
++| **FORE-02 Resolvable forecast contract** — *Superforecasting*, ch. 3. | Do not present a numerical gain forecast without a frozen estimand, sample/power plan, comparison and resolution rule. |
++| **BOUND-01 Assertable set is bounded** — *Ways of Seeing*, ch. 1 + *On Photography* + *Regarding the Pain of Others*, ch. 8 + *Image Music Text*, ch. 3 + *The Civil Contract of Photography*, ch. 6 + *Under the Sign of Saturn*, §syberbergs-hitler. | Describe what visible pixels support. Do not infer COVID purpose, emotion, intent or hidden facial content from a mask, covered mouth or eyes. |
++
++The relevant reasoning cards also sharpen controls: **CARD-31 synthetic-artifact-control-arm** keeps marker/overlay/compositing artifacts separate; **CARD-32 condition-matched-reference** matches the visible region on both sides; **CARD-28 quantization-delta-on-the-failure-metric** tests precision against the target failure, not a distant benchmark; **CARD-23 context-obedience-is-a-separate-capability** requires context-on/off/decoy arms. **CARD-25 frozen-base-additive-delta** is relevant only to a future optional embedding adaptation, not a reason to fine-tune in this study. These are proposed controls, not empirical laws or a vote count.
++
++## Source and verification boundary
++
++The direct repository observations above were checked against the remote checkout on 2026-10-08. The lane's code-graph/index channel reported degraded `bad_json` status and omitted several symbols; the graph was not used to infer absence. The supplied main codemap excerpts were treated as context, and the specific cited files and line anchors were read directly in the checkout. Research-specific paper locators and local distilled/extracted paths were supplied by the coordinator; the remote VM did not expose `/Volumes/Chimay/___Books`, `~/Documents/__research_papers/`, or `~/Development/heuristics-canon-research/`. Official mutable model-card facts are linked to the current Qwen and Google cards; no model weights or datasets were downloaded.
++
++Historical decision context was checked through cross-task semantic search with verified `gte-base-en-v1.5` embeddings. This is repository history retrieval, not an EmbeddingGemma 2 benchmark, and supplies no model-quality or degradation result. Relevant provenance: decisions 5093/5094 record the August 16 inventory context (646-image consent mix, 150 image-level tags, 13 sunglasses, 5 mask, 19 other-occlusion tags, and 449 uncaptioned images as of that date); 3323 is the 646-image CPU YuNet pass (138 seconds, 571 detections at 0.9 and 1,763 at 0.3; detection only); 4939 records Qwen3.8 registry admission pins; 4757 declined NVFP4; 12975 records merged FIRDV-2 strict detection metrics; and 15943 records the Qwen baseline correction. These are historical decision references, not new measurements in this assessment.
++
++The existing FIR report records historical dataset and timing measurements. They are not repeated as this assessment's experiments. This document adds a bounded proposal; it does not certify implementation, recognition accuracy, caption quality, fairness, deployment readiness, or performance.

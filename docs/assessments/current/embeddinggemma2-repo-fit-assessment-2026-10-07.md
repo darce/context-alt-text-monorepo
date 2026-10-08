@@ -43,7 +43,7 @@ live in production.
 | [`gpu_remote_adapter.py:225`](../../../apps/prototype-description-service/scene/infrastructure/vlm/gpu_remote_adapter.py#L225), [`gpu_remote_adapter.py:242`](../../../apps/prototype-description-service/scene/infrastructure/vlm/gpu_remote_adapter.py#L242) | `_render_context` includes each nonempty context key; `_user_text` puts it in an editorial-metadata fence. `context_applied` means context was injected, not that Qwen obeyed it. | No relevance ranking or token-budget selection happens in this renderer. |
 | [`class-describe-media-service.php:1004`](../../../apps/prototype-wp-alt-context/src/api/services/class-describe-media-service.php#L1004), [`class-describe-media-service.php:1068`](../../../apps/prototype-wp-alt-context/src/api/services/class-describe-media-service.php#L1068), [`class-describe-media-service.php:1110`](../../../apps/prototype-wp-alt-context/src/api/services/class-describe-media-service.php#L1110), [`requests.py:84`](../../../apps/prototype-description-service/scene/interface_adapters/http/schemas/requests.py#L84) | WordPress applies tenant category policy, bounds attachment and public-parent fields, and builds identity context under its own policy. An absent category option permits supported categories; malformed policy fails closed to attachment only. The backend accepts typed attachment, post, taxonomy, product, and identity fields; taxonomy terms are capped at 20. | The candidate input is already privacy-filtered and structurally bounded. The public parent method includes only published parents. |
 | [`reconcile.py:118`](../../../apps/prototype-description-service/scene/application/fusion/reconcile.py#L118) | Identity and brand attachment, conflict handling, and naming-policy checks are handled by the existing reconciliation stage. | Similarity scores must not replace identity, brand, or naming-policy decisions. |
-| [`visual_facts_service.py:243`](../../../apps/prototype-description-service/scene/application/visual_facts_service.py#L243) | Cache lookup uses tenant, image, adapter, model, prompt/task, and context hashes before model compute. | Any selected context must flow through this existing cache path; do not bypass or weaken its key. |
+| [`visual_facts_service.py:259`](../../../apps/prototype-description-service/scene/application/visual_facts_service.py#L259), [`ensemble_decode.py:220`](../../../apps/prototype-description-service/scene/infrastructure/vlm/ensemble_decode.py#L220), [`ensemble_decode.py:228`](../../../apps/prototype-description-service/scene/infrastructure/vlm/ensemble_decode.py#L228) | Cache lookup keys include tenant, image, adapter, model ID, model version, prompt/task version, and context hash. `EnsembleDescriptionAdapter` delegates its model and prompt/task identity to the wrapped adapter. | Any selected context must flow through this existing cache path. A later ranking-policy or caption-selector change must also version the cache namespace or prompt/policy identity so identical request inputs cannot reuse drafts selected under older behavior. |
 | [`describe_run.py:298`](../../../apps/prototype-description-service/scene/interface_adapters/http/routers/describe_run.py#L298), [`describe_run.py:358`](../../../apps/prototype-description-service/scene/interface_adapters/http/routers/describe_run.py#L358), [`scene-describe-run.schema.json:5`](../../../packages/shared-contracts/schemas/scene-describe-run.schema.json#L5) | The bulk `/describe/run` worker calls `VisualFactsService` with `context=None`; its multipart contract lists tenant, media IDs, recognition flag, idempotency key, and image parts, with no context/context-pack field. Identity inputs are separately supplied for naming. | A context selector can benefit existing contextual describe routes only. Bulk support needs a separately scoped request-contract change before threading context into the worker. |
 
 ### Configuration drift to keep visible
@@ -85,12 +85,20 @@ edited for this assessment.
 
 If real requests show large or distracting context packs, compare the current renderer with a cheap
 deterministic renderer first. A later EmbeddingGemma experiment could embed the image and candidate
-text entries in the same model space, then rank only entries that have already passed WordPress
-privacy/category filtering. Keep identity facts, naming policy, and review constraints in their
-protected path; never let a relevance score suppress or authorize them. Preserve source provenance
-for every included field. On encoder, lookup, or score failure, fall back to the original bounded
+text entries in the same model space
+([EMB-01](https://github.com/darce/heuristics-canon/tree/v0.25.6)), then rank only entries that
+have already passed WordPress privacy/category filtering. The bounded per-request candidate set can
+use an exact cosine scan; it does not require a vector database or approximate-nearest-neighbor
+index. A tenant-scoped metadata-embedding cache may help if measurements justify it. Keep identity
+facts, naming policy, and review constraints in their protected path; a relevance score must not
+suppress or authorize them. Preserve the original source context and provenance for every included
+field for auditability.
+Pin the EmbeddingGemma model revision, preprocessing, output dimension, normalization, and ranking
+policy in experiment provenance. Any ranking-policy change must version the cache namespace or
+prompt/policy identity, even when request inputs are unchanged, so old drafts cannot be reused under
+new selection behavior. On encoder, lookup, or score failure, fall back to the original bounded
 approved pack. Pass the chosen context through normal normalization, cache hashing, and describe
-execution.
+execution. This is a future-scope requirement, not a request to implement a new cache now.
 
 The current pack’s bounded fields and category filtering may already be sufficient, especially for
 short clean packs. Measure the distribution and token cost of actual eligible packs before adding
@@ -102,11 +110,14 @@ model serving. Do not extend this proposal to `/describe/run` without a separate
 already uses exact-string majority, then word-set Jaccard consensus when captions are unique; ties
 go to the earliest view, which is the full-image pass. It always returns one candidate caption
 verbatim. An embedding-based fallback might group paraphrases better, but adds model loading/caching
-and selection complexity to this inexpensive function. If evaluated, preserve exact majority,
-full-image tie behavior, and verbatim candidate selection. Similarity between captions is not
-evidence that a caption is true, that a name is visible, or that identity is correct. Do not assume
-it permits fewer Qwen views; each view remains a Qwen generation pass and may also incur a grounding
-follow-up.
+and selection complexity to this inexpensive function. For text-paraphrase consensus, compare the
+text-only 270M loading option with the existing Jaccard selector; consider text-plus-vision 440M
+only if caption reranking must use the image. Both model options add overhead against the cheap
+existing Jaccard calculation. If evaluated, preserve exact majority, full-image tie behavior, and
+verbatim candidate selection, and version the selector identity used by the cache. Similarity
+between captions is not evidence that a caption is true, that a name is visible, or that identity
+is correct. Do not assume it permits fewer Qwen views; each view remains a Qwen generation pass and
+may also incur a grounding follow-up.
 
 ### 3. Future semantic media search
 
@@ -135,32 +146,43 @@ selected separately from blind caption acceptability, unsupported-detail rate, a
 rate. A retrieval win is not a generation win.
 
 Report endpoint p50 and p95, not averages or encoder-only timing. For later scoping, use these as
-acceptance targets rather than predictions: allow at most 5% p95 regression when a measured quality
-improvement justifies it; claim a speed improvement only at 10% or better p95 reduction; optionally
-require a 5 percentage-point caption-acceptability gain. Predeclare sample sizes and report
-uncertainty intervals. Do not assign numeric accuracy or speed probabilities before this evaluation.
+acceptance targets rather than predictions
+([FORE-02](https://github.com/darce/heuristics-canon/tree/v0.25.6)): allow at most 5% p95 regression
+when a measured quality improvement justifies it; claim a speed
+improvement only at 10% or better p95 reduction; optionally require a 5 percentage-point
+caption-acceptability gain. Predeclare sample sizes and report uncertainty intervals. Do not assign
+numeric accuracy or speed probabilities before this evaluation.
 
 ## Evidence rules and provenance
 
 This assessment follows the pinned, read-only [heuristics-canon
 v0.25.6](https://github.com/darce/heuristics-canon/tree/v0.25.6) by stable ID and attributed
-summary; no canon text was copied or changed. The pinned canon release and manifest are not present
-in this lane checkout, so this document records the omission and links the release rather than
-copying canon text. The relevant rows are:
+summary; no canon text was copied or changed. The coordinator verified the local checkout at
+`/Users/daniel/Development/heuristics-canon-current`, resolved its release to `v0.25.6`, and
+revalidated manifest hashes for the consulted `ml-systems`, `engineering`, and `epistemics` rows.
+That canon checkout was not present in this lane VM, so this document uses the coordinator-verified
+row summaries and links the pinned release rather than claiming a local read or copying canon text.
+The relevant rows are:
 
 | Rule | Canon row | Source attribution |
 | --- | --- | --- |
-| EMB-01 | One embedding space per comparison | *Foundations of Vector Retrieval*, ch. 1 |
-| EVAL-01 | Require offline baselines | *Designing Machine Learning Systems* |
-| EVAL-04 | Slice-based gate | *Designing Machine Learning Systems* |
-| RAG-01 | Evaluate retrieval and generation separately | *AI Engineering* |
-| PERF-01 | Percentiles, not averages | *Latency: Reduce Delay in Distributed Systems*, ch. 2; *Designing Data-Intensive Applications*, ch. 1 |
-| FORE-02 | Resolvable forecast contract | *Superforecasting*, ch. 3 |
+| [`EMB-01`](https://github.com/darce/heuristics-canon/tree/v0.25.6) | One embedding space per comparison | *Foundations of Vector Retrieval*, ch. 1 |
+| [`EVAL-01`](https://github.com/darce/heuristics-canon/tree/v0.25.6) | Require offline baselines | *Designing Machine Learning Systems* |
+| [`EVAL-04`](https://github.com/darce/heuristics-canon/tree/v0.25.6) | Slice-based gate | *Designing Machine Learning Systems* |
+| [`RAG-01`](https://github.com/darce/heuristics-canon/tree/v0.25.6) | Evaluate retrieval and generation separately | *AI Engineering* |
+| [`PERF-01`](https://github.com/darce/heuristics-canon/tree/v0.25.6) | Percentiles, not averages | *Latency: Reduce Delay in Software Systems*, ch. 2; *Designing Data-Intensive Applications*, ch. 1 |
+| [`FORE-02`](https://github.com/darce/heuristics-canon/tree/v0.25.6) | Resolvable forecast contract | *Superforecasting*, ch. 3 |
 
-The claim trail applies canon Principle 9 (traceable claim inputs) and Principle 13 (evidence before
-commitment). Earlier history and semantic retrieval snippets are historical/advisory evidence only;
-they do not establish current runtime state. The prior Florence-default conclusion is explicitly
-superseded by the user correction and current checked-in source evidence above.
+The evaluation applies [`EVAL-01`](https://github.com/darce/heuristics-canon/tree/v0.25.6) and
+[`EVAL-04`](https://github.com/darce/heuristics-canon/tree/v0.25.6): compare against offline
+baselines and retain predeclared slices. It applies
+[`RAG-01`](https://github.com/darce/heuristics-canon/tree/v0.25.6) by scoring retrieval separately
+from generation, and [`PERF-01`](https://github.com/darce/heuristics-canon/tree/v0.25.6) by
+reporting endpoint percentiles. The claim trail applies canon Principle 9 (traceable claim inputs)
+and Principle 13 (evidence before commitment). Earlier history and semantic retrieval snippets are
+historical/advisory evidence only; they do not establish current runtime state. The prior
+Florence-default conclusion is explicitly superseded by the user correction and current checked-in
+source evidence above.
 
 **Limits:** this is repo-fit analysis for future scoping, not a build or rollout plan. It records
 source configuration and model-card capabilities, not live deployment state or benchmark results. No

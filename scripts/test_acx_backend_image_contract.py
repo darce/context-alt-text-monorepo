@@ -50,6 +50,8 @@ import subprocess
 import sys
 import textwrap
 
+import pytest
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 DOCKERFILE = REPO_ROOT / "apps" / "prototype-description-service" / "Dockerfile"
 SCRIPTS_DIR = REPO_ROOT / "apps" / "prototype-description-service" / "scripts"
@@ -869,6 +871,75 @@ def test_assert_safe_image_repo_refuses_evil_and_accepts_ocir() -> None:
     assert ok_vlm.returncode == 0, ok_vlm.stderr
 
 
+def _assert_deploy_promotion_order(deploy_script: str) -> None:
+    """The shared ship path must gate the immutable SHA before tag promotion."""
+
+    def _function_body(name: str) -> str:
+        m = re.search(
+            rf"^{re.escape(name)}\(\) \{{\n(?P<body>.*?)^\}}$",
+            deploy_script,
+            re.DOTALL | re.MULTILINE,
+        )
+        assert m, f"{name} must exist"
+        return m.group("body")
+
+    assert re.search(r'(?m)^\s*_ship_selected_env "\$env" aggregate\s*$', _function_body("do_deploy")), (
+        "do_deploy must ship through _ship_selected_env (aggregate)"
+    )
+    ship_body = _function_body("_ship_selected_env")
+    call_offsets = []
+    for call in (
+        r"do_push_sha\s*$",
+        r'promote_gate "\$env" "\$\{ACX_CANDIDATE_DIGEST_REF\}"\s*$',
+        r'if do_push_tag "\$tag" "\$\{ACX_CANDIDATE_DIGEST_REF\}"; then\s*$',
+    ):
+        m = re.search(rf"(?m)^\s*{call}", ship_body)
+        assert m, f"_ship_selected_env must call {call!r}"
+        call_offsets.append(m.start())
+    assert call_offsets == sorted(call_offsets), call_offsets
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "remove_sha_push",
+        "remove_gate",
+        "remove_tag_push",
+        "gate_before_sha_push",
+        "tag_push_before_gate",
+        "unguarded_tag_push",
+        "mutable_gate_ref",
+        "mutable_tag_ref",
+    ),
+)
+def test_d4_promotion_order_rejects_mutations(mutation: str) -> None:
+    """Reject regressions in the real ship body without executing a deployment."""
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    _assert_deploy_promotion_order(source)
+    sha_push = "  do_push_sha\n"
+    gate = '  promote_gate "$env" "${ACX_CANDIDATE_DIGEST_REF}"\n'
+    tag_push = '  if do_push_tag "$tag" "${ACX_CANDIDATE_DIGEST_REF}"; then\n'
+    replacements = {
+        "remove_sha_push": (sha_push, ""),
+        "remove_gate": (gate, ""),
+        "remove_tag_push": (tag_push, ""),
+        "gate_before_sha_push": (gate, ""),
+        "tag_push_before_gate": (tag_push, ""),
+        "unguarded_tag_push": (tag_push, tag_push.replace("if ", "").replace("; then", "")),
+        "mutable_gate_ref": (gate, gate.replace("${ACX_CANDIDATE_DIGEST_REF}", "$tag")),
+        "mutable_tag_ref": (tag_push, tag_push.replace("${ACX_CANDIDATE_DIGEST_REF}", "$tag")),
+    }
+    old, new = replacements[mutation]
+    assert old in source, f"mutation target missing: {mutation}"
+    mutant = source.replace(old, new, 1)
+    if mutation == "gate_before_sha_push":
+        mutant = mutant.replace(sha_push, gate + sha_push, 1)
+    elif mutation == "tag_push_before_gate":
+        mutant = mutant.replace(gate, tag_push + gate, 1)
+    with pytest.raises(AssertionError):
+        _assert_deploy_promotion_order(mutant)
+
+
 def test_d4_boot_smoke_emits_real_entrypoint_and_cache_mount(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -942,27 +1013,7 @@ def test_d4_boot_smoke_emits_real_entrypoint_and_cache_mount(
     assert "ACX_MODELS_PATH" in captured
     # Deploy still promotes SHA before env tag after smoke (structural order).
     # do_deploy delegates the ship to _ship_selected_env, which owns the order.
-    deploy_script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-
-    def _function_body(name: str) -> str:
-        m = re.search(
-            rf"^{re.escape(name)}\(\) \{{\n(?P<body>.*?)^\}}$",
-            deploy_script,
-            re.DOTALL | re.MULTILINE,
-        )
-        assert m, f"{name} must exist"
-        return m.group("body")
-
-    assert re.search(
-        r'(?m)^\s*_ship_selected_env "\$env" aggregate\s*$', _function_body("do_deploy")
-    ), "do_deploy must ship through _ship_selected_env (aggregate)"
-    ship_body = _function_body("_ship_selected_env")
-    call_offsets = []
-    for call in (r"do_push_sha\s*$", r'promote_gate "\$env" ', r'if ! do_push_tag "\$tag" '):
-        m = re.search(rf"(?m)^\s*{call}", ship_body)
-        assert m, f"_ship_selected_env must call {call!r}"
-        call_offsets.append(m.start())
-    assert call_offsets == sorted(call_offsets), call_offsets
+    _assert_deploy_promotion_order(DEPLOY_SCRIPT.read_text(encoding="utf-8"))
 
 
 def test_d6_ship_remote_image_repo_env_emits_sudo_upsert(
@@ -1061,26 +1112,32 @@ def test_d6_ship_remote_image_repo_env_emits_sudo_upsert(
     assert ssh_log.read_text() == "", f"ssh reached with: {ssh_log.read_text()!r}"
 
 
+@pytest.mark.parametrize("initial_mode", (0o600, 0o640))
 def test_d9_clear_remote_image_repo_env_removes_key(
     tmp_path: pathlib.Path,
+    initial_mode: int,
 ) -> None:
     """D9 behavioural: captured clear program removes ACX_IMAGE_REPO (TEST-11).
 
     clear_remote_image_repo_env ships ``sudo python3 -c <program> ... clear``.
     The ssh stub captures that payload; the test drops the sudo prefix (same
     technique as D6) and runs the program against a local .env so the
-    resulting file is asserted rather than the payload's spelling.
+    resulting file is asserted rather than the payload's spelling. Stub only
+    the external deployment lease, and record acquire/payload/release order.
     """
     bindir = tmp_path / "bin"
     bindir.mkdir()
     ssh_log = tmp_path / "ssh.log"
     ssh_log.write_text("")
+    call_log = tmp_path / "calls.log"
+    call_log.write_text("")
     (bindir / "ssh").write_text(
         textwrap.dedent(
             f"""\
             #!/bin/sh
             for a in "$@"; do last="$a"; done
             printf '%s\\n' "$last" >> "{ssh_log}"
+            printf 'payload\\n' >> "{call_log}"
             exit 0
             """
         )
@@ -1092,7 +1149,18 @@ def test_d9_clear_remote_image_repo_env_removes_key(
     script = textwrap.dedent(
         f"""\
         source "{DEPLOY_SCRIPT}"
-        preflight_ssh() {{ :; }}
+        preflight_ssh() {{ printf 'preflight\\n' >> "{call_log}"; }}
+        deploy_env_lease() {{
+          printf 'lease %s %s\\n' "$1" "$2" >> "{call_log}"
+          case "$1:$2" in
+            acquire:dev) ACX_DEPLOY_LEASE_ENV=dev ;;
+            release:dev)
+              [[ "$ACX_DEPLOY_LEASE_ENV" == dev ]] || return 1
+              ACX_DEPLOY_LEASE_ENV=""
+              ;;
+            *) return 1 ;;
+          esac
+        }}
         clear_remote_image_repo_env dev
         """
     )
@@ -1105,6 +1173,12 @@ def test_d9_clear_remote_image_repo_env_removes_key(
         timeout=15,
     )
     assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert call_log.read_text().splitlines() == [
+        "preflight",
+        "lease acquire dev",
+        "payload",
+        "lease release dev",
+    ]
     payload = ssh_log.read_text().strip()
     assert payload.startswith("sudo python3 -c "), payload
     remote_word = "/opt/acx-backend/dev"
@@ -1118,13 +1192,11 @@ def test_d9_clear_remote_image_repo_env_removes_key(
         "ACX_IMAGE_REPO=iad.ocir.io/idu2kqqe2jxy/acx-backend\nKEY=1\n",
         encoding="ascii",
     )
-    env_path.chmod(0o640)
+    env_path.chmod(initial_mode)
     before_mode = env_path.stat().st_mode
 
     # Drop sudo, then let bash parse the %q / $'...' quoting (D6's exec path).
-    body = payload[len("sudo ") :].replace(
-        remote_word, shlex.quote(str(remote_dir)), 1
-    )
+    body = payload[len("sudo ") :].replace(remote_word, shlex.quote(str(remote_dir)), 1)
     exec_env = os.environ.copy()
     exec_env["PATH"] = f"{pathlib.Path(sys.executable).parent}:{exec_env['PATH']}"
     ran = subprocess.run(
@@ -1140,14 +1212,18 @@ def test_d9_clear_remote_image_repo_env_removes_key(
     lines = content.splitlines()
     assert not any(line.startswith("ACX_IMAGE_REPO=") for line in lines), content
     assert "KEY=1" in lines, content
-    owner_lines = [
-        line for line in lines if line.startswith("# ACX_IMAGE_REPO_OWNER=")
-    ]
+    owner_lines = [line for line in lines if line.startswith("# ACX_IMAGE_REPO_OWNER=")]
     assert len(owner_lines) == 1, content
     state = json.loads(owner_lines[0].split("=", 1)[1])
     assert state["phase"] == "cleared", state
     assert state["current"] == "", state
-    assert env_path.stat().st_mode == before_mode
+    # The resource writer preserves a private file's mode and hardens older
+    # group-readable env files to the current mandatory 0600 contract.
+    assert env_path.stat().st_mode & 0o777 == 0o600
+    if initial_mode == 0o600:
+        assert env_path.stat().st_mode == before_mode
+    else:
+        assert env_path.stat().st_mode == (before_mode & ~0o777) | 0o600
 
     # Subcommand dispatch exists (help / case arm).
     help_proc = subprocess.run(
@@ -1269,7 +1345,7 @@ def test_dev_fir_env_example_pins_sface_128d_contract() -> None:
         if a.startswith("RECOGNITION_AUTH_ENABLED=")
     ]
     assert auth_values == ["true"], auth_values
-    assert "python -m scripts.manage_api_keys --env prod create --tenant" in text
+    assert "python -m scripts.manage_api_keys --env dev-fir create --tenant" in text
     assert not any(a.startswith("RECOGNITION_VAULT_SECRET_MAP=") for a in assignments)
     assert not any(
         a.startswith("RECOGNITION_SECRET_BACKEND=") and "oci_vault" in a
@@ -1301,6 +1377,24 @@ def test_dev_fir_mint_recipe_is_paste_safe() -> None:
         "apps/prototype-description-service/.env.fir.example must contain "
         "indented recipe command lines (rg-006)"
     )
+    runtime_envs = [
+        line.split("=", 1)[1].strip()
+        for line in text.splitlines()
+        if line.split("#", 1)[0].strip().startswith("ACX_ENV=")
+    ]
+    assert runtime_envs == ["dev-fir"], runtime_envs
+    mint_commands = [line for line in recipe_lines if "python -m scripts.manage_api_keys " in line]
+    assert len(mint_commands) == 2, mint_commands
+    mint_envs = []
+    for line in mint_commands:
+        match = re.search(r"(?:^|\s)--env\s+([^\s]+)", line)
+        assert match is not None, (
+            "apps/prototype-description-service/.env.fir.example mint command "
+            f"must pass --env matching ACX_ENV={runtime_envs[0]}: {line!r}"
+        )
+        mint_envs.append(match.group(1))
+    assert mint_envs == runtime_envs * len(mint_commands), mint_envs
+
     placeholder = re.compile(r"<[A-Za-z][A-Za-z0-9_-]*>")
     for line in recipe_lines:
         match = placeholder.search(line)

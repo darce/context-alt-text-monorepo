@@ -18,6 +18,15 @@ Copy `.env.example`. Vite bakes these at build time:
 
 Never put `CLERK_SECRET_KEY`, Polar OATs, invitation tokens, or API keys in this package.
 
+## Run against the dev API
+
+```bash
+PORTAL_API_PROXY_TARGET=https://dev.api.altcontext.com npm --prefix apps/app-portal run dev
+```
+
+The browser env comes from `make env-render ENV=local TARGET=app-portal-local` with the Clerk development publishable key.
+The dev API must have the portal enabled. Paste invitation token values directly into the portal's Invitation token field and newly created API key secrets directly into the local WordPress AltContext settings. Never put secret values in files, notes, chat, logs, or commits. Nonsecret key and tenant IDs may be recorded for independent rollback revocation.
+
 ## Scripts
 
 ```bash

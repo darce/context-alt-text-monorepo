@@ -810,12 +810,18 @@ make reset-remote ENV=prod CONFIRM_REMOTE_RESET=RESET CONFIRM=PROMOTE
 8. Runs the post-reset bootstrap inside the api container on the remote VM to
    recreate one usable service-mode API key:
 
+   The reset's selected stack label (`dev`, `dev-fir`, `staging`, or `prod`)
+   is the CLI `--env` value. Compose loads that stack's `/opt/acx-backend/<env>/.env`
+   into the API container, including its matching runtime `ACX_ENV`. The
+   operator's `make reset-remote ENV=...` selector chooses the stack; it is not
+   a host-shell `ACX_ENV` setting.
+
    ```bash
    sudo docker compose -f docker-compose.env.yml exec -T api \
-     python -m scripts.manage_api_keys --env prod \
+     python -m scripts.manage_api_keys --env <env> \
      tenant create --tenant <uuid> --site-url <url>
    sudo docker compose -f docker-compose.env.yml exec -T api \
-     python -m scripts.manage_api_keys --env prod \
+     python -m scripts.manage_api_keys --env <env> \
      create --tenant <uuid>
    ```
 
@@ -827,14 +833,16 @@ make reset-remote ENV=prod CONFIRM_REMOTE_RESET=RESET CONFIRM=PROMOTE
    the URL does not match the plugin's site URL, the plugin's recognition
    requests will fail with `403 tenant mismatch`. `ACX_RESET_TENANT_ID`
    remains an explicit override for non-derived tenants (rarely needed).
-   `--env prod` is required regardless of the OCI deployment env
-   (dev/staging/prod): the manage_api_keys CLI validates `--env` against
-   the DSN host, and the in-container DSN host is `postgres` (compose
-   service name), which only `--env prod` accepts. The tenant step runs
-   first because `create` enforces the tenant-foreign-key. The `api_key=`
-   line printed by `create` is operator-captured and pasted into the
-   plugin's settings page so the plugin can talk to the freshly-reset env
-   in service mode.
+   Replace `<env>` with the exact selected stack label in both commands. The
+   CLI requires `--env` to match the API container's configured `ACX_ENV`;
+   with that match, the in-container DSN host `postgres` is valid for dev,
+   dev-fir, staging, and prod. Production still rejects loopback DSN hosts,
+   and local still requires a local DSN host. With `ACX_ENV` unset, the CLI's
+   legacy DSN checks remain in force and do not grant non-production access to
+   the Compose `postgres` host. The tenant step runs first because `create`
+   enforces the tenant foreign key. Capture the single `api_key=` line printed
+   by `create` and enter it in the plugin's settings page to connect the plugin
+   to the freshly reset env in service mode.
 
 **Boundary:** the reset is environment-scoped. `make reset-remote ENV=dev`
 touches only `/opt/acx-backend/dev/.env`'s `ACX_PGDATA_PATH` (`dev-pgdata`).

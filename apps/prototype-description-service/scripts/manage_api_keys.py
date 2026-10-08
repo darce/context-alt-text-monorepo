@@ -5,15 +5,19 @@ Referenced from `.env.prod.example`. Delegates persistence to
 except the single labeled post-create line on stdout.
 
 Usage:
-    python -m scripts.manage_api_keys --env {prod,dev,local} create --tenant <uuid> [--expires-in <days>] [--tier STANDARD|PRO|ENTERPRISE]
-    python -m scripts.manage_api_keys --env {prod,dev,local} list --tenant <uuid> [--include-revoked]
-    python -m scripts.manage_api_keys --env {prod,dev,local} revoke --key-id <uuid>
-    python -m scripts.manage_api_keys --env {prod,dev,local} tenant create --tenant <uuid> --site-url <url>
-    python -m scripts.manage_api_keys --env {prod,dev,local} tenant list [--limit <n>]
+    python -m scripts.manage_api_keys --env {prod,dev,local,staging,dev-fir} create --tenant <uuid> [--expires-in <days>] [--tier STANDARD|PRO|ENTERPRISE]
+    python -m scripts.manage_api_keys --env {prod,dev,local,staging,dev-fir} list --tenant <uuid> [--include-revoked]
+    python -m scripts.manage_api_keys --env {prod,dev,local,staging,dev-fir} revoke --key-id <uuid>
+    python -m scripts.manage_api_keys --env {prod,dev,local,staging,dev-fir} tenant create --tenant <uuid> --site-url <url>
+    python -m scripts.manage_api_keys --env {prod,dev,local,staging,dev-fir} tenant list [--limit <n>]
 
 `--env` is mandatory (E15-3a-BR-02): the CLI refuses to run against a DSN
-whose host does not match the declared environment. Prod aborts on loopback
-or *.local hosts; dev/local abort on any remote host. This prevents the
+whose host does not match the declared environment. If `ACX_ENV` is set, it
+must name a supported environment and match `--env` before database settings
+are read. Matched dev, staging and dev-fir environments may use the Compose
+`postgres` service host; staging/dev-fir require explicit matching `ACX_ENV`.
+DSN-only dev/local still require a local host. Prod always refuses
+loopback or *.local hosts, and local refuses remote hosts. This prevents the
 original BR-02 incident where a "prod" key was silently written to a local
 dev DB because DSN resolution fell through to whatever the shell happened
 to configure.
@@ -23,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 import uuid
 from collections.abc import Sequence
@@ -38,7 +43,7 @@ from recognition.application.services.api_key_admin_service import mint_api_key
 from recognition.config.security import RateLimitTier
 from recognition.infrastructure.repositories.api_key_repository import SqlAlchemyApiKeyRepository
 
-_ENV_CHOICES = ("prod", "dev", "local")
+_ENV_CHOICES = ("prod", "dev", "local", "staging", "dev-fir")
 
 
 def _dsn_host(dsn: str) -> str:
@@ -49,16 +54,41 @@ def _is_local_host(host: str) -> bool:
     return host in {"localhost", "127.0.0.1", "::1"} or host.endswith(".local")
 
 
-def _validate_env_vs_dsn(env: str, dsn: str) -> str | None:
+def _validate_env_vs_dsn(env: str, dsn: str, *, configured_env: str | None = None) -> str | None:
     """Return an error string on mismatch, or None when env and DSN agree."""
     host = _dsn_host(dsn)
     if not host:
         return f"env={env}: DSN has no host; refusing to run"
     if env == "prod" and _is_local_host(host):
         return f"env=prod but DSN host '{host}' looks local; refusing to run"
-    if env in {"dev", "local"} and not _is_local_host(host):
+    if env == "local" and not _is_local_host(host):
         return f"env={env} but DSN host '{host}' is not a local host; refusing to run"
+    if (
+        env in {"dev", "staging", "dev-fir"}
+        and not _is_local_host(host)
+        and not (configured_env == env and host == "postgres")
+    ):
+        return f"env={env} but DSN host '{host}' is not a local or {env} Compose postgres host; refusing to run"
     return None
+
+
+def _validate_runtime_env(env: str) -> str | None:
+    """Validate an explicit runtime environment before reading DB settings."""
+    configured_env = os.environ.get("ACX_ENV")
+    if configured_env is not None:
+        if configured_env not in _ENV_CHOICES:
+            return f"ACX_ENV={configured_env!r} is not a supported CLI environment; refusing to run"
+        if configured_env != env:
+            return f"ACX_ENV={configured_env!r} does not match --env={env!r}; refusing to run"
+    elif env in {"staging", "dev-fir"}:
+        return f"ACX_ENV must be set to {env!r} to match --env; refusing to run"
+
+    # Keep production and local DSN protections even when ACX_ENV is set.
+    # Matching dev/staging/dev-fir runtimes may use Docker Compose postgres.
+    from db.settings import get_database_settings
+
+    dsn = get_database_settings().postgres_dsn
+    return _validate_env_vs_dsn(env, dsn, configured_env=configured_env)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -206,14 +236,9 @@ async def run(argv: Sequence[str] | None = None, *, session: AsyncSession | None
     parser = _build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
 
-    # BR-02 env/DSN guard runs before opening any connection. Read the
-    # configured DSN via the canonical settings accessor (no connection),
-    # validate, then proceed. When `session` is supplied by tests, we still
-    # validate against the configured DSN to keep the guard exercised.
-    from db.settings import get_database_settings
-
-    dsn = get_database_settings().postgres_dsn
-    mismatch = _validate_env_vs_dsn(args.env, dsn)
+    # Check ACX_ENV first, then validate the configured DSN, before opening a
+    # session or invoking an operation. This applies to injected sessions too.
+    mismatch = _validate_runtime_env(args.env)
     if mismatch is not None:
         sys.stderr.write(f"error: {mismatch}\n")
         sys.stderr.flush()

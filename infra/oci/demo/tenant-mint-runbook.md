@@ -22,10 +22,12 @@ Embed it in the `define('ACX_RECOGNITION_TENANT_ID', ...)` entry inside
 `WORDPRESS_CONFIG_EXTRA` in `secrets/.env` — the constants are the operative
 plugin config (see `.env.example`).
 
-> `--env` quirk: `manage_api_keys.py` only accepts `prod`/`dev`/`local` —
-> there is no `staging` choice. Use `--env prod` even when exec'ing inside the
-> staging stack; the env flag gates DSN validation, not the target stack
-> (the DSN comes from the container's own environment).
+The `--env` value is the exact stack label. Compose loads the stack's `.env`
+into the API container, including the matching runtime `ACX_ENV`; this is
+separate from any operator-side `ENV` selector. The in-container Postgres DSN
+uses the Compose service hostname `postgres`, which is allowed for a matched
+stack label. With `ACX_ENV` unset, the CLI retains its stricter legacy DSN
+checks.
 
 ## 2. Create the tenant row (staging first)
 
@@ -34,9 +36,9 @@ On the VM, against the **staging** API stack:
 ```bash
 cd /opt/acx-backend/staging
 docker compose -f docker-compose.env.yml exec -T api \
-  python -m scripts.manage_api_keys --env prod tenant create \
+  python -m scripts.manage_api_keys --env staging tenant create \
   --tenant 00000000-0000-4000-8000-000000000001 \
-  --site-url https://demo.altcontext.com
+  --site-url https://demo.altcontext.com < /dev/null
 ```
 
 Repeat against prod only after the staging walkthrough passes:
@@ -46,17 +48,20 @@ cd /opt/acx-backend/prod
 docker compose -f docker-compose.env.yml exec -T api \
   python -m scripts.manage_api_keys --env prod tenant create \
   --tenant 00000000-0000-4000-8000-000000000001 \
-  --site-url https://demo.altcontext.com
+  --site-url https://demo.altcontext.com < /dev/null
 ```
 
 ## 3. Mint the API key
 
 ```bash
-cd /opt/acx-backend/staging   # or prod after launch cutover
+cd /opt/acx-backend/staging
 docker compose -f docker-compose.env.yml exec -T api \
-  python -m scripts.manage_api_keys --env prod create \
-  --tenant 00000000-0000-4000-8000-000000000001
+  python -m scripts.manage_api_keys --env staging create \
+  --tenant 00000000-0000-4000-8000-000000000001 < /dev/null
 ```
+
+After launch cutover, repeat key creation from `/opt/acx-backend/prod` with
+`--env prod` and the same explicit tenant UUID.
 
 Copy the emitted raw key into the `define('ACX_RECOGNITION_API_KEY', ...)` entry
 of `WORDPRESS_CONFIG_EXTRA` in demo secrets only — never commit it.

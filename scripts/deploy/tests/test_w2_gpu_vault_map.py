@@ -11,6 +11,7 @@ if str(SCRIPTS_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_ROOT))
 
 PROD_VAULT_REFS = {
+    "ACX_GPU_ENDPOINT_API_KEY": "ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqa6zegkxaqzxkshjazsmbhawpzuwmcd7lodprgz5bugqmq",
     "PGPASSWORD": "ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqa5ka6inpwivjhrxm2ri4zdar46kdiijw32nzjly2uetzq",
     "POSTGRES_DSN": "ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqaxwiwmhdx52g6obkujhq7ob4wxtp7n2xp5l2eu243wqqa",
     "POSTGRES_SYNC_DSN": "ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqabr4qgl3jnrpfij72o4tv5ajujhwyyb4kd4ke7zwn73jq",

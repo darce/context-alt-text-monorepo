@@ -72,7 +72,8 @@ source of truth.
   `config/env/manifest.d/30-portal-backend.toml`. The remaining operator steps
   are: confirm the combined-main source/release prerequisite; check and
   materialize the production manifest; deploy the combined-main service with
-  `make deploy-prod CONFIRM=PROMOTE`; restart the production API; verify the
+  `make deploy-prod CONFIRM=PROMOTE` (which restarts and verifies `acx-prod`
+  with the materialized environment); verify the
   deployed invitation CLI and API mounting; apply the frontend; then issue a
   matching, unexpired invitation and perform signed-in smoke. Follow the API
   activation sequence below. Resolve any reported runtime drift or missing
@@ -176,14 +177,10 @@ on the very manifest change being activated. Do not bypass the manifest
 preflight or any other deployment safety gate. The source/release prerequisite
 precedes materialization; the deployed-code prerequisite precedes public launch.
 
-The deploy target builds, ships, restarts `acx-prod`, and verifies the service.
-A restart alone does not install code. On the VM, restart the shared prod API
-after deployment so it mounts `/portal` with
-`RECOGNITION_PORTAL_ENABLED=1` before frontend health runs:
-
-```bash
-sudo systemctl restart acx-prod
-```
+The deploy target builds, ships, restarts `acx-prod` with the materialized
+environment (including `RECOGNITION_PORTAL_ENABLED=1`), and verifies the service.
+A restart alone does not install code. Continue only after this verified deploy
+succeeds; the CLI check and the HTTP 401 probe below follow that verification.
 
 On the VM, fail closed if the running production container cannot load the
 invitation CLI. This checks deployed code without issuing an invitation:
@@ -265,8 +262,11 @@ overrides.
    to equal the absolute `CADDYFILE`. Checks the base-only configuration,
    any installed overlay, and the rendered replacement overlay. A mismatch
    names both paths and leaves staging, the journal, and live files untouched.
-   Then recovers any interrupted activation by restoring its snapshots,
-   reapplying its Compose state, reloading Caddy, and clearing the journal.
+   Then recovers any interrupted activation: promotion phases restore snapshots,
+   reapply Compose state, and reload Caddy; `snapshotting` only cleans planned
+   partial snapshots, and `restored` only retries failed-set cleanup. Cleanup
+   is synced before clearing the journal last. See the exact
+   [recovery invocation](#recover-an-interrupted-frontend-activation) below.
    Recovery requires no replacement frontend build. Only after recovery does
    it validate `FRONTEND_DIST`, including its source-path guards; a deleted
    build directory or another unavailable or invalid build exits nonzero
@@ -276,7 +276,9 @@ overrides.
    `demo.altcontext.com`, `129-213-40-111.sslip.io`, and `dl.darce.xyz` stay.
 3. Runs `caddy validate` on the staged Caddyfile (`--adapter caddyfile`).
 4. On validate failure: live Caddyfile, www, and overlay are left untouched.
-5. On success: copies complete rollback state to
+5. On success: durably journals all planned snapshot/marker paths at
+   `phase=snapshotting` **before** writing the first snapshot or absence marker,
+   then copies complete rollback state to
    `/opt/acx-backend/app/rollback/{Caddyfile,www,docker-compose.app.yml}.<ts>`.
    A previously absent frontend or overlay instead gets `absent-www.<ts>` or
    `absent-overlay.<ts>`, containing exactly `app-portal-absent-www-v1` or
@@ -459,6 +461,62 @@ disabled. Roll the frontend back using the [frontend back-out](#frontend-back-ou
 sequence below; the frontend checker expects 401 and will fail while the
 backend portal is disabled.
 
+### Recover an interrupted frontend activation
+
+A retained `/opt/acx-backend/app/activation.journal` blocks manual back-out.
+Recovery must use the same reviewed deploy script and input paths as the
+interrupted apply. If those files exist only on the operator workstation, copy
+these three reviewed files from that release to the VM first (the `acx-backend`
+SSH alias is the same existing VM used for deployment; no VM checkout is assumed):
+
+```bash
+scp scripts/deploy/app-portal.sh acx-backend:/tmp/app-portal-recovery.sh
+scp infra/oci/app/Caddyfile.app acx-backend:/tmp/app-portal-recovery.Caddyfile.app
+scp infra/oci/app/docker-compose.app.yml acx-backend:/tmp/app-portal-recovery.overlay.yml
+```
+
+In an operator shell on the VM, with the same filesystem and Docker permissions
+as the original apply, run this exact recovery invocation. These are the default
+apply bindings; substitute the original values if they were overridden, including
+`APP_ROOT`, `APP_WWW`, `CADDYFILE`, `CADDY_COMPOSE`, `APP_UPSTREAM`, and the overlay
+template. The installed live overlay remains `${APP_ROOT}/docker-compose.app.yml`.
+`env -u FRONTEND_DIST` also removes a build path inherited from the operator shell:
+
+```bash
+env -u FRONTEND_DIST \
+  APP_ROOT=/opt/acx-backend/app \
+  APP_WWW=/opt/acx-backend/app/www \
+  CADDYFILE=/opt/acx-backend/Caddyfile \
+  CADDY_COMPOSE=/opt/acx-backend/docker-compose.caddy.yml \
+  APP_UPSTREAM=prod-api:8000 \
+  APP_SNIPPET=/tmp/app-portal-recovery.Caddyfile.app \
+  APP_OVERLAY=/tmp/app-portal-recovery.overlay.yml \
+  APP_HEALTH_CMD=/usr/local/bin/app-portal-health-check \
+  bash /tmp/app-portal-recovery.sh --apply
+```
+
+The script acquires its bounded deployment lock, validates the Compose Caddyfile
+bindings (base, installed overlay, and rendered template), and recovers the
+journal **before** requiring a replacement build. Recovery restores/reloads live
+state for `prepared`, `caddy_promoted`, `www_promoted`, or `overlay_promoted`.
+For `snapshotting`, no live promotion has occurred: recovery removes only that
+journal's planned partial snapshot/marker set without restoring live files.
+For `restored`, restoration/reload is already durable and recovery retries only
+failed-set cleanup. Cleanup is synced while the journal remains present and the
+journal is cleared last; earlier successful rollback sets are preserved.
+
+After successful recovery the command deliberately exits nonzero with
+`ERROR: FRONTEND_DIST is required for --apply`, before staging or redeploying.
+Do not blindly ignore a nonzero status: any other error is a STOP. Confirm the
+output reports recovery followed by that exact missing-build refusal; check that
+`activation.journal` is gone (neither an existing path nor a dangling symlink),
+inspect the restored Caddyfile, frontend/absence, and overlay/absence against the
+pre-activation state, and verify Caddy/API readiness and restored frontend
+behavior as applicable. If the journal remains or restoration is unverified,
+STOP and resolve recovery first. Only then run manual back-out below to restore
+the last successful apply's prestate. Supplying `FRONTEND_DIST` would instead
+recover and then redeploy, so it must remain unset for this recovery step.
+
 ### Frontend back-out
 
 `/opt/acx-backend/app/rollback/Caddyfile.<ts>` plus `www.<ts>` and
@@ -467,11 +525,15 @@ missing artifact, a validated `absent-www.<ts>` or `absent-overlay.<ts>` replace
 its snapshot. Missing snapshots alone never prove prior absence. Automatic restore
 runs on promote/compose/reload/health failure and reapplies the restored compose
 state before the rollback reload. Successful failed-apply restore removes only
-its duplicate timestamp set after clearing the journal, preserving the last
-successful apply's prestate set. Thus a failed re-apply does not replace the
+its duplicate timestamp set while the durable journal is at `phase=restored`,
+syncs that cleanup, then clears the journal last, preserving the last successful
+apply's prestate set. Thus a failed re-apply does not replace the
 manual back-out target with copies of the still-live successful frontend.
 Failed restore retains the journal and all snapshot/absence-marker inputs for
-retry; resolve that interrupted activation before attempting manual back-out.
+retry; use [interrupted activation recovery](#recover-an-interrupted-frontend-activation)
+before attempting manual back-out. The manual block holds the same bounded
+`activation.journal.lock` as deploy and refuses any journal, including a dangling
+symlink, before selecting snapshots or mutating live/rollback state.
 On the VM, manual restore selects only
 `Caddyfile.<digits>` names and sorts by the numeric filename suffix, never mtime
 (`cp -a` preserves the live file's older mtime). It prints the chosen timestamp
@@ -502,6 +564,32 @@ first deployment with both artifacts absent, and either mixed prior state:
   done
   if [ ! -d /opt/acx-backend/app/rollback ] || [ -L /opt/acx-backend/app/rollback ]; then
     echo 'STOP: rollback directory missing or unsafe; refusing restore' >&2
+    exit 1
+  fi
+  # Same lock inode and bounded wait as app-portal.sh; never truncate the lock.
+  lock=/opt/acx-backend/app/activation.journal.lock
+  if [ -L "$lock" ] || { [ -e "$lock" ] && [ ! -f "$lock" ]; }; then
+    echo 'STOP: deployment lock path unsafe; refusing restore' >&2
+    exit 1
+  fi
+  lock_wait="${APP_DEPLOY_LOCK_WAIT:-30}"
+  case "$lock_wait" in
+    ''|*[!0-9]*) echo 'STOP: APP_DEPLOY_LOCK_WAIT must be a non-negative integer' >&2; exit 1 ;;
+  esac
+  if ! command -v flock >/dev/null 2>&1; then
+    echo 'STOP: flock required for deployment lock; refusing restore' >&2
+    exit 1
+  fi
+  if ! exec 9>>"$lock"; then
+    echo 'STOP: cannot open deployment lock; refusing restore' >&2
+    exit 1
+  fi
+  if ! flock -w "$lock_wait" 9; then
+    echo "STOP: cannot acquire deployment lock within ${lock_wait}s; refusing restore" >&2
+    exit 1
+  fi
+  if [ -e /opt/acx-backend/app/activation.journal ] || [ -L /opt/acx-backend/app/activation.journal ]; then
+    echo 'STOP: activation journal present; recover interrupted activation before manual back-out' >&2
     exit 1
   fi
   ts="$(find /opt/acx-backend/app/rollback -maxdepth 1 -type f \

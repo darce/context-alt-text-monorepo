@@ -291,6 +291,53 @@ def test_env_unset_prevents_redeploy_even_with_vm_checkout(
         assert _log(tmp_path).count(" reload ") == 1
 
 
+def _assert_recovery_cleanup_source_flow(source: str) -> None:
+    finish = source.split("finish_activation_rollback() {", 1)[1].split("\n}", 1)[0] + "\n"
+    restored = "  write_activation_journal restored || return 1\n"
+    delegated = "  cleanup_failed_snapshot_set\n"
+    assert restored in finish, "restored journal write must succeed before cleanup"
+    assert delegated in finish, "rollback must invoke delegated snapshot cleanup"
+    assert finish.index(restored) < finish.index(delegated), "restored journal must precede delegated cleanup"
+    assert finish.strip().endswith("cleanup_failed_snapshot_set"), "delegated cleanup must finish rollback"
+
+    journal = source.split("write_activation_journal() {", 1)[1].split("\n}", 1)[0] + "\n"
+    assert 'if ! sync_path "$_tmp"; then' in journal, "journal contents must sync before publication"
+    assert 'sync_path "$APP_ROOT" || return 1' in journal, "journal publication must sync before cleanup"
+    assert (
+        journal.index('if ! sync_path "$_tmp"; then')
+        < journal.index('if ! mv -f "$_tmp" "$ACTIVATION_JOURNAL"; then')
+        < journal.index('sync_path "$APP_ROOT" || return 1')
+        < journal.index('JOURNAL_PHASE="$_phase"')
+    ), "restored journal must be durable before its phase is published"
+
+    cleanup = source.split("cleanup_failed_snapshot_set() {", 1)[1].split("\n}", 1)[0] + "\n"
+    loop = "  for _snapshot_prefix in Caddyfile www docker-compose.app.yml absent-www absent-overlay; do\n"
+    assert "  guard_failed_snapshot_set\n" in cleanup, "validate the complete failed set before cleanup"
+    assert loop in cleanup, "cleanup must include all failed artifacts and absence markers"
+    assert cleanup.index("  guard_failed_snapshot_set\n") < cleanup.index(loop)
+    guards = (
+        '    guard_dest_path ROLLBACK_DIR "$ROLLBACK_DIR" dir\n'
+        '    _snapshot="${ROLLBACK_DIR}/${_snapshot_prefix}.${_failed_stamp}"\n'
+        '    if [ "$_snapshot_prefix" = www ]; then\n'
+        '      guard_dest_path _snapshot "$_snapshot" dir\n'
+        "    else\n"
+        '      guard_dest_path _snapshot "$_snapshot" file\n'
+        "    fi\n"
+        '    rm -rf -- "$_snapshot" || return 1\n'
+    )
+    assert loop + guards + "  done\n" in cleanup, "each deletion must recheck ancestors and artifact type"
+    barrier = '  sync_path "$ROLLBACK_DIR" || return 1\n'
+    assert barrier in cleanup, "failed-set deletion must sync before clearing the journal"
+    assert cleanup.count("  clear_activation_journal\n") == 1, "clear the journal exactly once, last"
+    assert (
+        cleanup.index('    rm -rf -- "$_snapshot" || return 1\n')
+        < cleanup.index("  done\n")
+        < cleanup.index(barrier)
+        < cleanup.index("  clear_activation_journal\n")
+    ), "all failed-set deletions must be durable before clearing the journal"
+    assert cleanup.strip().endswith("clear_activation_journal"), "clear the journal last"
+
+
 def test_recovery_copy_and_bindings_match_source_flow() -> None:
     source = SCRIPT.read_text()
     commands = _recovery_commands()
@@ -319,9 +366,81 @@ def test_recovery_copy_and_bindings_match_source_flow() -> None:
     recovery = source.index("if ! recover_interrupted_activation; then")
     missing_dist = source.index('refuse "FRONTEND_DIST is required for --apply"')
     assert recovery < missing_dist < source.index('cp -a "${FRONTEND_DIST}/."')
-    cleanup = source.split("finish_activation_rollback() {", 1)[1].split("\n}", 1)[0]
-    assert cleanup.index("write_activation_journal restored") < cleanup.index("rm -rf --")
-    assert cleanup.index('sync_path "$ROLLBACK_DIR"') < cleanup.index("clear_activation_journal")
+    _assert_recovery_cleanup_source_flow(source)
+
+
+@pytest.mark.parametrize(
+    ("function", "original", "replacement", "failure"),
+    [
+        (
+            "finish_activation_rollback",
+            "  cleanup_failed_snapshot_set\n",
+            "",
+            "rollback must invoke delegated snapshot cleanup",
+        ),
+        (
+            "finish_activation_rollback",
+            "  write_activation_journal restored || return 1\n  cleanup_failed_snapshot_set\n",
+            "  cleanup_failed_snapshot_set\n  write_activation_journal restored || return 1\n",
+            "restored journal must precede delegated cleanup",
+        ),
+        (
+            "finish_activation_rollback",
+            "  write_activation_journal restored || return 1\n",
+            "  write_activation_journal restored\n",
+            "restored journal write must succeed before cleanup",
+        ),
+        (
+            "write_activation_journal",
+            '  sync_path "$APP_ROOT" || return 1\n',
+            "",
+            "journal publication must sync before cleanup",
+        ),
+        (
+            "cleanup_failed_snapshot_set",
+            '    guard_dest_path ROLLBACK_DIR "$ROLLBACK_DIR" dir\n',
+            "",
+            "each deletion must recheck ancestors and artifact type",
+        ),
+        (
+            "cleanup_failed_snapshot_set",
+            '      guard_dest_path _snapshot "$_snapshot" dir\n',
+            "",
+            "each deletion must recheck ancestors and artifact type",
+        ),
+        (
+            "cleanup_failed_snapshot_set",
+            '      guard_dest_path _snapshot "$_snapshot" file\n',
+            "",
+            "each deletion must recheck ancestors and artifact type",
+        ),
+        (
+            "cleanup_failed_snapshot_set",
+            '  sync_path "$ROLLBACK_DIR" || return 1\n',
+            "",
+            "failed-set deletion must sync before clearing the journal",
+        ),
+        (
+            "cleanup_failed_snapshot_set",
+            '  sync_path "$ROLLBACK_DIR" || return 1\n  clear_activation_journal\n',
+            '  clear_activation_journal\n  sync_path "$ROLLBACK_DIR" || return 1\n',
+            "all failed-set deletions must be durable before clearing the journal",
+        ),
+    ],
+)
+def test_delegated_recovery_cleanup_source_mutants_are_detected(
+    function: str, original: str, replacement: str, failure: str
+) -> None:
+    source = SCRIPT.read_text()
+    _assert_recovery_cleanup_source_flow(source)
+    body = source.split(f"{function}() {{", 1)[1].split("\n}", 1)[0] + "\n"
+    assert body.count(original) == 1, "mutant must change exactly one actual cleanup operation"
+    mutant = source.replace(body, body.replace(original, replacement), 1)
+    assert mutant != source
+    # The same source contract must go red for a removed guard/call/barrier or
+    # premature cleanup; mutate only an in-memory copy of the actual VM script.
+    with pytest.raises(AssertionError, match=failure):
+        _assert_recovery_cleanup_source_flow(mutant)
 
 
 def test_every_runbook_bash_block_parses() -> None:

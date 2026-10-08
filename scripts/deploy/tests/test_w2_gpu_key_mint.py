@@ -143,19 +143,36 @@ def _write_fragmented_manifest(directory: Path) -> dict[str, Path]:
 
 
 def _write_fake_committed_manifest(directory: Path) -> dict[str, Path]:
-    """Copy the checked-in fragment layout while replacing identifiers with fakes."""
+    """Copy the fragment layout with fake identifiers and an unminted GPU key.
+
+    Bound/retry/rotation tests must establish their fake GPU identity explicitly,
+    independently of whether the checked-in deployment has already minted a key.
+    """
     source_dir = REPO_ROOT / "config/env/manifest.d"
+
+    def bootstrap_gpu_refs(match: re.Match[str]) -> str:
+        block = match.group(0)
+        variable = tomllib.loads(block)["var"][0]
+        if variable.get("name") != "ACX_GPU_ENDPOINT_API_KEY":
+            return block
+        secret_line = re.search(r"(?m)^secret\s*=.*$", block)
+        assert secret_line is not None
+        refs = secret_line.group(0)
+        for env in ("dev", "prod"):
+            refs, count = re.subn(rf'(\b{env}\s*=\s*)"[^"\n]*"', r'\1"host:"', refs, count=1)
+            assert count == 1
+        return block[: secret_line.start()] + refs + block[secret_line.end() :]
+
     fake_ids: dict[str, str] = {}
     paths = {}
     for source in sorted(source_dir.glob("*.toml")):
         text = source.read_text(encoding="utf-8")
+        text = re.sub(r"(?ms)^\[\[var\]\].*?(?=^\[\[|\Z)", bootstrap_gpu_refs, text)
 
         def replace_ocid(match: re.Match[str]) -> str:
             original = match.group(0)
             if original not in fake_ids:
-                fake_ids[original] = (
-                    "ocid1.vaultsecret.oc1.iad.f" + f"{len(fake_ids) + 1:02d}" + "a" * 20
-                )
+                fake_ids[original] = "ocid1.vaultsecret.oc1.iad.f" + f"{len(fake_ids) + 1:02d}" + "a" * 20
             return fake_ids[original]
 
         text = re.sub(
@@ -182,6 +199,152 @@ def _replace_var_field(path: Path, var_name: str, field: str, value: str) -> Non
     updated, count = re.subn(rf"(?m)^{re.escape(field)}\s*=.*$", value, block, count=1)
     assert count == 1
     path.write_text(text[:start] + updated + text[end:], encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "source_ocid",
+    [None, OTHER_FAKE_OCID, "ocid1.vaultsecret.oc12.iad.AbCdEfGhIjKlMnOpQrStUvWx"],
+    ids=["unminted", "previously-minted", "previously-minted-original-case"],
+)
+def test_fake_committed_manifest_establishes_bootstrap_independent_of_source(
+    tmp_path: Path,
+    monkeypatch,
+    source_ocid: str | None,
+) -> None:
+    source_root = tmp_path / "source"
+    source_dir = source_root / "config/env/manifest.d"
+    source_dir.mkdir(parents=True)
+    sources = _write_fragmented_manifest(source_dir)
+    source_owner = sources["21-service-vm.toml"]
+    staging_ref = "keychain:fixture-staging/ACX_GPU_ENDPOINT_API_KEY"
+    source_refs = (
+        f'dev = "oci:{source_ocid}", prod = "vault:{source_ocid}"'
+        if source_ocid is not None
+        else 'dev = "host:", prod = "host:"'
+    )
+    _replace_var_field(
+        source_owner,
+        "ACX_GPU_ENDPOINT_API_KEY",
+        "secret",
+        f'secret = {{ {source_refs}, staging = "{staging_ref}", local = "host:" }}',
+    )
+    source_before = {path.name: path.read_bytes() for path in source_dir.glob("*.toml")}
+    monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", source_root)
+    manifest_dir = tmp_path / "manifest.d"
+    manifest_dir.mkdir()
+
+    paths = _write_fake_committed_manifest(manifest_dir)
+
+    assert set(paths) == set(source_before)
+    assert {path.name: path.read_bytes() for path in source_dir.glob("*.toml")} == source_before
+    source_gpu = next(
+        row
+        for row in tomllib.loads(source_owner.read_text(encoding="utf-8"))["var"]
+        if row["name"] == "ACX_GPU_ENDPOINT_API_KEY"
+    )
+    owner = paths[source_owner.name]
+    fixture_gpu = next(
+        row
+        for row in tomllib.loads(owner.read_text(encoding="utf-8"))["var"]
+        if row["name"] == "ACX_GPU_ENDPOINT_API_KEY"
+    )
+    assert fixture_gpu == {**source_gpu, "secret": {**source_gpu["secret"], "dev": "host:", "prod": "host:"}}
+    source_secret_line = next(
+        line
+        for line in source_owner.read_text(encoding="utf-8").splitlines()
+        if line.startswith("secret =") and staging_ref in line
+    )
+    expected_secret_line = f'secret = {{ dev = "host:", prod = "host:", staging = "{staging_ref}", local = "host:" }}'
+    for name, original in source_before.items():
+        original_text = original.decode("utf-8")
+        if name == source_owner.name:
+            original_text = original_text.replace(source_secret_line, expected_secret_line)
+        fixture_text = paths[name].read_text(encoding="utf-8")
+        assert re.sub(r"ocid1\.vaultsecret[^\"]+", "FAKE_REF", fixture_text) == re.sub(
+            r"ocid1\.vaultsecret[^\"]+",
+            "FAKE_REF",
+            original_text,
+        )
+        for original_ref in re.findall(r"ocid1\.vaultsecret[^\"]+", original.decode("utf-8")):
+            assert original_ref not in fixture_text
+    expected_id, actual_owner, _ = gpu_key_manifest._preflight_mint_transaction(
+        paths["10-service-shared.toml"],
+        tmp_path / "gpu-api-key.tfvars",
+    )
+    assert expected_id is None
+    assert actual_owner == owner
+
+
+@pytest.mark.parametrize("rotate", [False, True], ids=["bound-bootstrap", "rotation"])
+def test_fake_committed_manifest_explicit_binding_rejects_writer_identity_mismatch(
+    tmp_path: Path,
+    monkeypatch,
+    rotate: bool,
+) -> None:
+    source_root = tmp_path / "source"
+    source_dir = source_root / "config/env/manifest.d"
+    source_dir.mkdir(parents=True)
+    _write_fragmented_manifest(source_dir)
+    monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", source_root)
+    manifest_dir = tmp_path / "manifest.d"
+    manifest_dir.mkdir()
+    paths = _write_fake_committed_manifest(manifest_dir)
+    _replace_var_field(
+        paths["21-service-vm.toml"],
+        "ACX_GPU_ENDPOINT_API_KEY",
+        "secret",
+        f'secret = {{ dev = "oci:{OTHER_FAKE_OCID}", staging = "host:", prod = "vault:{OTHER_FAKE_OCID}" }}',
+    )
+    before = {path: path.read_bytes() for path in paths.values()}
+    terraform_input = tmp_path / "gpu-api-key.tfvars"
+    terraform_input.write_text(
+        "# Generated by scripts/deploy/gpu-key-mint.sh; identifier only.\n"
+        f'gpu_api_key_secret_ocid = "{OTHER_FAKE_OCID}"\n',
+        encoding="utf-8",
+    )
+    before_terraform_input = terraform_input.read_bytes()
+    bin_dir = _fake_cli(tmp_path)
+    argument_capture = tmp_path / "writer-arguments"
+    stdin_capture = tmp_path / "writer-stdin"
+    args = [
+        "bash",
+        str(SCRIPT_PATH),
+        "--approve-mint",
+        "--manifest",
+        str(paths["10-service-shared.toml"]),
+        "--terraform-input",
+        str(terraform_input),
+    ]
+    if rotate:
+        args.append("--rotate")
+
+    result = subprocess.run(
+        args,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "ACX_OCI_PYTHON": str(bin_dir / "oci-python"),
+            "GPU_KEY_TEST_OCID": FAKE_OCID,
+            "GPU_KEY_TEST_EXPECTED_ID": OTHER_FAKE_OCID,
+            "GPU_KEY_TEST_ARGUMENT_CAPTURE": str(argument_capture),
+            "GPU_KEY_TEST_STDIN_CAPTURE": str(stdin_capture),
+            "TMPDIR": str(tmp_path),
+        },
+    )
+
+    assert result.returncode != 0
+    assert "Vault writer returned a different GPU key secret identity" in result.stderr
+    assert result.stdout == ""
+    writer_arguments = argument_capture.read_text(encoding="utf-8")
+    assert f"--expected-secret-id {OTHER_FAKE_OCID}" in writer_arguments
+    assert ("--rotate-existing" in writer_arguments) is rotate
+    assert {path: path.read_bytes() for path in paths.values()} == before
+    assert terraform_input.read_bytes() == before_terraform_input
+    _assert_key_only_in_stdin(tmp_path, stdin_capture)
+    assert FAKE_KEY not in result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("rotate", [False, True], ids=["bootstrap", "rotate"])

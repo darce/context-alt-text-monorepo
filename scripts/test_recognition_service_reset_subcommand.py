@@ -4,6 +4,7 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "deploy" / "recognition-service.sh"
@@ -171,10 +172,10 @@ def test_reset_dev_dry_run_bootstrap_uses_canonical_cli_contract() -> None:
     the bootstrap exits with argparse usage error and the operator is left
     without a service-mode key.
 
-    Real contract (apps/prototype-description-service/scripts/manage_api_keys.py):
-        python -m scripts.manage_api_keys --env {prod,dev,local} \
+    Real stack labels (apps/prototype-description-service/scripts/manage_api_keys.py):
+        python -m scripts.manage_api_keys --env {prod,dev,dev-fir,staging,local} \
             tenant create --tenant <uuid> --site-url <url>
-        python -m scripts.manage_api_keys --env {prod,dev,local} \
+        python -m scripts.manage_api_keys --env {prod,dev,dev-fir,staging,local} \
             create --tenant <uuid>
     """
     result = _run(
@@ -188,10 +189,11 @@ def test_reset_dev_dry_run_bootstrap_uses_canonical_cli_contract() -> None:
     assert result.returncode == 0, result.stderr
     out = result.stdout
 
-    # Mandatory top-level env flag with a valid choice.
+    # Keep the existing valid-choice assertion and require this reset's exact stack label.
     assert "--env prod" in out or "--env dev" in out or "--env local" in out, (
         "bootstrap is missing the mandatory --env flag from manage_api_keys CLI"
     )
+    assert "--env dev" in out, "bootstrap must use the validated reset stack env"
 
     # Tenant bootstrap (idempotent) before key creation.
     assert "tenant create" in out, (
@@ -215,6 +217,136 @@ def test_reset_dev_dry_run_bootstrap_uses_canonical_cli_contract() -> None:
         "bootstrap must run inside the api container on the remote VM "
         "(the local DSN is not the OCI db that was just reset)"
     )
+
+
+@pytest.mark.parametrize("stack_env", ["dev", "dev-fir", "staging", "prod"])
+def test_reset_dry_run_bootstrap_uses_actual_stack_env(stack_env: str) -> None:
+    """The reset caller must use the same environment label as the stack's ACX_ENV."""
+    env_overrides = {
+        "CONFIRM_REMOTE_RESET": "RESET",
+        "ACX_RESET_DRY_RUN": "1",
+        "ACX_RESET_SITE_URL": "http://localhost:10010",
+    }
+    if stack_env == "prod":
+        env_overrides["CONFIRM"] = "PROMOTE"
+
+    result = _run(["reset", stack_env], env_overrides=env_overrides)
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+
+    assert f"bash -s -- /opt/acx-backend/{stack_env} {stack_env} " in out, (
+        f"the quoted bootstrap heredoc must receive the validated reset env as a positional argument; got: {out!r}"
+    )
+    assert f"--env {stack_env} tenant create" in out, (
+        f"tenant creation must use the reset stack env {stack_env}; got: {out!r}"
+    )
+    assert f"--env {stack_env} create" in out, (
+        f"service key creation must use the reset stack env {stack_env}; got: {out!r}"
+    )
+
+
+@pytest.mark.parametrize("stack_env", ["dev", "dev-fir", "staging", "prod"])
+def test_reset_live_bootstrap_transports_stack_env_through_quoted_heredoc(tmp_path: Path, stack_env: str) -> None:
+    """Execute the captured SSH heredoc with fakes and verify both CLI calls."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    ssh_log = tmp_path / "ssh.log"
+    docker_log = tmp_path / "docker.log"
+    bootstrap_body = tmp_path / "bootstrap.sh"
+    ssh_log.write_text("")
+    docker_log.write_text("")
+    remote_dir = tmp_path / "remote"
+    remote_dir.mkdir()
+    backup_root = tmp_path / "vm-backups"
+    lease_path = backup_root / "locks" / f"deploy-{stack_env}.lease"
+
+    (bindir / "ssh").write_text(
+        "#!/bin/bash\n"
+        f'{{ printf "ARGV:"; for a in "$@"; do printf " <%s>" "$a"; done; printf "\\n"; }} >> "{ssh_log}"\n'
+        "shift 2\n"  # -l USER
+        "shift 2\n"  # -- HOST
+        'case "${1:-}" in\n'
+        '  "sudo python3 -c "*) exec bash -c "$1" ;;\n'
+        "esac\n"
+        'if [ "${1:-}" = "bash -s" ]; then\n'
+        '  if [ -f "' + str(lease_path) + '" ]; then echo LEASE-PRESENT >> "' + str(ssh_log) + '"; fi\n'
+        "  cat >/dev/null\n"
+        "  exit 0\n"
+        "fi\n"
+        '[ "${1:-}" = "bash" ] && [ "${2:-}" = "-s" ] && [ "${3:-}" = "--" ] || exit 91\n'
+        "shift 3\n"
+        '[ "$#" -eq 4 ] || exit 92\n'
+        f'cat > "{bootstrap_body}"\n'
+        # Substitute only the remote directory with the temporary fake VM path;
+        # preserve the transported env, tenant ID, and site URL as separate args.
+        f'exec bash -s -- "{remote_dir}" "$2" "$3" "$4" < "{bootstrap_body}"\n'
+    )
+    (bindir / "ssh").chmod(0o755)
+    (bindir / "sudo").write_text('#!/bin/sh\nexec "$@"\n')
+    (bindir / "sudo").chmod(0o755)
+    (bindir / "docker").write_text(
+        "#!/bin/sh\n"
+        f'{{ printf "DOCKER:"; for a in "$@"; do printf " <%s>" "$a"; done; printf "\\n"; }} >> "{docker_log}"\n'
+    )
+    (bindir / "docker").chmod(0o755)
+    (bindir / "curl").write_text("#!/bin/sh\nexit 0\n")
+    (bindir / "curl").chmod(0o755)
+    (bindir / "sleep").write_text("#!/bin/sh\nexit 0\n")
+    (bindir / "sleep").chmod(0o755)
+
+    site_url = "http://localhost:10010"
+    tenant_id = "11111111-2222-7333-9444-555555555555"
+    env = {**os.environ}
+    env.pop("CONFIRM", None)
+    env["PATH"] = f"{bindir}:{env['PATH']}"
+    env["CONFIRM_REMOTE_RESET"] = "RESET"
+    if stack_env == "prod":
+        env["CONFIRM"] = "PROMOTE"
+    env["ACX_RESET_SITE_URL"] = site_url
+    env["ACX_RESET_TENANT_ID"] = tenant_id
+    script = (
+        f'source "{SCRIPT}"; '
+        f'ACX_DEPLOY_BACKUP_ROOT="{backup_root}"; '
+        f'env_to_remote_dir() {{ printf "%s\\n" "{remote_dir}"; }}; '
+        "preflight_ssh() { :; }; "
+        "preflight_remote_face_pipeline_models() { :; }; "
+        f'do_reset "{stack_env}"'
+    )
+    proc = subprocess.run(
+        ["/bin/bash", "-c", script],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+        timeout=30,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+
+    ssh_calls = ssh_log.read_text()
+    bootstrap_ssh_call = next(line for line in ssh_calls.splitlines() if " <bash> <-s> <--> " in line)
+    assert f"<{remote_dir}> <{stack_env}> <{tenant_id}> <{site_url}>" in bootstrap_ssh_call, bootstrap_ssh_call
+    assert "LEASE-PRESENT" in ssh_calls, ssh_calls
+    assert not lease_path.exists()
+
+    heredoc_body = bootstrap_body.read_text()
+    assert 'remote_dir="$1"' in heredoc_body
+    assert 'env="$2"' in heredoc_body
+    assert 'tenant_id="$3"' in heredoc_body
+    assert 'site_url="$4"' in heredoc_body
+    assert heredoc_body.count('--env "${env}"') == 2
+    script_text = SCRIPT.read_text()
+    assert 'bash -s -- "${remote_dir}" "${env}" "${tenant_id}" "${site_url}"' in script_text
+    assert "<<'BOOTSTRAP'" in script_text
+
+    docker_calls = docker_log.read_text().splitlines()
+    assert len(docker_calls) == 2, docker_calls
+    assert all(f"<--env> <{stack_env}>" in line for line in docker_calls), docker_calls
+    assert "<tenant> <create>" in docker_calls[0], docker_calls
+    assert f"<scripts.manage_api_keys> <--env> <{stack_env}> <create>" in docker_calls[1], docker_calls
+    assert "<create> <--tenant>" in docker_calls[1], docker_calls
+    assert f"<--tenant> <{tenant_id}>" in docker_calls[0], docker_calls
+    assert f"<--tenant> <{tenant_id}>" in docker_calls[1], docker_calls
+    assert f"<--site-url> <{site_url}>" in docker_calls[0], docker_calls
 
 
 def test_reset_dev_dry_run_bootstrap_redirects_exec_stdin() -> None:

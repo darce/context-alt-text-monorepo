@@ -200,7 +200,7 @@ required = true
 doc = "oci_vault: after approval, mint records refs on this variable: dev oci:<ocid>,\nprod vault:<ocid> (staging ref is preserved). RECOGNITION_VAULT_SECRET_MAP derives\nautomatically; never set a value or hand-edit it.\nMint on the operator workstation using the operator OCI CLI config:\n  make gpu-key-mint GPU_KEY_MINT_ARGS=\"--approve-mint\"\nAfter mint, run make env-examples and commit the fragment and generated examples. Full procedure\nand rotation refresh: docs/runbooks/gpu-key-mint.md. Until refs are minted, GPU\npreflight blocks the enabled adapter. env: put the direct value here; never commit it.\ndomain: service secret | source: OCI Vault / service operator | consumer: remote GPU description adapter"
 section = "Image description"
 required_when = { RECOGNITION_SECRET_BACKEND = ["env"], ACX_GPU_ENDPOINT_URL = ["*"] }
-secret = { dev = "host:", staging = "host:", prod = "host:" }
+secret = { dev = "oci:ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqa6zegkxaqzxkshjazsmbhawpzuwmcd7lodprgz5bugqmq", staging = "host:", prod = "vault:ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqa6zegkxaqzxkshjazsmbhawpzuwmcd7lodprgz5bugqmq" }
 
 [[override]]
 name = "ACX_VLM_MAX_IMAGE_EDGE_PX"

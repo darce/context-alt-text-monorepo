@@ -40,7 +40,7 @@ host, not the app host.
 | Surface | Owner | Names |
 | --- | --- | --- |
 | This deploy script | app-host lane | `APP_HOSTNAME`, `APP_UPSTREAM`, `APP_ROOT`, `APP_WWW`, `CADDY_COMPOSE`, `APP_FRONTEND_ROOT`, `CADDYFILE`, `FRONTEND_DIST`, `APP_APPROVED_ROOTS`, `APP_RELOAD_CMD`, `APP_HEALTH_CMD`, `APP_PORTAL_ENV_ROOT` |
-| Prod API process | `svc-vm` manifest target, including `30-portal-backend.toml` | Clerk runtime settings and portal enablement belong in `/opt/acx-backend/prod/.env` (mode 0600); production enablement and materialization are launch gaps (see below) |
+| Prod API process | `svc-vm` manifest target, including `30-portal-backend.toml` | Clerk runtime settings and production portal enablement are committed in the manifest; materialize `/opt/acx-backend/prod/.env` (mode 0600) and restart the prod API before frontend apply |
 | Frontend build | `app-portal-build` public-build manifest target | public `VITE_CLERK_PUBLISHABLE_KEY` and `VITE_CLERK_FAPI`; use the live publishable key variant in production |
 
 `infra/oci/app/env.example` lists the deploy names only. Clerk secret keys and
@@ -51,23 +51,33 @@ source of truth.
 
 ## Before production launch
 
-- Add `prod = "1"` to the `RECOGNITION_PORTAL_ENABLED` variable's `values`
-  in `config/env/manifest.d/30-portal-backend.toml`. It currently has only
-  `local = "1"`; production rendering does not enable the portal. The API
-  mounts `/portal` only when this setting is `1`, `true`, `yes`, or `on`.
-- Supply the public live production publishable key as the `prod`
-  value of `VITE_CLERK_PUBLISHABLE_KEY` in
-  `config/env/manifest.d/60-app-portal.toml`. It currently has only a local
-  value, so `make env-render ENV=prod TARGET=app-portal-build` fails closed
-  until this is supplied. Use the live key format documented in
-  [Clerk production authentication](clerk-production-auth.md#1-create-the-production-instance-dashboard).
-  This key is public by design. Do not add a Clerk secret to the manifest.
+- **STOP:** before materialization or deployment, `main` must contain
+  `apps/prototype-description-service/scripts/manage_portal_invitations.py`
+  from PORTALDEV-1, and the combined-main production service release to deploy
+  must include that CLI. Follow the
+  [Clerk production LAUNCH prerequisite](clerk-production-auth.md#production-launch-prerequisite-before-a3deployment):
+  PORTALPROD-1 config mainmerge, then PORTALDEV-1 union/mainmerge, then launch
+  from that combined main candidate. Before public frontend apply or signed-in
+  smoke, the combined-main service release must be deployed and its invitation
+  CLI verified in the running production API. A restart alone does not install code.
+- The production value `prod = "1"` for `RECOGNITION_PORTAL_ENABLED` is
+  committed in `config/env/manifest.d/30-portal-backend.toml`. The API mounts
+  `/portal` only when this setting is `1`, `true`, `yes`, or `on`.
+- The operator-supplied public live publishable key is committed as the
+  `prod` value of `VITE_CLERK_PUBLISHABLE_KEY` in
+  `config/env/manifest.d/60-app-portal.toml`; a production build now renders
+  the live key. This key is public by design. Do not add a Clerk secret to the
+  manifest.
 - The VM's Clerk values are already harvested into
-  `config/env/manifest.d/30-portal-backend.toml`. Check and materialize that
-  target with `make env-materialize ENV=prod TARGET=svc-vm`; resolve any
-  reported runtime drift or missing host-only secrets before applying. There
-  is no interim VM writer. Also ensure the VM's runtime
-  `RECOGNITION_PORTAL_ENABLED=1` matches the launch manifest before restarting.
+  `config/env/manifest.d/30-portal-backend.toml`. The remaining operator steps
+  are: confirm the combined-main source/release prerequisite; check and
+  materialize the production manifest; deploy the combined-main service with
+  `make deploy-prod CONFIRM=PROMOTE` (which restarts and verifies `acx-prod`
+  with the materialized environment); verify the
+  deployed invitation CLI and API mounting; apply the frontend; then issue a
+  matching, unexpired invitation and perform signed-in smoke. Follow the API
+  activation sequence below. Resolve any reported runtime drift or missing
+  host-only secrets before applying. There is no interim VM writer.
 
 ## Default dry-run
 
@@ -125,6 +135,95 @@ values fail before activation. `APP_PORTAL_ENV_ROOT` can select a manifest
 root other than the repository's `config/env` when a deployment uses a
 separately checked-out manifest.
 
+### Activate the production API before frontend apply
+
+**STOP:** before the first materialization below, `main` must contain
+`apps/prototype-description-service/scripts/manage_portal_invitations.py` from
+PORTALDEV-1 and the combined-main production service release to deploy must
+include it. Follow the
+[Clerk production LAUNCH prerequisite](clerk-production-auth.md#production-launch-prerequisite-before-a3deployment).
+Do not apply the public frontend or begin signed-in smoke until that release
+has been deployed and the container CLI check below succeeds.
+
+The portal router enablement and Clerk verifier settings are already committed
+in the `svc-vm` environment manifest. From the repository root on the operator
+workstation, check the production target first; resolve any runtime drift or
+missing host-only secrets before continuing:
+
+```bash
+make env-materialize ENV=prod TARGET=svc-vm
+```
+
+Still on the operator workstation, materialize the committed production settings:
+
+```bash
+make env-materialize ENV=prod TARGET=svc-vm APPLY=1 CONFIRM=prod
+```
+
+Next, from a clean, synced combined-main checkout on the operator workstation,
+deploy the production service release including PORTALDEV-1's invitation CLI:
+
+```bash
+make deploy-prod CONFIRM=PROMOTE
+```
+
+This is the supported target in `mk/deploy.mk`; it invokes
+`scripts/deploy/recognition-service.sh deploy prod`. Its
+`preflight_env_manifest` runs `materialize_remote.sh prod svc-vm --check`
+before building or promoting, and refuses runtime drift or missing host-only
+secrets. Therefore check/materialize **before** service deployment: requiring
+the new release to be deployed before materialization would block the deploy
+on the very manifest change being activated. Do not bypass the manifest
+preflight or any other deployment safety gate. The source/release prerequisite
+precedes materialization; the deployed-code prerequisite precedes public launch.
+
+The deploy target builds, ships, restarts `acx-prod` with the materialized
+environment (including `RECOGNITION_PORTAL_ENABLED=1`), and verifies the service.
+A restart alone does not install code. Continue only after this verified deploy
+succeeds; the CLI check and the HTTP 401 probe below follow that verification.
+
+On the VM, fail closed if the running production container cannot load the
+invitation CLI. This checks deployed code without issuing an invitation:
+
+```bash
+(
+  set -euo pipefail
+  if ! (cd /opt/acx-backend/prod && docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_portal_invitations --help); then
+    echo 'STOP: deployed production invitation CLI unavailable; do not apply frontend or begin signed-in smoke' >&2
+    exit 1
+  fi
+)
+```
+
+Any directory, Compose, container, or CLI failure is a STOP; resolve the failed
+service deployment and rerun this check before continuing. After frontend
+apply, follow the [Clerk signed-in smoke check](clerk-production-auth.md#post-launch-signed-in-smoke-check):
+the smoke account needs a matching, unexpired operator-issued portal invitation
+for its verified primary email. Configuration materialization and process
+restart cannot substitute for deploying the invitation CLI.
+
+Confirm an unauthenticated `/portal/me` request returns HTTP **401**, not 404,
+before running frontend apply. Use the API host for the first deployment,
+when the app vhost may not yet exist:
+
+```bash
+(
+  if code="$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' https://api.altcontext.com/portal/me)"; then
+    if [ "$code" = 401 ]; then
+      echo 'portal API mounted (401)'
+    else
+      echo "STOP: expected 401, got ${code:-none}; do not apply frontend" >&2
+      exit 1
+    fi
+  else
+    echo "STOP: portal API probe failed (${code:-none}); do not apply frontend" >&2
+    exit 1
+  fi
+)
+```
+
+### Install the checker and apply the frontend
+
 The checked-in `scripts/deploy/app-portal.sh` also provides the health-check
 implementation when installed under the name `app-portal-health-check`. Install
 that versioned script as a regular executable on the VM:
@@ -133,10 +232,11 @@ that versioned script as a regular executable on the VM:
 sudo install -m 0755 scripts/deploy/app-portal.sh /usr/local/bin/app-portal-health-check
 ```
 
-It returns zero only when both the live frontend at
+It returns zero only when all three probes pass: the live frontend at
 `https://app.altcontext.com/` and the production API readiness endpoint at
-`https://api.altcontext.com/ready` return successful HTTP responses. It returns
-nonzero if either check fails.
+`https://api.altcontext.com/ready` return successful HTTP responses, and the
+unauthenticated `https://app.altcontext.com/portal/me` returns HTTP **401**.
+It returns nonzero if any check fails.
 The deploy script passes the selected `APP_HOSTNAME` to the checker; hostname
 overrides probe that frontend instead. Standalone checks default to
 `app.altcontext.com` unless `APP_HOSTNAME` is set.
@@ -162,8 +262,11 @@ overrides.
    to equal the absolute `CADDYFILE`. Checks the base-only configuration,
    any installed overlay, and the rendered replacement overlay. A mismatch
    names both paths and leaves staging, the journal, and live files untouched.
-   Then recovers any interrupted activation by restoring its snapshots,
-   reapplying its Compose state, reloading Caddy, and clearing the journal.
+   Then recovers any interrupted activation: promotion phases restore snapshots,
+   reapply Compose state, and reload Caddy; `snapshotting` only cleans planned
+   partial snapshots, and `restored` only retries failed-set cleanup. Cleanup
+   is synced before clearing the journal last. See the exact
+   [recovery invocation](#recover-an-interrupted-frontend-activation) below.
    Recovery requires no replacement frontend build. Only after recovery does
    it validate `FRONTEND_DIST`, including its source-path guards; a deleted
    build directory or another unavailable or invalid build exits nonzero
@@ -173,8 +276,17 @@ overrides.
    `demo.altcontext.com`, `129-213-40-111.sslip.io`, and `dl.darce.xyz` stay.
 3. Runs `caddy validate` on the staged Caddyfile (`--adapter caddyfile`).
 4. On validate failure: live Caddyfile, www, and overlay are left untouched.
-5. On success: copies complete rollback state to
+5. On success: durably journals all planned snapshot/marker paths at
+   `phase=snapshotting` **before** writing the first snapshot or absence marker,
+   then copies complete rollback state to
    `/opt/acx-backend/app/rollback/{Caddyfile,www,docker-compose.app.yml}.<ts>`.
+   A previously absent frontend or overlay instead gets `absent-www.<ts>` or
+   `absent-overlay.<ts>`, containing exactly `app-portal-absent-www-v1` or
+   `app-portal-absent-overlay-v1` plus a newline. These markers are synced before
+   activation and remain after success clears the journal. Numeric snapshots
+   and markers from older applies are reclaimed only after a successful apply,
+   retaining that apply's prestate set; nonnumeric operator files are untouched.
+   A failed apply must not displace the last successful apply's prestate set.
 6. Promotes under an ERR/INT/TERM trap:
    - Caddyfile: write a complete sibling, then `cat` into the live inode
      (same bind-mount inode rule as `sync-demo.sh` / GUIDEDEPLOY-1-BR-04).
@@ -199,7 +311,11 @@ overrides.
    required `APP_HEALTH_CMD` against the live frontend and production API.
 10. Any failure at write/move/copy/compose/reload/health restores all three
     rollback artifacts, recreates Caddy with the restored compose state, attempts a
-    rollback reload, and **does not** print `applied:`.
+    rollback reload, and **does not** print `applied:`. Successful failed-apply
+    restore clears its journal and removes only its duplicate timestamp set,
+    preserving the last successful apply's prestate set for manual back-out.
+    Failed restore retains the journal and all snapshot/absence-marker inputs
+    for retry; it does not reclaim rollback sets.
 
 Interrupted recovery also recreates Caddy after restoring the frontend snapshot,
 including interruptions before overlay promotion, to refresh the directory mount.
@@ -239,12 +355,8 @@ The mount exposes the chosen `APP_WWW` (default `/opt/acx-backend/app/www`) at
 TLS/network owner. A custom `APP_WWW` is already baked into the published
 overlay; do not compose the `__APP_WWW__` template.
 
-Reload or recreate Caddy if its mounted Caddyfile does not match the host
-configuration. Use `docker compose -f /opt/acx-backend/docker-compose.caddy.yml
--f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy caddy reload
---config /etc/caddy/Caddyfile --adapter caddyfile` when the inode already
-matches; recreate when the mount hash diverges (same check as `sync-demo.sh`).
-Compare:
+Confirm Caddy's mounted Caddyfile matches the host configuration (same check
+as `sync-demo.sh`). Both hashes must match before declaring the apply verified:
 
 ```bash
 sha256sum /opt/acx-backend/Caddyfile
@@ -252,23 +364,58 @@ docker compose -f docker-compose.caddy.yml exec -T caddy \
   sha256sum /etc/caddy/Caddyfile
 ```
 
-Enable the portal router and Clerk verifier settings in the `svc-vm`
-environment manifest. The VM values are already harvested; check and
-materialize the production target from the repository root after resolving any
-runtime drift or missing host-only secrets:
+If the hashes differ, recreate Caddy to refresh its bind mount, wait for its
+admin endpoint with the deployment script's bounded probe, then reload:
 
 ```bash
-make env-materialize ENV=prod TARGET=svc-vm
-make env-materialize ENV=prod TARGET=svc-vm APPLY=1 CONFIRM=prod
+(
+  set -euo pipefail
+  docker compose -f docker-compose.caddy.yml \
+    -f /opt/acx-backend/app/docker-compose.app.yml up -d --force-recreate --no-deps caddy
+  ready=0
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if docker compose -f docker-compose.caddy.yml \
+      -f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy \
+      wget -q -T 1 -O /dev/null http://127.0.0.1:2019/config/; then
+      ready=1
+      break
+    fi
+    if [ "$attempt" -lt 10 ]; then
+      sleep 1
+    fi
+  done
+  if [ "$ready" -ne 1 ]; then
+    echo 'STOP: Caddy admin endpoint not ready after 10 attempts; refusing reload/verification; follow frontend back-out' >&2
+    exit 1
+  fi
+  docker compose -f docker-compose.caddy.yml \
+    -f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy \
+    caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+  sha256sum /opt/acx-backend/Caddyfile
+  docker compose -f docker-compose.caddy.yml exec -T caddy \
+    sha256sum /etc/caddy/Caddyfile
+  /usr/local/bin/app-portal-health-check
+)
 ```
 
-Restart the prod API unit on the VM after applying those env changes:
+The subshell stops on recreation/reload failure or readiness exhaustion, before
+hash/health verification. The probe uses container-local BusyBox `wget`, a
+one-second request timeout, and at most nine one-second pauses between ten
+attempts. On exhaustion, follow frontend back-out. Recheck both hashes and
+health after recovery. If the hashes still differ or
+health fails, follow the [frontend back-out](#frontend-back-out) below before
+declaring the apply verified.
+
+Verify all three live probes with the installed checker; backend settings were
+materialized and the API restarted before frontend apply:
 
 ```bash
-sudo systemctl restart acx-prod
+/usr/local/bin/app-portal-health-check
 ```
 
 Billing webhooks stay on the API host, not the app host.
+
+## Shared-edge maintenance
 
 DNS: operator A-record `app.altcontext.com` → `129.213.40.111`. Caddy issues
 the cert once that name resolves here.
@@ -281,34 +428,295 @@ lane; [GRPH-09]).
 
 ## Rollback
 
+### Backend back-out
+
+The portal flag mounts both `/portal` and the billing webhooks router in the
+shared prod API; missing Clerk verifier settings can prevent API startup.
+To back out backend enablement, change the production value of
+`RECOGNITION_PORTAL_ENABLED` to `prod = "0"` in
+`config/env/manifest.d/30-portal-backend.toml` through the normal reviewed merge.
+The manifest is the only writer: there is no interim VM writer, and a hand edit
+of `/opt/acx-backend/prod/.env` is reverted as drift at the next materialize.
+From the repository root on the operator workstation, check the merged target
+and resolve drift or missing host-only secrets:
+
+```bash
+make env-materialize ENV=prod TARGET=svc-vm
+```
+
+Still on the operator workstation, materialize the disabled flag:
+
+```bash
+make env-materialize ENV=prod TARGET=svc-vm APPLY=1 CONFIRM=prod
+```
+
+On the VM, restart the shared prod API:
+
+```bash
+sudo systemctl restart acx-prod
+```
+
+Confirm API readiness recovers and `/portal/me` returns 404 with the router
+disabled. Roll the frontend back using the [frontend back-out](#frontend-back-out)
+sequence below; the frontend checker expects 401 and will fail while the
+backend portal is disabled.
+
+### Recover an interrupted frontend activation
+
+A retained `/opt/acx-backend/app/activation.journal` blocks manual back-out.
+Recovery must use the same reviewed deploy script and input paths as the
+interrupted apply. If those files exist only on the operator workstation, copy
+these three reviewed files from that release to the VM first (the `acx-backend`
+SSH alias is the same existing VM used for deployment; no VM checkout is assumed):
+
+```bash
+scp scripts/deploy/app-portal.sh acx-backend:/tmp/app-portal-recovery.sh
+scp infra/oci/app/Caddyfile.app acx-backend:/tmp/app-portal-recovery.Caddyfile.app
+scp infra/oci/app/docker-compose.app.yml acx-backend:/tmp/app-portal-recovery.overlay.yml
+```
+
+In an operator shell on the VM, with the same filesystem and Docker permissions
+as the original apply, run this exact recovery invocation. These are the default
+apply bindings; substitute the original values if they were overridden, including
+`APP_ROOT`, `APP_WWW`, `CADDYFILE`, `CADDY_COMPOSE`, `APP_UPSTREAM`, and the overlay
+template. The installed live overlay remains `${APP_ROOT}/docker-compose.app.yml`.
+`env -u FRONTEND_DIST` also removes a build path inherited from the operator shell:
+
+```bash
+env -u FRONTEND_DIST \
+  APP_ROOT=/opt/acx-backend/app \
+  APP_WWW=/opt/acx-backend/app/www \
+  CADDYFILE=/opt/acx-backend/Caddyfile \
+  CADDY_COMPOSE=/opt/acx-backend/docker-compose.caddy.yml \
+  APP_UPSTREAM=prod-api:8000 \
+  APP_SNIPPET=/tmp/app-portal-recovery.Caddyfile.app \
+  APP_OVERLAY=/tmp/app-portal-recovery.overlay.yml \
+  APP_HEALTH_CMD=/usr/local/bin/app-portal-health-check \
+  bash /tmp/app-portal-recovery.sh --apply
+```
+
+The script acquires its bounded deployment lock, validates the Compose Caddyfile
+bindings (base, installed overlay, and rendered template), and recovers the
+journal **before** requiring a replacement build. Recovery restores/reloads live
+state for `prepared`, `caddy_promoted`, `www_promoted`, or `overlay_promoted`.
+For `snapshotting`, no live promotion has occurred: recovery removes only that
+journal's planned partial snapshot/marker set without restoring live files.
+For `restored`, restoration/reload is already durable and recovery retries only
+failed-set cleanup. Cleanup is synced while the journal remains present and the
+journal is cleared last; earlier successful rollback sets are preserved.
+
+After successful recovery the command deliberately exits nonzero with
+`ERROR: FRONTEND_DIST is required for --apply`, before staging or redeploying.
+Do not blindly ignore a nonzero status: any other error is a STOP. Confirm the
+output reports recovery followed by that exact missing-build refusal; check that
+`activation.journal` is gone (neither an existing path nor a dangling symlink),
+inspect the restored Caddyfile, frontend/absence, and overlay/absence against the
+pre-activation state, and verify Caddy/API readiness and restored frontend
+behavior as applicable. If the journal remains or restoration is unverified,
+STOP and resolve recovery first. Only then run manual back-out below to restore
+the last successful apply's prestate. Supplying `FRONTEND_DIST` would instead
+recover and then redeploy, so it must remain unset for this recovery step.
+
+### Frontend back-out
+
 `/opt/acx-backend/app/rollback/Caddyfile.<ts>` plus `www.<ts>` and
-`docker-compose.app.yml.<ts>` are the pre-activation copies. Automatic restore
+`docker-compose.app.yml.<ts>` are the pre-activation copies. For each previously
+missing artifact, a validated `absent-www.<ts>` or `absent-overlay.<ts>` replaces
+its snapshot. Missing snapshots alone never prove prior absence. Automatic restore
 runs on promote/compose/reload/health failure and reapplies the restored compose
-state before the rollback reload. Manual restore: write the Caddyfile back
-**in place** (`cat rollback > Caddyfile`), restore www/overlay, then reapply
-the prior compose overlay and reload Caddy. Use these commands only when a prior
-overlay snapshot was restored:
+state before the rollback reload. Successful failed-apply restore removes only
+its duplicate timestamp set while the durable journal is at `phase=restored`,
+syncs that cleanup, then clears the journal last, preserving the last successful
+apply's prestate set. Thus a failed re-apply does not replace the
+manual back-out target with copies of the still-live successful frontend.
+Failed restore retains the journal and all snapshot/absence-marker inputs for
+retry; use [interrupted activation recovery](#recover-an-interrupted-frontend-activation)
+before attempting manual back-out. The manual block holds the same bounded
+`activation.journal.lock` as deploy and refuses any journal, including a dangling
+symlink, before selecting snapshots or mutating live/rollback state.
+On the VM, manual restore selects only
+`Caddyfile.<digits>` names and sorts by the numeric filename suffix, never mtime
+(`cp -a` preserves the live file's older mtime). It prints the chosen timestamp
+and refuses missing, empty, incomplete, or contradictory marker/snapshot sets
+before changing live files. Markers must be regular files without symlinks and
+match the exact versioned contents written by deployment, including the newline.
+The snapshot's `index.html` must be a non-empty regular file, not a symlink.
+The live overlay must be a regular file or absent, never a symlink; its parent
+must be an existing directory, not a symlink, even when the overlay is absent.
+The commands below use the default paths; substitute the same paths used at
+apply if they were overridden. Restore the Caddyfile back **in place**,
+preserving its bind-mounted inode, and www/overlay from that same timestamp.
+The executable branches below restore each snapshot or remove the newly added
+artifact only when its absence marker is validated. They support a full snapshot,
+first deployment with both artifacts absent, and either mixed prior state:
 
 ```bash
-cd /opt/acx-backend
-docker compose -f docker-compose.caddy.yml \
-  -f /opt/acx-backend/app/docker-compose.app.yml up -d --force-recreate --no-deps caddy
-docker compose -f docker-compose.caddy.yml \
-  -f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy \
-  caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+(
+  set -euo pipefail
+  # Reject symlinked parents for every source and destination before any mutation.
+  parent=/opt/acx-backend/app/rollback
+  while [ "$parent" != / ]; do
+    if [ ! -d "$parent" ] || [ -L "$parent" ]; then
+      echo 'STOP: rollback/live parent missing or unsafe; refusing restore' >&2
+      exit 1
+    fi
+    parent="$(dirname -- "$parent")"
+  done
+  if [ ! -d /opt/acx-backend/app/rollback ] || [ -L /opt/acx-backend/app/rollback ]; then
+    echo 'STOP: rollback directory missing or unsafe; refusing restore' >&2
+    exit 1
+  fi
+  # Same lock inode and bounded wait as app-portal.sh; never truncate the lock.
+  lock=/opt/acx-backend/app/activation.journal.lock
+  if [ -L "$lock" ] || { [ -e "$lock" ] && [ ! -f "$lock" ]; }; then
+    echo 'STOP: deployment lock path unsafe; refusing restore' >&2
+    exit 1
+  fi
+  lock_wait="${APP_DEPLOY_LOCK_WAIT:-30}"
+  case "$lock_wait" in
+    ''|*[!0-9]*) echo 'STOP: APP_DEPLOY_LOCK_WAIT must be a non-negative integer' >&2; exit 1 ;;
+  esac
+  if ! command -v flock >/dev/null 2>&1; then
+    echo 'STOP: flock required for deployment lock; refusing restore' >&2
+    exit 1
+  fi
+  if ! exec 9>>"$lock"; then
+    echo 'STOP: cannot open deployment lock; refusing restore' >&2
+    exit 1
+  fi
+  if ! flock -w "$lock_wait" 9; then
+    echo "STOP: cannot acquire deployment lock within ${lock_wait}s; refusing restore" >&2
+    exit 1
+  fi
+  if [ -e /opt/acx-backend/app/activation.journal ] || [ -L /opt/acx-backend/app/activation.journal ]; then
+    echo 'STOP: activation journal present; recover interrupted activation before manual back-out' >&2
+    exit 1
+  fi
+  ts="$(find /opt/acx-backend/app/rollback -maxdepth 1 -type f \
+    -name 'Caddyfile.*' -printf '%f\n' -o \
+    ! -type f -name 'Caddyfile.*' -printf '%f\n' \
+    | sed -n 's/^Caddyfile\.\([0-9][0-9]*\)$/\1/p' \
+    | sort -nr | sed -n '1p')"
+  if [ -z "$ts" ]; then
+    echo 'STOP: no numeric Caddyfile rollback snapshot; refusing restore' >&2
+    exit 1
+  fi
+  echo "Selected rollback timestamp: $ts"
+  snapshot="/opt/acx-backend/app/rollback/Caddyfile.$ts"
+  www_snapshot="/opt/acx-backend/app/rollback/www.$ts"
+  overlay_snapshot="/opt/acx-backend/app/rollback/docker-compose.app.yml.$ts"
+  www_absent="/opt/acx-backend/app/rollback/absent-www.$ts"
+  overlay_absent="/opt/acx-backend/app/rollback/absent-overlay.$ts"
+  if [ ! -f "$snapshot" ] || [ ! -s "$snapshot" ] || [ -L "$snapshot" ]; then
+    echo 'STOP: no non-empty regular Caddyfile rollback snapshot; refusing restore' >&2
+    exit 1
+  fi
+  restore_www=1
+  if [ -e "$www_absent" ] || [ -L "$www_absent" ]; then
+    if [ ! -f "$www_absent" ] || [ -L "$www_absent" ] \
+      || ! cmp -s -- "$www_absent" <(printf 'app-portal-absent-www-v1\n') \
+      || [ -e "$www_snapshot" ] || [ -L "$www_snapshot" ]; then
+      echo "STOP: invalid or contradictory frontend absence marker at $ts; refusing restore" >&2
+      exit 1
+    fi
+    restore_www=0
+  elif [ ! -d "$www_snapshot" ] || [ -L "$www_snapshot" ] \
+    || [ ! -f "$www_snapshot/index.html" ] || [ ! -s "$www_snapshot/index.html" ] \
+    || [ -L "$www_snapshot/index.html" ]; then
+    echo "STOP: incomplete rollback snapshot at $ts; refusing restore" >&2
+    exit 1
+  fi
+  restore_overlay=1
+  if [ -e "$overlay_absent" ] || [ -L "$overlay_absent" ]; then
+    if [ ! -f "$overlay_absent" ] || [ -L "$overlay_absent" ] \
+      || ! cmp -s -- "$overlay_absent" <(printf 'app-portal-absent-overlay-v1\n') \
+      || [ -e "$overlay_snapshot" ] || [ -L "$overlay_snapshot" ]; then
+      echo "STOP: invalid or contradictory overlay absence marker at $ts; refusing restore" >&2
+      exit 1
+    fi
+    restore_overlay=0
+  elif [ ! -f "$overlay_snapshot" ] || [ ! -s "$overlay_snapshot" ] || [ -L "$overlay_snapshot" ]; then
+    echo "STOP: incomplete rollback snapshot at $ts; refusing restore" >&2
+    exit 1
+  fi
+  if [ ! -f /opt/acx-backend/Caddyfile ] || [ -L /opt/acx-backend/Caddyfile ]; then
+    echo 'STOP: live Caddyfile must be an existing regular file; refusing restore' >&2
+    exit 1
+  fi
+  if [ ! -d /opt/acx-backend/app ] || [ -L /opt/acx-backend/app ]; then
+    echo 'STOP: live overlay parent must be an existing directory without symlinks; refusing restore' >&2
+    exit 1
+  fi
+  if [ -L /opt/acx-backend/app/docker-compose.app.yml ] \
+    || { [ -e /opt/acx-backend/app/docker-compose.app.yml ] \
+      && [ ! -f /opt/acx-backend/app/docker-compose.app.yml ]; }; then
+    echo 'STOP: live overlay must be a regular file or absent without symlinks; refusing restore' >&2
+    exit 1
+  fi
+  if [ -L /opt/acx-backend/app/www ] \
+    || { [ -e /opt/acx-backend/app/www ] && [ ! -d /opt/acx-backend/app/www ]; }; then
+    echo 'STOP: live frontend must be a directory or absent without symlinks; refusing restore' >&2
+    exit 1
+  fi
+  cp -- "$snapshot" /opt/acx-backend/Caddyfile
+  rm -rf -- /opt/acx-backend/app/www
+  if [ "$restore_www" -eq 1 ]; then
+    cp -a -- "$www_snapshot" /opt/acx-backend/app/www
+  fi
+  if [ "$restore_overlay" -eq 1 ]; then
+    cp -- "$overlay_snapshot" /opt/acx-backend/app/docker-compose.app.yml
+  else
+    rm -f -- /opt/acx-backend/app/docker-compose.app.yml
+  fi
+  cd /opt/acx-backend
+  compose=(docker compose -f docker-compose.caddy.yml)
+  if [ "$restore_overlay" -eq 1 ]; then
+    compose+=(-f /opt/acx-backend/app/docker-compose.app.yml)
+    docker compose -f docker-compose.caddy.yml \
+      -f /opt/acx-backend/app/docker-compose.app.yml up -d --force-recreate --no-deps caddy
+  else
+    docker compose -f docker-compose.caddy.yml up -d --force-recreate --no-deps caddy
+  fi
+  ready=0
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if "${compose[@]}" exec -T caddy wget -q -T 1 -O /dev/null \
+      http://127.0.0.1:2019/config/; then
+      ready=1
+      break
+    fi
+    if [ "$attempt" -lt 10 ]; then
+      sleep 1
+    fi
+  done
+  if [ "$ready" -ne 1 ]; then
+    echo 'STOP: Caddy admin endpoint not ready after 10 attempts; restored files retained; refusing reload; investigate Caddy startup before retry' >&2
+    exit 1
+  fi
+  if [ "$restore_overlay" -eq 1 ]; then
+    docker compose -f docker-compose.caddy.yml \
+      -f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy \
+      caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+  else
+    docker compose -f docker-compose.caddy.yml exec -T caddy \
+      caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+  fi
+)
 ```
 
-If there was no prior overlay (first deployment), remove the newly installed
-`/opt/acx-backend/app/docker-compose.app.yml` and frontend directory instead of
-restoring absent snapshots. After restoring the Caddyfile in place, use the base
-compose file alone:
+The block reapplies the prior compose overlay and reloads Caddy only after every
+guard, the full restore, and bounded admin readiness polling succeed. With a prior
+overlay, it uses both compose files for recreation, probing, and reload. As in
+fix-forward, it attempts the container-local admin probe up to ten times with a
+one-second request timeout and at most nine one-second pauses. Exhaustion prints
+STOP and leaves the restored files in place without reloading Caddy; investigate
+Caddy startup before retrying, and do not declare recovery verified.
 
-```bash
-cd /opt/acx-backend
-docker compose -f docker-compose.caddy.yml up -d --force-recreate --no-deps caddy
-docker compose -f docker-compose.caddy.yml exec -T caddy \
-  caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
-```
+If there was no prior overlay (first deployment), automatic rollback uses its
+activation journal's recorded absence. Manual rollback uses the durable validated
+absence markers even after a successful apply has cleared that journal. With both
+markers it removes the newly installed overlay and frontend directory after all
+guards pass, restores the Caddyfile in place, and uses the base compose file alone
+for recreation, the same bounded readiness probe, and reload in the block above.
 
 Failed validation never replaces the live files, so rollback is only needed
 after activation has started.

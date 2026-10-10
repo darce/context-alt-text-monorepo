@@ -17,30 +17,30 @@ import { mediaEditUrl } from './Panels';
 import { mediaLibraryUrl } from '../../utils/adminUrls';
 import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
 
-/** Who may hold the row's polite region or commit lock. */
+/** Who may hold the row's polite region. */
 export type RowPoliteOwner = 'editor' | 'suggest';
+export type RowCommitOwner = RowPoliteOwner | 'queue';
 
 /**
- * Row commit-lock primitives [S2c-4b-ii BR-01]. Exported so a third simulated
- * claimant can exercise compare-and-set without driving the full UI — the defect
- * (unconditional begin) is unreachable through the two real surfaces that already
- * refuse when peerCommitPending is true.
+ * Row commit-lock primitives [S2c-4b-ii BR-01]. Shared by editor, Suggest, and
+ * queue correction controls. Exported to exercise competing synchronous claims
+ * and late owner releases independently of disabled-button paint.
  *
  * Claim result is decided on a ref so beginCommit can return synchronously.
  * React may defer useState updaters; a side-effect flag inside setState is not
  * a reliable "did I win?" signal. State still drives peerCommitPending paint.
  */
 export const useRowCommitLock = (): {
-  commitOwner: RowPoliteOwner | null;
-  beginCommit: (owner: RowPoliteOwner) => boolean;
-  endCommit: (owner: RowPoliteOwner) => void;
+  commitOwner: RowCommitOwner | null;
+  beginCommit: (owner: RowCommitOwner) => boolean;
+  endCommit: (owner: RowCommitOwner) => void;
 } => {
-  const [commitOwner, setCommitOwner] = useState<RowPoliteOwner | null>(null);
-  const commitOwnerRef = useRef<RowPoliteOwner | null>(null);
+  const [commitOwner, setCommitOwner] = useState<RowCommitOwner | null>(null);
+  const commitOwnerRef = useRef<RowCommitOwner | null>(null);
 
   // Compare-and-set: claim only when free. Returns whether this caller won.
   // Exclusivity lives here — not in each caller's peerCommitPending guard.
-  const beginCommit = useCallback((owner: RowPoliteOwner): boolean => {
+  const beginCommit = useCallback((owner: RowCommitOwner): boolean => {
     if (commitOwnerRef.current !== null) {
       return false;
     }
@@ -50,7 +50,7 @@ export const useRowCommitLock = (): {
   }, []);
 
   // Compare-and-clear: only the holding owner releases the lock.
-  const endCommit = useCallback((owner: RowPoliteOwner): void => {
+  const endCommit = useCallback((owner: RowCommitOwner): void => {
     if (commitOwnerRef.current !== owner) {
       return;
     }
@@ -118,10 +118,7 @@ export const MediaSelectionTableBody = ({
     }
     return items.filter((item) => draftsByMediaId[item.id] != null);
   }, [draftsByMediaId, draftsIsError, draftsLoading, filterByDrafts, items]);
-  const truncationHeading = __(
-    'Only recent drafts were checked. Older drafts may not be listed.',
-    'alt-context',
-  );
+  const truncationHeading = __('Only recent drafts were checked. Older drafts may not be listed.', 'alt-context');
   const draftTruncationNotice = (
     <tr>
       <td colSpan={4}>
@@ -346,6 +343,8 @@ const MediaSelectionRow = ({
   const editorCommitEnd = useCallback((): void => endCommit('editor'), [endCommit]);
   const suggestCommitStart = useCallback((): boolean => beginCommit('suggest'), [beginCommit]);
   const suggestCommitEnd = useCallback((): void => endCommit('suggest'), [endCommit]);
+  const queueCommitStart = useCallback((): boolean => beginCommit('queue'), [beginCommit]);
+  const queueCommitEnd = useCallback((): void => endCommit('queue'), [endCommit]);
 
   return (
     <tr>
@@ -357,10 +356,7 @@ const MediaSelectionRow = ({
         />
       </td>
       <td className="acx-media-selection__thumb-cell">
-        <a
-          href={mediaEditUrl(item.id)}
-          aria-label={sprintf(__('Edit %s', 'alt-context'), item.title)}
-        >
+        <a href={mediaEditUrl(item.id)} aria-label={sprintf(__('Edit %s', 'alt-context'), item.title)}>
           {item.thumbnailUrl ? (
             <img
               src={item.thumbnailUrl}
@@ -370,11 +366,7 @@ const MediaSelectionRow = ({
                 // Prefer real alt over a leftover decorative marker (same
                 // precedence as DescriptionCandidateService: has_alt_text wins).
                 // Empty alt only when decorative AND altText is null. [WBUX-5-R1-01][A11Y-02]
-                item.altText != null
-                  ? decodeHtmlEntities(item.altText)
-                  : item.isDecorative
-                    ? ''
-                    : item.title
+                item.altText != null ? decodeHtmlEntities(item.altText) : item.isDecorative ? '' : item.title
               }
               className="acx-media-selection__thumb acx-media-selection__thumb--thumb"
               loading={eagerLoad ? 'eager' : 'lazy'}
@@ -400,12 +392,7 @@ const MediaSelectionRow = ({
           stable position, empty while quiet. Editor and Suggest announce through
           props — no context provider for a two-consumer one-level hop.
         */}
-        <div
-          role="status"
-          aria-live="polite"
-          className="screen-reader-text"
-          data-testid="media-selection-row-status"
-        >
+        <div role="status" aria-live="polite" className="screen-reader-text" data-testid="media-selection-row-status">
           {polite.message}
         </div>
         <MediaAltInlineEditor
@@ -415,7 +402,7 @@ const MediaSelectionRow = ({
           isDecorative={item.isDecorative === true}
           onPoliteAnnounce={editorAnnounce}
           onPoliteClear={editorClear}
-          peerCommitPending={commitOwner === 'suggest'}
+          peerCommitPending={commitOwner !== null && commitOwner !== 'editor'}
           onCommitStart={editorCommitStart}
           onCommitEnd={editorCommitEnd}
         />
@@ -426,12 +413,20 @@ const MediaSelectionRow = ({
           isDecorative={item.isDecorative === true}
           onPoliteAnnounce={suggestAnnounce}
           onPoliteClear={suggestClear}
-          peerCommitPending={commitOwner === 'editor'}
+          peerCommitPending={commitOwner !== null && commitOwner !== 'suggest'}
           onCommitStart={suggestCommitStart}
           onCommitEnd={suggestCommitEnd}
         />
         {draft ? (
-          <QueueDraftCell mediaId={item.id} draftText={draft.draftText} title={item.title} />
+          <QueueDraftCell
+            mediaId={item.id}
+            draftText={draft.draftText}
+            title={item.title}
+            committedAlt={item.altText ?? null}
+            peerCommitPending={commitOwner !== null && commitOwner !== 'queue'}
+            onCommitStart={queueCommitStart}
+            onCommitEnd={queueCommitEnd}
+          />
         ) : null}
         {/* detail-meta is metadata loading, not an operator result — not a live region. */}
         <div className="acx-media-selection__detail-meta">
@@ -440,7 +435,11 @@ const MediaSelectionRow = ({
               {item.mimeType ? <span className="acx-media-selection__detail-chip">{item.mimeType}</span> : null}
               {item.dimensions ? (
                 <span className="acx-media-selection__detail-chip">
-                  {sprintf(__('%1$d × %2$d px', 'alt-context'), item.dimensions.width ?? 0, item.dimensions.height ?? 0)}
+                  {sprintf(
+                    __('%1$d × %2$d px', 'alt-context'),
+                    item.dimensions.width ?? 0,
+                    item.dimensions.height ?? 0,
+                  )}
                 </span>
               ) : null}
             </>

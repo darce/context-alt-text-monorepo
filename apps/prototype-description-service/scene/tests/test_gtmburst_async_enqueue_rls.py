@@ -146,6 +146,9 @@ async def test_actual_post_reseeds_after_commit_and_preserves_cross_tenant_404(
     app.dependency_overrides[get_usage_admission_service] = lambda: admission
     app.dependency_overrides[get_description_adapter] = lambda: SimpleNamespace()
     app.dependency_overrides[get_async_gpu_description_adapter] = lambda: SimpleNamespace(n_passes=1)
+    # ASGITransport awaits response background work; this healthy control has no
+    # replay/fault observation requiring the shared fixture's worker to stay held.
+    gate.worker_continue.set()
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
             "/scene/describe/async",

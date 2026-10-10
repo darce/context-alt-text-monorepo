@@ -1,1 +1,4 @@
+9d2eb679e7cf offload: Committed the authenticated GET fixture repair; native
+c662642964c8 offload: Committed the ASYNC-03 fix and regressions; database
+1b01bd5569f1 chore(review): procure governed context payload
 c305cb4a6a67 offload: Committed both async enqueue fixes; standard pytest and

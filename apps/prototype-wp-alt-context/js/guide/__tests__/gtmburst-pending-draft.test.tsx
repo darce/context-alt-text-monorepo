@@ -32,6 +32,27 @@ const editor = (imageKey: GuidedImageKey) =>
     name: publicCopy('draft.field_label.public'),
   });
 
+const adminEditor = (imageKey: GuidedImageKey): HTMLTextAreaElement =>
+  within(screen.getByTestId(`guided-description-review-${imageKey}`)).getByRole<HTMLTextAreaElement>('textbox', {
+    name: guidedCopy('draft.label'),
+  });
+
+const preview = async (user: ReturnType<typeof userEvent.setup>): Promise<void> => {
+  await user.click(
+    within(screen.getByTestId('guided-description-review-tribeca')).getByRole('button', {
+      name: guidedCopy('draft.next'),
+    }),
+  );
+};
+
+const confirmAdminReplacement = async (user: ReturnType<typeof userEvent.setup>): Promise<void> => {
+  await user.click(
+    within(screen.getByRole('dialog', { name: guidedCopy('names.change_title') })).getByRole('button', {
+      name: guidedCopy('names.change_confirm'),
+    }),
+  );
+};
+
 const edit = (imageKey: GuidedImageKey, text: string): void => {
   fireEvent.change(editor(imageKey), { target: { value: text } });
 };
@@ -169,4 +190,149 @@ describe('public walkthrough pending draft ownership', () => {
     choose('coachella', 'left', 'include');
     expect(editor('tribeca')).toHaveValue(createGuidedScenario().samples.tribeca.both);
   });
+});
+
+describe('mounted editor acceptance controls', () => {
+  it.each(['replacement', 'full', 'copy_only'] as const)(
+    'keeps an admin %s after accepting manual input with Preview',
+    async (action) => {
+      const user = userEvent.setup({ delay: null });
+      render(<RecordedWalkthrough scope="admin" />);
+      answerNames('tribeca');
+      await user.clear(adminEditor('tribeca'));
+      await user.type(adminEditor('tribeca'), discardedCaption);
+      expect(screen.getByTestId('demo-apply-tribeca')).toBeDisabled();
+      await preview(user);
+      expect(screen.getByTestId('demo-apply-tribeca')).toBeEnabled();
+
+      choose('tribeca', 'right', 'omit');
+      await confirmAdminReplacement(user);
+      expect(adminEditor('tribeca')).toHaveValue(replacement);
+      choose('coachella', 'left', 'include');
+      expect(adminEditor('tribeca')).toHaveValue(replacement);
+      const review = await openHistory(user);
+      expect(within(review).getByText(discardedCaption)).toBeVisible();
+
+      if (action !== 'replacement') {
+        if (action === 'full') {
+          choose('tribeca', 'right', 'include');
+        }
+        const superseded = `Previewed caption before ${action} restore.`;
+        await user.clear(adminEditor('tribeca'));
+        await user.type(adminEditor('tribeca'), superseded);
+        await preview(user);
+        expect(screen.getByTestId('demo-apply-tribeca')).toBeEnabled();
+        const revision = within(review).getByText(discardedCaption).closest('li');
+        if (revision === null) {
+          throw new Error('Missing archived manual caption.');
+        }
+        await user.click(
+          within(revision).getByRole('button', {
+            name: guidedCopy(action === 'full' ? 'draft.restore_revision' : 'draft.copy_revision'),
+          }),
+        );
+        expect(adminEditor('tribeca')).toHaveValue(discardedCaption);
+        expect(screen.getByTestId('demo-apply-tribeca')).toBeDisabled();
+        choose('coachella', 'right', 'include');
+        expect(adminEditor('tribeca')).toHaveValue(discardedCaption);
+        expect(within(review).getByText(superseded)).toBeVisible();
+        expect(nameRadio('tribeca', 'right', action === 'full' ? 'include' : 'omit')).toBeChecked();
+      }
+    },
+    30_000,
+  );
+
+  it.each(['public', 'admin'] as const)(
+    'preserves selection and mid-sentence typing through %s renders and acceptance',
+    async (scope) => {
+      const user = userEvent.setup({ delay: null });
+      const { rerender } = render(<RecordedWalkthrough scope={scope} />);
+      answerNames('tribeca');
+      const field = (scope === 'admin' ? adminEditor('tribeca') : editor('tribeca')) as HTMLTextAreaElement;
+      await user.clear(field);
+      await user.type(field, 'Justin and Katy at the event.');
+      await user.keyboard('{Home}{ArrowRight>7}{Shift>}{ArrowRight>4}{/Shift}');
+      expect(field.selectionStart).toBe(7);
+      expect(field.selectionEnd).toBe(11);
+      rerender(<RecordedWalkthrough scope={scope} />);
+      expect(
+        screen.getByRole('textbox', {
+          name: scope === 'admin' ? guidedCopy('draft.label') : publicCopy('draft.field_label.public'),
+        }),
+      ).toBe(field);
+      expect(field).toHaveFocus();
+      expect(field.selectionStart).toBe(7);
+      expect(field.selectionEnd).toBe(11);
+
+      await user.keyboard('with ');
+      expect(field).toHaveValue('Justin with Katy at the event.');
+      expect(field.selectionStart).toBe(12);
+      expect(field.selectionEnd).toBe(12);
+      await user.keyboard('{ArrowLeft>5}');
+      // A parent state update accepts the edit without moving focus away from it.
+      choose('coachella', 'left', 'include');
+      expect(field).toHaveFocus();
+      expect(field).toHaveValue('Justin with Katy at the event.');
+      expect(field.selectionStart).toBe(7);
+      expect(field.selectionEnd).toBe(7);
+      if (scope === 'admin') {
+        await preview(user);
+        expect(field.selectionStart).toBe(7);
+        expect(field.selectionEnd).toBe(7);
+        expect(screen.getByTestId('demo-apply-tribeca')).toBeEnabled();
+      }
+      await user.click(field);
+      await user.keyboard('{Home}{ArrowRight>7}still ');
+      expect(field).toHaveValue('Justin still with Katy at the event.');
+      expect(field.selectionStart).toBe(13);
+      expect(field.selectionEnd).toBe(13);
+    },
+    30_000,
+  );
+
+  it.each(['replacement', 'restore'] as const)(
+    'consumes repeated identical input without invalidating Preview or overwriting a later %s',
+    async (action) => {
+      const user = userEvent.setup({ delay: null });
+      render(<RecordedWalkthrough scope="admin" />);
+      answerNames('tribeca');
+      await user.clear(adminEditor('tribeca'));
+      await user.type(adminEditor('tribeca'), discardedCaption);
+      choose('tribeca', 'right', 'omit');
+      await confirmAdminReplacement(user);
+
+      const repeatedCaption = 'Same accepted caption entered twice.';
+      await user.clear(adminEditor('tribeca'));
+      await user.type(adminEditor('tribeca'), repeatedCaption);
+      await preview(user);
+      expect(screen.getByTestId('demo-apply-tribeca')).toBeEnabled();
+      await user.clear(adminEditor('tribeca'));
+      await user.type(adminEditor('tribeca'), repeatedCaption);
+      await preview(user);
+      choose('coachella', 'left', 'include');
+      expect(adminEditor('tribeca')).toHaveValue(repeatedCaption);
+      expect(screen.getByTestId('demo-apply-tribeca')).toBeEnabled();
+
+      let expectedCaption: string;
+      if (action === 'replacement') {
+        choose('tribeca', 'right', 'include');
+        await confirmAdminReplacement(user);
+        expectedCaption = createGuidedScenario().samples.tribeca.both;
+      } else {
+        const review = await openHistory(user);
+        const revision = within(review).getByText(discardedCaption).closest('li');
+        if (revision === null) {
+          throw new Error('Missing archived manual caption.');
+        }
+        await user.click(within(revision).getByRole('button', { name: guidedCopy('draft.copy_revision') }));
+        expectedCaption = discardedCaption;
+      }
+      expect(adminEditor('tribeca')).toHaveValue(expectedCaption);
+      choose('coachella', 'right', 'include');
+      expect(adminEditor('tribeca')).toHaveValue(expectedCaption);
+      const review = screen.getByTestId('guided-description-review-tribeca');
+      expect(within(review).getByText(repeatedCaption, { selector: 'li p' })).toBeInTheDocument();
+    },
+    30_000,
+  );
 });

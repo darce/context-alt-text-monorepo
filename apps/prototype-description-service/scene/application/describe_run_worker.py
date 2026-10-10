@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from db.models.scene import DescribeOperation, DescribeStartup
 from db.tenant_context import get_tenant_record, set_tenant_context
 from recognition.application.services.usage_settlement_service import capture_usage_fence, settle_usage_job
-from scene.application.describe_load import load_snapshot, resolve_load_path, write_load_snapshot
+from scene.application.describe_load import dump_load_snapshot
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.identity_merge import NamingRealizer, NamingSkipReason, NamingStatus
 from scene.application.naming_preview_service import (
@@ -407,18 +407,8 @@ async def _persist_run_phase(
 
 
 async def publish_demand_snapshot(session_factory) -> None:
-    """Commit ``load_snapshot`` then publish the file; never pass STOP flags."""
-    from db.tenant_context import enable_rls_bypass
-
-    if session_factory is None:
-        return
-    try:
-        async with session_factory() as session:
-            await enable_rls_bypass(session)
-            payload = await load_snapshot(session)
-        write_load_snapshot(payload, resolve_load_path())
-    except Exception:  # noqa: BLE001 - reaper snapshot is best-effort
-        logger.debug("describe load snapshot write failed", exc_info=True)
+    """Commit demand then publish off-loop; never pass STOP flags."""
+    await dump_load_snapshot(session_factory)
 
 
 async def _record_run_pickup(

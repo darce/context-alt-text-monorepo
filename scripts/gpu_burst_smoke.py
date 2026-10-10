@@ -1930,6 +1930,8 @@ def _submit_and_observe_load(run: _SmokeExecution) -> None:
     if callable(trigger):
         trigger()
     post_trigger_anchor = run.now()
+    # Warm-start timing begins at submit acceptance, including load-observation
+    # polling below. WordPress submit latency remains outside this phase.
     run.trigger_elapsed = run.deadline.elapsed()
 
     load_observation_deadline = Deadline(
@@ -1955,7 +1957,7 @@ def _submit_and_observe_load(run: _SmokeExecution) -> None:
 
 def _warm_and_process(run: _SmokeExecution) -> None:
     warm_started = False
-    warm_start_started = run.deadline.elapsed()
+    warm_start_started = run.trigger_elapsed
     warm_start_budget_ok = True
     while not warm_started:
         warm_start_elapsed = run.deadline.elapsed() - warm_start_started
@@ -2004,10 +2006,7 @@ def _warm_and_process(run: _SmokeExecution) -> None:
         "RUNNING" if warm_started else "deadline before RUNNING",
     )
     if warm_started:
-        run.phase_durations_seconds["warm_start"] = round(
-            run.deadline.elapsed() - run.trigger_elapsed,
-            3,
-        )
+        run.phase_durations_seconds["warm_start"] = round(warm_start_elapsed, 3)
     processing_started = run.deadline.elapsed()
 
     while warm_started and run.run_status not in TERMINAL_RUN_STATUSES:
@@ -2218,15 +2217,40 @@ def _wait_for_reaper(run: _SmokeExecution) -> None:
             if not any(existing["name"] == "deadline" for existing in run.checks):
                 run.check("deadline", False, str(exc))
             break
+        phase_remaining = (
+            IDLE_REAPER_SECONDS - reaper_elapsed
+            if reaper_stop_started is None
+            else REAPER_BUDGET_SECONDS - (run.deadline.elapsed() - reaper_stop_started)
+        )
         observed = run.oci.get_instance(
             run.args.instance_id,
-            timeout=run.deadline.timeout(OCI_CALL_TIMEOUT_SECONDS),
+            timeout=min(run.deadline.timeout(OCI_CALL_TIMEOUT_SECONDS), phase_remaining),
         )
         observed_state = _state(observed)
-        _record_transition(run.transitions, observed_state, elapsed=run.deadline.elapsed(), now=run.now)
-        if observed_state == "STOPPING" and reaper_stop_started is None:
-            reaper_stop_started = run.deadline.elapsed()
+        observed_elapsed = run.deadline.elapsed()
+        _record_transition(run.transitions, observed_state, elapsed=observed_elapsed, now=run.now)
         run.reaper_stopped = observed_state == "STOPPED"
+        # An OCI call can consume the remaining phase budget (or return late).
+        # Check its observation time before accepting either phase's completion.
+        if reaper_stop_started is None and observed_elapsed - reaper_started >= IDLE_REAPER_SECONDS:
+            idle_reaper_budget_ok = False
+            run.check(
+                "idle_reaper_budget",
+                False,
+                f"idle reaper exceeded {IDLE_REAPER_SECONDS:g}s budget at {observed_elapsed - reaper_started:.3f}s",
+            )
+            break
+        if reaper_stop_started is not None and observed_elapsed - reaper_stop_started >= REAPER_BUDGET_SECONDS:
+            reaper_budget_ok = False
+            run.check(
+                "reaper_budget",
+                False,
+                f"reaper STOP convergence exceeded {REAPER_BUDGET_SECONDS:g}s budget "
+                f"at {observed_elapsed - reaper_stop_started:.3f}s",
+            )
+            break
+        if observed_state == "STOPPING" and reaper_stop_started is None:
+            reaper_stop_started = observed_elapsed
         _poll_health(run, "recovery" if run.reaper_stopped else "drain")
         if not run.reaper_stopped:
             run.sleep(POLL_SECONDS)

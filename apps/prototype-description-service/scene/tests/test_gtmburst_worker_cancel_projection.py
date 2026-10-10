@@ -11,6 +11,7 @@ import asyncio
 import os
 import uuid
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import text
@@ -28,7 +29,8 @@ from scene.domain.describe_run import DescribeItemStatus, DescribeRunPhase, Desc
 @asynccontextmanager
 async def _database(tmp_path, *, session_class=AsyncSession):
     url = os.getenv("GTMBURST_WORKER_TEST_DSN") or f"sqlite+aiosqlite:///{tmp_path / 'worker.db'}"
-    engine = create_async_engine(url)
+    options = {"isolation_level": "READ COMMITTED"} if url.startswith("postgresql") else {}
+    engine = create_async_engine(url, **options)
     schema = f"gtmburst_worker_{uuid.uuid4().hex}"
     schema_created = False
     tenant_id = uuid.uuid4()
@@ -75,10 +77,14 @@ async def _database(tmp_path, *, session_class=AsyncSession):
             await session.commit()
         yield factory, tenant_id, run_id
     finally:
-        if schema_created:
-            async with engine.begin() as connection:
-                await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
-        await engine.dispose()
+        try:
+            if schema_created:
+                async with asyncio.timeout(5), engine.begin() as connection:
+                    await connection.execute(text("SET LOCAL statement_timeout = '4000ms'"))
+                    await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        finally:
+            async with asyncio.timeout(5):
+                await engine.dispose()
 
 
 async def _snapshot(factory, tenant_id, run_id):
@@ -99,6 +105,7 @@ async def _cancel(factory, tenant_id, run_id):
 
 
 @pytest.mark.parametrize("schedule", ["between_items", "last_adapter"])
+@pytest.mark.timeout(15)
 def test_independent_cancel_wins_worker_projection(tmp_path, monkeypatch, schedule):
     import scene.application.describe_run_worker as worker
 
@@ -120,7 +127,8 @@ def test_independent_cancel_wins_worker_projection(tmp_path, monkeypatch, schedu
                 await super().commit()
                 if schedule == "between_items" and first_result and not paused.is_set():
                     paused.set()
-                    await resume.wait()
+                    async with asyncio.timeout(10):
+                        await resume.wait()
 
         async with _database(tmp_path, session_class=BarrierSession) as (factory, tenant_id, run_id):
 
@@ -130,7 +138,8 @@ def test_independent_cancel_wins_worker_projection(tmp_path, monkeypatch, schedu
                 dispatched.append(media_id)
                 if schedule == "last_adapter" and media_id == 2:
                     paused.set()
-                    await resume.wait()
+                    async with asyncio.timeout(10):
+                        await resume.wait()
                 return DescribeItemOutcome(alt_text_draft=f"draft-{media_id}", caption=f"caption-{media_id}")
 
             async def capture(*args, **kwargs):
@@ -167,7 +176,8 @@ def test_independent_cancel_wins_worker_projection(tmp_path, monkeypatch, schedu
                 resume.set()
                 if not task.done():
                     task.cancel()
-                    await asyncio.gather(task, return_exceptions=True)
+                    async with asyncio.timeout(5):
+                        await asyncio.gather(task, return_exceptions=True)
 
             run, items = await _snapshot(factory, tenant_id, run_id)
             assert run.status == DescribeRunStatus.CANCELLED, f"expected cancelled, got {run.status}"
@@ -194,6 +204,150 @@ def test_independent_cancel_wins_worker_projection(tmp_path, monkeypatch, schedu
     asyncio.run(exercise())
 
 
+async def _pg_participant(session, tenant_id):
+    await set_tenant_context(session, tenant_id)
+    assert await session.scalar(text("SHOW transaction_isolation")) == "read committed"
+    await session.execute(text("SET LOCAL statement_timeout = '4000ms'"))
+    await session.execute(text("SET LOCAL lock_timeout = '3000ms'"))
+    return await session.scalar(text("SELECT pg_backend_pid()"))
+
+
+async def _blocked_or_finished(observer, task, *, waiter, owner):
+    """Wait for a real server-side lock wait, or a mutant's early commit."""
+    async with asyncio.timeout(2):
+        while True:
+            blockers = await observer.scalar(text("SELECT pg_blocking_pids(:pid)"), {"pid": waiter})
+            if owner in blockers:
+                assert not task.done()
+                return True
+            if task.done():
+                task.result()  # Surface failures instead of mistaking them for a commit.
+                return False
+            await asyncio.sleep(0.005)
+
+
+@pytest.mark.pg
+@pytest.mark.timeout(15)
+@pytest.mark.skipif(
+    not os.getenv("GTMBURST_WORKER_TEST_DSN", "").startswith("postgresql"),
+    reason="READ COMMITTED overlap requires GTMBURST_WORKER_TEST_DSN (restricted PostgreSQL)",
+)
+@pytest.mark.parametrize("first", ["terminal", "cancel"])
+def test_read_committed_cancel_overlaps_terminal_select_to_update(tmp_path, first):
+    """Hold the first row lock across the other session's actual SQL attempt.
+
+    Terminal-first pauses after the terminal SELECT and item read, before the
+    terminal UPDATE. Cancel-first pauses after cancellation flush, before commit.
+    pg_blocking_pids proves overlap rather than relying on sleeps or task starts.
+    An unlocked mutant is allowed to finish so the lost cancellation is observed.
+    """
+
+    async def exercise():
+        async with _database(tmp_path) as (factory, tenant_id, run_id):
+            async with factory() as seed:
+                await set_tenant_context(seed, tenant_id)
+                repo = DescribeRunRepository(seed)
+                for media_id in (1, 2):
+                    await repo.record_item_result(
+                        tenant_id=tenant_id,
+                        run_id=run_id,
+                        media_id=media_id,
+                        caption=f"caption-{media_id}",
+                        alt_text_draft=f"draft-{media_id}",
+                        provenance=None,
+                    )
+                    await repo.mark_item(
+                        tenant_id=tenant_id, run_id=run_id, media_id=media_id, status=DescribeItemStatus.COMPLETED
+                    )
+                # Model the boundary after the final item result and before
+                # terminal run projection; both completed captions stay durable.
+                run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
+                run.status = DescribeRunStatus.RUNNING
+                run.phase = DescribeRunPhase.DESCRIBING
+                run.completed_at = None
+                run.server_elapsed_ms = None
+                await seed.commit()
+
+            paused = asyncio.Event()
+            resume = asyncio.Event()
+            terminal_at = []
+
+            class TerminalRepository(DescribeRunRepository):
+                async def list_run_items(self, **kwargs):
+                    items = await super().list_run_items(**kwargs)
+                    if first == "terminal":
+                        paused.set()
+                        async with asyncio.timeout(5):
+                            await resume.wait()
+                    return items
+
+            async with factory() as terminal, factory() as canceller, factory() as observer:
+                terminal_pid = await _pg_participant(terminal, tenant_id)
+                cancel_pid = await _pg_participant(canceller, tenant_id)
+                observer_pid = await _pg_participant(observer, tenant_id)
+                assert len({terminal_pid, cancel_pid, observer_pid}) == 3
+                cancel_repo = DescribeRunRepository(canceller)
+                stale = await cancel_repo.get_run(tenant_id=tenant_id, run_id=run_id)
+                assert stale.status == DescribeRunStatus.RUNNING
+                assert stale.cancel_requested is False
+
+                async def derive_terminal():
+                    repo = TerminalRepository(terminal)
+                    await repo._recompute_run_totals(tenant_id=tenant_id, run_id=run_id, now=datetime.now(UTC))
+                    run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
+                    terminal_at.append(run.completed_at)
+                    await terminal.commit()
+
+                async def cancel():
+                    assert await cancel_repo.request_cancel(tenant_id=tenant_id, run_id=run_id)
+                    if first == "cancel":
+                        paused.set()
+                        async with asyncio.timeout(5):
+                            await resume.wait()
+                    await canceller.commit()
+
+                tasks = []
+                try:
+                    tasks.append(asyncio.create_task(derive_terminal() if first == "terminal" else cancel()))
+                    await asyncio.wait_for(paused.wait(), 2)
+                    tasks.append(asyncio.create_task(cancel() if first == "terminal" else derive_terminal()))
+                    serialized = await _blocked_or_finished(
+                        observer,
+                        tasks[1],
+                        waiter=cancel_pid if first == "terminal" else terminal_pid,
+                        owner=terminal_pid if first == "terminal" else cancel_pid,
+                    )
+                    resume.set()
+                    async with asyncio.timeout(5):
+                        await asyncio.gather(*tasks)
+                finally:
+                    resume.set()
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    async with asyncio.timeout(5):
+                        await asyncio.gather(*tasks, return_exceptions=True)
+                    # Release every lock before schema cleanup, including when
+                    # a mutant or assertion fails during synchronization.
+                    async with asyncio.timeout(5):
+                        await terminal.rollback()
+                        await canceller.rollback()
+
+                final, items = await _snapshot(factory, tenant_id, run_id)
+                assert final.cancel_requested is True
+                assert final.status == DescribeRunStatus.CANCELLED, f"lost cancellation: {final.status}"
+                assert final.phase == DescribeRunPhase.CANCELLED
+                assert final.completed_at == terminal_at[0]
+                assert (final.completed_items, final.failed_items, final.skipped_items) == (2, 0, 0)
+                assert [item.caption for item in items] == ["caption-1", "caption-2"]
+                assert [item.alt_text_draft for item in items] == ["draft-1", "draft-2"]
+                assert all(item.status == DescribeItemStatus.COMPLETED and item.image_bytes is None for item in items)
+                assert serialized, "the second SQL operation did not wait for the first run-row lock"
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.timeout(15)
 def test_cancel_refreshes_stale_identity_after_terminal_commit(tmp_path):
     """The terminal-first order must converge too, including a stale canceller."""
 

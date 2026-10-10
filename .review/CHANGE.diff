@@ -1,1333 +1,359 @@
-diff --git a/apps/app-portal/.env.example b/apps/app-portal/.env.example
---- a/apps/app-portal/.env.example
-+++ b/apps/app-portal/.env.example
-@@ -7,3 +7,10 @@ VITE_CLERK_FAPI=https://clerk.altcontext.com
+diff --git a/apps/prototype-description-service/scene/application/describe_run_repository.py b/apps/prototype-description-service/scene/application/describe_run_repository.py
+--- a/apps/prototype-description-service/scene/application/describe_run_repository.py
++++ b/apps/prototype-description-service/scene/application/describe_run_repository.py
+@@ -512,7 +512,7 @@ class DescribeRunRepository:
+         non-terminal items are driven terminal-FAILED so their stored image
+         bytes are reclaimed rather than stranded QUEUED under a FAILED run.
+         """
+-        run = await self.get_run(tenant_id=tenant_id, run_id=run_id)
++        run = await self._locked_run(tenant_id=tenant_id, run_id=run_id)
+         if run is None:
+             return False
+         if DescribeRunStatus(run.status) in TERMINAL_RUN_STATUSES:
+@@ -538,17 +538,17 @@ class DescribeRunRepository:
+                 continue
+         # The rollback above expires ORM state; re-fetch so the status check and
+         # terminal write below never touch expired attributes in async context.
+-        run = await self.get_run(tenant_id=tenant_id, run_id=run_id)
++        run = await self._locked_run(tenant_id=tenant_id, run_id=run_id)
+         if run is None:
+             return False
+         # The per-item recompute may already have derived a terminal status. A
+-        # fatal-path write preserves only CANCELLED (cancel wins, untouched);
+-        # anything else -- including a derived COMPLETED_WITH_ERRORS -- becomes
+-        # FAILED, because this path only runs when the worker died fatally.
++        # fatal-path write preserves CANCELLED and any durable stop request;
++        # otherwise even a derived COMPLETED_WITH_ERRORS becomes FAILED,
++        # because this path only runs when the worker died fatally.
+         if DescribeRunStatus(run.status) is DescribeRunStatus.CANCELLED:
+             return False
+-        run.status = DescribeRunStatus.FAILED
+-        run.phase = DescribeRunPhase.FAILED
++        run.status = DescribeRunStatus.CANCELLED if run.cancel_requested else DescribeRunStatus.FAILED
++        run.phase = phase_for_status(run.status)
+         if run.completed_at is None:
+             run.completed_at = now
+         run.server_elapsed_ms = elapsed_ms(run.created_at, run.completed_at)
+@@ -600,14 +600,19 @@ class DescribeRunRepository:
+         return list(result.scalars().all())
  
- # Public build-time portal flag. false/0/off renders the designed unavailable screen.
- VITE_PORTAL_ENABLED=true
-+
-+# Public billing flag. Only explicit true/1/on/yes enables checkout and manage.
-+# Default is disabled. Do not invent a price, catalog, or product ID here.
-+VITE_PAYMENTS_ENABLED=false
-+
-+# Public plan code accepted by the backend catalog map. Leave blank when payments are disabled.
-+VITE_PUBLIC_PLAN_CODE=
-diff --git a/apps/app-portal/src/App.tsx b/apps/app-portal/src/App.tsx
---- a/apps/app-portal/src/App.tsx
-+++ b/apps/app-portal/src/App.tsx
-@@ -1,9 +1,19 @@
- import { ClerkProvider, SignIn, SignUp, UserButton, useAuth, useUser } from '@clerk/react';
--import { useCallback, useEffect, useRef, useState } from 'react';
-+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
- import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-+import { createPortalBillingClient } from './api/portalBilling';
-+import { createPortalClaimClient } from './api/portalClaim';
-+import { createPortalKeyClient } from './api/portalKeys';
- import { fetchPortalMe, PortalMeOutcome, type PortalMeResult } from './api/portalMe';
-+import { createPortalRequest } from './api/portalRequest';
-+import { createPortalUsageClient } from './api/portalUsage';
-+import { WordPressTestConnectionGuidance } from './components/WordPressTestConnectionGuidance';
- import { readPortalConfig, type PortalRuntimeConfig } from './config';
- import { AccountScreen } from './screens/AccountScreen';
-+import { BillingReturnScreen } from './screens/BillingReturnScreen';
-+import { BillingScreen } from './screens/BillingScreen';
-+import { ClaimScreen } from './screens/ClaimScreen';
-+import { KeysScreen } from './screens/KeysScreen';
- import { LogoutScreen } from './screens/LogoutScreen';
- import { NotAdmittedScreen } from './screens/NotAdmittedScreen';
- import { OutageScreen } from './screens/OutageScreen';
-@@ -11,6 +21,7 @@ import { SignInScreen } from './screens/SignInScreen';
- import { SignUpScreen } from './screens/SignUpScreen';
- import { SignedOutScreen } from './screens/SignedOutScreen';
- import { UnavailableScreen } from './screens/UnavailableScreen';
-+import { UsageScreen } from './screens/UsageScreen';
+     async def request_cancel(self, *, tenant_id: uuid.UUID, run_id: uuid.UUID) -> bool:
+-        run = await self.get_run(tenant_id=tenant_id, run_id=run_id)
++        # Serialize with terminal derivation through commit, and refresh even
++        # when this session already has an expire_on_commit=False identity.
++        run = await self._locked_run(tenant_id=tenant_id, run_id=run_id)
+         if run is None:
+             return False
+         run.cancel_requested = True
+-        if run.status == DescribeRunStatus.PENDING:
++        if run.status == DescribeRunStatus.PENDING or DescribeRunStatus(run.status) in TERMINAL_RUN_STATUSES:
++            # If the terminal writer acquired the lock first, cancellation
++            # projects here instead. Either commit order preserves the stop
++            # request and leaves already completed item results untouched.
+             run.status = DescribeRunStatus.CANCELLED
+             run.phase = DescribeRunPhase.CANCELLED
+-            run.completed_at = datetime.now(tz=UTC)
++            run.completed_at = run.completed_at or datetime.now(tz=UTC)
+             run.server_elapsed_ms = elapsed_ms(run.created_at, run.completed_at)
+             _release_idempotency_key_if_barren(run)
+         await self._session.flush()
+@@ -800,7 +805,10 @@ class DescribeRunRepository:
+         return result.scalar_one_or_none()
  
- export type AppProps = {
-   config?: PortalRuntimeConfig;
-@@ -37,6 +48,7 @@ type AccountView =
- type LogoutView = 'idle' | 'loading' | 'error';
+     async def _recompute_run_totals(self, *, tenant_id: uuid.UUID, run_id: uuid.UUID, now: datetime) -> None:
+-        run = await self.get_run(tenant_id=tenant_id, run_id=run_id)
++        # A refresh without a lock still loses a cancellation committed between
++        # this read and the terminal write. request_cancel uses the same lock;
++        # the winner holds it until commit and the other sees its durable state.
++        run = await self._locked_run(tenant_id=tenant_id, run_id=run_id)
+         if run is None:
+             return
  
- const CLERK_LOAD_TIMEOUT_MS = 8_000;
-+const PORTAL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
- 
- function isEmailVerified(user: ReturnType<typeof useUser>['user']): boolean {
-   const status = user?.primaryEmailAddress?.verification?.status;
-@@ -82,15 +94,45 @@ function ownedAccount(account: AccountView, owner: AccountOwner | null): Account
-   return { status: 'loading', owner };
- }
- 
-+function readAttemptId(value: string | null | undefined): string | null {
-+  if (typeof value !== 'string' || !PORTAL_UUID_RE.test(value)) {
-+    return null;
-+  }
-+  return value;
-+}
-+
-+function paymentsFromConfig(config: PortalRuntimeConfig): { paymentsEnabled: boolean; publicPlanCode: string | null } {
-+  const plan = typeof config.publicPlanCode === 'string' ? config.publicPlanCode.trim() : '';
-+  return {
-+    paymentsEnabled: config.paymentsEnabled === true,
-+    publicPlanCode: plan.length > 0 ? plan : null,
-+  };
-+}
-+
-+function SessionEscape({ userMenu, onSignOut }: { userMenu: ReactNode; onSignOut: () => void }) {
-+  return (
-+    <div className="acx-session-bar">
-+      {userMenu}
-+      <button type="button" className="acx-btn" onClick={onSignOut}>
-+        Sign out
-+      </button>
-+    </div>
-+  );
-+}
-+
- function PortalShell({
-   fetchImpl,
-   clerkLoadTimeoutMs,
-   portalMeTimeoutMs,
-+  paymentsEnabled,
-+  publicPlanCode,
-   onRetryClerk,
- }: {
-   fetchImpl: typeof fetch;
-   clerkLoadTimeoutMs: number;
-   portalMeTimeoutMs: number;
-+  paymentsEnabled: boolean;
-+  publicPlanCode: string | null;
-   onRetryClerk: () => void;
- }) {
-   const { isLoaded, isSignedIn, userId, sessionId, getToken, signOut } = useAuth();
-@@ -101,6 +143,7 @@ function PortalShell({
-   const [account, setAccount] = useState<AccountView>({ status: 'idle' });
-   const [logout, setLogout] = useState<LogoutView>('idle');
-   const [fetchEpoch, setFetchEpoch] = useState(0);
-+  const [returnAttemptId, setReturnAttemptId] = useState<string | null>(null);
-   const epochRef = useRef(0);
-   const ownerRef = useRef<AccountOwner | null>(null);
-   const logoutRef = useRef<LogoutView>('idle');
-@@ -109,8 +152,10 @@ function PortalShell({
-   const activeOwner = isSignedIn ? readOwner(userId, sessionId) : null;
-   if (activeOwner && account.status !== 'idle' && !ownersMatch(account.owner, activeOwner)) {
-     setAccount({ status: 'loading', owner: activeOwner });
-+    setReturnAttemptId(null);
-   } else if (!isSignedIn && account.status !== 'idle') {
-     setAccount({ status: 'idle' });
-+    setReturnAttemptId(null);
-   }
-   const displayAccount = ownedAccount(account, activeOwner);
- 
-@@ -119,6 +164,27 @@ function PortalShell({
-   logoutRef.current = logout;
-   getTokenRef.current = getToken;
- 
-+  const ownerUserId = activeOwner?.userId ?? '';
-+  const ownerSessionId = activeOwner?.sessionId ?? '';
-+  const request = useMemo(() => {
-+    if (!ownerUserId) {
-+      return null;
-+    }
-+    const captured = { userId: ownerUserId, sessionId: ownerSessionId };
-+    return createPortalRequest({
-+      getToken: () => getTokenRef.current(),
-+      fetchImpl,
-+      timeoutMs: portalMeTimeoutMs,
-+      owner: captured,
-+      currentOwner: () => ownerRef.current,
-+    });
-+  }, [fetchImpl, ownerSessionId, ownerUserId, portalMeTimeoutMs]);
-+
-+  const keyClient = useMemo(() => (request ? createPortalKeyClient(request) : null), [request]);
-+  const usageClient = useMemo(() => (request ? createPortalUsageClient(request) : null), [request]);
-+  const claimClient = useMemo(() => (request ? createPortalClaimClient(request) : null), [request]);
-+  const billingClient = useMemo(() => (request ? createPortalBillingClient(request) : null), [request]);
-+
-   useEffect(() => {
-     if (isLoaded) {
-       setClerkTimedOut(false);
-@@ -185,6 +251,7 @@ function PortalShell({
-   }, [fetchEpoch, fetchImpl, isLoaded, isSignedIn, logout, portalMeTimeoutMs, sessionId, user, userId]);
- 
-   const handleSignOut = useCallback(async () => {
-+    setReturnAttemptId(null);
-     setAccount({ status: 'idle' });
-     setLogout('loading');
-     setFetchEpoch((value) => value + 1);
-@@ -201,8 +268,25 @@ function PortalShell({
-     setFetchEpoch((value) => value + 1);
-   }, []);
- 
-+  const handleClaimed = useCallback(() => {
-+    if (!ownersMatch(activeOwner, ownerRef.current)) {
-+      return;
-+    }
-+    if (logoutRef.current !== 'idle') {
-+      return;
-+    }
-+    setFetchEpoch((value) => value + 1);
-+  }, [activeOwner]);
-+
-+  const signOutNow = () => void handleSignOut();
-   const userMenu = <UserButton />;
-   const path = location.pathname;
-+  const wrapPrivate = (node: ReactNode) => (
-+    <div className="acx-private-shell">
-+      <SessionEscape userMenu={userMenu} onSignOut={signOutNow} />
-+      {node}
-+    </div>
-+  );
- 
-   if (clerkTimedOut && !isLoaded) {
-     return <OutageScreen kind="clerk" onRetry={onRetryClerk} />;
-@@ -237,21 +321,30 @@ function PortalShell({
-     return <Navigate to="/" replace />;
-   }
-   if (displayAccount.status === 'email_unverified') {
--    return <NotAdmittedScreen reason="email_unverified" userMenu={userMenu} onSignOut={() => void handleSignOut()} />;
-+    return <NotAdmittedScreen reason="email_unverified" userMenu={userMenu} onSignOut={signOutNow} />;
-   }
-   if (displayAccount.status === 'not_admitted') {
--    return <NotAdmittedScreen reason="not_admitted" userMenu={userMenu} onSignOut={() => void handleSignOut()} />;
--  }
--  if (displayAccount.status === 'outage') {
-+    if (path.startsWith('/claim') && claimClient) {
-+      return wrapPrivate(
-+        <ClaimScreen
-+          key={`${displayAccount.owner.userId}:${displayAccount.owner.sessionId}`}
-+          client={claimClient}
-+          onClaimed={handleClaimed}
-+        />,
-+      );
-+    }
-     return (
--      <OutageScreen
--        kind="backend"
--        onRetry={handleRetryFetch}
-+      <NotAdmittedScreen
-+        reason="not_admitted"
-         userMenu={userMenu}
--        onSignOut={() => void handleSignOut()}
-+        onSignOut={signOutNow}
-+        onClaimAccess={() => navigate('/claim')}
-       />
-     );
-   }
-+  if (displayAccount.status === 'outage') {
-+    return <OutageScreen kind="backend" onRetry={handleRetryFetch} userMenu={userMenu} onSignOut={signOutNow} />;
-+  }
-   if (displayAccount.status === 'unauthorized') {
-     return (
-       <AccountScreen
-@@ -259,18 +352,89 @@ function PortalShell({
-         tenantId={null}
-         mode="error"
-         userMenu={userMenu}
--        onSignOut={() => void handleSignOut()}
-+        onSignOut={signOutNow}
-         onRetry={handleRetryFetch}
-       />
-     );
-   }
-+  if (displayAccount.status !== 'ok') {
-+    return (
-+      <AccountScreen
-+        personName={personName(user)}
-+        tenantId={null}
-+        mode={displayAccount.status === 'empty' ? 'empty' : 'loading'}
-+        userMenu={userMenu}
-+        onSignOut={signOutNow}
-+      />
-+    );
-+  }
-+
-+  const featureKey = `${displayAccount.owner.userId}:${displayAccount.owner.sessionId}:${displayAccount.tenantId}`;
-+  if (path.startsWith('/claim')) {
-+    return <Navigate to="/" replace />;
-+  }
-+  if (path.startsWith('/keys/wordpress')) {
-+    return wrapPrivate(
-+      <WordPressTestConnectionGuidance onClose={() => navigate('/keys')} onReturnToKeys={() => navigate('/keys')} />,
-+    );
-+  }
-+  if (path.startsWith('/keys') && keyClient) {
-+    return wrapPrivate(
-+      <KeysScreen
-+        client={keyClient}
-+        sessionKey={featureKey}
-+        onNavigateToUsage={() => navigate('/usage')}
-+        onNavigateToBilling={() => navigate('/billing')}
-+        onOpenWordPressGuidance={() => navigate('/keys/wordpress')}
-+      />,
-+    );
-+  }
-+  if (path.startsWith('/usage') && usageClient) {
-+    return wrapPrivate(
-+      <UsageScreen
-+        client={usageClient}
-+        sessionKey={featureKey}
-+        onNavigateToKeys={() => navigate('/keys')}
-+        onNavigateToBilling={() => navigate('/billing')}
-+      />,
-+    );
-+  }
-+  if (path.startsWith('/billing/return') && billingClient) {
-+    return wrapPrivate(
-+      <BillingReturnScreen
-+        client={billingClient}
-+        publicPlanCode={publicPlanCode}
-+        paymentsEnabled={paymentsEnabled}
-+        attemptId={returnAttemptId}
-+        onNavigateToBilling={() => navigate('/billing')}
-+        onNavigateToUsage={() => navigate('/usage')}
-+      />,
-+    );
-+  }
-+  if (path.startsWith('/billing') && billingClient) {
-+    return wrapPrivate(
-+      <BillingScreen
-+        client={billingClient}
-+        publicPlanCode={publicPlanCode}
-+        paymentsEnabled={paymentsEnabled}
-+        onNavigateToReturn={(attemptId) => {
-+          setReturnAttemptId(readAttemptId(attemptId));
-+          navigate('/billing/return');
-+        }}
-+        onNavigateToUsage={() => navigate('/usage')}
-+      />,
-+    );
-+  }
-   return (
-     <AccountScreen
-       personName={personName(user)}
--      tenantId={displayAccount.status === 'ok' ? displayAccount.tenantId : null}
--      mode={displayAccount.status === 'ok' ? 'default' : displayAccount.status === 'empty' ? 'empty' : 'loading'}
-+      tenantId={displayAccount.tenantId}
-+      mode="default"
-       userMenu={userMenu}
--      onSignOut={() => void handleSignOut()}
-+      onSignOut={signOutNow}
-+      onNavigateToKeys={() => navigate('/keys')}
-+      onNavigateToUsage={() => navigate('/usage')}
-+      onNavigateToBilling={() => navigate('/billing')}
-     />
-   );
- }
-@@ -283,6 +447,7 @@ export function App({
- }: AppProps = {}) {
-   const navigate = useNavigate();
-   const [providerEpoch, setProviderEpoch] = useState(0);
-+  const payments = paymentsFromConfig(config);
- 
-   if (!config.portalEnabled) {
-     return <UnavailableScreen mode="degraded" />;
-@@ -315,6 +480,8 @@ export function App({
-               fetchImpl={fetchImpl}
-               clerkLoadTimeoutMs={clerkLoadTimeoutMs}
-               portalMeTimeoutMs={portalMeTimeoutMs}
-+              paymentsEnabled={payments.paymentsEnabled}
-+              publicPlanCode={payments.publicPlanCode}
-               onRetryClerk={() => setProviderEpoch((value) => value + 1)}
-             />
-           }
-diff --git a/apps/app-portal/src/__tests__/account-navigation.test.tsx b/apps/app-portal/src/__tests__/account-navigation.test.tsx
+diff --git a/apps/prototype-description-service/scene/application/describe_run_worker.py b/apps/prototype-description-service/scene/application/describe_run_worker.py
+--- a/apps/prototype-description-service/scene/application/describe_run_worker.py
++++ b/apps/prototype-description-service/scene/application/describe_run_worker.py
+@@ -1026,17 +1026,16 @@ async def run_describe_job(
+             gpu_breaker_error: str | None = None
+             no_progress = 0
+             for item in items:
++                # SET LOCAL tenant context ends at every item commit on PG.
++                await set_tenant_context(session, tenant_id)
+                 previous_status = DescribeItemStatus(item.status)
+                 progressed = False
+                 if await cancel_requested():
+-                    marked = await repo.mark_item(
+-                        tenant_id=tenant_id,
+-                        run_id=run_id,
+-                        media_id=item.media_id,
+-                        status=DescribeItemStatus.SKIPPED,
+-                    )
+-                    progressed = _terminal_transition(previous_status, marked)
+-                    await session.commit()
++                    # Leave the tracking transaction before cleanup. The same
++                    # cancellation path handles warmup and between-item stops,
++                    # preserves completed results, and reclaims all pending
++                    # images without another adapter dispatch.
++                    raise _RunCancelledError("describe run cancelled between items")
+                 else:
+                     image_bytes = item.image_bytes
+                     content_type = item.image_content_type
+@@ -1046,6 +1045,11 @@ async def run_describe_job(
+                         media_id=item.media_id,
+                         status=DescribeItemStatus.RUNNING,
+                     )
++                    # Release the run-row lock before adapter/naming work. An
++                    # independent HTTP cancellation must be able to commit
++                    # while inference is in flight, including the last item.
++                    await session.commit()
++                    await set_tenant_context(session, tenant_id)
+                     processing_ms: float | None = None
+                     try:
+                         if gpu_breaker_error is not None:
+diff --git a/apps/prototype-description-service/scene/tests/test_gtmburst_worker_cancel_projection.py b/apps/prototype-description-service/scene/tests/test_gtmburst_worker_cancel_projection.py
 new file mode 100644
 --- /dev/null
-+++ b/apps/app-portal/src/__tests__/account-navigation.test.tsx
-@@ -0,0 +1,422 @@
-+import { screen, waitFor } from '@testing-library/react';
-+import userEvent from '@testing-library/user-event';
-+import { flushSync } from 'react-dom';
-+import { afterEach, describe, expect, it, vi } from 'vitest';
-+import { parsePortalConfig } from '../config';
-+import { clerkDouble } from './clerkDouble';
-+import { renderPortal } from './renderPortal';
++++ b/apps/prototype-description-service/scene/tests/test_gtmburst_worker_cancel_projection.py
+@@ -0,0 +1,243 @@
++"""GTMBURST-1: durable cancellation wins without discarding completed captions.
++
++The same schedules can run against an isolated PostgreSQL test database with
++GTMBURST_WORKER_TEST_DSN. SQLite exercises identity-map staleness, not PostgreSQL
++row-lock/RLS semantics. No test writes cancellation into the worker's identity.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import os
++import uuid
++from contextlib import asynccontextmanager
++
++import pytest
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
++
++from db.models.base_imports import Base
++from db.models.scene import DescribeRun, DescribeRunItem
++from db.models.tenant import Tenant
++from db.tenant_context import set_tenant_context
++from scene.application.describe_run_repository import DescribeRunRepository
++from scene.application.describe_run_worker import DescribeItemOutcome, run_describe_job
++from scene.domain.describe_run import DescribeItemStatus, DescribeRunPhase, DescribeRunStatus
++
++
++@asynccontextmanager
++async def _database(tmp_path, *, session_class=AsyncSession):
++    url = os.getenv("GTMBURST_WORKER_TEST_DSN") or f"sqlite+aiosqlite:///{tmp_path / 'worker.db'}"
++    engine = create_async_engine(url)
++    schema = f"gtmburst_worker_{uuid.uuid4().hex}"
++    schema_created = False
++    tenant_id = uuid.uuid4()
++    try:
++        if engine.dialect.name == "postgresql":
++            assert os.getenv("ALLOW_RLS_BYPASS_FOR_TESTS") != "1", "PostgreSQL verification must enforce tenant RLS"
++            async with engine.begin() as connection:
++                privileged = await connection.scalar(
++                    text("SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user")
++                )
++                assert not privileged, "PostgreSQL cancellation verification requires a non-bypass role"
++                await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
++            schema_created = True
++            engine = engine.execution_options(schema_translate_map={None: schema})
++        async with engine.begin() as connection:
++            if engine.dialect.name == "sqlite":
++                await connection.execute(text("PRAGMA journal_mode=WAL"))
++            await connection.run_sync(
++                Base.metadata.create_all,
++                tables=[Tenant.__table__, DescribeRun.__table__, DescribeRunItem.__table__],
++            )
++            if engine.dialect.name == "postgresql":
++                for table in (DescribeRun.__table__, DescribeRunItem.__table__):
++                    qualified = f'"{schema}"."{table.name}"'
++                    await connection.execute(text(f"ALTER TABLE {qualified} ENABLE ROW LEVEL SECURITY"))
++                    await connection.execute(text(f"ALTER TABLE {qualified} FORCE ROW LEVEL SECURITY"))
++                    await connection.execute(
++                        text(
++                            f"CREATE POLICY tenant_scope ON {qualified} USING "
++                            "(tenant_id = nullif(current_setting('app.current_tenant', true), '')::uuid)"
++                        )
++                    )
++        factory = async_sessionmaker(engine, class_=session_class, expire_on_commit=False)
++        async with factory() as session:
++            await set_tenant_context(session, tenant_id)
++            session.add(Tenant(id=tenant_id, site_url="http://worker.test"))
++            await session.flush()
++            run_id = await DescribeRunRepository(session).create_run(
++                tenant_id=tenant_id,
++                media_ids=[1, 2],
++                images={1: (b"first-image", "image/png"), 2: (b"second-image", "image/png")},
++                recognition_enabled=False,
++            )
++            await session.commit()
++        yield factory, tenant_id, run_id
++    finally:
++        if schema_created:
++            async with engine.begin() as connection:
++                await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
++        await engine.dispose()
++
++
++async def _snapshot(factory, tenant_id, run_id):
++    async with factory() as session:
++        await set_tenant_context(session, tenant_id)
++        repo = DescribeRunRepository(session)
++        return (
++            await repo.get_run(tenant_id=tenant_id, run_id=run_id),
++            await repo.list_run_items(tenant_id=tenant_id, run_id=run_id),
++        )
++
++
++async def _cancel(factory, tenant_id, run_id):
++    async with factory() as session:
++        await set_tenant_context(session, tenant_id)
++        assert await DescribeRunRepository(session).request_cancel(tenant_id=tenant_id, run_id=run_id)
++        await session.commit()
++
 +
-+vi.mock('@clerk/react', async () => {
-+  const doubles = await import('./clerkDouble');
-+  return {
-+    ClerkProvider: doubles.ClerkProviderStub,
-+    SignIn: doubles.SignInStub,
-+    SignUp: doubles.SignUpStub,
-+    UserButton: doubles.UserButtonStub,
-+    useAuth: doubles.useAuthStub,
-+    useUser: doubles.useUserStub,
-+  };
-+});
-+
-+const TENANT = '11111111-1111-4111-8111-111111111111';
-+const KEY_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-+const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
-+const INVITATION = 'raw-invitation-token-once';
-+
-+function jsonResponse(status: number, body: unknown): Response {
-+  return new Response(JSON.stringify(body), {
-+    status,
-+    headers: { 'Content-Type': 'application/json' },
-+  });
-+}
-+
-+function meBody(tenantId = TENANT) {
-+  return {
-+    tenant_id: tenantId,
-+    issuer: 'https://clerk.altcontext.com',
-+    subject: 'user_1',
-+    email: 'ada@example.test',
-+  };
-+}
-+
-+function keysPage() {
-+  return {
-+    data: [
-+      {
-+        id: KEY_ID,
-+        tenant_id: TENANT,
-+        created_at: '2026-09-01T00:00:00Z',
-+        expires_at: '2026-12-01T00:00:00Z',
-+        revoked_at: null,
-+        rate_limit_tier: 'standard',
-+        lifetime_seconds: 3600,
-+      },
-+    ],
-+    next_cursor: null,
-+    cursor: null,
-+    limit: 25,
-+    total: 1,
-+  };
-+}
-+
-+function usageBody() {
-+  return {
-+    tenant_id: TENANT,
-+    used: 1,
-+    reserved: 0,
-+    remaining: 9,
-+    allowance: 10,
-+    period_start: '2026-09-01T00:00:00Z',
-+    period_end: '2026-10-01T00:00:00Z',
-+    period: { start: '2026-09-01T00:00:00Z', end: '2026-10-01T00:00:00Z' },
-+    as_of: '2026-09-22T12:00:00Z',
-+    status: 'beta_active',
-+    data_source: 'authoritative',
-+  };
-+}
-+
-+function signInVerified(sessionId = 'sess_1') {
-+  clerkDouble.setState({
-+    isLoaded: true,
-+    isSignedIn: true,
-+    userId: 'user_1',
-+    sessionId,
-+    user: {
-+      fullName: 'Ada Lovelace',
-+      primaryEmailAddress: {
-+        emailAddress: 'ada@example.test',
-+        verification: { status: 'verified' },
-+      },
-+    },
-+    getToken: async () => 'session-jwt',
-+  });
-+}
-+
-+function portalFetch(options: { me?: () => Response | Promise<Response>; claimAdmitted?: { current: boolean } } = {}) {
-+  return vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
-+    const url = String(input);
-+    const path = url.split('?')[0];
-+    if (path === '/portal/me') {
-+      if (options.me) {
-+        return options.me();
-+      }
-+      if (options.claimAdmitted?.current) {
-+        return jsonResponse(200, meBody());
-+      }
-+      return jsonResponse(200, meBody());
-+    }
-+    if (path === '/portal/keys') {
-+      return jsonResponse(200, keysPage());
-+    }
-+    if (path === '/portal/usage') {
-+      return jsonResponse(200, usageBody());
-+    }
-+    if (path === '/portal/onboarding/claim') {
-+      if (options.claimAdmitted) {
-+        options.claimAdmitted.current = true;
-+      }
-+      return jsonResponse(201, {
-+        tenant_id: TENANT,
-+        issuer: 'https://clerk.altcontext.com',
-+        subject: 'user_1',
-+        email: 'ada@example.test',
-+        replayed: false,
-+      });
-+    }
-+    if (path === '/portal/billing/checkout' || path === '/portal/billing/manage') {
-+      throw new Error(`billing call must be absent when payments are disabled: ${path}`);
-+    }
-+    return jsonResponse(404, { detail: 'missing fixture' });
-+  });
-+}
-+
-+afterEach(() => {
-+  clerkDouble.reset();
-+});
-+
-+describe('public payments config [HAI-01]', () => {
-+  it('defaults payments disabled and empty plan, enabling only explicit recognized true', () => {
-+    expect(
-+      parsePortalConfig({
-+        VITE_CLERK_PUBLISHABLE_KEY: 'pk_test',
-+        VITE_CLERK_FAPI: 'https://clerk.altcontext.com',
-+        VITE_PORTAL_ENABLED: 'true',
-+        VITE_PAYMENTS_ENABLED: '',
-+        VITE_PUBLIC_PLAN_CODE: '',
-+      }),
-+    ).toEqual({
-+      publishableKey: 'pk_test',
-+      fapiOrigin: 'https://clerk.altcontext.com',
-+      portalEnabled: true,
-+      paymentsEnabled: false,
-+      publicPlanCode: null,
-+    });
-+
-+    expect(
-+      parsePortalConfig({
-+        VITE_CLERK_PUBLISHABLE_KEY: 'pk_test',
-+        VITE_CLERK_FAPI: 'https://clerk.altcontext.com',
-+        VITE_PORTAL_ENABLED: 'true',
-+        VITE_PAYMENTS_ENABLED: 'maybe',
-+        VITE_PUBLIC_PLAN_CODE: '  starter_monthly  ',
-+      }).paymentsEnabled,
-+    ).toBe(false);
-+
-+    expect(
-+      parsePortalConfig({
-+        VITE_CLERK_PUBLISHABLE_KEY: 'pk_test',
-+        VITE_CLERK_FAPI: 'https://clerk.altcontext.com',
-+        VITE_PORTAL_ENABLED: 'true',
-+        VITE_PAYMENTS_ENABLED: 'TRUE',
-+        VITE_PUBLIC_PLAN_CODE: '  starter_monthly  ',
-+      }),
-+    ).toMatchObject({
-+      paymentsEnabled: true,
-+      publicPlanCode: 'starter_monthly',
-+    });
-+  });
-+});
-+
-+describe('admitted shell navigation [NAV-08][NAV-11]', () => {
-+  it('wires keys, usage, billing, billing return, and WordPress guidance with sign-out', async () => {
-+    signInVerified();
-+    const fetchImpl = portalFetch();
-+    const user = userEvent.setup();
-+    renderPortal({ fetchImpl: fetchImpl as unknown as typeof fetch });
-+
-+    await waitFor(() => {
-+      expect(screen.getByText(TENANT)).toBeInTheDocument();
-+    });
-+    expect(screen.getByRole('navigation', { name: /account/i })).toBeInTheDocument();
-+
-+    await user.click(screen.getByRole('button', { name: /api keys/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /api keys/i })).toBeInTheDocument();
-+    });
-+    expect(screen.getByRole('main')).toHaveTextContent(KEY_ID);
-+    expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
-+
-+    await user.click(screen.getByRole('button', { name: /wordpress test connection guidance/i }));
-+    expect(screen.getByRole('heading', { name: /wordpress test connection/i })).toBeInTheDocument();
-+    expect(screen.queryByText(/acx_live|raw_key/i)).not.toBeInTheDocument();
-+    expect(window.location.href).not.toMatch(/acx_live|raw_key|secret=/i);
-+
-+    await user.click(screen.getByRole('button', { name: /back to api keys/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /api keys/i })).toBeInTheDocument();
-+    });
-+
-+    await user.click(screen.getByRole('button', { name: /^usage$/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /^usage$/i })).toBeInTheDocument();
-+    });
-+
-+    await user.click(screen.getByRole('button', { name: /^billing$/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /^billing$/i })).toBeInTheDocument();
-+    });
-+    expect(screen.getByRole('status')).toHaveTextContent(/payments are disabled/i);
-+    expect(screen.getByRole('button', { name: /continue to checkout/i })).toBeDisabled();
-+    expect(screen.getByRole('button', { name: /manage billing/i })).toBeDisabled();
-+  });
-+
-+  it('keeps billing return pending and never grants entitlement or posts checkout [HAI-01]', async () => {
-+    signInVerified();
-+    const fetchImpl = portalFetch();
-+    renderPortal({
-+      path: '/billing/return?checkout=success',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+    });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /billing return/i })).toBeInTheDocument();
-+    });
-+    expect(screen.getByRole('status')).toHaveTextContent(/pending reconciliation|backend confirmation/i);
-+    expect(screen.queryByText(/paid_active|you are now paid|subscription is active/i)).not.toBeInTheDocument();
-+    expect(fetchImpl.mock.calls.some((call) => String(call[0]).includes('/portal/billing'))).toBe(false);
-+  });
-+});
-+
-+describe('claim admission boundary [HAI-01][DOM-03]', () => {
-+  it('lets a verified not-admitted identity claim and refetches /portal/me before admission', async () => {
-+    signInVerified();
-+    const admitted = { current: false };
-+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
-+      const path = String(input).split('?')[0];
-+      if (path === '/portal/me') {
-+        if (admitted.current) {
-+          return jsonResponse(200, meBody());
-+        }
-+        return jsonResponse(403, { detail: 'portal access denied' });
-+      }
-+      if (path === '/portal/onboarding/claim') {
-+        return jsonResponse(201, {
-+          tenant_id: TENANT,
-+          issuer: 'https://clerk.altcontext.com',
-+          subject: 'user_1',
-+          email: 'ada@example.test',
-+          replayed: false,
-+        });
-+      }
-+      throw new Error(`unexpected path ${path}`);
-+    });
-+    const user = userEvent.setup();
-+    renderPortal({ fetchImpl: fetchImpl as unknown as typeof fetch });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('status')).toHaveTextContent(/not ready for access/i);
-+    });
-+    expect(screen.queryByText(TENANT)).not.toBeInTheDocument();
-+    await user.click(screen.getByRole('button', { name: /claim access/i }));
-+    expect(screen.getByLabelText(/invitation token/i)).toBeInTheDocument();
-+    expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
-+
-+    await user.type(screen.getByLabelText(/invitation token/i), INVITATION);
-+    await user.click(screen.getByRole('button', { name: /^claim access$/i }));
-+    await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
-+
-+    await waitFor(() => {
-+      expect(fetchImpl.mock.calls.some((call) => String(call[0]).includes('/portal/onboarding/claim'))).toBe(true);
-+      expect(
-+        fetchImpl.mock.calls.filter((call) => String(call[0]).split('?')[0] === '/portal/me').length,
-+      ).toBeGreaterThan(1);
-+    });
-+    expect(screen.queryByRole('heading', { name: /api keys/i })).not.toBeInTheDocument();
-+    expect(screen.queryByText(TENANT)).not.toBeInTheDocument();
-+    expect(window.location.href).not.toContain(INVITATION);
-+    expect(window.location.hash).not.toContain(INVITATION);
-+    admitted.current = true;
-+    expect(screen.queryByText(TENANT)).not.toBeInTheDocument();
-+  });
-+
-+  it('admits only after a post-claim /portal/me tenant, never from the claim body [HAI-01]', async () => {
-+    signInVerified();
-+    const admitted = { current: false };
-+    const fetchImpl = portalFetch({ claimAdmitted: admitted });
-+    fetchImpl.mockImplementation(async (input: RequestInfo | URL) => {
-+      const path = String(input).split('?')[0];
-+      if (path === '/portal/me') {
-+        return admitted.current ? jsonResponse(200, meBody()) : jsonResponse(403, { detail: 'portal access denied' });
-+      }
-+      if (path === '/portal/onboarding/claim') {
-+        admitted.current = true;
-+        return jsonResponse(201, {
-+          tenant_id: TENANT,
-+          issuer: 'https://clerk.altcontext.com',
-+          subject: 'user_1',
-+          email: 'ada@example.test',
-+          replayed: false,
-+        });
-+      }
-+      if (path === '/portal/keys') {
-+        return jsonResponse(200, keysPage());
-+      }
-+      return jsonResponse(404, {});
-+    });
-+    const user = userEvent.setup();
-+    renderPortal({ path: '/claim', fetchImpl: fetchImpl as unknown as typeof fetch });
-+
-+    await waitFor(() => {
-+      expect(screen.getByLabelText(/invitation token/i)).toBeInTheDocument();
-+    });
-+    await user.type(screen.getByLabelText(/invitation token/i), INVITATION);
-+    await user.click(screen.getByRole('button', { name: /^claim access$/i }));
-+    await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
-+
-+    await waitFor(() => {
-+      expect(screen.getByText(TENANT)).toBeInTheDocument();
-+    });
-+    expect(
-+      fetchImpl.mock.calls.filter((call) => String(call[0]).split('?')[0] === '/portal/me').length,
-+    ).toBeGreaterThan(1);
-+  });
-+
-+  it('does not offer claim to an unverified identity', async () => {
-+    clerkDouble.setState({
-+      isLoaded: true,
-+      isSignedIn: true,
-+      userId: 'user_1',
-+      sessionId: 'sess_1',
-+      user: {
-+        fullName: 'Ada Lovelace',
-+        primaryEmailAddress: {
-+          emailAddress: 'ada@example.test',
-+          verification: { status: 'unverified' },
-+        },
-+      },
-+      getToken: async () => 'session-jwt',
-+    });
-+    renderPortal({
-+      path: '/claim',
-+      fetchImpl: vi.fn(async () =>
-+        jsonResponse(403, { detail: { code: 'email_unverified' } }),
-+      ) as unknown as typeof fetch,
-+    });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('status')).toHaveTextContent(/verify your email/i);
-+    });
-+    expect(screen.queryByLabelText(/invitation token/i)).not.toBeInTheDocument();
-+    expect(screen.queryByRole('button', { name: /claim access/i })).not.toBeInTheDocument();
-+    expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
-+  });
-+});
-+
-+describe('private subtree ownership [DATA-03][CARD-15]', () => {
-+  it('clears keys metadata synchronously when the same user gets a new session', async () => {
-+    signInVerified('sess_a');
-+    const fetchImpl = portalFetch();
-+    renderPortal({ path: '/keys', fetchImpl: fetchImpl as unknown as typeof fetch });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('main')).toHaveTextContent(KEY_ID);
-+    });
-+
-+    flushSync(() => {
-+      clerkDouble.setState({ sessionId: 'sess_a_replaced' });
-+    });
-+
-+    expect(screen.getByRole('main')).not.toHaveTextContent(KEY_ID);
-+    expect(screen.getByRole('status')).toHaveTextContent(/checking account/i);
-+    await waitFor(() => {
-+      expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
-+    });
-+  });
-+
-+  it('hides private modules immediately when sign-out fails [RLSE-04]', async () => {
-+    signInVerified();
-+    clerkDouble.state.signOut = vi.fn(async () => {
-+      throw new Error('network');
-+    });
-+    const fetchImpl = portalFetch();
-+    const user = userEvent.setup();
-+    renderPortal({ path: '/keys', fetchImpl: fetchImpl as unknown as typeof fetch });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('main')).toHaveTextContent(KEY_ID);
-+    });
-+
-+    await user.click(screen.getByRole('button', { name: /sign out/i }));
-+
-+    expect(screen.getByRole('main')).not.toHaveTextContent(KEY_ID);
-+    expect(screen.queryByRole('heading', { name: /api keys/i })).not.toBeInTheDocument();
-+    expect(screen.getByRole('status')).toHaveTextContent(/sign out failed|could not sign out/i);
-+    expect(screen.getByRole('button', { name: /try again/i })).toBeEnabled();
-+  });
-+});
-+
-+describe('opaque attempt id [HAI-01]', () => {
-+  it('does not put attempt, invite, or raw key material in search or hash', async () => {
-+    signInVerified();
-+    renderPortal({
-+      path: `/billing/return?attempt_id=${ATTEMPT_ID}&invitation=${INVITATION}`,
-+      fetchImpl: portalFetch() as unknown as typeof fetch,
-+    });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /billing return/i })).toBeInTheDocument();
-+    });
-+    expect(screen.queryByText(INVITATION)).not.toBeInTheDocument();
-+    expect(screen.queryByText(ATTEMPT_ID)).not.toBeInTheDocument();
-+  });
-+});
-diff --git a/apps/app-portal/src/__tests__/portal-request.test.ts b/apps/app-portal/src/__tests__/portal-request.test.ts
-new file mode 100644
---- /dev/null
-+++ b/apps/app-portal/src/__tests__/portal-request.test.ts
-@@ -0,0 +1,188 @@
-+import { afterEach, describe, expect, it, vi } from 'vitest';
-+import { createPortalRequest } from '../api/portalRequest';
-+
-+const OWNER_A = { userId: 'user_a', sessionId: 'sess_a' };
-+const OWNER_B = { userId: 'user_b', sessionId: 'sess_b' };
-+
-+function jsonResponse(status: number, body: unknown): Response {
-+  return new Response(JSON.stringify(body), {
-+    status,
-+    headers: { 'Content-Type': 'application/json' },
-+  });
-+}
-+
-+afterEach(() => {
-+  vi.useRealTimers();
-+});
-+
-+describe('createPortalRequest bounded bearer transport [RES-02][RLSE-04][DATA-03]', () => {
-+  it('bounds a hanging getToken with the total deadline and never calls fetch [RES-02]', async () => {
-+    vi.useFakeTimers();
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken: () => new Promise<string | null>(() => undefined),
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      timeoutMs: 40,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    const pending = expect(request('/portal/usage')).rejects.toMatchObject({ name: 'AbortError' });
-+    await vi.advanceTimersByTimeAsync(40);
-+    await pending;
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
-+
-+  it('bounds a hanging fetch with the same total deadline [RES-02]', async () => {
-+    vi.useFakeTimers();
-+    const fetchImpl = vi.fn(() => new Promise<Response>(() => undefined));
-+    const request = createPortalRequest({
-+      getToken: async () => 'session-jwt',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      timeoutMs: 40,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    const pending = expect(request('/portal/usage')).rejects.toMatchObject({ name: 'AbortError' });
-+    await vi.advanceTimersByTimeAsync(40);
-+    await pending;
-+    expect(fetchImpl).toHaveBeenCalledTimes(1);
-+  });
-+
-+  it('aborts during getToken without sending a bearer request [RES-02]', async () => {
-+    const controller = new AbortController();
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken: () => new Promise<string | null>(() => undefined),
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      timeoutMs: 8_000,
-+      signal: controller.signal,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    const pending = expect(request('/portal/me')).rejects.toMatchObject({ name: 'AbortError' });
-+    controller.abort();
-+    await pending;
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
-+
-+  it('does not fetch when getToken rejects [RLSE-04]', async () => {
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken: async () => {
-+        throw new Error('token refresh failed');
-+      },
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      timeoutMs: 1_000,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    await expect(request('/portal/me')).rejects.toThrow(/token refresh failed|portal identity/i);
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
-+
-+  it('forces cache no-store, omits credentials, and never sets Origin [DATA-03]', async () => {
-+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-+      expect(String(input)).toBe('/portal/usage');
-+      expect(init?.cache).toBe('no-store');
-+      expect(init?.credentials).toBe('omit');
-+      const headers = new Headers(init?.headers);
-+      expect(headers.get('Authorization')).toBe('Bearer session-jwt');
-+      expect([...headers.keys()].some((key) => key.toLowerCase() === 'origin')).toBe(false);
-+      return jsonResponse(200, { ok: true });
-+    });
-+
-+    const request = createPortalRequest({
-+      getToken: async () => 'session-jwt',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    await expect(
-+      request('/portal/usage', { method: 'GET', headers: { Origin: 'https://evil.example' } }),
-+    ).resolves.toBeInstanceOf(Response);
-+    expect(fetchImpl).toHaveBeenCalledTimes(1);
-+  });
-+
-+  it('rejects external, protocol-relative, and non-allowlisted paths before getToken [DATA-03]', async () => {
-+    const getToken = vi.fn(async () => 'session-jwt');
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken,
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    const rejected = [
-+      'https://evil.example/portal/me',
-+      'http://app.altcontext.com/portal/me',
-+      '//evil.example/portal/me',
-+      '/api/portal/me',
-+      '/portal',
-+      'portal/me',
-+      '/portal/../keys',
-+      '/portal/%2e%2e/keys',
-+      'https://app.altcontext.com/portal/me',
-+    ];
-+
-+    for (const path of rejected) {
-+      await expect(request(path)).rejects.toThrow(/not allowed|portal request/i);
-+    }
-+    expect(getToken).not.toHaveBeenCalled();
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
-+
-+  it('allows same-origin relative /portal/ paths including key list query [DATA-03]', async () => {
-+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
-+      expect(String(input)).toBe('/portal/keys?limit=25');
-+      expect(String(input)).not.toMatch(/^https?:/i);
-+      return jsonResponse(200, { data: [] });
-+    });
-+    const request = createPortalRequest({
-+      getToken: async () => 'session-jwt',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    await request('/portal/keys?limit=25');
-+    expect(fetchImpl).toHaveBeenCalledTimes(1);
-+  });
-+
-+  it('does not send when the captured owner is no longer current [DDIA][DATA-03]', async () => {
-+    const getToken = vi.fn(async () => 'session-jwt');
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken,
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_B,
-+    });
-+
-+    await expect(request('/portal/usage')).rejects.toMatchObject({ name: 'AbortError' });
-+    expect(getToken).not.toHaveBeenCalled();
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
-+
-+  it('drops a completed response after a session replacement [DDIA][DATA-03]', async () => {
-+    let current = OWNER_A;
-+    const fetchImpl = vi.fn(async () => {
-+      current = OWNER_B;
-+      return jsonResponse(200, { tenant_id: '11111111-1111-4111-8111-111111111111' });
-+    });
-+    const request = createPortalRequest({
-+      getToken: async () => 'session-jwt',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => current,
-+    });
-+
-+    await expect(request('/portal/me')).rejects.toMatchObject({ name: 'AbortError' });
-+    expect(fetchImpl).toHaveBeenCalledTimes(1);
-+  });
-+});
-diff --git a/apps/app-portal/src/api/portalRequest.ts b/apps/app-portal/src/api/portalRequest.ts
-new file mode 100644
---- /dev/null
-+++ b/apps/app-portal/src/api/portalRequest.ts
-@@ -0,0 +1,157 @@
-+export type PortalRequest = (path: string, init?: RequestInit) => Promise<Response>;
-+
-+export type PortalRequestOwner = {
-+  userId: string;
-+  sessionId: string;
-+};
-+
-+export type CreatePortalRequestOptions = {
-+  getToken: () => Promise<string | null>;
-+  fetchImpl?: typeof fetch;
-+  timeoutMs?: number;
-+  signal?: AbortSignal;
-+  owner: PortalRequestOwner;
-+  currentOwner: () => PortalRequestOwner | null;
-+};
-+
-+const DEFAULT_TIMEOUT_MS = 8_000;
-+const PORTAL_PATH_RE = /^\/portal\/[A-Za-z0-9/_-]+$/;
-+
-+function abortError(): DOMException {
-+  return new DOMException('The operation was aborted.', 'AbortError');
-+}
-+
-+function ownersMatch(
-+  left: PortalRequestOwner | null | undefined,
-+  right: PortalRequestOwner | null | undefined,
-+): boolean {
-+  return Boolean(left && right && left.userId === right.userId && left.sessionId === right.sessionId);
-+}
-+
-+export function resolvePortalPath(path: string): string | null {
-+  if (typeof path !== 'string' || path.length === 0) {
-+    return null;
-+  }
-+  if (!path.startsWith('/portal/')) {
-+    return null;
-+  }
-+  if (path.startsWith('//') || path.includes('://') || path.includes('\\')) {
-+    return null;
-+  }
-+  if (path.includes('..') || /%2e/i.test(path)) {
-+    return null;
-+  }
-+  let url: URL;
-+  try {
-+    url = new URL(path, 'https://app.altcontext.com');
-+  } catch {
-+    return null;
-+  }
-+  if (url.origin !== 'https://app.altcontext.com') {
-+    return null;
-+  }
-+  if (url.username || url.password) {
-+    return null;
-+  }
-+  if (url.protocol !== 'https:') {
-+    return null;
-+  }
-+  if (!PORTAL_PATH_RE.test(url.pathname)) {
-+    return null;
-+  }
-+  return `${url.pathname}${url.search}`;
-+}
-+
-+function assertCurrentOwner(owner: PortalRequestOwner, currentOwner: () => PortalRequestOwner | null): void {
-+  if (!ownersMatch(owner, currentOwner())) {
-+    throw abortError();
-+  }
-+}
-+
-+export function createPortalRequest(options: CreatePortalRequestOptions): PortalRequest {
-+  const fetchImpl = options.fetchImpl ?? fetch;
-+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-+
-+  return async (path, init) => {
-+    const resolved = resolvePortalPath(path);
-+    if (!resolved) {
-+      throw new TypeError('portal request path is not allowed');
-+    }
-+    assertCurrentOwner(options.owner, options.currentOwner);
-+    if (options.signal?.aborted || init?.signal?.aborted) {
-+      throw abortError();
-+    }
-+
-+    const controller = new AbortController();
-+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
-+    const onAbort = () => controller.abort();
-+    if (options.signal) {
-+      if (options.signal.aborted) {
-+        controller.abort();
-+      } else {
-+        options.signal.addEventListener('abort', onAbort, { once: true });
-+      }
-+    }
-+    if (init?.signal) {
-+      if (init.signal.aborted) {
-+        controller.abort();
-+      } else {
-+        init.signal.addEventListener('abort', onAbort, { once: true });
-+      }
-+    }
-+
-+    const abortGate = new Promise<void>((resolve) => {
-+      if (controller.signal.aborted) {
-+        resolve();
-+        return;
-+      }
-+      controller.signal.addEventListener('abort', () => resolve(), { once: true });
-+    });
-+
-+    try {
-+      assertCurrentOwner(options.owner, options.currentOwner);
-+      const tokenResult = await Promise.race([
-+        Promise.resolve()
-+          .then(() => options.getToken())
-+          .then((token) => ({ token })),
-+        abortGate.then(() => ({ aborted: true as const })),
-+      ]);
-+      if ('aborted' in tokenResult || controller.signal.aborted) {
-+        throw abortError();
-+      }
-+      assertCurrentOwner(options.owner, options.currentOwner);
-+      if (!tokenResult.token) {
-+        throw new Error('portal identity unavailable');
-+      }
-+
-+      const headers = new Headers(init?.headers);
-+      headers.delete('Origin');
-+      headers.delete('Authorization');
-+      headers.set('Authorization', `Bearer ${tokenResult.token}`);
-+
-+      const fetchResult = await Promise.race([
-+        fetchImpl(resolved, {
-+          ...init,
-+          headers,
-+          cache: 'no-store',
-+          credentials: 'omit',
-+          redirect: 'error',
-+          signal: controller.signal,
-+        }).then((response) => ({ response })),
-+        abortGate.then(() => ({ aborted: true as const })),
-+      ]);
-+      if ('aborted' in fetchResult || controller.signal.aborted) {
-+        throw abortError();
-+      }
-+      assertCurrentOwner(options.owner, options.currentOwner);
-+      if (options.signal?.aborted || init?.signal?.aborted) {
-+        throw abortError();
-+      }
-+      return fetchResult.response;
-+    } finally {
-+      window.clearTimeout(timer);
-+      options.signal?.removeEventListener('abort', onAbort);
-+      init?.signal?.removeEventListener('abort', onAbort);
-+    }
-+  };
-+}
-diff --git a/apps/app-portal/src/config.ts b/apps/app-portal/src/config.ts
---- a/apps/app-portal/src/config.ts
-+++ b/apps/app-portal/src/config.ts
-@@ -2,6 +2,8 @@ export type PortalRuntimeConfig = {
-   publishableKey: string | null;
-   fapiOrigin: string | null;
-   portalEnabled: boolean;
-+  paymentsEnabled?: boolean;
-+  publicPlanCode?: string | null;
- };
- 
- function trimEnv(value: string | undefined): string {
-@@ -36,19 +38,39 @@ export function parseFapiOrigin(value: string | undefined): string | null {
-   }
- }
- 
-+function parsePaymentsEnabled(value: string | undefined): boolean {
-+  const normalized = trimEnv(value).toLowerCase();
-+  return normalized === '1' || normalized === 'true' || normalized === 'on' || normalized === 'yes';
-+}
-+
-+function parsePublicPlanCode(value: string | undefined): string | null {
-+  const raw = trimEnv(value);
-+  return raw.length > 0 ? raw : null;
-+}
-+
- export function parsePortalConfig(env: Record<string, string | undefined>): PortalRuntimeConfig {
-   const publishableKey = trimEnv(env.VITE_CLERK_PUBLISHABLE_KEY);
--  return {
-+  const config: PortalRuntimeConfig = {
-     publishableKey: publishableKey.length > 0 ? publishableKey : null,
-     fapiOrigin: parseFapiOrigin(env.VITE_CLERK_FAPI),
-     portalEnabled: parseEnabledFlag(env.VITE_PORTAL_ENABLED),
-   };
-+  if (Object.prototype.hasOwnProperty.call(env, 'VITE_PAYMENTS_ENABLED')) {
-+    config.paymentsEnabled = parsePaymentsEnabled(env.VITE_PAYMENTS_ENABLED);
-+  }
-+  if (Object.prototype.hasOwnProperty.call(env, 'VITE_PUBLIC_PLAN_CODE')) {
-+    config.publicPlanCode = parsePublicPlanCode(env.VITE_PUBLIC_PLAN_CODE);
-+  }
-+  return config;
- }
- 
- export function readPortalConfig(): PortalRuntimeConfig {
-+  const env = import.meta.env as Record<string, string | undefined>;
-   return parsePortalConfig({
--    VITE_CLERK_PUBLISHABLE_KEY: import.meta.env.VITE_CLERK_PUBLISHABLE_KEY,
--    VITE_CLERK_FAPI: import.meta.env.VITE_CLERK_FAPI,
--    VITE_PORTAL_ENABLED: import.meta.env.VITE_PORTAL_ENABLED,
-+    VITE_CLERK_PUBLISHABLE_KEY: env.VITE_CLERK_PUBLISHABLE_KEY,
-+    VITE_CLERK_FAPI: env.VITE_CLERK_FAPI,
-+    VITE_PORTAL_ENABLED: env.VITE_PORTAL_ENABLED,
-+    VITE_PAYMENTS_ENABLED: env.VITE_PAYMENTS_ENABLED,
-+    VITE_PUBLIC_PLAN_CODE: env.VITE_PUBLIC_PLAN_CODE,
-   });
- }
-diff --git a/apps/app-portal/src/screens/AccountScreen.tsx b/apps/app-portal/src/screens/AccountScreen.tsx
---- a/apps/app-portal/src/screens/AccountScreen.tsx
-+++ b/apps/app-portal/src/screens/AccountScreen.tsx
-@@ -8,6 +8,9 @@ export function AccountScreen({
-   userMenu,
-   onSignOut,
-   onRetry,
-+  onNavigateToKeys,
-+  onNavigateToUsage,
-+  onNavigateToBilling,
- }: {
-   personName: string | null;
-   tenantId: string | null;
-@@ -15,6 +18,9 @@ export function AccountScreen({
-   userMenu: ReactNode;
-   onSignOut: () => void;
-   onRetry?: () => void;
-+  onNavigateToKeys?: () => void;
-+  onNavigateToUsage?: () => void;
-+  onNavigateToBilling?: () => void;
- }) {
-   const status =
-     mode === 'loading'
-@@ -46,6 +52,19 @@ export function AccountScreen({
-       ) : (
-         <p>Account access: Waiting for account</p>
-       )}
-+      {mode === 'default' && onNavigateToKeys && onNavigateToUsage && onNavigateToBilling ? (
-+        <nav className="acx-account-nav" aria-label="Account">
-+          <button type="button" className="acx-btn" onClick={onNavigateToKeys}>
-+            API keys
-+          </button>
-+          <button type="button" className="acx-btn" onClick={onNavigateToUsage}>
-+            Usage
-+          </button>
-+          <button type="button" className="acx-btn" onClick={onNavigateToBilling}>
-+            Billing
-+          </button>
-+        </nav>
-+      ) : null}
-       <StatusMessage tone={mode === 'error' ? 'error' : mode === 'default' ? 'ok' : 'info'}>{status}</StatusMessage>
-       {mode === 'error' && onRetry ? (
-         <button type="button" className="acx-btn acx-btn-primary" onClick={onRetry}>
-diff --git a/apps/app-portal/src/screens/NotAdmittedScreen.tsx b/apps/app-portal/src/screens/NotAdmittedScreen.tsx
---- a/apps/app-portal/src/screens/NotAdmittedScreen.tsx
-+++ b/apps/app-portal/src/screens/NotAdmittedScreen.tsx
-@@ -5,10 +5,12 @@ export function NotAdmittedScreen({
-   reason,
-   userMenu,
-   onSignOut,
-+  onClaimAccess,
- }: {
-   reason: 'email_unverified' | 'not_admitted';
-   userMenu: ReactNode;
-   onSignOut: () => void;
-+  onClaimAccess?: () => void;
- }) {
-   const copy =
-     reason === 'email_unverified'
-@@ -29,6 +31,11 @@ export function NotAdmittedScreen({
-         </div>
-       </header>
-       <StatusMessage tone="error">{copy}</StatusMessage>
-+      {reason === 'not_admitted' && onClaimAccess ? (
-+        <button type="button" className="acx-btn acx-btn-primary" onClick={onClaimAccess}>
-+          Claim access
-+        </button>
-+      ) : null}
-     </main>
-   );
- }
-diff --git a/apps/app-portal/src/styles.css b/apps/app-portal/src/styles.css
---- a/apps/app-portal/src/styles.css
-+++ b/apps/app-portal/src/styles.css
-@@ -141,10 +141,61 @@ body {
-   margin-top: var(--acx-space-lg);
- }
- 
-+.acx-private-shell {
-+  min-height: 100%;
-+}
-+
-+.acx-session-bar {
-+  display: flex;
-+  flex-wrap: wrap;
-+  justify-content: flex-end;
-+  align-items: center;
-+  gap: var(--acx-space-sm);
-+  padding: var(--acx-space-md) var(--acx-space-lg);
-+}
-+
-+.acx-account-nav {
-+  display: flex;
-+  flex-wrap: wrap;
-+  gap: var(--acx-space-sm);
-+  margin: var(--acx-space-md) 0;
-+}
-+
-+label {
-+  display: block;
-+  font-weight: var(--acx-font-weight-medium);
-+  margin: var(--acx-space-sm) 0;
-+}
-+
-+input,
-+select,
-+textarea {
-+  min-height: 2.75rem;
-+  width: 100%;
-+  max-width: 100%;
-+  padding: 0.5rem 0.75rem;
-+  border: 1px solid var(--acx-color-border);
-+  border-radius: var(--acx-radius-md);
-+  background: var(--acx-color-surface-alt);
-+  color: var(--acx-color-text);
-+  font: inherit;
-+}
-+
-+[role='dialog'] {
-+  background: var(--acx-color-surface-alt);
-+  border: 1px solid var(--acx-color-border);
-+  border-radius: var(--acx-radius-md);
-+  box-shadow: var(--acx-shadow-1);
-+  padding: var(--acx-space-lg);
-+  margin-top: var(--acx-space-md);
-+}
-+
- @media (max-width: 40rem) {
-   .acx-portal-header,
-   .acx-portal-actions,
--  .acx-escape {
-+  .acx-escape,
-+  .acx-session-bar,
-+  .acx-account-nav {
-     flex-direction: column;
-     align-items: stretch;
-   }
-@@ -153,3 +204,26 @@ body {
-     width: 100%;
-   }
- }
-+
-+@media (max-width: 360px) {
-+  .acx-portal,
-+  .acx-session-bar {
-+    padding: var(--acx-space-md);
-+  }
-+
-+  .acx-portal-header,
-+  .acx-portal-actions,
-+  .acx-escape,
-+  .acx-session-bar,
-+  .acx-account-nav {
-+    flex-direction: column;
-+    align-items: stretch;
-+  }
-+
-+  .acx-btn,
-+  input,
-+  select,
-+  textarea {
-+    width: 100%;
-+  }
-+}
++@pytest.mark.parametrize("schedule", ["between_items", "last_adapter"])
++def test_independent_cancel_wins_worker_projection(tmp_path, monkeypatch, schedule):
++    import scene.application.describe_run_worker as worker
++
++    async def exercise():
++        paused = asyncio.Event()
++        resume = asyncio.Event()
++        dispatched = []
++        publications = []
++        settlements = []
++
++        class BarrierSession(AsyncSession):
++            async def commit(self):
++                first_result = any(
++                    isinstance(row, DescribeRunItem)
++                    and row.media_id == 1
++                    and row.status == DescribeItemStatus.COMPLETED
++                    for row in self.identity_map.values()
++                )
++                await super().commit()
++                if schedule == "between_items" and first_result and not paused.is_set():
++                    paused.set()
++                    await resume.wait()
++
++        async with _database(tmp_path, session_class=BarrierSession) as (factory, tenant_id, run_id):
++
++            async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
++                assert image_bytes == (b"first-image" if media_id == 1 else b"second-image")
++                assert content_type == "image/png"
++                dispatched.append(media_id)
++                if schedule == "last_adapter" and media_id == 2:
++                    paused.set()
++                    await resume.wait()
++                return DescribeItemOutcome(alt_text_draft=f"draft-{media_id}", caption=f"caption-{media_id}")
++
++            async def capture(*args, **kwargs):
++                return None
++
++            async def settle(*args, **kwargs):
++                run, _ = await _snapshot(factory, tenant_id, run_id)
++                settlements.append(run.status)
++
++            async def publish(_factory):
++                run, _ = await _snapshot(factory, tenant_id, run_id)
++                publications.append(run.status)
++
++            monkeypatch.setattr(worker, "capture_usage_fence", capture)
++            monkeypatch.setattr(worker, "settle_usage_job", settle)
++            monkeypatch.setattr(worker, "publish_demand_snapshot", publish)
++            task = asyncio.create_task(
++                run_describe_job(
++                    tenant_id=tenant_id,
++                    run_id=run_id,
++                    session_factory=factory,
++                    describe_one=describe_one,
++                    timeout_seconds=15,
++                )
++            )
++            try:
++                await asyncio.wait_for(paused.wait(), 5)
++                await asyncio.wait_for(_cancel(factory, tenant_id, run_id), 3)
++                durable, _ = await _snapshot(factory, tenant_id, run_id)
++                assert durable.cancel_requested is True
++                resume.set()
++                await asyncio.wait_for(task, 5)
++            finally:
++                resume.set()
++                if not task.done():
++                    task.cancel()
++                    await asyncio.gather(task, return_exceptions=True)
++
++            run, items = await _snapshot(factory, tenant_id, run_id)
++            assert run.status == DescribeRunStatus.CANCELLED, f"expected cancelled, got {run.status}"
++            assert run.phase == DescribeRunPhase.CANCELLED
++            assert run.cancel_requested is True
++            assert items[0].status == DescribeItemStatus.COMPLETED
++            assert items[0].caption == "caption-1"
++            assert items[0].alt_text_draft == "draft-1"
++            if schedule == "between_items":
++                assert dispatched == [1]
++                assert items[1].status == DescribeItemStatus.SKIPPED
++                assert items[1].caption is None
++                assert (run.completed_items, run.skipped_items) == (1, 1)
++            else:
++                assert dispatched == [1, 2]
++                assert items[1].status == DescribeItemStatus.COMPLETED
++                assert items[1].caption == "caption-2"
++                assert (run.completed_items, run.skipped_items) == (2, 0)
++            assert all(item.image_bytes is None for item in items)
++            assert run.completed_at is not None
++            assert settlements == [DescribeRunStatus.CANCELLED]
++            assert publications == [DescribeRunStatus.CANCELLED]
++
++    asyncio.run(exercise())
++
++
++def test_cancel_refreshes_stale_identity_after_terminal_commit(tmp_path):
++    """The terminal-first order must converge too, including a stale canceller."""
++
++    async def exercise():
++        async with _database(tmp_path) as (factory, tenant_id, run_id):
++            async with factory() as canceller:
++                await set_tenant_context(canceller, tenant_id)
++                cancel_repo = DescribeRunRepository(canceller)
++                stale = await cancel_repo.get_run(tenant_id=tenant_id, run_id=run_id)
++                assert stale.cancel_requested is False
++                # Keep the ORM identity, but not a SQLite read transaction.
++                await canceller.commit()
++                async with factory() as terminal_writer:
++                    await set_tenant_context(terminal_writer, tenant_id)
++                    repo = DescribeRunRepository(terminal_writer)
++                    for media_id in (1, 2):
++                        await repo.record_item_result(
++                            tenant_id=tenant_id,
++                            run_id=run_id,
++                            media_id=media_id,
++                            alt_text_draft=f"draft-{media_id}",
++                            caption=f"caption-{media_id}",
++                            provenance=None,
++                        )
++                        await repo.mark_item(
++                            tenant_id=tenant_id,
++                            run_id=run_id,
++                            media_id=media_id,
++                            status=DescribeItemStatus.COMPLETED,
++                        )
++                    await terminal_writer.commit()
++                before, _ = await _snapshot(factory, tenant_id, run_id)
++                assert before.status == DescribeRunStatus.COMPLETED
++                assert stale.status == DescribeRunStatus.PENDING
++                await set_tenant_context(canceller, tenant_id)
++                assert await cancel_repo.request_cancel(tenant_id=tenant_id, run_id=run_id)
++                await canceller.commit()
++            after, items = await _snapshot(factory, tenant_id, run_id)
++            assert after.status == DescribeRunStatus.CANCELLED, f"expected cancelled, got {after.status}"
++            assert after.phase == DescribeRunPhase.CANCELLED
++            assert after.cancel_requested is True
++            assert after.completed_at == before.completed_at
++            assert after.completed_items == 2
++            assert [item.caption for item in items] == ["caption-1", "caption-2"]
++            assert all(item.status == DescribeItemStatus.COMPLETED and item.image_bytes is None for item in items)
++
++    asyncio.run(exercise())

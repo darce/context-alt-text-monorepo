@@ -16,6 +16,7 @@ import math
 import os
 import tempfile
 import threading
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -47,6 +48,9 @@ LOAD_REFRESH_SECONDS_ENV = "ACX_DESCRIBE_LOAD_REFRESH_SECONDS"
 DEFAULT_LOAD_REFRESH_SECONDS = 45.0
 LOAD_SNAPSHOT_STALE_SECONDS = 120.0
 LOAD_REFRESH_TIMEOUT_SECONDS = 30.0
+# Leave room inside the refresh cycle for counting and file publication.
+LOAD_SNAPSHOT_ACQUIRE_TIMEOUT_SECONDS = 5.0
+_FENCE_POLL_SECONDS = 0.01
 # Preserve two refresh opportunities inside one stale window. The timeout is
 # also kept as headroom in case its configured value grows in a later change.
 MAX_LOAD_REFRESH_SECONDS = min(
@@ -471,15 +475,46 @@ async def load_snapshot(
     return snapshot
 
 
-def write_load_snapshot(snapshot: dict[str, Any], path: str | Path) -> None:
+class LoadSnapshotFenceTimeoutError(TimeoutError):
+    """Publication refused because its shared lock-acquisition budget expired."""
+
+
+class _LoadSnapshotPublicationCancelledError(Exception):
+    """Stop a cancelled async publisher's pending worker before replacement."""
+
+
+def _remaining_fence_budget(deadline: float, cancelled: threading.Event) -> float:
+    if cancelled.is_set():
+        raise _LoadSnapshotPublicationCancelledError
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise LoadSnapshotFenceTimeoutError("describe load publication fence acquisition timed out")
+    return remaining
+
+
+def write_load_snapshot(
+    snapshot: dict[str, Any],
+    path: str | Path,
+    *,
+    acquisition_timeout_seconds: float | None = None,
+    _cancel_event: threading.Event | None = None,
+) -> None:
     """Atomically dump load while holding the reaper's process fence.
 
     Snapshots that carry ``revision`` use write-if-newer: equal or older
     candidates are dropped without refreshing ``written_at``. Payloads without
     ``revision`` keep the legacy unconditional replace used by unit writers.
     Unreadable or malformed published revisions fail closed and never bypass
-    the fence.
+    the fence. Both locks share one monotonic acquisition budget; contention
+    raises ``LoadSnapshotFenceTimeoutError`` without changing the published file.
     """
+    budget = (
+        LOAD_SNAPSHOT_ACQUIRE_TIMEOUT_SECONDS if acquisition_timeout_seconds is None else acquisition_timeout_seconds
+    )
+    if isinstance(budget, bool) or not math.isfinite(budget) or budget <= 0:
+        raise ValueError("load snapshot acquisition timeout must be finite and positive")
+    deadline = time.monotonic() + budget
+    cancelled = _cancel_event if _cancel_event is not None else threading.Event()
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     write_if_newer = "revision" in snapshot
@@ -491,12 +526,24 @@ def write_load_snapshot(snapshot: dict[str, Any], path: str | Path) -> None:
         candidate_revision = raw_revision
     payload = json.dumps(snapshot, separators=(",", ":"))
 
-    with _LOAD_SNAPSHOT_WRITE_LOCK:
+    while not _LOAD_SNAPSHOT_WRITE_LOCK.acquire(
+        timeout=min(_FENCE_POLL_SECONDS, _remaining_fence_budget(deadline, cancelled))
+    ):
+        pass
+    try:
+        _remaining_fence_budget(deadline, cancelled)
         lock_fd = _open_load_snapshot_fence(target)
         fd = -1
         tmp: Path | None = None
         try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            while True:
+                remaining = _remaining_fence_budget(deadline, cancelled)
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    cancelled.wait(timeout=min(_FENCE_POLL_SECONDS, remaining))
+            _remaining_fence_budget(deadline, cancelled)
             if write_if_newer:
                 published = 0
                 if target.exists():
@@ -514,6 +561,8 @@ def write_load_snapshot(snapshot: dict[str, Any], path: str | Path) -> None:
                 fd = -1  # owned and closed by ``tmp_file`` from here
                 tmp_file.write(payload)
                 os.fchmod(tmp_file.fileno(), 0o644)
+            if cancelled.is_set():
+                raise _LoadSnapshotPublicationCancelledError
             os.replace(tmp, target)
             tmp = None  # the temp path no longer exists after replace
         finally:
@@ -525,6 +574,8 @@ def write_load_snapshot(snapshot: dict[str, Any], path: str | Path) -> None:
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
             finally:
                 os.close(lock_fd)
+    finally:
+        _LOAD_SNAPSHOT_WRITE_LOCK.release()
 
 
 async def dump_load_snapshot(
@@ -569,7 +620,15 @@ async def dump_load_snapshot(
                 minimum_revision=published_revision,
             )
             await session.commit()
-        write_load_snapshot(snap, target)
+        # Lock contention must yield to the API loop's timeout and cancellation.
+        # The worker has bounded acquisitions even if its caller disappears;
+        # cancellation also wakes polling and prevents a delayed publication.
+        cancelled = threading.Event()
+        try:
+            await asyncio.to_thread(write_load_snapshot, snap, target, _cancel_event=cancelled)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
     except Exception:  # noqa: BLE001 - reaper snapshot is best-effort
         if raise_on_error:
             raise

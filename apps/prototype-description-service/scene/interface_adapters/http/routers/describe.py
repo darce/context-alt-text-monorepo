@@ -2042,6 +2042,11 @@ async def enqueue_describe_image(
                 image_len=image_len,
                 admission_gate=admission_gate,
             )
+            # Starlette stops at the first failed/cancelled background task.
+            # Critical committed work must run before ancillary auth telemetry;
+            # retain telemetry and its relative order after the worker. Register
+            # first so failed add_task still follows enqueue orphan cleanup.
+            background_tasks.tasks.insert(0, background_tasks.tasks.pop())
             delivered = True
             return result
         except (Exception, asyncio.CancelledError) as exc:

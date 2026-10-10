@@ -8,6 +8,7 @@ superuser connection cannot certify this gate.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import os
@@ -27,9 +28,17 @@ from db.models.scene import DescribeRun, DescribeRunItem
 from db.tenant_context import set_tenant_context
 from recognition.interface_adapters.http.deps import get_optional_session, require_write_access
 from recognition.interface_adapters.http.deps.usage_admission import get_usage_admission_service
+from scene.domain.describe_run import TERMINAL_RUN_STATUSES, DescribeItemStatus
 from scene.interface_adapters.http.deps import get_async_gpu_description_adapter, get_description_adapter
 from scene.interface_adapters.http.routers import describe as route
-from scene.tests.test_gtmburst_async_enqueue import IMAGE, TENANT, Admission, gate
+from scene.tests.test_gtmburst_async_enqueue import (
+    IMAGE,
+    TENANT,
+    Admission,
+    AuthenticatedEnqueueApp,
+    exercise_auth_telemetry_outcome,
+    gate,
+)
 
 pytestmark = [pytest.mark.pg, pytest.mark.asyncio]
 MIGRATION = importlib.import_module("db.migrations.versions.001_identity_schema")
@@ -160,3 +169,50 @@ async def test_actual_post_reseeds_after_commit_and_preserves_cross_tenant_404(
         other = await client.get(f"/scene/describe/jobs/{job_id}")
         assert other.status_code == 404, other.text
     assert gate.releases == 1
+
+
+@pytest.mark.parametrize("outcome", ["healthy", "exception", "cancellation"])
+async def test_production_auth_telemetry_preserves_committed_worker_and_tenant_isolation(
+    restricted_pg_factory, gate, monkeypatch, outcome
+):
+    factory = restricted_pg_factory
+    app = AuthenticatedEnqueueApp(monkeypatch, factory)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        job_id = await exercise_auth_telemetry_outcome(app, client, gate, outcome)
+        # Real independent transactions establish terminal durability and byte
+        # reclamation under FORCE RLS, with neither superuser nor BYPASSRLS.
+        async with factory() as session:
+            assert await session.scalar(select(DescribeRun).where(DescribeRun.id == job_id)) is None
+            await set_tenant_context(session, TENANT)
+            run = await session.scalar(select(DescribeRun).where(DescribeRun.id == job_id))
+            item = await session.scalar(select(DescribeRunItem).where(DescribeRunItem.run_id == job_id))
+            assert run is not None and run.status in TERMINAL_RUN_STATUSES
+            assert item is not None and item.status == DescribeItemStatus.FAILED
+            assert item.image_bytes is None
+            assert item.last_error == "scheduler test worker failure"
+            await session.commit()
+            assert await session.scalar(select(DescribeRunItem).where(DescribeRunItem.run_id == job_id)) is None
+            await set_tenant_context(session, uuid.UUID(int=987))
+            assert await session.scalar(select(DescribeRun).where(DescribeRun.id == job_id)) is None
+            assert await session.scalar(select(DescribeRunItem).where(DescribeRunItem.run_id == job_id)) is None
+
+        app.outcome = "healthy"
+        own = await asyncio.wait_for(client.get(f"/scene/describe/jobs/{job_id}"), 5)
+        assert own.status_code == 200, own.text
+        assert own.json()["status"] == "failed"
+        app.tenant = uuid.UUID(int=987)
+        other = await asyncio.wait_for(client.get(f"/scene/describe/jobs/{job_id}"), 5)
+        assert other.status_code == 404, other.text
+        app.tenant = TENANT
+        retry = await asyncio.wait_for(app.submit(client), 5)
+        assert retry.status_code == 200, retry.text
+        retry_id = uuid.UUID(retry.json()["job_id"])
+        assert retry_id != job_id
+        assert app.worker_runs == [job_id, retry_id]
+        async with factory() as session:
+            await set_tenant_context(session, TENANT)
+            item = await session.scalar(select(DescribeRunItem).where(DescribeRunItem.run_id == retry_id))
+            assert item is not None and item.status == DescribeItemStatus.FAILED
+            assert item.image_bytes is None
+    assert gate.releases == 2
+    assert (gate._job_count, gate._retained_image_bytes) == (0, 0)

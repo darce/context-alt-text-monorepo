@@ -1,2 +1,1 @@
-a9c1081bb107 APP-1: land browser-integration after scoped VM verification
-79156a29f39b offload: I1 shell wires /keys /usage /claim /billing plus bounded
+c305cb4a6a67 offload: Committed both async enqueue fixes; standard pytest and

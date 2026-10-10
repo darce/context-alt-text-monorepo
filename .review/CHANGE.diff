@@ -1,1333 +1,860 @@
-diff --git a/apps/app-portal/.env.example b/apps/app-portal/.env.example
---- a/apps/app-portal/.env.example
-+++ b/apps/app-portal/.env.example
-@@ -7,3 +7,10 @@ VITE_CLERK_FAPI=https://clerk.altcontext.com
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelectionTableBody.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelectionTableBody.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelectionTableBody.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelectionTableBody.tsx
+@@ -17,30 +17,30 @@ import { mediaEditUrl } from './Panels';
+ import { mediaLibraryUrl } from '../../utils/adminUrls';
+ import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
  
- # Public build-time portal flag. false/0/off renders the designed unavailable screen.
- VITE_PORTAL_ENABLED=true
-+
-+# Public billing flag. Only explicit true/1/on/yes enables checkout and manage.
-+# Default is disabled. Do not invent a price, catalog, or product ID here.
-+VITE_PAYMENTS_ENABLED=false
-+
-+# Public plan code accepted by the backend catalog map. Leave blank when payments are disabled.
-+VITE_PUBLIC_PLAN_CODE=
-diff --git a/apps/app-portal/src/App.tsx b/apps/app-portal/src/App.tsx
---- a/apps/app-portal/src/App.tsx
-+++ b/apps/app-portal/src/App.tsx
-@@ -1,9 +1,19 @@
- import { ClerkProvider, SignIn, SignUp, UserButton, useAuth, useUser } from '@clerk/react';
--import { useCallback, useEffect, useRef, useState } from 'react';
-+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
- import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-+import { createPortalBillingClient } from './api/portalBilling';
-+import { createPortalClaimClient } from './api/portalClaim';
-+import { createPortalKeyClient } from './api/portalKeys';
- import { fetchPortalMe, PortalMeOutcome, type PortalMeResult } from './api/portalMe';
-+import { createPortalRequest } from './api/portalRequest';
-+import { createPortalUsageClient } from './api/portalUsage';
-+import { WordPressTestConnectionGuidance } from './components/WordPressTestConnectionGuidance';
- import { readPortalConfig, type PortalRuntimeConfig } from './config';
- import { AccountScreen } from './screens/AccountScreen';
-+import { BillingReturnScreen } from './screens/BillingReturnScreen';
-+import { BillingScreen } from './screens/BillingScreen';
-+import { ClaimScreen } from './screens/ClaimScreen';
-+import { KeysScreen } from './screens/KeysScreen';
- import { LogoutScreen } from './screens/LogoutScreen';
- import { NotAdmittedScreen } from './screens/NotAdmittedScreen';
- import { OutageScreen } from './screens/OutageScreen';
-@@ -11,6 +21,7 @@ import { SignInScreen } from './screens/SignInScreen';
- import { SignUpScreen } from './screens/SignUpScreen';
- import { SignedOutScreen } from './screens/SignedOutScreen';
- import { UnavailableScreen } from './screens/UnavailableScreen';
-+import { UsageScreen } from './screens/UsageScreen';
+-/** Who may hold the row's polite region or commit lock. */
++/** Who may hold the row's polite region. */
+ export type RowPoliteOwner = 'editor' | 'suggest';
++export type RowCommitOwner = RowPoliteOwner | 'queue';
  
- export type AppProps = {
-   config?: PortalRuntimeConfig;
-@@ -37,6 +48,7 @@ type AccountView =
- type LogoutView = 'idle' | 'loading' | 'error';
+ /**
+- * Row commit-lock primitives [S2c-4b-ii BR-01]. Exported so a third simulated
+- * claimant can exercise compare-and-set without driving the full UI — the defect
+- * (unconditional begin) is unreachable through the two real surfaces that already
+- * refuse when peerCommitPending is true.
++ * Row commit-lock primitives [S2c-4b-ii BR-01]. Shared by editor, Suggest, and
++ * queue correction controls. Exported to exercise competing synchronous claims
++ * and late owner releases independently of disabled-button paint.
+  *
+  * Claim result is decided on a ref so beginCommit can return synchronously.
+  * React may defer useState updaters; a side-effect flag inside setState is not
+  * a reliable "did I win?" signal. State still drives peerCommitPending paint.
+  */
+ export const useRowCommitLock = (): {
+-  commitOwner: RowPoliteOwner | null;
+-  beginCommit: (owner: RowPoliteOwner) => boolean;
+-  endCommit: (owner: RowPoliteOwner) => void;
++  commitOwner: RowCommitOwner | null;
++  beginCommit: (owner: RowCommitOwner) => boolean;
++  endCommit: (owner: RowCommitOwner) => void;
+ } => {
+-  const [commitOwner, setCommitOwner] = useState<RowPoliteOwner | null>(null);
+-  const commitOwnerRef = useRef<RowPoliteOwner | null>(null);
++  const [commitOwner, setCommitOwner] = useState<RowCommitOwner | null>(null);
++  const commitOwnerRef = useRef<RowCommitOwner | null>(null);
  
- const CLERK_LOAD_TIMEOUT_MS = 8_000;
-+const PORTAL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
- 
- function isEmailVerified(user: ReturnType<typeof useUser>['user']): boolean {
-   const status = user?.primaryEmailAddress?.verification?.status;
-@@ -82,15 +94,45 @@ function ownedAccount(account: AccountView, owner: AccountOwner | null): Account
-   return { status: 'loading', owner };
- }
- 
-+function readAttemptId(value: string | null | undefined): string | null {
-+  if (typeof value !== 'string' || !PORTAL_UUID_RE.test(value)) {
-+    return null;
-+  }
-+  return value;
-+}
-+
-+function paymentsFromConfig(config: PortalRuntimeConfig): { paymentsEnabled: boolean; publicPlanCode: string | null } {
-+  const plan = typeof config.publicPlanCode === 'string' ? config.publicPlanCode.trim() : '';
-+  return {
-+    paymentsEnabled: config.paymentsEnabled === true,
-+    publicPlanCode: plan.length > 0 ? plan : null,
-+  };
-+}
-+
-+function SessionEscape({ userMenu, onSignOut }: { userMenu: ReactNode; onSignOut: () => void }) {
-+  return (
-+    <div className="acx-session-bar">
-+      {userMenu}
-+      <button type="button" className="acx-btn" onClick={onSignOut}>
-+        Sign out
-+      </button>
-+    </div>
-+  );
-+}
-+
- function PortalShell({
-   fetchImpl,
-   clerkLoadTimeoutMs,
-   portalMeTimeoutMs,
-+  paymentsEnabled,
-+  publicPlanCode,
-   onRetryClerk,
- }: {
-   fetchImpl: typeof fetch;
-   clerkLoadTimeoutMs: number;
-   portalMeTimeoutMs: number;
-+  paymentsEnabled: boolean;
-+  publicPlanCode: string | null;
-   onRetryClerk: () => void;
- }) {
-   const { isLoaded, isSignedIn, userId, sessionId, getToken, signOut } = useAuth();
-@@ -101,6 +143,7 @@ function PortalShell({
-   const [account, setAccount] = useState<AccountView>({ status: 'idle' });
-   const [logout, setLogout] = useState<LogoutView>('idle');
-   const [fetchEpoch, setFetchEpoch] = useState(0);
-+  const [returnAttemptId, setReturnAttemptId] = useState<string | null>(null);
-   const epochRef = useRef(0);
-   const ownerRef = useRef<AccountOwner | null>(null);
-   const logoutRef = useRef<LogoutView>('idle');
-@@ -109,8 +152,10 @@ function PortalShell({
-   const activeOwner = isSignedIn ? readOwner(userId, sessionId) : null;
-   if (activeOwner && account.status !== 'idle' && !ownersMatch(account.owner, activeOwner)) {
-     setAccount({ status: 'loading', owner: activeOwner });
-+    setReturnAttemptId(null);
-   } else if (!isSignedIn && account.status !== 'idle') {
-     setAccount({ status: 'idle' });
-+    setReturnAttemptId(null);
-   }
-   const displayAccount = ownedAccount(account, activeOwner);
- 
-@@ -119,6 +164,27 @@ function PortalShell({
-   logoutRef.current = logout;
-   getTokenRef.current = getToken;
- 
-+  const ownerUserId = activeOwner?.userId ?? '';
-+  const ownerSessionId = activeOwner?.sessionId ?? '';
-+  const request = useMemo(() => {
-+    if (!ownerUserId) {
-+      return null;
-+    }
-+    const captured = { userId: ownerUserId, sessionId: ownerSessionId };
-+    return createPortalRequest({
-+      getToken: () => getTokenRef.current(),
-+      fetchImpl,
-+      timeoutMs: portalMeTimeoutMs,
-+      owner: captured,
-+      currentOwner: () => ownerRef.current,
-+    });
-+  }, [fetchImpl, ownerSessionId, ownerUserId, portalMeTimeoutMs]);
-+
-+  const keyClient = useMemo(() => (request ? createPortalKeyClient(request) : null), [request]);
-+  const usageClient = useMemo(() => (request ? createPortalUsageClient(request) : null), [request]);
-+  const claimClient = useMemo(() => (request ? createPortalClaimClient(request) : null), [request]);
-+  const billingClient = useMemo(() => (request ? createPortalBillingClient(request) : null), [request]);
-+
-   useEffect(() => {
-     if (isLoaded) {
-       setClerkTimedOut(false);
-@@ -185,6 +251,7 @@ function PortalShell({
-   }, [fetchEpoch, fetchImpl, isLoaded, isSignedIn, logout, portalMeTimeoutMs, sessionId, user, userId]);
- 
-   const handleSignOut = useCallback(async () => {
-+    setReturnAttemptId(null);
-     setAccount({ status: 'idle' });
-     setLogout('loading');
-     setFetchEpoch((value) => value + 1);
-@@ -201,8 +268,25 @@ function PortalShell({
-     setFetchEpoch((value) => value + 1);
+   // Compare-and-set: claim only when free. Returns whether this caller won.
+   // Exclusivity lives here — not in each caller's peerCommitPending guard.
+-  const beginCommit = useCallback((owner: RowPoliteOwner): boolean => {
++  const beginCommit = useCallback((owner: RowCommitOwner): boolean => {
+     if (commitOwnerRef.current !== null) {
+       return false;
+     }
+@@ -50,7 +50,7 @@ export const useRowCommitLock = (): {
    }, []);
  
-+  const handleClaimed = useCallback(() => {
-+    if (!ownersMatch(activeOwner, ownerRef.current)) {
-+      return;
-+    }
-+    if (logoutRef.current !== 'idle') {
-+      return;
-+    }
-+    setFetchEpoch((value) => value + 1);
-+  }, [activeOwner]);
-+
-+  const signOutNow = () => void handleSignOut();
-   const userMenu = <UserButton />;
-   const path = location.pathname;
-+  const wrapPrivate = (node: ReactNode) => (
-+    <div className="acx-private-shell">
-+      <SessionEscape userMenu={userMenu} onSignOut={signOutNow} />
-+      {node}
-+    </div>
-+  );
+   // Compare-and-clear: only the holding owner releases the lock.
+-  const endCommit = useCallback((owner: RowPoliteOwner): void => {
++  const endCommit = useCallback((owner: RowCommitOwner): void => {
+     if (commitOwnerRef.current !== owner) {
+       return;
+     }
+@@ -118,10 +118,7 @@ export const MediaSelectionTableBody = ({
+     }
+     return items.filter((item) => draftsByMediaId[item.id] != null);
+   }, [draftsByMediaId, draftsIsError, draftsLoading, filterByDrafts, items]);
+-  const truncationHeading = __(
+-    'Only recent drafts were checked. Older drafts may not be listed.',
+-    'alt-context',
+-  );
++  const truncationHeading = __('Only recent drafts were checked. Older drafts may not be listed.', 'alt-context');
+   const draftTruncationNotice = (
+     <tr>
+       <td colSpan={4}>
+@@ -346,6 +343,8 @@ const MediaSelectionRow = ({
+   const editorCommitEnd = useCallback((): void => endCommit('editor'), [endCommit]);
+   const suggestCommitStart = useCallback((): boolean => beginCommit('suggest'), [beginCommit]);
+   const suggestCommitEnd = useCallback((): void => endCommit('suggest'), [endCommit]);
++  const queueCommitStart = useCallback((): boolean => beginCommit('queue'), [beginCommit]);
++  const queueCommitEnd = useCallback((): void => endCommit('queue'), [endCommit]);
  
-   if (clerkTimedOut && !isLoaded) {
-     return <OutageScreen kind="clerk" onRetry={onRetryClerk} />;
-@@ -237,21 +321,30 @@ function PortalShell({
-     return <Navigate to="/" replace />;
-   }
-   if (displayAccount.status === 'email_unverified') {
--    return <NotAdmittedScreen reason="email_unverified" userMenu={userMenu} onSignOut={() => void handleSignOut()} />;
-+    return <NotAdmittedScreen reason="email_unverified" userMenu={userMenu} onSignOut={signOutNow} />;
-   }
-   if (displayAccount.status === 'not_admitted') {
--    return <NotAdmittedScreen reason="not_admitted" userMenu={userMenu} onSignOut={() => void handleSignOut()} />;
--  }
--  if (displayAccount.status === 'outage') {
-+    if (path.startsWith('/claim') && claimClient) {
-+      return wrapPrivate(
-+        <ClaimScreen
-+          key={`${displayAccount.owner.userId}:${displayAccount.owner.sessionId}`}
-+          client={claimClient}
-+          onClaimed={handleClaimed}
-+        />,
-+      );
-+    }
-     return (
--      <OutageScreen
--        kind="backend"
--        onRetry={handleRetryFetch}
-+      <NotAdmittedScreen
-+        reason="not_admitted"
-         userMenu={userMenu}
--        onSignOut={() => void handleSignOut()}
-+        onSignOut={signOutNow}
-+        onClaimAccess={() => navigate('/claim')}
-       />
-     );
-   }
-+  if (displayAccount.status === 'outage') {
-+    return <OutageScreen kind="backend" onRetry={handleRetryFetch} userMenu={userMenu} onSignOut={signOutNow} />;
-+  }
-   if (displayAccount.status === 'unauthorized') {
-     return (
-       <AccountScreen
-@@ -259,18 +352,89 @@ function PortalShell({
-         tenantId={null}
-         mode="error"
-         userMenu={userMenu}
--        onSignOut={() => void handleSignOut()}
-+        onSignOut={signOutNow}
-         onRetry={handleRetryFetch}
-       />
-     );
-   }
-+  if (displayAccount.status !== 'ok') {
-+    return (
-+      <AccountScreen
-+        personName={personName(user)}
-+        tenantId={null}
-+        mode={displayAccount.status === 'empty' ? 'empty' : 'loading'}
-+        userMenu={userMenu}
-+        onSignOut={signOutNow}
-+      />
-+    );
-+  }
-+
-+  const featureKey = `${displayAccount.owner.userId}:${displayAccount.owner.sessionId}:${displayAccount.tenantId}`;
-+  if (path.startsWith('/claim')) {
-+    return <Navigate to="/" replace />;
-+  }
-+  if (path.startsWith('/keys/wordpress')) {
-+    return wrapPrivate(
-+      <WordPressTestConnectionGuidance onClose={() => navigate('/keys')} onReturnToKeys={() => navigate('/keys')} />,
-+    );
-+  }
-+  if (path.startsWith('/keys') && keyClient) {
-+    return wrapPrivate(
-+      <KeysScreen
-+        client={keyClient}
-+        sessionKey={featureKey}
-+        onNavigateToUsage={() => navigate('/usage')}
-+        onNavigateToBilling={() => navigate('/billing')}
-+        onOpenWordPressGuidance={() => navigate('/keys/wordpress')}
-+      />,
-+    );
-+  }
-+  if (path.startsWith('/usage') && usageClient) {
-+    return wrapPrivate(
-+      <UsageScreen
-+        client={usageClient}
-+        sessionKey={featureKey}
-+        onNavigateToKeys={() => navigate('/keys')}
-+        onNavigateToBilling={() => navigate('/billing')}
-+      />,
-+    );
-+  }
-+  if (path.startsWith('/billing/return') && billingClient) {
-+    return wrapPrivate(
-+      <BillingReturnScreen
-+        client={billingClient}
-+        publicPlanCode={publicPlanCode}
-+        paymentsEnabled={paymentsEnabled}
-+        attemptId={returnAttemptId}
-+        onNavigateToBilling={() => navigate('/billing')}
-+        onNavigateToUsage={() => navigate('/usage')}
-+      />,
-+    );
-+  }
-+  if (path.startsWith('/billing') && billingClient) {
-+    return wrapPrivate(
-+      <BillingScreen
-+        client={billingClient}
-+        publicPlanCode={publicPlanCode}
-+        paymentsEnabled={paymentsEnabled}
-+        onNavigateToReturn={(attemptId) => {
-+          setReturnAttemptId(readAttemptId(attemptId));
-+          navigate('/billing/return');
-+        }}
-+        onNavigateToUsage={() => navigate('/usage')}
-+      />,
-+    );
-+  }
    return (
-     <AccountScreen
-       personName={personName(user)}
--      tenantId={displayAccount.status === 'ok' ? displayAccount.tenantId : null}
--      mode={displayAccount.status === 'ok' ? 'default' : displayAccount.status === 'empty' ? 'empty' : 'loading'}
-+      tenantId={displayAccount.tenantId}
-+      mode="default"
-       userMenu={userMenu}
--      onSignOut={() => void handleSignOut()}
-+      onSignOut={signOutNow}
-+      onNavigateToKeys={() => navigate('/keys')}
-+      onNavigateToUsage={() => navigate('/usage')}
-+      onNavigateToBilling={() => navigate('/billing')}
-     />
-   );
- }
-@@ -283,6 +447,7 @@ export function App({
- }: AppProps = {}) {
-   const navigate = useNavigate();
-   const [providerEpoch, setProviderEpoch] = useState(0);
-+  const payments = paymentsFromConfig(config);
- 
-   if (!config.portalEnabled) {
-     return <UnavailableScreen mode="degraded" />;
-@@ -315,6 +480,8 @@ export function App({
-               fetchImpl={fetchImpl}
-               clerkLoadTimeoutMs={clerkLoadTimeoutMs}
-               portalMeTimeoutMs={portalMeTimeoutMs}
-+              paymentsEnabled={payments.paymentsEnabled}
-+              publicPlanCode={payments.publicPlanCode}
-               onRetryClerk={() => setProviderEpoch((value) => value + 1)}
-             />
-           }
-diff --git a/apps/app-portal/src/__tests__/account-navigation.test.tsx b/apps/app-portal/src/__tests__/account-navigation.test.tsx
-new file mode 100644
---- /dev/null
-+++ b/apps/app-portal/src/__tests__/account-navigation.test.tsx
-@@ -0,0 +1,422 @@
-+import { screen, waitFor } from '@testing-library/react';
-+import userEvent from '@testing-library/user-event';
-+import { flushSync } from 'react-dom';
-+import { afterEach, describe, expect, it, vi } from 'vitest';
-+import { parsePortalConfig } from '../config';
-+import { clerkDouble } from './clerkDouble';
-+import { renderPortal } from './renderPortal';
-+
-+vi.mock('@clerk/react', async () => {
-+  const doubles = await import('./clerkDouble');
-+  return {
-+    ClerkProvider: doubles.ClerkProviderStub,
-+    SignIn: doubles.SignInStub,
-+    SignUp: doubles.SignUpStub,
-+    UserButton: doubles.UserButtonStub,
-+    useAuth: doubles.useAuthStub,
-+    useUser: doubles.useUserStub,
-+  };
-+});
-+
-+const TENANT = '11111111-1111-4111-8111-111111111111';
-+const KEY_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-+const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
-+const INVITATION = 'raw-invitation-token-once';
-+
-+function jsonResponse(status: number, body: unknown): Response {
-+  return new Response(JSON.stringify(body), {
-+    status,
-+    headers: { 'Content-Type': 'application/json' },
-+  });
-+}
-+
-+function meBody(tenantId = TENANT) {
-+  return {
-+    tenant_id: tenantId,
-+    issuer: 'https://clerk.altcontext.com',
-+    subject: 'user_1',
-+    email: 'ada@example.test',
-+  };
-+}
-+
-+function keysPage() {
-+  return {
-+    data: [
-+      {
-+        id: KEY_ID,
-+        tenant_id: TENANT,
-+        created_at: '2026-09-01T00:00:00Z',
-+        expires_at: '2026-12-01T00:00:00Z',
-+        revoked_at: null,
-+        rate_limit_tier: 'standard',
-+        lifetime_seconds: 3600,
-+      },
-+    ],
-+    next_cursor: null,
-+    cursor: null,
-+    limit: 25,
-+    total: 1,
-+  };
-+}
-+
-+function usageBody() {
-+  return {
-+    tenant_id: TENANT,
-+    used: 1,
-+    reserved: 0,
-+    remaining: 9,
-+    allowance: 10,
-+    period_start: '2026-09-01T00:00:00Z',
-+    period_end: '2026-10-01T00:00:00Z',
-+    period: { start: '2026-09-01T00:00:00Z', end: '2026-10-01T00:00:00Z' },
-+    as_of: '2026-09-22T12:00:00Z',
-+    status: 'beta_active',
-+    data_source: 'authoritative',
-+  };
-+}
-+
-+function signInVerified(sessionId = 'sess_1') {
-+  clerkDouble.setState({
-+    isLoaded: true,
-+    isSignedIn: true,
-+    userId: 'user_1',
-+    sessionId,
-+    user: {
-+      fullName: 'Ada Lovelace',
-+      primaryEmailAddress: {
-+        emailAddress: 'ada@example.test',
-+        verification: { status: 'verified' },
-+      },
-+    },
-+    getToken: async () => 'session-jwt',
-+  });
-+}
-+
-+function portalFetch(options: { me?: () => Response | Promise<Response>; claimAdmitted?: { current: boolean } } = {}) {
-+  return vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
-+    const url = String(input);
-+    const path = url.split('?')[0];
-+    if (path === '/portal/me') {
-+      if (options.me) {
-+        return options.me();
-+      }
-+      if (options.claimAdmitted?.current) {
-+        return jsonResponse(200, meBody());
-+      }
-+      return jsonResponse(200, meBody());
-+    }
-+    if (path === '/portal/keys') {
-+      return jsonResponse(200, keysPage());
-+    }
-+    if (path === '/portal/usage') {
-+      return jsonResponse(200, usageBody());
-+    }
-+    if (path === '/portal/onboarding/claim') {
-+      if (options.claimAdmitted) {
-+        options.claimAdmitted.current = true;
-+      }
-+      return jsonResponse(201, {
-+        tenant_id: TENANT,
-+        issuer: 'https://clerk.altcontext.com',
-+        subject: 'user_1',
-+        email: 'ada@example.test',
-+        replayed: false,
-+      });
-+    }
-+    if (path === '/portal/billing/checkout' || path === '/portal/billing/manage') {
-+      throw new Error(`billing call must be absent when payments are disabled: ${path}`);
-+    }
-+    return jsonResponse(404, { detail: 'missing fixture' });
-+  });
-+}
-+
-+afterEach(() => {
-+  clerkDouble.reset();
-+});
-+
-+describe('public payments config [HAI-01]', () => {
-+  it('defaults payments disabled and empty plan, enabling only explicit recognized true', () => {
-+    expect(
-+      parsePortalConfig({
-+        VITE_CLERK_PUBLISHABLE_KEY: 'pk_test',
-+        VITE_CLERK_FAPI: 'https://clerk.altcontext.com',
-+        VITE_PORTAL_ENABLED: 'true',
-+        VITE_PAYMENTS_ENABLED: '',
-+        VITE_PUBLIC_PLAN_CODE: '',
-+      }),
-+    ).toEqual({
-+      publishableKey: 'pk_test',
-+      fapiOrigin: 'https://clerk.altcontext.com',
-+      portalEnabled: true,
-+      paymentsEnabled: false,
-+      publicPlanCode: null,
-+    });
-+
-+    expect(
-+      parsePortalConfig({
-+        VITE_CLERK_PUBLISHABLE_KEY: 'pk_test',
-+        VITE_CLERK_FAPI: 'https://clerk.altcontext.com',
-+        VITE_PORTAL_ENABLED: 'true',
-+        VITE_PAYMENTS_ENABLED: 'maybe',
-+        VITE_PUBLIC_PLAN_CODE: '  starter_monthly  ',
-+      }).paymentsEnabled,
-+    ).toBe(false);
-+
-+    expect(
-+      parsePortalConfig({
-+        VITE_CLERK_PUBLISHABLE_KEY: 'pk_test',
-+        VITE_CLERK_FAPI: 'https://clerk.altcontext.com',
-+        VITE_PORTAL_ENABLED: 'true',
-+        VITE_PAYMENTS_ENABLED: 'TRUE',
-+        VITE_PUBLIC_PLAN_CODE: '  starter_monthly  ',
-+      }),
-+    ).toMatchObject({
-+      paymentsEnabled: true,
-+      publicPlanCode: 'starter_monthly',
-+    });
-+  });
-+});
-+
-+describe('admitted shell navigation [NAV-08][NAV-11]', () => {
-+  it('wires keys, usage, billing, billing return, and WordPress guidance with sign-out', async () => {
-+    signInVerified();
-+    const fetchImpl = portalFetch();
-+    const user = userEvent.setup();
-+    renderPortal({ fetchImpl: fetchImpl as unknown as typeof fetch });
-+
-+    await waitFor(() => {
-+      expect(screen.getByText(TENANT)).toBeInTheDocument();
-+    });
-+    expect(screen.getByRole('navigation', { name: /account/i })).toBeInTheDocument();
-+
-+    await user.click(screen.getByRole('button', { name: /api keys/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /api keys/i })).toBeInTheDocument();
-+    });
-+    expect(screen.getByRole('main')).toHaveTextContent(KEY_ID);
-+    expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
-+
-+    await user.click(screen.getByRole('button', { name: /wordpress test connection guidance/i }));
-+    expect(screen.getByRole('heading', { name: /wordpress test connection/i })).toBeInTheDocument();
-+    expect(screen.queryByText(/acx_live|raw_key/i)).not.toBeInTheDocument();
-+    expect(window.location.href).not.toMatch(/acx_live|raw_key|secret=/i);
-+
-+    await user.click(screen.getByRole('button', { name: /back to api keys/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /api keys/i })).toBeInTheDocument();
-+    });
-+
-+    await user.click(screen.getByRole('button', { name: /^usage$/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /^usage$/i })).toBeInTheDocument();
-+    });
-+
-+    await user.click(screen.getByRole('button', { name: /^billing$/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /^billing$/i })).toBeInTheDocument();
-+    });
-+    expect(screen.getByRole('status')).toHaveTextContent(/payments are disabled/i);
-+    expect(screen.getByRole('button', { name: /continue to checkout/i })).toBeDisabled();
-+    expect(screen.getByRole('button', { name: /manage billing/i })).toBeDisabled();
-+  });
-+
-+  it('keeps billing return pending and never grants entitlement or posts checkout [HAI-01]', async () => {
-+    signInVerified();
-+    const fetchImpl = portalFetch();
-+    renderPortal({
-+      path: '/billing/return?checkout=success',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+    });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /billing return/i })).toBeInTheDocument();
-+    });
-+    expect(screen.getByRole('status')).toHaveTextContent(/pending reconciliation|backend confirmation/i);
-+    expect(screen.queryByText(/paid_active|you are now paid|subscription is active/i)).not.toBeInTheDocument();
-+    expect(fetchImpl.mock.calls.some((call) => String(call[0]).includes('/portal/billing'))).toBe(false);
-+  });
-+});
-+
-+describe('claim admission boundary [HAI-01][DOM-03]', () => {
-+  it('lets a verified not-admitted identity claim and refetches /portal/me before admission', async () => {
-+    signInVerified();
-+    const admitted = { current: false };
-+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
-+      const path = String(input).split('?')[0];
-+      if (path === '/portal/me') {
-+        if (admitted.current) {
-+          return jsonResponse(200, meBody());
-+        }
-+        return jsonResponse(403, { detail: 'portal access denied' });
-+      }
-+      if (path === '/portal/onboarding/claim') {
-+        return jsonResponse(201, {
-+          tenant_id: TENANT,
-+          issuer: 'https://clerk.altcontext.com',
-+          subject: 'user_1',
-+          email: 'ada@example.test',
-+          replayed: false,
-+        });
-+      }
-+      throw new Error(`unexpected path ${path}`);
-+    });
-+    const user = userEvent.setup();
-+    renderPortal({ fetchImpl: fetchImpl as unknown as typeof fetch });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('status')).toHaveTextContent(/not ready for access/i);
-+    });
-+    expect(screen.queryByText(TENANT)).not.toBeInTheDocument();
-+    await user.click(screen.getByRole('button', { name: /claim access/i }));
-+    expect(screen.getByLabelText(/invitation token/i)).toBeInTheDocument();
-+    expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
-+
-+    await user.type(screen.getByLabelText(/invitation token/i), INVITATION);
-+    await user.click(screen.getByRole('button', { name: /^claim access$/i }));
-+    await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
-+
-+    await waitFor(() => {
-+      expect(fetchImpl.mock.calls.some((call) => String(call[0]).includes('/portal/onboarding/claim'))).toBe(true);
-+      expect(
-+        fetchImpl.mock.calls.filter((call) => String(call[0]).split('?')[0] === '/portal/me').length,
-+      ).toBeGreaterThan(1);
-+    });
-+    expect(screen.queryByRole('heading', { name: /api keys/i })).not.toBeInTheDocument();
-+    expect(screen.queryByText(TENANT)).not.toBeInTheDocument();
-+    expect(window.location.href).not.toContain(INVITATION);
-+    expect(window.location.hash).not.toContain(INVITATION);
-+    admitted.current = true;
-+    expect(screen.queryByText(TENANT)).not.toBeInTheDocument();
-+  });
-+
-+  it('admits only after a post-claim /portal/me tenant, never from the claim body [HAI-01]', async () => {
-+    signInVerified();
-+    const admitted = { current: false };
-+    const fetchImpl = portalFetch({ claimAdmitted: admitted });
-+    fetchImpl.mockImplementation(async (input: RequestInfo | URL) => {
-+      const path = String(input).split('?')[0];
-+      if (path === '/portal/me') {
-+        return admitted.current ? jsonResponse(200, meBody()) : jsonResponse(403, { detail: 'portal access denied' });
-+      }
-+      if (path === '/portal/onboarding/claim') {
-+        admitted.current = true;
-+        return jsonResponse(201, {
-+          tenant_id: TENANT,
-+          issuer: 'https://clerk.altcontext.com',
-+          subject: 'user_1',
-+          email: 'ada@example.test',
-+          replayed: false,
-+        });
-+      }
-+      if (path === '/portal/keys') {
-+        return jsonResponse(200, keysPage());
-+      }
-+      return jsonResponse(404, {});
-+    });
-+    const user = userEvent.setup();
-+    renderPortal({ path: '/claim', fetchImpl: fetchImpl as unknown as typeof fetch });
-+
-+    await waitFor(() => {
-+      expect(screen.getByLabelText(/invitation token/i)).toBeInTheDocument();
-+    });
-+    await user.type(screen.getByLabelText(/invitation token/i), INVITATION);
-+    await user.click(screen.getByRole('button', { name: /^claim access$/i }));
-+    await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
-+
-+    await waitFor(() => {
-+      expect(screen.getByText(TENANT)).toBeInTheDocument();
-+    });
-+    expect(
-+      fetchImpl.mock.calls.filter((call) => String(call[0]).split('?')[0] === '/portal/me').length,
-+    ).toBeGreaterThan(1);
-+  });
-+
-+  it('does not offer claim to an unverified identity', async () => {
-+    clerkDouble.setState({
-+      isLoaded: true,
-+      isSignedIn: true,
-+      userId: 'user_1',
-+      sessionId: 'sess_1',
-+      user: {
-+        fullName: 'Ada Lovelace',
-+        primaryEmailAddress: {
-+          emailAddress: 'ada@example.test',
-+          verification: { status: 'unverified' },
-+        },
-+      },
-+      getToken: async () => 'session-jwt',
-+    });
-+    renderPortal({
-+      path: '/claim',
-+      fetchImpl: vi.fn(async () =>
-+        jsonResponse(403, { detail: { code: 'email_unverified' } }),
-+      ) as unknown as typeof fetch,
-+    });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('status')).toHaveTextContent(/verify your email/i);
-+    });
-+    expect(screen.queryByLabelText(/invitation token/i)).not.toBeInTheDocument();
-+    expect(screen.queryByRole('button', { name: /claim access/i })).not.toBeInTheDocument();
-+    expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
-+  });
-+});
-+
-+describe('private subtree ownership [DATA-03][CARD-15]', () => {
-+  it('clears keys metadata synchronously when the same user gets a new session', async () => {
-+    signInVerified('sess_a');
-+    const fetchImpl = portalFetch();
-+    renderPortal({ path: '/keys', fetchImpl: fetchImpl as unknown as typeof fetch });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('main')).toHaveTextContent(KEY_ID);
-+    });
-+
-+    flushSync(() => {
-+      clerkDouble.setState({ sessionId: 'sess_a_replaced' });
-+    });
-+
-+    expect(screen.getByRole('main')).not.toHaveTextContent(KEY_ID);
-+    expect(screen.getByRole('status')).toHaveTextContent(/checking account/i);
-+    await waitFor(() => {
-+      expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
-+    });
-+  });
-+
-+  it('hides private modules immediately when sign-out fails [RLSE-04]', async () => {
-+    signInVerified();
-+    clerkDouble.state.signOut = vi.fn(async () => {
-+      throw new Error('network');
-+    });
-+    const fetchImpl = portalFetch();
-+    const user = userEvent.setup();
-+    renderPortal({ path: '/keys', fetchImpl: fetchImpl as unknown as typeof fetch });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('main')).toHaveTextContent(KEY_ID);
-+    });
-+
-+    await user.click(screen.getByRole('button', { name: /sign out/i }));
-+
-+    expect(screen.getByRole('main')).not.toHaveTextContent(KEY_ID);
-+    expect(screen.queryByRole('heading', { name: /api keys/i })).not.toBeInTheDocument();
-+    expect(screen.getByRole('status')).toHaveTextContent(/sign out failed|could not sign out/i);
-+    expect(screen.getByRole('button', { name: /try again/i })).toBeEnabled();
-+  });
-+});
-+
-+describe('opaque attempt id [HAI-01]', () => {
-+  it('does not put attempt, invite, or raw key material in search or hash', async () => {
-+    signInVerified();
-+    renderPortal({
-+      path: `/billing/return?attempt_id=${ATTEMPT_ID}&invitation=${INVITATION}`,
-+      fetchImpl: portalFetch() as unknown as typeof fetch,
-+    });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /billing return/i })).toBeInTheDocument();
-+    });
-+    expect(screen.queryByText(INVITATION)).not.toBeInTheDocument();
-+    expect(screen.queryByText(ATTEMPT_ID)).not.toBeInTheDocument();
-+  });
-+});
-diff --git a/apps/app-portal/src/__tests__/portal-request.test.ts b/apps/app-portal/src/__tests__/portal-request.test.ts
-new file mode 100644
---- /dev/null
-+++ b/apps/app-portal/src/__tests__/portal-request.test.ts
-@@ -0,0 +1,188 @@
-+import { afterEach, describe, expect, it, vi } from 'vitest';
-+import { createPortalRequest } from '../api/portalRequest';
-+
-+const OWNER_A = { userId: 'user_a', sessionId: 'sess_a' };
-+const OWNER_B = { userId: 'user_b', sessionId: 'sess_b' };
-+
-+function jsonResponse(status: number, body: unknown): Response {
-+  return new Response(JSON.stringify(body), {
-+    status,
-+    headers: { 'Content-Type': 'application/json' },
-+  });
-+}
-+
-+afterEach(() => {
-+  vi.useRealTimers();
-+});
-+
-+describe('createPortalRequest bounded bearer transport [RES-02][RLSE-04][DATA-03]', () => {
-+  it('bounds a hanging getToken with the total deadline and never calls fetch [RES-02]', async () => {
-+    vi.useFakeTimers();
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken: () => new Promise<string | null>(() => undefined),
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      timeoutMs: 40,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    const pending = expect(request('/portal/usage')).rejects.toMatchObject({ name: 'AbortError' });
-+    await vi.advanceTimersByTimeAsync(40);
-+    await pending;
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
-+
-+  it('bounds a hanging fetch with the same total deadline [RES-02]', async () => {
-+    vi.useFakeTimers();
-+    const fetchImpl = vi.fn(() => new Promise<Response>(() => undefined));
-+    const request = createPortalRequest({
-+      getToken: async () => 'session-jwt',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      timeoutMs: 40,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    const pending = expect(request('/portal/usage')).rejects.toMatchObject({ name: 'AbortError' });
-+    await vi.advanceTimersByTimeAsync(40);
-+    await pending;
-+    expect(fetchImpl).toHaveBeenCalledTimes(1);
-+  });
-+
-+  it('aborts during getToken without sending a bearer request [RES-02]', async () => {
-+    const controller = new AbortController();
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken: () => new Promise<string | null>(() => undefined),
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      timeoutMs: 8_000,
-+      signal: controller.signal,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    const pending = expect(request('/portal/me')).rejects.toMatchObject({ name: 'AbortError' });
-+    controller.abort();
-+    await pending;
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
-+
-+  it('does not fetch when getToken rejects [RLSE-04]', async () => {
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken: async () => {
-+        throw new Error('token refresh failed');
-+      },
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      timeoutMs: 1_000,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    await expect(request('/portal/me')).rejects.toThrow(/token refresh failed|portal identity/i);
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
-+
-+  it('forces cache no-store, omits credentials, and never sets Origin [DATA-03]', async () => {
-+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-+      expect(String(input)).toBe('/portal/usage');
-+      expect(init?.cache).toBe('no-store');
-+      expect(init?.credentials).toBe('omit');
-+      const headers = new Headers(init?.headers);
-+      expect(headers.get('Authorization')).toBe('Bearer session-jwt');
-+      expect([...headers.keys()].some((key) => key.toLowerCase() === 'origin')).toBe(false);
-+      return jsonResponse(200, { ok: true });
-+    });
-+
-+    const request = createPortalRequest({
-+      getToken: async () => 'session-jwt',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    await expect(
-+      request('/portal/usage', { method: 'GET', headers: { Origin: 'https://evil.example' } }),
-+    ).resolves.toBeInstanceOf(Response);
-+    expect(fetchImpl).toHaveBeenCalledTimes(1);
-+  });
-+
-+  it('rejects external, protocol-relative, and non-allowlisted paths before getToken [DATA-03]', async () => {
-+    const getToken = vi.fn(async () => 'session-jwt');
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken,
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    const rejected = [
-+      'https://evil.example/portal/me',
-+      'http://app.altcontext.com/portal/me',
-+      '//evil.example/portal/me',
-+      '/api/portal/me',
-+      '/portal',
-+      'portal/me',
-+      '/portal/../keys',
-+      '/portal/%2e%2e/keys',
-+      'https://app.altcontext.com/portal/me',
-+    ];
-+
-+    for (const path of rejected) {
-+      await expect(request(path)).rejects.toThrow(/not allowed|portal request/i);
-+    }
-+    expect(getToken).not.toHaveBeenCalled();
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
-+
-+  it('allows same-origin relative /portal/ paths including key list query [DATA-03]', async () => {
-+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
-+      expect(String(input)).toBe('/portal/keys?limit=25');
-+      expect(String(input)).not.toMatch(/^https?:/i);
-+      return jsonResponse(200, { data: [] });
-+    });
-+    const request = createPortalRequest({
-+      getToken: async () => 'session-jwt',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    await request('/portal/keys?limit=25');
-+    expect(fetchImpl).toHaveBeenCalledTimes(1);
-+  });
-+
-+  it('does not send when the captured owner is no longer current [DDIA][DATA-03]', async () => {
-+    const getToken = vi.fn(async () => 'session-jwt');
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken,
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_B,
-+    });
-+
-+    await expect(request('/portal/usage')).rejects.toMatchObject({ name: 'AbortError' });
-+    expect(getToken).not.toHaveBeenCalled();
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
-+
-+  it('drops a completed response after a session replacement [DDIA][DATA-03]', async () => {
-+    let current = OWNER_A;
-+    const fetchImpl = vi.fn(async () => {
-+      current = OWNER_B;
-+      return jsonResponse(200, { tenant_id: '11111111-1111-4111-8111-111111111111' });
-+    });
-+    const request = createPortalRequest({
-+      getToken: async () => 'session-jwt',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => current,
-+    });
-+
-+    await expect(request('/portal/me')).rejects.toMatchObject({ name: 'AbortError' });
-+    expect(fetchImpl).toHaveBeenCalledTimes(1);
-+  });
-+});
-diff --git a/apps/app-portal/src/api/portalRequest.ts b/apps/app-portal/src/api/portalRequest.ts
-new file mode 100644
---- /dev/null
-+++ b/apps/app-portal/src/api/portalRequest.ts
-@@ -0,0 +1,157 @@
-+export type PortalRequest = (path: string, init?: RequestInit) => Promise<Response>;
-+
-+export type PortalRequestOwner = {
-+  userId: string;
-+  sessionId: string;
-+};
-+
-+export type CreatePortalRequestOptions = {
-+  getToken: () => Promise<string | null>;
-+  fetchImpl?: typeof fetch;
-+  timeoutMs?: number;
-+  signal?: AbortSignal;
-+  owner: PortalRequestOwner;
-+  currentOwner: () => PortalRequestOwner | null;
-+};
-+
-+const DEFAULT_TIMEOUT_MS = 8_000;
-+const PORTAL_PATH_RE = /^\/portal\/[A-Za-z0-9/_-]+$/;
-+
-+function abortError(): DOMException {
-+  return new DOMException('The operation was aborted.', 'AbortError');
-+}
-+
-+function ownersMatch(
-+  left: PortalRequestOwner | null | undefined,
-+  right: PortalRequestOwner | null | undefined,
-+): boolean {
-+  return Boolean(left && right && left.userId === right.userId && left.sessionId === right.sessionId);
-+}
-+
-+export function resolvePortalPath(path: string): string | null {
-+  if (typeof path !== 'string' || path.length === 0) {
-+    return null;
-+  }
-+  if (!path.startsWith('/portal/')) {
-+    return null;
-+  }
-+  if (path.startsWith('//') || path.includes('://') || path.includes('\\')) {
-+    return null;
-+  }
-+  if (path.includes('..') || /%2e/i.test(path)) {
-+    return null;
-+  }
-+  let url: URL;
-+  try {
-+    url = new URL(path, 'https://app.altcontext.com');
-+  } catch {
-+    return null;
-+  }
-+  if (url.origin !== 'https://app.altcontext.com') {
-+    return null;
-+  }
-+  if (url.username || url.password) {
-+    return null;
-+  }
-+  if (url.protocol !== 'https:') {
-+    return null;
-+  }
-+  if (!PORTAL_PATH_RE.test(url.pathname)) {
-+    return null;
-+  }
-+  return `${url.pathname}${url.search}`;
-+}
-+
-+function assertCurrentOwner(owner: PortalRequestOwner, currentOwner: () => PortalRequestOwner | null): void {
-+  if (!ownersMatch(owner, currentOwner())) {
-+    throw abortError();
-+  }
-+}
-+
-+export function createPortalRequest(options: CreatePortalRequestOptions): PortalRequest {
-+  const fetchImpl = options.fetchImpl ?? fetch;
-+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-+
-+  return async (path, init) => {
-+    const resolved = resolvePortalPath(path);
-+    if (!resolved) {
-+      throw new TypeError('portal request path is not allowed');
-+    }
-+    assertCurrentOwner(options.owner, options.currentOwner);
-+    if (options.signal?.aborted || init?.signal?.aborted) {
-+      throw abortError();
-+    }
-+
-+    const controller = new AbortController();
-+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
-+    const onAbort = () => controller.abort();
-+    if (options.signal) {
-+      if (options.signal.aborted) {
-+        controller.abort();
-+      } else {
-+        options.signal.addEventListener('abort', onAbort, { once: true });
-+      }
-+    }
-+    if (init?.signal) {
-+      if (init.signal.aborted) {
-+        controller.abort();
-+      } else {
-+        init.signal.addEventListener('abort', onAbort, { once: true });
-+      }
-+    }
-+
-+    const abortGate = new Promise<void>((resolve) => {
-+      if (controller.signal.aborted) {
-+        resolve();
-+        return;
-+      }
-+      controller.signal.addEventListener('abort', () => resolve(), { once: true });
-+    });
-+
-+    try {
-+      assertCurrentOwner(options.owner, options.currentOwner);
-+      const tokenResult = await Promise.race([
-+        Promise.resolve()
-+          .then(() => options.getToken())
-+          .then((token) => ({ token })),
-+        abortGate.then(() => ({ aborted: true as const })),
-+      ]);
-+      if ('aborted' in tokenResult || controller.signal.aborted) {
-+        throw abortError();
-+      }
-+      assertCurrentOwner(options.owner, options.currentOwner);
-+      if (!tokenResult.token) {
-+        throw new Error('portal identity unavailable');
-+      }
-+
-+      const headers = new Headers(init?.headers);
-+      headers.delete('Origin');
-+      headers.delete('Authorization');
-+      headers.set('Authorization', `Bearer ${tokenResult.token}`);
-+
-+      const fetchResult = await Promise.race([
-+        fetchImpl(resolved, {
-+          ...init,
-+          headers,
-+          cache: 'no-store',
-+          credentials: 'omit',
-+          redirect: 'error',
-+          signal: controller.signal,
-+        }).then((response) => ({ response })),
-+        abortGate.then(() => ({ aborted: true as const })),
-+      ]);
-+      if ('aborted' in fetchResult || controller.signal.aborted) {
-+        throw abortError();
-+      }
-+      assertCurrentOwner(options.owner, options.currentOwner);
-+      if (options.signal?.aborted || init?.signal?.aborted) {
-+        throw abortError();
-+      }
-+      return fetchResult.response;
-+    } finally {
-+      window.clearTimeout(timer);
-+      options.signal?.removeEventListener('abort', onAbort);
-+      init?.signal?.removeEventListener('abort', onAbort);
-+    }
-+  };
-+}
-diff --git a/apps/app-portal/src/config.ts b/apps/app-portal/src/config.ts
---- a/apps/app-portal/src/config.ts
-+++ b/apps/app-portal/src/config.ts
-@@ -2,6 +2,8 @@ export type PortalRuntimeConfig = {
-   publishableKey: string | null;
-   fapiOrigin: string | null;
-   portalEnabled: boolean;
-+  paymentsEnabled?: boolean;
-+  publicPlanCode?: string | null;
- };
- 
- function trimEnv(value: string | undefined): string {
-@@ -36,19 +38,39 @@ export function parseFapiOrigin(value: string | undefined): string | null {
-   }
- }
- 
-+function parsePaymentsEnabled(value: string | undefined): boolean {
-+  const normalized = trimEnv(value).toLowerCase();
-+  return normalized === '1' || normalized === 'true' || normalized === 'on' || normalized === 'yes';
-+}
-+
-+function parsePublicPlanCode(value: string | undefined): string | null {
-+  const raw = trimEnv(value);
-+  return raw.length > 0 ? raw : null;
-+}
-+
- export function parsePortalConfig(env: Record<string, string | undefined>): PortalRuntimeConfig {
-   const publishableKey = trimEnv(env.VITE_CLERK_PUBLISHABLE_KEY);
--  return {
-+  const config: PortalRuntimeConfig = {
-     publishableKey: publishableKey.length > 0 ? publishableKey : null,
-     fapiOrigin: parseFapiOrigin(env.VITE_CLERK_FAPI),
-     portalEnabled: parseEnabledFlag(env.VITE_PORTAL_ENABLED),
-   };
-+  if (Object.prototype.hasOwnProperty.call(env, 'VITE_PAYMENTS_ENABLED')) {
-+    config.paymentsEnabled = parsePaymentsEnabled(env.VITE_PAYMENTS_ENABLED);
-+  }
-+  if (Object.prototype.hasOwnProperty.call(env, 'VITE_PUBLIC_PLAN_CODE')) {
-+    config.publicPlanCode = parsePublicPlanCode(env.VITE_PUBLIC_PLAN_CODE);
-+  }
-+  return config;
- }
- 
- export function readPortalConfig(): PortalRuntimeConfig {
-+  const env = import.meta.env as Record<string, string | undefined>;
-   return parsePortalConfig({
--    VITE_CLERK_PUBLISHABLE_KEY: import.meta.env.VITE_CLERK_PUBLISHABLE_KEY,
--    VITE_CLERK_FAPI: import.meta.env.VITE_CLERK_FAPI,
--    VITE_PORTAL_ENABLED: import.meta.env.VITE_PORTAL_ENABLED,
-+    VITE_CLERK_PUBLISHABLE_KEY: env.VITE_CLERK_PUBLISHABLE_KEY,
-+    VITE_CLERK_FAPI: env.VITE_CLERK_FAPI,
-+    VITE_PORTAL_ENABLED: env.VITE_PORTAL_ENABLED,
-+    VITE_PAYMENTS_ENABLED: env.VITE_PAYMENTS_ENABLED,
-+    VITE_PUBLIC_PLAN_CODE: env.VITE_PUBLIC_PLAN_CODE,
-   });
- }
-diff --git a/apps/app-portal/src/screens/AccountScreen.tsx b/apps/app-portal/src/screens/AccountScreen.tsx
---- a/apps/app-portal/src/screens/AccountScreen.tsx
-+++ b/apps/app-portal/src/screens/AccountScreen.tsx
-@@ -8,6 +8,9 @@ export function AccountScreen({
-   userMenu,
-   onSignOut,
-   onRetry,
-+  onNavigateToKeys,
-+  onNavigateToUsage,
-+  onNavigateToBilling,
- }: {
-   personName: string | null;
-   tenantId: string | null;
-@@ -15,6 +18,9 @@ export function AccountScreen({
-   userMenu: ReactNode;
-   onSignOut: () => void;
-   onRetry?: () => void;
-+  onNavigateToKeys?: () => void;
-+  onNavigateToUsage?: () => void;
-+  onNavigateToBilling?: () => void;
- }) {
-   const status =
-     mode === 'loading'
-@@ -46,6 +52,19 @@ export function AccountScreen({
-       ) : (
-         <p>Account access: Waiting for account</p>
-       )}
-+      {mode === 'default' && onNavigateToKeys && onNavigateToUsage && onNavigateToBilling ? (
-+        <nav className="acx-account-nav" aria-label="Account">
-+          <button type="button" className="acx-btn" onClick={onNavigateToKeys}>
-+            API keys
-+          </button>
-+          <button type="button" className="acx-btn" onClick={onNavigateToUsage}>
-+            Usage
-+          </button>
-+          <button type="button" className="acx-btn" onClick={onNavigateToBilling}>
-+            Billing
-+          </button>
-+        </nav>
-+      ) : null}
-       <StatusMessage tone={mode === 'error' ? 'error' : mode === 'default' ? 'ok' : 'info'}>{status}</StatusMessage>
-       {mode === 'error' && onRetry ? (
-         <button type="button" className="acx-btn acx-btn-primary" onClick={onRetry}>
-diff --git a/apps/app-portal/src/screens/NotAdmittedScreen.tsx b/apps/app-portal/src/screens/NotAdmittedScreen.tsx
---- a/apps/app-portal/src/screens/NotAdmittedScreen.tsx
-+++ b/apps/app-portal/src/screens/NotAdmittedScreen.tsx
-@@ -5,10 +5,12 @@ export function NotAdmittedScreen({
-   reason,
-   userMenu,
-   onSignOut,
-+  onClaimAccess,
- }: {
-   reason: 'email_unverified' | 'not_admitted';
-   userMenu: ReactNode;
-   onSignOut: () => void;
-+  onClaimAccess?: () => void;
- }) {
-   const copy =
-     reason === 'email_unverified'
-@@ -29,6 +31,11 @@ export function NotAdmittedScreen({
+     <tr>
+@@ -357,10 +356,7 @@ const MediaSelectionRow = ({
+         />
+       </td>
+       <td className="acx-media-selection__thumb-cell">
+-        <a
+-          href={mediaEditUrl(item.id)}
+-          aria-label={sprintf(__('Edit %s', 'alt-context'), item.title)}
+-        >
++        <a href={mediaEditUrl(item.id)} aria-label={sprintf(__('Edit %s', 'alt-context'), item.title)}>
+           {item.thumbnailUrl ? (
+             <img
+               src={item.thumbnailUrl}
+@@ -370,11 +366,7 @@ const MediaSelectionRow = ({
+                 // Prefer real alt over a leftover decorative marker (same
+                 // precedence as DescriptionCandidateService: has_alt_text wins).
+                 // Empty alt only when decorative AND altText is null. [WBUX-5-R1-01][A11Y-02]
+-                item.altText != null
+-                  ? decodeHtmlEntities(item.altText)
+-                  : item.isDecorative
+-                    ? ''
+-                    : item.title
++                item.altText != null ? decodeHtmlEntities(item.altText) : item.isDecorative ? '' : item.title
+               }
+               className="acx-media-selection__thumb acx-media-selection__thumb--thumb"
+               loading={eagerLoad ? 'eager' : 'lazy'}
+@@ -400,12 +392,7 @@ const MediaSelectionRow = ({
+           stable position, empty while quiet. Editor and Suggest announce through
+           props — no context provider for a two-consumer one-level hop.
+         */}
+-        <div
+-          role="status"
+-          aria-live="polite"
+-          className="screen-reader-text"
+-          data-testid="media-selection-row-status"
+-        >
++        <div role="status" aria-live="polite" className="screen-reader-text" data-testid="media-selection-row-status">
+           {polite.message}
          </div>
-       </header>
-       <StatusMessage tone="error">{copy}</StatusMessage>
-+      {reason === 'not_admitted' && onClaimAccess ? (
-+        <button type="button" className="acx-btn acx-btn-primary" onClick={onClaimAccess}>
-+          Claim access
-+        </button>
-+      ) : null}
-     </main>
-   );
- }
-diff --git a/apps/app-portal/src/styles.css b/apps/app-portal/src/styles.css
---- a/apps/app-portal/src/styles.css
-+++ b/apps/app-portal/src/styles.css
-@@ -141,10 +141,61 @@ body {
-   margin-top: var(--acx-space-lg);
+         <MediaAltInlineEditor
+@@ -415,7 +402,7 @@ const MediaSelectionRow = ({
+           isDecorative={item.isDecorative === true}
+           onPoliteAnnounce={editorAnnounce}
+           onPoliteClear={editorClear}
+-          peerCommitPending={commitOwner === 'suggest'}
++          peerCommitPending={commitOwner !== null && commitOwner !== 'editor'}
+           onCommitStart={editorCommitStart}
+           onCommitEnd={editorCommitEnd}
+         />
+@@ -426,12 +413,20 @@ const MediaSelectionRow = ({
+           isDecorative={item.isDecorative === true}
+           onPoliteAnnounce={suggestAnnounce}
+           onPoliteClear={suggestClear}
+-          peerCommitPending={commitOwner === 'editor'}
++          peerCommitPending={commitOwner !== null && commitOwner !== 'suggest'}
+           onCommitStart={suggestCommitStart}
+           onCommitEnd={suggestCommitEnd}
+         />
+         {draft ? (
+-          <QueueDraftCell mediaId={item.id} draftText={draft.draftText} title={item.title} />
++          <QueueDraftCell
++            mediaId={item.id}
++            draftText={draft.draftText}
++            title={item.title}
++            committedAlt={item.altText ?? null}
++            peerCommitPending={commitOwner !== null && commitOwner !== 'queue'}
++            onCommitStart={queueCommitStart}
++            onCommitEnd={queueCommitEnd}
++          />
+         ) : null}
+         {/* detail-meta is metadata loading, not an operator result — not a live region. */}
+         <div className="acx-media-selection__detail-meta">
+@@ -440,7 +435,11 @@ const MediaSelectionRow = ({
+               {item.mimeType ? <span className="acx-media-selection__detail-chip">{item.mimeType}</span> : null}
+               {item.dimensions ? (
+                 <span className="acx-media-selection__detail-chip">
+-                  {sprintf(__('%1$d × %2$d px', 'alt-context'), item.dimensions.width ?? 0, item.dimensions.height ?? 0)}
++                  {sprintf(
++                    __('%1$d × %2$d px', 'alt-context'),
++                    item.dimensions.width ?? 0,
++                    item.dimensions.height ?? 0,
++                  )}
+                 </span>
+               ) : null}
+             </>
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/QueueDraftCell.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/QueueDraftCell.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/QueueDraftCell.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/QueueDraftCell.tsx
+@@ -2,7 +2,13 @@ import { __, sprintf } from '@wordpress/i18n';
+ import { useEffect, useId, useRef, useState } from 'react';
+ import { useQueryClient } from '@tanstack/react-query';
+ 
+-import { resolveDescribeErrorMessage } from '../../api/describeApi';
++import {
++  DESCRIPTION_CORRECTION_CODE,
++  resolveDescribeErrorCode,
++  resolveDescribeErrorDataBooleanField,
++  resolveDescribeErrorDataField,
++  resolveDescribeErrorMessage,
++} from '../../api/describeApi';
+ import { useCorrectMediaAlt } from '../../hooks/useCorrectMediaAlt';
+ import { QUEUE_DRAFTS_HISTORY_QUERY_KEY } from '../../hooks/useQueueDrafts';
+ 
+@@ -14,10 +20,24 @@ export interface QueueDraftCellProps {
+   onApplied?: () => void;
+   // Only the single focused-review surface should claim focus; table rows mount many cells.
+   autoFocus?: boolean;
++  /** Live row alt; omitted by standalone callers without a row baseline. */
++  committedAlt?: string | null;
++  peerCommitPending?: boolean;
++  /** Synchronous exclusive claim; false means no correction may start. */
++  onCommitStart?: () => boolean;
++  onCommitEnd?: () => void;
  }
  
-+.acx-private-shell {
-+  min-height: 100%;
-+}
+ const APPLY_ERROR_FALLBACK = __('Could not save the alt text. Please try again.', 'alt-context');
+ const DESCRIBE_RUN_ITEMS_QUERY_PREFIX = ['describe-run-items'] as const;
++const COMMIT_CONFLICT_MESSAGE = __(
++  'The alt text changed since this draft was shown. Your draft has been kept. Dismiss it and review a fresh draft.',
++  'alt-context',
++);
++const COMMIT_BUSY_MESSAGE = __(
++  'Another alt text save is in progress. Please try again when it finishes.',
++  'alt-context',
++);
+ 
+ /**
+  * Inline draft chrome for one review-queue row. Accept/Save use the existing
+@@ -30,10 +50,20 @@ export const QueueDraftCell = ({
+   onDismiss,
+   onApplied,
+   autoFocus = false,
++  committedAlt,
++  peerCommitPending = false,
++  onCommitStart,
++  onCommitEnd,
+ }: QueueDraftCellProps): React.JSX.Element | null => {
+   const [isEditing, setIsEditing] = useState(false);
+   const [editDraft, setEditDraft] = useState(draftText);
+   const [dismissed, setDismissed] = useState(false);
++  const [conflictMessage, setConflictMessage] = useState<string | null>(null);
++  // The queue draft's first observed baseline survives peer saves, refetches,
++  // and opening Edit. Rebase only for this cell's own reconciled partial write.
++  const committedAltBaselineRef = useRef(committedAlt);
++  const isApplyingRef = useRef(false);
++  const shouldRestoreFocusRef = useRef(false);
+   const containerRef = useRef<HTMLDivElement | null>(null);
+   const acceptButtonRef = useRef<HTMLButtonElement | null>(null);
+   const editButtonRef = useRef<HTMLButtonElement | null>(null);
+@@ -42,7 +72,8 @@ export const QueueDraftCell = ({
+   const textareaId = useId();
+   const errorId = useId();
+   const queryClient = useQueryClient();
+-  const { mutate, isPending, error, reset } = useCorrectMediaAlt();
++  const { mutateAsync, isPending, error, reset } = useCorrectMediaAlt();
++  const errorMessage = conflictMessage ?? (error ? resolveDescribeErrorMessage(error, APPLY_ERROR_FALLBACK) : null);
+ 
+   const canAcceptDraft = draftText.trim() !== '';
+   const canSaveEdit = editDraft.trim() !== '';
+@@ -76,29 +107,72 @@ export const QueueDraftCell = ({
+     }
+   }, [isEditing]);
+ 
++  useEffect(() => {
++    if (!isPending && shouldRestoreFocusRef.current) {
++      shouldRestoreFocusRef.current = false;
++      if (isEditing) {
++        textareaRef.current?.focus();
++      } else {
++        acceptButtonRef.current?.focus();
++      }
++    }
++  }, [isPending, isEditing, error]);
 +
-+.acx-session-bar {
-+  display: flex;
-+  flex-wrap: wrap;
-+  justify-content: flex-end;
-+  align-items: center;
-+  gap: var(--acx-space-sm);
-+  padding: var(--acx-space-md) var(--acx-space-lg);
-+}
-+
-+.acx-account-nav {
-+  display: flex;
-+  flex-wrap: wrap;
-+  gap: var(--acx-space-sm);
-+  margin: var(--acx-space-md) 0;
-+}
-+
-+label {
-+  display: block;
-+  font-weight: var(--acx-font-weight-medium);
-+  margin: var(--acx-space-sm) 0;
-+}
-+
-+input,
-+select,
-+textarea {
-+  min-height: 2.75rem;
-+  width: 100%;
-+  max-width: 100%;
-+  padding: 0.5rem 0.75rem;
-+  border: 1px solid var(--acx-color-border);
-+  border-radius: var(--acx-radius-md);
-+  background: var(--acx-color-surface-alt);
-+  color: var(--acx-color-text);
-+  font: inherit;
-+}
-+
-+[role='dialog'] {
-+  background: var(--acx-color-surface-alt);
-+  border: 1px solid var(--acx-color-border);
-+  border-radius: var(--acx-radius-md);
-+  box-shadow: var(--acx-shadow-1);
-+  padding: var(--acx-space-lg);
-+  margin-top: var(--acx-space-md);
-+}
-+
- @media (max-width: 40rem) {
-   .acx-portal-header,
-   .acx-portal-actions,
--  .acx-escape {
-+  .acx-escape,
-+  .acx-session-bar,
-+  .acx-account-nav {
-     flex-direction: column;
-     align-items: stretch;
+   if (dismissed) {
+     return null;
    }
-@@ -153,3 +204,26 @@ body {
-     width: 100%;
-   }
- }
+ 
+   const applyText = (altText: string): void => {
+-    if (isPending || altText.trim() === '') {
++    if (isApplyingRef.current || isPending || peerCommitPending || altText.trim() === '') {
++      return;
++    }
++    if (committedAltBaselineRef.current !== committedAlt) {
++      setConflictMessage(COMMIT_CONFLICT_MESSAGE);
++      if (isEditing) {
++        textareaRef.current?.focus();
++      }
++      return;
++    }
++    if (!(onCommitStart?.() ?? true)) {
++      setConflictMessage((current) => current ?? COMMIT_BUSY_MESSAGE);
+       return;
+     }
+-    mutate(
++    setConflictMessage(null);
++    isApplyingRef.current = true;
++    void mutateAsync(
+       { mediaId, altText },
+       {
+         onSuccess: () => {
++          isApplyingRef.current = false;
+           void queryClient.invalidateQueries({ queryKey: DESCRIBE_RUN_ITEMS_QUERY_PREFIX });
+           void queryClient.invalidateQueries({ queryKey: QUEUE_DRAFTS_HISTORY_QUERY_KEY });
+           onApplied?.();
+           setDismissed(true);
+         },
++        onError: (err) => {
++          isApplyingRef.current = false;
++          // Match useCorrectMediaAlt's partial cache reconciliation. A retry
++          // must not mistake its own stored write for a competing human save.
++          if (resolveDescribeErrorCode(err) === DESCRIPTION_CORRECTION_CODE.PARTIAL) {
++            const stored = resolveDescribeErrorDataField(err, 'stored_alt_text');
++            const decorative = resolveDescribeErrorDataBooleanField(err, 'is_decorative');
++            if (committedAlt !== undefined && stored !== null && decorative !== null) {
++              committedAltBaselineRef.current = stored.trim() === '' ? null : stored;
++            }
++          }
++          shouldRestoreFocusRef.current = true;
++        },
+       },
++    ).then(
++      // Per-call UI callbacks stop on unmount, but the row may still exist after
++      // a draft refetch removes this cell. Hold ownership until the write settles.
++      () => onCommitEnd?.(),
++      () => onCommitEnd?.(),
+     );
+   };
+ 
+   const handleDismiss = (): void => {
+-    if (isPending) {
++    if (isApplyingRef.current || isPending) {
+       return;
+     }
+     reset();
+@@ -107,10 +181,11 @@ export const QueueDraftCell = ({
+   };
+ 
+   const handleCancelEdit = (): void => {
+-    if (isPending) {
++    if (isApplyingRef.current || isPending) {
+       return;
+     }
+     reset();
++    setConflictMessage(null);
+     setEditDraft(draftText);
+     shouldFocusEditButtonRef.current = true;
+     setIsEditing(false);
+@@ -136,8 +211,8 @@ export const QueueDraftCell = ({
+             value={editDraft}
+             onChange={(event) => setEditDraft(event.target.value)}
+             disabled={isPending}
+-            aria-invalid={error ? true : undefined}
+-            aria-describedby={error ? errorId : undefined}
++            aria-invalid={errorMessage ? true : undefined}
++            aria-describedby={errorMessage ? errorId : undefined}
+           />
+         </>
+       ) : (
+@@ -152,9 +227,9 @@ export const QueueDraftCell = ({
+       <p className="acx-media-selection__media-alt-disclosure">
+         {__('Drafted by AI — review before saving.', 'alt-context')}
+       </p>
+-      {error ? (
++      {errorMessage ? (
+         <div id={errorId} className="acx-media-selection__media-alt-error" role="alert">
+-          {resolveDescribeErrorMessage(error, APPLY_ERROR_FALLBACK)}
++          {errorMessage}
+         </div>
+       ) : null}
+       {isEditing ? (
+@@ -163,7 +238,7 @@ export const QueueDraftCell = ({
+             type="button"
+             className="button button-primary acx-media-selection__media-alt-suggest-save"
+             onClick={() => applyText(editDraft)}
+-            disabled={isPending || !canSaveEdit}
++            disabled={isPending || peerCommitPending || !canSaveEdit}
+           >
+             {isPending ? __('Saving alt text…', 'alt-context') : __('Save alt text', 'alt-context')}
+           </button>
+@@ -183,7 +258,7 @@ export const QueueDraftCell = ({
+             ref={acceptButtonRef}
+             className="button button-secondary acx-media-selection__media-alt-suggest-accept"
+             onClick={() => applyText(draftText)}
+-            disabled={isPending || !canAcceptDraft}
++            disabled={isPending || peerCommitPending || !canAcceptDraft}
+             aria-label={title ? acceptLabel : undefined}
+           >
+             {isPending ? __('Accepting draft…', 'alt-context') : __('Accept', 'alt-context')}
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaSelectionTableBody.commitExclusivity.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaSelectionTableBody.commitExclusivity.test.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaSelectionTableBody.commitExclusivity.test.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaSelectionTableBody.commitExclusivity.test.tsx
+@@ -12,7 +12,12 @@ import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-li
+ import type { ReactElement } from 'react';
+ import { beforeEach, describe, expect, it, vi } from 'vitest';
+ 
+-import { correctDescriptionHistoryItem, describeMedia } from '../../../api/describeApi';
++import {
++  correctDescriptionHistoryItem,
++  describeMedia,
++  DESCRIPTION_CORRECTION_CODE,
++  fetchDescriptionHistory,
++} from '../../../api/describeApi';
+ import type { DescriptionHistoryItem, VisualFactsResponse } from '../../../api/describeApi';
+ import { queryKeys } from '../../../api/queryKeys';
+ import type { WorkbenchMediaResponse } from '../../../api/workbenchMediaApi';
+@@ -39,11 +44,13 @@ vi.mock('../../../api/describeApi', async () => {
+     ...actual,
+     describeMedia: vi.fn(),
+     correctDescriptionHistoryItem: vi.fn(),
++    fetchDescriptionHistory: vi.fn(),
+   };
+ });
+ 
+ const describeMock = vi.mocked(describeMedia);
+ const correctMock = vi.mocked(correctDescriptionHistoryItem);
++const historyMock = vi.mocked(fetchDescriptionHistory);
+ 
+ const draft = 'A stone bridge over a calm river at dusk.';
+ const operatorAlt = 'Operator-authored alt that must not be overwritten.';
+@@ -108,8 +115,7 @@ const LiveWorkbenchRow = ({ initialItem }: { initialItem: WorkbenchMediaItem }):
+   // eslint-disable-next-line @tanstack/query/exhaustive-deps -- seed only; live truth is cache patches
+   const { data } = useQuery({
+     queryKey: workbenchKey,
+-    queryFn: (): Promise<WorkbenchMediaResponse> =>
+-      Promise.resolve({ items: [initialItem], total: 1, totalPages: 1 }),
++    queryFn: (): Promise<WorkbenchMediaResponse> => Promise.resolve({ items: [initialItem], total: 1, totalPages: 1 }),
+     initialData: { items: [initialItem], total: 1, totalPages: 1 },
+     staleTime: Infinity,
+   });
+@@ -153,6 +159,7 @@ describe('MediaSelectionTableBody — commit exclusivity [S2c-4b-i]', () => {
+   beforeEach(() => {
+     vi.resetAllMocks();
+     correctMock.mockImplementation((mediaId, altText) => Promise.resolve(successItem(mediaId, altText)));
++    historyMock.mockResolvedValue({ items: [], total: 0 });
+   });
+ 
+   it('[TEST-06] headline: generate draft, save different text via editor, Accept refuses and keeps operator text', async () => {
+@@ -412,6 +419,322 @@ describe('MediaSelectionTableBody — commit exclusivity [S2c-4b-i]', () => {
+   });
+ });
+ 
++describe('MediaSelectionTableBody — queue commit ownership [GTMBURST-ADMIN-01]', () => {
++  beforeEach(() => {
++    vi.resetAllMocks();
++    correctMock.mockImplementation((mediaId, altText) => Promise.resolve(successItem(mediaId, altText)));
++    historyMock.mockResolvedValue({
++      items: [{ ...successItem(42, existingAlt), generated_alt_text: draft, human_edit: null }],
++      total: 1,
++    });
++  });
 +
-+@media (max-width: 360px) {
-+  .acx-portal,
-+  .acx-session-bar {
-+    padding: var(--acx-space-md);
-+  }
++  const queueAction = async (action: 'Accept' | 'Edit-save'): Promise<HTMLElement> => {
++    await screen.findByRole('button', { name: 'Accept draft for Bridge' });
++    if (action === 'Edit-save') {
++      fireEvent.click(screen.getByRole('button', { name: 'Edit draft for Bridge' }));
++      fireEvent.change(screen.getByRole('textbox', { name: 'Edit draft alt text' }), {
++        target: { value: 'Reviewed queue draft.' },
++      });
++      return screen.getByRole('button', { name: 'Save alt text' });
++    }
++    return screen.getByRole('button', { name: 'Accept draft for Bridge' });
++  };
 +
-+  .acx-portal-header,
-+  .acx-portal-actions,
-+  .acx-escape,
-+  .acx-session-bar,
-+  .acx-account-nav {
-+    flex-direction: column;
-+    align-items: stretch;
-+  }
++  it.each(['Accept', 'Edit-save'] as const)(
++    '[TEST-06] editor-first: queue %s cannot start a competing correction',
++    async (action) => {
++      // Predicted RED: QueueDraftCell receives no peer lock, so its commit
++      // control stays enabled and a click starts a second correction.
++      let resolveCorrection!: (value: DescriptionHistoryItem) => void;
++      correctMock.mockReturnValueOnce(
++        new Promise<DescriptionHistoryItem>((resolve) => {
++          resolveCorrection = resolve;
++        }),
++      );
++      renderLiveRow();
++      const queueCommit = await queueAction(action);
 +
-+  .acx-btn,
-+  input,
-+  select,
-+  textarea {
-+    width: 100%;
-+  }
-+}
++      fireEvent.click(screen.getByRole('button', { name: 'Edit alt text for Bridge' }));
++      fireEvent.change(screen.getByRole('textbox', { name: /^alt text$/i }), {
++        target: { value: operatorAlt },
++      });
++      fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
++      await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
++
++      try {
++        expect(queueCommit).toBeDisabled();
++        fireEvent.click(queueCommit);
++        expect(correctMock).toHaveBeenCalledTimes(1);
++      } finally {
++        await act(async () => {
++          resolveCorrection(successItem(42, operatorAlt));
++          await Promise.resolve();
++        });
++      }
++      await waitFor(() => expect(queueCommit).not.toBeDisabled());
++    },
++  );
++
++  it.each(['Accept', 'Edit-save'] as const)(
++    'queue-first: queue %s prevents the human editor from committing until settle',
++    async (action) => {
++      // Predicted RED: queue writes do not claim the row lock, leaving human
++      // Save enabled while the queue correction is unresolved.
++      let resolveCorrection!: (value: DescriptionHistoryItem) => void;
++      correctMock.mockReturnValueOnce(
++        new Promise<DescriptionHistoryItem>((resolve) => {
++          resolveCorrection = resolve;
++        }),
++      );
++      renderLiveRow();
++      const queueCommit = await queueAction(action);
++      fireEvent.click(screen.getByRole('button', { name: 'Edit alt text for Bridge' }));
++      fireEvent.change(screen.getByRole('textbox', { name: /^alt text$/i }), {
++        target: { value: operatorAlt },
++      });
++      fireEvent.click(queueCommit);
++      await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
++
++      const humanSave = screen.getByRole('button', { name: /^save$/i });
++      try {
++        expect(humanSave).toBeDisabled();
++        fireEvent.click(humanSave);
++        expect(correctMock).toHaveBeenCalledTimes(1);
++      } finally {
++        await act(async () => {
++          resolveCorrection(successItem(42, action === 'Accept' ? draft : 'Reviewed queue draft.'));
++          await Promise.resolve();
++        });
++      }
++      await waitFor(() => expect(humanSave).not.toBeDisabled());
++      expect(screen.getByRole('textbox', { name: /^alt text$/i })).toHaveValue(operatorAlt);
++    },
++  );
++
++  it.each(['Accept', 'Edit-save'] as const)(
++    'after human save and refetch: stale queue %s refuses and preserves the draft',
++    async (action) => {
++      // Predicted RED: once the editor settles, queue applyText still accepts
++      // the old draft and overwrites the human alt instead of reporting change.
++      const { client } = renderLiveRow();
++      await screen.findByRole('button', { name: 'Accept draft for Bridge' });
++      fireEvent.click(screen.getByRole('button', { name: 'Edit alt text for Bridge' }));
++      fireEvent.change(screen.getByRole('textbox', { name: /^alt text$/i }), {
++        target: { value: operatorAlt },
++      });
++      fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
++      await waitFor(() => expect(cachedAlt(client)).toBe(operatorAlt));
++      await waitFor(() => expect(screen.queryByRole('button', { name: /saving/i })).not.toBeInTheDocument());
++
++      // A later cache refresh with the same committed human alt must not
++      // silently rebase the queue draft's original observed baseline.
++      await act(async () => {
++        client.setQueryData<WorkbenchMediaResponse>(workbenchKey, {
++          items: [seedItem(operatorAlt)],
++          total: 1,
++          totalPages: 1,
++        });
++        await client.invalidateQueries({ queryKey: ['description-history'] });
++      });
++      fireEvent.click(await queueAction(action));
++
++      expect(await screen.findByRole('alert')).toHaveTextContent(/changed/i);
++      expect(correctMock).toHaveBeenCalledTimes(1);
++      expect(cachedAlt(client)).toBe(operatorAlt);
++      if (action === 'Edit-save') {
++        expect(screen.getByRole('textbox', { name: 'Edit draft alt text' })).toHaveValue('Reviewed queue draft.');
++        fireEvent.click(screen.getByRole('button', { name: 'Cancel edit' }));
++        expect(screen.getByRole('button', { name: 'Edit draft for Bridge' })).toHaveFocus();
++      } else {
++        expect(screen.getByText(draft)).toBeInTheDocument();
++      }
++      expect(screen.getByRole('button', { name: 'Dismiss' })).not.toBeDisabled();
++      expect(document.querySelectorAll('[aria-live="polite"]')).toHaveLength(1);
++    },
++  );
++
++  it('healthy queue Accept with unchanged committed alt still writes once', async () => {
++    const { client } = renderLiveRow();
++    fireEvent.click(await queueAction('Accept'));
++
++    await waitFor(() => expect(cachedAlt(client)).toBe(draft));
++    expect(correctMock).toHaveBeenCalledTimes(1);
++    expect(correctMock).toHaveBeenCalledWith(42, draft);
++    await waitFor(() =>
++      expect(screen.queryByRole('button', { name: 'Accept draft for Bridge' })).not.toBeInTheDocument(),
++    );
++  });
++
++  it.each(['editor', 'queue'] as const)(
++    '%s-first: same-tick queue/editor clicks start only one correction',
++    async (first) => {
++      let resolveCorrection!: (value: DescriptionHistoryItem) => void;
++      correctMock.mockReturnValueOnce(
++        new Promise<DescriptionHistoryItem>((resolve) => {
++          resolveCorrection = resolve;
++        }),
++      );
++      const { client } = renderLiveRow();
++      const queueCommit = await queueAction('Accept');
++      fireEvent.click(screen.getByRole('button', { name: 'Edit alt text for Bridge' }));
++      fireEvent.change(screen.getByRole('textbox', { name: /^alt text$/i }), { target: { value: operatorAlt } });
++      const humanSave = screen.getByRole('button', { name: /^save$/i });
++      act(() => {
++        // Native clicks in one batch bypass the next-paint peer disabled guard.
++        (first === 'editor' ? humanSave : queueCommit).click();
++        (first === 'editor' ? queueCommit : humanSave).click();
++      });
++      await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
++      const savedAlt = first === 'editor' ? operatorAlt : draft;
++      expect(correctMock).toHaveBeenCalledWith(42, savedAlt);
++      await act(async () => {
++        resolveCorrection(successItem(42, savedAlt));
++        await Promise.resolve();
++      });
++      await waitFor(() => expect(cachedAlt(client)).toBe(savedAlt));
++      expect(correctMock).toHaveBeenCalledTimes(1);
++    },
++  );
++
++  it.each(['Accept', 'Edit-save'] as const)(
++    'failed queue %s releases the row and keeps draft/error/focus',
++    async (action) => {
++      let rejectCorrection!: (error: Error) => void;
++      correctMock.mockReturnValueOnce(
++        new Promise<DescriptionHistoryItem>((_resolve, reject) => {
++          rejectCorrection = reject;
++        }),
++      );
++      renderLiveRow();
++      const queueCommit = await queueAction(action);
++      fireEvent.click(screen.getByRole('button', { name: 'Edit alt text for Bridge' }));
++      fireEvent.change(screen.getByRole('textbox', { name: /^alt text$/i }), { target: { value: operatorAlt } });
++      fireEvent.click(queueCommit);
++      await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
++      const humanSave = screen.getByRole('button', { name: /^save$/i });
++      expect(humanSave).toBeDisabled();
++
++      await act(async () => {
++        rejectCorrection(new Error(JSON.stringify({ code: 'correction_failed', message: 'Correction unavailable' })));
++        await Promise.resolve();
++      });
++      expect(await screen.findByRole('alert')).toHaveTextContent('Correction unavailable');
++      await waitFor(() => expect(humanSave).not.toBeDisabled());
++      if (action === 'Edit-save') {
++        const field = screen.getByRole('textbox', { name: 'Edit draft alt text' });
++        expect(field).toHaveValue('Reviewed queue draft.');
++        expect(field).toHaveFocus();
++        expect(field).toHaveAttribute('aria-describedby', screen.getByRole('alert').id);
++      } else {
++        expect(screen.getByText(draft)).toBeInTheDocument();
++        expect(queueCommit).toHaveFocus();
++      }
++      fireEvent.click(humanSave);
++      await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(2));
++      expect(correctMock).toHaveBeenLastCalledWith(42, operatorAlt);
++      // The human save must not erase the queue's unread correction error.
++      expect(screen.getByRole('alert')).toHaveTextContent('Correction unavailable');
++    },
++  );
++
++  it.each(['queue', 'suggest'] as const)('%s-first: queue and Suggest share the exclusive row lock', async (first) => {
++    describeMock.mockResolvedValue(sampleResponse('Fresh inline suggestion.'));
++    let rejectCorrection!: (error: Error) => void;
++    correctMock.mockReturnValueOnce(
++      new Promise<DescriptionHistoryItem>((_resolve, reject) => {
++        rejectCorrection = reject;
++      }),
++    );
++    renderLiveRow();
++    const queueCommit = await queueAction('Accept');
++    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
++    await screen.findByText('Fresh inline suggestion.');
++    const suggestCommit = screen.getByRole('button', { name: /^accept$/i });
++    const firstCommit = first === 'queue' ? queueCommit : suggestCommit;
++    const secondCommit = first === 'queue' ? suggestCommit : queueCommit;
++    fireEvent.click(firstCommit);
++    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
++    expect(secondCommit).toBeDisabled();
++    fireEvent.click(secondCommit);
++    expect(correctMock).toHaveBeenCalledTimes(1);
++
++    await act(async () => {
++      rejectCorrection(new Error('Correction unavailable'));
++      await Promise.resolve();
++    });
++    await waitFor(() => expect(secondCommit).not.toBeDisabled());
++    fireEvent.click(secondCommit);
++    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(2));
++    expect(correctMock).toHaveBeenLastCalledWith(42, first === 'queue' ? 'Fresh inline suggestion.' : draft);
++  });
++
++  it('a queue partial write preserves the reviewed buffer and allows retry against reconciled alt', async () => {
++    const { client } = renderLiveRow();
++    const queueCommit = await queueAction('Edit-save');
++    correctMock.mockRejectedValueOnce(
++      new Error(
++        JSON.stringify({
++          code: DESCRIPTION_CORRECTION_CODE.PARTIAL,
++          message: 'Alt was saved but correction history failed.',
++          data: { status: 500, stored_alt_text: 'Reviewed queue draft.', is_decorative: false },
++        }),
++      ),
++    );
++    fireEvent.click(queueCommit);
++    await screen.findByRole('alert');
++    await waitFor(() => expect(cachedAlt(client)).toBe('Reviewed queue draft.'));
++    const field = screen.getByRole('textbox', { name: 'Edit draft alt text' });
++    expect(field).toHaveValue('Reviewed queue draft.');
++    expect(field).toHaveFocus();
++    fireEvent.click(screen.getByRole('button', { name: 'Save alt text' }));
++    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(2));
++    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
++  });
++
++  it.each(['success', 'failure'] as const)(
++    'queue removal during a pending %s releases only when the write settles',
++    async (outcome) => {
++      let resolveCorrection!: (value: DescriptionHistoryItem) => void;
++      let rejectCorrection!: (error: Error) => void;
++      correctMock.mockReturnValueOnce(
++        new Promise<DescriptionHistoryItem>((resolve, reject) => {
++          resolveCorrection = resolve;
++          rejectCorrection = reject;
++        }),
++      );
++      const { client } = renderLiveRow();
++      const queueCommit = await queueAction('Accept');
++      fireEvent.click(screen.getByRole('button', { name: 'Edit alt text for Bridge' }));
++      fireEvent.change(screen.getByRole('textbox', { name: /^alt text$/i }), { target: { value: operatorAlt } });
++      fireEvent.click(queueCommit);
++      await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
++      const humanSave = screen.getByRole('button', { name: /^save$/i });
++      expect(humanSave).toBeDisabled();
++
++      // A history refetch can remove just the queue cell while the row stays mounted.
++      historyMock.mockResolvedValue({ items: [], total: 0 });
++      await act(async () => {
++        await client.invalidateQueries({ queryKey: ['description-history'] });
++      });
++      await waitFor(() => expect(queueCommit).not.toBeInTheDocument());
++      expect(humanSave).toBeDisabled();
++      fireEvent.click(humanSave);
++      expect(correctMock).toHaveBeenCalledTimes(1);
++      await act(async () => {
++        if (outcome === 'success') {
++          resolveCorrection(successItem(42, draft));
++        } else {
++          rejectCorrection(new Error('Correction unavailable'));
++        }
++        await Promise.resolve();
++      });
++      await waitFor(() => expect(humanSave).not.toBeDisabled());
++      expect(screen.getByRole('textbox', { name: /^alt text$/i })).toHaveValue(operatorAlt);
++    },
++  );
++});
++
+ /**
+  * BR-01: beginCommit exclusivity lives in the state transition, not in callers.
+  * Unreachable via the two real UI surfaces (both refuse when peerCommitPending),
+@@ -421,6 +744,22 @@ describe('MediaSelectionTableBody — commit exclusivity [S2c-4b-i]', () => {
+  * setCommitOwner(owner) — the second claim would return true and steal the lock.
+  */
+ describe('MediaSelectionTableBody — beginCommit compare-and-set [S2c-4b-ii BR-01]', () => {
++  it('a late queue release cannot clear a later editor claim', () => {
++    const { result } = renderHook(() => useRowCommitLock());
++    act(() => {
++      expect(result.current.beginCommit('queue')).toBe(true);
++      expect(result.current.beginCommit('editor')).toBe(false);
++      result.current.endCommit('suggest');
++    });
++    expect(result.current.commitOwner).toBe('queue');
++    act(() => {
++      result.current.endCommit('queue');
++      expect(result.current.beginCommit('editor')).toBe(true);
++      result.current.endCommit('queue');
++    });
++    expect(result.current.commitOwner).toBe('editor');
++  });
++
+   it('refuses a second claim while a lock is held; end is compare-and-clear', () => {
+     const { result } = renderHook(() => useRowCommitLock());
+ 
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/QueueDraftCell.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/QueueDraftCell.test.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/QueueDraftCell.test.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/QueueDraftCell.test.tsx
+@@ -1,11 +1,15 @@
+ import type { QueryClient } from '@tanstack/react-query';
+-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
++import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+ import { __ } from '@wordpress/i18n';
+ import type { ReactElement } from 'react';
+ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+ 
+ import { QueueDraftCell } from '../QueueDraftCell';
+-import { applyDescribeRunDrafts, correctDescriptionHistoryItem } from '../../../api/describeApi';
++import {
++  applyDescribeRunDrafts,
++  correctDescriptionHistoryItem,
++  DESCRIPTION_CORRECTION_CODE,
++} from '../../../api/describeApi';
+ import { buildTestQueryClient, createQueryWrapper } from '../../../test-utils/queryClient';
+ 
+ vi.mock('@wordpress/i18n', () => ({
+@@ -169,4 +173,80 @@ describe('QueueDraftCell', () => {
+     expect(correctMock).toHaveBeenCalledTimes(1);
+     expect(busy).toBeDisabled();
+   });
++
++  it.each(['Accept', 'Edit-save'] as const)('does not write or release a refused row claim for %s', async (action) => {
++    const onCommitStart = vi.fn(() => false);
++    const onCommitEnd = vi.fn();
++    renderCell(
++      <QueueDraftCell mediaId={71} draftText="A flower." onCommitStart={onCommitStart} onCommitEnd={onCommitEnd} />,
++      client,
++    );
++    if (action === 'Edit-save') {
++      fireEvent.click(screen.getByRole('button', { name: /^edit draft$/i }));
++      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'My reviewed flower draft.' } });
++    }
++    fireEvent.click(screen.getByRole('button', { name: action === 'Accept' ? /^accept$/i : /^save alt text$/i }));
++
++    expect(await screen.findByRole('alert')).toHaveTextContent(/save is in progress/i);
++    expect(onCommitStart).toHaveBeenCalledTimes(1);
++    expect(onCommitEnd).not.toHaveBeenCalled();
++    expect(correctMock).not.toHaveBeenCalled();
++    if (action === 'Edit-save') {
++      expect(screen.getByRole('textbox')).toHaveValue('My reviewed flower draft.');
++    } else {
++      expect(screen.getByText('A flower.')).toBeInTheDocument();
++    }
++  });
++
++  it('blocks same-tick duplicate writes even for a standalone cell', async () => {
++    correctMock.mockImplementation(() => new Promise(() => undefined));
++    renderCell(<QueueDraftCell mediaId={71} draftText="A flower." />, client);
++    const accept = screen.getByRole('button', { name: /^accept$/i });
++    // Both clicks arrive before React paints disabled/isPending.
++    act(() => {
++      accept.click();
++      accept.click();
++    });
++    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
++  });
++
++  it('preserves the edit buffer and associates a stale-baseline alert with the textarea', () => {
++    const { rerender } = renderCell(<QueueDraftCell mediaId={71} draftText="A flower." committedAlt={null} />, client);
++    fireEvent.click(screen.getByRole('button', { name: /^edit draft$/i }));
++    const field = screen.getByRole('textbox');
++    fireEvent.change(field, { target: { value: 'My reviewed flower draft.' } });
++    rerender(<QueueDraftCell mediaId={71} draftText="A flower." committedAlt="Human alt" />);
++    fireEvent.click(screen.getByRole('button', { name: /^save alt text$/i }));
++
++    expect(correctMock).not.toHaveBeenCalled();
++    expect(field).toHaveValue('My reviewed flower draft.');
++    expect(field).toHaveFocus();
++    expect(field).toHaveAttribute('aria-invalid', 'true');
++    expect(field).toHaveAttribute('aria-describedby', screen.getByRole('alert').id);
++    fireEvent.click(screen.getByRole('button', { name: /^cancel edit$/i }));
++    expect(screen.getByRole('button', { name: /^edit draft$/i })).toHaveFocus();
++    // Cancel/Edit must not silently make this same stale draft committable.
++    fireEvent.click(screen.getByRole('button', { name: /^accept$/i }));
++    expect(screen.getByRole('alert')).toHaveTextContent(/changed/i);
++    expect(correctMock).not.toHaveBeenCalled();
++  });
++
++  it('allows a standalone cell without committedAlt to retry a partial write', async () => {
++    correctMock.mockRejectedValueOnce(
++      new Error(
++        JSON.stringify({
++          code: DESCRIPTION_CORRECTION_CODE.PARTIAL,
++          message: 'Alt was saved but correction history failed.',
++          data: { status: 500, stored_alt_text: 'A flower.', is_decorative: false },
++        }),
++      ),
++    );
++    renderCell(<QueueDraftCell mediaId={71} draftText="A flower." />, client);
++    fireEvent.click(screen.getByRole('button', { name: /^accept$/i }));
++    await screen.findByRole('alert');
++    await waitFor(() => expect(screen.getByRole('button', { name: /^accept$/i })).not.toBeDisabled());
++    fireEvent.click(screen.getByRole('button', { name: /^accept$/i }));
++    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(2));
++    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
++  });
+ });

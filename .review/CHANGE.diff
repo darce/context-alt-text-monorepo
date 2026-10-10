@@ -1,1333 +1,844 @@
-diff --git a/apps/app-portal/.env.example b/apps/app-portal/.env.example
---- a/apps/app-portal/.env.example
-+++ b/apps/app-portal/.env.example
-@@ -7,3 +7,10 @@ VITE_CLERK_FAPI=https://clerk.altcontext.com
+diff --git a/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py b/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
+--- a/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
++++ b/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
+@@ -9,6 +9,7 @@ ObjectStore staging, which is the S9 ``local_cpu`` async path. Mounted at
  
- # Public build-time portal flag. false/0/off renders the designed unavailable screen.
- VITE_PORTAL_ENABLED=true
+ from __future__ import annotations
+ 
++import asyncio
+ import hashlib
+ import json
+ import logging
+@@ -1854,6 +1855,65 @@ async def _maybe_purge_expired_single_runs(session_factory: async_sessionmaker[A
+         _logger.debug("purge_expired_single_runs failed", exc_info=True)
+ 
+ 
++async def _reconcile_undelivered_describe_job(
++    *,
++    session: AsyncSession,
++    session_factory: async_sessionmaker[AsyncSession] | None,
++    tenant_id: uuid.UUID,
++    run_id: uuid.UUID,
++    media_id: int,
++    cancelled: bool,
++    run_created: bool,
++) -> None:
++    """Rollback an uncommitted enqueue, or fail its committed orphan.
 +
-+# Public billing flag. Only explicit true/1/on/yes enables checkout and manage.
-+# Default is disabled. Do not invent a price, catalog, or product ID here.
-+VITE_PAYMENTS_ENABLED=false
++    Probe even when commit raised: the server may have committed before the
++    caller observed an error/cancellation. A failed INSERT owns no durable
++    row: an idempotent racing enqueue may have created that same job id.
++    No worker has received ownership of a run created here,
++    so a persisted item cannot truthfully remain queued. Use tenant context,
++    never maintenance bypass, on the independent reconciliation transaction.
++    """
++    await session.rollback()
++    if run_created and session_factory is not None:
++        async with session_factory() as cleanup_session:
++            await set_tenant_context(cleanup_session, tenant_id)
++            await DescribeRunRepository(cleanup_session).set_item_failed(
++                tenant_id=tenant_id,
++                run_id=run_id,
++                media_id=media_id,
++                error="describe job enqueue cancelled"
++                if cancelled
++                else "describe job enqueue failed before worker delivery",
++            )
++            await cleanup_session.commit()
++    # Billing is owned by admit_usage and evidence-based recovery. In
++    # particular, cancellation retains RESERVED usage under that contract;
++    # the terminal item above supplies durable evidence for its recovery.
 +
-+# Public plan code accepted by the backend catalog map. Leave blank when payments are disabled.
-+VITE_PUBLIC_PLAN_CODE=
-diff --git a/apps/app-portal/src/App.tsx b/apps/app-portal/src/App.tsx
---- a/apps/app-portal/src/App.tsx
-+++ b/apps/app-portal/src/App.tsx
-@@ -1,9 +1,19 @@
- import { ClerkProvider, SignIn, SignUp, UserButton, useAuth, useUser } from '@clerk/react';
--import { useCallback, useEffect, useRef, useState } from 'react';
-+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
- import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-+import { createPortalBillingClient } from './api/portalBilling';
-+import { createPortalClaimClient } from './api/portalClaim';
-+import { createPortalKeyClient } from './api/portalKeys';
- import { fetchPortalMe, PortalMeOutcome, type PortalMeResult } from './api/portalMe';
-+import { createPortalRequest } from './api/portalRequest';
-+import { createPortalUsageClient } from './api/portalUsage';
-+import { WordPressTestConnectionGuidance } from './components/WordPressTestConnectionGuidance';
- import { readPortalConfig, type PortalRuntimeConfig } from './config';
- import { AccountScreen } from './screens/AccountScreen';
-+import { BillingReturnScreen } from './screens/BillingReturnScreen';
-+import { BillingScreen } from './screens/BillingScreen';
-+import { ClaimScreen } from './screens/ClaimScreen';
-+import { KeysScreen } from './screens/KeysScreen';
- import { LogoutScreen } from './screens/LogoutScreen';
- import { NotAdmittedScreen } from './screens/NotAdmittedScreen';
- import { OutageScreen } from './screens/OutageScreen';
-@@ -11,6 +21,7 @@ import { SignInScreen } from './screens/SignInScreen';
- import { SignUpScreen } from './screens/SignUpScreen';
- import { SignedOutScreen } from './screens/SignedOutScreen';
- import { UnavailableScreen } from './screens/UnavailableScreen';
-+import { UsageScreen } from './screens/UsageScreen';
- 
- export type AppProps = {
-   config?: PortalRuntimeConfig;
-@@ -37,6 +48,7 @@ type AccountView =
- type LogoutView = 'idle' | 'loading' | 'error';
- 
- const CLERK_LOAD_TIMEOUT_MS = 8_000;
-+const PORTAL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
- 
- function isEmailVerified(user: ReturnType<typeof useUser>['user']): boolean {
-   const status = user?.primaryEmailAddress?.verification?.status;
-@@ -82,15 +94,45 @@ function ownedAccount(account: AccountView, owner: AccountOwner | null): Account
-   return { status: 'loading', owner };
- }
- 
-+function readAttemptId(value: string | null | undefined): string | null {
-+  if (typeof value !== 'string' || !PORTAL_UUID_RE.test(value)) {
-+    return null;
-+  }
-+  return value;
-+}
 +
-+function paymentsFromConfig(config: PortalRuntimeConfig): { paymentsEnabled: boolean; publicPlanCode: string | null } {
-+  const plan = typeof config.publicPlanCode === 'string' ? config.publicPlanCode.trim() : '';
-+  return {
-+    paymentsEnabled: config.paymentsEnabled === true,
-+    publicPlanCode: plan.length > 0 ? plan : null,
-+  };
-+}
++async def _finish_enqueue_cleanup(**kwargs) -> None:
++    """Keep cleanup alive through repeated cancellation and preserve the error."""
++    cleanup = asyncio.create_task(_reconcile_undelivered_describe_job(**kwargs))
++    interrupted = False
++    try:
++        while not cleanup.done():
++            try:
++                await asyncio.shield(cleanup)
++            except asyncio.CancelledError:
++                # Delay propagation until the transaction finishes. This also
++                # preserves cancellation arriving during ordinary-error cleanup.
++                interrupted = True
++                continue
++        cleanup.result()
++    except Exception:
++        # Leave evidence for restart recovery if the database is unavailable;
++        # never claim enqueue success or replace the original failure.
++        _logger.exception("undelivered describe job cleanup failed run_id=%s", kwargs["run_id"])
++    if interrupted:
++        raise asyncio.CancelledError
 +
-+function SessionEscape({ userMenu, onSignOut }: { userMenu: ReactNode; onSignOut: () => void }) {
-+  return (
-+    <div className="acx-session-bar">
-+      {userMenu}
-+      <button type="button" className="acx-btn" onClick={onSignOut}>
-+        Sign out
-+      </button>
-+    </div>
-+  );
-+}
 +
- function PortalShell({
-   fetchImpl,
-   clerkLoadTimeoutMs,
-   portalMeTimeoutMs,
-+  paymentsEnabled,
-+  publicPlanCode,
-   onRetryClerk,
- }: {
-   fetchImpl: typeof fetch;
-   clerkLoadTimeoutMs: number;
-   portalMeTimeoutMs: number;
-+  paymentsEnabled: boolean;
-+  publicPlanCode: string | null;
-   onRetryClerk: () => void;
- }) {
-   const { isLoaded, isSignedIn, userId, sessionId, getToken, signOut } = useAuth();
-@@ -101,6 +143,7 @@ function PortalShell({
-   const [account, setAccount] = useState<AccountView>({ status: 'idle' });
-   const [logout, setLogout] = useState<LogoutView>('idle');
-   const [fetchEpoch, setFetchEpoch] = useState(0);
-+  const [returnAttemptId, setReturnAttemptId] = useState<string | null>(null);
-   const epochRef = useRef(0);
-   const ownerRef = useRef<AccountOwner | null>(null);
-   const logoutRef = useRef<LogoutView>('idle');
-@@ -109,8 +152,10 @@ function PortalShell({
-   const activeOwner = isSignedIn ? readOwner(userId, sessionId) : null;
-   if (activeOwner && account.status !== 'idle' && !ownersMatch(account.owner, activeOwner)) {
-     setAccount({ status: 'loading', owner: activeOwner });
-+    setReturnAttemptId(null);
-   } else if (!isSignedIn && account.status !== 'idle') {
-     setAccount({ status: 'idle' });
-+    setReturnAttemptId(null);
-   }
-   const displayAccount = ownedAccount(account, activeOwner);
+ @router.post(
+     "/describe/async",
+     response_model=DescribeJobResult,
+@@ -1921,23 +1981,30 @@ async def enqueue_describe_image(
+                 raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "describe job was not persisted")
+             return _job_result_from_item(run_id=existing.id, item=item)
  
-@@ -119,6 +164,27 @@ function PortalShell({
-   logoutRef.current = logout;
-   getTokenRef.current = getToken;
+-        refusal = _ASYNC_ADMISSION.try_acquire(image_len)
++        run_id = bound_usage_job_id(ticket, job_id)
++        task_count = len(background_tasks.tasks)
++        admission_gate = _ASYNC_ADMISSION
++        refusal = admission_gate.try_acquire(image_len)
+         if refusal is not None:
+             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, refusal)
  
-+  const ownerUserId = activeOwner?.userId ?? '';
-+  const ownerSessionId = activeOwner?.sessionId ?? '';
-+  const request = useMemo(() => {
-+    if (!ownerUserId) {
-+      return null;
-+    }
-+    const captured = { userId: ownerUserId, sessionId: ownerSessionId };
-+    return createPortalRequest({
-+      getToken: () => getTokenRef.current(),
-+      fetchImpl,
-+      timeoutMs: portalMeTimeoutMs,
-+      owner: captured,
-+      currentOwner: () => ownerRef.current,
-+    });
-+  }, [fetchImpl, ownerSessionId, ownerUserId, portalMeTimeoutMs]);
-+
-+  const keyClient = useMemo(() => (request ? createPortalKeyClient(request) : null), [request]);
-+  const usageClient = useMemo(() => (request ? createPortalUsageClient(request) : null), [request]);
-+  const claimClient = useMemo(() => (request ? createPortalClaimClient(request) : null), [request]);
-+  const billingClient = useMemo(() => (request ? createPortalBillingClient(request) : null), [request]);
-+
-   useEffect(() => {
-     if (isLoaded) {
-       setClerkTimedOut(false);
-@@ -185,6 +251,7 @@ function PortalShell({
-   }, [fetchEpoch, fetchImpl, isLoaded, isSignedIn, logout, portalMeTimeoutMs, sessionId, user, userId]);
+-        session_factory = worker_session_factory(session)
+-        audit_sink = _BackgroundDescriptionAuditSink(session_factory)
+-        metrics = _DescriptionMetricsSink()
++        session_factory = None
++        run_created = False
++        delivered = False
+         try:
+-            run_id = await repo.create_single_run(
++            session_factory = worker_session_factory(session)
++            audit_sink = _BackgroundDescriptionAuditSink(session_factory)
++            metrics = _DescriptionMetricsSink()
++            await repo.create_single_run(
+                 tenant_id=submission.tenant_uuid,
+                 media_id=envelope.media_id,
+                 image_bytes=submission.image_bytes,
+                 created_by_user_id=getattr(auth, "user_id", None),
+-                run_id=bound_usage_job_id(ticket, job_id),
++                run_id=run_id,
+                 operation_id=operation_id,
+                 request_digest=usage_fingerprint,
+             )
++            run_created = True
+             await _bind_run_usage(
+                 session,
+                 tenant_id=submission.tenant_uuid,
+@@ -1948,47 +2015,59 @@ async def enqueue_describe_image(
+             await maybe_consume_demo_quota(auth, session, units=1)
+             await set_tenant_context(session, submission.tenant_uuid)
+             await session.commit()
+-        except HTTPException:
+-            _ASYNC_ADMISSION.release(image_len)
+-            raise
+-        except Exception as exc:
+-            # Paired release on any create/commit failure [RES-04]; surface 500 not 200.
+-            _ASYNC_ADMISSION.release(image_len)
+-            raise HTTPException(
+-                status.HTTP_500_INTERNAL_SERVER_ERROR,
+-                "describe job enqueue failed",
+-            ) from exc
+-
+-        await _maybe_purge_expired_single_runs(session_factory)
+-        await dump_load_snapshot(session_factory)
  
-   const handleSignOut = useCallback(async () => {
-+    setReturnAttemptId(null);
-     setAccount({ status: 'idle' });
-     setLogout('loading');
-     setFetchEpoch((value) => value + 1);
-@@ -201,8 +268,25 @@ function PortalShell({
-     setFetchEpoch((value) => value + 1);
-   }, []);
+-        background_tasks.add_task(
+-            _run_async_describe_job_and_release,
+-            tenant_id=submission.tenant_uuid,
+-            run_id=run_id,
+-            session_factory=session_factory,
+-            cpu_adapter=cpu_adapter,
+-            gpu_adapter=gpu_adapter,
+-            # One provisional pass + however many GPU-final passes the adapter
+-            # makes (ensemble: n_views; raw: 1 -> preserves the original 2x budget)
+-            # so N-view jobs cannot time out by construction (VLM4-RC-BR-01) [RES-02].
+-            job_timeout_seconds=settings.generation_timeout_seconds * (1 + getattr(gpu_adapter, "n_passes", 1)),
+-            audit_sink=audit_sink,
+-            metrics=metrics,
+-            context=submission.context,
+-            image_len=image_len,
+-        )
+-
+-        item = await repo.get_single_run_item(tenant_id=submission.tenant_uuid, run_id=run_id)
+-        if item is None:  # pragma: no cover - defensive only
+-            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "describe job was not persisted")
+-        return _job_result_from_item(run_id=run_id, item=item)
++            await _maybe_purge_expired_single_runs(session_factory)
++            await dump_load_snapshot(session_factory)
++            # SET LOCAL ended at commit; the response SELECT starts a new
++            # tenant-scoped transaction even with expire_on_commit=False.
++            await set_tenant_context(session, submission.tenant_uuid)
++            item = await repo.get_single_run_item(tenant_id=submission.tenant_uuid, run_id=run_id)
++            if item is None:
++                raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "describe job was not persisted")
++            result = _job_result_from_item(run_id=run_id, item=item)
++            # Construct the response before registering delivery. No await or
++            # fallible projection remains between ownership transfer and return.
++            background_tasks.add_task(
++                _run_async_describe_job_and_release,
++                tenant_id=submission.tenant_uuid,
++                run_id=run_id,
++                session_factory=session_factory,
++                cpu_adapter=cpu_adapter,
++                gpu_adapter=gpu_adapter,
++                # CPU provisional plus all GPU-final passes (VLM4-RC-BR-01).
++                job_timeout_seconds=settings.generation_timeout_seconds * (1 + getattr(gpu_adapter, "n_passes", 1)),
++                audit_sink=audit_sink,
++                metrics=metrics,
++                context=submission.context,
++                image_len=image_len,
++                admission_gate=admission_gate,
++            )
++            delivered = True
++            return result
++        except (Exception, asyncio.CancelledError) as exc:
++            del background_tasks.tasks[task_count:]
++            await _finish_enqueue_cleanup(
++                session=session,
++                session_factory=session_factory,
++                tenant_id=submission.tenant_uuid,
++                run_id=run_id,
++                media_id=envelope.media_id,
++                cancelled=isinstance(exc, asyncio.CancelledError),
++                run_created=run_created,
++            )
++            if isinstance(exc, (HTTPException, asyncio.CancelledError)):
++                raise
++            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "describe job enqueue failed") from exc
++        finally:
++            if not delivered:
++                admission_gate.release(image_len)
  
-+  const handleClaimed = useCallback(() => {
-+    if (!ownersMatch(activeOwner, ownerRef.current)) {
-+      return;
-+    }
-+    if (logoutRef.current !== 'idle') {
-+      return;
-+    }
-+    setFetchEpoch((value) => value + 1);
-+  }, [activeOwner]);
-+
-+  const signOutNow = () => void handleSignOut();
-   const userMenu = <UserButton />;
-   const path = location.pathname;
-+  const wrapPrivate = (node: ReactNode) => (
-+    <div className="acx-private-shell">
-+      <SessionEscape userMenu={userMenu} onSignOut={signOutNow} />
-+      {node}
-+    </div>
-+  );
  
-   if (clerkTimedOut && !isLoaded) {
-     return <OutageScreen kind="clerk" onRetry={onRetryClerk} />;
-@@ -237,21 +321,30 @@ function PortalShell({
-     return <Navigate to="/" replace />;
-   }
-   if (displayAccount.status === 'email_unverified') {
--    return <NotAdmittedScreen reason="email_unverified" userMenu={userMenu} onSignOut={() => void handleSignOut()} />;
-+    return <NotAdmittedScreen reason="email_unverified" userMenu={userMenu} onSignOut={signOutNow} />;
-   }
-   if (displayAccount.status === 'not_admitted') {
--    return <NotAdmittedScreen reason="not_admitted" userMenu={userMenu} onSignOut={() => void handleSignOut()} />;
--  }
--  if (displayAccount.status === 'outage') {
-+    if (path.startsWith('/claim') && claimClient) {
-+      return wrapPrivate(
-+        <ClaimScreen
-+          key={`${displayAccount.owner.userId}:${displayAccount.owner.sessionId}`}
-+          client={claimClient}
-+          onClaimed={handleClaimed}
-+        />,
-+      );
-+    }
-     return (
--      <OutageScreen
--        kind="backend"
--        onRetry={handleRetryFetch}
-+      <NotAdmittedScreen
-+        reason="not_admitted"
-         userMenu={userMenu}
--        onSignOut={() => void handleSignOut()}
-+        onSignOut={signOutNow}
-+        onClaimAccess={() => navigate('/claim')}
-       />
-     );
-   }
-+  if (displayAccount.status === 'outage') {
-+    return <OutageScreen kind="backend" onRetry={handleRetryFetch} userMenu={userMenu} onSignOut={signOutNow} />;
-+  }
-   if (displayAccount.status === 'unauthorized') {
-     return (
-       <AccountScreen
-@@ -259,18 +352,89 @@ function PortalShell({
-         tenantId={null}
-         mode="error"
-         userMenu={userMenu}
--        onSignOut={() => void handleSignOut()}
-+        onSignOut={signOutNow}
-         onRetry={handleRetryFetch}
-       />
-     );
-   }
-+  if (displayAccount.status !== 'ok') {
-+    return (
-+      <AccountScreen
-+        personName={personName(user)}
-+        tenantId={null}
-+        mode={displayAccount.status === 'empty' ? 'empty' : 'loading'}
-+        userMenu={userMenu}
-+        onSignOut={signOutNow}
-+      />
-+    );
-+  }
-+
-+  const featureKey = `${displayAccount.owner.userId}:${displayAccount.owner.sessionId}:${displayAccount.tenantId}`;
-+  if (path.startsWith('/claim')) {
-+    return <Navigate to="/" replace />;
-+  }
-+  if (path.startsWith('/keys/wordpress')) {
-+    return wrapPrivate(
-+      <WordPressTestConnectionGuidance onClose={() => navigate('/keys')} onReturnToKeys={() => navigate('/keys')} />,
-+    );
-+  }
-+  if (path.startsWith('/keys') && keyClient) {
-+    return wrapPrivate(
-+      <KeysScreen
-+        client={keyClient}
-+        sessionKey={featureKey}
-+        onNavigateToUsage={() => navigate('/usage')}
-+        onNavigateToBilling={() => navigate('/billing')}
-+        onOpenWordPressGuidance={() => navigate('/keys/wordpress')}
-+      />,
-+    );
-+  }
-+  if (path.startsWith('/usage') && usageClient) {
-+    return wrapPrivate(
-+      <UsageScreen
-+        client={usageClient}
-+        sessionKey={featureKey}
-+        onNavigateToKeys={() => navigate('/keys')}
-+        onNavigateToBilling={() => navigate('/billing')}
-+      />,
-+    );
-+  }
-+  if (path.startsWith('/billing/return') && billingClient) {
-+    return wrapPrivate(
-+      <BillingReturnScreen
-+        client={billingClient}
-+        publicPlanCode={publicPlanCode}
-+        paymentsEnabled={paymentsEnabled}
-+        attemptId={returnAttemptId}
-+        onNavigateToBilling={() => navigate('/billing')}
-+        onNavigateToUsage={() => navigate('/usage')}
-+      />,
-+    );
-+  }
-+  if (path.startsWith('/billing') && billingClient) {
-+    return wrapPrivate(
-+      <BillingScreen
-+        client={billingClient}
-+        publicPlanCode={publicPlanCode}
-+        paymentsEnabled={paymentsEnabled}
-+        onNavigateToReturn={(attemptId) => {
-+          setReturnAttemptId(readAttemptId(attemptId));
-+          navigate('/billing/return');
-+        }}
-+        onNavigateToUsage={() => navigate('/usage')}
-+      />,
-+    );
-+  }
-   return (
-     <AccountScreen
-       personName={personName(user)}
--      tenantId={displayAccount.status === 'ok' ? displayAccount.tenantId : null}
--      mode={displayAccount.status === 'ok' ? 'default' : displayAccount.status === 'empty' ? 'empty' : 'loading'}
-+      tenantId={displayAccount.tenantId}
-+      mode="default"
-       userMenu={userMenu}
--      onSignOut={() => void handleSignOut()}
-+      onSignOut={signOutNow}
-+      onNavigateToKeys={() => navigate('/keys')}
-+      onNavigateToUsage={() => navigate('/usage')}
-+      onNavigateToBilling={() => navigate('/billing')}
-     />
-   );
- }
-@@ -283,6 +447,7 @@ export function App({
- }: AppProps = {}) {
-   const navigate = useNavigate();
-   const [providerEpoch, setProviderEpoch] = useState(0);
-+  const payments = paymentsFromConfig(config);
+ async def _run_async_describe_job_and_release(
+     *,
+     image_len: int,
+     session_factory: async_sessionmaker[AsyncSession],
++    admission_gate: AsyncAdmissionGate | None = None,
+     **kwargs,
+ ) -> None:
+     try:
+@@ -2000,7 +2079,7 @@ async def _run_async_describe_job_and_release(
+             kwargs.get("run_id"),
+         )
+     finally:
+-        _ASYNC_ADMISSION.release(image_len)
++        (admission_gate if admission_gate is not None else _ASYNC_ADMISSION).release(image_len)
+         await dump_load_snapshot(session_factory)
  
-   if (!config.portalEnabled) {
-     return <UnavailableScreen mode="degraded" />;
-@@ -315,6 +480,8 @@ export function App({
-               fetchImpl={fetchImpl}
-               clerkLoadTimeoutMs={clerkLoadTimeoutMs}
-               portalMeTimeoutMs={portalMeTimeoutMs}
-+              paymentsEnabled={payments.paymentsEnabled}
-+              publicPlanCode={payments.publicPlanCode}
-               onRetryClerk={() => setProviderEpoch((value) => value + 1)}
-             />
-           }
-diff --git a/apps/app-portal/src/__tests__/account-navigation.test.tsx b/apps/app-portal/src/__tests__/account-navigation.test.tsx
+ 
+diff --git a/apps/prototype-description-service/scene/tests/test_gtmburst_async_enqueue.py b/apps/prototype-description-service/scene/tests/test_gtmburst_async_enqueue.py
 new file mode 100644
 --- /dev/null
-+++ b/apps/app-portal/src/__tests__/account-navigation.test.tsx
-@@ -0,0 +1,422 @@
-+import { screen, waitFor } from '@testing-library/react';
-+import userEvent from '@testing-library/user-event';
-+import { flushSync } from 'react-dom';
-+import { afterEach, describe, expect, it, vi } from 'vitest';
-+import { parsePortalConfig } from '../config';
-+import { clerkDouble } from './clerkDouble';
-+import { renderPortal } from './renderPortal';
++++ b/apps/prototype-description-service/scene/tests/test_gtmburst_async_enqueue.py
+@@ -0,0 +1,455 @@
++"""GTMBURST-ASYNC-01/02: real persistence with faults before worker delivery.
 +
-+vi.mock('@clerk/react', async () => {
-+  const doubles = await import('./clerkDouble');
-+  return {
-+    ClerkProvider: doubles.ClerkProviderStub,
-+    SignIn: doubles.SignInStub,
-+    SignUp: doubles.SignUpStub,
-+    UserButton: doubles.UserButtonStub,
-+    useAuth: doubles.useAuthStub,
-+    useUser: doubles.useUserStub,
-+  };
-+});
++TEST-06 / TEST-15 (heuristics-canon v0.25.6): removing enqueue ownership
++must make the fresh-key retry fail; removing reseeding must hide the item.
++"""
 +
-+const TENANT = '11111111-1111-4111-8111-111111111111';
-+const KEY_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-+const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
-+const INVITATION = 'raw-invitation-token-once';
++from __future__ import annotations
 +
-+function jsonResponse(status: number, body: unknown): Response {
-+  return new Response(JSON.stringify(body), {
-+    status,
-+    headers: { 'Content-Type': 'application/json' },
-+  });
-+}
++import asyncio
++import io
++import json
++import uuid
++from dataclasses import replace
++from types import SimpleNamespace
 +
-+function meBody(tenantId = TENANT) {
-+  return {
-+    tenant_id: tenantId,
-+    issuer: 'https://clerk.altcontext.com',
-+    subject: 'user_1',
-+    email: 'ada@example.test',
-+  };
-+}
++import pytest
++import pytest_asyncio
++from fastapi import BackgroundTasks, HTTPException
++from sqlalchemy import select
++from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
++from starlette.datastructures import FormData, Headers, UploadFile
 +
-+function keysPage() {
-+  return {
-+    data: [
-+      {
-+        id: KEY_ID,
-+        tenant_id: TENANT,
-+        created_at: '2026-09-01T00:00:00Z',
-+        expires_at: '2026-12-01T00:00:00Z',
-+        revoked_at: null,
-+        rate_limit_tier: 'standard',
-+        lifetime_seconds: 3600,
-+      },
++from db.models import Tenant
++from db.models.base_imports import Base
++from db.models.scene import DescribeRun, DescribeRunItem
++from recognition.domain.portal_contracts import UsageTicket
++from scene.domain.describe_run import TERMINAL_RUN_STATUSES, DescribeItemStatus
++from scene.interface_adapters.http.routers import describe as route
++
++TENANT = uuid.UUID("00000000-0000-0000-0000-0000000000bb")
++IMAGE = b"enqueue-image"
++
++
++class CountingGate(route.AsyncAdmissionGate):
++    def __init__(self):
++        super().__init__(max_jobs=1, max_retained_image_bytes=len(IMAGE))
++        self.releases = 0
++
++    def release(self, image_len):
++        self.releases += 1
++        super().release(image_len)
++
++
++class Admission:
++    def __init__(self):
++        self.released = []
++
++    async def reserve(self, tenant_id, *, idempotency_key, job_id, cost_units, **kwargs):
++        return UsageTicket(
++            uuid.uuid4(),
++            tenant_id,
++            idempotency_key,
++            cost_units,
++            operation_id=kwargs["operation_id"],
++            request_fingerprint=kwargs["request_fingerprint"],
++            job_id=job_id,
++            fence_token="enqueue-fence",
++        )
++
++    async def commit(self, ticket):
++        pass
++
++    async def release(self, ticket):
++        self.released.append(ticket)
++
++    async def release_fenced(self, ticket, *, fence_token):
++        assert fence_token == ticket.fence_token
++        await self.release(ticket)
++
++
++class Harness:
++    def __init__(self, factory):
++        self.factory = factory
++        self.admission = Admission()
++
++    async def submit(self, *, tasks=None, operation=None, image=IMAGE, session=None):
++        operation = operation or uuid.uuid4().hex
++        form = FormData(
++            [
++                ("request", json.dumps({"tenant_id": str(TENANT), "media_id": 42})),
++                ("operation_id", operation),
++                (
++                    "image_42",
++                    UploadFile(
++                        io.BytesIO(image), filename="image.jpg", headers=Headers({"content-type": "image/jpeg"})
++                    ),
++                ),
++            ]
++        )
++
++        async def request_form():
++            return form
++
++        async def invoke(current):
++            return await route.enqueue_describe_image(
++                background_tasks=tasks if tasks is not None else BackgroundTasks(),
++                request=SimpleNamespace(form=request_form),
++                auth=SimpleNamespace(tenant_claim=str(TENANT), user_id=None),
++                session=current,
++                cpu_adapter=SimpleNamespace(),
++                gpu_adapter=SimpleNamespace(n_passes=1),
++                usage_admission_service=self.admission,
++            )
++
++        if session is not None:
++            return await invoke(session)
++        async with self.factory() as current:
++            return await invoke(current)
++
++    async def rows(self):
++        async with self.factory() as session:
++            return list((await session.scalars(select(DescribeRun))).all()), list(
++                (await session.scalars(select(DescribeRunItem))).all()
++            )
++
++
++@pytest.fixture
++def gate(monkeypatch):
++    gate = CountingGate()
++    monkeypatch.setattr(route, "_ASYNC_ADMISSION", gate)
++
++    async def noop(*args, **kwargs):
++        pass
++
++    monkeypatch.setattr(route, "_maybe_purge_expired_single_runs", noop)
++    monkeypatch.setattr(route, "dump_load_snapshot", noop)
++    monkeypatch.setattr(route, "run_async_describe_job", noop)
++    return gate
++
++
++@pytest_asyncio.fixture
++async def harness(tmp_path, gate):
++    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'enqueue.db'}")
++    async with engine.begin() as conn:
++        await conn.run_sync(
++            Base.metadata.create_all,
++            tables=[
++                Tenant.__table__,
++                DescribeRun.__table__,
++                DescribeRunItem.__table__,
++            ],
++        )
++    factory = async_sessionmaker(engine, expire_on_commit=False)
++    async with factory() as session:
++        session.add(Tenant(id=TENANT, site_url="https://enqueue.test"))
++        await session.commit()
++    try:
++        yield Harness(factory)
++    finally:
++        await engine.dispose()
++
++
++def inject_fault(monkeypatch, stage, session, *, barrier=None):
++    owner, name = {
++        "factory": (route, "worker_session_factory"),
++        "audit": (route, "_BackgroundDescriptionAuditSink"),
++        "metrics": (route, "_DescriptionMetricsSink"),
++        "create": (route.DescribeRunRepository, "create_single_run"),
++        "bind": (route, "_bind_run_usage"),
++        "quota": (route, "maybe_consume_demo_quota"),
++        "quota_commit_after": (route, "maybe_consume_demo_quota"),
++        "commit": (session, "commit"),
++        "commit_after": (session, "commit"),
++        "purge": (route, "_maybe_purge_expired_single_runs"),
++        "snapshot": (route, "dump_load_snapshot"),
++        "read": (route.DescribeRunRepository, "get_single_run_item"),
++        "projection": (route, "_job_result_from_item"),
++        "registration": (BackgroundTasks, "add_task"),
++    }[stage]
++    original = getattr(owner, name)
++
++    def fail(*args, **kwargs):
++        # Even an add_task implementation which appends before failing must
++        # leave no reachable worker after enqueue cleanup has released its slot.
++        if stage == "registration":
++            original(*args, **kwargs)
++        raise RuntimeError(f"injected {stage}")
++
++    async def fail_async(*args, **kwargs):
++        if stage in {"create", "commit_after"}:
++            await original(*args, **kwargs)
++        if stage == "quota_commit_after":
++            # The real demo-quota producer may durably commit the request
++            # transaction before restoring its safety/tenant settings.
++            await session.commit()
++        if barrier is not None:
++            barrier.set()
++            await asyncio.Event().wait()
++        fail(*args, **kwargs)
++
++    monkeypatch.setattr(
++        owner, name, fail if stage in {"factory", "audit", "metrics", "projection", "registration"} else fail_async
++    )
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize(
++    "stage",
++    [
++        "factory",
++        "audit",
++        "metrics",
++        "create",
++        "bind",
++        "quota",
++        "quota_commit_after",
++        "commit",
++        "commit_after",
++        "read",
++        "projection",
++        "registration",
 +    ],
-+    next_cursor: null,
-+    cursor: null,
-+    limit: 25,
-+    total: 1,
-+  };
-+}
++)
++async def test_fault_releases_slot_bytes_and_reconciles_orphan(harness, gate, monkeypatch, stage):
++    tasks = BackgroundTasks()
++    async with harness.factory() as session:
++        with monkeypatch.context() as fault:
++            inject_fault(fault, stage, session)
++            with pytest.raises(HTTPException) as failure:
++                await harness.submit(tasks=tasks, session=session)
++            assert failure.value.status_code == 500
++            assert f"injected {stage}" in str(failure.value.__cause__)
++        assert gate.releases == 1, f"{stage} leaked or double-released admission"
++        assert (gate._job_count, gate._retained_image_bytes) == (0, 0)
++        assert tasks.tasks == [], "failed response retained a worker"
++    runs, items = await harness.rows()
++    if stage in {"quota_commit_after", "commit_after", "read", "projection", "registration"}:
++        assert len(items) == 1
++        assert items[0].status == DescribeItemStatus.FAILED
++        assert items[0].image_bytes is None
++        assert runs[0].status in TERMINAL_RUN_STATUSES
++    else:
++        assert not runs and not items, "uncommitted enqueue survived cleanup"
++    assert len(harness.admission.released) == 1
++    retry_tasks = BackgroundTasks()
++    result = await harness.submit(tasks=retry_tasks)
++    assert result.status == "queued", f"{stage}: fresh key did not enqueue"
++    await retry_tasks()
++    assert gate.releases == 2
 +
-+function usageBody() {
-+  return {
-+    tenant_id: TENANT,
-+    used: 1,
-+    reserved: 0,
-+    remaining: 9,
-+    allowance: 10,
-+    period_start: '2026-09-01T00:00:00Z',
-+    period_end: '2026-10-01T00:00:00Z',
-+    period: { start: '2026-09-01T00:00:00Z', end: '2026-10-01T00:00:00Z' },
-+    as_of: '2026-09-22T12:00:00Z',
-+    status: 'beta_active',
-+    data_source: 'authoritative',
-+  };
-+}
 +
-+function signInVerified(sessionId = 'sess_1') {
-+  clerkDouble.setState({
-+    isLoaded: true,
-+    isSignedIn: true,
-+    userId: 'user_1',
-+    sessionId,
-+    user: {
-+      fullName: 'Ada Lovelace',
-+      primaryEmailAddress: {
-+        emailAddress: 'ada@example.test',
-+        verification: { status: 'verified' },
-+      },
-+    },
-+    getToken: async () => 'session-jwt',
-+  });
-+}
++@pytest.mark.asyncio
++@pytest.mark.parametrize(
++    "stage", ["create", "bind", "quota", "quota_commit_after", "commit", "commit_after", "purge", "snapshot", "read"]
++)
++async def test_cancellation_propagates_and_drains_enqueue(harness, gate, monkeypatch, stage):
++    barrier = asyncio.Event()
++    tasks = BackgroundTasks()
++    async with harness.factory() as session:
++        with monkeypatch.context() as fault:
++            inject_fault(fault, stage, session, barrier=barrier)
++            pending = asyncio.create_task(harness.submit(tasks=tasks, session=session))
++            await asyncio.wait_for(barrier.wait(), 5)
++            pending.cancel()
++            with pytest.raises(asyncio.CancelledError):
++                await pending
++        assert gate.releases == 1, f"cancellation at {stage} leaked admission"
++        assert (gate._job_count, gate._retained_image_bytes) == (0, 0)
++        assert not tasks.tasks
++    runs, items = await harness.rows()
++    if stage in {"quota_commit_after", "commit_after", "purge", "snapshot", "read"}:
++        assert len(items) == 1
++        assert items[0].status == DescribeItemStatus.FAILED
++        assert items[0].image_bytes is None
++        assert runs[0].status in TERMINAL_RUN_STATUSES
++    else:
++        assert not runs
++    # Preserve admit_usage's cancellation contract: durable terminal evidence
++    # enables recovery; local capacity release is separate from billing.
++    assert not harness.admission.released
++    retry_tasks = BackgroundTasks()
++    await harness.submit(tasks=retry_tasks)
++    await retry_tasks()
++    assert gate.releases == 2
 +
-+function portalFetch(options: { me?: () => Response | Promise<Response>; claimAdmitted?: { current: boolean } } = {}) {
-+  return vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
-+    const url = String(input);
-+    const path = url.split('?')[0];
-+    if (path === '/portal/me') {
-+      if (options.me) {
-+        return options.me();
-+      }
-+      if (options.claimAdmitted?.current) {
-+        return jsonResponse(200, meBody());
-+      }
-+      return jsonResponse(200, meBody());
-+    }
-+    if (path === '/portal/keys') {
-+      return jsonResponse(200, keysPage());
-+    }
-+    if (path === '/portal/usage') {
-+      return jsonResponse(200, usageBody());
-+    }
-+    if (path === '/portal/onboarding/claim') {
-+      if (options.claimAdmitted) {
-+        options.claimAdmitted.current = true;
-+      }
-+      return jsonResponse(201, {
-+        tenant_id: TENANT,
-+        issuer: 'https://clerk.altcontext.com',
-+        subject: 'user_1',
-+        email: 'ada@example.test',
-+        replayed: false,
-+      });
-+    }
-+    if (path === '/portal/billing/checkout' || path === '/portal/billing/manage') {
-+      throw new Error(`billing call must be absent when payments are disabled: ${path}`);
-+    }
-+    return jsonResponse(404, { detail: 'missing fixture' });
-+  });
-+}
 +
-+afterEach(() => {
-+  clerkDouble.reset();
-+});
++@pytest.mark.asyncio
++@pytest.mark.parametrize("outcome", ["normal", "crash", "cancel"])
++async def test_worker_owns_one_release_without_releasing_another_job(harness, gate, monkeypatch, outcome):
++    gate._max_jobs = 2
++    gate._max_retained_image_bytes = len(IMAGE) * 2
++    tasks = BackgroundTasks()
++    result = await harness.submit(tasks=tasks)
++    assert result.status == "queued"
++    assert gate.releases == 0
++    assert gate.try_acquire(len(IMAGE)) is None  # unrelated live reservation
 +
-+describe('public payments config [HAI-01]', () => {
-+  it('defaults payments disabled and empty plan, enabling only explicit recognized true', () => {
-+    expect(
-+      parsePortalConfig({
-+        VITE_CLERK_PUBLISHABLE_KEY: 'pk_test',
-+        VITE_CLERK_FAPI: 'https://clerk.altcontext.com',
-+        VITE_PORTAL_ENABLED: 'true',
-+        VITE_PAYMENTS_ENABLED: '',
-+        VITE_PUBLIC_PLAN_CODE: '',
-+      }),
-+    ).toEqual({
-+      publishableKey: 'pk_test',
-+      fapiOrigin: 'https://clerk.altcontext.com',
-+      portalEnabled: true,
-+      paymentsEnabled: false,
-+      publicPlanCode: null,
-+    });
++    async def worker(**kwargs):
++        if outcome == "crash":
++            raise RuntimeError("worker crashed")
++        if outcome == "cancel":
++            raise asyncio.CancelledError()
 +
-+    expect(
-+      parsePortalConfig({
-+        VITE_CLERK_PUBLISHABLE_KEY: 'pk_test',
-+        VITE_CLERK_FAPI: 'https://clerk.altcontext.com',
-+        VITE_PORTAL_ENABLED: 'true',
-+        VITE_PAYMENTS_ENABLED: 'maybe',
-+        VITE_PUBLIC_PLAN_CODE: '  starter_monthly  ',
-+      }).paymentsEnabled,
-+    ).toBe(false);
++    monkeypatch.setattr(route, "run_async_describe_job", worker)
++    if outcome == "cancel":
++        with pytest.raises(asyncio.CancelledError):
++            await tasks()
++    else:
++        await tasks()
++    assert gate.releases == 1
++    assert (gate._job_count, gate._retained_image_bytes) == (1, len(IMAGE))
 +
-+    expect(
-+      parsePortalConfig({
-+        VITE_CLERK_PUBLISHABLE_KEY: 'pk_test',
-+        VITE_CLERK_FAPI: 'https://clerk.altcontext.com',
-+        VITE_PORTAL_ENABLED: 'true',
-+        VITE_PAYMENTS_ENABLED: 'TRUE',
-+        VITE_PUBLIC_PLAN_CODE: '  starter_monthly  ',
-+      }),
-+    ).toMatchObject({
-+      paymentsEnabled: true,
-+      publicPlanCode: 'starter_monthly',
-+    });
-+  });
-+});
 +
-+describe('admitted shell navigation [NAV-08][NAV-11]', () => {
-+  it('wires keys, usage, billing, billing return, and WordPress guidance with sign-out', async () => {
-+    signInVerified();
-+    const fetchImpl = portalFetch();
-+    const user = userEvent.setup();
-+    renderPortal({ fetchImpl: fetchImpl as unknown as typeof fetch });
++@pytest.mark.asyncio
++async def test_replay_conflict_and_tenant_isolation(harness, gate):
++    operation = uuid.uuid4().hex
++    tasks = BackgroundTasks()
++    first = await harness.submit(tasks=tasks, operation=operation)
++    replay_tasks = BackgroundTasks()
++    replay = await harness.submit(tasks=replay_tasks, operation=operation)
++    assert replay.job_id == first.job_id
++    assert not replay_tasks.tasks
++    assert gate._job_count == 1
++    with pytest.raises(HTTPException) as conflict:
++        await harness.submit(operation=operation, image=b"different")
++    assert conflict.value.status_code == 409
++    async with harness.factory() as session:
++        with pytest.raises(HTTPException) as hidden:
++            await route.get_describe_job(
++                first.job_id, auth=SimpleNamespace(tenant_claim=str(uuid.uuid4())), session=session
++            )
++        assert hidden.value.status_code == 404
++        own = await route.get_describe_job(
++            first.job_id, auth=SimpleNamespace(tenant_claim=str(TENANT)), session=session
++        )
++        assert own.job_id == first.job_id
++    await tasks()
++    assert gate.releases == 1
 +
-+    await waitFor(() => {
-+      expect(screen.getByText(TENANT)).toBeInTheDocument();
-+    });
-+    expect(screen.getByRole('navigation', { name: /account/i })).toBeInTheDocument();
 +
-+    await user.click(screen.getByRole('button', { name: /api keys/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /api keys/i })).toBeInTheDocument();
-+    });
-+    expect(screen.getByRole('main')).toHaveTextContent(KEY_ID);
-+    expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
++@pytest.mark.asyncio
++async def test_response_read_reseeds_after_real_commit(harness, gate, monkeypatch):
++    # Ordering surrogate only. PostgreSQL enforcement is a separate gate.
++    async with harness.factory() as session:
++        tenant_context = None
++        commit = session.commit
++        read = route.DescribeRunRepository.get_single_run_item
 +
-+    await user.click(screen.getByRole('button', { name: /wordpress test connection guidance/i }));
-+    expect(screen.getByRole('heading', { name: /wordpress test connection/i })).toBeInTheDocument();
-+    expect(screen.queryByText(/acx_live|raw_key/i)).not.toBeInTheDocument();
-+    expect(window.location.href).not.toMatch(/acx_live|raw_key|secret=/i);
++        async def seed(current, tenant):
++            nonlocal tenant_context
++            if current is session:
++                tenant_context = tenant
 +
-+    await user.click(screen.getByRole('button', { name: /back to api keys/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /api keys/i })).toBeInTheDocument();
-+    });
++        async def commit_and_reset():
++            nonlocal tenant_context
++            await commit()
++            tenant_context = None
 +
-+    await user.click(screen.getByRole('button', { name: /^usage$/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /^usage$/i })).toBeInTheDocument();
-+    });
++        async def restricted_read(repo, **kwargs):
++            if repo._session is session and tenant_context != kwargs["tenant_id"]:
++                return None
++            return await read(repo, **kwargs)
 +
-+    await user.click(screen.getByRole('button', { name: /^billing$/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /^billing$/i })).toBeInTheDocument();
-+    });
-+    expect(screen.getByRole('status')).toHaveTextContent(/payments are disabled/i);
-+    expect(screen.getByRole('button', { name: /continue to checkout/i })).toBeDisabled();
-+    expect(screen.getByRole('button', { name: /manage billing/i })).toBeDisabled();
-+  });
++        monkeypatch.setattr(route, "set_tenant_context", seed)
++        monkeypatch.setattr(session, "commit", commit_and_reset)
++        monkeypatch.setattr(route.DescribeRunRepository, "get_single_run_item", restricted_read)
++        tasks = BackgroundTasks()
++        result = await harness.submit(tasks=tasks, session=session)
++        assert result.status == "queued"
++        await tasks()
 +
-+  it('keeps billing return pending and never grants entitlement or posts checkout [HAI-01]', async () => {
-+    signInVerified();
-+    const fetchImpl = portalFetch();
-+    renderPortal({
-+      path: '/billing/return?checkout=success',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+    });
 +
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /billing return/i })).toBeInTheDocument();
-+    });
-+    expect(screen.getByRole('status')).toHaveTextContent(/pending reconciliation|backend confirmation/i);
-+    expect(screen.queryByText(/paid_active|you are now paid|subscription is active/i)).not.toBeInTheDocument();
-+    expect(fetchImpl.mock.calls.some((call) => String(call[0]).includes('/portal/billing'))).toBe(false);
-+  });
-+});
++@pytest.mark.asyncio
++@pytest.mark.parametrize("first_failure", ["exception", "cancellation"])
++async def test_cancellation_during_cleanup_is_propagated_after_durable_drain(harness, gate, monkeypatch, first_failure):
++    cleanup_entered = asyncio.Event()
++    finish_cleanup = asyncio.Event()
++    enqueue_entered = asyncio.Event()
++    original = route.DescribeRunRepository.set_item_failed
 +
-+describe('claim admission boundary [HAI-01][DOM-03]', () => {
-+  it('lets a verified not-admitted identity claim and refetches /portal/me before admission', async () => {
-+    signInVerified();
-+    const admitted = { current: false };
-+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
-+      const path = String(input).split('?')[0];
-+      if (path === '/portal/me') {
-+        if (admitted.current) {
-+          return jsonResponse(200, meBody());
-+        }
-+        return jsonResponse(403, { detail: 'portal access denied' });
-+      }
-+      if (path === '/portal/onboarding/claim') {
-+        return jsonResponse(201, {
-+          tenant_id: TENANT,
-+          issuer: 'https://clerk.altcontext.com',
-+          subject: 'user_1',
-+          email: 'ada@example.test',
-+          replayed: false,
-+        });
-+      }
-+      throw new Error(`unexpected path ${path}`);
-+    });
-+    const user = userEvent.setup();
-+    renderPortal({ fetchImpl: fetchImpl as unknown as typeof fetch });
++    async def delayed_cleanup(repo, **kwargs):
++        cleanup_entered.set()
++        await finish_cleanup.wait()
++        return await original(repo, **kwargs)
 +
-+    await waitFor(() => {
-+      expect(screen.getByRole('status')).toHaveTextContent(/not ready for access/i);
-+    });
-+    expect(screen.queryByText(TENANT)).not.toBeInTheDocument();
-+    await user.click(screen.getByRole('button', { name: /claim access/i }));
-+    expect(screen.getByLabelText(/invitation token/i)).toBeInTheDocument();
-+    expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
++    monkeypatch.setattr(route.DescribeRunRepository, "set_item_failed", delayed_cleanup)
++    tasks = BackgroundTasks()
++    async with harness.factory() as session:
++        stage = "projection" if first_failure == "exception" else "snapshot"
++        inject_fault(monkeypatch, stage, session, barrier=enqueue_entered)
++        pending = asyncio.create_task(harness.submit(tasks=tasks, session=session))
++        if first_failure == "cancellation":
++            await asyncio.wait_for(enqueue_entered.wait(), 5)
++            pending.cancel()
++        await asyncio.wait_for(cleanup_entered.wait(), 5)
++        pending.cancel()
++        await asyncio.sleep(0)
++        assert not pending.done(), "cancellation abandoned the cleanup transaction"
++        finish_cleanup.set()
++        with pytest.raises(asyncio.CancelledError):
++            await pending
++    assert gate.releases == 1
++    assert (gate._job_count, gate._retained_image_bytes) == (0, 0)
++    assert not tasks.tasks
++    runs, items = await harness.rows()
++    assert items[0].status == DescribeItemStatus.FAILED
++    assert items[0].image_bytes is None
++    assert runs[0].status in TERMINAL_RUN_STATUSES
 +
-+    await user.type(screen.getByLabelText(/invitation token/i), INVITATION);
-+    await user.click(screen.getByRole('button', { name: /^claim access$/i }));
-+    await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
 +
-+    await waitFor(() => {
-+      expect(fetchImpl.mock.calls.some((call) => String(call[0]).includes('/portal/onboarding/claim'))).toBe(true);
-+      expect(
-+        fetchImpl.mock.calls.filter((call) => String(call[0]).split('?')[0] === '/portal/me').length,
-+      ).toBeGreaterThan(1);
-+    });
-+    expect(screen.queryByRole('heading', { name: /api keys/i })).not.toBeInTheDocument();
-+    expect(screen.queryByText(TENANT)).not.toBeInTheDocument();
-+    expect(window.location.href).not.toContain(INVITATION);
-+    expect(window.location.hash).not.toContain(INVITATION);
-+    admitted.current = true;
-+    expect(screen.queryByText(TENANT)).not.toBeInTheDocument();
-+  });
++@pytest.mark.asyncio
++async def test_cleanup_database_failure_is_logged_without_success_or_slot_leak(harness, gate, monkeypatch, caplog):
++    async def unavailable(repo, **kwargs):
++        raise RuntimeError("reconciliation database unavailable")
 +
-+  it('admits only after a post-claim /portal/me tenant, never from the claim body [HAI-01]', async () => {
-+    signInVerified();
-+    const admitted = { current: false };
-+    const fetchImpl = portalFetch({ claimAdmitted: admitted });
-+    fetchImpl.mockImplementation(async (input: RequestInfo | URL) => {
-+      const path = String(input).split('?')[0];
-+      if (path === '/portal/me') {
-+        return admitted.current ? jsonResponse(200, meBody()) : jsonResponse(403, { detail: 'portal access denied' });
-+      }
-+      if (path === '/portal/onboarding/claim') {
-+        admitted.current = true;
-+        return jsonResponse(201, {
-+          tenant_id: TENANT,
-+          issuer: 'https://clerk.altcontext.com',
-+          subject: 'user_1',
-+          email: 'ada@example.test',
-+          replayed: false,
-+        });
-+      }
-+      if (path === '/portal/keys') {
-+        return jsonResponse(200, keysPage());
-+      }
-+      return jsonResponse(404, {});
-+    });
-+    const user = userEvent.setup();
-+    renderPortal({ path: '/claim', fetchImpl: fetchImpl as unknown as typeof fetch });
++    monkeypatch.setattr(route.DescribeRunRepository, "set_item_failed", unavailable)
++    async with harness.factory() as session:
++        inject_fault(monkeypatch, "projection", session)
++        with pytest.raises(HTTPException) as failure:
++            await harness.submit(session=session)
++    assert failure.value.status_code == 500
++    assert "injected projection" in str(failure.value.__cause__)
++    assert "undelivered describe job cleanup failed" in caplog.text
++    assert gate.releases == 1
++    assert (gate._job_count, gate._retained_image_bytes) == (0, 0)
++    # DB unavailability cannot be disguised as successful reconciliation.
++    # The queued durable row remains for the existing restart recovery path.
++    runs, items = await harness.rows()
++    assert items[0].status == DescribeItemStatus.QUEUED
 +
-+    await waitFor(() => {
-+      expect(screen.getByLabelText(/invitation token/i)).toBeInTheDocument();
-+    });
-+    await user.type(screen.getByLabelText(/invitation token/i), INVITATION);
-+    await user.click(screen.getByRole('button', { name: /^claim access$/i }));
-+    await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
 +
-+    await waitFor(() => {
-+      expect(screen.getByText(TENANT)).toBeInTheDocument();
-+    });
-+    expect(
-+      fetchImpl.mock.calls.filter((call) => String(call[0]).split('?')[0] === '/portal/me').length,
-+    ).toBeGreaterThan(1);
-+  });
++@pytest.mark.asyncio
++async def test_failed_racing_create_does_not_reconcile_the_winning_enqueue(harness, gate, monkeypatch):
++    gate._max_jobs = 2
++    gate._max_retained_image_bytes = len(IMAGE) * 2
++    operation = uuid.uuid4().hex
++    winner_tasks = BackgroundTasks()
++    winner = await harness.submit(tasks=winner_tasks, operation=operation)
++    reserve = harness.admission.reserve
 +
-+  it('does not offer claim to an unverified identity', async () => {
-+    clerkDouble.setState({
-+      isLoaded: true,
-+      isSignedIn: true,
-+      userId: 'user_1',
-+      sessionId: 'sess_1',
-+      user: {
-+        fullName: 'Ada Lovelace',
-+        primaryEmailAddress: {
-+          emailAddress: 'ada@example.test',
-+          verification: { status: 'unverified' },
-+        },
-+      },
-+      getToken: async () => 'session-jwt',
-+    });
-+    renderPortal({
-+      path: '/claim',
-+      fetchImpl: vi.fn(async () =>
-+        jsonResponse(403, { detail: { code: 'email_unverified' } }),
-+      ) as unknown as typeof fetch,
-+    });
++    async def replay_ticket(*args, **kwargs):
++        return replace(await reserve(*args, **kwargs), job_id=winner.job_id)
 +
-+    await waitFor(() => {
-+      expect(screen.getByRole('status')).toHaveTextContent(/verify your email/i);
-+    });
-+    expect(screen.queryByLabelText(/invitation token/i)).not.toBeInTheDocument();
-+    expect(screen.queryByRole('button', { name: /claim access/i })).not.toBeInTheDocument();
-+    expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
-+  });
-+});
++    async def lookup_before_winner_committed(*args, **kwargs):
++        return None
 +
-+describe('private subtree ownership [DATA-03][CARD-15]', () => {
-+  it('clears keys metadata synchronously when the same user gets a new session', async () => {
-+    signInVerified('sess_a');
-+    const fetchImpl = portalFetch();
-+    renderPortal({ path: '/keys', fetchImpl: fetchImpl as unknown as typeof fetch });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('main')).toHaveTextContent(KEY_ID);
-+    });
-+
-+    flushSync(() => {
-+      clerkDouble.setState({ sessionId: 'sess_a_replaced' });
-+    });
-+
-+    expect(screen.getByRole('main')).not.toHaveTextContent(KEY_ID);
-+    expect(screen.getByRole('status')).toHaveTextContent(/checking account/i);
-+    await waitFor(() => {
-+      expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
-+    });
-+  });
-+
-+  it('hides private modules immediately when sign-out fails [RLSE-04]', async () => {
-+    signInVerified();
-+    clerkDouble.state.signOut = vi.fn(async () => {
-+      throw new Error('network');
-+    });
-+    const fetchImpl = portalFetch();
-+    const user = userEvent.setup();
-+    renderPortal({ path: '/keys', fetchImpl: fetchImpl as unknown as typeof fetch });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('main')).toHaveTextContent(KEY_ID);
-+    });
-+
-+    await user.click(screen.getByRole('button', { name: /sign out/i }));
-+
-+    expect(screen.getByRole('main')).not.toHaveTextContent(KEY_ID);
-+    expect(screen.queryByRole('heading', { name: /api keys/i })).not.toBeInTheDocument();
-+    expect(screen.getByRole('status')).toHaveTextContent(/sign out failed|could not sign out/i);
-+    expect(screen.getByRole('button', { name: /try again/i })).toBeEnabled();
-+  });
-+});
-+
-+describe('opaque attempt id [HAI-01]', () => {
-+  it('does not put attempt, invite, or raw key material in search or hash', async () => {
-+    signInVerified();
-+    renderPortal({
-+      path: `/billing/return?attempt_id=${ATTEMPT_ID}&invitation=${INVITATION}`,
-+      fetchImpl: portalFetch() as unknown as typeof fetch,
-+    });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /billing return/i })).toBeInTheDocument();
-+    });
-+    expect(screen.queryByText(INVITATION)).not.toBeInTheDocument();
-+    expect(screen.queryByText(ATTEMPT_ID)).not.toBeInTheDocument();
-+  });
-+});
-diff --git a/apps/app-portal/src/__tests__/portal-request.test.ts b/apps/app-portal/src/__tests__/portal-request.test.ts
++    # Model an operation replay whose initial SELECT preceded the winner's
++    # commit. The real duplicate INSERT fails; this request owns no durable row.
++    loser_tasks = BackgroundTasks()
++    with monkeypatch.context() as race:
++        race.setattr(harness.admission, "reserve", replay_ticket)
++        race.setattr(route, "_run_by_usage_operation", lookup_before_winner_committed)
++        with pytest.raises(HTTPException) as failure:
++            await harness.submit(tasks=loser_tasks, operation=operation)
++    assert failure.value.status_code == 500
++    runs, items = await harness.rows()
++    assert len(items) == 1
++    assert items[0].status == DescribeItemStatus.QUEUED, "losing create failed the winner's live job"
++    assert items[0].image_bytes == IMAGE
++    assert not loser_tasks.tasks
++    assert gate.releases == 1
++    assert (gate._job_count, gate._retained_image_bytes) == (1, len(IMAGE))
++    assert not harness.admission.released, "replay released the winner's usage ticket"
++    await winner_tasks()
++    assert gate.releases == 2
+diff --git a/apps/prototype-description-service/scene/tests/test_gtmburst_async_enqueue_rls.py b/apps/prototype-description-service/scene/tests/test_gtmburst_async_enqueue_rls.py
 new file mode 100644
 --- /dev/null
-+++ b/apps/app-portal/src/__tests__/portal-request.test.ts
-@@ -0,0 +1,188 @@
-+import { afterEach, describe, expect, it, vi } from 'vitest';
-+import { createPortalRequest } from '../api/portalRequest';
++++ b/apps/prototype-description-service/scene/tests/test_gtmburst_async_enqueue_rls.py
+@@ -0,0 +1,162 @@
++"""Enforced PostgreSQL RLS gate; a missing URL is explicitly unverified.
 +
-+const OWNER_A = { userId: 'user_a', sessionId: 'sess_a' };
-+const OWNER_B = { userId: 'user_b', sessionId: 'sess_b' };
++Use GTMBURST_POSTGRES_TEST_URL (or POSTGRES_TEST_URL / IDENTITY_PG_TEST_URL)
++with a non-superuser, non-BYPASSRLS role allowed to create an isolated schema.
++The policy expressions come from the production migration. SQLite and a
++superuser connection cannot certify this gate.
++"""
 +
-+function jsonResponse(status: number, body: unknown): Response {
-+  return new Response(JSON.stringify(body), {
-+    status,
-+    headers: { 'Content-Type': 'application/json' },
-+  });
-+}
++from __future__ import annotations
 +
-+afterEach(() => {
-+  vi.useRealTimers();
-+});
++import importlib
++import json
++import os
++import uuid
++from types import SimpleNamespace
 +
-+describe('createPortalRequest bounded bearer transport [RES-02][RLSE-04][DATA-03]', () => {
-+  it('bounds a hanging getToken with the total deadline and never calls fetch [RES-02]', async () => {
-+    vi.useFakeTimers();
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken: () => new Promise<string | null>(() => undefined),
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      timeoutMs: 40,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
++import httpx
++import pytest
++import pytest_asyncio
++from fastapi import FastAPI
++from sqlalchemy import select, text
++from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 +
-+    const pending = expect(request('/portal/usage')).rejects.toMatchObject({ name: 'AbortError' });
-+    await vi.advanceTimersByTimeAsync(40);
-+    await pending;
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
++from db.models import Tenant
++from db.models.base_imports import Base
++from db.models.scene import DescribeRun, DescribeRunItem
++from db.tenant_context import set_tenant_context
++from recognition.interface_adapters.http.deps import get_optional_session, require_write_access
++from recognition.interface_adapters.http.deps.usage_admission import get_usage_admission_service
++from scene.interface_adapters.http.deps import get_async_gpu_description_adapter, get_description_adapter
++from scene.interface_adapters.http.routers import describe as route
++from scene.tests.test_gtmburst_async_enqueue import IMAGE, TENANT, Admission, gate
 +
-+  it('bounds a hanging fetch with the same total deadline [RES-02]', async () => {
-+    vi.useFakeTimers();
-+    const fetchImpl = vi.fn(() => new Promise<Response>(() => undefined));
-+    const request = createPortalRequest({
-+      getToken: async () => 'session-jwt',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      timeoutMs: 40,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
++pytestmark = [pytest.mark.pg, pytest.mark.asyncio]
++MIGRATION = importlib.import_module("db.migrations.versions.001_identity_schema")
 +
-+    const pending = expect(request('/portal/usage')).rejects.toMatchObject({ name: 'AbortError' });
-+    await vi.advanceTimersByTimeAsync(40);
-+    await pending;
-+    expect(fetchImpl).toHaveBeenCalledTimes(1);
-+  });
 +
-+  it('aborts during getToken without sending a bearer request [RES-02]', async () => {
-+    const controller = new AbortController();
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken: () => new Promise<string | null>(() => undefined),
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      timeoutMs: 8_000,
-+      signal: controller.signal,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
++@pytest_asyncio.fixture
++async def restricted_pg_factory(monkeypatch):
++    url = next(
++        (
++            os.environ[key]
++            for key in ("GTMBURST_POSTGRES_TEST_URL", "POSTGRES_TEST_URL", "IDENTITY_PG_TEST_URL")
++            if os.environ.get(key)
++        ),
++        None,
++    )
++    if not url:
++        pytest.skip("BLOCKED: restricted PostgreSQL RLS fixture URL is not configured")
++    url = url.replace("postgresql+psycopg://", "postgresql+asyncpg://").replace(
++        "postgresql://", "postgresql+asyncpg://"
++    )
++    monkeypatch.delenv("ALLOW_RLS_BYPASS_FOR_TESTS", raising=False)
++    schema = f"gtmburst_async_{uuid.uuid4().hex}"
++    control = create_async_engine(url, connect_args={"timeout": 10})
++    engine = None
++    try:
++        async with control.begin() as connection:
++            flags = (
++                await connection.execute(
++                    text("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user")
++                )
++            ).one()
++            assert flags == (False, False), "RLS gate requires non-superuser without BYPASSRLS"
++            await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
++        engine = create_async_engine(
++            url,
++            connect_args={
++                "timeout": 10,
++                "server_settings": {"search_path": schema},
++            },
++        )
++        async with engine.begin() as connection:
++            await connection.run_sync(
++                Base.metadata.create_all,
++                tables=[
++                    Tenant.__table__,
++                    DescribeRun.__table__,
++                    DescribeRunItem.__table__,
++                ],
++            )
++            for table in ("image_description_runs", "image_description_run_items"):
++                await connection.execute(text(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY"))
++                await connection.execute(text(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY"))
++                await connection.execute(
++                    text(f"""
++                    CREATE POLICY tenant_isolation_{table} ON {table} FOR ALL
++                    USING (tenant_id = {MIGRATION.SAFE_TENANT_EXPR} OR {MIGRATION.BYPASS_RLS_EXPR})
++                    WITH CHECK (tenant_id = {MIGRATION.SAFE_TENANT_EXPR} OR {MIGRATION.BYPASS_RLS_EXPR})
++                """)
++                )
++                flags = (
++                    await connection.execute(
++                        text(
++                            "SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE oid = to_regclass(:table)"
++                        ),
++                        {"table": table},
++                    )
++                ).one()
++                assert flags == (True, True)
++        factory = async_sessionmaker(engine, expire_on_commit=False)
++        async with factory() as session:
++            session.add_all(
++                [
++                    Tenant(id=TENANT, site_url="https://rls-enqueue.test"),
++                    Tenant(id=uuid.UUID(int=987), site_url="https://rls-other.test"),
++                ]
++            )
++            await session.commit()
++        yield factory
++    finally:
++        if engine is not None:
++            await engine.dispose()
++        async with control.begin() as connection:
++            await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
++        await control.dispose()
 +
-+    const pending = expect(request('/portal/me')).rejects.toMatchObject({ name: 'AbortError' });
-+    controller.abort();
-+    await pending;
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
 +
-+  it('does not fetch when getToken rejects [RLSE-04]', async () => {
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken: async () => {
-+        throw new Error('token refresh failed');
-+      },
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      timeoutMs: 1_000,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
++async def test_actual_post_reseeds_after_commit_and_preserves_cross_tenant_404(
++    restricted_pg_factory, gate, monkeypatch
++):
++    factory = restricted_pg_factory
++    monkeypatch.setattr(route, "worker_session_factory", lambda session: factory)
++    admission = Admission()
++    auth = SimpleNamespace(tenant_claim=str(TENANT), user_id=None)
++    app = FastAPI()
++    app.include_router(route.router, prefix="/scene")
 +
-+    await expect(request('/portal/me')).rejects.toThrow(/token refresh failed|portal identity/i);
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
++    async def session_dependency():
++        async with factory() as session:
++            yield session
 +
-+  it('forces cache no-store, omits credentials, and never sets Origin [DATA-03]', async () => {
-+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-+      expect(String(input)).toBe('/portal/usage');
-+      expect(init?.cache).toBe('no-store');
-+      expect(init?.credentials).toBe('omit');
-+      const headers = new Headers(init?.headers);
-+      expect(headers.get('Authorization')).toBe('Bearer session-jwt');
-+      expect([...headers.keys()].some((key) => key.toLowerCase() === 'origin')).toBe(false);
-+      return jsonResponse(200, { ok: true });
-+    });
-+
-+    const request = createPortalRequest({
-+      getToken: async () => 'session-jwt',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    await expect(
-+      request('/portal/usage', { method: 'GET', headers: { Origin: 'https://evil.example' } }),
-+    ).resolves.toBeInstanceOf(Response);
-+    expect(fetchImpl).toHaveBeenCalledTimes(1);
-+  });
-+
-+  it('rejects external, protocol-relative, and non-allowlisted paths before getToken [DATA-03]', async () => {
-+    const getToken = vi.fn(async () => 'session-jwt');
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken,
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    const rejected = [
-+      'https://evil.example/portal/me',
-+      'http://app.altcontext.com/portal/me',
-+      '//evil.example/portal/me',
-+      '/api/portal/me',
-+      '/portal',
-+      'portal/me',
-+      '/portal/../keys',
-+      '/portal/%2e%2e/keys',
-+      'https://app.altcontext.com/portal/me',
-+    ];
-+
-+    for (const path of rejected) {
-+      await expect(request(path)).rejects.toThrow(/not allowed|portal request/i);
-+    }
-+    expect(getToken).not.toHaveBeenCalled();
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
-+
-+  it('allows same-origin relative /portal/ paths including key list query [DATA-03]', async () => {
-+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
-+      expect(String(input)).toBe('/portal/keys?limit=25');
-+      expect(String(input)).not.toMatch(/^https?:/i);
-+      return jsonResponse(200, { data: [] });
-+    });
-+    const request = createPortalRequest({
-+      getToken: async () => 'session-jwt',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    await request('/portal/keys?limit=25');
-+    expect(fetchImpl).toHaveBeenCalledTimes(1);
-+  });
-+
-+  it('does not send when the captured owner is no longer current [DDIA][DATA-03]', async () => {
-+    const getToken = vi.fn(async () => 'session-jwt');
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken,
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_B,
-+    });
-+
-+    await expect(request('/portal/usage')).rejects.toMatchObject({ name: 'AbortError' });
-+    expect(getToken).not.toHaveBeenCalled();
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
-+
-+  it('drops a completed response after a session replacement [DDIA][DATA-03]', async () => {
-+    let current = OWNER_A;
-+    const fetchImpl = vi.fn(async () => {
-+      current = OWNER_B;
-+      return jsonResponse(200, { tenant_id: '11111111-1111-4111-8111-111111111111' });
-+    });
-+    const request = createPortalRequest({
-+      getToken: async () => 'session-jwt',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => current,
-+    });
-+
-+    await expect(request('/portal/me')).rejects.toMatchObject({ name: 'AbortError' });
-+    expect(fetchImpl).toHaveBeenCalledTimes(1);
-+  });
-+});
-diff --git a/apps/app-portal/src/api/portalRequest.ts b/apps/app-portal/src/api/portalRequest.ts
-new file mode 100644
---- /dev/null
-+++ b/apps/app-portal/src/api/portalRequest.ts
-@@ -0,0 +1,157 @@
-+export type PortalRequest = (path: string, init?: RequestInit) => Promise<Response>;
-+
-+export type PortalRequestOwner = {
-+  userId: string;
-+  sessionId: string;
-+};
-+
-+export type CreatePortalRequestOptions = {
-+  getToken: () => Promise<string | null>;
-+  fetchImpl?: typeof fetch;
-+  timeoutMs?: number;
-+  signal?: AbortSignal;
-+  owner: PortalRequestOwner;
-+  currentOwner: () => PortalRequestOwner | null;
-+};
-+
-+const DEFAULT_TIMEOUT_MS = 8_000;
-+const PORTAL_PATH_RE = /^\/portal\/[A-Za-z0-9/_-]+$/;
-+
-+function abortError(): DOMException {
-+  return new DOMException('The operation was aborted.', 'AbortError');
-+}
-+
-+function ownersMatch(
-+  left: PortalRequestOwner | null | undefined,
-+  right: PortalRequestOwner | null | undefined,
-+): boolean {
-+  return Boolean(left && right && left.userId === right.userId && left.sessionId === right.sessionId);
-+}
-+
-+export function resolvePortalPath(path: string): string | null {
-+  if (typeof path !== 'string' || path.length === 0) {
-+    return null;
-+  }
-+  if (!path.startsWith('/portal/')) {
-+    return null;
-+  }
-+  if (path.startsWith('//') || path.includes('://') || path.includes('\\')) {
-+    return null;
-+  }
-+  if (path.includes('..') || /%2e/i.test(path)) {
-+    return null;
-+  }
-+  let url: URL;
-+  try {
-+    url = new URL(path, 'https://app.altcontext.com');
-+  } catch {
-+    return null;
-+  }
-+  if (url.origin !== 'https://app.altcontext.com') {
-+    return null;
-+  }
-+  if (url.username || url.password) {
-+    return null;
-+  }
-+  if (url.protocol !== 'https:') {
-+    return null;
-+  }
-+  if (!PORTAL_PATH_RE.test(url.pathname)) {
-+    return null;
-+  }
-+  return `${url.pathname}${url.search}`;
-+}
-+
-+function assertCurrentOwner(owner: PortalRequestOwner, currentOwner: () => PortalRequestOwner | null): void {
-+  if (!ownersMatch(owner, currentOwner())) {
-+    throw abortError();
-+  }
-+}
-+
-+export function createPortalRequest(options: CreatePortalRequestOptions): PortalRequest {
-+  const fetchImpl = options.fetchImpl ?? fetch;
-+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-+
-+  return async (path, init) => {
-+    const resolved = resolvePortalPath(path);
-+    if (!resolved) {
-+      throw new TypeError('portal request path is not allowed');
-+    }
-+    assertCurrentOwner(options.owner, options.currentOwner);
-+    if (options.signal?.aborted || init?.signal?.aborted) {
-+      throw abortError();
-+    }
-+
-+    const controller = new AbortController();
-+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
-+    const onAbort = () => controller.abort();
-+    if (options.signal) {
-+      if (options.signal.aborted) {
-+        controller.abort();
-+      } else {
-+        options.signal.addEventListener('abort', onAbort, { once: true });
-+      }
-+    }
-+    if (init?.signal) {
-+      if (init.signal.aborted) {
-+        controller.abort();
-+      } else {
-+        init.signal.addEventListener('abort', onAbort, { once: true });
-+      }
-+    }
-+
-+    const abortGate = new Promise<void>((resolve) => {
-+      if (controller.signal.aborted) {
-+        resolve();
-+        return;
-+      }
-+      controller.signal.addEventListener('abort', () => resolve(), { once: true });
-+    });
-+
-+    try {
-+      assertCurrentOwner(options.owner, options.currentOwner);
-+      const tokenResult = await Promise.race([
-+        Promise.resolve()
-+          .then(() => options.getToken())
-+          .then((token) => ({ token })),
-+        abortGate.then(() => ({ aborted: true as const })),
-+      ]);
-+      if ('aborted' in tokenResult || controller.signal.aborted) {
-+        throw abortError();
-+      }
-+      assertCurrentOwner(options.owner, options.currentOwner);
-+      if (!tokenResult.token) {
-+        throw new Error('portal identity unavailable');
-+      }
-+
-+      const headers = new Headers(init?.headers);
-+      headers.delete('Origin');
-+      headers.delete('Authorization');
-+      headers.set('Authorization', `Bearer ${tokenResult.token}`);
-+
-+      const fetchResult = await Promise.race([
-+        fetchImpl(resolved, {
-+          ...init,
-+          headers,
-+          cache: 'no-store',
-+          credentials: 'omit',
-+          redirect: 'error',
-+          signal: controller.signal,
-+        }).then((response) => ({ response })),
-+        abortGate.then(() => ({ aborted: true as const })),
-+      ]);
-+      if ('aborted' in fetchResult || controller.signal.aborted) {
-+        throw abortError();
-+      }
-+      assertCurrentOwner(options.owner, options.currentOwner);
-+      if (options.signal?.aborted || init?.signal?.aborted) {
-+        throw abortError();
-+      }
-+      return fetchResult.response;
-+    } finally {
-+      window.clearTimeout(timer);
-+      options.signal?.removeEventListener('abort', onAbort);
-+      init?.signal?.removeEventListener('abort', onAbort);
-+    }
-+  };
-+}
-diff --git a/apps/app-portal/src/config.ts b/apps/app-portal/src/config.ts
---- a/apps/app-portal/src/config.ts
-+++ b/apps/app-portal/src/config.ts
-@@ -2,6 +2,8 @@ export type PortalRuntimeConfig = {
-   publishableKey: string | null;
-   fapiOrigin: string | null;
-   portalEnabled: boolean;
-+  paymentsEnabled?: boolean;
-+  publicPlanCode?: string | null;
- };
- 
- function trimEnv(value: string | undefined): string {
-@@ -36,19 +38,39 @@ export function parseFapiOrigin(value: string | undefined): string | null {
-   }
- }
- 
-+function parsePaymentsEnabled(value: string | undefined): boolean {
-+  const normalized = trimEnv(value).toLowerCase();
-+  return normalized === '1' || normalized === 'true' || normalized === 'on' || normalized === 'yes';
-+}
-+
-+function parsePublicPlanCode(value: string | undefined): string | null {
-+  const raw = trimEnv(value);
-+  return raw.length > 0 ? raw : null;
-+}
-+
- export function parsePortalConfig(env: Record<string, string | undefined>): PortalRuntimeConfig {
-   const publishableKey = trimEnv(env.VITE_CLERK_PUBLISHABLE_KEY);
--  return {
-+  const config: PortalRuntimeConfig = {
-     publishableKey: publishableKey.length > 0 ? publishableKey : null,
-     fapiOrigin: parseFapiOrigin(env.VITE_CLERK_FAPI),
-     portalEnabled: parseEnabledFlag(env.VITE_PORTAL_ENABLED),
-   };
-+  if (Object.prototype.hasOwnProperty.call(env, 'VITE_PAYMENTS_ENABLED')) {
-+    config.paymentsEnabled = parsePaymentsEnabled(env.VITE_PAYMENTS_ENABLED);
-+  }
-+  if (Object.prototype.hasOwnProperty.call(env, 'VITE_PUBLIC_PLAN_CODE')) {
-+    config.publicPlanCode = parsePublicPlanCode(env.VITE_PUBLIC_PLAN_CODE);
-+  }
-+  return config;
- }
- 
- export function readPortalConfig(): PortalRuntimeConfig {
-+  const env = import.meta.env as Record<string, string | undefined>;
-   return parsePortalConfig({
--    VITE_CLERK_PUBLISHABLE_KEY: import.meta.env.VITE_CLERK_PUBLISHABLE_KEY,
--    VITE_CLERK_FAPI: import.meta.env.VITE_CLERK_FAPI,
--    VITE_PORTAL_ENABLED: import.meta.env.VITE_PORTAL_ENABLED,
-+    VITE_CLERK_PUBLISHABLE_KEY: env.VITE_CLERK_PUBLISHABLE_KEY,
-+    VITE_CLERK_FAPI: env.VITE_CLERK_FAPI,
-+    VITE_PORTAL_ENABLED: env.VITE_PORTAL_ENABLED,
-+    VITE_PAYMENTS_ENABLED: env.VITE_PAYMENTS_ENABLED,
-+    VITE_PUBLIC_PLAN_CODE: env.VITE_PUBLIC_PLAN_CODE,
-   });
- }
-diff --git a/apps/app-portal/src/screens/AccountScreen.tsx b/apps/app-portal/src/screens/AccountScreen.tsx
---- a/apps/app-portal/src/screens/AccountScreen.tsx
-+++ b/apps/app-portal/src/screens/AccountScreen.tsx
-@@ -8,6 +8,9 @@ export function AccountScreen({
-   userMenu,
-   onSignOut,
-   onRetry,
-+  onNavigateToKeys,
-+  onNavigateToUsage,
-+  onNavigateToBilling,
- }: {
-   personName: string | null;
-   tenantId: string | null;
-@@ -15,6 +18,9 @@ export function AccountScreen({
-   userMenu: ReactNode;
-   onSignOut: () => void;
-   onRetry?: () => void;
-+  onNavigateToKeys?: () => void;
-+  onNavigateToUsage?: () => void;
-+  onNavigateToBilling?: () => void;
- }) {
-   const status =
-     mode === 'loading'
-@@ -46,6 +52,19 @@ export function AccountScreen({
-       ) : (
-         <p>Account access: Waiting for account</p>
-       )}
-+      {mode === 'default' && onNavigateToKeys && onNavigateToUsage && onNavigateToBilling ? (
-+        <nav className="acx-account-nav" aria-label="Account">
-+          <button type="button" className="acx-btn" onClick={onNavigateToKeys}>
-+            API keys
-+          </button>
-+          <button type="button" className="acx-btn" onClick={onNavigateToUsage}>
-+            Usage
-+          </button>
-+          <button type="button" className="acx-btn" onClick={onNavigateToBilling}>
-+            Billing
-+          </button>
-+        </nav>
-+      ) : null}
-       <StatusMessage tone={mode === 'error' ? 'error' : mode === 'default' ? 'ok' : 'info'}>{status}</StatusMessage>
-       {mode === 'error' && onRetry ? (
-         <button type="button" className="acx-btn acx-btn-primary" onClick={onRetry}>
-diff --git a/apps/app-portal/src/screens/NotAdmittedScreen.tsx b/apps/app-portal/src/screens/NotAdmittedScreen.tsx
---- a/apps/app-portal/src/screens/NotAdmittedScreen.tsx
-+++ b/apps/app-portal/src/screens/NotAdmittedScreen.tsx
-@@ -5,10 +5,12 @@ export function NotAdmittedScreen({
-   reason,
-   userMenu,
-   onSignOut,
-+  onClaimAccess,
- }: {
-   reason: 'email_unverified' | 'not_admitted';
-   userMenu: ReactNode;
-   onSignOut: () => void;
-+  onClaimAccess?: () => void;
- }) {
-   const copy =
-     reason === 'email_unverified'
-@@ -29,6 +31,11 @@ export function NotAdmittedScreen({
-         </div>
-       </header>
-       <StatusMessage tone="error">{copy}</StatusMessage>
-+      {reason === 'not_admitted' && onClaimAccess ? (
-+        <button type="button" className="acx-btn acx-btn-primary" onClick={onClaimAccess}>
-+          Claim access
-+        </button>
-+      ) : null}
-     </main>
-   );
- }
-diff --git a/apps/app-portal/src/styles.css b/apps/app-portal/src/styles.css
---- a/apps/app-portal/src/styles.css
-+++ b/apps/app-portal/src/styles.css
-@@ -141,10 +141,61 @@ body {
-   margin-top: var(--acx-space-lg);
- }
- 
-+.acx-private-shell {
-+  min-height: 100%;
-+}
-+
-+.acx-session-bar {
-+  display: flex;
-+  flex-wrap: wrap;
-+  justify-content: flex-end;
-+  align-items: center;
-+  gap: var(--acx-space-sm);
-+  padding: var(--acx-space-md) var(--acx-space-lg);
-+}
-+
-+.acx-account-nav {
-+  display: flex;
-+  flex-wrap: wrap;
-+  gap: var(--acx-space-sm);
-+  margin: var(--acx-space-md) 0;
-+}
-+
-+label {
-+  display: block;
-+  font-weight: var(--acx-font-weight-medium);
-+  margin: var(--acx-space-sm) 0;
-+}
-+
-+input,
-+select,
-+textarea {
-+  min-height: 2.75rem;
-+  width: 100%;
-+  max-width: 100%;
-+  padding: 0.5rem 0.75rem;
-+  border: 1px solid var(--acx-color-border);
-+  border-radius: var(--acx-radius-md);
-+  background: var(--acx-color-surface-alt);
-+  color: var(--acx-color-text);
-+  font: inherit;
-+}
-+
-+[role='dialog'] {
-+  background: var(--acx-color-surface-alt);
-+  border: 1px solid var(--acx-color-border);
-+  border-radius: var(--acx-radius-md);
-+  box-shadow: var(--acx-shadow-1);
-+  padding: var(--acx-space-lg);
-+  margin-top: var(--acx-space-md);
-+}
-+
- @media (max-width: 40rem) {
-   .acx-portal-header,
-   .acx-portal-actions,
--  .acx-escape {
-+  .acx-escape,
-+  .acx-session-bar,
-+  .acx-account-nav {
-     flex-direction: column;
-     align-items: stretch;
-   }
-@@ -153,3 +204,26 @@ body {
-     width: 100%;
-   }
- }
-+
-+@media (max-width: 360px) {
-+  .acx-portal,
-+  .acx-session-bar {
-+    padding: var(--acx-space-md);
-+  }
-+
-+  .acx-portal-header,
-+  .acx-portal-actions,
-+  .acx-escape,
-+  .acx-session-bar,
-+  .acx-account-nav {
-+    flex-direction: column;
-+    align-items: stretch;
-+  }
-+
-+  .acx-btn,
-+  input,
-+  select,
-+  textarea {
-+    width: 100%;
-+  }
-+}
++    app.dependency_overrides[get_optional_session] = session_dependency
++    app.dependency_overrides[require_write_access] = lambda: auth
++    app.dependency_overrides[get_usage_admission_service] = lambda: admission
++    app.dependency_overrides[get_description_adapter] = lambda: SimpleNamespace()
++    app.dependency_overrides[get_async_gpu_description_adapter] = lambda: SimpleNamespace(n_passes=1)
++    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
++        response = await client.post(
++            "/scene/describe/async",
++            data={
++                "request": json.dumps({"tenant_id": str(TENANT), "media_id": 42}),
++                "operation_id": uuid.uuid4().hex,
++            },
++            files={"image_42": ("image.jpg", IMAGE, "image/jpeg")},
++        )
++        assert response.status_code == 200, f"expected async enqueue 200, got {response.status_code}: {response.text}"
++        job_id = uuid.UUID(response.json()["job_id"])
++        # Dedicated session verifies real durability and the enforced policy.
++        async with factory() as session:
++            assert await session.scalar(select(DescribeRun).where(DescribeRun.id == job_id)) is None
++            await set_tenant_context(session, TENANT)
++            assert await session.scalar(select(DescribeRun).where(DescribeRun.id == job_id)) is not None
++            assert await session.scalar(select(DescribeRunItem).where(DescribeRunItem.run_id == job_id)) is not None
++            await session.commit()
++            assert await session.scalar(select(DescribeRunItem).where(DescribeRunItem.run_id == job_id)) is None
++        own = await client.get(f"/scene/describe/jobs/{job_id}")
++        assert own.status_code == 200, own.text
++        auth.tenant_claim = str(uuid.UUID(int=987))
++        other = await client.get(f"/scene/describe/jobs/{job_id}")
++        assert other.status_code == 404, other.text
++    assert gate.releases == 1

@@ -933,6 +933,7 @@ class LifecycleManager {
 			acknowledged_version bigint(20) unsigned DEFAULT NULL,
 			created_at datetime NOT NULL,
 			claimed_at datetime DEFAULT NULL,
+			claim_token char(64) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
 			last_attempted_at datetime DEFAULT NULL,
 			next_attempt_at datetime DEFAULT NULL,
 			first_failed_at datetime DEFAULT NULL,
@@ -942,7 +943,7 @@ class LifecycleManager {
 			KEY idx_tenant_status_created (tenant_id, status, created_at),
 			KEY idx_status_created (status, created_at),
 			KEY idx_entity (entity_type, entity_key)
-		) {$charset_collate};";
+		) ENGINE=InnoDB {$charset_collate};";
 
 		$topology_sql = "CREATE TABLE {$topology_table} (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -991,7 +992,7 @@ class LifecycleManager {
 			PRIMARY KEY  (id),
 			UNIQUE KEY uq_projection_conflict (tenant_id, entity_type, entity_key, conflict_code, backend_version),
 			KEY idx_entity_resolution (entity_type, entity_key, resolution_status)
-		) {$charset_collate};";
+		) ENGINE=InnoDB {$charset_collate};";
 
 		return array(
 			'acx_persons'              => $persons_sql,

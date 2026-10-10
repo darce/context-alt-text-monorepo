@@ -48,6 +48,27 @@ class ConflictRepository {
 		$this->table_name = $table_name ?? $default_table;
 	}
 
+	/** Fail closed on legacy nontransactional tables; START alone does not prove rollback. */
+	public function supports_atomic_outbox_conflicts( string $outbox_table ): bool {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_var' ) || ! method_exists( $wpdb, 'prepare' ) ) {
+			return false;
+		}
+		foreach ( array( $outbox_table, $this->table_name ) as $table ) {
+			$engine = $wpdb->get_var(
+				$wpdb->prepare(
+					'SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s',
+					$table
+				)
+			);
+			if ( ! is_string( $engine ) || 'innodb' !== strtolower( $engine ) ) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	/**
 	 * Persist one conflict result emitted by the outbox drain.
 	 *
@@ -103,7 +124,7 @@ class ConflictRepository {
 			array( '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s' )
 		);
 
-		if ( false === $inserted ) {
+		if ( false === $inserted || 0 === (int) $inserted ) {
 			return false;
 		}
 

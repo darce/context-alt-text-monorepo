@@ -339,7 +339,9 @@ def emit():
         pending = pending[written:]
     except BlockingIOError:
         pass
-    except BrokenPipeError:
+    except OSError:
+        # A closed PTY reports EIO instead of EPIPE. Output failure must not
+        # escape TERM/KILL/reap cleanup; worker.log retains the full output.
         output_closed = True
 
 def finish(reason, rc, stage, target):

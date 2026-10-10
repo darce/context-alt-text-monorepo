@@ -6,6 +6,8 @@ namespace AltContext\Sovereign\Sync;
 
 require_once __DIR__ . '/class-outbox-status.php';
 
+use RuntimeException;
+
 use function current_time;
 use function implode;
 use function is_array;
@@ -320,31 +322,67 @@ class OutboxQueryRepository {
 	 * Atomically claim a single pending operation for this drain.
 	 *
 	 * Transitions pending -> in_flight gated on the current status so a row already
-	 * claimed by a concurrent drain matches 0 rows. Returns true only when this caller
-	 * won the claim (CON-3).
+	 * claimed by a concurrent drain matches 0 rows. Returns the fresh claimed snapshot,
+	 * including its unique ownership token, or false on contention/lost ownership.
+	 *
+	 * @return array<string,mixed>|false
+	 * @throws RuntimeException When claim persistence or the snapshot read fails.
 	 */
-	public function claim_operation( int $outbox_id ): bool {
+	public function claim_operation( int $outbox_id ): array|false {
 		global $wpdb;
 
-		if ( $outbox_id <= 0 || ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'update' ) ) {
+		if ( $outbox_id <= 0 ) {
 			return false;
 		}
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'update' ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_row' ) ) {
+			throw new RuntimeException( 'Outbox claim database adapter is unavailable.' );
+		}
+
+		// Independent of clock resolution, lease length, and wall-clock rollback.
+		$claim_token = bin2hex( random_bytes( 32 ) );
 
 		$updated = $wpdb->update(
 			$this->table_name,
 			array(
-				'status'     => OutboxStatus::IN_FLIGHT,
-				'claimed_at' => current_time( 'mysql' ),
+				'status'      => OutboxStatus::IN_FLIGHT,
+				'claimed_at'  => current_time( 'mysql' ),
+				'claim_token' => $claim_token,
 			),
 			array(
 				'id'     => $outbox_id,
 				'status' => OutboxStatus::PENDING,
 			),
-			array( '%s', '%s' ),
+			array( '%s', '%s', '%s' ),
 			array( '%d', '%s' )
 		);
 
-		return false !== $updated && (int) $updated > 0;
+		if ( false === $updated ) {
+			throw new RuntimeException( 'Could not persist outbox claim.' );
+		}
+		if ( 0 === (int) $updated ) {
+			return false;
+		}
+
+		// A pre-claim pending snapshot may predate another completed retry. Read the
+		// accounting/payload belonging to THIS claim; never dispatch an unfenced fallback.
+		$row = $wpdb->get_row(
+			$wpdb->prepare(
+				'SELECT * FROM %i WHERE id = %d AND status = %s AND claim_token = %s',
+				$this->table_name,
+				$outbox_id,
+				OutboxStatus::IN_FLIGHT,
+				$claim_token
+			),
+			ARRAY_A
+		);
+		if ( ! empty( $wpdb->last_error ) ) {
+			throw new RuntimeException( 'Could not read claimed outbox operation.' );
+		}
+		if ( ! is_array( $row ) || ( $row['claim_token'] ?? null ) !== $claim_token ) {
+			return false;
+		}
+
+		return $this->decode_operation_payload( $row );
 	}
 
 	/**
@@ -356,6 +394,8 @@ class OutboxQueryRepository {
 	 * lease-expiry UPDATE returns such rows to `pending` and clears the claim. A freshly-claimed
 	 * row sits inside the lease window and is left untouched, so a peer drain mid-flight is not
 	 * disturbed.
+	 *
+	 * @throws RuntimeException When reclaim persistence fails.
 	 *
 	 * CON-3-FU-REV-A1: the lease cutoff is computed from current_time('mysql') — the SAME WP
 	 * site clock claim_operation() writes claimed_at with — NOT MySQL NOW(). Comparing a
@@ -372,7 +412,7 @@ class OutboxQueryRepository {
 		}
 
 		$query = $wpdb->prepare(
-			'UPDATE %i SET status = %s, claimed_at = NULL WHERE status = %s AND ( claimed_at IS NULL OR claimed_at <= DATE_SUB( %s, INTERVAL %d SECOND ) )',
+			'UPDATE %i SET status = %s, claimed_at = NULL, claim_token = NULL WHERE status = %s AND ( claimed_at IS NULL OR claimed_at <= DATE_SUB( %s, INTERVAL %d SECOND ) )',
 			$this->table_name,
 			OutboxStatus::PENDING,
 			OutboxStatus::IN_FLIGHT,
@@ -386,7 +426,10 @@ class OutboxQueryRepository {
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$result = $wpdb->query( $query );
 
-		return false !== $result ? max( 0, (int) $result ) : 0;
+		if ( false === $result ) {
+			throw new RuntimeException( 'Could not reclaim expired outbox claims.' );
+		}
+		return max( 0, (int) $result );
 	}
 
 	/**

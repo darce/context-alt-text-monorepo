@@ -18,6 +18,7 @@ use AltContext\Api\TenantIdentity;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use DateTimeImmutable;
 use DateTimeZone;
+use RuntimeException;
 use Throwable;
 
 use function add_action;
@@ -301,8 +302,9 @@ class OutboxDrain {
 				continue;
 			}
 
-			if ( $this->query_repository->claim_operation( $outbox_id ) ) {
-				$claimed[] = $operation;
+			$claimed_operation = $this->query_repository->claim_operation( $outbox_id );
+			if ( false !== $claimed_operation ) {
+				$claimed[] = $claimed_operation;
 			}
 		}
 
@@ -449,7 +451,9 @@ class OutboxDrain {
 					'error_message' => 'Remote curation replay did not return a result for this operation.',
 					'retryable' => true,
 				);
-			$this->apply_result( $operation, $result );
+			if ( ! $this->apply_result( $operation, $result ) ) {
+				continue;
+			}
 
 			$tenant_id = trim( (string) ( $operation['tenant_id'] ?? '' ) );
 			if ( '' !== $tenant_id ) {
@@ -493,17 +497,18 @@ class OutboxDrain {
 	/**
 	 * @param array<string,mixed> $operation
 	 * @param array<string,mixed> $result
+	 * @throws RuntimeException When an owned result cannot be persisted.
 	 */
-	private function apply_result( array $operation, array $result ): void {
+	private function apply_result( array $operation, array $result ): bool {
 		global $wpdb;
 
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'update' ) ) {
-			return;
-		}
-
 		$outbox_id = max( 0, (int) ( $operation['id'] ?? 0 ) );
-		if ( $outbox_id <= 0 ) {
-			return;
+		$claim_token = $operation['claim_token'] ?? null;
+		if ( $outbox_id <= 0 || ! is_string( $claim_token ) || '' === $claim_token ) {
+			return false;
+		}
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'update' ) ) {
+			throw new RuntimeException( 'Outbox completion database adapter is unavailable.' );
 		}
 
 		$attempts = max( 0, (int) ( $operation['attempts'] ?? 0 ) ) + 1;
@@ -511,8 +516,8 @@ class OutboxDrain {
 		$status = trim( (string) ( $result['status'] ?? 'failed' ) );
 
 		if ( OutboxStatus::ACKNOWLEDGED === $status ) {
-			$wpdb->update(
-				$this->table_name,
+			return $this->persist_claim_result(
+				$operation,
 				array(
 					'status' => OutboxStatus::ACKNOWLEDGED,
 					'attempts' => $attempts,
@@ -525,18 +530,13 @@ class OutboxDrain {
 					'next_attempt_at' => null,
 					'acknowledged_at' => $attempted_at,
 				),
-				array( 'id' => $outbox_id, 'status' => OutboxStatus::IN_FLIGHT ),
-				array( '%s', '%d', '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s' ),
-				array( '%d', '%s' )
+				array( '%s', '%d', '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s' )
 			);
-			return;
 		}
 
 		if ( OutboxStatus::CONFLICT === $status ) {
-			$this->conflict_repository->record_conflict( $operation, $result );
-
-			$wpdb->update(
-				$this->table_name,
+			return $this->persist_claim_result(
+				$operation,
 				array(
 					'status' => OutboxStatus::CONFLICT,
 					'attempts' => $attempts,
@@ -546,11 +546,9 @@ class OutboxDrain {
 					'last_attempted_at' => $attempted_at,
 					'next_attempt_at' => null,
 				),
-				array( 'id' => $outbox_id, 'status' => OutboxStatus::IN_FLIGHT ),
 				array( '%s', '%d', '%s', '%s', '%s', '%s', '%s' ),
-				array( '%d', '%s' )
+				$result
 			);
-			return;
 		}
 
 		// E15-35 Slice 1: combined time+count terminal. Non-retryable failures (auth/4xx/invalid
@@ -573,8 +571,8 @@ class OutboxDrain {
 		$next_status = $is_terminal ? OutboxStatus::FAILED : OutboxStatus::PENDING;
 		$next_attempt_at = $is_terminal ? null : $this->compute_next_attempt_at( $attempts, $attempted_at );
 
-		$wpdb->update(
-			$this->table_name,
+		return $this->persist_claim_result(
+			$operation,
 			array(
 				'status' => $next_status,
 				'attempts' => $attempts,
@@ -585,10 +583,73 @@ class OutboxDrain {
 				'first_failed_at' => $first_failed_at,
 				'next_attempt_at' => $next_attempt_at,
 			),
-			array( 'id' => $outbox_id, 'status' => OutboxStatus::IN_FLIGHT ),
-			array( '%s', '%d', '%s', '%s', '%d', '%s', '%s', '%s' ),
-			array( '%d', '%s' )
+			array( '%s', '%d', '%s', '%s', '%d', '%s', '%s', '%s' )
 		);
+	}
+
+	/**
+	 * The guarded UPDATE acquires the InnoDB row lock before any conflict insert.
+	 * Reclaimers cannot replace its owner between transition and conflict persistence.
+	 * Zero rows is lost ownership; persistence failures throw and remain recoverable.
+	 *
+	 * @param array<string,mixed> $operation
+	 * @param array<string,mixed> $data
+	 * @param string[] $formats
+	 * @param array<string,mixed>|null $conflict_result
+	 * @throws RuntimeException When completion or its conflict transaction fails.
+	 * @throws Throwable When conflict persistence throws.
+	 */
+	private function persist_claim_result( array $operation, array $data, array $formats, ?array $conflict_result = null ): bool {
+		global $wpdb;
+
+		$transaction_started = false;
+		if ( null !== $conflict_result ) {
+			if ( ! method_exists( $wpdb, 'query' ) || ! $this->conflict_repository->supports_atomic_outbox_conflicts( $this->table_name ) ) {
+				throw new RuntimeException( 'Outbox conflicts require InnoDB transactional storage.' );
+			}
+			if ( false === $wpdb->query( 'START TRANSACTION' ) ) {
+				throw new RuntimeException( 'Could not start outbox conflict transaction.' );
+			}
+			$transaction_started = true;
+		}
+
+		try {
+			$data['claimed_at'] = null;
+			$data['claim_token'] = null;
+			$formats[] = '%s';
+			$formats[] = '%s';
+			$updated = $wpdb->update(
+				$this->table_name,
+				$data,
+				array( 'id' => (int) $operation['id'], 'status' => OutboxStatus::IN_FLIGHT, 'claim_token' => $operation['claim_token'] ),
+				$formats,
+				array( '%d', '%s', '%s' )
+			);
+			if ( false === $updated ) {
+				throw new RuntimeException( 'Could not persist outbox completion.' );
+			}
+			if ( 0 === (int) $updated ) {
+				if ( $transaction_started && false === $wpdb->query( 'ROLLBACK' ) ) {
+					throw new RuntimeException( 'Could not roll back lost outbox conflict claim.' );
+				}
+				return false;
+			}
+			if ( $transaction_started ) {
+				$conflict_id = $this->conflict_repository->record_conflict( $operation, $conflict_result );
+				if ( false === $conflict_id || $conflict_id <= 0 ) {
+					throw new RuntimeException( 'Could not persist owned outbox conflict.' );
+				}
+				if ( false === $wpdb->query( 'COMMIT' ) ) {
+					throw new RuntimeException( 'Could not commit outbox conflict transaction.' );
+				}
+			}
+			return true;
+		} catch ( Throwable $exception ) {
+			if ( $transaction_started ) {
+				$wpdb->query( 'ROLLBACK' );
+			}
+			throw $exception;
+		}
 	}
 
 	/**

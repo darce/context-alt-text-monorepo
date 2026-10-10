@@ -1871,6 +1871,62 @@ def test_warm_start_budget_is_enforced_independently_of_overall_deadline(
     assert not _check(result, "warm_start_budget")
 
 
+@pytest.mark.parametrize("budget", [3.0, 7.0])
+@pytest.mark.parametrize("submit_seconds", [0.0, 10.0])
+def test_warm_start_budget_includes_load_observation_but_excludes_submit_latency(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    budget: float,
+    submit_seconds: float,
+) -> None:
+    monkeypatch.setattr(smoke, "WARM_START_BUDGET_SECONDS", budget)
+    clock = smoke.FastClock()
+    scenario = smoke.DryScenario()
+    base_transport = smoke.make_mock_transport(scenario, now=clock.now)
+    original_load_check = smoke._load_snapshot_has_fresh_work
+    pending_reads = 0
+
+    def delayed_load_check(
+        snapshot: dict[str, object],
+        *,
+        freshness_anchor: datetime,
+        require_pending: bool = True,
+    ) -> tuple[bool, str]:
+        nonlocal pending_reads
+        if require_pending:
+            pending_reads += 1
+            if pending_reads <= 2:
+                return False, "pending load not published yet"
+        return original_load_check(snapshot, freshness_anchor=freshness_anchor, require_pending=require_pending)
+
+    def delayed_submit(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and scenario.submitted_at is None:
+            clock.sleep(submit_seconds)
+        return base_transport.handle_request(request)
+
+    monkeypatch.setattr(smoke, "_load_snapshot_has_fresh_work", delayed_load_check)
+    result, _ = _run(
+        tmp_path,
+        scenario=scenario,
+        clock=clock,
+        transport=httpx.MockTransport(delayed_submit),
+    )
+
+    assert pending_reads == 3
+    assert _check(result, "load_snapshot_observed_after_trigger")
+    assert _check(result, "instance_stopped_finally")
+    assert _check(result, "stop_event_observed")
+    if budget == 3.0:
+        assert result.exit_code == 1
+        assert not _check(result, "warm_start_budget")
+        assert "at 4.000s" in _detail(result, "warm_start_budget")
+    else:
+        assert result.exit_code == 0
+        assert _check(result, "warm_start_budget")
+        assert result.evidence["phase_durations_seconds"]["warm_start"] == pytest.approx(6.0)
+        assert "in 6.000s" in _detail(result, "warm_start_budget")
+
+
 def test_warm_start_budget_fails_when_final_running_probe_crosses_deadline(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1929,6 +1985,59 @@ def test_reaper_stop_convergence_has_its_own_budget(
     assert result.exit_code == 1
     assert _check(result, "idle_reaper_budget")
     assert not _check(result, "reaper_budget")
+
+
+@pytest.mark.parametrize(
+    ("phase", "states", "late_state"),
+    [
+        ("idle", ["RUNNING", "STOPPING", "STOPPED"], "STOPPING"),
+        ("idle", ["RUNNING", "STOPPED"], "STOPPED"),
+        ("convergence", ["STOPPING", "STOPPED"], "STOPPED"),
+    ],
+)
+@pytest.mark.parametrize("probe_seconds", [0.5, 1.0, 4.0])
+def test_reaper_budget_checks_final_probe_time(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+    states: list[str],
+    late_state: str,
+    probe_seconds: float,
+) -> None:
+    monkeypatch.setattr(smoke, "IDLE_REAPER_SECONDS", 3.0 if phase == "idle" else 300.0)
+    monkeypatch.setattr(smoke, "REAPER_BUDGET_SECONDS", 3.0)
+    clock = smoke.FastClock()
+    probe_timeouts: list[float] = []
+
+    class SlowFinalProbeOci(smoke.FakeOci):
+        def get_instance(self, instance_id: str, *, timeout: float) -> dict[str, object]:
+            instance = super().get_instance(instance_id, timeout=timeout)
+            if self.reaping and instance["lifecycle-state"] == late_state and not probe_timeouts:
+                probe_timeouts.append(timeout)
+                # Deliberately return late even when a caller caps the timeout:
+                # the verdict must check the actual observation time as well.
+                clock.sleep(probe_seconds)
+            return instance
+
+    result, _ = _run(
+        tmp_path,
+        oci=SlowFinalProbeOci(gpu_states=None, reaper_states=list(states)),
+        clock=clock,
+    )
+
+    assert _check(result, "instance_stopped_finally")
+    assert _check(result, "stop_event_observed")
+    assert _check(result, "exactly_one_start_action")
+    within_budget = probe_seconds < 1.0
+    assert result.exit_code == (0 if within_budget else 1)
+    phase_check = "idle_reaper_budget" if phase == "idle" else "reaper_budget"
+    assert _check(result, phase_check) is within_budget
+    if not within_budget:
+        assert "exceeded" in _detail(result, phase_check)
+    other_check = "reaper_budget" if phase == "idle" else "idle_reaper_budget"
+    assert _check(result, other_check)
+    assert _check(result, "instance_stopped_after_reaper") is (within_budget or late_state == "STOPPED")
+    assert probe_timeouts == [pytest.approx(1.0)]
 
 
 def test_human_stop_principal_fails_the_smoke(tmp_path: Path) -> None:

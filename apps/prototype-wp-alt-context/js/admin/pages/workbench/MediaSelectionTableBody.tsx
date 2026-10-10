@@ -30,35 +30,46 @@ export type RowCommitOwner = RowPoliteOwner | 'queue';
  * React may defer useState updaters; a side-effect flag inside setState is not
  * a reliable "did I win?" signal. State still drives peerCommitPending paint.
  */
+const useTableCommitLocks = (): {
+  commitOwners: Map<number, RowCommitOwner>;
+  beginCommit: (mediaId: number, owner: RowCommitOwner) => boolean;
+  endCommit: (mediaId: number, owner: RowCommitOwner) => void;
+} => {
+  const [commitOwners, setCommitOwners] = useState(new Map<number, RowCommitOwner>());
+  const commitOwnersRef = useRef(new Map<number, RowCommitOwner>());
+
+  // Compare-and-set: claim only when free. Returns whether this caller won.
+  // Exclusivity lives here — not in each caller's peerCommitPending guard.
+  const beginCommit = useCallback((mediaId: number, owner: RowCommitOwner): boolean => {
+    if (commitOwnersRef.current.has(mediaId)) {
+      return false;
+    }
+    commitOwnersRef.current.set(mediaId, owner);
+    setCommitOwners(new Map(commitOwnersRef.current));
+    return true;
+  }, []);
+
+  // Compare-and-clear: only the holding owner releases the lock.
+  const endCommit = useCallback((mediaId: number, owner: RowCommitOwner): void => {
+    if (commitOwnersRef.current.get(mediaId) !== owner) {
+      return;
+    }
+    commitOwnersRef.current.delete(mediaId);
+    setCommitOwners(new Map(commitOwnersRef.current));
+  }, []);
+
+  return { commitOwners, beginCommit, endCommit };
+};
+
 export const useRowCommitLock = (): {
   commitOwner: RowCommitOwner | null;
   beginCommit: (owner: RowCommitOwner) => boolean;
   endCommit: (owner: RowCommitOwner) => void;
 } => {
-  const [commitOwner, setCommitOwner] = useState<RowCommitOwner | null>(null);
-  const commitOwnerRef = useRef<RowCommitOwner | null>(null);
-
-  // Compare-and-set: claim only when free. Returns whether this caller won.
-  // Exclusivity lives here — not in each caller's peerCommitPending guard.
-  const beginCommit = useCallback((owner: RowCommitOwner): boolean => {
-    if (commitOwnerRef.current !== null) {
-      return false;
-    }
-    commitOwnerRef.current = owner;
-    setCommitOwner(owner);
-    return true;
-  }, []);
-
-  // Compare-and-clear: only the holding owner releases the lock.
-  const endCommit = useCallback((owner: RowCommitOwner): void => {
-    if (commitOwnerRef.current !== owner) {
-      return;
-    }
-    commitOwnerRef.current = null;
-    setCommitOwner(null);
-  }, []);
-
-  return { commitOwner, beginCommit, endCommit };
+  const { commitOwners, beginCommit, endCommit } = useTableCommitLocks();
+  const beginRowCommit = useCallback((owner: RowCommitOwner) => beginCommit(0, owner), [beginCommit]);
+  const endRowCommit = useCallback((owner: RowCommitOwner) => endCommit(0, owner), [endCommit]);
+  return { commitOwner: commitOwners.get(0) ?? null, beginCommit: beginRowCommit, endCommit: endRowCommit };
 };
 
 interface MediaSelectionTableBodyProps {
@@ -96,6 +107,9 @@ export const MediaSelectionTableBody = ({
   hasDraftFilter = false,
   onClearDraftFilters,
 }: MediaSelectionTableBodyProps): React.JSX.Element => {
+  // Queue ownership belongs to the mounted table, not a visible row. Filtering
+  // or removing and redisplaying a row must not admit a competing correction.
+  const { commitOwners, beginCommit, endCommit } = useTableCommitLocks();
   const mediaIds = useMemo(() => items.map((item) => item.id), [items]);
   const queryClient = useQueryClient();
   const {
@@ -273,6 +287,9 @@ export const MediaSelectionTableBody = ({
           identitiesLoading={identitiesLoading}
           onRetryIdentities={onRetryIdentities}
           draft={draftsByMediaId[item.id]}
+          queueCommitPending={commitOwners.get(item.id) === 'queue'}
+          beginQueueCommit={beginCommit}
+          endQueueCommit={endCommit}
         />
       ))}
     </>
@@ -289,6 +306,9 @@ interface MediaSelectionRowProps {
   identitiesLoading?: boolean;
   onRetryIdentities?: () => void;
   draft?: QueueDraft;
+  queueCommitPending: boolean;
+  beginQueueCommit: (mediaId: number, owner: RowCommitOwner) => boolean;
+  endQueueCommit: (mediaId: number, owner: RowCommitOwner) => void;
 }
 
 interface RowPoliteState {
@@ -306,6 +326,9 @@ const MediaSelectionRow = ({
   identitiesLoading,
   onRetryIdentities,
   draft,
+  queueCommitPending,
+  beginQueueCommit,
+  endQueueCommit,
 }: MediaSelectionRowProps): React.JSX.Element => {
   const thumbDimensions = item.thumbnailDimensions;
   const detailReady = [item.mimeType, item.updatedAt, item.dimensions].some((value) => value != null && value !== '');
@@ -316,10 +339,10 @@ const MediaSelectionRow = ({
   // per-row correctionErrors map [RLSE-05]).
   const [polite, setPolite] = useState<RowPoliteState>({ owner: null, message: '' });
 
-  // One correction in flight per row (S2c-4b-i / S2c-4b-ii). Owner-tagged like
-  // the polite region: begin is exclusive compare-and-set, end is
-  // compare-and-clear so a late sibling settle cannot clear another owner's lock.
-  const { commitOwner, beginCommit, endCommit } = useRowCommitLock();
+  // Keep the existing editor/Suggest lifecycle. Queue writes additionally own
+  // the table lock, released by their promise even if this row unmounts.
+  const { commitOwner: localCommitOwner, beginCommit, endCommit } = useRowCommitLock();
+  const commitOwner = queueCommitPending ? 'queue' : localCommitOwner;
 
   const announcePolite = useCallback((owner: RowPoliteOwner, message: string): void => {
     setPolite({ owner, message });
@@ -339,12 +362,30 @@ const MediaSelectionRow = ({
   const suggestAnnounce = useCallback((message: string): void => announcePolite('suggest', message), [announcePolite]);
   const suggestClear = useCallback((): void => clearPolite('suggest'), [clearPolite]);
   // beginCommit returns whether the claim won — surfaces must not write on false.
-  const editorCommitStart = useCallback((): boolean => beginCommit('editor'), [beginCommit]);
+  const editorCommitStart = useCallback(
+    (): boolean => !queueCommitPending && beginCommit('editor'),
+    [beginCommit, queueCommitPending],
+  );
   const editorCommitEnd = useCallback((): void => endCommit('editor'), [endCommit]);
-  const suggestCommitStart = useCallback((): boolean => beginCommit('suggest'), [beginCommit]);
+  const suggestCommitStart = useCallback(
+    (): boolean => !queueCommitPending && beginCommit('suggest'),
+    [beginCommit, queueCommitPending],
+  );
   const suggestCommitEnd = useCallback((): void => endCommit('suggest'), [endCommit]);
-  const queueCommitStart = useCallback((): boolean => beginCommit('queue'), [beginCommit]);
-  const queueCommitEnd = useCallback((): void => endCommit('queue'), [endCommit]);
+  const queueCommitStart = useCallback((): boolean => {
+    if (!beginCommit('queue')) {
+      return false;
+    }
+    if (!beginQueueCommit(item.id, 'queue')) {
+      endCommit('queue');
+      return false;
+    }
+    return true;
+  }, [beginCommit, beginQueueCommit, endCommit, item.id]);
+  const queueCommitEnd = useCallback((): void => {
+    endCommit('queue');
+    endQueueCommit(item.id, 'queue');
+  }, [endCommit, endQueueCommit, item.id]);
 
   return (
     <tr>
@@ -423,6 +464,8 @@ const MediaSelectionRow = ({
             draftText={draft.draftText}
             title={item.title}
             committedAlt={item.altText ?? null}
+            committedIsDecorative={item.isDecorative === true}
+            draftIdentity={JSON.stringify([draft.source, draft.runId])}
             peerCommitPending={commitOwner !== null && commitOwner !== 'queue'}
             onCommitStart={queueCommitStart}
             onCommitEnd={queueCommitEnd}

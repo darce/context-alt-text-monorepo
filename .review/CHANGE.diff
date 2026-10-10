@@ -1,1333 +1,1224 @@
-diff --git a/apps/app-portal/.env.example b/apps/app-portal/.env.example
---- a/apps/app-portal/.env.example
-+++ b/apps/app-portal/.env.example
-@@ -7,3 +7,10 @@ VITE_CLERK_FAPI=https://clerk.altcontext.com
+diff --git a/scripts/remote_gate.sh b/scripts/remote_gate.sh
+--- a/scripts/remote_gate.sh
++++ b/scripts/remote_gate.sh
+@@ -8,6 +8,25 @@
+ # `EXIT=<code> (<target>)` per target, then a final `DONE-ALL`; local exit is
+ # nonzero if any target failed, 75 if the clone lock is busy, 74 if host-memory
+ # admission deferred the run, 73 if the workdir's `gate-preflight` target failed.
++# Deadline statuses: 124 remote whole-run deadline, 76 local push/SSH deadline,
++# 79 cleanup incomplete (never certify a run with surviving owned children).
++# WORKBAY_REMOTE_GATE_BUDGET_SECONDS / REMOTE_GATE_BUDGET_SECONDS defaults to
++# 1800; TERM_GRACE_SECONDS (same prefixes) defaults to 5. Both must be positive
++# whole seconds (budget <= 86400, grace <= 60). This default is an operational
++# ceiling, not a healthy-suite runtime calibration. The remote budget covers
++# lock, checkout, sync, admission, preflight, collection and all targets together.
++# Push has the same bound; SSH allows budget + grace + 15s for remote cleanup.
++# Python 3 is required locally and remotely; remote Linux /proc + subreaping
++# track only owned descendants, including children that create new sessions.
++# Each remote run keeps worker.log, stage and terminal.log under
++# $HOME/.local/state/remote-gate/<unique-run>/, outside checkout/git clean.
++# Terminal evidence includes reason, immutable SHA, last stage/target, elapsed
++# and budget even when the worker dies or the SSH reader disconnects.
++# Output uses the durable worker log as a spool, retaining partial writes and
++# retrying backpressure for up to 2s after cleanup. A persistently blocked or
++# disconnected reader can recover the complete output from those artifacts.
++# Unexpected supervisor monitoring failures fail closed with status 79 and
++# still attempt bounded owned-tree cleanup and terminal attribution.
+ # Those numeric codes are the SCRIPT's exit status; `make check-remote` collapses
+ # every failure to make's own exit 2, so read the code off the trailing
+ # `make: *** [check-remote] Error <n>` line or invoke this script directly.
+@@ -28,9 +47,10 @@
+ #      knobs default (dir src/<repo-slug>, workdir ., targets below).
+ #   2. .workbay/remote-gate.env at the repo root: REMOTE_GATE_HOST,
+ #      REMOTE_GATE_DIR, REMOTE_GATE_WORKDIR, REMOTE_GATE_TARGETS,
+-#      REMOTE_GATE_ENV ("KEY=VALUE ..." injected into the remote run env)
++#      REMOTE_GATE_ENV ("KEY=VALUE ..." injected into the remote run env),
++#      REMOTE_GATE_BUDGET_SECONDS, REMOTE_GATE_TERM_GRACE_SECONDS
+ #   3. WORKBAY_REMOTE_GATE_{HOST,DIR,WORKDIR,TARGETS,ENV,NICE,MEMORY_MAX,
+-#      CPU_QUOTA} + PYTEST_WORKERS env vars (captured before the file is
++#      CPU_QUOTA,BUDGET_SECONDS,TERM_GRACE_SECONDS} + PYTEST_WORKERS (captured before the file is
+ #      sourced, so env always wins)
+ #
+ # The remote user is expected to be a no-sudo, no-service-groups account whose
+@@ -45,7 +65,7 @@ set -euo pipefail
+ # fall through to the mutating `run` default.
+ case "${1:-}" in
+ ""|-h|--help|help|usage)
+-    sed -n '2,33p' "$0"
++    sed -n '2,54p' "$0"
+     exit 0
+     ;;
+ esac
+@@ -70,9 +90,14 @@ _env_nice="${WORKBAY_REMOTE_GATE_NICE:-}"
+ _env_workers="${PYTEST_WORKERS:-}"
+ _env_memmax="${WORKBAY_REMOTE_GATE_MEMORY_MAX:-}"
+ _env_cpuquota="${WORKBAY_REMOTE_GATE_CPU_QUOTA:-}"
++_env_budget="${WORKBAY_REMOTE_GATE_BUDGET_SECONDS-}"
++_env_grace="${WORKBAY_REMOTE_GATE_TERM_GRACE_SECONDS-}"
++_env_budget_set="${WORKBAY_REMOTE_GATE_BUDGET_SECONDS+x}"
++_env_grace_set="${WORKBAY_REMOTE_GATE_TERM_GRACE_SECONDS+x}"
  
- # Public build-time portal flag. false/0/off renders the designed unavailable screen.
- VITE_PORTAL_ENABLED=true
+ # Layer 2: per-repo config file.
+ REMOTE_GATE_HOST="" REMOTE_GATE_DIR="" REMOTE_GATE_WORKDIR="" REMOTE_GATE_TARGETS="" REMOTE_GATE_ENV=""
++REMOTE_GATE_BUDGET_SECONDS=1800 REMOTE_GATE_TERM_GRACE_SECONDS=5
+ config_file="$repo_root/.workbay/remote-gate.env"
+ if [ -f "$config_file" ]; then
+     # shellcheck disable=SC1090
+@@ -108,6 +133,10 @@ CLONE_SENTINEL=".remote-gate-clone"
+ # Per-run scope caps (inside the outer user-slice fence from the runbook).
+ RUN_MEMORY_MAX="${_env_memmax:-6G}"
+ RUN_CPU_QUOTA="${_env_cpuquota:-200%}"
++RUN_BUDGET="${REMOTE_GATE_BUDGET_SECONDS-1800}"
++TERM_GRACE="${REMOTE_GATE_TERM_GRACE_SECONDS-5}"
++[ -z "$_env_budget_set" ] || RUN_BUDGET="$_env_budget"
++[ -z "$_env_grace_set" ] || TERM_GRACE="$_env_grace"
+ 
+ die() { echo "remote_gate: $*" >&2; exit 2; }
+ 
+@@ -130,6 +159,14 @@ case "$NICENESS" in *[!0-9]*|"") die "WORKBAY_REMOTE_GATE_NICE must be an intege
+ case "$WORKERS" in *[!0-9]*|"") die "PYTEST_WORKERS must be an integer" ;; esac
+ case "$RUN_MEMORY_MAX" in *[!0-9GMK]*|"") die "MEMORY_MAX must look like 6G/512M" ;; esac
+ case "$RUN_CPU_QUOTA" in *[!0-9%]*|"") die "CPU_QUOTA must look like 200%" ;; esac
++case "$RUN_BUDGET" in
++    *[!0-9]*|""|0*|??????*) die "BUDGET_SECONDS must be positive whole seconds (1..86400)" ;;
++esac
++[ "$RUN_BUDGET" -le 86400 ] || die "BUDGET_SECONDS must be positive whole seconds (1..86400)"
++case "$TERM_GRACE" in
++    *[!0-9]*|""|0*|???*) die "TERM_GRACE_SECONDS must be positive whole seconds (1..60)" ;;
++esac
++[ "$TERM_GRACE" -le 60 ] || die "TERM_GRACE_SECONDS must be positive whole seconds (1..60)"
+ 
+ extra_env=()
+ remote_extra_env=()
+@@ -239,6 +276,310 @@ doctor)
+         done'
+     ;;
+ run)
++    command -v python3 >/dev/null || { echo 'remote-gate: Python 3 required for deadlines' >&2; exit 78; }
++    # The identical supervisor bounds local transports and the remote worker.
++    # It stays outside the worker session, owns/reaps orphaned descendants on
++    # Linux, and names scopes explicitly because systemd is a separate parent.
++    supervisor="$(cat <<'PY'
++import ctypes
++import os
++from pathlib import Path
++import select
++import signal
++import subprocess
++import sys
++import tempfile
++import time
++import uuid
 +
-+# Public billing flag. Only explicit true/1/on/yes enables checkout and manage.
-+# Default is disabled. Do not invent a price, catalog, or product ID here.
-+VITE_PAYMENTS_ENABLED=false
++mode, budget, grace, sha, initial_stage = sys.argv[1:6]
++budget, grace = int(budget), int(grace)
++started = time.monotonic()
++remote = mode == 'remote'
++linux = sys.platform.startswith('linux')
++if remote and not linux:
++    print('remote-gate: remote Linux /proc required', file=sys.stderr)
++    sys.exit(78)
++if linux and not Path('/proc/self/stat').is_file():
++    print('remote-gate: readable /proc required for owned child tracking', file=sys.stderr)
++    sys.exit(78)
++if linux:
++    # Adopt double-forked/session-detached children rather than losing them to
++    # PID 1 when the worker exits. Do not kill by name, user or shared cgroup.
++    if ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) != 0:
++        print('remote-gate: child subreaper unavailable', file=sys.stderr)
++        sys.exit(78)
++base = Path.home() / '.local/state/remote-gate'
++base.mkdir(parents=True, exist_ok=True, mode=0o700)
++prefix = ('' if remote else 'transport-') + sha[:12] + '-'
++run_dir = Path(tempfile.mkdtemp(prefix=prefix, dir=base))
++state = run_dir / 'stage'
++state.write_text(initial_stage + ' -\n')
++unit = 'remote-gate-' + uuid.uuid4().hex
++env = os.environ.copy()
++env.update({'RG_STATE': str(state), 'RG_UNIT_BASE': unit})
++worker_log = (run_dir / 'worker.log').open('wb', buffering=0)
++reader = (run_dir / 'worker.log').open('rb', buffering=0)
++cancelled = []
++for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
++    signal.signal(sig, lambda signum, frame: cancelled.append(signum))
++signal.signal(signal.SIGPIPE, signal.SIG_IGN)
++# A disconnected or backpressured SSH reader must not block deadline cleanup.
++os.set_blocking(sys.stdout.fileno(), False)
 +
-+# Public plan code accepted by the backend catalog map. Leave blank when payments are disabled.
-+VITE_PUBLIC_PLAN_CODE=
-diff --git a/apps/app-portal/src/App.tsx b/apps/app-portal/src/App.tsx
---- a/apps/app-portal/src/App.tsx
-+++ b/apps/app-portal/src/App.tsx
-@@ -1,9 +1,19 @@
- import { ClerkProvider, SignIn, SignUp, UserButton, useAuth, useUser } from '@clerk/react';
--import { useCallback, useEffect, useRef, useState } from 'react';
-+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
- import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-+import { createPortalBillingClient } from './api/portalBilling';
-+import { createPortalClaimClient } from './api/portalClaim';
-+import { createPortalKeyClient } from './api/portalKeys';
- import { fetchPortalMe, PortalMeOutcome, type PortalMeResult } from './api/portalMe';
-+import { createPortalRequest } from './api/portalRequest';
-+import { createPortalUsageClient } from './api/portalUsage';
-+import { WordPressTestConnectionGuidance } from './components/WordPressTestConnectionGuidance';
- import { readPortalConfig, type PortalRuntimeConfig } from './config';
- import { AccountScreen } from './screens/AccountScreen';
-+import { BillingReturnScreen } from './screens/BillingReturnScreen';
-+import { BillingScreen } from './screens/BillingScreen';
-+import { ClaimScreen } from './screens/ClaimScreen';
-+import { KeysScreen } from './screens/KeysScreen';
- import { LogoutScreen } from './screens/LogoutScreen';
- import { NotAdmittedScreen } from './screens/NotAdmittedScreen';
- import { OutageScreen } from './screens/OutageScreen';
-@@ -11,6 +21,7 @@ import { SignInScreen } from './screens/SignInScreen';
- import { SignUpScreen } from './screens/SignUpScreen';
- import { SignedOutScreen } from './screens/SignedOutScreen';
- import { UnavailableScreen } from './screens/UnavailableScreen';
-+import { UsageScreen } from './screens/UsageScreen';
- 
- export type AppProps = {
-   config?: PortalRuntimeConfig;
-@@ -37,6 +48,7 @@ type AccountView =
- type LogoutView = 'idle' | 'loading' | 'error';
- 
- const CLERK_LOAD_TIMEOUT_MS = 8_000;
-+const PORTAL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
- 
- function isEmailVerified(user: ReturnType<typeof useUser>['user']): boolean {
-   const status = user?.primaryEmailAddress?.verification?.status;
-@@ -82,15 +94,45 @@ function ownedAccount(account: AccountView, owner: AccountOwner | null): Account
-   return { status: 'loading', owner };
- }
- 
-+function readAttemptId(value: string | null | undefined): string | null {
-+  if (typeof value !== 'string' || !PORTAL_UUID_RE.test(value)) {
-+    return null;
-+  }
-+  return value;
-+}
++pending = b''
++output_closed = False
 +
-+function paymentsFromConfig(config: PortalRuntimeConfig): { paymentsEnabled: boolean; publicPlanCode: string | null } {
-+  const plan = typeof config.publicPlanCode === 'string' ? config.publicPlanCode.trim() : '';
-+  return {
-+    paymentsEnabled: config.paymentsEnabled === true,
-+    publicPlanCode: plan.length > 0 ? plan : null,
-+  };
-+}
++def emit():
++    global pending, output_closed
++    if output_closed or not pending:
++        return
++    try:
++        written = os.write(sys.stdout.fileno(), pending)
++        pending = pending[written:]
++    except BlockingIOError:
++        pass
++    except BrokenPipeError:
++        output_closed = True
 +
-+function SessionEscape({ userMenu, onSignOut }: { userMenu: ReactNode; onSignOut: () => void }) {
-+  return (
-+    <div className="acx-session-bar">
-+      {userMenu}
-+      <button type="button" className="acx-btn" onClick={onSignOut}>
-+        Sign out
-+      </button>
-+    </div>
-+  );
-+}
++def finish(reason, rc, stage, target):
++    terminal = (f'remote-gate: TERMINAL reason={reason} sha={sha} stage={stage} '
++                f'target={target} elapsed={time.monotonic() - started:.3f} '
++                f'budget={budget} exit={rc} artifacts={run_dir}\n')
++    (run_dir / 'terminal.log').write_text(terminal)
++    worker_log.write(terminal.encode())
++    # The file is the queue; memory holds at most one unwritten chunk. Drain a
++    # finite snapshot after cleanup, so output never postpones termination.
++    end = os.fstat(reader.fileno()).st_size
++    drain_end = time.monotonic() + 2
++    while (pending or reader.tell() < end) and not output_closed:
++        if time.monotonic() >= drain_end:
++            break
++        forward(end)
++        if pending:
++            select.select([], [sys.stdout.fileno()], [], min(.01, max(0, drain_end - time.monotonic())))
++    sys.exit(rc)
 +
- function PortalShell({
-   fetchImpl,
-   clerkLoadTimeoutMs,
-   portalMeTimeoutMs,
-+  paymentsEnabled,
-+  publicPlanCode,
-   onRetryClerk,
- }: {
-   fetchImpl: typeof fetch;
-   clerkLoadTimeoutMs: number;
-   portalMeTimeoutMs: number;
-+  paymentsEnabled: boolean;
-+  publicPlanCode: string | null;
-   onRetryClerk: () => void;
- }) {
-   const { isLoaded, isSignedIn, userId, sessionId, getToken, signOut } = useAuth();
-@@ -101,6 +143,7 @@ function PortalShell({
-   const [account, setAccount] = useState<AccountView>({ status: 'idle' });
-   const [logout, setLogout] = useState<LogoutView>('idle');
-   const [fetchEpoch, setFetchEpoch] = useState(0);
-+  const [returnAttemptId, setReturnAttemptId] = useState<string | null>(null);
-   const epochRef = useRef(0);
-   const ownerRef = useRef<AccountOwner | null>(null);
-   const logoutRef = useRef<LogoutView>('idle');
-@@ -109,8 +152,10 @@ function PortalShell({
-   const activeOwner = isSignedIn ? readOwner(userId, sessionId) : null;
-   if (activeOwner && account.status !== 'idle' && !ownersMatch(account.owner, activeOwner)) {
-     setAccount({ status: 'loading', owner: activeOwner });
-+    setReturnAttemptId(null);
-   } else if (!isSignedIn && account.status !== 'idle') {
-     setAccount({ status: 'idle' });
-+    setReturnAttemptId(null);
-   }
-   const displayAccount = ownedAccount(account, activeOwner);
- 
-@@ -119,6 +164,27 @@ function PortalShell({
-   logoutRef.current = logout;
-   getTokenRef.current = getToken;
- 
-+  const ownerUserId = activeOwner?.userId ?? '';
-+  const ownerSessionId = activeOwner?.sessionId ?? '';
-+  const request = useMemo(() => {
-+    if (!ownerUserId) {
-+      return null;
-+    }
-+    const captured = { userId: ownerUserId, sessionId: ownerSessionId };
-+    return createPortalRequest({
-+      getToken: () => getTokenRef.current(),
-+      fetchImpl,
-+      timeoutMs: portalMeTimeoutMs,
-+      owner: captured,
-+      currentOwner: () => ownerRef.current,
-+    });
-+  }, [fetchImpl, ownerSessionId, ownerUserId, portalMeTimeoutMs]);
++def forward(end=None):
++    global pending
++    # Cap each drain so a noisy worker cannot starve the monotonic deadline.
++    if output_closed:
++        return
++    if not pending:
++        size = 65536 if end is None else min(65536, end - reader.tell())
++        pending = reader.read(size)
++    emit()
 +
-+  const keyClient = useMemo(() => (request ? createPortalKeyClient(request) : null), [request]);
-+  const usageClient = useMemo(() => (request ? createPortalUsageClient(request) : null), [request]);
-+  const claimClient = useMemo(() => (request ? createPortalClaimClient(request) : null), [request]);
-+  const billingClient = useMemo(() => (request ? createPortalBillingClient(request) : null), [request]);
++owned = {}
++monitor_failed = False
 +
-   useEffect(() => {
-     if (isLoaded) {
-       setClerkTimedOut(false);
-@@ -185,6 +251,7 @@ function PortalShell({
-   }, [fetchEpoch, fetchImpl, isLoaded, isSignedIn, logout, portalMeTimeoutMs, sessionId, user, userId]);
- 
-   const handleSignOut = useCallback(async () => {
-+    setReturnAttemptId(null);
-     setAccount({ status: 'idle' });
-     setLogout('loading');
-     setFetchEpoch((value) => value + 1);
-@@ -201,8 +268,25 @@ function PortalShell({
-     setFetchEpoch((value) => value + 1);
-   }, []);
- 
-+  const handleClaimed = useCallback(() => {
-+    if (!ownersMatch(activeOwner, ownerRef.current)) {
-+      return;
-+    }
-+    if (logoutRef.current !== 'idle') {
-+      return;
-+    }
-+    setFetchEpoch((value) => value + 1);
-+  }, [activeOwner]);
++def process_stat(pid):
++    # comm is an arbitrary byte string, including non-UTF-8 and ')' bytes.
++    fields = Path(f'/proc/{pid}/stat').read_bytes().rsplit(b')', 1)[1].split()
++    return int(fields[1]), fields[19], fields[0]
 +
-+  const signOutNow = () => void handleSignOut();
-   const userMenu = <UserButton />;
-   const path = location.pathname;
-+  const wrapPrivate = (node: ReactNode) => (
-+    <div className="acx-private-shell">
-+      <SessionEscape userMenu={userMenu} onSignOut={signOutNow} />
-+      {node}
-+    </div>
-+  );
- 
-   if (clerkTimedOut && !isLoaded) {
-     return <OutageScreen kind="clerk" onRetry={onRetryClerk} />;
-@@ -237,21 +321,30 @@ function PortalShell({
-     return <Navigate to="/" replace />;
-   }
-   if (displayAccount.status === 'email_unverified') {
--    return <NotAdmittedScreen reason="email_unverified" userMenu={userMenu} onSignOut={() => void handleSignOut()} />;
-+    return <NotAdmittedScreen reason="email_unverified" userMenu={userMenu} onSignOut={signOutNow} />;
-   }
-   if (displayAccount.status === 'not_admitted') {
--    return <NotAdmittedScreen reason="not_admitted" userMenu={userMenu} onSignOut={() => void handleSignOut()} />;
--  }
--  if (displayAccount.status === 'outage') {
-+    if (path.startsWith('/claim') && claimClient) {
-+      return wrapPrivate(
-+        <ClaimScreen
-+          key={`${displayAccount.owner.userId}:${displayAccount.owner.sessionId}`}
-+          client={claimClient}
-+          onClaimed={handleClaimed}
-+        />,
-+      );
-+    }
-     return (
--      <OutageScreen
--        kind="backend"
--        onRetry={handleRetryFetch}
-+      <NotAdmittedScreen
-+        reason="not_admitted"
-         userMenu={userMenu}
--        onSignOut={() => void handleSignOut()}
-+        onSignOut={signOutNow}
-+        onClaimAccess={() => navigate('/claim')}
-       />
-     );
-   }
-+  if (displayAccount.status === 'outage') {
-+    return <OutageScreen kind="backend" onRetry={handleRetryFetch} userMenu={userMenu} onSignOut={signOutNow} />;
-+  }
-   if (displayAccount.status === 'unauthorized') {
-     return (
-       <AccountScreen
-@@ -259,18 +352,89 @@ function PortalShell({
-         tenantId={null}
-         mode="error"
-         userMenu={userMenu}
--        onSignOut={() => void handleSignOut()}
-+        onSignOut={signOutNow}
-         onRetry={handleRetryFetch}
-       />
-     );
-   }
-+  if (displayAccount.status !== 'ok') {
-+    return (
-+      <AccountScreen
-+        personName={personName(user)}
-+        tenantId={null}
-+        mode={displayAccount.status === 'empty' ? 'empty' : 'loading'}
-+        userMenu={userMenu}
-+        onSignOut={signOutNow}
-+      />
-+    );
-+  }
++def processes():
++    result = {}
++    if linux:
++        for entry in Path('/proc').iterdir():
++            if not entry.name.isdigit():
++                continue
++            try:
++                result[int(entry.name)] = process_stat(int(entry.name))
++            except (FileNotFoundError, ProcessLookupError, PermissionError):
++                pass
++    return result
 +
-+  const featureKey = `${displayAccount.owner.userId}:${displayAccount.owner.sessionId}:${displayAccount.tenantId}`;
-+  if (path.startsWith('/claim')) {
-+    return <Navigate to="/" replace />;
-+  }
-+  if (path.startsWith('/keys/wordpress')) {
-+    return wrapPrivate(
-+      <WordPressTestConnectionGuidance onClose={() => navigate('/keys')} onReturnToKeys={() => navigate('/keys')} />,
-+    );
-+  }
-+  if (path.startsWith('/keys') && keyClient) {
-+    return wrapPrivate(
-+      <KeysScreen
-+        client={keyClient}
-+        sessionKey={featureKey}
-+        onNavigateToUsage={() => navigate('/usage')}
-+        onNavigateToBilling={() => navigate('/billing')}
-+        onOpenWordPressGuidance={() => navigate('/keys/wordpress')}
-+      />,
-+    );
-+  }
-+  if (path.startsWith('/usage') && usageClient) {
-+    return wrapPrivate(
-+      <UsageScreen
-+        client={usageClient}
-+        sessionKey={featureKey}
-+        onNavigateToKeys={() => navigate('/keys')}
-+        onNavigateToBilling={() => navigate('/billing')}
-+      />,
-+    );
-+  }
-+  if (path.startsWith('/billing/return') && billingClient) {
-+    return wrapPrivate(
-+      <BillingReturnScreen
-+        client={billingClient}
-+        publicPlanCode={publicPlanCode}
-+        paymentsEnabled={paymentsEnabled}
-+        attemptId={returnAttemptId}
-+        onNavigateToBilling={() => navigate('/billing')}
-+        onNavigateToUsage={() => navigate('/usage')}
-+      />,
-+    );
-+  }
-+  if (path.startsWith('/billing') && billingClient) {
-+    return wrapPrivate(
-+      <BillingScreen
-+        client={billingClient}
-+        publicPlanCode={publicPlanCode}
-+        paymentsEnabled={paymentsEnabled}
-+        onNavigateToReturn={(attemptId) => {
-+          setReturnAttemptId(readAttemptId(attemptId));
-+          navigate('/billing/return');
-+        }}
-+        onNavigateToUsage={() => navigate('/usage')}
-+      />,
-+    );
-+  }
-   return (
-     <AccountScreen
-       personName={personName(user)}
--      tenantId={displayAccount.status === 'ok' ? displayAccount.tenantId : null}
--      mode={displayAccount.status === 'ok' ? 'default' : displayAccount.status === 'empty' ? 'empty' : 'loading'}
-+      tenantId={displayAccount.tenantId}
-+      mode="default"
-       userMenu={userMenu}
--      onSignOut={() => void handleSignOut()}
-+      onSignOut={signOutNow}
-+      onNavigateToKeys={() => navigate('/keys')}
-+      onNavigateToUsage={() => navigate('/usage')}
-+      onNavigateToBilling={() => navigate('/billing')}
-     />
-   );
- }
-@@ -283,6 +447,7 @@ export function App({
- }: AppProps = {}) {
-   const navigate = useNavigate();
-   const [providerEpoch, setProviderEpoch] = useState(0);
-+  const payments = paymentsFromConfig(config);
- 
-   if (!config.portalEnabled) {
-     return <UnavailableScreen mode="degraded" />;
-@@ -315,6 +480,8 @@ export function App({
-               fetchImpl={fetchImpl}
-               clerkLoadTimeoutMs={clerkLoadTimeoutMs}
-               portalMeTimeoutMs={portalMeTimeoutMs}
-+              paymentsEnabled={payments.paymentsEnabled}
-+              publicPlanCode={payments.publicPlanCode}
-               onRetryClerk={() => setProviderEpoch((value) => value + 1)}
-             />
-           }
-diff --git a/apps/app-portal/src/__tests__/account-navigation.test.tsx b/apps/app-portal/src/__tests__/account-navigation.test.tsx
++def owned_processes():
++    # If the global monitor fails, use the kernel's per-thread child lists.
++    # This independent cleanup path needs no scan of unrelated processes.
++    result = {}
++    queue = [os.getpid()]
++    for pid, birth in owned.items():
++        try:
++            record = process_stat(pid)
++            if record[1] == birth:
++                result[pid] = record
++                queue.append(pid)
++        except (OSError, ValueError, IndexError):
++            pass
++    visited = set()
++    while queue:
++        parent = queue.pop()
++        if parent in visited:
++            continue
++        visited.add(parent)
++        try:
++            with os.scandir(f'/proc/{parent}/task') as tasks:
++                for task in tasks:
++                    try:
++                        children = Path(task.path, 'children').read_bytes().split()
++                        for child in children:
++                            pid = int(child)
++                            result[pid] = process_stat(pid)
++                            queue.append(pid)
++                    except (OSError, ValueError, IndexError):
++                        pass
++        except OSError:
++            pass
++    return result
++
++def descendants():
++    global monitor_failed, reason, rc
++    try:
++        table = owned_processes() if monitor_failed else processes()
++    except Exception as exc:
++        # Monitoring may fail after the worker exits, during TERM/KILL too.
++        monitor_failed = True
++        reason, rc = 'supervisor-error', 79
++        worker_log.write(f'remote-gate: monitor failed: {exc!r}\n'.encode())
++        table = owned_processes()
++    parents = {os.getpid()}
++    while True:
++        children = {pid for pid, (ppid, birth, status) in table.items() if ppid in parents}
++        if children <= parents:
++            break
++        parents |= children
++    for pid in parents - {os.getpid()}:
++        owned[pid] = table[pid][1]
++    return {pid for pid, birth in owned.items()
++            if pid in table and table[pid][1] == birth and table[pid][2] != b'Z'}
++
++def reap():
++    # poll first so waitpid does not steal Popen's own exit status.
++    proc.poll()
++    while True:
++        try:
++            pid, _ = os.waitpid(-1, os.WNOHANG)
++            if not pid:
++                break
++        except ChildProcessError:
++            break
++
++def scope_units():
++    manifest = Path(str(state) + '.scopes')
++    if not remote or not manifest.exists():
++        return []
++    return [name for name in manifest.read_text().splitlines()
++            if name.startswith(unit + '-') and name.endswith('.scope')]
++
++def scope_signal(sig):
++    units = scope_units()
++    if units:
++        try:
++            subprocess.run(
++                ['systemctl', '--user', 'kill', '--kill-whom=all',
++                 '--signal=' + sig, *units],
++                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1,
++            )
++        except (OSError, subprocess.TimeoutExpired):
++            pass
++
++def scopes_live():
++    if not Path(str(state) + '.scopes-monitor').exists():
++        return False
++    units = scope_units()
++    if not units:
++        return False
++    try:
++        result = subprocess.run(
++            ['systemctl', '--user', 'show', '--property=ActiveState', '--value',
++             *units],
++            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=1,
++        )
++        states = result.stdout.decode().split()
++        # Failure/unknown state is not proof of cleanup. A scope that never
++        # existed (or was collected) is inactive; every owned unit must settle.
++        return result.returncode != 0 or len(states) != len(units) or any(
++            value not in ('inactive', 'failed') for value in states)
++    except (OSError, subprocess.TimeoutExpired):
++        return True
++
++def signal_tree(sig):
++    # Refresh ancestry on every pass, catching forks during TERM grace.
++    for pid in descendants():
++        try:
++            os.kill(pid, sig)
++        except ProcessLookupError:
++            pass
++    if not linux:
++        try:
++            os.killpg(proc.pid, sig)
++        except ProcessLookupError:
++            pass
++
++def group_live():
++    if linux:
++        return False
++    # On local macOS transports, the owned session may outlive git/ssh itself.
++    try:
++        os.killpg(proc.pid, 0)
++        return True
++    except ProcessLookupError:
++        return False
++
++try:
++    proc = subprocess.Popen(sys.argv[6:], env=env, start_new_session=True,
++                            stdout=worker_log, stderr=subprocess.STDOUT)
++except OSError as exc:
++    failure = ('remote-gate: worker start failed: ' + str(exc) + '\n').encode()
++    worker_log.write(failure)
++    finish('worker-start-failed', 78, initial_stage, '-')
++reason = 'completed'
++rc = 0
++try:
++    while True:
++        descendants()
++        if monitor_failed:
++            break
++        forward()
++        result = proc.poll()
++        if cancelled:
++            reason, rc = 'remote-cancelled' if remote else 'transport-cancelled', 128 + cancelled[0]
++            break
++        if time.monotonic() - started >= budget:
++            reason, rc = 'remote-deadline' if remote else 'transport-deadline', 124 if remote else 76
++            break
++        if result is not None:
++            rc = result if result >= 0 else 128 - result
++            break
++        time.sleep(.05)
++except Exception as exc:
++    monitor_failed = True
++    reason, rc = 'supervisor-error', 79
++    worker_log.write(f'remote-gate: monitor failed: {exc!r}\n'.encode())
++# Capture stage before cleanup can interrupt an atomic worker stage update.
++stage, target = initial_stage, '-'
++try:
++    last_stage = state.read_text().strip() or initial_stage + ' -'
++    stage, target = last_stage.split(maxsplit=1)
++except (OSError, ValueError) as exc:
++    monitor_failed = True
++    reason, rc = 'supervisor-error', 79
++    worker_log.write(f'remote-gate: stage read failed: {exc!r}\n'.encode())
++scope_signal('TERM')
++signal_tree(signal.SIGTERM)
++term_end = time.monotonic() + grace
++while descendants() or proc.poll() is None or group_live() or scopes_live():
++    if time.monotonic() >= term_end:
++        break
++    forward()
++    reap()
++    time.sleep(.05)
++scope_signal('KILL')
++kill_end = time.monotonic() + 2
++while True:
++    signal_tree(signal.SIGKILL)
++    reap()
++    if not descendants() and proc.poll() is not None and not group_live() and not scopes_live():
++        break
++    if time.monotonic() >= kill_end:
++        reason, rc = reason + '-cleanup-incomplete', 79
++        break
++    time.sleep(.05)
++finish(reason, rc, stage, target)
++PY
++)"
+     targets=("$@")
+     if [ "${#targets[@]}" -eq 0 ] && [ -n "$GATE_TARGETS" ]; then
+         read -r -a targets <<< "$GATE_TARGETS"
+@@ -264,21 +605,26 @@ run)
+     # a HEAD:refs/heads/<x> refspec and the guard falls back to the remote ref.
+     # Keeping the guard fully armed for real branch pushes is the point: the fix
+     # is to stop pretending the gate publishes a branch, not to override it.
+-    git push --quiet --force "${REMOTE_HOST}:${REMOTE_DIR}" "HEAD:refs/workbay/gate"
++    python3 -c "$supervisor" local "$RUN_BUDGET" "$TERM_GRACE" "$sha" push \
++        git push --quiet --force "${REMOTE_HOST}:${REMOTE_DIR}" "HEAD:refs/workbay/gate"
+     # Shell options do not cross the SSH process boundary. Target failures are
+     # captured with explicit `|| rc=$?` guards below so errexit can stay enabled
+     # for every other command in this remote body.
+-    "${SSH[@]}" "set -euo pipefail
++    remote_body="set -euo pipefail
++        stage() { printf '%s %s\\n' \"\$1\" \"\${2:--}\" > \"\$RG_STATE.tmp\"; mv \"\$RG_STATE.tmp\" \"\$RG_STATE\"; }
++        stage lock
+         cd \"\$HOME/${REMOTE_DIR}\" || exit 1
+         [ -f \"${CLONE_SENTINEL}\" ] || { echo 'remote-gate: clone sentinel missing; refusing (re-run bootstrap)' >&2; exit 1; }
+         exec 9>.gate.lock
+         flock -n 9 || { echo 'remote-gate: gate busy (another run holds the clone lock)' >&2; exit 75; }
++        stage checkout
+         git checkout -qf ${sha} || exit 1
+         # Retire the pre-refs/workbay transport branch once we are detached off
+         # it; left behind it pins old gate objects on a disk-tight VM. Idempotent.
+         git update-ref -d refs/heads/remote-gate 2>/dev/null || true
+         git clean -fdq -e .venv -e ${CLONE_SENTINEL} -e .gate.lock || exit 1
+         cd \"${WORKDIR}\" || exit 1
++        stage sync
+         if [ -f pyproject.toml ]; then
+             \"\$HOME/.local/bin/uv\" sync -q || { echo 'remote-gate: uv sync failed' >&2; exit 1; }
+         else
+@@ -290,6 +636,7 @@ run)
+         # \$PWD/.venv/bin is visible; the hook is a no-op only when the CLI is
+         # genuinely absent (logged, so a skip is never silent). Exit 74 (defer,
+         # distinct from the lock-busy 75) so automation can tell them apart.
++        stage admission
+         hostgov=''
+         for cand in \"\$PWD/.venv/bin/workbay-hostgov\" \"\$HOME/.local/bin/workbay-hostgov\"; do
+             [ -x \"\$cand\" ] && { hostgov=\"\$cand\"; break; }
+@@ -301,10 +648,25 @@ run)
+         else
+             echo 'remote-gate: workbay-hostgov not installed — memory admission SKIPPED (systemd caps remain the backstop)' >&2
+         fi
++        stage runner-probe
+         runner='nice -n ${NICENESS} ionice -c3'
+-        if command -v systemd-run >/dev/null && systemd-run --quiet --user --scope -p MemoryMax=${RUN_MEMORY_MAX} true 2>/dev/null; then
+-            runner=\"systemd-run --quiet --user --scope -p MemoryMax=${RUN_MEMORY_MAX} -p CPUQuota=${RUN_CPU_QUOTA} nice -n ${NICENESS} ionice -c3\"
++        if command -v systemd-run >/dev/null && command -v systemctl >/dev/null; then
++            printf '%s\\n' \"\$RG_UNIT_BASE-probe.scope\" > \"\$RG_STATE.scopes\"
++            touch \"\$RG_STATE.scopes-monitor\"
++        fi
++        if [ -f \"\$RG_STATE.scopes\" ] && systemd-run --quiet --user --scope --collect --unit \"\$RG_UNIT_BASE-probe\" -p MemoryMax=${RUN_MEMORY_MAX} -p RuntimeMaxSec=${RUN_BUDGET}s -p TimeoutStopSec=${TERM_GRACE}s true 2>/dev/null; then
++            scope_index=0
++            run_scoped() {
++                scope_index=\$((scope_index + 1))
++                scope_name=\"\$RG_UNIT_BASE-worker-\$scope_index\"
++                # Register before launch: cancellation must also clean up a
++                # scope whose systemd-run client has not returned yet.
++                printf '%s\\n' \"\$scope_name.scope\" >> \"\$RG_STATE.scopes\"
++                systemd-run --quiet --user --scope --collect --unit \"\$scope_name\" -p MemoryMax=${RUN_MEMORY_MAX} -p CPUQuota=${RUN_CPU_QUOTA} -p RuntimeMaxSec=${RUN_BUDGET}s -p TimeoutStopSec=${TERM_GRACE}s nice -n ${NICENESS} ionice -c3 \"\$@\"
++            }
++            runner=run_scoped
+         else
++            rm -f \"\$RG_STATE.scopes-monitor\"
+             echo 'remote-gate: systemd-run scope unavailable — falling back to nice/ionice only' >&2
+         fi
+         # Fail-closed repo preflight (GATE-BR-01). A workdir may declare a
+@@ -319,7 +681,9 @@ run)
+         # ran. Declared-and-failing aborts before any target with exit 73
+         # (distinct from the 74 defer / 75 lock-busy codes); undeclared is
+         # logged, never silent.
++        stage preflight-probe gate-preflight
+         if make -n gate-preflight >/dev/null 2>&1; then
++            stage preflight gate-preflight
+             echo \"=== gate-preflight ===\"
+             rc=0
+             \$runner env \
+@@ -339,6 +703,7 @@ run)
+         fi
+         overall=0
+         for t in ${targets[*]}; do
++            stage target \"\$t\"
+             echo \"=== \$t ===\"
+             rc=0
+             \$runner env \
+@@ -354,9 +719,15 @@ run)
+         done
+         echo DONE-ALL
+         exit \$overall"
++    printf -v quoted_supervisor '%q' "$supervisor"
++    printf -v quoted_body '%q' "$remote_body"
++    remote_command="exec python3 -c $quoted_supervisor remote $RUN_BUDGET $TERM_GRACE $sha lock bash -c $quoted_body"
++    transport_budget=$((RUN_BUDGET + TERM_GRACE + 15))
++    python3 -c "$supervisor" local "$transport_budget" "$TERM_GRACE" "$sha" transport \
++        "${SSH[@]}" "$remote_command"
+     ;;
+ *)
+-    sed -n '2,33p' "$0" >&2
++    sed -n '2,54p' "$0" >&2
+     exit 2
+     ;;
+ esac
+diff --git a/scripts/test_remote_gate_deadlines.py b/scripts/test_remote_gate_deadlines.py
 new file mode 100644
 --- /dev/null
-+++ b/apps/app-portal/src/__tests__/account-navigation.test.tsx
-@@ -0,0 +1,422 @@
-+import { screen, waitFor } from '@testing-library/react';
-+import userEvent from '@testing-library/user-event';
-+import { flushSync } from 'react-dom';
-+import { afterEach, describe, expect, it, vi } from 'vitest';
-+import { parsePortalConfig } from '../config';
-+import { clerkDouble } from './clerkDouble';
-+import { renderPortal } from './renderPortal';
++++ b/scripts/test_remote_gate_deadlines.py
+@@ -0,0 +1,716 @@
++"""Exercise the actual remote body with isolated, bounded fake transports.
 +
-+vi.mock('@clerk/react', async () => {
-+  const doubles = await import('./clerkDouble');
-+  return {
-+    ClerkProvider: doubles.ClerkProviderStub,
-+    SignIn: doubles.SignInStub,
-+    SignUp: doubles.SignUpStub,
-+    UserButton: doubles.UserButtonStub,
-+    useAuth: doubles.useAuthStub,
-+    useUser: doubles.useUserStub,
-+  };
-+});
++No network, shared clone, systemd manager, repository push or GPU is used.
++"""
 +
-+const TENANT = '11111111-1111-4111-8111-111111111111';
-+const KEY_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-+const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
-+const INVITATION = 'raw-invitation-token-once';
++from __future__ import annotations
 +
-+function jsonResponse(status: number, body: unknown): Response {
-+  return new Response(JSON.stringify(body), {
-+    status,
-+    headers: { 'Content-Type': 'application/json' },
-+  });
-+}
++import contextlib
++import os
++import signal
++import subprocess
++import sys
++import time
++from pathlib import Path
 +
-+function meBody(tenantId = TENANT) {
-+  return {
-+    tenant_id: tenantId,
-+    issuer: 'https://clerk.altcontext.com',
-+    subject: 'user_1',
-+    email: 'ada@example.test',
-+  };
-+}
++import pytest
 +
-+function keysPage() {
-+  return {
-+    data: [
-+      {
-+        id: KEY_ID,
-+        tenant_id: TENANT,
-+        created_at: '2026-09-01T00:00:00Z',
-+        expires_at: '2026-12-01T00:00:00Z',
-+        revoked_at: null,
-+        rate_limit_tier: 'standard',
-+        lifetime_seconds: 3600,
-+      },
++SCRIPT = Path(__file__).with_name("remote_gate.sh")
++
++
++def executable(path: Path, body: str) -> None:
++    path.parent.mkdir(parents=True, exist_ok=True)
++    path.write_text(body)
++    path.chmod(0o755)
++
++
++@pytest.fixture
++def gate(tmp_path: Path):
++    repo = tmp_path / "repo"
++    repo.mkdir()
++    subprocess.run(["git", "init", "-q", str(repo)], check=True, timeout=5)
++    subprocess.run(
++        [
++            "git",
++            "-c",
++            "user.name=gate-test",
++            "-c",
++            "user.email=gate@test.invalid",
++            "commit",
++            "--allow-empty",
++            "-qm",
++            "fixture",
++        ],
++        cwd=repo,
++        check=True,
++        timeout=5,
++    )
++    sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True, timeout=5).strip()
++    home = tmp_path / "remote-home"
++    clone = home / "src" / "repo"
++    clone.mkdir(parents=True)
++    (clone / ".remote-gate-clone").touch()
++    (clone / "pyproject.toml").touch()
++    tools = tmp_path / "bin"
++    tools.mkdir()
++    events = tmp_path / "events"
++    pids = tmp_path / "pids"
++    real_git = subprocess.check_output(["which", "git"], text=True, timeout=5).strip()
++    # The blocking fixture forks a TERM-ignoring child; all fixture-created
++    # processes are recorded for bounded cleanup even when the red test fails.
++    blocker = tmp_path / "blocker"
++    executable(
++        blocker,
++        f"""#!{sys.executable}
++import os, signal, time
++signal.signal(signal.SIGTERM, signal.SIG_IGN)
++with open(os.environ['PIDS'], 'a') as f:
++    f.write(str(os.getpid()) + '\\n'); f.flush()
++if os.fork() == 0:
++    if os.environ.get('ESCAPE_SESSION') == 'yes': os.setsid()
++    with open(os.environ['PIDS'], 'a') as f:
++        f.write(str(os.getpid()) + '\\n'); f.flush()
++while True: time.sleep(.1)
++""",
++    )
++    executable(
++        tools / "git",
++        f"""#!/bin/bash
++if [ "$1" = push ]; then
++    echo push >> "$EVENTS"
++    [ "$BLOCK" != push ] || exec "$BLOCKER"
++    exit 0
++fi
++if [ "$PWD" = "$CLONE" ]; then
++    echo "git:$1" >> "$EVENTS"
++    [ "$BLOCK" != checkout ] || [ "$1" != checkout ] || exec "$BLOCKER"
++    exit 0
++fi
++exec {real_git} "$@"
++""",
++    )
++    executable(
++        tools / "ssh",
++        """#!/bin/bash
++echo ssh >> "$EVENTS"
++[ "$BLOCK" != transport ] || exec "$BLOCKER"
++export HOME="$REMOTE_HOME"
++exec bash -c "${@: -1}"
++""",
++    )
++    executable(
++        home / ".local/bin/uv",
++        """#!/bin/bash
++echo sync >> "$EVENTS"
++[ "$BLOCK" != sync ] || exec "$BLOCKER"
++sleep "${SYNC_DELAY:-0}"
++""",
++    )
++    executable(
++        home / ".local/bin/workbay-hostgov",
++        """#!/bin/bash
++echo admission >> "$EVENTS"
++[ "$BLOCK" != admission ] || exec "$BLOCKER"
++exit "${ADMISSION_RC:-0}"
++""",
++    )
++    executable(
++        tools / "make",
++        """#!/bin/bash
++if [ "$1" = -n ]; then
++    echo probe >> "$EVENTS"
++    [ "$BLOCK" != probe ] || exec "$BLOCKER"
++    exit 0
++fi
++echo "make:$1" >> "$EVENTS"
++if [ "$1" = gate-preflight ]; then
++    [ "$BLOCK" != preflight ] || exec "$BLOCKER"
++    if [ "${LINGER_SCOPE:-no}" = yes ]; then "$BLOCKER" >/dev/null 2>&1 & sleep .1; fi
++    sleep "${PREFLIGHT_DELAY:-0}"
++    exit "${PREFLIGHT_RC:-0}"
++fi
++if [ "$1" = first ]; then
++    [ "$BLOCK" != import ] || exec "$BLOCKER"
++    if [ "${BURST_OUTPUT:-no}" = yes ]; then
++        python3 -c "import sys; sys.stdout.write('output-burst\\n' * 450000)"
++    fi
++    exit "${TARGET_RC:-0}"
++fi
++exit 0
++""",
++    )
++    executable(
++        tools / "systemd-run",
++        """#!/bin/bash
++echo systemd >> "$EVENTS"
++[ "$BLOCK" != runner-probe ] || exec "$BLOCKER"
++[ "$SYSTEMD" = yes ] || exit 1
++while [ "$#" -gt 0 ]; do
++    case "$1" in
++        -p|--unit) shift 2 ;;
++        --*) shift ;;
++        *) break ;;
++    esac
++done
++exec "$@"
++""",
++    )
++    executable(
++        tools / "systemctl",
++        """#!/bin/bash
++echo "systemctl:$*" >> "$EVENTS"
++if [ "$2" = show ]; then
++    for arg in "$@"; do case "$arg" in *.scope) echo inactive ;; esac; done
++fi
++""",
++    )
++    env = os.environ.copy()
++    # Caller configuration must not accidentally select an external host.
++    for key in tuple(env):
++        if key.startswith("WORKBAY_REMOTE_GATE_"):
++            env.pop(key)
++    env.update(
++        HOME=str(tmp_path / "local-home"),
++        PATH=f"{tools}:{Path(sys.executable).parent}:{env['PATH']}",
++        WORKBAY_REMOTE_GATE_HOST="fake.invalid",
++        WORKBAY_REMOTE_GATE_DIR="src/repo",
++        WORKBAY_REMOTE_GATE_BUDGET_SECONDS="1",
++        WORKBAY_REMOTE_GATE_TERM_GRACE_SECONDS="1",
++        REMOTE_HOME=str(home),
++        CLONE=str(clone),
++        EVENTS=str(events),
++        PIDS=str(pids),
++        BLOCKER=str(blocker),
++        BLOCK="sync",
++        SYSTEMD="no",
++    )
++
++    def run(external_bound=12, reader_pause=0, **updates):
++        proc = subprocess.Popen(
++            ["bash", str(SCRIPT), "run", "first", "later"],
++            cwd=repo,
++            env=env | updates,
++            stdout=subprocess.PIPE,
++            stderr=subprocess.STDOUT,
++            text=True,
++            start_new_session=True,
++        )
++        try:
++            if reader_pause:
++                time.sleep(reader_pause)
++            output, _ = proc.communicate(timeout=external_bound)
++        except subprocess.TimeoutExpired:
++            # This external watchdog bounds the deliberately red regression.
++            os.killpg(proc.pid, signal.SIGKILL)
++            output, _ = proc.communicate(timeout=3)
++            pytest.fail(f"external watchdog: gate exceeded {external_bound}s\n{output}")
++        return proc.returncode, output
++
++    yield run, clone, home, events, pids, sha, repo, env
++    if pids.exists():
++        for pid in pids.read_text().splitlines():
++            with contextlib.suppress(ProcessLookupError):
++                os.kill(int(pid), signal.SIGKILL)
++
++
++def alive(pid: int) -> bool:
++    try:
++        # A zombie cannot run work or hold the lock. Native supervisor reaps
++        # adopted children; the test watchdog may leave zombies under PID 1.
++        return Path(f"/proc/{pid}/stat").read_text().split(")", 1)[1].split()[0] != "Z"
++    except FileNotFoundError:
++        return False
++
++
++def test_sync_deadline_kills_owned_tree_and_releases_lock(gate):
++    run, clone, home, events, pids, sha, *_ = gate
++    rc, output = run()
++    assert rc == 124, output
++    assert f"sha={sha}" in output
++    assert "stage=sync" in output
++    assert "reason=remote-deadline" in output
++    assert "budget=1" in output
++    assert "elapsed=" in output
++    assert "make:later" not in events.read_text()
++    assert len(pids.read_text().splitlines()) >= 2
++    assert not any(alive(int(pid)) for pid in pids.read_text().splitlines())
++    lock = subprocess.run(["flock", "-n", str(clone / ".gate.lock"), "true"], timeout=3)
++    assert lock.returncode == 0
++    logs = list((home / ".local/state/remote-gate").glob("*/terminal.log"))
++    assert len(logs) == 1
++    assert "reason=remote-deadline" in logs[0].read_text()
++    assert "stage=sync" in logs[0].read_text()
++
++
++@pytest.mark.parametrize(
++    "block,stage,target",
++    [
++        ("checkout", "checkout", "-"),
++        ("admission", "admission", "-"),
++        ("runner-probe", "runner-probe", "-"),
++        ("probe", "preflight-probe", "gate-preflight"),
++        ("preflight", "preflight", "gate-preflight"),
++        ("import", "target", "first"),
 +    ],
-+    next_cursor: null,
-+    cursor: null,
-+    limit: 25,
-+    total: 1,
-+  };
-+}
-+
-+function usageBody() {
-+  return {
-+    tenant_id: TENANT,
-+    used: 1,
-+    reserved: 0,
-+    remaining: 9,
-+    allowance: 10,
-+    period_start: '2026-09-01T00:00:00Z',
-+    period_end: '2026-10-01T00:00:00Z',
-+    period: { start: '2026-09-01T00:00:00Z', end: '2026-10-01T00:00:00Z' },
-+    as_of: '2026-09-22T12:00:00Z',
-+    status: 'beta_active',
-+    data_source: 'authoritative',
-+  };
-+}
-+
-+function signInVerified(sessionId = 'sess_1') {
-+  clerkDouble.setState({
-+    isLoaded: true,
-+    isSignedIn: true,
-+    userId: 'user_1',
-+    sessionId,
-+    user: {
-+      fullName: 'Ada Lovelace',
-+      primaryEmailAddress: {
-+        emailAddress: 'ada@example.test',
-+        verification: { status: 'verified' },
-+      },
-+    },
-+    getToken: async () => 'session-jwt',
-+  });
-+}
-+
-+function portalFetch(options: { me?: () => Response | Promise<Response>; claimAdmitted?: { current: boolean } } = {}) {
-+  return vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
-+    const url = String(input);
-+    const path = url.split('?')[0];
-+    if (path === '/portal/me') {
-+      if (options.me) {
-+        return options.me();
-+      }
-+      if (options.claimAdmitted?.current) {
-+        return jsonResponse(200, meBody());
-+      }
-+      return jsonResponse(200, meBody());
-+    }
-+    if (path === '/portal/keys') {
-+      return jsonResponse(200, keysPage());
-+    }
-+    if (path === '/portal/usage') {
-+      return jsonResponse(200, usageBody());
-+    }
-+    if (path === '/portal/onboarding/claim') {
-+      if (options.claimAdmitted) {
-+        options.claimAdmitted.current = true;
-+      }
-+      return jsonResponse(201, {
-+        tenant_id: TENANT,
-+        issuer: 'https://clerk.altcontext.com',
-+        subject: 'user_1',
-+        email: 'ada@example.test',
-+        replayed: false,
-+      });
-+    }
-+    if (path === '/portal/billing/checkout' || path === '/portal/billing/manage') {
-+      throw new Error(`billing call must be absent when payments are disabled: ${path}`);
-+    }
-+    return jsonResponse(404, { detail: 'missing fixture' });
-+  });
-+}
-+
-+afterEach(() => {
-+  clerkDouble.reset();
-+});
-+
-+describe('public payments config [HAI-01]', () => {
-+  it('defaults payments disabled and empty plan, enabling only explicit recognized true', () => {
-+    expect(
-+      parsePortalConfig({
-+        VITE_CLERK_PUBLISHABLE_KEY: 'pk_test',
-+        VITE_CLERK_FAPI: 'https://clerk.altcontext.com',
-+        VITE_PORTAL_ENABLED: 'true',
-+        VITE_PAYMENTS_ENABLED: '',
-+        VITE_PUBLIC_PLAN_CODE: '',
-+      }),
-+    ).toEqual({
-+      publishableKey: 'pk_test',
-+      fapiOrigin: 'https://clerk.altcontext.com',
-+      portalEnabled: true,
-+      paymentsEnabled: false,
-+      publicPlanCode: null,
-+    });
-+
-+    expect(
-+      parsePortalConfig({
-+        VITE_CLERK_PUBLISHABLE_KEY: 'pk_test',
-+        VITE_CLERK_FAPI: 'https://clerk.altcontext.com',
-+        VITE_PORTAL_ENABLED: 'true',
-+        VITE_PAYMENTS_ENABLED: 'maybe',
-+        VITE_PUBLIC_PLAN_CODE: '  starter_monthly  ',
-+      }).paymentsEnabled,
-+    ).toBe(false);
-+
-+    expect(
-+      parsePortalConfig({
-+        VITE_CLERK_PUBLISHABLE_KEY: 'pk_test',
-+        VITE_CLERK_FAPI: 'https://clerk.altcontext.com',
-+        VITE_PORTAL_ENABLED: 'true',
-+        VITE_PAYMENTS_ENABLED: 'TRUE',
-+        VITE_PUBLIC_PLAN_CODE: '  starter_monthly  ',
-+      }),
-+    ).toMatchObject({
-+      paymentsEnabled: true,
-+      publicPlanCode: 'starter_monthly',
-+    });
-+  });
-+});
-+
-+describe('admitted shell navigation [NAV-08][NAV-11]', () => {
-+  it('wires keys, usage, billing, billing return, and WordPress guidance with sign-out', async () => {
-+    signInVerified();
-+    const fetchImpl = portalFetch();
-+    const user = userEvent.setup();
-+    renderPortal({ fetchImpl: fetchImpl as unknown as typeof fetch });
-+
-+    await waitFor(() => {
-+      expect(screen.getByText(TENANT)).toBeInTheDocument();
-+    });
-+    expect(screen.getByRole('navigation', { name: /account/i })).toBeInTheDocument();
-+
-+    await user.click(screen.getByRole('button', { name: /api keys/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /api keys/i })).toBeInTheDocument();
-+    });
-+    expect(screen.getByRole('main')).toHaveTextContent(KEY_ID);
-+    expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
-+
-+    await user.click(screen.getByRole('button', { name: /wordpress test connection guidance/i }));
-+    expect(screen.getByRole('heading', { name: /wordpress test connection/i })).toBeInTheDocument();
-+    expect(screen.queryByText(/acx_live|raw_key/i)).not.toBeInTheDocument();
-+    expect(window.location.href).not.toMatch(/acx_live|raw_key|secret=/i);
-+
-+    await user.click(screen.getByRole('button', { name: /back to api keys/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /api keys/i })).toBeInTheDocument();
-+    });
-+
-+    await user.click(screen.getByRole('button', { name: /^usage$/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /^usage$/i })).toBeInTheDocument();
-+    });
-+
-+    await user.click(screen.getByRole('button', { name: /^billing$/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /^billing$/i })).toBeInTheDocument();
-+    });
-+    expect(screen.getByRole('status')).toHaveTextContent(/payments are disabled/i);
-+    expect(screen.getByRole('button', { name: /continue to checkout/i })).toBeDisabled();
-+    expect(screen.getByRole('button', { name: /manage billing/i })).toBeDisabled();
-+  });
-+
-+  it('keeps billing return pending and never grants entitlement or posts checkout [HAI-01]', async () => {
-+    signInVerified();
-+    const fetchImpl = portalFetch();
-+    renderPortal({
-+      path: '/billing/return?checkout=success',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+    });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /billing return/i })).toBeInTheDocument();
-+    });
-+    expect(screen.getByRole('status')).toHaveTextContent(/pending reconciliation|backend confirmation/i);
-+    expect(screen.queryByText(/paid_active|you are now paid|subscription is active/i)).not.toBeInTheDocument();
-+    expect(fetchImpl.mock.calls.some((call) => String(call[0]).includes('/portal/billing'))).toBe(false);
-+  });
-+});
-+
-+describe('claim admission boundary [HAI-01][DOM-03]', () => {
-+  it('lets a verified not-admitted identity claim and refetches /portal/me before admission', async () => {
-+    signInVerified();
-+    const admitted = { current: false };
-+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
-+      const path = String(input).split('?')[0];
-+      if (path === '/portal/me') {
-+        if (admitted.current) {
-+          return jsonResponse(200, meBody());
-+        }
-+        return jsonResponse(403, { detail: 'portal access denied' });
-+      }
-+      if (path === '/portal/onboarding/claim') {
-+        return jsonResponse(201, {
-+          tenant_id: TENANT,
-+          issuer: 'https://clerk.altcontext.com',
-+          subject: 'user_1',
-+          email: 'ada@example.test',
-+          replayed: false,
-+        });
-+      }
-+      throw new Error(`unexpected path ${path}`);
-+    });
-+    const user = userEvent.setup();
-+    renderPortal({ fetchImpl: fetchImpl as unknown as typeof fetch });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('status')).toHaveTextContent(/not ready for access/i);
-+    });
-+    expect(screen.queryByText(TENANT)).not.toBeInTheDocument();
-+    await user.click(screen.getByRole('button', { name: /claim access/i }));
-+    expect(screen.getByLabelText(/invitation token/i)).toBeInTheDocument();
-+    expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
-+
-+    await user.type(screen.getByLabelText(/invitation token/i), INVITATION);
-+    await user.click(screen.getByRole('button', { name: /^claim access$/i }));
-+    await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
-+
-+    await waitFor(() => {
-+      expect(fetchImpl.mock.calls.some((call) => String(call[0]).includes('/portal/onboarding/claim'))).toBe(true);
-+      expect(
-+        fetchImpl.mock.calls.filter((call) => String(call[0]).split('?')[0] === '/portal/me').length,
-+      ).toBeGreaterThan(1);
-+    });
-+    expect(screen.queryByRole('heading', { name: /api keys/i })).not.toBeInTheDocument();
-+    expect(screen.queryByText(TENANT)).not.toBeInTheDocument();
-+    expect(window.location.href).not.toContain(INVITATION);
-+    expect(window.location.hash).not.toContain(INVITATION);
-+    admitted.current = true;
-+    expect(screen.queryByText(TENANT)).not.toBeInTheDocument();
-+  });
-+
-+  it('admits only after a post-claim /portal/me tenant, never from the claim body [HAI-01]', async () => {
-+    signInVerified();
-+    const admitted = { current: false };
-+    const fetchImpl = portalFetch({ claimAdmitted: admitted });
-+    fetchImpl.mockImplementation(async (input: RequestInfo | URL) => {
-+      const path = String(input).split('?')[0];
-+      if (path === '/portal/me') {
-+        return admitted.current ? jsonResponse(200, meBody()) : jsonResponse(403, { detail: 'portal access denied' });
-+      }
-+      if (path === '/portal/onboarding/claim') {
-+        admitted.current = true;
-+        return jsonResponse(201, {
-+          tenant_id: TENANT,
-+          issuer: 'https://clerk.altcontext.com',
-+          subject: 'user_1',
-+          email: 'ada@example.test',
-+          replayed: false,
-+        });
-+      }
-+      if (path === '/portal/keys') {
-+        return jsonResponse(200, keysPage());
-+      }
-+      return jsonResponse(404, {});
-+    });
-+    const user = userEvent.setup();
-+    renderPortal({ path: '/claim', fetchImpl: fetchImpl as unknown as typeof fetch });
-+
-+    await waitFor(() => {
-+      expect(screen.getByLabelText(/invitation token/i)).toBeInTheDocument();
-+    });
-+    await user.type(screen.getByLabelText(/invitation token/i), INVITATION);
-+    await user.click(screen.getByRole('button', { name: /^claim access$/i }));
-+    await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
-+
-+    await waitFor(() => {
-+      expect(screen.getByText(TENANT)).toBeInTheDocument();
-+    });
-+    expect(
-+      fetchImpl.mock.calls.filter((call) => String(call[0]).split('?')[0] === '/portal/me').length,
-+    ).toBeGreaterThan(1);
-+  });
-+
-+  it('does not offer claim to an unverified identity', async () => {
-+    clerkDouble.setState({
-+      isLoaded: true,
-+      isSignedIn: true,
-+      userId: 'user_1',
-+      sessionId: 'sess_1',
-+      user: {
-+        fullName: 'Ada Lovelace',
-+        primaryEmailAddress: {
-+          emailAddress: 'ada@example.test',
-+          verification: { status: 'unverified' },
-+        },
-+      },
-+      getToken: async () => 'session-jwt',
-+    });
-+    renderPortal({
-+      path: '/claim',
-+      fetchImpl: vi.fn(async () =>
-+        jsonResponse(403, { detail: { code: 'email_unverified' } }),
-+      ) as unknown as typeof fetch,
-+    });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('status')).toHaveTextContent(/verify your email/i);
-+    });
-+    expect(screen.queryByLabelText(/invitation token/i)).not.toBeInTheDocument();
-+    expect(screen.queryByRole('button', { name: /claim access/i })).not.toBeInTheDocument();
-+    expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
-+  });
-+});
-+
-+describe('private subtree ownership [DATA-03][CARD-15]', () => {
-+  it('clears keys metadata synchronously when the same user gets a new session', async () => {
-+    signInVerified('sess_a');
-+    const fetchImpl = portalFetch();
-+    renderPortal({ path: '/keys', fetchImpl: fetchImpl as unknown as typeof fetch });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('main')).toHaveTextContent(KEY_ID);
-+    });
-+
-+    flushSync(() => {
-+      clerkDouble.setState({ sessionId: 'sess_a_replaced' });
-+    });
-+
-+    expect(screen.getByRole('main')).not.toHaveTextContent(KEY_ID);
-+    expect(screen.getByRole('status')).toHaveTextContent(/checking account/i);
-+    await waitFor(() => {
-+      expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
-+    });
-+  });
-+
-+  it('hides private modules immediately when sign-out fails [RLSE-04]', async () => {
-+    signInVerified();
-+    clerkDouble.state.signOut = vi.fn(async () => {
-+      throw new Error('network');
-+    });
-+    const fetchImpl = portalFetch();
-+    const user = userEvent.setup();
-+    renderPortal({ path: '/keys', fetchImpl: fetchImpl as unknown as typeof fetch });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('main')).toHaveTextContent(KEY_ID);
-+    });
-+
-+    await user.click(screen.getByRole('button', { name: /sign out/i }));
-+
-+    expect(screen.getByRole('main')).not.toHaveTextContent(KEY_ID);
-+    expect(screen.queryByRole('heading', { name: /api keys/i })).not.toBeInTheDocument();
-+    expect(screen.getByRole('status')).toHaveTextContent(/sign out failed|could not sign out/i);
-+    expect(screen.getByRole('button', { name: /try again/i })).toBeEnabled();
-+  });
-+});
-+
-+describe('opaque attempt id [HAI-01]', () => {
-+  it('does not put attempt, invite, or raw key material in search or hash', async () => {
-+    signInVerified();
-+    renderPortal({
-+      path: `/billing/return?attempt_id=${ATTEMPT_ID}&invitation=${INVITATION}`,
-+      fetchImpl: portalFetch() as unknown as typeof fetch,
-+    });
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('heading', { name: /billing return/i })).toBeInTheDocument();
-+    });
-+    expect(screen.queryByText(INVITATION)).not.toBeInTheDocument();
-+    expect(screen.queryByText(ATTEMPT_ID)).not.toBeInTheDocument();
-+  });
-+});
-diff --git a/apps/app-portal/src/__tests__/portal-request.test.ts b/apps/app-portal/src/__tests__/portal-request.test.ts
-new file mode 100644
---- /dev/null
-+++ b/apps/app-portal/src/__tests__/portal-request.test.ts
-@@ -0,0 +1,188 @@
-+import { afterEach, describe, expect, it, vi } from 'vitest';
-+import { createPortalRequest } from '../api/portalRequest';
-+
-+const OWNER_A = { userId: 'user_a', sessionId: 'sess_a' };
-+const OWNER_B = { userId: 'user_b', sessionId: 'sess_b' };
-+
-+function jsonResponse(status: number, body: unknown): Response {
-+  return new Response(JSON.stringify(body), {
-+    status,
-+    headers: { 'Content-Type': 'application/json' },
-+  });
-+}
-+
-+afterEach(() => {
-+  vi.useRealTimers();
-+});
-+
-+describe('createPortalRequest bounded bearer transport [RES-02][RLSE-04][DATA-03]', () => {
-+  it('bounds a hanging getToken with the total deadline and never calls fetch [RES-02]', async () => {
-+    vi.useFakeTimers();
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken: () => new Promise<string | null>(() => undefined),
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      timeoutMs: 40,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    const pending = expect(request('/portal/usage')).rejects.toMatchObject({ name: 'AbortError' });
-+    await vi.advanceTimersByTimeAsync(40);
-+    await pending;
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
-+
-+  it('bounds a hanging fetch with the same total deadline [RES-02]', async () => {
-+    vi.useFakeTimers();
-+    const fetchImpl = vi.fn(() => new Promise<Response>(() => undefined));
-+    const request = createPortalRequest({
-+      getToken: async () => 'session-jwt',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      timeoutMs: 40,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    const pending = expect(request('/portal/usage')).rejects.toMatchObject({ name: 'AbortError' });
-+    await vi.advanceTimersByTimeAsync(40);
-+    await pending;
-+    expect(fetchImpl).toHaveBeenCalledTimes(1);
-+  });
-+
-+  it('aborts during getToken without sending a bearer request [RES-02]', async () => {
-+    const controller = new AbortController();
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken: () => new Promise<string | null>(() => undefined),
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      timeoutMs: 8_000,
-+      signal: controller.signal,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    const pending = expect(request('/portal/me')).rejects.toMatchObject({ name: 'AbortError' });
-+    controller.abort();
-+    await pending;
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
-+
-+  it('does not fetch when getToken rejects [RLSE-04]', async () => {
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken: async () => {
-+        throw new Error('token refresh failed');
-+      },
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      timeoutMs: 1_000,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    await expect(request('/portal/me')).rejects.toThrow(/token refresh failed|portal identity/i);
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
-+
-+  it('forces cache no-store, omits credentials, and never sets Origin [DATA-03]', async () => {
-+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-+      expect(String(input)).toBe('/portal/usage');
-+      expect(init?.cache).toBe('no-store');
-+      expect(init?.credentials).toBe('omit');
-+      const headers = new Headers(init?.headers);
-+      expect(headers.get('Authorization')).toBe('Bearer session-jwt');
-+      expect([...headers.keys()].some((key) => key.toLowerCase() === 'origin')).toBe(false);
-+      return jsonResponse(200, { ok: true });
-+    });
-+
-+    const request = createPortalRequest({
-+      getToken: async () => 'session-jwt',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    await expect(
-+      request('/portal/usage', { method: 'GET', headers: { Origin: 'https://evil.example' } }),
-+    ).resolves.toBeInstanceOf(Response);
-+    expect(fetchImpl).toHaveBeenCalledTimes(1);
-+  });
-+
-+  it('rejects external, protocol-relative, and non-allowlisted paths before getToken [DATA-03]', async () => {
-+    const getToken = vi.fn(async () => 'session-jwt');
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken,
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    const rejected = [
-+      'https://evil.example/portal/me',
-+      'http://app.altcontext.com/portal/me',
-+      '//evil.example/portal/me',
-+      '/api/portal/me',
-+      '/portal',
-+      'portal/me',
-+      '/portal/../keys',
-+      '/portal/%2e%2e/keys',
-+      'https://app.altcontext.com/portal/me',
-+    ];
-+
-+    for (const path of rejected) {
-+      await expect(request(path)).rejects.toThrow(/not allowed|portal request/i);
-+    }
-+    expect(getToken).not.toHaveBeenCalled();
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
-+
-+  it('allows same-origin relative /portal/ paths including key list query [DATA-03]', async () => {
-+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
-+      expect(String(input)).toBe('/portal/keys?limit=25');
-+      expect(String(input)).not.toMatch(/^https?:/i);
-+      return jsonResponse(200, { data: [] });
-+    });
-+    const request = createPortalRequest({
-+      getToken: async () => 'session-jwt',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_A,
-+    });
-+
-+    await request('/portal/keys?limit=25');
-+    expect(fetchImpl).toHaveBeenCalledTimes(1);
-+  });
-+
-+  it('does not send when the captured owner is no longer current [DDIA][DATA-03]', async () => {
-+    const getToken = vi.fn(async () => 'session-jwt');
-+    const fetchImpl = vi.fn();
-+    const request = createPortalRequest({
-+      getToken,
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => OWNER_B,
-+    });
-+
-+    await expect(request('/portal/usage')).rejects.toMatchObject({ name: 'AbortError' });
-+    expect(getToken).not.toHaveBeenCalled();
-+    expect(fetchImpl).not.toHaveBeenCalled();
-+  });
-+
-+  it('drops a completed response after a session replacement [DDIA][DATA-03]', async () => {
-+    let current = OWNER_A;
-+    const fetchImpl = vi.fn(async () => {
-+      current = OWNER_B;
-+      return jsonResponse(200, { tenant_id: '11111111-1111-4111-8111-111111111111' });
-+    });
-+    const request = createPortalRequest({
-+      getToken: async () => 'session-jwt',
-+      fetchImpl: fetchImpl as unknown as typeof fetch,
-+      owner: OWNER_A,
-+      currentOwner: () => current,
-+    });
-+
-+    await expect(request('/portal/me')).rejects.toMatchObject({ name: 'AbortError' });
-+    expect(fetchImpl).toHaveBeenCalledTimes(1);
-+  });
-+});
-diff --git a/apps/app-portal/src/api/portalRequest.ts b/apps/app-portal/src/api/portalRequest.ts
-new file mode 100644
---- /dev/null
-+++ b/apps/app-portal/src/api/portalRequest.ts
-@@ -0,0 +1,157 @@
-+export type PortalRequest = (path: string, init?: RequestInit) => Promise<Response>;
-+
-+export type PortalRequestOwner = {
-+  userId: string;
-+  sessionId: string;
-+};
-+
-+export type CreatePortalRequestOptions = {
-+  getToken: () => Promise<string | null>;
-+  fetchImpl?: typeof fetch;
-+  timeoutMs?: number;
-+  signal?: AbortSignal;
-+  owner: PortalRequestOwner;
-+  currentOwner: () => PortalRequestOwner | null;
-+};
-+
-+const DEFAULT_TIMEOUT_MS = 8_000;
-+const PORTAL_PATH_RE = /^\/portal\/[A-Za-z0-9/_-]+$/;
-+
-+function abortError(): DOMException {
-+  return new DOMException('The operation was aborted.', 'AbortError');
-+}
-+
-+function ownersMatch(
-+  left: PortalRequestOwner | null | undefined,
-+  right: PortalRequestOwner | null | undefined,
-+): boolean {
-+  return Boolean(left && right && left.userId === right.userId && left.sessionId === right.sessionId);
-+}
-+
-+export function resolvePortalPath(path: string): string | null {
-+  if (typeof path !== 'string' || path.length === 0) {
-+    return null;
-+  }
-+  if (!path.startsWith('/portal/')) {
-+    return null;
-+  }
-+  if (path.startsWith('//') || path.includes('://') || path.includes('\\')) {
-+    return null;
-+  }
-+  if (path.includes('..') || /%2e/i.test(path)) {
-+    return null;
-+  }
-+  let url: URL;
-+  try {
-+    url = new URL(path, 'https://app.altcontext.com');
-+  } catch {
-+    return null;
-+  }
-+  if (url.origin !== 'https://app.altcontext.com') {
-+    return null;
-+  }
-+  if (url.username || url.password) {
-+    return null;
-+  }
-+  if (url.protocol !== 'https:') {
-+    return null;
-+  }
-+  if (!PORTAL_PATH_RE.test(url.pathname)) {
-+    return null;
-+  }
-+  return `${url.pathname}${url.search}`;
-+}
-+
-+function assertCurrentOwner(owner: PortalRequestOwner, currentOwner: () => PortalRequestOwner | null): void {
-+  if (!ownersMatch(owner, currentOwner())) {
-+    throw abortError();
-+  }
-+}
-+
-+export function createPortalRequest(options: CreatePortalRequestOptions): PortalRequest {
-+  const fetchImpl = options.fetchImpl ?? fetch;
-+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-+
-+  return async (path, init) => {
-+    const resolved = resolvePortalPath(path);
-+    if (!resolved) {
-+      throw new TypeError('portal request path is not allowed');
-+    }
-+    assertCurrentOwner(options.owner, options.currentOwner);
-+    if (options.signal?.aborted || init?.signal?.aborted) {
-+      throw abortError();
-+    }
-+
-+    const controller = new AbortController();
-+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
-+    const onAbort = () => controller.abort();
-+    if (options.signal) {
-+      if (options.signal.aborted) {
-+        controller.abort();
-+      } else {
-+        options.signal.addEventListener('abort', onAbort, { once: true });
-+      }
-+    }
-+    if (init?.signal) {
-+      if (init.signal.aborted) {
-+        controller.abort();
-+      } else {
-+        init.signal.addEventListener('abort', onAbort, { once: true });
-+      }
-+    }
-+
-+    const abortGate = new Promise<void>((resolve) => {
-+      if (controller.signal.aborted) {
-+        resolve();
-+        return;
-+      }
-+      controller.signal.addEventListener('abort', () => resolve(), { once: true });
-+    });
-+
-+    try {
-+      assertCurrentOwner(options.owner, options.currentOwner);
-+      const tokenResult = await Promise.race([
-+        Promise.resolve()
-+          .then(() => options.getToken())
-+          .then((token) => ({ token })),
-+        abortGate.then(() => ({ aborted: true as const })),
-+      ]);
-+      if ('aborted' in tokenResult || controller.signal.aborted) {
-+        throw abortError();
-+      }
-+      assertCurrentOwner(options.owner, options.currentOwner);
-+      if (!tokenResult.token) {
-+        throw new Error('portal identity unavailable');
-+      }
-+
-+      const headers = new Headers(init?.headers);
-+      headers.delete('Origin');
-+      headers.delete('Authorization');
-+      headers.set('Authorization', `Bearer ${tokenResult.token}`);
-+
-+      const fetchResult = await Promise.race([
-+        fetchImpl(resolved, {
-+          ...init,
-+          headers,
-+          cache: 'no-store',
-+          credentials: 'omit',
-+          redirect: 'error',
-+          signal: controller.signal,
-+        }).then((response) => ({ response })),
-+        abortGate.then(() => ({ aborted: true as const })),
-+      ]);
-+      if ('aborted' in fetchResult || controller.signal.aborted) {
-+        throw abortError();
-+      }
-+      assertCurrentOwner(options.owner, options.currentOwner);
-+      if (options.signal?.aborted || init?.signal?.aborted) {
-+        throw abortError();
-+      }
-+      return fetchResult.response;
-+    } finally {
-+      window.clearTimeout(timer);
-+      options.signal?.removeEventListener('abort', onAbort);
-+      init?.signal?.removeEventListener('abort', onAbort);
-+    }
-+  };
-+}
-diff --git a/apps/app-portal/src/config.ts b/apps/app-portal/src/config.ts
---- a/apps/app-portal/src/config.ts
-+++ b/apps/app-portal/src/config.ts
-@@ -2,6 +2,8 @@ export type PortalRuntimeConfig = {
-   publishableKey: string | null;
-   fapiOrigin: string | null;
-   portalEnabled: boolean;
-+  paymentsEnabled?: boolean;
-+  publicPlanCode?: string | null;
- };
- 
- function trimEnv(value: string | undefined): string {
-@@ -36,19 +38,39 @@ export function parseFapiOrigin(value: string | undefined): string | null {
-   }
- }
- 
-+function parsePaymentsEnabled(value: string | undefined): boolean {
-+  const normalized = trimEnv(value).toLowerCase();
-+  return normalized === '1' || normalized === 'true' || normalized === 'on' || normalized === 'yes';
-+}
-+
-+function parsePublicPlanCode(value: string | undefined): string | null {
-+  const raw = trimEnv(value);
-+  return raw.length > 0 ? raw : null;
-+}
-+
- export function parsePortalConfig(env: Record<string, string | undefined>): PortalRuntimeConfig {
-   const publishableKey = trimEnv(env.VITE_CLERK_PUBLISHABLE_KEY);
--  return {
-+  const config: PortalRuntimeConfig = {
-     publishableKey: publishableKey.length > 0 ? publishableKey : null,
-     fapiOrigin: parseFapiOrigin(env.VITE_CLERK_FAPI),
-     portalEnabled: parseEnabledFlag(env.VITE_PORTAL_ENABLED),
-   };
-+  if (Object.prototype.hasOwnProperty.call(env, 'VITE_PAYMENTS_ENABLED')) {
-+    config.paymentsEnabled = parsePaymentsEnabled(env.VITE_PAYMENTS_ENABLED);
-+  }
-+  if (Object.prototype.hasOwnProperty.call(env, 'VITE_PUBLIC_PLAN_CODE')) {
-+    config.publicPlanCode = parsePublicPlanCode(env.VITE_PUBLIC_PLAN_CODE);
-+  }
-+  return config;
- }
- 
- export function readPortalConfig(): PortalRuntimeConfig {
-+  const env = import.meta.env as Record<string, string | undefined>;
-   return parsePortalConfig({
--    VITE_CLERK_PUBLISHABLE_KEY: import.meta.env.VITE_CLERK_PUBLISHABLE_KEY,
--    VITE_CLERK_FAPI: import.meta.env.VITE_CLERK_FAPI,
--    VITE_PORTAL_ENABLED: import.meta.env.VITE_PORTAL_ENABLED,
-+    VITE_CLERK_PUBLISHABLE_KEY: env.VITE_CLERK_PUBLISHABLE_KEY,
-+    VITE_CLERK_FAPI: env.VITE_CLERK_FAPI,
-+    VITE_PORTAL_ENABLED: env.VITE_PORTAL_ENABLED,
-+    VITE_PAYMENTS_ENABLED: env.VITE_PAYMENTS_ENABLED,
-+    VITE_PUBLIC_PLAN_CODE: env.VITE_PUBLIC_PLAN_CODE,
-   });
- }
-diff --git a/apps/app-portal/src/screens/AccountScreen.tsx b/apps/app-portal/src/screens/AccountScreen.tsx
---- a/apps/app-portal/src/screens/AccountScreen.tsx
-+++ b/apps/app-portal/src/screens/AccountScreen.tsx
-@@ -8,6 +8,9 @@ export function AccountScreen({
-   userMenu,
-   onSignOut,
-   onRetry,
-+  onNavigateToKeys,
-+  onNavigateToUsage,
-+  onNavigateToBilling,
- }: {
-   personName: string | null;
-   tenantId: string | null;
-@@ -15,6 +18,9 @@ export function AccountScreen({
-   userMenu: ReactNode;
-   onSignOut: () => void;
-   onRetry?: () => void;
-+  onNavigateToKeys?: () => void;
-+  onNavigateToUsage?: () => void;
-+  onNavigateToBilling?: () => void;
- }) {
-   const status =
-     mode === 'loading'
-@@ -46,6 +52,19 @@ export function AccountScreen({
-       ) : (
-         <p>Account access: Waiting for account</p>
-       )}
-+      {mode === 'default' && onNavigateToKeys && onNavigateToUsage && onNavigateToBilling ? (
-+        <nav className="acx-account-nav" aria-label="Account">
-+          <button type="button" className="acx-btn" onClick={onNavigateToKeys}>
-+            API keys
-+          </button>
-+          <button type="button" className="acx-btn" onClick={onNavigateToUsage}>
-+            Usage
-+          </button>
-+          <button type="button" className="acx-btn" onClick={onNavigateToBilling}>
-+            Billing
-+          </button>
-+        </nav>
-+      ) : null}
-       <StatusMessage tone={mode === 'error' ? 'error' : mode === 'default' ? 'ok' : 'info'}>{status}</StatusMessage>
-       {mode === 'error' && onRetry ? (
-         <button type="button" className="acx-btn acx-btn-primary" onClick={onRetry}>
-diff --git a/apps/app-portal/src/screens/NotAdmittedScreen.tsx b/apps/app-portal/src/screens/NotAdmittedScreen.tsx
---- a/apps/app-portal/src/screens/NotAdmittedScreen.tsx
-+++ b/apps/app-portal/src/screens/NotAdmittedScreen.tsx
-@@ -5,10 +5,12 @@ export function NotAdmittedScreen({
-   reason,
-   userMenu,
-   onSignOut,
-+  onClaimAccess,
- }: {
-   reason: 'email_unverified' | 'not_admitted';
-   userMenu: ReactNode;
-   onSignOut: () => void;
-+  onClaimAccess?: () => void;
- }) {
-   const copy =
-     reason === 'email_unverified'
-@@ -29,6 +31,11 @@ export function NotAdmittedScreen({
-         </div>
-       </header>
-       <StatusMessage tone="error">{copy}</StatusMessage>
-+      {reason === 'not_admitted' && onClaimAccess ? (
-+        <button type="button" className="acx-btn acx-btn-primary" onClick={onClaimAccess}>
-+          Claim access
-+        </button>
-+      ) : null}
-     </main>
-   );
- }
-diff --git a/apps/app-portal/src/styles.css b/apps/app-portal/src/styles.css
---- a/apps/app-portal/src/styles.css
-+++ b/apps/app-portal/src/styles.css
-@@ -141,10 +141,61 @@ body {
-   margin-top: var(--acx-space-lg);
- }
- 
-+.acx-private-shell {
-+  min-height: 100%;
-+}
-+
-+.acx-session-bar {
-+  display: flex;
-+  flex-wrap: wrap;
-+  justify-content: flex-end;
-+  align-items: center;
-+  gap: var(--acx-space-sm);
-+  padding: var(--acx-space-md) var(--acx-space-lg);
-+}
-+
-+.acx-account-nav {
-+  display: flex;
-+  flex-wrap: wrap;
-+  gap: var(--acx-space-sm);
-+  margin: var(--acx-space-md) 0;
-+}
-+
-+label {
-+  display: block;
-+  font-weight: var(--acx-font-weight-medium);
-+  margin: var(--acx-space-sm) 0;
-+}
-+
-+input,
-+select,
-+textarea {
-+  min-height: 2.75rem;
-+  width: 100%;
-+  max-width: 100%;
-+  padding: 0.5rem 0.75rem;
-+  border: 1px solid var(--acx-color-border);
-+  border-radius: var(--acx-radius-md);
-+  background: var(--acx-color-surface-alt);
-+  color: var(--acx-color-text);
-+  font: inherit;
-+}
-+
-+[role='dialog'] {
-+  background: var(--acx-color-surface-alt);
-+  border: 1px solid var(--acx-color-border);
-+  border-radius: var(--acx-radius-md);
-+  box-shadow: var(--acx-shadow-1);
-+  padding: var(--acx-space-lg);
-+  margin-top: var(--acx-space-md);
-+}
-+
- @media (max-width: 40rem) {
-   .acx-portal-header,
-   .acx-portal-actions,
--  .acx-escape {
-+  .acx-escape,
-+  .acx-session-bar,
-+  .acx-account-nav {
-     flex-direction: column;
-     align-items: stretch;
-   }
-@@ -153,3 +204,26 @@ body {
-     width: 100%;
-   }
- }
-+
-+@media (max-width: 360px) {
-+  .acx-portal,
-+  .acx-session-bar {
-+    padding: var(--acx-space-md);
-+  }
-+
-+  .acx-portal-header,
-+  .acx-portal-actions,
-+  .acx-escape,
-+  .acx-session-bar,
-+  .acx-account-nav {
-+    flex-direction: column;
-+    align-items: stretch;
-+  }
-+
-+  .acx-btn,
-+  input,
-+  select,
-+  textarea {
-+    width: 100%;
-+  }
-+}
++)
++@pytest.mark.parametrize("systemd", ["no", "yes"])
++def test_remote_stage_deadlines(gate, block, stage, target, systemd):
++    run, clone, home, events, pids, sha, *_ = gate
++    rc, output = run(BLOCK=block, SYSTEMD=systemd)
++    assert rc == 124, output
++    assert f"stage={stage} target={target}" in output
++    assert f"sha={sha}" in output
++    assert "make:later" not in events.read_text()
++    assert not any(alive(int(pid)) for pid in pids.read_text().splitlines())
++    assert subprocess.run(["flock", "-n", str(clone / ".gate.lock"), "true"], timeout=3).returncode == 0
++    terminal = next((home / ".local/state/remote-gate").glob("*/terminal.log"))
++    assert "reason=remote-deadline" in terminal.read_text()
++    assert terminal.with_name("worker.log").exists()
++    if systemd == "yes" and block in ("preflight", "import"):
++        assert "--signal=KILL remote-gate-" in events.read_text()
++
++
++@pytest.mark.parametrize("systemd", ["no", "yes"])
++@pytest.mark.parametrize("target_rc,expected", [("0", 0), ("9", 1)])
++def test_healthy_and_target_aggregation(gate, systemd, target_rc, expected):
++    run, _, home, events, _, sha, *_ = gate
++    rc, output = run(BLOCK="none", SYSTEMD=systemd, TARGET_RC=target_rc, WORKBAY_REMOTE_GATE_BUDGET_SECONDS="10")
++    assert rc == expected, output
++    assert f"EXIT={target_rc} (first)" in output
++    assert "EXIT=0 (later)" in output
++    assert "DONE-ALL" in output
++    assert "make:later" in events.read_text()
++    assert "reason=remote-deadline" not in output
++    terminal = next((home / ".local/state/remote-gate").glob("*/terminal.log"))
++    assert f"sha={sha}" in terminal.read_text()
++    assert "reason=completed" in terminal.read_text()
++
++
++@pytest.mark.parametrize("field", ["BUDGET", "TERM_GRACE"])
++@pytest.mark.parametrize("value", ["", "0", "-1", "1.5", "inf", "nan", "999999999999999999999", "01"])
++def test_invalid_deadline_input_never_pushes(gate, field, value):
++    run, _, _, events, *_ = gate
++    rc, output = run(**{f"WORKBAY_REMOTE_GATE_{field}_SECONDS": value})
++    assert rc == 2, output
++    assert f"{field}_SECONDS must be positive whole seconds" in output
++    assert not events.exists()
++
++
++@pytest.mark.parametrize("block,external_bound", [("push", 12), ("transport", 20)])
++def test_local_transport_deadline(gate, block, external_bound):
++    run, _, home, events, pids, sha, *_ = gate
++    rc, output = run(external_bound=external_bound, BLOCK=block)
++    assert rc == 76, output
++    assert "reason=transport-deadline" in output
++    assert f"sha={sha} stage={block}" in output
++    assert not any(alive(int(pid)) for pid in pids.read_text().splitlines())
++    assert not (home / ".local/state/remote-gate").exists()
++    if block == "push":
++        assert "ssh" not in events.read_text()
++
++
++@pytest.mark.parametrize("variable,expected", [("PREFLIGHT_RC", 73), ("ADMISSION_RC", 74)])
++def test_existing_early_failure_statuses(gate, variable, expected):
++    run, _, _, events, *_ = gate
++    rc, output = run(BLOCK="none", **{variable: "1"})
++    assert rc == expected, output
++    assert "make:first" not in events.read_text()
++
++
++def test_busy_clone_status(gate):
++    run, clone, _, events, *_ = gate
++    lock = (clone / ".gate.lock").open("w")
++    import fcntl
++
++    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++    try:
++        rc, output = run(BLOCK="none")
++        assert rc == 75, output
++        assert "git:checkout" not in events.read_text()
++    finally:
++        lock.close()
++
++
++def test_file_budget_and_environment_precedence(gate):
++    run, _, _, _, _, _, repo, _ = gate
++    (repo / ".workbay").mkdir()
++    (repo / ".workbay/remote-gate.env").write_text(
++        'REMOTE_GATE_BUDGET_SECONDS="invalid"\nWORKBAY_REMOTE_GATE_BUDGET_SECONDS="999"\n'
++    )
++    rc, output = run()
++    assert rc == 124, output  # captured caller budget 1 wins over both file namespaces
++
++
++def test_file_deadline_configuration(gate):
++    run, _, _, _, _, _, repo, env = gate
++    env.pop("WORKBAY_REMOTE_GATE_BUDGET_SECONDS")
++    env.pop("WORKBAY_REMOTE_GATE_TERM_GRACE_SECONDS")
++    (repo / ".workbay").mkdir()
++    (repo / ".workbay/remote-gate.env").write_text(
++        'REMOTE_GATE_BUDGET_SECONDS="1"\nREMOTE_GATE_TERM_GRACE_SECONDS="1"\n'
++    )
++    rc, output = run()
++    assert rc == 124, output
++    assert "stage=sync target=-" in output
++    assert "budget=1" in output
++
++
++@pytest.fixture
++def external_systemd(gate, tmp_path):
++    """Manager parented to pytest, proving ancestry cleanup alone is insufficient."""
++    *_, env = gate
++    tools = Path(env["PATH"].split(":")[0])
++    scopes = tmp_path / "scopes"
++    scopes.mkdir()
++    manager = tmp_path / "scope-manager"
++    executable(
++        manager,
++        f"""#!{sys.executable}
++import json, os, subprocess, time
++from pathlib import Path
++root = Path({str(scopes)!r})
++tasks = {{}}
++while True:
++    for request in root.glob('*.request'):
++        payload = json.loads(request.read_text())
++        key = request.stem
++        proc = subprocess.Popen(payload['argv'], cwd=payload['cwd'],
++                                env=payload['env'], start_new_session=True,
++                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
++        (root / (payload['unit'] + '.pid')).write_text(str(proc.pid))
++        tasks[key] = proc
++        request.unlink()
++    for key, proc in list(tasks.items()):
++        result = proc.poll()
++        if result is not None:
++            (root / (key + '.result')).write_text(str(result if result >= 0 else 128 - result))
++            del tasks[key]
++    time.sleep(.02)
++""",
++    )
++    executable(
++        tools / "systemd-run",
++        f"""#!{sys.executable}
++import json, os, sys, time, uuid
++from pathlib import Path
++root = Path({str(scopes)!r})
++args = sys.argv[1:]
++unit = None
++while args:
++    if args[0] in ('-p', '--unit'):
++        if args[0] == '--unit': unit = args[1]
++        args = args[2:]
++    elif args[0].startswith('--'): args = args[1:]
++    else: break
++assert unit and unit.startswith('remote-gate-')
++if (root / (unit + '.pid')).exists():
++    print('unit already loaded', file=sys.stderr)
++    sys.exit(1)
++key = uuid.uuid4().hex
++request = root / (key + '.tmp')
++request.write_text(json.dumps(dict(argv=args, env=dict(os.environ), cwd=os.getcwd(), unit=unit)))
++request.rename(root / (key + '.request'))
++result = root / (key + '.result')
++end = time.monotonic() + 15
++while not result.exists():
++    if time.monotonic() >= end: sys.exit(90)
++    time.sleep(.02)
++sys.exit(int(result.read_text()))
++""",
++    )
++    executable(
++        tools / "systemctl",
++        f"""#!{sys.executable}
++import os, signal, sys
++from pathlib import Path
++root = Path({str(scopes)!r})
++with open(os.environ['EVENTS'], 'a') as f: f.write('systemctl:' + ' '.join(sys.argv[1:]) + '\\n')
++units = [arg.removesuffix('.scope') for arg in sys.argv[1:] if arg.endswith('.scope')]
++for unit in units:
++    assert unit.startswith('remote-gate-')
++    path = root / (unit + '.pid')
++    pid = int(path.read_text()) if path.exists() else None
++    if 'show' in sys.argv:
++        live = False
++        if pid:
++            # Manager-created session contains ONLY this unit's processes.
++            for entry in Path('/proc').iterdir():
++                if entry.name.isdigit():
++                    try:
++                        fields = (entry / 'stat').read_bytes().rsplit(b')', 1)[1].split()
++                        if int(fields[2]) == pid and fields[0] != b'Z': live = True
++                    except FileNotFoundError: pass
++        print('active' if live else 'inactive')
++    elif pid and os.environ.get('SCOPE_KILL_FAILURE') != 'yes':
++        sig = signal.SIGKILL if '--signal=KILL' in sys.argv else signal.SIGTERM
++        try: os.killpg(pid, sig)
++        except ProcessLookupError: pass
++""",
++    )
++    proc = subprocess.Popen([str(manager)], start_new_session=True)
++    yield scopes
++    proc.kill()
++    proc.wait(timeout=3)
++    # Test-only resources created by this manager, never live shared units.
++    for path in scopes.glob("*.pid"):
++        with contextlib.suppress(ProcessLookupError):
++            os.killpg(int(path.read_text()), signal.SIGKILL)
++
++
++def test_external_systemd_children_are_killed(gate, external_systemd):
++    run, clone, home, events, pids, _, *_ = gate
++    rc, output = run(BLOCK="import", SYSTEMD="yes", WORKBAY_REMOTE_GATE_BUDGET_SECONDS="2")
++    assert rc == 124, output
++    assert "stage=target target=first" in output
++    assert "make:later" not in events.read_text()
++    assert len(pids.read_text().splitlines()) >= 2
++    assert not any(alive(int(pid)) for pid in pids.read_text().splitlines())
++    assert subprocess.run(["flock", "-n", str(clone / ".gate.lock"), "true"], timeout=3).returncode == 0
++    trace = events.read_text()
++    assert "--signal=TERM remote-gate-" in trace
++    assert "--signal=KILL remote-gate-" in trace
++    terminal = next((home / ".local/state/remote-gate").glob("*/terminal.log"))
++    assert "exit=124" in terminal.read_text()
++
++
++def test_scope_cleanup_failure_is_never_green(gate, external_systemd):
++    run, _, home, _, _, _, *_ = gate
++    rc, output = run(BLOCK="import", SYSTEMD="yes", SCOPE_KILL_FAILURE="yes", WORKBAY_REMOTE_GATE_BUDGET_SECONDS="2")
++    assert rc == 79, output
++    assert "reason=remote-deadline-cleanup-incomplete" in output
++    terminal = next((home / ".local/state/remote-gate").glob("*/terminal.log"))
++    assert "exit=79" in terminal.read_text()
++
++
++def test_session_detached_descendant_is_owned(gate):
++    run, _, _, _, pids, *_ = gate
++    rc, output = run(ESCAPE_SESSION="yes")
++    assert rc == 124, output
++    assert len(pids.read_text().splitlines()) == 2
++    assert not any(alive(int(pid)) for pid in pids.read_text().splitlines())
++
++
++def test_disconnect_leaves_remote_terminal_evidence(gate):
++    run, clone, home, _, pids, _, _, env = gate
++    tools = Path(env["PATH"].split(":")[0])
++    executable(
++        tools / "ssh",
++        f"""#!{sys.executable}
++import os, signal, subprocess, sys, time
++env = os.environ | {{'HOME': os.environ['REMOTE_HOME']}}
++proc = subprocess.Popen(['bash', '-c', sys.argv[-1]], env=env,
++                        start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
++with open(os.environ['PIDS'], 'a') as f: f.write(str(proc.pid) + '\\n')
++time.sleep(.5)
++os.kill(proc.pid, signal.SIGHUP)
++# The fake server remains a local descendant; wait for its server-side
++# cleanup rather than letting the LOCAL transport reaper kill that fake.
++# Output has already been disconnected (DEVNULL), as on the real server.
++proc.wait(timeout=6)
++sys.exit(255)
++""",
++    )
++    rc, output = run(WORKBAY_REMOTE_GATE_BUDGET_SECONDS="5")
++    assert rc == 255, output
++    end = time.monotonic() + 5
++    while time.monotonic() < end:
++        logs = list((home / ".local/state/remote-gate").glob("*/terminal.log"))
++        if logs:
++            break
++        time.sleep(0.05)
++    assert len(logs) == 1
++    assert "reason=remote-cancelled" in logs[0].read_text()
++    assert not any(alive(int(pid)) for pid in pids.read_text().splitlines())
++    assert subprocess.run(["flock", "-n", str(clone / ".gate.lock"), "true"], timeout=3).returncode == 0
++
++
++def test_budget_is_shared_across_stages(gate):
++    run, _, _, events, *_ = gate
++    rc, output = run(BLOCK="none", SYNC_DELAY="1.2", PREFLIGHT_DELAY="1.2", WORKBAY_REMOTE_GATE_BUDGET_SECONDS="2")
++    assert rc == 124, output
++    assert "stage=preflight target=gate-preflight" in output
++    assert "make:first" not in events.read_text()
++
++
++def test_worker_start_failure_has_terminal_evidence(gate, tmp_path):
++    run, _, home, events, _, sha, _, env = gate
++    tools = Path(env["PATH"].split(":")[0])
++    remote_tools = tmp_path / "remote-bin"
++    remote_tools.mkdir()
++    (remote_tools / "python3").symlink_to(sys.executable)
++    # Launch the actual remote supervisor, but omit bash from its PATH so
++    # starting its worker fails before lock acquisition or stage updates.
++    executable(
++        tools / "ssh",
++        f"""#!{sys.executable}
++import os, sys
++env = os.environ | {{'HOME': os.environ['REMOTE_HOME'], 'PATH': {str(remote_tools)!r}}}
++os.execve('/bin/bash', ['bash', '-c', sys.argv[-1]], env)
++""",
++    )
++    rc, output = run()
++    assert rc == 78, output
++    terminal = next((home / ".local/state/remote-gate").glob("*/terminal.log"))
++    evidence = terminal.read_text()
++    assert "reason=worker-start-failed" in evidence
++    assert f"sha={sha} stage=lock target=-" in evidence
++    assert "exit=78" in evidence
++    assert "elapsed=" in evidence and "budget=1" in evidence
++    assert "git:checkout" not in events.read_text()
++
++
++def test_unrelated_process_tree_is_untouched(gate, tmp_path):
++    run, _, _, _, _, _, _, env = gate
++    unrelated_pids = tmp_path / "unrelated-pids"
++    proc = subprocess.Popen([env["BLOCKER"]], env=env | {"PIDS": str(unrelated_pids)}, start_new_session=True)
++    try:
++        rc, output = run()
++        assert rc == 124, output
++        assert proc.poll() is None
++        assert all(alive(int(pid)) for pid in unrelated_pids.read_text().splitlines())
++    finally:
++        os.killpg(proc.pid, signal.SIGKILL)
++        proc.wait(timeout=3)
++
++
++def supervisor_source():
++    return SCRIPT.read_text().split("supervisor=\"$(cat <<'PY'\n", 1)[1].split("\nPY\n)", 1)[0]
++
++
++def run_supervisor(gate, prelude="", worker=None, paused_until_exit=False):
++    """Inject OS faults into the actual supervisor, with an external watchdog."""
++    _, _, _, _, _, sha, _, env = gate
++    proc = subprocess.Popen(
++        [sys.executable, "-c", prelude + supervisor_source(), "remote", "1", "1",
++         sha, "sync", *(worker or [env["BLOCKER"]])],
++        env=env | {"HOME": env["REMOTE_HOME"]},
++        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True,
++    )
++    try:
++        if paused_until_exit:
++            proc.wait(timeout=8)
++        output, _ = proc.communicate(timeout=8)
++    except subprocess.TimeoutExpired:
++        os.killpg(proc.pid, signal.SIGKILL)
++        output, _ = proc.communicate(timeout=3)
++        pytest.fail(f"supervisor external watchdog\n{output!r}")
++    return proc.returncode, output.decode()
++
++
++def test_partial_writes_and_temporary_backpressure_retain_output(gate):
++    prelude = """import os
++original_write = os.write
++write_calls = 0
++def partial_write(fd, data):
++    global write_calls
++    write_calls += 1
++    if write_calls % 3 == 0:
++        raise BlockingIOError('temporary backpressure')
++    return original_write(fd, data[:97])
++os.write = partial_write
++"""
++    rc, output = run_supervisor(
++        gate, prelude, [sys.executable, "-c", "print('output-burst\\n' * 500, end=''); print('DONE-ALL')"],
++    )
++    assert rc == 0, output
++    assert output.count("output-burst\n") == 500
++    assert "DONE-ALL\n" in output
++    assert "TERMINAL reason=completed" in output
++
++
++def test_paused_connected_reader_receives_complete_output(gate):
++    run, _, home, _, _, _, *_ = gate
++    rc, output = run(BLOCK="none", BURST_OUTPUT="yes", reader_pause=1.5,
++                     WORKBAY_REMOTE_GATE_BUDGET_SECONDS="10")
++    assert rc == 0, output[-2000:]
++    assert output.count("output-burst\n") == 450000
++    assert "EXIT=0 (first)" in output
++    assert "EXIT=0 (later)" in output
++    assert "DONE-ALL\n" in output
++    worker_log = next((home / ".local/state/remote-gate").glob("*/worker.log"))
++    assert worker_log.read_text().count("output-burst\n") == 450000
++
++
++def test_persistently_backpressured_reader_cannot_block_cleanup(gate):
++    _, _, home, _, pids, _, _, env = gate
++    code = ("import os, sys; sys.stdout.write('output-burst\\n' * 450000); "
++            f"sys.stdout.flush(); os.execv({env['BLOCKER']!r}, [{env['BLOCKER']!r}])")
++    started = time.monotonic()
++    rc, output = run_supervisor(gate, worker=[sys.executable, "-c", code], paused_until_exit=True)
++    assert rc == 124, output
++    assert time.monotonic() - started < 7
++    assert not any(alive(int(pid)) for pid in pids.read_text().splitlines())
++    terminal = next((home / ".local/state/remote-gate").glob("*/terminal.log"))
++    assert "reason=remote-deadline" in terminal.read_text()
++    spool = terminal.with_name("worker.log").read_text()
++    assert spool.count("output-burst\n") == 450000
++    assert terminal.read_text() in spool
++
++
++def test_non_utf8_unrelated_process_does_not_break_monitoring(gate):
++    run, _, home, _, pids, _, *_ = gate
++    proc = subprocess.Popen(
++        [sys.executable, "-c", "import ctypes, time; ctypes.CDLL(None).prctl(15, b'bad-\\xff', 0, 0, 0); print('ready', flush=True); time.sleep(15)"],
++        stdout=subprocess.PIPE, start_new_session=True,
++    )
++    try:
++        import select
++
++        assert select.select([proc.stdout], [], [], 3)[0]
++        assert proc.stdout.readline() == b"ready\n"
++        rc, output = run()
++        assert rc == 124, output
++        assert proc.poll() is None
++        assert not any(alive(int(pid)) for pid in pids.read_text().splitlines())
++        terminal = next((home / ".local/state/remote-gate").glob("*/terminal.log"))
++        assert "reason=remote-deadline" in terminal.read_text()
++    finally:
++        proc.kill()
++        proc.wait(timeout=3)
++        proc.stdout.close()
++
++
++@pytest.mark.parametrize("phase", ["running", "cleanup"])
++def test_unexpected_monitor_failure_still_cleans_up_and_records_terminal(gate, phase):
++    prelude = """import os
++from pathlib import Path
++original_iterdir = Path.iterdir
++def broken_scan(path):
++    fail = Path(os.environ['PIDS']).exists() if os.environ['FAIL_PHASE'] == 'running' else globals().get('reason') == 'remote-deadline'
++    if str(path) == '/proc' and fail:
++        raise RuntimeError('injected persistent monitor failure')
++    return original_iterdir(path)
++Path.iterdir = broken_scan
++"""
++    _, _, home, _, pids, sha, _, env = gate
++    env['FAIL_PHASE'] = phase
++    rc, output = run_supervisor(gate, prelude)
++    assert rc == 79, output
++    assert "reason=supervisor-error" in output
++    assert f"sha={sha} stage=sync target=-" in output
++    assert not any(alive(int(pid)) for pid in pids.read_text().splitlines())
++    terminal = next((home / ".local/state/remote-gate").glob("*/terminal.log"))
++    assert "reason=supervisor-error" in terminal.read_text()
++    assert "injected persistent monitor failure" in terminal.with_name("worker.log").read_text()
++
++
++@pytest.mark.parametrize("linger", ["no", "yes"])
++def test_unique_scopes_survive_delayed_collection(gate, external_systemd, linger):
++    run, clone, _, events, pids, _, *_ = gate
++    rc, output = run(BLOCK="none", SYSTEMD="yes", LINGER_SCOPE=linger,
++                     WORKBAY_REMOTE_GATE_BUDGET_SECONDS="5")
++    assert rc == 0, output
++    assert "EXIT=0 (gate-preflight)" in output
++    assert "EXIT=0 (first)" in output
++    assert "EXIT=0 (later)" in output
++    units = [path.stem for path in external_systemd.glob("*.pid")]
++    assert len(units) == 4
++    trace = events.read_text()
++    for unit in units:
++        for sig in ("TERM", "KILL"):
++            assert any(f"--signal={sig} " in line and f"{unit}.scope" in line.split()
++                       for line in trace.splitlines())
++    if linger == "yes":
++        assert len(pids.read_text().splitlines()) == 2
++        assert not any(alive(int(pid)) for pid in pids.read_text().splitlines())
++    assert subprocess.run(["flock", "-n", str(clone / ".gate.lock"), "true"], timeout=3).returncode == 0

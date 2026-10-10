@@ -9,6 +9,7 @@ ObjectStore staging, which is the S9 ``local_cpu`` async path. Mounted at
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -78,7 +79,9 @@ from scene.application.visual_facts_service import (
 )
 from scene.config.settings import DescriptionSettings
 from scene.domain.describe_run import (
+    TERMINAL_ITEM_STATUSES,
     DemandLeaseState,
+    DescribeItemStatus,
     DescribeJobStatus,
     DescribeUsageRouteMode,
     OperationExpiredError,
@@ -180,6 +183,38 @@ def _async_admission_gate() -> AsyncAdmissionGate:
 
 
 _ASYNC_ADMISSION = _async_admission_gate()
+
+# Response BackgroundTasks may never be invoked after a failed ASGI send.
+# Keep committed work strongly owned by the process until its finalizer ends.
+_ASYNC_DESCRIBE_TASKS: set[asyncio.Task[None]] = set()
+
+
+def _describe_delivery_done(task: asyncio.Task[None]) -> None:
+    _ASYNC_DESCRIBE_TASKS.discard(task)
+    if not task.cancelled() and task.exception() is not None:
+        _logger.error("committed describe delivery failed", exc_info=task.exception())
+
+
+class _CommittedDescribeDelivery:
+    def __init__(self, **worker_kwargs) -> None:
+        self._worker_kwargs = worker_kwargs
+        self._task: asyncio.Task[None] | None = None
+
+    def start(self) -> None:
+        worker = _run_async_describe_job_and_release(**self._worker_kwargs)
+        try:
+            self._task = asyncio.create_task(worker)
+        except BaseException:
+            worker.close()
+            raise
+        _ASYNC_DESCRIBE_TASKS.add(self._task)
+        self._task.add_done_callback(_describe_delivery_done)
+
+    async def wait(self) -> None:
+        assert self._task is not None
+        # Preserve worker-before-telemetry ordering on a healthy response, but
+        # cancellation of the response waiter must not cancel committed work.
+        await asyncio.shield(self._task)
 
 
 def worker_session_factory(session) -> async_sessionmaker[AsyncSession]:
@@ -1854,6 +1889,65 @@ async def _maybe_purge_expired_single_runs(session_factory: async_sessionmaker[A
         _logger.debug("purge_expired_single_runs failed", exc_info=True)
 
 
+async def _reconcile_undelivered_describe_job(
+    *,
+    session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    tenant_id: uuid.UUID,
+    run_id: uuid.UUID,
+    media_id: int,
+    cancelled: bool,
+    run_created: bool,
+) -> None:
+    """Rollback an uncommitted enqueue, or fail its committed orphan.
+
+    Probe even when commit raised: the server may have committed before the
+    caller observed an error/cancellation. A failed INSERT owns no durable
+    row: an idempotent racing enqueue may have created that same job id.
+    No worker has received ownership of a run created here,
+    so a persisted item cannot truthfully remain queued. Use tenant context,
+    never maintenance bypass, on the independent reconciliation transaction.
+    """
+    await session.rollback()
+    if run_created and session_factory is not None:
+        async with session_factory() as cleanup_session:
+            await set_tenant_context(cleanup_session, tenant_id)
+            await DescribeRunRepository(cleanup_session).set_item_failed(
+                tenant_id=tenant_id,
+                run_id=run_id,
+                media_id=media_id,
+                error="describe job enqueue cancelled"
+                if cancelled
+                else "describe job enqueue failed before worker delivery",
+            )
+            await cleanup_session.commit()
+    # Billing is owned by admit_usage and evidence-based recovery. In
+    # particular, cancellation retains RESERVED usage under that contract;
+    # the terminal item above supplies durable evidence for its recovery.
+
+
+async def _finish_enqueue_cleanup(**kwargs) -> None:
+    """Keep cleanup alive through repeated cancellation and preserve the error."""
+    cleanup = asyncio.create_task(_reconcile_undelivered_describe_job(**kwargs))
+    interrupted = False
+    try:
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                # Delay propagation until the transaction finishes. This also
+                # preserves cancellation arriving during ordinary-error cleanup.
+                interrupted = True
+                continue
+        cleanup.result()
+    except Exception:
+        # Leave evidence for restart recovery if the database is unavailable;
+        # never claim enqueue success or replace the original failure.
+        _logger.exception("undelivered describe job cleanup failed run_id=%s", kwargs["run_id"])
+    if interrupted:
+        raise asyncio.CancelledError
+
+
 @router.post(
     "/describe/async",
     response_model=DescribeJobResult,
@@ -1921,23 +2015,30 @@ async def enqueue_describe_image(
                 raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "describe job was not persisted")
             return _job_result_from_item(run_id=existing.id, item=item)
 
-        refusal = _ASYNC_ADMISSION.try_acquire(image_len)
+        run_id = bound_usage_job_id(ticket, job_id)
+        task_count = len(background_tasks.tasks)
+        admission_gate = _ASYNC_ADMISSION
+        refusal = admission_gate.try_acquire(image_len)
         if refusal is not None:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, refusal)
 
-        session_factory = worker_session_factory(session)
-        audit_sink = _BackgroundDescriptionAuditSink(session_factory)
-        metrics = _DescriptionMetricsSink()
+        session_factory = None
+        run_created = False
+        delivered = False
         try:
-            run_id = await repo.create_single_run(
+            session_factory = worker_session_factory(session)
+            audit_sink = _BackgroundDescriptionAuditSink(session_factory)
+            metrics = _DescriptionMetricsSink()
+            await repo.create_single_run(
                 tenant_id=submission.tenant_uuid,
                 media_id=envelope.media_id,
                 image_bytes=submission.image_bytes,
                 created_by_user_id=getattr(auth, "user_id", None),
-                run_id=bound_usage_job_id(ticket, job_id),
+                run_id=run_id,
                 operation_id=operation_id,
                 request_digest=usage_fingerprint,
             )
+            run_created = True
             await _bind_run_usage(
                 session,
                 tenant_id=submission.tenant_uuid,
@@ -1948,60 +2049,117 @@ async def enqueue_describe_image(
             await maybe_consume_demo_quota(auth, session, units=1)
             await set_tenant_context(session, submission.tenant_uuid)
             await session.commit()
-        except HTTPException:
-            _ASYNC_ADMISSION.release(image_len)
-            raise
-        except Exception as exc:
-            # Paired release on any create/commit failure [RES-04]; surface 500 not 200.
-            _ASYNC_ADMISSION.release(image_len)
-            raise HTTPException(
-                status.HTTP_500_INTERNAL_SERVER_ERROR,
-                "describe job enqueue failed",
-            ) from exc
 
-        await _maybe_purge_expired_single_runs(session_factory)
-        await dump_load_snapshot(session_factory)
-
-        background_tasks.add_task(
-            _run_async_describe_job_and_release,
-            tenant_id=submission.tenant_uuid,
-            run_id=run_id,
-            session_factory=session_factory,
-            cpu_adapter=cpu_adapter,
-            gpu_adapter=gpu_adapter,
-            # One provisional pass + however many GPU-final passes the adapter
-            # makes (ensemble: n_views; raw: 1 -> preserves the original 2x budget)
-            # so N-view jobs cannot time out by construction (VLM4-RC-BR-01) [RES-02].
-            job_timeout_seconds=settings.generation_timeout_seconds * (1 + getattr(gpu_adapter, "n_passes", 1)),
-            audit_sink=audit_sink,
-            metrics=metrics,
-            context=submission.context,
-            image_len=image_len,
-        )
-
-        item = await repo.get_single_run_item(tenant_id=submission.tenant_uuid, run_id=run_id)
-        if item is None:  # pragma: no cover - defensive only
-            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "describe job was not persisted")
-        return _job_result_from_item(run_id=run_id, item=item)
+            await _maybe_purge_expired_single_runs(session_factory)
+            await dump_load_snapshot(session_factory)
+            # SET LOCAL ended at commit; the response SELECT starts a new
+            # tenant-scoped transaction even with expire_on_commit=False.
+            await set_tenant_context(session, submission.tenant_uuid)
+            item = await repo.get_single_run_item(tenant_id=submission.tenant_uuid, run_id=run_id)
+            if item is None:
+                raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "describe job was not persisted")
+            result = _job_result_from_item(run_id=run_id, item=item)
+            # Finish all fallible enqueue work before transferring ownership.
+            delivery = _CommittedDescribeDelivery(
+                tenant_id=submission.tenant_uuid,
+                run_id=run_id,
+                session_factory=session_factory,
+                cpu_adapter=cpu_adapter,
+                gpu_adapter=gpu_adapter,
+                # CPU provisional plus all GPU-final passes (VLM4-RC-BR-01).
+                job_timeout_seconds=settings.generation_timeout_seconds * (1 + getattr(gpu_adapter, "n_passes", 1)),
+                audit_sink=audit_sink,
+                metrics=metrics,
+                context=submission.context,
+                image_len=image_len,
+                admission_gate=admission_gate,
+            )
+            # Register the shielded waiter before starting the independent task:
+            # registration/start failures still belong to enqueue cleanup. After
+            # start there is no await before return. Even an unsent response now
+            # leaves a process-owned worker responsible for the reservation.
+            background_tasks.add_task(delivery.wait)
+            delivery.start()
+            background_tasks.tasks.insert(0, background_tasks.tasks.pop())
+            delivered = True
+            return result
+        except (Exception, asyncio.CancelledError) as exc:
+            del background_tasks.tasks[task_count:]
+            await _finish_enqueue_cleanup(
+                session=session,
+                session_factory=session_factory,
+                tenant_id=submission.tenant_uuid,
+                run_id=run_id,
+                media_id=envelope.media_id,
+                cancelled=isinstance(exc, asyncio.CancelledError),
+                run_created=run_created,
+            )
+            if isinstance(exc, (HTTPException, asyncio.CancelledError)):
+                raise
+            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "describe job enqueue failed") from exc
+        finally:
+            if not delivered:
+                admission_gate.release(image_len)
 
 
 async def _run_async_describe_job_and_release(
     *,
     image_len: int,
     session_factory: async_sessionmaker[AsyncSession],
+    admission_gate: AsyncAdmissionGate | None = None,
     **kwargs,
 ) -> None:
     try:
         await run_async_describe_job(session_factory=session_factory, **kwargs)
-    except Exception:  # noqa: BLE001 - never leak reservation; log and finish
+    except (Exception, asyncio.CancelledError) as exc:
         _logger.exception(
             "async describe job failed tenant_id=%s run_id=%s",
             kwargs.get("tenant_id"),
             kwargs.get("run_id"),
         )
+        # The worker normally terminalizes its own failures. Cancellation can
+        # arrive before its claim/cleanup scope, or that cleanup can itself fail.
+        # Reconcile only nonterminal items under the tenant policy, preserving a
+        # provisional result and leaving billing to the fenced worker/recovery.
+        cleanup = asyncio.create_task(
+            _reconcile_aborted_describe_worker(
+                session_factory=session_factory,
+                tenant_id=kwargs["tenant_id"],
+                run_id=kwargs["run_id"],
+                cancelled=isinstance(exc, asyncio.CancelledError),
+            )
+        )
+        interrupted = False
+        try:
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    interrupted = True
+            cleanup.result()
+        except Exception:
+            _logger.exception("aborted describe worker cleanup failed run_id=%s", kwargs["run_id"])
+        if isinstance(exc, asyncio.CancelledError) or interrupted:
+            raise asyncio.CancelledError
     finally:
-        _ASYNC_ADMISSION.release(image_len)
+        (admission_gate if admission_gate is not None else _ASYNC_ADMISSION).release(image_len)
         await dump_load_snapshot(session_factory)
+
+
+async def _reconcile_aborted_describe_worker(*, session_factory, tenant_id, run_id, cancelled: bool) -> None:
+    async with session_factory() as session:
+        await set_tenant_context(session, tenant_id)
+        repo = DescribeRunRepository(session)
+        item = await repo.get_single_run_item(tenant_id=tenant_id, run_id=run_id)
+        if item is None or DescribeItemStatus(item.status) in TERMINAL_ITEM_STATUSES:
+            return
+        error = "describe job worker cancelled" if cancelled else "describe job worker aborted"
+        # Repository terminal guards make this idempotent after worker cleanup.
+        if getattr(item, "visual_facts", None) is not None:
+            await repo.set_item_degraded(tenant_id=tenant_id, run_id=run_id, media_id=item.media_id, error=error)
+        else:
+            await repo.set_item_failed(tenant_id=tenant_id, run_id=run_id, media_id=item.media_id, error=error)
+        await session.commit()
 
 
 @router.get("/describe/jobs/{job_id}", response_model=DescribeJobResult)

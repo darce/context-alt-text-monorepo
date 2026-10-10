@@ -9,6 +9,7 @@ ObjectStore staging, which is the S9 ``local_cpu`` async path. Mounted at
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -1854,6 +1855,65 @@ async def _maybe_purge_expired_single_runs(session_factory: async_sessionmaker[A
         _logger.debug("purge_expired_single_runs failed", exc_info=True)
 
 
+async def _reconcile_undelivered_describe_job(
+    *,
+    session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    tenant_id: uuid.UUID,
+    run_id: uuid.UUID,
+    media_id: int,
+    cancelled: bool,
+    run_created: bool,
+) -> None:
+    """Rollback an uncommitted enqueue, or fail its committed orphan.
+
+    Probe even when commit raised: the server may have committed before the
+    caller observed an error/cancellation. A failed INSERT owns no durable
+    row: an idempotent racing enqueue may have created that same job id.
+    No worker has received ownership of a run created here,
+    so a persisted item cannot truthfully remain queued. Use tenant context,
+    never maintenance bypass, on the independent reconciliation transaction.
+    """
+    await session.rollback()
+    if run_created and session_factory is not None:
+        async with session_factory() as cleanup_session:
+            await set_tenant_context(cleanup_session, tenant_id)
+            await DescribeRunRepository(cleanup_session).set_item_failed(
+                tenant_id=tenant_id,
+                run_id=run_id,
+                media_id=media_id,
+                error="describe job enqueue cancelled"
+                if cancelled
+                else "describe job enqueue failed before worker delivery",
+            )
+            await cleanup_session.commit()
+    # Billing is owned by admit_usage and evidence-based recovery. In
+    # particular, cancellation retains RESERVED usage under that contract;
+    # the terminal item above supplies durable evidence for its recovery.
+
+
+async def _finish_enqueue_cleanup(**kwargs) -> None:
+    """Keep cleanup alive through repeated cancellation and preserve the error."""
+    cleanup = asyncio.create_task(_reconcile_undelivered_describe_job(**kwargs))
+    interrupted = False
+    try:
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                # Delay propagation until the transaction finishes. This also
+                # preserves cancellation arriving during ordinary-error cleanup.
+                interrupted = True
+                continue
+        cleanup.result()
+    except Exception:
+        # Leave evidence for restart recovery if the database is unavailable;
+        # never claim enqueue success or replace the original failure.
+        _logger.exception("undelivered describe job cleanup failed run_id=%s", kwargs["run_id"])
+    if interrupted:
+        raise asyncio.CancelledError
+
+
 @router.post(
     "/describe/async",
     response_model=DescribeJobResult,
@@ -1921,23 +1981,30 @@ async def enqueue_describe_image(
                 raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "describe job was not persisted")
             return _job_result_from_item(run_id=existing.id, item=item)
 
-        refusal = _ASYNC_ADMISSION.try_acquire(image_len)
+        run_id = bound_usage_job_id(ticket, job_id)
+        task_count = len(background_tasks.tasks)
+        admission_gate = _ASYNC_ADMISSION
+        refusal = admission_gate.try_acquire(image_len)
         if refusal is not None:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, refusal)
 
-        session_factory = worker_session_factory(session)
-        audit_sink = _BackgroundDescriptionAuditSink(session_factory)
-        metrics = _DescriptionMetricsSink()
+        session_factory = None
+        run_created = False
+        delivered = False
         try:
-            run_id = await repo.create_single_run(
+            session_factory = worker_session_factory(session)
+            audit_sink = _BackgroundDescriptionAuditSink(session_factory)
+            metrics = _DescriptionMetricsSink()
+            await repo.create_single_run(
                 tenant_id=submission.tenant_uuid,
                 media_id=envelope.media_id,
                 image_bytes=submission.image_bytes,
                 created_by_user_id=getattr(auth, "user_id", None),
-                run_id=bound_usage_job_id(ticket, job_id),
+                run_id=run_id,
                 operation_id=operation_id,
                 request_digest=usage_fingerprint,
             )
+            run_created = True
             await _bind_run_usage(
                 session,
                 tenant_id=submission.tenant_uuid,
@@ -1948,47 +2015,59 @@ async def enqueue_describe_image(
             await maybe_consume_demo_quota(auth, session, units=1)
             await set_tenant_context(session, submission.tenant_uuid)
             await session.commit()
-        except HTTPException:
-            _ASYNC_ADMISSION.release(image_len)
-            raise
-        except Exception as exc:
-            # Paired release on any create/commit failure [RES-04]; surface 500 not 200.
-            _ASYNC_ADMISSION.release(image_len)
-            raise HTTPException(
-                status.HTTP_500_INTERNAL_SERVER_ERROR,
-                "describe job enqueue failed",
-            ) from exc
 
-        await _maybe_purge_expired_single_runs(session_factory)
-        await dump_load_snapshot(session_factory)
-
-        background_tasks.add_task(
-            _run_async_describe_job_and_release,
-            tenant_id=submission.tenant_uuid,
-            run_id=run_id,
-            session_factory=session_factory,
-            cpu_adapter=cpu_adapter,
-            gpu_adapter=gpu_adapter,
-            # One provisional pass + however many GPU-final passes the adapter
-            # makes (ensemble: n_views; raw: 1 -> preserves the original 2x budget)
-            # so N-view jobs cannot time out by construction (VLM4-RC-BR-01) [RES-02].
-            job_timeout_seconds=settings.generation_timeout_seconds * (1 + getattr(gpu_adapter, "n_passes", 1)),
-            audit_sink=audit_sink,
-            metrics=metrics,
-            context=submission.context,
-            image_len=image_len,
-        )
-
-        item = await repo.get_single_run_item(tenant_id=submission.tenant_uuid, run_id=run_id)
-        if item is None:  # pragma: no cover - defensive only
-            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "describe job was not persisted")
-        return _job_result_from_item(run_id=run_id, item=item)
+            await _maybe_purge_expired_single_runs(session_factory)
+            await dump_load_snapshot(session_factory)
+            # SET LOCAL ended at commit; the response SELECT starts a new
+            # tenant-scoped transaction even with expire_on_commit=False.
+            await set_tenant_context(session, submission.tenant_uuid)
+            item = await repo.get_single_run_item(tenant_id=submission.tenant_uuid, run_id=run_id)
+            if item is None:
+                raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "describe job was not persisted")
+            result = _job_result_from_item(run_id=run_id, item=item)
+            # Construct the response before registering delivery. No await or
+            # fallible projection remains between ownership transfer and return.
+            background_tasks.add_task(
+                _run_async_describe_job_and_release,
+                tenant_id=submission.tenant_uuid,
+                run_id=run_id,
+                session_factory=session_factory,
+                cpu_adapter=cpu_adapter,
+                gpu_adapter=gpu_adapter,
+                # CPU provisional plus all GPU-final passes (VLM4-RC-BR-01).
+                job_timeout_seconds=settings.generation_timeout_seconds * (1 + getattr(gpu_adapter, "n_passes", 1)),
+                audit_sink=audit_sink,
+                metrics=metrics,
+                context=submission.context,
+                image_len=image_len,
+                admission_gate=admission_gate,
+            )
+            delivered = True
+            return result
+        except (Exception, asyncio.CancelledError) as exc:
+            del background_tasks.tasks[task_count:]
+            await _finish_enqueue_cleanup(
+                session=session,
+                session_factory=session_factory,
+                tenant_id=submission.tenant_uuid,
+                run_id=run_id,
+                media_id=envelope.media_id,
+                cancelled=isinstance(exc, asyncio.CancelledError),
+                run_created=run_created,
+            )
+            if isinstance(exc, (HTTPException, asyncio.CancelledError)):
+                raise
+            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "describe job enqueue failed") from exc
+        finally:
+            if not delivered:
+                admission_gate.release(image_len)
 
 
 async def _run_async_describe_job_and_release(
     *,
     image_len: int,
     session_factory: async_sessionmaker[AsyncSession],
+    admission_gate: AsyncAdmissionGate | None = None,
     **kwargs,
 ) -> None:
     try:
@@ -2000,7 +2079,7 @@ async def _run_async_describe_job_and_release(
             kwargs.get("run_id"),
         )
     finally:
-        _ASYNC_ADMISSION.release(image_len)
+        (admission_gate if admission_gate is not None else _ASYNC_ADMISSION).release(image_len)
         await dump_load_snapshot(session_factory)
 
 

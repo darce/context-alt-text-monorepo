@@ -1,4 +1,4 @@
-import { ChangeEvent, useEffect, useState } from 'react';
+import { ChangeEvent, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { MemoryRouter, useInRouterContext, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import * as Select from '@radix-ui/react-select';
@@ -23,6 +23,16 @@ import { useJobPipeline } from './JobPipelineContext';
 import { Checkbox } from '../../../components/ui/checkbox';
 import { useBulkDescribe } from '../../hooks/useBulkDescribe';
 import { setDescribeProgressMounted } from '../../hooks/activeDescribeRun';
+import {
+  DESCRIBE_RUN_RESUME_STATUS,
+  getDescribeRunContext,
+  pendingTerminalRuns,
+  putDescribeOperationContext,
+  resolveDescribeOperationTenantId,
+  subscribeDescribeOperationStore,
+} from '../../hooks/describeOperationStore';
+import { useActivityStatus } from '../../hooks/useActivityStatus';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import type { DescribeRunProgress } from '../../hooks/useDescribeRunProgress';
 import { useRecognitionCooldown } from '../../hooks/useRecognitionCooldown';
 import { useRemoteActionGate } from '../../hooks/useRemoteActionGate';
@@ -62,6 +72,65 @@ interface MediaSelectionProps {
 
 export const QUEUE_HAS_DRAFT_PARAM = 'hasDraft';
 export const QUEUE_HAS_DRAFT_VALUE = '1';
+
+const pendingDescribeRunIds = (): string => JSON.stringify(pendingTerminalRuns().map(({ id }) => id));
+
+type AcceptedRunSelections = Map<string, number[]>;
+const acceptedRunSelectionsKey = (tenantId: string): string => `acx_describe_run_selections_v1:${tenantId}`;
+const readAcceptedRunSelections = (tenantId: string | null): AcceptedRunSelections => {
+  if (tenantId === null) {
+    return new Map();
+  }
+  try {
+    const stored: unknown = JSON.parse(sessionStorage.getItem(acceptedRunSelectionsKey(tenantId)) ?? 'null');
+    if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) {
+      return new Map();
+    }
+    return new Map(
+      Object.entries(stored as Record<string, unknown>).filter((entry): entry is [string, number[]] => {
+        const [, ids] = entry;
+        return Array.isArray(ids) && ids.length > 0 && ids.every((id) => Number.isInteger(id) && id > 0);
+      }),
+    );
+  } catch {
+    return new Map();
+  }
+};
+
+const PendingDescribeRecovery = ({ runId }: { runId: string }): React.JSX.Element => {
+  const { actions, isCancelling } = useActivityStatus({ describeRunId: runId });
+  const [cancelOpen, setCancelOpen] = useState(false);
+  return (
+    <section aria-label={sprintf(__('Describe run %s', 'alt-context'), runId)}>
+      <p role="status">
+        {sprintf(__('Describe run %s is awaiting its final status.', 'alt-context'), runId)}
+      </p>
+      {actions.onRetry !== null ? (
+        <button type="button" className="button" onClick={actions.onRetry}>
+          {__('Retry', 'alt-context')}
+        </button>
+      ) : null}
+      {actions.onCancel !== null ? (
+        <button type="button" className="button button-link" disabled={isCancelling} onClick={() => setCancelOpen(true)}>
+          {__('Cancel run', 'alt-context')}
+        </button>
+      ) : null}
+      <ConfirmDialog
+        open={cancelOpen}
+        onOpenChange={setCancelOpen}
+        onConfirm={() => {
+          setCancelOpen(false);
+          actions.onCancel?.();
+        }}
+        onCancel={() => setCancelOpen(false)}
+        title={__('Cancel this run?', 'alt-context')}
+        description={__('This stops the describe run. Finished drafts stay available to review.', 'alt-context')}
+        confirmLabel={__('Cancel run', 'alt-context')}
+        isPending={isCancelling}
+      />
+    </section>
+  );
+};
 
 /** History / ?run= deep-links land on the workbench draft filter (NAV-07). */
 export const descriptionHistoryQueuePath = (search: string): string => {
@@ -153,6 +222,15 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
   const pipeline = useJobPipeline();
   const [identify, setIdentify] = useState<{ pending: boolean; error: string | null }>({ pending: false, error: null });
   const startDescribe = (ids: number[]) => {
+    // The store parks only contexts explicitly awaiting terminal evidence.
+    // Mark the unresolved predecessor before useBulkDescribe can replace it.
+    const existing = getDescribeRunContext();
+    if (existing !== null && !describeProgress.isTerminal) {
+      putDescribeOperationContext({
+        ...existing,
+        status: DESCRIBE_RUN_RESUME_STATUS.NEEDS_TERMINAL_CHECK,
+      });
+    }
     setDismissedRunId(null);
     bulkDescribe.submit.mutate(ids);
   };
@@ -177,11 +255,62 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
   const describeProgress = bulkDescribe.progress;
   const terminalDescribeRunId = bulkDescribe.runId;
   const activeDescribeRunId = bulkDescribe.activeRunId ?? null;
-  // Run started and still making progress: a polling error does NOT count as an
-  // active run, so the primary CTA is never left permanently disabled (FE-02).
+  const pendingRunIdsSnapshot = useSyncExternalStore(
+    subscribeDescribeOperationStore,
+    pendingDescribeRunIds,
+    pendingDescribeRunIds,
+  );
+  const pendingRunIds = JSON.parse(pendingRunIdsSnapshot) as string[];
+  const tenantId = useSyncExternalStore(
+    subscribeDescribeOperationStore,
+    resolveDescribeOperationTenantId,
+    resolveDescribeOperationTenantId,
+  );
+  const acceptedSelectionsRef = useRef<{ tenantId: string | null; selections: AcceptedRunSelections } | null>(null);
+  if (acceptedSelectionsRef.current?.tenantId !== tenantId) {
+    acceptedSelectionsRef.current = { tenantId, selections: readAcceptedRunSelections(tenantId) };
+  }
+  const unresolvedRunIds = [
+    ...pendingRunIds,
+    ...(activeDescribeRunId !== null && !describeProgress.isTerminal ? [activeDescribeRunId] : []),
+  ];
+  const acceptedSelections = acceptedSelectionsRef.current.selections;
+  if (
+    bulkDescribe.submit.data?.tenant_id === tenantId &&
+    bulkDescribe.submit.variables !== undefined &&
+    unresolvedRunIds.includes(bulkDescribe.submit.data.run_id)
+  ) {
+    acceptedSelections.set(bulkDescribe.submit.data.run_id, [...bulkDescribe.submit.variables]);
+  }
+  for (const runId of acceptedSelections.keys()) {
+    if (!unresolvedRunIds.includes(runId)) {
+      acceptedSelections.delete(runId);
+    }
+  }
+  const acceptedSelectionsSnapshot = JSON.stringify(Object.fromEntries(acceptedSelections));
+  useEffect(() => {
+    if (tenantId === null) {
+      return;
+    }
+    try {
+      sessionStorage.setItem(acceptedRunSelectionsKey(tenantId), acceptedSelectionsSnapshot);
+    } catch {
+      // Keep the mounted selection metadata in memory. A restored run whose
+      // selection cannot be recovered holds submissions until it is settled.
+    }
+  }, [acceptedSelectionsSnapshot, tenantId]);
+  // A failed poll is never settlement. Every overlapping selection stays held;
+  // disjoint work can proceed without losing earlier accepted identities.
   const isDescribeRunning =
     bulkDescribe.submit.isPending ||
-    (activeDescribeRunId !== null && !describeProgress.isTerminal && !describeProgress.isError);
+    unresolvedRunIds.some((runId) => {
+      const ids = acceptedSelections.get(runId);
+      return (
+        ids === undefined ||
+        selectedMediaIds.some((id) => ids.includes(id)) ||
+        (runId === activeDescribeRunId && !describeProgress.isError)
+      );
+    });
   // The result panel stays visible through the terminal state so the operator
   // sees the outcome, until they explicitly dismiss that run (FE-01).
   const [dismissedRunId, setDismissedRunId] = useState<string | null>(null);
@@ -289,6 +418,9 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
             recognitionPolicy={recognitionPolicy}
             isIdentifying={identify.pending}
             onSubmit={() => {
+              if (isDescribeRunning) {
+                return;
+              }
               // WBUX6-W4-R-01: the container's own guard, named and unit-testable, so
               // it is no longer a belt that only the presentational buckle can reach.
               const action = resolveDescribeSubmitAction({
@@ -334,6 +466,9 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
             onDismiss={() => setDismissedRunId(terminalDescribeRunId)}
             onRetryPolling={() => describeProgress.retry()}
           />
+          {pendingRunIds
+            .filter((runId) => runId !== (activeDescribeRunId ?? pendingRunIds[0]))
+            .map((runId) => <PendingDescribeRecovery key={runId} runId={runId} />)}
           {bulkDescribe.unreadableMediaIds.length > 0 ? (
             <div className="acx-media-selection__unreadable-media" role="status">
               <p>
@@ -664,7 +799,7 @@ export const BulkDescribeCta = ({
           onClick={() => {
             // BR-76: presentational hold guard — activation is a no-op while held (the
             // container onSubmit also fail-fasts offline and while identifying).
-            if (submitHeld) {
+            if (submitHeld || isSubmitting || isRunning) {
               return;
             }
             onSubmit();

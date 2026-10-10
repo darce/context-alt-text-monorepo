@@ -661,6 +661,8 @@ final class GtmBurstOutboxFenceTest extends TestCase
             $db = @new \wpdb($user, $password, $database, $host);
             $db->suppress_errors(true);
             $db->hide_errors();
+            // WP_SETUP_CONFIG prevents the constructor from opening the connection.
+            @$db->db_connect(false);
             if (!$db->ready || !$db->has_cap('identifier_placeholders')) {
                 throw new RuntimeException('Native wpdb connection unavailable.');
             }

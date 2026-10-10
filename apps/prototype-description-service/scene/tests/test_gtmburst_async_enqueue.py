@@ -1,8 +1,9 @@
-"""GTMBURST-ASYNC-01/02/03: enqueue ownership and composed background scheduling.
+"""GTMBURST-ASYNC-01/02/03/04: enqueue and independent delivery ownership.
 
 TEST-06 / TEST-15 (heuristics-canon v0.25.6): removing enqueue ownership
 must make the fresh-key retry fail; removing reseeding must hide the item;
-removing worker priority must strand work behind failed/cancelled auth telemetry.
+removing independent ownership must strand work at the ASGI send boundary;
+removing waiter priority must run auth telemetry before committed work drains.
 """
 
 from __future__ import annotations
@@ -52,7 +53,12 @@ class AuthenticatedEnqueueApp:
         self.telemetry_calls = 0
         self.telemetry_commits = 0
         self.telemetry_closes = 0
+        self.callback_order = []
         self.worker_runs = []
+        self.worker_entered = asyncio.Event()
+        self.worker_continue = asyncio.Event()
+        self.worker_continue.set()
+        self.worker_outcome = "healthy"
         self.sent = []
         self.admission = Admission()
         self.tenant = TENANT
@@ -65,6 +71,7 @@ class AuthenticatedEnqueueApp:
 
         async def touch(repo, api_key_id):
             assert api_key_id == "scheduler-api-key"
+            self.callback_order.append("telemetry")
             self.telemetry_calls += 1
             self.telemetry_entered.set()
             if self.outcome == "cancellation":
@@ -96,7 +103,6 @@ class AuthenticatedEnqueueApp:
         monkeypatch.setattr(route, "worker_session_factory", lambda session: factory)
 
         async def worker(*, tenant_id, run_id, session_factory, **kwargs):
-            assert any(message["type"] == "http.response.body" for message in self.sent), "worker ran before response"
             async with session_factory() as session:
                 await route.set_tenant_context(session, tenant_id)
                 repo = route.DescribeRunRepository(session)
@@ -105,10 +111,17 @@ class AuthenticatedEnqueueApp:
                 assert item.status == DescribeItemStatus.QUEUED
                 assert item.image_bytes == IMAGE
                 self.worker_runs.append(run_id)
+                self.worker_entered.set()
+                await self.worker_continue.wait()
+                if self.worker_outcome == "exception":
+                    raise RuntimeError("scheduler worker aborted")
+                if self.worker_outcome == "cancellation":
+                    raise asyncio.CancelledError()
                 await repo.set_item_failed(
                     tenant_id=tenant_id, run_id=run_id, media_id=item.media_id, error="scheduler test worker failure"
                 )
                 await session.commit()
+                self.callback_order.append("worker")
 
         monkeypatch.setattr(route, "run_async_describe_job", worker)
         self.app = FastAPI()
@@ -136,14 +149,14 @@ class AuthenticatedEnqueueApp:
 
         await self.app(scope, receive, observe)
 
-    async def submit(self, client):
+    async def submit(self, client, *, operation=None):
         self.sent.clear()
         return await client.post(
             "/scene/describe/async",
             headers={"Authorization": "Bearer scheduler-test-key", "X-Tenant-ID": str(self.tenant)},
             data={
                 "request": json.dumps({"tenant_id": str(self.tenant), "media_id": 42}),
-                "operation_id": uuid.uuid4().hex,
+                "operation_id": operation or uuid.uuid4().hex,
             },
             files={"image_42": ("image.jpg", IMAGE, "image/jpeg")},
         )
@@ -180,6 +193,7 @@ async def exercise_auth_telemetry_outcome(app, client, gate, outcome):
                 await pending
     result = app.sent_result()
     assert app.worker_runs == [uuid.UUID(result["job_id"])], "auth telemetry prevented committed worker delivery"
+    assert app.callback_order == ["worker", "telemetry"], "auth telemetry ran before committed work drained"
     assert app.telemetry_calls == app.telemetry_closes == 1, "production auth telemetry was discarded"
     assert app.telemetry_commits == (0 if outcome == "cancellation" else 1)
     assert gate.releases == 1, "worker leaked or double-released admission"
@@ -187,14 +201,73 @@ async def exercise_auth_telemetry_outcome(app, client, gate, outcome):
     return uuid.UUID(result["job_id"])
 
 
+async def wait_for_worker_release(gate, count):
+    async def released():
+        while gate.releases < count:
+            gate.release_changed.clear()
+            await gate.release_changed.wait()
+
+    await asyncio.wait_for(released(), 5)
+
+
+async def exercise_response_send_failure(app, gate, outcome):
+    """Cancel/fail the actual ASGI body send while committed work is unfinished."""
+    app.worker_continue.clear()
+    send_entered = asyncio.Event()
+    operation = uuid.uuid4().hex
+
+    async def broken_transport(scope, receive, send):
+        async def intercept(message):
+            if message["type"] == "http.response.body":
+                send_entered.set()
+                if outcome == "exception":
+                    raise RuntimeError("response body send failed")
+                await asyncio.Event().wait()
+            await send(message)
+
+        await app(scope, receive, intercept)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=broken_transport), base_url="http://test") as client:
+        pending = asyncio.create_task(app.submit(client, operation=operation))
+        try:
+            await asyncio.wait_for(send_entered.wait(), 5)
+            if outcome == "cancellation":
+                pending.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await pending
+            else:
+                with pytest.raises(RuntimeError, match="response body send failed"):
+                    await pending
+        finally:
+            if not pending.done():
+                pending.cancel()
+                with suppress(asyncio.CancelledError):
+                    await pending
+    job_id = uuid.UUID(app.sent_result()["job_id"])
+    # This is the business ownership assertion; the old route never starts its
+    # worker after either failure. No background task is manually invoked here.
+    try:
+        await asyncio.wait_for(app.worker_entered.wait(), 1)
+    except TimeoutError:
+        pytest.fail("ASGI delivery failure stranded the committed worker")
+    assert app.worker_runs == [job_id]
+    assert app.telemetry_calls == 0, "unsent response unexpectedly ran auth telemetry"
+    assert gate.releases == 0
+    assert (gate._job_count, gate._retained_image_bytes) == (1, len(IMAGE))
+    return job_id, operation
+
+
 class CountingGate(route.AsyncAdmissionGate):
     def __init__(self):
         super().__init__(max_jobs=1, max_retained_image_bytes=len(IMAGE))
         self.releases = 0
+        self.release_changed = asyncio.Event()
+        self.worker_continue = asyncio.Event()
 
     def release(self, image_len):
         self.releases += 1
         super().release(image_len)
+        self.release_changed.set()
 
 
 class Admission:
@@ -280,7 +353,12 @@ def gate(monkeypatch):
 
     monkeypatch.setattr(route, "_maybe_purge_expired_single_runs", noop)
     monkeypatch.setattr(route, "dump_load_snapshot", noop)
-    monkeypatch.setattr(route, "run_async_describe_job", noop)
+
+    async def held_worker(**kwargs):
+        # Keep committed ownership observable across replay/fault transactions.
+        await gate.worker_continue.wait()
+
+    monkeypatch.setattr(route, "run_async_describe_job", held_worker)
     return gate
 
 
@@ -382,6 +460,63 @@ async def test_auth_telemetry_cannot_strand_committed_worker(scheduler_store, ga
         assert (gate._job_count, gate._retained_image_bytes) == (0, 0)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["exception", "cancellation"])
+@pytest.mark.parametrize("worker_outcome", ["healthy", "exception", "cancellation"])
+async def test_response_send_failure_cannot_strand_committed_worker(
+    scheduler_store, gate, monkeypatch, outcome, worker_outcome
+):
+    # Scheduler-only surrogate; the paired restricted-PG cases prove durability.
+    app = AuthenticatedEnqueueApp(monkeypatch, scheduler_store.factory)
+    app.worker_outcome = worker_outcome
+    try:
+        job_id, _ = await exercise_response_send_failure(app, gate, outcome)
+        item = scheduler_store.items[job_id]
+        assert item.status == DescribeItemStatus.QUEUED and item.image_bytes == IMAGE
+    finally:
+        app.worker_continue.set()
+    await wait_for_worker_release(gate, 1)
+    item = scheduler_store.items[job_id]
+    assert item.status == DescribeItemStatus.FAILED
+    assert item.image_bytes is None
+    assert gate.releases == 1
+    assert (gate._job_count, gate._retained_image_bytes) == (0, 0)
+    app.worker_outcome = "healthy"
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        retry = await asyncio.wait_for(app.submit(client), 5)
+    assert retry.status_code == 200, retry.text
+    assert app.worker_runs == [job_id, uuid.UUID(retry.json()["job_id"])]
+    assert gate.releases == 2
+
+
+@pytest.mark.asyncio
+async def test_response_background_wait_cancellation_does_not_cancel_committed_work(scheduler_store, gate, monkeypatch):
+    app = AuthenticatedEnqueueApp(monkeypatch, scheduler_store.factory)
+    app.worker_continue.clear()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        pending = asyncio.create_task(app.submit(client))
+        try:
+            await asyncio.wait_for(app.worker_entered.wait(), 5)
+            job_id = uuid.UUID(app.sent_result()["job_id"])
+            pending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+            assert gate.releases == 0
+            assert scheduler_store.items[job_id].image_bytes == IMAGE
+        finally:
+            app.worker_continue.set()
+            if not pending.done():
+                pending.cancel()
+                with suppress(asyncio.CancelledError):
+                    await pending
+        await wait_for_worker_release(gate, 1)
+        assert app.worker_runs == [job_id]
+        assert scheduler_store.items[job_id].status == DescribeItemStatus.FAILED
+        assert scheduler_store.items[job_id].image_bytes is None
+        assert gate.releases == 1
+        assert (gate._job_count, gate._retained_image_bytes) == (0, 0)
+
+
 def inject_fault(monkeypatch, stage, session, *, barrier=None):
     owner, name = {
         "factory": (route, "worker_session_factory"),
@@ -398,6 +533,7 @@ def inject_fault(monkeypatch, stage, session, *, barrier=None):
         "read": (route.DescribeRunRepository, "get_single_run_item"),
         "projection": (route, "_job_result_from_item"),
         "registration": (BackgroundTasks, "add_task"),
+        "delivery_start": (route._CommittedDescribeDelivery, "start"),
     }[stage]
     original = getattr(owner, name)
 
@@ -421,7 +557,11 @@ def inject_fault(monkeypatch, stage, session, *, barrier=None):
         fail(*args, **kwargs)
 
     monkeypatch.setattr(
-        owner, name, fail if stage in {"factory", "audit", "metrics", "projection", "registration"} else fail_async
+        owner,
+        name,
+        fail
+        if stage in {"factory", "audit", "metrics", "projection", "registration", "delivery_start"}
+        else fail_async,
     )
 
 
@@ -441,6 +581,7 @@ def inject_fault(monkeypatch, stage, session, *, barrier=None):
         "read",
         "projection",
         "registration",
+        "delivery_start",
     ],
 )
 async def test_fault_releases_slot_bytes_and_reconciles_orphan(harness, gate, monkeypatch, stage):
@@ -456,7 +597,7 @@ async def test_fault_releases_slot_bytes_and_reconciles_orphan(harness, gate, mo
         assert (gate._job_count, gate._retained_image_bytes) == (0, 0)
         assert tasks.tasks == [], "failed response retained a worker"
     runs, items = await harness.rows()
-    if stage in {"quota_commit_after", "commit_after", "read", "projection", "registration"}:
+    if stage in {"quota_commit_after", "commit_after", "read", "projection", "registration", "delivery_start"}:
         assert len(items) == 1
         assert items[0].status == DescribeItemStatus.FAILED
         assert items[0].image_bytes is None
@@ -467,6 +608,7 @@ async def test_fault_releases_slot_bytes_and_reconciles_orphan(harness, gate, mo
     retry_tasks = BackgroundTasks()
     result = await harness.submit(tasks=retry_tasks)
     assert result.status == "queued", f"{stage}: fresh key did not enqueue"
+    gate.worker_continue.set()
     await retry_tasks()
     assert gate.releases == 2
 
@@ -502,6 +644,7 @@ async def test_cancellation_propagates_and_drains_enqueue(harness, gate, monkeyp
     assert not harness.admission.released
     retry_tasks = BackgroundTasks()
     await harness.submit(tasks=retry_tasks)
+    gate.worker_continue.set()
     await retry_tasks()
     assert gate.releases == 2
 
@@ -511,19 +654,21 @@ async def test_cancellation_propagates_and_drains_enqueue(harness, gate, monkeyp
 async def test_worker_owns_one_release_without_releasing_another_job(harness, gate, monkeypatch, outcome):
     gate._max_jobs = 2
     gate._max_retained_image_bytes = len(IMAGE) * 2
-    tasks = BackgroundTasks()
-    result = await harness.submit(tasks=tasks)
-    assert result.status == "queued"
-    assert gate.releases == 0
-    assert gate.try_acquire(len(IMAGE)) is None  # unrelated live reservation
 
     async def worker(**kwargs):
+        await gate.worker_continue.wait()
         if outcome == "crash":
             raise RuntimeError("worker crashed")
         if outcome == "cancel":
             raise asyncio.CancelledError()
 
     monkeypatch.setattr(route, "run_async_describe_job", worker)
+    tasks = BackgroundTasks()
+    result = await harness.submit(tasks=tasks)
+    assert result.status == "queued"
+    assert gate.releases == 0
+    assert gate.try_acquire(len(IMAGE)) is None  # unrelated live reservation
+    gate.worker_continue.set()
     if outcome == "cancel":
         with pytest.raises(asyncio.CancelledError):
             await tasks()
@@ -556,6 +701,7 @@ async def test_replay_conflict_and_tenant_isolation(harness, gate):
             first.job_id, auth=SimpleNamespace(tenant_claim=str(TENANT)), session=session
         )
         assert own.job_id == first.job_id
+    gate.worker_continue.set()
     await tasks()
     assert gate.releases == 1
 
@@ -589,6 +735,7 @@ async def test_response_read_reseeds_after_real_commit(harness, gate, monkeypatc
         tasks = BackgroundTasks()
         result = await harness.submit(tasks=tasks, session=session)
         assert result.status == "queued"
+        gate.worker_continue.set()
         await tasks()
 
 
@@ -683,5 +830,6 @@ async def test_failed_racing_create_does_not_reconcile_the_winning_enqueue(harne
     assert gate.releases == 1
     assert (gate._job_count, gate._retained_image_bytes) == (1, len(IMAGE))
     assert not harness.admission.released, "replay released the winner's usage ticket"
+    gate.worker_continue.set()
     await winner_tasks()
     assert gate.releases == 2

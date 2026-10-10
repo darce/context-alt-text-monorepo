@@ -1,0 +1,172 @@
+import { fireEvent, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it } from 'vitest';
+
+import { guidedCopy } from '../../admin/guidedPrototype/copy';
+import { guidedCopy as publicCopy } from '../../admin/guidedPrototype/publicGuideCopy';
+import { RecordedWalkthrough } from '../../admin/guidedPrototype/RecordedWalkthrough';
+import { createGuidedScenario, type GuidedImageKey } from '../../admin/guidedPrototype/state';
+
+const discardedCaption = 'Discarded manual caption naming Katy Perry.';
+const replacement = createGuidedScenario().samples.tribeca['justin-trudeau'];
+
+const nameRadio = (imageKey: GuidedImageKey, position: 'left' | 'right', option: 'include' | 'omit') =>
+  within(screen.getByTestId(`name-choice-${imageKey}-${position}`)).getByRole('radio', {
+    name:
+      option === 'include'
+        ? publicCopy('names.use.public', { name: position === 'left' ? 'Justin Trudeau' : 'Katy Perry' })
+        : publicCopy('names.omit.public'),
+  });
+
+const choose = (imageKey: GuidedImageKey, position: 'left' | 'right', option: 'include' | 'omit'): void => {
+  fireEvent.click(nameRadio(imageKey, position, option));
+};
+
+const answerNames = (imageKey: GuidedImageKey): void => {
+  choose(imageKey, 'left', 'include');
+  choose(imageKey, 'right', 'include');
+};
+
+const editor = (imageKey: GuidedImageKey) =>
+  within(screen.getByTestId(`guided-draft-field-${imageKey}`)).getByRole('textbox', {
+    name: publicCopy('draft.field_label.public'),
+  });
+
+const edit = (imageKey: GuidedImageKey, text: string): void => {
+  fireEvent.change(editor(imageKey), { target: { value: text } });
+};
+
+const replacementDialog = () => screen.getByRole('dialog', { name: publicCopy('name_change.title.public') });
+
+const confirmReplacement = async (user: ReturnType<typeof userEvent.setup>): Promise<void> => {
+  await user.click(within(replacementDialog()).getByRole('button', { name: publicCopy('name_change.confirm.public') }));
+};
+
+const openHistory = async (user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> => {
+  const review = screen.getByTestId('guided-description-review-tribeca');
+  await user.click(within(review).getByText(guidedCopy('draft.history'), { selector: 'summary' }));
+  return review;
+};
+
+describe('public walkthrough pending draft ownership', () => {
+  it('keeps a confirmed replacement after another photo action and archives the discarded edit', async () => {
+    const user = userEvent.setup({ delay: null });
+    render(<RecordedWalkthrough scope="public" />);
+    answerNames('tribeca');
+    await user.clear(editor('tribeca'));
+    await user.type(editor('tribeca'), discardedCaption);
+    choose('tribeca', 'right', 'omit');
+
+    const dialog = replacementDialog();
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(dialog).toHaveAccessibleDescription(publicCopy('name_change.body.public'));
+    expect(within(dialog).getByRole('button', { name: publicCopy('name_change.keep.public') })).toHaveFocus();
+    await confirmReplacement(user);
+
+    expect(nameRadio('tribeca', 'right', 'omit')).toBeChecked();
+    expect(nameRadio('tribeca', 'right', 'omit')).toHaveFocus();
+    expect(editor('tribeca')).toHaveValue(replacement);
+    choose('coachella', 'left', 'include');
+    // TEST-06: the unfixed cross-photo flush replaces this with discardedCaption.
+    expect(editor('tribeca')).toHaveValue(replacement);
+
+    const review = await openHistory(user);
+    expect(within(review).getByText(discardedCaption)).toBeVisible();
+    expect(within(review).getByRole('button', { name: guidedCopy('draft.copy_revision') })).toBeEnabled();
+  }, 30_000);
+
+  it.each(['full', 'copy_only'] as const)('keeps an explicit %s restore after another photo action', async (mode) => {
+    const user = userEvent.setup();
+    render(<RecordedWalkthrough scope="public" />);
+    answerNames('tribeca');
+    edit('tribeca', discardedCaption);
+    choose('tribeca', 'right', 'omit');
+    await confirmReplacement(user);
+    if (mode === 'full') {
+      edit('tribeca', 'Intervening edit before aligning the archived name choices.');
+      choose('tribeca', 'right', 'include');
+      await confirmReplacement(user);
+    }
+    const supersededCaption = `Unsaved caption superseded by ${mode} restore.`;
+    edit('tribeca', supersededCaption);
+    const review = await openHistory(user);
+    const revision = within(review).getByText(discardedCaption).closest('li');
+    if (revision === null) {
+      throw new Error('Missing archived manual caption.');
+    }
+    await user.click(
+      within(revision).getByRole('button', {
+        name: guidedCopy(mode === 'full' ? 'draft.restore_revision' : 'draft.copy_revision'),
+      }),
+    );
+    expect(editor('tribeca')).toHaveValue(discardedCaption);
+    choose('coachella', 'left', 'include');
+    expect(editor('tribeca')).toHaveValue(discardedCaption);
+    expect(within(review).getByText(supersededCaption)).toBeVisible();
+    expect(nameRadio('tribeca', 'right', mode === 'full' ? 'include' : 'omit')).toBeChecked();
+  });
+
+  it('preserves the other photo unsaved edit through replacement and applies its visible text', async () => {
+    const user = userEvent.setup();
+    render(<RecordedWalkthrough scope="public" />);
+    answerNames('tribeca');
+    answerNames('coachella');
+    const otherCaption = 'Unrelated Coachella edit still awaiting acceptance.';
+    edit('coachella', otherCaption);
+    edit('tribeca', discardedCaption);
+    choose('tribeca', 'right', 'omit');
+    await confirmReplacement(user);
+    expect(editor('coachella')).toHaveValue(otherCaption);
+
+    await user.click(screen.getByTestId('demo-apply-coachella'));
+    expect(screen.getByTestId('guided-photo-coachella').querySelector('img.acx-guided-page__image')).toHaveAttribute(
+      'alt',
+      otherCaption,
+    );
+    expect(editor('tribeca')).toHaveValue(replacement);
+    await user.click(screen.getByTestId('demo-undo-coachella'));
+    expect(editor('tribeca')).toHaveValue(replacement);
+    expect(editor('coachella')).toHaveValue(otherCaption);
+  });
+
+  it.each(['Keep edits', 'Escape'])('preserves edits and choices when cancelling with %s', async (method) => {
+    const user = userEvent.setup();
+    render(<RecordedWalkthrough scope="public" />);
+    answerNames('tribeca');
+    edit('tribeca', discardedCaption);
+    choose('tribeca', 'right', 'omit');
+    if (method === 'Escape') {
+      await user.keyboard('{Escape}');
+    } else {
+      await user.click(
+        within(replacementDialog()).getByRole('button', { name: publicCopy('name_change.keep.public') }),
+      );
+    }
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(nameRadio('tribeca', 'right', 'omit')).toHaveFocus();
+    expect(nameRadio('tribeca', 'right', 'include')).toBeChecked();
+    choose('coachella', 'left', 'include');
+    expect(editor('tribeca')).toHaveValue(discardedCaption);
+  });
+
+  it('clears pending edits and archived recovery when starting over', async () => {
+    const user = userEvent.setup();
+    render(<RecordedWalkthrough scope="public" />);
+    answerNames('tribeca');
+    edit('tribeca', discardedCaption);
+    choose('tribeca', 'right', 'omit');
+    await confirmReplacement(user);
+    edit('tribeca', 'Another uncommitted caption before reset.');
+    await user.click(screen.getByRole('button', { name: publicCopy('reset.confirm.public') }));
+    await user.click(
+      within(screen.getByRole('dialog', { name: publicCopy('reset.title.public') })).getByRole('button', {
+        name: publicCopy('reset.confirm.public'),
+      }),
+    );
+    expect(nameRadio('tribeca', 'left', 'include')).toHaveFocus();
+    expect(screen.queryByText(guidedCopy('draft.history'), { selector: 'summary' })).not.toBeInTheDocument();
+    answerNames('tribeca');
+    choose('coachella', 'left', 'include');
+    expect(editor('tribeca')).toHaveValue(createGuidedScenario().samples.tribeca.both);
+  });
+});

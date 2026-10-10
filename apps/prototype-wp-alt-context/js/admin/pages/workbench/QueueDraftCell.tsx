@@ -22,6 +22,9 @@ export interface QueueDraftCellProps {
   autoFocus?: boolean;
   /** Live row alt; omitted by standalone callers without a row baseline. */
   committedAlt?: string | null;
+  committedIsDecorative?: boolean;
+  /** Stable source/run identity; text also identifies the displayed draft. */
+  draftIdentity?: string;
   peerCommitPending?: boolean;
   /** Synchronous exclusive claim; false means no correction may start. */
   onCommitStart?: () => boolean;
@@ -51,6 +54,8 @@ export const QueueDraftCell = ({
   onApplied,
   autoFocus = false,
   committedAlt,
+  committedIsDecorative = false,
+  draftIdentity,
   peerCommitPending = false,
   onCommitStart,
   onCommitEnd,
@@ -59,10 +64,22 @@ export const QueueDraftCell = ({
   const [editDraft, setEditDraft] = useState(draftText);
   const [dismissed, setDismissed] = useState(false);
   const [conflictMessage, setConflictMessage] = useState<string | null>(null);
-  // The queue draft's first observed baseline survives peer saves, refetches,
-  // and opening Edit. Rebase only for this cell's own reconciled partial write.
-  const committedAltBaselineRef = useRef(committedAlt);
+  const displayedDraftIdentity = JSON.stringify([mediaId, draftIdentity, draftText]);
+  const [baseline, setBaseline] = useState({
+    identity: displayedDraftIdentity,
+    alt: committedAlt,
+    decorative: committedIsDecorative,
+  });
+  // A refetch of the same draft must retain its stale fence. A different
+  // displayed draft starts with the current human decision, including empty
+  // alt that was deliberately marked decorative.
+  // While editing, the operator is still reviewing the prior draft's buffer.
+  if (!isEditing && baseline.identity !== displayedDraftIdentity) {
+    setBaseline({ identity: displayedDraftIdentity, alt: committedAlt, decorative: committedIsDecorative });
+    setConflictMessage(null);
+  }
   const isApplyingRef = useRef(false);
+  const ownsPendingFocusRef = useRef(false);
   const shouldRestoreFocusRef = useRef(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const acceptButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -79,6 +96,16 @@ export const QueueDraftCell = ({
   const canSaveEdit = editDraft.trim() !== '';
   const acceptLabel = title ? sprintf(__('Accept draft for %s', 'alt-context'), title) : __('Accept', 'alt-context');
   const editLabel = title ? sprintf(__('Edit draft for %s', 'alt-context'), title) : __('Edit draft', 'alt-context');
+
+  useEffect(() => {
+    const trackPendingFocus = (event: FocusEvent): void => {
+      if (isApplyingRef.current) {
+        ownsPendingFocusRef.current = containerRef.current?.contains(event.target as Node) ?? false;
+      }
+    };
+    document.addEventListener('focusin', trackPendingFocus);
+    return () => document.removeEventListener('focusin', trackPendingFocus);
+  }, []);
 
   useEffect(() => {
     if (!autoFocus) {
@@ -110,6 +137,10 @@ export const QueueDraftCell = ({
   useEffect(() => {
     if (!isPending && shouldRestoreFocusRef.current) {
       shouldRestoreFocusRef.current = false;
+      const active = document.activeElement;
+      if (active && active !== document.body && !containerRef.current?.contains(active)) {
+        return;
+      }
       if (isEditing) {
         textareaRef.current?.focus();
       } else {
@@ -126,7 +157,7 @@ export const QueueDraftCell = ({
     if (isApplyingRef.current || isPending || peerCommitPending || altText.trim() === '') {
       return;
     }
-    if (committedAltBaselineRef.current !== committedAlt) {
+    if (baseline.alt !== committedAlt || baseline.decorative !== committedIsDecorative) {
       setConflictMessage(COMMIT_CONFLICT_MESSAGE);
       if (isEditing) {
         textareaRef.current?.focus();
@@ -139,6 +170,9 @@ export const QueueDraftCell = ({
     }
     setConflictMessage(null);
     isApplyingRef.current = true;
+    const active = document.activeElement;
+    ownsPendingFocusRef.current =
+      !active || active === document.body || (containerRef.current?.contains(active) ?? false);
     void mutateAsync(
       { mediaId, altText },
       {
@@ -157,10 +191,14 @@ export const QueueDraftCell = ({
             const stored = resolveDescribeErrorDataField(err, 'stored_alt_text');
             const decorative = resolveDescribeErrorDataBooleanField(err, 'is_decorative');
             if (committedAlt !== undefined && stored !== null && decorative !== null) {
-              committedAltBaselineRef.current = stored.trim() === '' ? null : stored;
+              setBaseline((current) =>
+                current.identity === baseline.identity
+                  ? { ...current, alt: stored.trim() === '' ? null : stored, decorative }
+                  : current,
+              );
             }
           }
-          shouldRestoreFocusRef.current = true;
+          shouldRestoreFocusRef.current = ownsPendingFocusRef.current;
         },
       },
     ).then(
@@ -268,7 +306,11 @@ export const QueueDraftCell = ({
             ref={editButtonRef}
             className="button acx-media-selection__media-alt-suggest-edit"
             onClick={() => {
-              reset();
+              // Edit can arrive before pending state paints. Resetting a live
+              // observer would detach the callbacks that acknowledge settlement.
+              if (!isApplyingRef.current && !isPending) {
+                reset();
+              }
               setEditDraft(draftText);
               setIsEditing(true);
             }}

@@ -1,2 +1,2 @@
-a9c1081bb107 APP-1: land browser-integration after scoped VM verification
-79156a29f39b offload: I1 shell wires /keys /usage /claim /billing plus bounded
+02ba5ca1f0d0 offload: Fixed all three review findings; 55 lane tests pass with no
+f5c6ffab2c80 offload: Committed owned remote deadlines, bounded child cleanup and

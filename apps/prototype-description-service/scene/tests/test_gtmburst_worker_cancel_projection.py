@@ -1,0 +1,243 @@
+"""GTMBURST-1: durable cancellation wins without discarding completed captions.
+
+The same schedules can run against an isolated PostgreSQL test database with
+GTMBURST_WORKER_TEST_DSN. SQLite exercises identity-map staleness, not PostgreSQL
+row-lock/RLS semantics. No test writes cancellation into the worker's identity.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import uuid
+from contextlib import asynccontextmanager
+
+import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from db.models.base_imports import Base
+from db.models.scene import DescribeRun, DescribeRunItem
+from db.models.tenant import Tenant
+from db.tenant_context import set_tenant_context
+from scene.application.describe_run_repository import DescribeRunRepository
+from scene.application.describe_run_worker import DescribeItemOutcome, run_describe_job
+from scene.domain.describe_run import DescribeItemStatus, DescribeRunPhase, DescribeRunStatus
+
+
+@asynccontextmanager
+async def _database(tmp_path, *, session_class=AsyncSession):
+    url = os.getenv("GTMBURST_WORKER_TEST_DSN") or f"sqlite+aiosqlite:///{tmp_path / 'worker.db'}"
+    engine = create_async_engine(url)
+    schema = f"gtmburst_worker_{uuid.uuid4().hex}"
+    schema_created = False
+    tenant_id = uuid.uuid4()
+    try:
+        if engine.dialect.name == "postgresql":
+            assert os.getenv("ALLOW_RLS_BYPASS_FOR_TESTS") != "1", "PostgreSQL verification must enforce tenant RLS"
+            async with engine.begin() as connection:
+                privileged = await connection.scalar(
+                    text("SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user")
+                )
+                assert not privileged, "PostgreSQL cancellation verification requires a non-bypass role"
+                await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+            schema_created = True
+            engine = engine.execution_options(schema_translate_map={None: schema})
+        async with engine.begin() as connection:
+            if engine.dialect.name == "sqlite":
+                await connection.execute(text("PRAGMA journal_mode=WAL"))
+            await connection.run_sync(
+                Base.metadata.create_all,
+                tables=[Tenant.__table__, DescribeRun.__table__, DescribeRunItem.__table__],
+            )
+            if engine.dialect.name == "postgresql":
+                for table in (DescribeRun.__table__, DescribeRunItem.__table__):
+                    qualified = f'"{schema}"."{table.name}"'
+                    await connection.execute(text(f"ALTER TABLE {qualified} ENABLE ROW LEVEL SECURITY"))
+                    await connection.execute(text(f"ALTER TABLE {qualified} FORCE ROW LEVEL SECURITY"))
+                    await connection.execute(
+                        text(
+                            f"CREATE POLICY tenant_scope ON {qualified} USING "
+                            "(tenant_id = nullif(current_setting('app.current_tenant', true), '')::uuid)"
+                        )
+                    )
+        factory = async_sessionmaker(engine, class_=session_class, expire_on_commit=False)
+        async with factory() as session:
+            await set_tenant_context(session, tenant_id)
+            session.add(Tenant(id=tenant_id, site_url="http://worker.test"))
+            await session.flush()
+            run_id = await DescribeRunRepository(session).create_run(
+                tenant_id=tenant_id,
+                media_ids=[1, 2],
+                images={1: (b"first-image", "image/png"), 2: (b"second-image", "image/png")},
+                recognition_enabled=False,
+            )
+            await session.commit()
+        yield factory, tenant_id, run_id
+    finally:
+        if schema_created:
+            async with engine.begin() as connection:
+                await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        await engine.dispose()
+
+
+async def _snapshot(factory, tenant_id, run_id):
+    async with factory() as session:
+        await set_tenant_context(session, tenant_id)
+        repo = DescribeRunRepository(session)
+        return (
+            await repo.get_run(tenant_id=tenant_id, run_id=run_id),
+            await repo.list_run_items(tenant_id=tenant_id, run_id=run_id),
+        )
+
+
+async def _cancel(factory, tenant_id, run_id):
+    async with factory() as session:
+        await set_tenant_context(session, tenant_id)
+        assert await DescribeRunRepository(session).request_cancel(tenant_id=tenant_id, run_id=run_id)
+        await session.commit()
+
+
+@pytest.mark.parametrize("schedule", ["between_items", "last_adapter"])
+def test_independent_cancel_wins_worker_projection(tmp_path, monkeypatch, schedule):
+    import scene.application.describe_run_worker as worker
+
+    async def exercise():
+        paused = asyncio.Event()
+        resume = asyncio.Event()
+        dispatched = []
+        publications = []
+        settlements = []
+
+        class BarrierSession(AsyncSession):
+            async def commit(self):
+                first_result = any(
+                    isinstance(row, DescribeRunItem)
+                    and row.media_id == 1
+                    and row.status == DescribeItemStatus.COMPLETED
+                    for row in self.identity_map.values()
+                )
+                await super().commit()
+                if schedule == "between_items" and first_result and not paused.is_set():
+                    paused.set()
+                    await resume.wait()
+
+        async with _database(tmp_path, session_class=BarrierSession) as (factory, tenant_id, run_id):
+
+            async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
+                assert image_bytes == (b"first-image" if media_id == 1 else b"second-image")
+                assert content_type == "image/png"
+                dispatched.append(media_id)
+                if schedule == "last_adapter" and media_id == 2:
+                    paused.set()
+                    await resume.wait()
+                return DescribeItemOutcome(alt_text_draft=f"draft-{media_id}", caption=f"caption-{media_id}")
+
+            async def capture(*args, **kwargs):
+                return None
+
+            async def settle(*args, **kwargs):
+                run, _ = await _snapshot(factory, tenant_id, run_id)
+                settlements.append(run.status)
+
+            async def publish(_factory):
+                run, _ = await _snapshot(factory, tenant_id, run_id)
+                publications.append(run.status)
+
+            monkeypatch.setattr(worker, "capture_usage_fence", capture)
+            monkeypatch.setattr(worker, "settle_usage_job", settle)
+            monkeypatch.setattr(worker, "publish_demand_snapshot", publish)
+            task = asyncio.create_task(
+                run_describe_job(
+                    tenant_id=tenant_id,
+                    run_id=run_id,
+                    session_factory=factory,
+                    describe_one=describe_one,
+                    timeout_seconds=15,
+                )
+            )
+            try:
+                await asyncio.wait_for(paused.wait(), 5)
+                await asyncio.wait_for(_cancel(factory, tenant_id, run_id), 3)
+                durable, _ = await _snapshot(factory, tenant_id, run_id)
+                assert durable.cancel_requested is True
+                resume.set()
+                await asyncio.wait_for(task, 5)
+            finally:
+                resume.set()
+                if not task.done():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+
+            run, items = await _snapshot(factory, tenant_id, run_id)
+            assert run.status == DescribeRunStatus.CANCELLED, f"expected cancelled, got {run.status}"
+            assert run.phase == DescribeRunPhase.CANCELLED
+            assert run.cancel_requested is True
+            assert items[0].status == DescribeItemStatus.COMPLETED
+            assert items[0].caption == "caption-1"
+            assert items[0].alt_text_draft == "draft-1"
+            if schedule == "between_items":
+                assert dispatched == [1]
+                assert items[1].status == DescribeItemStatus.SKIPPED
+                assert items[1].caption is None
+                assert (run.completed_items, run.skipped_items) == (1, 1)
+            else:
+                assert dispatched == [1, 2]
+                assert items[1].status == DescribeItemStatus.COMPLETED
+                assert items[1].caption == "caption-2"
+                assert (run.completed_items, run.skipped_items) == (2, 0)
+            assert all(item.image_bytes is None for item in items)
+            assert run.completed_at is not None
+            assert settlements == [DescribeRunStatus.CANCELLED]
+            assert publications == [DescribeRunStatus.CANCELLED]
+
+    asyncio.run(exercise())
+
+
+def test_cancel_refreshes_stale_identity_after_terminal_commit(tmp_path):
+    """The terminal-first order must converge too, including a stale canceller."""
+
+    async def exercise():
+        async with _database(tmp_path) as (factory, tenant_id, run_id):
+            async with factory() as canceller:
+                await set_tenant_context(canceller, tenant_id)
+                cancel_repo = DescribeRunRepository(canceller)
+                stale = await cancel_repo.get_run(tenant_id=tenant_id, run_id=run_id)
+                assert stale.cancel_requested is False
+                # Keep the ORM identity, but not a SQLite read transaction.
+                await canceller.commit()
+                async with factory() as terminal_writer:
+                    await set_tenant_context(terminal_writer, tenant_id)
+                    repo = DescribeRunRepository(terminal_writer)
+                    for media_id in (1, 2):
+                        await repo.record_item_result(
+                            tenant_id=tenant_id,
+                            run_id=run_id,
+                            media_id=media_id,
+                            alt_text_draft=f"draft-{media_id}",
+                            caption=f"caption-{media_id}",
+                            provenance=None,
+                        )
+                        await repo.mark_item(
+                            tenant_id=tenant_id,
+                            run_id=run_id,
+                            media_id=media_id,
+                            status=DescribeItemStatus.COMPLETED,
+                        )
+                    await terminal_writer.commit()
+                before, _ = await _snapshot(factory, tenant_id, run_id)
+                assert before.status == DescribeRunStatus.COMPLETED
+                assert stale.status == DescribeRunStatus.PENDING
+                await set_tenant_context(canceller, tenant_id)
+                assert await cancel_repo.request_cancel(tenant_id=tenant_id, run_id=run_id)
+                await canceller.commit()
+            after, items = await _snapshot(factory, tenant_id, run_id)
+            assert after.status == DescribeRunStatus.CANCELLED, f"expected cancelled, got {after.status}"
+            assert after.phase == DescribeRunPhase.CANCELLED
+            assert after.cancel_requested is True
+            assert after.completed_at == before.completed_at
+            assert after.completed_items == 2
+            assert [item.caption for item in items] == ["caption-1", "caption-2"]
+            assert all(item.status == DescribeItemStatus.COMPLETED and item.image_bytes is None for item in items)
+
+    asyncio.run(exercise())

@@ -37,7 +37,9 @@ from scene.tests.test_gtmburst_async_enqueue import (
     Admission,
     AuthenticatedEnqueueApp,
     exercise_auth_telemetry_outcome,
+    exercise_response_send_failure,
     gate,
+    wait_for_worker_release,
 )
 
 pytestmark = [pytest.mark.pg, pytest.mark.asyncio]
@@ -230,3 +232,56 @@ async def test_production_auth_telemetry_preserves_committed_worker_and_tenant_i
             assert item.image_bytes is None
     assert gate.releases == 2
     assert (gate._job_count, gate._retained_image_bytes) == (0, 0)
+
+
+@pytest.mark.parametrize("outcome", ["exception", "cancellation"])
+@pytest.mark.parametrize("worker_outcome", ["healthy", "exception", "cancellation"])
+async def test_response_send_failure_preserves_worker_cleanup_replay_and_rls(
+    restricted_pg_factory, gate, monkeypatch, outcome, worker_outcome
+):
+    factory = restricted_pg_factory
+    app = AuthenticatedEnqueueApp(monkeypatch, factory)
+    app.worker_outcome = worker_outcome
+    try:
+        job_id, operation = await exercise_response_send_failure(app, gate, outcome)
+        async with factory() as session:
+            assert await session.scalar(select(DescribeRunItem).where(DescribeRunItem.run_id == job_id)) is None
+            await set_tenant_context(session, TENANT)
+            item = await session.scalar(select(DescribeRunItem).where(DescribeRunItem.run_id == job_id))
+            assert item is not None and item.status == DescribeItemStatus.QUEUED
+            assert item.image_bytes == IMAGE
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            replay = await asyncio.wait_for(app.submit(client, operation=operation), 5)
+            assert replay.status_code == 200, replay.text
+            assert uuid.UUID(replay.json()["job_id"]) == job_id
+            assert app.worker_runs == [job_id]
+            assert gate.releases == 0
+    finally:
+        app.worker_continue.set()
+    await wait_for_worker_release(gate, 1)
+    async with factory() as session:
+        await set_tenant_context(session, TENANT)
+        run = await session.scalar(select(DescribeRun).where(DescribeRun.id == job_id))
+        item = await session.scalar(select(DescribeRunItem).where(DescribeRunItem.run_id == job_id))
+        assert run is not None and run.status in TERMINAL_RUN_STATUSES
+        assert item is not None and item.status == DescribeItemStatus.FAILED
+        assert item.image_bytes is None
+        await session.commit()
+        assert await session.scalar(select(DescribeRunItem).where(DescribeRunItem.run_id == job_id)) is None
+        await set_tenant_context(session, uuid.UUID(int=987))
+        assert await session.scalar(select(DescribeRun).where(DescribeRun.id == job_id)) is None
+        assert await session.scalar(select(DescribeRunItem).where(DescribeRunItem.run_id == job_id)) is None
+    assert gate.releases == 1
+    assert (gate._job_count, gate._retained_image_bytes) == (0, 0)
+    app.worker_outcome = "healthy"
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        replay = await asyncio.wait_for(app.submit(client, operation=operation), 5)
+        assert replay.status_code == 200, replay.text
+        assert uuid.UUID(replay.json()["job_id"]) == job_id
+        assert replay.json()["status"] == "failed"
+        assert app.worker_runs == [job_id]
+        assert gate.releases == 1
+        retry = await asyncio.wait_for(app.submit(client), 5)
+        assert retry.status_code == 200, retry.text
+        assert app.worker_runs == [job_id, uuid.UUID(retry.json()["job_id"])]
+    assert gate.releases == 2

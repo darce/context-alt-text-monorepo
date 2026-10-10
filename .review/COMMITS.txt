@@ -1,1 +1,4 @@
+fcf07f203f95 offload: Committed the async publisher fix and overlapping PostgreSQL
+f7db5393855e offload: Committed bounded publication fence waits; async verification
+92f198c8d187 chore(review): procure governed context payload
 b36ef79b2aec offload: Committed cancellation fix as 13c79ee; native and PostgreSQL

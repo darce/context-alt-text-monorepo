@@ -605,6 +605,7 @@ final class GtmBurstOutboxFenceTest extends TestCase
             require_once $root . '/wp-includes/formatting.php';
             require_once $root . '/wp-includes/l10n.php';
             require_once $root . '/wp-includes/cron.php';
+            require_once $root . '/wp-includes/pluggable.php';
             require_once $root . '/wp-includes/class-wpdb.php';
         }
         if (realpath((string) (new ReflectionClass('wpdb'))->getFileName()) !== realpath($root . '/wp-includes/class-wpdb.php')) {

@@ -120,6 +120,7 @@ class OutboxDrain {
 		if ( $this->query_repository->has_pending_operations() ) {
 			self::maybe_schedule_drain();
 		}
+		$this->schedule_drain_for_in_flight_backlog();
 	}
 
 	public static function maybe_schedule_drain(): void {
@@ -233,34 +234,60 @@ class OutboxDrain {
 	}
 
 	public function drain(): void {
-		// CON-3-FU-1: recover rows orphaned in_flight by a drain that died between claim and the
-		// terminal apply_result write, before loading the pending batch. The lease window leaves
-		// rows a concurrent drain is actively processing untouched.
-		$this->query_repository->reclaim_stale_in_flight_operations( $this->resolve_claim_lease_seconds() );
+		$failure = null;
+		try {
+			// CON-3-FU-1: recover rows orphaned in_flight by a drain that died between claim and the
+			// terminal apply_result write, before loading the pending batch. The lease window leaves
+			// rows a concurrent drain is actively processing untouched.
+			$this->query_repository->reclaim_stale_in_flight_operations( $this->resolve_claim_lease_seconds() );
 
-		$operations = $this->sequencer->filter_ready_outbox_operations(
-			$this->query_repository->load_pending_operations( $this->batch_size )
-		);
-		if ( empty( $operations ) ) {
-			$this->schedule_drain_for_pending_backlog();
-			return;
+			$operations = $this->sequencer->filter_ready_outbox_operations(
+				$this->query_repository->load_pending_operations( $this->batch_size )
+			);
+			if ( empty( $operations ) ) {
+				return;
+			}
+
+			$claimed = $this->claim_operations( $operations );
+			if ( empty( $claimed ) ) {
+				return;
+			}
+
+			$processed_tenants = $this->process_operation_batch( $claimed );
+			$tenant_ids = array_keys( $processed_tenants );
+			$this->refresh_curation_metrics_for_tenants( $tenant_ids );
+			$this->purge_terminal_rows_for_tenants( $tenant_ids );
+
+		} catch ( Throwable $exception ) {
+			$failure = $exception;
+			throw $exception;
+		} finally {
+			try {
+				// Completion, snapshot, and claim failures leave durable intent behind.
+				$this->schedule_drain_for_pending_backlog();
+				$this->schedule_drain_for_in_flight_backlog();
+			} catch ( Throwable $scheduling_exception ) {
+				self::schedule_wp_cron_drain_at( time() + $this->resolve_claim_lease_seconds() );
+				if ( null === $failure ) {
+					throw $scheduling_exception;
+				}
+				do_action( 'acx_outbox_recovery_schedule_failed', $scheduling_exception );
+			}
+			if ( null !== $failure ) {
+				// Also covers pending work when AS treats this executing action as queued.
+				self::schedule_wp_cron_drain_at( time() + $this->resolve_claim_lease_seconds() );
+			}
 		}
+	}
 
-		$claimed = $this->claim_operations( $operations );
-		if ( empty( $claimed ) ) {
-			$this->schedule_drain_for_pending_backlog();
-			return;
+	private function schedule_drain_for_in_flight_backlog(): void {
+		$earliest = $this->query_repository->earliest_in_flight_recovery_time( $this->resolve_claim_lease_seconds() );
+		$expiry = is_string( $earliest ) ? $this->wp_datetime_to_epoch( $earliest ) : null;
+		$now = $this->wp_datetime_to_epoch( current_time( 'mysql' ) );
+		if ( null !== $expiry && null !== $now ) {
+			// A separate WP-Cron event cannot be mistaken for the running AS action.
+			self::schedule_wp_cron_drain_at( time() + max( 1, $expiry - $now ) );
 		}
-
-		$processed_tenants = $this->process_operation_batch( $claimed );
-		$tenant_ids = array_keys( $processed_tenants );
-		$this->refresh_curation_metrics_for_tenants( $tenant_ids );
-		$this->purge_terminal_rows_for_tenants( $tenant_ids );
-
-		// E15-35: always re-anchor on the remaining backlog. Rows this batch pushed into
-		// backoff are still `pending` but not yet due, so the next drain lands at the
-		// earliest pending attempt instead of busy-looping (rg-007).
-		$this->schedule_drain_for_pending_backlog();
 	}
 
 	/**

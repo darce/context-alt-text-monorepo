@@ -458,6 +458,32 @@ class OutboxQueryRepository {
 		return '' !== $normalized ? $normalized : null;
 	}
 
+	/**
+	 * Earliest lease expiry on the same WP clock as claim/reclaim, including NULL legacy claims.
+	 *
+	 * @throws RuntimeException When recovery scheduling cannot read lease expiries.
+	 */
+	public function earliest_in_flight_recovery_time( int $lease_seconds ): ?string {
+		global $wpdb;
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			throw new RuntimeException( 'Outbox recovery database adapter is unavailable.' );
+		}
+		$query = $wpdb->prepare(
+			'SELECT MIN(CASE WHEN claimed_at IS NULL THEN %s ELSE DATE_ADD(claimed_at, INTERVAL %d SECOND) END) FROM %i WHERE status = %s',
+			current_time( 'mysql' ), max( 1, $lease_seconds ), $this->table_name, OutboxStatus::IN_FLIGHT
+		);
+		if ( ! is_string( $query ) || '' === $query ) {
+			throw new RuntimeException( 'Could not prepare outbox recovery query.' );
+		}
+		$wpdb->last_error = '';
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Prepared above.
+		$value = $wpdb->get_var( $query );
+		if ( '' !== (string) $wpdb->last_error ) {
+			throw new RuntimeException( 'Could not read outbox lease expiries.' );
+		}
+		return is_string( $value ) && '' !== trim( $value ) ? trim( $value ) : null;
+	}
+
 	public function has_pending_operations(): bool {
 		global $wpdb;
 

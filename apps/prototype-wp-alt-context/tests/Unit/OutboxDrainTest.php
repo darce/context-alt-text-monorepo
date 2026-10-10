@@ -218,7 +218,7 @@ class OutboxDrainTest extends TestCase
 		$drain = new OutboxDrain($dispatcher);
 		$drain->drain();
 
-		$conflictInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_conflicts');
+		$conflictInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_sync_conflicts`');
 		$this->assertStringContainsString("'version_conflict'", $conflictInsert);
 
 		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
@@ -913,7 +913,7 @@ class OutboxDrainTest extends TestCase
 		$this->assertCount(1, $calls);
 		$this->assertStringContainsString('/recognition/clusters/revert-merge', $calls[0]['url']);
 
-		$conflictInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_conflicts');
+		$conflictInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_sync_conflicts`');
 		$this->assertStringContainsString("'cluster_version_conflict'", $conflictInsert);
 
 		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
@@ -1057,7 +1057,7 @@ class OutboxDrainTest extends TestCase
 		$drain = new OutboxDrain(new OutboxDispatcher());
 		$drain->drain();
 
-		$conflictInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_conflicts');
+		$conflictInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_sync_conflicts`');
 		$this->assertStringContainsString("'version_conflict'", $conflictInsert);
 
 		$outboxUpdate = $this->findOutboxStatusUpdate($wpdb->queries);

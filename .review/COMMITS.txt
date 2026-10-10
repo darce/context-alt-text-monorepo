@@ -1,2 +1,2 @@
-a9c1081bb107 APP-1: land browser-integration after scoped VM verification
-79156a29f39b offload: I1 shell wires /keys /usage /claim /billing plus bounded
+e0208a562221 offload: Fixed queue commit ownership and stale-alt protection; all 42
+f108cd782195 offload: Committed mounted-row regressions; missing managed Vitest

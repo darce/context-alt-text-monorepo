@@ -6,7 +6,9 @@ No network, shared clone, systemd manager, repository push or GPU is used.
 from __future__ import annotations
 
 import contextlib
+import errno
 import os
+import select
 import signal
 import subprocess
 import sys
@@ -645,6 +647,82 @@ def test_persistently_backpressured_reader_cannot_block_cleanup(gate):
     spool = terminal.with_name("worker.log").read_text()
     assert spool.count("output-burst\n") == 450000
     assert terminal.read_text() in spool
+
+
+@pytest.mark.parametrize("mode,stage,expected", [("local", "push", 76), ("remote", "sync", 124)])
+def test_closed_stdout_pty_still_cleans_up_and_records_terminal(gate, mode, stage, expected):
+    _, _, home, _, pids, sha, _, env = gate
+    supervisor_home = home if mode == "remote" else Path(env["HOME"])
+    worker = """import os, signal, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+with open(os.environ['PIDS'], 'a') as f:
+    f.write(str(os.getpid()) + '\\n'); f.flush()
+if os.fork() == 0:
+    os.setsid()
+    with open(os.environ['PIDS'], 'a') as f:
+        f.write(str(os.getpid()) + '\\n'); f.flush()
+while True:
+    print('pty-worker-output', flush=True)
+    time.sleep(.05)
+"""
+    master, slave = os.openpty()
+    started = time.monotonic()
+    proc = subprocess.Popen(
+        [sys.executable, "-c", supervisor_source(), mode, "2", "1", sha, stage,
+         sys.executable, "-c", worker],
+        env=env | {"HOME": str(supervisor_home)},
+        stdout=slave, stderr=subprocess.PIPE, start_new_session=True,
+    )
+    try:
+        # Close only after both owned children exist and forwarding has begun.
+        # Keeping the slave open proves a real persistent EIO, without mocking
+        # os.write or sending a cancellation signal to the supervisor.
+        observed = b""
+        ready_end = time.monotonic() + 3
+        while time.monotonic() < ready_end:
+            if select.select([master], [], [], .05)[0]:
+                observed += os.read(master, 65536)
+            if (b"pty-worker-output" in observed and pids.exists()
+                    and len(pids.read_text().splitlines()) == 2):
+                break
+        else:
+            pytest.fail(f"PTY worker did not become ready: {observed!r}")
+        os.close(master)
+        master = None
+        with pytest.raises(OSError) as error:
+            os.write(slave, b"disconnected output")
+        assert error.value.errno == errno.EIO
+        os.close(slave)
+        slave = None
+        try:
+            _, errors = proc.communicate(timeout=8)
+        except subprocess.TimeoutExpired:
+            pytest.fail("closed-PTY supervisor exceeded external watchdog")
+        survivors = [int(pid) for pid in pids.read_text().splitlines() if alive(int(pid))]
+        terminals = list((supervisor_home / ".local/state/remote-gate").glob("*/terminal.log"))
+        evidence = f"rc={proc.returncode}, survivors={survivors}, terminals={terminals}, stderr={errors!r}"
+        assert not survivors, evidence
+        assert len(terminals) == 1, evidence
+        assert proc.returncode == expected, evidence
+        assert time.monotonic() - started < 7, evidence
+        receipt = terminals[0].read_text()
+        reason = "transport-deadline" if mode == "local" else "remote-deadline"
+        assert f"reason={reason} sha={sha} stage={stage} target=-" in receipt
+        assert f"budget=2 exit={expected}" in receipt
+        spool = terminals[0].with_name("worker.log").read_text()
+        assert "pty-worker-output\n" in spool
+        assert spool.count("remote-gate: TERMINAL ") == 1
+        assert receipt in spool
+    finally:
+        if proc.poll() is None:
+            os.killpg(proc.pid, signal.SIGKILL)
+        proc.wait(timeout=3)
+        proc.stderr.close()
+        for fd in (master, slave):
+            if fd is not None:
+                os.close(fd)
+        # The gate fixture kills recorded children, including the detached
+        # child, even on RED; this teardown kills only the isolated supervisor.
 
 
 def test_non_utf8_unrelated_process_does_not_break_monitoring(gate):

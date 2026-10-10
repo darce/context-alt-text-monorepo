@@ -1,3 +1,135 @@
+diff --git a/apps/prototype-description-service/scene/application/describe_load.py b/apps/prototype-description-service/scene/application/describe_load.py
+--- a/apps/prototype-description-service/scene/application/describe_load.py
++++ b/apps/prototype-description-service/scene/application/describe_load.py
+@@ -16,6 +16,7 @@ import math
+ import os
+ import tempfile
+ import threading
++import time
+ from dataclasses import dataclass
+ from datetime import UTC, datetime
+ from pathlib import Path
+@@ -47,6 +48,9 @@ LOAD_REFRESH_SECONDS_ENV = "ACX_DESCRIBE_LOAD_REFRESH_SECONDS"
+ DEFAULT_LOAD_REFRESH_SECONDS = 45.0
+ LOAD_SNAPSHOT_STALE_SECONDS = 120.0
+ LOAD_REFRESH_TIMEOUT_SECONDS = 30.0
++# Leave room inside the refresh cycle for counting and file publication.
++LOAD_SNAPSHOT_ACQUIRE_TIMEOUT_SECONDS = 5.0
++_FENCE_POLL_SECONDS = 0.01
+ # Preserve two refresh opportunities inside one stale window. The timeout is
+ # also kept as headroom in case its configured value grows in a later change.
+ MAX_LOAD_REFRESH_SECONDS = min(
+@@ -471,15 +475,46 @@ async def load_snapshot(
+     return snapshot
+ 
+ 
+-def write_load_snapshot(snapshot: dict[str, Any], path: str | Path) -> None:
++class LoadSnapshotFenceTimeoutError(TimeoutError):
++    """Publication refused because its shared lock-acquisition budget expired."""
++
++
++class _LoadSnapshotPublicationCancelledError(Exception):
++    """Stop a cancelled async publisher's pending worker before replacement."""
++
++
++def _remaining_fence_budget(deadline: float, cancelled: threading.Event) -> float:
++    if cancelled.is_set():
++        raise _LoadSnapshotPublicationCancelledError
++    remaining = deadline - time.monotonic()
++    if remaining <= 0:
++        raise LoadSnapshotFenceTimeoutError("describe load publication fence acquisition timed out")
++    return remaining
++
++
++def write_load_snapshot(
++    snapshot: dict[str, Any],
++    path: str | Path,
++    *,
++    acquisition_timeout_seconds: float | None = None,
++    _cancel_event: threading.Event | None = None,
++) -> None:
+     """Atomically dump load while holding the reaper's process fence.
+ 
+     Snapshots that carry ``revision`` use write-if-newer: equal or older
+     candidates are dropped without refreshing ``written_at``. Payloads without
+     ``revision`` keep the legacy unconditional replace used by unit writers.
+     Unreadable or malformed published revisions fail closed and never bypass
+-    the fence.
++    the fence. Both locks share one monotonic acquisition budget; contention
++    raises ``LoadSnapshotFenceTimeoutError`` without changing the published file.
+     """
++    budget = (
++        LOAD_SNAPSHOT_ACQUIRE_TIMEOUT_SECONDS if acquisition_timeout_seconds is None else acquisition_timeout_seconds
++    )
++    if isinstance(budget, bool) or not math.isfinite(budget) or budget <= 0:
++        raise ValueError("load snapshot acquisition timeout must be finite and positive")
++    deadline = time.monotonic() + budget
++    cancelled = _cancel_event if _cancel_event is not None else threading.Event()
+     target = Path(path)
+     target.parent.mkdir(parents=True, exist_ok=True)
+     write_if_newer = "revision" in snapshot
+@@ -491,12 +526,24 @@ def write_load_snapshot(snapshot: dict[str, Any], path: str | Path) -> None:
+         candidate_revision = raw_revision
+     payload = json.dumps(snapshot, separators=(",", ":"))
+ 
+-    with _LOAD_SNAPSHOT_WRITE_LOCK:
++    while not _LOAD_SNAPSHOT_WRITE_LOCK.acquire(
++        timeout=min(_FENCE_POLL_SECONDS, _remaining_fence_budget(deadline, cancelled))
++    ):
++        pass
++    try:
++        _remaining_fence_budget(deadline, cancelled)
+         lock_fd = _open_load_snapshot_fence(target)
+         fd = -1
+         tmp: Path | None = None
+         try:
+-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
++            while True:
++                remaining = _remaining_fence_budget(deadline, cancelled)
++                try:
++                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
++                    break
++                except BlockingIOError:
++                    cancelled.wait(timeout=min(_FENCE_POLL_SECONDS, remaining))
++            _remaining_fence_budget(deadline, cancelled)
+             if write_if_newer:
+                 published = 0
+                 if target.exists():
+@@ -514,6 +561,8 @@ def write_load_snapshot(snapshot: dict[str, Any], path: str | Path) -> None:
+                 fd = -1  # owned and closed by ``tmp_file`` from here
+                 tmp_file.write(payload)
+                 os.fchmod(tmp_file.fileno(), 0o644)
++            if cancelled.is_set():
++                raise _LoadSnapshotPublicationCancelledError
+             os.replace(tmp, target)
+             tmp = None  # the temp path no longer exists after replace
+         finally:
+@@ -525,6 +574,8 @@ def write_load_snapshot(snapshot: dict[str, Any], path: str | Path) -> None:
+                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
+             finally:
+                 os.close(lock_fd)
++    finally:
++        _LOAD_SNAPSHOT_WRITE_LOCK.release()
+ 
+ 
+ async def dump_load_snapshot(
+@@ -569,7 +620,15 @@ async def dump_load_snapshot(
+                 minimum_revision=published_revision,
+             )
+             await session.commit()
+-        write_load_snapshot(snap, target)
++        # Lock contention must yield to the API loop's timeout and cancellation.
++        # The worker has bounded acquisitions even if its caller disappears;
++        # cancellation also wakes polling and prevents a delayed publication.
++        cancelled = threading.Event()
++        try:
++            await asyncio.to_thread(write_load_snapshot, snap, target, _cancel_event=cancelled)
++        except asyncio.CancelledError:
++            cancelled.set()
++            raise
+     except Exception:  # noqa: BLE001 - reaper snapshot is best-effort
+         if raise_on_error:
+             raise
 diff --git a/apps/prototype-description-service/scene/application/describe_run_repository.py b/apps/prototype-description-service/scene/application/describe_run_repository.py
 --- a/apps/prototype-description-service/scene/application/describe_run_repository.py
 +++ b/apps/prototype-description-service/scene/application/describe_run_repository.py
@@ -72,7 +204,37 @@ diff --git a/apps/prototype-description-service/scene/application/describe_run_r
 diff --git a/apps/prototype-description-service/scene/application/describe_run_worker.py b/apps/prototype-description-service/scene/application/describe_run_worker.py
 --- a/apps/prototype-description-service/scene/application/describe_run_worker.py
 +++ b/apps/prototype-description-service/scene/application/describe_run_worker.py
-@@ -1026,17 +1026,16 @@ async def run_describe_job(
+@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+ from db.models.scene import DescribeOperation, DescribeStartup
+ from db.tenant_context import get_tenant_record, set_tenant_context
+ from recognition.application.services.usage_settlement_service import capture_usage_fence, settle_usage_job
+-from scene.application.describe_load import load_snapshot, resolve_load_path, write_load_snapshot
++from scene.application.describe_load import dump_load_snapshot
+ from scene.application.describe_run_repository import DescribeRunRepository
+ from scene.application.identity_merge import NamingRealizer, NamingSkipReason, NamingStatus
+ from scene.application.naming_preview_service import (
+@@ -407,18 +407,8 @@ async def _persist_run_phase(
+ 
+ 
+ async def publish_demand_snapshot(session_factory) -> None:
+-    """Commit ``load_snapshot`` then publish the file; never pass STOP flags."""
+-    from db.tenant_context import enable_rls_bypass
+-
+-    if session_factory is None:
+-        return
+-    try:
+-        async with session_factory() as session:
+-            await enable_rls_bypass(session)
+-            payload = await load_snapshot(session)
+-        write_load_snapshot(payload, resolve_load_path())
+-    except Exception:  # noqa: BLE001 - reaper snapshot is best-effort
+-        logger.debug("describe load snapshot write failed", exc_info=True)
++    """Commit demand then publish off-loop; never pass STOP flags."""
++    await dump_load_snapshot(session_factory)
+ 
+ 
+ async def _record_run_pickup(
+@@ -1026,17 +1016,16 @@ async def run_describe_job(
              gpu_breaker_error: str | None = None
              no_progress = 0
              for item in items:
@@ -97,7 +259,7 @@ diff --git a/apps/prototype-description-service/scene/application/describe_run_w
                  else:
                      image_bytes = item.image_bytes
                      content_type = item.image_content_type
-@@ -1046,6 +1045,11 @@ async def run_describe_job(
+@@ -1046,6 +1035,11 @@ async def run_describe_job(
                          media_id=item.media_id,
                          status=DescribeItemStatus.RUNNING,
                      )
@@ -109,11 +271,222 @@ diff --git a/apps/prototype-description-service/scene/application/describe_run_w
                      processing_ms: float | None = None
                      try:
                          if gpu_breaker_error is not None:
+diff --git a/apps/prototype-description-service/scene/tests/test_describe_load.py b/apps/prototype-description-service/scene/tests/test_describe_load.py
+--- a/apps/prototype-description-service/scene/tests/test_describe_load.py
++++ b/apps/prototype-description-service/scene/tests/test_describe_load.py
+@@ -14,8 +14,10 @@ import math
+ import os
+ import tempfile
+ import threading
++import time
+ import uuid
+ from concurrent.futures import ThreadPoolExecutor
++from contextlib import contextmanager
+ from dataclasses import replace
+ from datetime import UTC, datetime, timedelta
+ from pathlib import Path
+@@ -375,6 +377,196 @@ def test_write_load_snapshot_holds_process_fence_during_publish(tmp_path: Path,
+     assert json.loads(target.read_text()) == {"writer": 1}
+ 
+ 
++@contextmanager
++def _held_publication_fence(target: Path, kind: str):
++    """Hold the real STOP fence (no OCI action), or the publisher's thread lock."""
++    from infra.oci.gpu_lifecycle.load_source import AggregateJobLoadSource
++
++    entered = threading.Event()
++    release = threading.Event()
++
++    def bounded_stop():
++        entered.set()
++        release.wait(timeout=0.5)  # Keep a broken synchronous writer's RED bounded.
++
++    def hold():
++        if kind == "process":
++            source = AggregateJobLoadSource(
++                target.parent.parent, stale_seconds=120, expected_environments=(target.parent.name,)
++            )
++            assert source.actuate_if_generation(source.fence_token(), bounded_stop)
++        else:
++            with load_mod._LOAD_SNAPSHOT_WRITE_LOCK:
++                bounded_stop()
++
++    with ThreadPoolExecutor(max_workers=1) as executor:
++        holder = executor.submit(hold)
++        assert entered.wait(timeout=1)
++        try:
++            yield release, holder
++        finally:
++            release.set()
++            holder.result(timeout=1)
++
++
++def _stub_snapshot_producer(monkeypatch, snapshot):
++    """Skip DB setup while retaining the real dump and publication implementation."""
++    import db.tenant_context as tenant_context
++
++    class Session:
++        async def __aenter__(self):
++            return self
++
++        async def __aexit__(self, *_args):
++            pass
++
++        async def commit(self):
++            pass
++
++    async def bypass(_session):
++        pass
++
++    async def counted(_session, **_kwargs):
++        return snapshot
++
++    monkeypatch.setattr(tenant_context, "enable_rls_bypass", bypass)
++    monkeypatch.setattr(load_mod, "load_snapshot", counted)
++    return Session
++
++
++@pytest.mark.parametrize("kind", ["process", "thread"])
++def test_dump_load_snapshot_contended_fence_yields_times_out_and_retries(tmp_path, monkeypatch, kind):
++    target = tmp_path / "prod" / "describe-load.json"
++    idle = {
++        "revision": 1,
++        "queue_depth": 0,
++        "in_flight": 0,
++        "batch_in_progress": False,
++        "lease_demand": 0,
++        "written_at": time.time(),
++    }
++    write_load_snapshot(idle, target)
++    original = target.read_bytes()
++    busy = {**idle, "revision": 2, "in_flight": 1, "lease_demand": 1, "batch_in_progress": True}
++    factory = _stub_snapshot_producer(monkeypatch, busy)
++    monkeypatch.setattr(load_mod, "LOAD_SNAPSHOT_ACQUIRE_TIMEOUT_SECONDS", 0.05, raising=False)
++
++    async def body():
++        with _held_publication_fence(target, kind) as (release, holder):
++            started = time.monotonic()
++            publication = asyncio.create_task(dump_load_snapshot(factory, target, raise_on_error=True))
++            heartbeat = asyncio.create_task(asyncio.sleep(0.01))
++            await asyncio.wait({heartbeat, publication}, timeout=0.15, return_when=asyncio.FIRST_COMPLETED)
++            assert heartbeat.done() and time.monotonic() - started < 0.15, "fence acquisition blocked the event loop"
++            with pytest.raises(TimeoutError) as failure:
++                await publication
++            assert isinstance(failure.value, load_mod.LoadSnapshotFenceTimeoutError)
++            assert target.read_bytes() == original
++            assert not list(target.parent.glob("*.tmp"))
++            release.set()
++            await asyncio.to_thread(holder.result, timeout=1)
++        await dump_load_snapshot(factory, target, raise_on_error=True)
++        assert json.loads(target.read_text()) == busy
++
++    asyncio.run(body())
++
++
++@pytest.mark.parametrize("kind", ["process", "thread"])
++@pytest.mark.parametrize("cancel_mode", ["cancel", "timeout"])
++def test_dump_load_snapshot_cancellation_stops_pending_worker(tmp_path, monkeypatch, kind, cancel_mode):
++    target = tmp_path / "prod" / "describe-load.json"
++    write_load_snapshot({"revision": 1}, target)
++    original = target.read_bytes()
++    factory = _stub_snapshot_producer(monkeypatch, {"revision": 2})
++    monkeypatch.setattr(load_mod, "LOAD_SNAPSHOT_ACQUIRE_TIMEOUT_SECONDS", 0.3)
++    entered = threading.Event()
++    finished = threading.Event()
++    real_write = load_mod.write_load_snapshot
++
++    def observed_write(*args, **kwargs):
++        entered.set()
++        try:
++            return real_write(*args, **kwargs)
++        finally:
++            finished.set()
++
++    monkeypatch.setattr(load_mod, "write_load_snapshot", observed_write)
++
++    async def body():
++        with _held_publication_fence(target, kind) as (release, holder):
++            publication = asyncio.create_task(dump_load_snapshot(factory, target, raise_on_error=True))
++            assert await asyncio.to_thread(entered.wait, timeout=1)
++            if cancel_mode == "cancel":
++                publication.cancel()
++                with pytest.raises(asyncio.CancelledError):
++                    await publication
++            else:
++                with pytest.raises(TimeoutError):
++                    async with asyncio.timeout(0.01):
++                        await publication
++            # Worker exits promptly while the fence is STILL held, rather than
++            # waiting for release and publishing after its caller was cancelled.
++            assert await asyncio.to_thread(finished.wait, timeout=0.15)
++            assert not holder.done()
++            assert target.read_bytes() == original
++            release.set()
++            await asyncio.to_thread(holder.result, timeout=1)
++        assert target.read_bytes() == original
++        await dump_load_snapshot(factory, target, raise_on_error=True)
++        assert json.loads(target.read_text()) == {"revision": 2}
++
++    asyncio.run(body())
++
++
++@pytest.mark.parametrize("kind", ["process", "thread"])
++def test_dump_load_snapshot_fence_timeout_is_best_effort_by_default(tmp_path, monkeypatch, caplog, kind):
++    target = tmp_path / "prod" / "describe-load.json"
++    write_load_snapshot({"revision": 1}, target)
++    original = target.read_bytes()
++    factory = _stub_snapshot_producer(monkeypatch, {"revision": 2})
++    monkeypatch.setattr(load_mod, "LOAD_SNAPSHOT_ACQUIRE_TIMEOUT_SECONDS", 0.03)
++
++    async def body():
++        with _held_publication_fence(target, kind):
++            await dump_load_snapshot(factory, target)
++            with pytest.raises(load_mod.LoadSnapshotFenceTimeoutError):
++                await dump_load_snapshot(factory, target, raise_on_error=True)
++            assert target.read_bytes() == original
++        assert "describe load snapshot write failed" in caplog.text
++        assert "LoadSnapshotFenceTimeoutError" in caplog.text
++
++    asyncio.run(body())
++
++
++def test_write_load_snapshot_locks_share_one_monotonic_budget(tmp_path):
++    target = tmp_path / "prod" / "describe-load.json"
++    write_load_snapshot({"revision": 1}, target)
++    original = target.read_bytes()
++    with _held_publication_fence(target, "process"), _held_publication_fence(target, "thread") as (release, _):
++        timer = threading.Timer(0.08, release.set)
++        timer.start()
++        try:
++            started = time.monotonic()
++            with pytest.raises(load_mod.LoadSnapshotFenceTimeoutError):
++                write_load_snapshot({"revision": 2}, target, acquisition_timeout_seconds=0.12)
++            assert time.monotonic() - started < 0.17
++            assert target.read_bytes() == original
++        finally:
++            timer.join(timeout=1)
++    write_load_snapshot({"revision": 2}, target)
++    assert json.loads(target.read_text()) == {"revision": 2}
++
++
++def test_dump_load_snapshot_uncontended_control(tmp_path, monkeypatch):
++    target = tmp_path / "prod" / "describe-load.json"
++    write_load_snapshot({"revision": 1}, target)
++    busy = {"revision": 2, "in_flight": 2, "lease_demand": 1, "batch_in_progress": True}
++    factory = _stub_snapshot_producer(monkeypatch, busy)
++    monkeypatch.setattr(load_mod, "LOAD_SNAPSHOT_ACQUIRE_TIMEOUT_SECONDS", 0.05)
++    asyncio.run(dump_load_snapshot(factory, target, raise_on_error=True))
++    assert json.loads(target.read_text()) == busy
++
++
+ def test_run_startup_load_snapshot_writes_file_with_counts(tmp_path: Path):
+     """VLM5-S4A-BR-01: run_startup_load_snapshot end-to-end against sqlite session factory."""
+ 
 diff --git a/apps/prototype-description-service/scene/tests/test_gtmburst_worker_cancel_projection.py b/apps/prototype-description-service/scene/tests/test_gtmburst_worker_cancel_projection.py
 new file mode 100644
 --- /dev/null
 +++ b/apps/prototype-description-service/scene/tests/test_gtmburst_worker_cancel_projection.py
-@@ -0,0 +1,243 @@
+@@ -0,0 +1,397 @@
 +"""GTMBURST-1: durable cancellation wins without discarding completed captions.
 +
 +The same schedules can run against an isolated PostgreSQL test database with
@@ -127,6 +500,7 @@ new file mode 100644
 +import os
 +import uuid
 +from contextlib import asynccontextmanager
++from datetime import UTC, datetime
 +
 +import pytest
 +from sqlalchemy import text
@@ -144,7 +518,8 @@ new file mode 100644
 +@asynccontextmanager
 +async def _database(tmp_path, *, session_class=AsyncSession):
 +    url = os.getenv("GTMBURST_WORKER_TEST_DSN") or f"sqlite+aiosqlite:///{tmp_path / 'worker.db'}"
-+    engine = create_async_engine(url)
++    options = {"isolation_level": "READ COMMITTED"} if url.startswith("postgresql") else {}
++    engine = create_async_engine(url, **options)
 +    schema = f"gtmburst_worker_{uuid.uuid4().hex}"
 +    schema_created = False
 +    tenant_id = uuid.uuid4()
@@ -191,10 +566,14 @@ new file mode 100644
 +            await session.commit()
 +        yield factory, tenant_id, run_id
 +    finally:
-+        if schema_created:
-+            async with engine.begin() as connection:
-+                await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
-+        await engine.dispose()
++        try:
++            if schema_created:
++                async with asyncio.timeout(5), engine.begin() as connection:
++                    await connection.execute(text("SET LOCAL statement_timeout = '4000ms'"))
++                    await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
++        finally:
++            async with asyncio.timeout(5):
++                await engine.dispose()
 +
 +
 +async def _snapshot(factory, tenant_id, run_id):
@@ -215,6 +594,7 @@ new file mode 100644
 +
 +
 +@pytest.mark.parametrize("schedule", ["between_items", "last_adapter"])
++@pytest.mark.timeout(15)
 +def test_independent_cancel_wins_worker_projection(tmp_path, monkeypatch, schedule):
 +    import scene.application.describe_run_worker as worker
 +
@@ -236,7 +616,8 @@ new file mode 100644
 +                await super().commit()
 +                if schedule == "between_items" and first_result and not paused.is_set():
 +                    paused.set()
-+                    await resume.wait()
++                    async with asyncio.timeout(10):
++                        await resume.wait()
 +
 +        async with _database(tmp_path, session_class=BarrierSession) as (factory, tenant_id, run_id):
 +
@@ -246,7 +627,8 @@ new file mode 100644
 +                dispatched.append(media_id)
 +                if schedule == "last_adapter" and media_id == 2:
 +                    paused.set()
-+                    await resume.wait()
++                    async with asyncio.timeout(10):
++                        await resume.wait()
 +                return DescribeItemOutcome(alt_text_draft=f"draft-{media_id}", caption=f"caption-{media_id}")
 +
 +            async def capture(*args, **kwargs):
@@ -283,7 +665,8 @@ new file mode 100644
 +                resume.set()
 +                if not task.done():
 +                    task.cancel()
-+                    await asyncio.gather(task, return_exceptions=True)
++                    async with asyncio.timeout(5):
++                        await asyncio.gather(task, return_exceptions=True)
 +
 +            run, items = await _snapshot(factory, tenant_id, run_id)
 +            assert run.status == DescribeRunStatus.CANCELLED, f"expected cancelled, got {run.status}"
@@ -310,6 +693,150 @@ new file mode 100644
 +    asyncio.run(exercise())
 +
 +
++async def _pg_participant(session, tenant_id):
++    await set_tenant_context(session, tenant_id)
++    assert await session.scalar(text("SHOW transaction_isolation")) == "read committed"
++    await session.execute(text("SET LOCAL statement_timeout = '4000ms'"))
++    await session.execute(text("SET LOCAL lock_timeout = '3000ms'"))
++    return await session.scalar(text("SELECT pg_backend_pid()"))
++
++
++async def _blocked_or_finished(observer, task, *, waiter, owner):
++    """Wait for a real server-side lock wait, or a mutant's early commit."""
++    async with asyncio.timeout(2):
++        while True:
++            blockers = await observer.scalar(text("SELECT pg_blocking_pids(:pid)"), {"pid": waiter})
++            if owner in blockers:
++                assert not task.done()
++                return True
++            if task.done():
++                task.result()  # Surface failures instead of mistaking them for a commit.
++                return False
++            await asyncio.sleep(0.005)
++
++
++@pytest.mark.pg
++@pytest.mark.timeout(15)
++@pytest.mark.skipif(
++    not os.getenv("GTMBURST_WORKER_TEST_DSN", "").startswith("postgresql"),
++    reason="READ COMMITTED overlap requires GTMBURST_WORKER_TEST_DSN (restricted PostgreSQL)",
++)
++@pytest.mark.parametrize("first", ["terminal", "cancel"])
++def test_read_committed_cancel_overlaps_terminal_select_to_update(tmp_path, first):
++    """Hold the first row lock across the other session's actual SQL attempt.
++
++    Terminal-first pauses after the terminal SELECT and item read, before the
++    terminal UPDATE. Cancel-first pauses after cancellation flush, before commit.
++    pg_blocking_pids proves overlap rather than relying on sleeps or task starts.
++    An unlocked mutant is allowed to finish so the lost cancellation is observed.
++    """
++
++    async def exercise():
++        async with _database(tmp_path) as (factory, tenant_id, run_id):
++            async with factory() as seed:
++                await set_tenant_context(seed, tenant_id)
++                repo = DescribeRunRepository(seed)
++                for media_id in (1, 2):
++                    await repo.record_item_result(
++                        tenant_id=tenant_id,
++                        run_id=run_id,
++                        media_id=media_id,
++                        caption=f"caption-{media_id}",
++                        alt_text_draft=f"draft-{media_id}",
++                        provenance=None,
++                    )
++                    await repo.mark_item(
++                        tenant_id=tenant_id, run_id=run_id, media_id=media_id, status=DescribeItemStatus.COMPLETED
++                    )
++                # Model the boundary after the final item result and before
++                # terminal run projection; both completed captions stay durable.
++                run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
++                run.status = DescribeRunStatus.RUNNING
++                run.phase = DescribeRunPhase.DESCRIBING
++                run.completed_at = None
++                run.server_elapsed_ms = None
++                await seed.commit()
++
++            paused = asyncio.Event()
++            resume = asyncio.Event()
++            terminal_at = []
++
++            class TerminalRepository(DescribeRunRepository):
++                async def list_run_items(self, **kwargs):
++                    items = await super().list_run_items(**kwargs)
++                    if first == "terminal":
++                        paused.set()
++                        async with asyncio.timeout(5):
++                            await resume.wait()
++                    return items
++
++            async with factory() as terminal, factory() as canceller, factory() as observer:
++                terminal_pid = await _pg_participant(terminal, tenant_id)
++                cancel_pid = await _pg_participant(canceller, tenant_id)
++                observer_pid = await _pg_participant(observer, tenant_id)
++                assert len({terminal_pid, cancel_pid, observer_pid}) == 3
++                cancel_repo = DescribeRunRepository(canceller)
++                stale = await cancel_repo.get_run(tenant_id=tenant_id, run_id=run_id)
++                assert stale.status == DescribeRunStatus.RUNNING
++                assert stale.cancel_requested is False
++
++                async def derive_terminal():
++                    repo = TerminalRepository(terminal)
++                    await repo._recompute_run_totals(tenant_id=tenant_id, run_id=run_id, now=datetime.now(UTC))
++                    run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
++                    terminal_at.append(run.completed_at)
++                    await terminal.commit()
++
++                async def cancel():
++                    assert await cancel_repo.request_cancel(tenant_id=tenant_id, run_id=run_id)
++                    if first == "cancel":
++                        paused.set()
++                        async with asyncio.timeout(5):
++                            await resume.wait()
++                    await canceller.commit()
++
++                tasks = []
++                try:
++                    tasks.append(asyncio.create_task(derive_terminal() if first == "terminal" else cancel()))
++                    await asyncio.wait_for(paused.wait(), 2)
++                    tasks.append(asyncio.create_task(cancel() if first == "terminal" else derive_terminal()))
++                    serialized = await _blocked_or_finished(
++                        observer,
++                        tasks[1],
++                        waiter=cancel_pid if first == "terminal" else terminal_pid,
++                        owner=terminal_pid if first == "terminal" else cancel_pid,
++                    )
++                    resume.set()
++                    async with asyncio.timeout(5):
++                        await asyncio.gather(*tasks)
++                finally:
++                    resume.set()
++                    for task in tasks:
++                        if not task.done():
++                            task.cancel()
++                    async with asyncio.timeout(5):
++                        await asyncio.gather(*tasks, return_exceptions=True)
++                    # Release every lock before schema cleanup, including when
++                    # a mutant or assertion fails during synchronization.
++                    async with asyncio.timeout(5):
++                        await terminal.rollback()
++                        await canceller.rollback()
++
++                final, items = await _snapshot(factory, tenant_id, run_id)
++                assert final.cancel_requested is True
++                assert final.status == DescribeRunStatus.CANCELLED, f"lost cancellation: {final.status}"
++                assert final.phase == DescribeRunPhase.CANCELLED
++                assert final.completed_at == terminal_at[0]
++                assert (final.completed_items, final.failed_items, final.skipped_items) == (2, 0, 0)
++                assert [item.caption for item in items] == ["caption-1", "caption-2"]
++                assert [item.alt_text_draft for item in items] == ["draft-1", "draft-2"]
++                assert all(item.status == DescribeItemStatus.COMPLETED and item.image_bytes is None for item in items)
++                assert serialized, "the second SQL operation did not wait for the first run-row lock"
++
++    asyncio.run(exercise())
++
++
++@pytest.mark.timeout(15)
 +def test_cancel_refreshes_stale_identity_after_terminal_commit(tmp_path):
 +    """The terminal-first order must converge too, including a stale canceller."""
 +
@@ -355,5 +882,205 @@ new file mode 100644
 +            assert after.completed_items == 2
 +            assert [item.caption for item in items] == ["caption-1", "caption-2"]
 +            assert all(item.status == DescribeItemStatus.COMPLETED and item.image_bytes is None for item in items)
++
++    asyncio.run(exercise())
+diff --git a/apps/prototype-description-service/scene/tests/test_gtmburst_worker_snapshot.py b/apps/prototype-description-service/scene/tests/test_gtmburst_worker_snapshot.py
+new file mode 100644
+--- /dev/null
++++ b/apps/prototype-description-service/scene/tests/test_gtmburst_worker_snapshot.py
+@@ -0,0 +1,195 @@
++"""Bulk-worker completion must use the cancellation-safe snapshot publisher."""
++
++from __future__ import annotations
++
++import asyncio
++import json
++import threading
++import time
++from contextlib import contextmanager
++
++import pytest
++
++import scene.application.describe_load as load
++import scene.application.describe_run_worker as worker
++
++
++def _producer(monkeypatch, target, payload):
++    import db.tenant_context as tenant_context
++
++    transactions = []
++    observations = []
++
++    class Session:
++        async def __aenter__(self):
++            transactions.append("opened")
++            return self
++
++        async def __aexit__(self, *_args):
++            transactions.append("closed")
++
++        async def commit(self):
++            transactions.append("committed")
++
++    async def bypass(_session):
++        pass
++
++    async def snapshot(_session, **kwargs):
++        observations.append(kwargs)
++        return payload
++
++    monkeypatch.setattr(tenant_context, "enable_rls_bypass", bypass)
++    monkeypatch.setattr(load, "load_snapshot", snapshot)
++    monkeypatch.setattr(load, "resolve_load_path", lambda: target)
++    # Also exercise the old direct-import caller in cause-removal mutations.
++    monkeypatch.setattr(worker, "load_snapshot", snapshot, raising=False)
++    monkeypatch.setattr(worker, "resolve_load_path", lambda: target, raising=False)
++    return Session, transactions, observations
++
++
++@contextmanager
++def _held_fence(target, kind):
++    from infra.oci.gpu_lifecycle.load_source import AggregateJobLoadSource
++
++    entered = threading.Event()
++    release = threading.Event()
++    failures = []
++
++    def bounded_stop():
++        entered.set()
++        release.wait(timeout=0.4)  # Bound teardown even for a synchronous mutant.
++
++    def hold():
++        try:
++            if kind == "process":
++                source = AggregateJobLoadSource(
++                    target.parent.parent, stale_seconds=120, expected_environments=(target.parent.name,)
++                )
++                assert source.actuate_if_generation(source.fence_token(), bounded_stop)
++            else:
++                with load._LOAD_SNAPSHOT_WRITE_LOCK:
++                    bounded_stop()
++        except BaseException as error:
++            failures.append(error)
++
++    holder = threading.Thread(target=hold, daemon=True)
++    holder.start()
++    try:
++        assert entered.wait(timeout=1), "publication fence holder did not start"
++        yield release, holder
++    finally:
++        release.set()
++        holder.join(timeout=1)
++        assert not holder.is_alive(), "publication fence holder did not finish"
++        if failures:
++            raise failures[0]
++
++
++async def _event(event, budget_seconds=1):
++    # Poll without spending another executor thread on the test's barrier.
++    async with asyncio.timeout(budget_seconds):
++        while not event.is_set():  # noqa: ASYNC110 - signalled by a writer thread, not an asyncio task
++            await asyncio.sleep(0.001)
++
++
++@pytest.mark.parametrize("kind", ["process", "thread"])
++@pytest.mark.timeout(10)
++def test_worker_snapshot_contended_fence_keeps_heartbeat_and_commits(tmp_path, monkeypatch, kind):
++    target = tmp_path / "prod" / "describe-load.json"
++    idle = {
++        "revision": 1,
++        "queue_depth": 0,
++        "in_flight": 0,
++        "batch_in_progress": False,
++        "lease_demand": 0,
++        "written_at": time.time(),
++    }
++    load.write_load_snapshot(idle, target)
++    original = target.read_bytes()
++    busy = {**idle, "revision": 2, "in_flight": 1, "lease_demand": 1}
++    factory, transactions, observations = _producer(monkeypatch, target, busy)
++    monkeypatch.setattr(load, "LOAD_SNAPSHOT_ACQUIRE_TIMEOUT_SECONDS", 0.25)
++
++    async def exercise():
++        with _held_fence(target, kind):
++            started = time.monotonic()
++            publication = asyncio.create_task(worker.publish_demand_snapshot(factory))
++            try:
++                await asyncio.sleep(0.01)
++                assert time.monotonic() - started < 0.1, "worker snapshot fence blocked the event loop"
++                assert not publication.done(), "publication must wait for the STOP fence"
++                assert target.read_bytes() == original
++                await asyncio.wait_for(publication, 1)  # Best-effort acquisition timeout.
++                assert target.read_bytes() == original
++            finally:
++                publication.cancel()
++                async with asyncio.timeout(1):
++                    await asyncio.gather(publication, return_exceptions=True)
++        assert transactions == ["opened", "committed", "closed"]
++        assert observations[0]["minimum_revision"] == 1
++        assert observations[0]["stop_requested"] is None
++        assert observations[0]["max_lease_reached"] is None
++        await worker.publish_demand_snapshot(factory)
++        assert json.loads(target.read_text()) == busy
++        # An equal revision cannot refresh the reaper's timestamp.
++        busy["written_at"] += 100
++        await worker.publish_demand_snapshot(factory)
++        assert json.loads(target.read_text())["written_at"] == idle["written_at"]
++        assert not list(target.parent.glob("*.tmp"))
++
++    asyncio.run(exercise())
++
++
++@pytest.mark.parametrize("kind", ["process", "thread"])
++@pytest.mark.parametrize("cancel_mode", ["cancel", "timeout"])
++@pytest.mark.timeout(10)
++def test_worker_snapshot_cancel_stops_publication_before_fence_release(tmp_path, monkeypatch, kind, cancel_mode):
++    target = tmp_path / "prod" / "describe-load.json"
++    load.write_load_snapshot({"revision": 1}, target)
++    original = target.read_bytes()
++    factory, transactions, _ = _producer(monkeypatch, target, {"revision": 2})
++    monkeypatch.setattr(load, "LOAD_SNAPSHOT_ACQUIRE_TIMEOUT_SECONDS", 0.3)
++    entered = threading.Event()
++    finished = threading.Event()
++    real_write = load.write_load_snapshot
++
++    def observed_write(*args, **kwargs):
++        entered.set()
++        try:
++            return real_write(*args, **kwargs)
++        finally:
++            finished.set()
++
++    monkeypatch.setattr(load, "write_load_snapshot", observed_write)
++    monkeypatch.setattr(worker, "write_load_snapshot", observed_write, raising=False)
++
++    async def exercise():
++        with _held_fence(target, kind) as (release, holder):
++            publication = asyncio.create_task(worker.publish_demand_snapshot(factory))
++            try:
++                await _event(entered)
++                assert not publication.done(), "publisher returned before cancellation could overlap the fence"
++                if cancel_mode == "cancel":
++                    publication.cancel()
++                    with pytest.raises(asyncio.CancelledError):
++                        async with asyncio.timeout(0.15):
++                            await publication
++                else:
++                    with pytest.raises(TimeoutError):
++                        async with asyncio.timeout(0.01):
++                            await publication
++                await _event(finished, budget_seconds=0.15)
++                assert holder.is_alive(), "cancellation must complete while STOP still holds its fence"
++                assert transactions == ["opened", "committed", "closed"]
++                assert target.read_bytes() == original
++                assert not list(target.parent.glob("*.tmp"))
++            finally:
++                release.set()
++                publication.cancel()
++                async with asyncio.timeout(1):
++                    await asyncio.gather(publication, return_exceptions=True)
++        assert target.read_bytes() == original
++        await worker.publish_demand_snapshot(factory)
++        assert json.loads(target.read_text()) == {"revision": 2}
 +
 +    asyncio.run(exercise())

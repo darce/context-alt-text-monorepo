@@ -1,4 +1,12 @@
- .../scene/application/describe_run_repository.py   |  30 ++-
- .../scene/application/describe_run_worker.py       |  20 +-
- .../test_gtmburst_worker_cancel_projection.py      | 243 +++++++++++++++++++++
- 3 files changed, 274 insertions(+), 19 deletions(-)
+ .review/CHANGE.diff                                | 1682 ++++----------------
+ .review/COMMITS.txt                                |    3 +-
+ .review/CONTEXT.md                                 |    8 +-
+ .review/DIFFSTAT.txt                               |   14 +-
+ .review/FINDINGS.md                                |   56 -
+ .../scene/application/describe_load.py             |   69 +-
+ .../scene/application/describe_run_repository.py   |   30 +-
+ .../scene/application/describe_run_worker.py       |   36 +-
+ .../scene/tests/test_describe_load.py              |  192 +++
+ .../test_gtmburst_worker_cancel_projection.py      |  397 +++++
+ .../scene/tests/test_gtmburst_worker_snapshot.py   |  195 +++
+ 11 files changed, 1245 insertions(+), 1437 deletions(-)

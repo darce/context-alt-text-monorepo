@@ -14,8 +14,10 @@ import math
 import os
 import tempfile
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -373,6 +375,196 @@ def test_write_load_snapshot_holds_process_fence_during_publish(tmp_path: Path, 
     write_load_snapshot({"writer": 1}, target)
 
     assert json.loads(target.read_text()) == {"writer": 1}
+
+
+@contextmanager
+def _held_publication_fence(target: Path, kind: str):
+    """Hold the real STOP fence (no OCI action), or the publisher's thread lock."""
+    from infra.oci.gpu_lifecycle.load_source import AggregateJobLoadSource
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def bounded_stop():
+        entered.set()
+        release.wait(timeout=0.5)  # Keep a broken synchronous writer's RED bounded.
+
+    def hold():
+        if kind == "process":
+            source = AggregateJobLoadSource(
+                target.parent.parent, stale_seconds=120, expected_environments=(target.parent.name,)
+            )
+            assert source.actuate_if_generation(source.fence_token(), bounded_stop)
+        else:
+            with load_mod._LOAD_SNAPSHOT_WRITE_LOCK:
+                bounded_stop()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        holder = executor.submit(hold)
+        assert entered.wait(timeout=1)
+        try:
+            yield release, holder
+        finally:
+            release.set()
+            holder.result(timeout=1)
+
+
+def _stub_snapshot_producer(monkeypatch, snapshot):
+    """Skip DB setup while retaining the real dump and publication implementation."""
+    import db.tenant_context as tenant_context
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            pass
+
+        async def commit(self):
+            pass
+
+    async def bypass(_session):
+        pass
+
+    async def counted(_session, **_kwargs):
+        return snapshot
+
+    monkeypatch.setattr(tenant_context, "enable_rls_bypass", bypass)
+    monkeypatch.setattr(load_mod, "load_snapshot", counted)
+    return Session
+
+
+@pytest.mark.parametrize("kind", ["process", "thread"])
+def test_dump_load_snapshot_contended_fence_yields_times_out_and_retries(tmp_path, monkeypatch, kind):
+    target = tmp_path / "prod" / "describe-load.json"
+    idle = {
+        "revision": 1,
+        "queue_depth": 0,
+        "in_flight": 0,
+        "batch_in_progress": False,
+        "lease_demand": 0,
+        "written_at": time.time(),
+    }
+    write_load_snapshot(idle, target)
+    original = target.read_bytes()
+    busy = {**idle, "revision": 2, "in_flight": 1, "lease_demand": 1, "batch_in_progress": True}
+    factory = _stub_snapshot_producer(monkeypatch, busy)
+    monkeypatch.setattr(load_mod, "LOAD_SNAPSHOT_ACQUIRE_TIMEOUT_SECONDS", 0.05, raising=False)
+
+    async def body():
+        with _held_publication_fence(target, kind) as (release, holder):
+            started = time.monotonic()
+            publication = asyncio.create_task(dump_load_snapshot(factory, target, raise_on_error=True))
+            heartbeat = asyncio.create_task(asyncio.sleep(0.01))
+            await asyncio.wait({heartbeat, publication}, timeout=0.15, return_when=asyncio.FIRST_COMPLETED)
+            assert heartbeat.done() and time.monotonic() - started < 0.15, "fence acquisition blocked the event loop"
+            with pytest.raises(TimeoutError) as failure:
+                await publication
+            assert isinstance(failure.value, load_mod.LoadSnapshotFenceTimeoutError)
+            assert target.read_bytes() == original
+            assert not list(target.parent.glob("*.tmp"))
+            release.set()
+            await asyncio.to_thread(holder.result, timeout=1)
+        await dump_load_snapshot(factory, target, raise_on_error=True)
+        assert json.loads(target.read_text()) == busy
+
+    asyncio.run(body())
+
+
+@pytest.mark.parametrize("kind", ["process", "thread"])
+@pytest.mark.parametrize("cancel_mode", ["cancel", "timeout"])
+def test_dump_load_snapshot_cancellation_stops_pending_worker(tmp_path, monkeypatch, kind, cancel_mode):
+    target = tmp_path / "prod" / "describe-load.json"
+    write_load_snapshot({"revision": 1}, target)
+    original = target.read_bytes()
+    factory = _stub_snapshot_producer(monkeypatch, {"revision": 2})
+    monkeypatch.setattr(load_mod, "LOAD_SNAPSHOT_ACQUIRE_TIMEOUT_SECONDS", 0.3)
+    entered = threading.Event()
+    finished = threading.Event()
+    real_write = load_mod.write_load_snapshot
+
+    def observed_write(*args, **kwargs):
+        entered.set()
+        try:
+            return real_write(*args, **kwargs)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(load_mod, "write_load_snapshot", observed_write)
+
+    async def body():
+        with _held_publication_fence(target, kind) as (release, holder):
+            publication = asyncio.create_task(dump_load_snapshot(factory, target, raise_on_error=True))
+            assert await asyncio.to_thread(entered.wait, timeout=1)
+            if cancel_mode == "cancel":
+                publication.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await publication
+            else:
+                with pytest.raises(TimeoutError):
+                    async with asyncio.timeout(0.01):
+                        await publication
+            # Worker exits promptly while the fence is STILL held, rather than
+            # waiting for release and publishing after its caller was cancelled.
+            assert await asyncio.to_thread(finished.wait, timeout=0.15)
+            assert not holder.done()
+            assert target.read_bytes() == original
+            release.set()
+            await asyncio.to_thread(holder.result, timeout=1)
+        assert target.read_bytes() == original
+        await dump_load_snapshot(factory, target, raise_on_error=True)
+        assert json.loads(target.read_text()) == {"revision": 2}
+
+    asyncio.run(body())
+
+
+@pytest.mark.parametrize("kind", ["process", "thread"])
+def test_dump_load_snapshot_fence_timeout_is_best_effort_by_default(tmp_path, monkeypatch, caplog, kind):
+    target = tmp_path / "prod" / "describe-load.json"
+    write_load_snapshot({"revision": 1}, target)
+    original = target.read_bytes()
+    factory = _stub_snapshot_producer(monkeypatch, {"revision": 2})
+    monkeypatch.setattr(load_mod, "LOAD_SNAPSHOT_ACQUIRE_TIMEOUT_SECONDS", 0.03)
+
+    async def body():
+        with _held_publication_fence(target, kind):
+            await dump_load_snapshot(factory, target)
+            with pytest.raises(load_mod.LoadSnapshotFenceTimeoutError):
+                await dump_load_snapshot(factory, target, raise_on_error=True)
+            assert target.read_bytes() == original
+        assert "describe load snapshot write failed" in caplog.text
+        assert "LoadSnapshotFenceTimeoutError" in caplog.text
+
+    asyncio.run(body())
+
+
+def test_write_load_snapshot_locks_share_one_monotonic_budget(tmp_path):
+    target = tmp_path / "prod" / "describe-load.json"
+    write_load_snapshot({"revision": 1}, target)
+    original = target.read_bytes()
+    with _held_publication_fence(target, "process"), _held_publication_fence(target, "thread") as (release, _):
+        timer = threading.Timer(0.08, release.set)
+        timer.start()
+        try:
+            started = time.monotonic()
+            with pytest.raises(load_mod.LoadSnapshotFenceTimeoutError):
+                write_load_snapshot({"revision": 2}, target, acquisition_timeout_seconds=0.12)
+            assert time.monotonic() - started < 0.17
+            assert target.read_bytes() == original
+        finally:
+            timer.join(timeout=1)
+    write_load_snapshot({"revision": 2}, target)
+    assert json.loads(target.read_text()) == {"revision": 2}
+
+
+def test_dump_load_snapshot_uncontended_control(tmp_path, monkeypatch):
+    target = tmp_path / "prod" / "describe-load.json"
+    write_load_snapshot({"revision": 1}, target)
+    busy = {"revision": 2, "in_flight": 2, "lease_demand": 1, "batch_in_progress": True}
+    factory = _stub_snapshot_producer(monkeypatch, busy)
+    monkeypatch.setattr(load_mod, "LOAD_SNAPSHOT_ACQUIRE_TIMEOUT_SECONDS", 0.05)
+    asyncio.run(dump_load_snapshot(factory, target, raise_on_error=True))
+    assert json.loads(target.read_text()) == busy
 
 
 def test_run_startup_load_snapshot_writes_file_with_counts(tmp_path: Path):

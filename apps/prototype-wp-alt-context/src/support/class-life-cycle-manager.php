@@ -1011,7 +1011,7 @@ class LifecycleManager {
 	}
 
 	/**
-	 * sha1 of normalised projection DDL. Prefix/charset are fixed placeholders so
+	 * sha1 of normalised projection DDL and required data migrations. Prefix/charset are fixed placeholders so
 	 * the hash is environment-independent and cheap to recompute every request.
 	 */
 	public function compute_projection_schema_fingerprint(): string {
@@ -1024,6 +1024,8 @@ class LifecycleManager {
 			$normalized_parts[] = $table . "\n" . ( is_string( $collapsed ) ? $collapsed : trim( $sql ) );
 		}
 
+		// Retry installs stamped by the earlier DDL-only engine declaration.
+		$normalized_parts[] = 'outbox-conflict-engine-migration-v1';
 		return sha1( implode( "\n", $normalized_parts ) );
 	}
 
@@ -1093,11 +1095,61 @@ class LifecycleManager {
 		if ( ! $this->verify_projection_schema_columns( $statements ) ) {
 			return false;
 		}
+		if ( ! $this->ensure_transactional_outbox_tables( (string) $wpdb->prefix ) ) {
+			return false;
+		}
 
 		if ( ! $this->seed_assigned_at_from_created_at( (string) $wpdb->prefix . 'acx_identity_members' ) ) {
 			return false;
 		}
 
+		return true;
+	}
+
+	/** dbDelta does not change existing engines; convert in place and verify before stamping. */
+	private function ensure_transactional_outbox_tables( string $prefix ): bool {
+		global $wpdb;
+		if ( ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) || ! method_exists( $wpdb, 'query' ) ) {
+			return false;
+		}
+		foreach ( array( 'acx_sync_outbox', 'acx_sync_conflicts' ) as $suffix ) {
+			$table = $prefix . $suffix;
+			$probe = $wpdb->prepare(
+				'SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s',
+				$table
+			);
+			if ( ! is_string( $probe ) || '' === $probe ) {
+				return false;
+			}
+			$wpdb->last_error = '';
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Prepared above.
+			$engine = $wpdb->get_var( $probe );
+			if ( '' !== (string) $wpdb->last_error || ! is_string( $engine ) || '' === $engine ) {
+				Telemetry::log_line( sprintf( '[acx] schema engine probe failed for %s', $table ) );
+				return false;
+			}
+			if ( 'innodb' === strtolower( $engine ) ) {
+				continue;
+			}
+			$alter = $wpdb->prepare( 'ALTER TABLE %i ENGINE=InnoDB', $table );
+			if ( ! is_string( $alter ) || '' === $alter ) {
+				return false;
+			}
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Prepared above.
+			$converted = $wpdb->query( $alter );
+			if ( false === $converted || '' !== (string) $wpdb->last_error ) {
+				Telemetry::log_line( sprintf( '[acx] schema engine conversion failed for %s', $table ) );
+				return false;
+			}
+			// A filtered or silently ignored ALTER must not certify atomic rollback.
+			$wpdb->last_error = '';
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Prepared above.
+			$engine = $wpdb->get_var( $probe );
+			if ( '' !== (string) $wpdb->last_error || ! is_string( $engine ) || 'innodb' !== strtolower( $engine ) ) {
+				Telemetry::log_line( sprintf( '[acx] schema engine verification failed for %s', $table ) );
+				return false;
+			}
+		}
 		return true;
 	}
 

@@ -12,7 +12,12 @@ import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-li
 import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { correctDescriptionHistoryItem, describeMedia } from '../../../api/describeApi';
+import {
+  correctDescriptionHistoryItem,
+  describeMedia,
+  DESCRIPTION_CORRECTION_CODE,
+  fetchDescriptionHistory,
+} from '../../../api/describeApi';
 import type { DescriptionHistoryItem, VisualFactsResponse } from '../../../api/describeApi';
 import { queryKeys } from '../../../api/queryKeys';
 import type { WorkbenchMediaResponse } from '../../../api/workbenchMediaApi';
@@ -39,11 +44,13 @@ vi.mock('../../../api/describeApi', async () => {
     ...actual,
     describeMedia: vi.fn(),
     correctDescriptionHistoryItem: vi.fn(),
+    fetchDescriptionHistory: vi.fn(),
   };
 });
 
 const describeMock = vi.mocked(describeMedia);
 const correctMock = vi.mocked(correctDescriptionHistoryItem);
+const historyMock = vi.mocked(fetchDescriptionHistory);
 
 const draft = 'A stone bridge over a calm river at dusk.';
 const operatorAlt = 'Operator-authored alt that must not be overwritten.';
@@ -108,8 +115,7 @@ const LiveWorkbenchRow = ({ initialItem }: { initialItem: WorkbenchMediaItem }):
   // eslint-disable-next-line @tanstack/query/exhaustive-deps -- seed only; live truth is cache patches
   const { data } = useQuery({
     queryKey: workbenchKey,
-    queryFn: (): Promise<WorkbenchMediaResponse> =>
-      Promise.resolve({ items: [initialItem], total: 1, totalPages: 1 }),
+    queryFn: (): Promise<WorkbenchMediaResponse> => Promise.resolve({ items: [initialItem], total: 1, totalPages: 1 }),
     initialData: { items: [initialItem], total: 1, totalPages: 1 },
     staleTime: Infinity,
   });
@@ -153,6 +159,7 @@ describe('MediaSelectionTableBody — commit exclusivity [S2c-4b-i]', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     correctMock.mockImplementation((mediaId, altText) => Promise.resolve(successItem(mediaId, altText)));
+    historyMock.mockResolvedValue({ items: [], total: 0 });
   });
 
   it('[TEST-06] headline: generate draft, save different text via editor, Accept refuses and keeps operator text', async () => {
@@ -412,6 +419,325 @@ describe('MediaSelectionTableBody — commit exclusivity [S2c-4b-i]', () => {
   });
 });
 
+describe('MediaSelectionTableBody — queue commit ownership [GTMBURST-ADMIN-01]', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    correctMock.mockImplementation((mediaId, altText) => Promise.resolve(successItem(mediaId, altText)));
+    historyMock.mockResolvedValue({
+      items: [{ ...successItem(42, existingAlt), generated_alt_text: draft, human_edit: null }],
+      total: 1,
+    });
+  });
+
+  const queueAction = async (action: 'Accept' | 'Edit-save'): Promise<HTMLElement> => {
+    await screen.findByRole('button', { name: 'Accept draft for Bridge' });
+    if (action === 'Edit-save') {
+      fireEvent.click(screen.getByRole('button', { name: 'Edit draft for Bridge' }));
+      fireEvent.change(screen.getByRole('textbox', { name: 'Edit draft alt text' }), {
+        target: { value: 'Reviewed queue draft.' },
+      });
+      return screen.getByRole('button', { name: 'Save alt text' });
+    }
+    return screen.getByRole('button', { name: 'Accept draft for Bridge' });
+  };
+
+  it.each(['Accept', 'Edit-save'] as const)(
+    '[TEST-06] editor-first: queue %s cannot start a competing correction',
+    async (action) => {
+      // Predicted RED: QueueDraftCell receives no peer lock, so its commit
+      // control stays enabled and a click starts a second correction.
+      let resolveCorrection!: (value: DescriptionHistoryItem) => void;
+      correctMock.mockReturnValueOnce(
+        new Promise<DescriptionHistoryItem>((resolve) => {
+          resolveCorrection = resolve;
+        }),
+      );
+      renderLiveRow();
+      const queueCommit = await queueAction(action);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Edit alt text for Bridge' }));
+      fireEvent.change(screen.getByRole('textbox', { name: /^alt text$/i }), {
+        target: { value: operatorAlt },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+      await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+
+      try {
+        expect(queueCommit).toBeDisabled();
+        fireEvent.click(queueCommit);
+        expect(correctMock).toHaveBeenCalledTimes(1);
+      } finally {
+        await act(async () => {
+          resolveCorrection(successItem(42, operatorAlt));
+          await Promise.resolve();
+        });
+      }
+      await waitFor(() => expect(queueCommit).not.toBeDisabled());
+    },
+  );
+
+  it.each(['Accept', 'Edit-save'] as const)(
+    'queue-first: queue %s prevents the human editor from committing until settle',
+    async (action) => {
+      // Predicted RED: queue writes do not claim the row lock, leaving human
+      // Save enabled while the queue correction is unresolved.
+      let resolveCorrection!: (value: DescriptionHistoryItem) => void;
+      correctMock.mockReturnValueOnce(
+        new Promise<DescriptionHistoryItem>((resolve) => {
+          resolveCorrection = resolve;
+        }),
+      );
+      renderLiveRow();
+      const queueCommit = await queueAction(action);
+      fireEvent.click(screen.getByRole('button', { name: 'Edit alt text for Bridge' }));
+      fireEvent.change(screen.getByRole('textbox', { name: /^alt text$/i }), {
+        target: { value: operatorAlt },
+      });
+      fireEvent.click(queueCommit);
+      await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+
+      const humanSave = screen.getByRole('button', { name: /^save$/i });
+      try {
+        expect(humanSave).toBeDisabled();
+        fireEvent.click(humanSave);
+        expect(correctMock).toHaveBeenCalledTimes(1);
+      } finally {
+        await act(async () => {
+          resolveCorrection(successItem(42, action === 'Accept' ? draft : 'Reviewed queue draft.'));
+          await Promise.resolve();
+        });
+      }
+      await waitFor(() => expect(humanSave).not.toBeDisabled());
+      expect(screen.getByRole('textbox', { name: /^alt text$/i })).toHaveValue(operatorAlt);
+    },
+  );
+
+  it.each(['Accept', 'Edit-save'] as const)(
+    'after human save and refetch: stale queue %s refuses and preserves the draft',
+    async (action) => {
+      // Predicted RED: once the editor settles, queue applyText still accepts
+      // the old draft and overwrites the human alt instead of reporting change.
+      const { client } = renderLiveRow();
+      await screen.findByRole('button', { name: 'Accept draft for Bridge' });
+      fireEvent.click(screen.getByRole('button', { name: 'Edit alt text for Bridge' }));
+      fireEvent.change(screen.getByRole('textbox', { name: /^alt text$/i }), {
+        target: { value: operatorAlt },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+      await waitFor(() => expect(cachedAlt(client)).toBe(operatorAlt));
+      await waitFor(() => expect(screen.queryByRole('button', { name: /saving/i })).not.toBeInTheDocument());
+
+      // A later cache refresh with the same committed human alt must not
+      // silently rebase the queue draft's original observed baseline.
+      await act(async () => {
+        client.setQueryData<WorkbenchMediaResponse>(workbenchKey, {
+          items: [seedItem(operatorAlt)],
+          total: 1,
+          totalPages: 1,
+        });
+        await client.invalidateQueries({ queryKey: ['description-history'] });
+      });
+      fireEvent.click(await queueAction(action));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(/changed/i);
+      expect(correctMock).toHaveBeenCalledTimes(1);
+      expect(cachedAlt(client)).toBe(operatorAlt);
+      if (action === 'Edit-save') {
+        expect(screen.getByRole('textbox', { name: 'Edit draft alt text' })).toHaveValue('Reviewed queue draft.');
+        fireEvent.click(screen.getByRole('button', { name: 'Cancel edit' }));
+        expect(screen.getByRole('button', { name: 'Edit draft for Bridge' })).toHaveFocus();
+      } else {
+        expect(screen.getByText(draft)).toBeInTheDocument();
+      }
+      expect(screen.getByRole('button', { name: 'Dismiss' })).not.toBeDisabled();
+      expect(document.querySelectorAll('[aria-live="polite"]')).toHaveLength(1);
+    },
+  );
+
+  it('healthy queue Accept with unchanged committed alt still writes once', async () => {
+    const { client } = renderLiveRow();
+    fireEvent.click(await queueAction('Accept'));
+
+    await waitFor(() => expect(cachedAlt(client)).toBe(draft));
+    expect(correctMock).toHaveBeenCalledTimes(1);
+    expect(correctMock).toHaveBeenCalledWith(42, draft);
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Accept draft for Bridge' })).not.toBeInTheDocument(),
+    );
+  });
+
+  it.each(['editor', 'queue'] as const)(
+    '%s-first: same-tick queue/editor clicks start only one correction',
+    async (first) => {
+      let resolveCorrection!: (value: DescriptionHistoryItem) => void;
+      correctMock.mockReturnValueOnce(
+        new Promise<DescriptionHistoryItem>((resolve) => {
+          resolveCorrection = resolve;
+        }),
+      );
+      const { client } = renderLiveRow();
+      const queueCommit = await queueAction('Accept');
+      fireEvent.click(screen.getByRole('button', { name: 'Edit alt text for Bridge' }));
+      fireEvent.change(screen.getByRole('textbox', { name: /^alt text$/i }), { target: { value: operatorAlt } });
+      const humanSave = screen.getByRole('button', { name: /^save$/i });
+      act(() => {
+        // Native clicks in one batch bypass the next-paint peer disabled guard.
+        (first === 'editor' ? humanSave : queueCommit).click();
+        (first === 'editor' ? queueCommit : humanSave).click();
+      });
+      await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+      const savedAlt = first === 'editor' ? operatorAlt : draft;
+      expect(correctMock).toHaveBeenCalledWith(42, savedAlt);
+      await act(async () => {
+        resolveCorrection(successItem(42, savedAlt));
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(cachedAlt(client)).toBe(savedAlt));
+      expect(correctMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(['Accept', 'Edit-save'] as const)(
+    'failed queue %s releases the row and keeps draft/error/focus',
+    async (action) => {
+      let rejectCorrection!: (error: Error) => void;
+      correctMock.mockReturnValueOnce(
+        new Promise<DescriptionHistoryItem>((_resolve, reject) => {
+          rejectCorrection = reject;
+        }),
+      );
+      renderLiveRow();
+      const queueCommit = await queueAction(action);
+      fireEvent.click(screen.getByRole('button', { name: 'Edit alt text for Bridge' }));
+      fireEvent.change(screen.getByRole('textbox', { name: /^alt text$/i }), { target: { value: operatorAlt } });
+      // fireEvent.click does not perform the browser's focus transfer. This
+      // control deliberately stays in the queue's focus context until failure.
+      queueCommit.focus();
+      fireEvent.click(queueCommit);
+      await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+      const humanSave = screen.getByRole('button', { name: /^save$/i });
+      expect(humanSave).toBeDisabled();
+
+      await act(async () => {
+        rejectCorrection(new Error(JSON.stringify({ code: 'correction_failed', message: 'Correction unavailable' })));
+        await Promise.resolve();
+      });
+      expect(await screen.findByRole('alert')).toHaveTextContent('Correction unavailable');
+      await waitFor(() => expect(humanSave).not.toBeDisabled());
+      if (action === 'Edit-save') {
+        const field = screen.getByRole('textbox', { name: 'Edit draft alt text' });
+        expect(field).toHaveValue('Reviewed queue draft.');
+        expect(field).toHaveFocus();
+        expect(field).toHaveAttribute('aria-describedby', screen.getByRole('alert').id);
+      } else {
+        expect(screen.getByText(draft)).toBeInTheDocument();
+        expect(queueCommit).toHaveFocus();
+      }
+      fireEvent.click(humanSave);
+      await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(2));
+      expect(correctMock).toHaveBeenLastCalledWith(42, operatorAlt);
+      // The human save must not erase the queue's unread correction error.
+      expect(screen.getByRole('alert')).toHaveTextContent('Correction unavailable');
+    },
+  );
+
+  it.each(['queue', 'suggest'] as const)('%s-first: queue and Suggest share the exclusive row lock', async (first) => {
+    describeMock.mockResolvedValue(sampleResponse('Fresh inline suggestion.'));
+    let rejectCorrection!: (error: Error) => void;
+    correctMock.mockReturnValueOnce(
+      new Promise<DescriptionHistoryItem>((_resolve, reject) => {
+        rejectCorrection = reject;
+      }),
+    );
+    renderLiveRow();
+    const queueCommit = await queueAction('Accept');
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText('Fresh inline suggestion.');
+    const suggestCommit = screen.getByRole('button', { name: /^accept$/i });
+    const firstCommit = first === 'queue' ? queueCommit : suggestCommit;
+    const secondCommit = first === 'queue' ? suggestCommit : queueCommit;
+    fireEvent.click(firstCommit);
+    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+    expect(secondCommit).toBeDisabled();
+    fireEvent.click(secondCommit);
+    expect(correctMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      rejectCorrection(new Error('Correction unavailable'));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(secondCommit).not.toBeDisabled());
+    fireEvent.click(secondCommit);
+    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(2));
+    expect(correctMock).toHaveBeenLastCalledWith(42, first === 'queue' ? 'Fresh inline suggestion.' : draft);
+  });
+
+  it('a queue partial write preserves the reviewed buffer and allows retry against reconciled alt', async () => {
+    const { client } = renderLiveRow();
+    const queueCommit = await queueAction('Edit-save');
+    correctMock.mockRejectedValueOnce(
+      new Error(
+        JSON.stringify({
+          code: DESCRIPTION_CORRECTION_CODE.PARTIAL,
+          message: 'Alt was saved but correction history failed.',
+          data: { status: 500, stored_alt_text: 'Reviewed queue draft.', is_decorative: false },
+        }),
+      ),
+    );
+    fireEvent.click(queueCommit);
+    await screen.findByRole('alert');
+    await waitFor(() => expect(cachedAlt(client)).toBe('Reviewed queue draft.'));
+    const field = screen.getByRole('textbox', { name: 'Edit draft alt text' });
+    expect(field).toHaveValue('Reviewed queue draft.');
+    expect(field).toHaveFocus();
+    fireEvent.click(screen.getByRole('button', { name: 'Save alt text' }));
+    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+  });
+
+  it.each(['success', 'failure'] as const)(
+    'queue removal during a pending %s releases only when the write settles',
+    async (outcome) => {
+      let resolveCorrection!: (value: DescriptionHistoryItem) => void;
+      let rejectCorrection!: (error: Error) => void;
+      correctMock.mockReturnValueOnce(
+        new Promise<DescriptionHistoryItem>((resolve, reject) => {
+          resolveCorrection = resolve;
+          rejectCorrection = reject;
+        }),
+      );
+      const { client } = renderLiveRow();
+      const queueCommit = await queueAction('Accept');
+      fireEvent.click(screen.getByRole('button', { name: 'Edit alt text for Bridge' }));
+      fireEvent.change(screen.getByRole('textbox', { name: /^alt text$/i }), { target: { value: operatorAlt } });
+      fireEvent.click(queueCommit);
+      await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+      const humanSave = screen.getByRole('button', { name: /^save$/i });
+      expect(humanSave).toBeDisabled();
+
+      // A history refetch can remove just the queue cell while the row stays mounted.
+      historyMock.mockResolvedValue({ items: [], total: 0 });
+      await act(async () => {
+        await client.invalidateQueries({ queryKey: ['description-history'] });
+      });
+      await waitFor(() => expect(queueCommit).not.toBeInTheDocument());
+      expect(humanSave).toBeDisabled();
+      fireEvent.click(humanSave);
+      expect(correctMock).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        if (outcome === 'success') {
+          resolveCorrection(successItem(42, draft));
+        } else {
+          rejectCorrection(new Error('Correction unavailable'));
+        }
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(humanSave).not.toBeDisabled());
+      expect(screen.getByRole('textbox', { name: /^alt text$/i })).toHaveValue(operatorAlt);
+    },
+  );
+});
+
 /**
  * BR-01: beginCommit exclusivity lives in the state transition, not in callers.
  * Unreachable via the two real UI surfaces (both refuse when peerCommitPending),
@@ -421,6 +747,22 @@ describe('MediaSelectionTableBody — commit exclusivity [S2c-4b-i]', () => {
  * setCommitOwner(owner) — the second claim would return true and steal the lock.
  */
 describe('MediaSelectionTableBody — beginCommit compare-and-set [S2c-4b-ii BR-01]', () => {
+  it('a late queue release cannot clear a later editor claim', () => {
+    const { result } = renderHook(() => useRowCommitLock());
+    act(() => {
+      expect(result.current.beginCommit('queue')).toBe(true);
+      expect(result.current.beginCommit('editor')).toBe(false);
+      result.current.endCommit('suggest');
+    });
+    expect(result.current.commitOwner).toBe('queue');
+    act(() => {
+      result.current.endCommit('queue');
+      expect(result.current.beginCommit('editor')).toBe(true);
+      result.current.endCommit('queue');
+    });
+    expect(result.current.commitOwner).toBe('editor');
+  });
+
   it('refuses a second claim while a lock is held; end is compare-and-clear', () => {
     const { result } = renderHook(() => useRowCommitLock());
 
@@ -458,4 +800,323 @@ describe('MediaSelectionTableBody — beginCommit compare-and-set [S2c-4b-ii BR-
     expect(reclaimed).toBe(true);
     expect(result.current.commitOwner).toBe('suggest');
   });
+});
+
+describe('row lifecycle audit — pending queue ownership', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    correctMock.mockImplementation((mediaId, altText) =>
+      Promise.resolve({ ...successItem(mediaId, altText), is_decorative: false }),
+    );
+    historyMock.mockResolvedValue({
+      items: [{ ...successItem(42, existingAlt), generated_alt_text: draft, human_edit: null, is_decorative: false }],
+      total: 1,
+    });
+  });
+
+  it('removing and redisplaying the same media in one mounted table keeps the pending queue owner', async () => {
+    let resolveCorrection!: (item: DescriptionHistoryItem) => void;
+    correctMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCorrection = resolve;
+      }),
+    );
+    const { client } = renderLiveRow();
+    const originalAccept = await screen.findByRole('button', { name: 'Accept draft for Bridge' });
+    fireEvent.click(originalAccept);
+    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+    let humanSaveDisabledWhilePending = false;
+    try {
+      await act(async () => {
+        client.setQueryData<WorkbenchMediaResponse>(workbenchKey, { items: [], total: 0, totalPages: 0 });
+        await Promise.resolve();
+      });
+      expect(originalAccept).not.toBeInTheDocument();
+      await act(async () => {
+        client.setQueryData<WorkbenchMediaResponse>(workbenchKey, { items: [seedItem()], total: 1, totalPages: 1 });
+        await Promise.resolve();
+      });
+      const newAccept = await screen.findByRole('button', { name: 'Accept draft for Bridge' });
+      expect(newAccept).not.toBe(originalAccept);
+      fireEvent.click(screen.getByRole('button', { name: 'Edit alt text for Bridge' }));
+      fireEvent.change(screen.getByRole('textbox', { name: /^alt text$/i }), { target: { value: operatorAlt } });
+      const humanSave = screen.getByRole('button', { name: /^save$/i });
+      humanSaveDisabledWhilePending = (humanSave as HTMLButtonElement).disabled;
+      fireEvent.click(humanSave);
+      await act(async () => {
+        await Promise.resolve();
+      });
+    } finally {
+      await act(async () => {
+        resolveCorrection({ ...successItem(42, draft), is_decorative: false });
+        await Promise.resolve();
+      });
+    }
+    await waitFor(() => expect(cachedAlt(client)).toBe(draft));
+    expect(humanSaveDisabledWhilePending).toBe(true);
+    expect(correctMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('control: refetching the same visible row retains its pending queue owner', async () => {
+    let resolveCorrection!: (item: DescriptionHistoryItem) => void;
+    correctMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCorrection = resolve;
+      }),
+    );
+    const { client } = renderLiveRow();
+    const accept = await screen.findByRole('button', { name: 'Accept draft for Bridge' });
+    fireEvent.click(accept);
+    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+    try {
+      await act(async () => {
+        client.setQueryData<WorkbenchMediaResponse>(workbenchKey, { items: [seedItem()], total: 1, totalPages: 1 });
+        await Promise.resolve();
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Edit alt text for Bridge' }));
+      fireEvent.change(screen.getByRole('textbox', { name: /^alt text$/i }), { target: { value: operatorAlt } });
+      const humanSave = screen.getByRole('button', { name: /^save$/i });
+      expect(humanSave).toBeDisabled();
+      fireEvent.click(humanSave);
+      expect(correctMock).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(async () => {
+        resolveCorrection({ ...successItem(42, draft), is_decorative: false });
+        await Promise.resolve();
+      });
+    }
+  });
+
+  it.each(['success', 'failure'] as const)(
+    'redisplayed rows refuse another queue claim, then allow a human correction after pending %s',
+    async (outcome) => {
+      let resolveCorrection!: (item: DescriptionHistoryItem) => void;
+      let rejectCorrection!: (error: Error) => void;
+      correctMock.mockReturnValueOnce(
+        new Promise((resolve, reject) => {
+          resolveCorrection = resolve;
+          rejectCorrection = reject;
+        }),
+      );
+      const { client } = renderLiveRow();
+      fireEvent.click(await screen.findByRole('button', { name: 'Accept draft for Bridge' }));
+      await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        client.setQueryData<WorkbenchMediaResponse>(workbenchKey, { items: [], total: 0, totalPages: 0 });
+        await Promise.resolve();
+      });
+      await act(async () => {
+        client.setQueryData<WorkbenchMediaResponse>(workbenchKey, { items: [seedItem()], total: 1, totalPages: 1 });
+        await Promise.resolve();
+      });
+      fireEvent.click(await screen.findByRole('button', { name: 'Accept draft for Bridge' }));
+      expect(screen.getByRole('alert')).toHaveTextContent(/save is in progress/i);
+      expect(correctMock).toHaveBeenCalledTimes(1);
+      fireEvent.click(screen.getByRole('button', { name: 'Edit alt text for Bridge' }));
+      const humanSave = screen.getByRole('button', { name: /^save$/i });
+      expect(humanSave).toBeDisabled();
+      await act(async () => {
+        if (outcome === 'success') {
+          resolveCorrection({ ...successItem(42, draft), is_decorative: false });
+        } else {
+          rejectCorrection(new Error('Correction unavailable'));
+        }
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(humanSave).not.toBeDisabled());
+      expect(cachedAlt(client)).toBe(outcome === 'success' ? draft : existingAlt);
+      // Reopen against settled truth rather than submitting the pre-write buffer.
+      fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+      fireEvent.click(screen.getByRole('button', { name: 'Edit alt text for Bridge' }));
+      fireEvent.change(screen.getByRole('textbox', { name: /^alt text$/i }), { target: { value: operatorAlt } });
+      fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+      await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(cachedAlt(client)).toBe(operatorAlt));
+    },
+  );
+
+  it('a pending queue write does not block another media row in the same table', async () => {
+    let resolveCorrection!: (item: DescriptionHistoryItem) => void;
+    correctMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCorrection = resolve;
+      }),
+    );
+    const { client } = renderLiveRow();
+    fireEvent.click(await screen.findByRole('button', { name: 'Accept draft for Bridge' }));
+    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      client.setQueryData<WorkbenchMediaResponse>(workbenchKey, {
+        items: [seedItem(), { ...seedItem(), id: 43, title: 'Other bridge' }],
+        total: 2,
+        totalPages: 1,
+      });
+      await Promise.resolve();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit alt text for Other bridge' }));
+    fireEvent.change(screen.getByRole('textbox', { name: /^alt text$/i }), { target: { value: operatorAlt } });
+    const humanSave = screen.getByRole('button', { name: /^save$/i });
+    expect(humanSave).not.toBeDisabled();
+    fireEvent.click(humanSave);
+    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(2));
+    expect(correctMock).toHaveBeenLastCalledWith(43, operatorAlt);
+    await act(async () => {
+      resolveCorrection({ ...successItem(42, draft), is_decorative: false });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(cachedAlt(client)).toBe(draft));
+    expect(client.getQueryData<WorkbenchMediaResponse>(workbenchKey)?.items[1].altText).toBe(operatorAlt);
+  });
+
+  it('pending ownership is isolated between mounted tables with separate query clients', async () => {
+    let resolveCorrection!: (item: DescriptionHistoryItem) => void;
+    correctMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCorrection = resolve;
+      }),
+    );
+    const first = renderLiveRow();
+    fireEvent.click(await screen.findByRole('button', { name: 'Accept draft for Bridge' }));
+    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+    const second = renderLiveRow({ ...seedItem(), title: 'Other table bridge' });
+    await screen.findByRole('button', { name: 'Accept draft for Other table bridge' });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit alt text for Other table bridge' }));
+    fireEvent.change(screen.getByRole('textbox', { name: /^alt text$/i }), { target: { value: operatorAlt } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(cachedAlt(second.client)).toBe(operatorAlt));
+    expect(cachedAlt(first.client)).toBe(existingAlt);
+    await act(async () => {
+      resolveCorrection({ ...successItem(42, draft), is_decorative: false });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(cachedAlt(first.client)).toBe(draft));
+    expect(cachedAlt(second.client)).toBe(operatorAlt);
+    expect(correctMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('independent audit — live queue row edge cases', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    correctMock.mockImplementation((mediaId, altText) =>
+      Promise.resolve({ ...successItem(mediaId, altText), is_decorative: false }),
+    );
+    historyMock.mockResolvedValue({
+      items: [{ ...successItem(42, existingAlt), generated_alt_text: draft, human_edit: null, is_decorative: false }],
+      total: 1,
+    });
+  });
+  const queueAction = async (action: 'Accept' | 'Edit-save') => {
+    const accept = await screen.findByRole('button', { name: 'Accept draft for Bridge' });
+    if (action === 'Edit-save') {
+      fireEvent.click(screen.getByRole('button', { name: 'Edit draft for Bridge' }));
+      return screen.getByRole('button', { name: 'Save alt text' });
+    }
+    return accept;
+  };
+
+  it.each(['Accept', 'Edit-save'] as const)(
+    'decorative: queue %s protects a decorative decision made after draft display',
+    async (action) => {
+      const { client } = renderLiveRow(seedItem(null));
+      const queueCommit = await queueAction(action);
+      correctMock.mockResolvedValueOnce({ ...successItem(42, ''), is_decorative: true });
+      fireEvent.click(screen.getByRole('button', { name: /decorative/i }));
+      await waitFor(() =>
+        expect(client.getQueryData<WorkbenchMediaResponse>(workbenchKey)?.items[0].isDecorative).toBe(true),
+      );
+      await waitFor(() => expect(queueCommit).not.toBeDisabled());
+      expect(cachedAlt(client)).toBeNull();
+      fireEvent.click(queueCommit);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      const row = client.getQueryData<WorkbenchMediaResponse>(workbenchKey)?.items[0];
+      expect({ writes: correctMock.mock.calls.length, alt: row?.altText, decorative: row?.isDecorative }).toEqual({
+        writes: 1,
+        alt: null,
+        decorative: true,
+      });
+      expect(screen.getByRole('alert')).toHaveTextContent(/changed/i);
+    },
+  );
+
+  it.each(['Accept', 'Edit-save'] as const)(
+    'fresh draft: queue %s after a human save uses the newly displayed draft baseline',
+    async (action) => {
+      const { client } = renderLiveRow();
+      const originalAccept = await queueAction('Accept');
+      fireEvent.click(screen.getByRole('button', { name: 'Edit alt text for Bridge' }));
+      fireEvent.change(screen.getByRole('textbox', { name: /^alt text$/i }), { target: { value: operatorAlt } });
+      fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+      await waitFor(() => expect(cachedAlt(client)).toBe(operatorAlt));
+      await waitFor(() => expect(originalAccept).not.toBeDisabled());
+      const fresh = 'A newly generated and reviewed bridge draft.';
+      historyMock.mockResolvedValue({
+        items: [{ ...successItem(42, operatorAlt), generated_alt_text: fresh, human_edit: null, is_decorative: false }],
+        total: 1,
+      });
+      await act(async () => {
+        await client.invalidateQueries({ queryKey: ['description-history'] });
+      });
+      await screen.findByText(fresh);
+      expect(screen.getByRole('button', { name: 'Accept draft for Bridge' })).toBe(originalAccept);
+      fireEvent.click(await queueAction(action));
+      await act(async () => {
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(2));
+      expect(correctMock).toHaveBeenLastCalledWith(42, fresh);
+      await waitFor(() => expect(cachedAlt(client)).toBe(fresh));
+    },
+  );
+
+  it.each(['Accept', 'Edit-save'] as const)(
+    'control: fresh queue %s with unchanged human alt is committable',
+    async (action) => {
+      const { client } = renderLiveRow();
+      await queueAction('Accept');
+      const fresh = 'Another fresh bridge draft without an interleaved human save.';
+      historyMock.mockResolvedValue({
+        items: [{ ...successItem(42, existingAlt), generated_alt_text: fresh, human_edit: null }],
+        total: 1,
+      });
+      await act(async () => {
+        await client.invalidateQueries({ queryKey: ['description-history'] });
+      });
+      await screen.findByText(fresh);
+      fireEvent.click(await queueAction(action));
+      await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+      expect(correctMock).toHaveBeenCalledWith(42, fresh);
+      await waitFor(() => expect(cachedAlt(client)).toBe(fresh));
+    },
+  );
+
+  it.each(['queue', 'suggest'] as const)(
+    'control: %s-first same-tick queue and Suggest start only one correction',
+    async (first) => {
+      describeMock.mockResolvedValue(sampleResponse('Fresh inline suggestion.'));
+      let rejectCorrection!: (error: Error) => void;
+      correctMock.mockReturnValueOnce(
+        new Promise((_resolve, reject) => {
+          rejectCorrection = reject;
+        }),
+      );
+      renderLiveRow();
+      const queue = await queueAction('Accept');
+      fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+      await screen.findByText('Fresh inline suggestion.');
+      const suggest = screen.getByRole('button', { name: /^accept$/i });
+      act(() => {
+        (first === 'queue' ? queue : suggest).click();
+        (first === 'queue' ? suggest : queue).click();
+      });
+      await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+      expect(correctMock).toHaveBeenCalledWith(42, first === 'queue' ? draft : 'Fresh inline suggestion.');
+      await act(async () => {
+        rejectCorrection(new Error('Correction unavailable'));
+        await Promise.resolve();
+      });
+    },
+  );
 });

@@ -1,11 +1,15 @@
 import type { QueryClient } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { __ } from '@wordpress/i18n';
 import type { ReactElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { QueueDraftCell } from '../QueueDraftCell';
-import { applyDescribeRunDrafts, correctDescriptionHistoryItem } from '../../../api/describeApi';
+import {
+  applyDescribeRunDrafts,
+  correctDescriptionHistoryItem,
+  DESCRIPTION_CORRECTION_CODE,
+} from '../../../api/describeApi';
 import { buildTestQueryClient, createQueryWrapper } from '../../../test-utils/queryClient';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -168,5 +172,81 @@ describe('QueueDraftCell', () => {
 
     expect(correctMock).toHaveBeenCalledTimes(1);
     expect(busy).toBeDisabled();
+  });
+
+  it.each(['Accept', 'Edit-save'] as const)('does not write or release a refused row claim for %s', async (action) => {
+    const onCommitStart = vi.fn(() => false);
+    const onCommitEnd = vi.fn();
+    renderCell(
+      <QueueDraftCell mediaId={71} draftText="A flower." onCommitStart={onCommitStart} onCommitEnd={onCommitEnd} />,
+      client,
+    );
+    if (action === 'Edit-save') {
+      fireEvent.click(screen.getByRole('button', { name: /^edit draft$/i }));
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'My reviewed flower draft.' } });
+    }
+    fireEvent.click(screen.getByRole('button', { name: action === 'Accept' ? /^accept$/i : /^save alt text$/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/save is in progress/i);
+    expect(onCommitStart).toHaveBeenCalledTimes(1);
+    expect(onCommitEnd).not.toHaveBeenCalled();
+    expect(correctMock).not.toHaveBeenCalled();
+    if (action === 'Edit-save') {
+      expect(screen.getByRole('textbox')).toHaveValue('My reviewed flower draft.');
+    } else {
+      expect(screen.getByText('A flower.')).toBeInTheDocument();
+    }
+  });
+
+  it('blocks same-tick duplicate writes even for a standalone cell', async () => {
+    correctMock.mockImplementation(() => new Promise(() => undefined));
+    renderCell(<QueueDraftCell mediaId={71} draftText="A flower." />, client);
+    const accept = screen.getByRole('button', { name: /^accept$/i });
+    // Both clicks arrive before React paints disabled/isPending.
+    act(() => {
+      accept.click();
+      accept.click();
+    });
+    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+  });
+
+  it('preserves the edit buffer and associates a stale-baseline alert with the textarea', () => {
+    const { rerender } = renderCell(<QueueDraftCell mediaId={71} draftText="A flower." committedAlt={null} />, client);
+    fireEvent.click(screen.getByRole('button', { name: /^edit draft$/i }));
+    const field = screen.getByRole('textbox');
+    fireEvent.change(field, { target: { value: 'My reviewed flower draft.' } });
+    rerender(<QueueDraftCell mediaId={71} draftText="A flower." committedAlt="Human alt" />);
+    fireEvent.click(screen.getByRole('button', { name: /^save alt text$/i }));
+
+    expect(correctMock).not.toHaveBeenCalled();
+    expect(field).toHaveValue('My reviewed flower draft.');
+    expect(field).toHaveFocus();
+    expect(field).toHaveAttribute('aria-invalid', 'true');
+    expect(field).toHaveAttribute('aria-describedby', screen.getByRole('alert').id);
+    fireEvent.click(screen.getByRole('button', { name: /^cancel edit$/i }));
+    expect(screen.getByRole('button', { name: /^edit draft$/i })).toHaveFocus();
+    // Cancel/Edit must not silently make this same stale draft committable.
+    fireEvent.click(screen.getByRole('button', { name: /^accept$/i }));
+    expect(screen.getByRole('alert')).toHaveTextContent(/changed/i);
+    expect(correctMock).not.toHaveBeenCalled();
+  });
+
+  it('allows a standalone cell without committedAlt to retry a partial write', async () => {
+    correctMock.mockRejectedValueOnce(
+      new Error(
+        JSON.stringify({
+          code: DESCRIPTION_CORRECTION_CODE.PARTIAL,
+          message: 'Alt was saved but correction history failed.',
+          data: { status: 500, stored_alt_text: 'A flower.', is_decorative: false },
+        }),
+      ),
+    );
+    renderCell(<QueueDraftCell mediaId={71} draftText="A flower." />, client);
+    fireEvent.click(screen.getByRole('button', { name: /^accept$/i }));
+    await screen.findByRole('alert');
+    await waitFor(() => expect(screen.getByRole('button', { name: /^accept$/i })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole('button', { name: /^accept$/i }));
+    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
   });
 });

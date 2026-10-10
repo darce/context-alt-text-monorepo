@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useIsMutating, useMutation, useQueryClient } from '@tanstack/react-query';
 
 import {
   cancelBulkDescribeRun,
@@ -33,6 +33,7 @@ import {
 import { isDefinitiveDescribeSubmitRefusal, persistRunContext } from './useBulkDescribe';
 import { useDescribeRunProgress, type DescribeRunProgress } from './useDescribeRunProgress';
 import { useGpuServiceStatus } from './useGpuServiceStatus';
+import { isCoolingDown } from '../utils/recognitionCooldown';
 import {
   deriveWarmingObservation,
   WARMING_OBSERVATION_EVIDENCE,
@@ -124,6 +125,8 @@ export interface ScanActivitySource {
 
 export interface UseActivityStatusParams {
   scan?: ScanActivitySource;
+  /** Recovery controls for a parked run while another run owns the main strip. */
+  describeRunId?: string;
 }
 
 export interface UseActivityStatusResult {
@@ -199,8 +202,8 @@ const parseWarmupTimeout = (run: DescribeRunResponse | null): { retryable: boole
 
 const describeDraftCount = (run: DescribeRunResponse | null): number => run?.completed ?? 0;
 
-const describeCanCancel = (progress: DescribeRunProgress): boolean =>
-  progress.run !== null && progress.run.cancel_requested !== true && !progress.isTerminal && !progress.isError;
+const describeCanCancel = (runId: string | null, progress: DescribeRunProgress): boolean =>
+  runId !== null && progress.run?.cancel_requested !== true && !progress.isTerminal;
 
 const gpuIsWarming = (gpuState: GpuState): boolean =>
   gpuState === GPU_STATE.STARTING || gpuState === GPU_STATE.WARMING;
@@ -282,12 +285,12 @@ export const resolveActivityStatus = (input: ResolveActivityStatusInput): Activi
     });
   }
 
-  if (describe.progress.isError) {
+  if (describe.progress.isError && !describe.progress.isTerminal) {
     return snapshot(ACTIVITY_KIND.FAILED, {
       progress: describe.progress.progressFraction,
       etaSeconds: null,
       reason: ACTIVITY_REASON.DESCRIBE_POLL_ERROR,
-      canCancel: false,
+      canCancel: describeCanCancel(describe.runId, describe.progress),
       runId: describe.runId,
       gpuState,
       retryable: true,
@@ -300,7 +303,7 @@ export const resolveActivityStatus = (input: ResolveActivityStatusInput): Activi
       progress: describe.progress.progressFraction,
       etaSeconds: describe.progress.etaSeconds,
       reason: null,
-      canCancel: describeCanCancel(describe.progress),
+      canCancel: describeCanCancel(describe.runId, describe.progress),
       runId: describe.runId,
       gpuState,
       retryable: warmingObservation.status !== WARMING_OBSERVATION_STATUS.WAITING,
@@ -314,7 +317,7 @@ export const resolveActivityStatus = (input: ResolveActivityStatusInput): Activi
       progress: describe.progress.progressFraction,
       etaSeconds: describe.progress.etaSeconds,
       reason: null,
-      canCancel: describeCanCancel(describe.progress),
+      canCancel: describeCanCancel(describe.runId, describe.progress),
       runId: describe.runId,
       gpuState,
       retryable: false,
@@ -384,6 +387,7 @@ export const resolveActivityStatus = (input: ResolveActivityStatusInput): Activi
 };
 
 const pendingTerminalRunId = (): string | null => pendingTerminalRuns()[0]?.id ?? null;
+const DESCRIBE_CANCEL_MUTATION_KEY = ['cancelBulkDescribeRun'] as const;
 
 const toScanInput = (scan: ScanActivitySource | undefined): ScanActivityInput => {
   if (scan === undefined) {
@@ -400,6 +404,7 @@ const toScanInput = (scan: ScanActivitySource | undefined): ScanActivityInput =>
 };
 
 export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActivityStatusResult => {
+  const queryClient = useQueryClient();
   const scan = params.scan;
   const { runId: activeRunId } = useActiveDescribeRun();
   const pendingRunId = useSyncExternalStore(
@@ -407,13 +412,32 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
     pendingTerminalRunId,
     pendingTerminalRunId,
   );
-  const describeRunId = activeRunId ?? pendingRunId;
+  const describeRunId = params.describeRunId ?? activeRunId ?? pendingRunId;
   const describeProgress = useDescribeRunProgress(describeRunId);
   const describeLive =
     describeRunId !== null && !describeProgress.isTerminal && !describeProgress.isError;
   const gpu = useGpuServiceStatus({ isRunPending: describeLive });
+  const cancelInFlightRef = useRef(false);
+  const pendingCancels = useIsMutating({
+    mutationKey: DESCRIBE_CANCEL_MUTATION_KEY,
+    predicate: (mutation) => mutation.state.variables === describeRunId,
+  });
   const cancelMutation = useMutation({
-    mutationFn: cancelBulkDescribeRun,
+    mutationKey: DESCRIBE_CANCEL_MUTATION_KEY,
+    mutationFn: (runId: string) => cancelBulkDescribeRun(runId),
+    onSuccess: async (response, runId) => {
+      // A cancel acknowledgement can still be nonterminal. Feed authoritative
+      // evidence to the same poller; only terminal evidence releases the run.
+      if (response.run_id === runId) {
+        // setQueryData alone cannot stop an older poll from replacing this
+        // acknowledgement (including terminal evidence) when it completes.
+        await queryClient.cancelQueries({ queryKey: ['bulkDescribeRun', runId], exact: true });
+        queryClient.setQueryData(['bulkDescribeRun', runId], response);
+      }
+    },
+    onSettled: () => {
+      cancelInFlightRef.current = false;
+    },
   });
   const resubmitInFlightRef = useRef(false);
   const hookLocalResubmitActionsRef = useRef<Map<string, HookLocalWarmupResubmitAction>>(
@@ -489,18 +513,14 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
   const lastTerminalRef = useRef<ActivityStatus | null>(null);
 
   useEffect(() => {
-    if (pendingRunId === null || pendingRunId !== describeRunId) {
+    if (describeRunId === null || !pendingTerminalRuns().some(({ id }) => id === describeRunId)) {
       return;
     }
     if (describeProgress.isTerminal && describeProgress.status !== null) {
-      settleRun(pendingRunId, mapDescribeStatusToSettleOutcome(describeProgress.status));
+      settleRun(describeRunId, mapDescribeStatusToSettleOutcome(describeProgress.status));
       return;
     }
-    if (describeProgress.isError) {
-      settleRun(pendingRunId, DESCRIBE_RUN_SETTLE_OUTCOME.UNRESOLVED);
-    }
   }, [
-    describeProgress.isError,
     describeProgress.isTerminal,
     describeProgress.status,
     describeRunId,
@@ -540,7 +560,7 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
       ? lastTerminalRef.current
       : resolved;
 
-  const isCancelling = scan?.isCancelling === true || cancelMutation.isPending;
+  const isCancelling = scan?.isCancelling === true || cancelMutation.isPending || pendingCancels > 0;
 
   const actions = useMemo<ActivityStatusActions>(() => {
     const canCancel = status.canCancel && !isCancelling;
@@ -551,6 +571,18 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
             return;
           }
           if (status.runId !== null) {
+            // The same run can move from the main strip to a recovery panel
+            // while cancellation is pending. Share the guard across consumers.
+            if (
+              cancelInFlightRef.current ||
+              queryClient.isMutating({
+                mutationKey: DESCRIBE_CANCEL_MUTATION_KEY,
+                predicate: (mutation) => mutation.state.variables === status.runId,
+              }) > 0
+            ) {
+              return;
+            }
+            cancelInFlightRef.current = true;
             cancelMutation.mutate(status.runId);
           }
         }
@@ -596,7 +628,9 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
         };
       }
       return () => {
-        describeProgress.retry();
+        if (!isCoolingDown()) {
+          describeProgress.retry();
+        }
       };
     })();
     return {
@@ -611,7 +645,7 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
           ? toWorkbench()
           : null,
     };
-  }, [cancelMutation, describeProgress, gpu, isCancelling, resubmitMutation, scan, status]);
+  }, [cancelMutation, describeProgress, gpu, isCancelling, queryClient, resubmitMutation, scan, status]);
 
   return { status, actions, isCancelling };
 };

@@ -463,6 +463,33 @@ describe('resolveActivityStatus', () => {
     expect(status.retryable).toBe(true);
   });
 
+  it.each(['first read', 'later poll'] as const)(
+    'retains Cancel and Retry for an accepted unresolved run after a failed %s',
+    (failureAt) => {
+      const status = resolveActivityStatus({
+        scan: idleScan(),
+        describe: {
+          runId: 'run-accepted',
+          progress: describeProgress(
+            {
+              ...(failureAt === 'first read' ? { run: null } : {}),
+              isError: true,
+              isPolling: false,
+              error: new Error('run status unavailable'),
+            },
+            { run_id: 'run-accepted' },
+          ),
+        },
+        gpu: gpuInput({ isRunPending: true }),
+      });
+
+      expect(status.runId).toBe('run-accepted');
+      expect(status.reason).toBe(ACTIVITY_REASON.DESCRIBE_POLL_ERROR);
+      expect(status.retryable).toBe(true);
+      expect(status.canCancel).toBe(true);
+    },
+  );
+
   it('keeps idle GPU warming presentation without a live run', () => {
     const status = resolveActivityStatus({
       scan: idleScan(),
@@ -471,6 +498,36 @@ describe('resolveActivityStatus', () => {
     });
     expect(status.kind).toBe(ACTIVITY_KIND.WARMING);
     expect(status.canCancel).toBe(false);
+  });
+
+  it.each([
+    { runId: null, run: null },
+    { runId: 'run-1', run: describeRun({ cancel_requested: true }) },
+  ])('does not offer poll-error Cancel without an eligible accepted run: %j', ({ runId, run }) => {
+    const status = resolveActivityStatus({
+      scan: idleScan(),
+      describe: { runId, progress: describeProgress({ run, isError: true }) },
+      gpu: gpuInput(),
+    });
+    expect(status.canCancel).toBe(false);
+  });
+
+  it('prefers authoritative terminal evidence over a subsequent poll failure', () => {
+    const status = resolveActivityStatus({
+      scan: idleScan(),
+      describe: {
+        runId: 'run-1',
+        progress: describeProgress({ isError: true }, {
+          status: DESCRIBE_RUN_STATUS.COMPLETED,
+          phase: DESCRIBE_RUN_PHASE.COMPLETE,
+          completed: 4,
+        }),
+      },
+      gpu: gpuInput(),
+    });
+    expect(status.kind).toBe(ACTIVITY_KIND.DONE);
+    expect(status.canCancel).toBe(false);
+    expect(status.retryable).toBe(false);
   });
 
   it('maps idle GPU status errors to failed with retry', () => {
@@ -620,6 +677,123 @@ describe('useActivityStatus', () => {
     expect(result.current.status.kind).toBe(ACTIVITY_KIND.DONE);
     expect(result.current.status.draftCount).toBe(4);
     expect(result.current.actions.reviewDraftsHref).toContain('run-settle');
+  });
+
+  it('keeps a resumed unresolved identity after a failed first read, and retries that identity', async () => {
+    putDescribeOperationContext({
+      version: DESCRIBE_OPERATION_CONTEXT_VERSION,
+      kind: DESCRIBE_OPERATION_KIND.RUN,
+      id: 'run-resume', startup_id: null, started_at: Date.now(),
+      request: { writeAlt: false, force: false },
+      status: DESCRIBE_RUN_RESUME_STATUS.NEEDS_TERMINAL_CHECK,
+    });
+    fetchBulkDescribeRunMock.mockRejectedValue(new Error('lost status'));
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
+    await waitFor(() => expect(result.current.status.reason).toBe(ACTIVITY_REASON.DESCRIBE_POLL_ERROR));
+    expect(pendingTerminalRuns().map(({ id }) => id)).toEqual(['run-resume']);
+    expect(result.current.actions.onCancel).not.toBeNull();
+    expect(result.current.actions.onRetry).not.toBeNull();
+    fetchBulkDescribeRunMock.mockResolvedValue(describeRun({
+      run_id: 'run-resume', status: DESCRIBE_RUN_STATUS.COMPLETED,
+      phase: DESCRIBE_RUN_PHASE.COMPLETE, completed: 4,
+    }));
+    act(() => result.current.actions.onRetry?.());
+    await waitFor(() => expect(getLastSettledRun()?.outcome).toBe(DESCRIBE_RUN_SETTLE_OUTCOME.COMPLETED));
+    expect(fetchBulkDescribeRunMock.mock.calls.every(([id]) => id === 'run-resume')).toBe(true);
+    expect(pendingTerminalRuns()).toEqual([]);
+  });
+
+  it('sends only one recovery Cancel in flight and permits another attempt after rejection', async () => {
+    putDescribeOperationContext({
+      version: DESCRIBE_OPERATION_CONTEXT_VERSION,
+      kind: DESCRIBE_OPERATION_KIND.RUN,
+      id: 'run-1', startup_id: null, started_at: Date.now(),
+      request: { writeAlt: false, force: false },
+    });
+    fetchBulkDescribeRunMock.mockRejectedValue(new Error('lost status'));
+    let rejectCancel!: (error: Error) => void;
+    const cancel = vi.mocked(describeApi.cancelBulkDescribeRun);
+    cancel.mockReturnValue(new Promise((_resolve, reject) => { rejectCancel = reject; }));
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
+    await waitFor(() => expect(result.current.status.reason).toBe(ACTIVITY_REASON.DESCRIBE_POLL_ERROR));
+    expect(result.current.actions.onCancel).not.toBeNull();
+    const onCancel = result.current.actions.onCancel!;
+    act(() => { onCancel(); onCancel(); });
+    await waitFor(() => expect(cancel).toHaveBeenCalledExactlyOnceWith('run-1'));
+    expect(result.current.isCancelling).toBe(true);
+    expect(result.current.actions.onCancel).toBeNull();
+    expect(getDescribeRunContext()?.id).toBe('run-1');
+    act(() => rejectCancel(new Error('cancel request lost')));
+    await waitFor(() => expect(result.current.actions.onCancel).not.toBeNull());
+    cancel.mockResolvedValue(describeRun({ cancel_requested: true }));
+    act(() => result.current.actions.onCancel?.());
+    await waitFor(() => expect(cancel).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(result.current.isCancelling).toBe(false));
+    expect(getDescribeRunContext()?.id).toBe('run-1');
+    expect(result.current.actions.onCancel).toBeNull();
+  });
+
+  it('shares the one-Cancel-in-flight guard across consumers of a recovered run', async () => {
+    putDescribeOperationContext({
+      version: DESCRIBE_OPERATION_CONTEXT_VERSION,
+      kind: DESCRIBE_OPERATION_KIND.RUN,
+      id: 'run-1', startup_id: null, started_at: Date.now(),
+      request: { writeAlt: false, force: false },
+    });
+    const cancel = vi.mocked(describeApi.cancelBulkDescribeRun);
+    let rejectCancel!: (error: Error) => void;
+    cancel.mockReturnValue(new Promise((_resolve, reject) => { rejectCancel = reject; }));
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => ({
+      strip: useActivityStatus(),
+      recovery: useActivityStatus({ describeRunId: 'run-1' }),
+    }), { wrapper: createQueryWrapper(queryClient) });
+    await waitFor(() => expect(result.current.recovery.actions.onCancel).not.toBeNull());
+    act(() => {
+      result.current.strip.actions.onCancel?.();
+      result.current.recovery.actions.onCancel?.();
+    });
+    await waitFor(() => expect(cancel).toHaveBeenCalledExactlyOnceWith('run-1'));
+    await waitFor(() => expect(result.current.recovery.isCancelling).toBe(true));
+    expect(result.current.strip.actions.onCancel).toBeNull();
+    expect(result.current.recovery.actions.onCancel).toBeNull();
+    act(() => rejectCancel(new Error('cancel request lost')));
+    await waitFor(() => expect(result.current.recovery.actions.onCancel).not.toBeNull());
+  });
+
+  it.each([false, true])('does not let an older in-flight poll overwrite Cancel evidence (terminal: %s)', async (terminal) => {
+    putDescribeOperationContext({
+      version: DESCRIBE_OPERATION_CONTEXT_VERSION,
+      kind: DESCRIBE_OPERATION_KIND.RUN,
+      id: 'run-1', startup_id: null, started_at: Date.now(),
+      request: { writeAlt: false, force: false },
+    });
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
+    await waitFor(() => expect(result.current.actions.onCancel).not.toBeNull());
+    let resolvePoll!: (response: DescribeRunResponse) => void;
+    fetchBulkDescribeRunMock.mockReturnValue(new Promise((resolve) => { resolvePoll = resolve; }));
+    let pendingPoll!: Promise<void>;
+    act(() => {
+      pendingPoll = queryClient.refetchQueries({ queryKey: ['bulkDescribeRun', 'run-1'], exact: true });
+    });
+    await waitFor(() => expect(fetchBulkDescribeRunMock).toHaveBeenCalledTimes(2));
+    const acknowledgement = describeRun({
+      cancel_requested: true,
+      ...(terminal ? { status: DESCRIBE_RUN_STATUS.CANCELLED, phase: DESCRIBE_RUN_PHASE.CANCELLED } : {}),
+    });
+    vi.mocked(describeApi.cancelBulkDescribeRun).mockResolvedValue(acknowledgement);
+    act(() => result.current.actions.onCancel?.());
+    await waitFor(() => expect(result.current.isCancelling).toBe(false));
+    await waitFor(() => expect(queryClient.getQueryData(['bulkDescribeRun', 'run-1'])).toEqual(acknowledgement));
+    await act(async () => {
+      resolvePoll(describeRun({ cancel_requested: false }));
+      await pendingPoll;
+    });
+    expect(queryClient.getQueryData(['bulkDescribeRun', 'run-1'])).toEqual(acknowledgement);
+    expect(result.current.actions.onCancel).toBeNull();
   });
 
   it('resubmits unfinished items on GPU warmup-timeout Retry and persists the new run', async () => {

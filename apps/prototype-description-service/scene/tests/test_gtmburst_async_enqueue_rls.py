@@ -197,11 +197,25 @@ async def test_production_auth_telemetry_preserves_committed_worker_and_tenant_i
             assert await session.scalar(select(DescribeRunItem).where(DescribeRunItem.run_id == job_id)) is None
 
         app.outcome = "healthy"
-        own = await asyncio.wait_for(client.get(f"/scene/describe/jobs/{job_id}"), 5)
+        own = await asyncio.wait_for(
+            client.get(
+                f"/scene/describe/jobs/{job_id}",
+                headers={"Authorization": "Bearer scheduler-test-key", "X-Tenant-ID": str(app.tenant)},
+            ),
+            5,
+        )
         assert own.status_code == 200, own.text
         assert own.json()["status"] == "failed"
+        # The lookup seam binds the key to app.tenant; authenticate the foreign
+        # request too so its 404 proves tenant isolation after real auth.
         app.tenant = uuid.UUID(int=987)
-        other = await asyncio.wait_for(client.get(f"/scene/describe/jobs/{job_id}"), 5)
+        other = await asyncio.wait_for(
+            client.get(
+                f"/scene/describe/jobs/{job_id}",
+                headers={"Authorization": "Bearer scheduler-test-key", "X-Tenant-ID": str(app.tenant)},
+            ),
+            5,
+        )
         assert other.status_code == 404, other.text
         app.tenant = TENANT
         retry = await asyncio.wait_for(app.submit(client), 5)

@@ -22,6 +22,11 @@
 # $HOME/.local/state/remote-gate/<unique-run>/, outside checkout/git clean.
 # Terminal evidence includes reason, immutable SHA, last stage/target, elapsed
 # and budget even when the worker dies or the SSH reader disconnects.
+# Output uses the durable worker log as a spool, retaining partial writes and
+# retrying backpressure for up to 2s after cleanup. A persistently blocked or
+# disconnected reader can recover the complete output from those artifacts.
+# Unexpected supervisor monitoring failures fail closed with status 79 and
+# still attempt bounded owned-tree cleanup and terminal attribution.
 # Those numeric codes are the SCRIPT's exit status; `make check-remote` collapses
 # every failure to make's own exit 2, so read the code off the trailing
 # `make: *** [check-remote] Error <n>` line or invoke this script directly.
@@ -279,6 +284,7 @@ run)
 import ctypes
 import os
 from pathlib import Path
+import select
 import signal
 import subprocess
 import sys
@@ -321,28 +327,56 @@ signal.signal(signal.SIGPIPE, signal.SIG_IGN)
 # A disconnected or backpressured SSH reader must not block deadline cleanup.
 os.set_blocking(sys.stdout.fileno(), False)
 
-def emit(data):
+pending = b''
+output_closed = False
+
+def emit():
+    global pending, output_closed
+    if output_closed or not pending:
+        return
     try:
-        os.write(sys.stdout.fileno(), data)
-    except (BrokenPipeError, BlockingIOError):
+        written = os.write(sys.stdout.fileno(), pending)
+        pending = pending[written:]
+    except BlockingIOError:
         pass
+    except BrokenPipeError:
+        output_closed = True
 
 def finish(reason, rc, stage, target):
     terminal = (f'remote-gate: TERMINAL reason={reason} sha={sha} stage={stage} '
                 f'target={target} elapsed={time.monotonic() - started:.3f} '
                 f'budget={budget} exit={rc} artifacts={run_dir}\n')
     (run_dir / 'terminal.log').write_text(terminal)
-    emit(terminal.encode())
+    worker_log.write(terminal.encode())
+    # The file is the queue; memory holds at most one unwritten chunk. Drain a
+    # finite snapshot after cleanup, so output never postpones termination.
+    end = os.fstat(reader.fileno()).st_size
+    drain_end = time.monotonic() + 2
+    while (pending or reader.tell() < end) and not output_closed:
+        if time.monotonic() >= drain_end:
+            break
+        forward(end)
+        if pending:
+            select.select([], [sys.stdout.fileno()], [], min(.01, max(0, drain_end - time.monotonic())))
     sys.exit(rc)
 
-def forward():
+def forward(end=None):
+    global pending
     # Cap each drain so a noisy worker cannot starve the monotonic deadline.
-    data = reader.read(65536)
-    if data:
-        emit(data)
-    return bool(data)
+    if output_closed:
+        return
+    if not pending:
+        size = 65536 if end is None else min(65536, end - reader.tell())
+        pending = reader.read(size)
+    emit()
 
 owned = {}
+monitor_failed = False
+
+def process_stat(pid):
+    # comm is an arbitrary byte string, including non-UTF-8 and ')' bytes.
+    fields = Path(f'/proc/{pid}/stat').read_bytes().rsplit(b')', 1)[1].split()
+    return int(fields[1]), fields[19], fields[0]
 
 def processes():
     result = {}
@@ -351,14 +385,55 @@ def processes():
             if not entry.name.isdigit():
                 continue
             try:
-                fields = (entry / 'stat').read_text().rsplit(')', 1)[1].split()
-                result[int(entry.name)] = (int(fields[1]), fields[19], fields[0])
+                result[int(entry.name)] = process_stat(int(entry.name))
             except (FileNotFoundError, ProcessLookupError, PermissionError):
                 pass
     return result
 
+def owned_processes():
+    # If the global monitor fails, use the kernel's per-thread child lists.
+    # This independent cleanup path needs no scan of unrelated processes.
+    result = {}
+    queue = [os.getpid()]
+    for pid, birth in owned.items():
+        try:
+            record = process_stat(pid)
+            if record[1] == birth:
+                result[pid] = record
+                queue.append(pid)
+        except (OSError, ValueError, IndexError):
+            pass
+    visited = set()
+    while queue:
+        parent = queue.pop()
+        if parent in visited:
+            continue
+        visited.add(parent)
+        try:
+            with os.scandir(f'/proc/{parent}/task') as tasks:
+                for task in tasks:
+                    try:
+                        children = Path(task.path, 'children').read_bytes().split()
+                        for child in children:
+                            pid = int(child)
+                            result[pid] = process_stat(pid)
+                            queue.append(pid)
+                    except (OSError, ValueError, IndexError):
+                        pass
+        except OSError:
+            pass
+    return result
+
 def descendants():
-    table = processes()
+    global monitor_failed, reason, rc
+    try:
+        table = owned_processes() if monitor_failed else processes()
+    except Exception as exc:
+        # Monitoring may fail after the worker exits, during TERM/KILL too.
+        monitor_failed = True
+        reason, rc = 'supervisor-error', 79
+        worker_log.write(f'remote-gate: monitor failed: {exc!r}\n'.encode())
+        table = owned_processes()
     parents = {os.getpid()}
     while True:
         children = {pid for pid, (ppid, birth, status) in table.items() if ppid in parents}
@@ -368,7 +443,7 @@ def descendants():
     for pid in parents - {os.getpid()}:
         owned[pid] = table[pid][1]
     return {pid for pid, birth in owned.items()
-            if pid in table and table[pid][1] == birth and table[pid][2] != 'Z'}
+            if pid in table and table[pid][1] == birth and table[pid][2] != b'Z'}
 
 def reap():
     # poll first so waitpid does not steal Popen's own exit status.
@@ -381,31 +456,41 @@ def reap():
         except ChildProcessError:
             break
 
+def scope_units():
+    manifest = Path(str(state) + '.scopes')
+    if not remote or not manifest.exists():
+        return []
+    return [name for name in manifest.read_text().splitlines()
+            if name.startswith(unit + '-') and name.endswith('.scope')]
+
 def scope_signal(sig):
-    if remote and Path(str(state) + '.scope-attempt').exists():
-        for suffix in ('probe', 'worker'):
-            try:
-                subprocess.run(
-                    ['systemctl', '--user', 'kill', '--kill-whom=all',
-                     '--signal=' + sig, unit + '-' + suffix + '.scope'],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1,
-                )
-            except (OSError, subprocess.TimeoutExpired):
-                pass
+    units = scope_units()
+    if units:
+        try:
+            subprocess.run(
+                ['systemctl', '--user', 'kill', '--kill-whom=all',
+                 '--signal=' + sig, *units],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
 
 def scopes_live():
-    if not remote or not Path(str(state) + '.scopes').exists():
+    if not Path(str(state) + '.scopes-monitor').exists():
+        return False
+    units = scope_units()
+    if not units:
         return False
     try:
         result = subprocess.run(
             ['systemctl', '--user', 'show', '--property=ActiveState', '--value',
-             unit + '-probe.scope', unit + '-worker.scope'],
+             *units],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=1,
         )
         states = result.stdout.decode().split()
         # Failure/unknown state is not proof of cleanup. A scope that never
-        # existed (or was collected) is inactive; both owned units must settle.
-        return result.returncode != 0 or len(states) != 2 or any(
+        # existed (or was collected) is inactive; every owned unit must settle.
+        return result.returncode != 0 or len(states) != len(units) or any(
             value not in ('inactive', 'failed') for value in states)
     except (OSError, subprocess.TimeoutExpired):
         return True
@@ -439,27 +524,39 @@ try:
 except OSError as exc:
     failure = ('remote-gate: worker start failed: ' + str(exc) + '\n').encode()
     worker_log.write(failure)
-    emit(failure)
     finish('worker-start-failed', 78, initial_stage, '-')
 reason = 'completed'
 rc = 0
-while True:
-    descendants()
-    forward()
-    result = proc.poll()
-    if cancelled:
-        reason, rc = 'remote-cancelled' if remote else 'transport-cancelled', 128 + cancelled[0]
-        break
-    if time.monotonic() - started >= budget:
-        reason, rc = 'remote-deadline' if remote else 'transport-deadline', 124 if remote else 76
-        break
-    if result is not None:
-        rc = result if result >= 0 else 128 - result
-        break
-    time.sleep(.05)
+try:
+    while True:
+        descendants()
+        if monitor_failed:
+            break
+        forward()
+        result = proc.poll()
+        if cancelled:
+            reason, rc = 'remote-cancelled' if remote else 'transport-cancelled', 128 + cancelled[0]
+            break
+        if time.monotonic() - started >= budget:
+            reason, rc = 'remote-deadline' if remote else 'transport-deadline', 124 if remote else 76
+            break
+        if result is not None:
+            rc = result if result >= 0 else 128 - result
+            break
+        time.sleep(.05)
+except Exception as exc:
+    monitor_failed = True
+    reason, rc = 'supervisor-error', 79
+    worker_log.write(f'remote-gate: monitor failed: {exc!r}\n'.encode())
 # Capture stage before cleanup can interrupt an atomic worker stage update.
-last_stage = state.read_text().strip() or initial_stage + ' -'
-stage, target = last_stage.split(maxsplit=1)
+stage, target = initial_stage, '-'
+try:
+    last_stage = state.read_text().strip() or initial_stage + ' -'
+    stage, target = last_stage.split(maxsplit=1)
+except (OSError, ValueError) as exc:
+    monitor_failed = True
+    reason, rc = 'supervisor-error', 79
+    worker_log.write(f'remote-gate: stage read failed: {exc!r}\n'.encode())
 scope_signal('TERM')
 signal_tree(signal.SIGTERM)
 term_end = time.monotonic() + grace
@@ -480,16 +577,6 @@ while True:
         reason, rc = reason + '-cleanup-incomplete', 79
         break
     time.sleep(.05)
-# The worker writes a regular file, so detached children cannot hold a pipe
-# open and hang this final drain. A finite snapshot also bounds noisy output.
-remaining = os.fstat(reader.fileno()).st_size - reader.tell()
-drain_end = time.monotonic() + 2
-while remaining > 0 and time.monotonic() < drain_end:
-    data = reader.read(min(remaining, 65536))
-    if not data:
-        break
-    emit(data)
-    remaining -= len(data)
 finish(reason, rc, stage, target)
 PY
 )"
@@ -564,12 +651,22 @@ PY
         stage runner-probe
         runner='nice -n ${NICENESS} ionice -c3'
         if command -v systemd-run >/dev/null && command -v systemctl >/dev/null; then
-            touch \"\$RG_STATE.scope-attempt\" \"\$RG_STATE.scopes\"
+            printf '%s\\n' \"\$RG_UNIT_BASE-probe.scope\" > \"\$RG_STATE.scopes\"
+            touch \"\$RG_STATE.scopes-monitor\"
         fi
         if [ -f \"\$RG_STATE.scopes\" ] && systemd-run --quiet --user --scope --collect --unit \"\$RG_UNIT_BASE-probe\" -p MemoryMax=${RUN_MEMORY_MAX} -p RuntimeMaxSec=${RUN_BUDGET}s -p TimeoutStopSec=${TERM_GRACE}s true 2>/dev/null; then
-            runner=\"systemd-run --quiet --user --scope --collect --unit \$RG_UNIT_BASE-worker -p MemoryMax=${RUN_MEMORY_MAX} -p CPUQuota=${RUN_CPU_QUOTA} -p RuntimeMaxSec=${RUN_BUDGET}s -p TimeoutStopSec=${TERM_GRACE}s nice -n ${NICENESS} ionice -c3\"
+            scope_index=0
+            run_scoped() {
+                scope_index=\$((scope_index + 1))
+                scope_name=\"\$RG_UNIT_BASE-worker-\$scope_index\"
+                # Register before launch: cancellation must also clean up a
+                # scope whose systemd-run client has not returned yet.
+                printf '%s\\n' \"\$scope_name.scope\" >> \"\$RG_STATE.scopes\"
+                systemd-run --quiet --user --scope --collect --unit \"\$scope_name\" -p MemoryMax=${RUN_MEMORY_MAX} -p CPUQuota=${RUN_CPU_QUOTA} -p RuntimeMaxSec=${RUN_BUDGET}s -p TimeoutStopSec=${TERM_GRACE}s nice -n ${NICENESS} ionice -c3 \"\$@\"
+            }
+            runner=run_scoped
         else
-            rm -f \"\$RG_STATE.scopes\"
+            rm -f \"\$RG_STATE.scopes-monitor\"
             echo 'remote-gate: systemd-run scope unavailable — falling back to nice/ionice only' >&2
         fi
         # Fail-closed repo preflight (GATE-BR-01). A workdir may declare a

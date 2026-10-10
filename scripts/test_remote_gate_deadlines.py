@@ -125,11 +125,15 @@ fi
 echo "make:$1" >> "$EVENTS"
 if [ "$1" = gate-preflight ]; then
     [ "$BLOCK" != preflight ] || exec "$BLOCKER"
+    if [ "${LINGER_SCOPE:-no}" = yes ]; then "$BLOCKER" >/dev/null 2>&1 & sleep .1; fi
     sleep "${PREFLIGHT_DELAY:-0}"
     exit "${PREFLIGHT_RC:-0}"
 fi
 if [ "$1" = first ]; then
     [ "$BLOCK" != import ] || exec "$BLOCKER"
+    if [ "${BURST_OUTPUT:-no}" = yes ]; then
+        python3 -c "import sys; sys.stdout.write('output-burst\\n' * 450000)"
+    fi
     exit "${TARGET_RC:-0}"
 fi
 exit 0
@@ -155,7 +159,9 @@ exec "$@"
         tools / "systemctl",
         """#!/bin/bash
 echo "systemctl:$*" >> "$EVENTS"
-if [ "$2" = show ]; then printf 'inactive\\ninactive\\n'; fi
+if [ "$2" = show ]; then
+    for arg in "$@"; do case "$arg" in *.scope) echo inactive ;; esac; done
+fi
 """,
     )
     env = os.environ.copy()
@@ -179,7 +185,7 @@ if [ "$2" = show ]; then printf 'inactive\\ninactive\\n'; fi
         SYSTEMD="no",
     )
 
-    def run(external_bound=12, **updates):
+    def run(external_bound=12, reader_pause=0, **updates):
         proc = subprocess.Popen(
             ["bash", str(SCRIPT), "run", "first", "later"],
             cwd=repo,
@@ -190,6 +196,8 @@ if [ "$2" = show ]; then printf 'inactive\\ninactive\\n'; fi
             start_new_session=True,
         )
         try:
+            if reader_pause:
+                time.sleep(reader_pause)
             output, _ = proc.communicate(timeout=external_bound)
         except subprocess.TimeoutExpired:
             # This external watchdog bounds the deliberately red regression.
@@ -395,6 +403,9 @@ while args:
     elif args[0].startswith('--'): args = args[1:]
     else: break
 assert unit and unit.startswith('remote-gate-')
+if (root / (unit + '.pid')).exists():
+    print('unit already loaded', file=sys.stderr)
+    sys.exit(1)
 key = uuid.uuid4().hex
 request = root / (key + '.tmp')
 request.write_text(json.dumps(dict(argv=args, env=dict(os.environ), cwd=os.getcwd(), unit=unit)))
@@ -426,8 +437,8 @@ for unit in units:
             for entry in Path('/proc').iterdir():
                 if entry.name.isdigit():
                     try:
-                        fields = (entry / 'stat').read_text().rsplit(')', 1)[1].split()
-                        if int(fields[2]) == pid and fields[0] != 'Z': live = True
+                        fields = (entry / 'stat').read_bytes().rsplit(b')', 1)[1].split()
+                        if int(fields[2]) == pid and fields[0] != b'Z': live = True
                     except FileNotFoundError: pass
         print('active' if live else 'inactive')
     elif pid and os.environ.get('SCOPE_KILL_FAILURE') != 'yes':
@@ -560,3 +571,146 @@ def test_unrelated_process_tree_is_untouched(gate, tmp_path):
     finally:
         os.killpg(proc.pid, signal.SIGKILL)
         proc.wait(timeout=3)
+
+
+def supervisor_source():
+    return SCRIPT.read_text().split("supervisor=\"$(cat <<'PY'\n", 1)[1].split("\nPY\n)", 1)[0]
+
+
+def run_supervisor(gate, prelude="", worker=None, paused_until_exit=False):
+    """Inject OS faults into the actual supervisor, with an external watchdog."""
+    _, _, _, _, _, sha, _, env = gate
+    proc = subprocess.Popen(
+        [sys.executable, "-c", prelude + supervisor_source(), "remote", "1", "1",
+         sha, "sync", *(worker or [env["BLOCKER"]])],
+        env=env | {"HOME": env["REMOTE_HOME"]},
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True,
+    )
+    try:
+        if paused_until_exit:
+            proc.wait(timeout=8)
+        output, _ = proc.communicate(timeout=8)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        output, _ = proc.communicate(timeout=3)
+        pytest.fail(f"supervisor external watchdog\n{output!r}")
+    return proc.returncode, output.decode()
+
+
+def test_partial_writes_and_temporary_backpressure_retain_output(gate):
+    prelude = """import os
+original_write = os.write
+write_calls = 0
+def partial_write(fd, data):
+    global write_calls
+    write_calls += 1
+    if write_calls % 3 == 0:
+        raise BlockingIOError('temporary backpressure')
+    return original_write(fd, data[:97])
+os.write = partial_write
+"""
+    rc, output = run_supervisor(
+        gate, prelude, [sys.executable, "-c", "print('output-burst\\n' * 500, end=''); print('DONE-ALL')"],
+    )
+    assert rc == 0, output
+    assert output.count("output-burst\n") == 500
+    assert "DONE-ALL\n" in output
+    assert "TERMINAL reason=completed" in output
+
+
+def test_paused_connected_reader_receives_complete_output(gate):
+    run, _, home, _, _, _, *_ = gate
+    rc, output = run(BLOCK="none", BURST_OUTPUT="yes", reader_pause=1.5,
+                     WORKBAY_REMOTE_GATE_BUDGET_SECONDS="10")
+    assert rc == 0, output[-2000:]
+    assert output.count("output-burst\n") == 450000
+    assert "EXIT=0 (first)" in output
+    assert "EXIT=0 (later)" in output
+    assert "DONE-ALL\n" in output
+    worker_log = next((home / ".local/state/remote-gate").glob("*/worker.log"))
+    assert worker_log.read_text().count("output-burst\n") == 450000
+
+
+def test_persistently_backpressured_reader_cannot_block_cleanup(gate):
+    _, _, home, _, pids, _, _, env = gate
+    code = ("import os, sys; sys.stdout.write('output-burst\\n' * 450000); "
+            f"sys.stdout.flush(); os.execv({env['BLOCKER']!r}, [{env['BLOCKER']!r}])")
+    started = time.monotonic()
+    rc, output = run_supervisor(gate, worker=[sys.executable, "-c", code], paused_until_exit=True)
+    assert rc == 124, output
+    assert time.monotonic() - started < 7
+    assert not any(alive(int(pid)) for pid in pids.read_text().splitlines())
+    terminal = next((home / ".local/state/remote-gate").glob("*/terminal.log"))
+    assert "reason=remote-deadline" in terminal.read_text()
+    spool = terminal.with_name("worker.log").read_text()
+    assert spool.count("output-burst\n") == 450000
+    assert terminal.read_text() in spool
+
+
+def test_non_utf8_unrelated_process_does_not_break_monitoring(gate):
+    run, _, home, _, pids, _, *_ = gate
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import ctypes, time; ctypes.CDLL(None).prctl(15, b'bad-\\xff', 0, 0, 0); print('ready', flush=True); time.sleep(15)"],
+        stdout=subprocess.PIPE, start_new_session=True,
+    )
+    try:
+        import select
+
+        assert select.select([proc.stdout], [], [], 3)[0]
+        assert proc.stdout.readline() == b"ready\n"
+        rc, output = run()
+        assert rc == 124, output
+        assert proc.poll() is None
+        assert not any(alive(int(pid)) for pid in pids.read_text().splitlines())
+        terminal = next((home / ".local/state/remote-gate").glob("*/terminal.log"))
+        assert "reason=remote-deadline" in terminal.read_text()
+    finally:
+        proc.kill()
+        proc.wait(timeout=3)
+        proc.stdout.close()
+
+
+@pytest.mark.parametrize("phase", ["running", "cleanup"])
+def test_unexpected_monitor_failure_still_cleans_up_and_records_terminal(gate, phase):
+    prelude = """import os
+from pathlib import Path
+original_iterdir = Path.iterdir
+def broken_scan(path):
+    fail = Path(os.environ['PIDS']).exists() if os.environ['FAIL_PHASE'] == 'running' else globals().get('reason') == 'remote-deadline'
+    if str(path) == '/proc' and fail:
+        raise RuntimeError('injected persistent monitor failure')
+    return original_iterdir(path)
+Path.iterdir = broken_scan
+"""
+    _, _, home, _, pids, sha, _, env = gate
+    env['FAIL_PHASE'] = phase
+    rc, output = run_supervisor(gate, prelude)
+    assert rc == 79, output
+    assert "reason=supervisor-error" in output
+    assert f"sha={sha} stage=sync target=-" in output
+    assert not any(alive(int(pid)) for pid in pids.read_text().splitlines())
+    terminal = next((home / ".local/state/remote-gate").glob("*/terminal.log"))
+    assert "reason=supervisor-error" in terminal.read_text()
+    assert "injected persistent monitor failure" in terminal.with_name("worker.log").read_text()
+
+
+@pytest.mark.parametrize("linger", ["no", "yes"])
+def test_unique_scopes_survive_delayed_collection(gate, external_systemd, linger):
+    run, clone, _, events, pids, _, *_ = gate
+    rc, output = run(BLOCK="none", SYSTEMD="yes", LINGER_SCOPE=linger,
+                     WORKBAY_REMOTE_GATE_BUDGET_SECONDS="5")
+    assert rc == 0, output
+    assert "EXIT=0 (gate-preflight)" in output
+    assert "EXIT=0 (first)" in output
+    assert "EXIT=0 (later)" in output
+    units = [path.stem for path in external_systemd.glob("*.pid")]
+    assert len(units) == 4
+    trace = events.read_text()
+    for unit in units:
+        for sig in ("TERM", "KILL"):
+            assert any(f"--signal={sig} " in line and f"{unit}.scope" in line.split()
+                       for line in trace.splitlines())
+    if linger == "yes":
+        assert len(pids.read_text().splitlines()) == 2
+        assert not any(alive(int(pid)) for pid in pids.read_text().splitlines())
+    assert subprocess.run(["flock", "-n", str(clone / ".gate.lock"), "true"], timeout=3).returncode == 0

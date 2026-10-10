@@ -17,48 +17,59 @@ import { mediaEditUrl } from './Panels';
 import { mediaLibraryUrl } from '../../utils/adminUrls';
 import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
 
-/** Who may hold the row's polite region or commit lock. */
+/** Who may hold the row's polite region. */
 export type RowPoliteOwner = 'editor' | 'suggest';
+export type RowCommitOwner = RowPoliteOwner | 'queue';
 
 /**
- * Row commit-lock primitives [S2c-4b-ii BR-01]. Exported so a third simulated
- * claimant can exercise compare-and-set without driving the full UI — the defect
- * (unconditional begin) is unreachable through the two real surfaces that already
- * refuse when peerCommitPending is true.
+ * Row commit-lock primitives [S2c-4b-ii BR-01]. Shared by editor, Suggest, and
+ * queue correction controls. Exported to exercise competing synchronous claims
+ * and late owner releases independently of disabled-button paint.
  *
  * Claim result is decided on a ref so beginCommit can return synchronously.
  * React may defer useState updaters; a side-effect flag inside setState is not
  * a reliable "did I win?" signal. State still drives peerCommitPending paint.
  */
-export const useRowCommitLock = (): {
-  commitOwner: RowPoliteOwner | null;
-  beginCommit: (owner: RowPoliteOwner) => boolean;
-  endCommit: (owner: RowPoliteOwner) => void;
+const useTableCommitLocks = (): {
+  commitOwners: Map<number, RowCommitOwner>;
+  beginCommit: (mediaId: number, owner: RowCommitOwner) => boolean;
+  endCommit: (mediaId: number, owner: RowCommitOwner) => void;
 } => {
-  const [commitOwner, setCommitOwner] = useState<RowPoliteOwner | null>(null);
-  const commitOwnerRef = useRef<RowPoliteOwner | null>(null);
+  const [commitOwners, setCommitOwners] = useState(new Map<number, RowCommitOwner>());
+  const commitOwnersRef = useRef(new Map<number, RowCommitOwner>());
 
   // Compare-and-set: claim only when free. Returns whether this caller won.
   // Exclusivity lives here — not in each caller's peerCommitPending guard.
-  const beginCommit = useCallback((owner: RowPoliteOwner): boolean => {
-    if (commitOwnerRef.current !== null) {
+  const beginCommit = useCallback((mediaId: number, owner: RowCommitOwner): boolean => {
+    if (commitOwnersRef.current.has(mediaId)) {
       return false;
     }
-    commitOwnerRef.current = owner;
-    setCommitOwner(owner);
+    commitOwnersRef.current.set(mediaId, owner);
+    setCommitOwners(new Map(commitOwnersRef.current));
     return true;
   }, []);
 
   // Compare-and-clear: only the holding owner releases the lock.
-  const endCommit = useCallback((owner: RowPoliteOwner): void => {
-    if (commitOwnerRef.current !== owner) {
+  const endCommit = useCallback((mediaId: number, owner: RowCommitOwner): void => {
+    if (commitOwnersRef.current.get(mediaId) !== owner) {
       return;
     }
-    commitOwnerRef.current = null;
-    setCommitOwner(null);
+    commitOwnersRef.current.delete(mediaId);
+    setCommitOwners(new Map(commitOwnersRef.current));
   }, []);
 
-  return { commitOwner, beginCommit, endCommit };
+  return { commitOwners, beginCommit, endCommit };
+};
+
+export const useRowCommitLock = (): {
+  commitOwner: RowCommitOwner | null;
+  beginCommit: (owner: RowCommitOwner) => boolean;
+  endCommit: (owner: RowCommitOwner) => void;
+} => {
+  const { commitOwners, beginCommit, endCommit } = useTableCommitLocks();
+  const beginRowCommit = useCallback((owner: RowCommitOwner) => beginCommit(0, owner), [beginCommit]);
+  const endRowCommit = useCallback((owner: RowCommitOwner) => endCommit(0, owner), [endCommit]);
+  return { commitOwner: commitOwners.get(0) ?? null, beginCommit: beginRowCommit, endCommit: endRowCommit };
 };
 
 interface MediaSelectionTableBodyProps {
@@ -96,6 +107,9 @@ export const MediaSelectionTableBody = ({
   hasDraftFilter = false,
   onClearDraftFilters,
 }: MediaSelectionTableBodyProps): React.JSX.Element => {
+  // Queue ownership belongs to the mounted table, not a visible row. Filtering
+  // or removing and redisplaying a row must not admit a competing correction.
+  const { commitOwners, beginCommit, endCommit } = useTableCommitLocks();
   const mediaIds = useMemo(() => items.map((item) => item.id), [items]);
   const queryClient = useQueryClient();
   const {
@@ -118,10 +132,7 @@ export const MediaSelectionTableBody = ({
     }
     return items.filter((item) => draftsByMediaId[item.id] != null);
   }, [draftsByMediaId, draftsIsError, draftsLoading, filterByDrafts, items]);
-  const truncationHeading = __(
-    'Only recent drafts were checked. Older drafts may not be listed.',
-    'alt-context',
-  );
+  const truncationHeading = __('Only recent drafts were checked. Older drafts may not be listed.', 'alt-context');
   const draftTruncationNotice = (
     <tr>
       <td colSpan={4}>
@@ -276,6 +287,9 @@ export const MediaSelectionTableBody = ({
           identitiesLoading={identitiesLoading}
           onRetryIdentities={onRetryIdentities}
           draft={draftsByMediaId[item.id]}
+          queueCommitPending={commitOwners.get(item.id) === 'queue'}
+          beginQueueCommit={beginCommit}
+          endQueueCommit={endCommit}
         />
       ))}
     </>
@@ -292,6 +306,9 @@ interface MediaSelectionRowProps {
   identitiesLoading?: boolean;
   onRetryIdentities?: () => void;
   draft?: QueueDraft;
+  queueCommitPending: boolean;
+  beginQueueCommit: (mediaId: number, owner: RowCommitOwner) => boolean;
+  endQueueCommit: (mediaId: number, owner: RowCommitOwner) => void;
 }
 
 interface RowPoliteState {
@@ -309,6 +326,9 @@ const MediaSelectionRow = ({
   identitiesLoading,
   onRetryIdentities,
   draft,
+  queueCommitPending,
+  beginQueueCommit,
+  endQueueCommit,
 }: MediaSelectionRowProps): React.JSX.Element => {
   const thumbDimensions = item.thumbnailDimensions;
   const detailReady = [item.mimeType, item.updatedAt, item.dimensions].some((value) => value != null && value !== '');
@@ -319,10 +339,10 @@ const MediaSelectionRow = ({
   // per-row correctionErrors map [RLSE-05]).
   const [polite, setPolite] = useState<RowPoliteState>({ owner: null, message: '' });
 
-  // One correction in flight per row (S2c-4b-i / S2c-4b-ii). Owner-tagged like
-  // the polite region: begin is exclusive compare-and-set, end is
-  // compare-and-clear so a late sibling settle cannot clear another owner's lock.
-  const { commitOwner, beginCommit, endCommit } = useRowCommitLock();
+  // Keep the existing editor/Suggest lifecycle. Queue writes additionally own
+  // the table lock, released by their promise even if this row unmounts.
+  const { commitOwner: localCommitOwner, beginCommit, endCommit } = useRowCommitLock();
+  const commitOwner = queueCommitPending ? 'queue' : localCommitOwner;
 
   const announcePolite = useCallback((owner: RowPoliteOwner, message: string): void => {
     setPolite({ owner, message });
@@ -342,10 +362,30 @@ const MediaSelectionRow = ({
   const suggestAnnounce = useCallback((message: string): void => announcePolite('suggest', message), [announcePolite]);
   const suggestClear = useCallback((): void => clearPolite('suggest'), [clearPolite]);
   // beginCommit returns whether the claim won — surfaces must not write on false.
-  const editorCommitStart = useCallback((): boolean => beginCommit('editor'), [beginCommit]);
+  const editorCommitStart = useCallback(
+    (): boolean => !queueCommitPending && beginCommit('editor'),
+    [beginCommit, queueCommitPending],
+  );
   const editorCommitEnd = useCallback((): void => endCommit('editor'), [endCommit]);
-  const suggestCommitStart = useCallback((): boolean => beginCommit('suggest'), [beginCommit]);
+  const suggestCommitStart = useCallback(
+    (): boolean => !queueCommitPending && beginCommit('suggest'),
+    [beginCommit, queueCommitPending],
+  );
   const suggestCommitEnd = useCallback((): void => endCommit('suggest'), [endCommit]);
+  const queueCommitStart = useCallback((): boolean => {
+    if (!beginCommit('queue')) {
+      return false;
+    }
+    if (!beginQueueCommit(item.id, 'queue')) {
+      endCommit('queue');
+      return false;
+    }
+    return true;
+  }, [beginCommit, beginQueueCommit, endCommit, item.id]);
+  const queueCommitEnd = useCallback((): void => {
+    endCommit('queue');
+    endQueueCommit(item.id, 'queue');
+  }, [endCommit, endQueueCommit, item.id]);
 
   return (
     <tr>
@@ -357,10 +397,7 @@ const MediaSelectionRow = ({
         />
       </td>
       <td className="acx-media-selection__thumb-cell">
-        <a
-          href={mediaEditUrl(item.id)}
-          aria-label={sprintf(__('Edit %s', 'alt-context'), item.title)}
-        >
+        <a href={mediaEditUrl(item.id)} aria-label={sprintf(__('Edit %s', 'alt-context'), item.title)}>
           {item.thumbnailUrl ? (
             <img
               src={item.thumbnailUrl}
@@ -370,11 +407,7 @@ const MediaSelectionRow = ({
                 // Prefer real alt over a leftover decorative marker (same
                 // precedence as DescriptionCandidateService: has_alt_text wins).
                 // Empty alt only when decorative AND altText is null. [WBUX-5-R1-01][A11Y-02]
-                item.altText != null
-                  ? decodeHtmlEntities(item.altText)
-                  : item.isDecorative
-                    ? ''
-                    : item.title
+                item.altText != null ? decodeHtmlEntities(item.altText) : item.isDecorative ? '' : item.title
               }
               className="acx-media-selection__thumb acx-media-selection__thumb--thumb"
               loading={eagerLoad ? 'eager' : 'lazy'}
@@ -400,12 +433,7 @@ const MediaSelectionRow = ({
           stable position, empty while quiet. Editor and Suggest announce through
           props — no context provider for a two-consumer one-level hop.
         */}
-        <div
-          role="status"
-          aria-live="polite"
-          className="screen-reader-text"
-          data-testid="media-selection-row-status"
-        >
+        <div role="status" aria-live="polite" className="screen-reader-text" data-testid="media-selection-row-status">
           {polite.message}
         </div>
         <MediaAltInlineEditor
@@ -415,7 +443,7 @@ const MediaSelectionRow = ({
           isDecorative={item.isDecorative === true}
           onPoliteAnnounce={editorAnnounce}
           onPoliteClear={editorClear}
-          peerCommitPending={commitOwner === 'suggest'}
+          peerCommitPending={commitOwner !== null && commitOwner !== 'editor'}
           onCommitStart={editorCommitStart}
           onCommitEnd={editorCommitEnd}
         />
@@ -426,12 +454,22 @@ const MediaSelectionRow = ({
           isDecorative={item.isDecorative === true}
           onPoliteAnnounce={suggestAnnounce}
           onPoliteClear={suggestClear}
-          peerCommitPending={commitOwner === 'editor'}
+          peerCommitPending={commitOwner !== null && commitOwner !== 'suggest'}
           onCommitStart={suggestCommitStart}
           onCommitEnd={suggestCommitEnd}
         />
         {draft ? (
-          <QueueDraftCell mediaId={item.id} draftText={draft.draftText} title={item.title} />
+          <QueueDraftCell
+            mediaId={item.id}
+            draftText={draft.draftText}
+            title={item.title}
+            committedAlt={item.altText ?? null}
+            committedIsDecorative={item.isDecorative === true}
+            draftIdentity={JSON.stringify([draft.source, draft.runId])}
+            peerCommitPending={commitOwner !== null && commitOwner !== 'queue'}
+            onCommitStart={queueCommitStart}
+            onCommitEnd={queueCommitEnd}
+          />
         ) : null}
         {/* detail-meta is metadata loading, not an operator result — not a live region. */}
         <div className="acx-media-selection__detail-meta">
@@ -440,7 +478,11 @@ const MediaSelectionRow = ({
               {item.mimeType ? <span className="acx-media-selection__detail-chip">{item.mimeType}</span> : null}
               {item.dimensions ? (
                 <span className="acx-media-selection__detail-chip">
-                  {sprintf(__('%1$d × %2$d px', 'alt-context'), item.dimensions.width ?? 0, item.dimensions.height ?? 0)}
+                  {sprintf(
+                    __('%1$d × %2$d px', 'alt-context'),
+                    item.dimensions.width ?? 0,
+                    item.dimensions.height ?? 0,
+                  )}
                 </span>
               ) : null}
             </>

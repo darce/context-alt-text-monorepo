@@ -512,7 +512,7 @@ class DescribeRunRepository:
         non-terminal items are driven terminal-FAILED so their stored image
         bytes are reclaimed rather than stranded QUEUED under a FAILED run.
         """
-        run = await self.get_run(tenant_id=tenant_id, run_id=run_id)
+        run = await self._locked_run(tenant_id=tenant_id, run_id=run_id)
         if run is None:
             return False
         if DescribeRunStatus(run.status) in TERMINAL_RUN_STATUSES:
@@ -538,17 +538,17 @@ class DescribeRunRepository:
                 continue
         # The rollback above expires ORM state; re-fetch so the status check and
         # terminal write below never touch expired attributes in async context.
-        run = await self.get_run(tenant_id=tenant_id, run_id=run_id)
+        run = await self._locked_run(tenant_id=tenant_id, run_id=run_id)
         if run is None:
             return False
         # The per-item recompute may already have derived a terminal status. A
-        # fatal-path write preserves only CANCELLED (cancel wins, untouched);
-        # anything else -- including a derived COMPLETED_WITH_ERRORS -- becomes
-        # FAILED, because this path only runs when the worker died fatally.
+        # fatal-path write preserves CANCELLED and any durable stop request;
+        # otherwise even a derived COMPLETED_WITH_ERRORS becomes FAILED,
+        # because this path only runs when the worker died fatally.
         if DescribeRunStatus(run.status) is DescribeRunStatus.CANCELLED:
             return False
-        run.status = DescribeRunStatus.FAILED
-        run.phase = DescribeRunPhase.FAILED
+        run.status = DescribeRunStatus.CANCELLED if run.cancel_requested else DescribeRunStatus.FAILED
+        run.phase = phase_for_status(run.status)
         if run.completed_at is None:
             run.completed_at = now
         run.server_elapsed_ms = elapsed_ms(run.created_at, run.completed_at)
@@ -600,14 +600,19 @@ class DescribeRunRepository:
         return list(result.scalars().all())
 
     async def request_cancel(self, *, tenant_id: uuid.UUID, run_id: uuid.UUID) -> bool:
-        run = await self.get_run(tenant_id=tenant_id, run_id=run_id)
+        # Serialize with terminal derivation through commit, and refresh even
+        # when this session already has an expire_on_commit=False identity.
+        run = await self._locked_run(tenant_id=tenant_id, run_id=run_id)
         if run is None:
             return False
         run.cancel_requested = True
-        if run.status == DescribeRunStatus.PENDING:
+        if run.status == DescribeRunStatus.PENDING or DescribeRunStatus(run.status) in TERMINAL_RUN_STATUSES:
+            # If the terminal writer acquired the lock first, cancellation
+            # projects here instead. Either commit order preserves the stop
+            # request and leaves already completed item results untouched.
             run.status = DescribeRunStatus.CANCELLED
             run.phase = DescribeRunPhase.CANCELLED
-            run.completed_at = datetime.now(tz=UTC)
+            run.completed_at = run.completed_at or datetime.now(tz=UTC)
             run.server_elapsed_ms = elapsed_ms(run.created_at, run.completed_at)
             _release_idempotency_key_if_barren(run)
         await self._session.flush()
@@ -800,7 +805,10 @@ class DescribeRunRepository:
         return result.scalar_one_or_none()
 
     async def _recompute_run_totals(self, *, tenant_id: uuid.UUID, run_id: uuid.UUID, now: datetime) -> None:
-        run = await self.get_run(tenant_id=tenant_id, run_id=run_id)
+        # A refresh without a lock still loses a cancellation committed between
+        # this read and the terminal write. request_cancel uses the same lock;
+        # the winner holds it until commit and the other sees its durable state.
+        run = await self._locked_run(tenant_id=tenant_id, run_id=run_id)
         if run is None:
             return
 

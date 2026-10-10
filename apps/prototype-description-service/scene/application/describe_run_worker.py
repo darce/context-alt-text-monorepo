@@ -1026,17 +1026,16 @@ async def run_describe_job(
             gpu_breaker_error: str | None = None
             no_progress = 0
             for item in items:
+                # SET LOCAL tenant context ends at every item commit on PG.
+                await set_tenant_context(session, tenant_id)
                 previous_status = DescribeItemStatus(item.status)
                 progressed = False
                 if await cancel_requested():
-                    marked = await repo.mark_item(
-                        tenant_id=tenant_id,
-                        run_id=run_id,
-                        media_id=item.media_id,
-                        status=DescribeItemStatus.SKIPPED,
-                    )
-                    progressed = _terminal_transition(previous_status, marked)
-                    await session.commit()
+                    # Leave the tracking transaction before cleanup. The same
+                    # cancellation path handles warmup and between-item stops,
+                    # preserves completed results, and reclaims all pending
+                    # images without another adapter dispatch.
+                    raise _RunCancelledError("describe run cancelled between items")
                 else:
                     image_bytes = item.image_bytes
                     content_type = item.image_content_type
@@ -1046,6 +1045,11 @@ async def run_describe_job(
                         media_id=item.media_id,
                         status=DescribeItemStatus.RUNNING,
                     )
+                    # Release the run-row lock before adapter/naming work. An
+                    # independent HTTP cancellation must be able to commit
+                    # while inference is in flight, including the last item.
+                    await session.commit()
+                    await set_tenant_context(session, tenant_id)
                     processing_ms: float | None = None
                     try:
                         if gpu_breaker_error is not None:

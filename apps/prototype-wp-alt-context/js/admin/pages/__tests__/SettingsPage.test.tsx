@@ -1122,11 +1122,17 @@ describe('SettingsPage', () => {
       });
       mockQueryClientRef.current = queryClient;
       queryClient.setQueryData(queryKeys.settings.all, defaultSettings);
+      const initialCachedSettings = queryClient.getQueryData<SettingsResponse>(queryKeys.settings.all);
       const initialQueryState = queryClient.getQueryState<SettingsResponse>(queryKeys.settings.all);
+      expect(initialCachedSettings).toBeDefined();
+      expect(initialQueryState).toBeDefined();
+      expect(initialQueryState?.data).toBe(initialCachedSettings);
       let publishedSettingsQuery = createMockQuery({
-        data: defaultSettings,
-        dataUpdatedAt: initialQueryState?.dataUpdatedAt ?? 0,
+        data: initialCachedSettings,
+        dataUpdatedAt: initialQueryState!.dataUpdatedAt,
       });
+      expect(publishedSettingsQuery.data).toBe(initialCachedSettings);
+      expect(publishedSettingsQuery.dataUpdatedAt).toBe(initialQueryState!.dataUpdatedAt);
       mockUseQuery.mockImplementation(() => publishedSettingsQuery);
       vi.mocked(fetchSettings).mockResolvedValue(savedSettings);
 
@@ -1143,23 +1149,37 @@ describe('SettingsPage', () => {
         );
       });
 
-      expect(queryClient.getQueryData(queryKeys.settings.all)).toBe(savedSettings);
+      const savedSettingsInCache = queryClient.getQueryData<SettingsResponse>(queryKeys.settings.all);
+      const savedQueryState = queryClient.getQueryState<SettingsResponse>(queryKeys.settings.all);
+      expect(savedSettingsInCache).toBeDefined();
+      expect(savedSettingsInCache).toEqual(savedSettings);
+      expect(savedQueryState?.data).toBe(savedSettingsInCache);
+      // The live cache has the saved snapshot while the mock hook still exposes
+      // the initial identity and stamp until the cache publication is rendered.
+      expect(publishedSettingsQuery.data).toBe(initialCachedSettings);
+      expect(publishedSettingsQuery.dataUpdatedAt).toBe(initialQueryState!.dataUpdatedAt);
       expect(testMutate).not.toHaveBeenCalled();
 
       const publishSettingsCache = (): void => {
         const queryState = queryClient.getQueryState<SettingsResponse>(queryKeys.settings.all);
+        const cachedSettings = queryClient.getQueryData<SettingsResponse>(queryKeys.settings.all);
         expect(queryState).toBeDefined();
+        expect(cachedSettings).toBeDefined();
+        expect(queryState?.data).toBe(cachedSettings);
         publishedSettingsQuery = createMockQuery({
-          data: queryState?.data,
-          dataUpdatedAt: queryState?.dataUpdatedAt ?? 0,
+          data: cachedSettings,
+          dataUpdatedAt: queryState!.dataUpdatedAt,
           isFetching: queryState?.fetchStatus === 'fetching',
         });
         view.rerender(<SettingsPageWithRouter />);
+        expect(publishedSettingsQuery.data).toBe(cachedSettings);
+        expect(publishedSettingsQuery.dataUpdatedAt).toBe(queryState!.dataUpdatedAt);
       };
 
       // Publish the actual cache value and stamp created by the save refetch;
       // this is the settled state from which the automatic R0 is bound.
       publishSettingsCache();
+      expect(publishedSettingsQuery.data).toBe(savedSettingsInCache);
       expect(testMutate).toHaveBeenCalledTimes(1);
       const oldRequestVariables = testMutate.mock.calls[0]?.[0] as Record<string, unknown>;
       expect(oldRequestVariables).toBeDefined();
@@ -1217,7 +1237,9 @@ describe('SettingsPage', () => {
       });
       publishSettingsCache();
 
-      expect(publishedSettingsQuery.data).toBe(currentSettings);
+      const currentSettingsInCache = queryClient.getQueryData<SettingsResponse>(queryKeys.settings.all);
+      expect(currentSettingsInCache).toEqual(currentSettings);
+      expect(publishedSettingsQuery.data).toBe(currentSettingsInCache);
       expect(publishedSettingsQuery.isFetching).toBe(false);
       expect(testMutate).toHaveBeenCalledTimes(2);
       const currentRequestVariables = testMutate.mock.calls[1]?.[0] as Record<string, unknown>;

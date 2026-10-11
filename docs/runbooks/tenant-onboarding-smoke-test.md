@@ -424,7 +424,7 @@ unproven, leave its description result **PENDING**.
 After those checks pass, use a separate operator-controlled test attachment
 that was not used for recognition enrollment or held-out scoring:
 
-1. In the matching LocalWP site's **Settings > Alt Context**, set Recognition
+1. In the matching LocalWP site's **Settings > Alt Context**, set Service API
    URL to that site's already verified API and enter its WordPress tenant API
    key, then save to pair the tenant. The Clerk browser key and GPU endpoint
    credential are not WordPress tenant API keys. For the maintained dev setup,

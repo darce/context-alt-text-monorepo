@@ -284,10 +284,17 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
 
     for (const imageKey of GUIDED_IMAGE_KEYS) {
       const pending = pendingDrafts[imageKey];
-      if (pending === undefined || pending === (next.drafts[imageKey].draftText ?? '')) {
+      if (pending === undefined) {
         continue;
       }
-      next = editGuidedDraftForImage(next, imageKey, pending);
+      if (pending !== (next.drafts[imageKey].draftText ?? '')) {
+        next = editGuidedDraftForImage(next, imageKey, pending);
+      }
+      if (pending === next.drafts[imageKey].draftText) {
+        // Once incorporated, this input belongs to state/history. Replaying it
+        // later would overwrite an explicit replacement or revision restore.
+        delete pendingDrafts[imageKey];
+      }
     }
 
     return next;
@@ -360,7 +367,7 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
   };
 
   const handlePreview = (imageKey: GuidedImageKey, text: string): void => {
-    let next = demo;
+    let next = flushPendingDraft(demo);
     if (text !== (next.drafts[imageKey].draftText ?? '')) {
       next = editGuidedDraftForImage(next, imageKey, text);
     }

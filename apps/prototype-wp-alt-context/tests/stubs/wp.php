@@ -2696,6 +2696,17 @@ if (!isset($GLOBALS['wpdb'])) {
         /** @var array<string,array<int,string>> */
         public array $tableColumns = [];
         /**
+         * The shared repository fixture starts with these two installed tables,
+         * including when a lifecycle test applies only a partial schema.
+         * Other tables need explicit DDL or metadata; null means unknown.
+         *
+         * @var array<string,string|null>
+         */
+        public array $tableEngines = [
+            'wp_acx_sync_outbox' => 'InnoDB',
+            'wp_acx_sync_conflicts' => 'InnoDB',
+        ];
+        /**
          * Achieved index names per table (Key_name). Used by SHOW INDEX / DROP INDEX
          * probes in lifecycle schema tests (LO-03).
          *
@@ -2746,6 +2757,14 @@ if (!isset($GLOBALS['wpdb'])) {
             if ($result === false || $result === null) {
                 $this->rows_affected = 0;
                 return $result;
+            }
+
+            if (preg_match(
+                '/^ALTER\s+TABLE\s+`?([^\s`]+)`?\s+ENGINE\s*=\s*([A-Za-z0-9_]+)\s*;?$/i',
+                $normalizedSql,
+                $engineMatches
+            ) && array_key_exists($engineMatches[1], $this->tableEngines)) {
+                $this->tableEngines[$engineMatches[1]] = $engineMatches[2];
             }
 
             if (preg_match("/^DELETE FROM " . preg_quote($this->options, '/') . " WHERE option_name = '((?:\\\\.|[^'])*)' AND BINARY option_value = '((?:\\\\.|[^'])*)'$/s", $normalizedSql, $matches)) {
@@ -2993,6 +3012,14 @@ if (!isset($GLOBALS['wpdb'])) {
 
             if (array_key_exists($normalizedSql, $this->queryResults)) {
                 return $this->queryResults[$normalizedSql];
+            }
+
+            if (preg_match(
+                "/^SELECT\s+ENGINE\s+FROM\s+information_schema\.TABLES\s+WHERE\s+TABLE_SCHEMA\s*=\s*DATABASE\(\)\s+AND\s+TABLE_NAME\s*=\s*'([^']+)'$/i",
+                $normalizedSql,
+                $engineMatches
+            )) {
+                return $this->tableEngines[stripslashes($engineMatches[1])] ?? null;
             }
 
             $results = $this->resolveStoredSelectResults($normalizedSql);
@@ -3662,6 +3689,10 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->deleteResultsByTable = [];
             $this->tableRows = [];
             $this->tableColumns = [];
+            $this->tableEngines = [
+                $this->prefix . 'acx_sync_outbox' => 'InnoDB',
+                $this->prefix . 'acx_sync_conflicts' => 'InnoDB',
+            ];
             $this->tableIndexes = [];
             $this->onGetVar = null;
             $this->onGetResults = null;
@@ -3705,6 +3736,8 @@ if (!function_exists('dbDelta')) {
 
             $GLOBALS['__ac_dbdelta_queries'][] = $normalized;
             $executed[] = $normalized;
+            $failOn = $GLOBALS['__ac_dbdelta_fail_on_match'] ?? null;
+            $failed = is_string($failOn) && $failOn !== '' && str_contains($normalized, $failOn);
 
             if (isset($GLOBALS['wpdb']) && is_object($GLOBALS['wpdb']) && property_exists($GLOBALS['wpdb'], 'tableColumns')) {
                 $tableName = null;
@@ -3738,12 +3771,21 @@ if (!function_exists('dbDelta')) {
                     }
                     $GLOBALS['wpdb']->tableColumns[$tableName] = $columns;
                 }
+
+                // dbDelta only declares an engine for a newly created table. An
+                // existing MyISAM or unknown engine needs a successful ALTER.
+                if (!$failed && $tableName !== null && property_exists($GLOBALS['wpdb'], 'tableEngines')
+                    && !array_key_exists($tableName, $GLOBALS['wpdb']->tableEngines)
+                ) {
+                    $engine = preg_match('/\)\s+ENGINE\s*=\s*([A-Za-z0-9_]+)\b/i', $normalized, $engineMatch)
+                        ? $engineMatch[1] : null;
+                    $GLOBALS['wpdb']->tableEngines[$tableName] = $engine;
+                }
             }
 
             // Test injection: simulate MySQL rejecting a statement (sets $wpdb->last_error).
             // Match is a substring of the SQL (typically a table suffix like acx_identity_members).
-            $failOn = $GLOBALS['__ac_dbdelta_fail_on_match'] ?? null;
-            if (is_string($failOn) && $failOn !== '' && str_contains($normalized, $failOn)) {
+            if ($failed) {
                 $error = $GLOBALS['__ac_dbdelta_fail_error'] ?? "dbDelta simulated failure for {$failOn}";
                 if (isset($GLOBALS['wpdb']) && is_object($GLOBALS['wpdb'])) {
                     $GLOBALS['wpdb']->last_error = (string) $error;

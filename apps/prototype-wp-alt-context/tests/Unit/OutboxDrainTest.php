@@ -19,6 +19,23 @@ class OutboxDrainTest extends TestCase
 {
 	use FindsSqlQueries;
 
+	private mixed $originalDb;
+
+	protected function setUp(): void
+	{
+		parent::setUp();
+		$this->originalDb = $GLOBALS['wpdb'];
+		// phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- Lane-local database fixture.
+		$GLOBALS['wpdb'] = new OutboxDrainDb();
+	}
+
+	protected function tearDown(): void
+	{
+		// phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- Restore the shared fixture.
+		$GLOBALS['wpdb'] = $this->originalDb;
+		parent::tearDown();
+	}
+
 	public function testRegisterRegistersHookAndSchedulesWhenPendingExists(): void
 	{
 		global $wpdb;
@@ -201,7 +218,7 @@ class OutboxDrainTest extends TestCase
 		$drain = new OutboxDrain($dispatcher);
 		$drain->drain();
 
-		$conflictInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_conflicts');
+		$conflictInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_sync_conflicts`');
 		$this->assertStringContainsString("'version_conflict'", $conflictInsert);
 
 		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
@@ -683,6 +700,7 @@ class OutboxDrainTest extends TestCase
 		// already claimed by a peer drain is updated by 0 rows (no double dispatch).
 		$claim = $this->findQueryContaining($wpdb->queries, "UPDATE wp_acx_sync_outbox SET status = 'in_flight'");
 		$this->assertStringContainsString('claimed_at = ', $claim);
+		$this->assertStringContainsString('claim_token = ', $claim);
 		$this->assertStringContainsString("WHERE id = 7 AND status = 'pending'", $claim);
 	}
 
@@ -703,11 +721,11 @@ class OutboxDrainTest extends TestCase
 		$drain = new OutboxDrain($dispatcher);
 		$drain->drain();
 
-		// CON-3: terminal write only lands while this drain still owns the row (status='in_flight'),
-		// so a stale worker's write is a no-op and cannot double-increment attempts.
+		// Ownership requires the unique claim token as well as the in-flight status.
 		$apply = $this->findOutboxStatusUpdate($wpdb->queries);
 		$this->assertStringContainsString("status = 'acknowledged'", $apply);
 		$this->assertStringContainsString("WHERE id = 7 AND status = 'in_flight'", $apply);
+		$this->assertMatchesRegularExpression("/WHERE id = 7 AND status = 'in_flight' AND claim_token = '[a-f0-9]{64}'/", $apply);
 	}
 
 	public function testDrainSkipsDispatchAndApplyWhenClaimIsLostToPeerDrain(): void
@@ -895,7 +913,7 @@ class OutboxDrainTest extends TestCase
 		$this->assertCount(1, $calls);
 		$this->assertStringContainsString('/recognition/clusters/revert-merge', $calls[0]['url']);
 
-		$conflictInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_conflicts');
+		$conflictInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_sync_conflicts`');
 		$this->assertStringContainsString("'cluster_version_conflict'", $conflictInsert);
 
 		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
@@ -1039,7 +1057,7 @@ class OutboxDrainTest extends TestCase
 		$drain = new OutboxDrain(new OutboxDispatcher());
 		$drain->drain();
 
-		$conflictInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_conflicts');
+		$conflictInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_sync_conflicts`');
 		$this->assertStringContainsString("'version_conflict'", $conflictInsert);
 
 		$outboxUpdate = $this->findOutboxStatusUpdate($wpdb->queries);
@@ -1755,4 +1773,48 @@ class OutboxDrainTest extends TestCase
 
 		return false;
 	}
+}
+
+/** Add claim snapshot/engine reads without changing the shared test adapter. */
+final class OutboxDrainDb extends \WPDBStub
+{
+    private array $claims = [];
+
+    public function update(string $table, array $data, array $where, $format = null, $whereFormat = null)
+    {
+        $updated = parent::update($table, $data, $where, $format, $whereFormat);
+        if ($updated !== false && (int) $updated > 0 && ($data['status'] ?? null) === 'in_flight') {
+            foreach ($this->mockResults as $row) {
+                if ((int) $row['id'] === (int) $where['id']) {
+                    $this->claims[(int) $row['id']] = array_replace($row, $data);
+                }
+            }
+        }
+        return $updated;
+    }
+
+    public function get_row($query, $output = OBJECT, $y = 0)
+    {
+        if (preg_match("/WHERE id = (\d+) AND status = 'in_flight' AND claim_token = '([^']+)'/", $query, $match)) {
+            $this->queries[] = $query;
+            $row = $this->claims[(int) $match[1]] ?? null;
+            return ($row['claim_token'] ?? null) === $match[2] ? $row : null;
+        }
+        return parent::get_row($query, $output, $y);
+    }
+
+    public function get_var($query, $x = 0, $y = 0)
+    {
+        if (str_contains($query, 'information_schema.TABLES')) {
+            $this->queries[] = $query;
+            return 'InnoDB';
+        }
+        return parent::get_var($query, $x, $y);
+    }
+
+    public function reset(): void
+    {
+        parent::reset();
+        $this->claims = [];
+    }
 }

@@ -9,6 +9,7 @@ use AltContext\Sovereign\Sync\ReclaimerLiveness;
 use AltContext\Support\LifecycleManager;
 use AltContext\Tests\TestCase;
 use AltContext\Tests\Support\FindsSqlQueries;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 /**
  * Tests for LifecycleManager.
@@ -176,6 +177,213 @@ class LifecycleManagerTest extends TestCase
         $this->assertMatchesRegularExpression(
             '/^[ \\t]*KEY [a-z_]+ \\(tenant_id, status, created_at\\),?$/m',
             $outboxSql
+        );
+    }
+
+    public function testEngineMetadataTracksCreationAndOnlySuccessfulConversion(): void
+    {
+        global $wpdb;
+
+        $create = 'CREATE TABLE wp_engine_fixture (id bigint NOT NULL) ENGINE=MyISAM;';
+        $probe = $this->engineProbe('wp_engine_fixture');
+        dbDelta($create);
+        $this->assertSame('MyISAM', $wpdb->get_var($probe));
+        $wpdb->tableRows['wp_engine_fixture'] = [['id' => 7]];
+
+        // dbDelta updates the schema but never converts an existing engine.
+        dbDelta(str_replace('MyISAM', 'InnoDB', $create));
+        $this->assertSame('MyISAM', $wpdb->get_var($probe));
+
+        $alter = 'ALTER TABLE `wp_engine_fixture` ENGINE=InnoDB';
+        $wpdb->queryResults[$alter] = false;
+        $this->assertFalse($wpdb->query($alter));
+        $this->assertSame('MyISAM', $wpdb->get_var($probe));
+
+        $wpdb->queryResults[$alter] = 0; // DDL success can affect zero rows.
+        $this->assertSame(0, $wpdb->query($alter));
+        $this->assertSame('InnoDB', $wpdb->get_var($probe));
+        $this->assertSame([['id' => 7]], $wpdb->tableRows['wp_engine_fixture']);
+    }
+
+    public function testEngineMetadataDoesNotGuessUnknownEnginesFromMockVar(): void
+    {
+        global $wpdb;
+
+        $wpdb->mockVar = 'InnoDB';
+        $this->assertNull($wpdb->get_var($this->engineProbe('wp_missing_fixture')));
+        dbDelta('CREATE TABLE wp_unknown_fixture (id bigint NOT NULL);');
+        $this->assertNull($wpdb->get_var($this->engineProbe('wp_unknown_fixture')));
+    }
+
+    public function testEngineMetadataPreservesUnknownExistingEngineAcrossDbDelta(): void
+    {
+        global $wpdb;
+
+        $create = 'CREATE TABLE wp_engine_fixture (id bigint NOT NULL) ENGINE=InnoDB;';
+        $probe = $this->engineProbe('wp_engine_fixture');
+        dbDelta($create);
+        $this->assertSame('InnoDB', $wpdb->get_var($probe));
+        $wpdb->tableEngines['wp_engine_fixture'] = null;
+        dbDelta($create);
+        $this->assertNull($wpdb->get_var($probe));
+    }
+
+    public function testEngineMetadataDoesNotCertifyRejectedCreateAndCanRetry(): void
+    {
+        global $wpdb;
+
+        $create = 'CREATE TABLE wp_engine_fixture (id bigint NOT NULL) ENGINE=InnoDB;';
+        $probe = $this->engineProbe('wp_engine_fixture');
+        $GLOBALS['__ac_dbdelta_fail_on_match'] = 'wp_engine_fixture';
+        try {
+            dbDelta($create);
+            $this->assertNotSame('', $wpdb->last_error);
+            $this->assertNull($wpdb->get_var($probe));
+        } finally {
+            unset($GLOBALS['__ac_dbdelta_fail_on_match']);
+            $wpdb->last_error = '';
+        }
+        dbDelta($create);
+        $this->assertSame('InnoDB', $wpdb->get_var($probe));
+    }
+
+    public function testEngineMetadataResetClearsAchievedState(): void
+    {
+        global $wpdb;
+
+        $probe = $this->engineProbe('wp_engine_fixture');
+        dbDelta('CREATE TABLE wp_engine_fixture (id bigint NOT NULL) ENGINE=InnoDB;');
+        $this->assertSame('InnoDB', $wpdb->get_var($probe));
+        $wpdb->reset();
+        $this->assertNull($wpdb->get_var($probe));
+    }
+
+    public function testEngineMetadataIncludesInstalledTablesDuringPartialSchemaUpgrade(): void
+    {
+        global $wpdb;
+
+        $tables = ['wp_acx_sync_outbox', 'wp_acx_sync_conflicts'];
+        foreach ($tables as $table) {
+            $this->assertSame('InnoDB', $wpdb->get_var($this->engineProbe($table)));
+        }
+        $manager = new class extends LifecycleManager {
+            public function build_projection_schema_statements(string $prefix, string $charset_collate): array
+            {
+                return ['acx_persons' => "CREATE TABLE {$prefix}acx_persons (id bigint NOT NULL);"];
+            }
+        };
+        $manager->maybe_upgrade();
+        $this->assertSame(ACX_VERSION, get_option('acx_version'));
+        $this->assertSame($manager->compute_projection_schema_fingerprint(), get_option('acx_schema_fingerprint'));
+        foreach ($tables as $table) {
+            $this->assertSame('InnoDB', $wpdb->get_var($this->engineProbe($table)));
+        }
+    }
+
+    public function testEngineMetadataInstalledFixtureCanStillFailClosed(): void
+    {
+        global $wpdb;
+
+        $probe = $this->engineProbe('wp_acx_sync_conflicts');
+        $this->assertSame('InnoDB', $wpdb->get_var($probe));
+        $wpdb->tableEngines['wp_acx_sync_conflicts'] = null;
+        $repository = new \AltContext\Sovereign\Sync\ConflictRepository();
+        $this->assertFalse($repository->supports_atomic_outbox_conflicts('wp_acx_sync_outbox'));
+        unset($wpdb->tableEngines['wp_acx_sync_conflicts']);
+        $this->assertNull($wpdb->get_var($probe));
+        $this->assertFalse($repository->supports_atomic_outbox_conflicts('wp_acx_sync_outbox'));
+    }
+
+    public function testMaybeUpgradeConvertsSharedFixtureEnginesAndPreservesRows(): void
+    {
+        global $wpdb;
+
+        $tables = ['wp_acx_sync_outbox', 'wp_acx_sync_conflicts'];
+        foreach ($tables as $table) {
+            $wpdb->tableEngines[$table] = 'MyISAM';
+            dbDelta("CREATE TABLE {$table} (id bigint NOT NULL) ENGINE=MyISAM;");
+            $this->assertSame('MyISAM', $wpdb->get_var($this->engineProbe($table)));
+            $wpdb->tableRows[$table] = [['id' => 7]];
+        }
+        $before = $wpdb->tableRows;
+        $this->setOption('acx_version', '0.0.1-stale');
+        $this->setOption('acx_schema_fingerprint', 'old');
+        $this->manager->maybe_upgrade();
+
+        foreach ($tables as $table) {
+            $this->assertSame('InnoDB', $wpdb->get_var($this->engineProbe($table)));
+            $this->assertContains("ALTER TABLE `{$table}` ENGINE=InnoDB", $wpdb->queries);
+        }
+        $this->assertSame($before, $wpdb->tableRows);
+        $this->assertSame(ACX_VERSION, get_option('acx_version'));
+        $this->assertSame($this->manager->compute_projection_schema_fingerprint(), get_option('acx_schema_fingerprint'));
+        $applied = count($GLOBALS['__ac_dbdelta_queries']);
+        $this->manager->maybe_upgrade();
+        $this->assertCount($applied, $GLOBALS['__ac_dbdelta_queries']);
+    }
+
+    public static function uncertifiedFixtureEngines(): array
+    {
+        $cases = [];
+        foreach (['wp_acx_sync_outbox', 'wp_acx_sync_conflicts'] as $table) {
+            foreach (['missing' => null, 'empty' => '', 'unconverted' => 'MyISAM'] as $kind => $engine) {
+                $cases[$table . ' ' . $kind] = [$table, $engine];
+            }
+        }
+        return $cases;
+    }
+
+    #[DataProvider('uncertifiedFixtureEngines')]
+    public function testMaybeUpgradeRejectsUncertifiedFixtureEngineAndRetries(string $table, ?string $engine): void
+    {
+        global $wpdb;
+
+        $probe = $this->engineProbe($table);
+        $wpdb->queryResults[$probe] = $engine;
+        $this->setOption('acx_version', '0.0.1-stale');
+        $this->setOption('acx_schema_fingerprint', 'old');
+        $this->manager->maybe_upgrade();
+        $this->assertSame('0.0.1-stale', get_option('acx_version'));
+        $this->assertSame('old', get_option('acx_schema_fingerprint'));
+        $this->assertStringContainsString($table, implode("\n", $this->getErrorLog()));
+
+        // A forced metadata result takes precedence over achieved stub state.
+        unset($wpdb->queryResults[$probe]);
+        $this->manager->maybe_upgrade();
+        $this->assertSame(ACX_VERSION, get_option('acx_version'));
+        $this->assertSame($this->manager->compute_projection_schema_fingerprint(), get_option('acx_schema_fingerprint'));
+    }
+
+    public function testMaybeUpgradeFailedFixtureEngineAlterDoesNotStampAndRetries(): void
+    {
+        global $wpdb;
+
+        $table = 'wp_acx_sync_conflicts';
+        $probe = $this->engineProbe($table);
+        $wpdb->tableEngines[$table] = 'MyISAM';
+        dbDelta("CREATE TABLE {$table} (id bigint NOT NULL) ENGINE=MyISAM;");
+        $this->assertSame('MyISAM', $wpdb->get_var($probe));
+        $alter = "ALTER TABLE `{$table}` ENGINE=InnoDB";
+        $wpdb->queryResults[$alter] = false;
+        $this->setOption('acx_version', '0.0.1-stale');
+        $this->setOption('acx_schema_fingerprint', 'old');
+        $this->manager->maybe_upgrade();
+        $this->assertSame('MyISAM', $wpdb->get_var($probe));
+        $this->assertSame('0.0.1-stale', get_option('acx_version'));
+        $this->assertSame('old', get_option('acx_schema_fingerprint'));
+
+        unset($wpdb->queryResults[$alter]);
+        $this->manager->maybe_upgrade();
+        $this->assertSame('InnoDB', $wpdb->get_var($probe));
+        $this->assertSame(ACX_VERSION, get_option('acx_version'));
+        $this->assertSame($this->manager->compute_projection_schema_fingerprint(), get_option('acx_schema_fingerprint'));
+    }
+
+    private function engineProbe(string $table): string
+    {
+        return $GLOBALS['wpdb']->prepare(
+            'SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s',
+            $table
         );
     }
 

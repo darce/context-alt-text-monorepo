@@ -63,7 +63,10 @@ const sectionFromLocation = (search: string, hash: string): string | null => {
 export const SettingsPage = (): React.JSX.Element => {
   const queryClient = useQueryClient();
   const location = useLocation();
-  const automaticHealthCheckStarted = useRef(false);
+  const scheduledHealthCheck = useRef<{
+    afterRoutingSave: boolean;
+    request: object | null;
+  } | null>({ afterRoutingSave: false, request: null });
   const healthProbeGeneration = useRef(0);
   const healthProbeMetadata = useRef(new WeakMap<object, HealthProbeBinding & { afterRoutingSave: boolean }>());
   const currentHealthRequest = useRef<object | null>(null);
@@ -99,7 +102,14 @@ export const SettingsPage = (): React.JSX.Element => {
     error: settingsQuery.isError,
   });
 
-  const invalidateHealthProbe = (): void => {
+  const invalidateHealthProbe = (preserveScheduledCheck = false): void => {
+    if (preserveScheduledCheck && scheduledHealthCheck.current) {
+      // Keep an unfinished automatic/post-save check queued for the published
+      // Settings snapshot. Its old request still loses every proof binding.
+      scheduledHealthCheck.current.request = null;
+    } else {
+      scheduledHealthCheck.current = null;
+    }
     healthProbeGeneration.current += 1;
     credentialRevision.current = Symbol();
     currentHealthRequest.current = null;
@@ -119,7 +129,7 @@ export const SettingsPage = (): React.JSX.Element => {
       error: settingsQuery.isError,
     };
     resolvedSettings.current = settingsQuery.data;
-    invalidateHealthProbe();
+    invalidateHealthProbe(true);
   } else {
     observedQuery.current.fetching = settingsQuery.isFetching;
   }
@@ -127,7 +137,7 @@ export const SettingsPage = (): React.JSX.Element => {
   useEffect(() => () => {
     healthProbeGeneration.current += 1;
     currentHealthRequest.current = null;
-    automaticHealthCheckStarted.current = false;
+    scheduledHealthCheck.current = { afterRoutingSave: false, request: null };
   }, []);
 
   const isCurrentHealthProbe = (binding: HealthProbeBinding): boolean =>
@@ -341,7 +351,8 @@ export const SettingsPage = (): React.JSX.Element => {
       syncLocalizedRouting(refreshed);
       resolvedSettings.current = refreshed;
       if (isRoutingAutosave) {
-        startHealthCheck(true);
+        scheduledHealthCheck.current = { afterRoutingSave: true, request: null };
+        startScheduledHealthCheck();
       }
       drainQueuedSave(refreshed, alreadySavedApiKey);
     },
@@ -369,6 +380,7 @@ export const SettingsPage = (): React.JSX.Element => {
       if (variables && (!metadata || !isCurrentHealthProbe(metadata))) {
         return;
       }
+      scheduledHealthCheck.current = null;
       const generation = metadata?.generation ?? healthProbeGeneration.current;
       const tenantChanged = data.tenant_id !== undefined
         && data.tenant_id !== resolvedSettings.current?.tenant_id;
@@ -397,6 +409,7 @@ export const SettingsPage = (): React.JSX.Element => {
       if (variables && (!metadata || !isCurrentHealthProbe(metadata))) {
         return;
       }
+      scheduledHealthCheck.current = null;
       const generation = metadata?.generation ?? healthProbeGeneration.current;
       applyHealthProbeError(generation);
       if (generation === healthProbeGeneration.current && metadata?.afterRoutingSave) {
@@ -408,11 +421,18 @@ export const SettingsPage = (): React.JSX.Element => {
   const runHealthCheck = (
     variables: NonNullable<Parameters<typeof testConnection>[0]>,
     afterRoutingSave = false,
+    scheduled = false,
   ): void => {
     dispatch({ type: 'clearTestResult' });
     const generation = ++healthProbeGeneration.current;
     const probeVariables = { ...variables };
     currentHealthRequest.current = probeVariables;
+    if (scheduled && scheduledHealthCheck.current) {
+      scheduledHealthCheck.current.request = probeVariables;
+    } else {
+      // Manual checks supersede pending scheduling rather than waiting on it.
+      scheduledHealthCheck.current = null;
+    }
     healthProbeMetadata.current.set(probeVariables, {
       generation,
       afterRoutingSave,
@@ -424,29 +444,50 @@ export const SettingsPage = (): React.JSX.Element => {
     testMutation.mutate(probeVariables);
   };
 
-  const startHealthCheck = (afterRoutingSave = false): void => {
-    automaticHealthCheckStarted.current = true;
-    dispatch({ type: 'clearTestResult' });
-    runHealthCheck({}, afterRoutingSave);
+  const startHealthCheck = (): void => {
+    runHealthCheck({});
   };
 
-  useEffect(() => {
+  const startScheduledHealthCheck = (): void => {
+    const scheduled = scheduledHealthCheck.current;
     if (
+      !scheduled ||
+      scheduled.request ||
       settingsQuery.isLoading ||
       settingsQuery.isLoadingError ||
-      !settingsQuery.data?.effective_target_url.trim() ||
-      state.testResult ||
-      automaticHealthCheckStarted.current
+      observedQuery.current.fetching ||
+      observedQuery.current.error ||
+      !resolvedSettings.current?.effective_target_url.trim()
     ) {
       return;
     }
-    startHealthCheck();
+    // fetchQuery can settle before the hook publishes its cached data/stamp.
+    // Bind only after this render has observed the current settled snapshot.
+    const cachedQuery = queryClient.getQueryState?.<SettingsResponse>(queryKeys.settings.all);
+    if (cachedQuery && (
+      cachedQuery.fetchStatus === 'fetching' ||
+      cachedQuery.status === 'error' ||
+      cachedQuery.data !== observedQuery.current.data ||
+      cachedQuery.dataUpdatedAt !== observedQuery.current.updatedAt
+    )) {
+      return;
+    }
+    if (cachedQuery) {
+      resolvedSettings.current = cachedQuery.data;
+    }
+    runHealthCheck({}, scheduled.afterRoutingSave, true);
+  };
+
+  useEffect(() => {
+    startScheduledHealthCheck();
   }, [
-    settingsQuery.data?.effective_target_url,
+    settingsQuery.data,
+    settingsQuery.dataUpdatedAt,
+    settingsQuery.isFetching,
+    settingsQuery.isError,
     settingsQuery.isLoading,
     settingsQuery.isLoadingError,
-    state.testResult,
-    startHealthCheck,
+    startScheduledHealthCheck,
   ]);
 
   const handleSave = (e: React.FormEvent) => {
@@ -507,7 +548,6 @@ export const SettingsPage = (): React.JSX.Element => {
   };
 
   const handleConfirmTenantPairing = () => {
-    automaticHealthCheckStarted.current = true;
     runHealthCheck({ confirm_tenant_pairing: true });
   };
 
@@ -553,7 +593,7 @@ export const SettingsPage = (): React.JSX.Element => {
             type="button"
             className="acx-button acx-button--secondary"
             onClick={() => {
-              invalidateHealthProbe();
+              invalidateHealthProbe(true);
               void settingsQuery.refetch();
             }}
           >

@@ -214,6 +214,7 @@ const defaultSettings: SettingsResponse = {
 
 const saveMutate = vi.fn();
 const testMutate = vi.fn();
+let testMutationPending = false;
 let capturedSaveOptions: CapturedMutationOptions | undefined;
 let capturedTestOptions: CapturedMutationOptions | undefined;
 
@@ -228,12 +229,13 @@ const installMutationMock = (): void => {
       return createMockMutation({ mutate: saveMutate });
     }
     capturedTestOptions = options;
-    return createMockMutation({ mutate: testMutate });
+    return createMockMutation({ mutate: testMutate, isPending: testMutationPending });
   });
 };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  testMutationPending = false;
   mockFetchQuery.mockResolvedValue(defaultSettings);
   installMutationMock();
 
@@ -718,6 +720,263 @@ describe('SettingsPage', () => {
     });
 
     expect(screen.getByTestId('acx-target-card-service')).toHaveTextContent('Reachable');
+  });
+
+  it('discloses one current authenticated InsightFace result for a service target', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPageWithRouter />);
+
+    act(() => {
+      capturedTestOptions?.onSuccess?.({
+        outcome: 'connected',
+        status_code: 200,
+        probe_mode: 'service_auth',
+        probed_url: 'https://api.example.com/health/detailed',
+        body: { status: 'ok', model_cache: { status: 'ok', profile: 'insightface' } },
+      });
+    });
+
+    expect(screen.getAllByText('Recognition engine: InsightFace')).toHaveLength(1);
+  });
+
+  it('discloses current local InsightFace proof on an FIR-named hostname', () => {
+    const targetUrl = 'https://fir.example.com/local-service';
+    mockUseQuery.mockReturnValue(createMockQuery({
+      data: {
+        ...defaultSettings,
+        effective_target_url: targetUrl,
+        effective_target_mode: 'local',
+        recognition_source: 'local',
+      },
+    }));
+    render(<SettingsPageWithRouter />);
+
+    act(() => {
+      capturedTestOptions?.onSuccess?.({
+        outcome: 'connected',
+        status_code: 200,
+        probe_mode: 'service_auth',
+        probed_url: `${targetUrl}/health/detailed`,
+        body: { status: 'ok', model_cache: { status: 'ok', profile: 'insightface' } },
+      });
+    });
+
+    expect(screen.getAllByText('Recognition engine: InsightFace')).toHaveLength(1);
+  });
+
+  it('discloses InsightFace when overall health is degraded but the model cache is ok', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPageWithRouter />);
+
+    act(() => {
+      capturedTestOptions?.onSuccess?.({
+        outcome: 'connected',
+        status_code: 200,
+        probe_mode: 'service_auth',
+        probed_url: 'https://api.example.com/health/detailed',
+        body: { status: 'degraded', model_cache: { status: 'ok', profile: 'insightface' } },
+      });
+    });
+
+    expect(screen.getAllByText('Recognition engine: InsightFace')).toHaveLength(1);
+  });
+
+  it.each([
+    [
+      'face_pipeline on the FIR-named service host',
+      {
+        ...defaultSettings,
+        effective_target_url: 'https://fir.example.com/recognition',
+      },
+      {
+        outcome: 'connected',
+        status_code: 200,
+        probe_mode: 'service_auth',
+        probed_url: 'https://fir.example.com/recognition/health/detailed',
+        body: { status: 'ok', model_cache: { status: 'ok', profile: 'face_pipeline' } },
+      },
+    ],
+    [
+      'auraface on a local target',
+      {
+        ...defaultSettings,
+        effective_target_url: 'http://127.0.0.1:8000',
+        effective_target_mode: 'local',
+        recognition_source: 'local',
+      },
+      {
+        outcome: 'connected',
+        status_code: 200,
+        probe_mode: 'service_auth',
+        probed_url: 'http://127.0.0.1:8000/health/detailed',
+        body: { status: 'ok', model_cache: { status: 'ok', profile: 'auraface' } },
+      },
+    ],
+  ])('does not infer InsightFace from %s', (_caseName, settings, result) => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: settings }));
+    render(<SettingsPageWithRouter />);
+
+    act(() => {
+      capturedTestOptions?.onSuccess?.(result);
+    });
+
+    expect(screen.queryByText('Recognition engine: InsightFace')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['a missing body', { outcome: 'connected', status_code: 200, probe_mode: 'service_auth' }],
+    [
+      'a raw-string body',
+      {
+        outcome: 'connected',
+        status_code: 200,
+        probe_mode: 'service_auth',
+        probed_url: 'https://api.example.com/health/detailed',
+        body: 'caption adapter reports insightface',
+      },
+    ],
+    [
+      'a null body',
+      {
+        outcome: 'connected',
+        status_code: 200,
+        probe_mode: 'service_auth',
+        probed_url: 'https://api.example.com/health/detailed',
+        body: null,
+      },
+    ],
+    [
+      'an array body',
+      {
+        outcome: 'connected',
+        status_code: 200,
+        probe_mode: 'service_auth',
+        probed_url: 'https://api.example.com/health/detailed',
+        body: [],
+      },
+    ],
+    [
+      'a missing model-cache profile',
+      {
+        outcome: 'connected',
+        status_code: 200,
+        probe_mode: 'service_auth',
+        probed_url: 'https://api.example.com/health/detailed',
+        body: { status: 'ok', model_cache: { status: 'ok' } },
+      },
+    ],
+    [
+      'an unknown profile',
+      {
+        outcome: 'connected',
+        status_code: 200,
+        probe_mode: 'service_auth',
+        probed_url: 'https://api.example.com/health/detailed',
+        body: { status: 'ok', model_cache: { status: 'ok', profile: 'other-engine' } },
+      },
+    ],
+    [
+      'caption-adapter-only evidence',
+      {
+        outcome: 'connected',
+        status_code: 200,
+        probe_mode: 'service_auth',
+        probed_url: 'https://api.example.com/health/detailed',
+        body: { status: 'ok', description_adapter: { status: 'ok', profile: 'insightface' } },
+      },
+    ],
+    [
+      'a ready boolean without model-cache proof',
+      {
+        outcome: 'connected',
+        status_code: 200,
+        probe_mode: 'service_auth',
+        probed_url: 'https://api.example.com/health/detailed',
+        body: { status: 'ok', ready: true },
+      },
+    ],
+    [
+      'an unavailable result',
+      { outcome: 'not_configured', probe_mode: 'service_auth', probed_url: '' },
+    ],
+    ['a transport error', { outcome: 'network_error', probe_mode: 'service_auth' }],
+    [
+      'a lifecycle result',
+      {
+        outcome: 'starting',
+        status_code: 200,
+        probe_mode: 'service_auth',
+        probed_url: 'https://api.example.com/scene/gpu/intent',
+        body: { status: 'ok', model_cache: { status: 'ok', profile: 'insightface' } },
+      },
+    ],
+    [
+      'an unhealthy HTTP-200 result',
+      {
+        outcome: 'server_error',
+        status_code: 200,
+        probe_mode: 'service_auth',
+        probed_url: 'https://api.example.com/health/detailed',
+        body: { status: 'unhealthy', model_cache: { status: 'ok', profile: 'insightface' } },
+      },
+    ],
+    [
+      'a response for a different endpoint',
+      {
+        outcome: 'connected',
+        status_code: 200,
+        probe_mode: 'service_auth',
+        probed_url: 'https://api.example.com:8443/health/detailed',
+        body: { status: 'ok', model_cache: { status: 'ok', profile: 'insightface' } },
+      },
+    ],
+  ])('keeps %s evidence undisclosed', (_caseName, result) => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPageWithRouter />);
+
+    act(() => {
+      capturedTestOptions?.onSuccess?.(result);
+    });
+
+    expect(screen.queryByText('Recognition engine: InsightFace')).not.toBeInTheDocument();
+  });
+
+  it('shows the single passive disclosure only for current proof, not while pending, edited, or unavailable', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPageWithRouter />);
+
+    act(() => {
+      capturedTestOptions?.onSuccess?.({
+        outcome: 'connected',
+        status_code: 200,
+        probe_mode: 'service_auth',
+        probed_url: 'https://api.example.com/health/detailed',
+        body: { status: 'ok', model_cache: { status: 'ok', profile: 'insightface' } },
+      });
+    });
+    const currentLineCount = screen.queryAllByText('Recognition engine: InsightFace').length;
+
+    testMutationPending = true;
+    fireEvent.click(screen.getByRole('button', { name: 'Check health' }));
+    const pendingLineCount = screen.queryAllByText('Recognition engine: InsightFace').length;
+
+    fireEvent.change(screen.getByLabelText('Service API URL'), {
+      target: { value: 'https://edited-api.example.com' },
+    });
+    const editedLineCount = screen.queryAllByText('Recognition engine: InsightFace').length;
+
+    testMutationPending = false;
+    act(() => {
+      capturedTestOptions?.onError?.(new Error('request failed'));
+    });
+    const unavailableLineCount = screen.queryAllByText('Recognition engine: InsightFace').length;
+
+    expect({ currentLineCount, pendingLineCount, editedLineCount, unavailableLineCount }).toEqual({
+      currentLineCount: 1,
+      pendingLineCount: 0,
+      editedLineCount: 0,
+      unavailableLineCount: 0,
+    });
   });
 
   it('renders the tenant id and unpaired status when the tenant is not paired', () => {

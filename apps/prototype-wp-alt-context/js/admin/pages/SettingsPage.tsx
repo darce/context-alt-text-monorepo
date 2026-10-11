@@ -140,12 +140,21 @@ export const SettingsPage = (): React.JSX.Element => {
     scheduledHealthCheck.current = { afterRoutingSave: false, request: null };
   }, []);
 
-  const isCurrentHealthProbe = (binding: HealthProbeBinding): boolean =>
-    binding.generation === healthProbeGeneration.current
-    && binding.request === currentHealthRequest.current
-    && binding.credentialRevision === credentialRevision.current
-    && matchesHealthProbeTarget(binding, resolvedSettings.current)
-    && !observedQuery.current.fetching && !observedQuery.current.error;
+  const isCurrentHealthProbe = (binding: HealthProbeBinding): boolean => {
+    // Cache transitions can precede the hook's batched notification.
+    const cachedQuery = queryClient.getQueryState?.<SettingsResponse>(queryKeys.settings.all);
+    return binding.generation === healthProbeGeneration.current
+      && binding.request === currentHealthRequest.current
+      && binding.credentialRevision === credentialRevision.current
+      && matchesHealthProbeTarget(binding, resolvedSettings.current)
+      && !observedQuery.current.fetching && !observedQuery.current.error
+      && (!cachedQuery || (
+        cachedQuery.fetchStatus !== 'fetching'
+        && cachedQuery.status !== 'error'
+        && cachedQuery.data === observedQuery.current.data
+        && cachedQuery.dataUpdatedAt === observedQuery.current.updatedAt
+      ));
+  };
 
   const syncLocalizedRouting = (settings: SettingsResponse): void => {
     if (!window.AltContextAdmin) {

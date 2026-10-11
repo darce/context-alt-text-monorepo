@@ -995,6 +995,105 @@ describe('SettingsPage', () => {
     });
   });
 
+  it('waits for a cached Settings refetch before automatically checking and disclosing the current target', () => {
+    const refreshedSettings = { ...defaultSettings };
+    let settingsQuery = createMockQuery({
+      data: defaultSettings,
+      dataUpdatedAt: 100,
+      isFetching: true,
+    });
+    mockUseQuery.mockImplementation(() => settingsQuery);
+    const view = render(<SettingsPageWithRouter />);
+
+    expect(testMutate).not.toHaveBeenCalled();
+    expect(screen.queryByText('Reachable')).not.toBeInTheDocument();
+
+    settingsQuery = createMockQuery({
+      data: refreshedSettings,
+      dataUpdatedAt: 101,
+      isFetching: false,
+    });
+    view.rerender(<SettingsPageWithRouter />);
+
+    expect(testMutate).toHaveBeenCalledTimes(1);
+    const automaticRequestVariables = testMutate.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(automaticRequestVariables).toEqual({});
+    act(() => {
+      capturedTestOptions?.onSuccess?.({
+        outcome: 'connected',
+        status_code: 200,
+        probe_mode: 'service_auth',
+        probed_url: 'https://api.example.com/health/detailed',
+        body: { status: 'ok', model_cache: { status: 'ok', profile: 'insightface' } },
+      }, automaticRequestVariables);
+    });
+
+    expect(screen.getByTestId('acx-target-card-service')).toHaveTextContent('Reachable');
+    expect(screen.getAllByText('Recognition engine: InsightFace')).toHaveLength(1);
+  });
+
+  it.each([
+    ['while the Settings refetch is pending', false],
+    ['after refreshed Settings is published', true],
+  ])('retries the automatic check after an old request rejects %s', (_completionOrder, rejectAfterRefresh) => {
+    let settingsQuery = createMockQuery({
+      data: defaultSettings,
+      dataUpdatedAt: 200,
+      isFetching: false,
+    });
+    mockUseQuery.mockImplementation(() => settingsQuery);
+    const view = render(<SettingsPageWithRouter />);
+    expect(testMutate).toHaveBeenCalledTimes(1);
+    const oldRequestVariables = testMutate.mock.calls[0]?.[0] as Record<string, unknown>;
+
+    settingsQuery = createMockQuery({
+      data: defaultSettings,
+      dataUpdatedAt: 200,
+      isFetching: true,
+    });
+    view.rerender(<SettingsPageWithRouter />);
+
+    if (!rejectAfterRefresh) {
+      act(() => {
+        capturedTestOptions?.onError?.(new Error('old request rejected'), oldRequestVariables);
+      });
+      expect(screen.queryByTestId('acx-test-connection-banner')).not.toBeInTheDocument();
+    }
+
+    const refreshedSettings = { ...defaultSettings };
+    settingsQuery = createMockQuery({
+      data: refreshedSettings,
+      dataUpdatedAt: 201,
+      isFetching: false,
+    });
+    view.rerender(<SettingsPageWithRouter />);
+
+    expect(testMutate).toHaveBeenCalledTimes(2);
+    const currentRequestVariables = testMutate.mock.calls[1]?.[0] as Record<string, unknown>;
+    expect(currentRequestVariables).toEqual({});
+    expect(currentRequestVariables).not.toBe(oldRequestVariables);
+
+    if (rejectAfterRefresh) {
+      act(() => {
+        capturedTestOptions?.onError?.(new Error('old request rejected'), oldRequestVariables);
+      });
+      expect(screen.queryByTestId('acx-test-connection-banner')).not.toBeInTheDocument();
+    }
+
+    act(() => {
+      capturedTestOptions?.onSuccess?.({
+        outcome: 'connected',
+        status_code: 200,
+        probe_mode: 'service_auth',
+        probed_url: 'https://api.example.com/health/detailed',
+        body: { status: 'ok', model_cache: { status: 'ok', profile: 'insightface' } },
+      }, currentRequestVariables);
+    });
+
+    expect(screen.getByTestId('acx-target-card-service')).toHaveTextContent('Reachable');
+    expect(screen.getAllByText('Recognition engine: InsightFace')).toHaveLength(1);
+  });
+
   it.each([
     [
       'URL edit',

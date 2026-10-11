@@ -1996,8 +1996,7 @@ describe('SettingsPage', () => {
       expect(screen.getByTestId('acx-target-card-service')).toHaveTextContent('Not checked');
       expect(screen.queryByText('Recognition engine: InsightFace')).not.toBeInTheDocument();
 
-      const tenantBRequestVariables = testMutate.mock.calls[requestsBeforePublishingTenantB]?.[0]
-        as Record<string, unknown>;
+      const tenantBRequestVariables = testMutate.mock.calls[requestsBeforePublishingTenantB]?.[0] as Record<string, unknown>;
       expect(tenantBRequestVariables).toEqual({});
       expect(tenantBRequestVariables).not.toBe(confirmRequestVariables);
       act(() => {

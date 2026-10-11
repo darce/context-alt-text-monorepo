@@ -1,5 +1,6 @@
 import React from 'react';
 import { act, render, screen, fireEvent } from '@testing-library/react';
+import { QueryClient } from '@tanstack/react-query';
 import { MemoryRouter, RouterProvider, createMemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -7,10 +8,12 @@ import { SettingsPage } from '../SettingsPage';
 import {
   CONTEXT_CATEGORIES,
   UrlRejectionReason,
+  fetchSettings,
   type SettingsResponse,
   type TestConnectionOutcomeValue,
   type TestConnectionResponse,
 } from '../../api/settingsApi';
+import { queryKeys } from '../../api/queryKeys';
 import {
   useApplyRetentionPreset,
   useAuditEvents,
@@ -38,6 +41,7 @@ const {
   mockInvalidateQueries,
   mockFetchQuery,
   mockToDashboard,
+  mockQueryClientRef,
   gpuStatusQueryResult,
 } = vi.hoisted(() => ({
   mockUseQuery: vi.fn<() => QueryHookResult>(),
@@ -45,6 +49,7 @@ const {
   mockInvalidateQueries: vi.fn(),
   mockFetchQuery: vi.fn(),
   mockToDashboard: vi.fn(() => '#/owned-dashboard-route'),
+  mockQueryClientRef: { current: undefined as unknown },
   // SettingsPage hosts GpuControlCard, whose own useQuery/useMutation would
   // otherwise be answered by the blanket settings mocks below — the card would
   // read gpu_state off a SettingsResponse and shift every captured mutation
@@ -172,7 +177,10 @@ vi.mock('@tanstack/react-query', async () => {
   const actual = await vi.importActual<typeof import('@tanstack/react-query')>('@tanstack/react-query');
   return {
     ...actual,
-    useQueryClient: () => ({ invalidateQueries: mockInvalidateQueries, fetchQuery: mockFetchQuery }),
+    useQueryClient: () => mockQueryClientRef.current ?? ({
+      invalidateQueries: mockInvalidateQueries,
+      fetchQuery: mockFetchQuery,
+    }),
     useQuery: mockUseQuery,
     useMutation: mockUseMutation,
   };
@@ -235,6 +243,7 @@ const installMutationMock = (): void => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockQueryClientRef.current = undefined;
   testMutationPending = false;
   mockFetchQuery.mockResolvedValue(defaultSettings);
   installMutationMock();
@@ -1093,6 +1102,142 @@ describe('SettingsPage', () => {
     expect(screen.getByTestId('acx-target-card-service')).toHaveTextContent('Reachable');
     expect(screen.getAllByText('Recognition engine: InsightFace')).toHaveLength(1);
   });
+
+  it.each(['error', 'success'] as const)(
+    'keeps the queued health check through a cache-first Settings refetch when R0 returns %s',
+    async (completion) => {
+      const savedSettings: SettingsResponse = {
+        ...defaultSettings,
+        url: 'https://saved-api.example.com',
+        effective_target_url: 'https://saved-api.example.com',
+      };
+      const currentSettings: SettingsResponse = {
+        ...savedSettings,
+        url: 'https://current-api.example.com',
+        effective_target_url: 'https://current-api.example.com',
+        tenant_paired: true,
+      };
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { gcTime: Infinity, retry: false } },
+      });
+      mockQueryClientRef.current = queryClient;
+      queryClient.setQueryData(queryKeys.settings.all, defaultSettings);
+      const initialQueryState = queryClient.getQueryState<SettingsResponse>(queryKeys.settings.all);
+      let publishedSettingsQuery = createMockQuery({
+        data: defaultSettings,
+        dataUpdatedAt: initialQueryState?.dataUpdatedAt ?? 0,
+      });
+      mockUseQuery.mockImplementation(() => publishedSettingsQuery);
+      vi.mocked(fetchSettings).mockResolvedValue(savedSettings);
+
+      const view = render(<SettingsPageWithRouter />);
+      fireEvent.change(screen.getByLabelText('Service API URL'), {
+        target: { value: savedSettings.url },
+      });
+      fireEvent.blur(screen.getByLabelText('Service API URL'));
+      expect(saveMutate).toHaveBeenCalledWith({ url: savedSettings.url });
+
+      await act(async () => {
+        await Promise.resolve(
+          capturedSaveOptions!.onSuccess!({ saved: ['url'], result: 'ok' }),
+        );
+      });
+
+      expect(queryClient.getQueryData(queryKeys.settings.all)).toBe(savedSettings);
+      expect(testMutate).not.toHaveBeenCalled();
+
+      const publishSettingsCache = (): void => {
+        const queryState = queryClient.getQueryState<SettingsResponse>(queryKeys.settings.all);
+        expect(queryState).toBeDefined();
+        publishedSettingsQuery = createMockQuery({
+          data: queryState?.data,
+          dataUpdatedAt: queryState?.dataUpdatedAt ?? 0,
+          isFetching: queryState?.fetchStatus === 'fetching',
+        });
+        view.rerender(<SettingsPageWithRouter />);
+      };
+
+      // Publish the actual cache value and stamp created by the save refetch;
+      // this is the settled state from which the automatic R0 is bound.
+      publishSettingsCache();
+      expect(testMutate).toHaveBeenCalledTimes(1);
+      const oldRequestVariables = testMutate.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(oldRequestVariables).toBeDefined();
+
+      let resolveBackgroundSettings: (settings: SettingsResponse) => void = () => {};
+      const backgroundSettings = new Promise<SettingsResponse>((resolve) => {
+        resolveBackgroundSettings = resolve;
+      });
+      vi.mocked(fetchSettings).mockImplementation(() => backgroundSettings);
+      let backgroundRefetch!: Promise<void>;
+      act(() => {
+        backgroundRefetch = queryClient.refetchQueries({
+          queryKey: queryKeys.settings.all,
+          type: 'all',
+        });
+      });
+
+      // Query state changes synchronously; the mock hook still exposes the
+      // prior settled publication until publishSettingsCache is called.
+      expect(queryClient.getQueryState(queryKeys.settings.all)?.fetchStatus).toBe('fetching');
+      expect(publishedSettingsQuery.isFetching).toBe(false);
+      expect(publishedSettingsQuery.data).toBe(savedSettings);
+
+      if (completion === 'error') {
+        act(() => {
+          capturedTestOptions!.onError!(new Error('R0 failed'), oldRequestVariables);
+        });
+      } else {
+        act(() => {
+          capturedTestOptions!.onSuccess!({
+            outcome: 'connected',
+            status_code: 200,
+            probe_mode: 'service_auth',
+            probed_url: `${savedSettings.effective_target_url}/health/detailed`,
+            body: { status: 'ok', model_cache: { status: 'ok', profile: 'insightface' } },
+          }, oldRequestVariables);
+        });
+      }
+
+      expect(queryClient.getQueryState(queryKeys.settings.all)?.fetchStatus).toBe('fetching');
+      expect(screen.getByTestId('acx-target-card-service')).toHaveTextContent('Not checked');
+      expect(screen.queryByTestId('acx-test-connection-banner')).not.toBeInTheDocument();
+      expect(screen.queryByText('Recognition engine: InsightFace')).not.toBeInTheDocument();
+
+      // The hook now publishes the pending state. It must keep the queued
+      // automatic check waiting until refreshed data and stamp are aligned.
+      publishSettingsCache();
+      expect(publishedSettingsQuery.isFetching).toBe(true);
+      expect(testMutate).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId('acx-target-card-service')).toHaveTextContent('Not checked');
+
+      await act(async () => {
+        resolveBackgroundSettings(currentSettings);
+        await backgroundRefetch;
+      });
+      publishSettingsCache();
+
+      expect(publishedSettingsQuery.data).toBe(currentSettings);
+      expect(publishedSettingsQuery.isFetching).toBe(false);
+      expect(testMutate).toHaveBeenCalledTimes(2);
+      const currentRequestVariables = testMutate.mock.calls[1]?.[0] as Record<string, unknown>;
+      expect(currentRequestVariables).toEqual({});
+      expect(currentRequestVariables).not.toBe(oldRequestVariables);
+
+      act(() => {
+        capturedTestOptions!.onSuccess!({
+          outcome: 'connected',
+          status_code: 200,
+          probe_mode: 'service_auth',
+          probed_url: `${currentSettings.effective_target_url}/health/detailed`,
+          body: { status: 'ok', model_cache: { status: 'ok', profile: 'insightface' } },
+        }, currentRequestVariables);
+      });
+
+      expect(screen.getByTestId('acx-target-card-service')).toHaveTextContent('Reachable');
+      expect(screen.getAllByText('Recognition engine: InsightFace')).toHaveLength(1);
+    },
+  );
 
   it.each([
     [

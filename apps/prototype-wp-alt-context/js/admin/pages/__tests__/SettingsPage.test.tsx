@@ -1241,7 +1241,7 @@ describe('SettingsPage', () => {
       // prior settled publication until publishSettingsCache is called.
       expect(queryClient.getQueryState(queryKeys.settings.all)?.fetchStatus).toBe('fetching');
       expect(publishedSettingsQuery.isFetching).toBe(false);
-      expect(publishedSettingsQuery.data).toBe(savedSettings);
+      expect(publishedSettingsQuery.data).toBe(savedSettingsInCache);
 
       if (completion === 'error') {
         act(() => {

@@ -52,6 +52,7 @@ const fetchGpuStatusMock = vi.mocked(gpuApi.fetchGpuStatus);
 const describeHttpError = (status: number): HTTPError =>
   new HTTPError({
     status,
+    retryAfterSeconds: undefined,
     endpoint: '/acx/v1/describe/runs',
     bodyPreview: '',
     message: `Request failed (${status})`,

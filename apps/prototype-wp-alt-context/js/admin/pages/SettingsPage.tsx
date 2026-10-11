@@ -408,6 +408,8 @@ export const SettingsPage = (): React.JSX.Element => {
         });
         syncLocalizedRouting(refreshed);
         resolvedSettings.current = refreshed;
+        scheduledHealthCheck.current = { afterRoutingSave: metadata.afterRoutingSave, request: null };
+        startScheduledHealthCheck();
       }
     },
     // Outcome enum maps to fixed banner copy; it cannot carry a free-form server

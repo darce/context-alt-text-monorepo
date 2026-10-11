@@ -86,11 +86,12 @@ supported. The CLI's --env local is only a database-host guard; it does not
 select an API provider.
 
 The Site 2 InsightFace disclosure is implemented and regression-covered in UI
-candidate 4a65721c8e7cd9d546de4566438f27dadc87da8c, tree
-0946596f54e5fc0f28a13158656406b6b9cc7b7d, but that candidate is not landed or
-active. Keep the disclosure **PENDING** until the approved source is present
-in a VERIFIED SERVING plugin artifact and the active settings page visibly
-identifies InsightFace. The candidate follows the existing settings UX maps
+source 4a65721c8e7cd9d546de4566438f27dadc87da8c, tree
+0946596f54e5fc0f28a13158656406b6b9cc7b7d. This source is VERIFIED and LANDED
+on local main, which has not been pushed; it is not active in the currently
+served plugin. Keep the disclosure **PENDING** until the approved source is
+present in a VERIFIED SERVING plugin artifact and the active settings page
+visibly identifies InsightFace. The source follows the existing settings UX maps
 254/267: pending, dirty, saving, stale and unknown states have no annotation;
 current authenticated InsightFace settings show one passive
 `Recognition engine: InsightFace` annotation; FIR and AuraFace show none. Do
@@ -507,10 +508,11 @@ Preserve fir.dev.api.altcontext.com, fir.api.altcontext.com,
 dev.api.altcontext.com, staging.api.altcontext.com and api.altcontext.com.
 Resolution is not service readiness. The 09:10 supplied inventory found
 AuraFace DNS resolution but TLS failure, and found TLS failure for fir.api.
-At 13:18 UTC, later checks confirmed all three AuraFace A records and
-successful TLS probes for AuraFace and production Clerk; DNS or TLS alone does
-not establish an upstream or serving readiness. Do not route smoke traffic to
-an unverified upstream. Do not add a new public InsightFace
+At 13:18 UTC, later checks confirmed all three AuraFace A records, while TLS
+handshakes failed for all three AuraFace endpoints and production Clerk
+(curl HTTP 000, exit 35). DNS resolution does not establish an upstream or
+serving readiness. Do not route smoke traffic to an unverified upstream. Do
+not add a new public InsightFace
 evaluation deployment, change model defaults, or declare a model winner.
 The earlier verified gte-base-en-v1.5 FIR 512 result and FIR-23 symmetric
 stacks from merge 7928fa are prior evidence, not proof of the live FIR
@@ -543,7 +545,7 @@ chapter 8).
 
 ## 7. Supplied status, pass criteria and records
 
-Supplied source-status snapshot — **2026-10-11 13:35 UTC**. These source,
+Supplied source-status snapshot — **2026-10-11 13:58 UTC**. These source,
 test, endpoint and resource facts were supplied for this documentation update;
 they are not fresh observations made by the documentation change. Recheck the
 actual build and runtime when an operator runs this procedure. This dated
@@ -556,33 +558,37 @@ snapshot does not replace those checks.
   contracts; production FIR profile/width remains unknown until authenticated
   runtime evidence confirms it.
 - **Endpoint and plugin checks:** at 13:18 UTC, all three AuraFace A records
-  matched their expected values, AuraFace and production Clerk TLS checks
-  succeeded, and the development Clerk endpoint returned HTTP 200. These
-  checks do not prove an upstream, a complete sign-in/invitation/claim sweep,
-  a serving plugin artifact or an end-to-end smoke. LocalWP ports 10010 and
-  10028 remained closed; their active plugin symlinks still named
-  0.0.35-066c3aa13 while source declares 0.0.36.
+  matched their expected values. TLS handshakes failed for all three AuraFace
+  endpoints and production Clerk `/sign-in`: each curl result was HTTP 000,
+  exit 35. The development Clerk endpoint returned HTTP 200, curl exit 0;
+  `demo.altcontext.com/wp-admin` returned HTTP 301, curl exit 0. These checks
+  do not prove an upstream, a complete sign-in/invitation/claim sweep, a
+  serving plugin artifact or an end-to-end smoke. LocalWP ports 10010 and
+  10028 remained closed (HTTP 000, curl exit 7); their active plugin symlinks
+  still named 0.0.35-066c3aa13 while source declares 0.0.36. Curl exit 35 is
+  not an HTTP status or a PASS.
 - **Auth source and tests:** the GTMSMOKE-AUTH-01 correction and regression
-  (Auth78c) are landed on main at
+  (Auth78c) are LANDED on main at
   eac89400e5de70d1ce9313f81296764cee2a2c4b, with 8 native PASS results and an
-  independent MAX PASS. Serving API image deployment and the real portal
+  independent MAX PASS. API deployment and the real live portal
   rotation/recovery smoke remain **PENDING**.
-- **UI candidate and tests:** source 4a65721c8e7cd9d546de4566438f27dadc87da8c,
+- **UI source and tests:** source 4a65721c8e7cd9d546de4566438f27dadc87da8c,
   tree 0946596f54e5fc0f28a13158656406b6b9cc7b7d, implements the Site 2
-  InsightFace disclosure and regression coverage. An earlier final proof had
-  a P2 tenant-adoption failure, independently confirmed by Sol MAX
-  as a reachable backend-trace and confirmation-feedback defect. The causal
-  confirmation had 127 tests total: 126 healthy and 1 RED at test 1994
-  (expected 3, got 2). The two-line high-priority correction queues and starts
-  the scheduled health check after tenant reconciliation. The latest native
-  host run on this exact candidate reported 127 tests passing across five
-  Settings-page modules in 23.81 seconds, with the full TypeScript check
-  returning 0. Current final MAX reviews remain **IN PROGRESS**; the candidate
-  is not yet landed.
+  InsightFace disclosure and regression coverage. It is VERIFIED and LANDED
+  on local main; main has not been pushed. Independent Sol MAX reviews j1b43
+  and j290 both returned PASS with no findings. Native child 4466 reported
+  127 tests passing across five Settings-page modules in 23.81 seconds, with
+  the full TypeScript check returning 0. Public close is READY and task finish
+  is COMPLETE; the UI worktree (UIWT) has been removed and its feature branch
+  retired. These source, review and test results do not establish serving or
+  runtime PASS.
 - **Serving artifact and runtime:** the active plugin remains
-  0.0.35-066c3aa13. The Site 2 disclosure is not active in that artifact.
-  Serving artifact verification, portal recovery smoke and runtime PASS
-  evidence remain **PENDING**. No onboarding keys have been issued.
+  0.0.35-066c3aa13, so the Site 2 disclosure is not active in that artifact.
+  API deployment, plugin serving verification, live portal recovery, live
+  WordPress smoke, GPU61 and end-to-end/runtime PASS evidence remain
+  **PENDING**. Parent GTMBURST-1 GPU action 61 remains **HOLD** pending exact
+  source/image, live GPU and full-stack proof. No onboarding keys have been
+  issued.
 - **Resource admission:** the 09:18 snapshot reported root storage at 93% and
   MemoryMax at 512 MiB. These are historical point-in-time readings; 512 MiB
   is not a static future allocation. The PGDATA guard requires less than 90%

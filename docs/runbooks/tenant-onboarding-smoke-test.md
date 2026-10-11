@@ -44,10 +44,13 @@ database/project/role and storage, supported environment guard, active
 profile and model ID, Clerk verifier settings, and the effective routed target.
 Require /ready, authenticated /health/detailed and all three actual vector
 columns in that store. Confirm the FIR hostname's TLS and upstream route.
-Repeat native resource admission before
-provisioning; the supplied root usage is 93% and the PGDATA guard requires
-less than 90% used. The maintained CLI must be present in the image and its
-real ACX_ENV and database host must satisfy its supported --env prod contract.
+Repeat fresh native resource admission immediately before provisioning, using
+current gauges and accepted pending costs. The PGDATA guard requires less than
+90% root use; the 09:18 reading is historical, and a later below-90% sample
+alone does not admit provisioning. Heavy builds remain on **HOLD** until root
+use is below 80% and fresh whole-host admission passes. The maintained CLI
+must be present in the image and its real ACX_ENV and database host must
+satisfy its supported --env prod contract.
 If any detail is unavailable or differs, stop and ask the stack owner for its
 runbook; do not guess an environment selector, directory, service name, store,
 command, or successful output.
@@ -82,10 +85,18 @@ through its documented constant or filter. The retired source option is not
 supported. The CLI's --env local is only a database-host guard; it does not
 select an API provider.
 
-The Site 2 InsightFace disclosure is still pending implementation. Keep it
-PENDING until the active settings page visibly identifies InsightFace. Do not
-add a FIR annotation to the generic settings UI or mark Site 3's UI disclosure
-as passed. Verify Site 3's actual backend profile and model evidence instead.
+The Site 2 InsightFace disclosure is implemented and regression-covered in UI
+candidate 4a65721c8e7cd9d546de4566438f27dadc87da8c, tree
+0946596f54e5fc0f28a13158656406b6b9cc7b7d, but that candidate is not landed or
+active. Keep the disclosure **PENDING** until the approved source is present
+in a VERIFIED SERVING plugin artifact and the active settings page visibly
+identifies InsightFace. The candidate follows the existing settings UX maps
+254/267: pending, dirty, saving, stale and unknown states have no annotation;
+current authenticated InsightFace settings show one passive
+`Recognition engine: InsightFace` annotation; FIR and AuraFace show none. Do
+not add a FIR annotation to the generic settings UI or mark Site 3's UI
+disclosure as passed. Verify Site 3's actual backend profile and model evidence
+instead.
 
 ## 2. Clerk sign-in, invitation and claim
 
@@ -298,11 +309,14 @@ The portal uses its existing supported rotate operation and its own
 one-usable-primary, bounded-grace and idempotency contract. The confirmed
 GTMSMOKE-AUTH-01 recovery defect is: create K1, rotate to K2, revoke all,
 create K3, then rotation of K3 is rejected because historical K2 remains the
-selected replacement. Regression and fix are pending. Do not claim the portal
-rotation/recovery sweep passed or substitute CLI create/revoke for portal
-rotation. Retest that recovery sequence only after the fix and regression are
-available in the serving artifact. Do not invent portal flags, routes or
-payloads.
+selected replacement. The correction and regression are landed on main as
+Auth78c at eac89400e5de70d1ce9313f81296764cee2a2c4b, with 8 native PASS
+results and an independent MAX PASS. Serving API image deployment and the
+real portal rotation/recovery smoke remain **PENDING**. Do not claim the
+portal rotation/recovery sweep passed or substitute CLI create/revoke for
+portal rotation. Retest only after the approved source is present in a
+VERIFIED SERVING artifact, and require actual runtime outcomes for the full
+recovery sequence. Do not invent portal flags, routes or payloads.
 
 ## 4. Configure WordPress and prove key isolation
 
@@ -491,9 +505,12 @@ AuraFace remains a separate candidate at these exact planned names:
 
 Preserve fir.dev.api.altcontext.com, fir.api.altcontext.com,
 dev.api.altcontext.com, staging.api.altcontext.com and api.altcontext.com.
-Resolution is not service readiness. The supplied inventory found AuraFace
-DNS resolution but TLS failure, and found TLS failure for fir.api. Do not route
-smoke traffic to an unverified upstream. Do not add a new public InsightFace
+Resolution is not service readiness. The 09:10 supplied inventory found
+AuraFace DNS resolution but TLS failure, and found TLS failure for fir.api.
+At 13:18 UTC, later checks confirmed all three AuraFace A records and
+successful TLS probes for AuraFace and production Clerk; DNS or TLS alone does
+not establish an upstream or serving readiness. Do not route smoke traffic to
+an unverified upstream. Do not add a new public InsightFace
 evaluation deployment, change model defaults, or declare a model winner.
 The earlier verified gte-base-en-v1.5 FIR 512 result and FIR-23 symmetric
 stacks from merge 7928fa are prior evidence, not proof of the live FIR
@@ -526,36 +543,73 @@ chapter 8).
 
 ## 7. Supplied status, pass criteria and records
 
-The following is the supplied native snapshot for 2026-10-11, not a fresh
-runtime observation from this documentation change:
+Supplied source-status snapshot — **2026-10-11 13:35 UTC**. These source,
+test, endpoint and resource facts were supplied for this documentation update;
+they are not fresh observations made by the documentation change. Recheck the
+actual build and runtime when an operator runs this procedure. This dated
+snapshot does not replace those checks.
 
-- The 09:10 inventory contained dev-fir only; it did not identify a dedicated
-  FIR production directory or running container. Generic /opt/acx-backend/prod
-  and acx-prod-api-1 are InsightFace.
-- fir.api.altcontext.com TLS failed. The three AuraFace names resolved to
-  129.213.40.111 but TLS failed; no AuraFace upstream was confirmed.
-- Production Clerk TLS failed; the development Clerk sign-in endpoint returned
-  200. This does not prove a complete sign-in, invitation or claim sweep.
-- LocalWP ports 10010 and 10028 refused connections. Their plugin symlinks
-  still named release 0.0.35-066c3aa13 while source declares 0.0.36.
-- Root storage was 93% used at 09:18. The native PGDATA admission guard
-  requires less than 90% used. Provisioning is not admitted by this snapshot.
-- MemoryMax remained 512 MiB. Preserve the native resource limit and holds.
-- The Site 2 InsightFace settings disclosure is pending implementation. No
-  onboarding keys or end-to-end recognition PASS are evidenced.
+- **Stack inventory:** the 09:10 inventory contained dev-fir only; it did not
+  identify a dedicated FIR production directory or running container.
+  Generic /opt/acx-backend/prod and acx-prod-api-1 are InsightFace. Keep the
+  existing generic InsightFace, firSFace and exact three AuraFace host
+  contracts; production FIR profile/width remains unknown until authenticated
+  runtime evidence confirms it.
+- **Endpoint and plugin checks:** at 13:18 UTC, all three AuraFace A records
+  matched their expected values, AuraFace and production Clerk TLS checks
+  succeeded, and the development Clerk endpoint returned HTTP 200. These
+  checks do not prove an upstream, a complete sign-in/invitation/claim sweep,
+  a serving plugin artifact or an end-to-end smoke. LocalWP ports 10010 and
+  10028 remained closed; their active plugin symlinks still named
+  0.0.35-066c3aa13 while source declares 0.0.36.
+- **Auth source and tests:** the GTMSMOKE-AUTH-01 correction and regression
+  (Auth78c) are landed on main at
+  eac89400e5de70d1ce9313f81296764cee2a2c4b, with 8 native PASS results and an
+  independent MAX PASS. Serving API image deployment and the real portal
+  rotation/recovery smoke remain **PENDING**.
+- **UI candidate and tests:** source 4a65721c8e7cd9d546de4566438f27dadc87da8c,
+  tree 0946596f54e5fc0f28a13158656406b6b9cc7b7d, implements the Site 2
+  InsightFace disclosure and regression coverage. An earlier final proof had
+  a P2 tenant-adoption failure, independently confirmed by Sol MAX
+  as a reachable backend-trace and confirmation-feedback defect. The causal
+  confirmation had 127 tests total: 126 healthy and 1 RED at test 1994
+  (expected 3, got 2). The two-line high-priority correction queues and starts
+  the scheduled health check after tenant reconciliation. The latest native
+  host run on this exact candidate reported 127 tests passing across five
+  Settings-page modules in 23.81 seconds, with the full TypeScript check
+  returning 0. Current final MAX reviews remain **IN PROGRESS**; the candidate
+  is not yet landed.
+- **Serving artifact and runtime:** the active plugin remains
+  0.0.35-066c3aa13. The Site 2 disclosure is not active in that artifact.
+  Serving artifact verification, portal recovery smoke and runtime PASS
+  evidence remain **PENDING**. No onboarding keys have been issued.
+- **Resource admission:** the 09:18 snapshot reported root storage at 93% and
+  MemoryMax at 512 MiB. These are historical point-in-time readings; 512 MiB
+  is not a static future allocation. The PGDATA guard requires less than 90%
+  root use. The latest supplied native reading at 13:12 reported 13,965 MiB
+  MemAvailable, 86.90% root use, 8.37 GB cgroup use and 465 PIDs. Fresh
+  whole-host admission included full current custody, reported root forecast
+  0, and all five retention controls at 0. The former static 13 GiB forecast
+  is withdrawn. Use current gauges and accepted pending costs for admission
+  immediately before provisioning; this dated snapshot does not admit a
+  future operation. The 86.90% sample is below the separate 90% PGDATA
+  threshold but above the 80% heavy-build threshold; heavy builds remain
+  **HOLD** until root use is below 80% and fresh whole-host admission passes.
 
 Do not claim this runbook or any site runtime PASS from these measurements.
-Record recognition and description as separate results. A row can be PASS only
-after its stack and source gates pass; effective routing, profile/model ID and
-all three actual vector columns agree; correct and negative key controls
-behave as expected; the scan/job/person evidence is complete; and a distinct
-held-out photo yields the expected automatic recognition without human naming.
-The description result needs its own completed run and target-specific
-server/worker/GPU proof; a CPU face scan or source tests cannot satisfy it.
-Parent GTMBURST-1 GPU action 61 remains **HOLD** pending exact source/image,
-live GPU and full-stack proof, so keep the affected description result
-**PENDING**. Keep portal rotation recovery PENDING until GTMSMOKE-AUTH-01 is
-fixed and regression-covered.
+Record recognition and description as separate results. A row can be **PASS**
+only when the approved source is present in a VERIFIED SERVING artifact and
+actual runtime outcomes establish that its stack and source gates pass;
+effective routing, profile/model ID and all three actual vector columns agree;
+correct and negative key controls behave as expected; scan/job/person evidence
+is complete; and a distinct held-out photo yields the expected automatic
+recognition without human naming. The description result needs its own
+completed run and target-specific server/worker/GPU proof; a CPU face scan or
+source tests cannot satisfy it. Parent GTMBURST-1 GPU action 61 remains
+**HOLD** pending exact source/image, live GPU and full-stack proof, so keep the
+affected description result **PENDING**. Keep portal rotation recovery
+**PENDING** until approved Auth78c source is in a VERIFIED SERVING artifact
+and the real portal recovery sequence passes with recorded runtime outcomes.
 
 Keep the durable redacted execution record in an approved private run-specific
 location outside Git. Record date/UTC, source and active plugin build identity,

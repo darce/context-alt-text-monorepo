@@ -155,8 +155,31 @@ delivers a message. Development email CNAMEs are not needed.
 First satisfy the dedicated FIR production gate in section 1, including a
 verified production Clerk verifier and a serving API image that contains the
 maintained invitation CLI. Do not issue a Site 1 invitation through the
-generic InsightFace /opt/acx-backend/prod stack. With the verified directory
-set explicitly:
+generic InsightFace /opt/acx-backend/prod stack.
+
+**Stop before issuing or claiming an invitation** until a read-only preflight
+proves that the portal and invitation CLI reach the same intended dedicated
+FIR store. Inspect the deployed portal's actual browser request construction
+and targets for CLAIM, ME and KEY against the live app-host routing and
+API/database mapping; trace each to the exact API service and store used by
+`FIR_PROD_STACK_DIR`. This preflight is read-only: do not claim an invitation
+or create a key to test it. Do not infer the store from the hostname, a mounted
+route, a 401 response or a successful CLI command. In particular,
+[`app-portal.sh`](../../scripts/deploy/app-portal.sh) defaults
+`APP_UPSTREAM` to `prod-api:8000`, and the supplied production stack at that
+upstream is generic InsightFace. Verify the deployed upstream itself; do not
+change or retarget production configuration in this lane.
+
+Before the invitation command, also verify that the portal is enabled on that
+same API; its production Clerk issuer and JWKS URL, session audience
+`altcontext-portal`, and authorized application origin agree with the
+production Clerk instance and frontend; and the exact browser origin and
+authorized party are `https://app.altcontext.com`. If any request-to-store,
+portal-enable, Clerk or origin mapping is unknown or differs, stop before
+invitation issuance and leave the FIR portal sweep **PENDING**. A later CLI key
+fallback cannot make a claim made in another store a FIR claim.
+
+Only after that preflight passes, set the verified directory explicitly:
 
 ```sh
 if [ -z "$FIR_PROD_STACK_DIR" ]; then echo "Set FIR_PROD_STACK_DIR only after verifying the dedicated FIR production stack" >&2; exit 1; fi
@@ -167,25 +190,28 @@ docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_po
 
 The command is conditional on verifying that this exact directory uses the
 maintained Compose file/API service, ACX_ENV=prod, matching database, production
-verifier and invitation CLI. If not, stop. Sign in at
-https://app.altcontext.com with a real production account, redeem the
-invitation, confirm /portal/me returns 200, and check the decoded session
-claims locally: aud is altcontext-portal and azp is https://app.altcontext.com.
-Never paste a JWT into a website or commit it. Production test mode is
-technically possible but discouraged; use real production authentication and
-delivery for this sweep. Copy production email deliverability targets only
-from that Clerk instance's Dashboard. After claim, use the portal's existing
-key-creation flow only if read-only verification proves its API writes to the
-same dedicated FIR store. Otherwise issue the Site 1 WordPress key with the
-verified CLI commands in section 3 and keep the portal key result scoped to
-its actual store. Do not mint two keys for one tenant or claim a key from a
-different store belongs to Site 1.
+verifier and invitation CLI already matched by the preflight. If not, stop.
+Sign in at https://app.altcontext.com with a real production account, redeem
+the invitation only after the preflight, confirm /portal/me returns 200, and
+check the decoded session claims locally: aud is altcontext-portal and azp is
+https://app.altcontext.com. Never paste a JWT into a website or commit it.
+Production test mode is technically possible but discouraged; use real
+production authentication and delivery for this sweep. Copy production email
+deliverability targets only from that Clerk instance's Dashboard. If the live
+claim or /portal/me request resolves to any other store, stop; keep the FIR
+portal sweep **PENDING** and do not describe that claim as Site 1 onboarding.
+Use the portal's existing key-creation flow only when the preflight proved its
+KEY request writes to this same FIR store. A separately issued WordPress key
+can be used only for its verified store and does not repair a claim in another
+store. Do not mint two keys for one tenant or present unrelated stores as one
+onboarding sweep.
 
 The existing portal flow and the WordPress tenant/model-space setup are
-separate checks. One Clerk user may bind independently in distinct stores.
-Within one store, provision_customer uses email as its idempotency key and
-reuses the tenant; do not promise that repeating the same email creates a new
-site tenant. Automation needs explicit per-site/per-stack tenant mappings.
+separate checks, and each store has its own sweep. One Clerk user may bind
+independently in distinct stores, but those bindings are not one onboarding
+sweep. Within one store, provision_customer uses email as its idempotency key
+and reuses the tenant; do not promise that repeating the same email creates a
+new site tenant. Automation needs explicit per-site/per-stack tenant mappings.
 Neither a successful login nor an invitation claim proves a tenant key or
 gallery exists.
 
@@ -331,14 +357,14 @@ docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_ap
 For Site 2, revoke through the local admin console that issued the key. Keep
 raw keys out of all evidence.
 
-## 5. Enroll one person, then test a different held-out photo
+## 5. Enroll one person, then test a different held-out recognition photo
 
 Use private operator-controlled photos that are not committed or included in
 screenshots. Upload them through WordPress Media > Add New, then follow the
-current Workbench flow; the
-maintained UI calls its surfaces Workbench, Review Queue and People. Its scan
-action is Analyze selected media. The current review control says Name this
-person and Save name. See [Workbench](../../apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx),
+current Workbench flow. The maintained UI calls its surfaces Workbench,
+Review Queue and People. The
+current review control says Name this person and Save name. See
+[Workbench](../../apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx),
 [People](../../apps/prototype-wp-alt-context/js/admin/pages/RosterPage.tsx),
 [person naming](../../apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/PersonCommitControl.tsx)
 and its [roster assignment API hook](../../apps/prototype-wp-alt-context/js/admin/pages/roster/hooks/useClusterActions.ts),
@@ -356,10 +382,12 @@ plus the closest maintained [scan E2E workflow](../../apps/prototype-wp-alt-cont
 3. Upload a different held-out photograph from a separate capture/session and
    scan it through the same Workbench flow. Do not name, accept, auto-accept,
    or silently enroll this held-out probe. Confirm the system itself surfaces
-   the expected named suggestion/recognition and expected description behavior.
-   A human accepting or assigning the held-out person's name is not automatic
-   recognition evidence. If the held-out photo only creates an unnamed group
-   or no expected named suggestion, do not mark recognition passed.
+   the expected named suggestion/recognition. A human accepting or assigning
+   the held-out person's name is not automatic recognition evidence. If the
+   held-out photo only creates an unnamed group or no expected named
+   suggestion, do not mark recognition passed. This recognition result says
+   nothing about image description; follow the separate description procedure
+   below.
 4. Include an independently verified unknown person and a wrong-person
    negative. Confirm that the unknown is not given a known name, the wrong
    identity is not suggested as a correct match, and data from another tenant
@@ -369,6 +397,61 @@ Enrollment/gallery creation and held-out retrieval are separate events. A
 health 200, ready response, successful empty scan, empty gallery, or manually
 assigned held-out name is not a recognition pass. Do not turn probe auto-enroll
 or review acceptance on during quality comparison.
+
+### Separate image-description smoke
+
+Keep this result separate from the CPU face-recognition result above. A face
+scan, recognition suggestion, or source test is not evidence that image
+description ran. Site 2's local-only InsightFace evaluation is a recognition
+target; do not count its CPU face work as a description result.
+
+Before sending a description request, verify the target's own server-side
+configuration and deployed image: the description adapter is a maintained
+GPU-backed adapter, its description worker is deployed and ready, and the
+actual GPU endpoint is live and authenticated. For the maintained dev example,
+[portal-dev-e2e](portal-dev-e2e.md) specifies
+`ACX_DESCRIPTION_ADAPTER=gpu_qwen30b`; it requires the GPU endpoint key to be
+minted and installed on the GPU host and in the dev environment. Follow
+[GPU endpoint key minting](gpu-key-mint.md) and the readiness and durable-run
+checks in [GPU demo environment flip](gpu-demo-env-flip.md). Keep the endpoint
+credential on the server/GPU side; never put it in WordPress, the browser, or
+the tenant API key field. For Site 1 and Site 3, prove these prerequisites for
+their own dedicated FIR API, worker and endpoint before use. The dev example's
+`https://dev.api.altcontext.com` and adapter configuration do not retarget
+either FIR site. If any target-specific prerequisite or store mapping is
+unproven, leave its description result **PENDING**.
+
+After those checks pass, use a separate operator-controlled test attachment
+that was not used for recognition enrollment or held-out scoring:
+
+1. In the matching LocalWP site's **Settings > Alt Context**, set Recognition
+   URL to that site's already verified API and enter its WordPress tenant API
+   key, then save to pair the tenant. The Clerk browser key and GPU endpoint
+   credential are not WordPress tenant API keys. For the maintained dev setup,
+   follow the exact target and prerequisite sequence in
+   [portal-dev-e2e](portal-dev-e2e.md); do not substitute its API URL for a
+   different site's verified URL. Use the current
+   [Workbench UI map](../../apps/prototype-wp-alt-context/docs/ux-maps/workbench-2pane.md)
+   for the maintained description-only toggle and Workbench labels; use this
+   UI flow without inventing or calling API routes.
+2. In **Settings > Alt Context**, record the current recognition-toggle state,
+   turn **Identify people in photos** off and save. The Workbench footer should
+   disclose that this run describes without identifying people. This keeps
+   its description result independent of the face-recognition result.
+3. In **Workbench**, select only the test attachment in the media library and
+   choose **Describe 1 selected**. Wait for the run to complete, then choose
+   **Review drafts** and inspect the item under **Description Runs**. Record
+   the non-secret run/media IDs, adapter/model provenance and compute tier.
+   **Compute tier: Final (GPU)** is the final GPU result; **Compute tier:
+   Provisional (CPU)** is not a GPU description result, and **Compute tier:
+   Unknown** or a queued/failed run remains pending. Do not overwrite an
+   existing human-authored alt text merely to produce this evidence. Restore
+   the recorded **Identify people in photos** state after the description run.
+
+Parent GTMBURST-1 GPU action 61 remains **HOLD** until exact source and image,
+live GPU and full-stack proof are available. A description draft from this
+procedure or source tests alone cannot clear that hold or establish the
+required description PASS.
 
 Capture genuine, redacted backend evidence for each enrollment and retrieval:
 actual API image/scan/job/person identifiers; tenant and key IDs; effective
@@ -462,12 +545,17 @@ runtime observation from this documentation change:
   onboarding keys or end-to-end recognition PASS are evidenced.
 
 Do not claim this runbook or any site runtime PASS from these measurements.
-Mark a row PASS only after its stack and source gates pass; effective routing,
-profile/model ID and all three actual vector columns agree; correct and
-negative key controls behave as expected; the scan/job/person evidence is
-complete; and a distinct held-out photo yields the expected automatic
-recognition/description behavior without human naming. Keep portal rotation
-recovery PENDING until GTMSMOKE-AUTH-01 is fixed and regression-covered.
+Record recognition and description as separate results. A row can be PASS only
+after its stack and source gates pass; effective routing, profile/model ID and
+all three actual vector columns agree; correct and negative key controls
+behave as expected; the scan/job/person evidence is complete; and a distinct
+held-out photo yields the expected automatic recognition without human naming.
+The description result needs its own completed run and target-specific
+server/worker/GPU proof; a CPU face scan or source tests cannot satisfy it.
+Parent GTMBURST-1 GPU action 61 remains **HOLD** pending exact source/image,
+live GPU and full-stack proof, so keep the affected description result
+**PENDING**. Keep portal rotation recovery PENDING until GTMSMOKE-AUTH-01 is
+fixed and regression-covered.
 
 Keep the durable redacted execution record in an approved private run-specific
 location outside Git. Record date/UTC, source and active plugin build identity,

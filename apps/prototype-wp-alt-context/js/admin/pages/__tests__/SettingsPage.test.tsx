@@ -28,8 +28,8 @@ type QueryHookResult = ReturnType<typeof createMockQuery<SettingsResponse>>;
 type MutationHookResult = ReturnType<typeof createMockMutation>;
 
 interface CapturedMutationOptions {
-  onSuccess?: (data: unknown) => void;
-  onError?: (err: unknown) => void;
+  onSuccess?: (data: unknown, variables?: unknown) => void;
+  onError?: (err: unknown, variables?: unknown) => void;
 }
 
 const {
@@ -264,6 +264,16 @@ beforeEach(() => {
   );
   vi.mocked(useApplyRetentionPreset).mockReturnValue(createMockMutation());
 });
+
+const startTestConnection = (): Record<string, unknown> => {
+  const previousCallCount = testMutate.mock.calls.length;
+  fireEvent.click(screen.getByRole('button', { name: 'Check health' }));
+  const requestVariables = testMutate.mock.calls[previousCallCount]?.[0] as
+    | Record<string, unknown>
+    | undefined;
+  expect(requestVariables).toBeDefined();
+  return requestVariables!;
+};
 
 describe('SettingsPage', () => {
   it('shows loading state initially', () => {
@@ -725,6 +735,7 @@ describe('SettingsPage', () => {
   it('discloses one current authenticated InsightFace result for a service target', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
     render(<SettingsPageWithRouter />);
+    const requestVariables = startTestConnection();
 
     act(() => {
       capturedTestOptions?.onSuccess?.({
@@ -733,7 +744,7 @@ describe('SettingsPage', () => {
         probe_mode: 'service_auth',
         probed_url: 'https://api.example.com/health/detailed',
         body: { status: 'ok', model_cache: { status: 'ok', profile: 'insightface' } },
-      });
+      }, requestVariables);
     });
 
     expect(screen.getAllByText('Recognition engine: InsightFace')).toHaveLength(1);
@@ -750,6 +761,7 @@ describe('SettingsPage', () => {
       },
     }));
     render(<SettingsPageWithRouter />);
+    const requestVariables = startTestConnection();
 
     act(() => {
       capturedTestOptions?.onSuccess?.({
@@ -758,7 +770,7 @@ describe('SettingsPage', () => {
         probe_mode: 'service_auth',
         probed_url: `${targetUrl}/health/detailed`,
         body: { status: 'ok', model_cache: { status: 'ok', profile: 'insightface' } },
-      });
+      }, requestVariables);
     });
 
     expect(screen.getAllByText('Recognition engine: InsightFace')).toHaveLength(1);
@@ -767,6 +779,7 @@ describe('SettingsPage', () => {
   it('discloses InsightFace when overall health is degraded but the model cache is ok', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
     render(<SettingsPageWithRouter />);
+    const requestVariables = startTestConnection();
 
     act(() => {
       capturedTestOptions?.onSuccess?.({
@@ -775,7 +788,7 @@ describe('SettingsPage', () => {
         probe_mode: 'service_auth',
         probed_url: 'https://api.example.com/health/detailed',
         body: { status: 'degraded', model_cache: { status: 'ok', profile: 'insightface' } },
-      });
+      }, requestVariables);
     });
 
     expect(screen.getAllByText('Recognition engine: InsightFace')).toHaveLength(1);
@@ -815,9 +828,10 @@ describe('SettingsPage', () => {
   ])('does not infer InsightFace from %s', (_caseName, settings, result) => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: settings }));
     render(<SettingsPageWithRouter />);
+    const requestVariables = startTestConnection();
 
     act(() => {
-      capturedTestOptions?.onSuccess?.(result);
+      capturedTestOptions?.onSuccess?.(result, requestVariables);
     });
 
     expect(screen.queryByText('Recognition engine: InsightFace')).not.toBeInTheDocument();
@@ -933,9 +947,10 @@ describe('SettingsPage', () => {
   ])('keeps %s evidence undisclosed', (_caseName, result) => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
     render(<SettingsPageWithRouter />);
+    const requestVariables = startTestConnection();
 
     act(() => {
-      capturedTestOptions?.onSuccess?.(result);
+      capturedTestOptions?.onSuccess?.(result, requestVariables);
     });
 
     expect(screen.queryByText('Recognition engine: InsightFace')).not.toBeInTheDocument();
@@ -944,6 +959,7 @@ describe('SettingsPage', () => {
   it('shows the single passive disclosure only for current proof, not while pending, edited, or unavailable', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
     render(<SettingsPageWithRouter />);
+    const currentRequestVariables = startTestConnection();
 
     act(() => {
       capturedTestOptions?.onSuccess?.({
@@ -952,12 +968,12 @@ describe('SettingsPage', () => {
         probe_mode: 'service_auth',
         probed_url: 'https://api.example.com/health/detailed',
         body: { status: 'ok', model_cache: { status: 'ok', profile: 'insightface' } },
-      });
+      }, currentRequestVariables);
     });
     const currentLineCount = screen.queryAllByText('Recognition engine: InsightFace').length;
 
     testMutationPending = true;
-    fireEvent.click(screen.getByRole('button', { name: 'Check health' }));
+    const pendingRequestVariables = startTestConnection();
     const pendingLineCount = screen.queryAllByText('Recognition engine: InsightFace').length;
 
     fireEvent.change(screen.getByLabelText('Service API URL'), {
@@ -967,7 +983,7 @@ describe('SettingsPage', () => {
 
     testMutationPending = false;
     act(() => {
-      capturedTestOptions?.onError?.(new Error('request failed'));
+      capturedTestOptions?.onError?.(new Error('request failed'), pendingRequestVariables);
     });
     const unavailableLineCount = screen.queryAllByText('Recognition engine: InsightFace').length;
 
@@ -977,6 +993,65 @@ describe('SettingsPage', () => {
       editedLineCount: 0,
       unavailableLineCount: 0,
     });
+  });
+
+  it.each([
+    [
+      'URL edit',
+      'Service API URL',
+      'https://replacement-api.example.com',
+      { url: 'https://replacement-api.example.com' },
+    ],
+    [
+      'key replacement with the same displayed last four characters',
+      'API Key',
+      'replacement-secret-abcd',
+      { api_key: 'replacement-secret-abcd' },
+    ],
+  ])('does not restore connected health after a late probe races a %s autosave', (
+    _caseName,
+    fieldLabel,
+    fieldValue,
+    expectedSave,
+  ) => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPageWithRouter />);
+    expect(screen.getByLabelText('API Key')).toHaveAttribute('placeholder', 'Current: ****abcd');
+
+    const freshRequestVariables = startTestConnection();
+    act(() => {
+      capturedTestOptions?.onSuccess?.({
+        outcome: 'connected',
+        status_code: 200,
+        probe_mode: 'service_auth',
+        probed_url: 'https://api.example.com/health/detailed',
+        body: { status: 'ok', model_cache: { status: 'ok', profile: 'insightface' } },
+      }, freshRequestVariables);
+    });
+    expect(screen.getByTestId('acx-target-card-service')).toHaveTextContent('Reachable');
+
+    const staleRequestVariables = startTestConnection();
+    expect(screen.queryByText('Reachable')).not.toBeInTheDocument();
+    expect(screen.queryByText('Recognition engine: InsightFace')).not.toBeInTheDocument();
+
+    const editedField = screen.getByLabelText(fieldLabel);
+    fireEvent.change(editedField, { target: { value: fieldValue } });
+    fireEvent.blur(editedField);
+    expect(saveMutate).toHaveBeenCalledWith(expectedSave);
+    expect(screen.queryByText('Recognition engine: InsightFace')).not.toBeInTheDocument();
+
+    act(() => {
+      capturedTestOptions?.onSuccess?.({
+        outcome: 'connected',
+        status_code: 200,
+        probe_mode: 'service_auth',
+        probed_url: 'https://api.example.com/health/detailed',
+        body: { status: 'ok', model_cache: { status: 'ok', profile: 'insightface' } },
+      }, staleRequestVariables);
+    });
+
+    expect(screen.queryByText('Reachable')).not.toBeInTheDocument();
+    expect(screen.queryByText('Recognition engine: InsightFace')).not.toBeInTheDocument();
   });
 
   it('renders the tenant id and unpaired status when the tenant is not paired', () => {

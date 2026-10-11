@@ -88,6 +88,7 @@ interface SettingsFormStatus {
   testPending: boolean;
   hasUnsavedRoutingChanges: boolean;
   testResult: TestConnectionResponse | null;
+  recognitionEngineVerified?: boolean;
   saveMessage?: string;
   saveMessageTone?: BannerTone;
   routingSaveFeedback?: boolean;
@@ -133,6 +134,7 @@ export const SettingsForm = ({
     testPending,
     hasUnsavedRoutingChanges,
     testResult,
+    recognitionEngineVerified = false,
     saveMessage = '',
     saveMessageTone = 'info',
     routingSaveFeedback = false,
@@ -328,6 +330,11 @@ export const SettingsForm = ({
           </>
         ) : null}
       </p>
+
+      {recognitionEngineVerified && !savePending && !testPending
+        && !hasUnsavedRoutingChanges && !apiKey ? (
+          <p className="description">{__('Recognition engine: InsightFace', 'alt-context')}</p>
+        ) : null}
 
       {devHatchActive ? (
         <p className="description">

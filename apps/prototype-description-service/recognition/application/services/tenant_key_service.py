@@ -447,10 +447,11 @@ class TenantKeyService:
             raise KeyAlreadyRotatedError("api key was already rotated")
 
         usable = await self._repository.usable_for_tenant(tenant_uuid, now=now, for_update=True)
-        if not any(_as_uuid(candidate.id, field_name="api_key_id") == key_uuid for candidate in usable):
+        usable_ids = {_as_uuid(candidate.id, field_name="api_key_id") for candidate in usable}
+        if key_uuid not in usable_ids:
             raise KeyConflictError("api key is not usable")
         primary_id = await self._repository.latest_replacement_for_tenant(tenant_uuid)
-        if primary_id is None and usable:
+        if primary_id not in usable_ids:
             primary_id = _as_uuid(usable[-1].id, field_name="api_key_id")
         if primary_id is not None and primary_id != key_uuid:
             raise KeyConflictError("only the current primary key can be rotated")

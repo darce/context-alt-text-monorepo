@@ -37,7 +37,7 @@ class ConflictRepositoryTest extends TestCase
 
 		$this->assertSame(1, $result);
 
-		$insertQuery = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_conflicts');
+		$insertQuery = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_sync_conflicts`');
 		$this->assertStringContainsString("'tenant-test-123'", $insertQuery);
 		$this->assertStringContainsString("'version_conflict'", $insertQuery);
 		$this->assertStringContainsString("'Remote label'", $insertQuery);

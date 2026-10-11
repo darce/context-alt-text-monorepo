@@ -176,11 +176,20 @@ class OutboxQueryRepositoryTest extends TestCase
             $wpdb->queries,
             static fn (string $query): bool => str_contains($query, 'acx_sync_outbox')
                 && str_contains($query, "SET status = 'pending', claimed_at = NULL")
+                && str_contains($query, 'claim_token = NULL')
                 && str_contains($query, "WHERE status = 'in_flight'")
                 && str_contains($query, "DATE_SUB( '")
                 && str_contains($query, 'INTERVAL 300 SECOND )')
                 && ! str_contains($query, 'DATE_SUB( NOW(')
         );
         $this->assertNotEmpty($matched, 'Expected a lease-gated reclaim UPDATE whose cutoff is the WP clock (current_time), not MySQL NOW().');
+    }
+
+    public function testReclaimDatabaseFailureIsNotReportedAsZeroExpiredClaims(): void
+    {
+        global $wpdb;
+        $wpdb->defaultQueryResult = false;
+        $this->expectException(\RuntimeException::class);
+        (new OutboxQueryRepository())->reclaim_stale_in_flight_operations(300);
     }
 }

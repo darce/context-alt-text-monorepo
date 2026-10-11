@@ -48,6 +48,27 @@ class ConflictRepository {
 		$this->table_name = $table_name ?? $default_table;
 	}
 
+	/** Fail closed on legacy nontransactional tables; START alone does not prove rollback. */
+	public function supports_atomic_outbox_conflicts( string $outbox_table ): bool {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_var' ) || ! method_exists( $wpdb, 'prepare' ) ) {
+			return false;
+		}
+		foreach ( array( $outbox_table, $this->table_name ) as $table ) {
+			$engine = $wpdb->get_var(
+				$wpdb->prepare(
+					'SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s',
+					$table
+				)
+			);
+			if ( ! is_string( $engine ) || 'innodb' !== strtolower( $engine ) ) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	/**
 	 * Persist one conflict result emitted by the outbox drain.
 	 *
@@ -57,7 +78,7 @@ class ConflictRepository {
 	public function record_conflict( array $operation, array $result ): int|false {
 		global $wpdb;
 
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'insert' ) ) {
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) || ! method_exists( $wpdb, 'prepare' ) ) {
 			return false;
 		}
 
@@ -83,27 +104,53 @@ class ConflictRepository {
 			$local_payload_json = '{}';
 		}
 
-		$inserted = $wpdb->insert(
-			$this->table_name,
-			array(
-				'tenant_id' => $tenant_id,
-				'entity_type' => $entity_type,
-				'entity_key' => $entity_key,
-				'outbox_id' => max( 0, (int) ( $operation['id'] ?? 0 ) ),
-				'expected_base_version' => max( 0, (int) ( $operation['expected_base_version'] ?? 0 ) ),
-				'backend_version' => max( 0, (int) ( $result['backend_version'] ?? 0 ) ),
-				'local_revision' => max( 0, (int) ( $operation['local_revision'] ?? 0 ) ),
-				'conflict_code' => trim( (string) ( $result['conflict_code'] ?? 'version_conflict' ) ),
-				'backend_proposed_value' => $backend_proposed_value,
-				'machine_payload' => $machine_payload_json,
-				'local_payload' => $local_payload_json,
-				'resolution_status' => 'open',
-				'created_at' => current_time( 'mysql' ),
-			),
-			array( '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s' )
+		$data = array(
+			'tenant_id' => $tenant_id,
+			'entity_type' => $entity_type,
+			'entity_key' => $entity_key,
+			'outbox_id' => max( 0, (int) ( $operation['id'] ?? 0 ) ),
+			'expected_base_version' => max( 0, (int) ( $operation['expected_base_version'] ?? 0 ) ),
+			'backend_version' => max( 0, (int) ( $result['backend_version'] ?? 0 ) ),
+			'local_revision' => max( 0, (int) ( $operation['local_revision'] ?? 0 ) ),
+			'conflict_code' => trim( (string) ( $result['conflict_code'] ?? 'version_conflict' ) ),
+			'backend_proposed_value' => $backend_proposed_value,
+			'machine_payload' => $machine_payload_json,
+			'local_payload' => $local_payload_json,
+			'resolution_status' => 'open',
+			'created_at' => current_time( 'mysql' ),
 		);
+		$formats = array( '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s' );
+		$args = array( $this->table_name );
+		$placeholders = array();
+		foreach ( array_values( $data ) as $index => $value ) {
+			$placeholders[] = null === $value ? 'NULL' : $formats[ $index ];
+			if ( null !== $value ) {
+				$args[] = $value;
+			}
+		}
 
-		if ( false === $inserted ) {
+		// uq_projection_conflict also applies to outbox conflicts. Reuse its row
+		// atomically and link the latest owned operation and its local intent.
+		$sql = $this->prepare_query(
+			'INSERT INTO %i (tenant_id, entity_type, entity_key, outbox_id, expected_base_version, backend_version, local_revision, conflict_code, backend_proposed_value, machine_payload, local_payload, resolution_status, created_at)
+			VALUES (' . implode( ', ', $placeholders ) . ')
+			ON DUPLICATE KEY UPDATE
+				id = LAST_INSERT_ID(id),
+				outbox_id = VALUES(outbox_id),
+				expected_base_version = VALUES(expected_base_version),
+				local_revision = VALUES(local_revision),
+				backend_proposed_value = VALUES(backend_proposed_value),
+				machine_payload = VALUES(machine_payload),
+				local_payload = VALUES(local_payload),
+				resolution_status = VALUES(resolution_status),
+				resolved_at = NULL',
+			$args
+		);
+		if ( null === $sql ) {
+			return false;
+		}
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Prepared above.
+		if ( false === $wpdb->query( $sql ) ) {
 			return false;
 		}
 

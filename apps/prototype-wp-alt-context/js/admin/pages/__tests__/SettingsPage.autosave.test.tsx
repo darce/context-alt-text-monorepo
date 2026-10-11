@@ -354,6 +354,83 @@ describe('SettingsPage routing autosave', () => {
     expect(testMutate).toHaveBeenCalledTimes(1);
   });
 
+  it('waits for the Settings hook to publish a routing save before checking the refreshed target', async () => {
+    const savedUrl = 'https://new-api.example.com';
+    const refreshedSettings = {
+      ...configuredSettings,
+      url: savedUrl,
+      effective_target_url: savedUrl,
+    };
+    let settingsQuery = createMockQuery({ data: configuredSettings, dataUpdatedAt: 300 });
+    mockUseQuery.mockImplementation(() => settingsQuery);
+    mockFetchQuery.mockResolvedValue(refreshedSettings);
+    const view = render(<SettingsPageWithRouter />);
+    expect(testMutate).toHaveBeenCalledTimes(1);
+    const oldRequestVariables = testMutate.mock.calls[0]?.[0] as object;
+
+    const url = screen.getByLabelText('Service API URL');
+    fireEvent.change(url, { target: { value: savedUrl } });
+    fireEvent.blur(url);
+    expect(saveMutate).toHaveBeenCalledWith({ url: savedUrl });
+
+    let releaseSettingsInvalidation: (() => void) | undefined;
+    mockInvalidateQueries.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      releaseSettingsInvalidation = resolve;
+    }));
+    let saveCompletion: void | Promise<void> = undefined;
+    act(() => {
+      saveCompletion = capturedSaveOptions?.onSuccess?.({ saved: ['url'], result: 'ok' });
+    });
+    expect(releaseSettingsInvalidation).toBeDefined();
+
+    // The successful save starts a real Settings refetch while the hook still
+    // exposes its cached snapshot.
+    settingsQuery = createMockQuery({
+      data: configuredSettings,
+      dataUpdatedAt: 300,
+      isFetching: true,
+    });
+    view.rerender(<SettingsPageWithRouter />);
+    await act(async () => {
+      releaseSettingsInvalidation?.();
+      await saveCompletion;
+      saveMutationPending = false;
+    });
+
+    expect(mockFetchQuery).toHaveBeenCalled();
+    expect(screen.getByTestId('acx-settings-routing-save-message')).toHaveTextContent(
+      'Saved — checking health…',
+    );
+    // fetchQuery has returned the new settings, but the hook remains on the
+    // cached snapshot while its refetch is pending.
+    expect(testMutate).toHaveBeenCalledTimes(1);
+
+    settingsQuery = createMockQuery({
+      data: refreshedSettings,
+      dataUpdatedAt: 301,
+      isFetching: false,
+    });
+    view.rerender(<SettingsPageWithRouter />);
+
+    expect(testMutate).toHaveBeenCalledTimes(2);
+    const replacementRequestVariables = testMutate.mock.calls[1]?.[0] as object;
+    expect(replacementRequestVariables).toEqual({});
+    expect(replacementRequestVariables).not.toBe(oldRequestVariables);
+    await act(async () => {
+      await capturedTestOptions?.onSuccess?.({
+        outcome: 'connected',
+        status_code: 200,
+        probe_mode: 'service_auth',
+        probed_url: `${savedUrl}/health/detailed`,
+        body: { status: 'ok', model_cache: { status: 'ok', profile: 'insightface' } },
+      }, replacementRequestVariables);
+    });
+
+    expect(screen.getByTestId('acx-target-card-service')).toHaveTextContent('Reachable');
+    expect(screen.getAllByText('Recognition engine: InsightFace')).toHaveLength(1);
+    expect(screen.queryByTestId('acx-settings-routing-save-message')).not.toBeInTheDocument();
+  });
+
   it('keeps the newer probe result when the older probe resolves last', async () => {
     const resolveProbeByVariables = new Map<object, (data: unknown) => void>();
     testMutate.mockImplementation((variables) => {

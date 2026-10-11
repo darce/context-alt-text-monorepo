@@ -7,6 +7,7 @@ import {
   type TestConnectionResponse,
 } from '../../api/settingsApi';
 import type { BannerTone } from './testConnectionBanner';
+import type { HealthProbeBinding } from './healthProbeProof';
 
 interface SettingsPageState {
   url: string;
@@ -18,6 +19,7 @@ interface SettingsPageState {
   saveMessage: string;
   saveMessageTone: BannerTone;
   testResult: TestConnectionResponse | null;
+  testProof: HealthProbeBinding | null;
 }
 
 type SettingsPageAction =
@@ -31,7 +33,7 @@ type SettingsPageAction =
   | { type: 'clearSaveMessage' }
   | { type: 'setSaveMessage'; message: string; tone: BannerTone }
   | { type: 'clearTestResult' }
-  | { type: 'setTestResult'; value: TestConnectionResponse | null };
+  | { type: 'setTestResult'; value: TestConnectionResponse | null; proof?: HealthProbeBinding };
 
 const INITIAL_STATE: SettingsPageState = {
   url: '',
@@ -43,6 +45,7 @@ const INITIAL_STATE: SettingsPageState = {
   saveMessage: '',
   saveMessageTone: 'success',
   testResult: null,
+  testProof: null,
 };
 
 const reducer = (state: SettingsPageState, action: SettingsPageAction): SettingsPageState => {
@@ -50,6 +53,8 @@ const reducer = (state: SettingsPageState, action: SettingsPageAction): Settings
     case 'syncFromSettings':
       return {
         ...state,
+        testResult: null,
+        testProof: null,
         url: action.settings.url,
         apiKey: '',
         descriptionBudgetMaxAttempts: String(action.settings.description_budget.max_attempts),
@@ -58,9 +63,9 @@ const reducer = (state: SettingsPageState, action: SettingsPageAction): Settings
         contextCategories: effectiveContextCategories(action.settings.context_categories),
       };
     case 'setUrl':
-      return { ...state, url: action.value };
+      return { ...state, url: action.value, testResult: null, testProof: null };
     case 'setApiKey':
-      return { ...state, apiKey: action.value };
+      return { ...state, apiKey: action.value, testResult: null, testProof: null };
     case 'setDescriptionBudgetMaxAttempts':
       return { ...state, descriptionBudgetMaxAttempts: action.value };
     case 'setRecognitionEnabled':
@@ -74,9 +79,9 @@ const reducer = (state: SettingsPageState, action: SettingsPageAction): Settings
     case 'setSaveMessage':
       return { ...state, saveMessage: action.message, saveMessageTone: action.tone };
     case 'clearTestResult':
-      return { ...state, testResult: null };
+      return { ...state, testResult: null, testProof: null };
     case 'setTestResult':
-      return { ...state, testResult: action.value };
+      return { ...state, testResult: action.value, testProof: action.proof ?? null };
     default:
       return state;
   }

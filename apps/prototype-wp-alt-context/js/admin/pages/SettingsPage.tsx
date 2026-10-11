@@ -29,6 +29,11 @@ import { GpuControlCard } from './settings/GpuControlCard';
 import { isReadOnly } from './settings/settingsConstants';
 import { TONE_CLASS } from './settings/testConnectionBanner';
 import { useSettingsPageState } from './settings/useSettingsPageState';
+import {
+  hasInsightFaceProof,
+  matchesHealthProbeTarget,
+  type HealthProbeBinding,
+} from './settings/healthProbeProof';
 
 const SETTINGS_SECTION_RETENTION_ID = 'acx-settings-section-retention';
 const SETTINGS_SECTION_RETENTION_HEADING_ID = 'acx-retention-title';
@@ -58,9 +63,14 @@ const sectionFromLocation = (search: string, hash: string): string | null => {
 export const SettingsPage = (): React.JSX.Element => {
   const queryClient = useQueryClient();
   const location = useLocation();
-  const automaticHealthCheckStarted = useRef(false);
+  const scheduledHealthCheck = useRef<{
+    afterRoutingSave: boolean;
+    request: object | null;
+  } | null>({ afterRoutingSave: false, request: null });
   const healthProbeGeneration = useRef(0);
-  const healthProbeMetadata = useRef(new WeakMap<object, { generation: number; afterRoutingSave: boolean }>());
+  const healthProbeMetadata = useRef(new WeakMap<object, HealthProbeBinding & { afterRoutingSave: boolean }>());
+  const currentHealthRequest = useRef<object | null>(null);
+  const credentialRevision = useRef(Symbol());
   const routingSavePending = useRef(false);
   const routingSaveFeedback = useRef(false);
   const routingSaveIncludesOtherSettings = useRef(false);
@@ -84,6 +94,67 @@ export const SettingsPage = (): React.JSX.Element => {
   }, [location.search, location.hash, settingsQuery.isLoading, settingsQuery.isLoadingError]);
 
   const { state, dispatch } = useSettingsPageState(settingsQuery.data);
+  const resolvedSettings = useRef(settingsQuery.data);
+  const observedQuery = useRef({
+    data: settingsQuery.data,
+    updatedAt: settingsQuery.dataUpdatedAt,
+    fetching: settingsQuery.isFetching,
+    error: settingsQuery.isError,
+  });
+
+  const invalidateHealthProbe = (preserveScheduledCheck = false): void => {
+    if (preserveScheduledCheck && scheduledHealthCheck.current) {
+      // Keep an unfinished automatic/post-save check queued for the published
+      // Settings snapshot. Its old request still loses every proof binding.
+      scheduledHealthCheck.current.request = null;
+    } else {
+      scheduledHealthCheck.current = null;
+    }
+    healthProbeGeneration.current += 1;
+    credentialRevision.current = Symbol();
+    currentHealthRequest.current = null;
+    dispatch({ type: 'clearTestResult' });
+  };
+
+  // Invalidate during the settings transition, before a late mutation can run.
+  // Refetches may keep identical data (including the same key last four).
+  if (observedQuery.current.data !== settingsQuery.data
+    || observedQuery.current.updatedAt !== settingsQuery.dataUpdatedAt
+    || (!observedQuery.current.fetching && settingsQuery.isFetching)
+    || observedQuery.current.error !== settingsQuery.isError) {
+    observedQuery.current = {
+      data: settingsQuery.data,
+      updatedAt: settingsQuery.dataUpdatedAt,
+      fetching: settingsQuery.isFetching,
+      error: settingsQuery.isError,
+    };
+    resolvedSettings.current = settingsQuery.data;
+    invalidateHealthProbe(true);
+  } else {
+    observedQuery.current.fetching = settingsQuery.isFetching;
+  }
+
+  useEffect(() => () => {
+    healthProbeGeneration.current += 1;
+    currentHealthRequest.current = null;
+    scheduledHealthCheck.current = { afterRoutingSave: false, request: null };
+  }, []);
+
+  const isCurrentHealthProbe = (binding: HealthProbeBinding): boolean => {
+    // Cache transitions can precede the hook's batched notification.
+    const cachedQuery = queryClient.getQueryState?.<SettingsResponse>(queryKeys.settings.all);
+    return binding.generation === healthProbeGeneration.current
+      && binding.request === currentHealthRequest.current
+      && binding.credentialRevision === credentialRevision.current
+      && matchesHealthProbeTarget(binding, resolvedSettings.current)
+      && !observedQuery.current.fetching && !observedQuery.current.error
+      && (!cachedQuery || (
+        cachedQuery.fetchStatus !== 'fetching'
+        && cachedQuery.status !== 'error'
+        && cachedQuery.data === observedQuery.current.data
+        && cachedQuery.dataUpdatedAt === observedQuery.current.updatedAt
+      ));
+  };
 
   const syncLocalizedRouting = (settings: SettingsResponse): void => {
     if (!window.AltContextAdmin) {
@@ -95,11 +166,15 @@ export const SettingsPage = (): React.JSX.Element => {
     resetConfigCache();
   };
 
-  const applyHealthProbeSuccess = (data: TestConnectionResponse, generation: number): void => {
+  const applyHealthProbeSuccess = (
+    data: TestConnectionResponse,
+    generation: number,
+    proof?: HealthProbeBinding,
+  ): void => {
     if (generation !== healthProbeGeneration.current) {
       return;
     }
-    dispatch({ type: 'setTestResult', value: data });
+    dispatch({ type: 'setTestResult', value: data, proof });
     // A reachable probe (or an adopted tenant) means the service is back;
     // refetch sync health so the offline banner clears immediately.
     void queryClient.invalidateQueries({ queryKey: queryKeys.sync.health() });
@@ -186,6 +261,7 @@ export const SettingsPage = (): React.JSX.Element => {
       });
       return;
     }
+    invalidateHealthProbe();
     if (queued) {
       dispatch({ type: 'setSaveMessage', message: __('Saving…', 'alt-context'), tone: 'info' });
       const hasRoutingChanges = 'url' in payload || 'api_key' in payload;
@@ -237,7 +313,7 @@ export const SettingsPage = (): React.JSX.Element => {
       if (isRoutingAutosave) {
         routingSavePending.current = false;
         if (data.saved.some((field) => field === 'url' || field === 'api_key')) {
-          healthProbeGeneration.current += 1;
+          invalidateHealthProbe();
         }
       }
       routingSaveIncludesOtherSettings.current = false;
@@ -282,8 +358,10 @@ export const SettingsPage = (): React.JSX.Element => {
         queryFn: fetchSettings,
       });
       syncLocalizedRouting(refreshed);
+      resolvedSettings.current = refreshed;
       if (isRoutingAutosave) {
-        startHealthCheck(true);
+        scheduledHealthCheck.current = { afterRoutingSave: true, request: null };
+        startScheduledHealthCheck();
       }
       drainQueuedSave(refreshed, alreadySavedApiKey);
     },
@@ -305,15 +383,31 @@ export const SettingsPage = (): React.JSX.Element => {
 
   const testMutation = useMutation({
     mutationFn: testConnection,
-    // Keep mutation-level handlers for callers that invoke the captured hook
-    // callbacks directly; real mutation results use the generation captured
-    // by each call below.
-    onSuccess: (data, variables?: Parameters<typeof testConnection>[0]) => {
+    // Unbound legacy callbacks retain banner behavior, but cannot create proof.
+    onSuccess: async (data, variables?: Parameters<typeof testConnection>[0]) => {
       const metadata = variables && healthProbeMetadata.current.get(variables);
+      if (variables && (!metadata || !isCurrentHealthProbe(metadata))) {
+        return;
+      }
+      scheduledHealthCheck.current = null;
       const generation = metadata?.generation ?? healthProbeGeneration.current;
-      applyHealthProbeSuccess(data, generation);
+      const tenantChanged = data.tenant_id !== undefined
+        && data.tenant_id !== resolvedSettings.current?.tenant_id;
+      applyHealthProbeSuccess(data, generation, tenantChanged ? undefined : metadata);
       if (generation === healthProbeGeneration.current && metadata?.afterRoutingSave) {
         clearRoutingCheckFeedback();
+      }
+      if (metadata && tenantChanged) {
+        // Adoption can re-probe under another tenant inside the backend call.
+        // Reconcile Settings first; only a subsequent bound check proves it.
+        invalidateHealthProbe();
+        await queryClient.invalidateQueries({ queryKey: queryKeys.settings.all });
+        const refreshed = await queryClient.fetchQuery({
+          queryKey: queryKeys.settings.all,
+          queryFn: fetchSettings,
+        });
+        syncLocalizedRouting(refreshed);
+        resolvedSettings.current = refreshed;
       }
     },
     // Outcome enum maps to fixed banner copy; it cannot carry a free-form server
@@ -321,6 +415,10 @@ export const SettingsPage = (): React.JSX.Element => {
     // transport-failure stand-in — see REPORT.md.
     onError: (_error, variables?: Parameters<typeof testConnection>[0]) => {
       const metadata = variables && healthProbeMetadata.current.get(variables);
+      if (variables && (!metadata || !isCurrentHealthProbe(metadata))) {
+        return;
+      }
+      scheduledHealthCheck.current = null;
       const generation = metadata?.generation ?? healthProbeGeneration.current;
       applyHealthProbeError(generation);
       if (generation === healthProbeGeneration.current && metadata?.afterRoutingSave) {
@@ -332,40 +430,78 @@ export const SettingsPage = (): React.JSX.Element => {
   const runHealthCheck = (
     variables: NonNullable<Parameters<typeof testConnection>[0]>,
     afterRoutingSave = false,
+    scheduled = false,
   ): void => {
+    dispatch({ type: 'clearTestResult' });
     const generation = ++healthProbeGeneration.current;
     const probeVariables = { ...variables };
-    healthProbeMetadata.current.set(probeVariables, { generation, afterRoutingSave });
+    currentHealthRequest.current = probeVariables;
+    if (scheduled && scheduledHealthCheck.current) {
+      scheduledHealthCheck.current.request = probeVariables;
+    } else {
+      // Manual checks supersede pending scheduling rather than waiting on it.
+      scheduledHealthCheck.current = null;
+    }
+    healthProbeMetadata.current.set(probeVariables, {
+      generation,
+      afterRoutingSave,
+      request: probeVariables,
+      endpoint: resolvedSettings.current?.effective_target_url ?? '',
+      tenant: resolvedSettings.current?.tenant_id ?? '',
+      credentialRevision: credentialRevision.current,
+    });
     testMutation.mutate(probeVariables);
   };
 
-  const startHealthCheck = (afterRoutingSave = false): void => {
-    automaticHealthCheckStarted.current = true;
-    dispatch({ type: 'clearTestResult' });
-    runHealthCheck({}, afterRoutingSave);
+  const startHealthCheck = (): void => {
+    runHealthCheck({});
   };
 
-  useEffect(() => {
+  const startScheduledHealthCheck = (): void => {
+    const scheduled = scheduledHealthCheck.current;
     if (
+      !scheduled ||
+      scheduled.request ||
       settingsQuery.isLoading ||
       settingsQuery.isLoadingError ||
-      !settingsQuery.data?.effective_target_url.trim() ||
-      state.testResult ||
-      automaticHealthCheckStarted.current
+      observedQuery.current.fetching ||
+      observedQuery.current.error ||
+      !resolvedSettings.current?.effective_target_url.trim()
     ) {
       return;
     }
-    startHealthCheck();
+    // fetchQuery can settle before the hook publishes its cached data/stamp.
+    // Bind only after this render has observed the current settled snapshot.
+    const cachedQuery = queryClient.getQueryState?.<SettingsResponse>(queryKeys.settings.all);
+    if (cachedQuery && (
+      cachedQuery.fetchStatus === 'fetching' ||
+      cachedQuery.status === 'error' ||
+      cachedQuery.data !== observedQuery.current.data ||
+      cachedQuery.dataUpdatedAt !== observedQuery.current.updatedAt
+    )) {
+      return;
+    }
+    if (cachedQuery) {
+      resolvedSettings.current = cachedQuery.data;
+    }
+    runHealthCheck({}, scheduled.afterRoutingSave, true);
+  };
+
+  useEffect(() => {
+    startScheduledHealthCheck();
   }, [
-    settingsQuery.data?.effective_target_url,
+    settingsQuery.data,
+    settingsQuery.dataUpdatedAt,
+    settingsQuery.isFetching,
+    settingsQuery.isError,
     settingsQuery.isLoading,
     settingsQuery.isLoadingError,
-    state.testResult,
-    startHealthCheck,
+    startScheduledHealthCheck,
   ]);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+    invalidateHealthProbe();
     if (saveMutation.isPending) {
       queuedSaveSnapshot.current = captureFormSnapshot();
       dispatch({ type: 'setSaveMessage', message: __('Saving…', 'alt-context'), tone: 'info' });
@@ -411,7 +547,7 @@ export const SettingsPage = (): React.JSX.Element => {
     routingSavePending.current = true;
     routingSaveFeedback.current = true;
     inFlightRoutingApiKey.current = payload.api_key ?? null;
-    dispatch({ type: 'clearTestResult' });
+    invalidateHealthProbe();
     dispatch({ type: 'setSaveMessage', message: __('Saving…', 'alt-context'), tone: 'info' });
     saveMutation.mutate(payload);
   };
@@ -421,7 +557,6 @@ export const SettingsPage = (): React.JSX.Element => {
   };
 
   const handleConfirmTenantPairing = () => {
-    automaticHealthCheckStarted.current = true;
     runHealthCheck({ confirm_tenant_pairing: true });
   };
 
@@ -466,7 +601,10 @@ export const SettingsPage = (): React.JSX.Element => {
           <button
             type="button"
             className="acx-button acx-button--secondary"
-            onClick={() => void settingsQuery.refetch()}
+            onClick={() => {
+              invalidateHealthProbe(true);
+              void settingsQuery.refetch();
+            }}
           >
             {__('Retry', 'alt-context')}
           </button>
@@ -481,7 +619,11 @@ export const SettingsPage = (): React.JSX.Element => {
   const data = settingsQuery.data!;
   const urlReadOnly = isReadOnly(data.url_source);
   const keyReadOnly = isReadOnly(data.key_source);
-  const hasUnsavedRoutingChanges = state.url !== data.url;
+  const hasUnsavedRoutingChanges = state.url !== data.url || state.apiKey !== '';
+  const recognitionEngineVerified = !!state.testProof
+    && isCurrentHealthProbe(state.testProof)
+    && matchesHealthProbeTarget(state.testProof, data)
+    && hasInsightFaceProof(state.testResult, state.testProof);
   return (
     <section className="acx-settings" aria-labelledby="acx-settings-page-title">
       <h1 id="acx-settings-page-title" className="acx-dashboard__title">
@@ -512,13 +654,20 @@ export const SettingsPage = (): React.JSX.Element => {
           testPending: testMutation.isPending,
           hasUnsavedRoutingChanges,
           testResult: state.testResult,
+          recognitionEngineVerified,
           saveMessage: state.saveMessage,
           saveMessageTone: state.saveMessageTone,
           routingSaveFeedback: routingSaveFeedback.current,
         }}
         actions={{
-          onUrlChange: (value) => dispatch({ type: 'setUrl', value }),
-          onApiKeyChange: (value) => dispatch({ type: 'setApiKey', value }),
+          onUrlChange: (value) => {
+            invalidateHealthProbe();
+            dispatch({ type: 'setUrl', value });
+          },
+          onApiKeyChange: (value) => {
+            invalidateHealthProbe();
+            dispatch({ type: 'setApiKey', value });
+          },
           onDescriptionBudgetMaxAttemptsChange: (value) =>
             dispatch({ type: 'setDescriptionBudgetMaxAttempts', value }),
           onRecognitionEnabledChange: (value) => dispatch({ type: 'setRecognitionEnabled', value }),

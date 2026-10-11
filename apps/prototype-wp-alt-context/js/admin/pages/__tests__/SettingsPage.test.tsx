@@ -1929,6 +1929,85 @@ describe('SettingsPage', () => {
       expect(testMutate).toHaveBeenCalledWith({ confirm_tenant_pairing: true });
     });
 
+    it('rechecks health after publishing the tenant adopted by confirmation', async () => {
+      const tenantASettings = { ...defaultSettings };
+      const tenantBSettings: SettingsResponse = {
+        ...defaultSettings,
+        tenant_id: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+        tenant_paired: true,
+      };
+      const tenantBHealthResponse: TestConnectionResponse = {
+        outcome: 'connected',
+        status_code: 200,
+        probe_mode: 'service_auth',
+        probed_url: 'https://api.example.com/health/detailed',
+        tenant_id: tenantBSettings.tenant_id,
+        body: { status: 'ok', model_cache: { status: 'ok', profile: 'insightface' } },
+      };
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { gcTime: Infinity, retry: false } },
+      });
+      mockQueryClientRef.current = queryClient;
+      queryClient.setQueryData(queryKeys.settings.all, tenantASettings);
+      const tenantAQueryState = queryClient.getQueryState<SettingsResponse>(queryKeys.settings.all)!;
+      let publishedSettingsQuery = createMockQuery<SettingsResponse>({
+        data: tenantAQueryState.data,
+        dataUpdatedAt: tenantAQueryState.dataUpdatedAt,
+      });
+      mockUseQuery.mockImplementation(() => publishedSettingsQuery);
+      vi.mocked(fetchSettings).mockResolvedValue(tenantBSettings);
+
+      const view = render(<SettingsPageWithRouter />);
+      expect(testMutate).toHaveBeenCalledTimes(1);
+      const initialRequestVariables = testMutate.mock.calls[0]?.[0] as Record<string, unknown>;
+      act(() => {
+        capturedTestOptions!.onSuccess!({ outcome: 'tenant_mismatch' }, initialRequestVariables);
+      });
+      expect(screen.getByTestId('acx-confirm-tenant-pairing')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId('acx-confirm-tenant-pairing'));
+      expect(testMutate).toHaveBeenCalledTimes(2);
+      const confirmRequestVariables = testMutate.mock.calls[1]?.[0] as Record<string, unknown>;
+      expect(confirmRequestVariables).toEqual({ confirm_tenant_pairing: true });
+
+      await act(async () => {
+        await Promise.resolve(capturedTestOptions!.onSuccess!(tenantBHealthResponse, confirmRequestVariables));
+      });
+
+      const cachedTenantB = queryClient.getQueryData<SettingsResponse>(queryKeys.settings.all)!;
+      const tenantBQueryState = queryClient.getQueryState<SettingsResponse>(queryKeys.settings.all)!;
+      expect(fetchSettings).toHaveBeenCalledTimes(1);
+      expect(cachedTenantB.tenant_id).toBe(tenantBSettings.tenant_id);
+      expect(tenantBQueryState).toMatchObject({ status: 'success', fetchStatus: 'idle' });
+      expect(tenantBQueryState.data).toBe(cachedTenantB);
+      expect(publishedSettingsQuery.data).toBe(tenantASettings);
+      const requestsBeforePublishingTenantB = testMutate.mock.calls.length;
+      expect(requestsBeforePublishingTenantB).toBe(2);
+      publishedSettingsQuery = createMockQuery<SettingsResponse>({
+        data: cachedTenantB,
+        dataUpdatedAt: tenantBQueryState.dataUpdatedAt,
+        fetchStatus: tenantBQueryState.fetchStatus,
+      });
+      view.rerender(<SettingsPageWithRouter />);
+      expect(publishedSettingsQuery.data).toBe(cachedTenantB);
+      expect(publishedSettingsQuery.dataUpdatedAt).toBe(tenantBQueryState.dataUpdatedAt);
+      expect(testMutate).toHaveBeenCalledTimes(requestsBeforePublishingTenantB + 1);
+      expect(screen.queryByTestId('acx-test-connection-banner')).not.toBeInTheDocument();
+      expect(screen.getByTestId('acx-target-card-service')).toHaveTextContent('Not checked');
+      expect(screen.queryByText('Recognition engine: InsightFace')).not.toBeInTheDocument();
+
+      const tenantBRequestVariables = testMutate.mock.calls[requestsBeforePublishingTenantB]?.[0]
+        as Record<string, unknown>;
+      expect(tenantBRequestVariables).toEqual({});
+      expect(tenantBRequestVariables).not.toBe(confirmRequestVariables);
+      act(() => {
+        capturedTestOptions!.onSuccess!(tenantBHealthResponse, tenantBRequestVariables);
+      });
+
+      expect(screen.getByTestId('acx-test-connection-banner')).toHaveTextContent('Connection successful.');
+      expect(screen.getAllByText('Recognition engine: InsightFace')).toHaveLength(1);
+    });
+
     it('renders the tenant_pairing_conflict banner with tenant ids and confirm control', () => {
       renderWithLoadedSettings();
       driveOutcome({

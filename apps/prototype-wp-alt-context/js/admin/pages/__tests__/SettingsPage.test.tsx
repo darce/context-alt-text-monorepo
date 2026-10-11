@@ -803,7 +803,7 @@ describe('SettingsPage', () => {
     expect(screen.getAllByText('Recognition engine: InsightFace')).toHaveLength(1);
   });
 
-  it.each([
+  const nonInsightFaceCases: Array<[string, SettingsResponse, TestConnectionResponse]> = [
     [
       'face_pipeline on the FIR-named service host',
       {
@@ -834,7 +834,9 @@ describe('SettingsPage', () => {
         body: { status: 'ok', model_cache: { status: 'ok', profile: 'auraface' } },
       },
     ],
-  ])('does not infer InsightFace from %s', (_caseName, settings, result) => {
+  ];
+
+  it.each(nonInsightFaceCases)('does not infer InsightFace from %s', (_caseName, settings, result) => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: settings }));
     render(<SettingsPageWithRouter />);
     const requestVariables = startTestConnection();
@@ -1121,22 +1123,76 @@ describe('SettingsPage', () => {
         defaultOptions: { queries: { gcTime: Infinity, retry: false } },
       });
       mockQueryClientRef.current = queryClient;
-      queryClient.setQueryData(queryKeys.settings.all, defaultSettings);
+      let resolveInitialSettings: (settings: SettingsResponse) => void = () => {};
+      const initialSettingsRequest = new Promise<SettingsResponse>((resolve) => {
+        resolveInitialSettings = resolve;
+      });
+      vi.mocked(fetchSettings).mockImplementation(() => initialSettingsRequest);
+      const initialFetch = queryClient.fetchQuery({
+        queryKey: queryKeys.settings.all,
+        queryFn: fetchSettings,
+      });
+      const initialPendingState = queryClient.getQueryState<SettingsResponse>(queryKeys.settings.all);
+      expect(initialPendingState).toMatchObject({
+        status: 'pending',
+        fetchStatus: 'fetching',
+        data: undefined,
+      });
+      let publishedSettingsQuery: QueryHookResult = createMockQuery<SettingsResponse>({
+        status: 'pending',
+        isFetching: true,
+        fetchStatus: 'fetching',
+        dataUpdatedAt: initialPendingState!.dataUpdatedAt,
+      });
+      expect(publishedSettingsQuery.data).toBe(initialPendingState?.data);
+      expect(publishedSettingsQuery.dataUpdatedAt).toBe(initialPendingState?.dataUpdatedAt);
+      mockUseQuery.mockImplementation(() => publishedSettingsQuery);
+
+      const view = render(<SettingsPageWithRouter />);
+      const publishSettingsCache = (): void => {
+        const queryState = queryClient.getQueryState<SettingsResponse>(queryKeys.settings.all);
+        const cachedSettings = queryClient.getQueryData<SettingsResponse>(queryKeys.settings.all);
+        expect(queryState).toBeDefined();
+        expect(cachedSettings).toBeDefined();
+        expect(queryState?.data).toBe(cachedSettings);
+        publishedSettingsQuery = createMockQuery<SettingsResponse>({
+          data: cachedSettings!,
+          dataUpdatedAt: queryState!.dataUpdatedAt,
+          isFetching: queryState?.fetchStatus === 'fetching',
+          fetchStatus: queryState!.fetchStatus,
+        });
+        view.rerender(<SettingsPageWithRouter />);
+        expect(publishedSettingsQuery.data).toBe(cachedSettings);
+        expect(publishedSettingsQuery.dataUpdatedAt).toBe(queryState!.dataUpdatedAt);
+      };
+
+      // Load and publish the real initial query result. A settled initial mount
+      // legitimately starts its automatic health check, so complete that
+      // request before measuring the post-save R0/R1 sequence below.
+      await act(async () => {
+        resolveInitialSettings(defaultSettings);
+        await initialFetch;
+      });
+      publishSettingsCache();
       const initialCachedSettings = queryClient.getQueryData<SettingsResponse>(queryKeys.settings.all);
       const initialQueryState = queryClient.getQueryState<SettingsResponse>(queryKeys.settings.all);
       expect(initialCachedSettings).toBeDefined();
       expect(initialQueryState).toBeDefined();
       expect(initialQueryState?.data).toBe(initialCachedSettings);
-      let publishedSettingsQuery = createMockQuery({
-        data: initialCachedSettings,
-        dataUpdatedAt: initialQueryState!.dataUpdatedAt,
-      });
       expect(publishedSettingsQuery.data).toBe(initialCachedSettings);
       expect(publishedSettingsQuery.dataUpdatedAt).toBe(initialQueryState!.dataUpdatedAt);
-      mockUseQuery.mockImplementation(() => publishedSettingsQuery);
+      expect(testMutate).toHaveBeenCalledTimes(1);
+      const initialRequestVariables = testMutate.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(initialRequestVariables).toBeDefined();
+      act(() => {
+        capturedTestOptions!.onError!(new Error('initial check failed'), initialRequestVariables);
+      });
+      expect(testMutate).toHaveBeenCalledTimes(1);
+      // The page legitimately starts Rinitial after the initial query settles.
+      // Complete it, then isolate the existing post-save R0/R1 count assertions.
+      testMutate.mockClear();
       vi.mocked(fetchSettings).mockResolvedValue(savedSettings);
 
-      const view = render(<SettingsPageWithRouter />);
       fireEvent.change(screen.getByLabelText('Service API URL'), {
         target: { value: savedSettings.url },
       });
@@ -1159,22 +1215,6 @@ describe('SettingsPage', () => {
       expect(publishedSettingsQuery.data).toBe(initialCachedSettings);
       expect(publishedSettingsQuery.dataUpdatedAt).toBe(initialQueryState!.dataUpdatedAt);
       expect(testMutate).not.toHaveBeenCalled();
-
-      const publishSettingsCache = (): void => {
-        const queryState = queryClient.getQueryState<SettingsResponse>(queryKeys.settings.all);
-        const cachedSettings = queryClient.getQueryData<SettingsResponse>(queryKeys.settings.all);
-        expect(queryState).toBeDefined();
-        expect(cachedSettings).toBeDefined();
-        expect(queryState?.data).toBe(cachedSettings);
-        publishedSettingsQuery = createMockQuery({
-          data: cachedSettings,
-          dataUpdatedAt: queryState!.dataUpdatedAt,
-          isFetching: queryState?.fetchStatus === 'fetching',
-        });
-        view.rerender(<SettingsPageWithRouter />);
-        expect(publishedSettingsQuery.data).toBe(cachedSettings);
-        expect(publishedSettingsQuery.dataUpdatedAt).toBe(queryState!.dataUpdatedAt);
-      };
 
       // Publish the actual cache value and stamp created by the save refetch;
       // this is the settled state from which the automatic R0 is bound.

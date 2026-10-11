@@ -25,6 +25,7 @@ The previously-split `00`–`05` docs were merged into that one file after a heu
 - **E16 / SaaS-ops** (`docs/roadmaps/roadmap-saas-operations.md`) chose the vendor stack — §6/§7 sequence and connect it; the field-ownership map (§6.3) and CRM guidance (§6.4) are new.
 
 ## Supporting analyses
+- [`pricing-2026-10-08/strategy.md`](pricing-2026-10-08/strategy.md) — current launch pricing recommendation for professors preparing LMS course material, broader hosted-service and institutional market survey, workload measurement plan, and first-year scenarios for 1/10/100 institutional accounts. Includes an [editable financial model](pricing-2026-10-08/forecast.xlsx). Supersedes the launch plan's earlier pricing hypothesis for this audience and corrects the inference memo's blanket >99% margin claim.
 - [`inference-cost-and-unit-economics-forecast.md`](inference-cost-and-unit-economics-forecast.md) — per-image inference cost forecast (warm pre-baked images + multi-AD rotation, utilization sensitivity, CPU/GPU crossover), grounded in the VLM-6 bake-off measurements. Feeds §7 (payments/pricing — inference is ≤$0.003/img, a rounding error against price) and §12 (risks — capacity + idle-GPU spend, not inference cost).
 
 ## Canon grounding

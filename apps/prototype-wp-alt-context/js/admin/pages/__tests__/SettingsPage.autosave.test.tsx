@@ -394,6 +394,7 @@ describe('SettingsPage routing autosave', () => {
     await act(async () => {
       releaseSettingsInvalidation?.();
       await saveCompletion;
+      saveMutationPending = false;
     });
 
     expect(mockFetchQuery).toHaveBeenCalled();

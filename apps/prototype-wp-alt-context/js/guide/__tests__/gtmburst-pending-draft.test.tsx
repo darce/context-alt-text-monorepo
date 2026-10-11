@@ -251,7 +251,9 @@ describe('mounted editor acceptance controls', () => {
       const field = (scope === 'admin' ? adminEditor('tribeca') : editor('tribeca')) as HTMLTextAreaElement;
       await user.clear(field);
       await user.type(field, 'Justin and Katy at the event.');
-      await user.keyboard('{Home}{ArrowRight>7}{Shift>}{ArrowRight>4}{/Shift}');
+      await user.keyboard('{Home}{ArrowRight>7}');
+      // jsdom/user-event collapses Shift+Arrow selections; arrange the range before real typing.
+      field.setSelectionRange(7, 11);
       expect(field.selectionStart).toBe(7);
       expect(field.selectionEnd).toBe(11);
       rerender(<RecordedWalkthrough scope={scope} />);

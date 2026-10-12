@@ -48,7 +48,7 @@ from recognition.interface_adapters.http.deps.usage_admission import (
 from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
 from recognition.shared.db.dialect import is_postgres
 from scene.application.describe_async_worker import run_async_describe_job
-from scene.application.describe_load import dump_load_snapshot
+from scene.application.describe_load import LOAD_REFRESH_TIMEOUT_SECONDS, dump_load_snapshot
 from scene.application.describe_operation_repository import DescribeOperationRepository
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.description_repository import ImageDescriptionRepository
@@ -2102,6 +2102,34 @@ async def enqueue_describe_image(
                 admission_gate.release(image_len)
 
 
+async def _publish_async_describe_terminal_snapshot(session_factory) -> None:
+    async def publish() -> None:
+        # Reuse the maintained refresh attempt budget, including its publisher
+        # cancellation fencing, rather than leaving a shielded attempt unbounded.
+        async with asyncio.timeout(LOAD_REFRESH_TIMEOUT_SECONDS):
+            await dump_load_snapshot(session_factory)
+
+    # Keep a strong reference until publication finishes, even across repeated
+    # cancellation of the worker's finalizer.
+    publication = asyncio.create_task(publish())
+    interrupted = False
+    try:
+        while not publication.done():
+            try:
+                await asyncio.shield(publication)
+            except asyncio.CancelledError:
+                interrupted = True
+        publication.result()
+    except TimeoutError:
+        _logger.warning(
+            "terminal describe load snapshot refresh timed out after %.1fs",
+            LOAD_REFRESH_TIMEOUT_SECONDS,
+        )
+    finally:
+        if interrupted:
+            raise asyncio.CancelledError
+
+
 async def _run_async_describe_job_and_release(
     *,
     image_len: int,
@@ -2143,7 +2171,7 @@ async def _run_async_describe_job_and_release(
             raise asyncio.CancelledError
     finally:
         (admission_gate if admission_gate is not None else _ASYNC_ADMISSION).release(image_len)
-        await dump_load_snapshot(session_factory)
+        await _publish_async_describe_terminal_snapshot(session_factory)
 
 
 async def _reconcile_aborted_describe_worker(*, session_factory, tenant_id, run_id, cancelled: bool) -> None:

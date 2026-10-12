@@ -367,6 +367,9 @@ def write_stub_preflight(run_dir: Path, stack_id: str) -> Path:
                 "health_detailed_excerpt": {
                     "model_cache": {
                         "profile": profile,
+                        "model_name": f"synthetic-{stack_id}",
+                        "bundle_files": 1,
+                        "bundle_sha256": hashlib.sha256(f"synthetic-bundle:{stack_id}".encode()).hexdigest(),
                         "detail": "numeric_runtime_fingerprint="
                         + json.dumps(runtime_fingerprint, separators=(",", ":")),
                     }

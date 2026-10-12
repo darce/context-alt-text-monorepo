@@ -1157,12 +1157,24 @@ verify_face_pipeline_models_dir() {
 # after the first '=' (C-05); one matching pair of surrounding quotes is stripped.
 # Missing key → empty string (exit 0). SSH failure → fail closed (C-06).
 _remote_dotenv_value() {
-  local remote_dir="$1" key="$2" raw rc=0
+  local remote_dir="$1" key="$2" raw rc=0 timeout="${3:-}"
   # Remote `|| true` only covers a missing key / missing file (grep exit 1).
   # Local ssh failure is NOT swallowed.
-  raw="$(ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "grep -E '^${key}=' '${remote_dir}/.env' 2>/dev/null | tail -1 | cut -d= -f2- || true")" || rc=$?
+  if [[ -n "${timeout}" ]]; then
+    raw="$(run_with_deadline "${timeout}" "remote ${key} read" \
+      ssh -o BatchMode=yes -o ConnectTimeout="${timeout}" -o ConnectionAttempts=1 \
+      -o ServerAliveInterval="${timeout}" -o ServerAliveCountMax=1 \
+      -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "grep -E '^${key}=' '${remote_dir}/.env' 2>/dev/null | tail -1 | cut -d= -f2- || true")" || rc=$?
+  else
+    raw="$(ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "grep -E '^${key}=' '${remote_dir}/.env' 2>/dev/null | tail -1 | cut -d= -f2- || true")" || rc=$?
+  fi
   if ((rc != 0)); then
+    if [[ -n "${timeout}" ]]; then
+      warn "ssh failed reading ${key} from ${remote_dir}/.env on ${SSH_TARGET} (exit ${rc})"
+      return "${rc}"
+    fi
     fail "ssh failed reading ${key} from ${remote_dir}/.env on ${SSH_TARGET} (exit ${rc})"
   fi
   # Strip one layer of surrounding double or single quotes only.
@@ -1886,13 +1898,19 @@ runtime_in_sync() {
     return 1
   fi
   if [[ "$env" == "prod" ]]; then
-    if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat '${remote_dir}/docker-compose.admin.yml' 2>/dev/null" \
+    if ! run_with_deadline "${timeout}" "runtime admin compose read for ${env}" \
+      ssh -o BatchMode=yes -o ConnectTimeout="${timeout}" -o ConnectionAttempts=1 \
+      -o ServerAliveInterval="${timeout}" -o ServerAliveCountMax=1 \
+      -l "${OCI_USER}" -- "${OCI_HOST}" "cat '${remote_dir}/docker-compose.admin.yml' 2>/dev/null" \
       | diff -q - "${SERVICE_DIR}/docker-compose.admin.yml" >/dev/null 2>&1; then
       return 1
     fi
   fi
-  rendered="$(render_unit "$env")"
-  if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat '/etc/systemd/system/${unit}.service' 2>/dev/null" \
+  rendered="$(render_unit "$env")" || return 1
+  if ! run_with_deadline "${timeout}" "runtime unit read for ${env}" \
+    ssh -o BatchMode=yes -o ConnectTimeout="${timeout}" -o ConnectionAttempts=1 \
+    -o ServerAliveInterval="${timeout}" -o ServerAliveCountMax=1 \
+    -l "${OCI_USER}" -- "${OCI_HOST}" "cat '/etc/systemd/system/${unit}.service' 2>/dev/null" \
     | diff -q - <(printf '%s\n' "$rendered") >/dev/null 2>&1; then
     return 1
   fi
@@ -1909,12 +1927,13 @@ env_to_compose_files() {
 
 # Render the systemd unit for <env> from the checked-in template to stdout.
 render_unit() {
-  local env="$1" compose_files secret_backend pre_start
+  local env="$1" compose_files secret_backend pre_start timeout
   compose_files="$(env_to_compose_files "$env")"
   if (($# >= 2)); then
     secret_backend="$2"
   else
-    secret_backend="$(_remote_dotenv_value "$(env_to_remote_dir "$env")" RECOGNITION_SECRET_BACKEND)"
+    timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)" || return $?
+    secret_backend="$(_remote_dotenv_value "$(env_to_remote_dir "$env")" RECOGNITION_SECRET_BACKEND "${timeout}")" || return $?
   fi
   pre_start='# '
   if [[ "$secret_backend" == "oci_vault" ]]; then
@@ -2765,7 +2784,12 @@ converge_check() {
       "${SERVICE_DIR}/docker-compose.admin.yml" \
       "docker-compose.admin.yml"
   fi
-  rendered="$(render_unit "$env")"
+  if rendered="$(render_unit "$env")"; then
+    :
+  else
+    ssh_rc=$?
+    _cc_fail "cannot render ${unit}.service on ${SSH_TARGET} (exit ${ssh_rc}); refusing to treat transport failure as runtime drift"
+  fi
   ssh_rc=0
   run_with_deadline "${command_timeout}" "remote ${unit}.service read for ${env}" \
     ssh -o BatchMode=yes -o ConnectTimeout="${command_timeout}" -o ConnectionAttempts=1 \

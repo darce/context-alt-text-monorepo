@@ -10,6 +10,7 @@ import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import StrEnum
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -1214,8 +1215,44 @@ def _strict_detection_inputs(
     return strict_inputs
 
 
+def _publish_score_refusal(root: Path, error: Exception) -> None:
+    """Replace both score artifacts without disturbing available diagnostics."""
+    score_dir = root / "score"
+    score_dir.mkdir(parents=True, exist_ok=True)
+    code = error.code if isinstance(error, BenchError) else type(error).__name__
+    header = {
+        "error_code": code,
+        "license_banner": LICENSE_BANNER,
+        "pr_cells_emitted": False,
+        "cells": [],
+    }
+    # Attempt both publications even if one artifact cannot be written.
+    try:
+        (score_dir / "frames.json").write_text(json.dumps(header, indent=2), encoding="utf-8")
+    finally:
+        (score_dir / "report.html").write_text(
+            "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Scoring refused</title></head>"
+            f"<body><h1>Scoring refused</h1><p>{LICENSE_BANNER}</p>"
+            f"<p>{escape(str(code))}: {escape(str(error))}</p></body></html>",
+            encoding="utf-8",
+        )
+
+
 def score_head_to_head(run_dir: Path | str) -> Path:
     root = Path(run_dir)
+    try:
+        return _score_head_to_head(root)
+    except Exception as error:
+        # Include failures before accepted-set publication (e.g. export hashes)
+        # and after it, while preserving the original exception and gate order.
+        try:
+            _publish_score_refusal(root, error)
+        except OSError as publication_error:
+            error.add_note(f"Score refusal publication failed: {publication_error}")
+        raise
+
+
+def _score_head_to_head(root: Path) -> Path:
     manifest = _load_manifest_from_run(root)
     pair = _load_pair(root)
     stacks = _declared_stack_ids(root, pair)
@@ -1252,13 +1289,6 @@ def score_head_to_head(run_dir: Path | str) -> Path:
     if len(one_sided_counts) == 2:
         skew = abs(one_sided_counts[0] - one_sided_counts[1]) / max(1, accepted.manifest_entry_count)
         if skew > pair.max_differential_attrition:
-            header = {
-                "error_code": "differential_attrition_exceeded",
-                "license_banner": LICENSE_BANNER,
-                "pr_cells_emitted": False,
-                "cells": [],
-            }
-            (root / "score" / "frames.json").write_text(json.dumps(header, indent=2), encoding="utf-8")
             raise BenchError("differential_attrition_exceeded", "one-sided attrition exceeds max_differential_attrition")
 
     accepted_entries = [e for e in manifest.entries if e.media_id in set(accepted.manifest_media_ids)]
@@ -1305,19 +1335,6 @@ def score_head_to_head(run_dir: Path | str) -> Path:
             if info is not None and not _media_identity_query_succeeded(
                 identity_results, info.get("stack_media_id")
             ):
-                header = {
-                    "error_code": "identity_query_unknown",
-                    "license_banner": LICENSE_BANNER,
-                    "pr_cells_emitted": False,
-                    "cells": [],
-                }
-                (root / "score" / "frames.json").write_text(json.dumps(header, indent=2), encoding="utf-8")
-                (root / "score" / "report.html").write_text(
-                    "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Scoring refused</title></head>"
-                    f"<body><h1>Scoring refused</h1><p>{LICENSE_BANNER}</p>"
-                    "<p>Failed or missing identity query; detection and identification metrics refused.</p></body></html>",
-                    encoding="utf-8",
-                )
                 raise BenchError(
                     "identity_query_unknown",
                     f"{stack_id} manifest media_id={entry.media_id} "

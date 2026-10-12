@@ -13,6 +13,15 @@ doc = "AuraFace ONNX root read by settings.auraface_models_dir on the auraface p
 required = true
 values = { dev-auraface = "/data/cache/face_pipeline", staging-auraface = "/data/cache/face_pipeline", prod-auraface = "/data/cache/face_pipeline" }
 
+# The shared RECOGNITION_FACE_PIPELINE_PROFILE example is face_pipeline, which selects the
+# SFace space. Every auraface label runs with the auraface profile (values in
+# 22-service-fir.toml), so this Aura-only override makes the template show auraface too
+# (P2M-AURA-EXAMPLE-01). Runtime values are unchanged.
+[[override]]
+name = "RECOGNITION_FACE_PIPELINE_PROFILE"
+target = "svc-auraface"
+example = "auraface"
+
 [[override]]
 name = "POSTGRES_DSN"
 target = "svc-auraface"

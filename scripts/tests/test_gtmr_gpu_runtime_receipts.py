@@ -15,10 +15,16 @@ Three test classes are reported separately:
 ``test_red_*``       CAUSAL REDs on UNCHANGED production. Each differs from a healthy control
                      by exactly one factor and is expected to FAIL now. A failure is a real
                      defect in existing behaviour; the docstring names the producer it reads.
-``test_proposal_*``  FUTURE-INTERFACE PROPOSAL for scripts/collect_gpu_runtime_evidence.py.
-                     Marked xfail(reason=PROPOSAL_PENDING) while that module is absent. Import
-                     absence is not a behaviour defect and is never reported as one. Once the
-                     module exists these run as ordinary assertions.
+``test_proposal_*``  Legacy proposal oracles for scripts/collect_gpu_runtime_evidence.py. Marked
+                     xfail(reason=PROPOSAL_PENDING) only while that module is absent; import absence is
+                     not a behaviour defect. The module now exists, so these run as ordinary assertions
+                     through ``_legacy_view`` (one-to-one ABI v1 -> legacy names, absent fields -> None).
+                     Five legacy oracles conflict with frozen ABI v1 and remain RED by design; see the
+                     commit report: instance lifecycle and total_layers are not runtime-kind fields,
+                     build is recorded verbatim, image_ref is not a runtime-kind field, the prompt is one
+                     canonical hash, and the artifact oracle predates stderr/capture/receipt custody.
+``test_<ABI>``      ABI v1 selectors (receipts, identity, completion binding, custody, redaction,
+                     readiness). Each asserts the frozen envelope directly through ``result["abi"]``.
 ``test_freeze_*``    Fixture freeze: pinned digests of the frozen raw command outputs.
 
 Offline only. A subprocess guard fails any live call. This file never runs nvidia-smi,
@@ -46,6 +52,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import importlib
 import importlib.util
 import json
 import math
@@ -59,6 +66,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -123,6 +131,13 @@ LOG_OFFLOAD_CPU = f"{T_OFFLOAD} load_tensors: offloaded 0/49 layers to GPU"
 LOG_OFFLOAD_STALE = f"{T_STALE} load_tensors: offloaded 49/49 layers to GPU"
 LOG_COMPLETION = f"{T_COMPLETION} srv  log_server_r: request_id={REQUEST_ID} status=200 completion"
 LOG_COMPLETION_OTHER = f"{T_COMPLETION} srv  log_server_r: request_id={OTHER_REQUEST_ID} status=200 completion"
+LOG_COMPLETION_STALE = f"{T_STALE} srv  log_server_r: request_id={REQUEST_ID} status=200 completion"
+
+# Adapter receipt fixtures (ABI v1 inference lineage). Client timings bracket the server completion.
+FIXTURE_CAPTION = b"fixture caption"
+RESPONSE_BODY = b'{"choices":[{"message":{"content":"fixture caption"}}]}\n'
+RECEIPT_STARTED_AT = "2026-10-12T00:00:05.000000Z"
+RECEIPT_FINISHED_AT = "2026-10-12T00:00:20.500000Z"
 
 MAX_CALLS = 32  # bound for every offline collector run; the healthy path uses fewer
 MAX_STDOUT_BYTES = 1 << 20  # frozen cap; the truncation fixture exceeds it by 2x
@@ -144,6 +159,25 @@ MISSING_CODES = frozenset(
         "request_completion_absent",
         "output_truncated",
         "deadline_exhausted",
+        # Vocabulary extension for the collector's documented codes (kept in sync by
+        # test_vocabulary_matches_collector_declared_vocabulary).
+        "boot_id_unparseable",
+        "call_budget_exhausted",
+        "caption_absent",
+        "cmdline_unparsed",
+        "command_timeout",
+        "dependency_absent",
+        "digest_unparseable",
+        "endpoint_unparseable",
+        "file_stat_unparseable",
+        "gpu_query_unparseable",
+        "http_status_absent",
+        "inspect_malformed",
+        "instance_unparseable",
+        "instruction_absent",
+        "mapped_file_absent",
+        "mount_absent",
+        "receipt_over_budget",
     }
 )
 CONTRADICTION_CODES = frozenset(
@@ -156,6 +190,14 @@ CONTRADICTION_CODES = frozenset(
         "mapped_projector_argv_mismatch",
         "mapped_file_replaced",
         "offload_cpu",
+        "build_ambiguous",
+        "completion_ambiguous",
+        "gpu_identity_changed",
+        "gpu_process_ambiguous",
+        "offload_ambiguous",
+        "receipt_body_mismatch",
+        "receipt_malformed",
+        "request_id_collision",
     }
 )
 
@@ -526,6 +568,38 @@ def _healthy_script(overrides: Mapping[tuple[str, ...], list[Any]] | None = None
     return script
 
 
+def _body_image(body: bytes) -> bytes:
+    url = json.loads(body)["messages"][1]["content"][0]["image_url"]["url"]
+    return base64.b64decode(url.split(",", maxsplit=1)[1])
+
+
+def _receipt_for(
+    body: bytes,
+    *,
+    kind: str = "caption",
+    correlation_id: str = REQUEST_ID,
+    source: bytes | None = None,
+    encoded: bytes | None = None,
+    caption: bytes = FIXTURE_CAPTION,
+) -> dict[str, Any]:
+    """Adapter receipt shape (raw custody bytes only). Source defaults to the body image: no transcode."""
+    decoded = _body_image(body)
+    return {
+        "request_kind": kind,
+        "correlation_id": correlation_id,
+        "media_type": "image/png",
+        "request_body": body,
+        "source_image": source if source is not None else decoded,
+        "encoded_image": encoded if encoded is not None else decoded,
+        "context_canonical": b"{}",
+        "caption": caption,
+        "response_body": RESPONSE_BODY,
+        "status_code": 200,
+        "started_at": RECEIPT_STARTED_AT,
+        "finished_at": RECEIPT_FINISHED_AT,
+    }
+
+
 def _observation(**overrides: Any) -> dict[str, Any]:
     base: dict[str, Any] = {
         "instance_id": INSTANCE_ID,
@@ -534,7 +608,64 @@ def _observation(**overrides: Any) -> dict[str, Any]:
         "request_body": _request_body(),
     }
     base.update(overrides)
+    # Fixture correction: the adapter receipt is the lineage source. Derive a consistent one from the body
+    # unless the caller supplies receipts explicitly. Assertions are unchanged.
+    base.setdefault("adapter_receipts", [_receipt_for(base["request_body"])])
     return base
+
+
+def _legacy_view(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """One-to-one view of the frozen ABI v1 runtime section in the legacy proposal names.
+
+    Absent ABI fields map to None. Legacy keys with no ABI counterpart (instance lifecycle, image_ref,
+    total_layers, prompt-part hashes) stay None so their legacy assertions fail honestly.
+    """
+    section = raw["section"]
+    by_kind: dict[str, list[Mapping[str, Any]]] = {}
+    for obs in section["observations"]:
+        by_kind.setdefault(obs["kind"], []).append(obs["data"])
+    identity = {data["phase"]: data for data in by_kind.get("runtime_identity", [])}
+    before = identity.get("before", {})
+    mapped = (by_kind.get("mapped_model") or [{}])[0]
+    inference = (by_kind.get("inference") or [{}])[0]
+    gpu_layers = mapped.get("offloaded_layers")
+    observations = {
+        "instance": {"lifecycle_state": None},
+        "container": {
+            "container_id": before.get("container_id"),
+            "image_id": before.get("container_image_id"),
+            "image_ref": None,
+        },
+        "process": {"pid": before.get("pid"), "start_ticks": before.get("start_ticks")},
+        "gpu": {
+            "gpu_uuid": before.get("gpu_uuid"),
+            "pid": before.get("pid") if before.get("gpu_uuid") else None,
+        },
+        "mapped": {
+            "model": {"host_path": mapped.get("model_path"), "sha256": mapped.get("model_sha256")},
+            "projector": {"host_path": mapped.get("projector_path"), "sha256": mapped.get("projector_sha256")},
+        },
+        "runtime": {
+            "offload": None if gpu_layers is None else {"gpu_layers": gpu_layers, "total_layers": None},
+            "build": mapped.get("build_identity"),
+        },
+        "request": {
+            "completion_request_id": inference.get("inference_request_id"),
+            "image_sha256": inference.get("source_image_sha256"),
+            "request_body_sha256": inference.get("request_body_sha256"),
+            "system_prompt_sha256": None,
+            "user_text_sha256": None,
+        },
+    }
+    return {
+        "section": "runtime",
+        "status": section["status"],
+        "observations": observations,
+        "missing_reasons": [issue["code"] for issue in section["missing_reasons"]],
+        "contradictions": [issue["code"] for issue in section["contradictions"]],
+        "artifacts": raw["artifacts"],
+        "abi": raw,
+    }
 
 
 def _collect(
@@ -545,12 +676,16 @@ def _collect(
     observation: Mapping[str, Any] | None = None,
     allow_unscripted: bool = False,
 ) -> tuple[Mapping[str, Any], FrozenRunner]:
-    """Run the proposal collector against the frozen runner. Raises CollectorAbsentError while pending."""
+    """Run the collector against the frozen runner. Raises CollectorAbsentError while pending.
+
+    The collector returns the frozen ABI v1 envelope fragment {section, artifacts, raw_artifacts}. The
+    returned view keeps the untouched ABI result under ``abi`` for ABI-shaped selectors.
+    """
 
     dl = deadline if deadline is not None else FakeDeadline(600.0)
     runner = FrozenRunner(script, deadline=dl, costs=costs, allow_unscripted=allow_unscripted)
     module = _collector()
-    result = module.collect_runtime_evidence(
+    raw = module.collect_runtime_evidence(
         runner=runner,
         observation=dict(observation) if observation is not None else _observation(),
         deadline=dl,
@@ -558,8 +693,10 @@ def _collect(
     if not allow_unscripted:
         assert runner.unexpected == [], f"argv outside the frozen trace reached the runner: {runner.unexpected}"
     assert runner.violations == [], runner.violations
-    assert {"section", "status", "observations", "missing_reasons", "contradictions", "artifacts"} <= set(result)
-    assert result["status"] in STATUSES, result["status"]
+    assert set(raw) == {"section", "artifacts", "raw_artifacts"}, sorted(raw)
+    assert set(raw["section"]) == {"status", "observations", "missing_reasons", "contradictions"}
+    assert raw["section"]["status"] in STATUSES, raw["section"]["status"]
+    result = _legacy_view(raw)
     return result, runner
 
 
@@ -997,6 +1134,10 @@ def test_proposal_utilization_config_pins_v1models_gpus_all_and_file_exist_never
         ARGV_CONFIG_PINS: [_done(ARGV_CONFIG_PINS, f"ACX_GPU_MODEL={MODEL_FILE}\n".encode())],
         ARGV_V1_MODELS: [_done(ARGV_V1_MODELS, json.dumps({"data": [{"id": MODEL_ID}]}).encode())],
         ARGV_FILE_EXISTS: [_done(ARGV_FILE_EXISTS, b"")],
+        # Fixture correction: the compute-apps query ran successfully and listed no process for the
+        # container (utilization 98% is not a process listing). An unscripted query is a failed
+        # command, not absence, so this script states the observed empty listing explicitly.
+        ARGV_GPU_APPS: [_done(ARGV_GPU_APPS, _gpu_apps_csv([]))],
         ARGV_INSPECT: [_done(ARGV_INSPECT, _inspect_json(device_requests=True))],
     }
     result, _ = _collect(script, allow_unscripted=True)
@@ -1057,3 +1198,378 @@ def test_proposal_applied_input_and_prompt_hashes_follow_retained_request_bytes(
     assert first["system_prompt_sha256"] == _sha(SYSTEM_PROMPT.encode())
     assert first["user_text_sha256"] == _sha(USER_TEXT.encode())
     assert first["request_body_sha256"] == _sha(_observation()["request_body"])
+
+
+# ---------------------------------------------------------------------------
+# G2 ABI v1 SELECTORS. Smoke and adapter selectors run against the unchanged module files and
+# are NOT pending. Collector selectors use _PENDING until scripts/collect_gpu_runtime_evidence.py
+# exists. Every selector asserts the frozen envelope; none is a skip or an xfail that hides a defect.
+# ---------------------------------------------------------------------------
+
+APP_ROOT = REPO_ROOT / "apps" / "prototype-description-service"
+
+
+def _abi(result: Mapping[str, Any]) -> Mapping[str, Any]:
+    return result["abi"]
+
+
+def _kinds(section: Mapping[str, Any], kind: str) -> list[Mapping[str, Any]]:
+    return [obs for obs in section["observations"] if obs["kind"] == kind]
+
+
+def test_cached_final_gpu_is_not_new_execution() -> None:
+    # Single differing factor from the uncached control: provenance.cached. The item stays final_gpu
+    # with the pinned identity, so only the cache predicate can reject it. An absent cached flag is
+    # refused too: an unobservable cache state cannot prove new GPU execution (fail closed).
+    cached = {name: passed for name, passed, _ in _smoke_checks(_smoke_item(cached=True))}
+    assert cached["tier_final_gpu"] is False, cached
+    absent_item = _smoke_item(cached=False)
+    del absent_item["provenance"]["cached"]
+    absent = {name: passed for name, passed, _ in _smoke_checks(absent_item)}
+    assert absent["tier_final_gpu"] is False, absent
+    uncached = {name: passed for name, passed, _ in _smoke_checks(_smoke_item(cached=False))}
+    assert all(uncached.values()), uncached
+
+
+def _adapter_module(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    monkeypatch.syspath_prepend(str(APP_ROOT))
+    return importlib.import_module("scene.infrastructure.vlm.gpu_remote_adapter")
+
+
+def _png(size: tuple[int, int] = (17, 11)) -> bytes:
+    import io
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", size, color=(24, 96, 180)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _chat(text: str) -> dict[str, Any]:
+    return {"choices": [{"message": {"content": text}}]}
+
+
+def test_control_adapter_without_receipt_sink_adds_no_correlation_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    mod = _adapter_module(monkeypatch)
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("x-request-id"))
+        return httpx.Response(200, json=_chat("A caption."))
+
+    adapter = mod.GpuRemoteDescriptionAdapter(
+        endpoint_url="http://gpu.test:8000",
+        model_id="Qwen3-VL-30B-A3B-Instruct",
+        model_version="Q4_K_M",
+        transport=httpx.MockTransport(handler),
+        grounding_enabled=False,
+    )
+    assert adapter.describe(image_bytes=_png(), context=None).caption == "A caption."
+    assert seen == [None], "the receipt hook must be inert unless a sink is installed"
+
+
+def test_adapter_receipt_records_exact_wire_bytes_and_lineage(monkeypatch: pytest.MonkeyPatch) -> None:
+    import io
+
+    from PIL import Image
+
+    mod = _adapter_module(monkeypatch)
+    wire: list[tuple[str | None, bytes]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        wire.append((request.headers.get("x-request-id"), request.content))
+        return httpx.Response(200, json=_chat("A WebP caption."))
+
+    source_buffer = io.BytesIO()
+    Image.new("RGB", (17, 11), color=(24, 96, 180)).save(source_buffer, format="WEBP")
+    source = source_buffer.getvalue()
+    receipts: list[Mapping[str, Any]] = []
+    adapter = mod.GpuRemoteDescriptionAdapter(
+        endpoint_url="http://gpu.test:8000",
+        model_id="Qwen3-VL-30B-A3B-Instruct",
+        model_version="Q4_K_M",
+        transport=httpx.MockTransport(handler),
+        grounding_enabled=False,
+        receipt_sink=receipts.append,
+    )
+    result = adapter.describe(image_bytes=source, context={"title": "Harbor"})
+
+    assert result.caption == "A WebP caption."
+    assert len(wire) == 1 and len(receipts) == 1
+    correlation, body = wire[0]
+    receipt = receipts[0]
+    assert receipt["request_kind"] == "caption"
+    assert receipt["request_body"] == body, "receipt must hold the exact bytes that crossed the wire"
+    assert receipt["correlation_id"] == correlation and correlation
+    assert receipt["source_image"] == source
+    encoded = _body_image(body)
+    assert receipt["encoded_image"] == encoded
+    assert encoded != source and encoded.startswith(b"\x89PNG\r\n\x1a\n"), "WebP->PNG transcode must be visible"
+    expected_context = json.dumps({"title": "Harbor"}, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    assert receipt["context_canonical"] == expected_context.encode("utf-8")
+    assert receipt["caption"] == b"A WebP caption."
+    assert json.loads(receipt["response_body"])["choices"][0]["message"]["content"] == "A WebP caption."
+    assert receipt["status_code"] == 200
+    assert receipt["started_at"].endswith("Z") and receipt["started_at"] <= receipt["finished_at"]
+
+
+def test_adapter_receipts_keep_caption_and_grounding_distinct(monkeypatch: pytest.MonkeyPatch) -> None:
+    mod = _adapter_module(monkeypatch)
+    replies = [_chat("A man in a red hat."), _chat("[]")]
+    wire: list[tuple[str | None, bytes]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        wire.append((request.headers.get("x-request-id"), request.content))
+        return httpx.Response(200, json=replies[len(wire) - 1])
+
+    receipts: list[Mapping[str, Any]] = []
+    adapter = mod.GpuRemoteDescriptionAdapter(
+        endpoint_url="http://gpu.test:8000",
+        model_id="Qwen3-VL-30B-A3B-Instruct",
+        model_version="Q4_K_M",
+        transport=httpx.MockTransport(handler),
+        grounding_enabled=True,
+        receipt_sink=receipts.append,
+    )
+    adapter.describe(image_bytes=_png(), context=None)
+
+    assert [receipt["request_kind"] for receipt in receipts] == ["caption", "grounding"]
+    assert len(wire) == 2
+    assert receipts[0]["request_body"] != receipts[1]["request_body"]
+    assert receipts[0]["correlation_id"] != receipts[1]["correlation_id"]
+    assert receipts[1]["request_body"] == wire[1][1]
+    assert receipts[1]["caption"] == b"A man in a red hat."
+    grounding_text = json.loads(wire[1][1])["messages"][1]["content"][1]["text"]
+    assert "Caption:\nA man in a red hat." in grounding_text
+
+
+def test_adapter_receipt_records_rejected_endpoint_without_caption(monkeypatch: pytest.MonkeyPatch) -> None:
+    mod = _adapter_module(monkeypatch)
+    receipts: list[Mapping[str, Any]] = []
+    adapter = mod.GpuRemoteDescriptionAdapter(
+        endpoint_url="http://gpu.test:8000",
+        model_id="Qwen3-VL-30B-A3B-Instruct",
+        model_version="Q4_K_M",
+        transport=httpx.MockTransport(lambda request: httpx.Response(503, text="busy")),
+        grounding_enabled=False,
+        receipt_sink=receipts.append,
+    )
+    with pytest.raises(mod.GpuRemoteAdapterError):
+        adapter.describe(image_bytes=_png(), context=None)
+    assert len(receipts) == 1
+    assert receipts[0]["status_code"] == 503
+    assert receipts[0]["caption"] is None, "a rejected call has no caption lineage to claim"
+    assert receipts[0]["response_body"] == b"busy"
+
+
+def test_adapter_receipt_sink_failure_does_not_change_caption(monkeypatch: pytest.MonkeyPatch) -> None:
+    mod = _adapter_module(monkeypatch)
+
+    def broken(_receipt: Mapping[str, Any]) -> None:
+        raise RuntimeError("sink down")
+
+    adapter = mod.GpuRemoteDescriptionAdapter(
+        endpoint_url="http://gpu.test:8000",
+        model_id="Qwen3-VL-30B-A3B-Instruct",
+        model_version="Q4_K_M",
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=_chat("Still a caption."))),
+        grounding_enabled=False,
+        receipt_sink=broken,
+    )
+    assert adapter.describe(image_bytes=_png(), context=None).caption == "Still a caption."
+
+
+@_PENDING
+@pytest.mark.parametrize(
+    ("override", "code"),
+    [
+        (
+            {ARGV_BOOT: [_done(ARGV_BOOT, _text(BOOT_ID)), _done(ARGV_BOOT, _text(BOOT_ID_PREVIOUS))]},
+            "boot_changed",
+        ),
+        (
+            {
+                ARGV_INSPECT: [
+                    _done(ARGV_INSPECT, _inspect_json()),
+                    _done(ARGV_INSPECT, _inspect_json(container_id=CONTAINER_ID_RESTARTED)),
+                ]
+            },
+            "container_changed",
+        ),
+        (
+            {
+                ARGV_PROC_STAT: [
+                    _done(ARGV_PROC_STAT, _proc_stat(CONTAINER_START_TICKS)),
+                    _done(ARGV_PROC_STAT, _proc_stat(CONTAINER_START_TICKS + 5000)),
+                ]
+            },
+            "pid_reused",
+        ),
+    ],
+)
+def test_runtime_receipt_rejects_identity_change(override: Mapping[Any, Any], code: str) -> None:
+    result, _ = _collect(_healthy_script(override))
+    section = _abi(result)["section"]
+    assert section["status"] == "contradicted", section["status"]
+    _assert_contradiction(result, code)
+    phases = [obs["data"]["phase"] for obs in _kinds(section, "runtime_identity")]
+    assert phases == ["before", "after"], phases
+    assert _kinds(section, "inference") == [], "a receipt bound to a changed process must not be reported"
+
+
+@_PENDING
+@pytest.mark.parametrize(
+    ("log_lines", "code"),
+    [
+        ((LOG_BUILD, LOG_OFFLOAD_GPU), "request_completion_absent"),
+        ((LOG_BUILD, LOG_OFFLOAD_GPU, LOG_COMPLETION_OTHER), "request_completion_absent"),
+        ((LOG_BUILD, LOG_OFFLOAD_GPU, LOG_COMPLETION_STALE), "startup_log_stale"),
+    ],
+)
+def test_runtime_receipt_requires_verified_completion_binding(log_lines: tuple[str, ...], code: str) -> None:
+    # Client correlation alone is insufficient: no server completion echo for this receipt id, so no
+    # inference observation may be emitted for it.
+    result, _ = _collect(_healthy_script({ARGV_LOGS: [_done(ARGV_LOGS, _logs(*log_lines))]}))
+    section = _abi(result)["section"]
+    assert section["status"] != "complete", section["status"]
+    _assert_missing(result, code)
+    assert _kinds(section, "inference") == [], "unbound receipt was reported as an inference observation"
+
+
+@_PENDING
+def test_runtime_receipt_binds_only_the_echoed_request_id() -> None:
+    result, _ = _collect(_healthy_script())
+    section = _abi(result)["section"]
+    inference = _kinds(section, "inference")
+    assert len(inference) == 1, inference
+    data = inference[0]["data"]
+    assert data["inference_request_id"] == REQUEST_ID
+    assert data["request_kind"] == "caption"
+    assert data["completion_started_at"] == RECEIPT_STARTED_AT
+    assert data["completion_finished_at"] == T_COMPLETION
+    assert data["request_body_sha256"] == _sha(_observation()["request_body"])
+    assert data["source_image_sha256"] == _sha(IMAGE_BYTES)
+    assert data["encoded_image_sha256"] == _sha(IMAGE_BYTES)
+    assert data["caption_sha256"] == _sha(FIXTURE_CAPTION)
+    assert data["context_hash"] == _sha(b"{}")
+    prompt = json.dumps(
+        {"system_prompt": SYSTEM_PROMPT, "user_text": USER_TEXT},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    assert data["prompt_sha256"] == _sha(prompt.encode("utf-8"))
+
+
+@_PENDING
+def test_runtime_receipt_custody_matches_persisted_bytes() -> None:
+    result, _ = _collect(_healthy_script())
+    raw = _abi(result)
+    section = raw["section"]
+    artifacts = {artifact["relative_path"]: artifact for artifact in raw["artifacts"]}
+    assert len(artifacts) == len(raw["artifacts"]), "duplicate artifact path"
+    assert set(raw["raw_artifacts"]) == set(artifacts), "every artifact must be persisted exactly once"
+    for relative_path, data in raw["raw_artifacts"].items():
+        assert artifacts[relative_path]["sha256"] == _sha(data), relative_path
+        assert not relative_path.startswith("/") and ".." not in Path(relative_path).parts, relative_path
+    ids = [obs["observation_id"] for obs in section["observations"]]
+    assert len(ids) == len(set(ids)), "observation ids must be unique"
+    for obs in section["observations"]:
+        assert obs["artifact_relative_path"] in artifacts, obs["observation_id"]
+        assert obs["artifact_sha256"] == artifacts[obs["artifact_relative_path"]]["sha256"]
+        for ref in obs["source_artifacts"]:
+            assert artifacts[ref["relative_path"]]["sha256"] == ref["sha256"], ref
+
+
+@_PENDING
+def test_runtime_receipt_unavailable_container_producer_is_incomplete_not_manufactured() -> None:
+    # The inspect producer is unavailable (runner raises). No container identity may be manufactured
+    # from the instruction, and no dependent probe may claim the missing identity.
+    script = _healthy_script({ARGV_INSPECT: [FileNotFoundError("docker")]})
+    result, _ = _collect(script)
+    assert result["status"] != "complete", result["status"]
+    _assert_missing(result, "command_failed")
+    assert _obs(result)["container"]["container_id"] is None
+    assert _obs(result)["process"]["pid"] is None
+    assert _kinds(_abi(result)["section"], "runtime_identity") == []
+
+
+GROUNDING_REQUEST_ID = "gtmr-g2-req-0002"
+LOG_COMPLETION_GROUNDING = f"{T_COMPLETION} srv  log_server_r: request_id={GROUNDING_REQUEST_ID} status=200 completion"
+
+
+@_PENDING
+def test_runtime_receipt_never_persists_container_env_secrets() -> None:
+    # docker inspect Config.Env can carry credentials. Persisted bytes and every serialized section
+    # must omit the value, and the capture document records the redaction and the pre-redaction digest.
+    inspect_doc = json.loads(_inspect_json())
+    inspect_doc[0]["Config"] = {"Env": ["ACX_GPU_API_TOKEN=fixture-secret-value", "PATH=/usr/bin"]}
+    raw_inspect = (json.dumps(inspect_doc, indent=2, sort_keys=True) + "\n").encode()
+    result, _ = _collect(_healthy_script({ARGV_INSPECT: [_done(ARGV_INSPECT, raw_inspect)]}))
+    raw = _abi(result)
+    persisted = b"".join(raw["raw_artifacts"].values())
+    assert b"fixture-secret-value" not in persisted
+    assert b"fixture-secret-value" not in json.dumps(raw["section"]).encode()
+    capture = json.loads(raw["raw_artifacts"]["raw/runtime/capture.json"])
+    inspect_calls = [call for call in capture["calls"] if call["label"].endswith("inspect")]
+    assert len(inspect_calls) == 2, [call["label"] for call in inspect_calls]
+    for call in inspect_calls:
+        assert call["redaction"]["fields"] == ["Config.Env"], call
+        assert call["redaction"]["original_stdout_sha256"] == _sha(raw_inspect), call
+    assert len(_kinds(_abi(result)["section"], "runtime_identity")) == 2, "redaction must not drop identity"
+
+
+@_PENDING
+def test_runtime_readiness_is_unauthenticated_and_http_status_is_not_invented() -> None:
+    script = _healthy_script(
+        {ARGV_V1_MODELS: [_done(ARGV_V1_MODELS, json.dumps({"data": [{"id": MODEL_ID}]}).encode())]}
+    )
+    result, _ = _collect(script, observation=_observation(readiness=True))
+    readiness = _kinds(_abi(result)["section"], "readiness")
+    assert len(readiness) == 1, readiness
+    assert readiness[0]["data"] == {
+        "instance_id": INSTANCE_ID,
+        "authenticated": False,
+        "http_status": None,
+        "ready": True,
+    }
+    _assert_missing(result, "http_status_absent")
+
+
+@_PENDING
+def test_runtime_receipt_keeps_caption_and_grounding_requests_distinct() -> None:
+    grounding_body = _request_body(system="fixture grounding system", user="fixture grounding user")
+    receipts = [
+        _receipt_for(_request_body(), kind="caption", correlation_id=REQUEST_ID),
+        _receipt_for(grounding_body, kind="grounding", correlation_id=GROUNDING_REQUEST_ID),
+    ]
+    script = _healthy_script(
+        {ARGV_LOGS: [_done(ARGV_LOGS, _logs(LOG_BUILD, LOG_OFFLOAD_GPU, LOG_COMPLETION, LOG_COMPLETION_GROUNDING))]}
+    )
+    result, _ = _collect(script, observation=_observation(adapter_receipts=receipts))
+    inference = _kinds(_abi(result)["section"], "inference")
+    assert [obs["data"]["request_kind"] for obs in inference] == ["caption", "grounding"], inference
+    assert inference[0]["data"]["request_body_sha256"] != inference[1]["data"]["request_body_sha256"]
+    assert inference[0]["data"]["inference_request_id"] != inference[1]["data"]["inference_request_id"]
+    assert inference[1]["data"]["prompt_sha256"] != inference[0]["data"]["prompt_sha256"]
+    assert result["status"] == "complete", (result["missing_reasons"], result["contradictions"])
+
+
+@_PENDING
+def test_runtime_receipt_encoded_bytes_must_match_the_request_body() -> None:
+    # The adapter's encoded-image record must be the image the request body carried. A mismatch is
+    # custody corruption: contradicted, and no inference observation is emitted for it.
+    receipts = [_receipt_for(_request_body(), encoded=b"other-encoded-bytes")]
+    result, _ = _collect(_healthy_script(), observation=_observation(adapter_receipts=receipts))
+    _assert_contradiction(result, "receipt_body_mismatch")
+    assert _kinds(_abi(result)["section"], "inference") == []
+
+
+@_PENDING
+def test_vocabulary_matches_collector_declared_vocabulary() -> None:
+    # Guard against drift: the assertion helpers accept exactly the collector's declared reason codes.
+    module = _collector()
+    assert set(module.MISSING_CODES) == set(MISSING_CODES)
+    assert set(module.CONTRADICTION_CODES) == set(CONTRADICTION_CODES)

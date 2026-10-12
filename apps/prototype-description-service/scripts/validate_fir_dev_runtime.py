@@ -80,7 +80,9 @@ EXPECTED_CONTRACTS: dict[str, dict[str, Any]] = {
     "candidate512": {
         "effective_profile": "auraface",
         "embedding_dimension": 512,
-        "model_name_prefix": "auraface+",
+        # Canonical production identity: EmbeddingModelManifest.model_id prepends the framework
+        # ("insightface-" + "auraface+<space>"), so the emitted prefix is insightface-auraface+.
+        "model_name_prefix": "insightface-auraface+",
         "model_suffix": ("512d", "l2", "cosine"),
         "preprocessing_id": "arcface-112",
         # Source of truth: provenance.py MODEL_MANIFEST yunet / auraface sha256.

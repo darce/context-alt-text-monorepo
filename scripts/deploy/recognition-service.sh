@@ -1874,10 +1874,14 @@ restore_prior_image_repo_env() {
 # Read-only topology match (same diffs as converge_check) but returns 1 on drift
 # instead of calling fail() — usable under ACX_CONVERGE_RUNTIME=0 refuse path.
 runtime_in_sync() {
-  local env="$1" remote_dir unit rendered
+  local env="$1" remote_dir unit rendered timeout
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   remote_dir="$(env_to_remote_dir "$env")"
   unit="$(env_to_unit "$env")"
-  if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat '${remote_dir}/docker-compose.env.yml' 2>/dev/null" \
+  if ! run_with_deadline "${timeout}" "runtime compose read for ${env}" \
+    ssh -o BatchMode=yes -o ConnectTimeout="${timeout}" -o ConnectionAttempts=1 \
+    -o ServerAliveInterval="${timeout}" -o ServerAliveCountMax=1 \
+    -l "${OCI_USER}" -- "${OCI_HOST}" "cat '${remote_dir}/docker-compose.env.yml' 2>/dev/null" \
     | diff -q - "${SERVICE_DIR}/docker-compose.env.yml" >/dev/null 2>&1; then
     return 1
   fi
@@ -2706,11 +2710,13 @@ EDGE
 # Read-only drift gate: diff the deployed compose/unit against the repo and exit
 # non-zero on any drift, without mutating the VM. Operator triage for `--check`.
 # Transport failures must never be misread as drift (gate r08117ab7 RA-03/RB-04):
-# each arm captures the ssh exit status before diffing; ssh rc=255 → fail with a
-# transport-error message. Missing remote files (cat exit 1) still count as drift.
+# each arm captures the ssh exit status before diffing; ssh rc=255 or deadline
+# rc=124 → fail with a transport-error message. Missing files (cat exit 1) are drift.
 converge_check() {
   local env="$1" remote_dir unit drift=0 rendered
-  local remote_tmp ssh_rc fir_net="acx-dev-fir-net"
+  local remote_tmp ssh_rc command_timeout inspect_timeout fir_net="acx-dev-fir-net"
+  command_timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  inspect_timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
   remote_dir="$(env_to_remote_dir "$env")"
   unit="$(env_to_unit "$env")"
   log "Checking runtime drift for ${env} on ${SSH_TARGET} (read-only)"
@@ -2729,8 +2735,11 @@ converge_check() {
     # content/missing-file mismatch. Aborts on ssh transport failure.
     local remote_path="$1" local_path="$2" label="$3"
     ssh_rc=0
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat '${remote_path}'" >"${remote_tmp}" 2>/dev/null || ssh_rc=$?
-    if ((ssh_rc == 255)); then
+    run_with_deadline "${command_timeout}" "remote ${label} read for ${env}" \
+      ssh -o BatchMode=yes -o ConnectTimeout="${command_timeout}" -o ConnectionAttempts=1 \
+      -o ServerAliveInterval="${command_timeout}" -o ServerAliveCountMax=1 \
+      -l "${OCI_USER}" -- "${OCI_HOST}" "cat '${remote_path}'" >"${remote_tmp}" 2>/dev/null || ssh_rc=$?
+    if ((ssh_rc == 255 || ssh_rc == 124)); then
       _cc_fail "cannot read remote ${label} on ${SSH_TARGET} (ssh exit ${ssh_rc}); refusing to treat transport failure as runtime drift"
     fi
     if ((ssh_rc != 0)); then
@@ -2758,8 +2767,11 @@ converge_check() {
   fi
   rendered="$(render_unit "$env")"
   ssh_rc=0
-  ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat '/etc/systemd/system/${unit}.service'" >"${remote_tmp}" 2>/dev/null || ssh_rc=$?
-  if ((ssh_rc == 255)); then
+  run_with_deadline "${command_timeout}" "remote ${unit}.service read for ${env}" \
+    ssh -o BatchMode=yes -o ConnectTimeout="${command_timeout}" -o ConnectionAttempts=1 \
+    -o ServerAliveInterval="${command_timeout}" -o ServerAliveCountMax=1 \
+    -l "${OCI_USER}" -- "${OCI_HOST}" "cat '/etc/systemd/system/${unit}.service'" >"${remote_tmp}" 2>/dev/null || ssh_rc=$?
+  if ((ssh_rc == 255 || ssh_rc == 124)); then
     _cc_fail "cannot read remote ${unit}.service on ${SSH_TARGET} (ssh exit ${ssh_rc}); refusing to treat transport failure as runtime drift"
   elif ((ssh_rc != 0)); then
     warn "drift: ${unit}.service on ${env} differs from repo template (or is missing)"
@@ -2786,7 +2798,10 @@ converge_check() {
   # converge_runtime's MEMBER|MISSING|NOCADDY inspect so --check catches the
   # fir-502 case (caddy never recreated onto acx-dev-fir-net).
   local edge_membership edge_member_rc=0
-  edge_membership="$(ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cd '${edge_dir}' && cid=\$(docker compose -f docker-compose.caddy.yml ps -q caddy 2>/dev/null); if [ -z \"\$cid\" ]; then echo NOCADDY; elif docker inspect -f '{{json .NetworkSettings.Networks}}' \"\$cid\" | grep -q '\"${fir_net}\"'; then echo MEMBER; else echo MISSING; fi")" || edge_member_rc=$?
+  edge_membership="$(run_with_deadline "${inspect_timeout}" "caddy edge membership inspection for ${env}" \
+    ssh -o BatchMode=yes -o ConnectTimeout="${inspect_timeout}" -o ConnectionAttempts=1 \
+    -o ServerAliveInterval="${inspect_timeout}" -o ServerAliveCountMax=1 \
+    -l "${OCI_USER}" -- "${OCI_HOST}" "cd '${edge_dir}' && cid=\$(docker compose -f docker-compose.caddy.yml ps -q caddy 2>/dev/null); if [ -z \"\$cid\" ]; then echo NOCADDY; elif docker inspect -f '{{json .NetworkSettings.Networks}}' \"\$cid\" | grep -q '\"${fir_net}\"'; then echo MEMBER; else echo MISSING; fi")" || edge_member_rc=$?
   if ((edge_member_rc != 0)); then
     _cc_fail "cannot inspect caddy edge network membership on ${SSH_TARGET} (ssh exit ${edge_member_rc}); refusing to treat transport failure as runtime drift"
   fi

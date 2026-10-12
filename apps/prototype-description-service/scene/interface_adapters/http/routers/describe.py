@@ -176,9 +176,19 @@ class AsyncAdmissionGate:
             self._retained_image_bytes = max(0, self._retained_image_bytes - image_len)
 
 
+def _positive_async_limit(setting: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(setting, str(default)))
+    except ValueError as exc:
+        raise ValueError(f"{setting} must be a positive integer") from exc
+    if value <= 0:
+        raise ValueError(f"{setting} must be a positive integer")
+    return value
+
+
 def _async_admission_gate() -> AsyncAdmissionGate:
-    max_jobs = int(os.environ.get("ACX_ASYNC_MAX_PENDING_JOBS", str(_DEFAULT_MAX_PENDING_JOBS)))
-    max_bytes = int(os.environ.get("ACX_ASYNC_MAX_RETAINED_IMAGE_BYTES", str(_DEFAULT_MAX_RETAINED_IMAGE_BYTES)))
+    max_jobs = _positive_async_limit("ACX_ASYNC_MAX_PENDING_JOBS", _DEFAULT_MAX_PENDING_JOBS)
+    max_bytes = _positive_async_limit("ACX_ASYNC_MAX_RETAINED_IMAGE_BYTES", _DEFAULT_MAX_RETAINED_IMAGE_BYTES)
     return AsyncAdmissionGate(max_jobs=max_jobs, max_retained_image_bytes=max_bytes)
 
 

@@ -10,8 +10,9 @@ Contract (target names are proposed configuration, not observed resources):
   COMPOSE_PROJECT_NAME execution context equals acx-<label>, and the effective DSN names the dedicated role
   acx_<label with underscores> and the dedicated database alt_context_<label with underscores>.
 * A DSN query key that asyncpg merges into connect arguments, or resolves through a service file, can replace the
-  effective user, database, host or port. Any such key is refused regardless of its value, so the netloc is the only
-  identity source for an Aura label.
+  effective user, database, host or port. A nested `dsn` key can set startup settings such as the role while the outer
+  identity stays dedicated. Any such key is refused regardless of its value, so the netloc is the only identity source
+  for an Aura label.
 * Missing or malformed role, database, host or port is refused. Refusal text never includes the DSN or its credential.
 * Host policy: dev-auraface and staging-auraface accept a local host or the Compose postgres service, as their generic
   stacks do. prod-auraface refuses loopback, unspecified and *.local hosts, and accepts any other host, including
@@ -38,11 +39,14 @@ _TARGETS: dict[str, tuple[str, str]] = {
 AURA_LABELS: tuple[str, ...] = tuple(_TARGETS)
 _PROD_LABEL = "prod-auraface"
 
-# Query keys that can replace the effective endpoint or identity. asyncpg merges query keys into connect kwargs, and
-# it resolves `service` and `servicefile` against a pg_service.conf file. Keys are matched case-insensitively.
-# `options` carries libpq startup settings such as `-c role=...`; asyncpg ignores it, and refusing it is intended.
+# Query keys that can replace the effective endpoint, identity or startup settings. asyncpg merges query keys into
+# connect kwargs, and resolves `service` and `servicefile` against a pg_service.conf file. `dsn` is a nested DSN:
+# asyncpg parses its query into server_settings, so `dsn=...?role=...` sets the startup role while the outer identity
+# stays dedicated. `options` carries libpq startup settings such as `-c role=...`; asyncpg.connect has no such argument
+# and rejects it with TypeError. Refusing it here keeps the refusal ahead of any connection attempt. Keys are matched
+# case-insensitively.
 _ENDPOINT_QUERY_KEYS = frozenset(
-    {"user", "username", "database", "dbname", "host", "hostaddr", "port", "service", "servicefile", "options"}
+    {"user", "username", "database", "dbname", "host", "hostaddr", "port", "service", "servicefile", "options", "dsn"}
 )
 
 

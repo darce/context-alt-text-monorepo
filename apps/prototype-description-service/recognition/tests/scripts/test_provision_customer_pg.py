@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from db.tenant_context import enable_rls_bypass
@@ -21,7 +22,7 @@ pytestmark = pytest.mark.pg
 
 
 def _async_sessionmaker(pg_migrated_engine):
-    async_url = str(pg_migrated_engine.url).replace("postgresql+psycopg://", "postgresql+asyncpg://", 1)
+    async_url = pg_migrated_engine.url.set(drivername="postgresql+asyncpg")
     engine = create_async_engine(async_url)
     return engine, async_sessionmaker(engine, expire_on_commit=False)
 
@@ -56,9 +57,16 @@ async def test_provision_without_bypass_is_rejected_by_rls(pg_migrated_engine) -
     engine, session_factory = _async_sessionmaker(pg_migrated_engine)
     try:
         async with session_factory() as session:
+            # Authenticate before expecting an RLS denial: connection failures
+            # must fail this test, rather than count as policy enforcement.
+            assert (await session.execute(text("SELECT 1"))).scalar_one() == 1
             # No enable_rls_bypass: the RLS-forced audit_events INSERT (no tenant
             # context set) must fail — this is the bug the fix commit closed.
-            with pytest.raises(Exception):
+            with pytest.raises(DBAPIError) as rejected:
                 await provision_customer(session, email="pg-noguard@example.com", plan="pro")
+            assert rejected.value.orig.sqlstate == "42501"
+            message = str(rejected.value.orig).lower()
+            assert "row-level security" in message
+            assert '"audit_events"' in message
     finally:
         await engine.dispose()

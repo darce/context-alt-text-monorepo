@@ -218,11 +218,14 @@ async def test_postgres_rv07_paid_checkout_lookup_closes_txn_before_retrieve(pg_
                 checkout_url="https://pay.example/rv07",
             )
             await checkout.mark_ambiguous(tenant.id, begun.attempt.id)
-            await session.execute(
+            await set_tenant_context(session, tenant.id)
+            result = await session.execute(
                 update(BillingCheckoutAttempt)
                 .where(BillingCheckoutAttempt.id == begun.attempt.id)
                 .values(updated_at=_NOW - timedelta(seconds=30))
+                .returning(BillingCheckoutAttempt.updated_at)
             )
+            assert result.scalar_one() == _NOW - timedelta(seconds=30)
             await session.commit()
             tenant_id = tenant.id
 

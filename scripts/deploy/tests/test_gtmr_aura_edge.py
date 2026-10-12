@@ -1,11 +1,14 @@
 """Causal RED for the three AuraFace edge vhosts (GTMSMOKE-1, edge E).
 
 The six RED checks read the maintained production Caddy files read-only. Against
-the unchanged production files they must fail: no AuraFace vhost or network join
-exists yet. The existing generic, SFace and demo routes are healthy controls that
-must stay green. Synthetic compliant and mutant edges prove that each check
-passes a correct edge and rejects each named defect, so the production RED comes
-from absent AuraFace routing rather than from a broken helper.
+the original (pre-AuraFace) production files they must fail: no AuraFace vhost or
+network join exists yet. Once edge E is applied they pass. The existing generic,
+SFace and demo routes are healthy controls that must stay green. Synthetic compliant
+and mutant edges are built from frozen pre-AuraFace baselines (pinned git blob ids),
+never from the live production files, so each fixture holds one AuraFace block per
+host and one network join per target. Each check then passes a correct edge and
+rejects each named defect, so the production RED comes from absent AuraFace routing
+rather than from a broken helper.
 
 The route emulator follows the literal source order of each Caddyfile site
 block. It is a config-contract check, not the Caddy runtime: ``caddy validate``,
@@ -18,6 +21,7 @@ TEST-15 — Prove the green can go red; The Pragmatic Programmer, ch. 9
 from __future__ import annotations
 
 import copy
+import hashlib
 import re
 from collections import Counter
 from collections.abc import Callable, Mapping
@@ -320,6 +324,165 @@ def check_demo_block_unchanged(caddy: str) -> None:
     _report(problems)
 
 
+# Frozen pre-AuraFace baselines: byte-exact copies of the two source blobs as they stood
+# before edge E (pre-edit tree 8c3eb2f85fdd5b4bba0c2e7036a5bf5144645d49). Synthetic fixtures
+# build from these copies and never from the live production files, so the production
+# AuraFace edge cannot be appended to a fixture a second time. Each copy is checked against
+# its git blob id before use, so an edited literal fails loudly instead of drifting.
+FROZEN_CADDYFILE_BLOB = "698cefd7b369dc5de3321fd4e623a38f4f5122e2"
+FROZEN_COMPOSE_BLOB = "f1d6d33d23fcd04f41a6cc45ef6aea660e988b83"
+FROZEN_CADDYFILE = r"""# Caddy reverse proxy for multi-environment deployment.
+# Each subdomain routes to the env-specific API alias on its Docker network.
+# Caddy auto-provisions Let's Encrypt TLS for all three subdomains.
+
+api.altcontext.com {
+	# /admin is tailnet-only (E15-31): deny it on the public vhost so the
+	# operator surface is reachable only over the tailnet path. 404 (not 403)
+	# avoids confirming the surface exists. The admin token still gates it.
+	@admin path /admin /admin/*
+	respond @admin 404
+
+	reverse_proxy prod-api:8000
+}
+
+staging.api.altcontext.com {
+	# Defense in depth: /admin is prod-operator-only; deny it here too.
+	@admin path /admin /admin/*
+	respond @admin 404
+
+	reverse_proxy staging-api:8000
+}
+
+dev.api.altcontext.com {
+	# Defense in depth: /admin is prod-operator-only; deny it here too.
+	@admin path /admin /admin/*
+	respond @admin 404
+
+	reverse_proxy dev-api:8000
+}
+
+fir.dev.api.altcontext.com {
+	# Defense in depth: /admin is prod-operator-only; deny it here too.
+	@admin path /admin /admin/*
+	respond @admin 404
+
+	reverse_proxy dev-fir-api:8000
+}
+
+# 129-213-40-111.sslip.io is the VM-native interim host (E15-29): it resolves to
+# the VM IP with no external DNS, so Caddy ALPN-issues a real cert for it today.
+# demo.altcontext.com stays listed so it auto-serves once the operator adds the
+# A-record — no Caddy edit needed at cutover. WordPress' canonical WP_HOME/
+# WP_SITEURL points at the interim until then (set in demo secrets/.env).
+demo.altcontext.com, 129-213-40-111.sslip.io {
+	# Demo root is the walkthrough itself: a visitor who reaches the demo
+	# host already wants the product, so skip the intermediate homepage.
+	# Scoped to the bare root of the public hostname, GET/HEAD, empty query
+	# string, so /wp-admin/, /wp-login.php, /wp-json/, assets and WordPress
+	# query-based routes are untouched. `path /` is an exact match in Caddy,
+	# not a prefix. 302 while the site structure is still settling.
+	@demo_root {
+		host demo.altcontext.com
+		method GET HEAD
+		path /
+		expression {query} == ""
+	}
+	redir @demo_root /guide/ 302
+
+	@xmlrpc path /xmlrpc.php
+	respond @xmlrpc "Forbidden" 403
+
+	# No rate_limit directive here: stock caddy:2-alpine does not bundle the
+	# third-party caddy-ratelimit module, and an unrecognized directive fails
+	# `caddy validate` for every vhost. Login rate-limiting requires a custom
+	# xcaddy build — deferred (E15-28 hardening note).
+
+	reverse_proxy demo-wp:80
+}
+
+# dl.darce.xyz is the portfolio's download rail, not an altcontext surface: it
+# shares this proxy because the proxy is here, but the NAME belongs to the
+# domain the portfolio itself lives on, so parking or selling altcontext.com
+# never breaks a published download link.
+#
+# 302, not 301: a permanent redirect is cached by browsers effectively forever,
+# which would forfeit the only thing this vhost buys — the ability to move the
+# bytes (GitHub Releases today, object storage or anything else tomorrow) by
+# editing one line here instead of editing every page that ever linked it.
+#
+# The target is the `latest` release PAGE, deliberately not a versioned asset
+# path: GitHub resolves `latest` itself, so cutting a new release needs no edit
+# to this file, and the reader lands beside the SHA256SUMS file the download
+# instructions tell them to check.
+dl.darce.xyz {
+	redir https://github.com/darce/visual-search-workbench/releases/latest 302
+}
+"""
+FROZEN_COMPOSE = r"""# Standalone Caddy reverse proxy for multi-environment routing.
+# Joins all three environment networks and routes subdomains to env-specific API aliases.
+# Start after environment stacks are up (networks must exist).
+#
+# Usage: cd /opt/acx-backend && docker compose -f docker-compose.caddy.yml up -d
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - acx-prod-net
+      - acx-staging-net
+      - acx-dev-net
+      - acx-dev-fir-net
+      - acx-demo-net
+
+networks:
+  acx-prod-net:
+    external: true
+  acx-staging-net:
+    external: true
+  acx-dev-net:
+    external: true
+  # Fir network MUST stay external (FL30C-GATE-01). docker-compose.env.yml owns
+  # the same name under key `backend` (name: ${ACX_NETWORK_NAME}=acx-dev-fir-net).
+  # A compose-created network here stamps com.docker.compose.network=acx-dev-fir-net
+  # and collides with the fir stack's expected label `backend` — whichever stack
+  # comes up second fails. Deploy path creates the network idempotently before
+  # `docker compose up` so fir-absent demo/dev converges still succeed.
+  acx-dev-fir-net:
+    external: true
+  acx-demo-net:
+    external: true
+
+volumes:
+  caddy_data:
+  caddy_config:
+"""
+
+
+def _git_blob_id(text: str) -> str:
+    data = text.encode("utf-8")
+    return hashlib.sha1(b"blob %d\x00" % len(data) + data).hexdigest()
+
+
+def _frozen_caddy() -> str:
+    if _git_blob_id(FROZEN_CADDYFILE) != FROZEN_CADDYFILE_BLOB:
+        raise AssertionError("frozen Caddyfile baseline drifted from its pinned git blob id")
+    return FROZEN_CADDYFILE
+
+
+def _frozen_compose() -> dict:
+    if _git_blob_id(FROZEN_COMPOSE) != FROZEN_COMPOSE_BLOB:
+        raise AssertionError("frozen compose baseline drifted from its pinned git blob id")
+    return yaml.safe_load(FROZEN_COMPOSE)
+
+
 def _load_caddy() -> str:
     return CADDYFILE.read_text(encoding="utf-8")
 
@@ -357,7 +520,7 @@ def _caddy_fixture(
             del blocks[env]
         else:
             blocks[env] = text
-    base = _load_caddy() if existing is None else existing
+    base = _frozen_caddy() if existing is None else existing
     return base + "\n" + "".join(blocks[env] for env in AURA_TARGETS if env in blocks)
 
 
@@ -367,7 +530,7 @@ def _compose_fixture(
     external: tuple[str, ...] = AURA_NETWORKS,
     drop: tuple[str, ...] = (),
 ) -> dict:
-    data = copy.deepcopy(_load_compose())
+    data = copy.deepcopy(_frozen_compose())
     kept = [net for net in data["services"]["caddy"]["networks"] if net not in drop]
     data["services"]["caddy"]["networks"] = [*kept, *attach]
     for net in AURA_NETWORKS:
@@ -406,7 +569,7 @@ def _edge_problems(caddy: str, compose: dict) -> list[str]:
     return problems
 
 
-# RED against the unchanged production files: no AuraFace vhost or network exists.
+# RED against the original production files; GREEN once edge E is applied.
 
 
 def test_caddy_declares_exactly_the_three_frozen_auraface_vhosts():
@@ -448,7 +611,7 @@ def test_existing_compose_networks_stay_attached_and_external():
     check_existing_networks(_load_compose())
 
 
-# Satisfiability and mutation controls: synthetic fixtures, not production.
+# Satisfiability and mutation controls: synthetic fixtures built from frozen baselines.
 
 
 def test_compliant_synthetic_edge_satisfies_every_check():
@@ -557,7 +720,7 @@ MUTANTS: dict[str, tuple[str, str, Callable[[], tuple[str, dict]]]] = {
         lambda: (
             _caddy_fixture(
                 existing=_replace_once(
-                    _load_caddy(),
+                    _frozen_caddy(),
                     "reverse_proxy prod-api:8000",
                     "reverse_proxy prod-auraface-api:8000",
                 )
@@ -571,7 +734,7 @@ MUTANTS: dict[str, tuple[str, str, Callable[[], tuple[str, dict]]]] = {
         lambda: (
             _caddy_fixture(
                 existing=_replace_once(
-                    _load_caddy(),
+                    _frozen_caddy(),
                     "reverse_proxy demo-wp:80",
                     "reverse_proxy prod-auraface-api:8000",
                 )

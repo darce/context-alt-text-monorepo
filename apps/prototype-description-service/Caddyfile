@@ -84,3 +84,35 @@ demo.altcontext.com, 129-213-40-111.sslip.io {
 dl.darce.xyz {
 	redir https://github.com/darce/visual-search-workbench/releases/latest 302
 }
+
+# AuraFace edge (GTMSMOKE-1, edge E): exactly one single-host vhost per frozen
+# target. Each routes '/' only to its own environment's stable API alias on port
+# 8000. The cutover alias is never routed here. Each block has one reverse_proxy
+# and no handle, route, or error branch, so an unreachable alias fails closed
+# rather than answering from another environment.
+auraface.dev.altcontext.com {
+	# Defense in depth: public /admin is denied before the proxy. 404 (not 403)
+	# avoids confirming the surface exists.
+	@admin path /admin /admin/*
+	respond @admin 404
+
+	reverse_proxy dev-auraface-api:8000
+}
+
+auraface.staging.api.altcontext.com {
+	# Defense in depth: public /admin is denied before the proxy. 404 (not 403)
+	# avoids confirming the surface exists.
+	@admin path /admin /admin/*
+	respond @admin 404
+
+	reverse_proxy staging-auraface-api:8000
+}
+
+auraface.api.altcontext.com {
+	# Defense in depth: public /admin is denied before the proxy. 404 (not 403)
+	# avoids confirming the surface exists.
+	@admin path /admin /admin/*
+	respond @admin 404
+
+	reverse_proxy prod-auraface-api:8000
+}

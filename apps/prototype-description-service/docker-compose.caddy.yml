@@ -21,6 +21,9 @@ services:
       - acx-dev-net
       - acx-dev-fir-net
       - acx-demo-net
+      - acx-dev-auraface-net
+      - acx-staging-auraface-net
+      - acx-prod-auraface-net
 
 networks:
   acx-prod-net:
@@ -38,6 +41,17 @@ networks:
   acx-dev-fir-net:
     external: true
   acx-demo-net:
+    external: true
+  # AuraFace per-target networks (GTMSMOKE-1, edge E). Each is intended to be created
+  # by its acx-<env> stack (proposed configuration, not an observed resource); caddy
+  # only joins them as external and never creates them.
+  # Create-before-up: an external network that is absent makes `docker compose up`
+  # fail for the whole edge, so bring each acx-<env> stack up first.
+  acx-dev-auraface-net:
+    external: true
+  acx-staging-auraface-net:
+    external: true
+  acx-prod-auraface-net:
     external: true
 
 volumes:

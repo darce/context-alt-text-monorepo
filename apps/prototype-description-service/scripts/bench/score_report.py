@@ -1296,6 +1296,21 @@ def score_head_to_head(run_dir: Path | str) -> Path:
     for stack_id in stacks:
         export = load_leg_exports(root, stack_id)
         join = accepted.join_by_stack.get(stack_id, {})
+        # Full-manifest scoring restores pipeline failures as end-to-end
+        # misses, but a successful analyze still requires a measured query.
+        # Failed or absent queries cannot establish an empty detection result.
+        identity_results = _media_identity_results_by_id(export.media_identity_results)
+        for entry in manifest.entries:
+            info = join.get(entry.media_id)
+            if info is not None and not _media_identity_query_succeeded(
+                identity_results, info.get("stack_media_id")
+            ):
+                raise BenchError(
+                    "identity_query_unknown",
+                    f"{stack_id} manifest media_id={entry.media_id} "
+                    f"stack_media_id={info.get('stack_media_id')} has a failed or missing "
+                    "identity query; refusing detection and identification metrics",
+                )
         accepted_manifest = _subset_manifest(manifest, accepted_entries)
         detection_manifest = _subset_manifest(manifest, detection_entries)
         detection_mode = _detection_score_mode(detection_manifest, manifest)

@@ -7,16 +7,14 @@ runtime and build settings; it does **not** mint Clerk secrets.
 
 ## Production LAUNCH prerequisite (before A3/deployment)
 
-Current PROD-only tree does **not** include the invitation CLI. PORTALDEV-1
-supplies it; the production configuration changes alone cannot issue a portal
-invitation or complete the first-sign-in smoke check.
+Source presence is not serving presence. The current source tree includes the invitation CLI at `apps/prototype-description-service/scripts/manage_portal_invitations.py`, which is present and tracked in git (PORTALDEV-1). The production configuration changes alone cannot issue a portal invitation or complete the first-sign-in smoke check.
+
+A parent-supplied native check (4506, 2026-10-12 snapshot, not a fresh observation of this change) found the CLI absent from all four serving images it checked, and the source anchors recorded for them are stale. Serving presence is therefore unproven.
 
 **STOP: do not begin A3/deployment or production LAUNCH** until
 `main` contains `apps/prototype-description-service/scripts/manage_portal_invitations.py`
 from PORTALDEV-1 and the production service release to deploy includes that CLI.
-Before issuance and signed-in smoke, confirm the deployed production API also
-includes it. A configuration materialization or process restart alone does not
-add this missing code.
+Before issuance and signed-in smoke, confirm the deployed production API also includes it, using the four guards in the signed-in smoke check (source, digest, issuer and store). A configuration materialization or process restart alone does not add this code to a serving image.
 
 Preserve the merge order: **PORTALPROD-1 config mainmerge**, then
 **PORTALDEV-1 union/mainmerge**, then A3/deployment and production LAUNCH from
@@ -197,7 +195,16 @@ production LAUNCH prerequisite above.
 
 The account must have a primary email verified in Clerk and an operator-issued,
 unexpired portal invitation whose invited email matches that verified primary
-email. Only after the dependency has landed and the production service has
+email. Before the issuance command, confirm all four guards on the serving API it reaches. Each must be proven, not inferred:
+
+- **Source:** the deployed release's source identity includes the invitation CLI at `apps/prototype-description-service/scripts/manage_portal_invitations.py`. Presence in a working tree is not enough.
+- **Digest:** the running API image digest is the one built from that source, and the CLI is present inside that image. The 2026-10-12 native check (4506) found the CLI absent from all four serving images it checked, so this guard is not met until a serving image with the CLI is verified by digest.
+- **Issuer:** `ACX_CLERK_ISSUER` and `ACX_CLERK_JWKS_URL` belong to the same Clerk instance as the production `pk_live_` key and match the production verifier values.
+- **Store:** inside the api container, `ACX_ENV` is `prod`, the database host is the existing store that the portal's API upstream reaches, and the API and worker report that same store identity.
+
+If any guard is unknown or differs, stop and do not issue an invitation.
+
+Only after the dependency has landed and the production service has
 been deployed with it, an operator runs this supported issuance command in the
 production API container, from `/opt/acx-backend/prod` on the service VM. Replace
 `you@example.com` with the smoke account's verified primary email:

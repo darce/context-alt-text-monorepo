@@ -12,15 +12,16 @@ administration, [portal development E2E](portal-dev-e2e.md) for the Clerk dev
 portal flow, and [production Clerk authentication](clerk-production-auth.md)
 for production claims, deploy and certificate requirements. The generic
 production API examples in other runbooks use the InsightFace production
-stack. They do not provision the demo's in-house FIR tenant.
+stack. The demo (Site 1) uses that same existing generic production API store;
+no FIR production store is a dependency of this runbook.
 
 ## 1. Ordered targets and stop gates
 
 | Order | WordPress site | Required service and model space | Effective recognition URL | Key environment | Current gate |
 | --- | --- | --- | --- | --- | --- |
-| 1 | Hosted demo at https://demo.altcontext.com/wp-admin/ | Dedicated in-house FIR production stack | https://fir.api.altcontext.com | prod, only in the verified FIR production store | **PENDING.** No dedicated FIR production directory or running container is present in the supplied inventory. |
-| 2 | LocalWP wp-context-alt-text at http://localhost:10010/wp-admin/ | Laptop-only InsightFace evaluation | http://localhost:8000 | local | Start and verify the maintained local service; verify the active plugin release and provider disclosure. |
-| 3 | LocalWP fir at http://localhost:10028/wp-admin/ | Existing in-house FIR dev-fir stack | https://fir.dev.api.altcontext.com | dev-fir | Use the measured dev-fir Compose stack and verify its in-container environment and active profile. |
+| 1 | Hosted demo at https://demo.altcontext.com/wp-admin/ | Existing generic production API store, InsightFace 512D; no separate production store dependency | Authenticated effective URL of that API, verified at run time; not pinned in this runbook | prod, existing generic production store only | **PENDING.** Read-only verification of that store (serving image, source identity, ACX_ENV, database host, CLI presence) and the section 1 resource gates before any write. |
+| 2 | LocalWP wp-context-alt-text at http://localhost:10010/wp-admin/ | Laptop-only InsightFace 512D evaluation | http://localhost:8000 | local | Start and verify the maintained local service; verify the active plugin release and provider disclosure. |
+| 3 | LocalWP fir at http://localhost:10028/wp-admin/ | Existing in-house FIR dev-fir stack, SFace 128D model space | https://fir.dev.api.altcontext.com | dev-fir | Use the measured dev-fir Compose stack and verify its in-container environment and active profile. |
 
 Set each tenant's site URL to the exact origin in this table, without
 wp-admin. Give each site/store mapping a fresh tenant UUID and a key issued
@@ -28,37 +29,45 @@ from that same store. A key authenticates as its owning tenant; WordPress has
 no caller-supplied tenant ID. Do not recycle an existing tenant UUID:
 tenant create updates the site URL when that UUID already exists.
 
-### Site 1: production FIR must be identified first
+### Site 1: demo on the existing generic production API
 
-The supplied production API directory, /opt/acx-backend/prod, and container
-acx-prod-api-1 are the generic InsightFace stack. There is no dedicated FIR
-production directory or running container in the supplied inventory. The
-fir.api.altcontext.com target is not evidence that an FIR service is behind
-it or ready.
+The demo (Site 1) uses the existing generic production API store:
+/opt/acx-backend/prod and container acx-prod-api-1, which run the InsightFace
+512D stack. No FIR production store is a dependency of Site 1, and the
+fir.api.altcontext.com hostname is not used for any site in this runbook. Its
+effective URL is not pinned here; verify it from the deployed routing at run time.
 
-Do not create a Site 1 tenant, invitation, or key in /opt/acx-backend/prod.
-Before any such write, obtain and verify the actual dedicated FIR production
-stack directory and owner instructions. Read-only verification must establish
-the exact Compose project/profile and API service, deployed image identity,
-database/project/role and storage, supported environment guard, active
-profile and model ID, Clerk verifier settings, and the effective routed target.
-Require /ready, authenticated /health/detailed and all three actual vector
-columns in that store. Confirm the FIR hostname's TLS and upstream route.
-Repeat fresh native resource admission immediately before provisioning, using
-current gauges and accepted pending costs. The PGDATA guard requires less than
-90% root use; the 09:18 reading is historical, and a later below-90% sample
-alone does not admit provisioning. Heavy builds remain on **HOLD** until root
-use is below 80% and fresh whole-host admission passes. The maintained CLI
-must be present in the image and its real ACX_ENV and database host must
-satisfy its supported --env prod contract.
+Before any Site 1 write, verify read-only against that existing store: the
+Compose project and API service; the deployed image and its source identity;
+ACX_ENV and the database host; the database, project and role; the active
+profile and model ID (InsightFace 512D); the Clerk verifier settings used by the
+portal; and the effective routed target of demo.altcontext.com. Require /ready,
+authenticated /health/detailed and all three actual vector columns at the
+configured width. Confirm the hostname's TLS and upstream route. The API and
+worker must report the same provenance and the same store identity.
+
+Repeat fresh native resource admission immediately before any write, using
+current gauges and accepted pending costs. The PGDATA guard requires root use
+below 90%; a later below-90% sample alone does not admit provisioning. Heavy
+image builds remain on **HOLD** until root use is below 80% and fresh
+whole-host admission passes. The most recent parent-supplied reading
+(2026-10-12) was above 90% root use, so both gates are on **HOLD**. Do not
+weaken either threshold or prune to clear them.
+
+Before any deployment or write, the gates run in this order: source join,
+capacity admission, image and source identity, and recovery (a verified backup
+and rollback path). The maintained CLI must be present in the serving image, and
+its real ACX_ENV and database host must satisfy its supported --env prod
+contract.
 If any detail is unavailable or differs, stop and ask the stack owner for its
 runbook; do not guess an environment selector, directory, service name, store,
 command, or successful output.
 
 Only after that read-only gate passes may an operator set the explicit
-FIR_PROD_STACK_DIR variable to the verified directory and use the conditional
-commands in sections 2 and 3. Leave it unset while the directory is unknown.
-Those commands are not a claim that this stack exists or that they have run.
+PROD_API_STACK_DIR variable to the verified existing generic production
+directory and use the conditional commands in sections 2 and 3. Leave it unset
+while the directory is unverified. FIR_PROD_STACK_DIR is not used by this
+runbook. Those commands are not a claim that they have run.
 
 ### LocalWP and plugin release gates
 
@@ -164,38 +173,42 @@ delivers a message. Development email CNAMEs are not needed.
 
 ### Production Clerk sweep
 
-First satisfy the dedicated FIR production gate in section 1, including a
-verified production Clerk verifier and a serving API image that contains the
-maintained invitation CLI. Do not issue a Site 1 invitation through the
-generic InsightFace /opt/acx-backend/prod stack.
+Site 1 is the existing generic production API store. First complete the Site 1
+store gate in section 1, including a verified production Clerk verifier and a
+serving API image that contains the maintained invitation CLI. The invitation is
+issued only in the store that the portal's API upstream is verified to reach.
 
 **Stop before issuing or claiming an invitation** until a read-only preflight
-proves that the portal and invitation CLI reach the same intended dedicated
-FIR store. Inspect the deployed portal's actual browser request construction
-and targets for CLAIM, ME and KEY against the live app-host routing and
-API/database mapping; trace each to the exact API service and store used by
-`FIR_PROD_STACK_DIR`. This preflight is read-only: do not claim an invitation
-or create a key to test it. Do not infer the store from the hostname, a mounted
+proves that the portal and invitation CLI reach the same intended store.
+Inspect the deployed portal's actual browser request construction and targets
+for CLAIM, ME and KEY against the live app-host routing and API/database
+mapping; trace each to the exact API service and store used by
+`PROD_API_STACK_DIR`. This preflight is read-only: do not claim an invitation or
+create a key to test it. Do not infer the store from the hostname, a mounted
 route, a 401 response or a successful CLI command. In particular,
 [`app-portal.sh`](../../scripts/deploy/app-portal.sh) defaults
 `APP_UPSTREAM` to `prod-api:8000`, and the supplied production stack at that
-upstream is generic InsightFace. Verify the deployed upstream itself; do not
-change or retarget production configuration in this lane.
+upstream is the same existing generic InsightFace store that Site 1 uses.
+Verify the deployed upstream itself; do not change or retarget production
+configuration in this lane.
 
 Before the invitation command, also verify that the portal is enabled on that
 same API; its production Clerk issuer and JWKS URL, session audience
-`altcontext-portal`, and authorized application origin agree with the
-production Clerk instance and frontend; and the exact browser origin and
-authorized party are `https://app.altcontext.com`. If any request-to-store,
-portal-enable, Clerk or origin mapping is unknown or differs, stop before
-invitation issuance and leave the FIR portal sweep **PENDING**. A later CLI key
-fallback cannot make a claim made in another store a FIR claim.
+`altcontext-portal`, and authorized application origin agree with the production
+Clerk instance and frontend; and the exact browser origin and authorized party
+are `https://app.altcontext.com`. The four issuance guards (source, digest,
+issuer and store) are listed in
+[production Clerk authentication](clerk-production-auth.md#post-launch-signed-in-smoke-check).
+If any request-to-store, portal-enable, Clerk or origin mapping is unknown or
+differs, stop before invitation issuance and leave the production portal sweep
+**PENDING**. A later CLI key fallback cannot make a claim made in another store
+a Site 1 claim.
 
 Only after that preflight passes, set the verified directory explicitly:
 
 ```sh
-if [ -z "$FIR_PROD_STACK_DIR" ]; then echo "Set FIR_PROD_STACK_DIR only after verifying the dedicated FIR production stack" >&2; exit 1; fi
-cd "$FIR_PROD_STACK_DIR"
+if [ -z "$PROD_API_STACK_DIR" ]; then echo "Set PROD_API_STACK_DIR only after verifying the existing generic production stack for Site 1; FIR_PROD_STACK_DIR is not used by this runbook" >&2; exit 1; fi
+cd "$PROD_API_STACK_DIR"
 docker compose -f docker-compose.env.yml exec -T api sh -c 'test "$ACX_ENV" = prod'
 docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_portal_invitations --env prod create --email <verified-smoke-account-email> --ttl-hours 72
 ```
@@ -210,10 +223,11 @@ https://app.altcontext.com. Never paste a JWT into a website or commit it.
 Production test mode is technically possible but discouraged; use real
 production authentication and delivery for this sweep. Copy production email
 deliverability targets only from that Clerk instance's Dashboard. If the live
-claim or /portal/me request resolves to any other store, stop; keep the FIR
-portal sweep **PENDING** and do not describe that claim as Site 1 onboarding.
+claim or /portal/me request resolves to any other store, stop; keep the
+production portal sweep **PENDING** and do not describe that claim as Site 1
+onboarding.
 Use the portal's existing key-creation flow only when the preflight proved its
-KEY request writes to this same FIR store. A separately issued WordPress key
+KEY request writes to this same Site 1 store. A separately issued WordPress key
 can be used only for its verified store and does not repair a claim in another
 store. Do not mint two keys for one tenant or present unrelated stores as one
 onboarding sweep.
@@ -242,15 +256,15 @@ approved secret manager and the matching WordPress API-key setting. Record
 only non-secret tenant and key IDs. Never capture the raw value in a
 transcript, log, screenshot, ticket or Git file.
 
-### Site 1 — dedicated FIR production only
+### Site 1 — demo on the existing generic production API
 
-These commands require the section 1 gate and a verified FIR_PROD_STACK_DIR.
-The prod examples in other runbooks point at generic InsightFace and must not
-be substituted here.
+These commands require the section 1 gate and a verified PROD_API_STACK_DIR,
+which is the existing generic production directory. FIR_PROD_STACK_DIR is not
+used here.
 
 ```sh
-if [ -z "$FIR_PROD_STACK_DIR" ]; then echo "Set FIR_PROD_STACK_DIR only after verifying the dedicated FIR production stack" >&2; exit 1; fi
-cd "$FIR_PROD_STACK_DIR"
+if [ -z "$PROD_API_STACK_DIR" ]; then echo "Set PROD_API_STACK_DIR only after verifying the existing generic production stack for Site 1; FIR_PROD_STACK_DIR is not used by this runbook" >&2; exit 1; fi
+cd "$PROD_API_STACK_DIR"
 docker compose -f docker-compose.env.yml exec -T api sh -c 'test "$ACX_ENV" = prod'
 docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod tenant create --tenant <site-1-tenant-uuid> --site-url https://demo.altcontext.com
 docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod create --tenant <site-1-tenant-uuid> --tier STANDARD
@@ -258,9 +272,9 @@ docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_ap
 ```
 
 Replace placeholders locally. Run only if read-only verification proved this
-directory, API service, image, store and environment match the dedicated FIR
-production target. The commands have not been run in this documentation
-change.
+directory, API service, image, store and environment match the existing generic
+production target for the demo. The commands have not been run in this
+documentation change.
 
 ### Site 2 — local InsightFace
 
@@ -352,12 +366,12 @@ For each row:
    prove the old key is denied and the new one still passes. Never leave a
    revoked key configured in the active site.
 
-For production revocation, use only the already verified FIR_PROD_STACK_DIR
+For Site 1 (demo) revocation, use only the already verified PROD_API_STACK_DIR
 and the same maintained CLI/API service:
 
 ```sh
-if [ -z "$FIR_PROD_STACK_DIR" ]; then echo "Set FIR_PROD_STACK_DIR only after verifying the dedicated FIR production stack" >&2; exit 1; fi
-cd "$FIR_PROD_STACK_DIR"
+if [ -z "$PROD_API_STACK_DIR" ]; then echo "Set PROD_API_STACK_DIR only after verifying the existing generic production stack for Site 1; FIR_PROD_STACK_DIR is not used by this runbook" >&2; exit 1; fi
+cd "$PROD_API_STACK_DIR"
 docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod revoke --key-id <old-key-id>
 ```
 
@@ -420,20 +434,26 @@ scan, recognition suggestion, or source test is not evidence that image
 description ran. Site 2's local-only InsightFace evaluation is a recognition
 target; do not count its CPU face work as a description result.
 
-Before sending a description request, verify the target's own server-side
-configuration and deployed image: the description adapter is a maintained
-GPU-backed adapter, its description worker is deployed and ready, and the
-actual GPU endpoint is live and authenticated. For the maintained dev example,
-[portal-dev-e2e](portal-dev-e2e.md) specifies
+Pre-demand config and credential checks come first, and they do not require the
+GPU endpoint to be live. Verify the target's own server-side configuration and
+deployed image: the description adapter is a maintained GPU-backed adapter, its
+description worker is deployed, and the endpoint credential is minted and
+installed server-side (pre-demand config/credential checks). For the maintained
+dev example, [portal-dev-e2e](portal-dev-e2e.md) specifies
 `ACX_DESCRIPTION_ADAPTER=gpu_qwen30b`; it requires the GPU endpoint key to be
 minted and installed on the GPU host and in the dev environment. Follow
 [GPU endpoint key minting](gpu-key-mint.md) and the readiness and durable-run
-checks in [GPU demo environment flip](gpu-demo-env-flip.md). Keep the endpoint
-credential on the server/GPU side; never put it in WordPress, the browser, or
-the tenant API key field. For Site 1 and Site 3, prove these prerequisites for
-their own dedicated FIR API, worker and endpoint before use. The dev example's
-`https://dev.api.altcontext.com` and adapter configuration do not retarget
-either FIR site. If any target-specific prerequisite or store mapping is
+checks in [GPU demo environment flip](gpu-demo-env-flip.md).
+
+Cold start order: the GPU endpoint is initially STOPPED. Prewarming is not a
+prerequisite. The description demand itself causes a post-demand START of the
+GPU endpoint. After that post-demand START, the endpoint must be live and
+authenticated and report ready before any description request is sent.
+Keep the endpoint credential on the server/GPU side; never put it in WordPress,
+the browser, or the tenant API key field. For Site 1 and Site 3, prove these
+prerequisites for their own API, worker and endpoint before use. The dev
+example's `https://dev.api.altcontext.com` and adapter configuration do not
+retarget either site. If any target-specific prerequisite or store mapping is
 unproven, leave its description result **PENDING**.
 
 After those checks pass, use a separate operator-controlled test attachment
@@ -489,20 +509,20 @@ Expected existing spaces are generic InsightFace 512D, FIR SFace 128D, and
 AuraFace 512D. InsightFace and AuraFace remain distinct provenance even at
 equal width. Each store's three actual columns must show the width for its
 active profile: 512 for InsightFace, 128 for SFace and 512 for AuraFace. The
-production FIR width is unknown until its active profile is authenticated.
+existing generic production store is expected to be InsightFace 512D, but its width is confirmed only from its three actual columns and authenticated active profile.
 Require the authentic active profile/model ID, matching actual columns, and
 fresh extraction for the enrollment. Never copy or pad vectors or share an
-incompatible gallery. The measured dev-fir database was 128D; recheck the
+incompatible gallery. Store vectors are never inherited from the InsightFace or SFace stores, and a new store starts without inherited vectors. The measured dev-fir database was 128D; recheck the
 selected store and active model before use.
 
 Preserve the generic InsightFace and existing firSFace settings and endpoints.
-AuraFace remains a separate candidate at these exact planned names:
+AuraFace remains a separate candidate at these frozen target labels and exact planned names. Aura names are proposed configuration, not observed resources:
 
-| DNS name | Planned A record |
-| --- | --- |
-| auraface.dev.altcontext.com | 129.213.40.111, TTL 300 |
-| auraface.api.altcontext.com | 129.213.40.111, TTL 300 |
-| auraface.staging.api.altcontext.com | 129.213.40.111, TTL 300 |
+| Frozen target label | DNS name | Planned A record |
+| --- | --- | --- |
+| dev-auraface | auraface.dev.altcontext.com | 129.213.40.111, TTL 300 |
+| staging-auraface | auraface.staging.api.altcontext.com | 129.213.40.111, TTL 300 |
+| prod-auraface | auraface.api.altcontext.com | 129.213.40.111, TTL 300 |
 
 Preserve fir.dev.api.altcontext.com, fir.api.altcontext.com,
 dev.api.altcontext.com, staging.api.altcontext.com and api.altcontext.com.
@@ -515,11 +535,44 @@ serving readiness. Do not route smoke traffic to an unverified upstream. Do
 not add a new public InsightFace
 evaluation deployment, change model defaults, or declare a model winner.
 The earlier verified gte-base-en-v1.5 FIR 512 result and FIR-23 symmetric
-stacks from merge 7928fa are prior evidence, not proof of the live FIR
-production profile. Use them only if fresh authenticated profile/model
+stacks from merge 7928fa are prior evidence, not proof of the live profile of any store named in this runbook. Use them only if fresh authenticated profile/model
 evidence confirms that exact contract.
 
-Functional onboarding and model quality are separate gates. For a quality
+#### Two spare sites for the three frozen Aura targets
+
+| Spare LocalWP site | Site URL | Authorized role | Gate before any AuraFace work |
+| --- | --- | --- | --- |
+| r | http://localhost:10023 | AuraFace 512D candidate fixture | Back up the site first; install plugin 0.0.36 from a verified artifact; do not wipe existing content |
+| vlm | http://localhost:10018 | AuraFace 512D candidate fixture | Back up the site first; install plugin 0.0.36 from a verified artifact; do not wipe existing content |
+
+The two spare sites are the only AuraFace 512D fixtures authorized here for the three frozen Aura targets, and the third Aura target fixture is pending. Do not hijack an original site (the demo, localhost:10010 or localhost:10028) for the pending fixture or for any Aura target. Each spare site must be backed up and have plugin 0.0.36 installed from a verified artifact before any AuraFace work, so that a rollback point exists before the change (Canon RLSE-08). Do not wipe content on either spare site. Which spare site serves which target is recorded in the run record, not assumed here.
+
+#### Proposed AuraFace stack naming (proposed configuration, not observed resources)
+
+Each column uses its exact frozen target label as E. These names are proposed configuration only: none is an observed resource, and none has been created.
+
+| Setting | dev-auraface | staging-auraface | prod-auraface |
+| --- | --- | --- | --- |
+| Project and unit | acx-dev-auraface | acx-staging-auraface | acx-prod-auraface |
+| Stack directory | /opt/acx-backend/dev-auraface | /opt/acx-backend/staging-auraface | /opt/acx-backend/prod-auraface |
+| Image tag | dev-auraface | staging-auraface | prod-auraface |
+| Network | acx-dev-auraface-net | acx-staging-auraface-net | acx-prod-auraface-net |
+| Aliases | dev-auraface-api, dev-auraface-api-next | staging-auraface-api, staging-auraface-api-next | prod-auraface-api, prod-auraface-api-next |
+| PGDATA | /opt/acx-backend/data/dev-auraface-pgdata | /opt/acx-backend/data/staging-auraface-pgdata | /opt/acx-backend/data/prod-auraface-pgdata |
+| Model root | /opt/acx-backend/data/dev-auraface-models | /opt/acx-backend/data/staging-auraface-models | /opt/acx-backend/data/prod-auraface-models |
+| Load directory | /run/acx-write/dev-auraface | /run/acx-write/staging-auraface | /run/acx-write/prod-auraface |
+| Blob storage | project-owned acx_blobs | project-owned acx_blobs | project-owned acx_blobs |
+| Database | alt_context_dev_auraface | alt_context_staging_auraface | alt_context_prod_auraface |
+| Database role | acx_dev_auraface | acx_staging_auraface | acx_prod_auraface |
+| ACX_ENV | dev-auraface | staging-auraface | prod-auraface |
+| Vector width | PGVECTOR_DIM=512 | PGVECTOR_DIM=512 | PGVECTOR_DIM=512 |
+| Face pipeline | RECOGNITION_FACE_PIPELINE_PROFILE=auraface; FACE_PIPELINE_MODELS_DIR and AURAFACE_MODELS_DIR both /data/cache/face_pipeline | same as dev-auraface | same as dev-auraface |
+| Secrets and DSN | distinct secret reference and DSN per target | distinct per target | distinct per target |
+| Admin | auth enabled; public admin denied | auth enabled; public admin denied | auth enabled; public admin denied; no generic-prod admin overlay |
+
+Before any AuraFace deployment, these preconditions run in order: runtime source join, capacity admission, image and source identity, and recovery (a verified backup and a practiced rollback path). API and worker provenance must agree with the store identity they serve (database, role and ACX_ENV). Each new store starts without vectors. Store vectors are never inherited from the InsightFace or SFace stores.
+
+Functional onboarding and model quality are separate gates. Scorer repair is independent from endpoint work: a scorer fix neither gates nor unblocks endpoint onboarding, and endpoint readiness does not validate a scorer. For a quality
 comparison, reuse [FIR-16](../tasks/fir/FIR-16-open-set-head-to-head-task-plan.md)
 and the [current FIR dimensions/detectors report](../../benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html).
 Use fixed mated and genuinely non-mated source denominators with independent
@@ -601,6 +654,9 @@ snapshot does not replace those checks.
   future operation. The 86.90% sample is below the separate 90% PGDATA
   threshold but above the 80% heavy-build threshold; heavy builds remain
   **HOLD** until root use is below 80% and fresh whole-host admission passes.
+
+- **Parent-supplied snapshot, 2026-10-12 (not fresh observations of this change):** main is at 0d3ff19d with fixture 138 PASS accepted. The invitation CLI is present in the current source tree, but native check 4506 found it absent from all four serving images it checked, and the source anchors recorded for them are stale; serving presence is therefore unproven. The four original WordPress sites have plugin 0.0.36 installed; the r plugin is recorded inactive and is preserved as-is. Root use was above 90% in that reading, so image builds (below 80%) and PGDATA admission (below 90%) are on **HOLD**; thresholds are not weakened and nothing is pruned to clear them. A 300 GiB storage expansion is pending explicit user approval and is not assumed. This snapshot supersedes the 2026-10-11 FIR-production routing wording for the demo. All runtime actions are performed by the parent only; this document performs none.
+- **Endpoint and UI history:** source-closed. This documentation change starts no fresh UI iteration. The Canon v0.25.6 rows cited here are pinned and read-only.
 
 Do not claim this runbook or any site runtime PASS from these measurements.
 Record recognition and description as separate results. A row can be **PASS**

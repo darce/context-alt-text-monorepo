@@ -37,7 +37,8 @@ def test_launch_stops_for_main_and_service_release_without_reversing_merge_order
     heading = "## Production LAUNCH prerequisite (before A3/deployment)"
     assert heading in runbook, "missing production LAUNCH prerequisite"
     prerequisite = runbook.split(heading)[1].split("Official references:")[0]
-    assert "Current PROD-only tree does **not** include the invitation CLI" in prerequisite
+    assert f"includes the invitation CLI at `{CLI_PATH}`" in " ".join(prerequisite.split())
+    assert "present and tracked in git" in " ".join(prerequisite.split())
     assert "STOP: do not begin A3/deployment or production LAUNCH" in prerequisite
     assert f"`main` contains `{CLI_PATH}`" in " ".join(prerequisite.split())
     assert "production service release to deploy includes that CLI" in " ".join(prerequisite.split())

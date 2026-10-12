@@ -15,6 +15,7 @@ from typing import Any
 
 from scripts.bench.corpus import ItemOutcomeStore, is_detection_exhaustive, load_bench_manifest
 from scripts.bench.export_map import _unwrap_rows, load_leg_exports, require_cluster_success, to_face_metric_inputs
+from scripts.bench.preflight import PreflightError, _parse_model_bundle_provenance
 from scripts.bench.stack_pair import (
     BenchError,
     HOLM_FAMILY_ENDPOINTS,
@@ -1112,6 +1113,10 @@ def _validate_preflight_provenance(doc: dict[str, Any], stack_id: str) -> None:
     cache = health.get("model_cache") if isinstance(health, dict) else None
     if not isinstance(cache, dict) or cache.get("profile") != doc["resolved_profile"]:
         raise BenchError("preflight_invalid", f"{stack_id} detailed health profile differs from preflight")
+    try:
+        _parse_model_bundle_provenance(health)
+    except PreflightError as exc:
+        raise BenchError("preflight_invalid", f"{stack_id} preflight model bundle is invalid: {exc}") from exc
 
 
 def _preflight_runtime_fingerprint(doc: dict[str, Any], stack_id: str) -> dict[str, Any]:

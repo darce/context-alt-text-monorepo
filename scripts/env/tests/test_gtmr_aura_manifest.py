@@ -301,7 +301,12 @@ def _generic_part(real, name: str, attribute: str) -> dict[str, str]:
 
 
 def _synthetic_manifest(mutate: Callable | None = None):
-    """Build an in-memory manifest holding a complete Aura contract plus real generic values."""
+    """Build an in-memory manifest holding a complete Aura contract plus real generic values.
+
+    Only generic targets are copied from production. Any production target that serves an Aura
+    label is dropped first, so the fixture holds exactly one Aura target (the synthetic one)
+    whether or not production currently declares its own Aura target.
+    """
     real = _real_manifest()
     config = {
         name: {**_generic_part(real, name, "values"), **per_label}
@@ -341,7 +346,12 @@ def _synthetic_manifest(mutate: Callable | None = None):
         )
         for name, refs in secrets.items()
     ]
-    targets = {**real.targets, target_name: target}
+    generic_targets = {
+        name: existing
+        for name, existing in real.targets.items()
+        if not set(existing.envs) & set(AURA_LABELS)
+    }
+    targets = {**generic_targets, target_name: target}
     return manifest_api.Manifest(targets=targets, vars=tuple(variables), overrides={})
 
 

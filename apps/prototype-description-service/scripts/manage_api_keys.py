@@ -5,11 +5,11 @@ Referenced from `.env.prod.example`. Delegates persistence to
 except the single labeled post-create line on stdout.
 
 Usage:
-    python -m scripts.manage_api_keys --env {prod,dev,local,staging,dev-fir} create --tenant <uuid> [--expires-in <days>] [--tier STANDARD|PRO|ENTERPRISE]
-    python -m scripts.manage_api_keys --env {prod,dev,local,staging,dev-fir} list --tenant <uuid> [--include-revoked]
-    python -m scripts.manage_api_keys --env {prod,dev,local,staging,dev-fir} revoke --key-id <uuid>
-    python -m scripts.manage_api_keys --env {prod,dev,local,staging,dev-fir} tenant create --tenant <uuid> --site-url <url>
-    python -m scripts.manage_api_keys --env {prod,dev,local,staging,dev-fir} tenant list [--limit <n>]
+    python -m scripts.manage_api_keys --env {prod,dev,local,staging,dev-fir,dev-auraface,staging-auraface,prod-auraface} create --tenant <uuid> [--expires-in <days>] [--tier STANDARD|PRO|ENTERPRISE]
+    python -m scripts.manage_api_keys --env {prod,dev,local,staging,dev-fir,dev-auraface,staging-auraface,prod-auraface} list --tenant <uuid> [--include-revoked]
+    python -m scripts.manage_api_keys --env {prod,dev,local,staging,dev-fir,dev-auraface,staging-auraface,prod-auraface} revoke --key-id <uuid>
+    python -m scripts.manage_api_keys --env {prod,dev,local,staging,dev-fir,dev-auraface,staging-auraface,prod-auraface} tenant create --tenant <uuid> --site-url <url>
+    python -m scripts.manage_api_keys --env {prod,dev,local,staging,dev-fir,dev-auraface,staging-auraface,prod-auraface} tenant list [--limit <n>]
 
 `--env` is mandatory (E15-3a-BR-02): the CLI refuses to run against a DSN
 whose host does not match the declared environment. If `ACX_ENV` is set, it
@@ -21,6 +21,13 @@ loopback or *.local hosts, and local refuses remote hosts. This prevents the
 original BR-02 incident where a "prod" key was silently written to a local
 dev DB because DSN resolution fell through to whatever the shell happened
 to configure.
+
+The Aura labels (dev-auraface, staging-auraface, prod-auraface) are dedicated
+targets. Each is admitted only when `ACX_ENV` equals the label, the
+`COMPOSE_PROJECT_NAME` context is `acx-<label>`, and the effective DSN names
+the dedicated role and database (see scripts/_aura_target_guard.py). Query
+overrides of the user, database, host, port, options or service are refused.
+Generic labels are unchanged by this contract.
 """
 
 from __future__ import annotations
@@ -42,8 +49,9 @@ from db.models import Tenant
 from recognition.application.services.api_key_admin_service import mint_api_key
 from recognition.config.security import RateLimitTier
 from recognition.infrastructure.repositories.api_key_repository import SqlAlchemyApiKeyRepository
+from scripts._aura_target_guard import AURA_LABELS, validate_aura_target
 
-_ENV_CHOICES = ("prod", "dev", "local", "staging", "dev-fir")
+_ENV_CHOICES = ("prod", "dev", "local", "staging", "dev-fir", *AURA_LABELS)
 
 
 def _dsn_host(dsn: str) -> str:
@@ -72,8 +80,23 @@ def _validate_env_vs_dsn(env: str, dsn: str, *, configured_env: str | None = Non
     return None
 
 
+def _validate_aura_runtime(env: str) -> str | None:
+    """Admit an Aura label only for its exact context and effective DSN identity (scripts/_aura_target_guard.py)."""
+    from db.settings import get_database_settings
+
+    return validate_aura_target(
+        env,
+        configured_env=os.environ.get("ACX_ENV"),
+        compose_project=os.environ.get("COMPOSE_PROJECT_NAME"),
+        read_dsn=lambda: get_database_settings().postgres_dsn,
+    )
+
+
 def _validate_runtime_env(env: str) -> str | None:
     """Validate an explicit runtime environment before reading DB settings."""
+    if env in AURA_LABELS:
+        return _validate_aura_runtime(env)
+
     configured_env = os.environ.get("ACX_ENV")
     if configured_env is not None:
         if configured_env not in _ENV_CHOICES:

@@ -40,8 +40,9 @@ _PROD_LABEL = "prod-auraface"
 
 # Query keys that can replace the effective endpoint or identity. asyncpg merges query keys into connect kwargs, and
 # it resolves `service` and `servicefile` against a pg_service.conf file. Keys are matched case-insensitively.
+# `options` carries libpq startup settings such as `-c role=...`; asyncpg ignores it, and refusing it is intended.
 _ENDPOINT_QUERY_KEYS = frozenset(
-    {"user", "username", "database", "dbname", "host", "hostaddr", "port", "service", "servicefile"}
+    {"user", "username", "database", "dbname", "host", "hostaddr", "port", "service", "servicefile", "options"}
 )
 
 

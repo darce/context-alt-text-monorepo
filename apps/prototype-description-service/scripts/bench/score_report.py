@@ -1238,9 +1238,8 @@ def _publish_score_refusal(root: Path, error: Exception) -> None:
     code = error.code if isinstance(error, BenchError) else type(error).__name__
     try:
         score_dir.mkdir(parents=True, exist_ok=True)
-    except Exception as publication_error:  # contained: the caller re-raises the scorer error
+    except Exception as publication_error:  # contained: both writers are still attempted below
         error.add_note(f"Score refusal publication failed: {publication_error}")
-        return
     header = {
         "error_code": code,
         "license_banner": LICENSE_BANNER,

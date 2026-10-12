@@ -172,10 +172,26 @@ Three gaps remain, all of which still hold the mutex:
   None of those is inside a pytest runtest protocol, so no per-test alarm
   is ever armed for them.
 
-The real control for both belongs in the gate script — wrapping the remote
-body in `timeout -k 30 "${GATE_MAX_SECONDS}"` with a distinct exit code, so
-`flock` releases when the holder dies. That is filed upstream; until it
-lands, a wedge in those surfaces still needs `make gate-reap CONFIRM=REAP`.
+Those gaps in the per-test alarm are covered by the maintained outer
+supervisor in `scripts/remote_gate.sh`. Its monotonic whole-run deadline
+covers checkout, sync, admission, preflight, import/collection and all targets
+together. `WORKBAY_REMOTE_GATE_BUDGET_SECONDS` overrides
+`REMOTE_GATE_BUDGET_SECONDS` in the config file (default 1800 seconds);
+the corresponding `TERM_GRACE_SECONDS` knobs default to 5 seconds.
+At the remote deadline the script exits **124** with
+`reason=remote-deadline`; collection is recorded as `stage=target` with the
+current target name. No later target runs. The supervisor sends TERM, then
+KILL as needed, to owned descendants and registered scopes, reaps children,
+and verifies cleanup so the clone lock is released. Incomplete cleanup or
+monitoring failure exits **79**, rather than certifying cleanup. Partial
+output remains in `worker.log`, with `stage` and `terminal.log` under
+`$HOME/.local/state/remote-gate/<unique-run>/`, outside checkout cleanup;
+terminal evidence records reason, immutable SHA, stage/target, elapsed time,
+budget and exit status. A local push/SSH deadline is separately **76**.
+Use the existing `make check-remote` commands above; make reports its own
+exit 2, so read the script status from `Error <n>` or invoke
+`scripts/remote_gate.sh run [target ...]` directly. These surfaces no longer
+require `gate-reap` as the routine response to a deadline.
 
 To tell a hung run from a merely slow one while it is still running, sample
 consumed CPU twice on the VM and read each thread's kernel wait channel:

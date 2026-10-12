@@ -113,13 +113,14 @@ ssh gate@<your-gate-host> \
   cat /tmp/prototype-description-service-pytest-collection-scope.json
 ```
 
-**It hung and held the mutex.** The gate serialises on `.gate.lock` and has
-no liveness bound of its own — it cannot tell a frozen output stream from a
-slow test, so a deadlocked test holds the lock until someone intervenes,
-and the run's partial results are unrecoverable (stdout goes to a deleted
-`/tmp/#<inode>` whose `/proc/<pid>/fd/1` reopens write-only). A bound now
-lives in the suite, so it needs no flag and cannot be forgotten at the call
-site: `apps/prototype-description-service/pyproject.toml` declares
+**The earlier incident hung and held the mutex.** At the time, the gate
+serialised on `.gate.lock` with no liveness bound of its own: it could not
+tell a frozen output stream from a slow test, so the deadlocked test held the
+lock until someone intervened, and that run's partial results were
+unrecoverable (stdout went to a deleted `/tmp/#<inode>` whose
+`/proc/<pid>/fd/1` reopened write-only). A per-test bound now lives in the
+suite, so it needs no flag and cannot be forgotten at the call site:
+`apps/prototype-description-service/pyproject.toml` declares
 `faulthandler_timeout` (dump every thread's stack, keep running) and
 `timeout` (abort the test, name it, let the other xdist workers finish).
 A test that legitimately needs longer overrides it with
@@ -134,8 +135,8 @@ so with two workers you are matching raw thread-id prefixes by hand. The
 *abort* is what names the test — which means in the C-wedge case below,
 where the abort never fires, the unlabelled dump is the only artifact you get.
 
-**That bound covers the test phase only, and only Python-level hangs.**
-Three gaps remain, all of which still hold the mutex:
+**The per-test alarm covers only the test phase and Python-level hangs.**
+The remaining gaps in that alarm are:
 
 - `timeout_method = "signal"` raises inside the test, so the abort arrives
   as an ordinary failure report naming the test — but a Python signal
@@ -164,18 +165,37 @@ Three gaps remain, all of which still hold the mutex:
 - The bound is armed inside `pytest_runtest_protocol`, so a module that
   hangs at *import* is outside it entirely — no abort and no stack dump,
   because neither `timeout` nor `dump_traceback_later` is active during
-  collection (AR-07). A collection-phase wedge looks like a gate that
-  produced no output at all and holds the mutex indefinitely.
+  collection (AR-07). During the earlier incident, a collection-phase wedge
+  produced no output and held the mutex indefinitely.
 - The lock is taken before the test phase and spans more than it. Inside
   the same critical section the gate runs `git checkout`, `git clean`,
   `uv sync` (which builds hdbscan from source), and the admission probe.
   None of those is inside a pytest runtest protocol, so no per-test alarm
   is ever armed for them.
 
-The real control for both belongs in the gate script — wrapping the remote
-body in `timeout -k 30 "${GATE_MAX_SECONDS}"` with a distinct exit code, so
-`flock` releases when the holder dies. That is filed upstream; until it
-lands, a wedge in those surfaces still needs `make gate-reap CONFIRM=REAP`.
+Those gaps in the per-test alarm are covered by the maintained outer
+supervisor in `scripts/remote_gate.sh`. Its monotonic whole-run deadline
+covers checkout, sync, admission, preflight, import/collection and all targets
+together. `WORKBAY_REMOTE_GATE_BUDGET_SECONDS` overrides
+`REMOTE_GATE_BUDGET_SECONDS` in the config file (default 1800 seconds);
+the corresponding `TERM_GRACE_SECONDS` knobs default to 5 seconds.
+At the remote deadline the script exits **124** with
+`reason=remote-deadline`; collection is recorded as `stage=target` with the
+current target name. Further target dispatch stops once the worker is
+terminated; a target that exits while TERM is being delivered may let the
+loop advance. The supervisor sends TERM, then KILL as needed, to owned
+descendants and registered scopes, reaps children, and verifies cleanup so
+the clone lock is released. Handled process-monitor faults and detected
+incomplete cleanup exit **79**. On runs that reach finalization, partial
+output remains in `worker.log`, with `stage` and `terminal.log` under
+`$HOME/.local/state/remote-gate/<unique-run>/`, outside checkout cleanup;
+terminal evidence records reason, immutable SHA, stage/target, elapsed time,
+budget and exit status. These guarantees do not cover every infrastructure
+`OSError`. A local push/SSH deadline is separately **76**.
+Use the existing `make check-remote` commands above; make reports its own
+exit 2, so read the script status from `Error <n>` or invoke
+`scripts/remote_gate.sh run [target ...]` directly. These surfaces no longer
+require `gate-reap` as the routine response to a deadline.
 
 To tell a hung run from a merely slow one while it is still running, sample
 consumed CPU twice on the VM and read each thread's kernel wait channel:

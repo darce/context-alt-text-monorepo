@@ -1215,27 +1215,47 @@ def _strict_detection_inputs(
     return strict_inputs
 
 
+def _utf8_safe(text: str) -> str:
+    """Return text UTF-8 can encode; lone surrogates from Linux paths become visible escapes."""
+    return text.encode("utf-8", "backslashreplace").decode("utf-8")
+
+
+def _refusal_html(code: str, error: Exception) -> str:
+    return (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Scoring refused</title></head>"
+        f"<body><h1>Scoring refused</h1><p>{LICENSE_BANNER}</p>"
+        f"<p>{escape(_utf8_safe(str(code)))}: {escape(_utf8_safe(str(error)))}</p></body></html>"
+    )
+
+
 def _publish_score_refusal(root: Path, error: Exception) -> None:
-    """Replace both score artifacts without disturbing available diagnostics."""
+    """Replace both score artifacts without disturbing available diagnostics.
+
+    Each artifact is attempted independently. Every publication failure is attached to the
+    original scorer exception as a note; this function never replaces or re-raises it.
+    """
     score_dir = root / "score"
-    score_dir.mkdir(parents=True, exist_ok=True)
     code = error.code if isinstance(error, BenchError) else type(error).__name__
+    try:
+        score_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as publication_error:  # contained: the caller re-raises the scorer error
+        error.add_note(f"Score refusal publication failed: {publication_error}")
+        return
     header = {
         "error_code": code,
         "license_banner": LICENSE_BANNER,
         "pr_cells_emitted": False,
         "cells": [],
     }
-    # Attempt both publications even if one artifact cannot be written.
-    try:
-        (score_dir / "frames.json").write_text(json.dumps(header, indent=2), encoding="utf-8")
-    finally:
-        (score_dir / "report.html").write_text(
-            "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Scoring refused</title></head>"
-            f"<body><h1>Scoring refused</h1><p>{LICENSE_BANNER}</p>"
-            f"<p>{escape(str(code))}: {escape(str(error))}</p></body></html>",
-            encoding="utf-8",
-        )
+    publications = (
+        (score_dir / "frames.json", lambda: json.dumps(header, indent=2)),
+        (score_dir / "report.html", lambda: _refusal_html(code, error)),
+    )
+    for artifact, render in publications:
+        try:
+            artifact.write_text(render(), encoding="utf-8")
+        except Exception as publication_error:  # contained; the other writer is still attempted
+            error.add_note(f"Score refusal publication failed: {publication_error}")
 
 
 def score_head_to_head(run_dir: Path | str) -> Path:
@@ -1245,10 +1265,7 @@ def score_head_to_head(run_dir: Path | str) -> Path:
     except Exception as error:
         # Include failures before accepted-set publication (e.g. export hashes)
         # and after it, while preserving the original exception and gate order.
-        try:
-            _publish_score_refusal(root, error)
-        except OSError as publication_error:
-            error.add_note(f"Score refusal publication failed: {publication_error}")
+        _publish_score_refusal(root, error)
         raise
 
 

@@ -53,6 +53,8 @@ KNOWN_LIFECYCLE_STATES = frozenset(
     }
 )
 MAX_NESTED_DEPTH = 64
+# The only receipt tier that can prove a GPU burst. Matches the live smoke's per-item rule.
+FINAL_GPU_TIER = "final_gpu"
 
 
 class EvidenceError(ValueError):
@@ -1886,6 +1888,35 @@ def _snapshot_check(
     )
 
 
+def _receipt_model_id(item: Mapping[str, Any]) -> str | None:
+    """Return the trimmed ``provenance.model_id`` of a receipt, or None when absent."""
+
+    provenance = item.get("provenance")
+    if not isinstance(provenance, Mapping):
+        return None
+    model_id = provenance.get("model_id")
+    if isinstance(model_id, str) and model_id.strip():
+        return model_id.strip()
+    return None
+
+
+def _receipt_exclusion(item: Mapping[str, Any]) -> str | None:
+    """Return why a description receipt cannot prove a GPU burst, or None when it can.
+
+    A receipt with no tier key is a legacy receipt and still counts. Any explicit tier other
+    than final_gpu is excluded, so a CPU draft never proves a burst. A final_gpu receipt must
+    also carry model lineage, or its output cannot be walked back to a model (PROV-01).
+    """
+
+    if "tier" not in item:
+        return None
+    if item["tier"] != FINAL_GPU_TIER:
+        return "explicit tier is not final_gpu"
+    if _receipt_model_id(item) is None:
+        return "final_gpu receipt has no provenance model_id"
+    return None
+
+
 def _receipts_check(
     path: Path | None, *, intervals: Sequence[tuple[float, float]], min_descriptions: int
 ) -> dict[str, Any]:
@@ -1900,6 +1931,7 @@ def _receipts_check(
         return _result("wp_descriptions", False, items_error)
     valid: list[Mapping[str, Any]] = []
     timestamp_errors: list[str] = []
+    exclusions: dict[str, int] = {}
     for index, item in enumerate(items):
         description = _description_value(item)
         timestamp, timestamp_error = _receipt_time_report(item)
@@ -1907,20 +1939,31 @@ def _receipts_check(
             timestamp_errors.append(f"receipt {index}: {timestamp_error}")
             continue
         in_running = timestamp is not None and any(start <= timestamp < stop for start, stop in intervals)
-        if description is not None and in_running:
-            valid.append(item)
-    if timestamp_errors:
-        return _result(
-            "wp_descriptions",
-            False,
-            "; ".join(timestamp_errors)
-            + f"; {len(valid)} description receipt(s) inside RUNNING interval; required {min_descriptions}",
-        )
-    return _result(
-        "wp_descriptions",
-        len(valid) >= min_descriptions,
+        if description is None or not in_running:
+            continue
+        exclusion = _receipt_exclusion(item)
+        if exclusion is not None:
+            exclusions[exclusion] = exclusions.get(exclusion, 0) + 1
+            continue
+        valid.append(item)
+    model_ids: list[str] = []
+    for item in valid:
+        model_id = _receipt_model_id(item)
+        if model_id is not None and model_id not in model_ids:
+            model_ids.append(model_id)
+    model_ids.sort()
+    parts = [
+        *timestamp_errors,
         f"{len(valid)} description receipt(s) inside RUNNING interval; required {min_descriptions}",
-    )
+    ]
+    passed = not timestamp_errors and len(valid) >= min_descriptions
+    if len(model_ids) > 1:
+        passed = False
+        parts.append(
+            f"receipts carry {len(model_ids)} model identities ({', '.join(model_ids)}); one burst requires one"
+        )
+    parts.extend(f"{count} description receipt(s) excluded: {reason}" for reason, count in sorted(exclusions.items()))
+    return _result("wp_descriptions", passed, "; ".join(parts))
 
 
 def _snapshot_checks(

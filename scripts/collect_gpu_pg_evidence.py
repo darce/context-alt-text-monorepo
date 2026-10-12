@@ -123,6 +123,10 @@ VECTOR_COLUMN_ABSENT = "vector_column_absent"
 RLS_TABLE_ABSENT = "rls_table_absent"
 CAPTION_SHA256_UNAVAILABLE = "caption_sha256_unavailable"
 OUTPUT_MODEL_UNOBSERVED = "output_model_unobserved"
+PROBE_NOT_RUN = "probe_not_run"
+TENANT_CONTEXT_NOT_SELECTED = "tenant_context_not_selected"
+DEMAND_ROW_NOT_VISIBLE = "demand_row_not_visible"
+OUTPUT_ROW_NOT_VISIBLE = "output_row_not_visible"
 
 # Query contract. Column names and declared types are the query's contract, recorded as such in receipts.
 BEGIN_READ_ONLY_SQL = "BEGIN READ ONLY"
@@ -709,7 +713,14 @@ def _connection_observation(capture: _Capture, sel: dict[str, Any], findings: _F
         findings.contradict(WRONG_SCHEMA, f"connection.{capture.label}.schema", f"observed {schema!r}", ref)
     read_only: bool | None = None
     txn = capture.rows("transaction-read-only")
-    if txn:
+    if txn is None:
+        findings.miss(
+            PROBE_NOT_RUN,
+            f"connection.{capture.label}.transaction_read_only",
+            "read-only probe did not complete",
+            (capture.label, "transaction-read-only"),
+        )
+    elif txn:
         read_only = txn[0][0] == "on"
         if not read_only:
             findings.contradict(
@@ -721,7 +732,14 @@ def _connection_observation(capture: _Capture, sel: dict[str, Any], findings: _F
     rolsuper: bool | None = None
     rolbypassrls: bool | None = None
     roles = capture.rows("role-flags")
-    if roles:
+    if roles is None:
+        findings.miss(
+            PROBE_NOT_RUN,
+            f"connection.{capture.label}.rolsuper",
+            "role-flag probe did not complete",
+            (capture.label, "role-flags"),
+        )
+    elif roles:
         rolsuper, rolbypassrls = roles[0]
         if rolsuper:
             findings.contradict(
@@ -745,6 +763,13 @@ def _connection_observation(capture: _Capture, sel: dict[str, Any], findings: _F
     )
     tenant_set = capture.record("set-tenant")
     tenant_context = sel["tenant_id"] if tenant_set is not None and tenant_set["outcome"] == "ok" else None
+    if tenant_context is None:
+        findings.miss(
+            TENANT_CONTEXT_NOT_SELECTED,
+            f"connection.{capture.label}.tenant_context",
+            "native tenant selection did not complete on this session",
+            (capture.label, "set-tenant"),
+        )
     return {
         "connection_id": capture.label,
         "database": database,
@@ -938,6 +963,13 @@ def _visibility(capture: _Capture, sel: dict[str, Any], findings: _Findings) -> 
             (label, "output-own"),
         )
     request_digest = demand_own[0][1] if demand_own else None
+    if "operation_id" in sel and not demand_own:
+        findings.miss(
+            DEMAND_ROW_NOT_VISIBLE,
+            f"visibility.{label}.operation_id",
+            "no committed demand row for the selected operation is visible to this session",
+            (label, "demand-own"),
+        )
     if request_digest is not None and not _H64.fullmatch(str(request_digest)):
         findings.contradict(
             REQUEST_DIGEST_MALFORMED,
@@ -995,6 +1027,13 @@ def _visibility(capture: _Capture, sel: dict[str, Any], findings: _Findings) -> 
     result: dict[int, dict[str, Any]] = {}
     for media_id in sel["media_ids"]:
         mine = [row for row in output_rows if row[1] == media_id]
+        if not mine:
+            findings.miss(
+                OUTPUT_ROW_NOT_VISIBLE,
+                f"visibility.{label}.{media_id}",
+                "no committed output row for the selected media is visible to this session",
+                (label, "output-own"),
+            )
         result_generation = mine[0][4] if mine else None
         for row in mine:
             if row[4] != sel["result_generation"]:

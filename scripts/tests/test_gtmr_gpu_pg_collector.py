@@ -854,6 +854,17 @@ def _assert_abi_envelope(result: Mapping[str, Any]) -> None:
         assert isinstance(issue["code"], str) and isinstance(issue["field"], str) and isinstance(issue["detail"], str)
         for ref in issue["artifact_refs"]:
             assert set(ref) == ABI_REF_KEYS
+    # Frozen ABI: every null measurement needs a missing reason in the same section, scoped to its connection
+    # (or to the catalog). A null without a reason is an unexplained gap that G1 must not accept.
+    missing_fields = [issue["field"] for issue in section["missing_reasons"]]
+    for obs in section["observations"]:
+        nulls = [key for key, value in obs["data"].items() if value is None]
+        if nulls:
+            scope = obs["data"].get("connection_id")
+            assert any(scope in name or name.startswith("catalog.") for name in missing_fields), (
+                obs["observation_id"],
+                nulls,
+            )
     # Contradictions take precedence over missing reasons.
     if section["contradictions"]:
         assert section["status"] == "contradicted"
@@ -1035,6 +1046,8 @@ def test_pg_collector_refuses_uncommitted_visibility() -> None:
     assert result["section"]["status"] == "incomplete"
     assert contradictions == set()
     assert NOT_VISIBLE_INDEPENDENT in missing
+    # An absent committed row leaves result_generation and caption_sha256 null: each null has a named reason.
+    assert {"output_row_not_visible", "demand_row_not_visible"} <= missing
     by_connection: dict[str, list[dict[str, Any]]] = {}
     for data in _observations(result, "visibility"):
         by_connection.setdefault(data["connection_id"], []).append(data)

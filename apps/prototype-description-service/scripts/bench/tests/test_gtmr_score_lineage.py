@@ -8,6 +8,7 @@ Programmer, ch. 9). These regressions intentionally fail on source 73db482d.
 from __future__ import annotations
 
 import json
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -69,13 +70,68 @@ def lineage_run(tmp_path: Path) -> Path:
     return run_dir
 
 
+_REFUSAL_TITLE = "Scoring refused"
+# Rejection codes the invalid-bundle and provenance-drift refusals may surface.
+_REFUSAL_CODES = frozenset({"preflight_invalid", "model_bundle_unreported"})
+_METRIC_TAGS = frozenset({"table", "tr", "td", "th"})
+
+
+class _RefusalPage(HTMLParser):
+    """Collects the structure the approved refusal page is judged on."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.tags: set[str] = set()
+        self.text: dict[str, list[str]] = {"title": [], "h1": [], "p": []}
+        self._open: str | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.tags.add(tag)
+        if tag in self.text:
+            self._open = tag
+            self.text[tag].append("")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == self._open:
+            self._open = None
+
+    def handle_data(self, data: str) -> None:
+        if self._open is not None:
+            self.text[self._open][-1] += data
+
+
 def _assert_no_metrics(run_dir: Path) -> None:
+    """Accept only the approved explicit refusal; reject any metric surface.
+
+    File existence is not evidence. Both publications must be readable. The HTML must
+    carry the refusal title and heading and one rejection line whose code matches
+    frames.json, followed by a nonempty reason. It must contain no metric table markup,
+    and the frames must report no emitted cells.
+    """
     frames_path = run_dir / "score" / "frames.json"
-    if frames_path.exists():
-        frames = json.loads(frames_path.read_text(encoding="utf-8"))
-        assert frames.get("pr_cells_emitted") is False
-        assert not frames.get("cells")
-    assert not (run_dir / "score" / "report.html").exists()
+    html_path = run_dir / "score" / "report.html"
+    assert frames_path.is_file(), "refusal frames.json is missing"
+    assert html_path.is_file(), "refusal report.html is missing"
+
+    frames = json.loads(frames_path.read_text(encoding="utf-8"))
+    assert frames.get("pr_cells_emitted") is False
+    assert frames.get("cells") == []
+    code = frames.get("error_code")
+    assert code in _REFUSAL_CODES, f"unexpected refusal code {code!r}"
+
+    page = _RefusalPage()
+    page.feed(html_path.read_text(encoding="utf-8"))
+    page.close()
+    assert not (_METRIC_TAGS & page.tags), "refusal page carries metric table markup"
+    assert [t.strip() for t in page.text["title"]] == [_REFUSAL_TITLE]
+    assert [h.strip() for h in page.text["h1"]] == [_REFUSAL_TITLE]
+    # Exactly the license banner and the rejection line; any other paragraph is a leak.
+    paragraphs = [p.strip() for p in page.text["p"]]
+    assert len(paragraphs) == 2, "refusal page must hold only the banner and the rejection line"
+    assert sum(p.startswith("INTERNAL BENCH ONLY") for p in paragraphs) == 1
+    lines = [p for p in paragraphs if p.startswith(f"{code}:")]
+    assert len(lines) == 1, f"refusal page must state {code!r} exactly once"
+    assert lines[0][len(code) + 1 :].strip(), "refusal reason is empty"
 
 
 @pytest.mark.parametrize("stack_id", STACKS)

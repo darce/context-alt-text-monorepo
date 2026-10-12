@@ -77,12 +77,12 @@ required = true
 [[var]]
 name = "RECOGNITION_FACE_PIPELINE_PROFILE"
 class = "config"
-targets = ["svc-fir"]
+targets = ["svc-fir", "svc-auraface"]
 section = "Face pipeline"
 example = "face_pipeline"
 doc = "Both profile + dim are required for the three-way guard\n(face_pipeline_adapter.py:318-329). Models dir must sit under the\nACX_MODELS_PATH -> /data/cache volume mount.\ndomain: recognition | source: OCI deploy | consumer: face_pipeline profile selection"
 required = true
-values = { fir = "face_pipeline" }
+values = { fir = "face_pipeline", dev-auraface = "auraface", staging-auraface = "auraface", prod-auraface = "auraface" }
 
 [[override]]
 name = "PGVECTOR_DIM"
@@ -94,12 +94,12 @@ required = true
 [[var]]
 name = "RECOGNITION_FACE_PIPELINE_MODELS_DIR"
 class = "config"
-targets = ["svc-fir"]
+targets = ["svc-fir", "svc-auraface"]
 section = "Face pipeline"
 example = "/data/cache/face_pipeline"
 doc = "domain: recognition | source: OCI deploy | consumer: face_pipeline settings.resolved_models_dir"
 required = true
-values = { fir = "/data/cache/face_pipeline" }
+values = { fir = "/data/cache/face_pipeline", dev-auraface = "/data/cache/face_pipeline", staging-auraface = "/data/cache/face_pipeline", prod-auraface = "/data/cache/face_pipeline" }
 
 [[override]]
 name = "INSIGHTFACE_CACHE_DIR"

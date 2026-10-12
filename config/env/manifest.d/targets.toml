@@ -90,6 +90,28 @@ Cross-ref: apps/prototype-description-service/docs/secrets-inventory.md
 
 Do NOT commit secrets.'''
 
+[targets.svc-auraface]
+audience = "backend"
+envs = ["dev-auraface", "staging-auraface", "prod-auraface"]
+remote_paths = { dev-auraface = "/opt/acx-backend/dev-auraface/.env", staging-auraface = "/opt/acx-backend/staging-auraface/.env", prod-auraface = "/opt/acx-backend/prod-auraface/.env" }
+preserve = ["ACX_IMAGE_REPO"]
+lease_env = { dev-auraface = "dev-auraface", staging-auraface = "staging-auraface", prod-auraface = "prod-auraface" }
+example = "apps/prototype-description-service/.env.auraface.example"
+sections = ["Compose", "Runtime mode", "Secret backend", "Postgres", "Database DSNs", "Face pipeline", "Cache directories", "Database pool tuning", "Worker behavior", "API security", "Operator /admin surface", "Image description"]
+doc = '''
+AuraFace 512d isolated stack template for the OCI VM (three labels: dev-auraface, staging-auraface, prod-auraface).
+
+Install one runtime file per label, owner ubuntu:ubuntu, mode 0600:
+  /opt/acx-backend/<label>/.env
+Each label has its own compose project, network, PGDATA, model root, database and role. No value is shared with the generic dev, staging or prod stacks or with the dev-fir SFace 128d stack.
+
+Mandatory: PGVECTOR_DIM=512 and RECOGNITION_FACE_PIPELINE_PROFILE=auraface. RECOGNITION_FACE_PIPELINE_MODELS_DIR and RECOGNITION_AURAFACE_MODELS_DIR both point under the compose mount (${ACX_MODELS_PATH}:/data/cache).
+Auth stays enabled and the /admin surface stays disabled. Replace each host-supplied Postgres value with one fresh value per label; never reuse another label's DSN or password.
+
+The runtime refuses AuraFace activation until artifact provenance and preprocessing are verified (ADR-016). This template does not clear that gate.
+
+Do NOT commit secrets.'''
+
 [targets.demo]
 audience = "backend"
 envs = ["demo"]

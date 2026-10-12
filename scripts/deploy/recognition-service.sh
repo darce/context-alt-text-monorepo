@@ -1157,12 +1157,24 @@ verify_face_pipeline_models_dir() {
 # after the first '=' (C-05); one matching pair of surrounding quotes is stripped.
 # Missing key → empty string (exit 0). SSH failure → fail closed (C-06).
 _remote_dotenv_value() {
-  local remote_dir="$1" key="$2" raw rc=0
+  local remote_dir="$1" key="$2" raw rc=0 timeout="${3:-}"
   # Remote `|| true` only covers a missing key / missing file (grep exit 1).
   # Local ssh failure is NOT swallowed.
-  raw="$(ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "grep -E '^${key}=' '${remote_dir}/.env' 2>/dev/null | tail -1 | cut -d= -f2- || true")" || rc=$?
+  if [[ -n "${timeout}" ]]; then
+    raw="$(run_with_deadline "${timeout}" "remote ${key} read" \
+      ssh -o BatchMode=yes -o ConnectTimeout="${timeout}" -o ConnectionAttempts=1 \
+      -o ServerAliveInterval="${timeout}" -o ServerAliveCountMax=1 \
+      -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "grep -E '^${key}=' '${remote_dir}/.env' 2>/dev/null | tail -1 | cut -d= -f2- || true")" || rc=$?
+  else
+    raw="$(ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "grep -E '^${key}=' '${remote_dir}/.env' 2>/dev/null | tail -1 | cut -d= -f2- || true")" || rc=$?
+  fi
   if ((rc != 0)); then
+    if [[ -n "${timeout}" ]]; then
+      warn "ssh failed reading ${key} from ${remote_dir}/.env on ${SSH_TARGET} (exit ${rc})"
+      return "${rc}"
+    fi
     fail "ssh failed reading ${key} from ${remote_dir}/.env on ${SSH_TARGET} (exit ${rc})"
   fi
   # Strip one layer of surrounding double or single quotes only.
@@ -1874,21 +1886,31 @@ restore_prior_image_repo_env() {
 # Read-only topology match (same diffs as converge_check) but returns 1 on drift
 # instead of calling fail() — usable under ACX_CONVERGE_RUNTIME=0 refuse path.
 runtime_in_sync() {
-  local env="$1" remote_dir unit rendered
+  local env="$1" remote_dir unit rendered timeout
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   remote_dir="$(env_to_remote_dir "$env")"
   unit="$(env_to_unit "$env")"
-  if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat '${remote_dir}/docker-compose.env.yml' 2>/dev/null" \
+  if ! run_with_deadline "${timeout}" "runtime compose read for ${env}" \
+    ssh -o BatchMode=yes -o ConnectTimeout="${timeout}" -o ConnectionAttempts=1 \
+    -o ServerAliveInterval="${timeout}" -o ServerAliveCountMax=1 \
+    -l "${OCI_USER}" -- "${OCI_HOST}" "cat '${remote_dir}/docker-compose.env.yml' 2>/dev/null" \
     | diff -q - "${SERVICE_DIR}/docker-compose.env.yml" >/dev/null 2>&1; then
     return 1
   fi
   if [[ "$env" == "prod" ]]; then
-    if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat '${remote_dir}/docker-compose.admin.yml' 2>/dev/null" \
+    if ! run_with_deadline "${timeout}" "runtime admin compose read for ${env}" \
+      ssh -o BatchMode=yes -o ConnectTimeout="${timeout}" -o ConnectionAttempts=1 \
+      -o ServerAliveInterval="${timeout}" -o ServerAliveCountMax=1 \
+      -l "${OCI_USER}" -- "${OCI_HOST}" "cat '${remote_dir}/docker-compose.admin.yml' 2>/dev/null" \
       | diff -q - "${SERVICE_DIR}/docker-compose.admin.yml" >/dev/null 2>&1; then
       return 1
     fi
   fi
-  rendered="$(render_unit "$env")"
-  if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat '/etc/systemd/system/${unit}.service' 2>/dev/null" \
+  rendered="$(render_unit "$env")" || return 1
+  if ! run_with_deadline "${timeout}" "runtime unit read for ${env}" \
+    ssh -o BatchMode=yes -o ConnectTimeout="${timeout}" -o ConnectionAttempts=1 \
+    -o ServerAliveInterval="${timeout}" -o ServerAliveCountMax=1 \
+    -l "${OCI_USER}" -- "${OCI_HOST}" "cat '/etc/systemd/system/${unit}.service' 2>/dev/null" \
     | diff -q - <(printf '%s\n' "$rendered") >/dev/null 2>&1; then
     return 1
   fi
@@ -1905,12 +1927,13 @@ env_to_compose_files() {
 
 # Render the systemd unit for <env> from the checked-in template to stdout.
 render_unit() {
-  local env="$1" compose_files secret_backend pre_start
+  local env="$1" compose_files secret_backend pre_start timeout
   compose_files="$(env_to_compose_files "$env")"
   if (($# >= 2)); then
     secret_backend="$2"
   else
-    secret_backend="$(_remote_dotenv_value "$(env_to_remote_dir "$env")" RECOGNITION_SECRET_BACKEND)"
+    timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)" || return $?
+    secret_backend="$(_remote_dotenv_value "$(env_to_remote_dir "$env")" RECOGNITION_SECRET_BACKEND "${timeout}")" || return $?
   fi
   pre_start='# '
   if [[ "$secret_backend" == "oci_vault" ]]; then
@@ -2706,11 +2729,13 @@ EDGE
 # Read-only drift gate: diff the deployed compose/unit against the repo and exit
 # non-zero on any drift, without mutating the VM. Operator triage for `--check`.
 # Transport failures must never be misread as drift (gate r08117ab7 RA-03/RB-04):
-# each arm captures the ssh exit status before diffing; ssh rc=255 → fail with a
-# transport-error message. Missing remote files (cat exit 1) still count as drift.
+# each arm captures the ssh exit status before diffing; ssh rc=255 or deadline
+# rc=124 → fail with a transport-error message. Missing files (cat exit 1) are drift.
 converge_check() {
   local env="$1" remote_dir unit drift=0 rendered
-  local remote_tmp ssh_rc fir_net="acx-dev-fir-net"
+  local remote_tmp ssh_rc command_timeout inspect_timeout fir_net="acx-dev-fir-net"
+  command_timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  inspect_timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
   remote_dir="$(env_to_remote_dir "$env")"
   unit="$(env_to_unit "$env")"
   log "Checking runtime drift for ${env} on ${SSH_TARGET} (read-only)"
@@ -2729,8 +2754,11 @@ converge_check() {
     # content/missing-file mismatch. Aborts on ssh transport failure.
     local remote_path="$1" local_path="$2" label="$3"
     ssh_rc=0
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat '${remote_path}'" >"${remote_tmp}" 2>/dev/null || ssh_rc=$?
-    if ((ssh_rc == 255)); then
+    run_with_deadline "${command_timeout}" "remote ${label} read for ${env}" \
+      ssh -o BatchMode=yes -o ConnectTimeout="${command_timeout}" -o ConnectionAttempts=1 \
+      -o ServerAliveInterval="${command_timeout}" -o ServerAliveCountMax=1 \
+      -l "${OCI_USER}" -- "${OCI_HOST}" "cat '${remote_path}'" >"${remote_tmp}" 2>/dev/null || ssh_rc=$?
+    if ((ssh_rc == 255 || ssh_rc == 124)); then
       _cc_fail "cannot read remote ${label} on ${SSH_TARGET} (ssh exit ${ssh_rc}); refusing to treat transport failure as runtime drift"
     fi
     if ((ssh_rc != 0)); then
@@ -2756,10 +2784,18 @@ converge_check() {
       "${SERVICE_DIR}/docker-compose.admin.yml" \
       "docker-compose.admin.yml"
   fi
-  rendered="$(render_unit "$env")"
+  if rendered="$(render_unit "$env")"; then
+    :
+  else
+    ssh_rc=$?
+    _cc_fail "cannot render ${unit}.service on ${SSH_TARGET} (exit ${ssh_rc}); refusing to treat transport failure as runtime drift"
+  fi
   ssh_rc=0
-  ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat '/etc/systemd/system/${unit}.service'" >"${remote_tmp}" 2>/dev/null || ssh_rc=$?
-  if ((ssh_rc == 255)); then
+  run_with_deadline "${command_timeout}" "remote ${unit}.service read for ${env}" \
+    ssh -o BatchMode=yes -o ConnectTimeout="${command_timeout}" -o ConnectionAttempts=1 \
+    -o ServerAliveInterval="${command_timeout}" -o ServerAliveCountMax=1 \
+    -l "${OCI_USER}" -- "${OCI_HOST}" "cat '/etc/systemd/system/${unit}.service'" >"${remote_tmp}" 2>/dev/null || ssh_rc=$?
+  if ((ssh_rc == 255 || ssh_rc == 124)); then
     _cc_fail "cannot read remote ${unit}.service on ${SSH_TARGET} (ssh exit ${ssh_rc}); refusing to treat transport failure as runtime drift"
   elif ((ssh_rc != 0)); then
     warn "drift: ${unit}.service on ${env} differs from repo template (or is missing)"
@@ -2786,7 +2822,10 @@ converge_check() {
   # converge_runtime's MEMBER|MISSING|NOCADDY inspect so --check catches the
   # fir-502 case (caddy never recreated onto acx-dev-fir-net).
   local edge_membership edge_member_rc=0
-  edge_membership="$(ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cd '${edge_dir}' && cid=\$(docker compose -f docker-compose.caddy.yml ps -q caddy 2>/dev/null); if [ -z \"\$cid\" ]; then echo NOCADDY; elif docker inspect -f '{{json .NetworkSettings.Networks}}' \"\$cid\" | grep -q '\"${fir_net}\"'; then echo MEMBER; else echo MISSING; fi")" || edge_member_rc=$?
+  edge_membership="$(run_with_deadline "${inspect_timeout}" "caddy edge membership inspection for ${env}" \
+    ssh -o BatchMode=yes -o ConnectTimeout="${inspect_timeout}" -o ConnectionAttempts=1 \
+    -o ServerAliveInterval="${inspect_timeout}" -o ServerAliveCountMax=1 \
+    -l "${OCI_USER}" -- "${OCI_HOST}" "cd '${edge_dir}' && cid=\$(docker compose -f docker-compose.caddy.yml ps -q caddy 2>/dev/null); if [ -z \"\$cid\" ]; then echo NOCADDY; elif docker inspect -f '{{json .NetworkSettings.Networks}}' \"\$cid\" | grep -q '\"${fir_net}\"'; then echo MEMBER; else echo MISSING; fi")" || edge_member_rc=$?
   if ((edge_member_rc != 0)); then
     _cc_fail "cannot inspect caddy edge network membership on ${SSH_TARGET} (ssh exit ${edge_member_rc}); refusing to treat transport failure as runtime drift"
   fi

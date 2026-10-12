@@ -1305,6 +1305,19 @@ def score_head_to_head(run_dir: Path | str) -> Path:
             if info is not None and not _media_identity_query_succeeded(
                 identity_results, info.get("stack_media_id")
             ):
+                header = {
+                    "error_code": "identity_query_unknown",
+                    "license_banner": LICENSE_BANNER,
+                    "pr_cells_emitted": False,
+                    "cells": [],
+                }
+                (root / "score" / "frames.json").write_text(json.dumps(header, indent=2), encoding="utf-8")
+                (root / "score" / "report.html").write_text(
+                    "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Scoring refused</title></head>"
+                    f"<body><h1>Scoring refused</h1><p>{LICENSE_BANNER}</p>"
+                    "<p>Failed or missing identity query; detection and identification metrics refused.</p></body></html>",
+                    encoding="utf-8",
+                )
                 raise BenchError(
                     "identity_query_unknown",
                     f"{stack_id} manifest media_id={entry.media_id} "

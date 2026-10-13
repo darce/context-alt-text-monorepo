@@ -689,6 +689,8 @@ def _collect(
         runner=runner,
         observation=dict(observation) if observation is not None else _observation(),
         deadline=dl,
+        # Declared synthetic fixture clock relationship; never observed clock evidence.
+        clock_skew_bound_s=1.0,
     )
     if not allow_unscripted:
         assert runner.unexpected == [], f"argv outside the frozen trace reached the runner: {runner.unexpected}"

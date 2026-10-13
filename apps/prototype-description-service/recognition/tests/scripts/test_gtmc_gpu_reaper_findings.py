@@ -14,11 +14,14 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[5]))
 
 from infra.oci.gpu_lifecycle import reaper
 from infra.oci.gpu_lifecycle.controller import GpuInstance, GpuLifecycleController
@@ -162,35 +165,45 @@ def cycle(tmp_path, monkeypatch):
             assert retained == raw[env]
             assert json.loads(retained)["revision"] == REVISIONS[env]
         assert all(receipt[field] is None for field in IDENTIFIERS)
-        return receipt, effects, legacy_calls, result
+        return receipt, effects, legacy_calls, result, record
 
     return run
 
 
 def test_red_legacy_none_without_actions_cannot_claim_command_invoked(cycle):
-    receipt, effects, calls, _ = cycle(legacy=True)
+    receipt, effects, calls, result, record = cycle(legacy=True)
     assert calls == [INSTANCE] and effects.actions == [] and effects.started == []
-    assert receipt.get("command_invoked") is not True, "zero-action legacy None is no positive invocation evidence"
-    assert receipt["outcome"] != "issued", "legacy honouring does not establish an issued command"
+    assert receipt["command_invoked"] is None
+    assert receipt["outcome"] == "unknown"
+    for field in ("actuation_receipt", "command_invoked"):
+        assert {"field": field, "code": "actuator_returned_no_receipt"} in receipt["missing_reasons"]
+    assert result.actuated == [("STOP", INSTANCE)]
+    assert record["actuation_outcome"] == "honoured"
 
 
-def test_red_reader_oserror_after_action_cannot_reset_process_started(cycle):
+@pytest.mark.parametrize("reader_error", [OSError, ValueError])
+def test_red_reader_oserror_after_action_cannot_reset_process_started(cycle, reader_error):
     reader_inputs = []
 
     def reader(stdout, stderr):
         reader_inputs.append((stdout, stderr))
-        raise OSError("offline receipt reader unavailable after action")
+        raise reader_error("offline receipt reader unavailable after action")
 
-    receipt, effects, _, _ = cycle(reader=reader)
+    receipt, effects, _, result, _ = cycle(reader=reader)
     assert len(effects.actions) == len(effects.started) == len(reader_inputs) == 1
     assert effects.state == "STOPPED" and json.loads(reader_inputs[0][0])["data"]["lifecycle-state"] == "STOPPING"
     assert receipt["command_invoked"] is True, "post-action reader failure cannot erase the observed process start"
+    assert receipt["outcome"] == "issued"
+    assert receipt["final_state"] == "STOPPING"
+    assert receipt["oci_response_request_id"] is None
+    assert {"field": "oci_response_request_id", "code": "action_response_reader_failed"} in receipt["missing_reasons"]
     assert not any(item["code"] == "process_not_started" for item in receipt["missing_reasons"])
+    assert result.actuated == [("STOP", INSTANCE)]
 
 
 @pytest.mark.parametrize("reader", [None, lambda stdout, stderr: None], ids=["default", "test-only-no-identifier"])
 def test_control_successful_action_keeps_named_raw_custody(cycle, reader):
-    receipt, effects, _, _ = cycle(reader=reader)
+    receipt, effects, _, _, _ = cycle(reader=reader)
     assert len(effects.actions) == len(effects.started) == 1
     assert receipt["command_invoked"] is True and receipt["outcome"] == "issued"
     assert receipt["final_state"] == "STOPPING"
@@ -201,7 +214,7 @@ def test_control_converged_stop_keeps_custody_without_action_rpc(cycle):
     def forbidden_reader(stdout, stderr):
         pytest.fail("converged GET must never enter action response reader")
 
-    receipt, effects, _, _ = cycle(state="STOPPED", reader=forbidden_reader)
+    receipt, effects, _, _, _ = cycle(state="STOPPED", reader=forbidden_reader)
     assert len(effects.gets) == 1 and effects.actions == effects.started == []
     assert receipt["command_invoked"] is False and receipt["outcome"] == "already_converged"
     assert receipt["final_state"] == "STOPPED"
@@ -209,6 +222,6 @@ def test_control_converged_stop_keeps_custody_without_action_rpc(cycle):
 
 @pytest.mark.parametrize("failure,invoked", [("launch", False), ("exit", True)])
 def test_control_launch_failure_and_started_failure_are_distinct(cycle, failure, invoked):
-    receipt, effects, _, _ = cycle(failure=failure)
+    receipt, effects, _, _, _ = cycle(failure=failure)
     assert len(effects.actions) == 1 and len(effects.started) == int(invoked)
     assert receipt["command_invoked"] is invoked and receipt["outcome"] == "failed"

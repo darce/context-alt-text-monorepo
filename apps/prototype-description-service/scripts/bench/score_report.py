@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import random
 import re
+import subprocess
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -1225,11 +1227,49 @@ def _utf8_safe(text: str) -> str:
     return text.encode("utf-8", "backslashreplace").decode("utf-8")
 
 
-def _refusal_html(code: str, error: Exception) -> str:
+def _scorer_revision() -> str:
+    """Identify the checked-out scorer, independently of the run's CLI revision."""
+    try:
+        revision = subprocess.check_output(
+            ["git", "log", "-1", "--format=%H", "--", "apps/prototype-description-service/scripts/bench/score_report.py"],
+            cwd=Path(__file__).resolve().parents[4],
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        ).decode("ascii").strip()
+        return revision if re.fullmatch(r"[0-9a-f]{40}", revision) else "unknown"
+    except (OSError, UnicodeError, subprocess.SubprocessError):
+        return "unknown"
+
+
+def _refusal_lineage(root: Path) -> dict[str, str]:
+    lineage = {"run_id": "unknown", "manifest_sha": "unknown", "scorer_revision": "unknown"}
+    # Best effort only: malformed/unreadable provenance must never mask the refusal.
+    try:
+        run = json.loads((root / "run.json").read_text(encoding="utf-8"))
+        stamp = run.get("run_stamp") if isinstance(run, dict) else None
+        if isinstance(stamp, str) and stamp:
+            lineage["run_id"] = stamp
+    except Exception:
+        pass
+    try:
+        pin = (root / "manifest.sha").read_text(encoding="ascii").strip()
+        if _MANIFEST_SHA_RE.fullmatch(pin):
+            lineage["manifest_sha"] = pin
+    except Exception:
+        pass
+    lineage["scorer_revision"] = _scorer_revision()
+    return lineage
+
+
+def _refusal_html(code: str, error: Exception, lineage: dict[str, str] | None = None) -> str:
+    provenance = "<header><dl>" + "".join(
+        f"<dt>{escape(key)}</dt><dd>{escape(_utf8_safe(value))}</dd>"
+        for key, value in (lineage or {}).items()
+    ) + "</dl></header>"
     return (
         "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Scoring refused</title></head>"
         f"<body><h1>Scoring refused</h1><p>{LICENSE_BANNER}</p>"
-        f"<p>{escape(_utf8_safe(str(code)))}: {escape(_utf8_safe(str(error)))}</p></body></html>"
+        f"<p>{escape(_utf8_safe(str(code)))}: {escape(_utf8_safe(str(error)))}</p>{provenance}</body></html>"
     )
 
 
@@ -1239,15 +1279,17 @@ def _publish_score_refusal(root: Path, error: Exception) -> None:
     Each artifact is attempted independently. Every publication failure is attached to the
     original scorer exception as a note; this function never replaces or re-raises it.
     """
-    if not root.is_dir():
+    if not os.path.isdir(root):
         return
     score_dir = root / "score"
     code = error.code if isinstance(error, BenchError) else type(error).__name__
     try:
-        score_dir.mkdir(parents=True, exist_ok=True)
+        score_dir.mkdir(parents=False, exist_ok=True)
     except Exception as publication_error:  # contained: both writers are still attempted below
         error.add_note(f"Score refusal publication failed: {publication_error}")
+    lineage = _refusal_lineage(root)
     header = {
+        **lineage,
         "error_code": code,
         "license_banner": LICENSE_BANNER,
         "pr_cells_emitted": False,
@@ -1255,7 +1297,7 @@ def _publish_score_refusal(root: Path, error: Exception) -> None:
     }
     publications = (
         (score_dir / "frames.json", lambda: json.dumps(header, indent=2)),
-        (score_dir / "report.html", lambda: _refusal_html(code, error)),
+        (score_dir / "report.html", lambda: _refusal_html(code, error, lineage)),
     )
     for artifact, render in publications:
         try:

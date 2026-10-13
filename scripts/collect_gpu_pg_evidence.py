@@ -187,7 +187,7 @@ INDEX_SQL = (
     "JOIN pg_namespace n ON n.oid = c.relnamespace "
     "JOIN pg_class ix ON ix.oid = i.indexrelid JOIN pg_am am ON am.oid = ix.relam "
     "JOIN LATERAL unnest(i.indkey::smallint[], i.indclass::oid[]) AS k(attnum, opclass) ON true "
-    "JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum "
+    "LEFT JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum "
     "JOIN pg_opclass op ON op.oid = k.opclass WHERE n.nspname = current_schema()"
 )
 EXTENSION_TYPE_SQL = (
@@ -1118,20 +1118,66 @@ def _catalog_observation(primary: _Capture, sel: dict[str, Any], findings: _Find
             (PRIMARY_SESSION, "vector-columns"),
         )
     indexes = primary.rows("indexes") or []
+
+    def centroid_cast(expression: Any) -> int | None:
+        if not isinstance(expression, str):
+            return None
+        text = expression.strip()
+        # Remove only enclosing parentheses, never those carrying the cast width.
+        while text.startswith("(") and text.endswith(")"):
+            depth = 0
+            for pos, char in enumerate(text):
+                depth += (char == "(") - (char == ")")
+                if depth == 0:
+                    break
+            if pos != len(text) - 1:
+                break
+            text = text[1:-1].strip()
+        cast = re.fullmatch(r'\s*(?:centroid|\(\s*centroid\s*\))\s*::\s*vector\s*\(\s*([0-9]+)\s*\)\s*', text)
+        return int(cast[1]) if cast else None
+
     for table, column in VECTOR_COLUMNS:
-        matched = [r for r in indexes if r[0:2] == [table, column]]
+        centroid = (table, column) == ("mv_identity_cluster_centroids", "centroid")
+        matched = [r for r in indexes if r[0:2] == [table, column] or (
+            centroid and r[0] == table and r[1] is None and centroid_cast(r[6]) is not None
+        )]
         field = f"catalog.indexes.{table}.{column}"
         if not matched:
             findings.miss("vector_index_absent", field, "no observed vector index", (PRIMARY_SESSION, "indexes"))
-        elif not any(
-            r[2:5] == ["ivfflat", "vector_cosine_ops", True] and r[5] is None and r[6] is None for r in matched
-        ):
-            findings.contradict(
-                "vector_index_identity_mismatch",
-                field,
-                "index geometry or validity differs",
-                (PRIMARY_SESSION, "indexes"),
-            )
+            continue
+        accepted = False
+        unknown = False
+        wrong = False
+        for row in matched:
+            expression = row[6]
+            width = centroid_cast(expression) if centroid else None
+            geometry_ok = row[2:5] == ["ivfflat", "vector_cosine_ops", True]
+            if not geometry_ok:
+                wrong = True
+            if centroid and expression is not None and width is None:
+                unknown = True
+                continue
+            predicate_ok = row[5] is None or (centroid and isinstance(row[5], str) and
+                re.fullmatch(r"\s*\(?\s*centroid\s+IS\s+NOT\s+NULL\s*\)?\s*", row[5], re.I) is not None)
+            expression_ok = expression is None or (centroid and width == expected)
+            if centroid and not predicate_ok and not (isinstance(row[5], str) and
+                re.fullmatch(r"\s*\(?\s*centroid\s+IS\s+NULL\s*\)?\s*", row[5], re.I)):
+                unknown = True
+            elif not predicate_ok:
+                wrong = True
+            if not expression_ok:
+                wrong = True
+            if geometry_ok and predicate_ok and expression_ok:
+                accepted = True
+        if not accepted:
+            if unknown and not wrong:
+                findings.miss("vector_index_absent", field, "index expression semantics unrecognized",
+                              (PRIMARY_SESSION, "indexes"))
+            else:
+                findings.contradict(
+                    "vector_index_identity_mismatch", field, "index geometry or validity differs",
+                    (PRIMARY_SESSION, "indexes"),
+                )
     if not any(r[1:] == ["vector", "vector"] for r in primary.rows("extension-type") or []):
         findings.miss(
             "vector_type_membership_unproven",

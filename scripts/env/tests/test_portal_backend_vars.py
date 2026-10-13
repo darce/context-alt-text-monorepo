@@ -52,7 +52,7 @@ def test_portal_backend_vars_are_optional_config_for_both_service_targets():
     for name, consumer in PORTAL_CONSUMERS.items():
         var = vars_by_name[name]
         assert var.cls == "config"
-        assert set(var.targets) == {"svc-local", "svc-vm"}
+        assert set(var.targets) == {"svc-local", "svc-vm", "svc-fir", "svc-auraface"}
         assert var.section == "API security"
         assert var.required is False
         assert consumer in var.doc
@@ -115,6 +115,10 @@ def test_portal_backend_values_render_for_local_dev_and_prod():
         "local": "1",
         "dev": "1",
         "prod": "1",
+        "fir": "1",
+        "dev-auraface": "1",
+        "staging-auraface": "0",
+        "prod-auraface": "0",
     }
 
 

@@ -10,10 +10,10 @@ Labels (every test name carries exactly one):
 * ``test_existing_control_*``   one-factor negative that the existing call already rejects. Must pass.
 * ``test_existing_scope_*``     characterization of the lifecycle prerequisite's boundary. The strict layer
   owns these checks, so the existing call is pinned as it stands. Must pass.
-* ``test_existing_red_*``       causal RED on the existing approved receipt predicate. It fails on the
-  current source by design and is recorded as RED, not as a passing control.
-* ``test_proposal_*``           the future ``validate_strict_acceptance``. SKIPPED with a proposal reason
-  until ``scripts/gpu_strict_acceptance.py`` exists. A skip is never a defect.
+* ``test_existing_red_*``       regression assertion on the existing approved receipt predicate.
+  A failure blocks the union until the predicate's owning lane repairs it.
+* ``test_proposal_*``           the future ``validate_strict_acceptance``. Each test has a strict
+  expected failure for the absent c83 API; assertions remain active when the API exists.
 
 Taxonomy used by the proposal tests (derived from the frozen contract; open to adjudication): an observed
 contradiction (altered bytes, escape, extra artifact, stale window, wrong pin, CPU offload, cached GPU
@@ -295,7 +295,7 @@ def test_existing_red_second_identity_in_sibling_container_is_not_counted(tmp_pa
 
 # ============================================================================
 # PROPOSAL: future validate_strict_acceptance(*, bundle_dir, policy, now).
-# Everything below is skipped until scripts/gpu_strict_acceptance.py exists.
+# Each proposal below strictly expects only the absent c83 API failure.
 # ============================================================================
 
 Validate = Callable[..., Mapping[str, Any]]
@@ -325,12 +325,15 @@ FUTURE_AT = "2026-09-01T03:00:00Z"
 NOW = "2026-09-01T02:00:00Z"
 
 
+class StrictAcceptanceNotImplementedError(RuntimeError):
+    """The c83 strict acceptance entry point has not been implemented."""
+
+
 @pytest.fixture
 def validate() -> Validate:
     if not STRICT_MODULE.is_file():
-        pytest.skip(
-            "PROPOSAL, not an existing defect: scripts/gpu_strict_acceptance.py is absent; "
-            "validate_strict_acceptance is future work"
+        raise StrictAcceptanceNotImplementedError(
+            "not implemented: C82R-HG3R-003 validate_strict_acceptance (c83)"
         )
     return _load_module("gtmr_gpu_strict_acceptance_proposal", STRICT_MODULE).validate_strict_acceptance
 
@@ -563,11 +566,23 @@ def _output(payload: dict[str, Any]) -> dict[str, Any]:
 # ---- proposal: positive and status mapping ----
 
 
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_positive_complete_bundle_is_ready",
+)
 def test_proposal_positive_complete_bundle_is_ready(validate: Validate, tmp_path: Path) -> None:
     bundle, policy = _build_strict(tmp_path)
     _assert_status(_run(validate, bundle, policy), "ready")
 
 
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_status_maps_to_fixed_exit_codes",
+)
 def test_proposal_status_maps_to_fixed_exit_codes(validate: Validate, tmp_path: Path) -> None:
     ready, policy = _build_strict(tmp_path / "ready")
     _assert_status(_run(validate, ready, policy), "ready")
@@ -581,18 +596,36 @@ def test_proposal_status_maps_to_fixed_exit_codes(validate: Validate, tmp_path: 
     _assert_status(_run(validate, invalid, policy_invalid), "invalid")
 
 
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_missing_sidecar_is_incomplete",
+)
 def test_proposal_missing_sidecar_is_incomplete(validate: Validate, tmp_path: Path) -> None:
     bundle, policy = _build_strict(tmp_path)
     (bundle / SIDECAR).unlink()
     _assert_status(_run(validate, bundle, policy), "incomplete")
 
 
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_sidecar_schema_version_must_be_one",
+)
 def test_proposal_sidecar_schema_version_must_be_one(validate: Validate, tmp_path: Path) -> None:
     bundle, policy = _build_strict(tmp_path)
     _edit_sidecar(bundle, lambda sidecar: sidecar.update(schema_version=2))
     _assert_status(_run(validate, bundle, policy), "invalid")
 
 
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_sidecar_artifact_entry_is_exact",
+)
 def test_proposal_sidecar_artifact_entry_is_exact(validate: Validate, tmp_path: Path) -> None:
     bundle, policy = _build_strict(tmp_path)
     _edit_sidecar(bundle, lambda sidecar: sidecar["artifacts"][0].pop("exit_code"))
@@ -602,12 +635,24 @@ def test_proposal_sidecar_artifact_entry_is_exact(validate: Validate, tmp_path: 
 # ---- proposal: custody (bytes, paths, extras, freshness, digests, policy and lane binding) ----
 
 
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_altered_raw_bytes_are_invalid",
+)
 def test_proposal_altered_raw_bytes_are_invalid(validate: Validate, tmp_path: Path) -> None:
     bundle, policy = _build_strict(tmp_path)
     _tamper_raw(bundle, "output")
     _assert_status(_run(validate, bundle, policy), "invalid")
 
 
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_missing_raw_artifact_is_incomplete",
+)
 def test_proposal_missing_raw_artifact_is_incomplete(validate: Validate, tmp_path: Path) -> None:
     bundle, policy = _build_strict(tmp_path)
     (bundle / RAW_DIR / "output.json").unlink()
@@ -615,6 +660,12 @@ def test_proposal_missing_raw_artifact_is_incomplete(validate: Validate, tmp_pat
 
 
 @pytest.mark.parametrize("stray", ["raw/stray.json", "lifecycle/stray.txt"])
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_unreferenced_extra_file_is_invalid",
+)
 def test_proposal_unreferenced_extra_file_is_invalid(validate: Validate, tmp_path: Path, stray: str) -> None:
     bundle, policy = _build_strict(tmp_path)
     (bundle / stray).write_text("unexplained\n", encoding="utf-8")
@@ -622,6 +673,12 @@ def test_proposal_unreferenced_extra_file_is_invalid(validate: Validate, tmp_pat
 
 
 @pytest.mark.parametrize("absolute", [False, True], ids=["relative-escape", "absolute-path"])
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_artifact_path_escape_is_invalid",
+)
 def test_proposal_artifact_path_escape_is_invalid(validate: Validate, tmp_path: Path, absolute: bool) -> None:
     bundle, policy = _build_strict(tmp_path)
     outside = tmp_path / "outside.json"
@@ -637,6 +694,12 @@ def test_proposal_artifact_path_escape_is_invalid(validate: Validate, tmp_path: 
 @pytest.mark.parametrize(
     "at", [pytest.param(STALE_AT, id="stale-before-window"), pytest.param(FUTURE_AT, id="future-after-now")]
 )
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_capture_outside_freshness_window_is_invalid",
+)
 def test_proposal_capture_outside_freshness_window_is_invalid(validate: Validate, tmp_path: Path, at: str) -> None:
     bundle, policy = _build_strict(tmp_path)
 
@@ -650,6 +713,12 @@ def test_proposal_capture_outside_freshness_window_is_invalid(validate: Validate
 
 
 @pytest.mark.parametrize(("field", "value"), [("lane_id", "other-lane"), ("environment", "other-env")])
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_sidecar_lane_or_environment_mismatch_is_invalid",
+)
 def test_proposal_sidecar_lane_or_environment_mismatch_is_invalid(
     validate: Validate, tmp_path: Path, field: str, value: str
 ) -> None:
@@ -658,12 +727,24 @@ def test_proposal_sidecar_lane_or_environment_mismatch_is_invalid(
     _assert_status(_run(validate, bundle, policy), "invalid")
 
 
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_substituted_policy_is_invalid",
+)
 def test_proposal_substituted_policy_is_invalid(validate: Validate, tmp_path: Path) -> None:
     bundle, policy = _build_strict(tmp_path)
     substituted = {**policy, "model_id": OTHER_MODEL}
     _assert_status(_run(validate, bundle, substituted), "invalid")
 
 
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_lifecycle_manifest_bytes_must_match_retained_digest",
+)
 def test_proposal_lifecycle_manifest_bytes_must_match_retained_digest(validate: Validate, tmp_path: Path) -> None:
     # The exporter manifest's listed files still verify. Only the externally retained manifest digest breaks.
     bundle, policy = _build_strict(tmp_path)
@@ -683,6 +764,12 @@ def test_proposal_lifecycle_manifest_bytes_must_match_retained_digest(validate: 
         pytest.param(lambda p: _output(p)["provenance"].pop("cached"), "incomplete", id="cached-absent"),
     ],
 )
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_cache_state_must_be_explicit_and_uncached",
+)
 def test_proposal_cache_state_must_be_explicit_and_uncached(
     validate: Validate, tmp_path: Path, mutate: Callable[[dict[str, Any]], object], status: str
 ) -> None:
@@ -698,6 +785,12 @@ def test_proposal_cache_state_must_be_explicit_and_uncached(
         pytest.param(lambda p: _output(p).pop("tier"), "incomplete", id="tier-absent"),
     ],
 )
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_output_tier_must_be_final_gpu",
+)
 def test_proposal_output_tier_must_be_final_gpu(
     validate: Validate, tmp_path: Path, mutate: Callable[[dict[str, Any]], object], status: str
 ) -> None:
@@ -706,6 +799,12 @@ def test_proposal_output_tier_must_be_final_gpu(
     _assert_status(_run(validate, bundle, policy), status)
 
 
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_output_identity_must_equal_operator_pin",
+)
 def test_proposal_output_identity_must_equal_operator_pin(validate: Validate, tmp_path: Path) -> None:
     # Consistent but arbitrary identity: one identity across receipts is not enough, it must be the pin.
     bundle, policy = _build_strict(tmp_path)
@@ -713,6 +812,12 @@ def test_proposal_output_identity_must_equal_operator_pin(validate: Validate, tm
     _assert_status(_run(validate, bundle, policy), "invalid")
 
 
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_mixed_output_identities_are_invalid",
+)
 def test_proposal_mixed_output_identities_are_invalid(validate: Validate, tmp_path: Path) -> None:
     bundle, policy = _build_strict(tmp_path)
 
@@ -726,12 +831,24 @@ def test_proposal_mixed_output_identities_are_invalid(validate: Validate, tmp_pa
 
 
 @pytest.mark.parametrize("key", ["image_hash", "context_hash", "prompt_or_task_version"])
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_input_and_prompt_pins_must_match",
+)
 def test_proposal_input_and_prompt_pins_must_match(validate: Validate, tmp_path: Path, key: str) -> None:
     bundle, policy = _build_strict(tmp_path)
     _produce(bundle, "output", lambda p: _output(p)["provenance"].update({key: _digest(b"changed")}))
     _assert_status(_run(validate, bundle, policy), "invalid")
 
 
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_cpu_offload_is_invalid",
+)
 def test_proposal_cpu_offload_is_invalid(validate: Validate, tmp_path: Path) -> None:
     bundle, policy = _build_strict(tmp_path)
     _produce(bundle, "runtime", lambda p: _output(p).update(offloaded_layers=0))
@@ -739,18 +856,36 @@ def test_proposal_cpu_offload_is_invalid(validate: Validate, tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize("key", ["mapped_model_sha256", "projector_sha256"])
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_wrong_model_or_projector_is_invalid",
+)
 def test_proposal_wrong_model_or_projector_is_invalid(validate: Validate, tmp_path: Path, key: str) -> None:
     bundle, policy = _build_strict(tmp_path)
     _produce(bundle, "runtime", lambda p: _output(p).update({key: _digest(b"swapped")}))
     _assert_status(_run(validate, bundle, policy), "invalid")
 
 
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_runtime_instance_must_match_policy_pin",
+)
 def test_proposal_runtime_instance_must_match_policy_pin(validate: Validate, tmp_path: Path) -> None:
     bundle, policy = _build_strict(tmp_path)
     _produce(bundle, "runtime", lambda p: _output(p).update(instance_id=OTHER_INSTANCE))
     _assert_status(_run(validate, bundle, policy), "invalid")
 
 
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_config_pins_and_gpu_utilization_cannot_prove_runtime",
+)
 def test_proposal_config_pins_and_gpu_utilization_cannot_prove_runtime(validate: Validate, tmp_path: Path) -> None:
     # Configured pins, /v1/models, and GPU utilization are not the observed loaded process or mapping.
     bundle, policy = _build_strict(tmp_path)
@@ -771,12 +906,24 @@ def test_proposal_config_pins_and_gpu_utilization_cannot_prove_runtime(validate:
 
 
 @pytest.mark.parametrize("section", ["demand", "output", "runtime", "load", "pg", "stop"])
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_absent_evidence_section_is_incomplete",
+)
 def test_proposal_absent_evidence_section_is_incomplete(validate: Validate, tmp_path: Path, section: str) -> None:
     bundle, policy = _build_strict(tmp_path)
     _drop_section(bundle, section)
     _assert_status(_run(validate, bundle, policy), "incomplete")
 
 
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_section_reporting_missing_evidence_is_incomplete_not_invalid",
+)
 def test_proposal_section_reporting_missing_evidence_is_incomplete_not_invalid(
     validate: Validate, tmp_path: Path
 ) -> None:
@@ -791,6 +938,12 @@ def test_proposal_section_reporting_missing_evidence_is_incomplete_not_invalid(
     _assert_status(_run(validate, bundle, policy), "incomplete")
 
 
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_observation_without_raw_digest_is_incomplete",
+)
 def test_proposal_observation_without_raw_digest_is_incomplete(validate: Validate, tmp_path: Path) -> None:
     bundle, policy = _build_strict(tmp_path)
     _edit_sidecar(bundle, lambda sidecar: sidecar["sections"]["runtime"]["observations"][0].pop("artifact_sha256"))
@@ -805,6 +958,12 @@ def test_proposal_observation_without_raw_digest_is_incomplete(validate: Validat
             lambda p: p["observations"][0].update(operation_id="op-preexisting"), "invalid", id="other-operation"
         ),
     ],
+)
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_load_revision_must_attribute_to_this_operation",
 )
 def test_proposal_load_revision_must_attribute_to_this_operation(
     validate: Validate, tmp_path: Path, mutate: Callable[[dict[str, Any]], object], status: str
@@ -830,6 +989,12 @@ def test_proposal_load_revision_must_attribute_to_this_operation(
         ),
     ],
 )
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_idle_stop_requires_consumed_decision_and_expected_principal",
+)
 def test_proposal_idle_stop_requires_consumed_decision_and_expected_principal(
     validate: Validate, tmp_path: Path, mutate: Callable[[dict[str, Any]], object], status: str
 ) -> None:
@@ -848,6 +1013,12 @@ def test_proposal_idle_stop_requires_consumed_decision_and_expected_principal(
         pytest.param(lambda p: p["observations"][0].update(foreign_tenant_rows=3), id="foreign-tenant-rows"),
         pytest.param(lambda p: p["observations"][0].update(database_name="alt_context_other"), id="wrong-database"),
     ],
+)
+@pytest.mark.xfail(
+    not STRICT_MODULE.is_file(),
+    strict=True,
+    raises=StrictAcceptanceNotImplementedError,
+    reason="not implemented: C82R-HG3R-003 test_proposal_restricted_pg_observation_refuses_unsafe_role_or_visibility",
 )
 def test_proposal_restricted_pg_observation_refuses_unsafe_role_or_visibility(
     validate: Validate, tmp_path: Path, mutate: Callable[[dict[str, Any]], object]

@@ -276,7 +276,7 @@ _COLLECTOR_PRESENT = COLLECTOR_PATH.is_file()
 _PENDING = pytest.mark.xfail(
     not _COLLECTOR_PRESENT,
     raises=CollectorAbsentError,
-    strict=False,
+    strict=True,
     reason=(
         "PROPOSAL_PENDING: scripts/collect_gpu_runtime_evidence.py not implemented. "
         "Future-interface coverage only; import absence is not a behaviour defect."

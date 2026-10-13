@@ -31,6 +31,7 @@ from scripts.validate_fir_dev_runtime import (
     EXPECTED_CONTRACTS,
     EXPECTED_VECTOR_COLUMNS,
     _is_finite_vector,
+    _is_identity_only_repair,
     _parse_model_id,
     _validate_store_state,
     _vector_inventory_is_incomplete,
@@ -220,7 +221,7 @@ def _is_aura_stamp(model_id: str) -> bool:
 
 
 def _active_stamp(snapshot: Mapping[str, Any]) -> str | tuple[str, str]:
-    """Derive the active stamp from the API and worker model-loading roles."""
+    """Derive the active stamp from every role reporting runtime fields."""
 
     observations = _at(snapshot, "observations")
     if not isinstance(observations, list) or not observations:
@@ -228,7 +229,7 @@ def _active_stamp(snapshot: Mapping[str, Any]) -> str | tuple[str, str]:
     stamps: list[str] = []
     missing = False
     for record in observations:
-        if isinstance(record, Mapping) and record.get("role") == "fix-blob-ownership":
+        if _is_identity_only_repair(record):
             continue
         model_id = _at(record, "model_id", "value")
         if not isinstance(model_id, str) or not model_id.strip():

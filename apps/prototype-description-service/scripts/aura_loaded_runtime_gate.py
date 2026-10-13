@@ -311,10 +311,10 @@ def _report_divergence(
     reason: str,
     findings: _Findings,
 ) -> None:
-    """Flag any name whose observed value differs between complete roles."""
+    """Flag any name whose present observed values differ between the roles that report it."""
 
     for name in names:
-        if len({value[name] for value in observed.values()}) > 1:
+        if len({value[name] for value in observed.values() if name in value}) > 1:
             findings.invalid(reason)
 
 
@@ -346,9 +346,9 @@ def _preprocessing_field_matches(observed: Any, expected: Any) -> bool:
 
 
 def _check_loaded_weights(by_role: Mapping[str, Mapping[str, Any]], findings: _Findings) -> None:
-    """Weights are checked on model-loading roles only. Missing or partial sets are incomplete."""
+    """Weights are checked on model-loading roles only. Each present digest is checked; absent ones are incomplete."""
 
-    observed: dict[str, Mapping[str, Any]] = {}
+    observed: dict[str, dict[str, str]] = {}
     for role in EVIDENCE_ROLES:
         value = _snapshot_observation(
             by_role.get(role),
@@ -365,22 +365,28 @@ def _check_loaded_weights(by_role: Mapping[str, Mapping[str, Any]], findings: _F
         if not value:
             findings.incomplete("missing_loaded_weight_hashes")
             continue
-        if set(value) != set(_MODEL_NAMES):
-            findings.incomplete("incomplete_loaded_weight_hashes")
-            continue
-        if any(not isinstance(digest, str) or _SHA256_DIGEST.fullmatch(digest) is None for digest in value.values()):
-            findings.invalid("malformed_loaded_weight_hash")
-            continue
-        observed[role] = value
-    _report_divergence(observed, _MODEL_NAMES, "role_loaded_weight_hash_mismatch", findings)
-    for value in observed.values():
+        present: dict[str, str] = {}
         for name in _MODEL_NAMES:
-            if value[name] != _model_pin_digest(name):
+            if name not in value:
+                findings.incomplete("incomplete_loaded_weight_hashes")
+                continue
+            digest = value[name]
+            if not isinstance(digest, str) or _SHA256_DIGEST.fullmatch(digest) is None:
+                findings.invalid("malformed_loaded_weight_hash")
+                continue
+            present[name] = digest
+        if set(value) - set(_MODEL_NAMES):
+            findings.incomplete("incomplete_loaded_weight_hashes")
+        observed[role] = present
+    _report_divergence(observed, _MODEL_NAMES, "role_loaded_weight_hash_mismatch", findings)
+    for digests in observed.values():
+        for name, digest in digests.items():
+            if digest != _model_pin_digest(name):
                 findings.invalid("model_asset_hash_unexpected")
 
 
 def _check_licenses(roles: Mapping[str, Mapping[str, Any]], findings: _Findings) -> None:
-    observed: dict[str, Mapping[str, Any]] = {}
+    observed: dict[str, dict[str, str]] = {}
     for role in EVIDENCE_ROLES:
         if role not in roles:
             continue
@@ -396,17 +402,20 @@ def _check_licenses(roles: Mapping[str, Mapping[str, Any]], findings: _Findings)
         if not isinstance(value, Mapping) or set(value) - set(_MODEL_NAMES):
             findings.invalid("aura_evidence_schema_invalid")
             continue
-        if any(value.get(name) is None for name in _MODEL_NAMES):
-            findings.incomplete("incomplete_license_evidence")
-            continue
-        if any(not isinstance(value[name], str) for name in _MODEL_NAMES):
-            findings.invalid("aura_evidence_schema_invalid")
-            continue
-        observed[role] = value
-    _report_divergence(observed, _MODEL_NAMES, "role_license_hash_mismatch", findings)
-    for value in observed.values():
+        present: dict[str, str] = {}
         for name in _MODEL_NAMES:
-            if value[name] != _model_license_pin(name):
+            digest = value.get(name)
+            if digest is None:
+                findings.incomplete("incomplete_license_evidence")
+            elif not isinstance(digest, str):
+                findings.invalid("aura_evidence_schema_invalid")
+            else:
+                present[name] = digest
+        observed[role] = present
+    _report_divergence(observed, _MODEL_NAMES, "role_license_hash_mismatch", findings)
+    for digests in observed.values():
+        for name, digest in digests.items():
+            if digest != _model_license_pin(name):
                 findings.invalid("license_hash_mismatch")
 
 
@@ -427,11 +436,11 @@ def _check_preprocessing(roles: Mapping[str, Mapping[str, Any]], findings: _Find
         if not isinstance(value, Mapping) or set(value) - set(expected):
             findings.invalid("aura_evidence_schema_invalid")
             continue
-        if any(value.get(field) is None for field in expected):
-            findings.incomplete("incomplete_preprocessing_evidence")
-            continue
         for field, want in expected.items():
-            if not _preprocessing_field_matches(value[field], want):
+            actual = value.get(field)
+            if actual is None:
+                findings.incomplete("incomplete_preprocessing_evidence")
+            elif not _preprocessing_field_matches(actual, want):
                 findings.invalid("preprocessing_contract_mismatch")
 
 

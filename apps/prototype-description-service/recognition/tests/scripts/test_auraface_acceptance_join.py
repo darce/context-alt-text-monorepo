@@ -580,3 +580,162 @@ def test_catalog_process_binding_is_local():
     records, inputs = pair()
     records[0]['serving_catalog']['process_instance_id'] = 'other'
     assert_gap(records, inputs, 'contradictory_binding', row=0)
+
+
+R3_EXECUTED_DIGEST_PATHS = [
+    ('detector_input', 'sha256'), ('embedder_input', 'sha256'),
+    ('detections_sha256',), ('alignment', 'landmarks_sha256'),
+    ('alignment', 'affine_sha256'), ('alignment', 'crop_sha256'),
+    ('raw_output', 'sha256'), ('normalized_output', 'sha256'),
+]
+
+
+def r3_change_digest(record, path):
+    node = record['adapter_observations'][0]['runtime_record']['execution_receipt']
+    for key in path[:-1]:
+        node = node[key]
+    node[path[-1]] = 'd' * 64
+
+
+def r3_assert_joined(records, inputs):
+    before = copy.deepcopy((records, inputs))
+    result = join(records, inputs)
+    assert set(result['gaps']) == BASE_GAPS
+    assert result['status'] == 'incomplete'
+    assert result['snapshot'] is None and result['sidecar'] is None
+    assert len(result['acquisition_ledger']) == len(records)
+    assert all(row['status'] == 'joined' and row['reason_code'] is None
+               for row in result['acquisition_ledger'])
+    assert (records, inputs) == before
+
+
+@pytest.mark.parametrize('path', R3_EXECUTED_DIGEST_PATHS)
+def test_r3_one_role_executed_digest_change_refuses(path):
+    records, inputs = pair()
+    r3_change_digest(records[1], path)
+    assert_gap(records, inputs, 'contradictory_binding', row=1)
+
+
+@pytest.mark.parametrize('path', R3_EXECUTED_DIGEST_PATHS)
+def test_r3_identical_pipeline_digest_control_joins(path):
+    records, inputs = pair()
+    for record in records:
+        r3_change_digest(record, path)
+    r3_assert_joined(records, inputs)
+
+
+@pytest.mark.parametrize('api_norm,worker_norm,joined', [
+    (2.0, 2.0, True), (2, 2.0, True), (9.0, 9.0, True),
+    (2.0, 2.0 + 5e-6, True), (2.0, 2.0 - 5e-6, True),
+    (2.0, 2.0 + 2e-5, False), (2.0, 9.0, False),
+    (1e6, 1e6 + 1.0, False),
+])
+def test_r3_raw_norm_absolute_tolerance(api_norm, worker_norm, joined):
+    records, inputs = pair()
+    for record, norm in zip(records, (api_norm, worker_norm)):
+        record['adapter_observations'][0]['runtime_record']['execution_receipt']['raw_output']['norm'] = norm
+    if joined:
+        r3_assert_joined(records, inputs)
+    else:
+        assert_gap(records, inputs, 'contradictory_binding', row=1)
+
+
+@pytest.mark.parametrize('both_roles', [False, True])
+def test_r3_interpolation_crop_receipt_probe(both_roles):
+    records, inputs = pair()
+    for record in records if both_roles else records[1:]:
+        for path in [('alignment', 'affine_sha256'), ('alignment', 'crop_sha256'),
+                     ('embedder_input', 'sha256'), ('raw_output', 'sha256'),
+                     ('normalized_output', 'sha256')]:
+            r3_change_digest(record, path)
+    if both_roles:
+        r3_assert_joined(records, inputs)
+    else:
+        assert_gap(records, inputs, 'contradictory_binding', row=1)
+
+
+def test_r3_raw_norm_tolerance_checks_full_span():
+    records, inputs = pair()
+    api_execution = records[0]['adapter_observations'][0]['runtime_record']['execution_receipt']
+    api_execution['raw_output']['norm'] = 2.0 + 8e-6
+    extra = copy.deepcopy(records[1]['adapter_observations'][0])
+    extra['adapter_instance_id'] = 'worker-second-adapter'
+    extra['runtime_record']['execution_receipt']['execution_id'] = 'worker-second-execution'
+    extra['runtime_record']['execution_receipt']['raw_output']['norm'] = 2.0 + 16e-6
+    records[1]['adapter_observations'].append(extra)
+    assert_gap(records, inputs, 'contradictory_binding')
+
+
+@pytest.mark.parametrize('model', ['yunet', 'auraface'])
+@pytest.mark.parametrize('case', ['spatial_symbols', 'batch_symbol', 'ort_dtype'])
+def test_r3_e10_metadata_vocabulary_control(model, case):
+    records, inputs = pair()
+    for record in records:
+        metadata = record['adapter_observations'][0]['runtime_record']['sessions'][model]['actual_input_metadata'][0]
+        if case == 'spatial_symbols':
+            metadata['shape'] = [1, 3, 'height', 'width']
+        elif case == 'batch_symbol':
+            metadata['shape'] = ['batch', 3, 112, 112]
+        else:
+            metadata['dtype'] = 'tensor(float)'
+    r3_assert_joined(records, inputs)
+
+
+@pytest.mark.parametrize('model', ['yunet', 'auraface'])
+@pytest.mark.parametrize('api_dtype,worker_dtype', [
+    ('float32', 'tensor(float)'), ('tensor(float)', 'float32'),
+    ('tensor(float)', 'tensor(float)'),
+])
+def test_r3_metadata_dtype_aliases_share_one_contract(model, api_dtype, worker_dtype):
+    records, inputs = pair()
+    for record, dtype in zip(records, (api_dtype, worker_dtype)):
+        session = record['adapter_observations'][0]['runtime_record']['sessions'][model]
+        for key in ('actual_input_metadata', 'actual_output_metadata'):
+            session[key][0]['dtype'] = dtype
+    r3_assert_joined(records, inputs)
+
+
+@pytest.mark.parametrize('model,tensor_key', [('yunet', 'detector_input'), ('auraface', 'embedder_input')])
+def test_r3_executed_dtype_uses_shared_canonicalizer(model, tensor_key):
+    records, inputs = pair()
+    rt = records[1]['adapter_observations'][0]['runtime_record']
+    rt['execution_receipt'][tensor_key]['dtype'] = 'tensor(float)'
+    rt['sessions'][model]['actual_input_metadata'][0]['dtype'] = 'tensor(float)'
+    r3_assert_joined(records, inputs)
+
+
+@pytest.mark.parametrize('model', ['yunet', 'auraface'])
+@pytest.mark.parametrize('factor', ['concrete_dimension', 'rank', 'float16', 'tensor_double'])
+def test_r3_metadata_canonicalization_preserves_local_contradictions(model, factor):
+    records, inputs = pair()
+    for record in records:
+        rt = record['adapter_observations'][0]['runtime_record']
+        metadata = rt['sessions'][model]['actual_input_metadata'][0]
+        metadata['shape'] = [1, 3, 'height', 'width']
+        if factor == 'concrete_dimension':
+            metadata['shape'][1] = 4
+        elif factor == 'rank':
+            metadata['shape'].append('extra')
+        else:
+            metadata['dtype'] = 'float16' if factor == 'float16' else 'tensor(double)'
+        module = load('auraface_acceptance_join')
+        with pytest.raises(module.RecordError, match='^contradictory_binding$'):
+            module._runtime(rt, NOW, dict(max_age_seconds=60, future_skew_seconds=2))
+    assert_gap(records, inputs, 'contradictory_binding', row=0)
+
+
+@pytest.mark.parametrize('model', ['yunet', 'auraface'])
+@pytest.mark.parametrize('dimension', [False, 0, '', None, 1.5])
+def test_r3_symbolic_dimensions_keep_metadata_validation(model, dimension):
+    records, inputs = pair()
+    for record in records:
+        metadata = record['adapter_observations'][0]['runtime_record']['sessions'][model]['actual_input_metadata'][0]
+        metadata['shape'][2] = dimension
+    assert_gap(records, inputs, 'malformed', row=0)
+
+
+@pytest.mark.parametrize('tensor_key', ['detector_input', 'embedder_input'])
+def test_r3_executed_dimensions_remain_concrete(tensor_key):
+    records, inputs = pair()
+    records[0]['adapter_observations'][0]['runtime_record']['execution_receipt'][tensor_key]['shape'][2] = 'height'
+    assert_gap(records, inputs, 'malformed', row=0)

@@ -1,16 +1,10 @@
 """AuraFace acceptance entrypoint: offline, fail-closed, and digest-only.
 
-``validate_aura_acceptance`` composes the gates that govern one Aura target, in this order:
-
-1. Additive evidence presence. A missing sidecar role or a missing store observation is ``incomplete``.
-   This runs before the shared guard, which would otherwise emit a less specific ``invalid``.
-2. The shared closed v1 guard and rungs, ``validate_fir_dev_runtime.validate_snapshot`` with
-   ``contract="candidate512"``. Its SFace, FIR, schema, freshness, runtime, image, auth, provenance,
-   catalog, asset, and store rules are unchanged.
-3. The target and store helper, ``scripts.aura_target_store_gate.validate_target_store``.
-4. The loaded-runtime helper, ``scripts.aura_loaded_runtime_gate.validate_loaded_runtime``. That module
-   is the runtime counterpart. It is imported lazily, so this facade imports before the join. Until the
-   counterpart lands, any input that reaches this rung raises, and the CLI reports it as ``invalid``.
+``validate_aura_acceptance`` composes the shared closed boundary, target/store gate,
+and loaded-runtime gate. Explicit Aura acceptance admits the identity-only blob ownership
+repair role while API/worker retain the complete runtime schema. Present contradictions
+outrank incomplete observations; gate order breaks ties. The shared validator's default
+and FIR128 behavior remain strict. No missing observation is filled from a policy pin.
 
 Outcomes: ``ready`` (exit 0), ``incomplete`` (exit 1), ``invalid`` (exit 2). These match the FIR
 validator and the frozen Aura acceptance tests. Reports are digest-only: raw snapshot, sidecar, and
@@ -55,12 +49,13 @@ def validate_aura_acceptance(
     if any(_contains_secret_shaped(value) for value in (aura_evidence, isolation_policy, acceptance_policy)):
         return _outcome("invalid", "secret_shaped_input", "input", snapshot, aura_evidence, acceptance_policy)
 
+    findings: list[tuple[str, str, str]] = []
     presence = _evidence_presence_reason(aura_evidence)
     if presence is not None:
-        return _outcome("incomplete", presence, "evidence", snapshot, aura_evidence, acceptance_policy)
+        findings.append(("incomplete", presence, "evidence"))
     missing = aura_target_store_gate.missing_evidence_reason(snapshot)
     if missing is not None:
-        return _outcome("incomplete", missing, "evidence", snapshot, aura_evidence, acceptance_policy)
+        findings.append(("incomplete", missing, "evidence"))
 
     shared = validate_snapshot(
         snapshot,
@@ -68,9 +63,12 @@ def validate_aura_acceptance(
         isolation_policy=isolation_policy,
         now=now,
         contract=ENTRYPOINT_CONTRACT,
+        aura_acceptance=True,
     )
-    if shared["status"] != "ready":
-        return _outcome(shared["status"], shared["reason_code"], "shared", snapshot, aura_evidence, acceptance_policy)
+    if shared["status"] == "invalid":
+        return _outcome("invalid", shared["reason_code"], "shared", snapshot, aura_evidence, acceptance_policy)
+    elif shared["status"] == "incomplete":
+        findings.append(("incomplete", shared["reason_code"], "shared"))
 
     target = aura_target_store_gate.validate_target_store(
         snapshot,
@@ -78,14 +76,18 @@ def validate_aura_acceptance(
         acceptance_policy=acceptance_policy,
     )
     if target is not None:
-        return _outcome(target[0], target[1], "target", snapshot, aura_evidence, acceptance_policy)
+        findings.append((*target, "target"))
 
-    # WHY: the runtime counterpart is joined at parent integration. Lazy import keeps this facade importable.
     from scripts.aura_loaded_runtime_gate import validate_loaded_runtime
 
     runtime = validate_loaded_runtime(snapshot, aura_evidence=aura_evidence, acceptance_policy=acceptance_policy)
     if runtime is not None:
-        return _outcome(runtime[0], runtime[1], "runtime", snapshot, aura_evidence, acceptance_policy)
+        findings.append((*runtime, "runtime"))
+    # Gate order breaks ties; present contradictions outrank missing observations.
+    for status in ("invalid", "incomplete"):
+        for finding_status, reason, stage in findings:
+            if finding_status == status:
+                return _outcome(status, reason, stage, snapshot, aura_evidence, acceptance_policy)
     return _outcome("ready", "ready", "ready", snapshot, aura_evidence, acceptance_policy)
 
 

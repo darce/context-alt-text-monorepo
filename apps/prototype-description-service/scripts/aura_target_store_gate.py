@@ -30,6 +30,7 @@ from scripts.validate_fir_dev_runtime import (
     _UNRESOLVED_MODEL_MARKERS,
     EXPECTED_CONTRACTS,
     EXPECTED_VECTOR_COLUMNS,
+    _is_finite_vector,
     _parse_model_id,
     _validate_store_state,
     _vector_inventory_is_incomplete,
@@ -186,15 +187,17 @@ def _observed_names(value: Any) -> frozenset[str] | None:
 
 def _identity_outcome(snapshot: Mapping[str, Any], label: str) -> tuple[str, str] | None:
     observed: dict[str, frozenset[str]] = {}
+    missing = False
     for category, path in _IDENTITY_PATHS.items():
         names = _observed_names(_at(snapshot, *path, "value"))
         if names is None:
-            return ("incomplete", "target_identity_unobserved")
+            missing = True
+            continue
         observed[category] = names
     for category, required in required_target_identities(label).items():
-        if observed[category] != required:
+        if category in observed and observed[category] != required:
             return ("invalid", "target_identity_mismatch")
-    return None
+    return ("incomplete", "target_identity_unobserved") if missing else None
 
 
 def _persisted_model_ids(summary: Mapping[str, Any]) -> list[str] | None:
@@ -217,21 +220,27 @@ def _is_aura_stamp(model_id: str) -> bool:
 
 
 def _active_stamp(snapshot: Mapping[str, Any]) -> str | tuple[str, str]:
-    """The stamp the runtime observes on every role; it must be one Aura stamp, never a sibling space."""
+    """Derive the active stamp from the API and worker model-loading roles."""
 
     observations = _at(snapshot, "observations")
     if not isinstance(observations, list) or not observations:
         return ("incomplete", "active_stamp_unobserved")
     stamps: list[str] = []
+    missing = False
     for record in observations:
+        if isinstance(record, Mapping) and record.get("role") == "fix-blob-ownership":
+            continue
         model_id = _at(record, "model_id", "value")
         if not isinstance(model_id, str) or not model_id.strip():
-            return ("incomplete", "active_stamp_unobserved")
+            missing = True
+            continue
         stamps.append(model_id)
     if any(stamp != stamps[0] for stamp in stamps[1:]):
         return ("invalid", "model_contract_mismatch")
-    if not _is_aura_stamp(stamps[0]):
+    if any(not _is_aura_stamp(stamp) for stamp in stamps):
         return ("invalid", "model_space_contract_mismatch")
+    if missing or not stamps:
+        return ("incomplete", "active_stamp_unobserved")
     return stamps[0]
 
 
@@ -245,41 +254,52 @@ def _representative_is_unit(vector: Any) -> bool:
 def _store_outcome(snapshot: Mapping[str, Any], stamp: str) -> tuple[str, str] | None:
     """Inventory, width, and store-state rungs reused from the FIR guard, then the Aura census."""
 
-    try:
-        inventory_reason = _vector_inventory_is_incomplete(snapshot)
-        if inventory_reason is not None:
-            return (_status_for(inventory_reason), inventory_reason)
-        for item in snapshot["database"]["vector_column_inventory"]["value"]:
-            if item["dimension"] != AURA_EMBEDDING_DIMENSION:
-                return ("invalid", "database_dimension_mismatch")
-        store_reason = _validate_store_state(snapshot, "candidate512")
-    except (KeyError, TypeError, ValueError, AttributeError):
-        return ("incomplete", "target_observation_unreadable")
+    findings: list[tuple[str, str]] = []
+    inventory_reason = _vector_inventory_is_incomplete(snapshot)
+    if inventory_reason is not None:
+        findings.append((_status_for(inventory_reason), inventory_reason))
+    inventory = _at(snapshot, "database", "vector_column_inventory", "value")
+    if isinstance(inventory, (list, tuple)):
+        for item in inventory:
+            if isinstance(item, Mapping) and item.get("dimension") is not None:
+                if item["dimension"] != AURA_EMBEDDING_DIMENSION:
+                    findings.append(("invalid", "database_dimension_mismatch"))
+    store_reason = _validate_store_state(snapshot, "candidate512")
     if store_reason is not None:
-        return (_status_for(store_reason), store_reason)
+        findings.append((_status_for(store_reason), store_reason))
 
-    summary = snapshot["database"]["embedding_provenance"]["value"]
-    for identity, count in summary["row_counts"].items():
-        # Extra discovered columns are allowed only when empty; an unknown populated column is unobserved.
-        if identity not in EXPECTED_VECTOR_COLUMNS and count != 0:
-            return ("incomplete", "fir_store_state_unobserved")
-
-    state = snapshot["database"]["store_state"]["value"]
-    persisted = _persisted_model_ids(summary)
-    if persisted is None:
-        return ("incomplete", "embedding_provenance_unobserved")
-    if len(set(persisted)) != len(persisted):
-        return ("invalid", "persisted_model_ids_not_distinct")
-    if state == "empty":
-        if persisted:
-            return ("invalid", "persisted_model_stamp_mismatch")
-        return None
-    if len(persisted) > 1:
-        return ("invalid", "mixed_persisted_models")
-    if persisted != [stamp]:
-        return ("invalid", "persisted_model_stamp_mismatch")
-    if not _representative_is_unit(summary["representative_vector"]):
-        return ("invalid", "non_normalized_persisted_vector")
+    summary = _at(snapshot, "database", "embedding_provenance", "value")
+    if isinstance(summary, Mapping):
+        counts = summary.get("row_counts")
+        if isinstance(counts, Mapping) and any(
+            identity not in EXPECTED_VECTOR_COLUMNS and count != 0 for identity, count in counts.items()
+        ):
+            findings.append(("incomplete", "fir_store_state_unobserved"))
+        state = _at(snapshot, "database", "store_state", "value")
+        persisted = summary.get("persisted_model_ids")
+        if _persisted_model_ids(summary) is None:
+            findings.append(("incomplete", "embedding_provenance_unobserved"))
+        # Even an unfinished census can contradict the active stamp with a present ID.
+        if isinstance(persisted, list) and all(isinstance(item, str) and item.strip() for item in persisted):
+            if len(set(persisted)) != len(persisted):
+                findings.append(("invalid", "persisted_model_ids_not_distinct"))
+            elif state == "empty" and persisted:
+                findings.append(("invalid", "persisted_model_stamp_mismatch"))
+            elif state == "enrolled":
+                if len(persisted) > 1:
+                    findings.append(("invalid", "mixed_persisted_models"))
+                elif any(model_id != stamp for model_id in persisted) or (
+                    _persisted_model_ids(summary) is not None and not persisted
+                ):
+                    findings.append(("invalid", "persisted_model_stamp_mismatch"))
+        vector = summary.get("representative_vector")
+        if state == "enrolled" and _is_finite_vector(vector, AURA_EMBEDDING_DIMENSION):
+            if not _representative_is_unit(vector):
+                findings.append(("invalid", "non_normalized_persisted_vector"))
+    for status in ("invalid", "incomplete"):
+        for finding in findings:
+            if finding[0] == status:
+                return finding
     return None
 
 
@@ -297,16 +317,25 @@ def validate_target_store(
     policy_outcome = _target_policy_outcome(isolation_policy, label)
     if policy_outcome is not None:
         return policy_outcome
+    findings: list[tuple[str, str]] = []
     missing = missing_evidence_reason(snapshot)
     if missing is not None:
-        return ("incomplete", missing)
+        findings.append(("incomplete", missing))
     summary = _at(snapshot, "database", "embedding_provenance", "value")
     if not isinstance(summary, Mapping) or _persisted_model_ids(summary) is None:
-        return ("incomplete", "embedding_provenance_unobserved")
+        findings.append(("incomplete", "embedding_provenance_unobserved"))
     identity_outcome = _identity_outcome(snapshot, label)
     if identity_outcome is not None:
-        return identity_outcome
+        findings.append(identity_outcome)
     stamp = _active_stamp(snapshot)
     if isinstance(stamp, tuple):
-        return stamp
-    return _store_outcome(snapshot, stamp)
+        findings.append(stamp)
+    elif missing is None:
+        store_outcome = _store_outcome(snapshot, stamp)
+        if store_outcome is not None:
+            findings.append(store_outcome)
+    for status in ("invalid", "incomplete"):
+        for finding in findings:
+            if finding[0] == status:
+                return finding
+    return None

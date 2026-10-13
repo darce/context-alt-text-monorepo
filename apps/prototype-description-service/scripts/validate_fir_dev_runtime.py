@@ -391,9 +391,17 @@ def _roles(snapshot: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
     return tuple(by_name[name] for name in ROLE_NAMES)
 
 
+def _is_identity_only_repair(record: Any) -> bool:
+    return (
+        isinstance(record, Mapping)
+        and record.get("role") == "fix-blob-ownership"
+        and set(record) == {"role", "image_digest", "source_git_sha"}
+    )
+
+
 def _runtime_roles(snapshot: Mapping[str, Any], aura_acceptance: bool = False) -> tuple[Mapping[str, Any], ...]:
     roles = _roles(snapshot)
-    return tuple(record for record in roles if record["role"] in {"api", "worker"}) if aura_acceptance else roles
+    return tuple(record for record in roles if not _is_identity_only_repair(record)) if aura_acceptance else roles
 
 
 def _field(record: Mapping[str, Any], field_name: str) -> Mapping[str, Any]:
@@ -439,7 +447,7 @@ def _observed_resource_values(snapshot: Mapping[str, Any]) -> Iterable[tuple[str
         "blob_namespace": "blob_namespaces",
     }
     for field_name in STORAGE_FIELDS:
-        value = storage[field_name]["value"]
+        value = storage[field_name].get("value")
         category = storage_categories[field_name]
         if isinstance(value, (list, tuple, set, frozenset)):
             for item in value:
@@ -452,7 +460,7 @@ def _observed_resource_values(snapshot: Mapping[str, Any]) -> Iterable[tuple[str
         "role": "database_roles",
     }
     for field_name, category in identity_categories.items():
-        value = identity[field_name]["value"]
+        value = identity[field_name].get("value")
         if isinstance(value, (list, tuple, set, frozenset)):
             for item in value:
                 yield category, item
@@ -532,6 +540,15 @@ def _is_wrapper(value: Any, expected_keys: frozenset[str] = _ROLE_WRAPPER_KEYS) 
     return isinstance(value, Mapping) and set(value) == expected_keys
 
 
+def _is_missing_evidence_wrapper(
+    value: Any, allow_missing: bool, expected_keys: frozenset[str] = _ROLE_WRAPPER_KEYS,
+) -> bool:
+    return (
+        allow_missing and isinstance(value, Mapping)
+        and set(value) <= expected_keys and not _ROLE_WRAPPER_KEYS.issubset(value)
+    )
+
+
 def _is_positive_number(value: Any) -> bool:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return False
@@ -562,7 +579,7 @@ def _validate_isolation_policy_shape(value: Any) -> str | None:
 def _validate_required_identity_values(snapshot: Mapping[str, Any]) -> str | None:
     database = snapshot["database"]
     identity = database["identity"]
-    if any(not _is_nonempty_identity(identity[field_name]["value"]) for field_name in ("database_name", "role")):
+    if any(not _is_nonempty_identity(identity[field_name].get("value")) for field_name in ("database_name", "role")):
         return "database_identity_version_unobserved"
     if not _is_nonempty_identity(database["server_version"]["value"]):
         return "database_identity_version_unobserved"
@@ -576,7 +593,7 @@ def _validate_required_identity_values(snapshot: Mapping[str, Any]) -> str | Non
         return "database_identity_version_unobserved"
 
     storage = snapshot["storage"]
-    if any(not _is_nonempty_identity(storage[field_name]["value"]) for field_name in STORAGE_FIELDS):
+    if any(not _is_nonempty_identity(storage[field_name].get("value")) for field_name in STORAGE_FIELDS):
         return "observation_provenance_declared"
 
     roles = _roles(snapshot)
@@ -621,9 +638,7 @@ def _validate_schema(
         if role in observed_roles:
             return "duplicate_role_observation"
         observed_roles.append(role)
-        identity_only = aura_acceptance and role == "fix-blob-ownership" and set(record) == {
-            "role", "image_digest", "source_git_sha"
-        }
+        identity_only = aura_acceptance and _is_identity_only_repair(record)
         if not identity_only and set(record) != expected_role_keys:
             return "snapshot_schema_invalid"
         fields = ("image_digest", "source_git_sha") if identity_only else ROLE_FIELDS
@@ -646,30 +661,31 @@ def _validate_schema(
     identity = database.get("identity")
     if not isinstance(identity, Mapping) or set(identity) != {"database_name", "role"}:
         return "snapshot_schema_invalid"
-    if any(not _is_wrapper(identity[field_name]) for field_name in ("database_name", "role")):
+    if any(not (_is_wrapper(identity[field_name]) or _is_missing_evidence_wrapper(
+        identity[field_name], allow_missing_store_evidence
+    )) for field_name in ("database_name", "role")):
         return "malformed_observation_wrapper"
-    if any(not isinstance(identity[field_name]["value"], str) for field_name in ("database_name", "role")):
+    if any("value" in identity[field_name] and not isinstance(identity[field_name]["value"], str)
+           for field_name in ("database_name", "role")):
         return "malformed_observation_wrapper"
     for field_name in ("server_version", "extension_versions"):
         if not _is_wrapper(database.get(field_name)):
             return "malformed_observation_wrapper"
     inventory = database.get("vector_column_inventory")
-    if not (_is_wrapper(inventory) or _is_wrapper(inventory, _INVENTORY_WRAPPER_KEYS)):
+    if not (_is_wrapper(inventory) or _is_wrapper(inventory, _INVENTORY_WRAPPER_KEYS)
+            or _is_missing_evidence_wrapper(inventory, allow_missing_store_evidence, _INVENTORY_WRAPPER_KEYS)):
         return "malformed_observation_wrapper"
     for field_name in DATABASE_EVIDENCE_FIELDS:
         if field_name in database and not _is_wrapper(database[field_name]):
-            wrapper = database[field_name]
-            missing_store_wrapper = (
-                allow_missing_store_evidence and isinstance(wrapper, Mapping)
-                and set(wrapper) < {"value", "provenance"}
-            )
-            if not missing_store_wrapper:
+            if not _is_missing_evidence_wrapper(database[field_name], allow_missing_store_evidence):
                 return "malformed_observation_wrapper"
 
     storage = snapshot.get("storage")
     if not isinstance(storage, Mapping) or set(storage) != set(STORAGE_FIELDS):
         return "snapshot_schema_invalid"
-    if any(not _is_wrapper(storage[field_name]) for field_name in STORAGE_FIELDS):
+    if any(not (_is_wrapper(storage[field_name]) or _is_missing_evidence_wrapper(
+        storage[field_name], allow_missing_store_evidence
+    )) for field_name in STORAGE_FIELDS):
         return "malformed_observation_wrapper"
 
     description_adapter = snapshot.get("description_adapter")
@@ -736,7 +752,7 @@ def _validate_freshness_and_isolation(
     # Compose project are eligible for the expanded comparison. The observed project prevents its own
     # prefix from being interpreted as a foreign policy resource.
     forbidden_resources = isolation_policy["forbidden_resource_ids"]
-    compose_project = snapshot["storage"]["compose_project"]["value"]
+    compose_project = snapshot["storage"]["compose_project"].get("value")
     forbidden_projects = tuple(_flatten_policy_values(forbidden_resources["compose_projects"]))
     for category, value in _observed_resource_values(snapshot):
         forbidden_values = tuple(_flatten_policy_values(forbidden_resources[category]))
@@ -827,7 +843,7 @@ def _validate_database_inventory(snapshot: Mapping[str, Any], aura_acceptance: b
     roles = _runtime_roles(snapshot, aura_acceptance)
     dimensions = [_field(record, "embedding_dimension")["value"] for record in roles]
     agreed_dimension = dimensions[0]
-    inventory = snapshot["database"]["vector_column_inventory"]["value"]
+    inventory = snapshot["database"]["vector_column_inventory"].get("value")
     if isinstance(inventory, (list, tuple)):
         for item in inventory:
             if not isinstance(item, Mapping):
@@ -963,7 +979,7 @@ def _validate_store_state(snapshot: Mapping[str, Any], contract: str = "baseline
     if not required_summary_fields.issubset(summary):
         return "embedding_provenance_unobserved"
 
-    inventory = database["vector_column_inventory"]["value"]
+    inventory = database["vector_column_inventory"].get("value")
     if not isinstance(inventory, (list, tuple)):
         return "embedding_provenance_unobserved"
     inventory_identities = {

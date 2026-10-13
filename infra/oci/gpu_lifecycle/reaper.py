@@ -243,7 +243,7 @@ class StopActuation:
     """
 
     outcome: StopOutcome
-    command_invoked: bool
+    command_invoked: bool | None
     final_state: str | None = None
     oci_response_request_id: str | None = None
     missing_reasons: tuple[tuple[str, str], ...] = ()
@@ -257,7 +257,7 @@ class LifecycleActionReceipt:
     instance_id: str
     reason_code: str
     outcome: StopOutcome
-    command_invoked: bool
+    command_invoked: bool | None
     consumed_load: tuple[ConsumedPublication, ...] = ()
     final_state: str | None = None
     oci_response_request_id: str | None = None
@@ -622,12 +622,18 @@ class OciCliStopActuator:
             request_id = None
             missing: tuple[tuple[str, str], ...] = (("oci_response_request_id", _RESPONSE_IDENTIFIER_UNVERIFIED),)
         else:
-            request_id = self._response_request_id_reader(stdout, stderr)
-            missing = (
-                ()
-                if request_id is not None
-                else (("oci_response_request_id", "action_response_carried_no_identifier"),)
-            )
+            try:
+                request_id = self._response_request_id_reader(stdout, stderr)
+            except Exception:
+                request_id = None
+                missing = (("oci_response_request_id", "action_response_reader_failed"),)
+                logger.warning("OCI STOP action response reader failed for %s", instance_id)
+            else:
+                missing = (
+                    ()
+                    if request_id is not None
+                    else (("oci_response_request_id", "action_response_carried_no_identifier"),)
+                )
         return StopActuation(
             outcome=StopOutcome.ISSUED,
             command_invoked=True,
@@ -2063,9 +2069,12 @@ def _normalise_stop_actuation(value: object) -> StopActuation:
     if isinstance(value, StopActuation):
         return value
     return StopActuation(
-        outcome=StopOutcome.ISSUED,
-        command_invoked=True,
-        missing_reasons=(("actuation_receipt", "actuator_returned_no_receipt"),),
+        outcome=StopOutcome.UNKNOWN,
+        command_invoked=None,
+        missing_reasons=(
+            ("actuation_receipt", "actuator_returned_no_receipt"),
+            ("command_invoked", "actuator_returned_no_receipt"),
+        ),
     )
 
 

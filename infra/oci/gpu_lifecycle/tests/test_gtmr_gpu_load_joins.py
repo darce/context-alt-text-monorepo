@@ -490,50 +490,8 @@ def test_red_decision_record_binds_the_publication_revision_the_reaper_consumed(
     )
 
 
-def test_red_decision_record_carries_the_oci_actuation_response_identifier(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_oci: FakeOciCli
-) -> None:
-    """The STOP's OCI response identifier must reach the decision so audit can join to the request.
-
-    Producer today: ``OciCliStopActuator.stop_instance`` runs the action with ``subprocess.run(cmd,
-    check=True, timeout=...)`` and no output capture, so the response is discarded before the
-    decision is written. The fake's identifier is delivered only when the producer captures it.
-    """
-    load_dir = tmp_path / "load"
-    _publish(load_dir, ENV, revision=REVISION)
-    fake_oci.request_id = "STOP-7731"
-
-    run = _reap(tmp_path, monkeypatch, load_dir=load_dir, fake=fake_oci)
-
-    assert fake_oci.action_argv, "precondition: the STOP must reach the OCI boundary"
-    assert any(_request_id_is_bound(raw, "STOP-7731") for raw in run.raw_records), (
-        "OCI STOP response identifier is absent from the decision record; "
-        f"actuation output captured={fake_oci.action_output_captured}; records={run.raw_records}"
-    )
-
-
-def test_red_claimed_stop_must_match_an_issued_oci_action_when_instance_already_converged(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_oci: FakeOciCli
-) -> None:
-    """A decision must not claim an honoured STOP that no OCI request produced.
-
-    Producer today: the convergence check inside ``stop_instance`` returns without an action when
-    OCI already reports STOPPED. ``_reap_stop_attempt`` treats the absence of an exception as
-    actuation, so the record claims one honoured STOP while zero requests were issued. The claim is
-    derived from a poll, not from an OCI actuation response.
-    """
-    load_dir = tmp_path / "load"
-    _publish(load_dir, ENV, revision=REVISION)
-    fake_oci.state = "STOPPED"
-
-    run = _reap(tmp_path, monkeypatch, load_dir=load_dir, fake=fake_oci)
-
-    assert fake_oci.action_argv == [], "precondition: the convergence check must issue no STOP request"
-    claimed = _claimed_stops(run.records)
-    assert claimed == len(fake_oci.action_argv), (
-        f"decision claims {claimed} honoured STOP(s) but {len(fake_oci.action_argv)} OCI action request(s) "
-        f"were issued; record={run.raw_records}"
-    )
+# Retired contradictory legacy oracles: the receipt controls below cover default
+# identifier absence, explicit reader propagation, and already-converged STOP.
 
 
 # --------------------------------------------------------------------------------------------

@@ -255,19 +255,74 @@ def test_process_restart_has_new_transport_identity_and_preserves_old_record(tmp
     assert {(r["process_instance_id"], r["observation_sequence"]) for r in records} == {("old-worker", 12), ("new-worker", 1)}
 
 
-def test_publisher_does_not_import_live_providers_or_construct_models():
+def assert_offline_provider_imports(source, package):
     import ast
-    assert (ROOT / "shared/face_role_snapshot.py").is_file(), "CAUSAL_RED: missing shared/face_role_snapshot.py (ABI-09/15)"
-    node = ast.parse((ROOT / "shared/face_role_snapshot.py").read_text())
-    imports = {alias.name for entry in ast.walk(node) if isinstance(entry, ast.Import)
-               for alias in entry.names}
+
+    node = ast.parse(source)
+    imports = set()
+    aliases = {}
     for entry in ast.walk(node):
-        if isinstance(entry, ast.ImportFrom) and entry.module:
-            imports.add(entry.module)
-            imports.update(entry.module + "." + alias.name for alias in entry.names)
-    forbidden = ('onnxruntime', 'cv2', 'recognition.infrastructure.face_pipeline', 'recognition.infrastructure.embeddings', 'recognition.application.embedding.runtime_factory', 'recognition.application.settings', 'config', 'shared.secrets', 'db', 'api', 'requests', 'httpx', 'urllib', 'socket', 'asyncpg', 'psycopg')
+        if isinstance(entry, ast.Import):
+            for alias in entry.names:
+                imports.add(alias.name)
+                aliases[alias.asname or alias.name.split('.')[0]] = (
+                    alias.name if alias.asname else alias.name.split('.')[0])
+        elif isinstance(entry, ast.ImportFrom):
+            module = importlib.util.resolve_name(
+                '.' * entry.level + (entry.module or ''), package) if entry.level else entry.module
+            if module:
+                imports.add(module)
+                for alias in entry.names:
+                    name = module + '.' + alias.name
+                    imports.add(name)
+                    aliases[alias.asname or alias.name] = name
+
+    def qualified(node):
+        if isinstance(node, ast.Name):
+            return aliases.get(node.id, node.id)
+        if isinstance(node, ast.Attribute):
+            return qualified(node.value) + '.' + node.attr
+        return ''
+
+    for entry in ast.walk(node):
+        if isinstance(entry, ast.Attribute):
+            imports.add(qualified(entry))
+    calls = set()
+    for entry in ast.walk(node):
+        if isinstance(entry, ast.Call):
+            name = qualified(entry.func)
+            calls.add(name.rsplit('.', 1)[-1])
+            imports.add(name)
+            if name in {'importlib.import_module', '__import__'} and entry.args:
+                target = entry.args[0]
+                if isinstance(target, ast.Constant) and isinstance(target.value, str):
+                    imports.add(importlib.util.resolve_name(target.value, package)
+                                if target.value.startswith('.') else target.value)
+    forbidden = (
+        'onnxruntime', 'cv2', 'recognition.infrastructure.face_pipeline',
+        'recognition.infrastructure.embeddings', 'recognition.infrastructure.embeddings.runtime_factory',
+        'recognition.application.settings', 'recognition.config',
+        'recognition.interface_adapters.http.deps.session', 'shared.secrets',
+        'db', 'api', 'requests', 'httpx', 'urllib', 'socket', 'asyncpg', 'psycopg',
+        'sqlalchemy.create_engine', 'sqlalchemy.engine.create_engine',
+        'sqlalchemy.engine.create.create_engine', 'sqlalchemy.engine_from_config',
+        'sqlalchemy.engine.engine_from_config', 'sqlalchemy.engine.create.engine_from_config',
+        'sqlalchemy.ext.asyncio.create_async_engine',
+        'sqlalchemy.ext.asyncio.engine.create_async_engine',
+        'sqlalchemy.ext.asyncio.async_engine_from_config',
+    )
     assert not {name for name in imports
-                if any(name == prefix or name.startswith(prefix + ".") for prefix in forbidden)}
+                if any(name == prefix or name.startswith(prefix + '.') for prefix in forbidden)}
+    assert not calls & {'get_shared_face_pipeline_runtime', 'build_embedding_runtime',
+                        'InferenceSession', 'get_observability_session', 'get_settings',
+                        'create_engine', 'create_async_engine', 'engine_from_config',
+                        'async_engine_from_config'}
+
+
+def test_publisher_does_not_import_live_providers_or_construct_models():
+    path = ROOT / "shared/face_role_snapshot.py"
+    assert path.is_file(), "CAUSAL_RED: missing shared/face_role_snapshot.py (offline provider guard)"
+    assert_offline_provider_imports(path.read_text(), "shared")
     producer()
 
 
@@ -420,3 +475,466 @@ def test_record_double_supports_attribute_protocol_and_copy():
     with pytest.raises(AttributeError):
         row.missing
     assert copy.deepcopy(row) == row
+
+
+def source_producer():
+    path = ROOT / 'shared/source_identity.py'
+    assert path.is_file(), 'CAUSAL_RED: missing shared/source_identity.py (ABI-11)'
+    return importlib.import_module('shared.source_identity')
+
+
+def identity_args():
+    return dict(source_identity_version=1, source_git_sha='1' * 40, source_tree='2' * 40,
+                build_context_manifest_sha256='3' * 64, service_lock_sha256='4' * 64,
+                image_variant='recognition', build_time='2026-01-01T00:00:00Z',
+                identity_document_sha256='5' * 64)
+
+
+def baked_document():
+    import hashlib
+    document = identity_args()
+    del document['identity_document_sha256']
+    digest = hashlib.sha256(json.dumps(document, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    return dict(document, identity_document_sha256=digest)
+
+
+def loader(module):
+    fn = getattr(module, 'load_baked_source_identity', None)
+    assert callable(fn), 'CAUSAL_RED: missing load_baked_source_identity (ABI-11)'
+    return fn
+
+
+def clear_source_environment(monkeypatch):
+    for name in ('GIT_COMMIT_SHA', 'APP_GIT_COMMIT_SHA', 'SOURCE_TREE',
+                 'BUILD_CONTEXT_MANIFEST_SHA256', 'SERVICE_LOCK_SHA256', 'IMAGE_VARIANT', 'BUILD_TIME'):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_source_loader_preserves_valid_document(tmp_path, monkeypatch):
+    module = source_producer()
+    clear_source_environment(monkeypatch)
+    path = tmp_path / 'identity.json'
+    document = baked_document()
+    path.write_text(json.dumps(document))
+    assert plain(loader(module)(path)) == document
+
+
+@pytest.mark.parametrize('fault', ['missing', 'malformed', 'array', 'extra', 'version',
+                                   'missing_tree', 'bad_digest', 'environment_conflict'])
+def test_source_loader_refuses_invalid_or_conflicting_document(tmp_path, monkeypatch, fault):
+    module = source_producer()
+    clear_source_environment(monkeypatch)
+    path = tmp_path / 'identity.json'
+    document = baked_document()
+    if fault == 'extra':
+        document['raw_environment'] = 'REJECTED_SENTINEL'
+    elif fault == 'version':
+        document['source_identity_version'] = True
+    elif fault == 'missing_tree':
+        del document['source_tree']
+    elif fault == 'bad_digest':
+        document['identity_document_sha256'] = '0' * 64
+    elif fault == 'environment_conflict':
+        monkeypatch.setenv('APP_GIT_COMMIT_SHA', '9' * 40)
+    if fault != 'missing':
+        path.write_text('{broken' if fault == 'malformed' else
+                        '[]' if fault == 'array' else json.dumps(document))
+    try:
+        result = loader(module)(path)
+    except (ValueError, TypeError, OSError):
+        return
+    assert result is None, 'invalid baked identity was accepted'
+
+
+@pytest.mark.parametrize('field,value', [
+    ('source_identity_version', 1.0), ('source_git_sha', 'z' * 40),
+    ('source_tree', '2' * 39), ('build_context_manifest_sha256', 'z' * 64),
+    ('service_lock_sha256', ''), ('identity_document_sha256', 'not-a-digest'),
+    ('image_variant', 'unknown'), ('build_time', 'not-a-time'),
+])
+def test_source_identity_constructor_guards(field, value):
+    module = source_producer()
+    options = identity_args()
+    options[field] = value
+    with pytest.raises((ValueError, TypeError)):
+        module.SourceIdentityV1(**options)
+
+
+def identity_writer(module):
+    fn = getattr(module, 'write_baked_source_identity', None)
+    assert callable(fn), 'CAUSAL_RED: missing write_baked_source_identity (ABI-11 writer seam)'
+    return fn
+
+
+def test_source_writer_round_trip_has_readonly_mode(tmp_path, monkeypatch):
+    module = source_producer()
+    clear_source_environment(monkeypatch)
+    path = tmp_path / 'identity.json'
+    options = identity_args()
+    del options['identity_document_sha256']
+    identity_writer(module)(path, **options)
+    assert path.stat().st_mode & 0o777 == 0o444
+    result = plain(loader(module)(path))
+    assert result is not None
+    assert {key: result[key] for key in options} == options
+    assert result['identity_document_sha256'] == baked_document()['identity_document_sha256']
+
+
+@pytest.mark.parametrize('fault', ['missing_tree', 'bad_lock', 'extra', 'symlink', 'replace_failure'])
+def test_source_writer_refuses_invalid_binding_and_preserves_previous(tmp_path, monkeypatch, fault):
+    module = source_producer()
+    options = identity_args()
+    del options['identity_document_sha256']
+    path = tmp_path / 'identity.json'
+    old = b'previous-baked-document'
+    target = tmp_path / 'target'
+    if fault == 'symlink':
+        target.write_bytes(old)
+        path.symlink_to(target)
+    else:
+        path.write_bytes(old)
+    if fault == 'missing_tree':
+        del options['source_tree']
+    elif fault == 'bad_lock':
+        options['service_lock_sha256'] = 'invalid'
+    elif fault == 'extra':
+        options['raw_environment'] = 'REJECTED_SENTINEL'
+    elif fault == 'replace_failure':
+        import os
+        def fail_replace(*args, **kwargs):
+            raise OSError('synthetic replacement refusal')
+        monkeypatch.setattr(os, 'replace', fail_replace)
+    try:
+        identity_writer(module)(path, **options)
+    except (ValueError, TypeError, OSError):
+        pass
+    else:
+        pytest.fail('invalid source publication was accepted')
+    assert path.read_bytes() == old
+    if fault == 'symlink':
+        assert path.is_symlink()
+        assert target.read_bytes() == old
+    assert {p.name for p in tmp_path.iterdir()} == ({'identity.json', 'target'} if fault == 'symlink' else {'identity.json'})
+
+
+def repair_inputs():
+    return dict(producer_abi_version=1, role='fix-blob-ownership', captured_at=NOW,
+                repair_invocation_id='repair-run', source_identity=source_producer().SourceIdentityV1(**identity_args()),
+                image_record=Record(role='fix-blob-ownership', registry_manifest_digest='sha256:' + '6' * 64,
+                                    digest_type='manifest', platform='linux/amd64',
+                                    image_config_digest='sha256:' + '7' * 64, identity_document_sha256='5' * 64),
+                collection_status='complete', reason_code=None)
+
+
+@pytest.mark.parametrize('fault', ['version', 'role', 'invocation', 'source', 'image_missing',
+    'image_extra', 'image_role', 'manifest_digest', 'digest_type', 'platform',
+    'config_digest', 'document_join', 'loaded_field', 'nested_loaded_field'])
+def test_repair_identity_guards_each_start_from_complete(fault):
+    module = producer()
+    cls = getattr(module, 'RepairIdentityRecordV1', None)
+    assert callable(cls), 'CAUSAL_RED: missing RepairIdentityRecordV1 (ABI-11)'
+    options = repair_inputs()
+    assert plain(cls(**options))['collection_status'] == 'complete'
+    if fault == 'version':
+        options['producer_abi_version'] = True
+    elif fault == 'role':
+        options['role'] = 'worker'
+        options['image_record']['role'] = 'worker'
+    elif fault == 'invocation':
+        options['repair_invocation_id'] = ''
+    elif fault == 'source':
+        options['source_identity'] = None
+    elif fault == 'image_missing':
+        options['image_record'] = None
+    elif fault == 'image_extra':
+        options['image_record']['uncontrolled'] = 'REJECTED_SENTINEL'
+    elif fault == 'image_role':
+        options['image_record']['role'] = 'api'
+    elif fault == 'manifest_digest':
+        options['image_record']['registry_manifest_digest'] = 'mutable-tag'
+    elif fault == 'digest_type':
+        options['image_record']['digest_type'] = 'config'
+    elif fault == 'platform':
+        options['image_record']['platform'] = ''
+    elif fault == 'config_digest':
+        options['image_record']['image_config_digest'] = 'mutable-tag'
+    elif fault == 'document_join':
+        options['image_record']['identity_document_sha256'] = '9' * 64
+    elif fault == 'loaded_field':
+        options['sessions'] = {}
+    elif fault == 'nested_loaded_field':
+        options['image_record']['metadata'] = {'sessions': {'yunet': {}}}
+    try:
+        result = plain(cls(**options))
+    except (ValueError, TypeError):
+        return
+    assert result['collection_status'] != 'complete'
+
+
+@pytest.mark.parametrize('fault', ['source', 'rows', 'catalog', 'catalog_status', 'catalog_role',
+    'catalog_process', 'origin', 'inactive', 'state', 'dimension', 'receipt_missing',
+    'receipt_completion', 'receipt_generation', 'detector_join', 'embedder_join',
+    'detector_generation', 'embedder_generation', 'sessions_missing', 'runtime_version'])
+def test_each_completion_conjunct_refuses_its_own_negative(fault):
+    module = producer()
+    options = complete_inputs()
+    assert plain(module.build_face_role_record(**options))['collection_status'] == 'complete'
+    row = options['adapter_observations'][0]
+    runtime = row['runtime_record']
+    if fault == 'source':
+        options['source_identity'] = None
+    elif fault == 'rows':
+        options['adapter_observations'] = ()
+    elif fault == 'catalog':
+        options['serving_catalog'] = None
+    elif fault.startswith('catalog_'):
+        options['serving_catalog'][{'catalog_status': 'status', 'catalog_role': 'role',
+                                   'catalog_process': 'process_instance_id'}[fault]] = 'contradictory'
+    elif fault == 'origin':
+        row['usage_origin'] = 'unregistered'
+    elif fault == 'inactive':
+        row['active'] = False
+    elif fault == 'state':
+        runtime['state'] = 'loaded_unexercised'
+    elif fault == 'dimension':
+        runtime['observed_embedding_dimension'] = None
+    elif fault == 'receipt_missing':
+        runtime['execution_receipt'] = None
+    elif fault == 'receipt_completion':
+        runtime['execution_receipt']['completion'] = 'incomplete'
+    elif fault == 'receipt_generation':
+        runtime['execution_receipt']['runtime_generation_id'] = 'other-generation'
+    elif fault in {'detector_join', 'embedder_join'}:
+        runtime['execution_receipt']['detector_session_id' if fault == 'detector_join' else 'embedder_session_id'] = 'other-session'
+    elif fault in {'detector_generation', 'embedder_generation'}:
+        runtime['sessions']['yunet' if fault == 'detector_generation' else 'auraface']['runtime_generation_id'] = 'other-generation'
+    elif fault == 'sessions_missing':
+        del runtime['sessions']['yunet']
+    elif fault == 'runtime_version':
+        runtime['producer_abi_version'] = 1.0
+    result = plain(module.build_face_role_record(**options))
+    assert result['collection_status'] == 'incomplete', fault
+
+
+@pytest.mark.parametrize('version', [None, 0, 2, True, '1', 1.0])
+def test_role_record_constructor_has_exact_version_guard(version):
+    module = producer()
+    raw = module.build_face_role_record(**inputs())
+    assert plain(raw)['producer_abi_version'] == 1
+    with pytest.raises((ValueError, TypeError)):
+        dataclasses.replace(raw, producer_abi_version=version)
+
+
+@pytest.mark.parametrize('process', ['../escape', 'nested/process', '/absolute', '..\\escape'])
+def test_role_record_constructor_rejects_traversal_before_any_writer(process):
+    module = producer()
+    raw = module.build_face_role_record(**inputs())
+    with pytest.raises((ValueError, TypeError)):
+        dataclasses.replace(raw, process_instance_id=process)
+    with pytest.raises((ValueError, TypeError)):
+        module.build_face_role_record(**inputs(process=process))
+
+
+@pytest.mark.parametrize('shape', ['mapping', 'list', 'tuple', 'dataclass'])
+def test_publisher_recursively_copies_caller_inputs_before_serialization(shape):
+    module = producer()
+    options = complete_inputs()
+    session = options['adapter_observations'][0]['runtime_record']['sessions']['yunet']
+    if shape == 'mapping':
+        value = {'nested': {'threads': 1}}
+        mutate = lambda: value['nested'].update(threads=9)
+    elif shape == 'list':
+        value = [{'threads': 1}]
+        mutate = lambda: value[0].update(threads=9)
+    elif shape == 'tuple':
+        value = ({'threads': 1},)
+        mutate = lambda: value[0].update(threads=9)
+    else:
+        @dataclasses.dataclass
+        class Options:
+            threads: int = 1
+        value = Options()
+        mutate = lambda: setattr(value, 'threads', 9)
+    session['actual_session_options'] = value
+    raw = module.build_face_role_record(**options)
+    before = plain(raw)
+    mutate()
+    assert plain(raw) == before
+
+
+def publication(module, record, directory, **changes):
+    options = dict(evidence_dir=directory, max_record_bytes=32768,
+                   deadline_monotonic=time.monotonic() + 2)
+    options.update(changes)
+    return module.write_face_role_record(record, **options)
+
+
+@pytest.mark.parametrize('fault', ['version', 'role', 'process', 'cap_bool', 'cap_float',
+                                   'cap_string', 'cap_zero', 'deadline_nan', 'deadline_inf'])
+def test_publication_revalidates_envelope_and_resource_guards(tmp_path, fault):
+    module = producer()
+    record = module.build_face_role_record(**inputs())
+    changes = {}
+    if fault in {'version', 'role', 'process'}:
+        object.__setattr__(record, {'version': 'producer_abi_version', 'role': 'role',
+                                  'process': 'process_instance_id'}[fault],
+                           {'version': True, 'role': 'repair', 'process': '..\\escape'}[fault])
+    else:
+        name = 'max_record_bytes' if fault.startswith('cap_') else 'deadline_monotonic'
+        changes[name] = {'cap_bool': True, 'cap_float': 32768.0, 'cap_string': '32768',
+                         'cap_zero': 0, 'deadline_nan': float('nan'), 'deadline_inf': float('inf')}[fault]
+    try:
+        result = plain(publication(module, record, tmp_path, **changes))
+    except (ValueError, TypeError, TimeoutError):
+        pass
+    else:
+        assert result['status'] != 'complete'
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_publication_expired_deadline_precedes_directory_or_serialization(tmp_path, monkeypatch):
+    module = producer()
+    record = module.build_face_role_record(**inputs())
+    def forbidden(*args, **kwargs):
+        pytest.fail('publication performed work before checking its expired deadline')
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, 'mkdir', forbidden)
+        patch.setattr(json, 'dumps', forbidden)
+        try:
+            result = plain(publication(module, record, tmp_path / 'evidence', deadline_monotonic=time.monotonic() - 1))
+        except (ValueError, TimeoutError):
+            pass
+        else:
+            assert result['status'] != 'complete'
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize('failure', ['replace', 'fsync'])
+def test_publication_is_atomic_and_cleans_temporary_file_on_failure(tmp_path, monkeypatch, failure):
+    import os
+    module = producer()
+    assert plain(publication(module, module.build_face_role_record(**inputs()), tmp_path))['status'] == 'complete'
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+    seen = []
+    original_replace = os.replace
+    def replace(source, destination):
+        assert {p.name: p.read_bytes() for p in tmp_path.iterdir() if p.name in before} == before
+        assert Path(source).stat().st_mode & 0o777 == 0o600
+        seen.append('replace')
+        if failure == 'replace':
+            raise OSError('synthetic replace failure')
+        original_replace(source, destination)
+    def fsync(fd):
+        seen.append('fsync')
+        if failure == 'fsync':
+            raise OSError('synthetic fsync failure')
+    with monkeypatch.context() as patch:
+        patch.setattr(os, 'replace', replace)
+        patch.setattr(os, 'fsync', fsync)
+        try:
+            result = plain(publication(module, module.build_face_role_record(**inputs(sequence=2)), tmp_path))
+        except OSError:
+            pass
+        else:
+            assert result['status'] != 'complete'
+    assert failure in seen
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before
+
+
+def test_pending_parent_git_commit_sha_alone_has_no_complete_identity(tmp_path, monkeypatch):
+    """PENDING_PARENT c79-face-g2-src-identity-r2; RLSE-08, no ENV backfill."""
+    module = source_producer()
+    clear_source_environment(monkeypatch)
+    monkeypatch.setenv('GIT_COMMIT_SHA', '1' * 40)
+    identity = loader(module)(tmp_path / 'missing-source-identity.json')
+    assert identity is None
+    publisher = producer()
+    options = complete_inputs()
+    assert plain(publisher.build_face_role_record(**options))['collection_status'] == 'complete'
+    options['source_identity'] = identity
+    assert plain(publisher.build_face_role_record(**options))['collection_status'] == 'incomplete'
+
+
+@pytest.mark.parametrize('captured_at', [None, '2026-01-01T00:00:00Z', 0, datetime(2026, 1, 1)])
+@pytest.mark.parametrize('subject', ['role', 'repair'])
+def test_pending_parent_invalid_capture_time_is_never_complete(subject, captured_at):
+    """PENDING_PARENT c79-face-g2-src-identity-r2; capture must be timezone-aware."""
+    module = producer()
+    options = complete_inputs() if subject == 'role' else repair_inputs()
+    constructor = module.build_face_role_record if subject == 'role' else module.RepairIdentityRecordV1
+    assert plain(constructor(**options))['collection_status'] == 'complete'
+    options['captured_at'] = captured_at
+    try:
+        result = plain(constructor(**options))
+    except (ValueError, TypeError):
+        return
+    assert result['collection_status'] != 'complete'
+
+
+@pytest.mark.parametrize("source", ['import recognition.config as forbidden',
+ 'from recognition.config import get_settings as forbidden',
+ 'import recognition.interface_adapters.http.deps.session as forbidden',
+ 'from recognition.interface_adapters.http.deps.session import '
+ 'get_observability_session as forbidden',
+ 'from sqlalchemy import create_engine as forbidden',
+ 'from sqlalchemy.ext.asyncio import create_async_engine as forbidden',
+ 'from sqlalchemy import engine_from_config as forbidden',
+ 'import sqlalchemy as sa\nfactory = sa.create_engine\nfactory()',
+ 'import sqlalchemy.ext.asyncio as sa\nfactory = sa.create_async_engine\nfactory()',
+ 'from .secrets import forbidden'])
+
+def test_provider_guard_detects_aliases_and_relative_imports(source):
+    with pytest.raises(AssertionError):
+        assert_offline_provider_imports(source, 'shared')
+
+
+@pytest.mark.parametrize('subject', ['role', 'repair'])
+def test_pending_parent_missing_capture_time_cannot_be_complete(subject):
+    """PENDING_PARENT c79-face-g2-src-identity-r2; no synthesized capture time."""
+    module = producer()
+    options = complete_inputs() if subject == 'role' else repair_inputs()
+    constructor = module.build_face_role_record if subject == 'role' else module.RepairIdentityRecordV1
+    assert plain(constructor(**options))['collection_status'] == 'complete'
+    del options['captured_at']
+    with pytest.raises((ValueError, TypeError)):
+        constructor(**options)
+
+
+@pytest.mark.parametrize('field,value', [('source_identity_version', True), ('source_tree', ''),
+    ('build_context_manifest_sha256', 'invalid'), ('service_lock_sha256', None)])
+@pytest.mark.parametrize('subject', ['role', 'repair'])
+def test_publishers_refuse_structural_source_with_invalid_binding(subject, field, value):
+    module = producer()
+    options = complete_inputs() if subject == 'role' else repair_inputs()
+    constructor = module.build_face_role_record if subject == 'role' else module.RepairIdentityRecordV1
+    assert plain(constructor(**options))['collection_status'] == 'complete'
+    source = Record(identity_args())
+    source[field] = value
+    options['source_identity'] = source
+    try:
+        result = plain(constructor(**options))
+    except (ValueError, TypeError):
+        return
+    assert result['collection_status'] != 'complete'
+
+
+def test_publication_deadline_expiring_during_fsync_keeps_previous_record(tmp_path, monkeypatch):
+    import os
+    module = producer()
+    assert plain(publication(module, module.build_face_role_record(**inputs()), tmp_path))['status'] == 'complete'
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+    record = module.build_face_role_record(**inputs(sequence=2))
+    clock = [time.monotonic()]
+    deadline = clock[0] + 1
+    def fsync(fd):
+        clock[0] = deadline + 1
+    with monkeypatch.context() as patch:
+        patch.setattr(time, 'monotonic', lambda: clock[0])
+        patch.setattr(os, 'fsync', fsync)
+        try:
+            result = plain(publication(module, record, tmp_path, deadline_monotonic=deadline))
+        except (ValueError, TimeoutError):
+            pass
+        else:
+            assert result['status'] != 'complete'
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before

@@ -25,7 +25,8 @@ image or runtime the process ran in. Collector and runtime provenance are verifi
 from __future__ import annotations
 
 import ipaddress
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+from urllib.parse import parse_qsl, urlsplit
 
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
@@ -48,6 +49,33 @@ _PROD_LABEL = "prod-auraface"
 _ENDPOINT_QUERY_KEYS = frozenset(
     {"user", "username", "database", "dbname", "host", "hostaddr", "port", "service", "servicefile", "options", "dsn"}
 )
+
+
+def has_connection_overrides(query_keys: Iterable[str]) -> bool:
+    """Identify query keys that can replace the effective connection target."""
+    return any(key.lower() in _ENDPOINT_QUERY_KEYS for key in query_keys)
+
+
+def dsn_host(dsn: str) -> str:
+    """Return the sole effective host, or raise a credential-free ValueError."""
+    if not isinstance(dsn, str) or not dsn:
+        raise ValueError("DSN is missing")
+    try:
+        url = make_url(dsn)
+        query_keys = [key for key, _ in parse_qsl(urlsplit(dsn).query, keep_blank_values=True)]
+    except (ArgumentError, ValueError):
+        raise ValueError("DSN is malformed") from None
+    if has_connection_overrides(query_keys):
+        raise ValueError("DSN query overrides the connection identity or endpoint")
+    host = (url.host or "").lower().rstrip(".")
+    if "," in host or any(character.isspace() for character in host):
+        raise ValueError("DSN host is malformed")
+    return host
+
+
+def is_local_host(host: str) -> bool:
+    """Apply the shared locality policy to a case-insensitive DNS host name."""
+    return _is_local_host(host.lower().rstrip("."))
 
 
 def validate_aura_target(
@@ -88,7 +116,7 @@ def _dsn_refusal(label: str, dsn: object) -> str | None:
     except (ArgumentError, ValueError):
         # No exception text: parser messages can echo fragments of the DSN, including its credential.
         return f"env={label}: DSN is malformed; refusing to run"
-    if any(key.lower() in _ENDPOINT_QUERY_KEYS for key in url.query):
+    if has_connection_overrides(url.query):
         return f"env={label}: DSN query overrides the connection identity or endpoint; refusing to run"
     if url.port is not None and not 1 <= url.port <= 65535:
         return f"env={label}: DSN port is malformed; refusing to run"

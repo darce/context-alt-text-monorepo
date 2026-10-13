@@ -377,6 +377,98 @@ def test_red_r03_redacted_inspect_overflow_obeys_byte_budget(captures, producer_
         assert len(persisted) == call["stdout"]["bytes_persisted"] <= call["max_bytes"]
 
 
+@pytest.mark.parametrize("fits_compact", [True, False], ids=["compact_rescue", "withheld_overflow"])
+def test_c82_m2_redaction_growth_preserves_custody(captures, producer_receipt, fits_compact):
+    doc = json.loads(captures._inspect_json())
+    doc[0]["Config"]["Env"] = ["A="]
+    doc[0]["Padding"] = ""
+    compact = lambda value: json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    budget = 1 << 20
+    margin = 64 if fits_compact else 1
+    doc[0]["Padding"] = "x" * (budget - margin - len(compact(doc)))
+    payload = compact(doc)
+    redacted = json.loads(payload)
+    redacted[0]["Config"]["Env"] = ["A=<redacted>"]
+    assert len(payload) <= budget < len(captures._collector()._dumps(redacted))
+    assert (len(compact(redacted)) <= budget) is fits_compact
+    raw = collect(captures, producer_receipt,
+                  overrides={captures.ARGV_INSPECT: [captures._done(captures.ARGV_INSPECT, payload)]})
+    for call in inspect_calls(raw):
+        persisted = raw["raw_artifacts"][call["stdout"]["relative_path"]]
+        assert call["stdout"]["bytes_received"] == len(payload) <= call["max_bytes"]
+        assert len(persisted) == call["stdout"]["bytes_persisted"] <= call["max_bytes"]
+        if fits_compact:
+            assert json.loads(persisted) == redacted, "M2: retained inspect must remain parseable"
+            assert call["truncated"] is False
+        else:
+            assert call["truncated"] is True, "M2: redaction growth must flag capture loss"
+            assert call["error"] == "truncated"
+            assert persisted == b""
+    if fits_compact:
+        assert_healthy(raw)
+    else:
+        assert raw["section"]["status"] == "incomplete"
+        assert "output_truncated" in {i["code"] for i in raw["section"]["missing_reasons"]}
+        assert observations(raw, "runtime_identity") == []
+
+
+@pytest.mark.parametrize("config_name", ["Config", "ContainerConfig"])
+def test_c82_l1_bare_env_is_redacted(captures, producer_receipt, config_name):
+    doc, canary = inspect_with_canary(captures)
+    doc[0]["Config"].pop("Env")
+    doc[0].setdefault(config_name, {})["Env"] = [canary.decode()]
+    raw = collect(captures, producer_receipt,
+                  overrides={captures.ARGV_INSPECT: [captures._done(captures.ARGV_INSPECT, json.dumps(doc).encode())]})
+    assert_canary_excluded(raw, canary)
+    assert_healthy(raw)
+    for call in inspect_calls(raw):
+        persisted = json.loads(raw["raw_artifacts"][call["stdout"]["relative_path"]])
+        assert persisted[0][config_name]["Env"] == ["<redacted>"]
+
+
+@pytest.mark.parametrize("shape", ["dict", "unparseable"], ids=["escaped_nonlist", "escaped_unparseable"])
+def test_c82_l1_escaped_env_document_is_withheld(captures, producer_receipt, shape):
+    doc, canary = inspect_with_canary(captures)
+    payload = json.dumps(doc[0]).encode().replace(b'"Env"', b'"\\u0045nv"')
+    if shape == "unparseable":
+        payload = payload[:-1]
+    assert b"Env" not in payload
+    raw = collect(captures, producer_receipt,
+                  overrides={captures.ARGV_INSPECT: [captures._done(captures.ARGV_INSPECT, payload)]})
+    assert_canary_excluded(raw, canary)
+    assert raw["section"]["status"] == "incomplete"
+    assert all(raw["raw_artifacts"][c["stdout"]["relative_path"]] == b"" for c in inspect_calls(raw))
+
+
+def test_c82_l2_in_interval_undeclared_clock_is_incomplete(captures, producer_receipt):
+    raw = collect(captures, producer_receipt, clock_skew_bound_s=None)
+    assert raw["section"]["status"] == "incomplete", "L2: cross-host clock relationship is undeclared"
+    assert raw["section"]["contradictions"] == []
+    assert "clock_relationship_undeclared" in {i["code"] for i in raw["section"]["missing_reasons"]}
+    assert observations(raw, "inference") == []
+
+
+def test_c82_l4_out_of_bound_is_completion_ambiguity(captures, producer_receipt):
+    completion = shifted_timestamp(captures, producer_receipt["finished_at"], CLOCK_SKEW_BOUND_S + 0.5)
+    raw = collect(captures, producer_receipt, completion=completion)
+    issues = raw["section"]["contradictions"]
+    assert [i["code"] for i in issues] == ["completion_ambiguous"], "L4: timing is not an ID collision"
+    assert "clock bound" in issues[0]["detail"]
+    assert observations(raw, "inference") == []
+
+
+def test_c82_l4_logs_stderr_overflow_uses_common_gate(captures, producer_receipt):
+    logs = captures._logs(captures.LOG_BUILD, captures.LOG_OFFLOAD_GPU, captures.LOG_COMPLETION)
+    raw = collect(captures, producer_receipt,
+                  overrides={captures.ARGV_LOGS: [captures._done(captures.ARGV_LOGS, logs, stderr=b"x" * 65537)]})
+    assert raw["section"]["status"] == "incomplete"
+    issues = [i for i in raw["section"]["missing_reasons"] if i["code"] == "output_truncated"]
+    assert [i["field"] for i in issues] == ["logs"]
+    # L4: a duplicate post-gate check is unreachable; pin its removal as well as the common gate.
+    import inspect
+    assert "len(logs.stderr)" not in inspect.getsource(captures._collector()._capture_logs)
+
+
 def inspect_stderr(f, size):
     return {f.ARGV_INSPECT: [f._done(f.ARGV_INSPECT, f._inspect_json(), stderr=b"x" * size)]}
 

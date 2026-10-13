@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import importlib.util
+import re
 import sys
 import time
 from pathlib import Path
@@ -17,11 +18,19 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 
 
+@pytest.fixture(autouse=True)
+def isolated_import_state(monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT))
+    for name in ("shared", "shared.source_identity", "shared.face_role_snapshot",
+                 "recognition.application.face_acceptance_catalog"):
+        # Register absent keys too, so transitive imports are removed on teardown.
+        monkeypatch.setitem(sys.modules, name, None)
+        monkeypatch.delitem(sys.modules, name)
+
+
 def capture():
     path = ROOT / "recognition/application/face_acceptance_catalog.py"
     assert path.is_file(), "CAUSAL_RED: missing face_acceptance_catalog.py (ABI-13)"
-    if str(ROOT) not in sys.path:
-        sys.path.insert(0, str(ROOT))
     spec = importlib.util.spec_from_file_location("recognition.application.face_acceptance_catalog", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -44,7 +53,11 @@ def plain(value):
 
 
 class Record(dict):
-    __getattr__ = dict.__getitem__
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(name) from None
 
 
 class Result:
@@ -78,21 +91,42 @@ class ServingSession:
         self.rollbacks = 0
         self.columns = columns
         self.width = width
+        self.query_started = False
+        self.query_completed = False
+        self.query_cancelled = False
+        self.never_ready = asyncio.Event()
 
     async def execute(self, statement, *args, **kwargs):
         sql = str(statement).lower()
         self.calls.append(sql)
         if self.failure == "timeout":
-            await asyncio.sleep(1)
-            raise AssertionError("capture did not bound the query")
+            self.query_started = True
+            try:
+                await self.never_ready.wait()
+                self.query_completed = True
+            except asyncio.CancelledError:
+                self.query_cancelled = True
+                raise
         if self.failure == "permission":
-            raise PermissionError("REJECTED_EXCEPTION_SENTINEL")
+            from sqlalchemy.exc import DBAPIError
+
+            class InsufficientPrivilege(Exception):
+                sqlstate = "42501"
+                pgcode = "42501"
+
+            raise DBAPIError("synthetic statement", {}, InsufficientPrivilege("REJECTED_EXCEPTION_SENTINEL"))
         if "pg_attribute" in sql:
-            return Result([Record(schema_name="recognition", table_name=f"table_{i}",
+            rows = [Record(schema_name="recognition", table_name=f"table_{i}",
                                   column_name="embedding", dimensions=self.width,
                                   type_name="vector" if i != 3 else "vector_domain",
-                                  relkind="r" if i != 3 else "m")
-                           for i in range(self.columns)])
+                                  relkind="m" if i == 3 else "p" if i == 2 else "r")
+                    for i in range(self.columns)]
+            # Interpret the deliberate fixed-table SQL mutant rather than ignoring its WHERE.
+            fixed_tables = re.search(r"\b(?:relname|table_name)\s+in\s*\(([^)]*)\)", sql)
+            if fixed_tables:
+                allowed = set(re.findall(r"'([^']+)'", fixed_tables.group(1)))
+                rows = [row for row in rows if row["table_name"] in allowed]
+            return Result(rows)
         if "current_database" in sql:
             return Result([Record(database_name="synthetic_store", current_database="synthetic_store",
                                   current_user="serving_role", session_user="serving_role",
@@ -102,11 +136,6 @@ class ServingSession:
 
     async def rollback(self):
         self.rollbacks += 1
-
-
-class ForbiddenObservabilitySession:
-    async def execute(self, *args, **kwargs):
-        raise AssertionError("observability session used in place of serving session")
 
 
 def args(deadline=None, max_rows=64):
@@ -141,21 +170,44 @@ def test_census_discovers_fourth_column_domain_and_materialized_view():
     result = run(fn, session)
     catalog_sql = " ".join(session.calls)
     assert all(name in catalog_sql for name in ("pg_attribute", "pg_class", "pg_namespace", "pg_type"))
+    assert re.search(r"(?:\b\w+\.typbasetype\s*=\s*\w+\.oid\b|"
+                     r"\b\w+\.oid\s*=\s*\w+\.typbasetype\b)", catalog_sql), "domain base-type join missing"
+    relation_kinds = re.search(r"\brelkind\s*(?:in\s*\(([^)]*)\)|=\s*any\s*\(([^)]*)\))", catalog_sql)
+    assert relation_kinds, "relation census must include ordinary, partitioned and materialized relations"
+    assert {"r", "p", "m"} <= set(re.findall(r"'([^']+)'", relation_kinds.group(0)))
+    columns = result["columns"]
+    assert {column["table_name"] for column in columns} == {f"table_{i}" for i in range(4)}
     assert "table_3" in repr(result), "three named health columns cannot be the full census"
 
 
 def test_wrong_vector_width_is_observed_without_backfilling_expected_width():
     fn = capture()
     result = run(fn, ServingSession(width=128))
-    assert "128" in repr(result)
-    assert "512" not in repr(result), "expected Aura width must not replace observed width"
+    columns = result["columns"]
+    assert len(columns) == 4
+    assert all(column["dimensions"] == 128 for column in columns), "expected Aura width must not replace observed width"
 
 
 @pytest.mark.parametrize("failure", ["permission", "timeout"])
 def test_query_failure_is_sanitized_incomplete_and_rolls_back(failure):
     fn = capture()
     session = ServingSession(failure=failure)
-    result = run(fn, session, deadline=time.monotonic() + 0.02)
+    async def bounded_capture():
+        started = time.monotonic()
+        # This outer bound stops a broken producer; the inner deadline is the producer's contract.
+        try:
+            result = await asyncio.wait_for(fn(session, **args(deadline=started + 0.02)), timeout=0.5)
+        except TimeoutError:
+            pytest.fail("producer did not finish within its catalog deadline")
+        elapsed = time.monotonic() - started
+        assert elapsed < 0.25, "outer watchdog cannot substitute for the producer deadline"
+        return plain(result)
+
+    result = asyncio.run(bounded_capture())
+    if failure == "timeout":
+        assert session.query_started
+        assert not session.query_completed
+        assert session.query_cancelled
     assert session.rollbacks >= 1
     assert "REJECTED_EXCEPTION_SENTINEL" not in repr(result)
     assert "incomplete" in repr(result) or "failed" in repr(result)
@@ -209,9 +261,25 @@ def test_same_database_names_on_distinct_instances_keep_distinct_binding():
 
 def test_catalog_module_cannot_reconstruct_or_substitute_serving_connection():
     import ast
-    capture()
+    assert (ROOT / "recognition/application/face_acceptance_catalog.py").is_file(), "CAUSAL_RED: missing face_acceptance_catalog.py (ABI-13)"
     node = ast.parse((ROOT / "recognition/application/face_acceptance_catalog.py").read_text())
-    calls = {n.func.attr if isinstance(n.func, ast.Attribute) else n.func.id
-             for n in ast.walk(node) if isinstance(n, ast.Call)
-             and isinstance(n.func, (ast.Name, ast.Attribute))}
-    assert not calls & {"create_engine", "create_async_engine", "get_observability_session", "get_settings"}
+    imports = {alias.name for entry in ast.walk(node) if isinstance(entry, ast.Import)
+               for alias in entry.names}
+    for entry in ast.walk(node):
+        if isinstance(entry, ast.ImportFrom) and entry.module:
+            imports.add(entry.module)
+            imports.update(entry.module + "." + alias.name for alias in entry.names)
+    forbidden = ('onnxruntime', 'cv2', 'recognition.infrastructure.face_pipeline', 'recognition.infrastructure.embeddings', 'recognition.application.embedding.runtime_factory', 'recognition.application.settings', 'config', 'shared.secrets', 'db', 'api', 'requests', 'httpx', 'urllib', 'socket', 'asyncpg', 'psycopg')
+    assert not {name for name in imports
+                if any(name == prefix or name.startswith(prefix + ".") for prefix in forbidden)}
+    capture()
+
+
+def test_record_double_supports_attribute_protocol_and_copy():
+    import copy
+    row = Record(nested=Record(value=1))
+    assert not hasattr(row, "missing")
+    assert getattr(row, "missing", None) is None
+    with pytest.raises(AttributeError):
+        row.missing
+    assert copy.deepcopy(row) == row

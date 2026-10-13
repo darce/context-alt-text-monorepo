@@ -391,6 +391,11 @@ def _roles(snapshot: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
     return tuple(by_name[name] for name in ROLE_NAMES)
 
 
+def _runtime_roles(snapshot: Mapping[str, Any], aura_acceptance: bool = False) -> tuple[Mapping[str, Any], ...]:
+    roles = _roles(snapshot)
+    return tuple(record for record in roles if record["role"] in {"api", "worker"}) if aura_acceptance else roles
+
+
 def _field(record: Mapping[str, Any], field_name: str) -> Mapping[str, Any]:
     value = record[field_name]
     if not isinstance(value, Mapping):
@@ -490,6 +495,8 @@ def _resource_is_forbidden(
 def _non_database_provenance_is_declared(snapshot: Mapping[str, Any], roles: tuple[Mapping[str, Any], ...]) -> bool:
     for record in roles:
         for field_name in ROLE_FIELDS:
+            if field_name not in record:
+                continue  # The schema admits only explicit Aura identity-only repair records here.
             path = f"observations[*].{field_name}"
             if _field(record, field_name).get("provenance") not in OBSERVATION_METHODS[path]:
                 return True
@@ -584,6 +591,8 @@ def _validate_schema(
     freshness_policy: Any,
     isolation_policy: Any,
     now: Any,
+    aura_acceptance: bool = False,
+    allow_missing_store_evidence: bool = False,
 ) -> str | None:
     """Validate the JSON boundary before any contract rung reads a field."""
 
@@ -612,9 +621,13 @@ def _validate_schema(
         if role in observed_roles:
             return "duplicate_role_observation"
         observed_roles.append(role)
-        if set(record) != expected_role_keys:
+        identity_only = aura_acceptance and role == "fix-blob-ownership" and set(record) == {
+            "role", "image_digest", "source_git_sha"
+        }
+        if not identity_only and set(record) != expected_role_keys:
             return "snapshot_schema_invalid"
-        if any(not _is_wrapper(record[field_name]) for field_name in ROLE_FIELDS):
+        fields = ("image_digest", "source_git_sha") if identity_only else ROLE_FIELDS
+        if any(not _is_wrapper(record[field_name]) for field_name in fields):
             return "malformed_observation_wrapper"
     if set(observed_roles) != set(ROLE_NAMES):
         return "unknown_role_observation"
@@ -645,7 +658,13 @@ def _validate_schema(
         return "malformed_observation_wrapper"
     for field_name in DATABASE_EVIDENCE_FIELDS:
         if field_name in database and not _is_wrapper(database[field_name]):
-            return "malformed_observation_wrapper"
+            wrapper = database[field_name]
+            missing_store_wrapper = (
+                allow_missing_store_evidence and isinstance(wrapper, Mapping)
+                and set(wrapper) < {"value", "provenance"}
+            )
+            if not missing_store_wrapper:
+                return "malformed_observation_wrapper"
 
     storage = snapshot.get("storage")
     if not isinstance(storage, Mapping) or set(storage) != set(STORAGE_FIELDS):
@@ -680,10 +699,10 @@ def _validate_schema(
     return None
 
 
-def _validate_secret_and_model_ids(snapshot: Mapping[str, Any]) -> str | None:
+def _validate_secret_and_model_ids(snapshot: Mapping[str, Any], aura_acceptance: bool = False) -> str | None:
     if _contains_secret_shaped(snapshot):
         return "secret_shaped_input"
-    roles = _roles(snapshot)
+    roles = _runtime_roles(snapshot, aura_acceptance)
     if any(not _model_id_is_parseable(_field(record, "model_id")["value"]) for record in roles):
         return "unparseable_model_id"
     return None
@@ -746,9 +765,9 @@ def _model_id_has_unresolved_space_marker(value: str, *, expected_prefix: str) -
     return parsed is not None and parsed[0] == expected_prefix
 
 
-def _validate_runtime_contract(snapshot: Mapping[str, Any], contract: str = "baseline128") -> str | None:
+def _validate_runtime_contract(snapshot: Mapping[str, Any], contract: str = "baseline128", aura_acceptance: bool = False) -> str | None:
     expected = _selected_contract(contract)
-    roles = _roles(snapshot)
+    roles = _runtime_roles(snapshot, aura_acceptance)
 
     if any(_field(record, "auth_enabled")["value"] is not True for record in roles):
         return "auth_disabled"
@@ -763,7 +782,7 @@ def _validate_runtime_contract(snapshot: Mapping[str, Any], contract: str = "bas
     if description_adapter["serving_profile"]["value"] != "remote_self_hosted":
         return "description_adapter_unverified_model"
 
-    image_digests = [_field(record, "image_digest")["value"] for record in roles]
+    image_digests = [_field(record, "image_digest")["value"] for record in _roles(snapshot)]
     if any(value != image_digests[0] for value in image_digests[1:]):
         return "role_image_digest_mismatch"
     if any(not isinstance(value, str) or _SHA256_DIGEST.fullmatch(value) is None for value in image_digests):
@@ -804,8 +823,8 @@ def _validate_runtime_contract(snapshot: Mapping[str, Any], contract: str = "bas
     return None
 
 
-def _validate_database_inventory(snapshot: Mapping[str, Any]) -> str | None:
-    roles = _roles(snapshot)
+def _validate_database_inventory(snapshot: Mapping[str, Any], aura_acceptance: bool = False) -> str | None:
+    roles = _runtime_roles(snapshot, aura_acceptance)
     dimensions = [_field(record, "embedding_dimension")["value"] for record in roles]
     agreed_dimension = dimensions[0]
     inventory = snapshot["database"]["vector_column_inventory"]["value"]
@@ -819,10 +838,24 @@ def _validate_database_inventory(snapshot: Mapping[str, Any]) -> str | None:
     return None
 
 
-def _validate_model_assets(snapshot: Mapping[str, Any], contract: str = "baseline128") -> str | None:
+def _validate_model_assets(snapshot: Mapping[str, Any], contract: str = "baseline128", aura_acceptance: bool = False) -> str | None:
     expected_hashes = _selected_contract(contract)["asset_hashes"]
-    roles = _roles(snapshot)
+    roles = _runtime_roles(snapshot, aura_acceptance)
     hash_values = [_field(record, "loaded_weight_hashes")["value"] for record in roles]
+    if aura_acceptance:
+        # Compare every present digest before selecting a missing-observation reason.
+        present = [value for value in hash_values if isinstance(value, Mapping)]
+        for value in present:
+            if any(not isinstance(digest, str) or _SHA256_DIGEST.fullmatch(digest) is None
+                   for digest in value.values()):
+                return "malformed_loaded_weight_hash"
+        for name in expected_hashes:
+            digests = {value[name] for value in present if name in value}
+            if len(digests) > 1:
+                return "role_loaded_weight_hash_mismatch"
+        if any(value[name] != digest for value in present
+               for name, digest in expected_hashes.items() if name in value):
+            return "model_asset_hash_unexpected"
     if any(isinstance(value, Mapping) and not value for value in hash_values):
         return "missing_loaded_weight_hashes"
     for value in hash_values:
@@ -994,9 +1027,12 @@ def validate_snapshot(
     isolation_policy: Mapping[str, Any],
     now: Any,
     contract: str = "baseline128",
+    aura_acceptance: bool = False,
 ) -> Mapping[str, Any]:
     """Validate a snapshot and return status, reason, and a redacted report."""
 
+    if aura_acceptance and contract != "candidate512":
+        raise ValueError("Aura acceptance requires candidate512")
     report = _build_report(snapshot, freshness_policy, isolation_policy, now)
 
     reason = _validate_schema(
@@ -1004,6 +1040,8 @@ def validate_snapshot(
         freshness_policy=freshness_policy,
         isolation_policy=isolation_policy,
         now=now,
+        aura_acceptance=aura_acceptance,
+        allow_missing_store_evidence=aura_acceptance,
     )
     if reason is not None:
         detail = (
@@ -1014,24 +1052,28 @@ def validate_snapshot(
         return _outcome(reason, report, detail=detail)
 
     ordered_checks = (
-        lambda: _validate_secret_and_model_ids(snapshot),
+        lambda: _validate_secret_and_model_ids(snapshot, aura_acceptance),
         lambda: _validate_freshness_and_isolation(
             snapshot,
             freshness_policy=freshness_policy,
             isolation_policy=isolation_policy,
             now=now,
         ),
-        lambda: _validate_runtime_contract(snapshot, contract),
-        lambda: _validate_database_inventory(snapshot),
-        lambda: _validate_model_assets(snapshot, contract),
+        lambda: _validate_runtime_contract(snapshot, contract, aura_acceptance),
+        lambda: _validate_database_inventory(snapshot, aura_acceptance),
+        lambda: _validate_model_assets(snapshot, contract, aura_acceptance),
         lambda: _validate_provenance(snapshot),
         lambda: _validate_store_state(snapshot, contract),
     )
+    incomplete_reason = None
     for check in ordered_checks:
         reason = check()
         if reason is not None:
+            if aura_acceptance and reason in _INCOMPLETE_REASON_CODES:
+                incomplete_reason = incomplete_reason or reason
+                continue
             return _outcome(reason, report)
-    return _outcome("ready", report)
+    return _outcome(incomplete_reason or "ready", report)
 
 
 def _load_json(path: Path) -> Any:

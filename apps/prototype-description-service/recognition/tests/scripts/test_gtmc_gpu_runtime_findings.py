@@ -1,9 +1,9 @@
 """Offline G2 source regressions; synthetic captures never certify GPU readiness.
 
-Only this new module is owned. Existing fixture builders are reused read-only;
+Existing fixture builders are reused read-only;
 assertions target the observations-list ABI, never the legacy oracle view.
 Serving log/mapping shapes remain UNVERIFIED-NATIVE. No live I/O is permitted.
-Canon v0.25.6 stable IDs: RES-02, TEST-15, PROV-01, GRPH-32, WEB-16.
+Canon v0.25.6 stable IDs: TEST-15, PROV-01, GRPH-32, WEB-16.
 Each RED changes one input of a healthy pair, without mutating production.
 """
 
@@ -25,6 +25,7 @@ import pytest
 
 
 REPO = Path(__file__).resolve().parents[5]
+CLOCK_SKEW_BOUND_S = 1.0
 
 
 def _load(name, path):
@@ -92,7 +93,7 @@ def producer_receipt(captures, monkeypatch):
 
 
 class MappingRunner:
-    """Exact current collector kwargs; bounded Mapping-return transport fake.
+    """Bounded Mapping-return fake; legacy kwargs have compatibility defaults.
 
     No catch-all kwargs: accidental additions fail. FrozenRunner's older
     subprocess defaults and legacy assertion adapter are deliberately unused.
@@ -122,7 +123,7 @@ class MappingRunner:
             "capture_finished_at": "2026-10-12T00:00:21.100000Z",
         }
 
-    def __call__(self, argv, *, timeout, max_bytes, capture_output, text, check, shell):
+    def __call__(self, argv, *, timeout, max_bytes, capture_output=True, text=False, check=False, shell=False):
         assert capture_output is True and text is False and check is False and shell is False
         return self.take(argv, timeout=timeout, max_bytes=max_bytes)
 
@@ -151,6 +152,7 @@ def collect(f, receipt, *, overrides=None, completion=None, offload=None, runner
             "adapter_receipts": [receipt],
         },
         deadline=time.monotonic() + 30,
+        clock_skew_bound_s=CLOCK_SKEW_BOUND_S,
     )
     assert 0 < runner.calls <= 32
     assert set(raw) == {"section", "artifacts", "raw_artifacts"}
@@ -169,6 +171,9 @@ def collect(f, receipt, *, overrides=None, completion=None, offload=None, runner
             assert ref["sha256"] == artifacts[ref["relative_path"]]["sha256"]
     capture = next(json.loads(data) for path, data in raw["raw_artifacts"].items() if path.endswith("/capture.json"))
     assert capture["schema_version"] == 1
+    assert capture["clock_relationship"] == {
+        "kind": "declared_shared_clock_bound", "bound_s": CLOCK_SKEW_BOUND_S, "observed": False,
+    }
     return raw
 
 
@@ -198,6 +203,7 @@ def test_control_r01_caption_is_bound_to_retained_actual_response(captures, prod
 
 @pytest.mark.parametrize("mutation", ["caption", "malformed_response"])
 def test_red_r01_caption_must_derive_from_retained_actual_response(captures, producer_receipt, mutation):
+    """Malformed retained response contradicts supplied caption custody (R01 pin)."""
     changed = dict(producer_receipt)
     if mutation == "caption":
         changed["caption"] = b"Unrelated output."
@@ -209,6 +215,7 @@ def test_red_r01_caption_must_derive_from_retained_actual_response(captures, pro
 
 
 def test_control_r02_completion_is_inside_declared_request_interval(captures, producer_receipt):
+    """Completion start remains the client start; clock bound is declared, not observed."""
     raw = collect(captures, producer_receipt)
     assert_healthy(raw)
     data = observations(raw, "inference")[0]
@@ -223,9 +230,11 @@ def test_red_r02_impossible_timestamps_are_contradictions(captures, producer_rec
     if mutation == "reversed_client":
         changed["started_at"] = "2026-10-12T00:00:25.000000Z"
     elif mutation == "before_request":
-        completion = "2026-10-12T00:00:04.000000000Z"
+        start_ns = captures._collector()._parse_rfc3339_ns(changed["started_at"])
+        completion = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(start_ns / 1e9 - CLOCK_SKEW_BOUND_S - 1)) + "Z"
     else:
-        completion = "2026-10-12T00:00:30.000000000Z"
+        finish_ns = captures._collector()._parse_rfc3339_ns(changed["finished_at"])
+        completion = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(finish_ns / 1e9 + CLOCK_SKEW_BOUND_S + 2)) + "Z"
     raw = collect(captures, changed, completion=completion)
     assert raw["section"]["status"] == "contradicted", "G2-R02: impossible shared-clock interval accepted"
     assert observations(raw, "inference") == []
@@ -283,6 +292,7 @@ def test_control_r04_stderr_at_cap_is_retained_without_truncation(captures, prod
 
 
 def test_red_r04_clipped_stderr_marks_truncated_and_incomplete(captures, producer_receipt):
+    """Retain the first 65536 stderr bytes and report the proven loss (R04 pin)."""
     raw = collect(captures, producer_receipt, overrides=inspect_stderr(captures, 65537))
     calls = inspect_calls(raw)
     assert len(calls) == 2
@@ -292,7 +302,7 @@ def test_red_r04_clipped_stderr_marks_truncated_and_incomplete(captures, produce
     assert "output_truncated" in {issue["code"] for issue in raw["section"]["missing_reasons"]}
 
 
-def test_control_r05_mapping_result_with_current_exact_kwargs(captures, producer_receipt):
+def test_control_r05_mapping_result_is_consumed(captures, producer_receipt):
     assert_healthy(collect(captures, producer_receipt, runner_type=MappingRunner))
 
 

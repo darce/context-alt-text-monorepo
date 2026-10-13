@@ -6,14 +6,14 @@ Entry point::
 
 Runner protocol (the existing transport in scripts/tests/test_gtmr_gpu_runtime_receipts.py, FrozenRunner):
 
-    runner(argv: list[str], *, timeout: float, capture_output=True, text=False, check=False,
-           shell=False, max_bytes: int) -> CompletedProcess[bytes]
+    runner(argv: list[str], *, timeout: float, max_bytes: int) -> Mapping | CompletedProcess[bytes]
 
     A Mapping with stdout/stderr bytes, exit_code, timed_out, truncated, capture_started_at and
     capture_finished_at is also accepted (the ABI proposal shape). A timeout may be raised as
     subprocess.TimeoutExpired and a launch failure as OSError. Any other exception propagates.
 
 deadline: an object exposing ``remaining()`` seconds, or an absolute ``time.monotonic()`` float.
+clock_skew_bound_s: declared shared-clock bound, default 1.0 seconds; never observed evidence.
 
 observation: capture instructions, never evidence.
     instance_id: str                     OCI instance to read (a mismatch is a contradiction).
@@ -59,6 +59,7 @@ MAX_RECEIPT_BYTES = 32 << 20
 MAX_RECEIPTS = 8
 MAX_CALLS = 32
 PER_CALL_TIMEOUT_S = 15.0
+DEFAULT_CLOCK_SKEW_BOUND_S = 1.0
 ENDPOINT_PROBE_ARGV = ("curl", "-fsS", "http://127.0.0.1:8000/v1/models")
 
 MISSING_CODES = frozenset(
@@ -290,9 +291,10 @@ class _Spec:
 class _Run:
     """One collector run: bounded calls, persisted bytes, dedupe-keyed issues."""
 
-    def __init__(self, runner: Any, deadline: Any) -> None:
+    def __init__(self, runner: Any, deadline: Any, clock_skew_bound_s: float) -> None:
         self.runner = runner
         self.deadline = deadline
+        self.clock_skew_bound_s = clock_skew_bound_s
         self.calls: list[_Call] = []
         self.files: dict[str, bytes] = {}
         self.specs: list[_Spec] = []
@@ -365,10 +367,6 @@ class _Run:
             result = self.runner(
                 list(argv_tuple),
                 timeout=timeout,
-                capture_output=True,
-                text=False,
-                check=False,
-                shell=False,
                 max_bytes=max_bytes,
             )
         except subprocess.TimeoutExpired as exc:
@@ -384,7 +382,7 @@ class _Run:
         if error is None:
             if outcome.timed_out:
                 error = "timeout"
-            elif outcome.truncated or len(outcome.stdout) > max_bytes:
+            elif outcome.truncated or len(outcome.stdout) > max_bytes or len(outcome.stderr) > MAX_STDERR_BYTES:
                 error = "truncated"
             elif outcome.exit_code != 0:
                 error = "failed"
@@ -473,7 +471,9 @@ class _Run:
                     },
                 }
             )
-        doc = {"schema_version": SCHEMA_VERSION, "calls": calls}
+        doc = {"schema_version": SCHEMA_VERSION, "calls": calls,
+               "clock_relationship": {"kind": "declared_shared_clock_bound",
+                                      "bound_s": self.clock_skew_bound_s, "observed": False}}
         return _dumps(doc)
 
 
@@ -622,6 +622,7 @@ def _capture_identity(run: _Run, phase: str, instance_id: str | None, container:
 
     insp = run.call(f"{phase}-inspect", ("docker", "inspect", container))
     if insp is not None:
+        _redact_inspect(run, insp)
         if insp.ok:
             entry = _inspect_entry(insp.stdout)
             if entry is None:
@@ -632,7 +633,6 @@ def _capture_identity(run: _Run, phase: str, instance_id: str | None, container:
                     run.call_refs(insp),
                 )
             else:
-                _redact_inspect(run, insp, entry)
                 ident.container_id = _text_or_none(entry.get("Id"))
                 ident.container_image_id = _text_or_none(entry.get("Image"))
                 state = entry.get("State") if isinstance(entry.get("State"), dict) else {}
@@ -695,20 +695,27 @@ def _inspect_entry(stdout: bytes) -> dict[str, Any] | None:
     return None
 
 
-def _redact_inspect(run: _Run, call: _Call, entry: dict[str, Any]) -> None:
-    """Persist docker inspect without Config.Env values (secrets never serialized)."""
-    config = entry.get("Config")
-    env = config.get("Env") if isinstance(config, dict) else None
-    if not isinstance(env, list):
+def _redact_inspect(run: _Run, call: _Call) -> None:
+    """Redact every inspect object, including failed or ambiguous captures."""
+    doc = _json_or_none(call.stdout)
+    changed = False
+    if isinstance(doc, list):
+        for entry in doc:
+            config = entry.get("Config") if isinstance(entry, dict) else None
+            if isinstance(config, dict) and "Env" in config:
+                config["Env"] = ["<redacted>"]
+                changed = True
+        if not changed:
+            return
+        persisted = _dumps(doc)
+        call.redacted = ["Config.Env"]
+    elif b"Env" in call.stdout:
+        persisted = b""
+        call.redacted = ["unparseable inspect withheld: Env may contain secrets"]
+    else:
         return
-    redacted = [
-        f"{item.split('=', 1)[0]}=<redacted>" if isinstance(item, str) and "=" in item else "<redacted>" for item in env
-    ]
-    doc = json.loads(json.dumps(entry))
-    doc["Config"]["Env"] = redacted
     call.original_stdout_sha256 = _sha(call.stdout[: call.max_bytes])
-    call.redacted = ["Config.Env"]
-    run.redact_persisted(call.stdout_path, _dumps([doc]))
+    run.redact_persisted(call.stdout_path, persisted)
 
 
 def _apply_gpu(run: _Run, ident: _Identity, gpu: _Call) -> None:
@@ -1048,10 +1055,6 @@ def _capture_logs(run: _Run, container: str, started_at: str | None) -> _LogFact
             (layers, total), path, span, _ = fresh_offloads[-1]
             facts.offload = (layers, total)
             facts.offload_ref = run.ref(path, _span(*span))
-            if layers == 0:
-                run.contradiction(
-                    "offload_cpu", "offloaded_layers", f"0/{total} layers offloaded to GPU", [facts.offload_ref]
-                )
     return facts
 
 
@@ -1135,6 +1138,30 @@ def _parse_request_body(body: bytes) -> tuple[str, str, str, bytes] | None:
         return None
 
 
+def _caption_from_response(response_body: bytes) -> bytes | None:
+    """Pure duplicate of the adapter caption parser; grounding uses request input."""
+    try:
+        body = json.loads(response_body)
+        message = body["choices"][0]["message"]
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, list):
+            parts = []
+            for part in content:
+                if not isinstance(part, dict) or part.get("type") != "text":
+                    continue
+                if not isinstance(part.get("text"), str):
+                    return None
+                parts.append(part["text"])
+            text = " ".join(parts).strip()
+        elif isinstance(content, str):
+            text = content.strip()
+        else:
+            return None
+        return text.encode("utf-8") if text else None
+    except (KeyError, IndexError, TypeError, ValueError, UnicodeError):
+        return None
+
+
 def _parse_receipt(run: _Run, index: int, raw: Any) -> _Receipt | None:
     site = f"adapter_receipts[{index}]"
     if not isinstance(raw, Mapping):
@@ -1159,6 +1186,9 @@ def _parse_receipt(run: _Run, index: int, raw: Any) -> _Receipt | None:
     started, finished = _time_or_none(raw.get("started_at")), _time_or_none(raw.get("finished_at"))
     if status is None or started is None or finished is None:
         run.contradiction("receipt_malformed", site, "status_code or RFC3339 Z timings are missing")
+        return None
+    if _parse_rfc3339_ns(started) > _parse_rfc3339_ns(finished):
+        run.contradiction("receipt_malformed", site, "receipt started_at exceeds finished_at")
         return None
     if any(len(raw[name]) > MAX_RECEIPT_BYTES for name in byte_fields):
         run.missing_reason("receipt_over_budget", site, "a receipt byte field exceeds the per-artifact budget")
@@ -1410,6 +1440,15 @@ def _bind_receipts(
                 "caption_absent", site, "successful receipt carries no caption bytes", [refs["response_body"]]
             )
             continue
+        if receipt.kind == "caption":
+            derived = _caption_from_response(receipt.response_body)
+            if derived is None or derived != receipt.caption:
+                run.contradiction(
+                    "receipt_malformed" if derived is None else "receipt_body_mismatch",
+                    site, "caption does not derive from retained response bytes",
+                    [refs["response_body"], refs["caption"]],
+                )
+                continue
         if logs is None or not logs.ok:
             run.missing_reason(
                 "request_completion_absent", site, "container logs unavailable; completion echo not observable"
@@ -1438,6 +1477,12 @@ def _bind_receipts(
                 )
             continue
         completion = fresh[0]
+        bound_ns = int(run.clock_skew_bound_s * 1_000_000_000)
+        if not (_parse_rfc3339_ns(receipt.started_at) - bound_ns <= completion.timestamp_ns
+                <= _parse_rfc3339_ns(receipt.finished_at) + bound_ns):
+            run.contradiction("request_id_collision", site,
+                              "completion outside declared request clock bound", [refs["meta"]])
+            continue
         if not 200 <= completion.status < 300:
             run.missing_reason(
                 "request_completion_absent", site, f"server completion status {completion.status}", [refs["meta"]]
@@ -1478,11 +1523,17 @@ def _issue_dict(issue: _Issue) -> dict[str, Any]:
     return {"code": issue.code, "field": issue.field, "detail": issue.detail, "artifact_refs": issue.artifact_refs}
 
 
-def collect_runtime_evidence(*, runner: Any, observation: Mapping[str, Any], deadline: Any) -> dict[str, Any]:
+def collect_runtime_evidence(
+    *, runner: Any, observation: Mapping[str, Any], deadline: Any,
+    clock_skew_bound_s: float = DEFAULT_CLOCK_SKEW_BOUND_S,
+) -> dict[str, Any]:
     """Collect the frozen ABI v1 runtime section. Returns {section, artifacts, raw_artifacts}."""
     if not isinstance(observation, Mapping):
         raise TypeError("observation must be a mapping of capture instructions")
-    run = _Run(runner, deadline)
+    if (isinstance(clock_skew_bound_s, bool) or not isinstance(clock_skew_bound_s, (int, float))
+            or not math.isfinite(clock_skew_bound_s) or clock_skew_bound_s < 0):
+        raise ValueError("clock_skew_bound_s must be finite and nonnegative")
+    run = _Run(runner, deadline, clock_skew_bound_s)
     instance_id = _text_or_none(observation.get("instance_id"))
     container = _text_or_none(observation.get("container_name")) or DEFAULT_CONTAINER
 

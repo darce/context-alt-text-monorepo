@@ -10,6 +10,7 @@ import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import StrEnum
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -1219,8 +1220,60 @@ def _strict_detection_inputs(
     return strict_inputs
 
 
+def _utf8_safe(text: str) -> str:
+    """Return text UTF-8 can encode; lone surrogates from Linux paths become visible escapes."""
+    return text.encode("utf-8", "backslashreplace").decode("utf-8")
+
+
+def _refusal_html(code: str, error: Exception) -> str:
+    return (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Scoring refused</title></head>"
+        f"<body><h1>Scoring refused</h1><p>{LICENSE_BANNER}</p>"
+        f"<p>{escape(_utf8_safe(str(code)))}: {escape(_utf8_safe(str(error)))}</p></body></html>"
+    )
+
+
+def _publish_score_refusal(root: Path, error: Exception) -> None:
+    """Replace both score artifacts without disturbing available diagnostics.
+
+    Each artifact is attempted independently. Every publication failure is attached to the
+    original scorer exception as a note; this function never replaces or re-raises it.
+    """
+    score_dir = root / "score"
+    code = error.code if isinstance(error, BenchError) else type(error).__name__
+    try:
+        score_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as publication_error:  # contained: both writers are still attempted below
+        error.add_note(f"Score refusal publication failed: {publication_error}")
+    header = {
+        "error_code": code,
+        "license_banner": LICENSE_BANNER,
+        "pr_cells_emitted": False,
+        "cells": [],
+    }
+    publications = (
+        (score_dir / "frames.json", lambda: json.dumps(header, indent=2)),
+        (score_dir / "report.html", lambda: _refusal_html(code, error)),
+    )
+    for artifact, render in publications:
+        try:
+            artifact.write_text(render(), encoding="utf-8")
+        except Exception as publication_error:  # contained; the other writer is still attempted
+            error.add_note(f"Score refusal publication failed: {publication_error}")
+
+
 def score_head_to_head(run_dir: Path | str) -> Path:
     root = Path(run_dir)
+    try:
+        return _score_head_to_head(root)
+    except Exception as error:
+        # Include failures before accepted-set publication (e.g. export hashes)
+        # and after it, while preserving the original exception and gate order.
+        _publish_score_refusal(root, error)
+        raise
+
+
+def _score_head_to_head(root: Path) -> Path:
     manifest = _load_manifest_from_run(root)
     pair = _load_pair(root)
     stacks = _declared_stack_ids(root, pair)
@@ -1257,13 +1310,6 @@ def score_head_to_head(run_dir: Path | str) -> Path:
     if len(one_sided_counts) == 2:
         skew = abs(one_sided_counts[0] - one_sided_counts[1]) / max(1, accepted.manifest_entry_count)
         if skew > pair.max_differential_attrition:
-            header = {
-                "error_code": "differential_attrition_exceeded",
-                "license_banner": LICENSE_BANNER,
-                "pr_cells_emitted": False,
-                "cells": [],
-            }
-            (root / "score" / "frames.json").write_text(json.dumps(header, indent=2), encoding="utf-8")
             raise BenchError("differential_attrition_exceeded", "one-sided attrition exceeds max_differential_attrition")
 
     accepted_entries = [e for e in manifest.entries if e.media_id in set(accepted.manifest_media_ids)]
@@ -1301,6 +1347,21 @@ def score_head_to_head(run_dir: Path | str) -> Path:
     for stack_id in stacks:
         export = load_leg_exports(root, stack_id)
         join = accepted.join_by_stack.get(stack_id, {})
+        # Full-manifest scoring restores pipeline failures as end-to-end
+        # misses, but a successful analyze still requires a measured query.
+        # Failed or absent queries cannot establish an empty detection result.
+        identity_results = _media_identity_results_by_id(export.media_identity_results)
+        for entry in manifest.entries:
+            info = join.get(entry.media_id)
+            if info is not None and not _media_identity_query_succeeded(
+                identity_results, info.get("stack_media_id")
+            ):
+                raise BenchError(
+                    "identity_query_unknown",
+                    f"{stack_id} manifest media_id={entry.media_id} "
+                    f"stack_media_id={info.get('stack_media_id')} has a failed or missing "
+                    "identity query; refusing detection and identification metrics",
+                )
         accepted_manifest = _subset_manifest(manifest, accepted_entries)
         detection_manifest = _subset_manifest(manifest, detection_entries)
         detection_mode = _detection_score_mode(detection_manifest, manifest)

@@ -155,7 +155,11 @@ APP_BYPASS_SQL = "SELECT current_setting('app.bypass_rls', true)"
 TENANT_CLAIM_SQL = "SELECT current_setting('app.current_tenant', true)"
 RUN_SQL = "SELECT r.id, r.tenant_id, r.operation_id FROM image_description_runs r WHERE r.id = %(run_id)s::uuid"
 ROLE_SQL = "SELECT r.rolsuper, r.rolbypassrls FROM pg_roles r WHERE r.rolname = current_user"
-ROLE_MEMBERSHIP_SQL = "SELECT r.rolname, pg_has_role(current_user, r.oid, 'USAGE') FROM pg_roles r"
+ROLE_MEMBERSHIP_SQL = (
+    "SELECT r.rolname, pg_has_role(current_user, r.oid, 'USAGE') FROM pg_roles r "
+    "WHERE r.rolname IN (SELECT unnest(p.roles) FROM pg_policies p "
+    "WHERE p.schemaname = current_schema() AND p.tablename = ANY(%(tables)s))"
+)
 EXTENSION_SQL = "SELECT e.extname, e.extversion FROM pg_extension e WHERE e.extname = 'vector'"
 VECTOR_SQL = (
     "SELECT n.nspname, c.relname, a.attname, t.typname, a.atttypmod FROM pg_attribute a "
@@ -498,6 +502,71 @@ def _query(
                 DEADLINE_EXHAUSTED, f"query.{capture.label}.{query_id}", "deadline exhausted before statement", ref=ref
             )
         rows = capture.session.query(sql, dict(params))
+        finished = _now()
+        if _remaining(deadline) <= 0:
+            capture.queries.append(
+                _record(query_id, sql, params, columns, types, started, finished, outcome="deadline_exhausted")
+            )
+            raise _HaltError(
+                DEADLINE_EXHAUSTED, f"query.{capture.label}.{query_id}", "deadline exhausted after query", ref=ref
+            )
+        materialized = []
+        acquired_bytes = capture.acquired_bytes
+        for row in rows:
+            values = list(row)
+            if columns and len(values) != len(columns):
+                capture.queries.append(
+                    _record(query_id, sql, params, columns, types, started, _now(), outcome="error")
+                )
+                raise _HaltError(
+                    PROBE_REJECTED, f"query.{capture.label}.{query_id}", "probe row arity differs from contract", ref=ref
+                )
+            converted = _jsonable(values)
+            # iterencode avoids constructing a complete serialized receipt before the byte bound.
+            for chunk in json.JSONEncoder(ensure_ascii=False).iterencode(converted):
+                acquired_bytes += len(chunk.encode("utf-8"))
+                if acquired_bytes > MAX_RECEIPT_BYTES:
+                    capture.queries.append(
+                        _record(query_id, sql, params, columns, types, started, finished, outcome="byte_budget_exceeded")
+                    )
+                    findings.miss(
+                        BYTE_BUDGET_EXCEEDED, f"query.{capture.label}.{query_id}", "acquisition byte budget exceeded", ref
+                    )
+                    return None
+            materialized.append(converted)
+            if len(materialized) > MAX_ROWS_PER_QUERY:
+                break
+            if _remaining(deadline) <= 0:
+                raise _HaltError(
+                    DEADLINE_EXHAUSTED,
+                    f"query.{capture.label}.{query_id}",
+                    "deadline exhausted during acquisition",
+                    ref=ref,
+                )
+        if len(materialized) > MAX_ROWS_PER_QUERY:
+            capture.queries.append(
+                _record(query_id, sql, params, columns, types, started, finished, outcome="row_budget_exceeded")
+            )
+            findings.miss(
+                ROW_BUDGET_EXCEEDED,
+                f"query.{capture.label}.{query_id}",
+                f"{len(materialized)} rows exceed the {MAX_ROWS_PER_QUERY}-row budget; the result is not used",
+                ref,
+            )
+            return None
+        record = _record(query_id, sql, params, columns, types, started, finished, outcome="ok", rows=materialized)
+        capture.acquired_bytes += sum(
+            len(c.encode("utf-8")) for c in json.JSONEncoder(ensure_ascii=False).iterencode(record)
+        )
+        if capture.acquired_bytes > MAX_RECEIPT_BYTES:
+            findings.miss(
+                BYTE_BUDGET_EXCEEDED, f"query.{capture.label}.{query_id}", "receipt acquisition budget exceeded", ref
+            )
+            record = _record(query_id, sql, params, columns, types, started, finished, outcome="byte_budget_exceeded")
+            capture.queries.append(record)
+            return None
+        capture.queries.append(record)
+        return materialized
     except _HaltError:
         raise
     except Exception as exc:  # noqa: BLE001 - classified by SQLSTATE; the message is not copied
@@ -539,63 +608,6 @@ def _query(
                 PROBE_REJECTED, where, "the target engine rejected a catalog probe; capture stopped", ref=ref
             )
         raise _HaltError(DRIVER_ERROR, where, f"driver error {type(exc).__name__}; capture stopped", ref=ref)
-    finished = _now()
-    if _remaining(deadline) <= 0:
-        capture.queries.append(
-            _record(query_id, sql, params, columns, types, started, finished, outcome="deadline_exhausted")
-        )
-        raise _HaltError(
-            DEADLINE_EXHAUSTED, f"query.{capture.label}.{query_id}", "deadline exhausted after query", ref=ref
-        )
-    materialized = []
-    acquired_bytes = capture.acquired_bytes
-    for row in rows:
-        converted = _jsonable(list(row))
-        # iterencode avoids constructing a complete serialized receipt before the byte bound.
-        for chunk in json.JSONEncoder(ensure_ascii=False).iterencode(converted):
-            acquired_bytes += len(chunk.encode("utf-8"))
-            if acquired_bytes > MAX_RECEIPT_BYTES:
-                capture.queries.append(
-                    _record(query_id, sql, params, columns, types, started, finished, outcome="byte_budget_exceeded")
-                )
-                findings.miss(
-                    BYTE_BUDGET_EXCEEDED, f"query.{capture.label}.{query_id}", "acquisition byte budget exceeded", ref
-                )
-                return None
-        materialized.append(converted)
-        if len(materialized) > MAX_ROWS_PER_QUERY:
-            break
-        if _remaining(deadline) <= 0:
-            raise _HaltError(
-                DEADLINE_EXHAUSTED,
-                f"query.{capture.label}.{query_id}",
-                "deadline exhausted during acquisition",
-                ref=ref,
-            )
-    if len(materialized) > MAX_ROWS_PER_QUERY:
-        capture.queries.append(
-            _record(query_id, sql, params, columns, types, started, finished, outcome="row_budget_exceeded")
-        )
-        findings.miss(
-            ROW_BUDGET_EXCEEDED,
-            f"query.{capture.label}.{query_id}",
-            f"{len(materialized)} rows exceed the {MAX_ROWS_PER_QUERY}-row budget; the result is not used",
-            ref,
-        )
-        return None
-    record = _record(query_id, sql, params, columns, types, started, finished, outcome="ok", rows=materialized)
-    capture.acquired_bytes += sum(
-        len(c.encode("utf-8")) for c in json.JSONEncoder(ensure_ascii=False).iterencode(record)
-    )
-    if capture.acquired_bytes > MAX_RECEIPT_BYTES:
-        findings.miss(
-            BYTE_BUDGET_EXCEEDED, f"query.{capture.label}.{query_id}", "receipt acquisition budget exceeded", ref
-        )
-        record = _record(query_id, sql, params, columns, types, started, finished, outcome="byte_budget_exceeded")
-        capture.queries.append(record)
-        return None
-    capture.queries.append(record)
-    return materialized
 
 
 def _begin(capture: _Capture, deadline: Any, findings: _Findings) -> None:
@@ -674,7 +686,7 @@ def _observe(
         findings,
         "role-membership",
         ROLE_MEMBERSHIP_SQL,
-        {},
+        {"tables": list(RLS_TABLES)},
         ("role", "usable"),
         ("name", "bool"),
     )
@@ -1198,7 +1210,12 @@ def _catalog_observation(primary: _Capture, sel: dict[str, Any], findings: _Find
             for key in ("qual", "with_check"):
                 if key == "with_check" and policy["command"] == "SELECT":
                     continue
-                norm = _normalize_policy(policy[key])
+                value = policy[key]
+                if key == "with_check" and value is None:
+                    value = policy["qual"]
+                norm = _normalize_policy(value)
+                if policy["permissive"] is False and norm == "true":
+                    continue
                 field = f"catalog.rls.{table}.policies.{policy['name']}.{key}"
                 if policy["permissive"] and norm in ("true", ""):
                     findings.contradict(
@@ -1264,13 +1281,18 @@ def _visibility(capture: _Capture, sel: dict[str, Any], findings: _Findings) -> 
             "run_row_not_visible", f"visibility.{label}.run", "native run link not visible", (label, "run-own")
         )
     elif run[:2] != [sel["run_id"], sel["tenant_id"]] or (
-        "operation_id" in sel and run[2] != sel["operation_id"]
+        "operation_id" in sel and run[2] is not None and run[2] != sel["operation_id"]
     ):
         findings.contradict(
             "run_operation_mismatch",
             f"visibility.{label}.operation_id",
             "native run link differs from selection",
             (label, "run-own"),
+        )
+    if run is not None and run[2] is None:
+        findings.miss(
+            "run_row_not_visible", f"visibility.{label}.operation_id",
+            "native run operation link is absent", (label, "run-own")
         )
     request_digest = demand_own[0][1] if demand_own else None
     if "operation_id" in sel and not demand_own:

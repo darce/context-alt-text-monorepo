@@ -223,6 +223,76 @@ def _qual_true(qual: str, row_tenant: str, session_tenant: str | None, bypass: b
     return False  # unrecognised policy semantics fail closed in the fake
 
 
+def _sql_predicate(expression: str, values: dict[str, Any]) -> bool:
+    """Small semantic evaluator for catalog join predicates; unknown syntax is a fixture error.
+
+    AND binds before OR. Equalities, IN, parentheses and regclass casts suffice for
+    the catalog contract and equivalent rewrites. No SQL is executed.
+    """
+    tokens = re.findall(r"'[^']*'|::|[a-z_][a-z_0-9.]*|[=(),]", expression.lower())
+    at = 0
+    def operand():
+        nonlocal at
+        token = tokens[at]
+        at += 1
+        value = token[1:-1] if token.startswith("'") else values.get(token, token == "true")
+        if at < len(tokens) and tokens[at] == "::":
+            at += 2
+        return value
+    def atom():
+        nonlocal at
+        if tokens[at] == "(":
+            at += 1
+            result = disjunction()
+            assert tokens[at] == ")"
+            at += 1
+            return result
+        left = operand()
+        if at < len(tokens) and tokens[at] == "=":
+            at += 1
+            return left == operand()
+        if at < len(tokens) and tokens[at] == "in":
+            at += 1
+            assert tokens[at] == "("
+            at += 1
+            choices = [operand()]
+            while tokens[at] == ",":
+                at += 1
+                choices.append(operand())
+            assert tokens[at] == ")"
+            at += 1
+            return left in choices
+        return left is True
+    def conjunction():
+        nonlocal at
+        result = atom()
+        while at < len(tokens) and tokens[at] == "and":
+            at += 1
+            other = atom()
+            result = result and other
+        return result
+    def disjunction():
+        nonlocal at
+        result = conjunction()
+        while at < len(tokens) and tokens[at] == "or":
+            at += 1
+            other = conjunction()
+            result = result or other
+        return result
+    result = disjunction()
+    assert at == len(tokens), (expression, tokens[at:])
+    return result
+
+
+def _catalog_join_matches(sql: str, row: tuple, type_oid: int) -> bool:
+    values = {"d.objid": row[3], "a.atttypid": type_oid, "t.oid": type_oid,
+              "d.deptype": row[4], "d.classid": row[5], "d.refclassid": row[6],
+              "d.refobjid": 42, "e.oid": 42, "e.extname": row[2]}
+    joins = re.findall(r"JOIN\s+(pg_depend|pg_extension)\s+\w+\s+ON\s+(.*?)(?=\s+JOIN|\s+WHERE|$)",
+                       sql, re.I)
+    return all(_sql_predicate(predicate, values) for _, predicate in joins)
+
+
 class FakeCluster:
     def __init__(self, *, budget_s: float = 600.0) -> None:
         self.clock = FakeClock()
@@ -364,9 +434,11 @@ class FakeSession:
                 if r["run_id"] == params.get("run_id")
             ]
         if "FROM pg_index" in sql:
-            return cl.indexes
+            # Model the selected validity value, so replacing the measured field with true is visible.
+            projection = sql.split("FROM", 1)[0].lower()
+            return [(*row[:4], row[4] if "i.indisvalid" in projection else True, *row[5:]) for row in cl.indexes]
         if "FROM pg_type" in sql and "pg_depend" in sql:
-            return [row[:3] for row in cl.extension_types]
+            return [row[:3] for row in cl.extension_types if _catalog_join_matches(sql, row, row[3])]
         if sql == COL.IDENTITY_SQL:
             return [
                 (
@@ -384,25 +456,20 @@ class FakeSession:
         if sql == COL.ROLE_SQL:
             return [(bool(ident["rolsuper"]), bool(ident["rolbypassrls"]))]
         if sql == COL.ROLE_MEMBERSHIP_SQL:
-            if "pg_has_role(current_user, r.oid, 'USAGE')" not in sql:
-                raise FakeSqlError("role applicability probe must observe inherited privileges")
-            return list(cl.role_usage.items())
+            probe = re.search(r"pg_has_role\s*\(\s*current_user\s*,\s*r.oid\s*,\s*'([^']+)'\s*\)", sql, re.I)
+            assert probe, "unsupported membership expression"
+            usage = cl.role_usage if probe[1].upper() == "USAGE" else {ROLE: True, "reader_group": False}
+            names = set(usage)
+            if re.search(r"WHERE\s+r.rolname\s+IN", sql, re.I):
+                names &= {r for t in params["tables"] for p in cl.policies[t] for r in p["roles"] or []}
+            return [(role, usage[role]) for role in usage if role in names]
         if sql == COL.EXTENSION_SQL:
             return [("vector", cl.extension_version)] if cl.extension_installed else []
         if sql == COL.VECTOR_SQL:
-            bound = "JOIN pg_depend d ON d.objid = a.atttypid" in sql
-            owned = {
-                row[3]
-                for row in cl.extension_types
-                if ("AND e.extname = 'vector'" not in sql or row[2] == "vector")
-                and ("AND d.deptype = 'e'" not in sql or row[4] == "e")
-                and ("AND d.classid = 'pg_type'::regclass" not in sql or row[5] == "pg_type")
-                and ("AND d.refclassid = 'pg_extension'::regclass" not in sql or row[6] == "pg_extension")
-            }
             return [
                 (ident["schema"], t, c, "vector", m)
                 for (t, c), m in cl.vector_typmods.items()
-                if not bound or cl.vector_type_oids[t, c] in owned
+                if any(_catalog_join_matches(sql, row, cl.vector_type_oids[t, c]) for row in cl.extension_types)
             ]
         if sql == COL.RLS_SQL:
             return [(t, True, True) for t in params.get("tables", []) if t in cl.policies]
@@ -1182,17 +1249,54 @@ def _assert_abi_envelope(result: Mapping[str, Any]) -> None:
         assert isinstance(issue["code"], str) and isinstance(issue["field"], str) and isinstance(issue["detail"], str)
         for ref in issue["artifact_refs"]:
             assert set(ref) == ABI_REF_KEYS
-    # Frozen ABI: every null measurement needs a missing reason in the same section, scoped to its connection
-    # (or to the catalog). A null without a reason is an unexplained gap that G1 must not accept.
-    missing_fields = [issue["field"] for issue in section["missing_reasons"]]
+    # F8: exact field/code pairs, never substring or unrelated catalog coverage.
+    missing = {(i["field"], i["code"]) for i in section["missing_reasons"]}
+    contradictions = {(i["field"], i["code"]) for i in section["contradictions"]}
     for obs in section["observations"]:
-        nulls = [key for key, value in obs["data"].items() if value is None]
-        if nulls:
-            scope = obs["data"].get("connection_id")
-            assert any(scope in name or name.startswith("catalog.") for name in missing_fields), (
-                obs["observation_id"],
-                nulls,
-            )
+        data = obs["data"]
+        label = data["connection_id"]
+        for key, value in data.items():
+            if value is not None:
+                continue
+            allowed = set()
+            if obs["kind"] == "connection":
+                field = f"connection.{label}.{key}"
+                codes = {"tenant_context": COL.TENANT_CONTEXT_NOT_SELECTED,
+                         "app_bypass_rls": COL.APP_BYPASS_UNPROBED}
+                allowed.add((field, codes.get(key, COL.PROBE_NOT_RUN)))
+                if key == "rolbypassrls":
+                    allowed.add((f"connection.{label}.rolsuper", COL.PROBE_NOT_RUN))
+            elif obs["kind"] == "catalog" and key == "extension_version":
+                allowed.add(("catalog.extension_version", COL.VECTOR_EXTENSION_ABSENT))
+            elif obs["kind"] == "visibility":
+                root = f"visibility.{label}"
+                media = f"{root}.{data['media_id']}"
+                if key in ("tenant_id", "run_id", "operation_id"):
+                    allowed.add((f"{root}.run", "run_row_not_visible"))
+                    if key == "operation_id":
+                        allowed.add((f"{root}.operation_id", "run_row_not_visible"))
+                elif key == "first_counting_revision":
+                    allowed.add((f"{media}.{key}", COL.FIRST_REVISION_UNPERSISTED))
+                elif key == "request_digest":
+                    allowed |= {(f"{root}.operation_id", COL.DEMAND_ROW_NOT_VISIBLE),
+                                (f"{root}.operation_id", COL.OPERATION_ID_NOT_SELECTED)}
+                    # A malformed observed digest is intentionally scrubbed to null.
+                    if (f"{root}.request_digest", COL.REQUEST_DIGEST_MALFORMED) in contradictions:
+                        continue
+                elif key in ("caption_sha256", "result_generation"):
+                    allowed.add((media, COL.OUTPUT_ROW_NOT_VISIBLE))
+                    if key == "caption_sha256":
+                        allowed.add((f"{media}.{key}", COL.CAPTION_SHA256_UNAVAILABLE))
+                elif key == "own_demand_rows":
+                    allowed.add((f"{root}.operation_id", COL.OPERATION_ID_NOT_SELECTED))
+                elif key == "foreign_demand_rows":
+                    allowed.add((f"{root}.foreign_operation_id", COL.FOREIGN_OPERATION_ID_NOT_SELECTED))
+            assert allowed & missing, (obs["observation_id"], key, allowed)
+        if obs["kind"] == "catalog":
+            for vector in data["vectors"]:
+                if vector["embedding_models"] is None:
+                    field = f"catalog.vectors.{vector['table']}.{vector['column']}.embedding_models"
+                    assert (field, COL.EMBEDDING_MODELS_UNAVAILABLE) in missing
     # Contradictions take precedence over missing reasons.
     if section["contradictions"]:
         assert section["status"] == "contradicted"
@@ -1459,3 +1563,219 @@ def test_r80_f4_column_must_use_extension_owned_type_oid(rogue: str) -> None:
         issue["code"] == COL.VECTOR_COLUMN_ABSENT and issue["field"] == f"catalog.vectors.{pair[0]}.{pair[1]}"
         for issue in result["section"]["missing_reasons"]
     )
+
+
+# c82 bundled lows: causal source regressions and private-mutant oracle controls.
+@pytest.mark.parametrize("sqlstate", ["57014", "XX000"])
+def test_c82_lazy_fetch_error_is_classified_and_skips_refresh(sqlstate, monkeypatch):
+    cluster = FakeCluster()
+    query = FakeSession.query
+    def lazy(session, sql, params):
+        if sql == COL.OUTPUT_SQL:
+            session.log.append(sql)
+            def rows():
+                session.aborted = True
+                raise FakeSqlError("lazy failure", sqlstate)
+                yield ()
+            return rows()
+        return query(session, sql, params)
+    monkeypatch.setattr(FakeSession, "query", lazy)
+    result = _run(cluster)
+    assert (COL.STATEMENT_TIMEOUT if sqlstate == "57014" else COL.DRIVER_ERROR) in _missing_codes(result)
+    primary = _session(cluster, PRIMARY)
+    assert primary.log[primary.log.index(COL.OUTPUT_SQL) + 1:] == ["ROLLBACK"]
+    receipt = json.loads(result["raw_artifacts"][f"raw/pg/{PRIMARY}.json"])
+    assert next(q for q in receipt["queries"] if q["query_id"] == "output-own")["outcome"] == "error"
+
+
+@pytest.mark.parametrize("probe", ["VECTOR_SQL", "POLICY_SQL", "ROLE_MEMBERSHIP_SQL", "RUN_SQL"])
+def test_c82_wrong_arity_is_probe_rejected(probe, monkeypatch):
+    query = FakeSession.query
+    def malformed(session, sql, params):
+        if sql == getattr(COL, probe):
+            session.log.append(sql)
+            return [("wrong-shape",)]
+        return query(session, sql, params)
+    monkeypatch.setattr(FakeSession, "query", malformed)
+    cluster = FakeCluster()
+    result = _run(cluster)
+    assert COL.PROBE_REJECTED in _missing_codes(result)
+    assert all(s.closed for s in cluster.sessions)
+
+
+def test_c82_run_tenant_leak_is_observed_and_contradicted(monkeypatch):
+    query = FakeSession.query
+    def leak(session, sql, params):
+        if sql == COL.RUN_SQL and params["run_id"] == RUN_OWN:
+            session.log.append(sql)
+            return [(RUN_OWN, TENANT_B, OP_OWN)]
+        return query(session, sql, params)
+    monkeypatch.setattr(FakeSession, "query", leak)
+    result = _run(FakeCluster())
+    assert "run_operation_mismatch" in _contra_codes(result)
+    assert _facts(result)[f"pg:visibility:{PRIMARY}:media-101"]["tenant_id"] == TENANT_B
+
+
+def test_c82_only_policy_named_roles_consume_membership_budget():
+    cluster = FakeCluster()
+    cluster.role_usage.update({f"irrelevant_{i}": False for i in range(250)})
+    cluster.role_usage["reader_group"] = True
+    policy = _policy("group_widening", "true")
+    policy["roles"] = ["reader_group"]
+    cluster.policies["media_identities"].append(policy)
+    result = _run(cluster)
+    assert COL.ROW_BUDGET_EXCEEDED not in _missing_codes(result)
+    assert "unsafe_policy_predicate" in _contra_codes(result)
+    receipt = json.loads(result["raw_artifacts"][f"raw/pg/{PRIMARY}.json"])
+    rows = next(q for q in receipt["queries"] if q["query_id"] == "role-membership")["rows"]
+    assert rows == [["reader_group", True]]
+
+
+def test_c82_null_native_operation_link_is_missing():
+    cluster = FakeCluster()
+    cluster.rows["image_description_runs"][0]["operation_id"] = None
+    result = _run(cluster)
+    assert "run_operation_mismatch" not in _contra_codes(result)
+    assert any(i["field"] == f"visibility.{PRIMARY}.operation_id" for i in result["section"]["missing_reasons"])
+
+
+@pytest.mark.parametrize("kind", ["null-check", "restrictive-true"])
+def test_c82_policy_inheritance_and_restrictive_true(kind):
+    cluster = FakeCluster()
+    if kind == "null-check":
+        cluster.policies["media_identities"][0]["with_check"] = None
+    else:
+        policy = _policy("restrictive_noop", "true")
+        policy["permissive"] = "RESTRICTIVE"
+        cluster.policies["media_identities"].append(policy)
+    result = _run(cluster)
+    assert not _policy_issue_fields(result, "media_identities")
+
+
+@pytest.mark.parametrize("rewrite,accepted", [("IN ('e')", True), ("= 'e' OR d.deptype = 'a'", False)])
+def test_c82_dependency_predicate_semantics(rewrite, accepted, monkeypatch):
+    monkeypatch.setattr(COL, "VECTOR_SQL", COL.VECTOR_SQL.replace("= 'e'", rewrite))
+    cluster = FakeCluster()
+    pair = COL.VECTOR_COLUMNS[0]
+    cluster.vector_type_oids[pair] = 9002
+    cluster.extension_types.append(("rogue", "vector", "vector", 9002, "a", "pg_type", "pg_extension"))
+    result = _run(cluster)
+    present = pair in {(v["table"], v["column"]) for v in _catalog(result)["vectors"]}
+    # The equivalent query excludes the rogue; the broken OR admits it, proving fake semantics.
+    assert present is (not accepted)
+
+
+def _unit_capture(cluster=None):
+    cluster = cluster or FakeCluster()
+    capture = COL._Capture(PRIMARY, "fixture-reference", {})
+    capture.session = FakeSession(cluster, PRIMARY)
+    return cluster, capture, COL._Findings()
+
+
+def test_c82_acquisition_deadline_stops_lazy_rows():
+    cluster, capture, findings = _unit_capture(FakeCluster(budget_s=5))
+    pulls = []
+    def rows():
+        for i in range(100):
+            pulls.append(i)
+            cluster.clock.now += 6
+            yield (i,)
+    capture.session.query = lambda sql, params: rows()
+    with pytest.raises(COL._HaltError) as halt:
+        COL._query(capture, cluster.deadline, findings, "slow", "SELECT fixture", {}, ("value",))
+    assert halt.value.code == COL.DEADLINE_EXHAUSTED
+    assert "during acquisition" in halt.value.detail
+    assert pulls == [0]
+
+
+@pytest.mark.parametrize("stage", ["rollback", "close"])
+def test_c82_cleanup_deadline_is_classified_at_exact_stage(stage):
+    cluster, capture, findings = _unit_capture(FakeCluster(budget_s=5))
+    capture.began = True
+    session = capture.session
+    query, close = session.query, session.close
+    def slow_query(sql, params):
+        value = query(sql, params)
+        if stage == "rollback" and sql == "ROLLBACK":
+            cluster.clock.now += 6
+        return value
+    def slow_close():
+        close()
+        if stage == "close":
+            cluster.clock.now += 6
+    session.query, session.close = slow_query, slow_close
+    COL._close_all({PRIMARY: capture}, findings, cluster.deadline)
+    assert any(i["code"] == COL.DEADLINE_EXHAUSTED and i["field"] == f"cleanup.{PRIMARY}.{stage}"
+               and i["detail"] == f"deadline exhausted during {stage}" for i in findings.missing)
+    assert session.closed and session.log[-1] == "ROLLBACK"
+
+
+def test_c82_row_bytes_stop_before_next_lazy_row():
+    cluster, capture, findings = _unit_capture()
+    pulls = []
+    def rows():
+        for i in range(10):
+            pulls.append(i)
+            yield ("x" * (COL.MAX_RECEIPT_BYTES + 1),)
+    capture.session.query = lambda sql, params: rows()
+    assert COL._query(capture, cluster.deadline, findings, "large", "SELECT fixture", {}, ("value",)) is None
+    assert pulls == [0]
+    assert capture.queries[-1]["outcome"] == "byte_budget_exceeded"
+
+
+def test_c82_accumulated_receipt_bytes_reject_many_small_queries(monkeypatch):
+    cluster, capture, findings = _unit_capture()
+    monkeypatch.setattr(COL, "MAX_RECEIPT_BYTES", 2000)
+    capture.session.query = lambda sql, params: [("small",)]
+    results = [COL._query(capture, cluster.deadline, findings, f"small-{i}", "SELECT fixture", {}, ("value",))
+               for i in range(10)]
+    assert results[0] == [["small"]] and results[-1] is None
+    assert any(i["code"] == COL.BYTE_BUDGET_EXCEEDED for i in findings.missing)
+    assert capture.queries[-1]["rows"] == []
+    kept = [q for q in capture.queries if q["outcome"] == "ok"]
+    assert sum(len(json.dumps(q, ensure_ascii=False).encode()) for q in kept) <= COL.MAX_RECEIPT_BYTES
+
+
+def test_c82_serialization_stops_encoder_at_byte_bound(monkeypatch):
+    _, capture, findings = _unit_capture()
+    capture.queries = [{"fixture": "value"}]
+    pulls = []
+    class Encoder:
+        def __init__(self, **kwargs):
+            pass
+        def iterencode(self, value):
+            for i in range(100):
+                pulls.append(i)
+                yield "x" * 100_000
+    monkeypatch.setattr(COL.json, "JSONEncoder", Encoder)
+    COL._serialize({PRIMARY: capture}, findings)
+    assert len(pulls) == 3
+    assert not capture.persisted
+    assert any(i["code"] == COL.BYTE_BUDGET_EXCEEDED for i in findings.missing)
+
+
+@pytest.mark.parametrize("replacement", ["catalog.unrelated", "substring", "other-media", "wrong-code"])
+def test_c82_null_measurement_requires_exact_reason(replacement):
+    result = _run(FakeCluster())
+    field = f"visibility.{PRIMARY}.101.first_counting_revision"
+    section = result["section"]
+    section["missing_reasons"] = [i for i in section["missing_reasons"] if i["field"] != field]
+    bogus = {"code": COL.FIRST_REVISION_UNPERSISTED, "field": field, "detail": "fixture", "artifact_refs": []}
+    if replacement == "wrong-code":
+        bogus["code"] = COL.PROBE_NOT_RUN
+    else:
+        bogus["field"] = {"catalog.unrelated": "catalog.unrelated", "substring": f"prefix.{field}.suffix",
+                          "other-media": f"visibility.{PRIMARY}.999.first_counting_revision"}[replacement]
+    section["missing_reasons"].append(bogus)
+    with pytest.raises(AssertionError):
+        _assert_abi_envelope(result)
+
+
+def test_c82_catalog_null_reason_cannot_cover_another_measurement():
+    cluster = FakeCluster()
+    cluster.extension_installed = False
+    result = _run(cluster)
+    catalog = next(o for o in result["section"]["observations"] if o["kind"] == "catalog")
+    catalog["data"]["extension_name"] = None
+    with pytest.raises(AssertionError):
+        _assert_abi_envelope(result)

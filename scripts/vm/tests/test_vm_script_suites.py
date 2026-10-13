@@ -58,6 +58,17 @@ def test_install_reap_cron_bash_suite(capsys: pytest.CaptureFixture[str]) -> Non
         _run_bash_suite("test_install_reap_cron.sh")
 
 
+@pytest.mark.parametrize(
+    "group", ["tmp_exclusions", "tmp_safety", "docker_journal", "installer", "failures"]
+)
+def test_host_hygiene_bash_suite(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, group: str
+) -> None:
+    monkeypatch.setenv("HYGIENE_TEST_GROUP", group)
+    with capsys.disabled():
+        _run_bash_suite("test_host_hygiene.sh")
+
+
 def test_reap_bridge_rejects_skips_when_flock_exists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

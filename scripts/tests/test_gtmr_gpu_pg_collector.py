@@ -1,46 +1,37 @@
 """G4 restricted-PostgreSQL collector: offline fake-driven authoring.
 
-Owner: GTMR G4. Target module: ``scripts/collect_gpu_pg_evidence.py`` (not implemented here).
+Owner: GTMR G4. Target module: ``scripts/collect_gpu_pg_evidence.py``.
 Scope: in-memory fakes only. No live database, DSN, credential, bootstrap, or GPU action.
 
 Classification
 --------------
 * ``test_fake_*`` exercise only this module's fake. They pass now and show that the fake
-  refuses writes, bypass GUCs, role escalation, read-write transactions, and foreign-tenant
+  refuses writes, bypass changes, role escalation, read-write transactions, and foreign-tenant
   reads. A green collector result is only meaningful if the fake can go red.
-* Every other test calls the proposed ``collect_pg_evidence``. While that module is absent
-  they fail with ``FUTURE_API_PROPOSAL_ABSENT``. That is proposal coverage for the G4
-  interface, not a causal defect in existing production code.
+* Collector tests exercise the frozen Section mapping ABI and measured fixture facts.
+  Offline results do not establish live PostgreSQL behavior or runtime readiness.
 
-Proposed interface under test
+Frozen interface under test
 -----------------------------
 ``collect_pg_evidence(*, connect, selection, deadline) -> mapping`` with keys
-``section`` ("pg"), ``status`` ("observed" | "incomplete" | "invalid"), ``reason_code``,
-``contradictions`` (list), ``missing_reasons`` (list), ``observations`` (mapping), and
-``raw_artifacts`` (list of ``{relative_path, sha256, content: bytes}``).
+``section`` (mapping of status, observations list, missing_reasons and contradictions),
+``artifacts`` (list), and ``raw_artifacts`` (path-to-bytes mapping).
 
 * ``connect(*, session_label, dsn_ref, connect_timeout_s, statement_timeout_ms, lock_timeout_ms,
   overall_deadline_s)`` returns a session exposing ``query(sql, params) -> list[tuple]`` and ``close()``.
   The connect call receives only a DSN reference, never a DSN value.
 * ``deadline.remaining_seconds() -> float``.
-* Observation wrappers follow the existing consumer schema in
-  ``apps/prototype-description-service/scripts/validate_fir_dev_runtime.py``:
-  ``{"provenance": "database_catalog", "value": ...}``.
+* Observations are keyed by ``observation_id`` with the frozen data keys for their kind.
 
-Status rule: any contradiction -> ``invalid``; any missing join -> ``incomplete``; otherwise ``observed``.
-
-Observation keys asserted by the positive case (proposal names, semantics are the contract):
-``identity`` (database_name, role), ``server_version``, ``extension_versions``, ``vector_column_inventory``
-(discovery_complete + per-column dimension), ``role_flags`` (rolsuper, rolbypassrls), ``rls`` (per table
-relrowsecurity/relforcerowsecurity), ``sessions`` (two distinct backend pid/start), ``isolation``
-(own and foreign run rows), ``committed_rows`` (run, media, tier, model, generation), ``durability``
-(independent session saw the committed rows). Every value is a ``database_catalog`` wrapper.
+Status rule: any contradiction -> ``contradicted``; any missing join -> ``incomplete``;
+otherwise ``complete``. Server version and output status/tier/model remain in raw receipts.
 """
 
 from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 import math
 import re
 from collections.abc import Callable, Mapping
@@ -132,7 +123,7 @@ RLS_TABLES = ("image_description_runs", "image_description_run_items")
 # tenant-scoped, PK tenant_id+operation_id) and db/models/identity.py MediaIdentity.embedding_model (media_identities).
 DEMAND_TABLE = "describe_operations"
 IDENTITY_TABLE = "media_identities"
-PROBED_TABLES = (*RLS_TABLES, DEMAND_TABLE, IDENTITY_TABLE)
+PROBED_TABLES = (*RLS_TABLES, DEMAND_TABLE, IDENTITY_TABLE, "identity_cluster_representatives")
 OWN_OP = "op-own-0001"
 FOREIGN_OP = "op-foreign-0002"
 OWN_DIGEST = hashlib.sha256(b"fixture-own-request-body").hexdigest()
@@ -173,10 +164,18 @@ class QueryCanceled(Exception):  # noqa: N818 - mirrors psycopg.errors.QueryCanc
 
 def _default_runs() -> list[dict[str, Any]]:
     return [
-        {"id": RUN_ID, "tenant_id": OWN_TENANT, "status": "completed", "media_ids": list(MEDIA_IDS), "committed": True},
+        {
+            "id": RUN_ID,
+            "tenant_id": OWN_TENANT,
+            "operation_id": OWN_OP,
+            "status": "completed",
+            "media_ids": list(MEDIA_IDS),
+            "committed": True,
+        },
         {
             "id": FOREIGN_RUN_ID,
             "tenant_id": FOREIGN_TENANT,
+            "operation_id": FOREIGN_OP,
             "status": "completed",
             "media_ids": [555],
             "committed": True,
@@ -360,6 +359,15 @@ class FakeSession:
         if self.ended:
             self.cluster.violation(f"statement after transaction end: {norm}")
             raise FakeReadOnlyViolation("transaction has ended")
+        if re.fullmatch(r"SELECT CURRENT_SETTING\s*\(\s*'APP\.BYPASS_RLS'\s*,\s*TRUE\s*\)", upper):
+            return [(None,)]
+        if re.fullmatch(r"SELECT CURRENT_SETTING\s*\(\s*'APP\.CURRENT_TENANT'\s*,\s*TRUE\s*\)", upper):
+            return [(self.current_tenant,)]
+        timeout_set = re.fullmatch(
+            r"SELECT SET_CONFIG\s*\(\s*'STATEMENT_TIMEOUT'\s*,\s*'([0-9]+)'\s*,\s*TRUE\s*\)", upper
+        )
+        if timeout_set:
+            return [(timeout_set.group(1),)]
         if "APP.BYPASS_RLS" in upper:
             self.cluster.violation(f"bypass GUC attempted: {norm}")
             raise FakeReadOnlyViolation("bypass GUC is not permitted")
@@ -410,6 +418,13 @@ class FakeSession:
             return [("on" if self.began and not self.ended else "off",)]
         if "PG_ROLES" in upper:
             return [(spec.rolsuper, spec.rolbypassrls)]
+        if re.search(r"\bFROM\s+PG_INDEX\b", upper):
+            return [
+                (key.split(".")[-2], key.split(".")[-1], "ivfflat", "vector_cosine_ops", True, None, None)
+                for key in spec.vector_dims
+            ]
+        if re.search(r"\bFROM\s+PG_TYPE\b", upper) and "PG_DEPEND" in upper:
+            return [(SCHEMA, "vector", "vector")]
         if "PG_EXTENSION" in upper:
             return [] if spec.vector_version is None else [("vector", spec.vector_version)]
         if "PG_POLICIES" in upper:
@@ -457,7 +472,7 @@ class FakeSession:
             ]
         if "IMAGE_DESCRIPTION_RUNS" in upper:
             return [
-                (row["id"], row["tenant_id"], row["status"], row["media_ids"])
+                (row["id"], row["tenant_id"], row["operation_id"])
                 for row in spec.runs
                 if row["id"] in ids and self._visible("image_description_runs", row)
             ]
@@ -504,30 +519,16 @@ def _load_collector() -> Callable[..., Mapping[str, Any]]:
 
 
 def _run(spec: ClusterSpec, *, remaining_s: float = 600.0) -> tuple[Mapping[str, Any], FakeCluster]:
-    collect = _load_collector()
-    cluster = FakeCluster(spec)
-    result = collect(connect=cluster.connect, selection=dict(SELECTION), deadline=FakeDeadline(remaining_s))
-    return result, cluster
-
-
-def _wrap(value: Any) -> dict[str, Any]:
-    return {"provenance": "database_catalog", "value": value}
+    return _run_abi(spec, remaining_s=remaining_s)
 
 
 def _codes(result: Mapping[str, Any]) -> set[str]:
-    raw = [result.get("reason_code"), *result.get("contradictions", []), *result.get("missing_reasons", [])]
-    return {code for code in raw if isinstance(code, str)}
+    missing, contradictions = _abi_codes(result)
+    return missing | contradictions
 
 
 def _assert_custody(result: Mapping[str, Any]) -> None:
-    assert result["section"] == "pg"
-    assert result["status"] in {"observed", "incomplete", "invalid"}
-    assert isinstance(result["raw_artifacts"], list)
-    for artifact in result["raw_artifacts"]:
-        path = PurePosixPath(artifact["relative_path"])
-        assert not path.is_absolute() and ".." not in path.parts and path.parts[0] == "pg", artifact["relative_path"]
-        assert isinstance(artifact["content"], bytes)
-        assert hashlib.sha256(artifact["content"]).hexdigest() == artifact["sha256"], artifact["relative_path"]
+    _assert_abi_envelope(result)
 
 
 def _assert_bounded_read_only(cluster: FakeCluster) -> None:
@@ -544,6 +545,7 @@ FORBIDDEN_STATEMENTS = (
     "CREATE TABLE gtmr_probe (id integer)",
     "INSERT INTO image_description_runs (id) VALUES ('00000000-0000-0000-0000-000000000000')",
     "SET LOCAL app.bypass_rls = 'true'",
+    "SET app.bypass_rls = 'true'",
     "SET ROLE postgres",
     "SELECT id FROM image_description_runs FOR UPDATE",
 )
@@ -567,67 +569,112 @@ def test_fake_session_refuses_read_write_begin() -> None:
     assert cluster.violations
 
 
+@pytest.mark.parametrize("spaced", [False, True])
+def test_fake_serves_coordinator_probes_by_pattern_without_changing_claims(spaced: bool) -> None:
+    cluster = FakeCluster(_positive_spec())
+    session = cluster.connect(**_connect_kwargs(PRIMARY_SESSION))
+    session.query("BEGIN READ ONLY")
+
+    def query(sql: str, params: Mapping[str, Any] | None = None) -> list[tuple[Any, ...]]:
+        if spaced:
+            sql = sql.upper().replace("(", "( ").replace(",", " , ").replace(")", " )")
+        return session.query(sql, params)
+
+    assert query("SELECT current_setting('app.bypass_rls', true)") == [(None,)]
+    assert query("SELECT current_setting('app.current_tenant', true)") == [(None,)]
+    assert cluster.tenant_sets == []
+    session.query(f"SET LOCAL app.current_tenant = '{OWN_TENANT}'")
+    assert query("SELECT current_setting('app.current_tenant', true)") == [(OWN_TENANT,)]
+    assert cluster.tenant_sets == [OWN_TENANT], "reading a claim must not reset the selected tenant"
+    assert query("SELECT set_config('statement_timeout', '2500', true)") == [("2500",)]
+    assert query(
+        "SELECT r.id, r.tenant_id, r.operation_id FROM image_description_runs r WHERE r.id = %(run_id)s",
+        {"run_id": RUN_ID},
+    ) == [(RUN_ID, OWN_TENANT, OWN_OP)]
+    assert query(
+        "SELECT c.relname, a.attname, am.amname, op.opcname, i.indisvalid, "
+        "pg_get_expr(i.indpred, i.indrelid), pg_get_expr(i.indexprs, i.indrelid) "
+        "FROM pg_index i JOIN pg_am am ON true"
+    ) == [
+        (key.split(".")[-2], key.split(".")[-1], "ivfflat", "vector_cosine_ops", True, None, None)
+        for key in VECTOR_KEYS
+    ]
+    assert query("SELECT n.nspname, t.typname, e.extname FROM pg_type t JOIN pg_depend d ON true") == [
+        (SCHEMA, "vector", "vector")
+    ]
+    assert cluster.violations == []
+
+
 def test_fake_rls_hides_foreign_rows_from_own_tenant_session() -> None:
     cluster = FakeCluster(_positive_spec())
     session = cluster.connect(**_connect_kwargs(PRIMARY_SESSION))
     session.query("BEGIN READ ONLY")
     session.query("SELECT set_config('app.current_tenant', %(tenant)s, true)", {"tenant": OWN_TENANT})
-    own = session.query("SELECT id, tenant_id FROM image_description_runs WHERE id = %(run_id)s", {"run_id": RUN_ID})
-    foreign = session.query(
-        "SELECT id, tenant_id FROM image_description_runs WHERE id = %(run_id)s", {"run_id": FOREIGN_RUN_ID}
+    own = session.query(
+        "SELECT id, tenant_id, operation_id FROM image_description_runs WHERE id = %(run_id)s", {"run_id": RUN_ID}
     )
-    assert [row[0] for row in own] == [RUN_ID]
+    foreign = session.query(
+        "SELECT id, tenant_id, operation_id FROM image_description_runs WHERE id = %(run_id)s",
+        {"run_id": FOREIGN_RUN_ID},
+    )
+    assert own == [(RUN_ID, OWN_TENANT, OWN_OP)]
     assert foreign == []
     assert cluster.violations == []
 
 
-# ---- positive: consistent restricted sessions (proposal under test) ----
+# ---- positive: consistent restricted sessions under the frozen ABI ----
 
 
 def test_positive_independent_restricted_sessions_observe_committed_pg_evidence() -> None:
     result, cluster = _run(_positive_spec())
     _assert_custody(result)
     _assert_bounded_read_only(cluster)
-    assert result["status"] == "observed", (
-        result["status"],
-        result["reason_code"],
-        result["contradictions"],
-        result["missing_reasons"],
-    )
-    assert result["reason_code"] is None
-    assert result["contradictions"] == []
-    assert result["missing_reasons"] == []
-
-    obs = result["observations"]
-    assert obs["identity"]["database_name"] == _wrap(DATABASE)
-    assert obs["identity"]["role"] == _wrap(ROLE)
-    assert obs["server_version"] == _wrap("16.4")
-    assert obs["extension_versions"] == _wrap({"vector": "0.7.4"})
-    assert obs["role_flags"] == _wrap({"rolsuper": False, "rolbypassrls": False})
-    inventory = obs["vector_column_inventory"]
-    assert inventory["discovery_complete"] is True
-    assert {(i["schema"], i["table"], i["column"], i["dimension"]) for i in inventory["value"]} == {
+    section = result["section"]
+    assert section["status"] == "incomplete"
+    assert section["contradictions"] == []
+    assert _abi_codes(result)[0] == {FOREIGN_UNWITNESSED, FIRST_REVISION_UNPERSISTED, EMBEDDING_MODELS_UNAVAILABLE}
+    obs = {o["observation_id"]: o["data"] for o in section["observations"]}
+    for label in (PRIMARY_SESSION, INDEPENDENT_SESSION):
+        data = obs[f"pg:connection:{label}"]
+        assert data["database"] == DATABASE
+        assert data["current_user"] == ROLE and data["session_user"] == ROLE
+        assert data["rolsuper"] is False and data["rolbypassrls"] is False
+        assert data["app_bypass_rls"] is False
+        assert data["tenant_context"] == OWN_TENANT
+    catalog = obs["pg:catalog:primary"]
+    assert catalog["extension_name"] == "vector" and catalog["extension_version"] == "0.7.4"
+    assert {(v["schema"], v["table"], v["column"], v["atttypmod"]) for v in catalog["vectors"]} == {
         ("public", "media_identities", "embedding", EXPECTED_DIM),
         ("public", "identity_cluster_representatives", "embedding", EXPECTED_DIM),
         ("public", "mv_identity_cluster_centroids", "centroid", EXPECTED_DIM),
     }
-    for table in RLS_TABLES:
-        assert obs["rls"]["value"][table] == {"relrowsecurity": True, "relforcerowsecurity": True}, table
-    assert obs["isolation"]["value"] == {"own_tenant_run_rows": 1, "foreign_tenant_run_rows": 0}
-    committed = obs["committed_rows"]["value"]
-    assert committed["run_id"] == RUN_ID
-    assert sorted(item["media_id"] for item in committed["items"]) == sorted(MEDIA_IDS)
-    assert {item["tier"] for item in committed["items"]} == {"final_gpu"}
-    assert {item["model_id"] for item in committed["items"]} == {PINNED_MODEL}
-    assert {item["result_generation"] for item in committed["items"]} == {GENERATION}
-    assert obs["durability"]["value"]["independent_session_saw_committed_rows"] is True
+    assert {r["table"] for r in catalog["rls"]} == set(PROBED_TABLES)
+    assert all(r["enabled"] is True and r["forced"] is True for r in catalog["rls"])
+    for label in (PRIMARY_SESSION, INDEPENDENT_SESSION):
+        visibility = [obs[f"pg:visibility:{label}:media-{media_id}"] for media_id in MEDIA_IDS]
+        assert {data["media_id"] for data in visibility} == set(MEDIA_IDS)
+        for data in visibility:
+            assert data["run_id"] == RUN_ID and data["tenant_id"] == OWN_TENANT
+            assert data["operation_id"] == OWN_OP and data["request_digest"] == OWN_DIGEST
+            assert data["own_output_rows"] == 1 and data["foreign_output_rows"] == 0
+            assert data["own_demand_rows"] == 1 and data["foreign_demand_rows"] == 0
+            assert data["result_generation"] == GENERATION
+            assert data["caption_sha256"] == _caption_sha(f"fixture caption for media {data['media_id']}")
+        receipt = json.loads(result["raw_artifacts"][f"raw/pg/{label}.json"])
+        queries = {q["query_id"]: q for q in receipt["queries"]}
+        assert queries["identity"]["rows"][0][4] == "16.4"
+        assert queries["run-own"]["rows"] == [[RUN_ID, OWN_TENANT, OWN_OP]]
+        assert {tuple(row[2:6]) for row in queries["output-own"]["rows"]} == {
+            ("completed", "final_gpu", GENERATION, PINNED_MODEL)
+        }
+        assert queries["app-bypass"]["rows"] == [[None]]
 
 
 def test_positive_two_distinct_sessions_end_read_only_and_never_impersonate() -> None:
     result, cluster = _run(_positive_spec())
     _assert_custody(result)
     _assert_bounded_read_only(cluster)
-    assert result["status"] == "observed"
+    assert result["section"]["status"] == "incomplete"
     assert [session.label for session in cluster.sessions] == [PRIMARY_SESSION, INDEPENDENT_SESSION]
     assert len({session.backend_pid for session in cluster.sessions}) == 2
     assert len({session.backend_start for session in cluster.sessions}) == 2
@@ -661,21 +708,25 @@ def _force_off_items(spec: ClusterSpec) -> ClusterSpec:
     return replace(spec, rls_forced={**spec.rls_forced, "image_description_run_items": False})
 
 
-# (change, expected status, expected codes). Contradictions are invalid. The missing durability join is
-# incomplete. Neither may be downgraded to observed.
+# (change, expected status, expected codes). Missing visibility is incomplete; measured conflicts contradict.
 NEGATIVE_CASES = [
-    pytest.param(lambda s: replace(s, database="alt_context_prod"), "invalid", (WRONG_DATABASE,), id="wrong-database"),
-    pytest.param(lambda s: replace(s, engine="sqlite"), "invalid", (NOT_POSTGRESQL,), id="sqlite-engine"),
-    pytest.param(lambda s: replace(s, rolsuper=True), "invalid", (SUPERUSER_ROLE,), id="superuser-role"),
-    pytest.param(lambda s: replace(s, rolbypassrls=True), "invalid", (BYPASSRLS_ROLE,), id="bypassrls-role"),
-    pytest.param(_force_off_items, "invalid", (RLS_NOT_FORCED,), id="force-rls-disabled-on-items"),
+    pytest.param(
+        lambda s: replace(s, database="alt_context_prod"), "contradicted", (WRONG_DATABASE,), id="wrong-database"
+    ),
+    pytest.param(lambda s: replace(s, engine="sqlite"), "contradicted", (NOT_POSTGRESQL,), id="sqlite-engine"),
+    pytest.param(lambda s: replace(s, rolsuper=True), "contradicted", (SUPERUSER_ROLE,), id="superuser-role"),
+    pytest.param(lambda s: replace(s, rolbypassrls=True), "contradicted", (BYPASSRLS_ROLE,), id="bypassrls-role"),
+    pytest.param(_force_off_items, "contradicted", (RLS_NOT_FORCED,), id="force-rls-disabled-on-items"),
     pytest.param(_uncommitted, "incomplete", (NOT_VISIBLE_INDEPENDENT,), id="uncommitted-not-visible-to-independent"),
     pytest.param(
-        lambda s: replace(s, leak_foreign_rows=True), "invalid", (FOREIGN_TENANT_VISIBLE,), id="foreign-tenant-visible"
+        lambda s: replace(s, leak_foreign_rows=True),
+        "contradicted",
+        (FOREIGN_TENANT_VISIBLE,),
+        id="foreign-tenant-visible",
     ),
-    pytest.param(_mixed_dims, "invalid", (MIXED_EMBEDDING_SPACES,), id="mixed-embedding-spaces"),
+    pytest.param(_mixed_dims, "contradicted", (MIXED_EMBEDDING_SPACES,), id="mixed-embedding-spaces"),
     pytest.param(
-        _mixed_output_models, "invalid", (MIXED_OUTPUT_MODELS, OUTPUT_MODEL_MISMATCH), id="mixed-output-models"
+        _mixed_output_models, "contradicted", (MIXED_OUTPUT_MODELS, OUTPUT_MODEL_MISMATCH), id="mixed-output-models"
     ),
 ]
 
@@ -687,12 +738,13 @@ def test_one_factor_negative_refuses_to_observe(
     result, cluster = _run(change(_positive_spec()))
     _assert_custody(result)
     _assert_bounded_read_only(cluster)
-    assert result["status"] == expected_status, (result["status"], sorted(_codes(result)))
+    section = result["section"]
+    assert section["status"] == expected_status, (section["status"], sorted(_codes(result)))
     assert set(expected_codes) <= _codes(result), (expected_codes, sorted(_codes(result)))
     if expected_status == "incomplete":
-        assert not result["contradictions"], "a missing join must not also be reported as a contradiction"
+        assert not section["contradictions"], "a missing join must not also be reported as a contradiction"
     else:
-        assert result["contradictions"], "a contradiction must be reported as invalid, not as a missing join"
+        assert section["contradictions"], "a contradiction must be reported as contradicted, not as a missing join"
 
 
 def test_shared_session_for_both_labels_is_refused_as_not_independent() -> None:
@@ -700,7 +752,7 @@ def test_shared_session_for_both_labels_is_refused_as_not_independent() -> None:
     _assert_custody(result)
     _assert_bounded_read_only(cluster)
     assert len(cluster.sessions) == 1
-    assert result["status"] == "incomplete"
+    assert result["section"]["status"] == "incomplete"
     assert SESSION_NOT_INDEPENDENT in _codes(result)
 
 
@@ -708,7 +760,7 @@ def test_statement_timeout_is_incomplete_and_every_session_closes() -> None:
     result, cluster = _run(replace(_positive_spec(), cancel_items=True))
     _assert_custody(result)
     _assert_bounded_read_only(cluster)
-    assert result["status"] == "incomplete"
+    assert result["section"]["status"] == "incomplete"
     assert STATEMENT_TIMEOUT in _codes(result)
 
 
@@ -717,18 +769,16 @@ def test_exhausted_overall_deadline_connects_nothing() -> None:
     _assert_custody(result)
     _assert_bounded_read_only(cluster)
     assert cluster.connect_calls == []
-    assert result["status"] == "incomplete"
+    assert result["section"]["status"] == "incomplete"
     assert DEADLINE_EXHAUSTED in _codes(result)
-    assert result["raw_artifacts"] == []
+    assert result["raw_artifacts"] == {} and result["artifacts"] == []
 
 
 # ======================================================================================================
-# Frozen ABI v1 section ``pg`` (added with the collector revision). The legacy proposal oracles above are
-# kept unchanged: they assert the superseded envelope (section == "pg", status observed/invalid,
-# raw_artifacts as a list). The selectors below assert the frozen envelope
+# Frozen ABI v1 section ``pg``. All collector selectors assert the frozen envelope
 # {section: {status, observations, missing_reasons, contradictions}, artifacts, raw_artifacts: dict}.
-# Explicit gaps are named, not hidden: app_bypass_rls cannot be probed through the bypass-GUC control,
-# foreign existence cannot be witnessed without a foreign-tenant read, and first_counting_revision is not
+# Explicit gaps are named, not hidden: foreign existence needs an independent witness,
+# non-media embedding models are unobserved, and first_counting_revision is not
 # persisted by the native producer (scene/tests/test_gtmr_demand_load_joins.py::test_red_committed_operation...).
 # ======================================================================================================
 
@@ -803,11 +853,13 @@ def _run_abi(
     cluster = FakeCluster(spec)
     chosen = dict(ABI_SELECTION if selection is None else selection)
     result = collect(connect=cluster.connect, selection=chosen, deadline=FakeDeadline(remaining_s))
+    _assert_abi_envelope(result)
     return result, cluster
 
 
 def _abi_codes(result: Mapping[str, Any]) -> tuple[set[str], set[str]]:
     section = result["section"]
+    assert isinstance(section, Mapping)
     return ({i["code"] for i in section["missing_reasons"]}, {i["code"] for i in section["contradictions"]})
 
 
@@ -819,8 +871,12 @@ def _assert_abi_envelope(result: Mapping[str, Any]) -> None:
     """Frozen ABI v1 invariants for section ``pg``. Shape only; semantic oracles live in the tests."""
     assert set(result) == {"section", "artifacts", "raw_artifacts"}
     section = result["section"]
+    assert isinstance(section, Mapping)
     assert set(section) == {"status", "observations", "missing_reasons", "contradictions"}
     assert section["status"] in ABI_STATUSES
+    assert isinstance(section["observations"], list)
+    assert isinstance(section["missing_reasons"], list) and isinstance(section["contradictions"], list)
+    assert isinstance(result["artifacts"], list)
     raw = result["raw_artifacts"]
     assert isinstance(raw, dict)
     listed = {artifact["relative_path"]: artifact for artifact in result["artifacts"]}
@@ -950,11 +1006,12 @@ def test_pg_collector_positive_is_incomplete_with_only_the_named_gaps() -> None:
     assert contradictions == set(), result["section"]["contradictions"]
     assert result["section"]["status"] == "incomplete", "no positive path can be complete under the frozen ABI gaps"
     assert missing == {
-        APP_BYPASS_UNPROBED,
         FOREIGN_UNWITNESSED,
         FIRST_REVISION_UNPERSISTED,
         EMBEDDING_MODELS_UNAVAILABLE,
     }
+    catalog = _observations(result, "catalog")[0]
+    assert {row["table"] for row in catalog["rls"]} == set(PROBED_TABLES)
     visibility = _observations(result, "visibility")
     for connection in (PRIMARY_SESSION, INDEPENDENT_SESSION):
         rows = [d for d in visibility if d["connection_id"] == connection]
@@ -997,9 +1054,11 @@ def test_pg_collector_rejects_app_bypass_rls(change: Callable[[ClusterSpec], Clu
     missing, contradictions = _abi_codes(result)
     assert result["section"]["status"] == "contradicted", (sorted(missing), sorted(contradictions))
     assert code in contradictions
-    # Bypass is never asserted false without an actual probe; the GUC is never named (bounded_read_only checks).
-    assert APP_BYPASS_UNPROBED in missing
-    assert all(data["app_bypass_rls"] is None for data in _observations(result, "connection"))
+    assert APP_BYPASS_UNPROBED not in missing
+    for data in _observations(result, "connection"):
+        assert data["app_bypass_rls"] is False
+        receipt = json.loads(result["raw_artifacts"][f"raw/pg/{data['connection_id']}.json"])
+        assert any(q["query_id"] == "app-bypass" and q["rows"] == [[None]] for q in receipt["queries"])
 
 
 def _without_foreign_rows(spec: ClusterSpec) -> ClusterSpec:

@@ -416,6 +416,8 @@ class FakeSession:
         if "TRANSACTION_READ_ONLY" in upper:
             # Reflects the open transaction: BEGIN READ ONLY makes it 'on' until it ends.
             return [("on" if self.began and not self.ended else "off",)]
+        if "PG_HAS_ROLE" in upper:
+            return [(spec.role, True)]
         if "PG_ROLES" in upper:
             return [(spec.rolsuper, spec.rolbypassrls)]
         if re.search(r"\bFROM\s+PG_INDEX\b", upper):
@@ -425,17 +427,17 @@ class FakeSession:
             ]
         if re.search(r"\bFROM\s+PG_TYPE\b", upper) and "PG_DEPEND" in upper:
             return [(SCHEMA, "vector", "vector")]
+        if "PG_ATTRIBUTE" in upper:
+            return [
+                (key.split(".")[0], key.split(".")[-2], key.split(".")[-1], "vector", dim)
+                for key, dim in spec.vector_dims.items()
+            ]
         if "PG_EXTENSION" in upper:
             return [] if spec.vector_version is None else [("vector", spec.vector_version)]
         if "PG_POLICIES" in upper:
             return [
                 (table, f"tenant_isolation_{table}", "ALL", ["public"], "PERMISSIVE", POLICY_EXPR, POLICY_EXPR)
                 for table in PROBED_TABLES
-            ]
-        if "PG_ATTRIBUTE" in upper:
-            return [
-                (key.split(".")[0], key.split(".")[-2], key.split(".")[-1], "vector", dim)
-                for key, dim in spec.vector_dims.items()
             ]
         if "PG_CLASS" in upper:
             return [(table, spec.rls_enabled[table], spec.rls_forced[table]) for table in PROBED_TABLES]

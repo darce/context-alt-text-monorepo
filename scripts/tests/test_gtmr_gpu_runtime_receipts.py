@@ -1001,12 +1001,7 @@ def test_proposal_model_file_replaced_after_mapping_is_contradiction() -> None:
     _assert_contradiction(result, "mapped_file_replaced")
 
 
-@_PENDING
-def test_proposal_cpu_offload_zero_layers_is_contradiction() -> None:
-    script = _healthy_script({ARGV_LOGS: [_done(ARGV_LOGS, _logs(LOG_BUILD, LOG_OFFLOAD_CPU, LOG_COMPLETION))]})
-    result, _ = _collect(script)
-    _assert_contradiction(result, "offload_cpu")
-    assert _obs(result)["runtime"]["offload"]["gpu_layers"] == 0
+# Retired G2-R06 policy oracle: zero offload is covered as an observation by the G2 findings module.
 
 
 @_PENDING
@@ -1118,9 +1113,9 @@ def test_proposal_calls_are_bounded_shell_free_and_never_read_the_secret_key() -
     result, runner = _collect(_healthy_script())
     assert len(runner.trace) <= MAX_CALLS
     for call in runner.trace:
-        assert call["shell"] is False
-        assert call["text"] is False
-        assert call["capture_output"] is True
+        # Canonical transport receives only argv, timeout and max_bytes.
+        assert 0 < call["timeout"] <= 15
+        assert call["extra_kwargs"] == ["max_bytes"]
         assert all(isinstance(part, str) for part in call["argv"])
         assert SECRET_KEY_PATH not in call["argv"]
     assert result["status"] == "complete"

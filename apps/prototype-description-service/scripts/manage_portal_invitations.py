@@ -1,14 +1,19 @@
 """Operator CLI for portal invitation lifecycle (create / list / revoke).
 
 Usage:
-    python -m scripts.manage_portal_invitations --env {prod,dev,local} create --email ADDR [--ttl-hours N]
-    python -m scripts.manage_portal_invitations --env {prod,dev,local} list [--include-inactive]
-    python -m scripts.manage_portal_invitations --env {prod,dev,local} revoke --invitation-id UUID
+    python -m scripts.manage_portal_invitations --env {prod,dev,local,dev-auraface,staging-auraface,prod-auraface} create --email ADDR [--ttl-hours N]
+    python -m scripts.manage_portal_invitations --env {prod,dev,local,dev-auraface,staging-auraface,prod-auraface} list [--include-inactive]
+    python -m scripts.manage_portal_invitations --env {prod,dev,local,dev-auraface,staging-auraface,prod-auraface} revoke --invitation-id UUID
 
 An invitation token is single-use. Its SHA-256 digest is stored; the raw token
 is printed once after creation and must never be logged or displayed again.
 When ACX_ENV is set, --env must match it exactly. Without ACX_ENV, the CLI
 checks the configured DSN host before opening or using a database session.
+A matching --env prod still checks the DSN host, because a matching ACX_ENV is
+not proof of a nonlocal database. Matching dev and local skip the settings read.
+The Aura labels (dev-auraface, staging-auraface, prod-auraface) are admitted
+only for their exact context and effective DSN identity (see
+scripts/_aura_target_guard.py).
 """
 
 from __future__ import annotations
@@ -32,8 +37,9 @@ from recognition.infrastructure.repositories.portal_identity_repository import (
     _hash_invitation_token,
     _normalize_email,
 )
+from scripts._aura_target_guard import AURA_LABELS, validate_aura_target
 
-_ENV_CHOICES = ("prod", "dev", "local")
+_ENV_CHOICES = ("prod", "dev", "local", *AURA_LABELS)
 _DEFAULT_TTL_HOURS = 72
 _MIN_TTL_HOURS = 1
 _MAX_TTL_HOURS = 336
@@ -116,12 +122,31 @@ def _state(invitation: PortalTenantInvitation, now: datetime) -> str:
     return "pending"
 
 
+def _validate_aura_runtime(env: str) -> str | None:
+    """Admit an Aura label only for its exact context and effective DSN identity (scripts/_aura_target_guard.py)."""
+    from db.settings import get_database_settings
+
+    return validate_aura_target(
+        env,
+        configured_env=os.environ.get("ACX_ENV"),
+        compose_project=os.environ.get("COMPOSE_PROJECT_NAME"),
+        read_dsn=lambda: get_database_settings().postgres_dsn,
+    )
+
+
 def _validate_runtime_env(env: str) -> str | None:
+    if env in AURA_LABELS:
+        return _validate_aura_runtime(env)
+
     configured_env = os.environ.get("ACX_ENV")
     if configured_env is not None:
         if configured_env != env:
             return f"ACX_ENV={configured_env!r} does not match --env={env!r}; refusing to run"
-        return None
+        if env != "prod":
+            # Matched dev and local keep the no-settings-read fast path.
+            return None
+        # Matched prod is not exempt from the DSN host guard: a matching
+        # ACX_ENV does not prove the database is nonlocal (loopback bypass).
 
     # This settings read does not open a session or connection. The DSN check
     # preserves manage_api_keys' fail-closed behavior outside VM containers.

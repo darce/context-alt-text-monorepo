@@ -177,7 +177,7 @@ class RecordingSession:
         return [SimpleNamespace(name="output", shape=[1, 512], type="tensor(float)")]
 
     def get_providers(self):
-        return getattr(self, "providers", None) or ["CPUExecutionProvider"]
+        return self.providers
 
     def get_session_options(self):
         return getattr(self, "sess_options", None)
@@ -244,6 +244,15 @@ def test_bytes_dispatch_passes_identical_immutable_object(monkeypatch):
     model = tiny_graph()
     adapters._ort_session(model)
     assert calls[0][0] is model, "CAUSAL_RED: _ort_session must pass bytes unchanged, not str(bytes)"
+    _, options, providers = calls[0]
+    assert providers == ["CPUExecutionProvider"], "CAUSAL_RED: bytes dispatch must pin the CPU provider"
+    assert options is not None, "CAUSAL_RED: bytes dispatch must pass session options"
+    assert options.inter_op_num_threads == options.intra_op_num_threads == 1, \
+        "CAUSAL_RED: bytes dispatch must retain single-thread options"
+    assert options.execution_mode == adapters.ort.ExecutionMode.ORT_SEQUENTIAL, \
+        "CAUSAL_RED: bytes dispatch must retain sequential execution"
+    assert options.graph_optimization_level == adapters.ort.GraphOptimizationLevel.ORT_ENABLE_ALL, \
+        "CAUSAL_RED: bytes dispatch must retain graph optimization"
 
 
 def test_acquisition_hashes_same_buffer_consumed_by_constructor(tmp_path, monkeypatch):
@@ -288,8 +297,9 @@ def test_verified_artifact_never_reopens_or_rehashes_disk(tmp_path, monkeypatch,
     adapters, calls, _ = install_constructor(monkeypatch)
 
     # C2: constructor metadata/fingerprint I/O is legal; artifact I/O is not.
-    guard_artifact_io(monkeypatch, tmp_path, entry, max_opens=0)
+    opens = guard_artifact_io(monkeypatch, tmp_path, entry, max_opens=0)
     adapters.OrtSFaceEmbedder(model_name="auraface", models_dir=tmp_path, verified_artifact=artifact)
+    assert not any(opens.values()), "CAUSAL_RED: constructor attempted artifact reopen/rehash"
     assert len(calls) == 1
     assert calls[0][0] is artifact.model_bytes
     assert sha(calls[0][0]) == sha(model)

@@ -25,6 +25,7 @@ MAX_NODES = 50000
 MAX_DEPTH = 24
 MAX_ITEMS = 512
 MAX_TEXT = 512
+RAW_NORM_ABS_TOLERANCE = 1e-5
 
 
 class RecordError(ValueError):
@@ -187,15 +188,21 @@ def _image(value, source, isolation):
         _fail('malformed')
 
 
+def _canonical_tensor_contract(shape, dtype, *, allow_symbolic=False):
+    """Normalize ORT's float dtype; only metadata may contain symbolic dims."""
+    dtype = _text(dtype)
+    dimensions = []
+    for size in _list(shape, True):
+        dimensions.append(_text(size) if allow_symbolic and isinstance(size, str)
+                          else _integer(size, 1))
+    return dict(shape=dimensions, dtype='float32' if dtype == 'tensor(float)' else dtype)
+
+
 def _metadata(value):
     for item in _list(value, True):
         _closed(item, 'name shape dtype')
-        _text(item['name']); _text(item['dtype'])
-        for size in _list(item['shape'], True):
-            if isinstance(size, str):
-                _text(size)
-            else:
-                _integer(size, 1)
+        _text(item['name'])
+        _canonical_tensor_contract(item['shape'], item['dtype'], allow_symbolic=True)
 
 
 def _session(value, generation, logical_name, now, policy):
@@ -229,9 +236,8 @@ def _tensor(value, embedder=False):
     fields = 'sha256 shape dtype contiguous ' + ('channel_samples mean scale' if embedder else 'padding_geometry')
     _closed(value, fields)
     _hex(value['sha256']); _text(value['dtype']); _boolean(value['contiguous'])
-    for size in _list(value['shape'], True):
-        _integer(size, 1)
-    if not value['contiguous'] or value['dtype'] != 'float32':
+    contract = _canonical_tensor_contract(value['shape'], value['dtype'])
+    if not value['contiguous'] or contract['dtype'] != 'float32':
         _fail('incomplete')
     if embedder:
         for sample in _list(value['channel_samples'], True):
@@ -259,7 +265,13 @@ def _execution(value, runtime, now, policy):
     for tensor_key, session_key in (('detector_input', 'yunet'), ('embedder_input', 'auraface')):
         tensor = value[tensor_key]
         metadata = sessions[session_key]['actual_input_metadata']
-        if len(metadata) != 1 or tensor['shape'] != metadata[0]['shape'] or tensor['dtype'] != metadata[0]['dtype']:
+        if len(metadata) != 1:
+            _fail('contradictory_binding')
+        actual = _canonical_tensor_contract(tensor['shape'], tensor['dtype'])
+        declared = _canonical_tensor_contract(metadata[0]['shape'], metadata[0]['dtype'], allow_symbolic=True)
+        if (actual['dtype'] != declared['dtype'] or len(actual['shape']) != len(declared['shape'])
+                or any(not isinstance(expected, str) and observed != expected
+                       for observed, expected in zip(actual['shape'], declared['shape']))):
             _fail('contradictory_binding')
     _hex(value['detections_sha256'])
     alignment = value['alignment']
@@ -461,10 +473,15 @@ def join_auraface_acceptance(records, *, captured_inputs, expected_contract,
 
     The ledger's ``joined`` means captured compatibility and identities agree;
     it never means recipe verification, live readiness, or full acceptance.
-    Executed tensor values, alignment template and fixture/reference lineage
+    Executed tensor values, preprocessing/alignment/output digests and fixture/reference lineage
     must agree across roles, as must the captured census; disagreement is a
     contradictory_binding. Execution and adapter IDs cannot be shared across
     roles. Executed shapes/dtypes bind to each role's own session metadata.
+    ORT tensor(float) means float32; metadata symbols match only their own
+    concrete tensor dimensions, with equal rank and all concrete dims checked.
+    For the same pinned fixture, the full span of raw norms must be within
+    RAW_NORM_ABS_TOLERANCE (1e-5 absolute, no relative tolerance); a wider span
+    refuses with contradictory_binding, as does any executed digest mismatch.
     A graph-L2 claim requires a unit raw norm in that role's execution receipt;
     agreement of captured values does not establish the graph's property.
     Compact preprocessing/settings/catalog summaries are explicitly limited
@@ -496,6 +513,7 @@ def join_auraface_acceptance(records, *, captured_inputs, expected_contract,
     execution_owners = {}
     adapter_owners = {}
     executed_contracts = set()
+    raw_norms = []
     censuses = set()
     for index, record in enumerate(records):
         entry = dict(record_index=index, status='incomplete', reason_code='incomplete', record_sha256=None)
@@ -534,11 +552,21 @@ def join_auraface_acceptance(records, *, captured_inputs, expected_contract,
                     if identifier in owners and owners[identifier] != record['role']:
                         _fail('contradictory_binding')
                     owners[identifier] = record['role']
+                tensor_contracts = {}
+                for tensor_key, fields in (('detector_input', ('sha256', 'padding_geometry')),
+                                           ('embedder_input', ('sha256', 'channel_samples', 'mean', 'scale'))):
+                    tensor = execution[tensor_key]
+                    tensor_contracts[tensor_key] = dict(_canonical_tensor_contract(tensor['shape'], tensor['dtype']),
+                                                      **{k: tensor[k] for k in fields})
                 executed_contracts.add(record_digest(dict(
-                    detector={k: execution['detector_input'][k] for k in ('shape', 'dtype', 'padding_geometry')},
-                    embedder={k: execution['embedder_input'][k] for k in ('shape', 'dtype', 'channel_samples', 'mean', 'scale')},
-                    template_sha256=execution['alignment']['template_sha256'],
+                    detector=tensor_contracts['detector_input'],
+                    embedder=tensor_contracts['embedder_input'],
+                    detections_sha256=execution['detections_sha256'],
+                    alignment=execution['alignment'],
+                    raw_output_sha256=execution['raw_output']['sha256'],
+                    normalized_output_sha256=execution['normalized_output']['sha256'],
                     input_lineage=execution['input_lineage'])))
+                raw_norms.append(execution['raw_output']['norm'])
                 generation = rt['runtime_generation_id']
                 if generation in generations and generations[generation] != key:
                     _fail('contradictory_binding')
@@ -554,6 +582,9 @@ def join_auraface_acceptance(records, *, captured_inputs, expected_contract,
                 for name in ('yunet', 'auraface'):
                     contract = {k: v for k, v in rt['sessions'][name].items()
                                 if k not in ('session_id', 'runtime_generation_id', 'constructed_at')}
+                    for metadata_key in ('actual_input_metadata', 'actual_output_metadata'):
+                        contract[metadata_key] = [dict(item, **_canonical_tensor_contract(
+                            item['shape'], item['dtype'], allow_symbolic=True)) for item in contract[metadata_key]]
                     session_contracts.append(record_digest(contract))
                 fingerprints.add((rt['compatibility_sha256'], rt['model_id'],
                     rt['preprocessing_id'], rt['config_sha256'],
@@ -565,6 +596,9 @@ def join_auraface_acceptance(records, *, captured_inputs, expected_contract,
     if seen != expected:
         gaps.add('incomplete')
     if len(executed_contracts) > 1 or len(censuses) > 1:
+        gaps.add('contradictory_binding')
+    if raw_norms and not math.isclose(min(raw_norms), max(raw_norms), rel_tol=0,
+                                      abs_tol=RAW_NORM_ABS_TOLERANCE):
         gaps.add('contradictory_binding')
     if len(fingerprints) > 1:
         gaps.add('contradictory_binding')

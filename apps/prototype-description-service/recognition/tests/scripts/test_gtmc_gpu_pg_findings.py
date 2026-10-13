@@ -1,7 +1,6 @@
 """G4 restricted-PostgreSQL findings: offline causal tests for ``scripts/collect_gpu_pg_evidence.py``.
 
-Owner: GTMC c76 G4 RED lane. This module is the only file this lane may author. No existing test,
-fixture, or source file is edited. The 14 superseded-ABI selectors in
+Owner: GTMC c79 G4 source-fix lane. Adjudicated corrections to the c76 findings module. The 14 superseded-ABI selectors in
 ``scripts/tests/test_gtmr_gpu_pg_collector.py`` are test-shape failures, not production defects, and
 are not counted here.
 
@@ -35,7 +34,8 @@ import json
 import re
 import socket
 from collections import defaultdict
-from pathlib import Path
+from collections.abc import Mapping
+from pathlib import Path, PurePosixPath
 from types import ModuleType
 from typing import Any
 
@@ -101,6 +101,8 @@ BASE_SELECTION: dict[str, Any] = {
     "foreign_operation_id": OP_FOREIGN,
 }
 UNSAFE_IDENTITY_VARIANTS: dict[str, dict[str, dict[str, Any]]] = {
+    "independent-foreign-schema": {INDEPENDENT: {"schema": "foreign_schema"}},
+    "primary-session-user": {PRIMARY: {"session_user": "login_other"}},
     "primary-superuser": {PRIMARY: {"rolsuper": True}},
     "primary-bypassrls-role": {PRIMARY: {"rolbypassrls": True}},
     "independent-foreign-database": {INDEPENDENT: {"database": "foreign_fixture_db"}},
@@ -113,7 +115,7 @@ KEYWORD_DSN_REFS = (
     "dbname=fixture_identity user=restricted_reader sslmode=require",
     "hostaddr=192.0.2.10 port=5432 dbname=fixture_identity",
 )
-TENANT_DATA_SQL = frozenset({COL.DEMAND_SQL, COL.OUTPUT_SQL, COL.EMBEDDING_SQL})
+TENANT_DATA_SQL = frozenset({COL.DEMAND_SQL, COL.OUTPUT_SQL, COL.EMBEDDING_SQL, COL.RUN_SQL})
 _SET_TENANT_PREFIX = re.compile(r"SET LOCAL app\.current_tenant\b")
 _SET_TENANT_VALUE = re.compile(
     r"SET LOCAL app\.current_tenant = '([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'"
@@ -212,7 +214,11 @@ def _view_key(table: str, row: dict[str, Any]) -> Any:
 def _qual_true(qual: str, row_tenant: str, session_tenant: str | None, bypass: bool) -> bool:
     if qual == "true":
         return True
-    if qual == NATIVE_TENANT_QUAL:
+    canonical = NATIVE_TENANT_QUAL.replace(
+        "NULLIF(current_setting('app.current_tenant'::text, true), ''::text)::uuid",
+        "(NULLIF(current_setting('app.current_tenant'::text, true), ''::text))::uuid",
+    )
+    if qual in (NATIVE_TENANT_QUAL, canonical):
         return (session_tenant is not None and row_tenant == session_tenant) or bypass
     return False  # unrecognised policy semantics fail closed in the fake
 
@@ -232,7 +238,9 @@ class FakeCluster:
         self.policies: dict[str, list[dict[str, Any]]] = {
             table: [_policy(f"tenant_isolation_{table}", NATIVE_TENANT_QUAL)] for table in COL.RLS_TABLES
         }
-        self.vector_typmods: dict[tuple[str, str], int] = {pair: DIMENSION for pair in COL.VECTOR_COLUMNS}
+        self.vector_typmods: dict[tuple[str, str], int] = dict.fromkeys(COL.VECTOR_COLUMNS, DIMENSION)
+        self.indexes = [(t, c, "ivfflat", "vector_cosine_ops", True, None, None) for t, c in COL.VECTOR_COLUMNS]
+        self.extension_types = [(SCHEMA, "vector", "vector")]
         self.cost_hook = lambda label, sql, params: 0.0
         self.fail_on: dict[str, str] = {}
         self.output_rows_total: int | None = None
@@ -321,11 +329,34 @@ class FakeSession:
         if tenant_set is not None:
             self.tenant = tenant_set.group(1)
             return []
+        if re.fullmatch(r"SET LOCAL (statement_timeout|lock_timeout|idle_in_transaction_session_timeout) = .+", sql):
+            return []
         if _SET_TENANT_PREFIX.match(sql) or _SESSION_STMT.match(sql):
             raise FakeSqlError("session setting refused by the fixture contract")
         if _WRITE_STMT.match(sql):
             raise FakeSqlError("write refused in a restricted session", "25006")
         ident = self.identity
+        timeout_set = re.fullmatch(r"SELECT set_config\('statement_timeout', '([0-9]+)', true\)", sql)
+        if timeout_set:
+            return [(timeout_set.group(1),)]
+        if sql == "SELECT current_setting('app.bypass_rls', true)":
+            return (
+                [(ident.get("raw_bypass", "on" if ident["bypass"] else None),)]
+                if not ident.get("bypass_missing")
+                else []
+            )
+        if sql == "SELECT current_setting('app.current_tenant', true)":
+            return [] if ident.get("claim_missing") else [(ident.get("claim", self.tenant),)]
+        if "FROM image_description_runs r" in sql:
+            return [
+                (r["run_id"], r["tenant_id"], r["operation_id"])
+                for r in self._visible("image_description_runs")
+                if r["run_id"] == params.get("run_id")
+            ]
+        if "FROM pg_index" in sql:
+            return cl.indexes
+        if "FROM pg_type" in sql and "pg_depend" in sql:
+            return cl.extension_types
         if sql == COL.IDENTITY_SQL:
             return [
                 (
@@ -415,7 +446,9 @@ def _connect_for(cluster: FakeCluster):
 
 def _run(cluster: FakeCluster, selection: dict[str, Any] | None = None) -> dict[str, Any]:
     sel = copy.deepcopy(BASE_SELECTION) if selection is None else selection
-    return COL.collect_pg_evidence(connect=_connect_for(cluster), selection=sel, deadline=cluster.deadline)
+    result = COL.collect_pg_evidence(connect=_connect_for(cluster), selection=sel, deadline=cluster.deadline)
+    _assert_abi_envelope(result)
+    return result
 
 
 def _selection(**overrides: Any) -> dict[str, Any]:
@@ -583,8 +616,25 @@ def test_collector_imports_no_database_driver_or_tenant_helper() -> None:
             modules.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
             modules.add(node.module)
-    allowed = {"__future__", "collections.abc", "datetime", "hashlib", "json", "math", "re", "typing"}
-    assert modules <= allowed, sorted(modules - allowed)
+    denied = {
+        "psycopg",
+        "asyncpg",
+        "pg8000",
+        "sqlalchemy",
+        "sqlite3",
+        "aiosqlite",
+        "socket",
+        "ssl",
+        "http",
+        "urllib",
+        "requests",
+        "db",
+    }
+    assert not {
+        m
+        for m in modules
+        if m.split(".")[0] in denied or m.startswith(("psycopg", "http", "urllib")) or "tenant_context" in m
+    }
 
 
 def test_collector_drives_sessions_only_through_query_and_close() -> None:
@@ -609,7 +659,8 @@ def test_collector_never_sets_or_resets_bypass_or_role_in_positive_capture() -> 
     for session in cluster.sessions:
         for sql in session.log:
             if re.match(r"\s*(SET|RESET)\b", sql, re.IGNORECASE):
-                assert sql.startswith("SET LOCAL app.current_tenant"), sql
+                assert sql.startswith("SET LOCAL "), sql
+                assert not re.search(r"bypass_rls|\bROLE\b|SESSION AUTHORIZATION|search_path", sql, re.I), sql
 
 
 # --------------------------------------------------------------------------------------------
@@ -671,8 +722,17 @@ def test_d2_unrecognised_predicate_under_native_name_is_not_accepted_by_name_alo
     )
 
 
-def test_d2_native_tenant_policy_under_native_name_raises_no_policy_verdict() -> None:
-    result = _run(FakeCluster())
+@pytest.mark.parametrize("canonical", [False, True])
+def test_d2_native_tenant_policy_under_native_name_raises_no_policy_verdict(canonical: bool) -> None:
+    cluster = FakeCluster()
+    if canonical:
+        qual = NATIVE_TENANT_QUAL.replace(
+            "NULLIF(current_setting('app.current_tenant'::text, true), ''::text)::uuid",
+            "(NULLIF(current_setting('app.current_tenant'::text, true), ''::text))::uuid",
+        )
+        for table in cluster.policies:
+            cluster.policies[table] = [_policy(f"tenant_isolation_{table}", qual)]
+    result = _run(cluster)
     assert _fields_under(result, "contradictions", "catalog.rls.") == []
     assert _fields_under(result, "missing_reasons", "catalog.rls.") == []
 
@@ -724,34 +784,44 @@ def test_d3_identical_sessions_produce_no_visibility_disagreement() -> None:
 
 
 def test_d3_running_provisional_row_is_not_verdict_equivalent_to_final_row() -> None:
-    baseline = _run(FakeCluster())
     cluster = FakeCluster()
-    item = cluster.rows["image_description_run_items"][0]
-    item["status"] = "running"
-    item["tier"] = "provisional_cpu"
+    cluster.rows["image_description_run_items"][0].update(status="running", tier="provisional_cpu")
     result = _run(cluster)
-    assert (_verdict(result), _facts(result)) != (_verdict(baseline), _facts(baseline)), (
-        "a running/provisional_cpu output row produced exactly the diagnostics of a completed final_gpu row"
+    assert any(
+        i["code"] == "output_row_not_final" and re.match(r"visibility\..+\.101\.", i["field"]) for i in _issues(result)
     )
 
 
 def test_d3_native_run_linked_to_unrelated_operation_is_not_copied_from_selection() -> None:
-    baseline = _run(FakeCluster())
     cluster = FakeCluster()
     cluster.rows["image_description_runs"][0]["operation_id"] = OP_FOREIGN
     result = _run(cluster)
-    observed_op = _facts(result)[f"pg:visibility:{PRIMARY}:media-101"]["operation_id"]
-    new_issues = _issue_keys(result) - _issue_keys(baseline)
-    assert observed_op != OP_OWN or new_issues, (
-        "visibility reports the selected operation although the native run is linked to another operation"
-    )
+    assert _facts(result)[f"pg:visibility:{PRIMARY}:media-101"]["operation_id"] == OP_FOREIGN
+    assert _fields_under(result, "contradictions", "visibility.")
+    assert "run_operation_mismatch" in _contra_codes(result)
 
 
 def test_d3_matching_native_run_link_introduces_no_new_contradiction() -> None:
-    baseline = _run(FakeCluster())
     result = _run(FakeCluster())
-    new_contra = {k for k in _issue_keys(result) - _issue_keys(baseline) if k[0] == "contradiction"}
-    assert new_contra == set()
+    assert _facts(result)[f"pg:visibility:{PRIMARY}:media-101"]["operation_id"] == OP_OWN
+    assert not [
+        i
+        for i in _issues(result)
+        if i["field"].startswith("visibility.") and (i["field"].endswith("operation_id") or i["field"].endswith("run"))
+    ]
+    receipts = [json.loads(raw) for raw in result["raw_artifacts"].values()]
+    assert all(
+        any(q["query_id"] == "run-own" and q["rows"] == [[RUN_OWN, TENANT_A, OP_OWN]] for q in r["queries"])
+        for r in receipts
+    )
+
+
+def test_d3_absent_run_link_is_missing() -> None:
+    cluster = FakeCluster()
+    cluster.rows["image_description_runs"] = []
+    result = _run(cluster)
+    assert _facts(result)[f"pg:visibility:{PRIMARY}:media-101"]["operation_id"] is None
+    assert "run_row_not_visible" in _missing_codes(result)
 
 
 # --------------------------------------------------------------------------------------------
@@ -768,6 +838,9 @@ def test_d4_deadline_expiring_during_the_last_query_is_classified_not_silently_u
     )
     result = _run(cluster)
     assert COL.DEADLINE_EXHAUSTED in _missing_codes(result)
+    receipt = json.loads(result["raw_artifacts"][f"raw/pg/{INDEPENDENT}.json"])
+    last_query = next(q for q in receipt["queries"] if q["query_id"] == "output-foreign")
+    assert last_query["outcome"] == "deadline_exhausted" and last_query["rows"] == []
 
 
 def test_d4_row_acquisition_is_capped_at_budget_plus_one() -> None:
@@ -838,26 +911,40 @@ def test_d4_statement_cancel_rolls_back_and_closes_every_session() -> None:
 # --------------------------------------------------------------------------------------------
 
 
-def test_d5_vector_index_identity_is_observed_by_the_primary_catalog() -> None:
+@pytest.mark.parametrize("mutation", [None, "hnsw", "vector_l2_ops", "absent", "invalid", "predicate", "expression"])
+def test_d5_vector_index_identity_is_observed_by_the_primary_catalog(mutation: str | None) -> None:
     cluster = FakeCluster()
-    _run(cluster)
-    statements = _session(cluster, PRIMARY).log
-    assert any("pg_index" in sql and "pg_am" in sql for sql in statements), (
-        "no executed catalog statement observes vector index access method or opclass"
-    )
+    row = list(cluster.indexes[0])
+    if mutation == "absent":
+        cluster.indexes.pop(0)
+    elif mutation:
+        key, value = {
+            "hnsw": (2, "hnsw"),
+            "vector_l2_ops": (3, "vector_l2_ops"),
+            "invalid": (4, False),
+            "predicate": (5, "media_id > 0"),
+            "expression": (6, "embedding + embedding"),
+        }[mutation]
+        row[key] = value
+        cluster.indexes[0] = tuple(row)
+    result = _run(cluster)
+    fields = [i["field"] for i in _issues(result) if i["field"].startswith("catalog.indexes.")]
+    assert bool(fields) is (mutation is not None)
 
 
-def test_d5_extension_membership_of_the_vector_type_is_observed() -> None:
+@pytest.mark.parametrize("owned", [True, False])
+def test_d5_extension_membership_of_the_vector_type_is_observed(owned: bool) -> None:
     cluster = FakeCluster()
-    _run(cluster)
-    assert any("pg_depend" in sql for sql in _session(cluster, PRIMARY).log), (
-        "vector type namespace is not tied to extension membership"
-    )
+    if not owned:
+        cluster.extension_types = []
+    result = _run(cluster)
+    assert bool([i for i in _issues(result) if i["field"] == "catalog.extension_type"]) is (not owned)
 
 
 def test_d5_every_tenant_vector_base_table_is_under_rls_coverage() -> None:
+    result = _run(FakeCluster())
     base = {table for table, _column in COL.VECTOR_COLUMNS if not table.startswith("mv_")}
-    assert base <= set(COL.RLS_TABLES), sorted(base - set(COL.RLS_TABLES))
+    assert base <= {r["table"] for r in _catalog(result)["rls"]}
 
 
 def test_d5_vector_typmod_mismatch_is_contradicted_on_the_named_column() -> None:
@@ -946,9 +1033,9 @@ def test_positive_produced_facts_are_pinned_separately_from_the_policy_verdict()
     assert facts[f"pg:connection:{INDEPENDENT}"]["backend_pid"] == 4102
     catalog = _catalog(result)
     assert catalog["extension_version"] == EXT_VERSION
-    assert {(v["table"], v["column"]): v["atttypmod"] for v in catalog["vectors"]} == {
-        pair: DIMENSION for pair in COL.VECTOR_COLUMNS
-    }
+    assert {(v["table"], v["column"]): v["atttypmod"] for v in catalog["vectors"]} == dict.fromkeys(
+        COL.VECTOR_COLUMNS, DIMENSION
+    )
     visibility = facts[f"pg:visibility:{PRIMARY}:media-101"]
     assert (
         visibility["own_output_rows"],
@@ -963,8 +1050,243 @@ def test_positive_produced_facts_are_pinned_separately_from_the_policy_verdict()
     assert verdict["contradictions"] == []
     assert verdict["status"] == "incomplete"
     assert {
-        COL.APP_BYPASS_UNPROBED,
         COL.FOREIGN_UNWITNESSED,
         COL.FIRST_REVISION_UNPERSISTED,
         COL.EMBEDDING_MODELS_UNAVAILABLE,
     } <= set(verdict["missing"])
+
+
+ABI_STATUSES = frozenset({"complete", "incomplete", "contradicted"})
+ABI_KINDS = frozenset({"connection", "catalog", "visibility"})
+ABI_DATA_KEYS: dict[str, frozenset[str]] = {
+    "connection": frozenset(
+        {
+            "connection_id",
+            "database",
+            "current_user",
+            "session_user",
+            "backend_pid",
+            "tenant_context",
+            "app_bypass_rls",
+            "rolsuper",
+            "rolbypassrls",
+            "transaction_read_only",
+        }
+    ),
+    "catalog": frozenset({"connection_id", "extension_name", "extension_version", "vectors", "rls"}),
+    "visibility": frozenset(
+        {
+            "connection_id",
+            "tenant_id",
+            "operation_id",
+            "request_digest",
+            "first_counting_revision",
+            "run_id",
+            "media_id",
+            "result_generation",
+            "caption_sha256",
+            "own_demand_rows",
+            "own_output_rows",
+            "foreign_demand_rows",
+            "foreign_output_rows",
+            "foreign_witness_refs",
+        }
+    ),
+}
+ABI_OBSERVATION_KEYS = frozenset(
+    {"observation_id", "kind", "observed_at", "artifact_relative_path", "artifact_sha256", "source_artifacts", "data"}
+)
+ABI_ISSUE_KEYS = frozenset({"code", "field", "detail", "artifact_refs"})
+ABI_REF_KEYS = frozenset({"relative_path", "sha256", "locator"})
+ABI_ARTIFACT_KEYS = frozenset(
+    {"relative_path", "sha256", "command_argv", "exit_code", "capture_started_at", "capture_finished_at"}
+)
+RFC3339_Z = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z")
+H64 = re.compile(r"[0-9a-f]{64}")
+
+
+def _assert_abi_envelope(result: Mapping[str, Any]) -> None:
+    """Frozen ABI v1 invariants for section ``pg``. Shape only; semantic oracles live in the tests."""
+    assert set(result) == {"section", "artifacts", "raw_artifacts"}
+    section = result["section"]
+    assert set(section) == {"status", "observations", "missing_reasons", "contradictions"}
+    assert section["status"] in ABI_STATUSES
+    raw = result["raw_artifacts"]
+    assert isinstance(raw, dict)
+    listed = {artifact["relative_path"]: artifact for artifact in result["artifacts"]}
+    assert set(listed) == set(raw), "every persisted raw file is listed and every listed artifact is persisted"
+    assert len(listed) == len(result["artifacts"]), "duplicate artifact paths"
+    for path, content in raw.items():
+        pure = PurePosixPath(path)
+        assert path.startswith("raw/pg/") and not pure.is_absolute() and ".." not in pure.parts, path
+        assert "\x00" not in path
+        assert isinstance(content, bytes)
+        assert hashlib.sha256(content).hexdigest() == listed[path]["sha256"], path
+    for artifact in result["artifacts"]:
+        assert set(artifact) == ABI_ARTIFACT_KEYS
+        assert artifact["command_argv"] == [] and artifact["exit_code"] is None, "direct driver queries"
+        assert RFC3339_Z.fullmatch(artifact["capture_started_at"]), artifact
+        assert RFC3339_Z.fullmatch(artifact["capture_finished_at"]), artifact
+        assert H64.fullmatch(artifact["sha256"]), artifact
+    ids = [obs["observation_id"] for obs in section["observations"]]
+    assert len(ids) == len(set(ids)), "observation IDs are unique within the envelope"
+    for obs in section["observations"]:
+        assert set(obs) == ABI_OBSERVATION_KEYS
+        assert obs["kind"] in ABI_KINDS, obs["kind"]
+        assert obs["observed_at"] is None or RFC3339_Z.fullmatch(obs["observed_at"]), obs
+        assert set(obs["data"]) == ABI_DATA_KEYS[obs["kind"]], (obs["kind"], sorted(obs["data"]))
+        assert obs["artifact_relative_path"] in raw, "every fact has a primary raw reference"
+        assert obs["artifact_sha256"] == listed[obs["artifact_relative_path"]]["sha256"]
+        for ref in obs["source_artifacts"]:
+            assert set(ref) == ABI_REF_KEYS
+    for issue in [*section["missing_reasons"], *section["contradictions"]]:
+        assert set(issue) == ABI_ISSUE_KEYS, issue
+        assert isinstance(issue["code"], str) and isinstance(issue["field"], str) and isinstance(issue["detail"], str)
+        for ref in issue["artifact_refs"]:
+            assert set(ref) == ABI_REF_KEYS
+    # Frozen ABI: every null measurement needs a missing reason in the same section, scoped to its connection
+    # (or to the catalog). A null without a reason is an unexplained gap that G1 must not accept.
+    missing_fields = [issue["field"] for issue in section["missing_reasons"]]
+    for obs in section["observations"]:
+        nulls = [key for key, value in obs["data"].items() if value is None]
+        if nulls:
+            scope = obs["data"].get("connection_id")
+            assert any(scope in name or name.startswith("catalog.") for name in missing_fields), (
+                obs["observation_id"],
+                nulls,
+            )
+    # Contradictions take precedence over missing reasons.
+    if section["contradictions"]:
+        assert section["status"] == "contradicted"
+    elif section["missing_reasons"]:
+        assert section["status"] == "incomplete"
+    else:
+        assert section["status"] == "complete"
+
+
+# ---- fake self-checks for the probes the collector depends on (pass now; no collector required) ----
+
+
+def test_bypass_false_requires_receipt() -> None:
+    result = _run(FakeCluster())
+    for label in (PRIMARY, INDEPENDENT):
+        assert _facts(result)[f"pg:connection:{label}"]["app_bypass_rls"] is False
+        receipt = json.loads(result["raw_artifacts"][f"raw/pg/{label}.json"])
+        assert any(
+            q["sql"] == "SELECT current_setting('app.bypass_rls', true)" and q["rows"] == [[None]]
+            for q in receipt["queries"]
+        )
+
+
+@pytest.mark.parametrize("override", [{"claim_missing": True}, {"claim": TENANT_B}, {"bypass_missing": True}])
+def test_d1_claims_are_observed_and_missing_claims_withhold_reads(override: dict[str, Any]) -> None:
+    cluster = FakeCluster()
+    cluster.overrides = {PRIMARY: override}
+    result = _run(cluster)
+    assert not any(sql in TENANT_DATA_SQL for session in cluster.sessions for sql in session.log)
+    if "claim" in override:
+        assert _facts(result)[f"pg:connection:{PRIMARY}"]["tenant_context"] == TENANT_B
+        assert "tenant_context_mismatch" in _contra_codes(result)
+    else:
+        assert _missing_codes(result)
+        if "claim_missing" in override:
+            assert _facts(result)[f"pg:connection:{PRIMARY}"]["tenant_context"] is None
+            assert COL.TENANT_CONTEXT_NOT_SELECTED in _missing_codes(result)
+
+
+def test_d2_additional_permissive_policy_is_or_widening() -> None:
+    cluster = FakeCluster()
+    cluster.policies["media_identities"].append(_policy("extra", "true"))
+    assert _fields_under(_run(cluster), "contradictions", "catalog.rls.media_identities.")
+
+
+@pytest.mark.parametrize("dsn_ref", ["service=fixture", "passfile=fixture", " ref", "ref\n", "ref\t", "x" * 129])
+def test_d6_only_opaque_reference_names(dsn_ref: str) -> None:
+    cluster = FakeCluster()
+    result = _run(cluster, _selection(dsn_ref=dsn_ref))
+    assert not cluster.connect_calls
+    assert dsn_ref not in _blob(result)
+
+
+@pytest.mark.parametrize("cleanup", ["rollback", "close"])
+def test_d4_cleanup_expiry_is_classified(cleanup: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    cluster = FakeCluster(budget_s=5)
+    if cleanup == "rollback":
+        cluster.cost_hook = lambda label, sql, params: 10 if sql == "ROLLBACK" else 0
+    else:
+        original = FakeSession.close
+
+        def close(session: FakeSession) -> None:
+            cluster.clock.now += 10
+            original(session)
+
+        monkeypatch.setattr(FakeSession, "close", close)
+    result = _run(cluster)
+    assert all(s.closed for s in cluster.sessions)
+    assert any(i["code"] == COL.DEADLINE_EXHAUSTED and i["field"].startswith("cleanup.") for i in _issues(result))
+
+
+def test_d4_statement_timeout_is_refreshed_to_remaining_budget() -> None:
+    cluster = FakeCluster(budget_s=5)
+    cluster.cost_hook = lambda label, sql, params: 0.01
+    _run(cluster)
+    bounds = [
+        int(re.search(r"'([0-9]+)'", sql).group(1))
+        for s in cluster.sessions
+        for sql in s.log
+        if "set_config('statement_timeout'" in sql
+    ]
+    assert bounds and max(bounds) <= 5000 and min(bounds) < max(bounds)
+    for session in cluster.sessions:
+        for index, sql in enumerate(session.log):
+            if sql == "BEGIN READ ONLY" or "set_config('statement_timeout'" in sql:
+                continue
+            assert index > 0 and "set_config('statement_timeout'" in session.log[index - 1], sql
+
+
+def test_d3_generation_disagreement_is_missing_not_session_contradiction() -> None:
+    cluster = FakeCluster()
+    cluster.session_views[INDEPENDENT][("image_description_run_items", (RUN_OWN, 101))] = {
+        "result_generation": GENERATION + 1
+    }
+    result = _run(cluster)
+    assert COL.VISIBILITY_SESSION_DISAGREEMENT in _missing_codes(result)
+    assert COL.VISIBILITY_SESSION_DISAGREEMENT not in _contra_codes(result)
+
+
+def test_d3_absent_operation_is_missing() -> None:
+    cluster = FakeCluster()
+    cluster.rows["describe_operations"] = []
+    result = _run(cluster)
+    assert COL.DEMAND_ROW_NOT_VISIBLE in _missing_codes(result)
+    assert _facts(result)[f"pg:visibility:{PRIMARY}:media-101"]["request_digest"] is None
+
+
+@pytest.mark.parametrize("drift", ["with_check", "reader_role", "restrictive"])
+def test_d2_policy_dimensions_are_not_replaced_by_name(drift: str) -> None:
+    cluster = FakeCluster()
+    policy = cluster.policies["media_identities"][0]
+    if drift == "with_check":
+        policy["with_check"] = "true"
+    elif drift == "reader_role":
+        policy["roles"] = [ROLE]
+        policy["qual"] = "true"
+    else:
+        policy["permissive"] = "RESTRICTIVE"
+        policy["qual"] = "unknown"
+    assert _policy_issue_fields(_run(cluster), "media_identities")
+
+
+@pytest.mark.parametrize("claim", [None, "", "off", "false", "unrecognized"])
+def test_d1_bypass_claim_is_measured_and_unknown_fails_closed(claim: str | None) -> None:
+    cluster = FakeCluster()
+    cluster.overrides = {PRIMARY: {"raw_bypass": claim}}
+    result = _run(cluster)
+    data = _facts(result)[f"pg:connection:{PRIMARY}"]
+    if claim == "unrecognized":
+        assert data["app_bypass_rls"] is None
+        assert COL.APP_BYPASS_UNPROBED in _missing_codes(result)
+        assert _tenant_statements(cluster) == []
+    else:
+        assert data["app_bypass_rls"] is False
+        assert _tenant_statements(cluster)

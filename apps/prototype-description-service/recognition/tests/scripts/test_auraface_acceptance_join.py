@@ -80,6 +80,8 @@ def test_healthy_pair_with_different_role_generations_preserves_contract_gap():
     assert result['snapshot'] is None and result['sidecar'] is None
     assert result['status'] == 'incomplete'
     assert set(result['gaps']) == {'GAP-V1-REPAIR','GAP-BRANCH-ARTIFACTS'}
+    assert all(row['status'] == 'joined' and row['reason_code'] is None
+               for row in result['acquisition_ledger'])
     assert (records,inputs) == before
 
 
@@ -285,7 +287,8 @@ def test_dedicated_join_guard(factor, code):
     elif factor == 'role_incomplete': r['collection_status'] = 'incomplete'
     elif factor == 'image_source': inputs['image_records'][0]['source_identity']['source_tree'] = 'd'*40
     elif factor == 'session_generation': rt['sessions']['yunet']['runtime_generation_id'] = 'other'
-    elif factor == 'graph_model': rt['sessions']['auraface']['graph_analysis']['model_sha256'] = 'd'*64
+    elif factor == 'graph_model':
+        for record in records: record['adapter_observations'][0]['runtime_record']['sessions']['auraface']['graph_analysis']['model_sha256'] = 'd'*64
     elif factor == 'contiguous': ex['embedder_input']['contiguous'] = False
     elif factor == 'execution_stale':
         ex['captured_at'] = OLD
@@ -354,13 +357,14 @@ def test_each_timestamp_staleness(site):
 
 @pytest.mark.parametrize('factor', ['mean','scale','channel_samples','template','detector_shape',
     'embedder_shape','detector_dtype','embedder_dtype','fixture_id','fixture_sha256',
-    'independent_reference_sha256','graph_l2'])
+    'independent_reference_sha256','graph_l2','padding_geometry'])
 def test_executed_value_binding(factor):
     records, inputs = pair()
     rt = records[1]['adapter_observations'][0]['runtime_record']; ex = rt['execution_receipt']
     if factor == 'mean': ex['embedder_input']['mean'] = 0.0
     elif factor == 'scale': ex['embedder_input']['scale'] = 1.0
     elif factor == 'channel_samples': ex['embedder_input']['channel_samples'].reverse()
+    elif factor == 'padding_geometry': ex['detector_input']['padding_geometry'][0] = 1
     elif factor == 'template': ex['alignment']['template_sha256'] = 'd'*64
     elif factor.endswith('_shape'):
         for record in records:
@@ -383,12 +387,16 @@ def test_graph_l2_unit_raw_norm_control():
         rt = record['adapter_observations'][0]['runtime_record']
         rt['sessions']['auraface']['graph_analysis']['output_l2_normalized'] = True
         rt['execution_receipt']['raw_output']['norm'] = 1.0
-    assert set(join(records,inputs)['gaps']) == BASE_GAPS
+    result = join(records, inputs)
+    assert set(result['gaps']) == BASE_GAPS
+    assert all(row['status'] == 'joined' and row['reason_code'] is None
+               for row in result['acquisition_ledger'])
 
 
 @pytest.mark.parametrize('helper,value,code', [
     ('_text',None,'incomplete'), ('_text',17,'malformed'), ('_text','', 'malformed'),
     ('_text','x'*513,'malformed'), ('_text','fixture@canary','malformed'),
+    ('_text','fixture://canary','malformed'), ('_text','fixture\x00canary','malformed'),
     ('_hex','a'*63,'malformed'), ('_hex','g'*64,'malformed'),
     ('_integer',True,'malformed'), ('_integer',-1,'malformed'),
     ('_integer',2**64,'malformed'), ('_number',True,'malformed'),
@@ -398,6 +406,8 @@ def test_graph_l2_unit_raw_norm_control():
     ('_list',{},'malformed'), ('_list',[0]*513,'malformed'),
     ('_source',None,'incomplete'),
     ('_bounded_json',{1:'value'},'malformed'),
+    ('_bounded_json',{None:'fixture'},'malformed'),
+    ('_bounded_json',{str(i):0 for i in range(513)},'malformed'),
     ('_bounded_json',object(),'malformed'),
 ])
 def test_transport_scalar_refusals(helper, value, code):
@@ -413,7 +423,7 @@ def test_transport_scalar_refusals(helper, value, code):
 def test_transport_structural_refusals(factor, code):
     module = load('auraface_acceptance_join')
     with pytest.raises(module.RecordError, match='^'+code+'$'):
-        if factor == 'closed_nondict': module._closed('fixture','field')
+        if factor == 'closed_nondict': module._closed(['field'],'field')
         elif factor == 'positive_zero': module._number(0,positive=True)
         elif factor == 'empty_list': module._list([],True)
         elif factor == 'json_nodes': module._bounded_json([[0]*512 for _ in range(100)])
@@ -425,6 +435,7 @@ def test_transport_structural_refusals(factor, code):
 
 @pytest.mark.parametrize('factor,code', [
     ('status_unknown','malformed'), ('status_reason','incomplete'),
+    ('status_reason_type','malformed'), ('image_digest_value','malformed'),
     ('image_digest','malformed'), ('image_digest_type','malformed'),
     ('session_future','future_clock'), ('tensor_dtype','incomplete'),
     ('output_width','contradictory_binding'), ('runtime_state','malformed'),
@@ -443,7 +454,9 @@ def test_additional_join_guard(factor, code):
     r=records[0]; obs=r['adapter_observations'][0]; rt=obs['runtime_record']; ex=rt['execution_receipt']
     if factor == 'status_unknown': r['collection_status']='unknown'
     elif factor == 'status_reason': r['reason_code']='fixture-reason'
-    elif factor == 'image_digest': inputs['image_records'][0]['registry_manifest_digest']=H
+    elif factor == 'status_reason_type': r['reason_code']=17
+    elif factor == 'image_digest_value': inputs['image_records'][0]['registry_manifest_digest']=17
+    elif factor == 'image_digest': inputs['image_records'][0]['registry_manifest_digest']='opaque:'+H
     elif factor == 'image_digest_type': inputs['image_records'][0]['digest_type']='other'
     elif factor == 'session_future': rt['sessions']['yunet']['constructed_at']='2026-10-13T00:00:03+00:00'
     elif factor == 'tensor_dtype': ex['embedder_input']['dtype']='float16'
@@ -452,7 +465,8 @@ def test_additional_join_guard(factor, code):
     elif factor == 'same_sessions':
         rt['sessions']['auraface']['session_id']=rt['sessions']['yunet']['session_id']
         ex['embedder_session_id']=rt['sessions']['yunet']['session_id']
-    elif factor == 'catalog_duplicate': r['serving_catalog']['vector_columns']*=2
+    elif factor == 'catalog_duplicate':
+        for record in records: record['serving_catalog']['vector_columns']*=2
     elif factor == 'role_name': r['role']='other'
     elif factor == 'duplicate_adapter': r['adapter_observations'].append(copy.deepcopy(obs))
     elif factor == 'execution_after_capture': ex['captured_at']='2026-10-13T00:00:01+00:00'
@@ -464,7 +478,7 @@ def test_additional_join_guard(factor, code):
     elif factor == 'binding_duplicate': inputs['serving_bindings'].append(copy.deepcopy(inputs['serving_bindings'][0]))
     elif factor == 'binding_missing': inputs['serving_bindings'].pop()
     elif factor in ('previous_role','previous_duplicate'):
-        prior=dict(role='api',process_instance_id='api-process',observation_sequence=1,captured_at=STAMP,record_sha256=H)
+        prior=dict(role='api',process_instance_id='api-process',observation_sequence=1,captured_at=STAMP,record_sha256=load('auraface_acceptance_join').record_digest(r))
         if factor=='previous_role': prior['role']='other'
         inputs['previous_observations']=[prior] if factor=='previous_role' else [prior,copy.deepcopy(prior)]
     elif factor == 'repair_missing': inputs['repair_identity']=None
@@ -510,3 +524,59 @@ def test_explicit_policy_validation(policy):
             isolation_policy=dict(resource_policy_id='candidate-target',database_instance_id='instance-opaque',
                 database_name='candidate_store',database_role='serving_role',storage_identity='store-opaque',tenant_context_id='tenant-opaque'),
             now=NOW.replace(tzinfo=None) if policy == 'naive_now' else NOW)
+
+
+@pytest.mark.parametrize('model', ['yunet', 'auraface'])
+def test_executed_tensor_requires_single_session_input(model):
+    records, inputs = pair()
+    for record in records:
+        session = record['adapter_observations'][0]['runtime_record']['sessions'][model]
+        session['actual_input_metadata'].append(dict(name='second-input',
+            shape=[1, 3, 112, 112], dtype='float32'))
+    assert_gap(records, inputs, 'contradictory_binding')
+
+
+@pytest.mark.parametrize('field,value,code', [
+    ('declared_embedding_dimension', 128, 'incomplete'),
+    ('declared_embedding_dimension', 512.0, 'incomplete'),
+    ('observed_embedding_dimension', 512.0, 'incomplete'),
+    ('effective_profile', 'other', 'contradictory_binding'),
+    ('reason_code', 'fixture-reason', 'incomplete'),
+])
+def test_runtime_declarations_cannot_override_execution(field, value, code):
+    records, inputs = pair()
+    for record in records:
+        record['adapter_observations'][0]['runtime_record'][field] = value
+    assert_gap(records, inputs, code, row=0)
+
+
+def test_session_logical_model_binding_is_local():
+    records, inputs = pair()
+    for record in records:
+        session = record['adapter_observations'][0]['runtime_record']['sessions']['yunet']
+        session['logical_model_name'] = 'auraface'
+    assert_gap(records, inputs, 'contradictory_binding', row=0)
+
+
+def test_embedder_session_binding_is_local():
+    records, inputs = pair()
+    records[0]['adapter_observations'][0]['runtime_record']['execution_receipt']['embedder_session_id'] = 'other'
+    assert_gap(records, inputs, 'contradictory_binding', row=0)
+
+
+def test_adapter_execution_cannot_follow_role_capture():
+    records, inputs = pair()
+    records[0]['adapter_observations'][0]['last_execution_at'] = '2026-10-13T00:00:01+00:00'
+    assert_gap(records, inputs, 'contradictory_binding', row=0)
+
+
+def test_image_document_digest_binds_to_source():
+    records, inputs = pair()
+    inputs['image_records'][0]['identity_document_sha256'] = 'd' * 64
+    assert_gap(records, inputs, 'contradictory_binding')
+
+
+def test_catalog_process_binding_is_local():
+    records, inputs = pair()
+    records[0]['serving_catalog']['process_instance_id'] = 'other'
+    assert_gap(records, inputs, 'contradictory_binding', row=0)

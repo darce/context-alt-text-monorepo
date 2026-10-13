@@ -2,7 +2,8 @@
 
 Each explicit path is opened by one isolated serial reader process. The caller
 wait has a freshly computed timeout and terminates the reader on expiration.
-Nonblocking, no-follow opens refuse devices, directories, FIFOs and symlinks.
+Nonblocking opens refuse devices, directories and FIFOs. Every path component
+is opened no-follow, including parent directories.
 No record or acquisition exception is logged. No producer path is written.
 RES-02: https://github.com/darce/heuristics-canon/blob/v0.25.6/lexicons/engineering.md#res-02
 """
@@ -32,8 +33,21 @@ import json, os, stat, sys
 request = json.loads(sys.stdin.read())
 path, cap = request['path'], request['cap']
 fd = None
+total = 0
 try:
-    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    # Walk from a fixed directory descriptor; never follow a parent symlink.
+    parts = path.split('/')
+    parent = os.open('/' if path.startswith('/') else '.', os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in parts[:-1]:
+            if not part or part == '.':
+                continue
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+            os.close(parent)
+            parent = child
+        fd = os.open(parts[-1], os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=parent)
+    finally:
+        os.close(parent)
     before = os.fstat(fd)
     if not stat.S_ISREG(before.st_mode):
         result = {'status':'unreadable'}
@@ -62,6 +76,7 @@ except (OSError,ValueError):
 finally:
     if fd is not None:
         os.close(fd)
+result['bytes_read'] = total
 sys.stdout.write(json.dumps(result,separators=(',',':')))
 '''
 
@@ -119,15 +134,35 @@ def collect_auraface_acceptance(record_paths, *, captured_inputs,
                 remaining = deadline_monotonic - time.monotonic()
                 if remaining <= 0:
                     raise subprocess.TimeoutExpired('captured-reader', 0)
-                process = subprocess.run([sys.executable,'-I','-c',_READ_SCRIPT],
-                    input=json.dumps(dict(path=str(path),cap=max_record_bytes)),
-                    text=True,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
-                    timeout=remaining,check=False)
-                if process.returncode != 0 or len(process.stdout) > 2 * max_record_bytes + 256:
+                process = subprocess.Popen([sys.executable,'-I','-c',_READ_SCRIPT],
+                    stdin=subprocess.PIPE,text=True,stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL)
+                try:
+                    # Reserve part of the remaining budget for bounded reaping.
+                    budget = max(0, deadline_monotonic - time.monotonic())
+                    output, _ = process.communicate(
+                        input=json.dumps(dict(path=str(path),cap=max_record_bytes)),
+                        timeout=budget - min(0.05, budget * 0.9))
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    try:
+                        process.wait(timeout=max(0, deadline_monotonic - time.monotonic()))
+                    except subprocess.TimeoutExpired:
+                        raise _join.RecordError('reader_unkillable') from None
+                    raise
+                finally:
+                    for pipe in (process.stdin, process.stdout):
+                        if pipe is not None:
+                            pipe.close()
+                if process.returncode != 0 or len(output) > 2 * max_record_bytes + 256:
                     row['status'] = row['reason_code'] = 'unreadable'
                 else:
-                    payload = json.loads(process.stdout)
+                    payload = json.loads(output)
                     status = payload.get('status')
+                    receipt = payload['bytes_read']
+                    if type(receipt) is not int or receipt < 0:
+                        raise ValueError('invalid read receipt')
+                    row['bytes_read'] = receipt
                     if status != 'acquired':
                         if status not in ('missing','unreadable','oversized','contradictory_binding'):
                             status = 'unreadable'

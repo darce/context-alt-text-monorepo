@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, fields, is_dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import math
 import os
@@ -68,6 +68,11 @@ def _version(value):
     return type(value) is int and value == 1
 
 
+def _capture_time(value):
+    if not isinstance(value, datetime) or value.utcoffset() != timedelta(0):
+        raise ValueError("invalid_capture_time")
+
+
 def _process(value):
     if not isinstance(value, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", value) is None:
         raise ValueError("invalid_process_identity")
@@ -86,6 +91,9 @@ class FaceRoleRecordV1:
     serving_catalog: object
     collection_status: str
     reason_code: str | None
+
+    def __post_init__(self):
+        _capture_time(self.captured_at)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -110,7 +118,7 @@ class RepairIdentityRecordV1:
         if not _version(self.producer_abi_version) or self.role != "fix-blob-ownership":
             raise ValueError("invalid_repair_identity")
         _process(self.repair_invocation_id)
-        _copy(self.captured_at)
+        _capture_time(self.captured_at)
         if self.source_identity is not None:
             SourceIdentityV1(**_copy(self.source_identity))
         image = _copy(self.image_record)
@@ -175,7 +183,7 @@ def build_face_role_record(*, role, process_instance_id, observation_sequence, c
     _process(process_instance_id)
     if type(observation_sequence) is not int or observation_sequence < 0:
         raise ValueError("invalid_sequence")
-    _copy(captured_at)
+    _capture_time(captured_at)
     settings = _copy(effective_settings)
     if not isinstance(settings, dict) or set(settings) - SETTINGS_FIELDS:
         raise ValueError("unallowlisted_settings")

@@ -145,6 +145,8 @@ def record_digest(value):
 
 
 def _source(value):
+    if value is None:
+        _fail('incomplete')
     _closed(value, 'source_identity_version source_git_sha source_tree build_context_manifest_sha256 service_lock_sha256 image_variant build_time identity_document_sha256', ('source_identity_version',))
     for key in ('source_git_sha', 'source_tree'):
         _hex(value[key], 40)
@@ -253,6 +255,11 @@ def _execution(value, runtime, now, policy):
     _closed(lineage, 'fixture_id fixture_sha256 independent_reference_sha256')
     _text(lineage['fixture_id']); _hex(lineage['fixture_sha256']); _hex(lineage['independent_reference_sha256'])
     _tensor(value['detector_input']); _tensor(value['embedder_input'], True)
+    for tensor_key, session_key in (('detector_input', 'yunet'), ('embedder_input', 'auraface')):
+        tensor = value[tensor_key]
+        metadata = sessions[session_key]['actual_input_metadata']
+        if len(metadata) != 1 or tensor['shape'] != metadata[0]['shape'] or tensor['dtype'] != metadata[0]['dtype']:
+            _fail('contradictory_binding')
     _hex(value['detections_sha256'])
     alignment = value['alignment']
     _closed(alignment, 'landmarks_sha256 executing_spec_sha256 template_sha256 affine_sha256 crop_sha256')
@@ -270,6 +277,8 @@ def _execution(value, runtime, now, policy):
         _fail('incomplete')
     _hex(value['graph_analysis_sha256'])
     if value['graph_analysis_sha256'] != sessions['auraface']['graph_analysis']['analysis_sha256']:
+        _fail('contradictory_binding')
+    if sessions['auraface']['graph_analysis']['output_l2_normalized'] and abs(value['raw_output']['norm'] - 1) > 1e-5:
         _fail('contradictory_binding')
     for session in sessions.values():
         if _time(session['constructed_at']) > _time(value['captured_at']):
@@ -384,7 +393,8 @@ def _inputs(value, now, policy, isolation):
         _fail('incomplete')
     images = {}
     for item in _list(value['image_records'], True):
-        _image(item, item.get('source_identity'), isolation)
+        _closed(item, 'role process_instance_id container_id registry_manifest_digest digest_type platform image_config_digest identity_document_sha256 source_identity resource_policy_id')
+        _image(item, item['source_identity'], isolation)
         key = (item['role'],item['process_instance_id'])
         if key in images:
             _fail('contradictory_binding')
@@ -450,6 +460,10 @@ def join_auraface_acceptance(records, *, captured_inputs, expected_contract,
 
     The ledger's ``joined`` means captured compatibility and identities agree;
     it never means recipe verification, live readiness, or full acceptance.
+    Executed tensor values, alignment template and fixture/reference lineage
+    must agree across roles, as must the captured census; disagreement is a
+    contradictory_binding. Execution and adapter IDs cannot be shared across
+    roles. Executed shapes/dtypes bind to each role's own session metadata.
     Compact preprocessing/settings/catalog summaries are explicitly limited
     capture contracts, not a substitute for the future full validator ABI.
     """
@@ -476,6 +490,10 @@ def join_auraface_acceptance(records, *, captured_inputs, expected_contract,
     image_contracts = []
     generations = {}
     session_owners = {}
+    execution_owners = {}
+    adapter_owners = {}
+    executed_contracts = set()
+    censuses = set()
     for index, record in enumerate(records):
         entry = dict(record_index=index, status='incomplete', reason_code='incomplete', record_sha256=None)
         try:
@@ -503,8 +521,21 @@ def join_auraface_acceptance(records, *, captured_inputs, expected_contract,
             # A pool is never inferred from a role name or an expected DB pin.
             if record['serving_catalog']['pool_identity'] != bindings[key]:
                 _fail('contradictory_binding')
+            censuses.add(record_digest(sorted(record['serving_catalog']['vector_columns'],
+                key=lambda column: (column['schema'], column['table'], column['column']))))
             for obs in record['adapter_observations']:
                 rt = obs['runtime_record']
+                execution = rt['execution_receipt']
+                for identifier, owners in ((execution['execution_id'], execution_owners),
+                                           (obs['adapter_instance_id'], adapter_owners)):
+                    if identifier in owners and owners[identifier] != record['role']:
+                        _fail('contradictory_binding')
+                    owners[identifier] = record['role']
+                executed_contracts.add(record_digest(dict(
+                    detector={k: execution['detector_input'][k] for k in ('shape', 'dtype', 'padding_geometry')},
+                    embedder={k: execution['embedder_input'][k] for k in ('shape', 'dtype', 'channel_samples', 'mean', 'scale')},
+                    template_sha256=execution['alignment']['template_sha256'],
+                    input_lineage=execution['input_lineage'])))
                 generation = rt['runtime_generation_id']
                 if generation in generations and generations[generation] != key:
                     _fail('contradictory_binding')
@@ -524,12 +555,14 @@ def join_auraface_acceptance(records, *, captured_inputs, expected_contract,
                 fingerprints.add((rt['compatibility_sha256'], rt['model_id'],
                     rt['preprocessing_id'], rt['config_sha256'],
                     record_digest(rt['frozen_preprocessing_spec']), *session_contracts))
-            entry['status'] = 'joined'; entry['reason_code'] = None
+            entry['reason_code'] = None
         except RecordError as exc:
             entry['reason_code'] = str(exc); gaps.add(str(exc))
         result['acquisition_ledger'].append(entry)
     if seen != expected:
         gaps.add('incomplete')
+    if len(executed_contracts) > 1 or len(censuses) > 1:
+        gaps.add('contradictory_binding')
     if len(fingerprints) > 1:
         gaps.add('contradictory_binding')
     if any(source != repair['source_identity'] for source in sources):
@@ -538,5 +571,12 @@ def join_auraface_acceptance(records, *, captured_inputs, expected_contract,
     repair_contract = tuple(repair_image[k] for k in ('registry_manifest_digest','digest_type','platform','image_config_digest'))
     if any(contract != repair_contract for contract in image_contracts):
         gaps.add('contradictory_binding')
+    aggregate_gaps = gaps - {'GAP-V1-REPAIR', 'GAP-BRANCH-ARTIFACTS'}
+    for entry in result['acquisition_ledger']:
+        if entry['reason_code'] is None:
+            if aggregate_gaps:
+                entry['reason_code'] = 'contradictory_binding' if 'contradictory_binding' in aggregate_gaps else sorted(aggregate_gaps)[0]
+            else:
+                entry['status'] = 'joined'
     result['gaps'] = sorted(gaps)
     return result

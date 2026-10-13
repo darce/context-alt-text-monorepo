@@ -13,7 +13,7 @@ Runner protocol (the existing transport in scripts/tests/test_gtmr_gpu_runtime_r
     subprocess.TimeoutExpired and a launch failure as OSError. Any other exception propagates.
 
 deadline: an object exposing ``remaining()`` seconds, or an absolute ``time.monotonic()`` float.
-clock_skew_bound_s: declared shared-clock bound, default 1.0 seconds; never observed evidence.
+clock_skew_bound_s: optional declared shared-clock bound; never observed evidence.
 
 observation: capture instructions, never evidence.
     instance_id: str                     OCI instance to read (a mismatch is a contradiction).
@@ -59,7 +59,6 @@ MAX_RECEIPT_BYTES = 32 << 20
 MAX_RECEIPTS = 8
 MAX_CALLS = 32
 PER_CALL_TIMEOUT_S = 15.0
-DEFAULT_CLOCK_SKEW_BOUND_S = 1.0
 ENDPOINT_PROBE_ARGV = ("curl", "-fsS", "http://127.0.0.1:8000/v1/models")
 
 MISSING_CODES = frozenset(
@@ -92,6 +91,7 @@ MISSING_CODES = frozenset(
         "dependency_absent",
         "receipt_over_budget",
         "instruction_absent",
+        "clock_relationship_undeclared",
     }
 )
 CONTRADICTION_CODES = frozenset(
@@ -291,7 +291,7 @@ class _Spec:
 class _Run:
     """One collector run: bounded calls, persisted bytes, dedupe-keyed issues."""
 
-    def __init__(self, runner: Any, deadline: Any, clock_skew_bound_s: float) -> None:
+    def __init__(self, runner: Any, deadline: Any, clock_skew_bound_s: float | None) -> None:
         self.runner = runner
         self.deadline = deadline
         self.clock_skew_bound_s = clock_skew_bound_s
@@ -472,7 +472,7 @@ class _Run:
                 }
             )
         doc = {"schema_version": SCHEMA_VERSION, "calls": calls,
-               "clock_relationship": {"kind": "declared_shared_clock_bound",
+               "clock_relationship": {"kind": "undeclared" if self.clock_skew_bound_s is None else "declared_shared_clock_bound",
                                       "bound_s": self.clock_skew_bound_s, "observed": False}}
         return _dumps(doc)
 
@@ -698,24 +698,30 @@ def _inspect_entry(stdout: bytes) -> dict[str, Any] | None:
 def _redact_inspect(run: _Run, call: _Call) -> None:
     """Redact every inspect object, including failed or ambiguous captures."""
     doc = _json_or_none(call.stdout)
-    changed = False
+    fields = []
     if isinstance(doc, list):
         for entry in doc:
-            config = entry.get("Config") if isinstance(entry, dict) else None
-            if isinstance(config, dict) and "Env" in config:
-                config["Env"] = ["<redacted>"]
-                changed = True
-        if not changed:
+            for name in ("Config", "ContainerConfig"):
+                config = entry.get(name) if isinstance(entry, dict) else None
+                if isinstance(config, dict) and "Env" in config:
+                    env = config["Env"]
+                    config["Env"] = [
+                        f"{item.split('=', 1)[0]}=<redacted>" if isinstance(item, str) else "<redacted>"
+                        for item in env
+                    ] if isinstance(env, list) else ["<redacted>"]
+                    if f"{name}.Env" not in fields:
+                        fields.append(f"{name}.Env")
+        if not fields:
             return
         persisted = _dumps(doc)
-        call.redacted = ["Config.Env"]
+        call.redacted = fields
     elif b"Env" in call.stdout:
         persisted = b""
         call.redacted = ["unparseable inspect withheld: Env may contain secrets"]
     else:
         return
     call.original_stdout_sha256 = _sha(call.stdout[: call.max_bytes])
-    run.redact_persisted(call.stdout_path, persisted)
+    run.redact_persisted(call.stdout_path, persisted[: call.max_bytes])
 
 
 def _apply_gpu(run: _Run, ident: _Identity, gpu: _Call) -> None:
@@ -1477,12 +1483,20 @@ def _bind_receipts(
                 )
             continue
         completion = fresh[0]
-        bound_ns = int(run.clock_skew_bound_s * 1_000_000_000)
-        if not (_parse_rfc3339_ns(receipt.started_at) - bound_ns <= completion.timestamp_ns
-                <= _parse_rfc3339_ns(receipt.finished_at) + bound_ns):
-            run.contradiction("request_id_collision", site,
-                              "completion outside declared request clock bound", [refs["meta"]])
-            continue
+        start_ns = _parse_rfc3339_ns(receipt.started_at)
+        finish_ns = _parse_rfc3339_ns(receipt.finished_at)
+        if run.clock_skew_bound_s is None:
+            if not start_ns <= completion.timestamp_ns <= finish_ns:
+                run.missing_reason("clock_relationship_undeclared", site,
+                                   "completion outside client interval without a declared clock bound", [refs["meta"]])
+                continue
+        else:
+            numerator, denominator = run.clock_skew_bound_s.as_integer_ratio()
+            bound_ns = numerator * 1_000_000_000 // denominator
+            if not start_ns - bound_ns <= completion.timestamp_ns <= finish_ns + bound_ns:
+                run.contradiction("request_id_collision", site,
+                                  "completion outside declared request clock bound", [refs["meta"]])
+                continue
         if not 200 <= completion.status < 300:
             run.missing_reason(
                 "request_completion_absent", site, f"server completion status {completion.status}", [refs["meta"]]
@@ -1523,16 +1537,26 @@ def _issue_dict(issue: _Issue) -> dict[str, Any]:
     return {"code": issue.code, "field": issue.field, "detail": issue.detail, "artifact_refs": issue.artifact_refs}
 
 
+class ClockSkewBoundError(ValueError):
+    code = "clock_skew_bound_invalid"
+
+
 def collect_runtime_evidence(
     *, runner: Any, observation: Mapping[str, Any], deadline: Any,
-    clock_skew_bound_s: float = DEFAULT_CLOCK_SKEW_BOUND_S,
+    clock_skew_bound_s: float | None = None,
 ) -> dict[str, Any]:
     """Collect the frozen ABI v1 runtime section. Returns {section, artifacts, raw_artifacts}."""
     if not isinstance(observation, Mapping):
         raise TypeError("observation must be a mapping of capture instructions")
-    if (isinstance(clock_skew_bound_s, bool) or not isinstance(clock_skew_bound_s, (int, float))
-            or not math.isfinite(clock_skew_bound_s) or clock_skew_bound_s < 0):
-        raise ValueError("clock_skew_bound_s must be finite and nonnegative")
+    if clock_skew_bound_s is not None:
+        if isinstance(clock_skew_bound_s, bool) or not isinstance(clock_skew_bound_s, (int, float)):
+            raise ClockSkewBoundError("clock_skew_bound_s must be finite and nonnegative")
+        try:
+            clock_skew_bound_s = float(clock_skew_bound_s)
+        except OverflowError:
+            raise ClockSkewBoundError("clock_skew_bound_s must be finite and nonnegative") from None
+        if not math.isfinite(clock_skew_bound_s) or clock_skew_bound_s < 0:
+            raise ClockSkewBoundError("clock_skew_bound_s must be finite and nonnegative")
     run = _Run(runner, deadline, clock_skew_bound_s)
     instance_id = _text_or_none(observation.get("instance_id"))
     container = _text_or_none(observation.get("container_name")) or DEFAULT_CONTAINER

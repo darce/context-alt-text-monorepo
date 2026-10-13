@@ -135,7 +135,8 @@ class FrozenAbiRunner(MappingRunner):
         return self.take(argv, timeout=timeout, max_bytes=max_bytes)
 
 
-def collect(f, receipt, *, overrides=None, completion=None, offload=None, runner_type=MappingRunner):
+def collect(f, receipt, *, overrides=None, completion=None, offload=None, runner_type=MappingRunner,
+            clock_skew_bound_s=CLOCK_SKEW_BOUND_S):
     # Log echo is explicitly UNVERIFIED-NATIVE, derived from the actual receipt
     # ID rather than an invented audit ID. It tests parsing/binding only.
     timestamp = completion if completion is not None else f.T_COMPLETION
@@ -152,7 +153,7 @@ def collect(f, receipt, *, overrides=None, completion=None, offload=None, runner
             "adapter_receipts": [receipt],
         },
         deadline=time.monotonic() + 30,
-        clock_skew_bound_s=CLOCK_SKEW_BOUND_S,
+        **({} if clock_skew_bound_s is None else {"clock_skew_bound_s": clock_skew_bound_s}),
     )
     assert 0 < runner.calls <= 32
     assert set(raw) == {"section", "artifacts", "raw_artifacts"}
@@ -172,7 +173,8 @@ def collect(f, receipt, *, overrides=None, completion=None, offload=None, runner
     capture = next(json.loads(data) for path, data in raw["raw_artifacts"].items() if path.endswith("/capture.json"))
     assert capture["schema_version"] == 1
     assert capture["clock_relationship"] == {
-        "kind": "declared_shared_clock_bound", "bound_s": CLOCK_SKEW_BOUND_S, "observed": False,
+        "kind": "undeclared" if clock_skew_bound_s is None else "declared_shared_clock_bound",
+        "bound_s": clock_skew_bound_s, "observed": False,
     }
     return raw
 
@@ -223,21 +225,68 @@ def test_control_r02_completion_is_inside_declared_request_interval(captures, pr
     assert data["completion_finished_at"] == captures.T_COMPLETION
 
 
+def shifted_timestamp(f, timestamp, offset_s):
+    ns = f._collector()._parse_rfc3339_ns(timestamp) + int(offset_s * 1_000_000_000)
+    seconds, fraction = divmod(ns, 1_000_000_000)
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(seconds)) + f".{fraction:09d}Z"
+
+
+@pytest.mark.parametrize("bound_s", [0.0, 0.25, 2.0])
 @pytest.mark.parametrize("mutation", ["reversed_client", "before_request", "after_response"])
-def test_red_r02_impossible_timestamps_are_contradictions(captures, producer_receipt, mutation):
+def test_red_r02_impossible_timestamps_are_contradictions(captures, producer_receipt, mutation, bound_s):
     changed = dict(producer_receipt)
     completion = None
     if mutation == "reversed_client":
         changed["started_at"] = "2026-10-12T00:00:25.000000Z"
     elif mutation == "before_request":
-        start_ns = captures._collector()._parse_rfc3339_ns(changed["started_at"])
-        completion = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(start_ns / 1e9 - CLOCK_SKEW_BOUND_S - 1)) + "Z"
+        completion = shifted_timestamp(captures, changed["started_at"], -bound_s - 0.5)
     else:
-        finish_ns = captures._collector()._parse_rfc3339_ns(changed["finished_at"])
-        completion = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(finish_ns / 1e9 + CLOCK_SKEW_BOUND_S + 2)) + "Z"
-    raw = collect(captures, changed, completion=completion)
+        completion = shifted_timestamp(captures, changed["finished_at"], bound_s + 0.5)
+    raw = collect(captures, changed, completion=completion, clock_skew_bound_s=bound_s)
     assert raw["section"]["status"] == "contradicted", "G2-R02: impossible shared-clock interval accepted"
     assert observations(raw, "inference") == []
+
+
+@pytest.mark.parametrize("bound_s", [CLOCK_SKEW_BOUND_S, None], ids=["declared", "undeclared"])
+def test_red_r02_reversed_within_bound_is_malformed(captures, producer_receipt, bound_s):
+    changed = dict(producer_receipt)
+    changed["started_at"] = shifted_timestamp(captures, captures.T_COMPLETION, 0.25)
+    changed["finished_at"] = shifted_timestamp(captures, captures.T_COMPLETION, -0.25)
+    raw = collect(captures, changed, clock_skew_bound_s=bound_s)
+    assert raw["section"]["status"] == "contradicted", "G2-R02: reversed single-clock interval accepted"
+    assert "receipt_malformed" in {issue["code"] for issue in raw["section"]["contradictions"]}
+    assert observations(raw, "inference") == []
+
+
+@pytest.mark.parametrize("bound_s", [0.0, 0.25, 2.0])
+@pytest.mark.parametrize("edge", ["started_at", "finished_at"])
+def test_control_r02_completion_at_declared_bound_is_retained(captures, producer_receipt, bound_s, edge):
+    offset = -bound_s if edge == "started_at" else bound_s
+    completion = shifted_timestamp(captures, producer_receipt[edge], offset)
+    assert_healthy(collect(captures, producer_receipt, completion=completion, clock_skew_bound_s=bound_s))
+
+
+@pytest.mark.parametrize("edge", ["started_at", "finished_at"])
+def test_control_r02_absent_clock_bound_is_incomplete(captures, producer_receipt, edge):
+    offset = -CLOCK_SKEW_BOUND_S - 0.5 if edge == "started_at" else CLOCK_SKEW_BOUND_S + 0.5
+    completion = shifted_timestamp(captures, producer_receipt[edge], offset)
+    raw = collect(captures, producer_receipt, completion=completion, clock_skew_bound_s=None)
+    assert raw["section"]["status"] == "incomplete"
+    assert raw["section"]["contradictions"] == []
+    assert "clock_relationship_undeclared" in {issue["code"] for issue in raw["section"]["missing_reasons"]}
+    assert observations(raw, "inference") == []
+
+
+@pytest.mark.parametrize("bound_s", [-1, float("nan"), float("inf"), True, "1", {}, 10 ** 400],
+                         ids=["negative", "nan", "inf", "bool", "string", "mapping", "overflow"])
+def test_red_r02_invalid_clock_bound_is_refused_before_capture(captures, bound_s):
+    runner = MappingRunner({})
+    with pytest.raises(ValueError) as error:
+        captures._collector().collect_runtime_evidence(
+            runner=runner, observation={}, deadline=time.monotonic() + 30, clock_skew_bound_s=bound_s,
+        )
+    assert getattr(error.value, "code", None) == "clock_skew_bound_invalid"
+    assert runner.calls == 0
 
 
 def inspect_with_canary(f):
@@ -261,16 +310,71 @@ def test_control_r03_successful_inspect_excludes_env_canary(captures, producer_r
     assert_canary_excluded(raw, canary)
 
 
-@pytest.mark.parametrize("mutation", ["nonzero_exit", "ambiguous_objects"])
+@pytest.mark.parametrize("mutation", ["nonzero_exit", "ambiguous_objects", "unparseable_inspect"])
 def test_red_r03_failed_or_malformed_inspect_excludes_env_canary(captures, producer_receipt, mutation):
     f = captures
     doc, canary = inspect_with_canary(f)
     rc = 9 if mutation == "nonzero_exit" else 0
     if mutation == "ambiguous_objects":
         doc.append(dict(doc[0]))
-    raw = collect(f, producer_receipt, overrides={f.ARGV_INSPECT: [f._done(f.ARGV_INSPECT, json.dumps(doc).encode(), rc=rc)]})
+    payload = json.dumps(doc).encode()
+    if mutation == "unparseable_inspect":
+        payload = payload[:-1]
+    raw = collect(f, producer_receipt, overrides={f.ARGV_INSPECT: [f._done(f.ARGV_INSPECT, payload, rc=rc)]})
     assert raw["section"]["status"] == "incomplete"
     assert_canary_excluded(raw, canary)
+    if mutation == "unparseable_inspect":
+        assert all(raw["raw_artifacts"][call["stdout"]["relative_path"]] == b"" for call in inspect_calls(raw))
+
+
+@pytest.mark.parametrize("config_name", ["Config", "ContainerConfig"])
+def test_red_r03_env_names_survive_value_redaction(captures, producer_receipt, config_name):
+    doc, canary = inspect_with_canary(captures)
+    if config_name == "ContainerConfig":
+        doc[0][config_name] = {"Env": doc[0]["Config"].pop("Env")}
+    payload = json.dumps(doc).encode()
+    raw = collect(captures, producer_receipt,
+                  overrides={captures.ARGV_INSPECT: [captures._done(captures.ARGV_INSPECT, payload)]})
+    assert_canary_excluded(raw, canary)
+    assert_healthy(raw)
+    for call in inspect_calls(raw):
+        persisted = json.loads(raw["raw_artifacts"][call["stdout"]["relative_path"]])
+        assert persisted[0][config_name]["Env"] == ["FIXTURE_TOKEN=<redacted>", "PATH=<redacted>"]
+        assert config_name + ".Env" in call["redaction"]["fields"]
+
+
+@pytest.mark.parametrize("config_name", ["Config", "ContainerConfig"])
+@pytest.mark.parametrize("shape", ["non_list", "non_string"])
+def test_red_r03_malformed_env_values_are_withheld(captures, producer_receipt, config_name, shape):
+    doc, canary = inspect_with_canary(captures)
+    doc[0]["Config"].pop("Env")
+    env = canary.decode() if shape == "non_list" else [{"value": canary.decode()}]
+    doc[0].setdefault(config_name, {})["Env"] = env
+    payload = json.dumps(doc).encode()
+    raw = collect(captures, producer_receipt,
+                  overrides={captures.ARGV_INSPECT: [captures._done(captures.ARGV_INSPECT, payload)]})
+    assert_canary_excluded(raw, canary)
+    assert_healthy(raw)
+    for call in inspect_calls(raw):
+        persisted = json.loads(raw["raw_artifacts"][call["stdout"]["relative_path"]])
+        assert persisted[0][config_name]["Env"] == ["<redacted>"]
+
+
+def test_red_r03_redacted_inspect_overflow_obeys_byte_budget(captures, producer_receipt):
+    doc, canary = inspect_with_canary(captures)
+    doc[0]["ContainerConfig"] = {"Env": list(doc[0]["Config"]["Env"])}
+    doc[0]["Padding"] = "x" * ((1 << 20) + 1)
+    payload = json.dumps(doc).encode()
+    raw = collect(captures, producer_receipt,
+                  overrides={captures.ARGV_INSPECT: [captures._done(captures.ARGV_INSPECT, payload)]})
+    assert_canary_excluded(raw, canary)
+    assert raw["section"]["status"] == "incomplete"
+    assert "output_truncated" in {issue["code"] for issue in raw["section"]["missing_reasons"]}
+    for call in inspect_calls(raw):
+        persisted = raw["raw_artifacts"][call["stdout"]["relative_path"]]
+        assert call["truncated"] is True
+        assert call["stdout"]["bytes_received"] == len(payload) > call["max_bytes"]
+        assert len(persisted) == call["stdout"]["bytes_persisted"] <= call["max_bytes"]
 
 
 def inspect_stderr(f, size):

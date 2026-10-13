@@ -374,16 +374,20 @@ class FakeSession:
         return out
 
     def _allowed(self, table: str, row_tenant: str) -> bool:
+        permissive = []
+        restrictive = []
         for pol in self._cluster.policies.get(table, []):
-            if pol["cmd"] not in ("ALL", "SELECT") or pol["permissive"] != "PERMISSIVE":
+            if pol["cmd"] not in ("ALL", "SELECT"):
                 continue
             if pol["roles"] is None or not any(
-                role == "public" or self._cluster.role_usage.get(role, False) for role in pol["roles"]
+                role == "public" or self._cluster.role_usage.get(role) is True for role in pol["roles"]
             ):
                 continue
-            if _qual_true(pol["qual"], row_tenant, self.tenant, bool(self.identity["bypass"])):
-                return True
-        return False
+            if pol["permissive"] not in ("PERMISSIVE", "RESTRICTIVE"):
+                return False  # unknown applicability semantics fail closed
+            allowed = _qual_true(pol["qual"], row_tenant, self.tenant, bool(self.identity["bypass"]))
+            (permissive if pol["permissive"] == "PERMISSIVE" else restrictive).append(allowed)
+        return any(permissive) and all(restrictive)
 
     def query(self, sql: str, params: Any) -> list[tuple[Any, ...]]:
         cl = self._cluster

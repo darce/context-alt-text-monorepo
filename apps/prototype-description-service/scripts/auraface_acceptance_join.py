@@ -7,8 +7,9 @@ validator's repair ABI and the branch helper bytes are unavailable.
 
 No expected value is ever copied into an observed field. The ledger reports
 only indices, digests and fixed codes, never input text, identifiers or errors.
-PROV-01 / EMB-05 / WEB-16:
+PROV-01 / EMB-01 / EMB-05 / WEB-16:
 https://github.com/darce/heuristics-canon/blob/v0.25.6/lexicons/ml-systems.md#prov-01
+https://github.com/darce/heuristics-canon/blob/v0.25.6/lexicons/ml-systems.md#emb-01
 https://github.com/darce/heuristics-canon/blob/v0.25.6/lexicons/ml-systems.md#emb-05
 https://github.com/darce/heuristics-canon/blob/v0.25.6/lexicons/security.md#web-16
 """
@@ -464,6 +465,8 @@ def join_auraface_acceptance(records, *, captured_inputs, expected_contract,
     must agree across roles, as must the captured census; disagreement is a
     contradictory_binding. Execution and adapter IDs cannot be shared across
     roles. Executed shapes/dtypes bind to each role's own session metadata.
+    A graph-L2 claim requires a unit raw norm in that role's execution receipt;
+    agreement of captured values does not establish the graph's property.
     Compact preprocessing/settings/catalog summaries are explicitly limited
     capture contracts, not a substitute for the future full validator ABI.
     """

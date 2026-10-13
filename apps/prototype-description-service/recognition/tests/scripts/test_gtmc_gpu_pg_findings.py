@@ -240,7 +240,10 @@ class FakeCluster:
         }
         self.vector_typmods: dict[tuple[str, str], int] = dict.fromkeys(COL.VECTOR_COLUMNS, DIMENSION)
         self.indexes = [(t, c, "ivfflat", "vector_cosine_ops", True, None, None) for t, c in COL.VECTOR_COLUMNS]
-        self.extension_types = [(SCHEMA, "vector", "vector")]
+        self.extension_types = [(SCHEMA, "vector", "vector", 9001, "e", "pg_type", "pg_extension")]
+        self.vector_type_oids = dict.fromkeys(COL.VECTOR_COLUMNS, 9001)
+        self.role_usage: dict[str, bool] = {ROLE: True, "reader_group": False}
+        self.abort_on_error = False
         self.cost_hook = lambda label, sql, params: 0.0
         self.fail_on: dict[str, str] = {}
         self.output_rows_total: int | None = None
@@ -287,6 +290,7 @@ class FakeSession:
         self.identity = cluster.identity_for(label)
         self.log: list[str] = []
         self.began = False
+        self.aborted = False
         self.read_only = False
         self.tenant: str | None = None
         self.closed = False
@@ -303,7 +307,9 @@ class FakeSession:
         for pol in self._cluster.policies.get(table, []):
             if pol["cmd"] not in ("ALL", "SELECT") or pol["permissive"] != "PERMISSIVE":
                 continue
-            if "public" not in pol["roles"] and self.identity["role"] not in pol["roles"]:
+            if pol["roles"] is None or not any(
+                role == "public" or self._cluster.role_usage.get(role, False) for role in pol["roles"]
+            ):
                 continue
             if _qual_true(pol["qual"], row_tenant, self.tenant, bool(self.identity["bypass"])):
                 return True
@@ -314,7 +320,10 @@ class FakeSession:
         params = dict(params or {})
         self.log.append(sql)
         cl.clock.now += float(cl.cost_hook(self.label, sql, params))
+        if self.aborted and sql != "ROLLBACK":
+            raise FakeSqlError("transaction aborted", "25P02")
         if sql in cl.fail_on:
+            self.aborted = cl.abort_on_error and self.began
             raise FakeSqlError("fixture-induced statement failure", cl.fail_on[sql])
         if sql in ("BEGIN READ ONLY", "START TRANSACTION READ ONLY"):
             self.began = True
@@ -322,6 +331,7 @@ class FakeSession:
             return []
         if sql == "ROLLBACK":
             self.began = False
+            self.aborted = False
             self.read_only = False
             self.tenant = None
             return []
@@ -356,7 +366,7 @@ class FakeSession:
         if "FROM pg_index" in sql:
             return cl.indexes
         if "FROM pg_type" in sql and "pg_depend" in sql:
-            return cl.extension_types
+            return [row[:3] for row in cl.extension_types]
         if sql == COL.IDENTITY_SQL:
             return [
                 (
@@ -373,10 +383,27 @@ class FakeSession:
             return [("on" if self.read_only else "off",)]
         if sql == COL.ROLE_SQL:
             return [(bool(ident["rolsuper"]), bool(ident["rolbypassrls"]))]
+        if sql == COL.ROLE_MEMBERSHIP_SQL:
+            if "pg_has_role(current_user, r.oid, 'USAGE')" not in sql:
+                raise FakeSqlError("role applicability probe must observe inherited privileges")
+            return list(cl.role_usage.items())
         if sql == COL.EXTENSION_SQL:
             return [("vector", cl.extension_version)] if cl.extension_installed else []
         if sql == COL.VECTOR_SQL:
-            return [(ident["schema"], t, c, "vector", m) for (t, c), m in cl.vector_typmods.items()]
+            bound = "JOIN pg_depend d ON d.objid = a.atttypid" in sql
+            owned = {
+                row[3]
+                for row in cl.extension_types
+                if ("AND e.extname = 'vector'" not in sql or row[2] == "vector")
+                and ("AND d.deptype = 'e'" not in sql or row[4] == "e")
+                and ("AND d.classid = 'pg_type'::regclass" not in sql or row[5] == "pg_type")
+                and ("AND d.refclassid = 'pg_extension'::regclass" not in sql or row[6] == "pg_extension")
+            }
+            return [
+                (ident["schema"], t, c, "vector", m)
+                for (t, c), m in cl.vector_typmods.items()
+                if not bound or cl.vector_type_oids[t, c] in owned
+            ]
         if sql == COL.RLS_SQL:
             return [(t, True, True) for t in params.get("tables", []) if t in cl.policies]
         if sql == COL.POLICY_SQL:
@@ -822,6 +849,17 @@ def test_d3_absent_run_link_is_missing() -> None:
     result = _run(cluster)
     assert _facts(result)[f"pg:visibility:{PRIMARY}:media-101"]["operation_id"] is None
     assert "run_row_not_visible" in _missing_codes(result)
+
+
+def test_d3_unselected_operation_is_missing_not_run_mismatch() -> None:
+    selection = copy.deepcopy(BASE_SELECTION)
+    del selection["operation_id"]
+    result = _run(FakeCluster(), selection)
+    assert "run_operation_mismatch" not in _contra_codes(result)
+    assert result["section"]["status"] == "incomplete"
+    assert COL.OPERATION_ID_NOT_SELECTED in _missing_codes(result)
+    for label in (PRIMARY, INDEPENDENT):
+        assert _facts(result)[f"pg:visibility:{label}:media-101"]["operation_id"] == OP_OWN
 
 
 # --------------------------------------------------------------------------------------------
@@ -1290,3 +1328,134 @@ def test_d1_bypass_claim_is_measured_and_unknown_fails_closed(claim: str | None)
     else:
         assert data["app_bypass_rls"] is False
         assert _tenant_statements(cluster)
+
+
+def test_r80_f2_aborted_transaction_rolls_back_without_cleanup_refresh() -> None:
+    cluster = FakeCluster()
+    cluster.abort_on_error = True
+    cluster.fail_on[COL.OUTPUT_SQL] = "57014"
+    result = _run(cluster)
+    assert COL.STATEMENT_TIMEOUT in _missing_codes(result)
+    assert COL.SESSION_CLOSE_FAILED not in _missing_codes(result)
+    primary = _session(cluster, PRIMARY)
+    failed_at = primary.log.index(COL.OUTPUT_SQL)
+    assert primary.log[failed_at + 1 :] == ["ROLLBACK"]
+    for session in cluster.sessions:
+        assert session.log.count("ROLLBACK") == 1
+        assert session.closed and not session.began and not session.aborted
+
+
+@pytest.mark.parametrize("failure", ["statement", "fetch"])
+def test_r80_f2_failed_cleanup_refresh_still_attempts_rollback(
+    failure: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cluster = FakeCluster()
+    query = FakeSession.query
+
+    def fail_cleanup(session: FakeSession, sql: str, params: Any):
+        if "set_config('statement_timeout'" in sql and session.log.count(COL.OUTPUT_SQL) == 2:
+            session.log.append(sql)
+            session.aborted = True
+            if failure == "statement":
+                raise FakeSqlError("cleanup refresh rejected", "57014")
+
+            def aborted_rows():
+                raise FakeSqlError("cleanup refresh fetch rejected", "25P02")
+                yield ()
+
+            return aborted_rows()
+        return query(session, sql, params)
+
+    monkeypatch.setattr(FakeSession, "query", fail_cleanup)
+    result = _run(cluster)
+    for session in cluster.sessions:
+        assert session.log[-1] == "ROLLBACK"
+        assert session.closed and not session.began and not session.aborted
+    assert COL.SESSION_CLOSE_FAILED not in _missing_codes(result)
+    assert (COL.STATEMENT_TIMEOUT if failure == "statement" else COL.DRIVER_ERROR) in _missing_codes(result)
+
+
+@pytest.mark.parametrize("inherited", [True, False])
+def test_r80_f3_group_role_policy_uses_observed_membership(inherited: bool) -> None:
+    cluster = FakeCluster()
+    cluster.role_usage["reader_group"] = inherited
+    policy = _policy("group_widening", "true")
+    policy["roles"] = ["reader_group"]
+    cluster.policies["media_identities"].append(policy)
+    result = _run(cluster)
+    fields = _fields_under(result, "contradictions", "catalog.rls.media_identities.policies.group_widening.")
+    assert bool(fields) is inherited
+    receipt = json.loads(result["raw_artifacts"][f"raw/pg/{PRIMARY}.json"])
+    membership = next(q for q in receipt["queries"] if q["query_id"] == "role-membership")
+    assert ["reader_group", inherited] in membership["rows"]
+
+
+@pytest.mark.parametrize("roles", [None, [], ["unobserved_group"]])
+def test_r80_f3_unknown_policy_roles_are_missing(roles: list[str] | None) -> None:
+    cluster = FakeCluster()
+    policy = _policy("unknown_target", "true")
+    policy["roles"] = roles
+    cluster.policies["media_identities"].append(policy)
+    result = _run(cluster)
+    assert any(
+        issue["code"] == "policy_roles_unproven"
+        and issue["field"] == "catalog.rls.media_identities.policies.unknown_target.roles"
+        for issue in result["section"]["missing_reasons"]
+    )
+    assert result["section"]["status"] == "incomplete"
+
+
+@pytest.mark.parametrize("probe_rows", [[], [(ROLE, True)]])
+def test_r80_f3_unobserved_group_membership_is_missing(
+    probe_rows: list[tuple[str, bool]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cluster = FakeCluster()
+    policy = _policy("unproven_group", "true")
+    policy["roles"] = ["reader_group"]
+    cluster.policies["media_identities"].append(policy)
+    query = FakeSession.query
+
+    def missing_membership(session: FakeSession, sql: str, params: Any):
+        if sql == COL.ROLE_MEMBERSHIP_SQL:
+            session.log.append(sql)
+            return probe_rows
+        return query(session, sql, params)
+
+    monkeypatch.setattr(FakeSession, "query", missing_membership)
+    result = _run(cluster)
+    assert "policy_roles_unproven" in _missing_codes(result)
+    assert "unsafe_policy_predicate" not in _contra_codes(result)
+
+
+def test_r80_f4_extension_type_in_other_schema_is_accepted() -> None:
+    cluster = FakeCluster()
+    cluster.extension_types = [("extensions", "vector", "vector", 9001, "e", "pg_type", "pg_extension")]
+    result = _run(cluster)
+    assert not _fields_under(result, "missing_reasons", "catalog.extension_type")
+    assert {(v["table"], v["column"]) for v in _catalog(result)["vectors"]} == set(COL.VECTOR_COLUMNS)
+    assert result["section"]["status"] == "incomplete"
+
+
+@pytest.mark.parametrize(
+    "rogue", ["unowned", "other-extension", "nonmember-dependency", "wrong-object-class", "wrong-reference-class"]
+)
+def test_r80_f4_column_must_use_extension_owned_type_oid(rogue: str) -> None:
+    cluster = FakeCluster()
+    pair = COL.VECTOR_COLUMNS[0]
+    cluster.vector_type_oids[pair] = 9002
+    if rogue != "unowned":
+        row = ["rogue", "vector", "vector", 9002, "e", "pg_type", "pg_extension"]
+        key, value = {
+            "other-extension": (2, "other_extension"),
+            "nonmember-dependency": (4, "a"),
+            "wrong-object-class": (5, "pg_class"),
+            "wrong-reference-class": (6, "pg_class"),
+        }[rogue]
+        row[key] = value
+        cluster.extension_types.append(tuple(row))
+    result = _run(cluster)
+    assert pair not in {(v["table"], v["column"]) for v in _catalog(result)["vectors"]}
+    assert any(
+        issue["code"] == COL.VECTOR_COLUMN_ABSENT and issue["field"] == f"catalog.vectors.{pair[0]}.{pair[1]}"
+        for issue in result["section"]["missing_reasons"]
+    )

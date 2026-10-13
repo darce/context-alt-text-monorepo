@@ -38,11 +38,14 @@ def native_ort_tripwire(monkeypatch):
         pytest.fail("CAUSAL_RED: native ORT construction forbidden in fixture-only lane", pytrace=False)
 
     monkeypatch.setattr(native, "InferenceSession", forbidden)
+    # GTMC-C78G1T-04: direct imports of the binding bypass the wrapper alias.
+    binding = importlib.import_module("onnxruntime.capi.onnxruntime_pybind11_state")
+    monkeypatch.setattr(binding, "InferenceSession", forbidden)
     yield attempts
     assert not attempts, "NATIVE_ORT_CONSTRUCTIONS must be 0"
 
 
-def guard_artifact_io(monkeypatch, root, entry, *, max_opens):
+def guard_artifact_io(monkeypatch, root, entry, *, max_opens, swap_on_close=False):
     """Scope guards to the two artifact paths; delegate all unrelated I/O.
 
     Path.read_bytes -> Path.open nesting is one logical open, not two.
@@ -53,6 +56,35 @@ def guard_artifact_io(monkeypatch, root, entry, *, max_opens):
     opens = dict.fromkeys(paths, 0)
     depth = dict.fromkeys(paths, 0)
     directory_fds = {}
+    artifact_fds = {}
+    swapped = set()
+    raw_file = io.FileIO
+
+    def swap(key):
+        if swap_on_close and key not in swapped:
+            swapped.add(key)
+            # R02: a later uninstrumented/native read sees different content.
+            with raw_file(key, "wb") as stream:
+                stream.write(b"content changed after acquisition closed its handle")
+
+    class ClosingTrap:
+        def __init__(self, stream, key):
+            self.stream, self.key = stream, key
+
+        def __getattr__(self, name):
+            return getattr(self.stream, name)
+
+        def close(self):
+            self.stream.close()
+            swap(self.key)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            result = self.stream.__exit__(*exc)
+            swap(self.key)
+            return result
 
     def wrap(original, *, tracks_fd=False):
         def guarded(path, *args, **kwargs):
@@ -73,6 +105,10 @@ def guard_artifact_io(monkeypatch, root, entry, *, max_opens):
                 flags = args[0] if args else kwargs.get("flags", 0)
                 if tracks_fd and flags & os.O_DIRECTORY:
                     directory_fds[result] = key
+                if tracks_fd and targeted:
+                    artifact_fds[result] = key
+                elif targeted and swap_on_close and hasattr(result, "close"):
+                    result = ClosingTrap(result, key)
                 return result
             finally:
                 if targeted:
@@ -83,11 +119,34 @@ def guard_artifact_io(monkeypatch, root, entry, *, max_opens):
                         (builtins, "open"), (io, "open")):
         monkeypatch.setattr(owner, name, wrap(getattr(owner, name)))
     monkeypatch.setattr(os, "open", wrap(os.open, tracks_fd=True))
+    class GuardedFileIO(raw_file):
+        def __init__(self, path, *args, **kwargs):
+            if not isinstance(path, int):
+                key = os.path.abspath(os.fsdecode(path))
+                if key in paths and depth[key] == 0:
+                    opens[key] += 1
+                    assert opens[key] <= max_opens, "CAUSAL_RED: raw artifact reopened/rehash"
+                self.artifact_key = key if key in paths else None
+            else:
+                self.artifact_key = None
+            super().__init__(path, *args, **kwargs)
+
+        def close(self):
+            super().close()
+            key = getattr(self, "artifact_key", None)
+            if key is not None:
+                swap(key)
+
+    monkeypatch.setattr(io, "FileIO", GuardedFileIO)
     original_close = os.close
 
     def close(fd):
         directory_fds.pop(fd, None)
-        return original_close(fd)
+        key = artifact_fds.pop(fd, None)
+        result = original_close(fd)
+        if key is not None:
+            swap(key)
+        return result
 
     monkeypatch.setattr(os, "close", close)
     return opens
@@ -261,7 +320,8 @@ def test_acquisition_hashes_same_buffer_consumed_by_constructor(tmp_path, monkey
     # Counting opens catches verify-then-reopen without requiring sha256(data)
     # rather than hashlib.new/update/memoryview on the acquired buffer.
     with monkeypatch.context() as acquisition_patch:
-        opens = guard_artifact_io(acquisition_patch, tmp_path, entry, max_opens=1)
+        opens = guard_artifact_io(acquisition_patch, tmp_path, entry, max_opens=1,
+                                  swap_on_close=True)
         artifact = acquire(provenance, entry, tmp_path)
     assert all(count == 1 for count in opens.values()), \
         "CAUSAL_RED: acquire each model/license once, then consume retained bytes"
@@ -344,7 +404,12 @@ def test_receipt_contract_types_exist_and_are_immutable(type_name):
 
 @pytest.mark.parametrize("type_name, mapping_field", [
     ("SessionReceiptV1", "actual_session_options"),
+    ("ExecutionReceiptV1", "input_lineage"),
+    ("ExecutionReceiptV1", "detector_input"),
+    ("ExecutionReceiptV1", "alignment"),
     ("ExecutionReceiptV1", "embedder_input"),
+    ("ExecutionReceiptV1", "raw_output"),
+    ("ExecutionReceiptV1", "normalized_output"),
     ("LoadedRuntimeRecordV1", "sessions"),
 ])
 def test_receipt_mappings_reject_mutation_and_detach_input_aliases(type_name, mapping_field):
@@ -388,3 +453,15 @@ def test_receipt_mappings_reject_mutation_and_detach_input_aliases(type_name, ma
     assert dict(retained) == before, "CAUSAL_RED: caller can rewrite retained receipt evidence"
     with pytest.raises(TypeError):
         retained["fixture_direct_mutation"] = "changed"
+
+
+def test_frozen_preprocessing_contract_is_immutable():
+    spec = symbol(PREFIX + "loaded_session", "FrozenPreprocessingSpecV1")
+    assert spec.__dataclass_params__.frozen, "CAUSAL_RED: preprocessing spec must be immutable"
+
+
+def test_native_tripwire_covers_direct_binding_import():
+    from onnxruntime.capi.onnxruntime_pybind11_state import InferenceSession
+    wrapper = importlib.import_module("onnxruntime.capi._pybind_state")
+    assert InferenceSession is wrapper.InferenceSession, \
+        "CAUSAL_RED: direct native binding import bypasses the fixture tripwire"

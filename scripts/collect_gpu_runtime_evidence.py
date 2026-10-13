@@ -706,7 +706,7 @@ def _redact_inspect(run: _Run, call: _Call) -> None:
                 if isinstance(config, dict) and "Env" in config:
                     env = config["Env"]
                     config["Env"] = [
-                        f"{item.split('=', 1)[0]}=<redacted>" if isinstance(item, str) else "<redacted>"
+                        f"{item.split('=', 1)[0]}=<redacted>" if isinstance(item, str) and "=" in item else "<redacted>"
                         for item in env
                     ] if isinstance(env, list) else ["<redacted>"]
                     if f"{name}.Env" not in fields:
@@ -714,14 +714,19 @@ def _redact_inspect(run: _Run, call: _Call) -> None:
         if not fields:
             return
         persisted = _dumps(doc)
+        if len(persisted) > call.max_bytes:
+            persisted = json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                                   allow_nan=False).encode("utf-8")
         call.redacted = fields
-    elif b"Env" in call.stdout:
-        persisted = b""
-        call.redacted = ["unparseable inspect withheld: Env may contain secrets"]
     else:
-        return
+        persisted = b""
+        call.redacted = ["malformed inspect withheld: Env may contain secrets"]
+    if len(persisted) > call.max_bytes:
+        persisted = b""
+        call.truncated = True
+        call.error = "truncated"
     call.original_stdout_sha256 = _sha(call.stdout[: call.max_bytes])
-    run.redact_persisted(call.stdout_path, persisted[: call.max_bytes])
+    run.redact_persisted(call.stdout_path, persisted)
 
 
 def _apply_gpu(run: _Run, ident: _Identity, gpu: _Call) -> None:
@@ -992,11 +997,6 @@ def _capture_logs(run: _Run, container: str, started_at: str | None) -> _LogFact
         return None
     if not logs.ok:
         run.call_issue(logs, "logs")
-        return None
-    if len(logs.stderr) > MAX_STDERR_BYTES:
-        run.missing_reason(
-            "output_truncated", "logs.stderr", "container stderr exceeds the byte budget", run.call_refs(logs)
-        )
         return None
     facts = _LogFacts(logs_path=logs.stdout_path, ok=True)
     builds: list[tuple[str, str, tuple[int, int], bool]] = []
@@ -1486,15 +1486,14 @@ def _bind_receipts(
         start_ns = _parse_rfc3339_ns(receipt.started_at)
         finish_ns = _parse_rfc3339_ns(receipt.finished_at)
         if run.clock_skew_bound_s is None:
-            if not start_ns <= completion.timestamp_ns <= finish_ns:
-                run.missing_reason("clock_relationship_undeclared", site,
-                                   "completion outside client interval without a declared clock bound", [refs["meta"]])
-                continue
+            run.missing_reason("clock_relationship_undeclared", site,
+                               "completion cannot be bound without a declared clock relationship", [refs["meta"]])
+            continue
         else:
             numerator, denominator = run.clock_skew_bound_s.as_integer_ratio()
             bound_ns = numerator * 1_000_000_000 // denominator
             if not start_ns - bound_ns <= completion.timestamp_ns <= finish_ns + bound_ns:
-                run.contradiction("request_id_collision", site,
+                run.contradiction("completion_ambiguous", site,
                                   "completion outside declared request clock bound", [refs["meta"]])
                 continue
         if not 200 <= completion.status < 300:

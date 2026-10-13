@@ -440,7 +440,9 @@ class FakeSession:
         if "FROM pg_index" in sql:
             # Model the selected validity value, so replacing the measured field with true is visible.
             projection = sql.split("FROM", 1)[0].lower()
-            return [(*row[:4], row[4] if "i.indisvalid" in projection else True, *row[5:]) for row in cl.indexes]
+            preserves_expression_keys = bool(re.search(r"LEFT\s+JOIN\s+pg_attribute\b", sql, re.I))
+            return [(*row[:4], row[4] if "i.indisvalid" in projection else True, *row[5:])
+                    for row in cl.indexes if row[1] is not None or preserves_expression_keys]
         if "FROM pg_type" in sql and "pg_depend" in sql:
             return [row[:3] for row in cl.extension_types if _catalog_join_matches(sql, row, row[3])]
         if sql == COL.IDENTITY_SQL:

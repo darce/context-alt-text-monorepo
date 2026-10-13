@@ -238,3 +238,43 @@ def test_strict_defaults_refuse_identity_only_repair(contract: str) -> None:
 def test_aura_mode_rejects_baseline128() -> None:
     with pytest.raises(ValueError, match="Aura acceptance requires candidate512"):
         _shared(_aura_case(), contract="baseline128")
+
+
+# C82 F1/F4: missing target identity must not hide a present store contradiction.
+@pytest.mark.parametrize("path", IDENTITY_PATHS, ids=lambda path: ".".join(path))
+@pytest.mark.parametrize("member", ("value", "provenance"))
+def test_missing_identity_keeps_persisted_sibling_invalid(path: tuple[str, ...], member: str) -> None:
+    case = _aura_case(store="enrolled")
+    del _wrapper(case, path)[member]
+    case["snapshot"]["database"]["embedding_provenance"]["value"]["persisted_model_ids"] = [
+        INSIGHTFACE_512_MODEL_ID,
+    ]
+    before = copy.deepcopy(case)
+    assert target.validate_target_store(
+        case["snapshot"], isolation_policy=case["isolation_policy"], acceptance_policy=case["acceptance_policy"],
+    ) == ("invalid", "persisted_model_stamp_mismatch")
+    assert case == before
+    _assert_outcome(_facade(case), "invalid", "persisted_model_stamp_mismatch")
+
+
+# C82 F2: the missing-member exemption belongs exclusively to Aura acceptance.
+@pytest.mark.parametrize("contract", ("candidate512", "baseline128"))
+@pytest.mark.parametrize("path", IDENTITY_PATHS + (STORE_PATHS[2][0],), ids=lambda path: ".".join(path))
+@pytest.mark.parametrize("member", ("value", "provenance"))
+def test_strict_missing_wrapper_is_invalid(contract: str, path: tuple[str, ...], member: str) -> None:
+    case = _aura_case(store="enrolled")
+    if contract == "baseline128":
+        case["snapshot"] = _baseline_snapshot()
+    del _wrapper(case, path)[member]
+    _assert_outcome(_shared(case, contract=contract, aura=False), "invalid", "malformed_observation_wrapper")
+
+
+# C82 F3: missing evidence does not admit unknown wrapper keys.
+@pytest.mark.parametrize("path,reason", MISSING_PATHS, ids=[".".join(row[0]) for row in MISSING_PATHS])
+@pytest.mark.parametrize("member", ("value", "provenance"))
+def test_missing_wrapper_with_extra_key_is_invalid(path: tuple[str, ...], reason: str, member: str) -> None:
+    case = _aura_case(store="enrolled")
+    wrapper = _wrapper(case, path)
+    del wrapper[member]
+    wrapper["unknown_evidence_key"] = "constructed"
+    _assert_outcome(_facade(case), "invalid", "malformed_observation_wrapper")

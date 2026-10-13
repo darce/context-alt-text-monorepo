@@ -155,11 +155,16 @@ APP_BYPASS_SQL = "SELECT current_setting('app.bypass_rls', true)"
 TENANT_CLAIM_SQL = "SELECT current_setting('app.current_tenant', true)"
 RUN_SQL = "SELECT r.id, r.tenant_id, r.operation_id FROM image_description_runs r WHERE r.id = %(run_id)s::uuid"
 ROLE_SQL = "SELECT r.rolsuper, r.rolbypassrls FROM pg_roles r WHERE r.rolname = current_user"
+ROLE_MEMBERSHIP_SQL = "SELECT r.rolname, pg_has_role(current_user, r.oid, 'USAGE') FROM pg_roles r"
 EXTENSION_SQL = "SELECT e.extname, e.extversion FROM pg_extension e WHERE e.extname = 'vector'"
 VECTOR_SQL = (
     "SELECT n.nspname, c.relname, a.attname, t.typname, a.atttypmod FROM pg_attribute a "
     "JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace "
-    "JOIN pg_type t ON t.oid = a.atttypid WHERE n.nspname = current_schema() "
+    "JOIN pg_type t ON t.oid = a.atttypid "
+    "JOIN pg_depend d ON d.objid = a.atttypid AND d.classid = 'pg_type'::regclass "
+    "AND d.refclassid = 'pg_extension'::regclass AND d.deptype = 'e' "
+    "JOIN pg_extension e ON e.oid = d.refobjid AND e.extname = 'vector' "
+    "WHERE n.nspname = current_schema() "
     "AND NOT a.attisdropped AND t.typname = 'vector'"
 )
 RLS_SQL = (
@@ -667,6 +672,16 @@ def _observe(
         primary,
         deadline,
         findings,
+        "role-membership",
+        ROLE_MEMBERSHIP_SQL,
+        {},
+        ("role", "usable"),
+        ("name", "bool"),
+    )
+    _query(
+        primary,
+        deadline,
+        findings,
         "indexes",
         INDEX_SQL,
         {},
@@ -799,7 +814,7 @@ def _close_all(captures: dict[str, _Capture], findings: _Findings, deadline: Any
             started = _now()
             try:
                 remaining = _remaining(deadline)
-                if remaining > 0:
+                if remaining > 0 and not any(q["outcome"] == "error" for q in began.queries):
                     ms = min(int(CONNECT_CAPS["statement_timeout_ms"]), max(1, int(remaining * 1000)))
                     _query(
                         began,
@@ -812,10 +827,20 @@ def _close_all(captures: dict[str, _Capture], findings: _Findings, deadline: Any
                         ("text",),
                         _refresh=False,
                     )
-                else:
+                elif remaining <= 0:
                     findings.miss(
                         DEADLINE_EXHAUSTED, f"cleanup.{began.label}.rollback", "deadline exhausted before cleanup"
                     )
+            except _HaltError as halt:
+                findings.absorb(halt)
+            except Exception as exc:  # noqa: BLE001 - refresh failures must not prevent rollback
+                findings.miss(
+                    DRIVER_ERROR,
+                    f"cleanup.{began.label}.timeout",
+                    f"cleanup timeout probe failed: {type(exc).__name__}",
+                    (began.label, "cleanup-timeout"),
+                )
+            try:
                 session.query(END_READ_ONLY_SQL, {})
                 if _remaining(deadline) <= 0:
                     findings.miss(
@@ -1095,9 +1120,7 @@ def _catalog_observation(primary: _Capture, sel: dict[str, Any], findings: _Find
                 "index geometry or validity differs",
                 (PRIMARY_SESSION, "indexes"),
             )
-    vector_schemas = {row[0] for row in primary.rows("vector-columns") or []}
-    owned_schemas = {r[0] for r in primary.rows("extension-type") or [] if r[1:] == ["vector", "vector"]}
-    if not vector_schemas or not vector_schemas <= owned_schemas:
+    if not any(r[1:] == ["vector", "vector"] for r in primary.rows("extension-type") or []):
         findings.miss(
             "vector_type_membership_unproven",
             "catalog.extension_type",
@@ -1106,6 +1129,10 @@ def _catalog_observation(primary: _Capture, sel: dict[str, Any], findings: _Find
         )
     rls_flags = {name: (enabled, forced) for name, enabled, forced in primary.rows("rls-flags") or []}
     policy_rows = primary.rows("policies") or []
+    membership_rows = primary.rows("role-membership")
+    applicable_roles = {"public", sel["expected_role"]} | {
+        role for role, usable in membership_rows or [] if usable is True
+    }
     rls: list[dict[str, Any]] = []
     for table in RLS_TABLES:
         if table not in rls_flags:
@@ -1150,10 +1177,23 @@ def _catalog_observation(primary: _Capture, sel: dict[str, Any], findings: _Find
                 (PRIMARY_SESSION, "policies"),
             )
         for policy in policies:
-            if policy["command"] not in ("ALL", "SELECT") or not set(policy["roles"] or []) & {
-                "public",
-                sel["expected_role"],
-            }:
+            if policy["command"] not in ("ALL", "SELECT"):
+                continue
+            role_field = f"catalog.rls.{table}.policies.{policy['name']}.roles"
+            if policy["roles"] is None:
+                findings.miss(
+                    "policy_roles_unproven", role_field, "policy role targets unobserved", (PRIMARY_SESSION, "policies")
+                )
+                continue
+            if not set(policy["roles"]) & applicable_roles:
+                membership = dict(membership_rows or [])
+                if not policy["roles"] or any(membership.get(role) is not False for role in policy["roles"]):
+                    findings.miss(
+                        "policy_roles_unproven",
+                        role_field,
+                        "policy role applicability unobserved",
+                        (PRIMARY_SESSION, "role-membership"),
+                    )
                 continue
             for key in ("qual", "with_check"):
                 if key == "with_check" and policy["command"] == "SELECT":
@@ -1223,7 +1263,9 @@ def _visibility(capture: _Capture, sel: dict[str, Any], findings: _Findings) -> 
         findings.miss(
             "run_row_not_visible", f"visibility.{label}.run", "native run link not visible", (label, "run-own")
         )
-    elif run != [sel["run_id"], sel["tenant_id"], sel.get("operation_id")]:
+    elif run[:2] != [sel["run_id"], sel["tenant_id"]] or (
+        "operation_id" in sel and run[2] != sel["operation_id"]
+    ):
         findings.contradict(
             "run_operation_mismatch",
             f"visibility.{label}.operation_id",

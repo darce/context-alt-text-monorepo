@@ -259,6 +259,246 @@ else
   fail "reinstall overwrote the installed script in place"
 fi
 
+# New durable-cron cases use an isolated installer/reaper fixture; the existing
+# assertions above remain unchanged. [RES-07][RES-25][TEST-15]
+durable_passes=0
+durable_failures=0
+durable_fixture() {
+  D_DIR="$WORKDIR/durable-$1"
+  mkdir -p "$D_DIR/vm" "$D_DIR/home with spaces"
+  cp "${INSTALL_REAP_CRON_TEST_SOURCE:-$SCRIPT}" "$D_DIR/vm/install-reap-cron.sh"
+  export HOME="$D_DIR/home with spaces"
+  export CRONTAB_FILE="$D_DIR/crontab" D_CALLS="$D_DIR/calls"
+  unset WORKBAY_REMOTE_AGENT_ROOT WORKBAY_REMOTE_AGENT_SANDBOX_TTL_SEC CRONTAB_LIST_ERROR
+  : >"$CRONTAB_FILE"
+  : >"$D_CALLS"
+  cat >"$D_DIR/vm/reap-lane.sh" <<'D_REAPER'
+#!/usr/bin/env bash
+lane_has_live_process() { return 1; }
+{
+  printf 'root=<%s>\nttl=<%s>\n' "${WORKBAY_REMOTE_AGENT_ROOT:-}" "${WORKBAY_REMOTE_AGENT_SANDBOX_TTL_SEC:-}"
+  for arg in "$@"; do printf 'arg=<%s>\n' "$arg"; done
+} >>"$D_CALLS"
+if [[ -n "${D_NESTED_CRON_COMMAND:-}" ]]; then
+  # Match the real reaper's reuse of descriptor 9 for its own lock.
+  exec 9>"$HOME/reaper-private.lock"
+  exec 9>&-
+  D_NESTED_CRON_COMMAND='' /bin/sh -c "$D_NESTED_CRON_COMMAND"
+fi
+echo fixture-reaper-output
+exit "${D_REAPER_STATUS:-0}"
+D_REAPER
+  D_INSTALL="$D_DIR/vm/install-reap-cron.sh"
+}
+durable_expect() {
+  if "$@"; then return 0; fi
+  printf '  assertion failed: %s\n' "$*"
+  return 1
+}
+durable_install() {
+  D_RC=0
+  bash "$D_INSTALL" >"$D_DIR/install-output" 2>&1 || D_RC=$?
+}
+durable_command() {
+  sed -n "/^$1 /s/^[^ ]* [^ ]* [^ ]* [^ ]* [^ ]* //p" "$CRONTAB_FILE" | sed 's/\\%/%/g'
+}
+durable_run() {
+  local command
+  command="$(durable_command "$1")"
+  [[ -n "$command" ]] || { echo "  missing :$1 cron entry"; return 1; }
+  D_RUN_RC=0
+  /bin/sh -c "$command" >"$D_DIR/cron-output" 2>&1 || D_RUN_RC=$?
+}
+durable_case() {
+  if (durable_fixture "$1"; "$2"); then
+    pass "durable $1"
+    durable_passes=$((durable_passes + 1))
+  else
+    fail "durable $1"
+    durable_failures=$((durable_failures + 1))
+  fi
+}
+durable_hourly() {
+  durable_install
+  durable_expect test "$D_RC" -eq 0 || return 1
+  durable_expect grep -q '^17 \* \* \* \* ' "$CRONTAB_FILE" || return 1
+  durable_expect test "$(grep -c 'reap-lane\.sh' "$CRONTAB_FILE")" -eq 1 || return 1
+  durable_run 17 || return 1
+  durable_expect test "$D_RUN_RC" -eq 0 || return 1
+  for root in w3 uxw2 l1 w lanes grok-sandbox; do
+    durable_expect grep -qxF "arg=<$HOME/$root>" "$D_CALLS" || return 1
+  done
+  durable_expect grep -qxF 'root=<>' "$D_CALLS"
+}
+durable_remote() {
+  export WORKBAY_REMOTE_AGENT_ROOT="$HOME/agents 100% \"quoted\" \$literal \`literal\` \\tail"
+  durable_install
+  durable_expect test "$D_RC" -eq 0 || return 1
+  durable_expect grep -q '^23 \* \* \* \* ' "$CRONTAB_FILE" || return 1
+  durable_expect test "$(grep -c 'reap-lane\.sh' "$CRONTAB_FILE")" -eq 2 || return 1
+  local home_entry remote_entry
+  home_entry="$(sed -n '/^17 /p' "$CRONTAB_FILE")"
+  remote_entry="$(sed -n '/^23 /p' "$CRONTAB_FILE")"
+  durable_expect test "${home_entry#*WORKBAY_REMOTE_AGENT_ROOT}" = "$home_entry" || return 1
+  [[ "$remote_entry" == *'100\%'* ]] || return 1
+  [[ "${remote_entry//\\%/}" != *%* ]] || return 1
+  durable_run 17 || return 1
+  durable_expect grep -qxF 'root=<>' "$D_CALLS" || return 1
+  : >"$D_CALLS"
+  durable_run 23 || return 1
+  durable_expect test "$D_RUN_RC" -eq 0 || return 1
+  durable_expect grep -qxF "root=<$WORKBAY_REMOTE_AGENT_ROOT>" "$D_CALLS" || return 1
+  durable_expect grep -qxF 'ttl=<3600>' "$D_CALLS" || return 1
+  durable_expect grep -qxF "arg=<$WORKBAY_REMOTE_AGENT_ROOT>" "$D_CALLS" || return 1
+  durable_expect test "$(grep -c '^arg=<--all>$' "$D_CALLS")" -eq 1 || return 1
+  durable_expect grep -qxF "arg=<$HOME/lane-archive.git>" "$D_CALLS"
+}
+durable_override() {
+  export WORKBAY_REMOTE_AGENT_ROOT="$HOME/agents" WORKBAY_REMOTE_AGENT_SANDBOX_TTL_SEC=900
+  durable_install
+  durable_expect test "$D_RC" -eq 0 || return 1
+  durable_run 23 || return 1
+  durable_expect grep -qxF 'ttl=<900>' "$D_CALLS" || return 1
+  export WORKBAY_REMOTE_AGENT_SANDBOX_TTL_SEC=21600
+  durable_install
+  : >"$D_CALLS"
+  durable_run 23 || return 1
+  durable_expect grep -qxF 'ttl=<21600>' "$D_CALLS" || return 1
+  export WORKBAY_REMOTE_AGENT_SANDBOX_TTL_SEC=00900
+  durable_install
+  : >"$D_CALLS"
+  durable_run 23 || return 1
+  durable_expect grep -qxF 'ttl=<900>' "$D_CALLS"
+}
+durable_invalid_ttl() {
+  export WORKBAY_REMOTE_AGENT_ROOT="$HOME/agents"
+  mkdir -p "$HOME/bin"
+  printf 'installed sentinel\n' >"$HOME/bin/reap-lane.sh"
+  cp "$HOME/bin/reap-lane.sh" "$D_DIR/copy-before"
+  printf '# user comment\n0 3 * * * user-job\n' >"$CRONTAB_FILE"
+  cp "$CRONTAB_FILE" "$D_DIR/cron-before"
+  local ttl
+  for ttl in 899 0 -1 1.5 oops '900;echo bad' ''; do
+    export WORKBAY_REMOTE_AGENT_SANDBOX_TTL_SEC="$ttl"
+    durable_install
+    durable_expect test "$D_RC" -ne 0 || return 1
+    durable_expect cmp -s "$CRONTAB_FILE" "$D_DIR/cron-before" || return 1
+    durable_expect cmp -s "$HOME/bin/reap-lane.sh" "$D_DIR/copy-before" || return 1
+  done
+}
+durable_converge() {
+  export WORKBAY_REMOTE_AGENT_ROOT="$HOME/agents"
+  cat >"$D_DIR/unrelated" <<'D_UNRELATED'
+# unrelated comment mentions reap-lane.sh
+
+  # user spacing and trailing spaces preserved  
+0 3 * * * /usr/bin/some-other-job
+5 3 * * * /usr/bin/user-job # reminder about reap-lane.sh
+7 3 * * * /usr/bin/reap-lane.sh.backup
+
+
+D_UNRELATED
+  cat "$D_DIR/unrelated" >"$CRONTAB_FILE"
+  cat >>"$CRONTAB_FILE" <<'D_OLD_CRON'
+17 * * * * "$HOME/bin/reap-lane.sh" --yes --archive-to "$HOME/lane-archive.git" --all "$HOME/w3" --all "$HOME/uxw2" --all "$HOME/l1" --all "$HOME/w" --all "$HOME/lanes" --all "$HOME/grok-sandbox" >> "$HOME/reap-lane.log" 2>&1
+23 * * * * WORKBAY_REMOTE_AGENT_ROOT=/home/gate/workbay-sandbox WORKBAY_REMOTE_AGENT_SANDBOX_TTL_SEC=21600 "$HOME/bin/reap-lane.sh" --yes --archive-to "$HOME/lane-archive.git" --all /home/gate/workbay-sandbox >> "$HOME/reap-lane.log" 2>&1
+# acx-reap-lane
+17 6 * * 1 /fixture/reap-lane.sh --all /fixture/old
+D_OLD_CRON
+  durable_install
+  durable_expect test "$D_RC" -eq 0 || return 1
+  sed '/^# acx-reap-lane$/,$d' "$CRONTAB_FILE" >"$D_DIR/unrelated-after"
+  durable_expect cmp -s "$D_DIR/unrelated" "$D_DIR/unrelated-after" || return 1
+  durable_expect test "$(grep -c '^[12][37] .*reap-lane\.sh' "$CRONTAB_FILE")" -eq 2 || return 1
+  cp "$CRONTAB_FILE" "$D_DIR/first-install"
+  durable_install
+  durable_expect cmp -s "$CRONTAB_FILE" "$D_DIR/first-install" || return 1
+  unset WORKBAY_REMOTE_AGENT_ROOT
+  durable_install
+  durable_expect test "$(grep -c '^[12][37] .*reap-lane\.sh' "$CRONTAB_FILE")" -eq 1
+}
+durable_old_source() {
+  mkdir -p "$HOME/bin"
+  printf 'installed sentinel\n' >"$HOME/bin/reap-lane.sh"
+  cp "$HOME/bin/reap-lane.sh" "$D_DIR/copy-before"
+  printf '# user comment\n0 3 * * * user-job\n' >"$CRONTAB_FILE"
+  cp "$CRONTAB_FILE" "$D_DIR/cron-before"
+  printf '#!/bin/sh\n# lane_has_live_process is absent\nexit 0\n' >"$D_DIR/vm/reap-lane.sh"
+  durable_install
+  durable_expect test "$D_RC" -ne 0 || return 1
+  durable_expect cmp -s "$CRONTAB_FILE" "$D_DIR/cron-before" || return 1
+  durable_expect cmp -s "$HOME/bin/reap-lane.sh" "$D_DIR/copy-before"
+}
+durable_lock() {
+  export WORKBAY_REMOTE_AGENT_ROOT="$HOME/agents"
+  durable_install
+  durable_expect test "$D_RC" -eq 0 || return 1
+  exec 8>"$HOME/.reap-lane.cron.lock"
+  flock -n 8 || return 1
+  local minute
+  for minute in 17 23; do
+    durable_run "$minute" || return 1
+    durable_expect test "$D_RUN_RC" -eq 0 || return 1
+  done
+  durable_expect test ! -s "$D_CALLS" || return 1
+  durable_expect test "$(grep -cxF 'reap-lane: skipped, previous sweep still running' "$HOME/reap-lane.log")" -eq 2 || return 1
+  durable_expect test "$(wc -l <"$HOME/reap-lane.log")" -eq 2 || return 1
+  exec 8>&-
+  durable_run 17 || return 1
+  durable_expect test -s "$D_CALLS"
+}
+durable_exit_status() {
+  export WORKBAY_REMOTE_AGENT_ROOT="$HOME/agents" D_REAPER_STATUS=4
+  durable_install
+  local minute status
+  for status in 4 7 0; do
+    export D_REAPER_STATUS="$status"
+    for minute in 17 23; do
+      durable_run "$minute" || return 1
+      durable_expect test "$D_RUN_RC" -eq "$status" || return 1
+    done
+  done
+}
+durable_lock_lifetime() {
+  export WORKBAY_REMOTE_AGENT_ROOT="$HOME/agents"
+  durable_install
+  export D_NESTED_CRON_COMMAND="$(durable_command 23)"
+  durable_run 17 || return 1
+  durable_expect test "$D_RUN_RC" -eq 0 || return 1
+  durable_expect test "$(grep -c '^root=' "$D_CALLS")" -eq 1 || return 1
+  durable_expect grep -qxF 'reap-lane: skipped, previous sweep still running' "$HOME/reap-lane.log" || return 1
+  unset D_NESTED_CRON_COMMAND
+  durable_run 23 || return 1
+  durable_expect test "$(grep -c '^root=' "$D_CALLS")" -eq 2
+}
+durable_rotate() {
+  export WORKBAY_REMOTE_AGENT_ROOT="$HOME/agents"
+  durable_install
+  truncate -s 33554432 "$HOME/reap-lane.log"
+  durable_run 17 || return 1
+  durable_expect test ! -e "$HOME/reap-lane.log.1" || return 1
+  truncate -s 33554433 "$HOME/reap-lane.log"
+  printf old-generation >"$HOME/reap-lane.log.1"
+  durable_run 23 || return 1
+  durable_expect test "$(stat -c %s "$HOME/reap-lane.log.1")" -eq 33554433 || return 1
+  durable_expect grep -qxF fixture-reaper-output "$HOME/reap-lane.log" || return 1
+  truncate -s 33554434 "$HOME/reap-lane.log"
+  durable_run 17 || return 1
+  durable_expect test "$(stat -c %s "$HOME/reap-lane.log.1")" -eq 33554434 || return 1
+  durable_expect test ! -e "$HOME/reap-lane.log.2"
+}
+durable_case hourly durable_hourly
+durable_case remote-default-quoting durable_remote
+durable_case ttl-override durable_override
+durable_case ttl-validation durable_invalid_ttl
+durable_case converge-byte-preservation durable_converge
+durable_case missing-live-probe durable_old_source
+durable_case shared-nonblocking-lock durable_lock
+durable_case reaper-exit-status durable_exit_status
+durable_case lock-survives-reaper-fd-reuse durable_lock_lifetime
+durable_case bounded-log-rotation durable_rotate
+printf 'DURABLE_COUNTS pass=%s fail=%s\n' "$durable_passes" "$durable_failures"
+
 echo
 if [[ "$failures" -gt 0 ]]; then
   echo "$failures FAILED"

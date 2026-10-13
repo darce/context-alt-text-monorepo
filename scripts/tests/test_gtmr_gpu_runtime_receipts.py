@@ -159,6 +159,7 @@ MISSING_CODES = frozenset(
         "boot_id_unparseable",
         "call_budget_exhausted",
         "caption_absent",
+        "clock_relationship_undeclared",
         "cmdline_unparsed",
         "command_timeout",
         "dependency_absent",
@@ -857,7 +858,7 @@ def test_red_smoke_tier_predicate_accepts_cached_final_gpu_replay() -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="G2 sampler native receipt unproven (c67): numeric EOF does not prove truncation")
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="G2 sampler native receipt unproven (c67): numeric EOF does not prove truncation")
 def test_red_sampler_truncated_total_is_measured_as_fabricated_capacity() -> None:
     # Hypothetical only: no native receipt or framing contract proves these numeric bytes were truncated.
     record = _sampler_record("1024, 24576\n2048, 2457")
@@ -867,7 +868,7 @@ def test_red_sampler_truncated_total_is_measured_as_fabricated_capacity() -> Non
     )
 
 
-@pytest.mark.xfail(strict=True, reason="G2 sampler native receipt unproven (c67): successful malformed row lacks a producer receipt")
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="G2 sampler native receipt unproven (c67): successful malformed row lacks a producer receipt")
 def test_red_sampler_malformed_row_is_silently_dropped_while_measured() -> None:
     # Hypothetical only: no native receipt attests this malformed row with a successful exit status.
     record = _sampler_record("1024, 24576\nGPU lost, \n")

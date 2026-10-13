@@ -65,14 +65,38 @@ def test_sources_are_stdlib_only():
             elif isinstance(node,ast.ImportFrom): assert node.module.split('.')[0] in allowed
 
 
-def test_actual_reader_timeout_is_bounded(tmp_path,monkeypatch):
+def test_actual_reader_timeout_is_bounded(tmp_path,monkeypatch,request):
     module=load('collect_auraface_acceptance')
     _,inputs=pair()
-    monkeypatch.setattr(module,'_READ_SCRIPT','import time; time.sleep(1)')
-    started=time.monotonic()
-    result=module.collect_auraface_acceptance([tmp_path/'captured'],captured_inputs=inputs,expected_contract='candidate512',freshness_policy=dict(max_age_seconds=60,future_skew_seconds=2),isolation_policy=dict(resource_policy_id='candidate-target',database_instance_id='instance-opaque',database_name='candidate_store',database_role='serving_role',storage_identity='store-opaque',tenant_context_id='tenant-opaque'),now=NOW,max_record_bytes=1024,deadline_monotonic=started+0.05)
-    assert time.monotonic()-started < 0.5
-    assert result['acquisition_ledger'][0]['status']=='deadline_exceeded'
+    monkeypatch.setattr(module,'_READ_SCRIPT','import time; time.sleep(60)')
+    real_popen = module.subprocess.Popen
+    # Start the actual stalled reader before measuring its timeout/reap budget.
+    reader = real_popen([module.sys.executable, '-I', '-c', module._READ_SCRIPT],
+                        stdin=module.subprocess.PIPE, text=True,
+                        stdout=module.subprocess.PIPE, stderr=module.subprocess.DEVNULL)
+    readers = []
+
+    def popen(*args, **kwargs):
+        readers.append(reader)
+        return reader
+
+    monkeypatch.setattr(module.subprocess, 'Popen', popen)
+    try:
+        started=time.monotonic()
+        result=module.collect_auraface_acceptance([tmp_path/'captured'],captured_inputs=inputs,expected_contract='candidate512',freshness_policy=dict(max_age_seconds=60,future_skew_seconds=2),isolation_policy=dict(resource_policy_id='candidate-target',database_instance_id='instance-opaque',database_name='candidate_store',database_role='serving_role',storage_identity='store-opaque',tenant_context_id='tenant-opaque'),now=NOW,max_record_bytes=1024,deadline_monotonic=started+0.2)
+        elapsed = time.monotonic() - started
+        request.node.user_properties.append(('collector_elapsed_seconds', elapsed))
+        request.node.user_properties.append(('deadline_overshoot_seconds', max(0, elapsed - 0.2)))
+        assert elapsed < 0.5
+        assert result['acquisition_ledger'][0]['status']=='deadline_exceeded'
+        assert len(readers) == 1 and reader.returncode == -9
+    finally:
+        if reader.returncode is None:
+            reader.kill()
+            reader.wait(timeout=1)
+        for pipe in (reader.stdin, reader.stdout):
+            if pipe is not None:
+                pipe.close()
 
 
 def test_oversized_file_reports_actual_bounded_reads(tmp_path):
@@ -190,6 +214,7 @@ def test_post_kill_wait_is_bounded_and_sanitized(tmp_path, monkeypatch, unkillab
     monkeypatch.setitem(collect.__globals__, 'load', lambda _: module)
     calls = []
     clock = [10.0]
+    deadline, reap_reserve, reap_grace = 11.0, 0.15, 0.1
     monkeypatch.setattr(module.time, 'monotonic', lambda: clock[0])
 
     class Reader:
@@ -199,9 +224,10 @@ def test_post_kill_wait_is_bounded_and_sanitized(tmp_path, monkeypatch, unkillab
             clock[0] = 10.2  # launch consumes budget
 
         def communicate(self, *, input, timeout=None):
-            assert timeout is not None and 0 < timeout <= 0.8
+            budget = deadline - clock[0]
+            assert timeout is not None and 0 < timeout <= budget - reap_reserve
             calls.append('communicate')
-            clock[0] = 10.95
+            clock[0] += timeout
             raise module.subprocess.TimeoutExpired('fixture-only-canary', timeout)
 
         def kill(self):
@@ -210,15 +236,17 @@ def test_post_kill_wait_is_bounded_and_sanitized(tmp_path, monkeypatch, unkillab
 
         def wait(self, timeout=None):
             assert self.killed
-            assert timeout is not None and 0 <= timeout <= 0.051
+            assert timeout == pytest.approx(reap_grace)
+            assert timeout <= deadline - clock[0]
             calls.append('wait')
             if unkillable:
+                clock[0] += timeout
                 raise module.subprocess.TimeoutExpired('fixture-only-canary', timeout)
             return -9
 
     monkeypatch.setattr(module.subprocess, 'Popen', Reader)
     _, inputs = pair()
-    result = collect([tmp_path / 'unused'], inputs, deadline_monotonic=11.0)
+    result = collect([tmp_path / 'unused'], inputs, deadline_monotonic=deadline)
     code = 'reader_unkillable' if unkillable else 'deadline_exceeded'
     assert calls == ['communicate', 'kill', 'wait']
     assert result['acquisition_ledger'][0]['status'] == code
@@ -226,6 +254,57 @@ def test_post_kill_wait_is_bounded_and_sanitized(tmp_path, monkeypatch, unkillab
     assert code in result['gaps']
     assert 'fixture-only-canary' not in str(result)
     assert str(tmp_path) not in str(result)
+
+
+@pytest.mark.parametrize('remaining', [0.05, 0.15, 0.155])
+def test_short_budget_refuses_reader_launch(tmp_path, monkeypatch, remaining):
+    module = load('collect_auraface_acceptance')
+    monkeypatch.setitem(collect.__globals__, 'load', lambda _: module)
+    monkeypatch.setattr(module.time, 'monotonic', lambda: 0.0)
+    monkeypatch.setattr(module.subprocess, 'Popen',
+                        lambda *a, **k: pytest.fail('reader launched without reap reserve plus margin'))
+    _, inputs = pair()
+    result = collect([tmp_path / 'unused'], inputs, deadline_monotonic=remaining)
+    row = result['acquisition_ledger'][0]
+    assert row['status'] == row['reason_code'] == 'deadline_exceeded'
+    assert row['bytes_read'] == 0 and 'deadline_exceeded' in result['gaps']
+
+
+@pytest.mark.parametrize('launch_time', [0.97, 1.0, 1.02])
+def test_launch_overrun_cannot_establish_reader_unkillable(tmp_path, monkeypatch, launch_time):
+    import io
+    module = load('collect_auraface_acceptance')
+    monkeypatch.setitem(collect.__globals__, 'load', lambda _: module)
+    clock, calls = [0.0], []
+    monkeypatch.setattr(module.time, 'monotonic', lambda: clock[0])
+
+    class Reader:
+        def __init__(self, *args, **kwargs):
+            self.stdin, self.stdout = io.StringIO(), io.StringIO()
+            clock[0] = launch_time
+
+        def communicate(self, *, input, timeout=None):
+            assert timeout == 0
+            calls.append('communicate')
+            raise module.subprocess.TimeoutExpired('fixture-only-canary', timeout)
+
+        def kill(self):
+            calls.append('kill')
+
+        def wait(self, timeout=None):
+            assert timeout == max(0, 1.0 - launch_time)
+            calls.append('wait')
+            clock[0] += timeout
+            raise module.subprocess.TimeoutExpired('fixture-only-canary', timeout)
+
+    monkeypatch.setattr(module.subprocess, 'Popen', Reader)
+    _, inputs = pair()
+    result = collect([tmp_path / 'unused'], inputs, deadline_monotonic=1.0)
+    assert calls == ['communicate', 'kill', 'wait']
+    row = result['acquisition_ledger'][0]
+    assert row['status'] == row['reason_code'] == 'deadline_exceeded'
+    assert 'reader_unkillable' not in result['gaps']
+    assert 'fixture-only-canary' not in str(result) and str(tmp_path) not in str(result)
 
 
 def test_expired_deadline_prevents_join(monkeypatch):

@@ -12,9 +12,11 @@ import builtins
 import hashlib
 import importlib
 import inspect
+import io
 import os
 import time
 from dataclasses import FrozenInstanceError, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -24,10 +26,10 @@ import pytest
 PREFIX = "recognition.infrastructure.face_pipeline."
 
 
-
 @pytest.fixture(autouse=True)
 def native_ort_tripwire(monkeypatch):
     """C12: protect the native seam even if a wrapper was imported earlier."""
+    monkeypatch.setenv("ORT_DISABLE_TELEMETRY", "1")
     native = importlib.import_module("onnxruntime.capi._pybind_state")
     attempts = []
 
@@ -49,32 +51,47 @@ def guard_artifact_io(monkeypatch, root, entry, *, max_opens):
     paths = {os.path.abspath(root / entry.file_name),
              os.path.abspath(root / entry.license_file)}
     opens = dict.fromkeys(paths, 0)
-    depth = 0
+    depth = dict.fromkeys(paths, 0)
+    directory_fds = {}
 
-    def wrap(original):
+    def wrap(original, *, tracks_fd=False):
         def guarded(path, *args, **kwargs):
-            nonlocal depth
             if isinstance(path, int):
                 return original(path, *args, **kwargs)
-            key = os.path.abspath(os.fsdecode(path))
+            decoded = os.fsdecode(path)
+            parent = directory_fds.get(kwargs.get("dir_fd")) if tracks_fd else None
+            key = os.path.abspath(os.path.join(parent, decoded) if parent is not None else decoded)
             targeted = key in paths
-            if targeted and depth == 0:
+            if targeted and depth[key] == 0:
                 opens[key] += 1
                 assert opens[key] <= max_opens, \
                     "CAUSAL_RED: artifact reopened/rehash after acquisition"
             if targeted:
-                depth += 1
+                depth[key] += 1
             try:
-                return original(path, *args, **kwargs)
+                result = original(path, *args, **kwargs)
+                flags = args[0] if args else kwargs.get("flags", 0)
+                if tracks_fd and flags & os.O_DIRECTORY:
+                    directory_fds[result] = key
+                return result
             finally:
                 if targeted:
-                    depth -= 1
+                    depth[key] -= 1
         return guarded
 
     for owner, name in ((Path, "open"), (Path, "read_bytes"),
-                        (builtins, "open"), (os, "open")):
+                        (builtins, "open"), (io, "open")):
         monkeypatch.setattr(owner, name, wrap(getattr(owner, name)))
+    monkeypatch.setattr(os, "open", wrap(os.open, tracks_fd=True))
+    original_close = os.close
+
+    def close(fd):
+        directory_fds.pop(fd, None)
+        return original_close(fd)
+
+    monkeypatch.setattr(os, "close", close)
     return opens
+
 
 def symbol(module, name):
     """Only the specifically missing proposed interface is an intended RED."""
@@ -160,7 +177,7 @@ class RecordingSession:
         return [SimpleNamespace(name="output", shape=[1, 512], type="tensor(float)")]
 
     def get_providers(self):
-        return ["CPUExecutionProvider"]
+        return getattr(self, "providers", None) or ["CPUExecutionProvider"]
 
     def get_session_options(self):
         return getattr(self, "sess_options", None)
@@ -313,3 +330,51 @@ def test_acquisition_bounds_are_enforced(tmp_path, monkeypatch, limit):
 def test_receipt_contract_types_exist_and_are_immutable(type_name):
     receipt = symbol(PREFIX + "loaded_session", type_name)
     assert receipt.__dataclass_params__.frozen, f"CAUSAL_RED: {type_name} must be immutable"
+
+
+@pytest.mark.parametrize("type_name, mapping_field", [
+    ("SessionReceiptV1", "actual_session_options"),
+    ("ExecutionReceiptV1", "embedder_input"),
+    ("LoadedRuntimeRecordV1", "sessions"),
+])
+def test_receipt_mappings_reject_mutation_and_detach_input_aliases(type_name, mapping_field):
+    """C16: frozen record attributes must also retain immutable evidence maps."""
+    receipt = symbol(PREFIX + "loaded_session", type_name)
+    now = datetime(2026, 10, 13, tzinfo=UTC)
+    digest = sha(b"synthetic receipt fixture")
+    if type_name == "SessionReceiptV1":
+        provenance = importlib.import_module(PREFIX + "provenance")
+        numeric_fixture = provenance.NumericRuntimeFingerprint(
+            opencv_version="0.fixture", opencv_major=0, onnxruntime_version="0.fixture",
+            numpy_version="0.fixture", scipy_version="0.fixture", pillow_version="0.fixture",
+            hdbscan_version="0.fixture", pgvector_version="0.fixture")
+        values = dict(session_id="fixture-session", runtime_generation_id="fixture-generation",
+                      logical_model_name="auraface", constructed_at=now,
+                      observed_weight_sha256=digest, observed_weight_size_bytes=1,
+                      observed_license_sha256=digest, observed_license_size_bytes=1,
+                      manifest_expectation_sha256=digest, frozen_preprocessing_sha256=digest,
+                      numeric_runtime_fingerprint=numeric_fixture, actual_providers=("CPUExecutionProvider",),
+                      actual_input_metadata=(), actual_output_metadata=(),
+                      actual_session_options={"intra_op_num_threads": 1}, graph_analysis=None)
+    elif type_name == "ExecutionReceiptV1":
+        values = dict(execution_id="fixture-execution", runtime_generation_id="fixture-generation",
+                      detector_session_id="fixture-detector", embedder_session_id="fixture-embedder",
+                      captured_at=now, input_lineage={}, detector_input={}, detections_sha256=None,
+                      alignment={}, embedder_input={"sha256": digest}, raw_output={},
+                      normalized_output={}, graph_analysis_sha256=None, completion="partial")
+    else:
+        values = dict(producer_abi_version=1, runtime_generation_id="fixture-generation",
+                      model_id="fixture-auraface512", effective_profile="auraface",
+                      declared_embedding_dimension=512, observed_embedding_dimension=None,
+                      preprocessing_id="arcface-112", compatibility_sha256=digest, config_sha256=digest,
+                      sessions={}, frozen_preprocessing_spec=None, execution_receipt=None,
+                      state="not_loaded", reason_code="synthetic_missing_pair", observed_at=now)
+    incoming = values[mapping_field]
+    before = dict(incoming)
+    record = receipt(**values)
+    retained = getattr(record, mapping_field)
+    assert dict(retained) == before
+    incoming["fixture_alias_mutation"] = "changed"
+    assert dict(retained) == before, "CAUSAL_RED: caller can rewrite retained receipt evidence"
+    with pytest.raises(TypeError):
+        retained["fixture_direct_mutation"] = "changed"

@@ -26,6 +26,11 @@ _spec.loader.exec_module(_join)
 MAX_RECORD_BYTES = 1024 * 1024
 MAX_RECORD_COUNT = 128
 
+# Reserve 150 ms: a bounded 100 ms SIGKILL/reap grace plus scheduling headroom.
+READER_REAP_RESERVE_SECONDS = 0.15
+READER_REAP_GRACE_SECONDS = 0.1
+READER_LAUNCH_MARGIN_SECONDS = 0.01
+
 # stdout is bounded to max_bytes plus a small status envelope; stderr is empty.
 # A path/exception/input payload is never emitted on failure.
 _READ_SCRIPT = r'''
@@ -132,22 +137,28 @@ def collect_auraface_acceptance(record_paths, *, captured_inputs,
             try:
                 # Remaining time is calculated at launch, not before prior work.
                 remaining = deadline_monotonic - time.monotonic()
-                if remaining <= 0:
+                if remaining < READER_REAP_RESERVE_SECONDS + READER_LAUNCH_MARGIN_SECONDS:
                     raise subprocess.TimeoutExpired('captured-reader', 0)
                 process = subprocess.Popen([sys.executable,'-I','-c',_READ_SCRIPT],
                     stdin=subprocess.PIPE,text=True,stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL)
                 try:
-                    # Reserve part of the remaining budget for bounded reaping.
+                    # Kill at deadline minus the fixed reap grace, never shrink it.
                     budget = max(0, deadline_monotonic - time.monotonic())
                     output, _ = process.communicate(
                         input=json.dumps(dict(path=str(path),cap=max_record_bytes)),
-                        timeout=budget - min(0.05, budget * 0.9))
+                        timeout=max(0, budget - READER_REAP_RESERVE_SECONDS))
                 except subprocess.TimeoutExpired:
                     process.kill()
+                    reap_budget = min(READER_REAP_GRACE_SECONDS,
+                                      max(0, deadline_monotonic - time.monotonic()))
                     try:
-                        process.wait(timeout=max(0, deadline_monotonic - time.monotonic()))
+                        process.wait(timeout=reap_budget)
                     except subprocess.TimeoutExpired:
+                        # A slow launch/scheduling stall may leave less than the
+                        # full grace; that cannot establish an unkillable reader.
+                        if reap_budget < READER_REAP_GRACE_SECONDS:
+                            raise
                         raise _join.RecordError('reader_unkillable') from None
                     raise
                 finally:

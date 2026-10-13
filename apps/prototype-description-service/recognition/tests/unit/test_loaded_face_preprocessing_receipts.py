@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 from recognition.tests.unit.test_loaded_face_session_producer import (
-    PREFIX, RecordingSession, acquire, artifact_fixture, install_constructor, sha, symbol,
+    PREFIX, acquire, artifact_fixture, install_constructor, sha, symbol,
 )
 
 
@@ -33,20 +33,31 @@ def independent_aura_tensor(crop):
     return result
 
 
-def executing_embedder(output=None):
-    adapters = importlib.import_module(PREFIX + "ort_adapters")
-    embedder = adapters.OrtSFaceEmbedder.__new__(adapters.OrtSFaceEmbedder)
-    embedder._model_name = "auraface"
-    embedder.embedding_dim = 512
-    embedder._blob_builder = adapters._blob_builder_for_model("auraface")
-    embedder._session = RecordingSession(output)
-    embedder._input_name = "input"
-    return embedder
+@pytest.fixture(autouse=True)
+def native_ort_tripwire(monkeypatch):
+    """Catch native aliases as well as the public recording-constructor seam."""
+    native = importlib.import_module("onnxruntime.capi._pybind_state")
+    calls = []
+
+    def forbidden(*args, **kwargs):
+        calls.append(True)
+        pytest.fail("FIXTURE_ERROR: native ORT construction attempted", pytrace=False)
+
+    monkeypatch.setattr(native, "InferenceSession", forbidden)
+    yield calls
+    assert len(calls) == 0
 
 
-def test_control_actual_session_feed_matches_independent_aura_tensor():
+def executing_embedder(tmp_path, monkeypatch, output=None):
+    artifact_fixture(tmp_path, monkeypatch)
+    adapters, _, _ = install_constructor(monkeypatch, output)
+    # Exercise the preserved legacy constructor, verification and metadata path.
+    return adapters.OrtSFaceEmbedder(model_name="auraface", models_dir=tmp_path)
+
+
+def test_control_actual_session_feed_matches_independent_aura_tensor(tmp_path, monkeypatch):
     crop = asymmetric_crop()
-    embedder = executing_embedder()
+    embedder = executing_embedder(tmp_path, monkeypatch)
     result = embedder.embed([crop])
     tensor = embedder._session.feeds[0]["input"]
     np.testing.assert_array_equal(tensor, independent_aura_tensor(crop))
@@ -58,7 +69,7 @@ def test_control_actual_session_feed_matches_independent_aura_tensor():
 
 
 @pytest.mark.parametrize("mutation", ["channel", "mean", "scale"])
-def test_control_independent_tensor_oracle_detects_each_mutation(monkeypatch, mutation):
+def test_control_independent_tensor_oracle_detects_each_mutation(tmp_path, monkeypatch, mutation):
     adapters = importlib.import_module(PREFIX + "ort_adapters")
     crop = asymmetric_crop()
     kwargs = dict(channel_order="RGB", input_mean=127.5, input_scale=1 / 127.5)
@@ -68,17 +79,17 @@ def test_control_independent_tensor_oracle_detects_each_mutation(monkeypatch, mu
     assert not np.array_equal(mutated, independent_aura_tensor(crop))
     # Prove the exact healthy run assertion goes red under an executing-builder
     # mutation. All changes are in-process and restored by monkeypatch.
-    test_control_actual_session_feed_matches_independent_aura_tensor()
-    monkeypatch.setattr(adapters, "_blob_builder_for_model", lambda name:
+    test_control_actual_session_feed_matches_independent_aura_tensor(tmp_path, monkeypatch)
+    monkeypatch.setattr(adapters, "_blob_builder_for_model", lambda name, **unused:
                         lambda crop: adapters._bgr_to_declared_blob(crop, **kwargs))
     with pytest.raises(AssertionError):
-        test_control_actual_session_feed_matches_independent_aura_tensor()
+        test_control_actual_session_feed_matches_independent_aura_tensor(tmp_path, monkeypatch)
 
 
-def test_control_normalization_mutation_turns_healthy_run_assertion_red(monkeypatch):
+def test_control_normalization_mutation_turns_healthy_run_assertion_red(tmp_path, monkeypatch):
     adapters = importlib.import_module(PREFIX + "ort_adapters")
     common = importlib.import_module(PREFIX + "_common")
-    test_control_actual_session_feed_matches_independent_aura_tensor()
+    test_control_actual_session_feed_matches_independent_aura_tensor(tmp_path, monkeypatch)
     original = adapters.embed_batch
 
     def omit_normalization(*args, **kwargs):
@@ -87,17 +98,17 @@ def test_control_normalization_mutation_turns_healthy_run_assertion_red(monkeypa
 
     monkeypatch.setattr(adapters, "embed_batch", omit_normalization)
     with pytest.raises(AssertionError):
-        test_control_actual_session_feed_matches_independent_aura_tensor()
+        test_control_actual_session_feed_matches_independent_aura_tensor(tmp_path, monkeypatch)
 
 
 @pytest.mark.parametrize("failure", ["empty", "zero", "nan", "infinity", "wrong_width"])
-def test_control_normalization_gate_and_empty_batch(failure):
+def test_control_normalization_gate_and_empty_batch(tmp_path, monkeypatch, failure):
     common = importlib.import_module(PREFIX + "_common")
     outputs = {"zero": np.zeros((1, 512), np.float32),
                "nan": np.full((1, 512), np.nan, np.float32),
                "infinity": np.full((1, 512), np.inf, np.float32),
                "wrong_width": np.ones((1, 511), np.float32)}
-    embedder = executing_embedder(outputs.get(failure))
+    embedder = executing_embedder(tmp_path, monkeypatch, outputs.get(failure))
     if failure == "empty":
         result = embedder.embed([])
         assert result.vectors.shape == (0, 512)
@@ -114,12 +125,13 @@ def test_candidate_builder_reads_explicit_frozen_manifest_entry(monkeypatch):
     adapters = importlib.import_module(PREFIX + "ort_adapters")
     provenance = importlib.import_module(PREFIX + "provenance")
     frozen = provenance.MODEL_MANIFEST["auraface"]
-    assert "entry" in inspect.signature(adapters._blob_builder_for_model).parameters, \
-        "CAUSAL_RED: ABI-04 frozen entry keyword absent"
-    # ABI-04's keyword-only entry: this must be execution's entry, not metadata only.
-    builder = adapters._blob_builder_for_model("auraface", entry=frozen)
     changed = replace(frozen, preprocessing=replace(frozen.preprocessing, channel_order="BGR", input_mean=0))
+    # Change the ambient entry BEFORE construction: ignoring the snapshot must fail.
     monkeypatch.setitem(provenance.MODEL_MANIFEST, "auraface", changed)
+    try:
+        builder = adapters._blob_builder_for_model("auraface", entry=frozen)
+    except TypeError as exc:
+        pytest.fail(f"CAUSAL_RED: ABI-04 frozen entry unsupported: {type(exc).__name__}", pytrace=False)
     np.testing.assert_array_equal(builder(asymmetric_crop()), independent_aura_tensor(asymmetric_crop()))
 
 
@@ -197,13 +209,24 @@ def test_receipt_fields_distinguish_construction_execution_and_graph(receipt_nam
 
 def test_verified_embedder_executes_frozen_recipe_at_run_boundary(tmp_path, monkeypatch):
     provenance, entry, _, _ = artifact_fixture(tmp_path, monkeypatch)
+    # Deliberately false graph declaration: the fixture emits raw norm 5.
+    # It cannot replace observed execution or digest-bound graph evidence (C6).
+    entry = replace(entry, preprocessing=replace(entry.preprocessing, output_l2_normalized=True))
+    monkeypatch.setitem(provenance.MODEL_MANIFEST, "auraface", entry)
     artifact = acquire(provenance, entry, tmp_path)
     adapters, calls, session = install_constructor(monkeypatch)
-    embedder = adapters.OrtSFaceEmbedder(model_name="auraface", models_dir=tmp_path, verified_artifact=artifact)
     monkeypatch.setitem(provenance.MODEL_MANIFEST, "auraface", replace(
         entry, preprocessing=replace(entry.preprocessing, channel_order="BGR", input_mean=0)))
+    # A changed manifest may be refused explicitly, or the acquired recipe used.
+    try:
+        embedder = adapters.OrtSFaceEmbedder(model_name="auraface", models_dir=tmp_path, verified_artifact=artifact)
+    except provenance.ModelIntegrityError:
+        assert calls == []
+        return
     crop = asymmetric_crop()
-    embedder.embed([crop])
+    result = embedder.embed([crop])
+    assert result.norms.tolist() == [5.0]
+    np.testing.assert_allclose(np.linalg.norm(result.vectors[0]), 1, atol=1e-7)
     assert calls[0][0] is artifact.model_bytes
     np.testing.assert_array_equal(session.feeds[0]["input"], independent_aura_tensor(crop))
     assert sha(session.feeds[0]["input"].tobytes()) == sha(independent_aura_tensor(crop).tobytes())

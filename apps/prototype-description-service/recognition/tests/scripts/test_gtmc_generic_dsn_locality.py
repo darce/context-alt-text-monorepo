@@ -161,3 +161,31 @@ def test_matched_dev_local_preserve_settings_policy(cli, monkeypatch, env, host)
     reads = _settings(monkeypatch, _dsn(host), env)
     assert cli._validate_runtime_env(env) is None
     assert reads == (["settings"] if cli.__name__.endswith("manage_api_keys") else [])
+
+
+@pytest.mark.parametrize("userinfo_suffix,path_suffix", [
+    pytest.param("#marker", "", id="userinfo-fragment"),
+    pytest.param("?marker", "", id="userinfo-query"),
+    pytest.param("", "#marker", id="path-fragment"),
+])
+@pytest.mark.parametrize("query", [
+    pytest.param("host=127.0.0.1", id="single-host"),
+    pytest.param("host=db.example.invalid&host=127.0.0.1", id="repeated-host"),
+])
+@pytest.mark.parametrize("env", ["prod", "dev", "local"])
+def test_parser_differential_query_overrides_are_refused(
+    cli, monkeypatch, userinfo_suffix, path_suffix, query, env,
+) -> None:
+    host = "db.example.invalid" if env == "prod" else "localhost"
+    dsn = f"postgresql+asyncpg://fixture:fixture{userinfo_suffix}@{host}/fixture{path_suffix}?{query}"
+    reads = _settings(monkeypatch, dsn, "prod" if env == "prod" else None)
+    refusal = cli._validate_runtime_env(env)
+    assert refusal == f"env={env}: DSN query overrides the connection identity or endpoint; refusing to run"
+    assert reads == ["settings"]
+
+
+@pytest.mark.parametrize("env", ["dev", "local"])
+def test_clean_local_dsn_control_is_admitted(cli, monkeypatch, env) -> None:
+    reads = _settings(monkeypatch, _dsn("localhost"))
+    assert cli._validate_runtime_env(env) is None
+    assert reads == ["settings"]

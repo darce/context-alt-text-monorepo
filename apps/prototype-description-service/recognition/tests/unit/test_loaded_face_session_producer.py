@@ -8,9 +8,11 @@ TEST-15: https://github.com/darce/heuristics-canon/blob/v0.25.6/lexicons/enginee
 """
 from __future__ import annotations
 
+import builtins
 import hashlib
 import importlib
 import inspect
+import os
 import time
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
@@ -21,6 +23,58 @@ import pytest
 
 PREFIX = "recognition.infrastructure.face_pipeline."
 
+
+
+@pytest.fixture(autouse=True)
+def native_ort_tripwire(monkeypatch):
+    """C12: protect the native seam even if a wrapper was imported earlier."""
+    native = importlib.import_module("onnxruntime.capi._pybind_state")
+    attempts = []
+
+    def forbidden(*args, **kwargs):
+        attempts.append(1)
+        pytest.fail("CAUSAL_RED: native ORT construction forbidden in fixture-only lane", pytrace=False)
+
+    monkeypatch.setattr(native, "InferenceSession", forbidden)
+    yield attempts
+    assert not attempts, "NATIVE_ORT_CONSTRUCTIONS must be 0"
+
+
+def guard_artifact_io(monkeypatch, root, entry, *, max_opens):
+    """Scope guards to the two artifact paths; delegate all unrelated I/O.
+
+    Path.read_bytes -> Path.open nesting is one logical open, not two.
+    The same applies to custom openers delegating builtins.open to os.open.
+    """
+    paths = {os.path.abspath(root / entry.file_name),
+             os.path.abspath(root / entry.license_file)}
+    opens = dict.fromkeys(paths, 0)
+    depth = 0
+
+    def wrap(original):
+        def guarded(path, *args, **kwargs):
+            nonlocal depth
+            if isinstance(path, int):
+                return original(path, *args, **kwargs)
+            key = os.path.abspath(os.fsdecode(path))
+            targeted = key in paths
+            if targeted and depth == 0:
+                opens[key] += 1
+                assert opens[key] <= max_opens, \
+                    "CAUSAL_RED: artifact reopened/rehash after acquisition"
+            if targeted:
+                depth += 1
+            try:
+                return original(path, *args, **kwargs)
+            finally:
+                if targeted:
+                    depth -= 1
+        return guarded
+
+    for owner, name in ((Path, "open"), (Path, "read_bytes"),
+                        (builtins, "open"), (os, "open")):
+        monkeypatch.setattr(owner, name, wrap(getattr(owner, name)))
+    return opens
 
 def symbol(module, name):
     """Only the specifically missing proposed interface is an intended RED."""
@@ -108,6 +162,15 @@ class RecordingSession:
     def get_providers(self):
         return ["CPUExecutionProvider"]
 
+    def get_session_options(self):
+        return getattr(self, "sess_options", None)
+
+    def get_provider_options(self):
+        return {provider: {} for provider in self.get_providers()}
+
+    def get_modelmeta(self):
+        return SimpleNamespace(custom_metadata_map={}, graph_name="synthetic")
+
     def run(self, names, feeds):
         self.feeds.append({key: value.copy() for key, value in feeds.items()})
         return [self.output.copy()]
@@ -118,8 +181,10 @@ def install_constructor(monkeypatch, output=None):
     calls = []
     session = RecordingSession(output)
 
-    def constructor(source, *, sess_options, providers):
+    def constructor(source, sess_options=None, providers=None, **kwargs):
         calls.append((source, sess_options, providers))
+        session.sess_options = sess_options
+        session.providers = providers
         return session
 
     monkeypatch.setattr(adapters.ort, "InferenceSession", constructor)
@@ -166,28 +231,14 @@ def test_bytes_dispatch_passes_identical_immutable_object(monkeypatch):
 
 def test_acquisition_hashes_same_buffer_consumed_by_constructor(tmp_path, monkeypatch):
     provenance, entry, model, license_bytes = artifact_fixture(tmp_path, monkeypatch)
-    # Observe the actual argument to hashing during acquisition, before any
-    # oracle hash calls. Equality alone would miss hashing a different buffer.
-    real_sha256 = hashlib.sha256
-    hashed_buffers = []
-
-    class HashSpy:
-        def __init__(self, data=b"", **kwargs):
-            hashed_buffers.append(data)
-            self.inner = real_sha256(data, **kwargs)
-
-        def update(self, data):
-            hashed_buffers.append(data)
-            self.inner.update(data)
-
-        def __getattr__(self, name):
-            return getattr(self.inner, name)
-
-    with monkeypatch.context() as hashing_patch:
-        hashing_patch.setattr(provenance.hashlib, "sha256", HashSpy)
+    # C3: one acquisition per artifact, independent of hash implementation.
+    # Counting opens catches verify-then-reopen without requiring sha256(data)
+    # rather than hashlib.new/update/memoryview on the acquired buffer.
+    with monkeypatch.context() as acquisition_patch:
+        opens = guard_artifact_io(acquisition_patch, tmp_path, entry, max_opens=1)
         artifact = acquire(provenance, entry, tmp_path)
-    assert any(buffer is artifact.model_bytes for buffer in hashed_buffers), \
-        "CAUSAL_RED: hash the acquired immutable buffer itself, not a separate disk read/copy"
+    assert all(count == 1 for count in opens.values()), \
+        "CAUSAL_RED: acquire each model/license once, then consume retained bytes"
     verified_type = symbol(PREFIX + "loaded_session", "VerifiedModelBytes")
     assert isinstance(artifact, verified_type)
     assert type(artifact.model_bytes) is bytes
@@ -219,12 +270,8 @@ def test_verified_artifact_never_reopens_or_rehashes_disk(tmp_path, monkeypatch,
         path.write_bytes(b"changed after verification")
     adapters, calls, _ = install_constructor(monkeypatch)
 
-    def forbidden(*args, **kwargs):
-        pytest.fail("CAUSAL_RED: disk reopened/rehash after verification", pytrace=False)
-
-    monkeypatch.setattr(Path, "open", forbidden)
-    monkeypatch.setattr(Path, "read_bytes", forbidden)
-    monkeypatch.setattr(provenance, "_file_sha256", forbidden)
+    # C2: constructor metadata/fingerprint I/O is legal; artifact I/O is not.
+    guard_artifact_io(monkeypatch, tmp_path, entry, max_opens=0)
     adapters.OrtSFaceEmbedder(model_name="auraface", models_dir=tmp_path, verified_artifact=artifact)
     assert len(calls) == 1
     assert calls[0][0] is artifact.model_bytes
@@ -256,7 +303,9 @@ def test_acquisition_bounds_are_enforced(tmp_path, monkeypatch, limit):
     symbol(PREFIX + "provenance", "acquire_verified_model_bytes")
     overrides = {"model_cap": dict(max_model_bytes=1), "license_cap": dict(max_license_bytes=1),
                  "deadline": dict(deadline_monotonic=time.monotonic() - 1)}[limit]
-    with pytest.raises((provenance.ModelIntegrityError, ValueError, TimeoutError)):
+    # C15: documented existing integrity taxonomy or deadline timeout;
+    # arbitrary ValueError is not evidence that the requested bound was checked.
+    with pytest.raises((provenance.ModelIntegrityError, TimeoutError)):
         acquire(provenance, entry, tmp_path, **overrides)
 
 

@@ -1239,6 +1239,8 @@ def _publish_score_refusal(root: Path, error: Exception) -> None:
     Each artifact is attempted independently. Every publication failure is attached to the
     original scorer exception as a note; this function never replaces or re-raises it.
     """
+    if not root.is_dir():
+        return
     score_dir = root / "score"
     code = error.code if isinstance(error, BenchError) else type(error).__name__
     try:

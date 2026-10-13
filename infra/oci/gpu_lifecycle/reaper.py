@@ -240,6 +240,8 @@ class StopActuation:
 
     ``command_invoked`` is true only when the action subprocess ran. A convergence GET is not an action,
     so an already-converged result carries no action identifiers.
+    A legacy actuator may return ``None``; this maps to ``UNKNOWN`` with ``command_invoked`` set to
+    ``None`` because no invocation evidence was returned.
     """
 
     outcome: StopOutcome
@@ -624,10 +626,10 @@ class OciCliStopActuator:
         else:
             try:
                 request_id = self._response_request_id_reader(stdout, stderr)
-            except Exception:
+            except Exception as exc:
                 request_id = None
                 missing = (("oci_response_request_id", "action_response_reader_failed"),)
-                logger.warning("OCI STOP action response reader failed for %s", instance_id)
+                logger.warning("OCI STOP action response reader failed for %s (%s)", instance_id, type(exc).__name__)
             else:
                 missing = (
                     ()

@@ -83,7 +83,6 @@ class FakeOciCli:
     action_fails: bool = False
     get_argv: list[list[str]] = field(default_factory=list)
     action_argv: list[list[str]] = field(default_factory=list)
-    action_output_captured: list[bool] = field(default_factory=list)
 
     def run(self, cmd: Any, *args: Any, **kwargs: Any) -> subprocess.CompletedProcess[Any]:
         argv = [str(part) for part in cmd]
@@ -103,7 +102,6 @@ class FakeOciCli:
             )
         if argv[1:4] == ["compute", "instance", "action"]:
             self.action_argv.append(argv)
-            self.action_output_captured.append(captured_out or captured_err)
             if self.action_fails:
                 if kwargs.get("check") is True:
                     raise subprocess.CalledProcessError(1, argv, output="", stderr="fake action failure")
@@ -270,7 +268,7 @@ def _request_id_is_bound(raw_record: str, request_id: str) -> bool:
 
 
 def _claimed_stops(records: list[dict[str, Any]]) -> int:
-    """STOPs the decision log says were honoured. Each one should correspond to one issued OCI request."""
+    """Legacy honoured STOPs, including already-converged STOPs that issue no action RPC."""
     return sum(len(record["actuated"]) for record in records)
 
 
@@ -413,10 +411,10 @@ def test_control_absent_request_identifier_is_not_fabricated_or_reused(
 def test_control_join_checks_accept_a_record_that_carries_the_joins(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_oci: FakeOciCli
 ) -> None:
-    """Oracle sanity: each RED check must go green when the join is present, so the RED is not vacuous.
+    """Join-helper sanity for a test-only enriched record from an issued STOP.
 
-    The mutation is test-only and in memory: it adds the three joins to a real decision record the way a
-    producer might, then runs the same check helpers the RED tests use.
+    This fixture issues one RPC. An already-converged STOP instead remains actuated and honoured,
+    with an already_converged receipt and no action RPC, as the convergence control asserts.
     """
     load_dir = tmp_path / "load"
     _publish(load_dir, ENV, revision=REVISION)
@@ -568,6 +566,8 @@ def test_already_converged_stop_records_no_action_rpc(
 
     assert fake_oci.action_argv == [], "convergence must not issue a STOP request"
     assert len(run.records) == 1
+    assert run.result.actuated == [("STOP", INSTANCE_ID)]
+    assert run.records[0]["actuation_outcome"] == "honoured"
     (receipt,) = _stop_receipts(run.records[0])
     assert receipt["outcome"] == "already_converged"
     assert receipt["command_invoked"] is False
@@ -692,6 +692,89 @@ def test_lease_cap_stop_receipt_is_emergency_not_idle_proof(
     assert receipt["outcome"] == "issued"
     assert receipt["consumed_load"] == [], "the lease cap bypasses the publication fence"
     assert "consumed_load" in _missing_fields(receipt)
+
+
+def test_lease_cap_legacy_none_keeps_invocation_unknown_without_action_rpc(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_oci: FakeOciCli
+) -> None:
+    load_dir = tmp_path / "load"
+    _publish(load_dir, ENV, revision=REVISION, queue_depth=1)
+    legacy_calls: list[str] = []
+
+    def legacy_stop(instance_id: str) -> None:
+        legacy_calls.append(instance_id)
+
+    actuator = _actuator()
+    monkeypatch.setattr(actuator, "stop_instance", legacy_stop)
+    run = _reap(
+        tmp_path,
+        monkeypatch,
+        load_dir=load_dir,
+        fake=fake_oci,
+        actuator=actuator,
+        instances=[_running(idle_seconds=7200)],
+        max_lease_seconds=3600,
+    )
+
+    assert legacy_calls == [INSTANCE_ID]
+    assert fake_oci.action_argv == fake_oci.get_argv == []
+    assert run.result.lease_expired == [("STOP", INSTANCE_ID)]
+    assert run.result.errors == []
+    assert run.consumed == [] and len(run.records) == 1
+    (receipt,) = _stop_receipts(run.records[0])
+    assert receipt["decision_id"] == run.records[0]["decision_id"]
+    assert receipt["instance_id"] == INSTANCE_ID and receipt["reason_code"] == "lease_cap"
+    assert receipt["command_invoked"] is None
+    assert receipt["outcome"] == "unknown"
+    for field_name in ("actuation_receipt", "command_invoked"):
+        assert {"field": field_name, "code": "actuator_returned_no_receipt"} in receipt["missing_reasons"]
+    assert receipt["consumed_load"] == []
+
+
+def test_lease_cap_reader_oserror_preserves_issued_action(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_oci: FakeOciCli, caplog: pytest.LogCaptureFixture
+) -> None:
+    load_dir = tmp_path / "load"
+    _publish(load_dir, ENV, revision=REVISION, queue_depth=1)
+    reader_inputs: list[tuple[str, str]] = []
+
+    def failing_reader(stdout: str, stderr: str) -> str | None:
+        reader_inputs.append((stdout, stderr))
+        raise OSError("unlogged-reader-detail")
+
+    run = _reap(
+        tmp_path,
+        monkeypatch,
+        load_dir=load_dir,
+        fake=fake_oci,
+        actuator=_actuator(response_request_id_reader=failing_reader),
+        instances=[_running(idle_seconds=7200)],
+        max_lease_seconds=3600,
+    )
+
+    assert len(fake_oci.action_argv) == len(reader_inputs) == 1
+    assert fake_oci.state == "STOPPED"
+    assert json.loads(reader_inputs[0][0])["data"]["lifecycle-state"] == "STOPPING"
+    (actuation,) = run.result.lifecycle_receipts
+    assert actuation.reason_code == "lease_cap"
+    assert actuation.command_invoked is True
+    assert run.consumed == [] and len(run.records) == 1
+    (receipt,) = _stop_receipts(run.records[0])
+    assert receipt["decision_id"] == run.records[0]["decision_id"]
+    assert receipt["instance_id"] == INSTANCE_ID and receipt["reason_code"] == "lease_cap"
+    assert receipt["command_invoked"] is True
+    assert receipt["outcome"] == "issued"
+    assert receipt["final_state"] == "STOPPING"
+    assert receipt["oci_response_request_id"] is None
+    assert {"field": "oci_response_request_id", "code": "action_response_reader_failed"} in receipt["missing_reasons"]
+    assert not any(entry["code"] == "process_not_started" for entry in receipt["missing_reasons"])
+    assert receipt["consumed_load"] == []
+    assert run.result.lease_expired == [("STOP", INSTANCE_ID)]
+    assert run.result.errors == []
+    warnings = [record.getMessage() for record in caplog.records if "action response reader failed" in record.getMessage()]
+    assert len(warnings) == 1 and "OSError" in warnings[0]
+    assert "unlogged-reader-detail" not in warnings[0]
+    assert reader_inputs[0][0] not in warnings[0]
 
 
 def test_fence_consumed_publication_is_read_under_the_producer_lock(tmp_path: Path) -> None:

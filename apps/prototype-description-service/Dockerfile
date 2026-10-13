@@ -207,6 +207,11 @@ CMD ["/app/scripts/docker-entrypoint.sh"]
 #   HF_HUB_OFFLINE=1 / TRANSFORMERS_OFFLINE=1 are a second line of defense.
 # ---------------------------------------------------------------------------
 FROM runtime-base AS runtime-vlm
+ARG GIT_COMMIT_SHA
+ARG SOURCE_TREE
+ARG BUILD_CONTEXT_MANIFEST_SHA256
+ARG SERVICE_LOCK_SHA256
+ARG BUILD_TIME
 
 COPY --from=builder-vlm /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
@@ -243,6 +248,11 @@ USER acx
 # DEFAULT final stage: torch-free. MUST remain the last stage in this file.
 # ---------------------------------------------------------------------------
 FROM runtime-base AS runtime
+ARG GIT_COMMIT_SHA
+ARG SOURCE_TREE
+ARG BUILD_CONTEXT_MANIFEST_SHA256
+ARG SERVICE_LOCK_SHA256
+ARG BUILD_TIME
 
 # Copy the virtualenv from the builder
 COPY --from=builder /opt/venv /opt/venv

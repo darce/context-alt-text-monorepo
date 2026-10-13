@@ -13,8 +13,7 @@ Boundaries
   SELECT only, selects tenant context with the native statement ``SET LOCAL app.current_tenant = '<tenant>'``
   (apps/prototype-description-service/db/tenant_context.py, set_tenant_context), ends with ROLLBACK, and is
   closed on every path, including failures.
-* The bypass GUC is never named. ``app_bypass_rls`` therefore stays null with an ``app_bypass_rls_unprobed``
-  missing reason. A bypass is never asserted false without an actual probe.
+* Application bypass and tenant claims are probed. Missing claims withhold tenant reads.
 * Raw captures are UTF-8 driver-result receipts: query IDs, SQL, parameters, declared column names and
   types, typed rows, and timing. They are returned in-process, must be persisted before JSON assembly, and
   are hashed over the exact returned bytes. Receipts never carry a DSN, password, or Authorization value.
@@ -58,7 +57,13 @@ VECTOR_COLUMNS: tuple[tuple[str, str], ...] = (
 )
 # Only media_identities carries embedding_model in the native schema (db/models/identity.py).
 EMBEDDING_MODEL_TABLE = "media_identities"
-RLS_TABLES = ("image_description_runs", "image_description_run_items", "describe_operations", "media_identities")
+RLS_TABLES = (
+    "image_description_runs",
+    "image_description_run_items",
+    "describe_operations",
+    "media_identities",
+    "identity_cluster_representatives",
+)
 REQUIRED_SELECTION = (
     "environment",
     "expected_database",
@@ -146,6 +151,9 @@ IDENTITY_COLUMNS = (
 )
 IDENTITY_TYPES = ("name", "name", "name", "int4", "text", "timestamptz", "name")
 TXN_READ_ONLY_SQL = "SELECT current_setting('transaction_read_only')"
+APP_BYPASS_SQL = "SELECT current_setting('app.bypass_rls', true)"
+TENANT_CLAIM_SQL = "SELECT current_setting('app.current_tenant', true)"
+RUN_SQL = "SELECT r.id, r.tenant_id, r.operation_id FROM image_description_runs r WHERE r.id = %(run_id)s::uuid"
 ROLE_SQL = "SELECT r.rolsuper, r.rolbypassrls FROM pg_roles r WHERE r.rolname = current_user"
 EXTENSION_SQL = "SELECT e.extname, e.extversion FROM pg_extension e WHERE e.extname = 'vector'"
 VECTOR_SQL = (
@@ -162,6 +170,23 @@ RLS_SQL = (
 POLICY_SQL = (
     "SELECT p.tablename, p.policyname, p.cmd, p.roles, p.permissive, p.qual, p.with_check "
     "FROM pg_policies p WHERE p.schemaname = current_schema() AND p.tablename = ANY(%(tables)s)"
+)
+INDEX_SQL = (
+    "SELECT c.relname, a.attname, am.amname, op.opcname, i.indisvalid, "
+    "pg_get_expr(i.indpred, i.indrelid), pg_get_expr(i.indexprs, i.indrelid) "
+    "FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid "
+    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "JOIN pg_class ix ON ix.oid = i.indexrelid JOIN pg_am am ON am.oid = ix.relam "
+    "JOIN LATERAL unnest(i.indkey::smallint[], i.indclass::oid[]) AS k(attnum, opclass) ON true "
+    "JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum "
+    "JOIN pg_opclass op ON op.oid = k.opclass WHERE n.nspname = current_schema()"
+)
+EXTENSION_TYPE_SQL = (
+    "SELECT n.nspname, t.typname, e.extname FROM pg_type t "
+    "JOIN pg_namespace n ON n.oid = t.typnamespace "
+    "JOIN pg_depend d ON d.objid = t.oid AND d.classid = 'pg_type'::regclass "
+    "AND d.refclassid = 'pg_extension'::regclass AND d.deptype = 'e' "
+    "JOIN pg_extension e ON e.oid = d.refobjid WHERE t.typname = 'vector'"
 )
 SET_TENANT_TEMPLATE = "SET LOCAL app.current_tenant = '{tenant_id}'"
 EMBEDDING_SQL = "SELECT DISTINCT m.embedding_model FROM media_identities m ORDER BY m.embedding_model"
@@ -227,6 +252,7 @@ class _Capture:
         self.session: Any = None
         self.began = False
         self.queries: list[dict[str, Any]] = []
+        self.acquired_bytes = 0
         self.persisted = False
         self.path = ""
         self.sha256 = ""
@@ -359,8 +385,8 @@ def _read_selection(selection: Any, findings: _Findings) -> dict[str, Any] | Non
     if "dsn_ref" in selection:
         if not isinstance(dsn_ref, str) or not dsn_ref.strip():
             bad("dsn_ref", "must be a non-empty reference name")
-        elif "://" in dsn_ref or "password" in dsn_ref.lower():
-            bad("dsn_ref", "must be a reference name, never a DSN")
+        elif not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", dsn_ref):
+            bad("dsn_ref", "opaque identifier required")
     for name in OPTIONAL_SELECTION:
         if name in selection and not (isinstance(selection[name], str) and 1 <= len(selection[name]) <= 128):
             bad(name, "must be a 1..128 character operation identifier when present")
@@ -442,13 +468,33 @@ def _query(
     types: tuple[str, ...] = (),
     *,
     identity: bool = False,
+    _refresh: bool = True,
 ) -> list[list[Any]] | None:
     ref = (capture.label, query_id)
     if _remaining(deadline) <= 0:
         raise _HaltError(DEADLINE_EXHAUSTED, f"query.{capture.label}.{query_id}", "deadline exhausted", ref=ref)
     started = _now()
     try:
+        if capture.began and _refresh:
+            ms = min(int(CONNECT_CAPS["statement_timeout_ms"]), max(1, int(_remaining(deadline) * 1000)))
+            _query(
+                capture,
+                deadline,
+                findings,
+                query_id + "-timeout",
+                f"SELECT set_config('statement_timeout', '{ms}', true)",
+                {},
+                ("statement_timeout",),
+                ("text",),
+                _refresh=False,
+            )
+        if _remaining(deadline) <= 0:
+            raise _HaltError(
+                DEADLINE_EXHAUSTED, f"query.{capture.label}.{query_id}", "deadline exhausted before statement", ref=ref
+            )
         rows = capture.session.query(sql, dict(params))
+    except _HaltError:
+        raise
     except Exception as exc:  # noqa: BLE001 - classified by SQLSTATE; the message is not copied
         sqlstate = getattr(exc, "sqlstate", None)
         sqlstate = sqlstate if isinstance(sqlstate, str) else None
@@ -489,7 +535,38 @@ def _query(
             )
         raise _HaltError(DRIVER_ERROR, where, f"driver error {type(exc).__name__}; capture stopped", ref=ref)
     finished = _now()
-    materialized = [list(row) for row in rows]
+    if _remaining(deadline) <= 0:
+        capture.queries.append(
+            _record(query_id, sql, params, columns, types, started, finished, outcome="deadline_exhausted")
+        )
+        raise _HaltError(
+            DEADLINE_EXHAUSTED, f"query.{capture.label}.{query_id}", "deadline exhausted after query", ref=ref
+        )
+    materialized = []
+    acquired_bytes = capture.acquired_bytes
+    for row in rows:
+        converted = _jsonable(list(row))
+        # iterencode avoids constructing a complete serialized receipt before the byte bound.
+        for chunk in json.JSONEncoder(ensure_ascii=False).iterencode(converted):
+            acquired_bytes += len(chunk.encode("utf-8"))
+            if acquired_bytes > MAX_RECEIPT_BYTES:
+                capture.queries.append(
+                    _record(query_id, sql, params, columns, types, started, finished, outcome="byte_budget_exceeded")
+                )
+                findings.miss(
+                    BYTE_BUDGET_EXCEEDED, f"query.{capture.label}.{query_id}", "acquisition byte budget exceeded", ref
+                )
+                return None
+        materialized.append(converted)
+        if len(materialized) > MAX_ROWS_PER_QUERY:
+            break
+        if _remaining(deadline) <= 0:
+            raise _HaltError(
+                DEADLINE_EXHAUSTED,
+                f"query.{capture.label}.{query_id}",
+                "deadline exhausted during acquisition",
+                ref=ref,
+            )
     if len(materialized) > MAX_ROWS_PER_QUERY:
         capture.queries.append(
             _record(query_id, sql, params, columns, types, started, finished, outcome="row_budget_exceeded")
@@ -501,9 +578,18 @@ def _query(
             ref,
         )
         return None
-    capture.queries.append(
-        _record(query_id, sql, params, columns, types, started, finished, outcome="ok", rows=materialized)
+    record = _record(query_id, sql, params, columns, types, started, finished, outcome="ok", rows=materialized)
+    capture.acquired_bytes += sum(
+        len(c.encode("utf-8")) for c in json.JSONEncoder(ensure_ascii=False).iterencode(record)
     )
+    if capture.acquired_bytes > MAX_RECEIPT_BYTES:
+        findings.miss(
+            BYTE_BUDGET_EXCEEDED, f"query.{capture.label}.{query_id}", "receipt acquisition budget exceeded", ref
+        )
+        record = _record(query_id, sql, params, columns, types, started, finished, outcome="byte_budget_exceeded")
+        capture.queries.append(record)
+        return None
+    capture.queries.append(record)
     return materialized
 
 
@@ -523,7 +609,7 @@ def _same_backend(first: _Capture, second: _Capture) -> bool:
 def _observe(
     connect: Any, sel: dict[str, Any], deadline: Any, findings: _Findings, captures: dict[str, _Capture]
 ) -> None:
-    """Run the read-only capture. Every SELECT is bound to the selection; no statement changes state."""
+    """Probe both sessions, gate authorization, then select and measure the tenant claim before reads."""
     tenant_sql = SET_TENANT_TEMPLATE.format(tenant_id=sel["tenant_id"])
     primary = _open(connect, PRIMARY_SESSION, sel["dsn_ref"], deadline, captures)
     _begin(primary, deadline, findings)
@@ -552,6 +638,51 @@ def _observe(
             ("text",),
         )
         _query(capture, deadline, findings, "role-flags", ROLE_SQL, {}, ("rolsuper", "rolbypassrls"), ("bool", "bool"))
+        _query(capture, deadline, findings, "app-bypass", APP_BYPASS_SQL, {}, ("app_bypass_rls",), ("text",))
+    for capture in (primary, independent):
+        ident, txn, roles, bypass = (
+            capture.rows(q) for q in ("identity", "transaction-read-only", "role-flags", "app-bypass")
+        )
+        if not all((ident, txn, roles, bypass)):
+            raise _HaltError(PROBE_NOT_RUN, f"connection.{capture.label}", "required authorization probe has no row")
+        if _bypass_value(bypass[0][0]) is None:
+            raise _HaltError(
+                APP_BYPASS_UNPROBED, f"connection.{capture.label}.app_bypass_rls", "bypass claim not recognized"
+            )
+        checks = [
+            (ident[0][0] != sel["expected_database"], WRONG_DATABASE),
+            (ident[0][1] != sel["expected_role"] or ident[0][2] != sel["expected_role"], WRONG_ROLE),
+            (ident[0][6] != sel["expected_schema"], WRONG_SCHEMA),
+            (txn[0][0] != "on", TRANSACTION_NOT_READ_ONLY),
+            (bool(roles[0][0]), SUPERUSER_ROLE),
+            (bool(roles[0][1]), BYPASSRLS_ROLE),
+            (_bypass_value(bypass[0][0]) is True, "app_bypass_rls_enabled"),
+        ]
+        for unsafe, code in checks:
+            if unsafe:
+                raise _HaltError(
+                    code, f"connection.{capture.label}", "unsafe session authorization", contradiction=True
+                )
+    _query(
+        primary,
+        deadline,
+        findings,
+        "indexes",
+        INDEX_SQL,
+        {},
+        ("table", "column", "method", "opclass", "valid", "predicate", "expression"),
+        ("name", "name", "name", "name", "bool", "text", "text"),
+    )
+    _query(
+        primary,
+        deadline,
+        findings,
+        "extension-type",
+        EXTENSION_TYPE_SQL,
+        {},
+        ("schema", "type", "extension"),
+        ("name", "name", "name"),
+    )
     _query(primary, deadline, findings, "extension", EXTENSION_SQL, {}, ("extname", "extversion"), ("name", "text"))
     _query(
         primary,
@@ -585,6 +716,19 @@ def _observe(
     )
     for capture in (primary, independent):
         _query(capture, deadline, findings, "set-tenant", tenant_sql, {})
+        _query(capture, deadline, findings, "tenant-claim", TENANT_CLAIM_SQL, {}, ("tenant_context",), ("text",))
+        claim = capture.rows("tenant-claim")
+        if not claim or not claim[0][0]:
+            raise _HaltError(
+                TENANT_CONTEXT_NOT_SELECTED, f"connection.{capture.label}.tenant_context", "tenant claim missing"
+            )
+        if claim[0][0] != sel["tenant_id"]:
+            raise _HaltError(
+                "tenant_context_mismatch",
+                f"connection.{capture.label}.tenant_context",
+                "tenant claim differs",
+                contradiction=True,
+            )
     _query(primary, deadline, findings, "embedding-models", EMBEDDING_SQL, {}, ("embedding_model",), ("text",))
     for capture in (primary, independent):
         if "operation_id" in sel:
@@ -613,6 +757,16 @@ def _observe(
             capture,
             deadline,
             findings,
+            "run-own",
+            RUN_SQL,
+            {"run_id": sel["run_id"]},
+            ("run_id", "tenant_id", "operation_id"),
+            ("uuid", "uuid", "text"),
+        )
+        _query(
+            capture,
+            deadline,
+            findings,
             "output-own",
             OUTPUT_SQL,
             {"run_id": sel["run_id"]},
@@ -631,7 +785,7 @@ def _observe(
         )
 
 
-def _close_all(captures: dict[str, _Capture], findings: _Findings) -> None:
+def _close_all(captures: dict[str, _Capture], findings: _Findings, deadline: Any) -> None:
     """Close every opened session exactly once: end a began read-only transaction, then close."""
     closed: set[int] = set()
     for capture in captures.values():
@@ -644,7 +798,29 @@ def _close_all(captures: dict[str, _Capture], findings: _Findings) -> None:
         if began is not None:
             started = _now()
             try:
+                remaining = _remaining(deadline)
+                if remaining > 0:
+                    ms = min(int(CONNECT_CAPS["statement_timeout_ms"]), max(1, int(remaining * 1000)))
+                    _query(
+                        began,
+                        deadline,
+                        findings,
+                        "cleanup-timeout",
+                        f"SELECT set_config('statement_timeout', '{ms}', true)",
+                        {},
+                        ("statement_timeout",),
+                        ("text",),
+                        _refresh=False,
+                    )
+                else:
+                    findings.miss(
+                        DEADLINE_EXHAUSTED, f"cleanup.{began.label}.rollback", "deadline exhausted before cleanup"
+                    )
                 session.query(END_READ_ONLY_SQL, {})
+                if _remaining(deadline) <= 0:
+                    findings.miss(
+                        DEADLINE_EXHAUSTED, f"cleanup.{began.label}.rollback", "deadline exhausted during rollback"
+                    )
                 began.queries.append(
                     _record("end-read-only", END_READ_ONLY_SQL, {}, (), (), started, _now(), outcome="ok")
                 )
@@ -665,6 +841,8 @@ def _close_all(captures: dict[str, _Capture], findings: _Findings) -> None:
                 findings.miss(SESSION_CLOSE_FAILED, f"session.{began.label}", f"rollback failed: {type(exc).__name__}")
         try:
             session.close()
+            if _remaining(deadline) <= 0:
+                findings.miss(DEADLINE_EXHAUSTED, f"cleanup.{owners[0].label}.close", "deadline exhausted during close")
         except Exception as exc:  # noqa: BLE001 - class name only
             label = (began or owners[0]).label
             findings.miss(SESSION_CLOSE_FAILED, f"session.{label}", f"close failed: {type(exc).__name__}")
@@ -683,9 +861,16 @@ def _serialize(captures: dict[str, _Capture], findings: _Findings) -> None:
             "connect_bounds": capture.bounds,
             "queries": capture.queries,
         }
-        raw = (
-            json.dumps(receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False) + "\n"
-        ).encode("utf-8")
+        chunks = bytearray()
+        for chunk in json.JSONEncoder(
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+        ).iterencode(receipt):
+            encoded = chunk.encode("utf-8")
+            if len(chunks) + len(encoded) + 1 > MAX_RECEIPT_BYTES:
+                chunks = bytearray(b" " * (MAX_RECEIPT_BYTES + 1))
+                break
+            chunks.extend(encoded)
+        raw = bytes(chunks) + b"\n"
         if len(raw) > MAX_RECEIPT_BYTES:
             findings.miss(
                 BYTE_BUDGET_EXCEEDED,
@@ -697,6 +882,17 @@ def _serialize(captures: dict[str, _Capture], findings: _Findings) -> None:
         capture.path = f"{RAW_DIR}/{label}.json"
         capture.sha256 = hashlib.sha256(raw).hexdigest()
         capture.persisted = True
+
+
+def _bypass_value(value: Any) -> bool | None:
+    if value is None or value == "":
+        return False
+    value = str(value).strip().lower()
+    if value in ("on", "true", "1", "yes", "t"):
+        return True
+    if value in ("off", "false", "0", "no", "f"):
+        return False
+    return None
 
 
 def _connection_observation(capture: _Capture, sel: dict[str, Any], findings: _Findings) -> dict[str, Any] | None:
@@ -755,20 +951,23 @@ def _connection_observation(capture: _Capture, sel: dict[str, Any], findings: _F
                 "role bypasses RLS",
                 (capture.label, "role-flags"),
             )
-    findings.miss(
-        APP_BYPASS_UNPROBED,
-        f"connection.{capture.label}.app_bypass_rls",
-        "app.bypass_rls is outside the restricted read contract; never asserted false without a probe",
-        ref,
-    )
-    tenant_set = capture.record("set-tenant")
-    tenant_context = sel["tenant_id"] if tenant_set is not None and tenant_set["outcome"] == "ok" else None
+    bypass = capture.rows("app-bypass")
+    app_bypass = None if not bypass else _bypass_value(bypass[0][0])
+    if app_bypass is None:
+        findings.miss(
+            APP_BYPASS_UNPROBED,
+            f"connection.{capture.label}.app_bypass_rls",
+            "bypass probe unobserved",
+            (capture.label, "app-bypass"),
+        )
+    claim = capture.rows("tenant-claim")
+    tenant_context = claim[0][0] if claim and claim[0][0] else None
     if tenant_context is None:
         findings.miss(
             TENANT_CONTEXT_NOT_SELECTED,
             f"connection.{capture.label}.tenant_context",
-            "native tenant selection did not complete on this session",
-            (capture.label, "set-tenant"),
+            "tenant claim unobserved",
+            (capture.label, "tenant-claim"),
         )
     return {
         "connection_id": capture.label,
@@ -777,11 +976,18 @@ def _connection_observation(capture: _Capture, sel: dict[str, Any], findings: _F
         "session_user": session_user,
         "backend_pid": backend_pid,
         "tenant_context": tenant_context,
-        "app_bypass_rls": None,
+        "app_bypass_rls": app_bypass,
         "rolsuper": rolsuper,
         "rolbypassrls": rolbypassrls,
         "transaction_read_only": read_only,
     }
+
+
+NATIVE_POLICY = "tenant_id = NULLIF(current_setting('app.current_tenant', true), '')::uuid OR COALESCE(NULLIF(current_setting('app.bypass_rls', true), ''), 'false')::boolean"
+
+
+def _normalize_policy(value: Any) -> str:
+    return re.sub(r"\s+|[()]|::(?:text|uuid|boolean)", "", str(value or "").lower())
 
 
 def _catalog_observation(primary: _Capture, sel: dict[str, Any], findings: _Findings) -> dict[str, Any] | None:
@@ -874,6 +1080,30 @@ def _catalog_observation(primary: _Capture, sel: dict[str, Any], findings: _Find
             f"identity vector typmods {sorted(set(dimensions))} against expected {expected}",
             (PRIMARY_SESSION, "vector-columns"),
         )
+    indexes = primary.rows("indexes") or []
+    for table, column in VECTOR_COLUMNS:
+        matched = [r for r in indexes if r[0:2] == [table, column]]
+        field = f"catalog.indexes.{table}.{column}"
+        if not matched:
+            findings.miss("vector_index_absent", field, "no observed vector index", (PRIMARY_SESSION, "indexes"))
+        elif not any(
+            r[2:5] == ["ivfflat", "vector_cosine_ops", True] and r[5] is None and r[6] is None for r in matched
+        ):
+            findings.contradict(
+                "vector_index_identity_mismatch",
+                field,
+                "index geometry or validity differs",
+                (PRIMARY_SESSION, "indexes"),
+            )
+    vector_schemas = {row[0] for row in primary.rows("vector-columns") or []}
+    owned_schemas = {r[0] for r in primary.rows("extension-type") or [] if r[1:] == ["vector", "vector"]}
+    if not vector_schemas or not vector_schemas <= owned_schemas:
+        findings.miss(
+            "vector_type_membership_unproven",
+            "catalog.extension_type",
+            "vector type is not observed extension-owned",
+            (PRIMARY_SESSION, "extension-type"),
+        )
     rls_flags = {name: (enabled, forced) for name, enabled, forced in primary.rows("rls-flags") or []}
     policy_rows = primary.rows("policies") or []
     rls: list[dict[str, Any]] = []
@@ -919,6 +1149,31 @@ def _catalog_observation(primary: _Capture, sel: dict[str, Any], findings: _Find
                 f"no tenant_isolation_{table} policy",
                 (PRIMARY_SESSION, "policies"),
             )
+        for policy in policies:
+            if policy["command"] not in ("ALL", "SELECT") or not set(policy["roles"] or []) & {
+                "public",
+                sel["expected_role"],
+            }:
+                continue
+            for key in ("qual", "with_check"):
+                if key == "with_check" and policy["command"] == "SELECT":
+                    continue
+                norm = _normalize_policy(policy[key])
+                field = f"catalog.rls.{table}.policies.{policy['name']}.{key}"
+                if policy["permissive"] and norm in ("true", ""):
+                    findings.contradict(
+                        "unsafe_policy_predicate",
+                        field,
+                        "permissive policy admits unrestricted rows",
+                        (PRIMARY_SESSION, "policies"),
+                    )
+                elif norm != _normalize_policy(NATIVE_POLICY):
+                    findings.miss(
+                        "policy_semantics_unrecognised",
+                        field,
+                        "policy semantics not recognized",
+                        (PRIMARY_SESSION, "policies"),
+                    )
         rls.append(
             {
                 "schema": sel["expected_schema"],
@@ -962,6 +1217,19 @@ def _visibility(capture: _Capture, sel: dict[str, Any], findings: _Findings) -> 
             "producer did not select a foreign operation; demand isolation not attempted",
             (label, "output-own"),
         )
+    run_rows = capture.rows("run-own") or []
+    run = run_rows[0] if run_rows else None
+    if run is None:
+        findings.miss(
+            "run_row_not_visible", f"visibility.{label}.run", "native run link not visible", (label, "run-own")
+        )
+    elif run != [sel["run_id"], sel["tenant_id"], sel.get("operation_id")]:
+        findings.contradict(
+            "run_operation_mismatch",
+            f"visibility.{label}.operation_id",
+            "native run link differs from selection",
+            (label, "run-own"),
+        )
     request_digest = demand_own[0][1] if demand_own else None
     if "operation_id" in sel and not demand_own:
         findings.miss(
@@ -1001,6 +1269,13 @@ def _visibility(capture: _Capture, sel: dict[str, Any], findings: _Findings) -> 
     )
     output_rows = capture.rows("output-own") or []
     for row in output_rows:
+        if row[2] != "completed" or row[3] != "final_gpu":
+            findings.miss(
+                "output_row_not_final",
+                f"visibility.{label}.{row[1]}.final",
+                "output is not completed final_gpu",
+                (label, "output-own"),
+            )
         model = row[5]
         if model is None:
             findings.miss(
@@ -1059,11 +1334,11 @@ def _visibility(capture: _Capture, sel: dict[str, Any], findings: _Findings) -> 
         )
         result[media_id] = {
             "connection_id": label,
-            "tenant_id": sel["tenant_id"],
-            "operation_id": sel.get("operation_id"),
+            "tenant_id": run[1] if run else None,
+            "operation_id": run[2] if run else None,
             "request_digest": request_digest,
             "first_counting_revision": None,
-            "run_id": sel["run_id"],
+            "run_id": run[0] if run else None,
             "media_id": media_id,
             "result_generation": result_generation,
             "caption_sha256": caption_sha,
@@ -1147,7 +1422,16 @@ def _analyse(sel: dict[str, Any], captures: dict[str, _Capture], findings: _Find
             )
         other = primary_view.get(media_id)
         if other is not None and (
-            other["own_output_rows"] != data["own_output_rows"] or other["own_demand_rows"] != data["own_demand_rows"]
+            any(
+                other[key] != data[key]
+                for key in (
+                    "own_output_rows",
+                    "own_demand_rows",
+                    "caption_sha256",
+                    "request_digest",
+                    "result_generation",
+                )
+            )
         ):
             findings.miss(
                 VISIBILITY_SESSION_DISAGREEMENT,
@@ -1224,7 +1508,7 @@ def collect_pg_evidence(*, connect: Any, selection: Any, deadline: Any) -> dict[
         except _HaltError as halt:
             findings.absorb(halt)
         finally:
-            _close_all(captures, findings)
+            _close_all(captures, findings, deadline)
         _serialize(captures, findings)
         _analyse(sel, captures, findings)
     return _assemble(findings, captures)

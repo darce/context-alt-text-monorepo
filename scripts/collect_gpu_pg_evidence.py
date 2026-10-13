@@ -1024,7 +1024,9 @@ NATIVE_POLICY = "tenant_id = NULLIF(current_setting('app.current_tenant', true),
 
 
 def _normalize_policy(value: Any) -> str:
-    return re.sub(r"\s+|[()]|::(?:text|uuid|boolean)", "", str(value or "").lower())
+    if not isinstance(value, str):
+        return ""  # absent or non-text predicates have no recognized semantics
+    return re.sub(r"\s+|[()]|::(?:text|uuid|boolean)", "", value.lower())
 
 
 def _catalog_observation(primary: _Capture, sel: dict[str, Any], findings: _Findings) -> dict[str, Any] | None:
@@ -1188,10 +1190,16 @@ def _catalog_observation(primary: _Capture, sel: dict[str, Any], findings: _Find
                 f"no tenant_isolation_{table} policy",
                 (PRIMARY_SESSION, "policies"),
             )
+        applicable = []
         for policy in policies:
-            if policy["command"] not in ("ALL", "SELECT"):
+            root = f"catalog.rls.{table}.policies.{policy['name']}"
+            if policy["command"] not in ("ALL", "SELECT", "INSERT", "UPDATE", "DELETE"):
+                findings.miss(
+                    "policy_semantics_unrecognised", f"{root}.command",
+                    "policy command not recognized", (PRIMARY_SESSION, "policies"),
+                )
                 continue
-            role_field = f"catalog.rls.{table}.policies.{policy['name']}.roles"
+            role_field = f"{root}.roles"
             if policy["roles"] is None:
                 findings.miss(
                     "policy_roles_unproven", role_field, "policy role targets unobserved", (PRIMARY_SESSION, "policies")
@@ -1201,36 +1209,52 @@ def _catalog_observation(primary: _Capture, sel: dict[str, Any], findings: _Find
                 membership = dict(membership_rows or [])
                 if not policy["roles"] or any(membership.get(role) is not False for role in policy["roles"]):
                     findings.miss(
-                        "policy_roles_unproven",
-                        role_field,
-                        "policy role applicability unobserved",
+                        "policy_roles_unproven", role_field, "policy role applicability unobserved",
                         (PRIMARY_SESSION, "role-membership"),
                     )
                 continue
-            for key in ("qual", "with_check"):
-                if key == "with_check" and policy["command"] == "SELECT":
+            if policy["permissive"] is None:
+                findings.miss(
+                    "policy_semantics_unrecognised", f"{root}.permissive",
+                    "policy permissiveness not recognized", (PRIMARY_SESSION, "policies"),
+                )
+                continue
+            applicable.append(policy)
+
+        # Each command has its own permissive union and restrictive intersection.
+        # UPDATE must satisfy both USING (existing row) and WITH CHECK (new row).
+        for command, key in (("SELECT", "qual"), ("DELETE", "qual"), ("UPDATE", "qual"),
+                             ("INSERT", "with_check"), ("UPDATE", "with_check")):
+            classified = []
+            for policy in applicable:
+                if policy["command"] not in ("ALL", command):
                     continue
                 value = policy[key]
-                if key == "with_check" and value is None:
+                if key == "with_check" and value is None and policy["command"] == "ALL":
                     value = policy["qual"]
                 norm = _normalize_policy(value)
-                if policy["permissive"] is False and norm == "true":
-                    continue
                 field = f"catalog.rls.{table}.policies.{policy['name']}.{key}"
-                if policy["permissive"] and norm in ("true", ""):
-                    findings.contradict(
-                        "unsafe_policy_predicate",
-                        field,
-                        "permissive policy admits unrestricted rows",
-                        (PRIMARY_SESSION, "policies"),
-                    )
-                elif norm != _normalize_policy(NATIVE_POLICY):
+                if norm not in ("true", "false", _normalize_policy(NATIVE_POLICY)):
                     findings.miss(
-                        "policy_semantics_unrecognised",
-                        field,
-                        "policy semantics not recognized",
+                        "policy_semantics_unrecognised", field, "policy semantics not recognized",
                         (PRIMARY_SESSION, "policies"),
                     )
+                    continue
+                classified.append((policy, norm, field))
+            bounded = any(
+                policy["permissive"] is False and norm in ("false", _normalize_policy(NATIVE_POLICY))
+                for policy, norm, _field in classified
+            )
+            # A true restrictive predicate is neutral. A recognized restrictive
+            # tenant predicate (or false) bounds every applicable permissive grant.
+            if not bounded:
+                for policy, norm, field in classified:
+                    if policy["permissive"] is True and norm == "true":
+                        findings.contradict(
+                            "unsafe_policy_predicate", field,
+                            f"effective {command} {key} permissive union admits unrestricted rows",
+                            (PRIMARY_SESSION, "policies"),
+                        )
         rls.append(
             {
                 "schema": sel["expected_schema"],

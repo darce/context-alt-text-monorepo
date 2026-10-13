@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import logging
 import math
@@ -41,12 +42,14 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Iterable, Iterator
+import uuid
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from infra.oci.gpu_lifecycle.controller import (
     FallbackDecision,
@@ -70,7 +73,7 @@ from infra.oci.gpu_lifecycle.intent import (
     _atomic_write_json,
     _durable_unlink,
 )
-from infra.oci.gpu_lifecycle.load_source import AggregateJobLoadSource
+from infra.oci.gpu_lifecycle.load_source import AggregateJobLoadSource, ConsumedPublication
 from infra.oci.gpu_lifecycle.probe import (
     HttpReadinessProbe,
     InstanceReadinessProbe,
@@ -210,8 +213,182 @@ class AtomicStopFenceLoadSource(JobLoadSource, Protocol):
     ) -> bool: ...
 
 
+class StopOutcome(StrEnum):
+    """Actuation outcome vocabulary shared with the lifecycle_action receipt (frozen ABI)."""
+
+    ISSUED = "issued"
+    ALREADY_CONVERGED = "already_converged"
+    DRY_RUN = "dry_run"
+    UNKNOWN = "unknown"
+    FENCED_OFF = "fenced_off"
+    FAILED = "failed"
+
+
+# Identity fields the lifecycle producer cannot capture. They are always null and always carry a reason.
+_UNCAPTURED_IDENTITY_REASONS: tuple[tuple[str, str], ...] = (
+    ("caller_request_id", "operator_intent_carries_no_caller_request_id"),
+    ("audit_request_id", "oci_audit_not_queried_by_lifecycle_producer"),
+    ("audit_event_id", "oci_audit_not_queried_by_lifecycle_producer"),
+    ("audit_principal_id", "oci_audit_not_queried_by_lifecycle_producer"),
+)
+_RESPONSE_IDENTIFIER_UNVERIFIED = "oci_cli_response_identifier_exposure_unverified"
+
+
+@dataclass(frozen=True)
+class StopActuation:
+    """What one STOP attempt actually did, as observed at the actuator boundary.
+
+    ``command_invoked`` is true only when the action subprocess ran. A convergence GET is not an action,
+    so an already-converged result carries no action identifiers.
+    A legacy actuator may return ``None``; this maps to ``UNKNOWN`` with ``command_invoked`` set to
+    ``None`` because no invocation evidence was returned.
+    """
+
+    outcome: StopOutcome
+    command_invoked: bool | None
+    final_state: str | None = None
+    oci_response_request_id: str | None = None
+    missing_reasons: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class LifecycleActionReceipt:
+    """One STOP decision's receipt: the publication consumed at the fence plus the actuation outcome."""
+
+    action: str
+    instance_id: str
+    reason_code: str
+    outcome: StopOutcome
+    command_invoked: bool | None
+    consumed_load: tuple[ConsumedPublication, ...] = ()
+    final_state: str | None = None
+    oci_response_request_id: str | None = None
+    missing_reasons: tuple[tuple[str, str], ...] = ()
+
+    def to_record(self, decision_id: str, *, retained_paths: Mapping[str, str] | None = None) -> dict[str, Any]:
+        missing: list[tuple[str, str]] = list(self.missing_reasons)
+        recorded = {field_name for field_name, _ in missing}
+        if self.oci_response_request_id is None and "oci_response_request_id" not in recorded:
+            missing.append(("oci_response_request_id", "no_action_response_identifier"))
+        if self.final_state is None and "final_state" not in recorded:
+            missing.append(("final_state", "no_action_response_state"))
+        missing.extend(_UNCAPTURED_IDENTITY_REASONS)
+        consumed: list[dict[str, Any]] = []
+        for publication in self.consumed_load:
+            if publication.revision is None:
+                missing.append(
+                    (
+                        f"consumed_load.{publication.environment}.revision",
+                        "publication_revision_absent_or_malformed",
+                    )
+                )
+            artifact_path = None if retained_paths is None else retained_paths.get(publication.sha256)
+            if artifact_path is None:
+                missing.append(
+                    (
+                        f"consumed_load.{publication.environment}.publication_artifact_path",
+                        "publication_bytes_not_retained",
+                    )
+                )
+            consumed.append(
+                {
+                    "environment": publication.environment,
+                    "revision": publication.revision,
+                    "generation": _generation_record(publication.generation),
+                    "publication_artifact_sha256": publication.sha256,
+                    "publication_artifact_path": artifact_path,
+                }
+            )
+        return {
+            "decision_id": decision_id,
+            "action": self.action,
+            "instance_id": self.instance_id,
+            "reason_code": self.reason_code,
+            "consumed_load": consumed,
+            "command_invoked": self.command_invoked,
+            "outcome": self.outcome.value,
+            "caller_request_id": None,
+            "oci_response_request_id": self.oci_response_request_id,
+            "audit_request_id": None,
+            "audit_event_id": None,
+            "audit_principal_id": None,
+            "final_state": self.final_state,
+            "missing_reasons": [{"field": field_name, "code": code} for field_name, code in missing],
+        }
+
+
+def _generation_record(generation: tuple[int, int, int, int]) -> dict[str, int]:
+    st_dev, st_ino, st_size, st_mtime_ns = generation
+    return {"st_dev": st_dev, "st_ino": st_ino, "st_size": st_size, "st_mtime_ns": st_mtime_ns}
+
+
+_LIFECYCLE_RECEIPT_DIR = "lifecycle-receipts"
+
+
+def _retain_publication_bytes(log_root: Path, publication: ConsumedPublication) -> str:
+    """Persist the exact bytes the fence consumed, named by their SHA-256, and return the path under ``log_root``.
+
+    Content addressing makes retention idempotent and lets any reader verify the artifact by hashing it. The
+    file is fsynced and renamed into place, then the directory is fsynced, as the decision log is.
+    """
+    raw = publication.raw
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest != publication.sha256:
+        raise ValueError("consumed publication bytes do not match their recorded digest")
+    directory = log_root / _LIFECYCLE_RECEIPT_DIR
+    directory.mkdir(parents=True, exist_ok=True)
+    relative = f"{_LIFECYCLE_RECEIPT_DIR}/{digest}.json"
+    target = log_root / relative
+    if target.exists():
+        if hashlib.sha256(target.read_bytes()).hexdigest() != digest:
+            raise OSError(f"retained publication {relative} does not match its digest")
+        return relative
+    temporary = directory / f".{digest}.{os.getpid()}.tmp"
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC, 0o660)
+    try:
+        os.fchmod(fd, 0o660)
+        written = 0
+        while written < len(raw):
+            written += os.write(fd, raw[written:])
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(temporary, target)
+    directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+    return relative
+
+
+def _retain_consumed_publications(
+    receipts: Iterable[LifecycleActionReceipt],
+    log_root: Path,
+) -> tuple[dict[str, str], list[str]]:
+    """Retain each distinct consumed publication once; a failure is reported, never silently skipped."""
+    retained: dict[str, str] = {}
+    errors: list[str] = []
+    attempted: set[str] = set()
+    for receipt in receipts:
+        for publication in receipt.consumed_load:
+            if publication.sha256 in attempted:
+                continue
+            attempted.add(publication.sha256)
+            try:
+                retained[publication.sha256] = _retain_publication_bytes(log_root, publication)
+            except (OSError, ValueError) as exc:
+                msg = (
+                    f"consumed publication for {publication.environment} bytes could not be retained: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                logger.error(msg)
+                errors.append(msg)
+    return retained, errors
+
+
 class InstanceStopActuator(Protocol):
-    def stop_instance(self, instance_id: str) -> None: ...
+    def stop_instance(self, instance_id: str) -> StopActuation | None: ...
 
 
 class InstanceStartActuator(Protocol):
@@ -358,6 +535,27 @@ class JsonFileJobLoadSource:
         )
 
 
+def _decode_captured(value: bytes | str | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
+def _action_response_state(stdout: str) -> str | None:
+    """Return the lifecycle-state the action response body itself reports, never a later poll."""
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, dict):
+        return None
+    state = data.get("lifecycle-state") or data.get("lifecycle_state")
+    return state if isinstance(state, str) and state else None
+
+
 class OciCliStopActuator:
     """STOP via OCI CLI (`oci compute instance action --action STOP`).
 
@@ -365,6 +563,11 @@ class OciCliStopActuator:
     ``OCI_CLI_AUTH``) for ``instance_principal`` / ``resource_principal`` when
     the reaper runs on a principal-enabled host. ``subprocess`` timeout bounds
     CLI hangs independent of ``--max-wait-seconds`` (VLMFIX-S2-03).
+
+    ``response_request_id_reader`` maps the action's decoded stdout and stderr to the OCI request
+    identifier that the action response actually exposes. It is applied to the action subprocess only,
+    never to the convergence GET. The default is ``None``: the CLI's exposure of a response identifier
+    is unverified, so no identifier is read and the receipt records that gap.
     """
 
     def __init__(
@@ -374,11 +577,13 @@ class OciCliStopActuator:
         dry_run: bool = False,
         auth: str | None = None,
         timeout_seconds: int = _DEFAULT_OCI_TIMEOUT_SECONDS,
+        response_request_id_reader: Callable[[str, str], str | None] | None = None,
     ) -> None:
         self._oci_bin = oci_bin or shutil.which("oci") or "oci"
         self._dry_run = dry_run
         self._auth = auth
         self._timeout_seconds = timeout_seconds
+        self._response_request_id_reader = response_request_id_reader
 
     def build_cmd(self, instance_id: str) -> list[str]:
         return build_instance_action_cmd(
@@ -389,16 +594,55 @@ class OciCliStopActuator:
             auth=self._auth,
         )
 
-    def stop_instance(self, instance_id: str) -> None:
+    def stop_instance(self, instance_id: str) -> StopActuation:
         cmd = self.build_cmd(instance_id)
         if self._dry_run:
             logger.info("dry-run STOP %s: %s", instance_id, " ".join(cmd))
-            return
+            return StopActuation(outcome=StopOutcome.DRY_RUN, command_invoked=False)
         if self.get_instance_state(instance_id) == "STOPPED":
             logger.info("STOP already converged for %s", instance_id)
-            return
+            return StopActuation(
+                outcome=StopOutcome.ALREADY_CONVERGED,
+                command_invoked=False,
+                final_state="STOPPED",
+            )
         logger.info("actuating STOP for %s", instance_id)
-        subprocess.run(cmd, check=True, timeout=self._timeout_seconds)
+        try:
+            proc = subprocess.run(cmd, check=True, timeout=self._timeout_seconds, capture_output=True)
+        except subprocess.CalledProcessError as exc:
+            # Output is captured for the receipt now, so keep the CLI's error text visible in the journal.
+            logger.error(
+                "OCI STOP action exited %s for %s: %s",
+                exc.returncode,
+                instance_id,
+                _decode_captured(exc.stderr)[-512:],
+            )
+            raise
+        stdout = _decode_captured(proc.stdout)
+        stderr = _decode_captured(proc.stderr)
+        if self._response_request_id_reader is None:
+            request_id = None
+            missing: tuple[tuple[str, str], ...] = (("oci_response_request_id", _RESPONSE_IDENTIFIER_UNVERIFIED),)
+        else:
+            try:
+                request_id = self._response_request_id_reader(stdout, stderr)
+            except Exception as exc:
+                request_id = None
+                missing = (("oci_response_request_id", "action_response_reader_failed"),)
+                logger.warning("OCI STOP action response reader failed for %s (%s)", instance_id, type(exc).__name__)
+            else:
+                missing = (
+                    ()
+                    if request_id is not None
+                    else (("oci_response_request_id", "action_response_carried_no_identifier"),)
+                )
+        return StopActuation(
+            outcome=StopOutcome.ISSUED,
+            command_invoked=True,
+            final_state=_action_response_state(stdout),
+            oci_response_request_id=request_id,
+            missing_reasons=missing,
+        )
 
     def get_instance_state(self, instance_id: str) -> str | None:
         observed = fetch_instance_idle_seconds(
@@ -1179,6 +1423,8 @@ class ReapCycleResult:
     instance_running_since: datetime | None = None
     lease_expires_at: datetime | None = None
     last_transition_reason: LastTransitionReason = LastTransitionReason.UNKNOWN
+    # One receipt per STOP the cycle decided, including fenced-off and lease-cap STOPs.
+    lifecycle_receipts: tuple[LifecycleActionReceipt, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1797,25 +2043,140 @@ def _actuate_stop_with_generation_fence(
     semantics coordinated with their writer. Static test sources are immutable
     by construction and need no such handshake.
     """
+    attempt = _actuate_stop_with_fence_receipt(
+        load_source,
+        actuator,
+        instance_id=instance_id,
+        expected_generation=expected_generation,
+    )
+    if attempt.error is not None:
+        raise attempt.error
+    return attempt.fenced, attempt.fence_supported
+
+
+@dataclass
+class _StopFenceAttempt:
+    """Mutable record of one fenced STOP: what the fence consumed and what the actuator reported."""
+
+    fenced: bool = False
+    fence_supported: bool = True
+    consumed: tuple[ConsumedPublication, ...] = ()
+    entered: bool = False
+    actuation: StopActuation | None = None
+    error: BaseException | None = None
+
+
+def _normalise_stop_actuation(value: object) -> StopActuation:
+    """Accept the receipt from a receipt-aware actuator. A legacy ``None`` return is not a receipt."""
+    if isinstance(value, StopActuation):
+        return value
+    return StopActuation(
+        outcome=StopOutcome.UNKNOWN,
+        command_invoked=None,
+        missing_reasons=(
+            ("actuation_receipt", "actuator_returned_no_receipt"),
+            ("command_invoked", "actuator_returned_no_receipt"),
+        ),
+    )
+
+
+def _actuation_for_exception(exc: BaseException) -> StopActuation:
+    """Classify a raised STOP: SubprocessError means the action subprocess ran; OSError means it never started."""
+    if isinstance(exc, subprocess.CalledProcessError):
+        return StopActuation(outcome=StopOutcome.FAILED, command_invoked=True)
+    if isinstance(exc, subprocess.SubprocessError):
+        return StopActuation(
+            outcome=StopOutcome.UNKNOWN,
+            command_invoked=True,
+            missing_reasons=(("action_response", "action_outcome_not_established"),),
+        )
+    if isinstance(exc, OSError):
+        # The OCI CLI could not be executed, so the action process never started.
+        return StopActuation(
+            outcome=StopOutcome.FAILED,
+            command_invoked=False,
+            missing_reasons=(("command_invoked", "process_not_started"),),
+        )
+    return StopActuation(
+        outcome=StopOutcome.UNKNOWN,
+        command_invoked=True,
+        missing_reasons=(("command_invoked", "invocation_unattributed"),),
+    )
+
+
+def _stop_receipt(
+    instance_id: str,
+    *,
+    reason_code: str,
+    actuation: StopActuation,
+    consumed: tuple[ConsumedPublication, ...] = (),
+    consumed_missing: str = "no_consumed_publication",
+) -> LifecycleActionReceipt:
+    missing = list(actuation.missing_reasons)
+    if not consumed:
+        missing.append(("consumed_load", consumed_missing))
+    return LifecycleActionReceipt(
+        action="STOP",
+        instance_id=instance_id,
+        reason_code=reason_code,
+        outcome=actuation.outcome,
+        command_invoked=actuation.command_invoked,
+        consumed_load=consumed,
+        final_state=actuation.final_state,
+        oci_response_request_id=actuation.oci_response_request_id,
+        missing_reasons=tuple(missing),
+    )
+
+
+def _actuate_stop_with_fence_receipt(
+    load_source: JobLoadSource,
+    actuator: InstanceStopActuator,
+    *,
+    instance_id: str,
+    expected_generation: object,
+) -> _StopFenceAttempt:
+    """Actuate one STOP under the writer-coordinated fence and capture what the fence consumed.
+
+    Never raises for actuator or read failures: they are recorded on the attempt so the caller can
+    classify them and still emit the receipt. ``entered`` distinguishes a failure before the actuator was
+    called (no STOP attempted) from a failure of the actuator itself.
+    """
+    attempt = _StopFenceAttempt()
+
+    def stop_under_fence() -> None:
+        attempt.entered = True
+        try:
+            attempt.actuation = _normalise_stop_actuation(actuator.stop_instance(instance_id))
+        except Exception as exc:  # noqa: BLE001 - classified by the caller together with its receipt
+            attempt.error = exc
+
     if isinstance(load_source, StaticJobLoadSource):
-        actuator.stop_instance(instance_id)
-        return True, True
+        stop_under_fence()
+        attempt.fenced = True
+        return attempt
+    recorded = getattr(load_source, "actuate_recorded_if_generation", None)
+    if callable(recorded):
+        try:
+            fenced, consumed = recorded(expected_generation, stop_under_fence)
+        except Exception as exc:  # noqa: BLE001 - an unreadable fence fails closed before actuation
+            attempt.error = exc
+            return attempt
+        attempt.fenced = bool(fenced)
+        attempt.consumed = tuple(consumed)
+        return attempt
     compare_and_act = getattr(load_source, "actuate_if_generation", None)
     if not callable(compare_and_act):
         logger.error(
             "load source has no writer-coordinated generation fence; cancelling STOP for %s",
             instance_id,
         )
-        return False, False
-    return (
-        bool(
-            compare_and_act(
-                expected_generation,
-                lambda: actuator.stop_instance(instance_id),
-            )
-        ),
-        True,
-    )
+        attempt.fence_supported = False
+        return attempt
+    try:
+        attempt.fenced = bool(compare_and_act(expected_generation, stop_under_fence))
+    except Exception as exc:  # noqa: BLE001 - classified by the caller; entered says whether STOP was attempted
+        attempt.error = exc
+    return attempt
 
 
 def _snapshot_instance_id(instances: list[GpuInstance]) -> str | None:
@@ -1925,6 +2286,17 @@ def _record_decision(
         "errors": list(result.errors),
         "fallbacks": fallbacks,
     }
+    if mode == "reap":
+        # The decision identity is minted here, at decision time, and shared by every receipt it owns.
+        decision_id = str(uuid.uuid4())
+        receipts = tuple(getattr(result, "lifecycle_receipts", ()))
+        retained_paths, retention_errors = _retain_consumed_publications(receipts, Path(store.path).parent)
+        record["decision_id"] = decision_id
+        record["lifecycle_receipts"] = [
+            receipt.to_record(decision_id, retained_paths=retained_paths) for receipt in receipts
+        ]
+        if retention_errors:
+            record["errors"] = [*result.errors, *retention_errors]
     try:
         store.append(record)
     except Exception as exc:  # noqa: BLE001 - audit failure must surface in result
@@ -2090,12 +2462,14 @@ class _ReapLeaseContext:
 class _ReapLeaseAttempt:
     expired: bool
     error: str | None = None
+    receipt: LifecycleActionReceipt | None = None
 
 
 @dataclass(frozen=True)
 class _ReapLeaseResult:
     lease_expired: list[tuple[str, str]]
     errors: list[str]
+    receipts: list[LifecycleActionReceipt] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -2112,6 +2486,8 @@ class _ReapActuationInputs:
     actuator: InstanceStopActuator
     expected_generation: object
     dry_run: bool
+    reason_code: str
+    receipts: list[LifecycleActionReceipt]
 
 
 @dataclass(frozen=True)
@@ -2131,6 +2507,7 @@ class _ReapStopAttempt:
     actuated: bool = False
     cancelled: bool = False
     errors: tuple[str, ...] = ()
+    receipt: LifecycleActionReceipt | None = None
 
 
 def _pending_intent_status(effective_intent: EffectiveIntent) -> IntentStatus:
@@ -2169,25 +2546,44 @@ def _reap_expired_lease_attempt(
         )
     if context.dry_run:
         logger.info("dry-run would force STOP for expired lease: %s", instance_id)
-        return _ReapLeaseAttempt(expired=True)
+        return _ReapLeaseAttempt(
+            expired=True,
+            receipt=_lease_cap_receipt(instance_id, StopActuation(outcome=StopOutcome.DRY_RUN, command_invoked=False)),
+        )
     try:
-        context.actuator.stop_instance(instance_id)
-        return _ReapLeaseAttempt(expired=True)
+        actuation = _normalise_stop_actuation(context.actuator.stop_instance(instance_id))
+        return _ReapLeaseAttempt(expired=True, receipt=_lease_cap_receipt(instance_id, actuation))
     except subprocess.SubprocessError as exc:
+        receipt = _lease_cap_receipt(instance_id, _actuation_for_exception(exc))
         if _reconcile_ambiguous_action(
             context.actuator,
             instance_id,
             desired_state="STOPPED",
         ):
-            return _ReapLeaseAttempt(expired=True)
+            return _ReapLeaseAttempt(expired=True, receipt=receipt)
         return _ReapLeaseAttempt(
             expired=False,
             error=f"{instance_id}: STOP outcome unknown after {type(exc).__name__}: {exc}",
+            receipt=receipt,
         )
     except Exception as exc:  # noqa: BLE001 - isolate per-instance (rg-007)
         msg = f"{instance_id}: {type(exc).__name__}: {exc}"
         logger.error("lease-expiry STOP failed: %s", msg)
-        return _ReapLeaseAttempt(expired=False, error=msg)
+        return _ReapLeaseAttempt(
+            expired=False,
+            error=msg,
+            receipt=_lease_cap_receipt(instance_id, _actuation_for_exception(exc)),
+        )
+
+
+def _lease_cap_receipt(instance_id: str, actuation: StopActuation) -> LifecycleActionReceipt:
+    """Emergency cost-cap STOP: it bypasses the publication fence, so it consumed no load evidence."""
+    return _stop_receipt(
+        instance_id,
+        reason_code="lease_cap",
+        actuation=actuation,
+        consumed_missing="lease_cap_bypasses_publication_fence",
+    )
 
 
 def _force_reap_leases(context: _ReapLeaseContext) -> _ReapLeaseResult:
@@ -2198,6 +2594,7 @@ def _force_reap_leases(context: _ReapLeaseContext) -> _ReapLeaseResult:
     )
     lease_expired: list[tuple[str, str]] = []
     lease_errors: list[str] = []
+    lease_receipts: list[LifecycleActionReceipt] = []
     for action, instance_id in forced:
         attempt = _reap_expired_lease_attempt(
             context,
@@ -2208,12 +2605,14 @@ def _force_reap_leases(context: _ReapLeaseContext) -> _ReapLeaseResult:
             lease_expired.append((action, instance_id))
         if attempt.error is not None:
             lease_errors.append(attempt.error)
+        if attempt.receipt is not None:
+            lease_receipts.append(attempt.receipt)
     if lease_expired and context.effective_intent.action is IntentAction.STOP and context.deferred_stop_store is not None:
         try:
             context.deferred_stop_store.clear(sequence=context.effective_intent.sequence)
         except OSError as exc:
             lease_errors.append(f"deferred STOP clear failed: {type(exc).__name__}: {exc}")
-    return _ReapLeaseResult(lease_expired=lease_expired, errors=lease_errors)
+    return _ReapLeaseResult(lease_expired=lease_expired, errors=lease_errors, receipts=lease_receipts)
 
 
 def _reap_instances_after_lease_cap(
@@ -2362,40 +2761,124 @@ def _reap_stop_attempt(
         fence_expired=current_load is None,
     ):
         logger.info("generation fence cancelled STOP for %s", instance_id)
-        return _ReapStopAttempt(cancelled=True)
+        return _ReapStopAttempt(
+            cancelled=True,
+            receipt=_stop_receipt(
+                instance_id,
+                reason_code=inputs.reason_code,
+                actuation=StopActuation(outcome=StopOutcome.FENCED_OFF, command_invoked=False),
+                consumed_missing="fence_refused_before_consume",
+            ),
+        )
     if inputs.dry_run:
         logger.info("dry-run would STOP idle instance: %s", instance_id)
-        return _ReapStopAttempt(actuated=True)
-    try:
-        stopped, fence_supported = _actuate_stop_with_generation_fence(
-            inputs.load_source,
-            inputs.actuator,
-            instance_id=instance_id,
-            expected_generation=inputs.expected_generation,
+        return _ReapStopAttempt(
+            actuated=True,
+            receipt=_stop_receipt(
+                instance_id,
+                reason_code=inputs.reason_code,
+                actuation=StopActuation(outcome=StopOutcome.DRY_RUN, command_invoked=False),
+                consumed_missing="dry_run_no_fence_actuation",
+            ),
         )
-        if not stopped:
-            logger.info("atomic generation fence cancelled STOP for %s", instance_id)
-            fence_errors = (
-                ()
-                if fence_supported
-                else (f"{instance_id}: writer-coordinated STOP generation fence unavailable",)
-            )
-            return _ReapStopAttempt(cancelled=True, errors=fence_errors)
-        return _ReapStopAttempt(actuated=True)
-    except subprocess.SubprocessError as exc:
+    attempt = _actuate_stop_with_fence_receipt(
+        inputs.load_source,
+        inputs.actuator,
+        instance_id=instance_id,
+        expected_generation=inputs.expected_generation,
+    )
+    if attempt.error is not None and not attempt.entered:
+        # The fence could not be read; no STOP reached the actuator, so nothing was consumed or invoked.
+        msg = f"{instance_id}: {type(attempt.error).__name__}: {attempt.error}"
+        logger.error("STOP fence failed before actuation: %s", msg)
+        return _ReapStopAttempt(
+            errors=(msg,),
+            receipt=_stop_receipt(
+                instance_id,
+                reason_code=inputs.reason_code,
+                actuation=StopActuation(
+                    outcome=StopOutcome.FAILED,
+                    command_invoked=False,
+                    missing_reasons=(("command_invoked", "fence_failed_before_actuation"),),
+                ),
+                consumed_missing="publication_read_failed_before_actuation",
+            ),
+        )
+    if not attempt.fenced:
+        logger.info("atomic generation fence cancelled STOP for %s", instance_id)
+        fence_errors = (
+            () if attempt.fence_supported else (f"{instance_id}: writer-coordinated STOP generation fence unavailable",)
+        )
+        return _ReapStopAttempt(
+            cancelled=True,
+            errors=fence_errors,
+            receipt=_stop_receipt(
+                instance_id,
+                reason_code=inputs.reason_code,
+                actuation=StopActuation(outcome=StopOutcome.FENCED_OFF, command_invoked=False),
+                consumed_missing="fence_refused_before_consume",
+            ),
+        )
+    if attempt.error is None and attempt.actuation is not None:
+        return _ReapStopAttempt(
+            actuated=True,
+            receipt=_stop_receipt(
+                instance_id,
+                reason_code=inputs.reason_code,
+                actuation=attempt.actuation,
+                consumed=attempt.consumed,
+                consumed_missing="source_has_no_publication_fence",
+            ),
+        )
+    if attempt.error is None:
+        # A fence that reports success without invoking the actuator cannot prove a STOP: fail closed.
+        msg = f"{instance_id}: fence reported success without invoking the STOP actuator"
+        logger.error(msg)
+        return _ReapStopAttempt(
+            errors=(msg,),
+            receipt=_stop_receipt(
+                instance_id,
+                reason_code=inputs.reason_code,
+                actuation=StopActuation(
+                    outcome=StopOutcome.FAILED,
+                    command_invoked=False,
+                    missing_reasons=(("command_invoked", "actuator_not_entered"),),
+                ),
+                consumed=attempt.consumed,
+                consumed_missing="source_has_no_publication_fence",
+            ),
+        )
+    exc = attempt.error
+    if isinstance(exc, subprocess.SubprocessError):
+        receipt = _stop_receipt(
+            instance_id,
+            reason_code=inputs.reason_code,
+            actuation=_actuation_for_exception(exc),
+            consumed=attempt.consumed,
+            consumed_missing="source_has_no_publication_fence",
+        )
         if _reconcile_ambiguous_action(
             inputs.actuator,
             instance_id,
             desired_state="STOPPED",
         ):
-            return _ReapStopAttempt(actuated=True)
+            return _ReapStopAttempt(actuated=True, receipt=receipt)
         return _ReapStopAttempt(
-            errors=(f"{instance_id}: STOP outcome unknown after {type(exc).__name__}: {exc}",)
+            errors=(f"{instance_id}: STOP outcome unknown after {type(exc).__name__}: {exc}",),
+            receipt=receipt,
         )
-    except Exception as exc:  # noqa: BLE001 - isolate per-instance (VLMFIX-S2-03)
-        msg = f"{instance_id}: {type(exc).__name__}: {exc}"
-        logger.error("STOP failed: %s", msg)
-        return _ReapStopAttempt(errors=(msg,))
+    msg = f"{instance_id}: {type(exc).__name__}: {exc}"
+    logger.error("STOP failed: %s", msg)
+    return _ReapStopAttempt(
+        errors=(msg,),
+        receipt=_stop_receipt(
+            instance_id,
+            reason_code=inputs.reason_code,
+            actuation=_actuation_for_exception(exc),
+            consumed=attempt.consumed,
+            consumed_missing="source_has_no_publication_fence",
+        ),
+    )
 
 
 def _actuate_reap_stops(
@@ -2405,7 +2888,7 @@ def _actuate_reap_stops(
     """Apply the per-instance generation fence and publish STOP outcomes."""
     actuated: list[tuple[str, str]] = []
     errors: list[str] = []
-    for action, instance_id in context.fenced:
+    for index, (action, instance_id) in enumerate(context.fenced):
         if action != "STOP":
             continue
         attempt = _reap_stop_attempt(
@@ -2414,7 +2897,19 @@ def _actuate_reap_stops(
             instance_id=instance_id,
         )
         errors.extend(attempt.errors)
+        if attempt.receipt is not None:
+            inputs.receipts.append(attempt.receipt)
         if attempt.cancelled:
+            inputs.receipts.extend(
+                _stop_receipt(
+                    remaining_id,
+                    reason_code=inputs.reason_code,
+                    actuation=StopActuation(outcome=StopOutcome.FENCED_OFF, command_invoked=False),
+                    consumed_missing="not_attempted_after_fence_refusal",
+                )
+                for remaining_action, remaining_id in context.fenced[index + 1 :]
+                if remaining_action == "STOP"
+            )
             return ReapCycleResult(
                 decided=context.decided,
                 actuated=actuated,
@@ -2465,9 +2960,16 @@ def _run_reap_cycle(
     effective_intent: EffectiveIntent | None = None,
     deferred_stop_store: DeferredStopStore | None = None,
     now: datetime | float | int | None = None,
+    receipts: list[LifecycleActionReceipt] | None = None,
 ) -> ReapCycleResult:
-    """Decision → fence delay → re-sample → STOP only if still idle."""
+    """Decision → fence delay → re-sample → STOP only if still idle.
+
+    ``receipts`` collects one receipt per STOP this cycle decided or forced, in order. Callers that need
+    the receipts pass a list; the result is unchanged either way.
+    """
+    receipt_sink: list[LifecycleActionReceipt] = [] if receipts is None else receipts
     effective_intent = effective_intent or EffectiveIntent()
+    reason_code = "operator" if effective_intent.action is IntentAction.STOP else "idle"
     cycle_time = _coerce_cycle_time(now)
     intent_status = _pending_intent_status(effective_intent)
     lease_errors: list[str] = []
@@ -2493,6 +2995,7 @@ def _run_reap_cycle(
             deferred_stop_store=deferred_stop_store,
         )
     )
+    receipt_sink.extend(lease_result.receipts)
     lease_expired = lease_result.lease_expired
     lease_errors.extend(lease_result.errors)
     instances, last_transition_reason = _reap_instances_after_lease_cap(instances, lease_expired)
@@ -2555,6 +3058,16 @@ def _run_reap_cycle(
             None if fence.pre_stop is None else fence.pre_stop.batch_in_progress,
             fence.expired,
         )
+        receipt_sink.extend(
+            _stop_receipt(
+                instance_id,
+                reason_code=reason_code,
+                actuation=StopActuation(outcome=StopOutcome.FENCED_OFF, command_invoked=False),
+                consumed_missing="pre_stop_fence_refused",
+            )
+            for action, instance_id in decided
+            if action == "STOP"
+        )
         return ReapCycleResult(
             decided=decided,
             actuated=[],
@@ -2572,6 +3085,8 @@ def _run_reap_cycle(
             actuator=actuator,
             expected_generation=fence.generation,
             dry_run=dry_run,
+            reason_code=reason_code,
+            receipts=receipt_sink,
         ),
         _ReapOutcomeContext(
             decided=decided,
@@ -2695,6 +3210,7 @@ def run_reap_cycle(
         decision_log_store=resolved_log,
     )
     if dry_run:
+        dry_receipts: list[LifecycleActionReceipt] = []
         result = _run_reap_cycle(
             controller=controller,
             instances=instances,
@@ -2708,9 +3224,12 @@ def run_reap_cycle(
             effective_intent=effective_intent,
             deferred_stop_store=resolved_deferred,
             now=now,
+            receipts=dry_receipts,
         )
+        result = replace(result, lifecycle_receipts=tuple(dry_receipts))
         return _record_decision(result, mode="reap", now=now, store=resolved_log)
     with _serialized_gpu_state_publish(gpu_state_path):
+        live_receipts: list[LifecycleActionReceipt] = []
         result = _run_reap_cycle(
             controller=controller,
             instances=instances,
@@ -2724,7 +3243,9 @@ def run_reap_cycle(
             effective_intent=effective_intent,
             deferred_stop_store=resolved_deferred,
             now=now,
+            receipts=live_receipts,
         )
+        result = replace(result, lifecycle_receipts=tuple(live_receipts))
         result = _record_decision(result, mode="reap", now=now, store=resolved_log)
         stopped_instance_ids = {
             instance_id for action, instance_id in [*result.actuated, *result.lease_expired] if action == "STOP"

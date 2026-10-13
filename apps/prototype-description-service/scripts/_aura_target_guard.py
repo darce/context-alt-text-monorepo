@@ -65,7 +65,7 @@ def dsn_host(dsn: str) -> str:
         query_keys = [key for key, _ in parse_qsl(urlsplit(dsn).query, keep_blank_values=True)]
     except (ArgumentError, ValueError):
         raise ValueError("DSN is malformed") from None
-    if has_connection_overrides(query_keys):
+    if has_connection_overrides([*url.query, *query_keys]):
         raise ValueError("DSN query overrides the connection identity or endpoint")
     host = (url.host or "").lower().rstrip(".")
     if "," in host or any(character.isspace() for character in host):

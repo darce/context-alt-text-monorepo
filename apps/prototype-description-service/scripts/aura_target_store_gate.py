@@ -331,7 +331,9 @@ def validate_target_store(
     stamp = _active_stamp(snapshot)
     if isinstance(stamp, tuple):
         findings.append(stamp)
-    elif missing is None:
+    # Missing target identity cannot suppress contradictions in observed store evidence.
+    # Keep the store rung guarded when one of its own wrappers is incomplete.
+    elif all(_has_wrapper(snapshot, path) for path, _ in _STORE_EVIDENCE_PATHS):
         store_outcome = _store_outcome(snapshot, stamp)
         if store_outcome is not None:
             findings.append(store_outcome)

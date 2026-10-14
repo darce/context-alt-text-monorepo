@@ -9,8 +9,10 @@ import os
 import re
 import threading
 import time
-from collections.abc import Mapping, Sequence
+import uuid
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 from io import BytesIO
 from typing import Any
@@ -94,6 +96,41 @@ def reset_gpu_remote_adapter_state_for_tests() -> None:
         _shared_client_timeout = None
         _gpu_call_semaphore = None
         _gpu_call_semaphore_size = None
+
+
+# Optional request/response receipt hook (GTMR G2). Inert unless a sink is passed to the adapter.
+# Each receipt is a mapping of raw bytes plus scalar metadata; the sink must not mutate the bytes.
+GpuReceiptSink = Callable[[Mapping[str, Any]], None]
+_RECEIPT_CORRELATION_HEADER = "X-Request-Id"
+
+
+@dataclass(frozen=True)
+class _Lineage:
+    """Raw inputs of one describe call: original bytes, posted PNG/JPEG bytes, canonical context bytes."""
+
+    source_image: bytes
+    encoded_image: bytes
+    media_type: str
+    context_canonical: bytes
+
+
+def _rfc3339_now() -> str:
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _context_canonical_bytes(context: Mapping[str, Any] | None) -> bytes:
+    # Same canonical form as scene.application.hashing.compute_context_hash (None is the empty context).
+    return json.dumps(context or {}, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def _receipt_caption(response: httpx.Response) -> bytes | None:
+    """Caption the adapter returns for this response, or None when no caption is derivable."""
+    if not 200 <= response.status_code < 300:
+        return None
+    try:
+        return _extract_caption(response.json()).encode("utf-8")
+    except (GpuRemoteAdapterError, TypeError, ValueError):
+        return None
 
 
 def _media_type(image_bytes: bytes) -> str:
@@ -387,8 +424,10 @@ class GpuRemoteDescriptionAdapter:
         transport: httpx.BaseTransport | None = None,
         grounding_enabled: bool | None = None,
         grounding_timeout_s: float = _DEFAULT_GROUNDING_TIMEOUT_S,
+        receipt_sink: GpuReceiptSink | None = None,
     ) -> None:
         self.endpoint_url = endpoint_url.rstrip("/")
+        self._receipt_sink = receipt_sink
         # llama.cpp served id stays unadorned; wire provenance is hub-repo@pin
         # so the citation is walkable (rg-015: do not stamp a SHA we were not given).
         self._endpoint_model_id = model_id
@@ -446,6 +485,10 @@ class GpuRemoteDescriptionAdapter:
         semaphore = _get_gpu_call_semaphore(self._max_concurrent_calls)
         encoded_image = b""
         media_type = "image/jpeg"
+        correlation_id = uuid.uuid4().hex if self._receipt_sink is not None else None
+        if correlation_id is not None:
+            headers = {**headers, _RECEIPT_CORRELATION_HEADER: correlation_id}
+        lineage: _Lineage | None = None
         try:
             with semaphore:
                 media_type, encoded_image = _image_payload(image_bytes)
@@ -457,7 +500,23 @@ class GpuRemoteDescriptionAdapter:
                     encoded_image=encoded_image,
                     n_probs=n_probs,
                 )
+                if self._receipt_sink is not None:
+                    lineage = _Lineage(
+                        source_image=image_bytes,
+                        encoded_image=encoded_image,
+                        media_type=media_type,
+                        context_canonical=_context_canonical_bytes(context),
+                    )
+                started_at = _rfc3339_now()
                 response = self._post(json=payload, headers=headers)
+                self._emit_receipt(
+                    kind="caption",
+                    correlation_id=correlation_id,
+                    lineage=lineage,
+                    response=response,
+                    started_at=started_at,
+                    caption=_receipt_caption(response) if lineage is not None else None,
+                )
                 if not 200 <= response.status_code < 300:
                     raise GpuRemoteAdapterError(
                         GpuRemoteAdapterErrorReason.ENDPOINT_REJECTED,
@@ -513,6 +572,7 @@ class GpuRemoteDescriptionAdapter:
                         write=min(30.0, remaining_s),
                         pool=min(5.0, remaining_s),
                     ),
+                    lineage=lineage,
                 )
         result = AdapterResult(
             caption=caption,
@@ -534,6 +594,7 @@ class GpuRemoteDescriptionAdapter:
         headers: dict[str, str],
         semaphore: threading.Semaphore,
         timeout: httpx.Timeout,
+        lineage: _Lineage | None = None,
     ) -> tuple[PhraseBox, ...]:
         payload = _completion_payload(
             model_id=self._endpoint_model_id,
@@ -542,9 +603,24 @@ class GpuRemoteDescriptionAdapter:
             media_type=media_type,
             encoded_image=encoded_image,
         )
+        correlation_id: str | None = None
+        if lineage is not None:
+            # Grounding is its own request: a fresh correlation id, never the caption request's id.
+            correlation_id = uuid.uuid4().hex
+            headers = {**headers, _RECEIPT_CORRELATION_HEADER: correlation_id}
         try:
             with semaphore:
+                started_at = _rfc3339_now()
                 response = self._post(json=payload, headers=headers, timeout=timeout)
+                # For grounding the receipt's caption is the caption that was grounded (the request input).
+                self._emit_receipt(
+                    kind="grounding",
+                    correlation_id=correlation_id,
+                    lineage=lineage,
+                    response=response,
+                    started_at=started_at,
+                    caption=caption.encode("utf-8") if lineage is not None else None,
+                )
                 if not 200 <= response.status_code < 300:
                     _log_grounding_discard("endpoint_rejected", f"HTTP {response.status_code}: {response.text}")
                     return ()
@@ -567,6 +643,41 @@ class GpuRemoteDescriptionAdapter:
             _log_grounding_discard("follow_up_failed", f"{type(exc).__name__}: {exc}")
             return ()
         return _parse_qwen_phrase_grounding(text, caption=caption)
+
+    def _emit_receipt(
+        self,
+        *,
+        kind: str,
+        correlation_id: str | None,
+        lineage: _Lineage | None,
+        response: httpx.Response,
+        started_at: str,
+        caption: bytes | None,
+    ) -> None:
+        """Hand one raw receipt to the optional sink. Observational only: a sink failure never alters the result."""
+        sink = self._receipt_sink
+        if sink is None or lineage is None or correlation_id is None:
+            return
+        try:
+            sink(
+                {
+                    "request_kind": kind,
+                    "correlation_id": correlation_id,
+                    "media_type": lineage.media_type,
+                    # Exact bytes httpx serialized for the wire, not a re-encoding of the payload dict.
+                    "request_body": response.request.content,
+                    "source_image": lineage.source_image,
+                    "encoded_image": lineage.encoded_image,
+                    "context_canonical": lineage.context_canonical,
+                    "caption": caption,
+                    "response_body": response.content,
+                    "status_code": response.status_code,
+                    "started_at": started_at,
+                    "finished_at": _rfc3339_now(),
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - the receipt hook is observational; the caption path is unchanged
+            logger.warning("GPU remote adapter receipt sink failed kind=%s error=%s", kind, type(exc).__name__)
 
     def _post(
         self,

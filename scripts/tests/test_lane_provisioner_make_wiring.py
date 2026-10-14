@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MK_LANE_LIFECYCLE_PATH = REPO_ROOT / "mk" / "lane-lifecycle.mk"
 MK_LANE_WORKER_PATH = REPO_ROOT / "mk" / "lane-worker.mk"
@@ -11,19 +13,36 @@ BOOTSTRAP = "-m workbay_orchestrator_mcp.orchestration.bootstrap_lane"
 
 def _recipe_for(path: Path, target: str) -> str:
     lines = path.read_text(encoding="utf-8").splitlines()
-    start = next((index for index, line in enumerate(lines) if line.startswith(f"{target}:")), None)
-    assert start is not None, f"missing target {target} in {path}"
-    body: list[str] = []
-    for line in lines[start + 1 :]:
-        if line.startswith("\t"):
-            body.append(line[1:])
-            continue
-        if not line.strip():
-            continue
-        break
-    recipe = "\n".join(body)
-    assert recipe, f"target {target} in {path} has no recipe"
-    return recipe
+    starts = [index for index, line in enumerate(lines) if line.startswith(f"{target}:")]
+    assert starts, f"missing target {target} in {path}"
+    recipes: list[str] = []
+    for start in starts:
+        body: list[str] = []
+        for line in lines[start + 1 :]:
+            if line.startswith("\t"):
+                body.append(line[1:])
+                continue
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            break
+        if body:
+            recipes.append("\n".join(body))
+    assert recipes, f"target {target} in {path} has no recipe"
+    assert len(recipes) == 1, f"target {target} in {path} has multiple recipes"
+    return recipes[0]
+
+
+def test_recipe_for_merges_prerequisite_only_rule(tmp_path: Path) -> None:
+    makefile = tmp_path / "lane.mk"
+    makefile.write_text("lane-check: lane-worker-guard\n\nifeq (x,)\nlane-check:\n\t@echo check\nendif\n")
+    assert _recipe_for(makefile, "lane-check") == "@echo check"
+
+
+def test_recipe_for_rejects_multiple_recipes(tmp_path: Path) -> None:
+    makefile = tmp_path / "lane.mk"
+    makefile.write_text("lane-check:\n\t@echo first\nlane-check:\n\t@echo second\n")
+    with pytest.raises(AssertionError, match="multiple recipes"):
+        _recipe_for(makefile, "lane-check")
 
 
 def _normalized(recipe: str) -> str:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import logging
 import math
@@ -24,6 +25,9 @@ logger = logging.getLogger(__name__)
 LOAD_SNAPSHOT_FUTURE_SKEW_SECONDS = 5.0
 DEFAULT_UNKNOWN_GRACE_SECONDS = 600.0
 DEFAULT_DEPLOYMENTS_FILE = Path(__file__).resolve().parents[3] / "scripts/deploy/gpu-snapshot-deployments.conf"
+# Explicit byte budget for the publication read performed under the fence. Native publications are
+# a few hundred bytes; anything larger fails the fence closed rather than being hashed unbounded.
+FENCE_PUBLICATION_MAX_BYTES = 1 << 20
 
 _ENVIRONMENT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 
@@ -58,6 +62,23 @@ class AggregateJobLoadSnapshot(JobLoadSnapshot):
     unknown_environments: tuple[str, ...] = ()
     unknown_reasons: tuple[tuple[str, UnknownReason], ...] = ()
     escalated_environments: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ConsumedPublication:
+    """One producer publication exactly as the STOP fence consumed it.
+
+    ``revision`` is the publication's own ``revision`` field, or ``None`` when that field is absent or
+    malformed. ``generation`` is the ``(st_dev, st_ino, st_size, st_mtime_ns)`` tuple of the file
+    validated at the fence, and ``sha256`` hashes the exact persisted bytes read under the lock.
+    """
+
+    environment: str
+    revision: int | None
+    generation: tuple[int, int, int, int]
+    sha256: str
+    # The exact bytes read under the fence, held in memory so the decision can retain them by digest.
+    raw: bytes = field(repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -220,6 +241,56 @@ class AggregateJobLoadSource:
             return True
         finally:
             self._release_fence_locks(lock_fds)
+
+    def actuate_recorded_if_generation(
+        self,
+        expected_generation: tuple[tuple[str, tuple[int, int, int, int] | None], ...],
+        action: Callable[[], None],
+    ) -> tuple[bool, tuple[ConsumedPublication, ...]]:
+        """Run ``action`` under the same fence as ``actuate_if_generation`` and report what the fence consumed.
+
+        The publication bytes are read only after every producer lock is held and the generation has
+        matched ``expected_generation``, and before ``action`` runs. A publisher cannot replace the file
+        while the lock is held, so the recorded bytes, revision, and generation are the ones the STOP was
+        validated against. A refused fence returns ``(False, ())`` and runs no action.
+        """
+        consumed: list[tuple[ConsumedPublication, ...]] = []
+
+        def read_then_act() -> None:
+            consumed.append(self._read_consumed_publications(expected_generation))
+            action()
+
+        fenced = self.actuate_if_generation(expected_generation, read_then_act)
+        return fenced, (consumed[0] if consumed else ())
+
+    def _read_consumed_publications(
+        self,
+        expected_generation: tuple[tuple[str, tuple[int, int, int, int] | None], ...],
+    ) -> tuple[ConsumedPublication, ...]:
+        """Read every declared publication's exact bytes. Callers must hold every producer lock."""
+        expected = dict(expected_generation)
+        publications: list[ConsumedPublication] = []
+        for environment in self._declared_environments:
+            path = self.directory / environment / "describe-load.json"
+            fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
+            try:
+                stat = os.fstat(fd)
+                raw = _read_bounded(fd, max_bytes=FENCE_PUBLICATION_MAX_BYTES)
+            finally:
+                os.close(fd)
+            generation = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+            if expected.get(environment) != generation:
+                raise RuntimeError(f"describe load publication for {environment} changed while the fence was held")
+            publications.append(
+                ConsumedPublication(
+                    environment=environment,
+                    revision=_publication_revision(raw),
+                    generation=generation,
+                    sha256=hashlib.sha256(raw).hexdigest(),
+                    raw=raw,
+                )
+            )
+        return tuple(publications)
 
     @staticmethod
     def _open_fence_lock(path: Path) -> int:
@@ -475,3 +546,32 @@ class AggregateJobLoadSource:
         if len(set(values)) != len(values):
             raise ValueError(f"{label} contains duplicate environments")
         return tuple(sorted(values))
+
+
+def _read_bounded(fd: int, *, max_bytes: int) -> bytes:
+    """Read an open descriptor to EOF, failing closed past ``max_bytes`` instead of buffering unbounded."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise OSError(f"describe load publication exceeds the {max_bytes}-byte fence budget")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _publication_revision(raw: bytes) -> int | None:
+    """Return the publication's own revision, or ``None`` when it is absent or not a positive integer."""
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    revision = payload.get("revision")
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
+        return None
+    return revision

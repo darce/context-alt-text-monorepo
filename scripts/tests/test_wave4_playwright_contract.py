@@ -13,7 +13,8 @@ def test_remote_runner_declaration_is_narrow() -> None:
     config = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
     remote_test = config["tool"]["workbay"]["remote_test"]
     assert remote_test["runner_commands"] == ["vitest", "phpunit", "tsc", "playwright"]
-    assert remote_test["runner_selecting_wrappers"] == ["npx"]
+    # The remote_test declaration documents uv as a service-env runner selector.
+    assert remote_test["runner_selecting_wrappers"] == ["npx", "uv"]
 
 
 def test_collection_has_an_independent_dependency_owning_gate() -> None:

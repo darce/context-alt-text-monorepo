@@ -518,6 +518,10 @@ def test_score_uses_full_manifest_occasions_and_caps_golden150_tiers(
     run_dir = init_run_dir(tmp_path / "run", pair, manifest_path)
     media_ids = list(range(1, 7))
     predictions = [_pred(media_id) for media_id in media_ids]
+    # Removing export rows models pipeline misses, not a smaller detection
+    # population: an exhaustive manifest still contributes all six observations.
+    # The four-observation oracle below requires a partial scoring population
+    # while retaining all six entries for the occasion-size denominator.
     for stack_id in (A_STACK, B_STACK):
         _write_leg(run_dir, stack_id, predictions, media_ids)
         items_path = run_dir / "legs" / stack_id / "items.jsonl"

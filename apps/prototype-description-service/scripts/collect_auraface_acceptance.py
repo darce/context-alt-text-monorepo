@@ -5,8 +5,8 @@ wait has a freshly computed timeout and attempts to kill/reap on expiration.
 Nonblocking opens avoid FIFO waits; the regular-file check refuses devices,
 directories and FIFOs. Every path component is opened no-follow, including
 parent directories. Popen launch and the in-process join are not interruptible;
-The deadline reserves cleanup time, but cleanup always gets its fixed grace:
-elapsed time can be pre-kill time plus that grace, not the deadline itself.
+Cleanup always gets its fixed grace, and may use the remaining reap reserve:
+elapsed time can exceed the deadline when launch or scheduling overruns it.
 No record or acquisition exception is logged. No producer path is written.
 RES-02: https://github.com/darce/heuristics-canon/blob/v0.25.6/lexicons/engineering.md#res-02
 """
@@ -29,7 +29,7 @@ _spec.loader.exec_module(_join)
 MAX_RECORD_BYTES = 1024 * 1024
 MAX_RECORD_COUNT = 128
 
-# Reserve 150 ms: a bounded 100 ms SIGKILL/reap grace plus scheduling headroom.
+# Reserve 150 ms for bounded SIGKILL/reap, including scheduling headroom.
 READER_REAP_RESERVE_SECONDS = 0.15
 READER_REAP_GRACE_SECONDS = 0.1
 READER_LAUNCH_MARGIN_SECONDS = 0.01
@@ -102,6 +102,28 @@ def _reject_constant(_):
     raise ValueError('nonfinite JSON value')
 
 
+def _reap_reader(process, reap_deadline):
+    try:
+        process.wait(timeout=READER_REAP_GRACE_SECONDS)
+        return
+    except subprocess.TimeoutExpired:
+        # A timeout is not an exit observation. Popen can still reap via poll.
+        poll = getattr(process, 'poll', None)
+        if poll is not None:
+            if poll() is not None:
+                return
+            remaining = min(READER_REAP_RESERVE_SECONDS - READER_REAP_GRACE_SECONDS,
+                            reap_deadline - time.monotonic())
+            if remaining > 0:
+                try:
+                    process.wait(timeout=remaining)
+                    return
+                except subprocess.TimeoutExpired:
+                    if poll() is not None:
+                        return
+        raise _join.RecordError('reader_unkillable') from None
+
+
 def collect_auraface_acceptance(record_paths, *, captured_inputs,
                                 expected_contract, freshness_policy,
                                 isolation_policy, now, max_record_bytes,
@@ -118,15 +140,15 @@ def collect_auraface_acceptance(record_paths, *, captured_inputs,
     """
     if expected_contract != 'candidate512':
         raise ValueError('expected_contract must explicitly be candidate512')
-    _join._validate_policy(freshness_policy, isolation_policy, now)
     if type(max_record_bytes) is not int or not 1 <= max_record_bytes <= MAX_RECORD_BYTES:
         raise ValueError('max_record_bytes outside explicit bounded range')
     if type(max_record_count) is not int or not 0 <= max_record_count <= MAX_RECORD_COUNT:
         raise ValueError('max_record_count outside explicit bounded range')
     if type(deadline_monotonic) not in (float,int) or not math.isfinite(deadline_monotonic):
         raise ValueError('finite monotonic deadline required')
-    result = _join.empty_result()
     if not isinstance(record_paths, (list,tuple)) or len(record_paths) > max_record_count:
+        _join._validate_policy(freshness_policy, isolation_policy, now)
+        result = _join.empty_result()
         result['gaps'].append('oversized')
         result['acquisition_ledger'] = [dict(record_index=None,status='oversized',reason_code='record_count_limit',bytes_read=0,record_sha256=None)]
         return result
@@ -154,16 +176,15 @@ def collect_auraface_acceptance(record_paths, *, captured_inputs,
                         input=json.dumps(dict(path=str(path),cap=max_record_bytes)),
                         timeout=max(0, budget - READER_REAP_RESERVE_SECONDS))
                 except BaseException:
+                    reap_deadline = min(deadline_monotonic,
+                                        time.monotonic() + READER_REAP_RESERVE_SECONDS)
                     try:
                         process.kill()
                     except OSError:
                         # A failed signal does not justify abandoning cleanup.
                         # The bounded wait below determines whether it exited.
                         pass
-                    try:
-                        process.wait(timeout=READER_REAP_GRACE_SECONDS)
-                    except subprocess.TimeoutExpired:
-                        raise _join.RecordError('reader_unkillable') from None
+                    _reap_reader(process, reap_deadline)
                     raise
                 finally:
                     for pipe in (process.stdin, process.stdout):
@@ -202,6 +223,9 @@ def collect_auraface_acceptance(record_paths, *, captured_inputs,
         if row['status'] != 'acquired':
             failures.add(row['status'])
         ledger.append(row)
+    # Policies govern the pure join; byte/count/deadline caps govern acquisition.
+    _join._validate_policy(freshness_policy, isolation_policy, now)
+    result = _join.empty_result()
     if time.monotonic() >= deadline_monotonic:
         failures.add('deadline_exceeded')
     else:

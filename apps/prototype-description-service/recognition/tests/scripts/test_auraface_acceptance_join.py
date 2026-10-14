@@ -853,6 +853,36 @@ def test_c82_output_metadata_symbolic_control():
     r3_assert_joined(records, inputs)
 
 
+def test_c82_output_metadata_float16_refuses():
+    records, inputs = pair()
+    for record in records:
+        record['adapter_observations'][0]['runtime_record']['sessions']['auraface']['actual_output_metadata'][0]['dtype'] = 'float16'
+    assert_gap(records, inputs, 'contradictory_binding', row=0)
+
+
+def test_c82_output_metadata_second_output_refuses():
+    records, inputs = pair()
+    for record in records:
+        metadata = record['adapter_observations'][0]['runtime_record']['sessions']['auraface']['actual_output_metadata']
+        metadata.append(dict(name='second_output', shape=[1, 512], dtype='float32'))
+    assert_gap(records, inputs, 'contradictory_binding', row=0)
+
+
+def test_c82_output_metadata_dtype_alias_control():
+    records, inputs = pair()
+    for record in records:
+        record['adapter_observations'][0]['runtime_record']['sessions']['auraface']['actual_output_metadata'][0]['dtype'] = 'tensor(float)'
+    r3_assert_joined(records, inputs)
+
+
+def test_c82_output_metadata_single_output_control():
+    records, inputs = pair()
+    for record in records:
+        metadata = record['adapter_observations'][0]['runtime_record']['sessions']['auraface']['actual_output_metadata']
+        assert len(metadata) == 1
+    r3_assert_joined(records, inputs)
+
+
 def test_c82_invalid_string_key_is_malformed():
     module = load('auraface_acceptance_join')
     with pytest.raises(module.RecordError, match='^malformed$'):

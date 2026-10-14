@@ -7,6 +7,7 @@ WEB-16: https://github.com/darce/heuristics-canon/blob/v0.25.6/lexicons/security
 """
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import importlib.util
 import sys
@@ -301,8 +302,9 @@ def assert_offline_provider_imports(source, package):
     forbidden = (
         'onnxruntime', 'cv2', 'recognition.infrastructure.face_pipeline',
         'recognition.infrastructure.embeddings', 'recognition.infrastructure.embeddings.runtime_factory',
+        'recognition.application.embedding.runtime_factory',
         'recognition.application.settings', 'recognition.config',
-        'recognition.interface_adapters.http.deps.session', 'shared.secrets',
+        'recognition.interface_adapters', 'shared.secrets',
         'db', 'api', 'requests', 'httpx', 'urllib', 'socket', 'asyncpg', 'psycopg',
         'sqlalchemy.create_engine', 'sqlalchemy.engine.create_engine',
         'sqlalchemy.engine.create.create_engine', 'sqlalchemy.engine_from_config',
@@ -389,17 +391,61 @@ def complete_inputs():
         image_variant="recognition", build_time="2026-01-01T00:00:00Z",
         identity_document_sha256="5" * 64,
     )
-    options["serving_catalog"] = Record(
-        producer_abi_version=1, role="worker", process_instance_id="worker-process",
-        pool_identity="serving-pool", tenant_context_id="synthetic-tenant",
-        captured_at=NOW, deadline_monotonic=time.monotonic() + 2,
-        status="complete", reason_code=None,
-        instance_binding=Record(instance_id="synthetic-instance", storage_id="synthetic-storage"),
-        database=Record(database_name="synthetic_store", database_oid=123,
-                        current_user="serving_role", session_user="serving_role"),
-        columns=[],
-    )
+    # F09: preserve the catalog producer's transport type using only inert rows.
+    from recognition.tests.unit.test_face_acceptance_catalog_capture import ServingSession, args, capture
+    options["serving_catalog"] = asyncio.run(capture()(ServingSession(), **args()))
     return options
+
+
+def replace_transport(record, **changes):
+    if dataclasses.is_dataclass(record):
+        return dataclasses.replace(record, **changes)
+    if hasattr(record, "model_copy"):
+        return record.model_copy(update=changes)
+    return Record(record, **changes)
+
+
+@pytest.mark.parametrize('subject', ['complete', 'healthy_pair'])
+def test_positive_fixtures_preserve_producer_transport_types(tmp_path, monkeypatch, subject):
+    """F09: a type-strict publisher must accept both positive fixture seams."""
+    from types import ModuleType, SimpleNamespace
+    from recognition.tests.unit import test_face_acceptance_catalog_capture as catalog_tests
+
+    source_type = dataclasses.make_dataclass(
+        'FixtureSource', [(name, object) for name in identity_args()], frozen=True)
+    source_module = ModuleType('shared.source_identity')
+    source_module.SourceIdentityV1 = source_type
+    monkeypatch.setitem(sys.modules, 'shared.source_identity', source_module)
+    (tmp_path / 'shared').mkdir()
+    (tmp_path / 'shared/source_identity.py').touch()
+    monkeypatch.setattr(sys.modules[__name__], 'ROOT', tmp_path)
+    catalog_type = dataclasses.make_dataclass('FixtureCatalog', [('status', str), ('columns', tuple)], frozen=True)
+    catalog = catalog_type('complete', tuple(Record(table_name=f'table_{i}', dimensions=512)
+                                             for i in range(4)))
+
+    async def capture_catalog(session, **options):
+        assert isinstance(session, catalog_tests.ServingSession)
+        assert options['role'] == 'worker'
+        return catalog
+
+    monkeypatch.setattr(catalog_tests, 'capture', lambda: capture_catalog)
+    if subject == 'complete':
+        options = complete_inputs()
+        assert type(options['source_identity']) is source_type
+        assert options['serving_catalog'] is catalog
+        assert len(options['serving_catalog'].columns) == 4
+    else:
+        seen = []
+
+        def build_strict(**options):
+            assert type(options['source_identity']) is source_type
+            seen.append(options['role'])
+            return Record(options, collection_status='incomplete')
+
+        monkeypatch.setattr(sys.modules[__name__], 'producer',
+                            lambda: SimpleNamespace(build_face_role_record=build_strict))
+        test_healthy_synthetic_role_pair_keeps_receipt_session_generation_joins()
+        assert seen == ['api', 'worker']
 
 
 def test_complete_synthetic_source_catalog_and_attested_observation():
@@ -420,7 +466,7 @@ def test_healthy_synthetic_role_pair_keeps_receipt_session_generation_joins():
     for role in ("api", "worker"):
         row = attested_observation(role)
         args = inputs(role=role, process=role + "-process", observations=[row])
-        args["source_identity"] = Record(
+        args["source_identity"] = source_producer().SourceIdentityV1(
             source_identity_version=1, source_git_sha="1" * 40, source_tree="2" * 40,
             build_context_manifest_sha256="3" * 64, service_lock_sha256="4" * 64,
             image_variant="recognition", build_time="2026-01-01T00:00:00Z",
@@ -688,8 +734,13 @@ def test_each_completion_conjunct_refuses_its_own_negative(fault):
     elif fault == 'catalog':
         options['serving_catalog'] = None
     elif fault.startswith('catalog_'):
-        options['serving_catalog'][{'catalog_status': 'status', 'catalog_role': 'role',
-                                   'catalog_process': 'process_instance_id'}[fault]] = 'contradictory'
+        field = {'catalog_status': 'status', 'catalog_role': 'role',
+                 'catalog_process': 'process_instance_id'}[fault]
+        try:
+            options['serving_catalog'] = replace_transport(
+                options['serving_catalog'], **{field: 'contradictory'})
+        except (ValueError, TypeError):
+            return
     elif fault == 'origin':
         row['usage_origin'] = 'unregistered'
     elif fault == 'inactive':
@@ -872,6 +923,8 @@ def test_pending_parent_invalid_capture_time_is_never_complete(subject, captured
 
 
 @pytest.mark.parametrize("source", ['import recognition.config as forbidden',
+ 'from recognition.application.embedding.runtime_factory import make as forbidden',
+ 'from recognition.interface_adapters.http.deps.services import provider as forbidden',
  'from recognition.config import get_settings as forbidden',
  'import recognition.interface_adapters.http.deps.session as forbidden',
  'from recognition.interface_adapters.http.deps.session import '
@@ -881,11 +934,24 @@ def test_pending_parent_invalid_capture_time_is_never_complete(subject, captured
  'from sqlalchemy import engine_from_config as forbidden',
  'import sqlalchemy as sa\nfactory = sa.create_engine\nfactory()',
  'import sqlalchemy.ext.asyncio as sa\nfactory = sa.create_async_engine\nfactory()',
+ 'import importlib as loader\nloader.import_module("recognition.config")',
+ 'from importlib import import_module as load\nload(".secrets")',
+ '__import__("onnxruntime")',
+ 'get_shared_face_pipeline_runtime()', 'build_embedding_runtime()', 'InferenceSession()',
+ 'get_observability_session()', 'get_settings()', 'create_engine()',
+ 'create_async_engine()', 'engine_from_config()', 'async_engine_from_config()',
  'from .secrets import forbidden'])
 
 def test_provider_guard_detects_aliases_and_relative_imports(source):
     with pytest.raises(AssertionError):
         assert_offline_provider_imports(source, 'shared')
+
+
+@pytest.mark.parametrize('source', ['import json\njson.dumps({})',
+                                  'from .source_identity import SourceIdentityV1',
+                                  'from sqlalchemy import text\ntext("select 1")'])
+def test_provider_guard_accepts_offline_transport_helpers(source):
+    assert_offline_provider_imports(source, 'shared')
 
 
 @pytest.mark.parametrize('subject', ['role', 'repair'])

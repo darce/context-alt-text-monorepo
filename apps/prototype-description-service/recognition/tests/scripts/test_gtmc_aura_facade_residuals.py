@@ -73,6 +73,32 @@ def test_partial02_present_field_is_compared(role, family, layer):
         assert case == before
 
 
+@pytest.mark.parametrize("role", ("api", "worker"))
+@pytest.mark.parametrize("wrong_field,missing_field", (("database_name", "role"), ("role", "database_name")))
+@pytest.mark.parametrize("layer", ("helper", "facade"))
+def test_db_identity_present_contradiction_wins(role, wrong_field, missing_field, layer):
+    case = _aura_case(store="enrolled")
+    identity = case["aura_evidence"]["runtime_roles"][role]["database_identity"]
+    assert identity["provenance"] == "database_catalog"
+    identity["value"][wrong_field] = "constructed_wrong_identity"
+
+    def assert_invalid():
+        if layer == "facade":
+            _assert_outcome(_facade(case), "invalid", "database_identity_divergent")
+        else:
+            case["aura_evidence"]["snapshot_sha256"] = _snapshot_digest(case["snapshot"])
+            before = copy.deepcopy(case)
+            assert validate_loaded_runtime(
+                case["snapshot"], aura_evidence=case["aura_evidence"],
+                acceptance_policy=case["acceptance_policy"],
+            ) == ("invalid", "database_identity_divergent")
+            assert case == before
+
+    assert_invalid()
+    del identity["value"][missing_field]
+    assert_invalid()
+
+
 @pytest.mark.parametrize("path,reason", MISSING_PATHS, ids=[".".join(p) for p, _ in MISSING_PATHS])
 @pytest.mark.parametrize("member", ("value", "provenance"))
 def test_r2_missing_member_is_incomplete(path, reason, member):

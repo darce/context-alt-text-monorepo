@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import tempfile
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -55,10 +56,13 @@ def _digest(document):
 
 
 def load_baked_source_identity(path: Path = Path("/app/.source-identity.json"), *,
-                               max_record_bytes: int = 16384) -> SourceIdentityV1:
+                               max_record_bytes: int = 16384) -> SourceIdentityV1 | None:
     if type(max_record_bytes) is not int or not 0 < max_record_bytes <= 1048576:
         raise ValueError("invalid_size_cap")
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return None
     with os.fdopen(fd, "rb") as stream:
         metadata = os.fstat(stream.fileno())
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > max_record_bytes:
@@ -83,6 +87,26 @@ def load_baked_source_identity(path: Path = Path("/app/.source-identity.json"), 
         override = os.environ.get(name)
         if override is not None and override != identity.source_git_sha:
             raise ValueError("source_environment_conflict")
+    return identity
+
+
+def write_baked_source_identity(path: Path, **fields) -> SourceIdentityV1:
+    """Validate a complete explicit binding before atomically replacing its file."""
+    path = Path(path)
+    version = fields.pop("source_identity_version", 1)
+    if type(version) is not int or version != 1:
+        raise ValueError("incompatible_version")
+    if path.is_symlink():
+        raise ValueError("invalid_identity_file")
+    with tempfile.TemporaryDirectory(prefix=".source-identity-", dir=path.parent) as directory:
+        temporary = Path(directory) / "identity.json"
+        identity = write_build_source_identity(output=temporary, **fields)
+        if not isinstance(identity, SourceIdentityV1):
+            raise ValueError("incomplete_source_identity")
+        load_baked_source_identity(temporary)
+        if path.is_symlink():
+            raise ValueError("invalid_identity_file")
+        os.replace(temporary, path)
     return identity
 
 

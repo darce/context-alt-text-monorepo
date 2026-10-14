@@ -26,6 +26,10 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from pathlib import Path
+import hashlib
+import threading
+import time
+from contextlib import contextmanager
 from typing import Final
 
 import numpy as np
@@ -44,7 +48,10 @@ from recognition.infrastructure.face_pipeline._common import (
     embed_batch,
     resolve_embedding_dim,
 )
-from recognition.infrastructure.face_pipeline.provenance import MODEL_MANIFEST, load_verified_model
+from recognition.infrastructure.face_pipeline.provenance import (
+    MODEL_MANIFEST, load_verified_model, acquire_verified_model_bytes,
+)
+from recognition.infrastructure.face_pipeline.loaded_session import VerifiedModelBytes
 
 # OpenCV FaceDetectorYN pad divisor + FPN strides (face_detect.cpp).
 _YUNET_DIVISOR: Final[int] = 32
@@ -77,7 +84,56 @@ class UnsupportedModelPreprocessingError(ValueError):
     """Raised when a model's declared preprocessing exceeds this pipeline's contract."""
 
 
-def _ort_session(model_path: Path) -> ort.InferenceSession:
+# The recorder is scoped to one inference on one worker thread. Nested calls
+# restore their caller's recorder; concurrent workers never share tensor state.
+_TENSOR_RECORDER = threading.local()
+
+
+def tensor_record(tensor: np.ndarray) -> dict:
+    return {"sha256": hashlib.sha256(tensor.tobytes()).hexdigest(),
+            "shape": tuple(tensor.shape), "dtype": str(tensor.dtype),
+            "contiguous": bool(tensor.flags.c_contiguous)}
+
+
+@contextmanager
+def recording_tensors():
+    previous = getattr(_TENSOR_RECORDER, "current", None)
+    records = {"detector": [], "embedder": [], "raw": []}
+    _TENSOR_RECORDER.current = records
+    try:
+        yield records
+    finally:
+        _TENSOR_RECORDER.current = previous
+
+
+def _capture_tensor(kind: str, tensor: np.ndarray, **extra) -> None:
+    recorder = getattr(_TENSOR_RECORDER, "current", None)
+    if recorder is not None:
+        recorder[kind].append(dict(tensor_record(tensor), **extra))
+
+
+def _constructor_artifact(model_name, models_dir, verified_artifact, acquire_verified):
+    if verified_artifact is None and acquire_verified:
+        verified_artifact = acquire_verified_model_bytes(
+            model_name, models_dir=models_dir, expected=MODEL_MANIFEST[model_name],
+            max_model_bytes=512 * 1024 * 1024, max_license_bytes=1024 * 1024,
+            deadline_monotonic=time.monotonic() + 60,
+        )
+    if verified_artifact is not None:
+        if not isinstance(verified_artifact, VerifiedModelBytes) or verified_artifact.logical_name != model_name:
+            raise ValueError("verified artifact model identity mismatch")
+    return verified_artifact
+
+
+def _verified_session_metadata(session):
+    def metadata(items):
+        return tuple({"name": item.name, "shape": tuple(item.shape), "type": item.type} for item in items)
+    return {"inputs": metadata(session.get_inputs()), "outputs": metadata(session.get_outputs()),
+            "providers": tuple(session.get_providers()),
+            "options": getattr(session, "_face_constructor_options", {})}
+
+
+def _ort_session(model_source: Path | bytes) -> ort.InferenceSession:
     """CPU-only InferenceSession with pinned single-thread + reduced log noise.
 
     Thread counts fixed to 1 for reproducible parity/determinism builds (BR-05).
@@ -89,11 +145,20 @@ def _ort_session(model_path: Path) -> ort.InferenceSession:
     # Graph optimization and execution_mode stay SessionOptions defaults
     # (ORT_ENABLE_ALL / ORT_SEQUENTIAL). Do not pin ORT_DISABLE_ALL here —
     # that would change SFace/YuNet numerics relative to the FIR-3 baseline.
-    return ort.InferenceSession(
-        str(model_path),
-        sess_options=opts,
-        providers=["CPUExecutionProvider"],
-    )
+    if not isinstance(model_source, bytes):
+        return ort.InferenceSession(
+            str(model_source), sess_options=opts, providers=["CPUExecutionProvider"],
+        )
+    constructor_options = {
+        "log_severity_level": opts.log_severity_level,
+        "inter_op_num_threads": opts.inter_op_num_threads,
+        "intra_op_num_threads": opts.intra_op_num_threads,
+        "execution_mode": opts.execution_mode.name,
+        "graph_optimization_level": opts.graph_optimization_level.name,
+    }
+    session = ort.InferenceSession(model_source, sess_options=opts, providers=["CPUExecutionProvider"])
+    session._face_constructor_options = constructor_options
+    return session
 
 
 def _pad_to_divisor(image: np.ndarray, *, divisor: int = _YUNET_DIVISOR) -> tuple[np.ndarray, int, int]:
@@ -151,10 +216,10 @@ def _bgr_to_declared_blob(
     return np.ascontiguousarray((blob - np.float32(input_mean)) * np.float32(input_scale))
 
 
-def _blob_builder_for_model(model_name: str) -> Callable[[np.ndarray], np.ndarray]:
+def _blob_builder_for_model(model_name: str, *, entry=None) -> Callable[[np.ndarray], np.ndarray]:
     """Resolve one model's preprocessing into the callable used by ``_feature``."""
     try:
-        entry = MODEL_MANIFEST[model_name]
+        entry = MODEL_MANIFEST[model_name] if entry is None else entry
     except KeyError:
         known_models = ", ".join(sorted(MODEL_MANIFEST))
         raise ValueError(f"unknown embedding model {model_name!r}; known models: {known_models}") from None
@@ -410,8 +475,12 @@ class OrtYuNetDetector:
         nms_threshold: float = DEFAULT_NMS_THRESHOLD,
         top_k: int = DEFAULT_TOP_K,
         initial_input_size: tuple[int, int] = DEFAULT_INPUT_SIZE,
+        verified_artifact: VerifiedModelBytes | None = None,
+        acquire_verified: bool = False,
     ) -> None:
-        model_path = load_verified_model(model_name, models_dir=models_dir)
+        artifact = _constructor_artifact(model_name, models_dir, verified_artifact, acquire_verified)
+        model_path = load_verified_model(model_name, models_dir=models_dir) if artifact is None else None
+        self._verified_artifact = artifact
         self._model_name = model_name
         self._model_path = model_path
         self._score_threshold = float(score_threshold)
@@ -419,7 +488,7 @@ class OrtYuNetDetector:
         self._top_k = int(top_k)
         # Accepted for DI/factory kwargs parity; per-image pad resets size (BR-07).
         self._initial_input_size = (int(initial_input_size[0]), int(initial_input_size[1]))
-        self._session = _ort_session(model_path)
+        self._session = _ort_session(model_path if artifact is None else artifact.model_bytes)
         self._input_name = self._session.get_inputs()[0].name
         # Cache output names once (BR-03) — do not re-fetch inside detect loop.
         self._output_names: tuple[str, ...] = tuple(o.name for o in self._session.get_outputs())
@@ -427,6 +496,9 @@ class OrtYuNetDetector:
         missing = [n for n in _YUNET_OUTPUT_NAMES if n not in out_names]
         if missing:
             raise FacePipelineInputError(f"YuNet ONNX missing expected outputs {missing}; got {sorted(out_names)}")
+
+        if artifact is not None:
+            self._session_metadata = _verified_session_metadata(self._session)
 
     @property
     def score_threshold(self) -> float:
@@ -447,6 +519,7 @@ class OrtYuNetDetector:
             img = _ensure_bgr_u8(image, label=f"images[{i}]")
             padded, pad_w, pad_h = _pad_to_divisor(img)
             blob = _bgr_to_nchw_float(padded)
+            _capture_tensor("detector", blob, padding_geometry={"height": pad_h, "width": pad_w, "source_shape": tuple(img.shape)})
             raw_outs = self._session.run(None, {self._input_name: blob})
             outputs = dict(zip(self._output_names, raw_outs, strict=False))
             faces = decode_yunet_outputs(
@@ -474,20 +547,34 @@ class OrtSFaceEmbedder:
         *,
         model_name: str = "sface",
         models_dir: Path | None = None,
+        verified_artifact: VerifiedModelBytes | None = None,
+        acquire_verified: bool = False,
     ) -> None:
         self._model_name = model_name
-        self.embedding_dim = resolve_embedding_dim(model_name)
-        self._blob_builder = _blob_builder_for_model(model_name)
-        model_path = load_verified_model(model_name, models_dir=models_dir)
-        self._model_path = model_path
-        self._session = _ort_session(model_path)
+        artifact = _constructor_artifact(model_name, models_dir, verified_artifact, acquire_verified)
+        self._verified_artifact = artifact
+        if artifact is None:
+            self.embedding_dim = resolve_embedding_dim(model_name)
+            self._blob_builder = _blob_builder_for_model(model_name)
+            model_path = load_verified_model(model_name, models_dir=models_dir)
+            self._model_path = model_path
+            self._session = _ort_session(model_path)
+        else:
+            self.embedding_dim = artifact.manifest_snapshot.embedding_dim
+            self._blob_builder = _blob_builder_for_model(model_name, entry=artifact.manifest_snapshot)
+            self._model_path = None
+            self._session = _ort_session(artifact.model_bytes)
+            self._session_metadata = _verified_session_metadata(self._session)
         self._input_name = self._session.get_inputs()[0].name
 
     def _feature(self, crop: np.ndarray) -> np.ndarray:
         """Raw model feature for one validated 112×112 BGR crop (hookable in tests)."""
         blob = self._blob_builder(crop)
+        _capture_tensor("embedder", blob, channel_samples=tuple(float(v) for v in blob[0, :, 0, 0]))
         out = self._session.run(None, {self._input_name: blob})[0]
-        return np.asarray(out, dtype=np.float32).reshape(-1)
+        raw = np.asarray(out, dtype=np.float32).reshape(-1)
+        _capture_tensor("raw", raw, dimension=int(raw.size), norm=float(np.linalg.norm(raw)))
+        return raw
 
     def embed(self, crops: Sequence[np.ndarray]) -> EmbedBatchResult:
         """Embed a batch of 112×112×3 BGR crops → EmbedBatchResult (vectors + pre-norm norms)."""

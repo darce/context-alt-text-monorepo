@@ -33,7 +33,7 @@ MAX_RECORD_COUNT = 128
 # Keep the launch/communication reserve distinct from the cleanup ceiling.
 READER_REAP_RESERVE_SECONDS = 0.15
 READER_REAP_GRACE_SECONDS = 0.1
-# Real-child cleanup has a separate fixed scheduling allowance.
+# One second bounds real-child cleanup while allowing scheduling headroom.
 READER_REAP_CEILING_SECONDS = 1.0
 READER_LAUNCH_MARGIN_SECONDS = 0.01
 _REAL_POPEN = subprocess.Popen
@@ -127,7 +127,7 @@ def _reap_os_child(process):
     return False
 
 
-def _reap_reader(process, reap_deadline):
+def _reap_reader(process, caller_deadline, kill_time, ledger_row):
     try:
         process.wait(timeout=READER_REAP_GRACE_SECONDS)
         return
@@ -137,7 +137,7 @@ def _reap_reader(process, reap_deadline):
         if poll is not None and poll() is not None:
             return
         remaining = min(READER_REAP_RESERVE_SECONDS - READER_REAP_GRACE_SECONDS,
-                        reap_deadline - time.monotonic())
+                        caller_deadline - (kill_time + READER_REAP_GRACE_SECONDS))
         if poll is not None and remaining > 0:
             try:
                 process.wait(timeout=remaining)
@@ -147,6 +147,9 @@ def _reap_reader(process, reap_deadline):
                     return
         if _reap_os_child(process):
             return
+        if isinstance(process, _REAL_POPEN):
+            ledger_row['leaked_child_pid'] = process.pid
+            ledger_row['leaked_child_residual'] = 'r3_class_edge:CON-22'
         raise _join.RecordError('reader_unkillable') from None
 
 
@@ -208,9 +211,8 @@ def collect_auraface_acceptance(record_paths, *, captured_inputs,
                         # A failed signal does not justify abandoning cleanup.
                         # The bounded wait below determines whether it exited.
                         pass
-                    reap_deadline = min(deadline_monotonic,
-                        time.monotonic() + READER_REAP_RESERVE_SECONDS)
-                    _reap_reader(process, reap_deadline)
+                    kill_time = time.monotonic()
+                    _reap_reader(process, deadline_monotonic, kill_time, row)
                     raise
                 finally:
                     for pipe in (process.stdin, process.stdout):

@@ -477,7 +477,9 @@ def test_actual_launch_is_in_total_caller_timing(tmp_path, monkeypatch):
         return reader
     monkeypatch.setattr(module.subprocess, 'Popen', popen)
     _, inputs = pair()
-    started = time.monotonic()
+    real_monotonic = time.monotonic
+    started = real_monotonic()
+    monkeypatch.setattr(module.time, "monotonic", lambda: real_monotonic() if readers else started)
     try:
         result = collect([tmp_path / 'unused'], inputs, deadline_monotonic=started + 0.2)
         assert time.monotonic() - started < 0.5
@@ -585,61 +587,82 @@ def test_join_policy_work_does_not_consume_launch_window(tmp_path, monkeypatch):
 @pytest.mark.timeout(2)
 @pytest.mark.parametrize('exits', [True, False], ids=['late_exit', 'never_exits'])
 def test_reap_ceiling_is_independent_of_caller_deadline(tmp_path, monkeypatch, exits):
-    """A killed child can outlive both the first wait and the old reserve."""
-    import io
+    """Real children retain bounded cleanup after the caller deadline expires."""
+    import os
     module = load('collect_auraface_acceptance')
     monkeypatch.setitem(collect.__globals__, 'load', lambda _: module)
-    clock, readers, waits = [0.0], [], []
-    monkeypatch.setattr(module.time, 'monotonic', lambda: clock[0])
+    real_popen = module.subprocess.Popen
+    real_waitpid, real_sleep = os.waitpid, time.sleep
+    clock, waits, polls = [0.0], [], []
 
-    class Reader:
-        returncode = None
-
-        def __init__(self, *args, **kwargs):
-            self.stdin, self.stdout = io.StringIO(), io.StringIO()
-            readers.append(self)
-
+    class Reader(real_popen):
         def communicate(self, **kwargs):
-            clock[0] = 0.2  # The caller deadline is already exhausted.
+            clock[0] = 0.2  # The caller deadline is exhausted at kill time.
             raise module.subprocess.TimeoutExpired('captured-reader', 0)
 
         def kill(self):
             self.killed_at = clock[0]
+            if exits:
+                super().kill()
 
         def wait(self, timeout=None):
             waits.append(timeout)
-            if timeout is None:
-                # The unbounded-wait mutant must be stopped by pytest-timeout.
-                while True:
-                    time.sleep(0.01)
-            elapsed = clock[0] - self.killed_at
-            if exits and elapsed + timeout >= 0.25:
-                clock[0] = self.killed_at + 0.25
-                self.returncode = -9
-                return -9
             clock[0] += timeout
             raise module.subprocess.TimeoutExpired('captured-reader', timeout)
 
         def poll(self):
             return self.returncode
 
-    monkeypatch.setattr(module.subprocess, 'Popen', Reader)
+    reader = Reader([module.sys.executable, '-I', '-c',
+                     "import time; print('ready', flush=True); time.sleep(60)"],
+                    stdin=module.subprocess.PIPE, stdout=module.subprocess.PIPE,
+                    stderr=module.subprocess.DEVNULL, text=True)
+    assert reader.stdout.readline() == 'ready\n'
+
+    def waitpid(pid, flags):
+        assert pid == reader.pid and flags == os.WNOHANG
+        polls.append(clock[0])
+        if not exits or clock[0] >= reader.killed_at + 0.25:
+            return real_waitpid(pid, flags)
+        return 0, 0
+
+    def sleep(seconds):
+        clock[0] += seconds
+        real_sleep(0.001)
+
+    monkeypatch.setattr(module.subprocess, 'Popen', lambda *a, **k: reader)
+    monkeypatch.setattr(module.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(module.time, 'sleep', sleep)
+    monkeypatch.setattr(os, 'waitpid', waitpid)
     _, inputs = pair()
-    result = collect([tmp_path / 'unused'], inputs, deadline_monotonic=0.2)
-    reader = readers[0]
-    status = 'deadline_exceeded' if exits else 'reader_unkillable'
-    assert result['acquisition_ledger'][0]['status'] == status
-    assert result['acquisition_ledger'][0]['reason_code'] == status
-    assert reader.returncode == (-9 if exits else None)
-    assert len(waits) == 2
-    assert waits[0] == 0.1
-    elapsed = clock[0] - reader.killed_at
-    if exits:
-        assert elapsed == pytest.approx(0.25)
-    else:
-        assert elapsed == pytest.approx(module.READER_REAP_CEILING_SECONDS)
-    assert 0.25 < module.READER_REAP_CEILING_SECONDS <= 2.0
-    assert reader.stdin.closed and reader.stdout.closed
+    try:
+        result = collect([tmp_path / 'unused'], inputs, deadline_monotonic=0.2)
+        assert reader.returncode == (-9 if exits else None)
+        row = result['acquisition_ledger'][0]
+        status = 'deadline_exceeded' if exits else 'reader_unkillable'
+        assert row['status'] == row['reason_code'] == status
+        assert status in result['gaps']
+        assert reader.killed_at == 0.2
+        assert waits == [0.1]
+        assert polls
+        elapsed = clock[0] - reader.killed_at
+        if exits:
+            assert elapsed >= 0.25 > module.READER_REAP_RESERVE_SECONDS
+            assert 'leaked_child_pid' not in row
+        else:
+            assert elapsed == pytest.approx(0.1 + module.READER_REAP_CEILING_SECONDS)
+            assert real_popen.poll(reader) is None
+            assert row['leaked_child_pid'] == reader.pid
+            assert row['leaked_child_residual'] == 'r3_class_edge:CON-22'
+        assert 0.25 < module.READER_REAP_CEILING_SECONDS <= 2.0
+        assert reader.stdin.closed and reader.stdout.closed
+    finally:
+        monkeypatch.undo()
+        if reader.returncode is None:
+            real_popen.kill(reader)
+            real_popen.wait(reader, timeout=1)
+        reader.stdin.close()
+        reader.stdout.close()
 
 
 @pytest.mark.timeout(2)

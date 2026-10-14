@@ -1,8 +1,11 @@
 """Bounded offline capture acquisition. No live producer/resource operations.
 
 Each explicit path is opened by one isolated serial reader process. The caller
-wait has a freshly computed timeout and terminates the reader on expiration.
-Nonblocking, no-follow opens refuse devices, directories, FIFOs and symlinks.
+wait has a freshly computed timeout and attempts to kill/reap on expiration.
+Nonblocking opens avoid FIFO waits; the regular-file check refuses devices,
+directories and FIFOs. Every path component is opened no-follow, including
+parent directories. Popen launch and the in-process join are not interruptible;
+the deadline bounds communicate/reap waits, not total caller wall time.
 No record or acquisition exception is logged. No producer path is written.
 RES-02: https://github.com/darce/heuristics-canon/blob/v0.25.6/lexicons/engineering.md#res-02
 """
@@ -25,6 +28,11 @@ _spec.loader.exec_module(_join)
 MAX_RECORD_BYTES = 1024 * 1024
 MAX_RECORD_COUNT = 128
 
+# Reserve 150 ms: a bounded 100 ms SIGKILL/reap grace plus scheduling headroom.
+READER_REAP_RESERVE_SECONDS = 0.15
+READER_REAP_GRACE_SECONDS = 0.1
+READER_LAUNCH_MARGIN_SECONDS = 0.01
+
 # stdout is bounded to max_bytes plus a small status envelope; stderr is empty.
 # A path/exception/input payload is never emitted on failure.
 _READ_SCRIPT = r'''
@@ -32,8 +40,21 @@ import json, os, stat, sys
 request = json.loads(sys.stdin.read())
 path, cap = request['path'], request['cap']
 fd = None
+total = 0
 try:
-    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    # Walk from a fixed directory descriptor; never follow a parent symlink.
+    parts = path.split('/')
+    parent = os.open('/' if path.startswith('/') else '.', os.O_PATH | os.O_DIRECTORY)
+    try:
+        for part in parts[:-1]:
+            if not part or part == '.':
+                continue
+            child = os.open(part, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+            os.close(parent)
+            parent = child
+        fd = os.open(parts[-1], os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=parent)
+    finally:
+        os.close(parent)
     before = os.fstat(fd)
     if not stat.S_ISREG(before.st_mode):
         result = {'status':'unreadable'}
@@ -62,6 +83,7 @@ except (OSError,ValueError):
 finally:
     if fd is not None:
         os.close(fd)
+result['bytes_read'] = total
 sys.stdout.write(json.dumps(result,separators=(',',':')))
 '''
 
@@ -86,7 +108,9 @@ def collect_auraface_acceptance(record_paths, *, captured_inputs,
     """Acquire only explicit captured files; never glob/discover/recollect.
 
     Count and per-file byte caps have hard upper bounds. The deadline is an
-    absolute monotonic timestamp, covering serial acquisition and the join.
+    absolute monotonic timestamp checked during serial acquisition and around
+    the join. Popen launch and in-process work cannot be interrupted; this is
+    not a total caller wall-time guarantee.
     Producer join digests use canonical JSON; acquisition digests use raw bytes.
     Each acquired entry preserves the raw acquisition digest separately from
     its canonical join digest and pure join verdict.
@@ -117,17 +141,48 @@ def collect_auraface_acceptance(record_paths, *, captured_inputs,
             try:
                 # Remaining time is calculated at launch, not before prior work.
                 remaining = deadline_monotonic - time.monotonic()
-                if remaining <= 0:
+                if remaining < READER_REAP_RESERVE_SECONDS + READER_LAUNCH_MARGIN_SECONDS:
                     raise subprocess.TimeoutExpired('captured-reader', 0)
-                process = subprocess.run([sys.executable,'-I','-c',_READ_SCRIPT],
-                    input=json.dumps(dict(path=str(path),cap=max_record_bytes)),
-                    text=True,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
-                    timeout=remaining,check=False)
-                if process.returncode != 0 or len(process.stdout) > 2 * max_record_bytes + 256:
+                process = subprocess.Popen([sys.executable,'-I','-c',_READ_SCRIPT],
+                    stdin=subprocess.PIPE,text=True,stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL)
+                try:
+                    # Kill at deadline minus the fixed reap grace, never shrink it.
+                    budget = max(0, deadline_monotonic - time.monotonic())
+                    output, _ = process.communicate(
+                        input=json.dumps(dict(path=str(path),cap=max_record_bytes)),
+                        timeout=max(0, budget - READER_REAP_RESERVE_SECONDS))
+                except subprocess.TimeoutExpired:
+                    try:
+                        process.kill()
+                    except OSError:
+                        # A failed signal does not justify abandoning cleanup.
+                        # The bounded wait below determines whether it exited.
+                        pass
+                    reap_budget = min(READER_REAP_GRACE_SECONDS,
+                                      max(0, deadline_monotonic - time.monotonic()))
+                    try:
+                        process.wait(timeout=reap_budget)
+                    except subprocess.TimeoutExpired:
+                        # A slow launch/scheduling stall may leave less than the
+                        # full grace; that cannot establish an unkillable reader.
+                        if reap_budget < READER_REAP_GRACE_SECONDS:
+                            raise
+                        raise _join.RecordError('reader_unkillable') from None
+                    raise
+                finally:
+                    for pipe in (process.stdin, process.stdout):
+                        if pipe is not None:
+                            pipe.close()
+                if process.returncode != 0 or len(output) > 2 * max_record_bytes + 256:
                     row['status'] = row['reason_code'] = 'unreadable'
                 else:
-                    payload = json.loads(process.stdout)
+                    payload = json.loads(output)
                     status = payload.get('status')
+                    receipt = payload['bytes_read']
+                    if type(receipt) is not int or receipt < 0:
+                        raise ValueError('invalid read receipt')
+                    row['bytes_read'] = receipt
                     if status != 'acquired':
                         if status not in ('missing','unreadable','oversized','contradictory_binding'):
                             status = 'unreadable'

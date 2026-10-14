@@ -189,3 +189,66 @@ def test_clean_local_dsn_control_is_admitted(cli, monkeypatch, env) -> None:
     reads = _settings(monkeypatch, _dsn("localhost"))
     assert cli._validate_runtime_env(env) is None
     assert reads == ["settings"]
+
+
+# GTMC-C80A-I77-N2: numeric-only resolution must cover libc's legacy and IDNA forms.
+@pytest.mark.parametrize("host", ["2130706433", "0177.0.0.1", "0x7f.0.0.1", "127.1", "0", "１２７.0.0.1"])
+def test_numeric_loopback_forms_are_refused(cli, monkeypatch, host) -> None:
+    _settings(monkeypatch, _dsn(host), "prod")
+    refusal = cli._validate_runtime_env("prod")
+    assert refusal is not None, "numeric loopback must be refused"
+    assert "looks local; refusing to run" in refusal
+
+
+@pytest.mark.parametrize("host", ["2130706433", "0177.0.0.1", "0x7f.0.0.1", "127.1", "0", "１２７.0.0.1"])
+def test_aura_numeric_loopback_forms_are_refused(host) -> None:
+    from scripts._aura_target_guard import validate_aura_target
+
+    refusal = validate_aura_target(
+        "prod-auraface", configured_env="prod-auraface", compose_project="acx-prod-auraface",
+        read_dsn=lambda: f"postgresql+asyncpg://acx_prod_auraface@{host}/alt_context_prod_auraface",
+    )
+    assert refusal is not None, "Aura must also refuse numeric loopback"
+    assert "looks local; refusing to run" in refusal
+
+
+# N4 pins the normalization used by the matched Compose exception.
+@pytest.mark.parametrize("env", ["dev", "staging", "dev-fir"])
+@pytest.mark.parametrize("host", ["POSTGRES", "postgres.", "PoStGrEs."])
+def test_api_matched_compose_host_normalization(monkeypatch, env, host) -> None:
+    from scripts import manage_api_keys
+
+    _settings(monkeypatch, _dsn(host), env)
+    assert manage_api_keys._validate_runtime_env(env) is None
+
+
+def test_numeric_resolution_never_uses_dns(monkeypatch) -> None:
+    import socket
+    from scripts._aura_target_guard import is_local_host
+
+    real_getaddrinfo = socket.getaddrinfo
+    calls = []
+
+    def numeric_only(host, port, *args, **kwargs):
+        assert kwargs.get("flags") == socket.AI_NUMERICHOST
+        calls.append(host)
+        return real_getaddrinfo(host, port, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", numeric_only)
+    assert is_local_host("2130706433")
+    assert not is_local_host("192.0.2.1")
+    assert not is_local_host("db.example.invalid")
+    assert calls == ["2130706433", "db.example.invalid"]
+
+
+def test_guard_documents_explicit_port() -> None:
+    from scripts import _aura_target_guard
+
+    assert "omitted port" in _aura_target_guard.__doc__
+    assert "explicit settings" in _aura_target_guard.__doc__
+
+
+def test_guard_documents_name_resolution_limit() -> None:
+    from scripts import _aura_target_guard
+
+    assert "DNS-to-loopback" in _aura_target_guard.__doc__

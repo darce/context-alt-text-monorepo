@@ -19,7 +19,7 @@ REAP_GROUPS = [
     "worktrees", "sweeps", "freshness", "triage",
 ]
 REAP_PASS_COUNTS = dict(zip(REAP_GROUPS, [
-    9, 46, 18, 15, 41, 22, 68, 20, 24, 22, 8, 9, 6, 10, 17, 10, 16, 34,
+    9, 46, 18, 15, 41, 22, 68, 20, 24, 22, 8, 9, 47, 10, 17, 10, 16, 34,
 ], strict=True))
 
 
@@ -59,7 +59,7 @@ def _run_bash_suite(name: str) -> None:
     passes = sum(line.startswith("PASS:") for line in result.stdout.splitlines())
     if name == "test_reap_lane.sh":
         group = os.environ.get("REAP_TEST_GROUP", "")
-        expected = REAP_PASS_COUNTS[group] if group else 395
+        expected = REAP_PASS_COUNTS[group] if group else 436
         assert passes > 0, f"reap group {group!r} emitted zero PASS lines"
         assert passes == expected, (
             f"reap group {group!r}: expected {expected} PASS lines, got {passes}"
@@ -147,7 +147,7 @@ def test_reap_lane_case_coverage_guard() -> None:
     assert len(groups) == len(entries), "duplicate reap group"
     assert set(REAP_PASS_COUNTS) == set(groups), "reap PASS pin/group mismatch"
     assert all(count > 0 for count in REAP_PASS_COUNTS.values()), "empty reap PASS pin"
-    assert sum(REAP_PASS_COUNTS.values()) == 395, "reap PASS union count drift"
+    assert sum(REAP_PASS_COUNTS.values()) == 436, "reap PASS union count drift"
     mark = next(mark for mark in test_reap_lane_bash_suite.pytestmark
                 if mark.name == "parametrize" and mark.args[0] == "group")
     assert set(mark.args[1]) == set(groups), "reap parametrize/GROUPS mismatch"

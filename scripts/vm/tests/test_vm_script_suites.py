@@ -1,5 +1,7 @@
 """Pytest bridge for the VM script suites used by remote verification."""
 
+import ast
+from collections import Counter
 import re
 import shutil
 import subprocess
@@ -76,6 +78,36 @@ def test_host_hygiene_bash_suite(
     monkeypatch.setenv("HYGIENE_TEST_GROUP", group)
     with capsys.disabled():
         _run_bash_suite("test_host_hygiene.sh")
+
+
+def test_host_hygiene_case_coverage_guard() -> None:
+    source = (TESTS / "test_host_hygiene.sh").read_text()
+    python_source = source.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    groups = next(
+        ast.literal_eval(node.value)
+        for node in ast.parse(python_source).body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "GROUPS"
+            for target in node.targets
+        )
+    )
+    parametrized_groups = next(
+        mark.args[1]
+        for mark in test_host_hygiene_bash_suite.pytestmark
+        if mark.name == "parametrize" and mark.args[0] == "group"
+    )
+    assert set(parametrized_groups) == set(groups), "parametrize/GROUPS mismatch"
+    assert len(parametrized_groups) == len(set(parametrized_groups))
+    cases = re.findall(r"(?m)^case\('([^']+)',", python_source)
+    call_sites = re.findall(r"(?m)^\s*case\s*\(", python_source)
+    assert len(cases) == len(call_sites) == 45, (
+        "unparsed case registration or case count drift"
+    )
+    assert len(set(cases)) == len(cases), "duplicate case registration"
+    membership = Counter(name for names in groups.values() for name in names)
+    assert set(membership) == set(cases), "GROUPS/case coverage mismatch"
+    assert all(count == 1 for count in membership.values()), "cases belong to multiple groups"
 
 
 def test_reap_bridge_rejects_skips_when_flock_exists(

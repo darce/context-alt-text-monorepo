@@ -166,23 +166,28 @@ def test_score_refuses_v3_manifest_without_ratified_iou_threshold(tmp_path: Path
     assert exc.value.code == "manifest_iou_threshold_missing"
 
 
-def test_empty_detection_population_emits_directional_cells(tmp_path: Path) -> None:
+@pytest.mark.parametrize("empty_queries", [True, False], ids=["empty-queries", "false-positive-queries"])
+def test_zero_face_negatives_remain_detection_population(tmp_path: Path, empty_queries: bool) -> None:
     images = tmp_path / "images"
     manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1, 2])
     payload = json.loads(manifest.read_text())
     payload["iou_threshold"] = 0.5
     for entry in payload["entries"]:
-        # Exhaustive zero-face negatives remain detection-covered. A zero-population
-        # fixture needs a mode that excludes entries without refusing the metrics.
+        # C82R-SARADJ-01: exhaustive negatives retain their FP observations.
         entry["face_count"] = 0
         entry["face_boxes"] = []
         entry["present_identities"] = []
     manifest.write_text(json.dumps(payload), encoding="utf-8")
     pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
     out = tmp_path / "out"
+    class EmptyQueryClient(FakeClient):
+        def media_identities(self, media_ids: list[int]) -> object:
+            return []
+
+    client_type = EmptyQueryClient if empty_queries else FakeClient
     clients = {
-        "acx-dev-insightface": FakeClient(),
-        "acx-dev-fir": FakeClient(),
+        "acx-dev-insightface": client_type(),
+        "acx-dev-fir": client_type(),
     }
     run_pair(
         pair,
@@ -201,8 +206,20 @@ def test_empty_detection_population_emits_directional_cells(tmp_path: Path) -> N
     assert score_head_to_head(out).exists()
     accepted = json.loads((out / "score" / "accepted_set.json").read_text())
     assert accepted["accepted_set_size"] == 2
-    assert accepted["detection_scoring_set_size"] == 0
+    assert accepted["detection_scoring_set_size"] == 2
+    attrition = json.loads((out / "score" / "attrition.json").read_text())
+    assert attrition["post_accept_exclusions"] == []
+    for stack_id in clients:
+        results = json.loads(
+            (out / "legs" / stack_id / "exports" / "media_identity_results.json").read_text()
+        )
+        assert len(results) == 2
+        assert all(result["query_succeeded"] is True for result in results)
+        assert [len(result["rows"]) for result in results] == ([0, 0] if empty_queries else [1, 1])
     frames = json.loads((out / "score" / "frames.json").read_text())
+    assert frames["accepted_set_size"] == 2
+    assert frames["detection_scoring_set_size"] == 2
+    assert frames["zero_detection_media_count"] == (2 if empty_queries else 0)
     primary = [
         cell for cell in frames["cells"]
         if cell["cell"] == "detection_recall@frame_e2e/label_map_primary"
@@ -211,8 +228,60 @@ def test_empty_detection_population_emits_directional_cells(tmp_path: Path) -> N
     for cell in primary:
         assert cell["tier"] == "DIRECTIONAL"
         assert cell["true_positives"] == 0
-        assert cell["false_positives"] == 0
+        assert cell["false_positives"] == (0 if empty_queries else 2)
         assert cell["false_negatives"] == 0
+        assert cell["value"] is None
+        assert cell["recall"] is None
+        assert cell["precision"] == (None if empty_queries else 0.0)
         assert cell["ci_half_width"] is None
         assert cell["p_value"] is None
         assert cell["primary_claim_type"] == "unsupported"
+
+
+def test_roster_only_empty_detection_population_is_refused(tmp_path: Path, monkeypatch) -> None:
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1, 2])
+    payload = json.loads(manifest.read_text())
+    payload["iou_threshold"] = 0.5
+    payload["annotation_mode"] = "roster_only"
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = tmp_path / "out"
+    clients = {stack_id: FakeClient() for stack_id in ("acx-dev-insightface", "acx-dev-fir")}
+    run_pair(
+        pair, manifest_path=manifest, images_dir=images, out_dir=out,
+        clients=clients, skip_preflight=True,
+        pre_run_reset_by_stack=_fresh_reset_evidence(),
+    )
+    from scripts.bench.tests.conftest import write_stub_preflight
+
+    for stack_id in clients:
+        write_stub_preflight(out, stack_id)
+
+    detection_bootstrap_calls = []
+    original_bootstrap = score_report_module.bootstrap_paired_delta
+
+    def observe_bootstrap(*args, **kwargs):
+        if kwargs.get("cell", "").startswith("detection_"):
+            detection_bootstrap_calls.append(kwargs["cell"])
+        return original_bootstrap(*args, **kwargs)
+
+    monkeypatch.setattr(score_report_module, "bootstrap_paired_delta", observe_bootstrap)
+    assert score_head_to_head(out).exists()
+    accepted = json.loads((out / "score" / "accepted_set.json").read_text())
+    assert accepted["accepted_set_size"] == 2
+    assert accepted["detection_scoring_set_size"] == 0
+    frames = json.loads((out / "score" / "frames.json").read_text())
+    assert frames["accepted_set_size"] == 2
+    assert frames["detection_scoring_set_size"] == 0
+    detection_cells = [cell for cell in frames["cells"] if cell["cell"].startswith("detection_")]
+    assert len(detection_cells) == 24
+    for cell in detection_cells:
+        assert cell["tier"] == "DIAGNOSTIC"
+        assert cell["refused"] is True
+        assert cell["invariant"] == "detection_refuses_roster_only"
+        for key in ("value", "precision", "recall", "true_positives", "false_positives", "false_negatives"):
+            assert cell[key] is None
+        for key in ("ci_half_width", "p_value", "holm_significant", "holm_rank", "primary_claim_type", "resampling_unit", "partial_occasions"):
+            assert key not in cell
+    assert detection_bootstrap_calls == []

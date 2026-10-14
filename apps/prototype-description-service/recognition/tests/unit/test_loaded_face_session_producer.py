@@ -465,3 +465,78 @@ def test_native_tripwire_covers_direct_binding_import():
     wrapper = importlib.import_module("onnxruntime.capi._pybind_state")
     assert InferenceSession is wrapper.InferenceSession, \
         "CAUSAL_RED: direct native binding import bypasses the fixture tripwire"
+
+
+@pytest.fixture(params=[
+    ("SessionReceiptV1", "actual_session_options"),
+    ("ExecutionReceiptV1", "input_lineage"),
+    ("ExecutionReceiptV1", "detector_input"),
+    ("ExecutionReceiptV1", "alignment"),
+    ("ExecutionReceiptV1", "embedder_input"),
+    ("ExecutionReceiptV1", "raw_output"),
+    ("ExecutionReceiptV1", "normalized_output"),
+    ("LoadedRuntimeRecordV1", "sessions"),
+], ids=lambda pair: ".".join(pair))
+def nested_receipt_mapping(request):
+    type_name, mapping_field = request.param
+    receipt = symbol(PREFIX + "loaded_session", type_name)
+    now = datetime(2026, 10, 13, tzinfo=UTC)
+    digest = sha(b"synthetic nested receipt fixture")
+    if type_name == "SessionReceiptV1":
+        values = dict(
+            session_id="fixture-session", runtime_generation_id="fixture-generation",
+            logical_model_name="auraface", constructed_at=now,
+            observed_weight_sha256=digest, observed_weight_size_bytes=1,
+            observed_license_sha256=digest, observed_license_size_bytes=1,
+            manifest_expectation_sha256=digest, frozen_preprocessing_sha256=digest,
+            numeric_runtime_fingerprint={}, actual_providers=("CPUExecutionProvider",),
+            actual_input_metadata=(), actual_output_metadata=(),
+            actual_session_options={}, graph_analysis=None,
+        )
+    elif type_name == "ExecutionReceiptV1":
+        values = dict(
+            execution_id="fixture-execution", runtime_generation_id="fixture-generation",
+            detector_session_id="fixture-detector", embedder_session_id="fixture-embedder",
+            captured_at=now, input_lineage={}, detector_input={}, detections_sha256=None,
+            alignment={}, embedder_input={}, raw_output={}, normalized_output={},
+            graph_analysis_sha256=None, completion="partial",
+        )
+    else:
+        values = dict(
+            producer_abi_version=1, runtime_generation_id="fixture-generation",
+            model_id="fixture-auraface512", effective_profile="auraface",
+            declared_embedding_dimension=512, observed_embedding_dimension=None,
+            preprocessing_id="arcface-112", compatibility_sha256=digest,
+            config_sha256=digest, sessions={}, frozen_preprocessing_spec=None,
+            execution_receipt=None, state="not_loaded",
+            reason_code="synthetic_missing_pair", observed_at=now,
+        )
+    incoming = {"nested": {"items": [{"value": "original"}], "shape": [1, 2]}}
+    values[mapping_field] = incoming
+    record = receipt(**values)
+    return incoming, getattr(record, mapping_field)
+
+
+def test_receipt_nested_input_aliases_are_detached(nested_receipt_mapping):
+    incoming, retained = nested_receipt_mapping
+    incoming["nested"]["items"][0]["value"] = "changed"
+    incoming["nested"]["items"].append({"value": "added"})
+    incoming["nested"]["shape"][0] = 99
+    incoming["nested"]["new_key"] = "added"
+    assert retained["nested"]["items"][0]["value"] == "original", \
+        "CAUSAL_RED: nested caller alias rewrote retained receipt evidence"
+    assert len(retained["nested"]["items"]) == 1
+    assert tuple(retained["nested"]["shape"]) == (1, 2)
+    assert "new_key" not in retained["nested"]
+
+
+def test_receipt_nested_values_reject_direct_mutation(nested_receipt_mapping):
+    _, retained = nested_receipt_mapping
+    with pytest.raises(TypeError):
+        retained["nested"]["new_key"] = "changed"
+    with pytest.raises(TypeError):
+        retained["nested"]["items"][0]["value"] = "changed"
+    with pytest.raises(TypeError):
+        retained["nested"]["items"][0] = {"value": "changed"}
+    with pytest.raises(TypeError):
+        retained["nested"]["shape"][0] = 99

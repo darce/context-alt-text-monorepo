@@ -1,7 +1,8 @@
 """Model provenance manifest + fail-closed loader for face-pipeline ONNX.
 
 FIR-3 S1: pin model bytes by sha256 with source URL/ref and license hashes.
-Adapters (S2/S3) load models only through ``load_verified_model``.
+Legacy adapters retain ``load_verified_model``'s Path ABI. Candidate acquisition
+uses ``acquire_verified_model_bytes`` to bind verification to consumed bytes.
 
 Heuristics: rg-008 (config validate-at-load), AGT-02 (no unresolved anchors),
 rg-015 (manifest is single source for EmbeddingModelManifest field values).
@@ -10,8 +11,15 @@ rg-015 (manifest is single source for EmbeddingModelManifest field values).
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+import json
+import math
+import os
+import stat
+import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
+
+from .loaded_session import VerifiedModelBytes
 
 # Explicit unresolved-hash sentinel. Never invent sha256 values.
 PENDING_OPERATOR_FETCH = "PENDING_OPERATOR_FETCH"
@@ -240,6 +248,233 @@ def load_verified_model(name: str, *, models_dir: Path | None = None) -> Path:
         )
 
     return path
+
+
+def _check_acquisition_deadline(deadline_monotonic: float) -> None:
+    if time.monotonic() >= deadline_monotonic:
+        raise TimeoutError("model acquisition deadline exceeded")
+
+
+def _protobuf_varint(data: memoryview, offset: int) -> tuple[int, int]:
+    value = 0
+    for shift in range(0, 70, 7):
+        if offset >= len(data):
+            raise ModelIntegrityError("truncated ONNX protobuf")
+        byte = data[offset]
+        offset += 1
+        if shift == 63 and byte > 1:
+            raise ModelIntegrityError("invalid ONNX protobuf varint")
+        value |= (byte & 127) << shift
+        if byte < 128:
+            return value, offset
+    raise ModelIntegrityError("invalid ONNX protobuf varint")
+
+
+# ONNX protobuf message edges that can contain TensorProto, including nested
+# graphs, sparse tensors, training graphs and function attribute defaults.
+_ONNX_TENSOR_EDGES = {
+    "model": {7: "graph", 20: "training", 25: "function"},
+    "graph": {1: "node", 5: "tensor", 15: "sparse"},
+    "node": {5: "attribute"},
+    "attribute": {5: "tensor", 6: "graph", 10: "tensor", 11: "graph", 22: "sparse", 23: "sparse"},
+    "sparse": {1: "tensor", 2: "tensor"},
+    "training": {1: "graph", 2: "graph"},
+    "function": {7: "node", 11: "attribute"},
+    "tensor": {},
+}
+
+
+def _validate_self_contained_onnx(model_bytes: bytes, *, deadline_monotonic: float) -> None:
+    """Reject malformed wire structure and external tensors in the same buffer.
+
+    This bounded structural check requires an IR version and one graph. It is
+    not an operator/type/shape checker or graph-normalization analysis. Views
+    skip tensor payloads without copying/reopening weights. Unknown protobuf
+    fields are skipped; unsupported groups, depth or field counts fail closed.
+    """
+    field_budget = [1_000_000]
+    graphs = [0]
+    ir_version = [0]
+
+    def visit(data: memoryview, kind: str, depth: int) -> None:
+        if depth > 64:
+            raise ModelIntegrityError("ONNX protobuf nesting limit exceeded")
+        offset = 0
+        while offset < len(data):
+            _check_acquisition_deadline(deadline_monotonic)
+            field_budget[0] -= 1
+            if field_budget[0] < 0:
+                raise ModelIntegrityError("ONNX protobuf field limit exceeded")
+            tag, offset = _protobuf_varint(data, offset)
+            number, wire = tag >> 3, tag & 7
+            if not 0 < number < (1 << 29):
+                raise ModelIntegrityError("invalid ONNX protobuf field")
+            value = None
+            payload = None
+            if wire == 0:
+                value, offset = _protobuf_varint(data, offset)
+            elif wire == 2:
+                length, offset = _protobuf_varint(data, offset)
+                end = offset + length
+                if end > len(data):
+                    raise ModelIntegrityError("truncated ONNX protobuf payload")
+                payload = data[offset:end]
+                offset = end
+            elif wire in {1, 5}:
+                offset += 8 if wire == 1 else 4
+                if offset > len(data):
+                    raise ModelIntegrityError("truncated ONNX protobuf scalar")
+            else:
+                raise ModelIntegrityError("unsupported ONNX protobuf wire type")
+            if kind == "tensor" and (number == 13 or (number == 14 and value != 0)):
+                raise ModelIntegrityError("external ONNX tensor data is unsupported")
+            if kind == "model" and number == 1:
+                if wire != 0 or value is None or value <= 0:
+                    raise ModelIntegrityError("invalid ONNX IR version")
+                ir_version[0] += 1
+            child = _ONNX_TENSOR_EDGES[kind].get(number)
+            if child is not None:
+                if payload is None:
+                    raise ModelIntegrityError("invalid ONNX message field")
+                if kind == "model" and number == 7:
+                    graphs[0] += 1
+                visit(payload, child, depth + 1)
+
+    visit(memoryview(model_bytes), "model", 0)
+    _check_acquisition_deadline(deadline_monotonic)
+    if graphs[0] != 1 or ir_version[0] != 1:
+        raise ModelIntegrityError("ONNX acquisition requires one graph and IR version")
+
+
+def _read_verified_artifact(
+    path: Path,
+    *,
+    max_bytes: int,
+    deadline_monotonic: float,
+) -> tuple[bytes, tuple[int, int, int, int]]:
+    _check_acquisition_deadline(deadline_monotonic)
+    try:
+        # NONBLOCK lets the regular-file check reject a FIFO without waiting
+        # for a writer. Regular-file reads still require deadline rechecks.
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        raise ModelMissingError("model acquisition artifact missing") from None
+    except OSError:
+        raise ModelIntegrityError("model acquisition artifact cannot be opened safely") from None
+    try:
+        _check_acquisition_deadline(deadline_monotonic)
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ModelIntegrityError("model acquisition requires a regular file")
+        if metadata.st_size > max_bytes:
+            raise ModelIntegrityError("model acquisition artifact exceeds byte cap")
+        identity = (metadata.st_size, metadata.st_mtime_ns, metadata.st_ino, metadata.st_ctime_ns)
+        chunks = []
+        total = 0
+        while True:
+            _check_acquisition_deadline(deadline_monotonic)
+            chunk = os.read(fd, min(64 * 1024, max_bytes - total + 1))
+            _check_acquisition_deadline(deadline_monotonic)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise ModelIntegrityError("model acquisition artifact exceeds byte cap")
+            chunks.append(chunk)
+        data = b"".join(chunks)
+        final = os.fstat(fd)
+        final_identity = (final.st_size, final.st_mtime_ns, final.st_ino, final.st_ctime_ns)
+        if len(data) != metadata.st_size or final_identity != identity:
+            raise ModelIntegrityError("model acquisition artifact changed during read")
+        _check_acquisition_deadline(deadline_monotonic)
+        return data, identity
+    except TimeoutError:
+        raise
+    except OSError:
+        raise ModelIntegrityError("model acquisition artifact read failed") from None
+    finally:
+        os.close(fd)
+
+
+def acquire_verified_model_bytes(
+    name: str,
+    *,
+    models_dir: Path | None,
+    expected: ModelProvenance,
+    max_model_bytes: int,
+    max_license_bytes: int,
+    deadline_monotonic: float,
+) -> VerifiedModelBytes:
+    """Acquire each artifact once, binding verification to the returned buffer.
+
+    ``expected`` is the caller's frozen manifest entry, never replaced by a
+    current global entry. Explicit positive caps bound each regular-file read;
+    the absolute monotonic deadline is checked around every read [RES-02].
+    The identical model buffer receives bounded protobuf structure/external-data
+    validation; this supplies no operator/shape or normalization attestation.
+    Missing files/pins raise ModelMissingError; unsafe files, caps or integrity
+    mismatches raise ModelIntegrityError; expiry raises TimeoutError.
+    Descriptor identities are invalidation hints, not immutable-file claims.
+    """
+    if not isinstance(name, str) or name not in MODEL_MANIFEST or not isinstance(expected, ModelProvenance):
+        raise ModelIntegrityError("invalid acquisition manifest entry")
+    for cap in (max_model_bytes, max_license_bytes):
+        if type(cap) is not int or cap <= 0:
+            raise ModelIntegrityError("acquisition byte caps must be positive integers")
+    if (
+        isinstance(deadline_monotonic, bool)
+        or not isinstance(deadline_monotonic, (int, float))
+        or not math.isfinite(deadline_monotonic)
+    ):
+        raise ModelIntegrityError("acquisition requires a finite monotonic deadline")
+    _check_acquisition_deadline(deadline_monotonic)
+    for pin in (expected.sha256, expected.license_sha256):
+        if pin == PENDING_OPERATOR_FETCH:
+            raise ModelMissingError("model acquisition pin missing")
+        if not isinstance(pin, str) or len(pin) != 64 or any(char not in "0123456789abcdef" for char in pin):
+            raise ModelIntegrityError("invalid acquisition digest pin")
+    if type(expected.size_bytes) is not int or expected.size_bytes <= 0:
+        raise ModelIntegrityError("acquisition requires an exact positive model size")
+    for filename in (expected.file_name, expected.license_file):
+        if (
+            not isinstance(filename, str)
+            or not filename
+            or "\0" in filename
+            or Path(filename).name != filename
+            or filename in {".", ".."}
+        ):
+            raise ModelIntegrityError("acquisition artifact names must be basenames")
+    root = Path(models_dir) if models_dir is not None else DEFAULT_MODELS_DIR
+    model_bytes, model_identity = _read_verified_artifact(
+        root / expected.file_name, max_bytes=max_model_bytes, deadline_monotonic=deadline_monotonic
+    )
+    model_sha256 = hashlib.sha256(model_bytes).hexdigest()
+    _check_acquisition_deadline(deadline_monotonic)
+    if len(model_bytes) != expected.size_bytes or model_sha256 != expected.sha256:
+        raise ModelIntegrityError("model acquisition size or digest mismatch")
+    license_bytes, license_identity = _read_verified_artifact(
+        root / expected.license_file, max_bytes=max_license_bytes, deadline_monotonic=deadline_monotonic
+    )
+    license_sha256 = hashlib.sha256(license_bytes).hexdigest()
+    _check_acquisition_deadline(deadline_monotonic)
+    if license_sha256 != expected.license_sha256:
+        raise ModelIntegrityError("license acquisition digest mismatch")
+    _validate_self_contained_onnx(model_bytes, deadline_monotonic=deadline_monotonic)
+    manifest_bytes = json.dumps(asdict(expected), sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    expectation_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+    _check_acquisition_deadline(deadline_monotonic)
+    return VerifiedModelBytes(
+        logical_name=name,
+        model_bytes=model_bytes,
+        model_sha256=model_sha256,
+        model_size_bytes=len(model_bytes),
+        license_sha256=license_sha256,
+        license_size_bytes=len(license_bytes),
+        manifest_snapshot=expected,
+        manifest_expectation_sha256=expectation_sha256,
+        observed_model_file_identity=model_identity,
+        observed_license_file_identity=license_identity,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -564,6 +799,8 @@ __all__ = [
     "ModelIntegrityError",
     "ModelMissingError",
     "ModelProvenance",
+    "VerifiedModelBytes",
+    "acquire_verified_model_bytes",
     "ModelVerifyOutcome",
     "NumericRuntimeFingerprint",
     "OPENCV_ZOO_COMMIT",

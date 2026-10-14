@@ -503,6 +503,7 @@ is_grok_sandbox() {
 # the per-lane lock immediately before archive/anchor and holds it through rm.
 grok_sandbox_is_stale() {
   local real="$1" path="$2" root key marker lease ttl now mtime issued expiry lease_line
+  local -r sandbox_ttl_max=315360000
   root="$(dirname "$real")"
   key="${real##*/}"
   marker="$real/.workbay-lane-sandbox"
@@ -513,11 +514,20 @@ grok_sandbox_is_stale() {
       skip "$path" "invalid sandbox TTL"
       return 1
       ;;
+  esac
+  ttl="${ttl#"${ttl%%[!0]*}"}"
+  ttl="${ttl:-0}"
+  case "$ttl" in
     0)
       skip "$path" "sandbox TTL reaping is disabled"
       return 1
       ;;
   esac
+  if [[ ${#ttl} -gt ${#sandbox_ttl_max} ]] ||
+    [[ "$ttl" -gt "$sandbox_ttl_max" ]]; then
+    skip "$path" "invalid sandbox TTL"
+    return 1
+  fi
 
   if [[ ! -f "$marker" ]]; then
     freshness_candidates=$((freshness_candidates + 1))
@@ -530,7 +540,7 @@ grok_sandbox_is_stale() {
       skip "$path" "could not read sandbox marker age"
       return 1
     fi
-    if [[ $((now - mtime)) -le "$ttl" ]]; then
+    if [[ $((now - mtime)) -le "$((10#$ttl))" ]]; then
       skip "$path" "sandbox marker has not reached TTL"
       return 1
     fi

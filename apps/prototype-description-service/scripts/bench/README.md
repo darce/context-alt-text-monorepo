@@ -55,6 +55,7 @@ Replace the sample names and timestamp with the values from the reset you just c
 | --- | --- |
 | `stack_media_id_missing` | analyze payload has no integer `media_id` / `stack_media_id` |
 | `provenance_sha_unavailable` | git SHA for the bench/harness tree is unavailable (no checkout) |
+| `identity_query_unknown` | score refuses an unknown or failed identity-query state; repair the leg query evidence before rescoring |
 | `join_row_missing` | score join hole (path or media_id has no metric row) |
 | `bootstrap_series_mismatch` | named cell's paired bootstrap series missing or length-mismatched |
 | `bootstrap_status` | cell stamp / demotion reason; `!= ok` on the primary or a Holm secondary demotes CONFIRMATORY |

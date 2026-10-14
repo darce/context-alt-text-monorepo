@@ -11,8 +11,8 @@ When ACX_ENV is set, --env must match it exactly. Without ACX_ENV, the CLI
 checks the configured DSN host before opening or using a database session.
 A matching --env prod still checks the DSN host, because a matching ACX_ENV is
 not proof of a nonlocal database. Matching dev and local skip the settings read.
-The portal-enabled Aura label dev-auraface is admitted only for its exact
-context and effective DSN identity; staging/prod Aura portal labels are refused (see
+The Aura labels (dev-auraface, staging-auraface, prod-auraface) are admitted
+only for their exact context and effective DSN identity (see
 scripts/_aura_target_guard.py).
 dev-fir requires its exact ACX_ENV and dedicated role/database on postgres or
 an explicit loopback endpoint. --tenant binds an invitation to an existing
@@ -137,8 +137,6 @@ def _validate_aura_runtime(env: str) -> str | None:
 
 
 def _validate_runtime_env(env: str) -> str | None:
-    if env in {"staging-auraface", "prod-auraface"}:
-        return f"env={env}: portal is disabled for this target; refusing to run"
     if env == "dev-fir":
         return _validate_fir_runtime()
     if env in AURA_LABELS:
@@ -374,7 +372,7 @@ async def run(argv: Sequence[str] | None = None, *, session: AsyncSession | None
             return 1
     elif args.command == "revoke" and status == 0 and revoked_metadata is not None:
         saved_id, saved_expiry = revoked_metadata
-        sys.stderr.write(f"revoked invitation_id={saved_id} expires_at={_format(saved_expiry)}\n")
+        sys.stderr.write(f"revoked invitation_id={saved_id} expires_at={saved_expiry}\n")
     elif args.command == "revoke" and revoke_not_pending:
         sys.stderr.write("error: invitation not found or not pending\n")
     sys.stderr.flush()

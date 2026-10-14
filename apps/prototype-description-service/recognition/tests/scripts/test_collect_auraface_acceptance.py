@@ -491,3 +491,92 @@ def test_actual_launch_is_in_total_caller_timing(tmp_path, monkeypatch):
                 reader.wait(timeout=1)
             reader.stdin.close()
             reader.stdout.close()
+
+
+@pytest.mark.parametrize('outcome', ['reaped', 'exhausted', 'already_reaped', 'launch_overrun'])
+def test_reap_uses_only_remaining_reserved_allowance(tmp_path, monkeypatch, outcome):
+    import io
+    module = load('collect_auraface_acceptance')
+    monkeypatch.setitem(collect.__globals__, 'load', lambda _: module)
+    clock, waits, readers = [0.0], [], []
+    monkeypatch.setattr(module.time, 'monotonic', lambda: clock[0])
+
+    class Reader:
+        returncode = None
+
+        def __init__(self, *args, **kwargs):
+            self.stdin, self.stdout = io.StringIO(), io.StringIO()
+            readers.append(self)
+            if outcome == 'launch_overrun':
+                clock[0] = 0.21
+
+        def communicate(self, *, input, timeout):
+            clock[0] += timeout
+            raise module.subprocess.TimeoutExpired('captured-reader', timeout)
+
+        def kill(self):
+            self.killed_at = clock[0]
+
+        def wait(self, timeout):
+            waits.append(timeout)
+            if len(waits) == 1:
+                assert timeout == 0.1
+                clock[0] += timeout
+                if outcome == 'already_reaped':
+                    self.returncode = -9
+                raise module.subprocess.TimeoutExpired('captured-reader', timeout)
+            assert timeout == pytest.approx(0.05)
+            clock[0] += timeout
+            if outcome == 'reaped':
+                self.returncode = -9
+                return -9
+            raise module.subprocess.TimeoutExpired('captured-reader', timeout)
+
+        def poll(self):
+            return self.returncode
+
+    monkeypatch.setattr(module.subprocess, 'Popen', Reader)
+    _, inputs = pair()
+    result = collect([tmp_path / 'unused'], inputs, deadline_monotonic=0.2)
+    reaped = outcome in ('reaped', 'already_reaped')
+    status = 'deadline_exceeded' if reaped else 'reader_unkillable'
+    assert result['acquisition_ledger'][0]['status'] == status
+    assert result['acquisition_ledger'][0]['reason_code'] == status
+    assert status in result['gaps']
+    assert len(waits) == (2 if outcome in ('reaped', 'exhausted') else 1)
+    assert len(readers) == 1
+    assert readers[0].returncode == (-9 if reaped else None)
+    assert clock[0] - readers[0].killed_at == pytest.approx(0.15 if len(waits) == 2 else 0.1)
+    assert readers[0].stdin.closed and readers[0].stdout.closed
+
+
+def test_join_policy_work_does_not_consume_launch_window(tmp_path, monkeypatch):
+    import io
+    module = load('collect_auraface_acceptance')
+    monkeypatch.setitem(collect.__globals__, 'load', lambda _: module)
+    clock, events = [0.0], []
+    monkeypatch.setattr(module.time, 'monotonic', lambda: clock[0])
+    validate = module._join._validate_policy
+
+    def delayed_policy(*args):
+        events.append('policy')
+        clock[0] += 0.05
+        return validate(*args)
+
+    class Reader:
+        returncode = 0
+
+        def __init__(self, *args, **kwargs):
+            events.append('launch')
+            self.stdin, self.stdout = io.StringIO(), io.StringIO()
+
+        def communicate(self, **kwargs):
+            return '{"status":"missing","bytes_read":0}', None
+
+    monkeypatch.setattr(module._join, '_validate_policy', delayed_policy)
+    monkeypatch.setattr(module.subprocess, 'Popen', Reader)
+    _, inputs = pair()
+    result = collect([tmp_path / 'unused'], inputs, deadline_monotonic=0.2)
+    assert events[0] == 'launch'
+    assert 'policy' in events
+    assert result['acquisition_ledger'][0]['status'] == 'missing'

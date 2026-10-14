@@ -1503,6 +1503,19 @@ def test_promote_to_dev_fir_never_retags_shared_dev(tmp_path: Path) -> None:
     push, restart, and verify must target dev-fir / the ``dev-fir`` tag, never
     the shared ``:dev`` tag and never ``acx-dev``.
     """
+    # GTMC-C78INT-01: fail locally if an unstubbed helper reaches transport.
+    bindir = tmp_path / "forbidden-transport"
+    bindir.mkdir()
+    transport_calls = tmp_path / "transport-calls"
+    for name in ("ssh", "scp"):
+        binary = bindir / name
+        binary.write_text(
+            f'#!/bin/sh\nprintf "%s\\n" "{name}" >>"{transport_calls}"\n'
+            'echo "forbidden promote transport" >&2\nexit 97\n'
+        )
+        binary.chmod(0o755)
+    env = {k: v for k, v in os.environ.items() if k != "CONFIRM"}
+    env["PATH"] = f"{bindir}:{env['PATH']}"
     records = tmp_path / "promote-records"
     command = f'''
 source "{SCRIPT}"
@@ -1510,6 +1523,7 @@ GREEN=; YELLOW=; RED=; RESET=
 REMOTE_BUILD=0
 init_deploy_ocir_docker_config() {{ return 0; }}
 preflight_ssh() {{ printf 'preflight_ssh\\n' >>"{records}"; return 0; }}
+preflight_env_manifest() {{ printf 'manifest:%s\\n' "$1" >>"{records}"; return 0; }}
 deploy_env_lease() {{ return 0; }}
 preflight_remote_face_pipeline_models() {{ printf 'preflight:%s\\n' "$1" >>"{records}"; return 0; }}
 preflight_remote_ocir_auth() {{ return 0; }}
@@ -1536,15 +1550,17 @@ do_promote dev dev-fir
         text=True,
         timeout=30,
         check=False,
-        env={k: v for k, v in os.environ.items() if k != "CONFIRM"},
+        env=env,
     )
     combined = result.stdout + result.stderr
+    assert not transport_calls.exists(), "promote spawned ssh/scp: " + combined
     assert result.returncode == 0, combined
     logged = records.read_text(encoding="utf-8").splitlines()
     pull = [line for line in logged if line.startswith("pull:")]
     assert pull, logged
     assert all(line.endswith(":dev") for line in pull), pull
     assert all(":dev-fir" not in line for line in pull), pull
+    assert [line for line in logged if line == "manifest:dev-fir"]
     assert [line for line in logged if line == "preflight:dev-fir"]
     assert [line for line in logged if line == "gate:dev-fir"]
     assert [line for line in logged if line == "push:dev-fir"]
@@ -1553,7 +1569,7 @@ do_promote dev dev-fir
     mutation_targets = [
         line.split(":", 1)[1]
         for line in logged
-        if line.startswith(("push:", "restart:", "verify:", "gate:", "preflight:"))
+        if line.startswith(("push:", "restart:", "verify:", "gate:", "preflight:", "manifest:"))
     ]
     assert mutation_targets, logged
     assert all(target == "dev-fir" for target in mutation_targets), mutation_targets

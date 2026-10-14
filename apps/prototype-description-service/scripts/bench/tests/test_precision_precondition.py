@@ -518,10 +518,7 @@ def test_score_uses_full_manifest_occasions_and_caps_golden150_tiers(
     run_dir = init_run_dir(tmp_path / "run", pair, manifest_path)
     media_ids = list(range(1, 7))
     predictions = [_pred(media_id) for media_id in media_ids]
-    # Removing export rows models pipeline misses, not a smaller detection
-    # population: an exhaustive manifest still contributes all six observations.
-    # The four-observation oracle below requires a partial scoring population
-    # while retaining all six entries for the occasion-size denominator.
+    # C82R-SARADJ-02: missing exports remain exhaustive-manifest detection misses.
     for stack_id in (A_STACK, B_STACK):
         _write_leg(run_dir, stack_id, predictions, media_ids)
         items_path = run_dir / "legs" / stack_id / "items.jsonl"
@@ -566,7 +563,10 @@ def test_score_uses_full_manifest_occasions_and_caps_golden150_tiers(
     original_bootstrap = score_report.bootstrap_paired_delta
 
     def observe_bootstrap(*args, **kwargs):
-        observed_calls.append(kwargs.copy())
+        observed_calls.append({
+            **kwargs,
+            "per_leg_counts": [[(item.tp, item.fp, item.fn) for item in series] for series in args[:2]],
+        })
         return original_bootstrap(*args, **kwargs)
 
     # Test an approved pinned manifest after its run metadata has disappeared.
@@ -592,13 +592,23 @@ def test_score_uses_full_manifest_occasions_and_caps_golden150_tiers(
         f"occasion:{session_a}",
         f"occasion:{session_a}",
         f"occasion:{session_b}",
+        f"occasion:{session_b}",
+        f"occasion:{session_b}",
     ]
     assert primary_call["occasion_full_size"] == {
         f"occasion:{session_a}": 3,
         f"occasion:{session_b}": 3,
     }
 
+    assert primary_call["per_leg_counts"] == [[(1, 0, 1)] * 4 + [(0, 0, 2)] * 2] * 2
+    accepted = json.loads((run_dir / "score" / "accepted_set.json").read_text(encoding="utf-8"))
+    assert accepted["accepted_set_size"] == 4
+    assert accepted["detection_scoring_set_size"] == 4
+    assert accepted["manifest_entry_count"] == 6
     frames = json.loads((run_dir / "score" / "frames.json").read_text(encoding="utf-8"))
+    assert frames["accepted_set_size"] == 4
+    assert frames["detection_scoring_set_size"] == 4
+    assert frames["manifest_entry_count"] == 6
     assert frames["primary_claim"]["claim_type"] == "equivalence"
     assert frames["primary_claim"]["direction"] is None
     # Both fixture boxes have usable geometry, so the localization pass drops none.
@@ -627,8 +637,13 @@ def test_score_uses_full_manifest_occasions_and_caps_golden150_tiers(
     for cell in primary_cells:
         assert cell["primary_claim_type"] == "equivalence"
         assert cell["primary_claim_direction"] is None
-        assert cell["resampling_unit"] == "occasion+image"
-        assert cell["partial_occasions"] == 1
+        assert cell["resampling_unit"] == "occasion"
+        assert cell["partial_occasions"] == 0
+        assert cell["true_positives"] == 4
+        assert cell["false_positives"] == 0
+        assert cell["false_negatives"] == 8
+        assert cell["recall"] == 4 / 12
+        assert cell["value"] == 4 / 12
         assert cell["tier"] == CrossbenchTier.DIRECTIONAL.value
         assert cell["reason"] == "golden150_bias_bound_pending"
 
@@ -638,6 +653,14 @@ def test_score_uses_full_manifest_occasions_and_caps_golden150_tiers(
     assert len(native_identification) == 2
     assert all(cell["tier"] == CrossbenchTier.DIRECTIONAL.value for cell in native_identification)
     assert all(cell["reason"] == "frame_fir5_native" for cell in native_identification)
+
+    native_call = next(call for call in observed_calls if call.get("cell") == NATIVE_ID)
+    assert native_call["occasion_ids"] == [f"occasion:{session_a}"] * 3 + [f"occasion:{session_b}"]
+    assert native_call["occasion_full_size"] == {f"occasion:{session_a}": 3, f"occasion:{session_b}": 3}
+    assert native_call["per_leg_counts"] == [[(1, 0, 0)] * 4] * 2
+    for cell in native_identification:
+        assert cell["resampling_unit"] == "occasion+image"
+        assert cell["partial_occasions"] == 1
 
     # Preserve the strict scorer's refusal as a regression on a golden150 run.
     invalid_manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))

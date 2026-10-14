@@ -513,6 +513,125 @@ durable_case shared-nonblocking-lock durable_lock
 durable_case reaper-exit-status durable_exit_status
 durable_case lock-survives-reaper-fd-reuse durable_lock_lifetime
 durable_case bounded-log-rotation durable_rotate
+
+# Argument-position mentions never confer ownership of a user's job.
+regression_preserve_argument() {
+  printf '%s\n' '# user comment' '' "$REGRESSION_JOB" '' >"$CRONTAB_FILE"
+  cp "$CRONTAB_FILE" "$D_DIR/before"
+  durable_install
+  durable_expect test "$D_RC" -eq 0 || return 1
+  sed '/^# acx-reap-lane$/,$d' "$CRONTAB_FILE" >"$D_DIR/after"
+  durable_expect cmp -s "$D_DIR/before" "$D_DIR/after"
+}
+regression_command_position() {
+  printf '%s\n' '17 * * * * env MODE="space value" "$HOME/bin/reap-lane.sh" --yes' >"$CRONTAB_FILE"
+  durable_install
+  durable_expect test "$D_RC" -eq 0 || return 1
+  durable_expect test "$(grep -c 'reap-lane.sh' "$CRONTAB_FILE")" -eq 1 || return 1
+  durable_expect grep -qF 'reap-lane.sh.cron' "$CRONTAB_FILE"
+}
+regression_idempotence() {
+  export WORKBAY_REMOTE_AGENT_ROOT="$HOME/agents"
+  cat >"$D_DIR/unrelated" <<'REGRESSION_JOBS'
+# comment
+
+0 1 * * * echo reap-lane.sh
+0 2 * * * test -f "$HOME/bin/reap-lane.sh"
+0 3 * * * rotate-logs /var/log/reap-lane.sh
+0 4 * * * echo "a reap-lane.sh argument"
+
+REGRESSION_JOBS
+  cp "$D_DIR/unrelated" "$CRONTAB_FILE"
+  cat >>"$CRONTAB_FILE" <<'REGRESSION_MAIN'
+# acx-reap-lane
+
+# preserve adjacent comment
+17 6 * * 1 /fixture/reap-lane.sh --all /fixture/old
+23 * * * * WORKBAY_REMOTE_AGENT_ROOT=/fixture "$HOME/bin/reap-lane.sh" --yes
+REGRESSION_MAIN
+  printf '\n# preserve adjacent comment\n' >>"$D_DIR/unrelated"
+  durable_install
+  durable_expect test "$D_RC" -eq 0 || return 1
+  sed '/^# acx-reap-lane$/,$d' "$CRONTAB_FILE" >"$D_DIR/after"
+  durable_expect cmp -s "$D_DIR/unrelated" "$D_DIR/after" || return 1
+  durable_expect test "$(grep -c '^17 .*reap-lane.sh.cron' "$CRONTAB_FILE")" -eq 1 || return 1
+  durable_expect test "$(grep -c '^23 .*reap-lane.sh.cron' "$CRONTAB_FILE")" -eq 1 || return 1
+  durable_expect test "$(count_marker)" -eq 1 || return 1
+  cp "$CRONTAB_FILE" "$D_DIR/first"
+  durable_install
+  durable_expect test "$D_RC" -eq 0 || return 1
+  durable_expect cmp -s "$CRONTAB_FILE" "$D_DIR/first"
+}
+regression_ttl_reject_fresh() {
+  export WORKBAY_REMOTE_AGENT_ROOT="$HOME/agents" WORKBAY_REMOTE_AGENT_SANDBOX_TTL_SEC="$REGRESSION_TTL"
+  # No crontab read/write is permissible on a validation rejection.
+  mkdir -p "$D_DIR/trapbin"
+  printf '#!/bin/sh\necho called >>"$D_DIR/crontab-calls"\nexec "$REGRESSION_CRONTAB" "$@"\n' >"$D_DIR/trapbin/crontab"
+  chmod +x "$D_DIR/trapbin/crontab"
+  export D_DIR REGRESSION_CRONTAB="$WORKDIR/fakebin/crontab" PATH="$D_DIR/trapbin:$PATH"
+  durable_install
+  durable_expect test "$D_RC" -ne 0 || return 1
+  durable_expect grep -qF '315360000' "$D_DIR/install-output" || return 1
+  durable_expect test ! -e "$D_DIR/crontab-calls" || return 1
+  durable_expect test ! -s "$CRONTAB_FILE" || return 1
+  durable_expect test ! -e "$HOME/bin/reap-lane.sh.cron" || return 1
+  durable_expect test ! -e "$HOME/bin/reap-lane.sh" || return 1
+  durable_expect test ! -e "$HOME/lane-archive.git"
+}
+regression_ttl_reject_installed() {
+  export WORKBAY_REMOTE_AGENT_ROOT="$HOME/agents"
+  durable_install
+  durable_expect test "$D_RC" -eq 0 || return 1
+  cp "$CRONTAB_FILE" "$D_DIR/cron-before"
+  cp "$HOME/bin/reap-lane.sh" "$D_DIR/reaper-before"
+  cp "$HOME/bin/reap-lane.sh.cron" "$D_DIR/wrapper-before"
+  local ttl
+  for ttl in 315360001 9223372036854775807 9223372036854775808 18446744073709551616 18446744073709552516 9999999999999999999; do
+    export WORKBAY_REMOTE_AGENT_SANDBOX_TTL_SEC="$ttl"
+    durable_install
+    durable_expect test "$D_RC" -ne 0 || return 1
+    durable_expect cmp -s "$CRONTAB_FILE" "$D_DIR/cron-before" || return 1
+    durable_expect cmp -s "$HOME/bin/reap-lane.sh" "$D_DIR/reaper-before" || return 1
+    durable_expect cmp -s "$HOME/bin/reap-lane.sh.cron" "$D_DIR/wrapper-before" || return 1
+  done
+}
+regression_ttl_ceiling() {
+  export WORKBAY_REMOTE_AGENT_ROOT="$HOME/agents" WORKBAY_REMOTE_AGENT_SANDBOX_TTL_SEC=315360000
+  durable_install
+  durable_expect test "$D_RC" -eq 0 || return 1
+  durable_run 23 || return 1
+  durable_expect grep -qxF 'ttl=<315360000>' "$D_CALLS" || return 1
+  WORKBAY_REMOTE_AGENT_SANDBOX_TTL_SEC="$(sed -n 's/^ttl=<\([0-9]*\)>$/\1/p' "$D_CALLS")"
+  # Source the production predicate, never the reaper's executable main body.
+  awk '/^path_mtime\(\)/ || /^grok_sandbox_is_stale\(\)/ { copy=1 } copy { print } copy && /^}/ { copy=0 }' "${ROOT}/scripts/vm/reap-lane.sh" >"$D_DIR/predicate.sh"
+  source "$D_DIR/predicate.sh"
+  skip() { printf '%s\n' "$2" >"$D_DIR/held-reason"; }
+  mkdir -p "$D_DIR/sandbox"
+  touch "$D_DIR/sandbox/.workbay-lane-sandbox"
+  if grok_sandbox_is_stale "$D_DIR/sandbox" "$D_DIR/sandbox"; then
+    echo '  fresh marker incorrectly STALE'
+    return 1
+  fi
+  durable_expect grep -qxF 'sandbox marker has not reached TTL' "$D_DIR/held-reason"
+}
+REGRESSION_JOB='0 1 * * * echo reap-lane.sh'
+durable_case argument-echo-preserved regression_preserve_argument
+REGRESSION_JOB='0 2 * * * test -f "$HOME/bin/reap-lane.sh"'
+durable_case argument-test-preserved regression_preserve_argument
+REGRESSION_JOB='0 3 * * * rotate-logs /var/log/reap-lane.sh'
+durable_case argument-path-preserved regression_preserve_argument
+REGRESSION_JOB='0 4 * * * echo "a reap-lane.sh argument"'
+durable_case argument-quoted-preserved regression_preserve_argument
+REGRESSION_JOB='@daily echo a b c "$HOME/bin/reap-lane.sh"'
+durable_case argument-special-schedule-preserved regression_preserve_argument
+durable_case command-position-converged regression_command_position
+durable_case argument-converge-idempotence regression_idempotence
+for REGRESSION_TTL in 315360001 9223372036854775807 9223372036854775808 18446744073709551616 18446744073709552516 9999999999999999999; do
+  durable_case "ttl-reject-fresh-$REGRESSION_TTL" regression_ttl_reject_fresh
+done
+durable_case ttl-reject-installed-unchanged regression_ttl_reject_installed
+durable_case ttl-ceiling-production-held regression_ttl_ceiling
+
 printf 'DURABLE_COUNTS pass=%s fail=%s\n' "$durable_passes" "$durable_failures"
 
 echo

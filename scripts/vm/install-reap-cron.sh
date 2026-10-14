@@ -32,6 +32,14 @@ if [[ ${#remote_agent_ttl} -lt 3 ]] || [[ ${#remote_agent_ttl} -eq 3 && "$remote
   echo 'install-reap-cron: WORKBAY_REMOTE_AGENT_SANDBOX_TTL_SEC must be an integer >= 900' >&2
   exit 1
 fi
+# Ten years leaves ample margin below the consumer's signed 64-bit arithmetic.
+readonly REMOTE_AGENT_TTL_MAX=315360000
+# Compare length first: never evaluate an unbounded digit string as arithmetic.
+if [[ ${#remote_agent_ttl} -gt ${#REMOTE_AGENT_TTL_MAX} ]] ||
+   [[ ${#remote_agent_ttl} -eq ${#REMOTE_AGENT_TTL_MAX} && "$remote_agent_ttl" > "$REMOTE_AGENT_TTL_MAX" ]]; then
+  echo "install-reap-cron: WORKBAY_REMOTE_AGENT_SANDBOX_TTL_SEC must be <= $REMOTE_AGENT_TTL_MAX" >&2
+  exit 1
+fi
 if [[ "${WORKBAY_REMOTE_AGENT_ROOT:-}" == *$'\n'* || "${WORKBAY_REMOTE_AGENT_ROOT:-}" == *$'\r'* ]]; then
   echo 'install-reap-cron: WORKBAY_REMOTE_AGENT_ROOT must fit on one crontab line' >&2
   exit 1
@@ -86,29 +94,47 @@ if [[ -n "${WORKBAY_REMOTE_AGENT_ROOT:-}" ]]; then
   remote_entry="23 * * * * WORKBAY_REMOTE_AGENT_ROOT=${remote_root} WORKBAY_REMOTE_AGENT_SANDBOX_TTL_SEC=${remote_agent_ttl} \"\$HOME/bin/reap-lane.sh.cron\" remote --yes --archive-to \"\$HOME/lane-archive.git\" --all ${remote_root}"
 fi
 
-# Own hand-added invocations too; preserve all unrelated comments and blank
-# lines, including trailing blank lines lost by command substitution. [RES-25]
+# Own command-position invocations of our installed reaper, including hand-added
+# jobs; arguments never confer ownership. Marker-adjacent legacy reapers may
+# have a different install path. Preserve unrelated comments and blanks. [RES-25]
 {
   awk -v m="$marker" '
-    function before_comment(line, i, c, quote, escaped) {
+    # Read shell words without executing expansions; quoted spaces stay in-word.
+    function words(line, a, i, c, quote, escaped, word, active, n) {
       for (i = 1; i <= length(line); i++) {
         c = substr(line, i, 1)
-        if (escaped) { escaped = 0; continue }
-        if (c == "\\" && quote != "\047") { escaped = 1; continue }
+        if (escaped) { word = word c; escaped = 0; continue }
+        if (c == "\\" && quote != "\047") { escaped = 1; active = 1; continue }
         if (quote != "") {
           if (c == quote) quote = ""
+          else word = word c
           continue
         }
-        if (c == "\047" || c == "\"") { quote = c; continue }
-        if (c == "#" && (i == 1 || substr(line, i - 1, 1) ~ /[[:space:];&|]/))
-          return substr(line, 1, i - 1)
+        if (c == "\047" || c == "\"") { quote = c; active = 1; continue }
+        if (c == "#" && !active) break
+        if (c ~ /[[:space:]]/) {
+          if (active) { a[++n] = word; word = ""; active = 0 }
+        } else { word = word c; active = 1 }
       }
-      return line
+      if (active) a[++n] = word
+      return n
     }
-    $0 == m { next }
-    /^[[:space:]]*#/ { print; next }
-    before_comment($0) ~ /(^|[[:space:]\/"\047(;&|])reap-lane[.]sh([.]cron)?($|[[:space:])"\047;&|])/ { next }
-    { print }
+    function managed(line, adjacent, a, n, i, command) {
+      n = words(line, a)
+      if (n < 6 || a[1] !~ /^[0-9*]/) return 0
+      i = 6
+      if (a[i] == "env") i++
+      while (i <= n && a[i] ~ /^[A-Za-z_][A-Za-z_0-9]*=/) i++
+      command = a[i]
+      if (command == "$HOME/bin/reap-lane.sh" ||
+          command == "${HOME}/bin/reap-lane.sh" ||
+          command == "$HOME/bin/reap-lane.sh.cron" ||
+          command == "${HOME}/bin/reap-lane.sh.cron") return 1
+      return adjacent && command ~ /(^|\/)reap-lane[.]sh([.]cron)?$/
+    }
+    $0 == m { adjacent = 1; next }
+    /^[[:space:]]*(#|$)/ { print; next }
+    { owned = managed($0, adjacent); adjacent = 0; if (!owned) print }
   ' "$stage/current"
   printf '%s\n' "$marker" "$entry"
   if [[ -n "$remote_entry" ]]; then printf '%s\n' "$remote_entry"; fi

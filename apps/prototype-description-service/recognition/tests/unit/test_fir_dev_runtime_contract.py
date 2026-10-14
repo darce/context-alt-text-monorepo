@@ -353,7 +353,9 @@ def _apply_candidate512_contract(snapshot: dict[str, Any]) -> None:
 
     from recognition.infrastructure.face_pipeline.provenance import MODEL_MANIFEST
 
-    model_id = f"auraface+{_runtime_space_token()}@512d/l2/cosine"
+    # Emitter-matching identity: EmbeddingModelManifest.model_id = framework + "-" + name, and the
+    # AuraFace emitter's framework is "insightface" (test_face_pipeline_adapter.py asserts this).
+    model_id = f"insightface-auraface+{_runtime_space_token()}@512d/l2/cosine"
     hashes = {
         "yunet": f"sha256:{MODEL_MANIFEST['yunet'].sha256}",
         "auraface": f"sha256:{MODEL_MANIFEST['auraface'].sha256}",

@@ -39,7 +39,7 @@ def _load(name, path):
 
 @pytest.fixture(scope="module")
 def captures():
-    return _load("c77_g2_readonly_captures", REPO / "scripts/tests/test_gtmr_gpu_runtime_receipts.py")
+    return _load("c77_g2_readonly_captures", Path(__file__).resolve().with_name("test_gtmr_gpu_runtime_receipts.py"))
 
 
 @pytest.fixture(autouse=True)

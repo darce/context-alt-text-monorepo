@@ -336,13 +336,14 @@ def test_wrong_vector_width_is_observed_without_backfilling_expected_width():
     assert all(column["dimensions"] == 128 for column in columns), "expected Aura width must not replace observed width"
 
 
+@pytest.mark.parametrize("deadline_offset", [0.01, 0.04])
 @pytest.mark.parametrize("failure", ["permission", "timeout"])
-def test_query_failure_is_sanitized_incomplete_and_rolls_back(failure, monkeypatch):
+def test_query_failure_is_sanitized_incomplete_and_rolls_back(failure, monkeypatch, deadline_offset):
     fn = capture()
     session = ServingSession(failure=failure)
     async def bounded_capture():
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + 0.02
+        deadline = loop.time() + deadline_offset
         scheduled = []
         budgets = []
         call_at = loop.call_at
@@ -376,7 +377,7 @@ def test_query_failure_is_sanitized_incomplete_and_rolls_back(failure, monkeypat
                     assert session.query_cancelled, 'producer abandoned the in-flight query'
                     assert scheduled, 'query had no producer timeout'
                     if budgets:
-                        assert all(budget is not None and 0 < budget <= 0.02 for budget in budgets), 'query timeout ignored the supplied deadline'
+                        assert all(budget is not None and 0 < budget <= deadline_offset for budget in budgets), 'query timeout ignored the supplied deadline'
                     else:
                         assert max(scheduled) <= deadline + 0.001, 'query timeout ignored the supplied deadline'
                 return plain(result)
@@ -538,3 +539,66 @@ def test_record_double_supports_attribute_protocol_and_copy():
 def test_provider_guard_detects_aliases_and_relative_imports(source):
     with pytest.raises(AssertionError):
         assert_offline_provider_imports(source, 'recognition.application')
+
+
+@pytest.mark.parametrize("max_rows", [2, 8])
+def test_census_limit_is_bound_to_requested_cap_plus_one(max_rows):
+    """GTMC-C80A-G2T-F05: a fixed SQL limit can hide a larger catalog."""
+    class LimitSession(ServingSession):
+        census = None
+
+        async def execute(self, statement, *positional, **keywords):
+            sql = str(statement).lower()
+            if "pg_class" in sql:
+                params = dict(statement.compile().params)
+                if positional:
+                    params.update(positional[0])
+                params.update(keywords.get("params", {}))
+                self.census = sql, params
+            return await super().execute(statement, *positional, **keywords)
+
+    session = LimitSession(columns=9)
+    result = run(capture(), session, max_rows=max_rows)
+    assert session.census is not None, "producer did not execute a census"
+    sql, params = session.census
+    limit = re.search(r"\blimit\s+(:\w+|\d+)", sql)
+    assert limit and limit[1].startswith(":"), "census LIMIT must be a bound cap"
+    assert params[limit[1][1:]] == max_rows + 1, "census LIMIT must request cap + 1"
+    # Reject literal name restrictions while permitting bound SQL expressions.
+    assert not re.search(
+        r"\b(?:\w+\.)?(?:relname|table_name|attname)\s*"
+        r"(?:(?:=|<>|!=)\s*'|(?:not\s+)?in\s*\([^)]*'|"
+        r"=\s*any\s*\(\s*array\s*\[)", sql), "census restricts literal names"
+    assert len(result["columns"]) == max_rows
+    assert result["status"] == "incomplete"
+    assert result["reason_code"] == "catalog_truncated"
+
+
+@pytest.mark.parametrize("alternative", ["relkind_not_in", "domain_coalesce", "relkind_param"])
+def test_census_accepts_equivalent_sql_predicates(alternative, monkeypatch):
+    """GTMC-C80A-G2T-F05: spelling controls for the inert SQL evaluator."""
+    fn = capture()
+    module = sys.modules[fn.__module__]
+    sql = module._CENSUS_SQL
+    if alternative == "relkind_not_in":
+        sql = sql.replace("c.relkind IN ('r', 'p', 'm')",
+                          "c.relkind NOT IN ('i', 'S', 't', 'v', 'c', 'f', 'I')")
+    elif alternative == "domain_coalesce":
+        sql = sql.replace("t.typbasetype = b.oid",
+                          "b.oid = coalesce(nullif(t.typbasetype, 0), t.oid)")
+    else:
+        sql = sql.replace("c.relkind IN ('r', 'p', 'm')", "c.relkind = ANY(:kinds)")
+    monkeypatch.setattr(module, "_CENSUS_SQL", sql)
+
+    class AlternativeSession(ServingSession):
+        async def execute(self, statement, *positional, **keywords):
+            if alternative == "relkind_param" and "pg_class" in str(statement):
+                params = dict(positional[0] if positional else keywords.get("params", {}))
+                params["kinds"] = ["r", "p", "m"]
+                return await super().execute(statement, params)
+            return await super().execute(statement, *positional, **keywords)
+
+    result = run(fn, AlternativeSession())
+    assert result["status"] == "complete"
+    assert {column["table_name"] for column in result["columns"]} == {
+        f"table_{i}" for i in range(4)}

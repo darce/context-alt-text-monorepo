@@ -33,10 +33,13 @@ representable field for those, so a RED on them would be import or schema noise.
 from __future__ import annotations
 
 import importlib.util
+import json
 from collections.abc import Mapping
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EVIDENCE_CHECKER = REPO_ROOT / "scripts" / "gpu_burst_evidence.py"
@@ -106,6 +109,66 @@ def _final_item(description: str, model_id: str = PINNED_MODEL) -> dict[str, obj
         "tier": "final_gpu",
         "provenance": {"model_id": model_id},
     }
+
+
+def test_receipt_wrapper_reads_every_sibling() -> None:
+    first = _final_item("first")
+    second = _final_item("second", OTHER_MODEL)
+    assert evidence._receipt_items({"items": [first], "data": {"results": [second]}}) == [first, second]
+
+
+@pytest.mark.parametrize("sibling_key", ["receipts", "items", "descriptions", "results", "data", "value"])
+@pytest.mark.parametrize("shape", ["list", "mapping", "empty_first"])
+def test_receipt_sibling_model_conflict_fails(tmp_path: Path, sibling_key: str, shape: str) -> None:
+    first_key = "items" if sibling_key != "items" else "receipts"
+    first = _final_item("first")
+    second = _final_item("second", OTHER_MODEL)
+    payload: dict[str, object] = {first_key: [first], sibling_key: [second]}
+    if shape == "mapping":
+        payload[sibling_key] = {"results": [second]}
+    elif shape == "empty_first":
+        payload[first_key] = []
+        payload[sibling_key] = {"receipts": [first, second]}
+    verdict = _verdict(_bundle(tmp_path, receipts=payload))
+    _assert_only_wp_predicate_can_differ(verdict)
+    check = _check(verdict, "wp_descriptions")
+    assert check["passed"] is False
+    assert "2 model identities" in check["detail"]
+
+
+def test_receipt_sibling_depth_error_is_not_hidden(tmp_path: Path) -> None:
+    nested: object = {"items": [_final_item("deep", OTHER_MODEL)]}
+    for _ in range(evidence.MAX_NESTED_DEPTH + 1):
+        nested = {"data": nested}
+    verdict = _verdict(_bundle(tmp_path, receipts={"items": [_final_item("first")], "data": nested}))
+    check = _check(verdict, "wp_descriptions")
+    assert check["passed"] is False
+    assert "maximum nested depth" in check["detail"]
+
+
+@pytest.mark.parametrize("sibling_key", ["events", "items", "audit_events", "audit-events", "data"])
+@pytest.mark.parametrize("nested", [False, True])
+def test_audit_sibling_extra_start_is_not_hidden(tmp_path: Path, sibling_key: str, nested: bool) -> None:
+    control = fixtures._custom_bundle(tmp_path)
+    events = json.loads((control / "audit-events.json").read_text())["data"]
+    extra = {**events[0], "eventId": "start-extra"}
+    first_key = "events" if sibling_key != "events" else "items"
+    payload = {first_key: events, sibling_key: [extra]}
+    if nested:
+        payload = {first_key: events, "data": {sibling_key if sibling_key != "data" else "items": [extra]}}
+    assert sorted(item["eventId"] for item in evidence._audit_items(payload)) == ["start-1", "start-extra", "stop-1"]
+    groups = evidence._audit_event_groups(payload, instance_id=fixtures.INSTANCE_ID)
+    assert sum(len(group) for group in groups.values()) == 3
+    other = tmp_path / "other"
+    other.mkdir()
+    verdict = _verdict(fixtures._custom_bundle(other, audit=payload))
+    assert verdict["passed"] is False
+    assert "observed 2 StartInstance" in _check(verdict, "exactly_one_start_instance")["detail"]
+    history = evidence.build_state_history_document(
+        payload, instance_id=fixtures.INSTANCE_ID, since=fixtures.SINCE, until=fixtures.UNTIL
+    )
+    assert [item["action"] for item in history["observations"] if "action" in item].count("StartInstance") == 2
+    assert history["proof_status"] == "unknown"
 
 
 # ---- healthy controls: must pass on unchanged production and after any fix ----

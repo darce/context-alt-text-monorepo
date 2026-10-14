@@ -26,7 +26,6 @@ import sys
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlparse
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,6 +37,8 @@ from recognition.infrastructure.repositories.portal_identity_repository import (
     _normalize_email,
 )
 from scripts._aura_target_guard import AURA_LABELS, validate_aura_target
+from scripts._aura_target_guard import dsn_host as _dsn_host
+from scripts._aura_target_guard import is_local_host as _is_local_host
 
 _ENV_CHOICES = ("prod", "dev", "local", *AURA_LABELS)
 _DEFAULT_TTL_HOURS = 72
@@ -45,17 +46,12 @@ _MIN_TTL_HOURS = 1
 _MAX_TTL_HOURS = 336
 
 
-def _dsn_host(dsn: str) -> str:
-    return (urlparse(dsn).hostname or "").lower()
-
-
-def _is_local_host(host: str) -> bool:
-    return host in {"localhost", "127.0.0.1", "::1"} or host.endswith(".local")
-
-
 def _validate_env_vs_dsn(env: str, dsn: str) -> str | None:
     """Return an error string on mismatch, or None when env and DSN agree."""
-    host = _dsn_host(dsn)
+    try:
+        host = _dsn_host(dsn)
+    except ValueError as exc:
+        return f"env={env}: {exc}; refusing to run"
     if not host:
         return f"env={env}: DSN has no host; refusing to run"
     if env == "prod" and _is_local_host(host):

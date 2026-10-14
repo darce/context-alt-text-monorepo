@@ -489,7 +489,9 @@ def assert_offline_provider_imports(source, package):
     forbidden = (
         'onnxruntime', 'cv2', 'recognition.infrastructure.face_pipeline',
         'recognition.infrastructure.embeddings', 'recognition.infrastructure.embeddings.runtime_factory',
+        'recognition.application.embedding.runtime_factory',
         'recognition.application.settings', 'recognition.config',
+        'recognition.interface_adapters.http.deps.services',
         'recognition.interface_adapters.http.deps.session', 'shared.secrets',
         'db', 'api', 'requests', 'httpx', 'urllib', 'socket', 'asyncpg', 'psycopg',
         'sqlalchemy.create_engine', 'sqlalchemy.engine.create_engine',
@@ -539,6 +541,117 @@ def test_record_double_supports_attribute_protocol_and_copy():
 def test_provider_guard_detects_aliases_and_relative_imports(source):
     with pytest.raises(AssertionError):
         assert_offline_provider_imports(source, 'recognition.application')
+
+
+@pytest.mark.parametrize("source", [
+    pytest.param('import recognition.application.embedding.runtime_factory as provider',
+                 id="embedding_runtime_factory"),
+    pytest.param('import recognition.interface_adapters.http.deps.services as provider',
+                 id="http_services"),
+])
+def test_provider_guard_refuses_aliased_application_providers(source):
+    with pytest.raises(AssertionError):
+        assert_offline_provider_imports(source, 'recognition.application')
+
+
+@pytest.mark.parametrize("failure", ["permission", "timeout"])
+def test_hung_rollback_is_cancelled_within_cleanup_budget(failure):
+    fn = capture()
+
+    class HungRollbackSession(ServingSession):
+        rollback_started = False
+        rollback_cancelled = False
+
+        async def rollback(self):
+            self.rollbacks += 1
+            self.rollback_started = True
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.rollback_cancelled = True
+                raise
+
+    session = HungRollbackSession(failure=failure)
+
+    async def bounded_capture():
+        deadline = time.monotonic() + (0.01 if failure == "timeout" else 2)
+        try:
+            return plain(await asyncio.wait_for(
+                fn(session, **args(deadline=deadline)), timeout=0.3))
+        except TimeoutError:
+            pytest.fail("catalog capture exceeded its rollback cleanup budget")
+
+    result = asyncio.run(bounded_capture())
+    assert session.rollback_started
+    assert session.rollback_cancelled
+    assert session.rollbacks == 1
+    assert result["status"] == "incomplete"
+    assert result["reason_code"] == (
+        "deadline_exceeded" if failure == "timeout" else "permission_denied")
+
+
+@pytest.mark.parametrize("dimensions", [None, 0, -1, True, "512"],
+                         ids=["missing", "zero", "negative", "boolean", "string"])
+def test_unknown_dimensions_refuse_complete_catalog(dimensions):
+    class UnknownDimensionSession(ServingSession):
+        async def execute(self, statement, *positional, **keywords):
+            result = await super().execute(statement, *positional, **keywords)
+            if "pg_class" in str(statement):
+                return Result([dict(row, dimensions=dimensions) for row in result.all()])
+            return result
+
+    result = run(capture(), UnknownDimensionSession(columns=1))
+    assert len(result["columns"]) == 1
+    column = result["columns"][0]
+    assert column["dimensions"] == dimensions
+    assert type(column["dimensions"]) is type(dimensions)
+    assert column["row_count"] == 0
+    assert result["status"] == "incomplete"
+    assert result["reason_code"] == "dimension_unknown"
+
+
+@pytest.mark.parametrize("row_count", [None, -1, False, True, "0"],
+                         ids=["missing", "negative", "false", "true", "string"])
+def test_unknown_row_counts_refuse_complete_catalog(row_count):
+    class UnknownCountSession(ServingSession):
+        async def execute(self, statement, *positional, **keywords):
+            if "count(*)" in str(statement):
+                return Result([{"row_count": row_count}])
+            if "attname AS model_column" in str(statement):
+                return Result([])
+            return await super().execute(statement, *positional, **keywords)
+
+    result = run(capture(), UnknownCountSession(columns=1))
+    assert len(result["columns"]) == 1
+    column = result["columns"][0]
+    assert column["dimensions"] == 512
+    assert column["row_count"] == row_count
+    assert type(column["row_count"]) is type(row_count)
+    assert column["model_ids"] == []
+    assert result["status"] == "incomplete"
+    assert result["reason_code"] == "row_count_unknown"
+
+
+def test_populated_store_with_model_lineage_still_refuses_complete_catalog():
+    class PopulatedSession(ServingSession):
+        async def execute(self, statement, *positional, **keywords):
+            sql = str(statement).lower()
+            if "count(*)" in sql:
+                return Result([{"row_count": 1}])
+            if "attname as model_column" in sql:
+                return Result([{"model_column": "embedding_model"}])
+            if "select distinct" in sql:
+                return Result([{"model_id": "synthetic-model"}])
+            return await super().execute(statement, *positional, **keywords)
+
+    result = run(capture(), PopulatedSession(columns=1))
+    assert len(result["columns"]) == 1
+    column = result["columns"][0]
+    assert column["dimensions"] == 512
+    assert column["row_count"] == 1
+    assert column["model_ids"] == ["synthetic-model"]
+    assert result["status"] == "incomplete"
+    assert result["reason_code"] == "store_validation_missing"
 
 
 @pytest.mark.parametrize("max_rows", [2, 8])

@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 export LC_ALL=C
-[[ "$(timeout --kill-after=2s 10s id -u)" == 0 ]] || {
+[[ $# == 0 || ( $# == 1 && "$1" == --tmp-report ) ]] || {
+  printf 'usage: host-hygiene.sh [--tmp-report]\n' >&2
+  exit 2
+}
+export HYGIENE_TMP_REPORT_ONLY=0
+if [[ ${1:-} == --tmp-report ]]; then
+  export HYGIENE_TMP_REPORT_ONLY=1
+fi
+[[ "$HYGIENE_TMP_REPORT_ONLY" == 1 || "$(timeout --kill-after=2s 10s id -u)" == 0 ]] || {
   printf 'host-hygiene: run as root\n' >&2
   exit 1
 }
@@ -117,8 +125,12 @@ def images(result):
     result['freed_measured'] = True
 
 
-def tree_guard(path, cutoff):
+def tree_guard(path, cutoff, metadata=None):
     root_stat = os.lstat(path)
+    if os.path.basename(path) == '.git':
+        return 'git'
+    if os.path.basename(path) in {'.workbay-lane-sandbox', '.workbay-scratch'}:
+        return 'marker'
     if root_stat.st_dev != os.lstat(TMP_ROOT).st_dev:
         return 'mount'
     if root_stat.st_uid != GATE_UID:
@@ -135,13 +147,17 @@ def tree_guard(path, cutoff):
             for entry in entries:
                 scanned += 1
                 if scanned > 100000:
-                    raise RuntimeError('tree scan limit')
+                    if directory != path and metadata is not None:
+                        metadata.update(barrier=directory, reason='scan_limit')
+                    return 'scan_limit' if directory == path else 'split'
                 children.append(entry)
         names = {entry.name for entry in children}
         if names & {'.workbay-lane-sandbox', '.workbay-scratch'}:
             return 'marker'
         if '.git' in names or {'HEAD', 'objects', 'refs'} <= names:
-            return 'git'
+            if directory != path and metadata is not None:
+                metadata.update(barrier=directory, reason='git')
+            return 'git' if directory == path else 'split'
         for entry in children:
             info = os.lstat(entry.path)
             newest = max(newest, info.st_mtime)
@@ -151,6 +167,8 @@ def tree_guard(path, cutoff):
                 return 'uid'
             if stat.S_ISDIR(info.st_mode):
                 stack.append(entry.path)
+    if metadata is not None:
+        metadata['newest'] = newest
     return 'recent' if newest > cutoff else None
 
 
@@ -206,43 +224,140 @@ def tmp_mode():
 
 
 def tmp_sweep(result):
-    result['held_git'] = 0
-    result['held_live'] = 0
-    result['mode'] = tmp_mode()
+    result.update(held_git=0, held_live=0, would_reclaim=0, entries={}, skip_reasons={})
+    result['mode'] = 'report' if os.environ.get('HYGIENE_TMP_REPORT_ONLY') == '1' else tmp_mode()
     before_metric(result, tmp_bytes())
     cutoff = time.time() - 72 * 3600
-    with os.scandir(TMP_ROOT) as entries:
-        paths = [entry.path for entry in entries]
-    for path in paths:
-        reason = None
+
+    def size(path):
+        output = command('du', '--summarize', '--block-size=1', '--one-file-system',
+                         '--', path)
+        return int(output.split()[0])
+
+    def record(path, top, reason):
+        amount = 0 if reason == 'vanished' else size(path)
+        entry = result['entries'][top]
+        result['held'] += 1
+        if reason == 'report':
+            result['would_reclaim'] += amount
+            entry['would_reclaim'] += amount
+        else:
+            result['held_git'] += reason == 'git'
+            result['held_live'] += reason == 'live'
+            for reasons in (result['skip_reasons'], entry['skip_reasons']):
+                metric = reasons.setdefault(reason, dict(count=0, bytes=0, bytes_measured=True))
+                metric['count'] += 1
+                metric['bytes'] += amount
+
+    barriers = {}
+
+    def guarded(path):
+        if path in barriers:
+            return barriers[path]
+        if any(barrier.startswith(path + os.sep) for barrier in barriers):
+            return 'split'
+        metadata = {}
+        reason = tree_guard(path, cutoff, metadata)
+        if 'barrier' in metadata:
+            barriers[metadata['barrier']] = metadata['reason']
+        return reason
+
+    def sweep_path(path, top, force_reason=None):
+        reason = force_reason
         try:
-            if os.path.basename(path) in {'workbay-uv-cache', 'acx-build'}:
-                reason = 'excluded'
-            else:
-                reason = tree_guard(path, cutoff)
+            reason = reason or guarded(path)
+            if reason == 'split':
+                # A protected descendant prevents removing its ancestors, not its siblings.
+                with os.scandir(path) as entries:
+                    children = [entry.path for entry in entries]
+                for child in children:
+                    sweep_path(child, top)
+                return
             if not reason and live_tree(path):
                 reason = 'live'
             if not reason and result['mode'] == 'report':
                 reason = 'report'
             if not reason:
-                reason = tree_guard(path, cutoff)
+                reason = guarded(path)
+                if reason == 'split':
+                    sweep_path(path, top)
+                    return
                 # The last check before removal must be a new liveness probe.
                 if not reason and live_tree(path):
                     reason = 'live'
                 if not reason:
                     command('rm', '-rf', '--one-file-system', '--', path)
+            if reason:
+                record(path, top, reason)
         except FileNotFoundError:
-            reason = 'vanished'
+            record(path, top, 'vanished')
         except TimeoutError:
             raise
         except (OSError, RuntimeError, ValueError) as exc:
-            reason = 'uncertain'
             result['errors'] += 1
             result['error_types'].append(type(exc).__name__)
-        if reason:
-            result['held'] += 1
-            result['held_git'] += reason == 'git'
-            result['held_live'] += reason == 'live'
+            try:
+                record(path, top, 'uncertain')
+            except FileNotFoundError:
+                record(path, top, 'vanished')
+            except (OSError, RuntimeError, ValueError):
+                result['held'] += 1
+                for reasons in (result['skip_reasons'], result['entries'][top]['skip_reasons']):
+                    metric = reasons.setdefault('uncertain', dict(count=0, bytes=0, bytes_measured=False))
+                    metric['count'] += 1
+                    metric['bytes_measured'] = False
+
+    with os.scandir(TMP_ROOT) as entries:
+        paths = [entry.path for entry in entries]
+    for path in paths:
+        top = os.path.basename(path)
+        result['entries'][top] = dict(would_reclaim=0, skip_reasons={})
+        if top in {'workbay-uv-cache', 'acx-build'}:
+            sweep_path(path, top, 'excluded')
+            continue
+        pytest_container = False
+        try:
+            info = os.lstat(path)
+            if (top.startswith('pytest-of-') and stat.S_ISDIR(info.st_mode)
+                    and info.st_uid == GATE_UID and info.st_dev == os.lstat(TMP_ROOT).st_dev):
+                pytest_container = True
+                # pytest updates the container continuously; judge each run independently.
+                with os.scandir(path) as entries:
+                    children = []
+                    for entry in entries:
+                        children.append(entry.path)
+                        if len(children) > 100000:
+                            break
+                names = {os.path.basename(child) for child in children}
+                if len(children) > 100000:
+                    sweep_path(path, top, 'scan_limit')
+                    continue
+                if names & {'.workbay-lane-sandbox', '.workbay-scratch'}:
+                    sweep_path(path, top, 'marker')
+                    continue
+                if '.git' in names or {'HEAD', 'objects', 'refs'} <= names:
+                    sweep_path(path, top, 'git')
+                    continue
+                newest = None
+                newest_time = float('-inf')
+                for child in children:
+                    child_info = os.lstat(child)
+                    if stat.S_ISDIR(child_info.st_mode):
+                        metadata = {}
+                        tree_guard(child, cutoff, metadata)
+                        modified = metadata.get('newest', child_info.st_mtime)
+                        if modified > newest_time:
+                            newest, newest_time = child, modified
+                for child in children:
+                    sweep_path(child, top, 'newest_child' if child == newest else None)
+                continue
+        except (OSError, RuntimeError, ValueError) as exc:
+            if pytest_container:
+                result['errors'] += 1
+                result['error_types'].append(type(exc).__name__)
+                sweep_path(path, top, 'uncertain')
+                continue
+        sweep_path(path, top)
     freed_metric(result, tmp_bytes())
 
 
@@ -255,9 +370,12 @@ def journald(result):
     result['freed_measured'] = True
 
 
-for name, mode, sweep in [('build_cache', 'delete', build_cache), ('volumes', 'delete', volumes),
+sweeps = [('build_cache', 'delete', build_cache), ('volumes', 'delete', volumes),
                           ('images', 'report', images), ('tmp', 'report', tmp_sweep),
-                          ('journald', 'report', journald)]:
+                          ('journald', 'report', journald)]
+if os.environ.get('HYGIENE_TMP_REPORT_ONLY') == '1':
+    sweeps = [('tmp', 'report', tmp_sweep)]
+for name, mode, sweep in sweeps:
     result = dict(before=0, freed=0, held=0, mode=mode, errors=0,
                   before_measured=False, freed_measured=False, error_types=[])
     deadline = time.monotonic() + CLASS_TIMEOUT

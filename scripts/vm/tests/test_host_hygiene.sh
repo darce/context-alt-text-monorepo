@@ -26,7 +26,9 @@ GROUPS = {
     'tmp_safety': {'report_mode', 'delete_mode', 'bare_git', 'acx_build', 'symlink',
                    'live_prefix_boundary', 'liveness_recheck', 'unreadable_proc_held',
                    'top_level_mount_held', 'invalid_mode', 'default_report',
-                   'malformed_mode', 'quoted_delete_mode'},
+                   'malformed_mode', 'quoted_delete_mode', 'pytest_children',
+                   'git_subtree_only', 'scan_subtree_only', 'report_reclaim_bytes',
+                   'pytest_newest_old', 'pytest_recent_nonnewest', 'tmp_report_only'},
     'docker_journal': {'old_anonymous_removed', 'named_volume', 'in_use_volume', 'young_volume',
                        'dangling_but_in_use', 'volume_recheck', 'metrics_and_no_image_deletion',
                        'journal_binary_units'},
@@ -567,6 +569,99 @@ def timeout_case():
 
 
 case('class_timeouts', timeout_case)
+# GTMC-C81V-HH-M1: independently eligible children and local barriers.
+def child_reclaim(kind, mode='delete'):
+    with fixture(mode) as (base, env):
+        container = base / 'tmp' / ('pytest-of-fixture' if kind.startswith('pytest') else 'mixed')
+        container.mkdir()
+        old = container / 'old'
+        old.mkdir()
+        (old / 'data').write_bytes(b'x' * 8192)
+        protected = container / 'protected'
+        protected.mkdir()
+        (protected / 'data').write_bytes(b'y' * 4096)
+        if kind == 'git':
+            (protected / '.git').mkdir()
+        age(container)
+        if kind == 'pytest':
+            (protected / 'data').touch()
+        if kind == 'pytest-old':
+            os.utime(protected / 'data', (OLD + 100, OLD + 100))
+        if kind == 'scan':
+            # Trigger the real 100000-entry boundary without allocating that debris.
+            with (base / 'shim/sitecustomize.py').open('a') as f:
+                f.write("""
+scandir_original = os.scandir
+class RepeatedEntries:
+    def __enter__(self):
+        self.source = scandir_original(os.environ['HYGIENE_TMP_ROOT'] + '/mixed/protected')
+        self.entry = next(self.source)
+        return iter([self.entry] * 100001)
+    def __exit__(self, *args):
+        self.source.close()
+def limit_scandir(path):
+    if os.fspath(path).endswith('/mixed/protected'):
+        return RepeatedEntries()
+    return scandir_original(path)
+os.scandir = limit_scandir
+""")
+        summary = run(base, env)['tmp']
+        assert protected.exists(), 'HH-M1 protected child removed'
+        assert old.exists() == (mode == 'report'), 'HH-M1 eligible sibling retained'
+        if mode == 'report':
+            assert summary['would_reclaim'] >= 8192, 'HH-M1 reclaim bytes missing'
+            assert summary['entries'][container.name]['would_reclaim'] >= 8192
+            assert summary['skip_reasons']['newest_child']['bytes'] >= 4096
+        if kind in ('git', 'scan'):
+            reason = 'git' if kind == 'git' else 'scan_limit'
+            assert summary['skip_reasons'][reason]['count'] == 1, 'HH-M1 local skip not logged'
+
+case('pytest_children', lambda: child_reclaim('pytest'))
+case('git_subtree_only', lambda: child_reclaim('git'))
+case('scan_subtree_only', lambda: child_reclaim('scan'))
+case('report_reclaim_bytes', lambda: child_reclaim('pytest', 'report'))
+
+case('pytest_newest_old', lambda: child_reclaim('pytest-old'))
+
+
+def pytest_recent_nonnewest():
+    with fixture('delete') as (base, env):
+        root = base / 'tmp/pytest-of-fixture'
+        root.mkdir()
+        children = []
+        for name in ('old', 'recent', 'newest'):
+            child = root / name
+            child.mkdir()
+            (child / 'data').write_bytes(b'x' * 4096)
+            children.append(child)
+        age(root)
+        os.utime(children[1] / 'data', (time.time() - 3600, time.time() - 3600))
+        (children[2] / 'data').touch()
+        summary = run(base, env)['tmp']
+        assert not children[0].exists(), 'HH-M1 old pytest child retained'
+        assert children[1].exists(), 'HH-M1 recent non-newest child removed'
+        assert children[2].exists(), 'HH-M1 newest pytest child removed'
+        assert summary['skip_reasons']['recent']['count'] == 1
+        assert summary['skip_reasons']['newest_child']['count'] == 1
+
+
+case('pytest_recent_nonnewest', pytest_recent_nonnewest)
+
+
+def tmp_report_only():
+    with fixture('delete') as (base, env):
+        path = old_tree(base, 'old')
+        result = subprocess.run(['bash', str(SWEEP), '--tmp-report'], env=env,
+                                capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, result.stderr
+        summary = json.loads(result.stdout.splitlines()[-1])
+        assert set(summary) == {'tmp'}, 'HH-M1 report ran other classes'
+        assert summary['tmp']['mode'] == 'report' and path.exists()
+        assert summary['tmp']['would_reclaim'] >= 8192
+        assert not (base / 'calls').exists(), 'HH-M1 report ran host operations'
+
+
+case('tmp_report_only', tmp_report_only)
 assert passed > 0, 'case selector matched no tests'
 print(f'host hygiene cases passed: {passed}')
 print('all cases passed, 0 skipped')

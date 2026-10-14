@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +11,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXPECTED_WRAPPERS = {
+    REPO_ROOT / "scripts/gate_ops.sh",
     REPO_ROOT / "scripts/localwp-gate-status.sh",
     REPO_ROOT / "scripts/remote_gate.sh",
 }
@@ -42,6 +44,119 @@ def test_pipeline_wrapper_discovery_matches_expected_inventory() -> None:
 
 def _read_null_terminated_argv(path: Path) -> list[str]:
     return [part.decode() for part in path.read_bytes().split(b"\0") if part]
+
+
+def _decode_supervised_remote_body(command: str) -> str:
+    # Bash printf %q uses ANSI-C quotes for multiline arguments; shlex alone
+    # treats their dollar prefix and backslash escapes as literal characters.
+    escapes = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f",
+               "n": "\n", "r": "\r", "t": "\t", "v": "\v", "\\": "\\", "'": "'", '"': '"'}
+
+    def unquote(match: re.Match[str]) -> str:
+        def unescape(escape: re.Match[str]) -> str:
+            value = escape[1]
+            if value in escapes:
+                return escapes[value]
+            return chr(int(value[1:], 16) if value[0] in "xuU" else int(value, 8))
+
+        body = re.sub(r"\\([abefnrtvE\\'\"]|[0-7]{1,3}|x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})",
+                      unescape, match[1])
+        return shlex.quote(body)
+
+    argv = shlex.split(re.sub(r"\$'((?:\\.|[^'\\])*)'", unquote, command, flags=re.DOTALL))
+    assert len(argv) == 12, "expected supervisor command with one bash body"
+    assert argv[:3] == ["exec", "python3", "-c"], "expected Python supervisor"
+    assert argv[4] == "remote", "expected remote supervisor mode"
+    assert argv[8:11] == ["lock", "bash", "-c"], "expected supervised bash -c body"
+    return argv[11]
+
+
+def test_supervised_remote_body_decoder_preserves_contract() -> None:
+    sha = "0123456789abcdef0123456789abcdef01234567"
+    body = f'set -euo pipefail\ngit checkout -qf {sha} || exit 1\nenv SAFE=quote\\"me'
+    quoted = subprocess.run(
+        ["bash", "-c", 'printf "%q" "$1"', "--", body],
+        capture_output=True, text=True, check=True, timeout=10,
+    ).stdout
+    command = f"exec python3 -c supervisor remote 60 5 {sha} lock bash -c {quoted}"
+    decoded = _decode_supervised_remote_body(command)
+    assert decoded == body
+    assert _remote_shell_enables_pipefail(decoded)
+    assert f"git checkout -qf {sha} || exit 1" in decoded
+    assert r'SAFE=quote\"me' in decoded
+    assert 'SAFE=quote"me' not in decoded
+    with pytest.raises(AssertionError, match="expected"):
+        _decode_supervised_remote_body("bash -c " + shlex.quote(body))
+
+
+@pytest.mark.parametrize(
+    ("failing_program", "injected_exit"),
+    [(None, 0), ("df", 23), ("df", 41), ("du", 23), ("du", 41), ("ps", 23), ("ps", 41)],
+)
+def test_gate_ops_status_propagates_filtered_failure_across_ssh(
+    tmp_path: Path, failing_program: str | None, injected_exit: int,
+) -> None:
+    """Run only local stubs: no SSH, process probes, or /tmp-wide scans."""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (tmp_path / "home/src/repo").mkdir(parents=True)
+    remote_source = tmp_path / "remote-source"
+    _write_executable(
+        fake_bin / "git",
+        '#!/usr/bin/env bash\nprintf "%s\\n" "$GATE_OPS_TEST_COMMON_DIR"\n',
+    )
+    _write_executable(
+        fake_bin / "ssh",
+        '#!/usr/bin/env bash\ncat > "$GATE_OPS_TEST_REMOTE_SOURCE"\n'
+        'exec bash -c "${!#}" < "$GATE_OPS_TEST_REMOTE_SOURCE"\n',
+    )
+    _write_executable(
+        fake_bin / "fuser",
+        '#!/usr/bin/env bash\n'
+        'if [[ "$GATE_OPS_TEST_FAILING_PROGRAM" == ps ]]; then echo 123; fi\nexit 0\n',
+    )
+    for program in ("df", "du", "ps"):
+        _write_executable(
+            fake_bin / program,
+            '#!/usr/bin/env bash\nprintf "header\\n1 0 filtered-output\\n"\n'
+            f'if [[ "$GATE_OPS_TEST_FAILING_PROGRAM" == {program} ]]; then '
+            'exit "$GATE_OPS_TEST_INJECTED_EXIT"; fi\nexit 0\n',
+        )
+    _write_executable(
+        fake_bin / "cat",
+        '#!/usr/bin/env bash\ncase "$*" in *"/proc/"*) exit 1 ;; esac\nexec /bin/cat "$@"\n',
+    )
+    _write_executable(
+        fake_bin / "cut",
+        '#!/usr/bin/env bash\ncase "$*" in *"/proc/"*) echo 0; exit 0 ;; esac\nexec /usr/bin/cut "$@"\n',
+    )
+    for program in ("find", "hostname", "date", "id", "sleep"):
+        _write_executable(fake_bin / program, '#!/usr/bin/env bash\nexit 0\n')
+    completed = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts/gate_ops.sh"), "status"],
+        cwd=REPO_ROOT,
+        env={
+            **os.environ,
+            "HOME": str(tmp_path / "home"),
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "WORKBAY_REMOTE_GATE_HOST": "gate.invalid",
+            "WORKBAY_REMOTE_GATE_DIR": "src/repo",
+            "GATE_OPS_TEST_COMMON_DIR": str(tmp_path / "repo/.git"),
+            "GATE_OPS_TEST_REMOTE_SOURCE": str(remote_source),
+            "GATE_OPS_TEST_FAILING_PROGRAM": failing_program or "",
+            "GATE_OPS_TEST_INJECTED_EXIT": str(injected_exit),
+        },
+        capture_output=True, text=True, check=False, timeout=10,
+    )
+    assert completed.returncode == injected_exit, (
+        f"gate_ops masked {failing_program}'s exit {injected_exit}; "
+        f"stdout={completed.stdout!r}; stderr={completed.stderr!r}"
+    )
+    assert _remote_shell_enables_pipefail(remote_source.read_text())
+    if failing_program is None:
+        assert "lock: FREE" in completed.stdout
+        assert "disk:" in completed.stdout
+        assert "/tmp:" in completed.stdout
 
 
 def test_localwp_status_propagates_a_filtered_wp_failure(tmp_path: Path) -> None:
@@ -279,6 +394,7 @@ exit "$REMOTE_GATE_TEST_SSH_EXIT"
             "WORKBAY_REMOTE_GATE_HOST": "gate@example.invalid",
             "WORKBAY_REMOTE_GATE_DIR": "src/repo",
             "REMOTE_GATE_TEST_CALL_LOG": str(call_log),
+            "HOME": str(tmp_path / "home"),
             "REMOTE_GATE_TEST_COMMON_DIR": str(tmp_path / "repo" / ".git"),
             "REMOTE_GATE_TEST_PUSHED_SHA": str(pushed_sha),
             "REMOTE_GATE_TEST_SHA": expected_sha,
@@ -308,8 +424,9 @@ exit "$REMOTE_GATE_TEST_SSH_EXIT"
         "ServerAliveCountMax=4",
         "gate@example.invalid",
     ]
-    assert _remote_shell_enables_pipefail(ssh_argv[-1]), ssh_argv[-1][:120]
-    assert f"git checkout -qf {expected_sha} || exit 1" in ssh_argv[-1]
+    body = _decode_supervised_remote_body(ssh_argv[-1])
+    assert _remote_shell_enables_pipefail(body), body[:120]
+    assert f"git checkout -qf {expected_sha} || exit 1" in body
 
 
 def test_remote_gate_quotes_env_values_before_remote_shell(tmp_path: Path) -> None:
@@ -349,6 +466,7 @@ exit 0
             "WORKBAY_REMOTE_GATE_ENV": 'SAFE=quote"me',
             "REMOTE_GATE_TEST_COMMON_DIR": str(tmp_path / "repo" / ".git"),
             "REMOTE_GATE_TEST_REMOTE_COMMAND": str(remote_command),
+            "HOME": str(tmp_path / "home"),
             "REMOTE_GATE_TEST_SHA": expected_sha,
         },
         text=True,
@@ -357,7 +475,7 @@ exit 0
     )
 
     assert completed.returncode == 0, completed.stderr
-    command = remote_command.read_text(encoding="utf-8")
+    command = _decode_supervised_remote_body(remote_command.read_text(encoding="utf-8"))
     assert r"SAFE=quote\"me" in command
     assert 'SAFE=quote"me' not in command
 

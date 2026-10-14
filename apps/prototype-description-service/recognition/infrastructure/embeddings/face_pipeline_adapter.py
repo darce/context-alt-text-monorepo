@@ -16,8 +16,14 @@ import threading
 import time
 from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
+from collections import deque
+from datetime import datetime, timezone
+from types import MappingProxyType
+from uuid import uuid4
+import json
+import weakref
 from typing import Any
 
 import httpx
@@ -54,12 +60,19 @@ from recognition.infrastructure.face_pipeline._common import (
 from recognition.infrastructure.face_pipeline.activation import assert_space_activatable
 from recognition.infrastructure.face_pipeline.aligner import AlignmentError, FivePointAligner
 from recognition.infrastructure.face_pipeline.model_space import ModelSpace
-from recognition.infrastructure.face_pipeline.ort_adapters import OrtSFaceEmbedder, OrtYuNetDetector
+from recognition.infrastructure.face_pipeline.ort_adapters import (
+    OrtSFaceEmbedder, OrtYuNetDetector, recording_tensors, tensor_record,
+)
+from recognition.infrastructure.face_pipeline.loaded_session import (
+    VerifiedModelBytes, SessionReceiptV1, ExecutionReceiptV1, LoadedRuntimeRecordV1,
+    FrozenFaceRuntimeConfig, AdapterObservationV1,
+)
 from recognition.infrastructure.face_pipeline.provenance import (
     DEFAULT_MODELS_DIR,
     MODEL_MANIFEST,
     ModelIntegrityError,
     ModelMissingError,
+    numeric_runtime_fingerprint,
 )
 from recognition.observability.face_pipeline_metrics import FacePipelineMetricsObserver
 
@@ -289,6 +302,12 @@ class FacePipelineRuntime:
     nms_threshold: float
     top_k: int
     embedder_models_dir: Path | None = None
+    runtime_generation_id: str | None = None
+    session_receipts: Any = None
+    frozen_config: FrozenFaceRuntimeConfig | None = None
+    artifact_identity: tuple = ()
+    compatibility_sha256: str | None = None
+    frozen_preprocessing_spec: Any = None
 
 
 def sface_embedding_model_manifest() -> EmbeddingModelManifest:
@@ -315,7 +334,7 @@ def sface_embedding_model_manifest() -> EmbeddingModelManifest:
     )
 
 
-def auraface_embedding_model_manifest() -> EmbeddingModelManifest:
+def auraface_embedding_model_manifest(*, _fingerprint=None) -> EmbeddingModelManifest:
     """Map MODEL_MANIFEST['auraface'] provenance → EmbeddingModelManifest (rg-015).
 
     Embedding-space identity includes the numeric-relevant runtime token
@@ -330,7 +349,7 @@ def auraface_embedding_model_manifest() -> EmbeddingModelManifest:
     entry = MODEL_MANIFEST["auraface"]
     if entry.embedding_dim is None or entry.normalization is None or entry.metric is None:
         raise ValueError("MODEL_MANIFEST['auraface'] missing embedding contract fields")
-    space = numeric_runtime_fingerprint().space_token
+    space = (_fingerprint if _fingerprint is not None else numeric_runtime_fingerprint()).space_token
     return EmbeddingModelManifest(
         framework=entry.framework,
         name=f"auraface+{space}",
@@ -487,6 +506,78 @@ def _runtime_cache_key(
     )
 
 
+_API_ADAPTERS = deque(maxlen=256)
+_API_ADAPTERS_LOCK = threading.Lock()
+
+
+def _contract_digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"),
+                                     allow_nan=False, default=str).encode()).hexdigest()
+
+
+def _freeze_pair(detector, embedder, aligner, manifest, space, detector_dir,
+                 embedder_dir, score_threshold, nms_threshold, top_k, fingerprint):
+    artifacts = [getattr(adapter, "_verified_artifact", None) for adapter in (detector, embedder)]
+    if not all(isinstance(artifact, VerifiedModelBytes) for artifact in artifacts):
+        return {}
+    generation = str(uuid4())
+    config = FrozenFaceRuntimeConfig(space.value, detector_dir.resolve(), embedder_dir.resolve(),
+                                     float(score_threshold), float(nms_threshold), int(top_k),
+                                     manifest.dimensions, manifest.dimensions)
+    spec = {"detector": {"channel_order": "BGR", "dtype": "float32", "layout": "NCHW",
+                         "pad_divisor": 32, "pad_value": 0, "score_threshold": score_threshold,
+                         "nms_threshold": nms_threshold, "top_k": top_k},
+            "embedding": asdict(artifacts[1].manifest_snapshot.preprocessing),
+            "alignment": {"template_sha256": tensor_record(aligner.dst_landmarks)["sha256"],
+                          "template": aligner.dst_landmarks.tolist(), "dtype": str(aligner.dst_landmarks.dtype),
+                          "estimator": "umeyama", "interpolation": "INTER_LINEAR",
+                          "border": "BORDER_CONSTANT", "border_value": 0},
+            "pipeline_normalization": "l2", "graph_analysis": None}
+    spec_digest = _contract_digest(spec)
+    receipts = {}
+    identities = []
+    now = datetime.now(timezone.utc)
+    for adapter, artifact, root in zip((detector, embedder), artifacts, (detector_dir, embedder_dir), strict=True):
+        metadata = adapter._session_metadata
+        receipts[artifact.logical_name] = SessionReceiptV1(
+            session_id=str(uuid4()), runtime_generation_id=generation,
+            logical_model_name=artifact.logical_name, constructed_at=now,
+            observed_weight_sha256=artifact.model_sha256, observed_weight_size_bytes=artifact.model_size_bytes,
+            observed_license_sha256=artifact.license_sha256, observed_license_size_bytes=artifact.license_size_bytes,
+            manifest_expectation_sha256=artifact.manifest_expectation_sha256,
+            frozen_preprocessing_sha256=spec_digest, numeric_runtime_fingerprint=fingerprint,
+            actual_providers=metadata["providers"], actual_input_metadata=metadata["inputs"],
+            actual_output_metadata=metadata["outputs"],
+            actual_session_options=metadata["options"], graph_analysis=None)
+        identities.extend(((root / artifact.manifest_snapshot.file_name, artifact.observed_model_file_identity),
+                           (root / artifact.manifest_snapshot.license_file, artifact.observed_license_file_identity)))
+    compatibility = _contract_digest({"artifacts": [(a.model_sha256, a.license_sha256,
+                                                    a.manifest_expectation_sha256) for a in artifacts],
+                                      "preprocessing": spec_digest, "numeric": asdict(fingerprint),
+                                      "model_id": manifest.model_id})
+    # Reuse the receipt freezer for the nested executing spec.
+    frozen_spec = LoadedRuntimeRecordV1(1, generation, manifest.model_id, space.value,
+        manifest.dimensions, None, spec_digest, compatibility, _contract_digest(asdict(config)),
+        receipts, spec, None, "loaded_unexercised", None, now).frozen_preprocessing_spec
+    return dict(runtime_generation_id=generation, session_receipts=MappingProxyType(receipts),
+                frozen_config=config, artifact_identity=tuple(identities),
+                compatibility_sha256=compatibility, frozen_preprocessing_spec=frozen_spec)
+
+
+def observe_api_face_adapters(*, expected_config, captured_at):
+    with _API_ADAPTERS_LOCK:
+        references = tuple(_API_ADAPTERS)
+    observations = []
+    for reference in references:
+        adapter = reference()
+        if adapter is not None:
+            observations.append(AdapterObservationV1(adapter._adapter_instance_id, "serving",
+                adapter.loaded_runtime_record(expected_config=expected_config,
+                    active_generation_id=None, captured_at=captured_at),
+                adapter._last_execution_at, adapter._last_execution_at is not None))
+    return tuple(observations)
+
+
 def _load_face_pipeline_runtime(
     *,
     models_dir: Path,
@@ -499,8 +590,9 @@ def _load_face_pipeline_runtime(
     """Load YuNet + embedder as one atomic unit; any failure raises (caller decides cache)."""
     assert_space_activatable(space)
     assert_embedding_pgvector_pair()
+    fingerprint = numeric_runtime_fingerprint() if space is ModelSpace.AURAFACE else None
     if space is ModelSpace.AURAFACE:
-        manifest = auraface_embedding_model_manifest()
+        manifest = auraface_embedding_model_manifest(_fingerprint=fingerprint)
     else:
         manifest = sface_embedding_model_manifest()
     assert_three_way_embedding_dimensions(manifest)
@@ -512,14 +604,15 @@ def _load_face_pipeline_runtime(
             score_threshold=score_threshold,
             nms_threshold=nms_threshold,
             top_k=top_k,
+            **({"acquire_verified": True} if space is ModelSpace.AURAFACE else {}),
         )
     except ModelMissingError as exc:
         raise FacePipelineRuntimeUnavailableError(
-            f"face_pipeline runtime unavailable: detector missing: {exc}"
+            f"face_pipeline runtime unavailable: detector missing yunet: {exc}"
         ) from exc
     aligner = FivePointAligner(space=space)
     if space is ModelSpace.AURAFACE:
-        embedder = OrtSFaceEmbedder(model_name="auraface", models_dir=embedder_dir)
+        embedder = OrtSFaceEmbedder(model_name="auraface", models_dir=embedder_dir, acquire_verified=True)
     else:
         embedder = OrtSFaceEmbedder(models_dir=embedder_dir)
     return FacePipelineRuntime(
@@ -532,6 +625,8 @@ def _load_face_pipeline_runtime(
         nms_threshold=nms_threshold,
         top_k=top_k,
         embedder_models_dir=embedder_dir,
+        **_freeze_pair(detector, embedder, aligner, manifest, space, detector_dir, embedder_dir,
+                       score_threshold, nms_threshold, top_k, fingerprint),
     )
 
 
@@ -685,6 +780,10 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
     ) -> None:
         assert_three_way_embedding_dimensions(runtime.manifest)
         self._runtime = runtime
+        self._adapter_instance_id = str(uuid4())
+        self._call_records = threading.local()
+        self._execution_receipt = None
+        self._last_execution_at = None
         if timeout is not None:
             self._timeout = float(timeout)
         else:
@@ -702,6 +801,9 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
             self._submit_semaphore = gate
         # Injected process-local observer (FINALB-06). No HTTP middleware import.
         self._metrics: FacePipelineMetricsObserver | None = metrics
+        if isinstance(runtime.runtime_generation_id, str):
+            with _API_ADAPTERS_LOCK:
+                _API_ADAPTERS.append(weakref.ref(self))
 
     async def _fetch_image(self, url: str) -> bytes | None:
         """Fetch image bytes from a URL (mirrors InsightFaceFaceDetector)."""
@@ -718,7 +820,78 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
             logger.error("Failed to fetch image from %s: %s", url[:100], e)
             return None
 
+    def _drift_reason(self, expected_config, active_generation_id):
+        runtime = self._runtime
+        if runtime.frozen_config != expected_config:
+            return "effective_config_changed"
+        if active_generation_id is not None and active_generation_id != runtime.runtime_generation_id:
+            return "active_generation_changed"
+        for path, identity in runtime.artifact_identity:
+            current = _artifact_stat_identity(path)
+            if current != identity:
+                return "artifact_identity_unknown" if current == ("missing",) else "artifact_identity_changed"
+        if runtime.frozen_preprocessing_spec is not None:
+            expected = runtime.frozen_preprocessing_spec["alignment"]["template_sha256"]
+            if tensor_record(runtime.aligner.dst_landmarks)["sha256"] != expected:
+                return "preprocessing_changed"
+        return None
+
+    def loaded_runtime_record(self, *, expected_config, active_generation_id, captured_at):
+        runtime = self._runtime
+        generation = runtime.runtime_generation_id
+        applicable = isinstance(generation, str)
+        reason = self._drift_reason(expected_config, active_generation_id) if applicable else "producer_not_available"
+        receipt = self._execution_receipt
+        state = "not_loaded" if not applicable else "drifted" if reason else "loaded_unexercised"
+        if applicable and not reason and receipt is not None and receipt.completion == "failed":
+            state = "failed"
+        return LoadedRuntimeRecordV1(
+            producer_abi_version=1, runtime_generation_id=generation if applicable else None,
+            model_id=runtime.manifest.model_id, effective_profile=runtime.frozen_config.profile if applicable else "face_pipeline",
+            declared_embedding_dimension=runtime.manifest.dimensions,
+            observed_embedding_dimension=receipt.normalized_output.get("dimension") if receipt else None,
+            preprocessing_id=next(iter(runtime.session_receipts.values())).frozen_preprocessing_sha256 if applicable else None,
+            compatibility_sha256=runtime.compatibility_sha256,
+            config_sha256=_contract_digest(asdict(runtime.frozen_config)) if applicable else None,
+            sessions=runtime.session_receipts or {}, frozen_preprocessing_spec=runtime.frozen_preprocessing_spec,
+            execution_receipt=receipt, state=state, reason_code=reason, observed_at=captured_at)
+
     def _detect_sync(self, image_bytes: bytes, media_id: str) -> list[FaceDetection]:
+        runtime = self._runtime
+        if not isinstance(runtime.runtime_generation_id, str):
+            return self._detect_sync_impl(image_bytes, media_id)
+        reason = self._drift_reason(runtime.frozen_config, None)
+        if reason:
+            raise DetectionAdapterError(media_id=media_id, error_message=reason)
+        captured_at = datetime.now(timezone.utc)
+        with recording_tensors() as tensors:
+            tensors["alignment"] = {}
+            tensors["detections_sha256"] = None
+            tensors["normalized"] = {}
+            self._call_records.current = tensors
+            completion = "failed"
+            try:
+                result = self._detect_sync_impl(image_bytes, media_id)
+                completion = "executed_unreferenced" if tensors["normalized"] else "partial"
+                return result
+            finally:
+                self._call_records.current = None
+                if tensors["embedder"]:
+                    recipe = runtime.frozen_preprocessing_spec["embedding"]
+                    tensors["embedder"][-1].update(mean=recipe.get("input_mean", 0.0),
+                                                   scale=recipe["input_scale"])
+                self._execution_receipt = ExecutionReceiptV1(
+                    execution_id=str(uuid4()), runtime_generation_id=runtime.runtime_generation_id,
+                    detector_session_id=runtime.session_receipts["yunet"].session_id,
+                    embedder_session_id=runtime.session_receipts["auraface"].session_id, captured_at=captured_at,
+                    input_lineage={}, detector_input=tensors["detector"][0] if tensors["detector"] else {},
+                    detections_sha256=tensors["detections_sha256"], alignment=tensors["alignment"],
+                    embedder_input=tensors["embedder"][-1] if tensors["embedder"] else {},
+                    raw_output=tensors["raw"][-1] if tensors["raw"] else {},
+                    normalized_output=tensors["normalized"], graph_analysis_sha256=None, completion=completion)
+                self._last_execution_at = captured_at
+
+    def _detect_sync_impl(self, image_bytes: bytes, media_id: str) -> list[FaceDetection]:
         """Sync one-pass path: decode → detect → clamp/drop → align → embed."""
         try:
             bgr = decode_image_bytes(image_bytes)
@@ -730,6 +903,10 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
 
         raw_batches = self._runtime.detector.detect([bgr])
         raw_faces: list[RawDetection] = raw_batches[0] if raw_batches else []
+        records = getattr(self._call_records, "current", None)
+        if records is not None:
+            records["detections_sha256"] = _contract_digest([
+                {"bbox": face.bbox.tolist(), "landmarks": face.landmarks.tolist(), "score": float(face.score)} for face in raw_faces])
         if not raw_faces:
             return []
 
@@ -768,10 +945,24 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
         results: list[FaceDetection] = []
         for face, bbox in kept:
             try:
+                if records is not None:
+                    records["alignment"] = {}
+                    records["normalized"] = {}
+                    records["embedder"].clear()
+                    records["raw"].clear()
                 aligned = self._runtime.aligner.align(bgr, face.landmarks)
+                if records is not None:
+                    records["alignment"] = {"landmarks_sha256": tensor_record(face.landmarks)["sha256"],
+                        "template_sha256": tensor_record(self._runtime.aligner.dst_landmarks)["sha256"],
+                        "affine_sha256": tensor_record(aligned.affine)["sha256"],
+                        "crop_sha256": tensor_record(aligned.crop)["sha256"],
+                        "executing_spec_sha256": self._runtime.session_receipts["auraface"].frozen_preprocessing_sha256}
                 batch = self._runtime.embedder.embed([aligned.crop])
                 embedding = batch.vectors[0]
                 emb_norm = float(batch.norms[0])
+                if records is not None:
+                    records["normalized"] = dict(tensor_record(embedding), dimension=int(embedding.size),
+                                                  norm=float(np.linalg.norm(embedding)))
             except (AlignmentError, ZeroNormEmbeddingError) as exc:
                 dropped_align_embed += 1
                 logger.debug(

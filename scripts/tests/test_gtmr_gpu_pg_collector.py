@@ -428,8 +428,15 @@ class FakeSession:
         if re.search(r"\bFROM\s+PG_TYPE\b", upper) and "PG_DEPEND" in upper:
             return [(SCHEMA, "vector", "vector")]
         if "PG_ATTRIBUTE" in upper:
+            projection = upper.split(" FROM ", 1)[0].removeprefix("SELECT ").split(",")
+            typmod = projection[-1].strip()
+            if typmod != "A.ATTTYPMOD" and not re.fullmatch(r"[0-9]+", typmod):
+                raise FakeProbeRejected("unsupported vector typmod projection")
             return [
-                (key.split(".")[0], key.split(".")[-2], key.split(".")[-1], "vector", dim)
+                (
+                    key.split(".")[0], key.split(".")[-2], key.split(".")[-1], "vector",
+                    dim if typmod == "A.ATTTYPMOD" else int(typmod),
+                )
                 for key, dim in spec.vector_dims.items()
             ]
         if "PG_EXTENSION" in upper:
@@ -569,6 +576,44 @@ def test_fake_session_refuses_read_write_begin() -> None:
     with pytest.raises(FakeReadOnlyViolation):
         session.query("BEGIN")
     assert cluster.violations
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+def test_fake_membership_returns_role_name_and_usage_not_role_flags(privileged: bool) -> None:
+    cluster = FakeCluster(replace(_positive_spec(), rolsuper=privileged, rolbypassrls=privileged))
+    session = cluster.connect(**_connect_kwargs(PRIMARY_SESSION))
+    session.query("BEGIN READ ONLY")
+    assert session.query(
+        "SELECT r.rolname, pg_has_role(current_user, r.oid, 'USAGE') "
+        "FROM pg_roles r WHERE r.rolname = current_user"
+    ) == [(ROLE, True)]
+    assert session.query("SELECT r.rolsuper, r.rolbypassrls FROM pg_roles r") == [
+        (privileged, privileged)
+    ]
+
+
+@pytest.mark.parametrize("projection, expected", [("a.atttypmod", 384), ("768", 768)])
+def test_fake_vector_typmod_follows_select_projection(projection: str, expected: int) -> None:
+    spec = _positive_spec()
+    cluster = FakeCluster(replace(spec, vector_dims={key: 384 for key in spec.vector_dims}))
+    session = cluster.connect(**_connect_kwargs(PRIMARY_SESSION))
+    session.query("BEGIN READ ONLY")
+    rows = session.query(
+        f"SELECT n.nspname, c.relname, a.attname, t.typname, {projection} FROM pg_attribute a"
+    )
+    assert {tuple(row) for row in rows} == {
+        (*key.split("."), "vector", expected) for key in spec.vector_dims
+    }
+
+
+def test_pg_collector_reports_measured_typmods_instead_of_projected_constant() -> None:
+    spec = _positive_spec()
+    result, cluster = _run(replace(spec, vector_dims={key: 384 for key in spec.vector_dims}))
+    _assert_bounded_read_only(cluster)
+    vectors = [v for catalog in _observations(result, "catalog") for v in catalog["vectors"]]
+    assert vectors
+    assert {v["atttypmod"] for v in vectors} == {384}
+    assert VECTOR_DIMENSION_MISMATCH in _codes(result)
 
 
 @pytest.mark.parametrize("spaced", [False, True])

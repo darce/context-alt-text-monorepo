@@ -185,6 +185,13 @@ def test_attrition_keeps_all_failed_conditions_by_leg(tmp_path: Path) -> None:
 
 def test_attrition_records_post_accept_detection_exclusion(tmp_path: Path) -> None:
     run_dir = _two_leg_run(tmp_path, media_ids=[1], zero_export=set())
+    manifest_path = run_dir / "manifest.json"
+    manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_payload["annotation_mode"] = "roster_only"
+    manifest_path.write_text(json.dumps(manifest_payload), encoding="utf-8")
+    (run_dir / "manifest.sha").write_text(
+        hashlib.sha256(manifest_path.read_bytes()).hexdigest() + "\n", encoding="ascii"
+    )
     accepted = compute_accepted_set(run_dir)
     assert accepted.manifest_media_ids == [1]
     assert accepted.detection_scoring_set == []
@@ -481,6 +488,11 @@ def _write_leg(run_dir: Path, stack_id: str, ok_ids: list[int], *, zero_export: 
                 "health_detailed_excerpt": {
                     "model_cache": {
                         "profile": profile,
+                        "model_name": f"synthetic-{profile}",
+                        "bundle_files": 1,
+                        "bundle_sha256": hashlib.sha256(
+                            f"synthetic-{profile}-bundle".encode("utf-8")
+                        ).hexdigest(),
                         "detail": "numeric_runtime_fingerprint="
                         + json.dumps(runtime_fingerprint),
                     }

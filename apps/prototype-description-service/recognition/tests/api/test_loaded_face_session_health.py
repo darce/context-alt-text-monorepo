@@ -302,3 +302,159 @@ def test_existing_readiness_fixture_is_real_worker_method():
     method = function(tree(WORKER), "_ensure_embedding_runtime")
     assert isinstance(method, ast.AsyncFunctionDef)
     assert "build_embedding_runtime" in called_names(method)
+
+
+@pytest.fixture
+def canonical_record():
+    from recognition.infrastructure.face_pipeline.loaded_session import (
+        FrozenPreprocessingSpecV1, LoadedRuntimeRecordV1, SessionReceiptV1,
+    )
+
+    def make(generation="worker-old", state="loaded_unexercised", session_id="session-old"):
+        captured_at = datetime(2026, 10, 14, tzinfo=UTC)
+        receipt = SessionReceiptV1(
+            session_id=session_id, runtime_generation_id=generation, logical_model_name="yunet",
+            constructed_at=captured_at, observed_weight_sha256="fixture-weight", observed_weight_size_bytes=1,
+            observed_license_sha256="fixture-license", observed_license_size_bytes=1,
+            manifest_expectation_sha256="fixture-manifest", frozen_preprocessing_sha256="fixture-recipe",
+            numeric_runtime_fingerprint={"fixture": {"versions": ["offline"]}},
+            actual_providers=("FixtureProvider",), actual_input_metadata=({"shape": [1, 3, 8, 8]},),
+            actual_output_metadata=({"shape": [1, 512]},), actual_session_options={"threads": 1},
+            graph_analysis=None,
+        )
+        spec = FrozenPreprocessingSpecV1(
+            detector={"thresholds": {"score": 0.9}}, embedding={"shape": [1, 512]},
+            alignment={"template": [[0.0, 1.0]]}, graph_analysis=None, pipeline_normalization="l2",
+        )
+        return LoadedRuntimeRecordV1(
+            producer_abi_version=1, runtime_generation_id=generation, model_id="fixture-model",
+            effective_profile="auraface", declared_embedding_dimension=512,
+            observed_embedding_dimension=None, preprocessing_id="fixture-recipe",
+            compatibility_sha256="fixture-contract", config_sha256="fixture-config",
+            sessions={"yunet": receipt}, frozen_preprocessing_spec=spec, execution_receipt=None,
+            state=state, reason_code="artifact_changed" if state == "drifted" else None,
+            observed_at=captured_at,
+        )
+
+    return make
+
+
+def test_canonical_health_serializes_frozen_maps(monkeypatch, canonical_record):
+    health = importlib.import_module("recognition.application.health")
+    adapter = importlib.import_module("recognition.infrastructure.embeddings.face_pipeline_adapter")
+    from recognition.infrastructure.face_pipeline.loaded_session import AdapterObservationV1
+    record = canonical_record()
+    observation = AdapterObservationV1("fixture-api", "serving", record, None, True)
+    monkeypatch.setattr(adapter, "observe_api_face_adapters", lambda **kwargs: (observation,))
+    runtime = SimpleNamespace(loaded_runtime_record=lambda **kwargs: record)
+    result = health._with_face_runtime_observations(
+        health.CheckResult("model_cache", health.HealthStatus.OK, "fixture"), runtime, object(),
+    )
+    diagnostics = result.payload["face_runtime"]
+    probe = diagnostics["health_probe"]
+    assert probe["usage_origin"] == "health_probe_only"
+    assert probe["runtime_record"]["sessions"]["yunet"]["actual_input_metadata"] == [{"shape": [1, 3, 8, 8]}]
+    assert probe["runtime_record"]["frozen_preprocessing_spec"]["detector"] == {"thresholds": {"score": 0.9}}
+    assert diagnostics["api_adapters"][0]["runtime_record"] == probe["runtime_record"]
+    assert diagnostics["api_adapters"][0]["usage_origin"] == "serving"
+
+
+def test_real_runtime_probe_reports_not_observed(monkeypatch, tmp_path, canonical_record):
+    health = importlib.import_module("recognition.application.health")
+    adapter = importlib.import_module("recognition.infrastructure.embeddings.face_pipeline_adapter")
+    record = canonical_record("probe-fixture")
+    runtime = adapter.FacePipelineRuntime(
+        detector=object(), aligner=object(), embedder=object(), manifest=object(),
+        models_dir=tmp_path, score_threshold=0.9, nms_threshold=0.3, top_k=5000,
+        runtime_generation_id=record.runtime_generation_id, session_receipts=record.sessions,
+        frozen_preprocessing_spec=record.frozen_preprocessing_spec,
+    )
+    monkeypatch.setattr(adapter, "observe_api_face_adapters", lambda **kwargs: ())
+    result = health._with_face_runtime_observations(
+        health.CheckResult("model_cache", health.HealthStatus.OK, "fixture"), runtime, object(),
+    )
+    probe = result.payload["face_runtime"]["health_probe"]
+    assert probe.get("status") == "not_observed", "CAUSAL_RED: real runtime has no supported probe observer"
+    assert probe["runtime_record"] is None
+    assert probe["usage_origin"] == "health_probe_only"
+    assert result.payload["face_runtime"]["api_adapters"] == []
+    assert "not_observed" in result.detail
+
+
+def canonical_worker(monkeypatch, tmp_path, canonical_record, *, replacement=None, state="loaded_unexercised"):
+    worker, _ = retained_worker(monkeypatch, tmp_path, "worker-old", state)
+    records, configs = [], []
+
+    class Detector:
+        def __init__(self, record):
+            self.record = record
+
+        def loaded_runtime_record(self, *, expected_config, active_generation_id, captured_at):
+            records.append(self.record)
+            configs.append(expected_config)
+            return self.record
+
+    worker._detector = Detector(canonical_record(state=state))
+    worker_module = importlib.import_module("recognition.worker.scan_worker")
+    if replacement is not None:
+        async def rebuild(**kwargs):
+            return Detector(replacement), SimpleNamespace()
+        monkeypatch.setattr(worker_module, "build_embedding_runtime", rebuild)
+    return worker, records, configs
+
+
+def test_canonical_heartbeat_serializes_frozen_maps(monkeypatch, tmp_path, canonical_record):
+    import json
+    worker, records, _ = canonical_worker(monkeypatch, tmp_path, canonical_record)
+    _, publications = recording_heartbeat(monkeypatch, worker)
+    asyncio.run(worker._heartbeat_embedding_runtime_capability())
+    assert publications[0]["available"] is True
+    snapshot = json.loads(publications[0]["reason"].split("; loaded_runtime=", 1)[1])
+    assert snapshot["runtime_generation_id"] == records[0].runtime_generation_id
+    assert snapshot["sessions"]["yunet"]["numeric_runtime_fingerprint"] == {"fixture": {"versions": ["offline"]}}
+    assert snapshot["observed_at"] == records[0].observed_at.isoformat()
+
+
+def test_canonical_worker_observes_config_values(monkeypatch, tmp_path, canonical_record):
+    from db.settings import get_database_settings
+    from recognition.infrastructure.face_pipeline.loaded_session import FrozenFaceRuntimeConfig
+    worker, _, configs = canonical_worker(monkeypatch, tmp_path, canonical_record)
+    asyncio.run(worker._ensure_embedding_runtime())
+    assert configs == [FrozenFaceRuntimeConfig(
+        profile="auraface", models_dir=(tmp_path / "detector").resolve(),
+        embedder_models_dir=(tmp_path / "embedder").resolve(), score_threshold=0.9,
+        nms_threshold=0.3, top_k=5000, embedding_dimension=512,
+        pgvector_dimension=int(get_database_settings().pgvector_dimension),
+    )], "CAUSAL_RED: worker must observe canonical config values"
+
+
+def test_canonical_drift_accepts_fresh_mapping_receipts(monkeypatch, tmp_path, canonical_record):
+    replacement = canonical_record("worker-new", session_id="session-new")
+    worker, records, _ = canonical_worker(monkeypatch, tmp_path, canonical_record, replacement=replacement, state="drifted")
+    original = worker._detector
+    _, publications = recording_heartbeat(monkeypatch, worker)
+    asyncio.run(worker._ensure_embedding_runtime())
+    assert records[0] is original.record
+    assert worker._detector is not original
+    assert worker._detector.record is replacement
+    assert worker._embedding_runtime_ready is True
+    assert "worker-new" in publications[-1]["reason"]
+    assert "session-new" in publications[-1]["reason"]
+
+
+@pytest.mark.parametrize("reused_identity", ["generation", "session"])
+def test_canonical_drift_refuses_reused_identity(monkeypatch, tmp_path, canonical_record, reused_identity):
+    replacement = canonical_record(
+        "worker-old" if reused_identity == "generation" else "worker-new",
+        session_id="session-old" if reused_identity == "session" else "session-new",
+    )
+    worker, records, _ = canonical_worker(monkeypatch, tmp_path, canonical_record, replacement=replacement, state="drifted")
+    original = worker._detector
+    _, publications = recording_heartbeat(monkeypatch, worker)
+    asyncio.run(worker._ensure_embedding_runtime())
+    assert worker._detector is original, "CAUSAL_RED: reused identity replacement must be refused"
+    assert records == [original.record, replacement]
+    assert worker._embedding_runtime_ready is False
+    assert worker._can_claim_scan_items() is False
+    assert worker._embedding_retry_after is not None
+    assert publications == []

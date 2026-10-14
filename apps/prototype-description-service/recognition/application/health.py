@@ -13,8 +13,8 @@ import hashlib
 import json
 import logging
 import threading
-from collections.abc import Sequence
-from dataclasses import asdict, dataclass, is_dataclass, replace
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, fields, is_dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -155,6 +155,23 @@ def sha256_model_bundle(paths: Sequence[Path], *, cache_dir: Path) -> str | None
     return hashlib.sha256(encoded).hexdigest()
 
 
+def encode_face_runtime_observation(value: Any) -> Any:
+    """Encode immutable observations without copying frozen mapping containers."""
+    if is_dataclass(value):
+        return {field.name: encode_face_runtime_observation(getattr(value, field.name)) for field in fields(value)}
+    if isinstance(value, Mapping):
+        return {key: encode_face_runtime_observation(item) for key, item in value.items()}
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [encode_face_runtime_observation(item) for item in value]
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    return encode_face_runtime_observation(vars(value))
+
+
 def _with_face_runtime_observations(result: CheckResult, runtime: Any, expected_config: Any) -> CheckResult:
     from recognition.infrastructure.embeddings import face_pipeline_adapter
 
@@ -170,19 +187,13 @@ def _with_face_runtime_observations(result: CheckResult, runtime: Any, expected_
         return replace(result, status=HealthStatus.UNHEALTHY,
                        detail=f"runtime observation unavailable: {type(exc).__name__}")
 
-    def encode(value: Any) -> Any:
-        if is_dataclass(value):
-            return asdict(value)
-        if isinstance(value, datetime):
-            return value.isoformat()
-        if isinstance(value, Path):
-            return str(value)
-        return vars(value)
-
-    diagnostics = json.loads(json.dumps({
+    probe = {"usage_origin": "health_probe_only", "runtime_record": probe_record}
+    if probe_record is None:
+        probe["status"] = "not_observed"
+    diagnostics = encode_face_runtime_observation({
         "api_adapters": serving,
-        "health_probe": {"usage_origin": "health_probe_only", "runtime_record": probe_record},
-    }, default=encode))
+        "health_probe": probe,
+    })
     return replace(result, payload={**(result.payload or {}), "face_runtime": diagnostics},
                    detail=f"{result.detail}; face_runtime={json.dumps(diagnostics, sort_keys=True)}")
 

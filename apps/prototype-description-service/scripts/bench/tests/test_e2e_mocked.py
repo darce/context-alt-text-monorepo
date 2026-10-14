@@ -172,6 +172,8 @@ def test_empty_detection_population_emits_directional_cells(tmp_path: Path) -> N
     payload = json.loads(manifest.read_text())
     payload["iou_threshold"] = 0.5
     for entry in payload["entries"]:
+        # Exhaustive zero-face negatives remain detection-covered. A zero-population
+        # fixture needs a mode that excludes entries without refusing the metrics.
         entry["face_count"] = 0
         entry["face_boxes"] = []
         entry["present_identities"] = []

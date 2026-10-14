@@ -28,6 +28,15 @@ MAX_TEXT = 512
 RAW_NORM_ABS_TOLERANCE = 1e-5
 
 
+def _raw_norm_span_exceeds_tolerance(values):
+    """Compare exact int/float ratios without rounding integers to binary64."""
+    low_num, low_den = min(values).as_integer_ratio()
+    high_num, high_den = max(values).as_integer_ratio()
+    tolerance_num, tolerance_den = RAW_NORM_ABS_TOLERANCE.as_integer_ratio()
+    return ((high_num * low_den - low_num * high_den) * tolerance_den
+            > tolerance_num * high_den * low_den)
+
+
 class RecordError(ValueError):
     """Exception contents are restricted to fixed public reason codes."""
 
@@ -286,6 +295,14 @@ def _execution(value, runtime, now, policy):
         _hex(output['sha256']); _integer(output['dimension'], 1); _number(output['norm'], True)
         if output['dimension'] != 512:
             _fail('contradictory_binding')
+    metadata = sessions['auraface']['actual_output_metadata']
+    if len(metadata) != 1:
+        _fail('contradictory_binding')
+    declared = _canonical_tensor_contract(metadata[0]['shape'], metadata[0]['dtype'], allow_symbolic=True)
+    if (declared['dtype'] != 'float32' or len(declared['shape']) != 2
+            or any(not isinstance(expected, str) and observed != expected
+                   for observed, expected in zip((1, value['raw_output']['dimension']), declared['shape']))):
+        _fail('contradictory_binding')
     if abs(value['normalized_output']['norm'] - 1) > 1e-5:
         _fail('incomplete')
     _hex(value['graph_analysis_sha256'])
@@ -473,10 +490,13 @@ def join_auraface_acceptance(records, *, captured_inputs, expected_contract,
 
     The ledger's ``joined`` means captured compatibility and identities agree;
     it never means recipe verification, live readiness, or full acceptance.
+    Rows preserve local_reason_code separately from aggregate_reason_codes;
+    reason_code remains the refusal summary when an aggregate check fails.
     Executed tensor values, preprocessing/alignment/output digests and fixture/reference lineage
     must agree across roles, as must the captured census; disagreement is a
     contradictory_binding. Execution and adapter IDs cannot be shared across
-    roles. Executed shapes/dtypes bind to each role's own session metadata.
+    processes. Executed shapes/dtypes bind to each role's own session metadata,
+    including the single batch of 512 output components.
     ORT tensor(float) means float32; metadata symbols match only their own
     concrete tensor dimensions, with equal rank and all concrete dims checked.
     For the same pinned fixture, the full span of raw norms must be within
@@ -549,9 +569,9 @@ def join_auraface_acceptance(records, *, captured_inputs, expected_contract,
                 execution = rt['execution_receipt']
                 for identifier, owners in ((execution['execution_id'], execution_owners),
                                            (obs['adapter_instance_id'], adapter_owners)):
-                    if identifier in owners and owners[identifier] != record['role']:
+                    if identifier in owners and owners[identifier] != key:
                         _fail('contradictory_binding')
-                    owners[identifier] = record['role']
+                    owners[identifier] = key
                 tensor_contracts = {}
                 for tensor_key, fields in (('detector_input', ('sha256', 'padding_geometry')),
                                            ('embedder_input', ('sha256', 'channel_samples', 'mean', 'scale'))):
@@ -597,8 +617,7 @@ def join_auraface_acceptance(records, *, captured_inputs, expected_contract,
         gaps.add('incomplete')
     if len(executed_contracts) > 1 or len(censuses) > 1:
         gaps.add('contradictory_binding')
-    if raw_norms and not math.isclose(min(raw_norms), max(raw_norms), rel_tol=0,
-                                      abs_tol=RAW_NORM_ABS_TOLERANCE):
+    if raw_norms and _raw_norm_span_exceeds_tolerance(raw_norms):
         gaps.add('contradictory_binding')
     if len(fingerprints) > 1:
         gaps.add('contradictory_binding')
@@ -610,6 +629,8 @@ def join_auraface_acceptance(records, *, captured_inputs, expected_contract,
         gaps.add('contradictory_binding')
     aggregate_gaps = gaps - {'GAP-V1-REPAIR', 'GAP-BRANCH-ARTIFACTS'}
     for entry in result['acquisition_ledger']:
+        entry['local_reason_code'] = entry['reason_code']
+        entry['aggregate_reason_codes'] = sorted(aggregate_gaps)
         if entry['reason_code'] is None:
             if aggregate_gaps:
                 entry['reason_code'] = 'contradictory_binding' if 'contradictory_binding' in aggregate_gaps else sorted(aggregate_gaps)[0]

@@ -739,3 +739,149 @@ def test_r3_executed_dimensions_remain_concrete(tensor_key):
     records, inputs = pair()
     records[0]['adapter_observations'][0]['runtime_record']['execution_receipt'][tensor_key]['shape'][2] = 'height'
     assert_gap(records, inputs, 'malformed', row=0)
+
+
+@pytest.mark.parametrize('api_norm,worker_norm', [
+    (2**53, 2**53 + 1), (float(2**53), 2**53 + 1),
+    (float(2**53), float(2**53 + 2)),
+])
+def test_c82_exact_norm_boundary(api_norm, worker_norm):
+    import json
+    records, inputs = pair()
+    for record, norm in zip(records, (api_norm, worker_norm)):
+        record['adapter_observations'][0]['runtime_record']['execution_receipt']['raw_output']['norm'] = norm
+    records = json.loads(json.dumps(records))
+    assert_gap(records, inputs, 'contradictory_binding', row=1)
+
+
+@pytest.mark.parametrize('model,tensor_key', [('yunet', 'detector_input'), ('auraface', 'embedder_input')])
+def test_c82_symbolic_metadata_executed_shape(model, tensor_key):
+    records, inputs = pair()
+    for record in records:
+        record['adapter_observations'][0]['runtime_record']['sessions'][model]['actual_input_metadata'][0]['shape'] = [1, 3, 'height', 'width']
+    records[1]['adapter_observations'][0]['runtime_record']['execution_receipt'][tensor_key]['shape'] = [1, 3, 224, 224]
+    assert_gap(records, inputs, 'contradictory_binding', row=1)
+
+
+@pytest.mark.parametrize('component', ['input_name', 'model_id', 'preprocessing_id', 'config', 'output_metadata', 'shape_union'])
+def test_c82_fingerprint_component(component):
+    records, inputs = pair()
+    rt = records[1]['adapter_observations'][0]['runtime_record']
+    if component == 'input_name':
+        rt['sessions']['yunet']['actual_input_metadata'][0]['name'] = 'other_input'
+    elif component == 'model_id':
+        rt['model_id'] = 'auraface+other'
+    elif component == 'preprocessing_id':
+        rt['preprocessing_id'] = 'other-preprocessing'
+    elif component == 'config':
+        rt['config_sha256'] = 'd' * 64
+        records[1]['effective_settings']['config_sha256'] = 'd' * 64
+    elif component == 'output_metadata':
+        rt['sessions']['yunet']['actual_output_metadata'][0]['name'] = 'other_output'
+    else:
+        for model, tensor_key in [('yunet', 'detector_input'), ('auraface', 'embedder_input')]:
+            rt['sessions'][model]['actual_input_metadata'][0]['shape'] = [1, 3, 224, 224]
+            rt['execution_receipt'][tensor_key]['shape'] = [1, 3, 224, 224]
+    # The receipt remains valid locally; this must exercise the aggregate guard.
+    load('auraface_acceptance_join')._runtime(rt, NOW, dict(max_age_seconds=60, future_skew_seconds=2))
+    assert_gap(records, inputs, 'contradictory_binding', row=1)
+
+
+def test_c82_caller_none_offset():
+    from datetime import tzinfo
+    class NoneTZ(tzinfo):
+        def utcoffset(self, dt):
+            return None
+    module = load('auraface_acceptance_join')
+    records, inputs = pair()
+    with pytest.raises(ValueError, match='now must be timezone-aware'):
+        module.join_auraface_acceptance(records, captured_inputs=inputs,
+            expected_contract='candidate512',
+            freshness_policy=dict(max_age_seconds=60, future_skew_seconds=2),
+            isolation_policy=dict(resource_policy_id='candidate-target',
+                database_instance_id='instance-opaque', database_name='candidate_store',
+                database_role='serving_role', storage_identity='store-opaque',
+                tenant_context_id='tenant-opaque'), now=NOW.replace(tzinfo=NoneTZ()))
+
+
+@pytest.mark.parametrize('identifier', ['execution_id', 'adapter_instance_id', 'unique_control'])
+def test_c82_same_role_process_identifier_reuse(identifier):
+    records, inputs = pair()
+    extra = copy.deepcopy(records[0])
+    extra['process_instance_id'] = 'api-second-process'
+    extra['serving_catalog']['process_instance_id'] = extra['process_instance_id']
+    extra['serving_catalog']['pool_identity'] = 'api-second-pool'
+    obs = extra['adapter_observations'][0]
+    rt = obs['runtime_record']
+    rt['runtime_generation_id'] = 'api-second-generation'
+    for name, session in rt['sessions'].items():
+        session['runtime_generation_id'] = rt['runtime_generation_id']
+        session['session_id'] = 'api-second-' + name
+    execution = rt['execution_receipt']
+    execution['runtime_generation_id'] = rt['runtime_generation_id']
+    execution['detector_session_id'] = rt['sessions']['yunet']['session_id']
+    execution['embedder_session_id'] = rt['sessions']['auraface']['session_id']
+    obs['adapter_instance_id'] = 'api-second-adapter'
+    execution['execution_id'] = 'api-second-execution'
+    if identifier == 'execution_id':
+        execution[identifier] = records[0]['adapter_observations'][0]['runtime_record']['execution_receipt'][identifier]
+    elif identifier == 'adapter_instance_id':
+        obs[identifier] = records[0]['adapter_observations'][0][identifier]
+    records.append(extra)
+    key = dict(role='api', process_instance_id=extra['process_instance_id'])
+    inputs['expected_processes'].append(key)
+    inputs['serving_bindings'].append(dict(key, pool_identity='api-second-pool'))
+    inputs['image_records'].append(dict(inputs['image_records'][0], **key, container_id='api-second-container'))
+    if identifier == 'unique_control':
+        r3_assert_joined(records, inputs)
+    else:
+        assert_gap(records, inputs, 'contradictory_binding', row=2)
+
+
+@pytest.mark.parametrize('shape', [[1, 128], [512], [2, 512], [1, 512, 1]])
+def test_c82_output_metadata_dimension_binding(shape):
+    records, inputs = pair()
+    for record in records:
+        record['adapter_observations'][0]['runtime_record']['sessions']['auraface']['actual_output_metadata'][0]['shape'] = shape
+    assert_gap(records, inputs, 'contradictory_binding', row=0)
+
+
+def test_c82_output_metadata_symbolic_control():
+    records, inputs = pair()
+    for record in records:
+        record['adapter_observations'][0]['runtime_record']['sessions']['auraface']['actual_output_metadata'][0]['shape'] = ['batch', 'dimension']
+    r3_assert_joined(records, inputs)
+
+
+def test_c82_invalid_string_key_is_malformed():
+    module = load('auraface_acceptance_join')
+    with pytest.raises(module.RecordError, match='^malformed$'):
+        module._bounded_json({'bad@key': 0})
+
+
+def test_c82_ledger_preserves_local_attribution():
+    records, inputs = pair()
+    records[0]['serving_catalog']['captured_at'] = '2026-10-12T00:00:00+00:00'
+    result = join(records, inputs)
+    api, worker = result['acquisition_ledger']
+    assert api['status'] == worker['status'] == 'incomplete'
+    assert api['reason_code'] == 'stale'
+    assert api['local_reason_code'] == 'stale'
+    assert worker['local_reason_code'] is None
+    assert worker['aggregate_reason_codes'] == ['incomplete', 'stale']
+
+
+@pytest.mark.parametrize('norm', [2**53, float(2**53), 2**63 - 1])
+def test_c82_identical_large_norm_control(norm):
+    records, inputs = pair()
+    for record in records:
+        record['adapter_observations'][0]['runtime_record']['execution_receipt']['raw_output']['norm'] = norm
+    r3_assert_joined(records, inputs)
+
+
+def test_c82_same_process_execution_identifier_control():
+    records, inputs = pair()
+    extra = copy.deepcopy(records[0]['adapter_observations'][0])
+    extra['adapter_instance_id'] = 'api-second-adapter'
+    records[0]['adapter_observations'].append(extra)
+    r3_assert_joined(records, inputs)

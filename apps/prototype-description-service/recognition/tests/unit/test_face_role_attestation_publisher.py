@@ -1006,6 +1006,104 @@ def test_publication_deadline_expiring_during_fsync_keeps_previous_record(tmp_pa
     assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before
 
 
+def canonical_manifest_model_id():
+    import ast
+    from recognition.application.embedding.manifest import EmbeddingModelManifest
+    from recognition.infrastructure.face_pipeline.provenance import MODEL_MANIFEST, NumericRuntimeFingerprint
+
+    # Execute the production manifest factory without importing its native adapter graph.
+    path = ROOT / 'recognition/infrastructure/embeddings/face_pipeline_adapter.py'
+    node = next(node for node in ast.parse(path.read_text()).body
+                if isinstance(node, ast.FunctionDef) and node.name == 'auraface_embedding_model_manifest')
+    namespace = {'EmbeddingModelManifest': EmbeddingModelManifest, 'MODEL_MANIFEST': MODEL_MANIFEST}
+    exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), 'exec'), namespace)
+    fingerprint = NumericRuntimeFingerprint(
+        opencv_version='0.1.2', opencv_major=0, onnxruntime_version='3.4.5', numpy_version='6.7.8',
+        scipy_version='fixture', pillow_version='fixture', hdbscan_version='fixture',
+        pgvector_version='fixture',
+    )
+    return namespace['auraface_embedding_model_manifest'](_fingerprint=fingerprint).model_id
+
+
+@pytest.mark.parametrize('complete', [True, False])
+def test_canonical_manifest_model_id_survives_publication(tmp_path, complete):
+    module = producer()
+    options = complete_inputs()
+    model_id = canonical_manifest_model_id()
+    options['adapter_observations'][0]['runtime_record']['model_id'] = model_id
+    catalog = options['serving_catalog']
+    assert catalog.columns
+    options['serving_catalog'] = replace_transport(
+        catalog, columns=tuple(dict(column, model_ids=[model_id]) for column in catalog.columns))
+    if not complete:
+        options['adapter_observations'][0]['runtime_record']['state'] = 'loaded_unexercised'
+    record = module.build_face_role_record(**options)
+    assert record.collection_status == ('complete' if complete else 'incomplete')
+    result = publication(module, record, tmp_path)
+    saved = json.loads(Path(result.path).read_text())
+    assert saved['adapter_observations'][0]['runtime_record']['model_id'] == model_id
+    assert all(column['model_ids'] == [model_id] for column in saved['serving_catalog']['columns'])
+
+
+def test_canonical_manifest_model_id_in_producer_dataclass(tmp_path):
+    from recognition.infrastructure.face_pipeline.loaded_session import AdapterObservationV1, LoadedRuntimeRecordV1
+
+    module = producer()
+    row = observation('fixture-generation', 'fixture-adapter')
+    model_id = canonical_manifest_model_id()
+    row['runtime_record'].update(model_id=model_id, frozen_preprocessing_spec=None)
+    row['runtime_record'] = LoadedRuntimeRecordV1(**row['runtime_record'])
+    options = complete_inputs()
+    options['adapter_observations'] = (AdapterObservationV1(**row),)
+    record = module.build_face_role_record(**options)
+    assert record.collection_status == 'incomplete'
+    assert record.adapter_observations[0]['runtime_record']['model_id'] == model_id
+    result = publication(module, record, tmp_path)
+    saved = json.loads(Path(result.path).read_text())
+    assert saved['adapter_observations'][0]['runtime_record']['model_id'] == model_id
+
+
+@pytest.mark.parametrize('field', ['model_id', 'model_ids'])
+@pytest.mark.parametrize('fault', [
+    'control', 'newline', 'slash', 'backslash', 'traversal', 'extra_component',
+    'missing_component', 'zero_dimension', 'noninteger_dimension', 'extra_at',
+    'mail_shape', 'long_string',
+])
+def test_model_lineage_grammar_refuses_unsafe_strings(field, fault):
+    module = producer()
+    model_id = canonical_manifest_model_id()
+    value = {
+        'control': model_id + chr(0), 'newline': model_id + chr(10),
+        'slash': '/' + model_id, 'backslash': model_id.replace('/', chr(92)),
+        'traversal': '../' + model_id, 'extra_component': model_id + '/extra',
+        'missing_component': model_id.rsplit('/', 1)[0],
+        'zero_dimension': model_id.replace('@512d', '@0d'),
+        'noninteger_dimension': model_id.replace('@512d', '@widthd'),
+        'extra_at': model_id.replace('@', '@@'),
+        'mail_shape': 'fixture' + chr(64) + 'invalid.example',
+        'long_string': 'x' * 16385,
+    }[fault]
+    options = inputs(observations=[observation('generation', 'adapter')])
+    options['adapter_observations'][0]['runtime_record'][field] = [value] if field == 'model_ids' else value
+    with pytest.raises(ValueError, match='unsafe_record_string'):
+        module.build_face_role_record(**options)
+
+
+@pytest.mark.parametrize('field', ['reason_code', 'adapter_instance_id', 'profile', 'mapping_key'])
+def test_non_model_fields_keep_at_sign_refusal(field):
+    module = producer()
+    options = inputs(observations=[observation('generation', 'adapter')])
+    value = canonical_manifest_model_id()
+    if field == 'profile':
+        options['effective_settings'][field] = value
+    elif field == 'mapping_key':
+        options['adapter_observations'][0][value] = 'fixture'
+    else:
+        options['adapter_observations'][0][field] = value
+    with pytest.raises(ValueError, match='unsafe_record_string'):
+        module.build_face_role_record(**options)
+
+
 # GTMC-C80A-G2S-M02 / TEST-15: these controls bind current source guards.
 @pytest.mark.parametrize('fault', ['depth', 'wide_mapping', 'wide_list', 'wide_tuple',
     'long_string', 'nonfinite', 'naive_nested', 'unsafe_nested', 'nonstring_key'])

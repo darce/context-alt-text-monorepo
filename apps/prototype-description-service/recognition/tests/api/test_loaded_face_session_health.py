@@ -134,12 +134,15 @@ def test_health_labels_probe_only_generation_in_executable_code(health_diagnosti
 
 
 def test_health_observes_api_registry_without_relabeling_singleton(health_diagnostics):
-    calls = called_names(tree(HEALTH))
-    assert "observe_api_face_adapters" in calls, "CAUSAL_RED: missing actual API adapter registry observation (ABI-07/09)"
+    # F04: execution also accepts getattr-bound observers; AST spelling is not evidence.
     result, executed, original = health_diagnostics
     assert "api" in executed, "CAUSAL_RED: registry observer was not executed"
     serving = [row for row in mappings(result) if row.get("usage_origin") == "serving"]
     assert serving, "CAUSAL_RED: actual API serving observation was not emitted"
+    # F03: renamed/missing generation keys must not hide an extra singleton row.
+    assert sorted(row.get("adapter_instance_id", "") for row in serving) == sorted(
+        row.adapter_instance_id for row in original
+    ), "CAUSAL_RED: serving rows must equal the observed adapter ids exactly"
     assert any(child.get("runtime_generation_id") == "api-old"
                for row in serving for child in mappings(row))
     assert not any(child.get("runtime_generation_id") == "health-new"
@@ -148,84 +151,113 @@ def test_health_observes_api_registry_without_relabeling_singleton(health_diagno
     assert original[0].runtime_record.runtime_generation_id == "api-old"
 
 
-def test_worker_heartbeat_observes_its_retained_detector():
-    node = tree(WORKER)
-    # Allow a worker-owned helper; require its call graph to reach the actual observer.
-    methods = {n.name: n for n in ast.walk(node) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
-    pending = ["_heartbeat_embedding_runtime_capability", "_publish_embedding_runtime_capability"]
-    reached = set()
-    while pending:
-        name = pending.pop()
-        if name in reached:
-            continue
-        reached.add(name)
-        pending.extend(called_names(methods[name]) & methods.keys() - reached)
-    observers = []
-    for name in reached:
-        bindings = {}
-        for assignment in ast.walk(methods[name]):
-            if isinstance(assignment, ast.Assign):
-                targets, value = assignment.targets, assignment.value
-            elif isinstance(assignment, (ast.AnnAssign, ast.NamedExpr)):
-                targets, value = [assignment.target], assignment.value
-            else:
-                continue
-            if (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
-                    and value.func.id == "getattr" and len(value.args) >= 2
-                    and isinstance(value.args[1], ast.Constant)
-                    and value.args[1].value == "loaded_runtime_record"):
-                for target in targets:
-                    if isinstance(target, ast.Name):
-                        bindings[target.id] = value.args[0]
-        for call in ast.walk(methods[name]):
-            if not isinstance(call, ast.Call):
-                continue
-            if isinstance(call.func, ast.Attribute) and call.func.attr == "loaded_runtime_record":
-                observers.append(call.func.value)
-            # A hasattr guard is allowed; only actual invocation is evidence.
-            if isinstance(call.func, ast.Name) and call.func.id in bindings:
-                observers.append(bindings[call.func.id])
-            if (isinstance(call.func, ast.Call) and isinstance(call.func.func, ast.Name)
-                    and call.func.func.id == "getattr" and len(call.func.args) >= 2
-                    and isinstance(call.func.args[1], ast.Constant)
-                    and call.func.args[1].value == "loaded_runtime_record"):
-                observers.append(call.func.args[0])
-    assert observers, "CAUSAL_RED: heartbeat publishes readiness without retained runtime observation"
-    assert any(isinstance(value, ast.Attribute) and value.attr == "_detector"
-               for value in observers), "worker observation must originate at self._detector"
-    assert all("get_shared_face_pipeline_runtime" not in called_names(methods[name]) for name in reached)
+def recording_heartbeat(monkeypatch, worker):
+    """Execute real heartbeat/publish methods with in-memory session boundaries."""
+    worker_module = importlib.import_module("recognition.worker.scan_worker")
+    dialect = importlib.import_module("recognition.shared.db.dialect")
+    events, publications = [], []
+
+    class Session:
+        async def __aenter__(self):
+            events.append("enter")
+            return self
+
+        async def __aexit__(self, *args):
+            events.append("exit")
+
+        async def commit(self):
+            events.append("commit")
+
+    session = Session()
+
+    async def bypass(actual):
+        assert actual is session
+        events.append("bypass")
+
+    async def publish(actual, **kwargs):
+        assert actual is session
+        events.append("publish")
+        publications.append(plain(kwargs))
+
+    worker._session_factory = lambda: session
+    worker._scan_counters = worker_module.ScanWorkerCounters()
+    monkeypatch.setattr(dialect, "is_postgres", lambda actual: actual is session)
+    monkeypatch.setattr(worker_module, "enable_rls_bypass", bypass)
+    monkeypatch.setattr(worker_module, "publish_embedding_runtime_capability", publish)
+    return events, publications
 
 
-def retained_worker(monkeypatch, tmp_path, generation, state):
+@pytest.mark.parametrize("state", ["loaded_unexercised", "drifted"])
+def test_worker_heartbeat_observes_its_retained_detector(monkeypatch, tmp_path, state):
+    # F01: dead/no-arg calls cannot satisfy an executed ABI-07 observation.
+    worker, observations = retained_worker(monkeypatch, tmp_path, "worker-old", state)
+    events, publications = recording_heartbeat(monkeypatch, worker)
+    for index in range(2):
+        asyncio.run(worker._heartbeat_embedding_runtime_capability())
+        assert len(observations) == index + 1, "CAUSAL_RED: one ABI-07 observation per heartbeat required"
+        assert len(publications) == index + 1, "CAUSAL_RED: heartbeat must publish its observation"
+        publication = publications[-1]
+        assert publication["available"] is (state != "drifted"), "CAUSAL_RED: published availability ignores retained state"
+        assert "worker-old" in repr(publication), "CAUSAL_RED: published capability lacks observed generation"
+        assert events == ["enter", "bypass", "publish", "commit", "exit"] * (index + 1)
+
+
+def retained_worker(monkeypatch, tmp_path, generation, state, *, allow_rebuild=False):
     monkeypatch.syspath_prepend(str(ROOT))
     worker_module = importlib.import_module("recognition.worker.scan_worker")
     observations = []
+    records = []
+    rebuilds = []
 
     class RetainedDetector:
+        def __init__(self, generation, state, session_id):
+            self.generation, self.state = generation, state
+            self.record = SimpleNamespace(
+                runtime_generation_id=generation, state=state,
+                reason_code="artifact_changed" if state == "drifted" else None,
+                sessions=(SimpleNamespace(session_id=session_id),),
+                execution_receipt={"runtime_generation_id": generation, "session_id": session_id},
+            )
+
         # ABI-07 is keyword-only: a no-argument call must fail this double.
         def loaded_runtime_record(self, *, expected_config, active_generation_id, captured_at):
-            assert expected_config is not None, "ABI-07 expected_config is required"
-            assert active_generation_id in (None, generation), "health singleton is not role-local policy"
+            # F06: object() must not impersonate the frozen G1 runtime config.
+            assert dataclasses.is_dataclass(expected_config), "CAUSAL_RED: expected_config must be FrozenFaceRuntimeConfig"
+            assert type(expected_config).__name__ == "FrozenFaceRuntimeConfig"
+            assert expected_config.__dataclass_params__.frozen, "CAUSAL_RED: expected_config must be frozen"
+            assert active_generation_id in (None, self.generation), "health singleton is not role-local policy"
             assert isinstance(captured_at, datetime)
             assert captured_at.utcoffset() == UTC.utcoffset(captured_at)
-            observations.append((generation, expected_config, active_generation_id, captured_at))
-            return SimpleNamespace(runtime_generation_id=generation, state=state,
-                                   reason_code="artifact_changed" if state == "drifted" else None)
+            observations.append((self.generation, expected_config, active_generation_id, captured_at))
+            records.append(self.record)
+            return self.record
 
     def forbidden(*args, **kwargs):
         raise AssertionError("singleton/factory/DB/client must not replace retained evidence")
 
     monkeypatch.setattr(worker_module, "get_recognition_settings", lambda: face_settings(tmp_path))
-    monkeypatch.setattr(worker_module, "build_embedding_runtime", forbidden)
+
+    async def rebuild(**kwargs):
+        rebuilds.append(kwargs)
+        return RetainedDetector("worker-new", "loaded_unexercised", "session-new"), SimpleNamespace()
+
+    monkeypatch.setattr(worker_module, "build_embedding_runtime", rebuild if allow_rebuild else forbidden)
     monkeypatch.setattr(worker_module, "get_shared_face_pipeline_runtime", forbidden, raising=False)
     worker = object.__new__(worker_module.ScanWorker)
     worker._runtime_mode = "production"
-    worker._detector = RetainedDetector()
+    worker._detector = RetainedDetector(generation, state, "session-old")
     worker._embedding_runtime_ready = True
     worker._embedding_retry_after = None
-    worker._http_client = None
     worker._face_pipeline_metrics = None
     worker._session_factory = forbidden
+    worker._http_client = SimpleNamespace()  # inert, already allocated; no client construction
+    worker._config = SimpleNamespace(max_attempts=1, max_concurrency=1)
+    worker._object_store_factory = None
+    worker._scan_counters = worker_module.ScanWorkerCounters()
+    worker._hlt_records = records
+    worker._hlt_rebuilds = rebuilds
+    worker._hlt_original_record = worker._detector.record
+    monkeypatch.setattr(worker_module, "ScanItemHandler", lambda **kwargs: SimpleNamespace())
     return worker, observations
 
 
@@ -237,12 +269,33 @@ def test_sticky_ready_still_observes_worker_generation_before_return(monkeypatch
     assert worker._embedding_runtime_ready is True
 
 
-def test_sticky_ready_drift_refuses_claims_without_rebuilding(monkeypatch, tmp_path):
-    worker, observations = retained_worker(monkeypatch, tmp_path, "worker-old", "drifted")
+def test_sticky_ready_drift_requires_new_generation_and_session_on_rebuild(monkeypatch, tmp_path):
+    # F07 / ABI-08: a same-pass rebuild is permitted with fresh identities only.
+    worker, observations = retained_worker(
+        monkeypatch, tmp_path, "worker-old", "drifted", allow_rebuild=True
+    )
+    original = worker._hlt_original_record
+    before = plain(original)
+    _, publications = recording_heartbeat(monkeypatch, worker)
     asyncio.run(worker._ensure_embedding_runtime())
-    assert [row[0] for row in observations] == ["worker-old"], "CAUSAL_RED: retained drift not observed"
-    assert worker._embedding_runtime_ready is False, "CAUSAL_RED: drift must demote sticky readiness"
-    assert worker._can_claim_scan_items() is False
+    assert observations and observations[0][0] == "worker-old", "CAUSAL_RED: retained drift not observed"
+    assert plain(original) == before, "CAUSAL_RED: earlier receipt was mutated or overwritten"
+    if worker._hlt_rebuilds:
+        assert len(worker._hlt_rebuilds) == 1
+        assert len(worker._hlt_records) >= 2, "CAUSAL_RED: replacement must be observed"
+        assert worker._hlt_records[-1] is not original, "CAUSAL_RED: rebuild overwrote earlier receipt"
+        replacement = plain(worker._hlt_records[-1])
+        assert replacement["runtime_generation_id"] != before["runtime_generation_id"], "CAUSAL_RED: rebuild reused generation"
+        old_sessions = {row["session_id"] for row in before["sessions"]}
+        new_sessions = {row["session_id"] for row in replacement["sessions"]}
+        assert new_sessions and new_sessions.isdisjoint(old_sessions), "CAUSAL_RED: rebuild reused session"
+        assert publications, "CAUSAL_RED: replacement generation must be published"
+        assert replacement["runtime_generation_id"] in repr(publications[-1])
+        assert all(session_id in repr(publications[-1]) for session_id in new_sessions)
+        assert worker._embedding_runtime_ready is True
+    else:
+        assert worker._embedding_runtime_ready is False, "CAUSAL_RED: drift must demote sticky readiness"
+        assert worker._can_claim_scan_items() is False
 
 
 def test_existing_readiness_fixture_is_real_worker_method():

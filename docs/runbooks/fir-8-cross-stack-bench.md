@@ -121,6 +121,8 @@ uv run python -m scripts.bench.cross_stack_bench status --run-dir "$RUN_DIR"
 
 ## 6. Score
 
+A refused score exits non-zero (BenchError exits 2). For an existing run directory it also replaces `score/frames.json` and `score/report.html` with refusal artifacts: `pr_cells_emitted` is false and the HTML says “Scoring refused”. File existence alone is not scoring success. The refusal header/page records `run_id` (the recorded run stamp), `manifest_sha` (the run-local pin), and `scorer_revision` (the current scorer commit), using literal `unknown` when unavailable. Missing or non-directory run roots are never created for refusal publication. `identity_query_unknown` means an identity-query state is unknown or failed; repair the leg query evidence and rerun score.
+
 Working directory: `apps/prototype-description-service`. Offline; **no credentials / no network**. Fails if either leg's cluster phase is missing or non-success. Writes `score/accepted_set.json`, `score/attrition.json`, `score/frames.json`, `score/report.html`.
 
 ```bash

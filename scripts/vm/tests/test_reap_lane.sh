@@ -5,6 +5,37 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SCRIPT="${ROOT}/scripts/vm/reap-lane.sh"
 
+REAP_GROUPS=(
+  "locks:locks"
+  "basic_guards:basic_guards"
+  "roots:roots"
+  "archive_guards:archive_guards"
+  "sandbox_races:sandbox_races"
+  "sandbox_locks:sandbox_locks"
+  "remote_ttl:remote_ttl"
+  "occupancy:occupancy"
+  "archive_refs:archive_refs"
+  "partial_removal:partial_removal"
+  "ref_enumeration:ref_enumeration"
+  "archive_generations:archive_generations"
+  "archive_verification:archive_verification"
+  "archive_races:archive_races"
+  "worktrees:worktrees"
+  "sweeps:sweeps"
+  "freshness:freshness"
+  "triage:triage"
+)
+if [[ -n "${REAP_TEST_GROUP:-}" ]]; then
+  known_group=0
+  for entry in "${REAP_GROUPS[@]}"; do
+    [[ "$REAP_TEST_GROUP" != "${entry%%:*}" ]] || known_group=1
+  done
+  if [[ "$known_group" -eq 0 ]]; then
+    echo "unknown REAP_TEST_GROUP: $REAP_TEST_GROUP" >&2
+    exit 2
+  fi
+fi
+
 failures=0
 skips=0
 pass() { echo "PASS: $*"; }
@@ -178,6 +209,56 @@ wait_for_background_pid() {  # $1 pid, $2 exit marker, $3 label
 
 init_origin
 
+noflock_bin="$WORKDIR/noflock-bin"
+mkdir "$noflock_bin"
+for command_name in awk bash basename date df dirname du git grep mkdir mv ps \
+  realpath rm rmdir sed sort stat touch; do
+  ln -s "$(command -v "$command_name")" "$noflock_bin/$command_name"
+done
+
+flock_success_bin="$WORKDIR/flock-success-bin"
+mkdir "$flock_success_bin"
+cat >"$flock_success_bin/flock" <<'FLOCK_SUCCESS'
+#!/bin/sh
+exit 0
+FLOCK_SUCCESS
+chmod +x "$flock_success_bin/flock"
+
+ARCHIVE="$WORKDIR/archive.git"
+git init --bare --quiet "$ARCHIVE"
+
+archive_has() {  # $1 label, $2 ref, $3 expected sha
+  local got
+  got="$(git -C "$ARCHIVE" rev-parse --verify --quiet "$2" || true)"
+  if [[ "$got" == "$3" ]]; then pass "$1 archived $2"
+  else fail "$1: $2 is '$got', expected '$3'"; fi
+}
+
+archive_lacks_namespace() {  # $1 label, $2 namespace
+  local refs
+  refs="$(git -C "$ARCHIVE" for-each-ref --format='%(refname)' "refs/lanes/$2")"
+  if [[ -z "$refs" ]]; then pass "$1 did not archive"
+  else fail "$1 unexpectedly created archive refs: $refs"; fi
+}
+
+generation_of() {  # $1 repo
+  git -C "$1" rev-list --max-parents=0 HEAD | sort | sed -n '1p'
+}
+
+
+flock_contention_bin="$WORKDIR/flock-contention-bin"
+mkdir "$flock_contention_bin"
+cat >"$flock_contention_bin/flock" <<'FLOCK_CONTENTION'
+#!/bin/sh
+if [ "${1:-}" = "-n" ] && [ "${2:-}" = "8" ]; then
+  exit 1
+fi
+exit 0
+FLOCK_CONTENTION
+chmod +x "$flock_contention_bin/flock"
+
+# REAP CASE BLOCKS
+reap_case_locks() {
 # A second reaper must fail closed before inspecting any lane. Hold the same
 # whole-sweep lock with the platform's locking primitive and prove the checkout
 # is not even reported as a candidate.
@@ -283,6 +364,9 @@ else
   fail "mkdir fallback stale recovery statuses $race_one_rc/$race_two_rc; one=$(cat "$WORKDIR/race-one.out"); two=$(cat "$WORKDIR/race-two.out")"
 fi
 
+} # REAP_CASE_END locks
+
+reap_case_basic_guards() {
 # ---------------------------------------------------------------------------
 # (a) merged clean clone -> WOULD REAP (dry-run) and is deleted with --yes.
 # Isolates: all guards pass; dry-run does not delete.
@@ -438,6 +522,9 @@ run_reap "$lane_lanes"
 assert_rc0 "g2 lanes"
 assert_contains "g2 lanes" "WOULD REAP"
 
+} # REAP_CASE_END basic_guards
+
+reap_case_roots() {
 # Guard 2 positive: offload lane sandboxes live in ~/grok-sandbox. [RES-07] the
 # defaults still read `w3 uxw2 l1 w lanes` while every lane the orchestrator
 # created went to ~/grok-sandbox -- 60G across 197 clones, with the cron sweeping
@@ -451,12 +538,6 @@ touch -t 200001010000 "$lane_gs/.workbay-lane-sandbox"
 # host without flock. Refuse the whole run before inspecting a lane, while
 # leaving the observational dry-run available. Build a complete PATH without
 # flock so these cases exercise the macOS behavior on Linux too.
-noflock_bin="$WORKDIR/noflock-bin"
-mkdir "$noflock_bin"
-for command_name in awk bash basename date df dirname du git grep mkdir mv ps \
-  realpath rm rmdir sed sort stat touch; do
-  ln -s "$(command -v "$command_name")" "$noflock_bin/$command_name"
-done
 PATH="$noflock_bin" run_reap --yes --all "$HOME/grok-sandbox"
 if [[ "$rc" -eq 2 ]]; then pass "grok-sandbox no-flock destructive exit 2"
 else fail "grok-sandbox no-flock destructive expected exit 2 got $rc; out=$out"; fi
@@ -470,13 +551,6 @@ assert_exists "grok-sandbox no-flock dry-run" "$lane_gs"
 
 # Eligibility-reason cases need a deterministic lane-lock result on both Linux
 # and macOS. This minimal shim also handles the whole-sweep lock and unlock.
-flock_success_bin="$WORKDIR/flock-success-bin"
-mkdir "$flock_success_bin"
-cat >"$flock_success_bin/flock" <<'FLOCK_SUCCESS'
-#!/bin/sh
-exit 0
-FLOCK_SUCCESS
-chmod +x "$flock_success_bin/flock"
 
 # ...and widening the roots must not come from loosening the matcher: the
 # segment-exact guard still refuses a sibling that merely shares the prefix.
@@ -523,39 +597,9 @@ REAP_LANE_ROOTS="scratchpad" run_reap --yes "$lane_default"
 assert_contains "g2 override replaces" "not under allowlisted lane root"
 assert_exists "g2 override replaces kept" "$lane_default"
 
-# --- archive-then-reap -------------------------------------------------------
-# VMDISK-1. Ancestry cannot answer "is this merged?" for a wave that landed by
-# squash or rebase: the lane's commits are never ancestors of main, so the guard
-# skips forever and the reclaimer frees nothing. The VM sat at 94% with ~85
-# lanes, git objects totalling 239M and the rest being duplicated working-tree
-# checkouts (~500M each).
-#
-# --archive-to sidesteps the question. Push every local ref into a keep-repo
-# first and the commits survive whether or not they ever reached main, so
-# deleting the *checkout* cannot lose work. The guard then only has to protect
-# what has no commit behind it: an uncommitted tree, and a stash.
+} # REAP_CASE_END roots
 
-ARCHIVE="$WORKDIR/archive.git"
-git init --bare --quiet "$ARCHIVE"
-
-archive_has() {  # $1 label, $2 ref, $3 expected sha
-  local got
-  got="$(git -C "$ARCHIVE" rev-parse --verify --quiet "$2" || true)"
-  if [[ "$got" == "$3" ]]; then pass "$1 archived $2"
-  else fail "$1: $2 is '$got', expected '$3'"; fi
-}
-
-archive_lacks_namespace() {  # $1 label, $2 namespace
-  local refs
-  refs="$(git -C "$ARCHIVE" for-each-ref --format='%(refname)' "refs/lanes/$2")"
-  if [[ -z "$refs" ]]; then pass "$1 did not archive"
-  else fail "$1 unexpectedly created archive refs: $refs"; fi
-}
-
-generation_of() {  # $1 repo
-  git -C "$1" rev-list --max-parents=0 HEAD | sort | sed -n '1p'
-}
-
+reap_case_archive_guards() {
 # Git safety reads fail closed. A broken or unreadable index must never be
 # interpreted as a clean checkout, and an unreadable stash list must never be
 # interpreted as an empty stash.
@@ -638,6 +682,17 @@ else
 fi
 assert_contains "non-local file URL authority" "unsupported file URL authority"
 assert_exists "non-local file URL authority" "$lane_nested_localhost"
+
+} # REAP_CASE_END archive_guards
+
+reap_case_sandbox_races() {
+if [[ "${REAP_TEST_GROUP:-}" == "sandbox_races" ]]; then
+lane_gs="$HOME/grok-sandbox/feature-vmreap-1-abc1234"
+clone_lane "$lane_gs"
+mark_sandbox "$lane_gs"
+touch -t 200001010000 "$lane_gs/.workbay-lane-sandbox"
+
+fi
 
 # The generic lane sweep must honor the remote sandbox lifecycle before it
 # archives or deletes anything: marker TTL, occupancy lease, and per-lane lock.
@@ -909,6 +964,9 @@ else
   skip_case "grok-sandbox post-rm lock replacement"
 fi
 
+} # REAP_CASE_END sandbox_races
+
+reap_case_sandbox_locks() {
 lane_gs_leased="$HOME/grok-sandbox/feature-leased-abc12345"
 clone_lane "$lane_gs_leased"
 mark_sandbox "$lane_gs_leased"
@@ -927,16 +985,6 @@ lane_gs_locked="$HOME/grok-sandbox/feature-locked-abc12345"
 clone_lane "$lane_gs_locked"
 mark_sandbox "$lane_gs_locked"
 touch -t 200001010000 "$lane_gs_locked/.workbay-lane-sandbox"
-flock_contention_bin="$WORKDIR/flock-contention-bin"
-mkdir "$flock_contention_bin"
-cat >"$flock_contention_bin/flock" <<'FLOCK_CONTENTION'
-#!/bin/sh
-if [ "${1:-}" = "-n" ] && [ "${2:-}" = "8" ]; then
-  exit 1
-fi
-exit 0
-FLOCK_CONTENTION
-chmod +x "$flock_contention_bin/flock"
 PATH="$flock_contention_bin:$PATH" \
   run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_locked"
 assert_rc0 "grok-sandbox lane lock"
@@ -1017,6 +1065,9 @@ assert_exists "grok-sandbox replaced-at-acquire lane lock" \
 archive_lacks_namespace "grok-sandbox replaced-at-acquire lane lock" \
   "grok-sandbox/${lane_gs_replaced_at_lock##*/}"
 
+} # REAP_CASE_END sandbox_locks
+
+reap_case_remote_ttl() {
 # remote_agent.sh allows the managed sandbox root to move. The reaper must
 # resolve and recognize that configured root so marker, lock, lease, and TTL
 # guards cannot be bypassed by falling into the generic one-hour path.
@@ -1037,6 +1088,32 @@ if [[ "$rc" -eq 2 ]]; then pass "custom remote-agent root no-flock exit 2"
 else fail "custom remote-agent root no-flock expected exit 2 got $rc; out=$out"; fi
 assert_contains "custom remote-agent root no-flock" \
   "reap-lane: flock is required for destructive sandbox sweeps"
+
+# Direct TTL overrides must hold fresh sandboxes without archiving them.
+ttl_agent_root="$HOME/w/ttl-agent-sandboxes"
+for ttl_case in 9223372036854775808 18446744073709551616 \
+  18446744073709552516 9999999999999999999 315360001 0900 315360000; do
+  ttl_label="sandbox TTL $ttl_case"
+  ttl_lane="$ttl_agent_root/feature-ttl-$ttl_case"
+  clone_lane "$ttl_lane"
+  mark_sandbox "$ttl_lane"
+  touch "$ttl_lane/.workbay-lane-sandbox"
+  WORKBAY_REMOTE_AGENT_ROOT="$ttl_agent_root" \
+    WORKBAY_REMOTE_AGENT_SANDBOX_TTL_SEC="$ttl_case" \
+    PATH="$flock_success_bin:$PATH" \
+    run_reap --yes --archive-to "$ARCHIVE" "$ttl_lane"
+  assert_rc0 "$ttl_label"
+  case "$ttl_case" in
+    0900|315360000) ttl_reason="sandbox marker has not reached TTL" ;;
+    *) ttl_reason="invalid sandbox TTL" ;;
+  esac
+  assert_contains "$ttl_label" "$ttl_reason"
+  assert_exists "$ttl_label" "$ttl_lane"
+  assert_not_contains "$ttl_label" "REAPED"
+  assert_not_contains "$ttl_label" "value too great for base"
+  assert_summary_counts "$ttl_label" 1 0 1
+  archive_lacks_namespace "$ttl_label" "w/ttl-agent-sandboxes/${ttl_lane##*/}"
+done
 
 # A configured agent root is an explicit deletion boundary, not merely a hint
 # that enables sandbox locking inside one of the default roots.
@@ -1097,6 +1174,9 @@ assert_contains "contended sandbox freshness alert" "lane lock contended"
 assert_summary "contended sandbox freshness alert" 1 0 1 0
 assert_exists "contended sandbox freshness alert" "$lane_custom_locked"
 
+} # REAP_CASE_END remote_ttl
+
+reap_case_occupancy() {
 # A dry run is observational only: it must neither delete the checkout nor
 # create archive refs (including an anchor ref for a linked worktree).
 lane_dry_archive="$HOME/w/lane-dry-archive"
@@ -1266,6 +1346,13 @@ fi
 # Remaining fixtures isolate archive behavior, independently of the age gate.
 export REAP_MIN_AGE_SEC=0
 
+} # REAP_CASE_END occupancy
+
+reap_case_archive_refs() {
+if [[ -n "${REAP_TEST_GROUP:-}" ]]; then
+  export REAP_MIN_AGE_SEC=0
+fi
+
 # Unmerged work is reaped once it is archived -- and every branch lands.
 lane_ar="$HOME/w/lane-archive"
 clone_lane "$lane_ar"
@@ -1388,6 +1475,13 @@ run_reap --yes --archive-to "$ARCHIVE" "$lane_as"
 assert_contains "archive + stash" "stash has real work"
 assert_exists "archive + stash keeps the lane" "$lane_as"
 
+} # REAP_CASE_END archive_refs
+
+reap_case_partial_removal() {
+if [[ -n "${REAP_TEST_GROUP:-}" ]]; then
+  export REAP_MIN_AGE_SEC=0
+fi
+
 # A failed rm is not a reap. Simulate a genuinely partial removal and require a
 # durable marker containing the successful archive ref, so a later sweep does
 # not misdiagnose the damaged checkout as an ordinary dirty tree.
@@ -1491,6 +1585,13 @@ else
 fi
 chmod u+w "$lane_head_conflict"
 
+} # REAP_CASE_END partial_removal
+
+reap_case_ref_enumeration() {
+if [[ -n "${REAP_TEST_GROUP:-}" ]]; then
+  export REAP_MIN_AGE_SEC=0
+fi
+
 # Ref enumeration is a destructive-decision input. A failed read must not look
 # like an empty ref set and permit deletion of an unarchived alternate branch.
 lane_ref_enum_fail="$HOME/ref-enum-root/lane-ref-enumeration-fail"
@@ -1559,6 +1660,13 @@ else
   skips=$((skips + 1))
 fi
 
+} # REAP_CASE_END ref_enumeration
+
+reap_case_archive_generations() {
+if [[ -n "${REAP_TEST_GROUP:-}" ]]; then
+  export REAP_MIN_AGE_SEC=0
+fi
+
 # Same basename under two roots must not overwrite one another: ~/w/dux-l1 and
 # ~/lanes/dux-l1 both exist on the VM, and a basename namespace would archive
 # one over the other and then delete both.
@@ -1605,6 +1713,13 @@ archive_has "rearchive first generation" \
 archive_has "rearchive second generation" \
   "refs/lanes/w/lane-rearchive/$re_gen_two/main" "$re_sha_two"
 
+} # REAP_CASE_END archive_generations
+
+reap_case_archive_verification() {
+if [[ -n "${REAP_TEST_GROUP:-}" ]]; then
+  export REAP_MIN_AGE_SEC=0
+fi
+
 # A push can report success and still leave the archive empty (a quarantine, a
 # hook, a repo that accepts and drops). The lane is deleted on the strength of
 # that archive, so the refs must be read back out -- Release It! 5.5: verify the
@@ -1647,6 +1762,13 @@ if [[ "$(git -C "$ARCHIVE" show "$reflog_sha:REFLOG_ONLY" 2>/dev/null || true)" 
   pass "archive reflog-only commit tree is readable"
 else
   fail "archive reflog-only commit tree is not readable"
+fi
+
+} # REAP_CASE_END archive_verification
+
+reap_case_archive_races() {
+if [[ -n "${REAP_TEST_GROUP:-}" ]]; then
+  export REAP_MIN_AGE_SEC=0
 fi
 
 # Archiving can take long enough for another actor to change a non-sandbox
@@ -1780,6 +1902,13 @@ run_reap --yes --archive-to "$ARCHIVE" "$lane_dh"
 assert_gone "detached HEAD reaped" "$lane_dh"
 archive_has "detached HEAD" "refs/lanes/w/lane-detached/$dh_generation/HEAD" "$dh_sha"
 
+} # REAP_CASE_END archive_races
+
+reap_case_worktrees() {
+if [[ -n "${REAP_TEST_GROUP:-}" ]]; then
+  export REAP_MIN_AGE_SEC=0
+fi
+
 # --- linked worktrees --------------------------------------------------------
 # The VM's two biggest roots are not clones at all: all 35 lanes in ~/w and all
 # 19 in ~/lanes are linked git worktrees of three parent repos. Their branch
@@ -1878,6 +2007,13 @@ assert_exists "parent of live worktrees kept" "$PARENT"
 run_reap --yes --archive-to "$ARCHIVE" --all "$HOME/l1"
 assert_exists "parent survives an --all sweep" "$PARENT"
 
+} # REAP_CASE_END worktrees
+
+reap_case_sweeps() {
+if [[ -n "${REAP_TEST_GROUP:-}" ]]; then
+  export REAP_MIN_AGE_SEC=0
+fi
+
 # --all is repeatable: one cron line has to sweep every lane root. With a
 # last-one-wins flag the entry would silently reap only the final root.
 lane_m1="$HOME/w/lane-multi"
@@ -1915,6 +2051,13 @@ run_reap --yes --all "$HOME/w3"
 assert_rc0 "--all"
 assert_gone "--all merged" "$lane_all_ok"
 assert_exists "--all unmerged" "$lane_all_bad"
+
+} # REAP_CASE_END sweeps
+
+reap_case_freshness() {
+if [[ -n "${REAP_TEST_GROUP:-}" ]]; then
+  export REAP_MIN_AGE_SEC=0
+fi
 
 # A real sweep that sees stale candidates but cannot reclaim any must tell cron
 # that the run is stale when disk use is at or above the configurable alert
@@ -1980,6 +2123,13 @@ assert_rc0 "freshness dry-run"
 assert_contains "freshness dry-run" "WOULD REAP"
 assert_summary "freshness dry-run" 1 0 0 0
 
+
+} # REAP_CASE_END freshness
+
+reap_case_triage() {
+if [[ -n "${REAP_TEST_GROUP:-}" ]]; then
+  export REAP_MIN_AGE_SEC=0
+fi
 
 # ---------------------------------------------------------------------------
 # VMREAP-2: deterministic dirty-lane triage.
@@ -2117,6 +2267,17 @@ clone_lane "$lane_clean_sweep"
 run_reap "$lane_clean_sweep"
 assert_rc0 "triage clean"
 assert_not_contains "triage clean" "REAP TRIAGE"
+
+} # REAP_CASE_END triage
+
+# REAP CASE DISPATCH
+for entry in "${REAP_GROUPS[@]}"; do
+  group="${entry%%:*}"
+  [[ -z "${REAP_TEST_GROUP:-}" || "$REAP_TEST_GROUP" == "$group" ]] || continue
+  for case_name in ${entry#*:}; do
+    "reap_case_${case_name}"
+  done
+done
 
 if [[ "$failures" -gt 0 ]]; then
   echo "${failures} FAILED"

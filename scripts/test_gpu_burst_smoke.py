@@ -12,6 +12,7 @@ import sys
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import gpu_burst_smoke as smoke
 import httpx
@@ -431,6 +432,38 @@ def test_fixture_denylist_python_matches_canonical_bash(sample: str, expected: b
     )
     assert smoke.fixture_sample_is_denied(sample) is expected
     assert (shell.returncode == 0) is expected
+
+
+def test_dry_item_producer_emits_uncached_execution() -> None:
+    item = smoke._dry_item_payload(
+        smoke.DryScenario(),
+        media_id=101,
+        status="completed",
+        tier="final_gpu",
+        result_generation=1,
+    )
+
+    assert item["provenance"]["cached"] is False
+
+
+@pytest.mark.parametrize("cached", [True, "missing"])
+def test_non_dry_final_gpu_rejects_cached_or_unknown_execution(cached: bool | str) -> None:
+    expected = _expected()
+    provenance = {"model_id": f"{expected.spec.hub_repo}@{expected.spec.model_revision}"}
+    if cached != "missing":
+        provenance["cached"] = cached
+    item = {"media_id": 101, "tier": "final_gpu", "provenance": provenance}
+    checks: dict[str, bool] = {}
+    execution = SimpleNamespace(
+        expected_profile=expected,
+        check=lambda name, passed, detail: checks.update({name: passed}),
+    )
+
+    smoke._check_item_provenance(execution, [item], set())
+
+    assert checks["tier_final_gpu"] is False
+    assert checks["model_id_expected_profile"] is True
+    assert checks["model_revision_pinned"] is True
 
 
 def test_dry_run_exercises_whole_flow_and_writes_cost_evidence(tmp_path: Path) -> None:

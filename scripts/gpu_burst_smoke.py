@@ -765,7 +765,11 @@ def _dry_item_payload(
         "result_generation": result_generation,
         "caption": scenario.caption if status == "completed" else None,
         "alt_text_draft": scenario.alt_text_draft if status == "completed" else None,
-        "provenance": ({"model_id": f"{scenario.model_id}@{scenario.revision}"} if tier is not None else None),
+        "provenance": (
+            {"model_id": f"{scenario.model_id}@{scenario.revision}", "cached": False}
+            if tier is not None
+            else None
+        ),
     }
     payload = DescribeRunItemResponse(**values).model_dump(mode="json")
     # The production response currently omits persistence metadata, but live
@@ -2107,7 +2111,9 @@ def _check_item_provenance(
     for item in requested_items:
         media_id = item["media_id"]
         provenance = item.get("provenance") if isinstance(item.get("provenance"), dict) else {}
-        if item.get("tier") != "final_gpu":
+        # A cache replay keeps tier=final_gpu but performed no new GPU execution. Require an explicit
+        # cached=false; an absent cache flag fails closed as well.
+        if item.get("tier") != "final_gpu" or provenance.get("cached") is not False:
             wrong_tier_ids.add(media_id)
         model_identity = str(provenance.get("model_id") or "")
         hub_repo, separator, revision = model_identity.rpartition("@")
@@ -2115,7 +2121,12 @@ def _check_item_provenance(
             wrong_model_ids.add(media_id)
         if not separator or revision != expected_revision:
             wrong_revision_ids.add(media_id)
-    run.check("tier_final_gpu", not wrong_tier_ids, f"offending media_ids: {sorted(wrong_tier_ids)}")
+    run.check(
+        "tier_final_gpu",
+        not wrong_tier_ids,
+        "offending media_ids: "
+        f"{sorted(wrong_tier_ids)}; requires tier final_gpu and provenance.cached is false (new execution)",
+    )
     run.check(
         "model_id_expected_profile",
         not wrong_model_ids,

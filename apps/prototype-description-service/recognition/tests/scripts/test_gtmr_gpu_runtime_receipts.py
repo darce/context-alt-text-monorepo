@@ -64,7 +64,7 @@ from typing import Any
 import httpx
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[5]
 SMOKE_PATH = REPO_ROOT / "scripts" / "gpu_burst_smoke.py"
 SAMPLER_PATH = REPO_ROOT / "apps" / "prototype-description-service" / "scripts" / "eval_harness" / "bench_capture.py"
 HASHING_PATH = REPO_ROOT / "apps" / "prototype-description-service" / "scene" / "application" / "hashing.py"
@@ -899,7 +899,7 @@ def test_control_sampler_xfail_isolates_only_receipt_assertion(
 ) -> None:
     source = Path(__file__).read_text()
     source = source.replace(
-        "REPO_ROOT = Path(__file__).resolve().parents[2]",
+        "REPO_ROOT = Path(__file__).resolve().parents[5]",
         f"REPO_ROOT = Path({str(REPO_ROOT)!r})",
     )
     if fault == "guard":
@@ -917,7 +917,7 @@ def test_control_sampler_xfail_isolates_only_receipt_assertion(
     # In-process pytest keeps the offline subprocess guard active throughout the control.
     exit_code = pytest.main([
         str(isolated) + "::" + case, "-q", "-p", "no:cacheprovider",
-        "--confcutdir=" + str(tmp_path), "--timeout=60",
+        "--confcutdir=" + str(tmp_path), "-p", "no:timeout", "-p", "pytest_timeout", "--timeout=60",
         "--import-mode=importlib", "--basetemp=" + str(tmp_path / "run"),
     ], plugins=[Reports()])
     calls = [report for report in reports if report.when == "call"]

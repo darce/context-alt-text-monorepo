@@ -172,7 +172,9 @@ space_crontab="$space_home/crontab.txt"
 HOME="$space_home" CRONTAB_FILE="$space_crontab" \
   WORKBAY_REMOTE_AGENT_ROOT="$space_home/agent sandboxes" \
   PATH="$space_home/fakebin:$PATH" bash "$SCRIPT" >/dev/null
-cron_command="$(sed -n '/reap-lane\.sh/p' "$space_crontab" | sed 's/^[^ ]* [^ ]* [^ ]* [^ ]* [^ ]* //')"
+# GTMC-C81V-RC-M1 / decision 16447: inspect each sweep independently.
+home_cron_command="$(sed -n '/^17 .*reap-lane\.sh/p' "$space_crontab" | sed 's/^[^ ]* [^ ]* [^ ]* [^ ]* [^ ]* //')"
+remote_cron_command="$(sed -n '/^23 .*reap-lane\.sh/p' "$space_crontab" | sed 's/^[^ ]* [^ ]* [^ ]* [^ ]* [^ ]* //')"
 mkdir -p "$space_home/bin"
 mv "$space_home/bin/reap-lane.sh" "$space_home/bin/reap-lane.real"
 cat >"$space_home/bin/reap-lane.sh" <<'FAKE_REAPER'
@@ -182,19 +184,33 @@ for arg in "$@"; do printf 'arg=<%s>\n' "$arg" >>"$CRON_ARGS"; done
 FAKE_REAPER
 chmod +x "$space_home/bin/reap-lane.sh"
 cron_args="$space_home/cron args.txt"
-HOME="$space_home" CRON_ARGS="$cron_args" /bin/sh -c "$cron_command"
+HOME="$space_home" CRON_ARGS="$cron_args" /bin/sh -c "$home_cron_command"
 assert_file_line() {
   if grep -qxF "$2" "$1"; then pass "$3"
   else fail "$3 missing '$2'; file=$(cat "$1" 2>/dev/null || true)"; fi
 }
-assert_file_line "$cron_args" "remote=<$space_home/agent sandboxes>" \
-  "space HOME preserves remote root"
+assert_file_line "$cron_args" 'remote=<>' "space HOME home sweep clears remote root"
 assert_file_line "$cron_args" "arg=<--archive-to>" "space HOME preserves archive flag"
 assert_file_line "$cron_args" "arg=<$space_home/lane-archive.git>" \
   "space HOME preserves archive path"
 assert_file_line "$cron_args" "arg=<--all>" "space HOME preserves all flags"
-assert_file_line "$cron_args" "arg=<$space_home/grok-sandbox>" \
-  "space HOME preserves root path"
+for root in w3 uxw2 l1 w lanes grok-sandbox; do
+  assert_file_line "$cron_args" "arg=<$space_home/$root>" \
+    "space HOME preserves home root $root"
+done
+HOME="$space_home" CRON_ARGS="$cron_args" /bin/sh -c "$remote_cron_command"
+assert_file_line "$cron_args" "remote=<$space_home/agent sandboxes>" \
+  "space HOME preserves remote root"
+assert_file_line "$cron_args" "arg=<--archive-to>" "space HOME remote sweep preserves archive flag"
+assert_file_line "$cron_args" "arg=<$space_home/lane-archive.git>" \
+  "space HOME remote sweep preserves archive path"
+assert_file_line "$cron_args" "arg=<$space_home/agent sandboxes>" \
+  "space HOME remote sweep preserves all root"
+if [[ "$(grep -cxF 'arg=<--all>' "$cron_args")" -eq 1 ]]; then
+  pass "space HOME remote sweep has exactly one all root"
+else
+  fail "space HOME remote sweep must have exactly one all root"
+fi
 
 # crontab(5) turns an unescaped % into a newline before the shell ever runs,
 # truncating the command. The entry must escape it and survive cron's unescape.

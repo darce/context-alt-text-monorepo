@@ -610,12 +610,27 @@ class OciCliStopActuator:
         try:
             proc = subprocess.run(cmd, check=True, timeout=self._timeout_seconds, capture_output=True)
         except subprocess.CalledProcessError as exc:
+            exc.stop_actuation = StopActuation(outcome=StopOutcome.FAILED, command_invoked=True)
             # Output is captured for the receipt now, so keep the CLI's error text visible in the journal.
             logger.error(
                 "OCI STOP action exited %s for %s: %s",
                 exc.returncode,
                 instance_id,
                 _decode_captured(exc.stderr)[-512:],
+            )
+            raise
+        except subprocess.SubprocessError as exc:
+            exc.stop_actuation = StopActuation(
+                outcome=StopOutcome.UNKNOWN,
+                command_invoked=True,
+                missing_reasons=(("action_response", "action_outcome_not_established"),),
+            )
+            raise
+        except OSError as exc:
+            exc.stop_actuation = StopActuation(
+                outcome=StopOutcome.FAILED,
+                command_invoked=False,
+                missing_reasons=(("command_invoked", "process_not_started"),),
             )
             raise
         stdout = _decode_captured(proc.stdout)
@@ -2081,25 +2096,13 @@ def _normalise_stop_actuation(value: object) -> StopActuation:
 
 
 def _actuation_for_exception(exc: BaseException) -> StopActuation:
-    """Classify a raised STOP: SubprocessError means the action subprocess ran; OSError means it never started."""
-    if isinstance(exc, subprocess.CalledProcessError):
-        return StopActuation(outcome=StopOutcome.FAILED, command_invoked=True)
-    if isinstance(exc, subprocess.SubprocessError):
-        return StopActuation(
-            outcome=StopOutcome.UNKNOWN,
-            command_invoked=True,
-            missing_reasons=(("action_response", "action_outcome_not_established"),),
-        )
-    if isinstance(exc, OSError):
-        # The OCI CLI could not be executed, so the action process never started.
-        return StopActuation(
-            outcome=StopOutcome.FAILED,
-            command_invoked=False,
-            missing_reasons=(("command_invoked", "process_not_started"),),
-        )
+    """Use concrete action-stage evidence; opaque exception types establish no invocation fact."""
+    evidence = getattr(exc, "stop_actuation", None)
+    if isinstance(evidence, StopActuation):
+        return evidence
     return StopActuation(
         outcome=StopOutcome.UNKNOWN,
-        command_invoked=True,
+        command_invoked=None,
         missing_reasons=(("command_invoked", "invocation_unattributed"),),
     )
 

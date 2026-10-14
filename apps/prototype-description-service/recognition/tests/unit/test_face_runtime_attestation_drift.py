@@ -495,3 +495,55 @@ def test_control_serving_fixture_runs_actual_adapter_without_native_load(tmp_pat
 def test_control_second_constructor_failure_is_injected_without_native_load(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="synthetic_second_constructor_failure"):
         serving_fixture(tmp_path, monkeypatch, second_constructor_fails=True, require_producer=False)
+
+
+def test_emitted_execution_receipt_rejects_nested_padding_mutation(tmp_path, monkeypatch):
+    _, adapter, config, _, _, _ = serving_fixture(tmp_path, monkeypatch)
+    adapter._detect_sync(b"synthetic encoded image", "fixture-media")
+    receipt = observe(adapter, config).execution_receipt
+    assert receipt is not None
+    padding = receipt.detector_input["padding_geometry"]
+    assert padding
+    with pytest.raises(TypeError):
+        padding["fixture_canary"] = 99
+
+
+def test_emitted_execution_receipt_copies_callers_nested_padding_alias(tmp_path, monkeypatch):
+    module, adapter, config, _, _, _ = serving_fixture(tmp_path, monkeypatch)
+    receipt_type = module.ExecutionReceiptV1
+    aliases = []
+
+    def capture_receipt(**values):
+        aliases.append(values["detector_input"]["padding_geometry"])
+        return receipt_type(**values)
+
+    monkeypatch.setattr(module, "ExecutionReceiptV1", capture_receipt)
+    adapter._detect_sync(b"synthetic encoded image", "fixture-media")
+    receipt = observe(adapter, config).execution_receipt
+    assert receipt is not None
+    assert len(aliases) == 1
+    before = dict(receipt.detector_input["padding_geometry"])
+    assert before
+    aliases[0]["fixture_canary"] = 99
+    assert dict(receipt.detector_input["padding_geometry"]) == before
+
+
+def test_emitted_execution_receipt_has_no_graph_digest_without_analysis(tmp_path, monkeypatch):
+    _, adapter, config, _, _, _ = serving_fixture(tmp_path, monkeypatch)
+    adapter._detect_sync(b"synthetic encoded image", "fixture-media")
+    record = observe(adapter, config)
+    assert all(session.graph_analysis is None for session in record.sessions.values())
+    assert record.execution_receipt is not None
+    assert record.execution_receipt.graph_analysis_sha256 is None
+
+
+def test_emitted_session_receipt_rejects_graph_for_different_consumed_model(tmp_path, monkeypatch):
+    _, adapter, config, _, _, _ = serving_fixture(tmp_path, monkeypatch)
+    adapter._detect_sync(b"synthetic encoded image", "fixture-media")
+    session = observe(adapter, config).sessions["auraface"]
+    wrong_digest = sha(b"different consumed model")
+    assert wrong_digest != session.observed_weight_sha256
+    bound = replace(session, graph_analysis={"digest": session.observed_weight_sha256})
+    assert bound.graph_analysis["digest"] == session.observed_weight_sha256
+    with pytest.raises(ValueError, match="graph analysis must bind the consumed model digest"):
+        replace(session, graph_analysis={"digest": wrong_digest})

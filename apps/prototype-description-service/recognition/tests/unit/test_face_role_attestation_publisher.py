@@ -1055,8 +1055,13 @@ def test_builder_rejects_invalid_envelope_with_named_reason(fault):
         options['source_identity'] = Record(identity_args(), source_tree='invalid')
     else:
         options['adapter_observations'][0]['runtime_record']['producer_abi_version'] = 1.0
-    with pytest.raises(ValueError, match=reason):
-        module.build_face_role_record(**options)
+    if fault == 'runtime_version':
+        record = module.build_face_role_record(**options)
+        assert record.collection_status == 'incomplete'
+        assert record.reason_code == 'incompatible_version'
+    else:
+        with pytest.raises(ValueError, match=reason):
+            module.build_face_role_record(**options)
 
 
 @pytest.mark.parametrize('fault', ['runtime_shape', 'runtime_version', 'generation',

@@ -823,12 +823,22 @@ def check_face_pipeline_models(models_dir: Path) -> CheckResult:
     try:
         from recognition.config import get_settings
         from recognition.infrastructure.embeddings.face_pipeline_adapter import (
+            FrozenFaceRuntimeConfig,
             get_shared_face_pipeline_runtime,
         )
 
         # Face-pipeline readiness only; pass configured thresholds so readiness
         # and serve share the same runtime cache key (profile/models_dir/top-k).
-        fp = get_settings().face_pipeline
+        settings = get_settings()
+        fp = settings.face_pipeline
+        from db.settings import get_database_settings
+
+        expected_config = FrozenFaceRuntimeConfig(
+            profile="face_pipeline", models_dir=root.resolve(), embedder_models_dir=root.resolve(),
+            score_threshold=float(fp.score_threshold), nms_threshold=float(fp.nms_threshold),
+            top_k=int(fp.top_k), embedding_dimension=int(settings.identity_detection.embedding_dimension),
+            pgvector_dimension=int(get_database_settings().pgvector_dimension),
+        )
         runtime = get_shared_face_pipeline_runtime(
             profile="face_pipeline",
             models_dir=root,
@@ -844,7 +854,7 @@ def check_face_pipeline_models(models_dir: Path) -> CheckResult:
         )
     return _with_numeric_runtime_fingerprint(
         _with_face_runtime_observations(
-            CheckResult("model_cache", HealthStatus.OK, f"verified: yunet+sface @ {root}"), runtime, fp,
+            CheckResult("model_cache", HealthStatus.OK, f"verified: yunet+sface @ {root}"), runtime, expected_config,
         )
     )
 
@@ -893,10 +903,22 @@ def check_model_space(space: ModelSpace, store: Path, /) -> CheckResult:
     try:
         from recognition.config import get_settings
         from recognition.infrastructure.embeddings.face_pipeline_adapter import (
+            FrozenFaceRuntimeConfig,
             get_shared_face_pipeline_runtime,
         )
 
-        face_pipeline = get_settings().face_pipeline
+        settings = get_settings()
+        face_pipeline = settings.face_pipeline
+        from db.settings import get_database_settings
+
+        expected_config = FrozenFaceRuntimeConfig(
+            profile=space.value, models_dir=Path(face_pipeline.resolved_models_dir).resolve(),
+            embedder_models_dir=Path(store).resolve(),
+            score_threshold=float(face_pipeline.score_threshold),
+            nms_threshold=float(face_pipeline.nms_threshold), top_k=int(face_pipeline.top_k),
+            embedding_dimension=int(settings.identity_detection.embedding_dimension),
+            pgvector_dimension=int(get_database_settings().pgvector_dimension),
+        )
         runtime = get_shared_face_pipeline_runtime(
             profile=space,
             models_dir=face_pipeline.resolved_models_dir,
@@ -909,7 +931,7 @@ def check_model_space(space: ModelSpace, store: Path, /) -> CheckResult:
         return CheckResult("model_cache", HealthStatus.UNHEALTHY, f"runtime unavailable: {exc}")
     return _with_numeric_runtime_fingerprint(
         _with_face_runtime_observations(
-            CheckResult("model_cache", HealthStatus.OK, f"verified: auraface @ {store}"), runtime, face_pipeline,
+            CheckResult("model_cache", HealthStatus.OK, f"verified: auraface @ {store}"), runtime, expected_config,
         )
     )
 

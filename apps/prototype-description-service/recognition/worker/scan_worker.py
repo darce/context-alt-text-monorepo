@@ -13,8 +13,8 @@ import math
 import os
 import time
 import uuid
-from collections.abc import Callable
-from dataclasses import asdict, dataclass, field, is_dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -632,8 +632,12 @@ class ScanWorker:
         )
         if retained is not None:
             replacement = self._observe_embedding_runtime(detector)
-            old_sessions = {row.session_id for row in retained.sessions}
-            new_sessions = {row.session_id for row in replacement.sessions} if replacement is not None else set()
+            old_receipts = retained.sessions.values() if isinstance(retained.sessions, Mapping) else retained.sessions
+            new_receipts = (
+                replacement.sessions.values() if isinstance(replacement.sessions, Mapping) else replacement.sessions
+            ) if replacement is not None else ()
+            old_sessions = {row.session_id for row in old_receipts}
+            new_sessions = {row.session_id for row in new_receipts}
             if (replacement is None
                     or not replacement.runtime_generation_id
                     or replacement.runtime_generation_id == retained.runtime_generation_id
@@ -705,10 +709,10 @@ class ScanWorker:
                 counters=self._scan_counters,
             )
         if record is not None:
-            snapshot = asdict(record) if is_dataclass(record) else vars(record)
-            reason += "; loaded_runtime=" + json.dumps(snapshot, default=lambda value: (
-                value.isoformat() if isinstance(value, datetime) else str(value) if isinstance(value, Path) else vars(value)
-            ), sort_keys=True)
+            from recognition.application.health import encode_face_runtime_observation
+
+            snapshot = encode_face_runtime_observation(record)
+            reason += "; loaded_runtime=" + json.dumps(snapshot, sort_keys=True)
         await publish_embedding_runtime_capability(session, available=available, reason=reason)
 
     async def _heartbeat_embedding_runtime_capability(self) -> None:

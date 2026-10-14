@@ -463,6 +463,7 @@ def test_control_join_scanner_detects_a_binding_persisted_in_a_row_or_in_the_pub
 # --------------------------------------------------------------------------------------------
 
 
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="C82R-HGPUR2-F3: operation-to-first-counting-revision binding not yet persisted; implement in the c83 join node")
 def test_red_committed_operation_is_bound_to_the_revision_that_first_counted_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -495,6 +496,7 @@ def test_red_committed_operation_is_bound_to_the_revision_that_first_counted_it(
     )
 
 
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="C82R-HGPUR2-F3: operation-to-first-counting-revision binding not yet persisted; implement in the c83 join node")
 def test_red_later_publication_keeps_each_operation_bound_to_its_first_counting_revision(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

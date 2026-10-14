@@ -201,6 +201,25 @@ def _identity_outcome(snapshot: Mapping[str, Any], label: str) -> tuple[str, str
     return ("incomplete", "target_identity_unobserved") if missing else None
 
 
+def _sidecar_identity_outcome(aura_evidence: Any, label: str) -> tuple[str, str] | None:
+    expected = target_identities(label)
+    for role in ("api", "worker"):
+        wrapper = _at(aura_evidence, "runtime_roles", role, "database_identity")
+        if (
+            not isinstance(wrapper, Mapping)
+            or set(wrapper) - {"value", "provenance"}
+            or wrapper.get("provenance") != "database_catalog"
+        ):
+            continue
+        value = wrapper.get("value")
+        if not isinstance(value, Mapping) or set(value) - {"database_name", "role"}:
+            continue
+        for field in ("database_name", "role"):
+            if value.get(field) is not None and value[field] != expected[field]:
+                return ("invalid", "database_identity_divergent")
+    return None
+
+
 def _persisted_model_ids(summary: Mapping[str, Any]) -> list[str] | None:
     ids = summary.get("persisted_model_ids")
     if not isinstance(ids, list) or not all(isinstance(item, str) and item.strip() for item in ids):
@@ -309,6 +328,7 @@ def validate_target_store(
     *,
     isolation_policy: Mapping[str, Any],
     acceptance_policy: Mapping[str, Any],
+    aura_evidence: Any = None,
 ) -> tuple[str, str] | None:
     """Check the target and store rungs owned by one Aura label; ``None`` means they are complete and consistent."""
 
@@ -328,6 +348,9 @@ def validate_target_store(
     identity_outcome = _identity_outcome(snapshot, label)
     if identity_outcome is not None:
         findings.append(identity_outcome)
+    sidecar_outcome = _sidecar_identity_outcome(aura_evidence, label)
+    if sidecar_outcome is not None:
+        findings.append(sidecar_outcome)
     stamp = _active_stamp(snapshot)
     if isinstance(stamp, tuple):
         findings.append(stamp)

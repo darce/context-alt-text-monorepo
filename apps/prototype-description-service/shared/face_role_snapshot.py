@@ -93,6 +93,9 @@ class FaceRoleRecordV1:
     reason_code: str | None
 
     def __post_init__(self):
+        if not _version(self.producer_abi_version):
+            raise ValueError("incompatible_version")
+        _process(self.process_instance_id)
         _capture_time(self.captured_at)
 
 
@@ -193,10 +196,13 @@ def build_face_role_record(*, role, process_instance_id, observation_sequence, c
     rows = _copy(adapter_observations)
     if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
         raise ValueError("invalid_observations")
+    incompatible_version = False
     for row in rows:
         runtime = row.get("runtime_record")
-        if runtime is not None and (not isinstance(runtime, dict) or not _version(runtime.get("producer_abi_version"))):
+        if runtime is not None and not isinstance(runtime, dict):
             raise ValueError("incompatible_version")
+        if isinstance(runtime, dict) and not _version(runtime.get("producer_abi_version")):
+            incompatible_version = True
     catalog = _copy(serving_catalog)
     complete = (source is not None and bool(rows) and all(_attested(row) for row in rows)
                 and isinstance(catalog, dict) and _version(catalog.get("producer_abi_version"))
@@ -206,7 +212,7 @@ def build_face_role_record(*, role, process_instance_id, observation_sequence, c
                             observation_sequence=observation_sequence, captured_at=captured_at,
                             source_identity=source, effective_settings=settings, adapter_observations=tuple(rows),
                             serving_catalog=catalog, collection_status="complete" if complete else "incomplete",
-                            reason_code=None if complete else "evidence_incomplete")
+                            reason_code=None if complete else ("incompatible_version" if incompatible_version else "evidence_incomplete"))
 
 
 def write_face_role_record(record, *, evidence_dir: Path, max_record_bytes: int, deadline_monotonic: float):

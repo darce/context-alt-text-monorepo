@@ -212,7 +212,7 @@ def test_post_kill_wait_is_bounded_and_sanitized(tmp_path, monkeypatch, unkillab
     import io
     module = load('collect_auraface_acceptance')
     monkeypatch.setitem(collect.__globals__, 'load', lambda _: module)
-    calls = []
+    calls, readers = [], []
     clock = [10.0]
     deadline, reap_reserve, reap_grace = 11.0, 0.15, 0.1
     monkeypatch.setattr(module.time, 'monotonic', lambda: clock[0])
@@ -221,6 +221,7 @@ def test_post_kill_wait_is_bounded_and_sanitized(tmp_path, monkeypatch, unkillab
         def __init__(self, *args, **kwargs):
             self.stdin, self.stdout = io.StringIO(), io.StringIO()
             self.killed = False
+            readers.append(self)
             clock[0] = 10.2  # launch consumes budget
 
         def communicate(self, *, input, timeout=None):
@@ -249,6 +250,7 @@ def test_post_kill_wait_is_bounded_and_sanitized(tmp_path, monkeypatch, unkillab
     result = collect([tmp_path / 'unused'], inputs, deadline_monotonic=deadline)
     code = 'reader_unkillable' if unkillable else 'deadline_exceeded'
     assert calls == ['communicate', 'kill', 'wait']
+    assert readers[0].stdin.closed and readers[0].stdout.closed
     assert result['acquisition_ledger'][0]['status'] == code
     assert result['acquisition_ledger'][0]['reason_code'] == code
     assert code in result['gaps']
@@ -342,3 +344,148 @@ def test_symlinked_parent_directory_is_refused(tmp_path):
     result = collect([link / 'record'], inputs)
     assert result['acquisition_ledger'][0]['status'] == 'unreadable'
     assert result['acquisition_ledger'][0]['bytes_read'] == 0
+
+
+@pytest.mark.parametrize('wait_expires', [False, True])
+def test_kill_error_still_attempts_bounded_reap(tmp_path, monkeypatch, wait_expires):
+    # GTMC-FG3C80-F3 / C82R-G3C2-01: cleanup errors are typed and sanitized.
+    import io
+    module = load('collect_auraface_acceptance')
+    monkeypatch.setitem(collect.__globals__, 'load', lambda _: module)
+    monkeypatch.setattr(module.time, 'monotonic', lambda: 0.0)
+    calls, readers = [], []
+
+    class Reader:
+        def __init__(self, *args, **kwargs):
+            self.stdin, self.stdout = io.StringIO(), io.StringIO()
+            readers.append(self)
+
+        def communicate(self, **kwargs):
+            raise module.subprocess.TimeoutExpired('private-canary', 0)
+
+        def kill(self):
+            calls.append('kill')
+            raise PermissionError('private-canary')
+
+        def wait(self, timeout=None):
+            calls.append('wait')
+            assert timeout == 0.1
+            if wait_expires:
+                raise module.subprocess.TimeoutExpired('private-canary', timeout)
+            return 0
+
+    monkeypatch.setattr(module.subprocess, 'Popen', Reader)
+    _, inputs = pair()
+    result = collect([tmp_path / 'unused'], inputs, deadline_monotonic=1.0)
+    assert calls == ['kill', 'wait']
+    code = 'reader_unkillable' if wait_expires else 'deadline_exceeded'
+    assert result['acquisition_ledger'][0]['status'] == code
+    assert result['acquisition_ledger'][0]['reason_code'] == code
+    assert code in result['gaps']
+    assert 'private-canary' not in str(result) and str(tmp_path) not in str(result)
+    assert readers[0].stdin.closed and readers[0].stdout.closed
+
+
+@pytest.mark.parametrize('receipt,status,expected,accounted', [
+    (-7, 'missing', 'malformed', 0),
+    (True, 'missing', 'malformed', 0),
+    ('7', 'missing', 'malformed', 0),
+    (7, 'oversized', 'oversized', 7),
+])
+def test_collector_receipt_validation_and_propagation(tmp_path, monkeypatch, receipt, status, expected, accounted):
+    # GTMC-FG3C80-F5 / C82R-G3C2-02: child receipts must reach the collector.
+    import io
+    module = load('collect_auraface_acceptance')
+    monkeypatch.setitem(collect.__globals__, 'load', lambda _: module)
+    readers = []
+
+    class Reader:
+        returncode = 0
+        def __init__(self, *args, **kwargs):
+            self.stdin, self.stdout = io.StringIO(), io.StringIO()
+            readers.append(self)
+        def communicate(self, **kwargs):
+            return json.dumps(dict(status=status, bytes_read=receipt)), None
+
+    monkeypatch.setattr(module.subprocess, 'Popen', Reader)
+    _, inputs = pair()
+    result = collect([tmp_path / 'unused'], inputs)
+    row = result['acquisition_ledger'][0]
+    assert row['status'] == row['reason_code'] == expected
+    assert row['bytes_read'] == accounted
+    assert expected in result['gaps']
+    assert readers[0].stdin.closed and readers[0].stdout.closed
+
+
+def test_search_only_parent_is_acquired(tmp_path, monkeypatch):
+    # GTMC-FG3C80-F8 / C82R-G3C2-04: search permission suffices for directory walk.
+    import os
+    directory = tmp_path / 'search-only'
+    directory.mkdir()
+    path = directory / 'record'
+    path.write_bytes(b'{}')
+    real_open = os.open
+    directory_flags = []
+    def checked_open(name, flags, *args, **kwargs):
+        if flags & os.O_DIRECTORY:
+            directory_flags.append(flags)
+            assert flags & os.O_PATH, 'directory walk requires O_PATH'
+        return real_open(name, flags, *args, **kwargs)
+    directory.chmod(0o311)
+    try:
+        monkeypatch.setattr(os, 'open', checked_open)
+        result, _ = run_reader(path, 1024, monkeypatch)
+        assert directory_flags
+        assert result['status'] == 'acquired' and result['bytes_read'] == 2
+    finally:
+        directory.chmod(0o700)
+
+
+def test_exact_launch_reserve_boundary_is_allowed(tmp_path, monkeypatch):
+    # C82R-G3C2-05: equality must launch, independent of float subtraction.
+    import io
+    module = load('collect_auraface_acceptance')
+    monkeypatch.setitem(collect.__globals__, 'load', lambda _: module)
+    monkeypatch.setattr(module.time, 'monotonic', lambda: 0.0)
+    calls = []
+    class Reader:
+        returncode = 0
+        def __init__(self, *args, **kwargs):
+            calls.append('launch')
+            self.stdin, self.stdout = io.StringIO(), io.StringIO()
+        def communicate(self, **kwargs):
+            return '{"status":"missing","bytes_read":0}', None
+    monkeypatch.setattr(module.subprocess, 'Popen', Reader)
+    _, inputs = pair()
+    boundary = module.READER_REAP_RESERVE_SECONDS + module.READER_LAUNCH_MARGIN_SECONDS
+    result = collect([tmp_path / 'unused'], inputs, deadline_monotonic=boundary)
+    assert calls == ['launch']
+    assert result['acquisition_ledger'][0]['status'] == 'missing'
+
+
+def test_actual_launch_is_in_total_caller_timing(tmp_path, monkeypatch):
+    # C82R-G3C2-06: complementary launch-inclusive smoke, not a universal bound.
+    module = load('collect_auraface_acceptance')
+    monkeypatch.setitem(collect.__globals__, 'load', lambda _: module)
+    monkeypatch.setattr(module, '_READ_SCRIPT', 'import time; time.sleep(60)')
+    real_popen, readers = module.subprocess.Popen, []
+    def popen(*args, **kwargs):
+        reader = real_popen(*args, **kwargs)
+        readers.append(reader)
+        return reader
+    monkeypatch.setattr(module.subprocess, 'Popen', popen)
+    _, inputs = pair()
+    started = time.monotonic()
+    try:
+        result = collect([tmp_path / 'unused'], inputs, deadline_monotonic=started + 0.2)
+        assert time.monotonic() - started < 0.5
+        assert result['acquisition_ledger'][0]['status'] == 'deadline_exceeded'
+        assert len(readers) == 1 and readers[0].returncode == -9
+        assert readers[0].stdin.closed and readers[0].stdout.closed
+    finally:
+        for reader in readers:
+            if reader.poll() is None:
+                reader.kill()
+                reader.wait(timeout=1)
+            reader.stdin.close()
+            reader.stdout.close()

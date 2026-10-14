@@ -18,7 +18,7 @@ factory = h.factory
 
 
 @pytest.mark.parametrize("label", ["staging-auraface", "prod-auraface"])
-def test_disabled_portal_labels_refused_before_settings_or_session(monkeypatch, capsys, factory, label):
+def test_aura_portal_labels_admitted_in_dedicated_store(monkeypatch, capsys, factory, label):
     cli = h._load_cli(monkeypatch)
     reads = h._configure_env(
         monkeypatch, acx_env=label,
@@ -27,9 +27,10 @@ def test_disabled_portal_labels_refused_before_settings_or_session(monkeypatch, 
     )
     clock = h._VirtualClock()
     factory.session = h._SpySession(clock)
-    assert h._drive(clock, cli.run(["--env", label, "list"])) == 1
-    assert reads == []
-    assert factory.calls == 0
+    assert h._drive(clock, cli.run(["--env", label, "list"])) == 0
+    assert len(reads) == 1
+    assert factory.calls == 1
+    assert factory.session.log == ["execute", "commit", "close"]
     h._assert_no_token_output(capsys.readouterr())
 
 

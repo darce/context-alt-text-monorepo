@@ -71,7 +71,7 @@ esac
 ssh -o BatchMode=yes -o ConnectTimeout=10 \
     -o ServerAliveInterval=30 -o ServerAliveCountMax=4 "$REMOTE_HOST" \
     "bash -s -- '$mode' '$REMOTE_DIR' '$SAMPLE_GAP' '$confirm' '$days' '$REMOTE_HOST'" <<'REMOTE_EOF'
-set -u
+set -uo pipefail
 mode="$1"; dir="$2"; gap="$3"; confirm="$4"; days="$5"; host="$6"
 
 holders_of() { fuser .gate.lock 2>/dev/null | tr -s ' ' '\n' | grep -E '^[0-9]+$' || true; }
@@ -120,7 +120,7 @@ status)
     if [ -z "$holders" ]; then
         echo 'lock: FREE - no process holds .gate.lock'
     else
-        tree="$(descendants_of "$holders" | sort -n)"
+        tree="$(descendants_of "$holders" | sort -n)" || exit "$?"
         echo "lock: HELD - $(count_words "$holders") holder(s) of fd 9, $(count_words "$tree") process(es) in the run tree"
         ps -o pid,ppid,stat,etimes,cputimes,args -p $(echo $tree | tr ' ' ',') 2>/dev/null | cut -c1-150
         echo
@@ -165,8 +165,12 @@ status)
         fi
     fi
     echo
-    echo "disk: $(df -h / | tail -1 | tr -s ' ')"
-    echo "/tmp: $(du -sh /tmp 2>/dev/null | cut -f1) across $(find /tmp -maxdepth 1 -user $(id -un) 2>/dev/null | wc -l) gate-owned entries"
+    # echo succeeds even when a substitution fails; capture before printing so
+    # a failed probe retains its exit status across the SSH boundary.
+    disk="$(df -h / | tail -1 | tr -s ' ')" || exit "$?"
+    tmp_usage="$(du -sh /tmp 2>/dev/null | cut -f1)" || exit "$?"
+    echo "disk: $disk"
+    echo "/tmp: $tmp_usage across $(find /tmp -maxdepth 1 -user $(id -un) 2>/dev/null | wc -l) gate-owned entries"
     echo "  stale >7d: $(find /tmp -maxdepth 1 -user $(id -un) -mtime +7 2>/dev/null | wc -l) entries"
     ;;
 reap)

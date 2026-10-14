@@ -13,7 +13,8 @@ def test_runbook_covers_localwp_gate_secret_flow() -> None:
     assert "wp-config.local.php" in text
     assert "ACX_RECOGNITION_URL" in text
     assert "ACX_RECOGNITION_API_KEY" in text
-    assert "python -m scripts.manage_api_keys create --tenant" in text
-    assert "python -m scripts.manage_api_keys revoke --key-id" in text
+    # GTMC-C78INT-03: the hosted-key runbook requires the prod CLI environment.
+    assert "python -m scripts.manage_api_keys --env prod create --tenant" in text
+    assert "python -m scripts.manage_api_keys --env prod revoke --key-id" in text
     assert "bash scripts/localwp-wp.sh" in text
     assert "fingerprint" in text.lower()

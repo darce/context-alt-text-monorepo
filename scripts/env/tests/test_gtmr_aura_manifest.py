@@ -67,7 +67,7 @@ EXISTING_RENDER_GOLDEN = {
     ("svc-vm", "dev"): ("fe9d7de22285f28527ccbf7df05dd95d8710eda4a81c19f461e52900e6fd4f5e", 44),
     ("svc-vm", "staging"): ("1c918c65a696e81561a547aff97420bda3499d926833f033465923bb493ef110", 36),
     ("svc-vm", "prod"): ("c5211970a47dfdfc28e017f082b653df50445c7209bfa2ba32465ae192e4637c", 49),
-    ("svc-fir", "fir"): ("38d2fb376f3034d80749f56874f62a73c92bd4b404c82fcec437edddec37a83a", 25),
+    ("svc-fir", "fir"): ("61391317a2500419470638bd6f8378ba945e1bba8ce38c10888b341a5cf23f37", 32),
     ("demo", "demo"): ("777ec589b67c67008e376b812a3b414287c699a888bdf258ea47ee9903cc47a3", 16),
 }
 

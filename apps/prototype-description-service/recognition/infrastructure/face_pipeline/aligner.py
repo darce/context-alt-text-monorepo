@@ -163,14 +163,21 @@ def _umeyama_similarity_homogeneous(src: np.ndarray, dst: np.ndarray) -> np.ndar
     return transform
 
 
-def arcface_similarity_transform_matrix(src_landmarks: np.ndarray) -> np.ndarray:
+def arcface_similarity_transform_matrix(
+    src_landmarks: np.ndarray,
+    *,
+    dst_landmarks: np.ndarray | None = None,
+) -> np.ndarray:
     """Umeyama similarity matching InsightFace ``estimate_norm`` (ArcFace 112).
 
     Preserves input landmark dtype and the float32 ArcFace dest means. Returns
-    a float64 2×3 affine. Production copy — does not import test goldens.
+    a float64 2×3 affine. ``dst_landmarks`` supplies the retained executing
+    destination; the default preserves the legacy global template lookup.
+    Production copy — does not import test goldens.
     """
     src = _as_landmarks5_native(src_landmarks)
-    homogeneous = _umeyama_similarity_homogeneous(src, ARCFACE_CANONICAL_LANDMARKS_112)
+    dst = ARCFACE_CANONICAL_LANDMARKS_112 if dst_landmarks is None else _as_landmarks5_native(dst_landmarks)
+    homogeneous = _umeyama_similarity_homogeneous(src, dst)
     if not np.isfinite(homogeneous).all():
         raise AlignmentError("degenerate landmarks; Umeyama is ill-conditioned")
     return np.asarray(homogeneous[0:2, :], dtype=np.float64)
@@ -272,7 +279,11 @@ class FivePointAligner:
         if self.template_id not in _TEMPLATE_LANDMARKS:
             supported = ", ".join(sorted(_TEMPLATE_LANDMARKS))
             raise AlignmentError(f"unknown alignment template {self.template_id!r}; supported templates: {supported}")
-        self.dst_landmarks = _TEMPLATE_LANDMARKS[self.template_id]
+        if self.template_id == _SFACE_TEMPLATE_ID:
+            self.dst_landmarks = _TEMPLATE_LANDMARKS[self.template_id]
+        else:
+            self.dst_landmarks = np.array(_TEMPLATE_LANDMARKS[self.template_id], dtype=np.float32, copy=True)
+            self.dst_landmarks.setflags(write=False)
 
     def align(
         self,
@@ -304,7 +315,7 @@ class FivePointAligner:
         if self.template_id == _SFACE_TEMPLATE_ID:
             affine = similarity_transform_matrix(landmarks)
         else:
-            affine = arcface_similarity_transform_matrix(landmarks)
+            affine = arcface_similarity_transform_matrix(landmarks, dst_landmarks=self.dst_landmarks)
         crop = cv2.warpAffine(
             img,
             affine,

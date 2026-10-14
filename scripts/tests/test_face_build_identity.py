@@ -82,20 +82,61 @@ def test_positive_baked_identity_preserves_distinct_source_and_tree(monkeypatch)
 
 
 def test_baked_loader_refuses_conflicting_environment(monkeypatch, tmp_path):
-    if BAKED_IDENTITY_LOADER is None:
-        pytest.skip("C-10 / ABI-11: baked identity loader name and signature not frozen by parent")
+    assert BAKED_IDENTITY_LOADER is not None, (
+        "CAUSAL_RED: C-10 loader ABI unfrozen; owner=parent-G2-ABI-11 (GTMC-C81R-HB-M2)")
     loader = getattr(module(), BAKED_IDENTITY_LOADER, None)
     assert callable(loader), "CAUSAL_RED: frozen baked identity loader is missing"
+    assert_baked_loader_environment(loader, monkeypatch, tmp_path)
+
+
+def assert_baked_loader_environment(loader, monkeypatch, tmp_path):
     path = tmp_path / ".source-identity.json"
     path.write_text(json.dumps(identity_args()))
     monkeypatch.delenv("GIT_COMMIT_SHA", raising=False)
     monkeypatch.delenv("APP_GIT_COMMIT_SHA", raising=False)
     assert plain(loader(path)) == identity_args()
+
     for variable in ("GIT_COMMIT_SHA", "APP_GIT_COMMIT_SHA"):
+        with monkeypatch.context() as equal:
+            equal.setenv(variable, identity_args()["source_git_sha"])
+            assert plain(loader(path)) == identity_args(), "CAUSAL_RED: equal ENV must preserve baked identity"
         with monkeypatch.context() as conflict:
             conflict.setenv(variable, "fixture-conflicting-source")
             with pytest.raises((ValueError, TypeError)):
                 loader(path)
+    monkeypatch.setenv("GIT_COMMIT_SHA", identity_args()["source_git_sha"])
+    monkeypatch.setenv("APP_GIT_COMMIT_SHA", identity_args()["source_git_sha"])
+    assert plain(loader(path)) == identity_args()
+
+
+def test_unfrozen_loader_is_an_active_owned_tripwire(monkeypatch, tmp_path):
+    monkeypatch.setitem(globals(), "BAKED_IDENTITY_LOADER", None)
+    try:
+        with pytest.raises(AssertionError, match="owner=parent-G2-ABI-11"):
+            test_baked_loader_refuses_conflicting_environment(monkeypatch, tmp_path)
+    except pytest.skip.Exception:
+        pytest.fail("CAUSAL_RED: C-10 silently skipped instead of failing closed")
+
+
+@pytest.mark.parametrize("behavior", ["faithful", "ignore-env", "refuse-any-env", "app-only"])
+def test_baked_loader_environment_oracle_discriminates(behavior, monkeypatch, tmp_path):
+    def loader(path):
+        import os
+        document = json.loads(path.read_text())
+        for variable in ("GIT_COMMIT_SHA", "APP_GIT_COMMIT_SHA"):
+            value = os.environ.get(variable)
+            if behavior == "ignore-env" or (behavior == "app-only" and variable == "GIT_COMMIT_SHA"):
+                continue
+            if value is not None and (behavior == "refuse-any-env" or value != document["source_git_sha"]):
+                raise ValueError("synthetic ENV conflict")
+        return document
+
+    if behavior == "faithful":
+        assert_baked_loader_environment(loader, monkeypatch, tmp_path)
+    else:
+        with pytest.raises((AssertionError, ValueError, pytest.fail.Exception)):
+            assert_baked_loader_environment(loader, monkeypatch, tmp_path)
+
 
 
 @pytest.mark.parametrize("version", [None, True, "1", 0, 2])
@@ -154,56 +195,107 @@ def docker_instructions(source):
 
 
 def instruction_destination(instruction, arguments, workdir):
-    if instruction in {"COPY", "ADD"}:
-        # Flags precede both shell-form and JSON-form operands.
-        while arguments.startswith("--"):
-            _, _, arguments = arguments.partition(" ")
-            arguments = arguments.lstrip()
-        operands = json.loads(arguments) if arguments.startswith("[") else shlex.split(arguments)
-        if len(operands) < 2:
-            return None
-        destination = operands[-1]
-        if destination.endswith("/"):
-            if len(operands) != 2:
-                return None
-            destination = posixpath.join(destination, posixpath.basename(operands[0]))
-    elif instruction == "RUN":
-        # An output operand/redirection is evidence of a write; echoing a path is not.
-        lexer = shlex.shlex(arguments, posix=True, punctuation_chars=";&|<>")
-        lexer.whitespace_split = True
-        tokens = list(lexer)
-        destinations = [tokens[index + 1] for index, token in enumerate(tokens[:-1])
-                        if token in {">", ">>"}]
-        for index, token in enumerate(tokens):
-            if token not in {"cp", "mv", "install"}:
-                continue
-            end = next((i for i in range(index + 1, len(tokens)) if tokens[i] in {"&&", ";", "||"}), len(tokens))
-            if end > index + 2:
-                destinations.append(tokens[end - 1])
-        return next((posixpath.normpath(posixpath.join(workdir, path))
-                     for path in destinations
-                     if posixpath.normpath(posixpath.join(workdir, path)) == "/app/.source-identity.json"), None)
-    else:
+    if instruction not in {"COPY", "ADD"}:
         return None
+    while arguments.startswith("--"):
+        _, _, arguments = arguments.partition(" ")
+        arguments = arguments.lstrip()
+    try:
+        operands = json.loads(arguments) if arguments.startswith("[") else shlex.split(arguments)
+    except (ValueError, TypeError) as exc:
+        raise AssertionError("CAUSAL_RED: malformed identity COPY/ADD") from exc
+    assert isinstance(operands, list) and all(isinstance(item, str) for item in operands), "CAUSAL_RED: invalid COPY/ADD operands"
+    if len(operands) < 2:
+        return None
+    destination = operands[-1]
+    if destination.endswith("/"):
+        if len(operands) != 2:
+            return None
+        destination = posixpath.join(destination, posixpath.basename(operands[0]))
     return posixpath.normpath(posixpath.join(workdir, destination))
 
 
+def run_identity_effects(arguments, workdir):
+    """Offline syntax oracle for documented writers; never execute shell text."""
+    lexer = shlex.shlex(arguments, posix=True, punctuation_chars=";&|<>")
+    lexer.whitespace_split = True
+    try:
+        tokens = list(lexer)
+    except ValueError as exc:
+        raise AssertionError("CAUSAL_RED: malformed RUN") from exc
+    commands, command = [], []
+    for token in tokens:
+        if token in {"&&", ";", "||", "|"}:
+            commands.append(command)
+            command = []
+        else:
+            command.append(token)
+    commands.append(command)
+    for command in commands:
+        if not command:
+            continue
+        program = posixpath.basename(command[0])
+        operands = command[1:]
+        if program == "rm":
+            for path in operands:
+                if not path.startswith("-"):
+                    yield "remove", posixpath.normpath(posixpath.join(workdir, path))
+            continue
+        if program in {"echo", "printf"}:
+            # F05: a path (or arbitrary text) in a file is not an identity document.
+            try:
+                literal = json.loads(operands[0])
+            except (ValueError, IndexError):
+                continue
+            if not isinstance(literal, dict) or set(literal) != FIELDS:
+                continue
+        destinations = []
+        for index, token in enumerate(command[:-1]):
+            if token in {">", ">>"} and (index == 0 or not command[index - 1].isdigit() or command[index - 1] == "1"):
+                destinations.append(command[index + 1])
+            if token in {"--output", "-o"}:
+                destinations.append(command[index + 1])
+        destinations.extend(token.split("=", 1)[1] for token in command if token.startswith("--output="))
+        if program in {"cp", "mv", "install", "tee"}:
+            if program == "tee":
+                destinations.extend(token for token in operands if not token.startswith("-"))
+            elif operands:
+                destinations.append(operands[-1])
+        for path in destinations:
+            yield "write", posixpath.normpath(posixpath.join(workdir, path))
+
+
 def assert_runtime_identity_baked(source):
+    import re
     stages = {}
     stage = None
+    target = "/app/.source-identity.json"
     for instruction, arguments in docker_instructions(source):
         if instruction == "FROM":
-            tokens = shlex.split(arguments)
-            tokens = [token for token in tokens if not token.startswith("--")]
+            tokens = [token for token in shlex.split(arguments) if not token.startswith("--")]
             base = tokens[0].lower()
             name = tokens[2].lower() if len(tokens) == 3 and tokens[1].upper() == "AS" else str(len(stages))
-            inherited = stages.get(base, {"workdir": "/", "baked": False})
-            stage = dict(inherited)
+            inherited = stages.get(base, {"workdir": "/", "baked": False, "variables": {}})
+            stage = dict(inherited, variables=dict(inherited["variables"]))
             stages[name] = stage
         elif stage is not None:
+            if instruction in {"ARG", "ENV"}:
+                for binding in shlex.split(arguments):
+                    key, separator, value = binding.partition("=")
+                    if separator:
+                        stage["variables"][key] = value
+                continue
+            arguments = re.sub(r"\$\{(\w+)\}|\$(\w+)",
+                               lambda match: stage["variables"].get(match[1] or match[2], match[0]), arguments)
             if instruction == "WORKDIR":
                 stage["workdir"] = posixpath.normpath(posixpath.join(stage["workdir"], arguments))
-            elif instruction_destination(instruction, arguments, stage["workdir"]) == "/app/.source-identity.json":
+            elif instruction == "RUN":
+                for effect, path in run_identity_effects(arguments, stage["workdir"]):
+                    if effect == "remove" and (target == path or target.startswith(path.rstrip("/") + "/")):
+                        stage["baked"] = False
+                    elif effect == "write" and path == target:
+                        stage["baked"] = True
+            elif instruction_destination(instruction, arguments, stage["workdir"]) == target:
                 stage["baked"] = True
     for name in ("runtime", "runtime-vlm"):
         assert name in stages and stages[name]["baked"], (
@@ -218,7 +310,7 @@ def test_runtime_image_bakes_identity_document_instead_of_only_env_sha():
     "COPY identity.json /app/.source-identity.json",
     "COPY identity.json \\\n    /app/.source-identity.json",
     'COPY ["identity.json", "/app/.source-identity.json"]',
-    "RUN printf 'fixture-only' > /app/.source-identity.json",
+    "RUN printf '" + json.dumps(identity_args()) + "' > /app/.source-identity.json",
 ])
 def test_dockerfile_identity_oracle_accepts_logical_destination_inherited_by_both_targets(copy):
     assert_runtime_identity_baked(f"FROM fixture AS runtime-base\n{copy}\nFROM runtime-base AS runtime-vlm\nFROM runtime-base AS runtime\n")
@@ -243,6 +335,28 @@ def test_dockerfile_identity_oracle_rejects_baking_only_in_builder_or_one_target
     ):
         with pytest.raises(AssertionError, match="CAUSAL_RED"):
             assert_runtime_identity_baked(source)
+
+
+@pytest.mark.parametrize("writer", [
+    "RUN python write_identity.py --output /app/.source-identity.json",
+    "RUN python write_identity.py | tee /app/.source-identity.json",
+    "ARG IDENTITY=/app/.source-identity.json\nCOPY identity.json ${IDENTITY}",
+])
+def test_dockerfile_identity_oracle_accepts_writer_forms(writer):
+    assert_runtime_identity_baked(f"FROM fixture AS runtime-base\n{writer}\nFROM runtime-base AS runtime-vlm\nFROM runtime-base AS runtime\n")
+
+
+@pytest.mark.parametrize("decoy", [
+    "RUN python write_identity.py 2> /app/.source-identity.json",
+    "COPY identity.json /app/.source-identity.json\nRUN rm /app/.source-identity.json",
+    "RUN echo /app/.source-identity.json > /app/.source-identity.json",
+    'COPY ["identity.json", broken]',
+    "COPY identity.json /app/.source-identity.json\nRUN rm -rf /app",
+    "RUN cp identity.json /app/.source-identity.json && rm /app/.source-identity.json",
+])
+def test_dockerfile_identity_oracle_rejects_invalid_or_removed_document(decoy):
+    with pytest.raises(AssertionError, match="CAUSAL_RED"):
+        assert_runtime_identity_baked(f"FROM fixture AS runtime-base\n{decoy}\nFROM runtime-base AS runtime-vlm\nFROM runtime-base AS runtime\n")
 
 
 def test_positive_repair_identity_carries_only_identity_metadata():
@@ -281,12 +395,34 @@ def test_repair_image_record_rejects_nested_loaded_or_serving_fields(field):
     image = dict(role="fix-blob-ownership", registry_manifest_digest="sha256:" + "6" * 64,
                  digest_type="manifest", platform="linux/amd64", image_config_digest="sha256:" + "7" * 64,
                  identity_document_sha256="5" * 64)
-    image[field] = "fabricated"
-    with pytest.raises((ValueError, TypeError)):
-        cls(producer_abi_version=1, role="fix-blob-ownership",
+    assert_repair_image_field_rejected(cls, image, field, identity_type()(**identity_args()))
+
+
+def assert_repair_image_field_rejected(cls, image, field, source):
+    arguments = dict(producer_abi_version=1, role="fix-blob-ownership",
             captured_at=datetime(2026, 1, 1, tzinfo=UTC), repair_invocation_id="repair-run",
-            source_identity=identity_type()(**identity_args()), image_record=image,
+            source_identity=source, image_record=image,
             collection_status="complete", reason_code=None)
+    valid = plain(cls(**arguments))
+    assert valid["image_record"] == image, "CAUSAL_RED: valid complete image must be accepted before its mutation"
+    image = dict(image, **{field: "fabricated"})
+    with pytest.raises((ValueError, TypeError)):
+        cls(**dict(arguments, image_record=image))
+
+
+@pytest.mark.parametrize("behavior", ["faithful", "refuse-complete", "accept-extension"])
+def test_repair_nested_oracle_requires_valid_control(behavior):
+    def producer(**arguments):
+        if behavior == "refuse-complete" or (behavior == "faithful" and set(arguments["image_record"]) != IMAGE_FIELDS):
+            raise ValueError("synthetic invalid image")
+        return arguments
+
+    image = dict.fromkeys(IMAGE_FIELDS, "synthetic")
+    if behavior == "faithful":
+        assert_repair_image_field_rejected(producer, image, "unknown_image_extension", identity_args())
+    else:
+        with pytest.raises((ValueError, AssertionError, pytest.fail.Exception)):
+            assert_repair_image_field_rejected(producer, image, "unknown_image_extension", identity_args())
 
 
 def test_synthetic_identity_fixture_has_all_frozen_fields():

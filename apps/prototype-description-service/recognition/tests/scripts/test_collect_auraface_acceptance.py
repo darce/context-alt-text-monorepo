@@ -274,7 +274,7 @@ def test_short_budget_refuses_reader_launch(tmp_path, monkeypatch, remaining):
 
 
 @pytest.mark.parametrize('launch_time', [0.97, 1.0, 1.02])
-def test_launch_overrun_cannot_establish_reader_unkillable(tmp_path, monkeypatch, launch_time):
+def test_launch_overrun_preserves_full_reap_grace(tmp_path, monkeypatch, launch_time):
     import io
     module = load('collect_auraface_acceptance')
     monkeypatch.setitem(collect.__globals__, 'load', lambda _: module)
@@ -295,7 +295,7 @@ def test_launch_overrun_cannot_establish_reader_unkillable(tmp_path, monkeypatch
             calls.append('kill')
 
         def wait(self, timeout=None):
-            assert timeout == max(0, 1.0 - launch_time)
+            assert timeout == module.READER_REAP_GRACE_SECONDS
             calls.append('wait')
             clock[0] += timeout
             raise module.subprocess.TimeoutExpired('fixture-only-canary', timeout)
@@ -305,8 +305,8 @@ def test_launch_overrun_cannot_establish_reader_unkillable(tmp_path, monkeypatch
     result = collect([tmp_path / 'unused'], inputs, deadline_monotonic=1.0)
     assert calls == ['communicate', 'kill', 'wait']
     row = result['acquisition_ledger'][0]
-    assert row['status'] == row['reason_code'] == 'deadline_exceeded'
-    assert 'reader_unkillable' not in result['gaps']
+    assert row['status'] == row['reason_code'] == 'reader_unkillable'
+    assert 'reader_unkillable' in result['gaps']
     assert 'fixture-only-canary' not in str(result) and str(tmp_path) not in str(result)
 
 

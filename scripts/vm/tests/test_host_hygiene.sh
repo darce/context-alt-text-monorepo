@@ -678,6 +678,8 @@ assert all(count == 1 for count in membership.values()), 'cases belong to multip
 for name, callback in CASES.items():
     run_case(name, callback)
 assert passed > 0, 'case selector matched no tests'
+if not os.environ.get('HYGIENE_TEST_GROUP'):
+    assert passed == 45, f'expected 45 host hygiene cases, ran {passed}'
 print(f'host hygiene cases passed: {passed}')
 print('all cases passed, 0 skipped')
 PY

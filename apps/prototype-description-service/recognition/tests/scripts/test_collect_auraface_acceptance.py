@@ -65,6 +65,7 @@ def test_sources_are_stdlib_only():
             elif isinstance(node,ast.ImportFrom): assert node.module.split('.')[0] in allowed
 
 
+@pytest.mark.timing
 def test_actual_reader_timeout_is_bounded(tmp_path,monkeypatch,request):
     module=load('collect_auraface_acceptance')
     _,inputs=pair()
@@ -463,6 +464,7 @@ def test_exact_launch_reserve_boundary_is_allowed(tmp_path, monkeypatch):
     assert result['acquisition_ledger'][0]['status'] == 'missing'
 
 
+@pytest.mark.timing
 def test_actual_launch_is_in_total_caller_timing(tmp_path, monkeypatch):
     # C82R-G3C2-06: complementary launch-inclusive smoke, not a universal bound.
     module = load('collect_auraface_acceptance')

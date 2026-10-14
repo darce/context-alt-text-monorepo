@@ -5,7 +5,8 @@ wait has a freshly computed timeout and attempts to kill/reap on expiration.
 Nonblocking opens avoid FIFO waits; the regular-file check refuses devices,
 directories and FIFOs. Every path component is opened no-follow, including
 parent directories. Popen launch and the in-process join are not interruptible;
-the deadline bounds communicate/reap waits, not total caller wall time.
+The deadline reserves cleanup time, but cleanup always gets its fixed grace:
+elapsed time can be pre-kill time plus that grace, not the deadline itself.
 No record or acquisition exception is logged. No producer path is written.
 RES-02: https://github.com/darce/heuristics-canon/blob/v0.25.6/lexicons/engineering.md#res-02
 """
@@ -152,22 +153,16 @@ def collect_auraface_acceptance(record_paths, *, captured_inputs,
                     output, _ = process.communicate(
                         input=json.dumps(dict(path=str(path),cap=max_record_bytes)),
                         timeout=max(0, budget - READER_REAP_RESERVE_SECONDS))
-                except subprocess.TimeoutExpired:
+                except BaseException:
                     try:
                         process.kill()
                     except OSError:
                         # A failed signal does not justify abandoning cleanup.
                         # The bounded wait below determines whether it exited.
                         pass
-                    reap_budget = min(READER_REAP_GRACE_SECONDS,
-                                      max(0, deadline_monotonic - time.monotonic()))
                     try:
-                        process.wait(timeout=reap_budget)
+                        process.wait(timeout=READER_REAP_GRACE_SECONDS)
                     except subprocess.TimeoutExpired:
-                        # A slow launch/scheduling stall may leave less than the
-                        # full grace; that cannot establish an unkillable reader.
-                        if reap_budget < READER_REAP_GRACE_SECONDS:
-                            raise
                         raise _join.RecordError('reader_unkillable') from None
                     raise
                 finally:

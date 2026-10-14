@@ -44,12 +44,15 @@ def test_partial_snapshot_identity_keeps_sidecar_contradiction(role, wrong_field
 
 
 @pytest.mark.parametrize("wrong_field,missing_field", (("database_name", "role"), ("role", "database_name")))
-def test_partial_snapshot_identity_cli_exits_invalid(tmp_path, wrong_field, missing_field):
+def test_partial_snapshot_identity_cli_exits_invalid(tmp_path, wrong_field, missing_field, role="api"):
     for missing_member in ("value", "provenance"):
         case = _aura_case(store="enrolled")
-        identity = case["aura_evidence"]["runtime_roles"]["api"]["database_identity"]
+        identity = case["aura_evidence"]["runtime_roles"][role]["database_identity"]
         assert identity["provenance"] == "database_catalog"
         identity["value"][wrong_field] = "constructed_wrong_identity"
+        assert case["aura_evidence"]["runtime_roles"][role]["database_identity"]["value"][wrong_field] == "constructed_wrong_identity"
+        peer = "worker" if role == "api" else "api"
+        assert case["aura_evidence"]["runtime_roles"][peer]["database_identity"]["value"][wrong_field] == case["snapshot"]["database"]["identity"][wrong_field]["value"]
         del case["snapshot"]["database"]["identity"][missing_field][missing_member]
         case["aura_evidence"]["snapshot_sha256"] = _snapshot_digest(case["snapshot"])
         before = copy.deepcopy(case)
@@ -65,6 +68,51 @@ def test_partial_snapshot_identity_cli_exits_invalid(tmp_path, wrong_field, miss
         assert case == before
         for key in inputs:
             assert json.loads((tmp_path / f"{key}.json").read_text(encoding="utf-8")) == inputs[key]
+
+
+@pytest.mark.parametrize("wrong_field,missing_field", (("database_name", "role"), ("role", "database_name")))
+def test_partial_snapshot_identity_worker_cli_exits_invalid(tmp_path, wrong_field, missing_field):
+    test_partial_snapshot_identity_cli_exits_invalid(tmp_path, wrong_field, missing_field, role="worker")
+
+
+@pytest.mark.parametrize("field", ("database_name", "role"))
+@pytest.mark.parametrize("member,reason", (
+    ("value", "incomplete_database_identity"),
+    ("provenance", "observation_provenance_declared"),
+))
+def test_missing_only_snapshot_identity_helper_reason(field, member, reason):
+    case = _aura_case(store="enrolled")
+    assert validate_loaded_runtime(
+        case["snapshot"], aura_evidence=case["aura_evidence"],
+        acceptance_policy=case["acceptance_policy"],
+    ) is None
+    del case["snapshot"]["database"]["identity"][field][member]
+    case["aura_evidence"]["snapshot_sha256"] = _snapshot_digest(case["snapshot"])
+    before = copy.deepcopy(case)
+    assert validate_loaded_runtime(
+        case["snapshot"], aura_evidence=case["aura_evidence"],
+        acceptance_policy=case["acceptance_policy"],
+    ) == ("incomplete", reason)
+    assert case == before
+
+
+@pytest.mark.parametrize("role", ("api", "worker"))
+@pytest.mark.parametrize("field", ("database_name", "role"))
+@pytest.mark.parametrize("member,reason", (
+    ("value", "incomplete_database_identity"),
+    ("provenance", "observation_provenance_declared"),
+))
+def test_peer_only_identity_difference_is_not_snapshot_contradiction(role, field, member, reason):
+    case = _aura_case(store="enrolled")
+    del case["snapshot"]["database"]["identity"][field][member]
+    case["aura_evidence"]["runtime_roles"][role]["database_identity"]["value"][field] = "constructed_peer_only_identity"
+    case["aura_evidence"]["snapshot_sha256"] = _snapshot_digest(case["snapshot"])
+    before = copy.deepcopy(case)
+    assert validate_loaded_runtime(
+        case["snapshot"], aura_evidence=case["aura_evidence"],
+        acceptance_policy=case["acceptance_policy"],
+    ) == ("incomplete", reason)
+    assert case == before
 
 
 def test_role03_identity_only_producer_is_ready():

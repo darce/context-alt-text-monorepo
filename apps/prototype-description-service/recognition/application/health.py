@@ -14,7 +14,8 @@ import json
 import logging
 import threading
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, is_dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -152,6 +153,38 @@ def sha256_model_bundle(paths: Sequence[Path], *, cache_dir: Path) -> str | None
         return None
     encoded = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _with_face_runtime_observations(result: CheckResult, runtime: Any, expected_config: Any) -> CheckResult:
+    from recognition.infrastructure.embeddings import face_pipeline_adapter
+
+    captured_at = datetime.now(tz=UTC)
+    observe = getattr(face_pipeline_adapter, "observe_api_face_adapters", None)
+    try:
+        serving = observe(expected_config=expected_config, captured_at=captured_at) if observe else ()
+        observer = getattr(runtime, "loaded_runtime_record", None)
+        probe_record = observer(
+            expected_config=expected_config, active_generation_id=None, captured_at=captured_at,
+        ) if observer else None
+    except Exception as exc:
+        return replace(result, status=HealthStatus.UNHEALTHY,
+                       detail=f"runtime observation unavailable: {type(exc).__name__}")
+
+    def encode(value: Any) -> Any:
+        if is_dataclass(value):
+            return asdict(value)
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, Path):
+            return str(value)
+        return vars(value)
+
+    diagnostics = json.loads(json.dumps({
+        "api_adapters": serving,
+        "health_probe": {"usage_origin": "health_probe_only", "runtime_record": probe_record},
+    }, default=encode))
+    return replace(result, payload={**(result.payload or {}), "face_runtime": diagnostics},
+                   detail=f"{result.detail}; face_runtime={json.dumps(diagnostics, sort_keys=True)}")
 
 
 def _with_numeric_runtime_fingerprint(result: CheckResult) -> CheckResult:
@@ -796,7 +829,7 @@ def check_face_pipeline_models(models_dir: Path) -> CheckResult:
         # Face-pipeline readiness only; pass configured thresholds so readiness
         # and serve share the same runtime cache key (profile/models_dir/top-k).
         fp = get_settings().face_pipeline
-        get_shared_face_pipeline_runtime(
+        runtime = get_shared_face_pipeline_runtime(
             profile="face_pipeline",
             models_dir=root,
             score_threshold=float(fp.score_threshold),
@@ -810,7 +843,9 @@ def check_face_pipeline_models(models_dir: Path) -> CheckResult:
             f"runtime unavailable: {exc}",
         )
     return _with_numeric_runtime_fingerprint(
-        CheckResult("model_cache", HealthStatus.OK, f"verified: yunet+sface @ {root}")
+        _with_face_runtime_observations(
+            CheckResult("model_cache", HealthStatus.OK, f"verified: yunet+sface @ {root}"), runtime, fp,
+        )
     )
 
 
@@ -862,7 +897,7 @@ def check_model_space(space: ModelSpace, store: Path, /) -> CheckResult:
         )
 
         face_pipeline = get_settings().face_pipeline
-        get_shared_face_pipeline_runtime(
+        runtime = get_shared_face_pipeline_runtime(
             profile=space,
             models_dir=face_pipeline.resolved_models_dir,
             embedder_models_dir=store,
@@ -873,7 +908,9 @@ def check_model_space(space: ModelSpace, store: Path, /) -> CheckResult:
     except Exception as exc:
         return CheckResult("model_cache", HealthStatus.UNHEALTHY, f"runtime unavailable: {exc}")
     return _with_numeric_runtime_fingerprint(
-        CheckResult("model_cache", HealthStatus.OK, f"verified: auraface @ {store}")
+        _with_face_runtime_observations(
+            CheckResult("model_cache", HealthStatus.OK, f"verified: auraface @ {store}"), runtime, face_pipeline,
+        )
     )
 
 

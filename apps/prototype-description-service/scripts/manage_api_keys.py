@@ -26,8 +26,9 @@ The Aura labels (dev-auraface, staging-auraface, prod-auraface) are dedicated
 targets. Each is admitted only when `ACX_ENV` equals the label, the
 `COMPOSE_PROJECT_NAME` context is `acx-<label>`, and the effective DSN names
 the dedicated role and database (see scripts/_aura_target_guard.py). Query
-overrides of the user, database, host, port, options or service are refused.
-Generic labels are unchanged by this contract.
+overrides of the user, database, host, port, dsn, options or service are refused.
+Generic DSN checks use the same override refusal and locality policy, including
+loopback, unspecified, IPv4-mapped, *.localhost and *.local hosts.
 """
 
 from __future__ import annotations
@@ -39,7 +40,6 @@ import sys
 import uuid
 from collections.abc import Sequence
 from datetime import datetime
-from urllib.parse import urlparse
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -50,21 +50,18 @@ from recognition.application.services.api_key_admin_service import mint_api_key
 from recognition.config.security import RateLimitTier
 from recognition.infrastructure.repositories.api_key_repository import SqlAlchemyApiKeyRepository
 from scripts._aura_target_guard import AURA_LABELS, validate_aura_target
+from scripts._aura_target_guard import dsn_host as _dsn_host
+from scripts._aura_target_guard import is_local_host as _is_local_host
 
 _ENV_CHOICES = ("prod", "dev", "local", "staging", "dev-fir", *AURA_LABELS)
 
 
-def _dsn_host(dsn: str) -> str:
-    return (urlparse(dsn).hostname or "").lower()
-
-
-def _is_local_host(host: str) -> bool:
-    return host in {"localhost", "127.0.0.1", "::1"} or host.endswith(".local")
-
-
 def _validate_env_vs_dsn(env: str, dsn: str, *, configured_env: str | None = None) -> str | None:
     """Return an error string on mismatch, or None when env and DSN agree."""
-    host = _dsn_host(dsn)
+    try:
+        host = _dsn_host(dsn)
+    except ValueError as exc:
+        return f"env={env}: {exc}; refusing to run"
     if not host:
         return f"env={env}: DSN has no host; refusing to run"
     if env == "prod" and _is_local_host(host):

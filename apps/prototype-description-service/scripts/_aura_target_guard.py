@@ -2,7 +2,8 @@
 
 scripts/manage_api_keys.py and scripts/manage_portal_invitations.py call validate_aura_target() before any settings
 read, session creation, injected-session use or operation dispatch. Apart from the single DSN read the caller injects,
-the guard performs no I/O: no database, network or secret is touched.
+the guard opens no database or network connection and reads no secret. Numeric host canonicalization uses
+getaddrinfo with AI_NUMERICHOST only; it never performs a DNS lookup.
 
 Contract (target names are proposed configuration, not observed resources):
 
@@ -13,18 +14,22 @@ Contract (target names are proposed configuration, not observed resources):
   effective user, database, host or port. A nested `dsn` key can set startup settings such as the role while the outer
   identity stays dedicated. Any such key is refused regardless of its value, so the netloc is the only identity source
   for an Aura label.
-* Missing or malformed role, database, host or port is refused. Refusal text never includes the DSN or its credential.
+* Missing or malformed role, database or host, and malformed supplied ports, are refused. An omitted port is
+  supported through explicit settings configuration. Refusal text never includes the DSN or its credential.
 * Host policy: dev-auraface and staging-auraface accept a local host or the Compose postgres service, as their generic
   stacks do. prod-auraface refuses loopback, unspecified and *.local hosts, and accepts any other host, including
   postgres. A public API hostname is not required of the database host.
 
-Scope limit: ACX_ENV and COMPOSE_PROJECT_NAME are environment-consistency signals. They do not prove which container,
+Scope limit: locality is syntactic plus numeric-only canonicalization. Name aliases such as localhost4,
+ip6-localhost and localhost.localdomain, and DNS-to-loopback names, are not resolved or classified as local.
+ACX_ENV and COMPOSE_PROJECT_NAME are environment-consistency signals. They do not prove which container,
 image or runtime the process ran in. Collector and runtime provenance are verified separately.
 """
 
 from __future__ import annotations
 
 import ipaddress
+import socket
 from collections.abc import Callable, Iterable
 from urllib.parse import parse_qsl, urlsplit
 
@@ -147,7 +152,12 @@ def _is_local_host(host: str) -> bool:
     try:
         address = ipaddress.ip_address(host)
     except ValueError:
-        return False
+        try:
+            # AI_NUMERICHOST accepts libc numeric/IDNA forms without resolving DNS names.
+            numeric = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM, flags=socket.AI_NUMERICHOST)
+            address = ipaddress.ip_address(numeric[0][4][0])
+        except (socket.gaierror, UnicodeError, ValueError, IndexError):
+            return False
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
         address = address.ipv4_mapped
     # Loopback covers 127.0.0.0/8 and ::1; unspecified covers 0.0.0.0 and ::, which connect to the local host on Linux.

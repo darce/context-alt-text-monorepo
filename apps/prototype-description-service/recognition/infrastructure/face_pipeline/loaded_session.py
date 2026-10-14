@@ -61,6 +61,8 @@ Nested mappings/sequences are defensively copied into immutable containers.
 from __future__ import annotations
 
 from collections.abc import Mapping
+import hashlib
+import json
 from dataclasses import dataclass, fields
 from datetime import datetime
 from pathlib import Path
@@ -155,6 +157,47 @@ class ExecutionReceiptV1:
 
 
 @dataclass(frozen=True, slots=True)
+class FrozenPreprocessingSpecV1:
+    """ABI-04 executing recipe, with recursively immutable JSON values.
+
+    Detector: channel_order/layout/dtype, pad_divisor/pad_value and score/NMS/
+    top_k thresholds. Embedding: input_size/channel_order/input_mean/input_scale,
+    layout/dtype and declared graph normalization. Alignment: selected estimator,
+    template coordinates/dtype/digest, landmark_order, interpolation/border and
+    output_size. graph_analysis is observed evidence (None when unavailable);
+    pipeline_normalization is the actual post-model rule.
+    """
+
+    detector: Mapping[str, Any]
+    embedding: Mapping[str, Any]
+    alignment: Mapping[str, Any]
+    graph_analysis: Mapping[str, Any] | None
+    pipeline_normalization: str
+
+    def __post_init__(self) -> None:
+        _freeze_fields(self)
+
+    def __getitem__(self, name: str) -> Any:
+        # Preserve internal recipe readers while the record itself is typed.
+        if name not in {field.name for field in fields(self)}:
+            raise KeyError(name)
+        return getattr(self, name)
+
+    def digest(self) -> str:
+        """Hash every ABI field using canonical JSON, never mapping reprs."""
+        def plain(value: Any) -> Any:
+            if isinstance(value, Mapping):
+                return {key: plain(item) for key, item in value.items()}
+            if isinstance(value, tuple):
+                return [plain(item) for item in value]
+            return value
+
+        payload = {field.name: plain(getattr(self, field.name)) for field in fields(self)}
+        return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                                         allow_nan=False).encode()).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
 class LoadedRuntimeRecordV1:
     producer_abi_version: int
     runtime_generation_id: str | None
@@ -166,13 +209,17 @@ class LoadedRuntimeRecordV1:
     compatibility_sha256: str | None
     config_sha256: str | None
     sessions: Mapping[str, SessionReceiptV1]
-    frozen_preprocessing_spec: Mapping[str, Any] | None
+    frozen_preprocessing_spec: FrozenPreprocessingSpecV1 | None
     execution_receipt: ExecutionReceiptV1 | None
     state: Literal["not_loaded", "loaded_unexercised", "attested", "drifted", "failed"]
     reason_code: str | None
     observed_at: datetime
 
     def __post_init__(self) -> None:
+        if self.frozen_preprocessing_spec is not None and not isinstance(
+            self.frozen_preprocessing_spec, FrozenPreprocessingSpecV1
+        ):
+            raise TypeError("frozen_preprocessing_spec must be FrozenPreprocessingSpecV1 or None")
         if type(self.producer_abi_version) is not int or self.producer_abi_version != 1:
             raise ValueError("unsupported face producer ABI version")
         if self.state not in {"not_loaded", "loaded_unexercised", "attested", "drifted", "failed"}:
@@ -204,6 +251,7 @@ class AdapterObservationV1:
 
 
 __all__ = [
+    "FrozenPreprocessingSpecV1",
     "VerifiedModelBytes",
     "SessionReceiptV1",
     "ExecutionReceiptV1",

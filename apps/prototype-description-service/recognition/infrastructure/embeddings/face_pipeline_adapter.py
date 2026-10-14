@@ -58,14 +58,16 @@ from recognition.infrastructure.face_pipeline._common import (
     ZeroNormEmbeddingError,
 )
 from recognition.infrastructure.face_pipeline.activation import assert_space_activatable
-from recognition.infrastructure.face_pipeline.aligner import AlignmentError, FivePointAligner
+from recognition.infrastructure.face_pipeline.aligner import (
+    AlignmentError, FivePointAligner, YUNET_LANDMARK_NAMES,
+)
 from recognition.infrastructure.face_pipeline.model_space import ModelSpace
 from recognition.infrastructure.face_pipeline.ort_adapters import (
     OrtSFaceEmbedder, OrtYuNetDetector, recording_tensors, tensor_record,
 )
 from recognition.infrastructure.face_pipeline.loaded_session import (
     VerifiedModelBytes, SessionReceiptV1, ExecutionReceiptV1, LoadedRuntimeRecordV1,
-    FrozenFaceRuntimeConfig, AdapterObservationV1,
+    FrozenFaceRuntimeConfig, AdapterObservationV1, FrozenPreprocessingSpecV1,
 )
 from recognition.infrastructure.face_pipeline.provenance import (
     DEFAULT_MODELS_DIR,
@@ -524,16 +526,25 @@ def _freeze_pair(detector, embedder, aligner, manifest, space, detector_dir,
     config = FrozenFaceRuntimeConfig(space.value, detector_dir.resolve(), embedder_dir.resolve(),
                                      float(score_threshold), float(nms_threshold), int(top_k),
                                      manifest.dimensions, manifest.dimensions)
-    spec = {"detector": {"channel_order": "BGR", "dtype": "float32", "layout": "NCHW",
-                         "pad_divisor": 32, "pad_value": 0, "score_threshold": score_threshold,
-                         "nms_threshold": nms_threshold, "top_k": top_k},
-            "embedding": asdict(artifacts[1].manifest_snapshot.preprocessing),
-            "alignment": {"template_sha256": tensor_record(aligner.dst_landmarks)["sha256"],
+    # Retain the exact destination consumed by alignment, independent of the
+    # ambient template registry. Immutable bytes also prevent setflags(write=True).
+    template = aligner.dst_landmarks
+    aligner.dst_landmarks = np.frombuffer(template.tobytes(), dtype=template.dtype).reshape(template.shape)
+    spec = FrozenPreprocessingSpecV1(
+            detector={"channel_order": "BGR", "dtype": "float32", "layout": "NCHW",
+                         "pad_divisor": 32, "pad_value": 0, "score_threshold": detector.score_threshold,
+                         "nms_threshold": detector.nms_threshold, "top_k": detector.top_k},
+            embedding={**asdict(artifacts[1].manifest_snapshot.preprocessing),
+                       "layout": "NCHW", "dtype": "float32"},
+            alignment={"template_sha256": tensor_record(aligner.dst_landmarks)["sha256"],
                           "template": aligner.dst_landmarks.tolist(), "dtype": str(aligner.dst_landmarks.dtype),
-                          "estimator": "umeyama", "interpolation": "INTER_LINEAR",
+                          "estimator": "opencv_sface" if aligner.template_id == "sface-5pt-112" else "umeyama",
+                          "landmark_order": YUNET_LANDMARK_NAMES,
+                          "output_size": (aligner.output_size, aligner.output_size),
+                          "interpolation": "INTER_LINEAR",
                           "border": "BORDER_CONSTANT", "border_value": 0},
-            "pipeline_normalization": "l2", "graph_analysis": None}
-    spec_digest = _contract_digest(spec)
+            pipeline_normalization="l2", graph_analysis=None)
+    spec_digest = spec.digest()
     receipts = {}
     identities = []
     now = datetime.now(timezone.utc)
@@ -555,13 +566,9 @@ def _freeze_pair(detector, embedder, aligner, manifest, space, detector_dir,
                                                     a.manifest_expectation_sha256) for a in artifacts],
                                       "preprocessing": spec_digest, "numeric": asdict(fingerprint),
                                       "model_id": manifest.model_id})
-    # Reuse the receipt freezer for the nested executing spec.
-    frozen_spec = LoadedRuntimeRecordV1(1, generation, manifest.model_id, space.value,
-        manifest.dimensions, None, spec_digest, compatibility, _contract_digest(asdict(config)),
-        receipts, spec, None, "loaded_unexercised", None, now).frozen_preprocessing_spec
     return dict(runtime_generation_id=generation, session_receipts=MappingProxyType(receipts),
                 frozen_config=config, artifact_identity=tuple(identities),
-                compatibility_sha256=compatibility, frozen_preprocessing_spec=frozen_spec)
+                compatibility_sha256=compatibility, frozen_preprocessing_spec=spec)
 
 
 def observe_api_face_adapters(*, expected_config, captured_at):

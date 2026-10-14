@@ -18,6 +18,9 @@ REAP_GROUPS = [
     "ref_enumeration", "archive_generations", "archive_verification", "archive_races",
     "worktrees", "sweeps", "freshness", "triage",
 ]
+REAP_PASS_COUNTS = dict(zip(REAP_GROUPS, [
+    9, 46, 18, 15, 41, 22, 68, 20, 24, 22, 8, 9, 6, 10, 17, 10, 16, 34,
+], strict=True))
 
 
 def _assert_reap_skip_coverage(summary: str) -> None:
@@ -54,6 +57,13 @@ def _run_bash_suite(name: str) -> None:
     if name == "test_reap_lane.sh":
         _assert_reap_skip_coverage(summary)
     passes = sum(line.startswith("PASS:") for line in result.stdout.splitlines())
+    if name == "test_reap_lane.sh":
+        group = os.environ.get("REAP_TEST_GROUP", "")
+        expected = REAP_PASS_COUNTS[group] if group else 395
+        assert passes > 0, f"reap group {group!r} emitted zero PASS lines"
+        assert passes == expected, (
+            f"reap group {group!r}: expected {expected} PASS lines, got {passes}"
+        )
     print(f"{name}: {summary}; PASS assertions={passes}")
     assert not any(line.startswith("FAIL:") for line in result.stdout.splitlines())
 
@@ -112,8 +122,10 @@ def test_host_hygiene_case_coverage_guard() -> None:
     )
     assert set(parametrized_groups) == set(groups), "parametrize/GROUPS mismatch"
     assert len(parametrized_groups) == len(set(parametrized_groups))
-    oversized = {name: len(names) for name, names in groups.items() if len(names) > 8}
-    assert not oversized, f"host-hygiene groups must contain at most 8 cases: {oversized}"
+    # tmp_exclusions has 10 cases; 10 still rejects every pairwise tmp merge
+    # (the smallest combines 6 and 7 cases, totaling 13).
+    oversized = {name: len(names) for name, names in groups.items() if len(names) > 10}
+    assert not oversized, f"host-hygiene groups must contain at most 10 cases: {oversized}"
     cases = re.findall(r"(?m)^case\('([^']+)',", python_source)
     call_sites = re.findall(r"(?m)^\s*case\s*\(", python_source)
     assert len(cases) == len(call_sites) == 45, (
@@ -133,6 +145,9 @@ def test_reap_lane_case_coverage_guard() -> None:
     assert len(entries) == len(declaration[1].splitlines()), "unparsed reap group"
     groups = dict((name, cases.split()) for name, cases in entries)
     assert len(groups) == len(entries), "duplicate reap group"
+    assert set(REAP_PASS_COUNTS) == set(groups), "reap PASS pin/group mismatch"
+    assert all(count > 0 for count in REAP_PASS_COUNTS.values()), "empty reap PASS pin"
+    assert sum(REAP_PASS_COUNTS.values()) == 395, "reap PASS union count drift"
     mark = next(mark for mark in test_reap_lane_bash_suite.pytestmark
                 if mark.name == "parametrize" and mark.args[0] == "group")
     assert set(mark.args[1]) == set(groups), "reap parametrize/GROUPS mismatch"

@@ -51,7 +51,7 @@ def native_ort_tripwire(monkeypatch):
 def executing_embedder(tmp_path, monkeypatch, output=None):
     artifact_fixture(tmp_path, monkeypatch)
     adapters, _, _ = install_constructor(monkeypatch, output)
-    # Exercise the preserved legacy constructor, verification and metadata path.
+    # Guard legacy constructor wiring and metadata; verification has separate producer tests.
     return adapters.OrtSFaceEmbedder(model_name="auraface", models_dir=tmp_path)
 
 
@@ -128,10 +128,13 @@ def test_candidate_builder_reads_explicit_frozen_manifest_entry(monkeypatch):
     changed = replace(frozen, preprocessing=replace(frozen.preprocessing, channel_order="BGR", input_mean=0))
     # Change the ambient entry BEFORE construction: ignoring the snapshot must fail.
     monkeypatch.setitem(provenance.MODEL_MANIFEST, "auraface", changed)
+    # ABI-04 requires the builder to honour entry=; refusal belongs in the constructor.
     try:
-        builder = adapters._blob_builder_for_model("auraface", entry=frozen)
-    except TypeError as exc:
-        pytest.fail(f"CAUSAL_RED: ABI-04 frozen entry unsupported: {type(exc).__name__}", pytrace=False)
+        inspect.signature(adapters._blob_builder_for_model).bind("auraface", entry=frozen)
+    except TypeError:
+        pytest.fail("CAUSAL_RED: ABI-04 frozen entry keyword absent", pytrace=False)
+    # Internal TypeErrors must retain their original diagnostic (GTMC-FG1R80-L3).
+    builder = adapters._blob_builder_for_model("auraface", entry=frozen)
     np.testing.assert_array_equal(builder(asymmetric_crop()), independent_aura_tensor(asymmetric_crop()))
 
 
@@ -214,19 +217,24 @@ def test_verified_embedder_executes_frozen_recipe_at_run_boundary(tmp_path, monk
     entry = replace(entry, preprocessing=replace(entry.preprocessing, output_l2_normalized=True))
     monkeypatch.setitem(provenance.MODEL_MANIFEST, "auraface", entry)
     artifact = acquire(provenance, entry, tmp_path)
-    adapters, calls, session = install_constructor(monkeypatch)
-    monkeypatch.setitem(provenance.MODEL_MANIFEST, "auraface", replace(
-        entry, preprocessing=replace(entry.preprocessing, channel_order="BGR", input_mean=0)))
-    # A changed manifest may be refused explicitly, or the acquired recipe used.
-    try:
-        embedder = adapters.OrtSFaceEmbedder(model_name="auraface", models_dir=tmp_path, verified_artifact=artifact)
-    except provenance.ModelIntegrityError:
-        assert calls == []
-        return
-    crop = asymmetric_crop()
-    result = embedder.embed([crop])
-    assert result.norms.tolist() == [5.0]
-    np.testing.assert_allclose(np.linalg.norm(result.vectors[0]), 1, atol=1e-7)
-    assert calls[0][0] is artifact.model_bytes
-    np.testing.assert_array_equal(session.feeds[0]["input"], independent_aura_tensor(crop))
-    assert sha(session.feeds[0]["input"].tobytes()) == sha(independent_aura_tensor(crop).tobytes())
+    # GTMC-FG1R80-L1: exercise C6 even when changed manifests are refused.
+    for manifest_changed in (False, True):
+        adapters, calls, session = install_constructor(monkeypatch)
+        if manifest_changed:
+            monkeypatch.setitem(provenance.MODEL_MANIFEST, "auraface", replace(
+                entry, preprocessing=replace(entry.preprocessing, channel_order="BGR", input_mean=0)))
+        # Only a changed manifest may be refused; unchanged acquisition must run.
+        try:
+            embedder = adapters.OrtSFaceEmbedder(model_name="auraface", models_dir=tmp_path, verified_artifact=artifact)
+        except provenance.ModelIntegrityError:
+            if not manifest_changed:
+                raise
+            assert calls == []
+            return
+        crop = asymmetric_crop()
+        result = embedder.embed([crop])
+        assert result.norms.tolist() == [5.0]
+        np.testing.assert_allclose(np.linalg.norm(result.vectors[0]), 1, atol=1e-7)
+        assert calls[0][0] is artifact.model_bytes
+        np.testing.assert_array_equal(session.feeds[0]["input"], independent_aura_tensor(crop))
+        assert sha(session.feeds[0]["input"].tobytes()) == sha(independent_aura_tensor(crop).tobytes())

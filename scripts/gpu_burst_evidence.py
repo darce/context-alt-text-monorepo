@@ -357,19 +357,18 @@ def _payload_items(payload: Any, keys: Sequence[str]) -> list[Any]:
         return payload
     if not isinstance(payload, Mapping):
         return []
-    for key in keys:
+    items: list[Any] = []
+    for key in dict.fromkeys((*keys, "data")):
         value = payload.get(key)
         if isinstance(value, list):
-            return value
+            items.extend(value)
     data = payload.get("data")
-    if isinstance(data, list):
-        return data
     if isinstance(data, Mapping):
         for key in keys:
             value = data.get(key)
             if isinstance(value, list):
-                return value
-    return []
+                items.extend(value)
+    return items
 
 
 _INSTANCE_ID_PATHS = (
@@ -1195,22 +1194,26 @@ def _receipt_items_report(payload: Any) -> tuple[list[Mapping[str, Any]], str | 
     if not isinstance(payload, Mapping):
         return [], "WordPress receipt payload must be an object or list"
     pending: list[tuple[Mapping[str, Any], int]] = [(payload, 0)]
+    items: list[Mapping[str, Any]] = []
     while pending:
         current, depth = pending.pop()
         if depth > MAX_NESTED_DEPTH:
             return [], f"WordPress receipt payload exceeds maximum nested depth {MAX_NESTED_DEPTH}"
         nested_mappings: list[Mapping[str, Any]] = []
+        has_container = False
         for key in ("receipts", "items", "descriptions", "results", "data", "value"):
             value = current.get(key)
             if isinstance(value, list):
-                return [item for item in value if isinstance(item, Mapping)], None
+                has_container = True
+                items.extend(item for item in value if isinstance(item, Mapping))
             if isinstance(value, Mapping):
+                has_container = True
                 nested_mappings.append(value)
         if nested_mappings:
             pending.extend((value, depth + 1) for value in reversed(nested_mappings))
-            continue
-        return [current], None
-    return [], None
+        if not has_container:
+            items.append(current)
+    return items, None
 
 
 def _receipt_items(payload: Any) -> list[Mapping[str, Any]]:

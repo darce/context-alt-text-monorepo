@@ -525,7 +525,7 @@ def _check_sidecar_source_tree(
 
 
 def _snapshot_database_identity(snapshot: Mapping[str, Any], findings: _Findings) -> dict[str, str] | None:
-    """Return the catalog database identity from the snapshot, or None after recording why it is absent."""
+    """Collect each authoritative catalog field, recording unavailable evidence independently."""
 
     database = snapshot.get("database")
     if database is None:
@@ -546,17 +546,17 @@ def _snapshot_database_identity(snapshot: Mapping[str, Any], findings: _Findings
         wrapper = identity.get(field)
         if wrapper is None:
             findings.incomplete("incomplete_database_identity")
-            return None
+            continue
         if not isinstance(wrapper, Mapping):
             findings.invalid("malformed_observation_wrapper")
-            return None
+            continue
         value = wrapper.get("value")
         if not isinstance(value, str) or not value.strip():
             findings.incomplete("incomplete_database_identity")
-            return None
+            continue
         if wrapper.get("provenance") != "database_catalog":
             findings.incomplete("observation_provenance_declared")
-            return None
+            continue
         actual[field] = value
     return actual
 
@@ -586,7 +586,7 @@ def _check_database_identity(
             continue
         if any(
             value.get(field) is not None and value[field] != actual[field]
-            for field in _DATABASE_IDENTITY_FIELDS
+            for field in actual
         ):
             findings.invalid("database_identity_divergent")
         if any(value.get(field) is None for field in _DATABASE_IDENTITY_FIELDS):

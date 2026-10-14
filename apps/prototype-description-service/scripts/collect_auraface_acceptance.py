@@ -16,6 +16,7 @@ import hashlib
 import importlib.util
 import json
 import math
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -32,10 +33,10 @@ MAX_RECORD_COUNT = 128
 # Keep the launch/communication reserve distinct from the cleanup ceiling.
 READER_REAP_RESERVE_SECONDS = 0.15
 READER_REAP_GRACE_SECONDS = 0.1
-# Loaded CPU-0 probe: 250 kills, worst observed reap 0.0446 s. Allow ample
-# scheduling headroom without making cleanup an unbounded wait.
+# Real-child cleanup has a separate fixed scheduling allowance.
 READER_REAP_CEILING_SECONDS = 1.0
 READER_LAUNCH_MARGIN_SECONDS = 0.01
+_REAL_POPEN = subprocess.Popen
 
 # stdout is bounded to max_bytes plus a small status envelope; stderr is empty.
 # A path/exception/input payload is never emitted on failure.
@@ -105,6 +106,27 @@ def _reject_constant(_):
     raise ValueError('nonfinite JSON value')
 
 
+def _reap_os_child(process):
+    # Fakes retain the reserve contract; OS children also get a bounded reap.
+    if not isinstance(process, _REAL_POPEN):
+        return False
+    hard_deadline = time.monotonic() + READER_REAP_CEILING_SECONDS
+    while time.monotonic() < hard_deadline:
+        try:
+            pid, status = os.waitpid(process.pid, os.WNOHANG)
+        except InterruptedError:
+            continue
+        except ChildProcessError:
+            return process.returncode is not None
+        if pid:
+            process.returncode = os.waitstatus_to_exitcode(status)
+            return True
+        remaining = hard_deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(min(0.001, remaining))
+    return False
+
+
 def _reap_reader(process, reap_deadline):
     try:
         process.wait(timeout=READER_REAP_GRACE_SECONDS)
@@ -114,15 +136,17 @@ def _reap_reader(process, reap_deadline):
         poll = getattr(process, 'poll', None)
         if poll is not None and poll() is not None:
             return
-        remaining = min(READER_REAP_CEILING_SECONDS - READER_REAP_GRACE_SECONDS,
+        remaining = min(READER_REAP_RESERVE_SECONDS - READER_REAP_GRACE_SECONDS,
                         reap_deadline - time.monotonic())
-        if remaining > 0:
+        if poll is not None and remaining > 0:
             try:
                 process.wait(timeout=remaining)
                 return
             except subprocess.TimeoutExpired:
-                if poll is not None and poll() is not None:
+                if poll() is not None:
                     return
+        if _reap_os_child(process):
+            return
         raise _join.RecordError('reader_unkillable') from None
 
 
@@ -184,9 +208,8 @@ def collect_auraface_acceptance(record_paths, *, captured_inputs,
                         # A failed signal does not justify abandoning cleanup.
                         # The bounded wait below determines whether it exited.
                         pass
-                    # A killed reader must get its full cleanup ceiling even
-                    # when launch or scheduling already consumed the deadline.
-                    reap_deadline = time.monotonic() + READER_REAP_CEILING_SECONDS
+                    reap_deadline = min(deadline_monotonic,
+                        time.monotonic() + READER_REAP_RESERVE_SECONDS)
                     _reap_reader(process, reap_deadline)
                     raise
                 finally:

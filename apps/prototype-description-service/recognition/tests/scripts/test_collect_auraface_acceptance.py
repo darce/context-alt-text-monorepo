@@ -640,3 +640,75 @@ def test_reap_ceiling_is_independent_of_caller_deadline(tmp_path, monkeypatch, e
         assert elapsed == pytest.approx(module.READER_REAP_CEILING_SECONDS)
     assert 0.25 < module.READER_REAP_CEILING_SECONDS <= 2.0
     assert reader.stdin.closed and reader.stdout.closed
+
+
+@pytest.mark.timeout(2)
+@pytest.mark.parametrize('exits', [True, False], ids=['late_reap', 'ceiling'])
+def test_real_child_post_reserve_reap(tmp_path, monkeypatch, exits):
+    """In-budget waits expire; only OS reaping can finish the killed child."""
+    import os
+    module = load('collect_auraface_acceptance')
+    monkeypatch.setitem(collect.__globals__, 'load', lambda _: module)
+    real_popen = module.subprocess.Popen
+    real_waitpid, real_sleep = os.waitpid, time.sleep
+    clock, waits, polls = [0.0], [], []
+
+    class Reader(real_popen):
+        def communicate(self, **kwargs):
+            clock[0] = 0.05
+            raise module.subprocess.TimeoutExpired('captured-reader', 0)
+
+        def wait(self, timeout=None):
+            waits.append(timeout)
+            clock[0] += timeout
+            raise module.subprocess.TimeoutExpired('captured-reader', timeout)
+
+        def poll(self):
+            return self.returncode
+
+    reader = Reader([module.sys.executable, '-I', '-c',
+                     "import time; print('ready', flush=True); time.sleep(60)"],
+                    stdin=module.subprocess.PIPE, stdout=module.subprocess.PIPE,
+                    stderr=module.subprocess.DEVNULL, text=True)
+    assert reader.stdout.readline() == 'ready\n'
+
+    def waitpid(pid, flags):
+        assert pid == reader.pid and flags == os.WNOHANG
+        polls.append(clock[0])
+        if exits and clock[0] >= 0.30:
+            return real_waitpid(pid, flags)
+        return 0, 0
+
+    def sleep(seconds):
+        clock[0] += seconds
+        real_sleep(0.001)
+
+    monkeypatch.setattr(module.subprocess, 'Popen', lambda *a, **k: reader)
+    monkeypatch.setattr(module.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(module.time, 'sleep', sleep)
+    monkeypatch.setattr(os, 'waitpid', waitpid)
+    _, inputs = pair()
+    try:
+        result = collect([tmp_path / 'unused'], inputs, deadline_monotonic=0.2)
+        # Inspect returncode before any cleanup poll can mask a missing reap.
+        assert reader.returncode == (-9 if exits else None)
+        assert waits == pytest.approx([0.1, 0.05])
+        assert polls
+        status = 'deadline_exceeded' if exits else 'reader_unkillable'
+        row = result['acquisition_ledger'][0]
+        assert row['status'] == row['reason_code'] == status
+        assert status in result['gaps']
+        elapsed = clock[0] - 0.05
+        if exits:
+            assert elapsed > module.READER_REAP_RESERVE_SECONDS
+        else:
+            assert elapsed == pytest.approx(
+                module.READER_REAP_RESERVE_SECONDS + module.READER_REAP_CEILING_SECONDS)
+        assert reader.stdin.closed and reader.stdout.closed
+    finally:
+        monkeypatch.undo()
+        if reader.returncode is None:
+            reader.kill()
+            real_popen.wait(reader, timeout=1)
+        reader.stdin.close()
+        reader.stdout.close()

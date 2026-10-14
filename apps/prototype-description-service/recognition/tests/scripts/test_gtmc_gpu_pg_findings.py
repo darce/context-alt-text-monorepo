@@ -1827,6 +1827,24 @@ def test_c82_vector_null_model_requires_its_exact_missing_reason(replacement):
         _assert_abi_envelope(result)
 
 
+@pytest.mark.parametrize(
+    "projection,expected_width",
+    [("a.atttypmod", 384), ("768", 768)],
+    ids=["atttypmod", "literal-768"],
+)
+def test_c82_fake_vector_query_returns_selected_typmod(projection, expected_width, monkeypatch):
+    cluster = FakeCluster()
+    cluster.vector_typmods = dict.fromkeys(COL.VECTOR_COLUMNS, 384)
+    sql = COL.VECTOR_SQL.replace("a.atttypmod", projection, 1)
+    monkeypatch.setattr(COL, "VECTOR_SQL", sql)
+    session = FakeSession(cluster, PRIMARY)
+
+    assert session.query(sql, {}) == [
+        (SCHEMA, table, column, "vector", expected_width)
+        for table, column in COL.VECTOR_COLUMNS
+    ]
+
+
 @pytest.mark.parametrize("measured_dimension", [384, 1024])
 def test_c82_vector_dimension_is_measured_from_selected_typmod(measured_dimension):
     cluster = FakeCluster()

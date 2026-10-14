@@ -5,7 +5,7 @@ wait has a freshly computed timeout and attempts to kill/reap on expiration.
 Nonblocking opens avoid FIFO waits; the regular-file check refuses devices,
 directories and FIFOs. Every path component is opened no-follow, including
 parent directories. Popen launch and the in-process join are not interruptible;
-Cleanup always gets its fixed grace, and may use the remaining reap reserve:
+Cleanup gets a separate fixed reap ceiling, independent of the caller deadline:
 elapsed time can exceed the deadline when launch or scheduling overruns it.
 No record or acquisition exception is logged. No producer path is written.
 RES-02: https://github.com/darce/heuristics-canon/blob/v0.25.6/lexicons/engineering.md#res-02
@@ -29,9 +29,12 @@ _spec.loader.exec_module(_join)
 MAX_RECORD_BYTES = 1024 * 1024
 MAX_RECORD_COUNT = 128
 
-# Reserve 150 ms for bounded SIGKILL/reap, including scheduling headroom.
+# Keep the launch/communication reserve distinct from the cleanup ceiling.
 READER_REAP_RESERVE_SECONDS = 0.15
 READER_REAP_GRACE_SECONDS = 0.1
+# Loaded CPU-0 probe: 250 kills, worst observed reap 0.0446 s. Allow ample
+# scheduling headroom without making cleanup an unbounded wait.
+READER_REAP_CEILING_SECONDS = 1.0
 READER_LAUNCH_MARGIN_SECONDS = 0.01
 
 # stdout is bounded to max_bytes plus a small status envelope; stderr is empty.
@@ -109,18 +112,17 @@ def _reap_reader(process, reap_deadline):
     except subprocess.TimeoutExpired:
         # A timeout is not an exit observation. Popen can still reap via poll.
         poll = getattr(process, 'poll', None)
-        if poll is not None:
-            if poll() is not None:
+        if poll is not None and poll() is not None:
+            return
+        remaining = min(READER_REAP_CEILING_SECONDS - READER_REAP_GRACE_SECONDS,
+                        reap_deadline - time.monotonic())
+        if remaining > 0:
+            try:
+                process.wait(timeout=remaining)
                 return
-            remaining = min(READER_REAP_RESERVE_SECONDS - READER_REAP_GRACE_SECONDS,
-                            reap_deadline - time.monotonic())
-            if remaining > 0:
-                try:
-                    process.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                if poll is not None and poll() is not None:
                     return
-                except subprocess.TimeoutExpired:
-                    if poll() is not None:
-                        return
         raise _join.RecordError('reader_unkillable') from None
 
 
@@ -176,14 +178,15 @@ def collect_auraface_acceptance(record_paths, *, captured_inputs,
                         input=json.dumps(dict(path=str(path),cap=max_record_bytes)),
                         timeout=max(0, budget - READER_REAP_RESERVE_SECONDS))
                 except BaseException:
-                    reap_deadline = min(deadline_monotonic,
-                                        time.monotonic() + READER_REAP_RESERVE_SECONDS)
                     try:
                         process.kill()
                     except OSError:
                         # A failed signal does not justify abandoning cleanup.
                         # The bounded wait below determines whether it exited.
                         pass
+                    # A killed reader must get its full cleanup ceiling even
+                    # when launch or scheduling already consumed the deadline.
+                    reap_deadline = time.monotonic() + READER_REAP_CEILING_SECONDS
                     _reap_reader(process, reap_deadline)
                     raise
                 finally:

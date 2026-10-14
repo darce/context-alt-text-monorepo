@@ -580,3 +580,63 @@ def test_join_policy_work_does_not_consume_launch_window(tmp_path, monkeypatch):
     assert events[0] == 'launch'
     assert 'policy' in events
     assert result['acquisition_ledger'][0]['status'] == 'missing'
+
+
+@pytest.mark.timeout(2)
+@pytest.mark.parametrize('exits', [True, False], ids=['late_exit', 'never_exits'])
+def test_reap_ceiling_is_independent_of_caller_deadline(tmp_path, monkeypatch, exits):
+    """A killed child can outlive both the first wait and the old reserve."""
+    import io
+    module = load('collect_auraface_acceptance')
+    monkeypatch.setitem(collect.__globals__, 'load', lambda _: module)
+    clock, readers, waits = [0.0], [], []
+    monkeypatch.setattr(module.time, 'monotonic', lambda: clock[0])
+
+    class Reader:
+        returncode = None
+
+        def __init__(self, *args, **kwargs):
+            self.stdin, self.stdout = io.StringIO(), io.StringIO()
+            readers.append(self)
+
+        def communicate(self, **kwargs):
+            clock[0] = 0.2  # The caller deadline is already exhausted.
+            raise module.subprocess.TimeoutExpired('captured-reader', 0)
+
+        def kill(self):
+            self.killed_at = clock[0]
+
+        def wait(self, timeout=None):
+            waits.append(timeout)
+            if timeout is None:
+                # The unbounded-wait mutant must be stopped by pytest-timeout.
+                while True:
+                    time.sleep(0.01)
+            elapsed = clock[0] - self.killed_at
+            if exits and elapsed + timeout >= 0.25:
+                clock[0] = self.killed_at + 0.25
+                self.returncode = -9
+                return -9
+            clock[0] += timeout
+            raise module.subprocess.TimeoutExpired('captured-reader', timeout)
+
+        def poll(self):
+            return self.returncode
+
+    monkeypatch.setattr(module.subprocess, 'Popen', Reader)
+    _, inputs = pair()
+    result = collect([tmp_path / 'unused'], inputs, deadline_monotonic=0.2)
+    reader = readers[0]
+    status = 'deadline_exceeded' if exits else 'reader_unkillable'
+    assert result['acquisition_ledger'][0]['status'] == status
+    assert result['acquisition_ledger'][0]['reason_code'] == status
+    assert reader.returncode == (-9 if exits else None)
+    assert len(waits) == 2
+    assert waits[0] == 0.1
+    elapsed = clock[0] - reader.killed_at
+    if exits:
+        assert elapsed == pytest.approx(0.25)
+    else:
+        assert elapsed == pytest.approx(module.READER_REAP_CEILING_SECONDS)
+    assert 0.25 < module.READER_REAP_CEILING_SECONDS <= 2.0
+    assert reader.stdin.closed and reader.stdout.closed

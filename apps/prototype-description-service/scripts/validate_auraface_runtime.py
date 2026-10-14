@@ -74,6 +74,7 @@ def validate_aura_acceptance(
         snapshot,
         isolation_policy=isolation_policy,
         acceptance_policy=acceptance_policy,
+        aura_evidence=aura_evidence,
     )
     if target is not None:
         findings.append((*target, "target"))

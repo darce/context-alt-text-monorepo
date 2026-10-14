@@ -472,8 +472,15 @@ class FakeSession:
         if sql == COL.EXTENSION_SQL:
             return [("vector", cl.extension_version)] if cl.extension_installed else []
         if sql == COL.VECTOR_SQL:
+            # Evaluate the selected width, including literal substitutions, rather
+            # than returning the stored width regardless of the SQL projection.
+            typmod_projection = sql.split("FROM", 1)[0].rsplit(",", 1)[1].strip()
+            assert typmod_projection == "a.atttypmod" or re.fullmatch(r"[0-9]+", typmod_projection), (
+                "unsupported vector typmod projection", typmod_projection
+            )
             return [
-                (ident["schema"], t, c, "vector", m)
+                (ident["schema"], t, c, "vector",
+                 m if typmod_projection == "a.atttypmod" else int(typmod_projection))
                 for (t, c), m in cl.vector_typmods.items()
                 if any(_catalog_join_matches(sql, row, cl.vector_type_oids[t, c]) for row in cl.extension_types)
             ]
@@ -1785,3 +1792,48 @@ def test_c82_catalog_null_reason_cannot_cover_another_measurement():
     catalog["data"]["extension_name"] = None
     with pytest.raises(AssertionError):
         _assert_abi_envelope(result)
+
+
+def test_c82_run_rejects_corrupted_collector_envelope(monkeypatch):
+    collect = COL.collect_pg_evidence
+
+    def corrupt(**kwargs):
+        result = collect(**kwargs)
+        result["unexpected_envelope_field"] = True
+        return result
+
+    monkeypatch.setattr(COL, "collect_pg_evidence", corrupt)
+    with pytest.raises(AssertionError):
+        _run(FakeCluster())
+
+
+@pytest.mark.parametrize("replacement", ["other-vector", "wrong-code"])
+def test_c82_vector_null_model_requires_its_exact_missing_reason(replacement):
+    result = _run(FakeCluster())
+    field = "catalog.vectors.mv_identity_cluster_centroids.centroid.embedding_models"
+    vector = next(v for v in _catalog(result)["vectors"]
+                  if v["table"] == "mv_identity_cluster_centroids")
+    assert vector["embedding_models"] is None
+    section = result["section"]
+    reason = next(i for i in section["missing_reasons"] if i["field"] == field)
+    section["missing_reasons"].remove(reason)
+    bogus = copy.deepcopy(reason)
+    if replacement == "other-vector":
+        bogus["field"] = "catalog.vectors.media_identities.embedding.embedding_models"
+    else:
+        bogus["code"] = COL.PROBE_NOT_RUN
+    section["missing_reasons"].append(bogus)
+    with pytest.raises(AssertionError):
+        _assert_abi_envelope(result)
+
+
+@pytest.mark.parametrize("measured_dimension", [384, 1024])
+def test_c82_vector_dimension_is_measured_from_selected_typmod(measured_dimension):
+    cluster = FakeCluster()
+    cluster.vector_typmods[("media_identities", "embedding")] = measured_dimension
+    result = _run(cluster)
+    vector = next(v for v in _catalog(result)["vectors"] if v["table"] == "media_identities")
+    assert vector["atttypmod"] == measured_dimension
+    assert any(i["field"] == "catalog.vectors.media_identities.embedding.atttypmod"
+               and i["code"] == COL.VECTOR_DIMENSION_MISMATCH
+               for i in result["section"]["contradictions"])

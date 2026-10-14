@@ -765,7 +765,11 @@ def _dry_item_payload(
         "result_generation": result_generation,
         "caption": scenario.caption if status == "completed" else None,
         "alt_text_draft": scenario.alt_text_draft if status == "completed" else None,
-        "provenance": ({"model_id": f"{scenario.model_id}@{scenario.revision}"} if tier is not None else None),
+        "provenance": (
+            {"model_id": f"{scenario.model_id}@{scenario.revision}", "cached": False}
+            if tier is not None
+            else None
+        ),
     }
     payload = DescribeRunItemResponse(**values).model_dump(mode="json")
     # The production response currently omits persistence metadata, but live

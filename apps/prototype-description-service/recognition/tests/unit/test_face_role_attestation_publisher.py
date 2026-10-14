@@ -1004,3 +1004,275 @@ def test_publication_deadline_expiring_during_fsync_keeps_previous_record(tmp_pa
         else:
             assert result['status'] != 'complete'
     assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before
+
+
+# GTMC-C80A-G2S-M02 / TEST-15: these controls bind current source guards.
+@pytest.mark.parametrize('fault', ['depth', 'wide_mapping', 'wide_list', 'wide_tuple',
+    'long_string', 'nonfinite', 'naive_nested', 'unsafe_nested', 'nonstring_key'])
+def test_structural_transport_limits_reject_before_publication(fault):
+    module = producer()
+    options = inputs()
+    value = {'threads': 1}
+    if fault == 'depth':
+        for _ in range(34):
+            value = {'nested': value}
+    elif fault == 'wide_mapping':
+        value = {str(i): i for i in range(1025)}
+    elif fault == 'wide_list':
+        value = [0] * 1025
+    elif fault == 'wide_tuple':
+        value = (0,) * 1025
+    elif fault == 'long_string':
+        value = 'x' * 16385
+    elif fault == 'nonfinite':
+        value = float('nan')
+    elif fault == 'naive_nested':
+        value = datetime(2026, 1, 1)
+    elif fault == 'unsafe_nested':
+        value = {'nested': {'password': 'REJECTED_SENTINEL'}}
+    elif fault == 'nonstring_key':
+        value = {1: 'synthetic'}
+    options['effective_settings']['actual_session_options'] = value
+    with pytest.raises(ValueError):
+        module.build_face_role_record(**options)
+
+
+@pytest.mark.parametrize('fault', ['settings_shape', 'rows_mapping', 'rows_scalar',
+    'source_binding', 'runtime_version'])
+def test_builder_rejects_invalid_envelope_with_named_reason(fault):
+    module = producer()
+    options = complete_inputs()
+    reason = {'settings_shape': 'unallowlisted_settings', 'rows_mapping': 'invalid_observations',
+              'rows_scalar': 'invalid_observations', 'source_binding': 'invalid_build_binding',
+              'runtime_version': 'incompatible_version'}[fault]
+    if fault == 'settings_shape':
+        options['effective_settings'] = []
+    elif fault == 'rows_mapping':
+        options['adapter_observations'] = {}
+    elif fault == 'rows_scalar':
+        options['adapter_observations'] = [1]
+    elif fault == 'source_binding':
+        options['source_identity'] = Record(identity_args(), source_tree='invalid')
+    else:
+        options['adapter_observations'][0]['runtime_record']['producer_abi_version'] = 1.0
+    with pytest.raises(ValueError, match=reason):
+        module.build_face_role_record(**options)
+
+
+@pytest.mark.parametrize('fault', ['runtime_shape', 'runtime_version', 'generation',
+    'receipt_shape', 'sessions_shape', 'extra_session', 'session_shape', 'empty_session_id',
+    'dimension_bool', 'dimension_zero', 'dimension_mismatch', 'origin', 'active'])
+def test_attested_predicate_has_positive_control_and_independent_negative(fault):
+    module = producer()
+    row = plain(attested_observation('worker'))
+    assert module._attested(row) is True
+    runtime = row['runtime_record']
+    if fault == 'runtime_shape':
+        row['runtime_record'] = []
+    elif fault == 'runtime_version':
+        runtime['producer_abi_version'] = True
+    elif fault == 'generation':
+        runtime['runtime_generation_id'] = ''
+    elif fault == 'receipt_shape':
+        runtime['execution_receipt'] = []
+    elif fault == 'sessions_shape':
+        runtime['sessions'] = []
+    elif fault == 'extra_session':
+        runtime['sessions']['extra'] = {}
+    elif fault == 'session_shape':
+        runtime['sessions']['yunet'] = []
+    elif fault == 'empty_session_id':
+        runtime['sessions']['yunet']['session_id'] = ''
+        runtime['execution_receipt']['detector_session_id'] = ''
+    elif fault.startswith('dimension_'):
+        runtime['observed_embedding_dimension'] = {
+            'dimension_bool': True, 'dimension_zero': 0, 'dimension_mismatch': 128}[fault]
+    elif fault == 'origin':
+        row['usage_origin'] = 'health_probe_only'
+    elif fault == 'active':
+        row['active'] = 1
+    assert module._attested(row) is False, fault
+
+
+@pytest.mark.parametrize('fault', ['status', 'image_shape', 'empty_value', 'document_digest',
+    'required_field', 'invocation', 'reason', 'source'])
+def test_repair_additional_guards_reject_with_named_reason(fault):
+    module = producer()
+    options = repair_inputs()
+    assert plain(module.RepairIdentityRecordV1(**options))['collection_status'] == 'complete'
+    reason = {'status': 'invalid_collection_status', 'image_shape': 'invalid_image_fields',
+              'empty_value': 'invalid_image_value', 'document_digest': 'invalid_image_digest',
+              'required_field': 'repair_binding_missing', 'invocation': 'invalid_process_identity',
+              'reason': 'unsafe_record_field', 'source': 'invalid_build_binding'}[fault]
+    if fault == 'status':
+        options['collection_status'] = 'unknown'
+    elif fault == 'image_shape':
+        options['image_record'] = []
+    elif fault == 'empty_value':
+        options['image_record']['platform'] = ''
+    elif fault == 'document_digest':
+        options['collection_status'] = 'incomplete'
+        options['image_record']['identity_document_sha256'] = 'bad'
+    elif fault == 'required_field':
+        del options['image_record']['platform']
+    elif fault == 'invocation':
+        options['repair_invocation_id'] = '../escape'
+    elif fault == 'reason':
+        options['reason_code'] = {'exception': 'REJECTED_SENTINEL'}
+    elif fault == 'source':
+        options['source_identity'] = Record(identity_args(), source_tree='bad')
+    with pytest.raises(ValueError, match=reason):
+        module.RepairIdentityRecordV1(**options)
+
+
+@pytest.mark.parametrize('subject', ['role', 'repair'])
+def test_capture_time_requires_zero_offset(subject):
+    from datetime import timedelta, timezone
+    module = producer()
+    options = complete_inputs() if subject == 'role' else repair_inputs()
+    constructor = module.build_face_role_record if subject == 'role' else module.RepairIdentityRecordV1
+    assert plain(constructor(**options))['collection_status'] == 'complete'
+    options['captured_at'] = NOW.astimezone(timezone(timedelta(hours=1)))
+    with pytest.raises(ValueError, match='invalid_capture_time'):
+        constructor(**options)
+
+
+@pytest.mark.parametrize('fault', ['catalog_version', 'source_alias', 'settings_alias', 'catalog_alias'])
+def test_completion_and_transport_copy_keep_independent_controls(fault):
+    module = producer()
+    options = complete_inputs()
+    if fault == 'catalog_version':
+        options['serving_catalog'] = replace_transport(options['serving_catalog'], producer_abi_version=True)
+        assert plain(module.build_face_role_record(**options))['collection_status'] == 'incomplete'
+        return
+    if fault == 'source_alias':
+        options['source_identity'] = Record(identity_args())
+        target = options['source_identity']
+        field = 'source_tree'
+    elif fault == 'settings_alias':
+        target = options['effective_settings']
+        field = 'profile'
+    else:
+        options['serving_catalog'] = plain(options['serving_catalog'])
+        target = options['serving_catalog']
+        field = 'process_instance_id'
+    raw = module.build_face_role_record(**options)
+    assert plain(raw)['collection_status'] == 'complete'
+    before = plain(raw)
+    target[field] = 'mutated-input'
+    assert plain(raw) == before
+
+
+@pytest.mark.parametrize('process', ['', True, '../escape', '..\\escape', 'x' * 129])
+def test_process_guard_rejects_invalid_identity_with_named_reason(process):
+    module = producer()
+    with pytest.raises(ValueError, match='invalid_process_identity'):
+        module.build_face_role_record(**inputs(process=process))
+
+
+@pytest.mark.parametrize('version', [None, True, 1.0, '1', 0, 2])
+def test_version_predicate_is_exact_for_attestation_envelopes(version):
+    module = producer()
+    assert module._version(1) is True
+    assert module._version(version) is False
+
+
+@pytest.mark.parametrize('boundary', ['serialize', 'open_stream', 'flush'])
+def test_publication_checks_deadline_before_next_io_boundary(tmp_path, monkeypatch, boundary):
+    import os
+    from contextlib import contextmanager
+    module = producer()
+    record = module.build_face_role_record(**inputs())
+    clock = [time.monotonic()]
+    deadline = clock[0] + 1
+    original_dumps, original_open, original_fdopen, original_fsync = json.dumps, os.open, os.fdopen, os.fsync
+    def dumps(*args, **kwargs):
+        result = original_dumps(*args, **kwargs)
+        if boundary == 'serialize':
+            clock[0] = deadline + 1
+        return result
+    def open_file(*args, **kwargs):
+        assert clock[0] < deadline, 'CAUSAL_RED: expired serialization opened a temporary file'
+        return original_open(*args, **kwargs)
+    @contextmanager
+    def fdopen(fd, *args, **kwargs):
+        with original_fdopen(fd, *args, **kwargs) as stream:
+            if boundary == 'open_stream':
+                clock[0] = deadline + 1
+            class Stream:
+                def write(self, payload):
+                    assert clock[0] < deadline, 'CAUSAL_RED: expired stream wrote payload'
+                    return stream.write(payload)
+                def flush(self):
+                    result = stream.flush()
+                    if boundary == 'flush':
+                        clock[0] = deadline + 1
+                    return result
+                def fileno(self):
+                    return stream.fileno()
+            yield Stream()
+    def fsync(fd):
+        assert clock[0] < deadline, 'CAUSAL_RED: expired flush invoked fsync'
+        return original_fsync(fd)
+    with monkeypatch.context() as patch:
+        patch.setattr(time, 'monotonic', lambda: clock[0])
+        patch.setattr(json, 'dumps', dumps)
+        patch.setattr(os, 'open', open_file)
+        patch.setattr(os, 'fdopen', fdopen)
+        patch.setattr(os, 'fsync', fsync)
+        with pytest.raises(TimeoutError, match='publication_deadline'):
+            publication(module, record, tmp_path, deadline_monotonic=deadline)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_repair_record_copies_image_and_source_before_caller_mutation():
+    module = producer()
+    options = repair_inputs()
+    options['source_identity'] = Record(identity_args())
+    raw = module.RepairIdentityRecordV1(**options)
+    before = plain(raw)
+    options['source_identity']['source_tree'] = '9' * 40
+    options['image_record']['platform'] = 'mutated-platform'
+    assert plain(raw) == before
+
+
+@pytest.mark.parametrize('fault', ['empty_generation', 'zero_dimension', 'boolean_dimension', 'unsupported_value'])
+def test_attestation_rejects_self_consistent_but_invalid_observed_values(fault):
+    module = producer()
+    row = plain(attested_observation('worker'))
+    assert module._attested(row) is True
+    runtime = row['runtime_record']
+    if fault == 'empty_generation':
+        runtime['runtime_generation_id'] = ''
+        runtime['execution_receipt']['runtime_generation_id'] = ''
+        for session in runtime['sessions'].values():
+            session['runtime_generation_id'] = ''
+    elif fault in ('zero_dimension', 'boolean_dimension'):
+        runtime['observed_embedding_dimension'] = runtime['declared_embedding_dimension'] = (
+            0 if fault == 'zero_dimension' else True)
+    else:
+        options = inputs()
+        options['effective_settings']['actual_session_options'] = object()
+        with pytest.raises(TypeError, match='unsupported_record_value'):
+            module.build_face_role_record(**options)
+        return
+    assert module._attested(row) is False
+
+
+@pytest.mark.parametrize('symlink', [False, True])
+def test_publication_refuses_preexisting_temporary_path(tmp_path, monkeypatch, symlink):
+    from types import SimpleNamespace
+    module = producer()
+    record = module.build_face_role_record(**inputs())
+    monkeypatch.setattr(module.uuid, 'uuid4', lambda: SimpleNamespace(hex='fixed'))
+    temporary = tmp_path / '.worker-worker-process.json.fixed.tmp'
+    if symlink:
+        victim = tmp_path / 'victim'
+        victim.write_bytes(b'unchanged')
+        temporary.symlink_to(victim)
+    else:
+        temporary.write_bytes(b'unchanged')
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+    with pytest.raises(OSError):
+        publication(module, record, tmp_path)
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before

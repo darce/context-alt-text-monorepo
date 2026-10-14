@@ -26,7 +26,7 @@ LOADED_FIELDS = {"model_id", "profile", "effective_profile", "embedding_dimensio
                  "loaded_weight_hashes", "loaded_license_hashes", "sessions",
                  "runtime_generation_id", "preprocessing_contract", "adapter_observations",
                  "execution_receipt", "serving_catalog", "auth", "database", "effective_settings"}
-BAKED_IDENTITY_LOADER = None  # C-10: parent has not frozen the loader symbol/signature.
+BAKED_IDENTITY_LOADER = "load_baked_source_identity"  # C-10: bound to combined-tree ABI-11.
 IMAGE_FIELDS = {"role", "registry_manifest_digest", "digest_type", "platform",
                 "image_config_digest", "identity_document_sha256"}
 
@@ -91,22 +91,23 @@ def test_baked_loader_refuses_conflicting_environment(monkeypatch, tmp_path):
 
 def assert_baked_loader_environment(loader, monkeypatch, tmp_path):
     path = tmp_path / ".source-identity.json"
-    path.write_text(json.dumps(identity_args()))
+    document = canonical_identity_document()
+    path.write_text(json.dumps(document))
     monkeypatch.delenv("GIT_COMMIT_SHA", raising=False)
     monkeypatch.delenv("APP_GIT_COMMIT_SHA", raising=False)
-    assert plain(loader(path)) == identity_args()
+    assert plain(loader(path)) == document
 
     for variable in ("GIT_COMMIT_SHA", "APP_GIT_COMMIT_SHA"):
         with monkeypatch.context() as equal:
             equal.setenv(variable, identity_args()["source_git_sha"])
-            assert plain(loader(path)) == identity_args(), "CAUSAL_RED: equal ENV must preserve baked identity"
+            assert plain(loader(path)) == document, "CAUSAL_RED: equal ENV must preserve baked identity"
         with monkeypatch.context() as conflict:
             conflict.setenv(variable, "fixture-conflicting-source")
             with pytest.raises((ValueError, TypeError)):
                 loader(path)
     monkeypatch.setenv("GIT_COMMIT_SHA", identity_args()["source_git_sha"])
     monkeypatch.setenv("APP_GIT_COMMIT_SHA", identity_args()["source_git_sha"])
-    assert plain(loader(path)) == identity_args()
+    assert plain(loader(path)) == document
 
 
 def test_unfrozen_loader_is_an_active_owned_tripwire(monkeypatch, tmp_path):
@@ -429,3 +430,216 @@ def test_synthetic_identity_fixture_has_all_frozen_fields():
     assert set(identity_args()) == FIELDS
     assert len(identity_args()["source_git_sha"]) == 40
     assert len(identity_args()["identity_document_sha256"]) == 64
+
+
+def canonical_identity_document():
+    """C-10: compute the synthetic document digest, never pretend a pin is loaded."""
+    import hashlib
+    document = identity_args()
+    del document["identity_document_sha256"]
+    document["identity_document_sha256"] = hashlib.sha256(
+        json.dumps(document, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return document
+
+
+@pytest.mark.parametrize("field", ["source_git_sha", "source_tree",
+    "build_context_manifest_sha256", "service_lock_sha256"])
+@pytest.mark.parametrize("value", [True, 3, "invalid"])
+def test_build_writer_invalid_supplied_binding_never_creates_file(tmp_path, field, value):
+    writer = module().write_build_source_identity
+    options = identity_args()
+    options.pop("identity_document_sha256")
+    options.pop("source_identity_version")
+    options[field] = value
+    path = tmp_path / "identity.json"
+    with pytest.raises((ValueError, TypeError)):
+        writer(output=path, **options)
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("absent", [None, ""])
+def test_build_writer_sha_only_records_nulls_and_loader_refuses(tmp_path, monkeypatch, absent):
+    source = module()
+    for name in ("GIT_COMMIT_SHA", "APP_GIT_COMMIT_SHA"):
+        monkeypatch.delenv(name, raising=False)
+    optional = ("source_tree", "build_context_manifest_sha256", "service_lock_sha256",
+                "image_variant", "build_time")
+    path = tmp_path / "identity.json"
+    result = source.write_build_source_identity(output=path, source_git_sha="1" * 40,
+                                               **dict.fromkeys(optional, absent))
+    document = json.loads(path.read_bytes())
+    assert document == result
+    assert document["collection_status"] == "incomplete"
+    assert all(document[key] is None for key in optional)
+    assert path.stat().st_mode & 0o777 == 0o444
+    with pytest.raises((ValueError, TypeError)):
+        source.load_baked_source_identity(path)
+
+
+@pytest.mark.parametrize('cap', [True, 0, -1, 1.0, 1048577])
+def test_loader_size_cap_rejects_before_open(tmp_path, cap):
+    source = module()
+    with pytest.raises(ValueError, match='invalid_size_cap'):
+        source.load_baked_source_identity(tmp_path / 'absent', max_record_bytes=cap)
+
+
+@pytest.mark.parametrize('fault', ['oversized', 'nonregular', 'duplicate', 'digest', 'symlink'])
+def test_loader_file_guards_from_valid_control(tmp_path, monkeypatch, fault):
+    import os
+    import stat
+    from types import SimpleNamespace
+    source = module()
+    for name in ('GIT_COMMIT_SHA', 'APP_GIT_COMMIT_SHA'):
+        monkeypatch.delenv(name, raising=False)
+    path = tmp_path / 'identity.json'
+    document = canonical_identity_document()
+    path.write_text(json.dumps(document))
+    assert plain(source.load_baked_source_identity(path)) == document
+    if fault == 'oversized':
+        with pytest.raises(ValueError, match='invalid_identity_file'):
+            source.load_baked_source_identity(path, max_record_bytes=1)
+    elif fault == 'nonregular':
+        # Inert metadata seam avoids opening a FIFO or device.
+        monkeypatch.setattr(os, 'fstat', lambda fd: SimpleNamespace(st_mode=stat.S_IFIFO, st_size=1))
+        with pytest.raises(ValueError, match='invalid_identity_file'):
+            source.load_baked_source_identity(path)
+    elif fault == 'duplicate':
+        path.write_text(json.dumps(document)[:-1] + ',"source_git_sha":"' + '1' * 40 + '"}')
+        with pytest.raises(ValueError, match='duplicate_identity_field'):
+            source.load_baked_source_identity(path)
+    elif fault == 'digest':
+        document['identity_document_sha256'] = '0' * 64
+        path.write_text(json.dumps(document))
+        with pytest.raises(ValueError, match='identity_digest_mismatch'):
+            source.load_baked_source_identity(path)
+    else:
+        link = tmp_path / 'link'
+        link.symlink_to(path)
+        with pytest.raises(OSError):
+            source.load_baked_source_identity(link)
+
+
+def test_loader_checks_bytes_read_even_if_metadata_is_stale(tmp_path, monkeypatch):
+    import os
+    import stat
+    from types import SimpleNamespace
+    source = module()
+    path = tmp_path / 'identity.json'
+    path.write_text(json.dumps(canonical_identity_document()))
+    monkeypatch.setattr(os, 'fstat', lambda fd: SimpleNamespace(st_mode=stat.S_IFREG, st_size=0))
+    with pytest.raises(ValueError, match='identity_oversized'):
+        source.load_baked_source_identity(path, max_record_bytes=10)
+
+
+@pytest.mark.parametrize('subject', ['constructor', 'writer'])
+@pytest.mark.parametrize('field,value,reason', [
+    ('image_variant', 'unknown', 'invalid_image_variant'),
+    ('build_time', 1, 'invalid_build_time'),
+    ('build_time', 'malformed', 'invalid_build_time'),
+    ('build_time', '2026-01-01T00:00:00', 'invalid_build_time')])
+def test_build_time_and_variant_guards(subject, field, value, reason, tmp_path):
+    source = module()
+    options = identity_args()
+    options[field] = value
+    if subject == 'writer':
+        options.pop('identity_document_sha256')
+        options.pop('source_identity_version')
+        constructor = lambda **kwargs: source.write_build_source_identity(output=tmp_path / 'identity.json', **kwargs)
+    else:
+        constructor = source.SourceIdentityV1
+    with pytest.raises(ValueError, match=reason):
+        constructor(**options)
+    assert not (tmp_path / 'identity.json').exists()
+
+
+def test_build_writer_complete_roundtrip_and_exclusive_output(tmp_path, monkeypatch):
+    source = module()
+    for name in ('GIT_COMMIT_SHA', 'APP_GIT_COMMIT_SHA'):
+        monkeypatch.delenv(name, raising=False)
+    options = identity_args()
+    options.pop('source_identity_version')
+    options.pop('identity_document_sha256')
+    path = tmp_path / 'identity.json'
+    result = source.write_build_source_identity(output=path, **options)
+    assert plain(result) == canonical_identity_document()
+    assert plain(source.load_baked_source_identity(path)) == plain(result)
+    assert path.stat().st_mode & 0o777 == 0o444
+    before = path.read_bytes()
+    with pytest.raises(FileExistsError):
+        source.write_build_source_identity(output=path, **options)
+    assert path.read_bytes() == before
+
+
+def assert_identity_writer_arg_scope(source):
+    """H01 / C-11: ARG names used by the real writer must be declared per stage."""
+    stage = None
+    args = set()
+    writers = {}
+    required = {'GIT_COMMIT_SHA', 'SOURCE_TREE', 'BUILD_CONTEXT_MANIFEST_SHA256',
+                'SERVICE_LOCK_SHA256', 'BUILD_TIME'}
+    for instruction, arguments in docker_instructions(source):
+        if instruction == 'FROM':
+            stage = shlex.split(arguments)[-1]
+            args = set()
+        elif instruction == 'ARG':
+            args.add(arguments.split('=', 1)[0])
+        elif instruction == 'RUN' and '/app/shared/source_identity.py' in arguments:
+            assert required <= args, f'CAUSAL_RED: {stage} writer ARGs missing {sorted(required - args)}'
+            tokens = shlex.split(arguments)
+            assert tokens[tokens.index('--output') + 1] == '/app/.source-identity.json'
+            variant = tokens[tokens.index('--image-variant') + 1]
+            assert variant == {'runtime': 'recognition', 'runtime-vlm': 'vlm'}[stage]
+            for flag, variable in (('--source-git-sha', 'GIT_COMMIT_SHA'),
+                ('--source-tree', 'SOURCE_TREE'), ('--build-context-manifest-sha256', 'BUILD_CONTEXT_MANIFEST_SHA256'),
+                ('--service-lock-sha256', 'SERVICE_LOCK_SHA256'), ('--build-time', 'BUILD_TIME')):
+                assert tokens[tokens.index(flag) + 1] in {'$' + variable, '${' + variable + '}'}
+            writers[stage] = writers.get(stage, 0) + 1
+    assert writers == {'runtime-vlm': 1, 'runtime': 1}, 'CAUSAL_RED: each runtime stage must execute its identity writer'
+
+
+def test_runtime_identity_writer_has_per_stage_args_and_matching_variants():
+    assert_identity_writer_arg_scope((ROOT / 'Dockerfile').read_text())
+
+
+@pytest.mark.parametrize('field,value,reason', [
+    ('source_git_sha', 'invalid', 'invalid_build_binding'),
+    ('source_tree', 'invalid', 'invalid_build_binding'),
+    ('build_context_manifest_sha256', 'invalid', 'invalid_build_binding'),
+    ('service_lock_sha256', 'invalid', 'invalid_build_binding'),
+    ('image_variant', 'unknown', 'invalid_image_variant'),
+    ('build_time', 1, 'invalid_build_time'),
+    ('build_time', 'malformed', 'invalid_build_time'),
+    ('build_time', '2026-01-01T00:00:00', 'invalid_build_time')])
+def test_incomplete_build_still_validates_every_supplied_field(tmp_path, field, value, reason):
+    source = module()
+    options = dict(source_git_sha='1' * 40)
+    options[field] = value
+    path = tmp_path / 'identity.json'
+    with pytest.raises(ValueError, match=reason):
+        source.write_build_source_identity(output=path, **options)
+    assert not path.exists()
+
+
+@pytest.mark.parametrize('field', ['source_git_sha', 'source_tree',
+    'build_context_manifest_sha256', 'service_lock_sha256', 'identity_document_sha256'])
+@pytest.mark.parametrize('value', [True, '', 'invalid'])
+def test_constructor_checks_each_hex_binding_without_loader(field, value):
+    options = identity_args()
+    options[field] = value
+    with pytest.raises(ValueError, match='invalid_build_binding'):
+        module().SourceIdentityV1(**options)
+
+
+def test_build_writer_cli_sha_only_does_not_backfill_environment(tmp_path, monkeypatch):
+    import subprocess
+    monkeypatch.setenv('SOURCE_TREE', '9' * 40)
+    path = tmp_path / 'identity.json'
+    result = subprocess.run([sys.executable, '-B', str(ROOT / 'shared/source_identity.py'),
+                             '--output', str(path), '--source-git-sha', '1' * 40],
+                            capture_output=True, timeout=10)
+    assert result.returncode == 0
+    document = json.loads(path.read_bytes())
+    assert document['source_git_sha'] == '1' * 40
+    assert document['source_tree'] is None
+    assert document['collection_status'] == 'incomplete'
+    assert path.stat().st_mode & 0o777 == 0o444

@@ -155,6 +155,10 @@ ENV HF_HUB_DISABLE_TELEMETRY=1
 # Without this, GIT_COMMIT_SHA is out of scope in the runtime image.
 ARG GIT_COMMIT_SHA=unknown
 ENV APP_GIT_COMMIT_SHA=${GIT_COMMIT_SHA}
+ARG SOURCE_TREE
+ARG BUILD_CONTEXT_MANIFEST_SHA256
+ARG SERVICE_LOCK_SHA256
+ARG BUILD_TIME
 
 WORKDIR /app
 
@@ -203,6 +207,11 @@ CMD ["/app/scripts/docker-entrypoint.sh"]
 #   HF_HUB_OFFLINE=1 / TRANSFORMERS_OFFLINE=1 are a second line of defense.
 # ---------------------------------------------------------------------------
 FROM runtime-base AS runtime-vlm
+ARG GIT_COMMIT_SHA
+ARG SOURCE_TREE
+ARG BUILD_CONTEXT_MANIFEST_SHA256
+ARG SERVICE_LOCK_SHA256
+ARG BUILD_TIME
 
 COPY --from=builder-vlm /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
@@ -212,6 +221,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 # ENV alone is not safe: compose env_file can override image ENV and fail open.
 ENV ACX_IMAGE_VARIANT=vlm
 RUN printf 'vlm\n' > /app/.image-variant && chmod 0444 /app/.image-variant
+RUN python /app/shared/source_identity.py --output /app/.source-identity.json --source-git-sha "$GIT_COMMIT_SHA" --source-tree "$SOURCE_TREE" --build-context-manifest-sha256 "$BUILD_CONTEXT_MANIFEST_SHA256" --service-lock-sha256 "$SERVICE_LOCK_SHA256" --image-variant vlm --build-time "$BUILD_TIME"
 
 # Install the app package into /opt/venv without resolving build/runtime deps.
 # --no-deps: runtime deps come only from the locked uv.lock sync above.
@@ -238,6 +248,11 @@ USER acx
 # DEFAULT final stage: torch-free. MUST remain the last stage in this file.
 # ---------------------------------------------------------------------------
 FROM runtime-base AS runtime
+ARG GIT_COMMIT_SHA
+ARG SOURCE_TREE
+ARG BUILD_CONTEXT_MANIFEST_SHA256
+ARG SERVICE_LOCK_SHA256
+ARG BUILD_TIME
 
 # Copy the virtualenv from the builder
 COPY --from=builder /opt/venv /opt/venv
@@ -246,6 +261,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Build-immutable identity (must match ImageVariant.RECOGNITION). See runtime-vlm.
 ENV ACX_IMAGE_VARIANT=recognition
 RUN printf 'recognition\n' > /app/.image-variant && chmod 0444 /app/.image-variant
+RUN python /app/shared/source_identity.py --output /app/.source-identity.json --source-git-sha "$GIT_COMMIT_SHA" --source-tree "$SOURCE_TREE" --build-context-manifest-sha256 "$BUILD_CONTEXT_MANIFEST_SHA256" --service-lock-sha256 "$SERVICE_LOCK_SHA256" --image-variant recognition --build-time "$BUILD_TIME"
 
 # Install the app package into /opt/venv without resolving build/runtime deps.
 # --no-deps: runtime deps come only from the locked uv.lock sync above.

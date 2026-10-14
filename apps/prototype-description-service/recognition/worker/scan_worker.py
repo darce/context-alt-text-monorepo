@@ -573,8 +573,27 @@ class ScanWorker:
             return None
         if detector is None:
             self._embedding_runtime_ready = False
+        from db.settings import get_database_settings
+        from recognition.infrastructure.face_pipeline.loaded_session import FrozenFaceRuntimeConfig
+
+        settings = get_recognition_settings()
+        fp = settings.face_pipeline
+        # Match runtime_factory: SFace shares the detector store; AuraFace
+        # uses the dedicated embedder store (or a supplied face settings view).
+        embedder_dir = fp.resolved_models_dir
+        if fp.profile == "auraface":
+            embedder_dir = getattr(settings, "auraface_models_dir", None)
+            if embedder_dir is None:
+                embedder_dir = fp.resolved_embedder_models_dir
+        expected_config = FrozenFaceRuntimeConfig(
+            profile=fp.profile, models_dir=Path(fp.resolved_models_dir).resolve(),
+            embedder_models_dir=Path(embedder_dir).resolve(),
+            score_threshold=float(fp.score_threshold), nms_threshold=float(fp.nms_threshold),
+            top_k=int(fp.top_k), embedding_dimension=int(settings.identity_detection.embedding_dimension),
+            pgvector_dimension=int(get_database_settings().pgvector_dimension),
+        )
         record = observer(
-            expected_config=get_recognition_settings().face_pipeline,
+            expected_config=expected_config,
             active_generation_id=None,
             captured_at=datetime.now(tz=UTC),
         )

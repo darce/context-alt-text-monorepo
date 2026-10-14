@@ -24,16 +24,27 @@ SETTINGS_FIELDS = frozenset({
 })
 IMAGE_FIELDS = frozenset({"role", "container_id", "repair_invocation_id", "registry_manifest_digest",
                           "digest_type", "platform", "image_config_digest", "identity_document_sha256"})
+MODEL_LINEAGE_FIELDS = frozenset({"model_id", "model_ids"})
+_MODEL_ID = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9_.+-]*-[A-Za-z0-9][A-Za-z0-9_.+-]*"
+    r"(?:\+cv[A-Za-z0-9][A-Za-z0-9_.+-]*/ort[A-Za-z0-9][A-Za-z0-9_.+-]*/np[A-Za-z0-9][A-Za-z0-9_.+-]*)?"
+    r"@[1-9][0-9]*d/[A-Za-z0-9][A-Za-z0-9_.+-]*/[A-Za-z0-9][A-Za-z0-9_.+-]*"
+)
 
 
-def _copy(value, depth=0):
+def _copy(value, depth=0, field=None):
     """Structural copy avoids provider hooks and broken mapping __getattr__."""
     if depth > 32:
         raise ValueError("record_too_deep")
     if value is None or type(value) in (bool, int):
         return value
     if isinstance(value, str):
-        if len(value) > 16384 or chr(64) in value:
+        unsafe = chr(64) in value
+        if field in MODEL_LINEAGE_FIELDS:
+            # Manifest separators are valid only as part of the complete model contract.
+            unsafe = (_MODEL_ID.fullmatch(value) is None if chr(64) in value else
+                      re.fullmatch(r"[A-Za-z0-9_.+-]*", value) is None)
+        if len(value) > 16384 or unsafe:
             raise ValueError("unsafe_record_string")
         return value
     if type(value) is float:
@@ -45,7 +56,7 @@ def _copy(value, depth=0):
             raise ValueError("capture_timezone_missing")
         return value.isoformat()
     if is_dataclass(value) and not isinstance(value, type):
-        return {f.name: _copy(getattr(value, f.name), depth + 1) for f in fields(value)}
+        return {f.name: _copy(getattr(value, f.name), depth + 1, f.name) for f in fields(value)}
     if isinstance(value, Mapping):
         if len(value) > 1024:
             raise ValueError("record_too_wide")
@@ -55,12 +66,12 @@ def _copy(value, depth=0):
                 "authorization", "connection_string", "raw_environment", "password", "secret",
                 "auth", "exception", "email", "contact", "credentials", "dsn"}:
                 raise ValueError("unsafe_record_field")
-            result[_copy(key, depth + 1)] = _copy(item, depth + 1)
+            result[_copy(key, depth + 1)] = _copy(item, depth + 1, key)
         return result
     if isinstance(value, (tuple, list)):
         if len(value) > 1024:
             raise ValueError("record_too_wide")
-        return [_copy(item, depth + 1) for item in value]
+        return [_copy(item, depth + 1, field) for item in value]
     raise TypeError("unsupported_record_value")
 
 

@@ -7,6 +7,10 @@ TEST-15: https://github.com/darce/heuristics-canon/blob/v0.25.6/lexicons/enginee
 from __future__ import annotations
 
 import copy
+import json
+import subprocess
+import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -255,6 +259,46 @@ def test_missing_identity_keeps_persisted_sibling_invalid(path: tuple[str, ...],
     ) == ("invalid", "persisted_model_stamp_mismatch")
     assert case == before
     _assert_outcome(_facade(case), "invalid", "persisted_model_stamp_mismatch")
+
+
+# C82R-HV1-F1: missing store wrappers cannot hide an authoritative census contradiction.
+@pytest.mark.parametrize("path", (STORE_PATHS[0][0], STORE_PATHS[2][0]), ids=lambda path: ".".join(path))
+@pytest.mark.parametrize("member", ("value", "provenance"))
+def test_missing_store_wrapper_keeps_persisted_sibling_invalid(path: tuple[str, ...], member: str) -> None:
+    case = _aura_case(store="enrolled")
+    summary = case["snapshot"]["database"]["embedding_provenance"]["value"]
+    summary["persisted_model_ids"] = [INSIGHTFACE_512_MODEL_ID]
+    before = copy.deepcopy(case)
+    assert target.validate_target_store(
+        case["snapshot"], isolation_policy=case["isolation_policy"], acceptance_policy=case["acceptance_policy"],
+    ) == ("invalid", "persisted_model_stamp_mismatch")
+    assert case == before
+    _assert_outcome(_facade(case), "invalid", "persisted_model_stamp_mismatch")
+    del _wrapper(case, path)[member]
+    before = copy.deepcopy(case)
+    assert target.validate_target_store(
+        case["snapshot"], isolation_policy=case["isolation_policy"], acceptance_policy=case["acceptance_policy"],
+    ) == ("invalid", "persisted_model_stamp_mismatch")
+    assert case == before
+    _assert_outcome(_facade(case), "invalid", "persisted_model_stamp_mismatch")
+
+
+def test_missing_store_state_with_persisted_sibling_cli_exits_invalid(tmp_path: Path) -> None:
+    case = _aura_case(store="enrolled")
+    case["snapshot"]["database"]["embedding_provenance"]["value"]["persisted_model_ids"] = [
+        INSIGHTFACE_512_MODEL_ID,
+    ]
+    del case["snapshot"]["database"]["store_state"]["value"]
+    case["aura_evidence"]["snapshot_sha256"] = _snapshot_digest(case["snapshot"])
+    inputs = {**case, "freshness_policy": _fixture("freshness_policy.json")}
+    command = [sys.executable, "-B", "-m", "scripts.validate_auraface_runtime", "--now", NOW]
+    for key in ("snapshot", "aura_evidence", "isolation_policy", "acceptance_policy", "freshness_policy"):
+        path = tmp_path / f"{key}.json"
+        path.write_text(json.dumps(inputs[key]), encoding="utf-8")
+        command.extend((f"--{key.replace('_', '-')}", str(path)))
+    result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 2, result.stdout
+    _assert_outcome(json.loads(result.stdout), "invalid", "persisted_model_stamp_mismatch")
 
 
 # C82 F2: the missing-member exemption belongs exclusively to Aura acceptance.

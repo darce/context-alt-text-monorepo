@@ -286,11 +286,11 @@ def _store_outcome(snapshot: Mapping[str, Any], stamp: str) -> tuple[str, str] |
                 findings.append(("invalid", "persisted_model_ids_not_distinct"))
             elif state == "empty" and persisted:
                 findings.append(("invalid", "persisted_model_stamp_mismatch"))
-            elif state == "enrolled":
+            else:
                 if len(persisted) > 1:
                     findings.append(("invalid", "mixed_persisted_models"))
                 elif any(model_id != stamp for model_id in persisted) or (
-                    _persisted_model_ids(summary) is not None and not persisted
+                    state == "enrolled" and _persisted_model_ids(summary) is not None and not persisted
                 ):
                     findings.append(("invalid", "persisted_model_stamp_mismatch"))
         vector = summary.get("representative_vector")
@@ -331,9 +331,8 @@ def validate_target_store(
     stamp = _active_stamp(snapshot)
     if isinstance(stamp, tuple):
         findings.append(stamp)
-    # Missing target identity cannot suppress contradictions in observed store evidence.
-    # Keep the store rung guarded when one of its own wrappers is incomplete.
-    elif all(_has_wrapper(snapshot, path) for path, _ in _STORE_EVIDENCE_PATHS):
+    # Compare present store evidence even when another wrapper or the state is missing.
+    else:
         store_outcome = _store_outcome(snapshot, stamp)
         if store_outcome is not None:
             findings.append(store_outcome)

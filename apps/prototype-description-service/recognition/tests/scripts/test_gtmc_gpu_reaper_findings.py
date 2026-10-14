@@ -117,7 +117,7 @@ def cycle(tmp_path, monkeypatch):
 
     monkeypatch.setattr(AggregateJobLoadSource, "_read_consumed_publications", observed_read)
 
-    def run(*, state="RUNNING", failure=None, reader=None, legacy=False):
+    def run(*, state="RUNNING", failure=None, reader=None, legacy=False, opaque_failure=None):
         effects = SideEffects(state, failure)
         monkeypatch.setattr(reaper.subprocess, "run", effects.run)
         actuator = reaper.OciCliStopActuator(oci_bin=BIN, timeout_seconds=5, response_request_id_reader=reader)
@@ -128,6 +128,17 @@ def cycle(tmp_path, monkeypatch):
                     legacy_calls.append(instance_id)
                     return None  # Native supported legacy protocol shape, zero actions.
             actuator = LegacyNoOp()
+        if opaque_failure is not None:
+            native = actuator
+
+            class OpaqueFailure:
+                def stop_instance(self, instance_id):
+                    if opaque_failure == "after_action":
+                        native.stop_instance(instance_id)
+                        raise OSError("offline opaque failure after action")
+                    raise RuntimeError("offline opaque failure before action")
+
+            actuator = OpaqueFailure()
         log = tmp_path / "decisions.jsonl"
         runtime = tmp_path / "runtime"
         runtime.mkdir()
@@ -225,3 +236,14 @@ def test_control_launch_failure_and_started_failure_are_distinct(cycle, failure,
     receipt, effects, _, _, _ = cycle(failure=failure)
     assert len(effects.actions) == 1 and len(effects.started) == int(invoked)
     assert receipt["command_invoked"] is invoked and receipt["outcome"] == "failed"
+
+
+@pytest.mark.parametrize("stage,actions", [("before_action", 0), ("after_action", 1)])
+def test_opaque_failure_preserves_unknown_invocation_in_real_cycle(cycle, stage, actions):
+    receipt, effects, _, result, record = cycle(opaque_failure=stage)
+    assert len(effects.actions) == len(effects.started) == actions
+    assert receipt["command_invoked"] is None
+    assert receipt["outcome"] == "unknown"
+    assert {"field": "command_invoked", "code": "invocation_unattributed"} in receipt["missing_reasons"]
+    assert not any(item["code"] == "process_not_started" for item in receipt["missing_reasons"])
+    assert result.errors and record["actuation_outcome"] == "failed"

@@ -860,23 +860,81 @@ def test_red_smoke_tier_predicate_accepts_cached_final_gpu_replay() -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="G2 sampler native receipt unproven (c67): numeric EOF does not prove truncation")
+class SamplerReceiptUnproven(AssertionError):
+    """Only the unproven sampler receipt assertion may satisfy its xfail."""
+
+
+@pytest.mark.xfail(strict=True, raises=SamplerReceiptUnproven, reason="G2 sampler native receipt unproven (c67): numeric EOF does not prove truncation")
 def test_red_sampler_truncated_total_is_measured_as_fabricated_capacity() -> None:
     # Hypothetical only: no native receipt or framing contract proves these numeric bytes were truncated.
     record = _sampler_record("1024, 24576\n2048, 2457")
-    assert record["status"] != "measured", (
-        f"truncated nvidia-smi output was reported as MEASURED total_mb={record.get('total_mb')} "
-        f"gpu_count={record.get('gpu_count')}"
-    )
+    try:
+        assert record["status"] != "measured", (
+            f"truncated nvidia-smi output was reported as MEASURED total_mb={record.get('total_mb')} "
+            f"gpu_count={record.get('gpu_count')}"
+        )
+    except AssertionError as exc:
+        raise SamplerReceiptUnproven(str(exc)) from exc
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="G2 sampler native receipt unproven (c67): successful malformed row lacks a producer receipt")
+@pytest.mark.xfail(strict=True, raises=SamplerReceiptUnproven, reason="G2 sampler native receipt unproven (c67): successful malformed row lacks a producer receipt")
 def test_red_sampler_malformed_row_is_silently_dropped_while_measured() -> None:
     # Hypothetical only: no native receipt attests this malformed row with a successful exit status.
     record = _sampler_record("1024, 24576\nGPU lost, \n")
-    assert record["status"] != "measured", (
-        f"a dropped malformed row was reported as MEASURED with gpu_count={record.get('gpu_count')}"
+    try:
+        assert record["status"] != "measured", (
+            f"a dropped malformed row was reported as MEASURED with gpu_count={record.get('gpu_count')}"
+        )
+    except AssertionError as exc:
+        raise SamplerReceiptUnproven(str(exc)) from exc
+
+
+@pytest.mark.parametrize("case", [
+    "test_red_sampler_truncated_total_is_measured_as_fabricated_capacity",
+    "test_red_sampler_malformed_row_is_silently_dropped_while_measured",
+])
+@pytest.mark.parametrize("fault", ["expected", "guard", "assertion"])
+def test_control_sampler_xfail_isolates_only_receipt_assertion(
+    tmp_path: Path, case: str, fault: str,
+) -> None:
+    source = Path(__file__).read_text()
+    source = source.replace(
+        "REPO_ROOT = Path(__file__).resolve().parents[2]",
+        f"REPO_ROOT = Path({str(REPO_ROOT)!r})",
     )
+    if fault == "guard":
+        source += '\n\ndef _sampler_record(stdout):\n    subprocess.run(["gtmr-offline-guard-sentinel"])\n'
+    elif fault == "assertion":
+        source += '\n\ndef _sampler_record(stdout):\n    raise AssertionError("unrelated sampler assertion sentinel")\n'
+    isolated = tmp_path / f"test_sampler_marker_{fault}_{case}.py"
+    isolated.write_text(source)
+    reports = []
+
+    class Reports:
+        def pytest_runtest_logreport(self, report: Any) -> None:
+            reports.append(report)
+
+    # In-process pytest keeps the offline subprocess guard active throughout the control.
+    exit_code = pytest.main([
+        str(isolated) + "::" + case, "-q", "-p", "no:cacheprovider",
+        "--confcutdir=" + str(tmp_path), "--timeout=60",
+        "--import-mode=importlib", "--basetemp=" + str(tmp_path / "run"),
+    ], plugins=[Reports()])
+    calls = [report for report in reports if report.when == "call"]
+    assert len(calls) == 1, [(report.when, report.outcome) for report in reports]
+    report = calls[0]
+    if fault == "expected":
+        assert exit_code == pytest.ExitCode.OK
+        assert report.skipped and hasattr(report, "wasxfail")
+        assert "SamplerReceiptUnproven" in str(report.longrepr)
+    else:
+        assert exit_code == pytest.ExitCode.TESTS_FAILED, (fault, report.outcome)
+        assert report.failed and not hasattr(report, "wasxfail")
+        expected = (
+            "live subprocess is forbidden in offline GTMR G2 tests"
+            if fault == "guard" else "unrelated sampler assertion sentinel"
+        )
+        assert expected in str(report.longrepr)
 
 
 # ---------------------------------------------------------------------------

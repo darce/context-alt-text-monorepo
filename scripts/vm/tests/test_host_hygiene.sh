@@ -8,6 +8,7 @@ INSTALLER=${HYGIENE_TEST_INSTALLER:-$SCRIPT_DIR/../install-host-hygiene.sh}
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 "${HYGIENE_TEST_PYTHON:-/home/gate/.workbay/gtmburst-runtime/python-fx-async/bin/python}" - "$SWEEP" "$INSTALLER" <<'PY'
 import contextlib
+from collections import Counter
 import json
 import os
 from pathlib import Path
@@ -20,15 +21,16 @@ SWEEP, INSTALLER = map(Path, sys.argv[1:])
 OLD = time.time() - 96 * 3600
 ANON = [str(i) * 64 for i in range(1, 5)]
 passed = 0
+CASES = {}
 GROUPS = {
     'tmp_exclusions': {'sandbox_marker', 'scratch_marker', 'live_cwd', 'live_root', 'live_fd',
                        'recent_nested', 'git_repo', 'git_worktree', 'other_uid', 'uv_cache'},
-    'tmp_safety': {'report_mode', 'delete_mode', 'bare_git', 'acx_build', 'symlink',
-                   'live_prefix_boundary', 'liveness_recheck', 'unreadable_proc_held',
-                   'top_level_mount_held', 'invalid_mode', 'default_report',
-                   'malformed_mode', 'quoted_delete_mode', 'pytest_children',
-                   'git_subtree_only', 'scan_subtree_only', 'report_reclaim_bytes',
-                   'pytest_newest_old', 'pytest_recent_nonnewest', 'tmp_report_only'},
+    'tmp_safety_1': {'pytest_newest_old', 'report_reclaim_bytes', 'pytest_children',
+                     'live_prefix_boundary', 'symlink', 'default_report', 'delete_mode'},
+    'tmp_safety_2': {'scan_subtree_only', 'git_subtree_only', 'pytest_recent_nonnewest',
+                     'bare_git', 'top_level_mount_held', 'invalid_mode', 'tmp_report_only'},
+    'tmp_safety_3': {'malformed_mode', 'quoted_delete_mode', 'report_mode',
+                     'unreadable_proc_held', 'liveness_recheck', 'acx_build'},
     'docker_journal': {'old_anonymous_removed', 'named_volume', 'in_use_volume', 'young_volume',
                        'dangling_but_in_use', 'volume_recheck', 'metrics_and_no_image_deletion',
                        'journal_binary_units'},
@@ -166,6 +168,11 @@ def run(base, env, installer=False, args=(), ok=True):
 
 
 def case(name, callback):
+    assert name not in CASES, f'duplicate case definition: {name}'
+    CASES[name] = callback
+
+
+def run_case(name, callback):
     global passed
     group = os.environ.get('HYGIENE_TEST_GROUP')
     if group and name not in GROUPS[group]:
@@ -662,6 +669,14 @@ def tmp_report_only():
 
 
 case('tmp_report_only', tmp_report_only)
+membership = Counter(name for names in GROUPS.values() for name in names)
+assert set(membership) == set(CASES), (
+    f'group coverage mismatch: missing={sorted(set(CASES) - set(membership))}, '
+    f'unknown={sorted(set(membership) - set(CASES))}'
+)
+assert all(count == 1 for count in membership.values()), 'cases belong to multiple groups'
+for name, callback in CASES.items():
+    run_case(name, callback)
 assert passed > 0, 'case selector matched no tests'
 print(f'host hygiene cases passed: {passed}')
 print('all cases passed, 0 skipped')

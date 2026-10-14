@@ -59,7 +59,16 @@ def test_install_reap_cron_bash_suite(capsys: pytest.CaptureFixture[str]) -> Non
 
 
 @pytest.mark.parametrize(
-    "group", ["tmp_exclusions", "tmp_safety", "docker_journal", "installer", "failures"]
+    "group",
+    [
+        "tmp_exclusions",
+        "tmp_safety_1",
+        "tmp_safety_2",
+        "tmp_safety_3",
+        "docker_journal",
+        "installer",
+        "failures",
+    ],
 )
 def test_host_hygiene_bash_suite(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, group: str

@@ -1038,6 +1038,32 @@ else fail "custom remote-agent root no-flock expected exit 2 got $rc; out=$out";
 assert_contains "custom remote-agent root no-flock" \
   "reap-lane: flock is required for destructive sandbox sweeps"
 
+# Direct TTL overrides must hold fresh sandboxes without archiving them.
+ttl_agent_root="$HOME/w/ttl-agent-sandboxes"
+for ttl_case in 9223372036854775808 18446744073709551616 \
+  18446744073709552516 9999999999999999999 315360001 0900 315360000; do
+  ttl_label="sandbox TTL $ttl_case"
+  ttl_lane="$ttl_agent_root/feature-ttl-$ttl_case"
+  clone_lane "$ttl_lane"
+  mark_sandbox "$ttl_lane"
+  touch "$ttl_lane/.workbay-lane-sandbox"
+  WORKBAY_REMOTE_AGENT_ROOT="$ttl_agent_root" \
+    WORKBAY_REMOTE_AGENT_SANDBOX_TTL_SEC="$ttl_case" \
+    PATH="$flock_success_bin:$PATH" \
+    run_reap --yes --archive-to "$ARCHIVE" "$ttl_lane"
+  assert_rc0 "$ttl_label"
+  case "$ttl_case" in
+    0900|315360000) ttl_reason="sandbox marker has not reached TTL" ;;
+    *) ttl_reason="invalid sandbox TTL" ;;
+  esac
+  assert_contains "$ttl_label" "$ttl_reason"
+  assert_exists "$ttl_label" "$ttl_lane"
+  assert_not_contains "$ttl_label" "REAPED"
+  assert_not_contains "$ttl_label" "value too great for base"
+  assert_summary_counts "$ttl_label" 1 0 1
+  archive_lacks_namespace "$ttl_label" "w/ttl-agent-sandboxes/${ttl_lane##*/}"
+done
+
 # A configured agent root is an explicit deletion boundary, not merely a hint
 # that enables sandbox locking inside one of the default roots.
 remote_sibling_root="$HOME/grok-sandbox-altcontext"

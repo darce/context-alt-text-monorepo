@@ -1,9 +1,11 @@
 """Bounded offline capture acquisition. No live producer/resource operations.
 
 Each explicit path is opened by one isolated serial reader process. The caller
-wait has a freshly computed timeout and terminates the reader on expiration.
-Nonblocking opens refuse devices, directories and FIFOs. Every path component
-is opened no-follow, including parent directories.
+wait has a freshly computed timeout and attempts to kill/reap on expiration.
+Nonblocking opens avoid FIFO waits; the regular-file check refuses devices,
+directories and FIFOs. Every path component is opened no-follow, including
+parent directories. Popen launch and the in-process join are not interruptible;
+the deadline bounds communicate/reap waits, not total caller wall time.
 No record or acquisition exception is logged. No producer path is written.
 RES-02: https://github.com/darce/heuristics-canon/blob/v0.25.6/lexicons/engineering.md#res-02
 """
@@ -42,12 +44,12 @@ total = 0
 try:
     # Walk from a fixed directory descriptor; never follow a parent symlink.
     parts = path.split('/')
-    parent = os.open('/' if path.startswith('/') else '.', os.O_RDONLY | os.O_DIRECTORY)
+    parent = os.open('/' if path.startswith('/') else '.', os.O_PATH | os.O_DIRECTORY)
     try:
         for part in parts[:-1]:
             if not part or part == '.':
                 continue
-            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+            child = os.open(part, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
             os.close(parent)
             parent = child
         fd = os.open(parts[-1], os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=parent)
@@ -106,7 +108,9 @@ def collect_auraface_acceptance(record_paths, *, captured_inputs,
     """Acquire only explicit captured files; never glob/discover/recollect.
 
     Count and per-file byte caps have hard upper bounds. The deadline is an
-    absolute monotonic timestamp, covering serial acquisition and the join.
+    absolute monotonic timestamp checked during serial acquisition and around
+    the join. Popen launch and in-process work cannot be interrupted; this is
+    not a total caller wall-time guarantee.
     Producer join digests use canonical JSON; acquisition digests use raw bytes.
     Each acquired entry preserves the raw acquisition digest separately from
     its canonical join digest and pure join verdict.
@@ -149,7 +153,12 @@ def collect_auraface_acceptance(record_paths, *, captured_inputs,
                         input=json.dumps(dict(path=str(path),cap=max_record_bytes)),
                         timeout=max(0, budget - READER_REAP_RESERVE_SECONDS))
                 except subprocess.TimeoutExpired:
-                    process.kill()
+                    try:
+                        process.kill()
+                    except OSError:
+                        # A failed signal does not justify abandoning cleanup.
+                        # The bounded wait below determines whether it exited.
+                        pass
                     reap_budget = min(READER_REAP_GRACE_SECONDS,
                                       max(0, deadline_monotonic - time.monotonic()))
                     try:

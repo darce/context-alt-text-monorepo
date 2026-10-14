@@ -584,11 +584,13 @@ def _check_database_identity(
         if not isinstance(value, Mapping) or set(value) - set(_DATABASE_IDENTITY_FIELDS):
             findings.invalid("aura_evidence_schema_invalid")
             continue
+        if any(
+            value.get(field) is not None and value[field] != actual[field]
+            for field in _DATABASE_IDENTITY_FIELDS
+        ):
+            findings.invalid("database_identity_divergent")
         if any(value.get(field) is None for field in _DATABASE_IDENTITY_FIELDS):
             findings.incomplete("incomplete_database_identity")
-            continue
-        if any(value[field] != actual[field] for field in _DATABASE_IDENTITY_FIELDS):
-            findings.invalid("database_identity_divergent")
 
 
 def validate_loaded_runtime(

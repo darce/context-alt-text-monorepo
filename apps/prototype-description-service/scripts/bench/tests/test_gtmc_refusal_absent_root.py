@@ -282,3 +282,46 @@ def test_scorer_revision_is_bounded_and_explicit(
     assert command == ["git", "log", "-1", "--format=%H", "--", "apps/prototype-description-service/scripts/bench/score_report.py"]
     assert kwargs["timeout"] == 5
     assert kwargs["cwd"] == Path(score_report.__file__).resolve().parents[4]
+
+
+def test_bench_readme_documents_identity_query_refusal_recovery() -> None:
+    repo = Path(__file__).resolve().parents[5]
+    readme = (repo / "apps/prototype-description-service/scripts/bench/README.md").read_text(
+        encoding="utf-8"
+    )
+    rows = [line for line in readme.splitlines() if line.startswith("| `identity_query_unknown` |")]
+    assert len(rows) == 1, "operator code table must document identity_query_unknown"
+    assert "unknown or failed identity-query state" in rows[0]
+    assert "repair the leg query evidence before rescoring" in rows[0]
+
+
+def test_runbook_documents_refusal_artifacts_are_not_success() -> None:
+    repo = Path(__file__).resolve().parents[5]
+    runbook = (repo / "docs/runbooks/fir-8-cross-stack-bench.md").read_text(encoding="utf-8")
+    score_section = runbook.split("## 6. Score", 1)[1].split("\n## ", 1)[0]
+    assert "A refused score exits non-zero (BenchError exits 2)" in score_section
+    assert "`score/frames.json` and `score/report.html` with refusal artifacts" in score_section
+    assert "`pr_cells_emitted` is false" in score_section
+    assert "Scoring refused" in score_section
+    assert "File existence alone is not scoring success." in score_section
+
+
+@pytest.mark.parametrize(
+    "pin",
+    ["not-a-manifest-sha", "a" * 63, "a" * 65, "g" * 64],
+    ids=["invalid-ascii", "too-short", "too-long", "non-hex"],
+)
+def test_readable_invalid_manifest_pin_stays_unknown_in_both_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pin: str
+) -> None:
+    root = tmp_path / "run"
+    root.mkdir()
+    (root / "manifest.sha").write_text(pin + "\n", encoding="ascii")
+    monkeypatch.setattr(score_report, "_scorer_revision", lambda: "unknown")
+
+    _refuse_unchanged(root, monkeypatch)
+
+    header = json.loads((root / "score" / "frames.json").read_text(encoding="utf-8"))
+    html = (root / "score" / "report.html").read_text(encoding="utf-8")
+    assert header["manifest_sha"] == "unknown"
+    assert "<dt>manifest_sha</dt><dd>unknown</dd>" in html

@@ -1,3 +1,4 @@
+import { registerConfig, resetConfigCache } from '../../../../api/config';
 /**
  * FEBT1G-H-05 / FEBT1G-H-08 / FEBT1-LC-01 regression cover for ClusterLabelingPanel.
  *
@@ -103,6 +104,24 @@ const typeNameAndSave = async (user: TestUser, name: string) => {
 describe('ClusterLabelingPanel duplicate guard and interactive budget', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    registerConfig({
+      nonce: 'fixture-nonce', ajaxUrl: '/wp-admin/admin-ajax.php',
+      endpoints: { recognitionClusters: '/wp-json/acx/v1/recognition/clusters' },
+    });
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const url = new URL(raw, window.location.origin);
+      expect(url.pathname).toBe('/wp-json/acx/v1/recognition/clusters/panel-cluster-id/roster-candidates');
+      expect(url.searchParams.get('top_k')).toBe('5');
+      expect(init?.method).toBe('GET');
+      return Promise.resolve(new Response(JSON.stringify({
+        model_id: 'fixture-model', embedding_model: 'fixture-model',
+        computed_at: '2026-10-15T00:00:00Z', probe_face_count: 1,
+        reference_face_count: 1, quality_flag: 'ok',
+        thresholds: { suggestion_floor: 0.35, suggestion_ceiling: 0.55, similarity_threshold: 0.6 },
+        candidates: [],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }));
     vi.mocked(fetchClusterMembers).mockResolvedValue(emptyMembers);
     vi.mocked(updateClusterLabel).mockResolvedValue(undefined);
     vi.mocked(useRosterEntries).mockReturnValue(
@@ -112,6 +131,8 @@ describe('ClusterLabelingPanel duplicate guard and interactive budget', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
+    resetConfigCache();
   });
 
   it('FEBT1G-H-05: a failed remote duplicate lookup blocks the write instead of failing open', async () => {

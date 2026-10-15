@@ -2,10 +2,10 @@
 
 > **Metadata**
 >
-> - **Date**: 2026-10-14
+> - **Date**: 2026-10-14 (revision v4: 2026-10-15)
 > - **Task ID**: `FIRBENCH-1` · branch `feature/firbench-1`
 > - **Companion**: [task plan](FIRBENCH-1-fir-benchmark-tool-task-plan.md) · [lane briefs](firbench-1/README.md)
-> - **Status**: operator-delegated answers (2026-10-14), binding after plan review. Canon citations are Canon v0.26.2 row IDs.
+> - **Status**: operator-delegated answers (2026-10-14), plus delegated decisions MCP 16732–16736 and clarifications 16756, 16763 and 16773 in revision v4 (2026-10-15), reconciled by the second gate-defect dispatch. These govern stale lane wording. Canon citations are Canon v0.26.2 row IDs. Implementation and evidence gates remain open.
 
 ## In scope (this wave)
 
@@ -14,6 +14,27 @@ Benchmark tooling only: decision contract, frames, three in-process legs, scorin
 ## Out of scope (this wave)
 
 Training, detector replacement, deployments, stack mode, the description-utility rubric, labelling execution, acquisition of the confirmatory frame, confirmatory claims, any local inference.
+
+## Delegated decisions (revision v4, MCP 16732–16736, 16756, 16763, 16773)
+
+Revision v4 records choices the operator delegated to canon-first judgement (MCP 16732). They are reversible project policy. The canon does not prescribe their numbers, and they are not evidence of human observation, real-data properties or ratification. The plan's [canon key](FIRBENCH-1-fir-benchmark-tool-task-plan.md#delegated-choices-and-frozen-seams-revision-v4) gives each cited row's name and source locator.
+
+| Area | Revision v4 decision | Status |
+| --- | --- | --- |
+| Protocol (MCP 16733) | k = 5 identity- and PSU-disjoint rotating folds. Seeds are the first 32 bits, big-endian, of SHA-256 of `FIRBENCH-1/v1/{folds,gallery,bootstrap,label_queue}`: 2406466110, 2468935812, 2429382368 and 336880394. Paired cluster percentile bootstrap, `n_boot` 10000. | Declared policy; seeds re-derived in v4 |
+| ICC | `planning_icc` 0.10 is a design assumption, not observed. Sensitivity points 0.05 and 0.20 are reported with it. | Design assumption; observed ICC is measured by S1 |
+| Eligibility | Global floor ≥ 50 independent PSUs (`min_n_independent`), checked before FPIR eligibility and intervals (`insufficient_independent_psus`). Pair-cell floor ≥ 30 (`cell_floor_n_independent`). | Declared floors; they prove no adequacy |
+| Design discordance (MCP 16756) | Required `p_d` = 0.15 in `DecisionManifest`. S3 imports it; there is no implicit or global default. | Design assumption |
+| Label QC (MCP 16734) | Gold share 0.10; repeat fraction 0.10; percent agreement ≥ 0.90; Cohen's κ ≥ 0.80 (undefined κ routes to SME); gold accuracy ≥ 0.90; support ≥ 20 gold decisions per annotator and ≥ 20 repeat decisions per evaluated field before any import. | Pre-data project QC policy |
+| Units (MCP 16735) | One background source unit per exhaustive frame image, plus independently verified non-mated GT-face units. A duplicate that overlaps a represented GT face opens no unit; its extra names count only as spurious names. Detector alarms never add to the FPIR denominator. | Precommitted policy |
+| Real-eval annotations (MCP 16735) | Stable image and face IDs and hashes; valid GT boxes; named / unknown / unresolved identity status (unresolved never enters the non-mated pool); tier and exhaustiveness; provenance and rule IDs; occluder set and eye/nose/mouth visibility; duplicate, session and synthetic-sibling metadata when known; sampling arm and inclusion probability; for tier (a), valid QC and an observation reference. | Required before any real verdict |
+| Timestamps (MCP 16736, 16773) | Semantic `created_at` selects `seal.sealed_at`, else `ratification.ratified_at`, else an explicit `--created-at` ISO 8601 literal. Seal and ratification are different events and may differ; only a supplied explicit literal must match the highest-priority derived value, comparing parsed instants. Missing/invalid values or a conflicting explicit literal raise existing `FrameContractError`. Semantic writers never read the wall clock. Actual attempt/timing and private consumption receipts remain separate and non-replayable. | Frozen seam (S0); priority clarified by 16773 |
+| Contract seams (MCP 16756, 16773) | `build_nonmated_pool(faces, images, folds, *, fold, component_map, exhaustive, planning_icc) -> NonMatedPool` raises existing `FrameContractError` for `exhaustive=False` or malformed coverage. The actual frozen helper is `require_frame_read_allowed(frame, token, *, decision_sha256, run_id, code_sha, scorer_sha, repo_root, consumed_at) -> UnsealToken`. `consumed_at` is supplied from an allowed nonsemantic attempt-receipt boundary; the returned token records consumption. Exact binding and per-frame `O_EXCL` spending remain mandatory. | Frozen seam (S0); full types in the plan |
+| Annotation producer (MCP 16763) | Persisted `GoldenManifest` is document-homogeneous; `GoldenEntry` forbids `annotation_mode`. Only flattened raw score mappings get parent stamps. Mixed/missing/empty entries fail closed; an explicit exhaustive request cannot upgrade `roster_only`. | Producer contract; no fabricated exhaustiveness |
+| UI (MCP 16735) | Keep the supported MapState enums with bench semantics. A static exit marker gets no invented loading screen; the RLSE-04 trigger is adjudicated as not firing for it. One draw mode. No auto-advance deadline. Recoverable work is preserved. | Precommitted policy |
+| Measurement observation (MCP 16734) | Before real tier-(a) labels feed analysis, a bounded contextual observation of production is recorded (MEAS-29). | Evidence gate; unresolved, not invented |
+
+Left unresolved on purpose, as evidence gates rather than operator choices: real frame and template hashes (measured later on the pinned frames), the observed ICC (measured by S1), and the MEAS-29 observation reference. The 2026-10-14 operator-pending wording below is kept as history; where it differs, this table governs.
 
 ## Operator questions of 2026-10-14
 
@@ -33,15 +54,25 @@ Human confirmation changes the wording of the audit, not its conclusion for dete
   - Development uses the **already designed** fir-occ pilot (2026-09-19 population allocation): 120 probability draws (p = 120/588), 106 challenge candidates, 60 keyword negatives (p = 60/489), 6 caption failures and 23 zero-detection additions, for 286 unique images. These must be labelled pixel-first, without detector overlays (AUDIT-07, HITL-03).
   - Confirmatory needs **new, previously unexamined identities and sessions** with exhaustive pixel-first labels, sized by power on independent units (identities/PSUs, not images).
 
-**Power, for sizing the confirmatory frame.** Paired FNIR difference, McNemar-type: n = [z·√p_d + z_β·√(p_d − Δ²)]² / Δ², with discordance p_d = 0.15, power 0.80 (z_β = 0.8416), and z the two-sided z of the step: 1.96 for H1 (one-sided 0.025) and 1.645 for H2 (one-sided 0.05). The estimand is the paired ΔFNIR at the primary point. The unit is effective mated searches, n_eff, with deff already applied. Compare effective with effective only. Raw rows equal n_eff × the measured deff, computed by S1 at run time.
+**Power, for sizing the confirmatory frame.** Paired FNIR difference, McNemar-type: n = [z·√p_d + z_β·√(p_d − Δ²)]² / Δ², with discordance p_d = 0.15, power 0.80 (z_β = 0.8416), and z the two-sided z of the step: 1.96 for H1 (one-sided 0.025) and 1.645 for H2 (one-sided 0.05). The estimand is the paired ΔFNIR at the primary point. The unit is effective mated searches, n_eff, with deff already applied. Compare effective with effective only. Raw rows equal n_eff × the measured deff, computed by S1 at run time. Here Δ is a sizing alternative (distance from the tested boundary), not the practical hypothesis margin. The original margins stay H1 = 0 and H2 δ = 0.05. Planted/sizing Δ = 0.10 and computed MDE do not introduce a minimum-effect manifest field or change either rejection boundary (CARD-27; S0 Build 2).
 
-| Margin Δ | H1 step (z 1.96) | H2 step (z 1.645) |
+| Sizing distance Δ | H1 step (z 1.96) | H2 step (z 1.645) |
 | --- | --- | --- |
 | 0.10 | ≈ 115 effective mated searches | ≈ 91 |
 | 0.05 | ≈ 469 | ≈ 369 |
 
-- **What the current corpus can resolve.** The tracked corpus manifest v3r (646 images) gives 231 image–identity components (largest 79 images), image-count size-weighted mean M̃ ≈ 18.2, and deff ≈ 2.72 at ICC 0.10, so n_eff ≈ 238. This is an image-level proxy. The report's M̃ = 12.925 does not reproduce from the tracked manifest, and the PSU recount on the pinned frame (S1) replaces this figure. At n_eff ≈ 238 the frame resolves Δ = 0.10 at both steps (115 and 91 required) and cannot resolve Δ = 0.05 (469 and 369 required). The H2 MDE at this n_eff is about 0.06, above δ = 0.05.
-- **FPIR resolvability.** A zero-error claim needs about 3/n independent non-mated source units (the README definition). FPIR 0.01 needs ≥ 300 and 0.001 needs ≥ 3,000. The exact zero-event floor at 0.01 is about 298, so the 3/n rule is kept as the conservative floor. The current 207-probe non-mated set resolves only ≳ 0.0145 (CARD-27, EXP-12).
+- **What the inventory establishes.** Accepted W2 inventory §4 counts 231 image–identity components in tracked v3r (646 images; largest component 79 images). Its measured named-face M̃ = 24.401 over 584 named boxes differs from image-count M̃ = 18.192. At assumed planning ICC 0.10, the image-only arithmetic gives deff ≈ 2.719 and n_eff ≈ 237.6, where deff = 1 + (M̃ − 1) × ICC and n_eff = 646 / deff. These are conditional image-proxy calculations, not current real face-level power. Named boxes are not an exhaustive mated or non-mated inventory; their M̃ cannot establish either admissible pool. The report's M̃ = 12.925 does not reproduce. S1 must measure the pinned frame's relevant source-unit PSU structure and effective counts before any real power or resolvability conclusion.
+
+    Conditional arithmetic using the same image proxy and sizing formula; these MDE values do not establish face-level power or admissibility:
+
+    | ICC | Role | deff | n_eff | H1 MDE (z 1.96) | H2 MDE (z 1.645) against δ = 0.05 |
+    | --- | --- | --- | --- | --- | --- |
+    | 0.05 | sensitivity | 1.86 | ≈ 347 | 0.058 | 0.0515, above δ |
+    | 0.10 | planning assumption | 2.72 | ≈ 238 | 0.070 | 0.062, above δ |
+    | 0.20 | sensitivity | 4.44 | ≈ 146 | 0.089 | 0.079, above δ |
+
+    In that conditional proxy, Δ = 0.10 exceeds the H1 MDE and the H2 MDE exceeds δ = 0.05 at all three points. Neither comparison decides H1 or H2 on the real frame.
+- **FPIR resolvability.** A zero-error claim needs about 3/n_nonmated_eff effective non-mated source units (the README definition). FPIR 0.01 needs ≥ 300 and 0.001 needs ≥ 3,000. The exact zero-event floor at 0.01 is about 298, so the 3/n rule is kept as the conservative floor. W2 inventory §5 found no raw provenance file for the historical 207 probes: 204/207 is report prose, retained for legacy parity only. The arithmetic 3/207 ≈ 0.0145 would apply only if 207 admissible independent non-mated units were established; they are unverified. Without exhaustive GT, admissible non-mated N, n_eff and current resolvability are not established. Even 646 background image slots do not establish an admissible pool or resolvability. The global PSU floor (≥ 50), power/MDE and exhaustive GT must also hold. Floors alone prove no adequacy (CARD-27, EXP-12).
 
 ### Does the full report change the tool's design? Yes.
 
@@ -80,14 +111,15 @@ Yes, as diagnostics computed in each model's own space, never across spaces.
 
 1. **D3 operating point.**
    - Primary: FNIR at **FPIR = 0.01**, end to end, so detector misses count (EVAL-16, EVAL-18, EVAL-19). The gallery is the enrolled identities from `gallery_split`, with gallery size named.
-   - Non-mated population: verified zero-identity faces plus held-out identities on identity-disjoint rotating folds. "Unlabeled" alone is not non-mated. The denominator is the non-mated source units: non-mated GT faces plus one background unit per frame image.
+   - Non-mated population: verified zero-identity faces plus held-out identities on identity-disjoint rotating folds. "Unlabeled" alone is not non-mated. The denominator is the non-mated source units: non-mated GT faces plus one background unit per frame image. A duplicate detection that overlaps an already represented GT face opens no unit; its extra names count only as spurious names (MCP 16735).
    - τ is fit on identity-disjoint calibration folds, frozen, and tested once (CAL-07, CAL-04, EVAL-07). The selection rule is the smallest τ whose pooled calibration FPI is within ⌊fpir_target × N⌋ over the pooled calibration non-mated source units (S3 Build 3). With an empty pool, the run refuses.
    - Secondary points are FPIR 0.05 and 0.001, each flagged "unresolvable" until n_nonmated_eff ≥ 3/FPIR. An unresolvable point shows the measured FPIR with its upper confidence limit as a designed unknown (CARD-03).
    - The primary point has the same resolvability rule. If n_nonmated_eff < 3/0.01 (300) on the frame in use, the verdict is `inconclusive` with reason `primary_fpir_unresolvable`, whatever the FNIR interval says. No winner is named, and the frame is not admissible for a verdict at that point.
    - `fir-gate-contract-v1.json` `max_fpi` and `n_nonmated_declared` are written once S1 counts the frozen non-mated frame (max_fpi = ⌊0.01·n⌋), through the `firplan_d3_operating_point_<date>` decision named by FIR-13.
    - The point is revisable only before the first sealed run.
-2. **Margin and alpha (CARD-27, EXP-10, EXP-19, EXP-24).**
+2. **Margin and alpha (CARD-27, EXP-10, EXP-12, EXP-19).**
    - **Estimand.** Primary is the paired ΔFNIR@FPIR0.01, computed as SFace − AuraFace. The unit of resampling is the PSU (image–identity component), and the reported n is n_eff. Intervals come from a paired cluster percentile bootstrap.
+     - **Eligibility and power (EXP-12).** Before any interval is shown, the frame needs at least 50 independent PSUs (`min_n_independent`). Below that, the verdict is `insufficient_independent_psus`, checked before FPIR eligibility and intervals. Each pair cell needs at least 30 (`cell_floor_n_independent`). Both are declared floors, not evidence of adequate power. The effective-power/MDE check, FPIR resolvability and exhaustive GT still apply. Seal the original hypothesis margins, interval class, harm directions and α allocation before the run (CARD-27): H1 superiority margin 0; H2 non-inferiority margin 0.05. Δ = 0.10 is a sizing/planted alternative only; MDE is computed from effective n and the sizing assumptions, with no new minimum-effect field.
    - **Hypotheses and step order.** The sealed manifest fixes the order H1, then H2. The family α = 0.05 is one-sided. Holm step-down over two hypotheses gives one-sided levels 0.025 for step 1 and 0.05 for step 2, which are two-sided 95% and 90% intervals.
      - H1 (step 1): AuraFace is superior to SFace iff the 95% two-sided lower bound is > 0 and the veto guardrails hold.
      - H2 (step 2, tested only if H1 is rejected): the in-house leg named in the manifest is non-inferior to the InsightFace reference iff the 90% two-sided upper bound of (FNIR_inhouse − FNIR_IF) is < δ = 0.05 and the veto guardrails hold.
@@ -109,7 +141,8 @@ Yes, as diagnostics computed in each model's own space, never across spaces.
    - **Known traps** are resolved from pixels: #162 lace eye mask, #271 sleep mask on forehead, #276 gold mask on another person, #93 conflicting caption, and #593/#623 in both mask and sunglasses channels.
    - **Labels** are face-instance labels: occluder multi-label, per-region visibility, and "cannot determine". Captions are queue sources, never labels.
    - **Arms.** The probability arm (IPW) and the enriched challenge arm are reported separately. The written label rule (T-09) comes first (MLDATA-03).
-   - **Quality control.** About 10% blind repeats test intra-rater consistency, with gold items (HITL-03). An edit path lets the operator add faces that no detector proposed (HAI-11).
+   - **Quality control** (pre-data project policy, not a source-established accuracy guarantee). Gold share 0.10 and repeat fraction 0.10. Gold items mix random, batch-matched and hard cases, authored independently by SMEs as non-caption answers (HITL-03). Per-field repeat percent agreement ≥ 0.90 and per-field Cohen's κ ≥ 0.80 (undefined κ routes to SME); per-annotator independent-gold accuracy ≥ 0.90. Agreement is a diagnostic, not the truth (HITL-05). Support: ≥ 20 known-answer gold decisions per annotator and ≥ 20 repeat decisions per evaluated field across the annotation run. Below that, a batch exports but cannot import. Below-floor, uncertain, eval-critical or undefined-kappa fields go to SME adjudication or repair (HITL-07). Workers are never deleted to chase agreement, and pre-adjudication labels are kept (MLDATA-03). An edit path lets the operator add faces that no detector proposed (HAI-11).
+  - **Required annotations for real evaluation** (MCP 16735). Stable image and face IDs and hashes; valid GT boxes; explicit named, unknown or unresolved identity status (unresolved never enters the non-mated pool); annotation tier and exhaustiveness; provenance and rule IDs; face-specific occluder set and eye/nose/mouth visibility; duplicate, session and synthetic-sibling metadata when known; sampling arm and inclusion probability; and, for tier (a), a valid QC result and a MEAS-29 observation reference. Unknown metadata stays explicit.
    - **Effort, two tiers.**
      - Tier (a): occluder labels plus missed-face additions on the ~150-image occlusion queue, about 2–3 min per image, ≈ 5–8 person-h.
      - Tier (b): full pixel-exhaustive labelling per the corpus contract, at the report's T-04 rate of ≈ 8–14 min per image, ≈ 40–65 person-h for the 286 pilot.

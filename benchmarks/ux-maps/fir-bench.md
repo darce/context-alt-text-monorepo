@@ -67,8 +67,8 @@
 |   ) prints the numbers and 'unratified: no verdict'. unre\ |
 |   solvable_fpir ○ (degraded) prints primary_fpir_unresolv\ |
 |   able and names no winner. A hypothesis not reached prin\ |
-|   ts 'not evaluated'. Serves VIZ-23, WRIT-81. (status) st\ |
-|   ates=[default,degraded,error]                            |
+|   ts 'not evaluated'. Serves VIZ-23, INT-22. (status) sta\ |
+|   tes=[default,degraded,error]                             |
 |   - Admissibility line: frame id and tag (diagnostic, dev\ |
 |   elopment or confirmatory), frame-inspected flag, n_eff,\ |
 |    deff, and MDE per step. Every number carries its frame\ |
@@ -76,9 +76,9 @@
 |   error]                                                   |
 |   - FNIR at FPIR 0.01 per leg (SF-128, AF-512, and the IF\ |
 |    judge row) as a dot-range with its interval and the fr\ |
-|   ozen τ. Range frame on the value axis; each leg labelle\ |
-|   d directly, not by legend. Serves VIZ-35, VIZ-40. (cont\ |
-|   ent) states=[default,empty,error]                        |
+|   ozen τ. Each leg labelled directly, not by legend. Serv\ |
+|   es VIZ-40, VIZ-23. (content) states=[default,empty,erro\ |
+|   r]                                                       |
 |   - Exact-lookup table: per leg FNIR at FPIR 0.01, FPIR m\ |
 |   easured with its UCL, frozen τ, and stage counts. Same \ |
 |   numbers as the range. Unratified rows show numbers with\ |
@@ -114,16 +114,26 @@
 |   zen on calibration folds and the test set read once. Be\ |
 |   nch states: unresolvable_fpir is degraded, for the regi\ |
 |   on below 3/n_eff; unratified is degraded, with numbers \ |
-|   only and no winner.                                      |
+|   only and no winner. Chart treatment follows the actual \ |
+|   rendered marks and task: [VIZ-35] Use a range-frame for\ |
+|    observed extrema (The Visual Display of Quantitative I\ |
+|   nformation, ch. 6) applies only to a bivariate-pattern \ |
+|   scatterplot whose decision-relevant measured extrema ar\ |
+|   e hidden by unneeded round-number frame tails. Trim tho\ |
+|   se tails and label the extrema, retaining required refe\ |
+|   rences, scales, units, legibility and marginal views. N\ |
+|   o blanket mandate or ban covers S1–S8; chart names alon\ |
+|   e do not decide applicability. FPIR reference lines at \ |
+|   0.001, 0.01 and 0.05 remain.                             |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Operating curves per leg on a log FPIR axis with a ra\ |
-|   nge frame and a direct label on each curve. Points belo\ |
-|   w 3/n_eff are shaded (░) and marked ○ unresolvable, and\ |
-|    no FNIR claim is drawn inside that region (degraded). \ |
-|   A curve with no data reads 'no data' (empty). Serves VI\ |
-|   Z-35, VIZ-40, VIZ-27. (content) states=[default,degrade\ |
-|   d,empty,error]                                           |
+|   - Operating curves per leg on a log FPIR axis, with ref\ |
+|   erence lines at FPIR 0.001, 0.01 and 0.05 and a direct \ |
+|   label on each curve. Points below 3/n_eff are shaded (░\ |
+|   ) and marked ○ unresolvable, and no FNIR claim is drawn\ |
+|    inside that region (degraded). A curve with no data re\ |
+|   ads 'no data' (empty). Serves VIZ-40, VIZ-27. (content)\ |
+|    states=[default,degraded,empty,error]                   |
 |   - At-τ table: per leg FNIR, FPIR measured with its UCL,\ |
 |    false accepts as an integer over non-mated source unit\ |
 |   s, and the gallery identity count. Same numbers as the \ |
@@ -379,7 +389,10 @@
 |   l contiguity: no gap, density or axis claims. If the pr\ |
 |   ojection cannot be drawn, projection_unavailable is deg\ |
 |   raded and the neighbour table stays. Serves VIZ-18, VIZ\ |
-|   -19. (content) states=[default,degraded,empty,error]     |
+|   -19. Assess any scatterplot rendering against its actua\ |
+|   l task before applying VIZ-35; diagnostic projection co\ |
+|   ordinates do not establish original-space measured extr\ |
+|   ema. (content) states=[default,degraded,empty,error]     |
 |   - Table alternative: select a face to list its nearest \ |
 |   neighbours in the original leg space, with their scores\ |
 |   . Distances come from that space, not from the projecti\ |
@@ -448,9 +461,30 @@
 |   ld accuracy 0.90, support >=20 gold decisions per annot\ |
 |   ator and >=20 repeats per evaluated field; these remain\ |
 |    hidden from L1. These are project QC defaults, not acc\ |
-|   uracy guarantees; real imports require genuine observat\ |
-|   ion reference and support. Serves INT-21. (status) stat\ |
-|   es=[default,degraded,empty,error]                        |
+|   uracy guarantees; real tier-(a) imports always require \ |
+|   a genuine resolvable observation reference, documented \ |
+|   applicability to the current measurement context and va\ |
+|   lid supported QC. No fixture flag bypasses the producti\ |
+|   on gate; controlled generated-fixture helper output is \ |
+|   synthetic and ineligible for real analysis. Preserve or\ |
+|   iginal answers and failed QC; a corrected version needs\ |
+|    its own fresh independently blinded QC run or supporte\ |
+|   d qualified SME resolution under S7, never worker delet\ |
+|   ion or revised historical QC. Reuse observation after d\ |
+|   ocumenting continuing applicability; unrelated version \ |
+|   changes alone need no new human observation, while mate\ |
+|   rial changes beyond the observed scope or uncertainty b\ |
+|   lock analysis pending a new bounded observation. Semant\ |
+|   ic created_at follows MCP 16773: seal.sealed_at, else r\ |
+|   atification.ratified_at, else explicit ISO8601 literal.\ |
+|    Seal and ratification may differ; a supplied explicit \ |
+|   literal must match the highest-priority derived instant\ |
+|   . Missing/invalid semantic dates or conflicting explici\ |
+|   t literals raise FrameContractError. Actual attempt/pri\ |
+|   vate unseal-ledger consumed_at stays separate at the no\ |
+|   n-replayable receipt boundary; no clock fallback or sub\ |
+|   stitution of a seal date. Serves INT-21. (status) state\ |
+|   s=[default,degraded,empty,error]                         |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Open verdict for this frame -> s1-verdict      |
@@ -483,20 +517,27 @@
 |   om m mask, s sunglasses, h hand, o object, x mixed, n n\ |
 |   one, ? can't tell. Region controls for eyes, nose and m\ |
 |   outh cycle through visible, occluded, out-of-frame and \ |
-|   uncertain. Only these values can be entered. Every cont\ |
-|   rol has a visible label and Tab reach. Serves FORM-11. \ |
-|   (form) states=[default,error]                            |
+|   uncertain. Only these values can be entered. Every shor\ |
+|   tcut has a visible labelled button with the same action\ |
+|   , reachable by Tab and activated with Enter or Space. E\ |
+|   very focusable control shows a visible :focus-visible i\ |
+|   ndicator. Serves FORM-11. (form) states=[default,error]  |
 |   - Add missed face is a mode. a enters it with a visible\ |
-|    'drawing a box' banner. Enter commits the box. Esc can\ |
-|   cels the draw and restores the item. u marks an unknown\ |
-|    person in the same way. Serves INT-23. (form) states=[\ |
-|   default]                                                 |
-|   - Enter next, Esc undo, skip recorded as nonresponse. A\ |
-|    skipped item shows ○ skipped, the only item state the \ |
-|   annotator sees, and stays in the export. The loop ends \ |
-|   at the last item or on an explicit export. Progress rea\ |
-|   ds 'done n · skipped m'. Serves INT-24, PERC-10. (nav) \ |
-|   states=[default]                                         |
+|    'drawing a box' banner. Enter or the visible Commit bo\ |
+|   x button commits the box. Esc or the visible Cancel dra\ |
+|   w button cancels and restores the unchanged item; the b\ |
+|   anner disappears on exit. Button and shortcut paths agr\ |
+|   ee. u marks an unknown person as a face attribute, not \ |
+|   a second mode; at most one mode is active. Serves INT-2\ |
+|   3. (form) states=[default]                               |
+|   - Outside draw mode: Enter next, Esc undo, skip recorde\ |
+|   d as nonresponse. A skipped item shows ○ skipped, the o\ |
+|   nly item state the annotator sees, and stays in the exp\ |
+|   ort. The loop ends at the last item or on an explicit e\ |
+|   xport. Progress reads 'done n · skipped m'. No timer ad\ |
+|   vances an item; only Enter, skip or export moves the an\ |
+|   notator on. Serves INT-24, PERC-10. (nav) states=[defau\ |
+|   lt]                                                      |
 |   - Export JSON writes the labelled items to the private \ |
 |   output path. Nothing is imported here. A failed export \ |
 |   keeps every label, shows the error and offers a retry. \ |

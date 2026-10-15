@@ -49,6 +49,10 @@
     "state": "inconclusive",
     "reason": "insufficient_independent_psus"
   },
+  "decision_path": [
+    "synthetic: schema fixture only; no core verdict execution or real evidence",
+    "eligibility:insufficient_independent_psus"
+  ],
   "hypotheses": [
     {
       "id": "H1",
@@ -69,7 +73,16 @@
       "role": "veto",
       "state": "unscored",
       "value": null,
-      "timings_sha256": null
+      "timings_sha256": null,
+      "evidence": {
+        "leg_key": null,
+        "cohort": "synthetic: fixture only",
+        "n_units": 10,
+        "n_psu": 5,
+        "n_eff": 5.0,
+        "limit": null,
+        "reason": "synthetic: cohort evidence not supplied"
+      }
     },
     {
       "id": "G4",
@@ -105,12 +118,16 @@
   "cells": [
     {
       "leg_key": "sface__native__ab12cd__cv4.10.0__ort1.18.0",
-      "query_occluder": "none",
-      "enrolled_occluder": "none",
+      "query_occluder": "clear",
+      "enrolled_occluder": "unknown",
       "n_units": 10,
       "n_psu": 5,
       "scored": false,
-      "fnir": null
+      "fnir": null,
+      "data_origin": "synthetic",
+      "n_identities": 4,
+      "n_eff": 5.0,
+      "interval": null
     }
   ],
   "waterfall": [
@@ -209,6 +226,11 @@
             }
           }
         }
+      },
+      "pair_fmr": {
+        "status": "not_evaluated",
+        "reason": "pair_scores_not_supplied",
+        "data": null
       }
     },
     {
@@ -292,6 +314,73 @@
             }
           }
         }
+      },
+      "pair_fmr": {
+        "status": "not_evaluated",
+        "reason": "pair_scores_not_supplied",
+        "data": null
+      }
+    }
+  ],
+  "joint_gaps": [
+    {
+      "leg_key": "sface__native__ab12cd__cv4.10.0__ort1.18.0",
+      "arm": "gt_crop_redetect",
+      "scored": false,
+      "reason": "synthetic: paired attribution evidence not supplied",
+      "n_pairs": 0,
+      "n_psu": 0,
+      "n_eff": 0.0,
+      "delta": null,
+      "interval": null,
+      "unavailable_counts": {
+        "native": 0,
+        "attribution": 10
+      }
+    },
+    {
+      "leg_key": "sface__native__ab12cd__cv4.10.0__ort1.18.0",
+      "arm": "cached_yunet_landmark_replay",
+      "scored": false,
+      "reason": "synthetic: paired attribution evidence not supplied",
+      "n_pairs": 0,
+      "n_psu": 0,
+      "n_eff": 0.0,
+      "delta": null,
+      "interval": null,
+      "unavailable_counts": {
+        "native": 0,
+        "attribution": 10
+      }
+    },
+    {
+      "leg_key": "auraface__native__ef34ab__cv4.10.0__ort1.18.0",
+      "arm": "gt_crop_redetect",
+      "scored": false,
+      "reason": "synthetic: paired attribution evidence not supplied",
+      "n_pairs": 0,
+      "n_psu": 0,
+      "n_eff": 0.0,
+      "delta": null,
+      "interval": null,
+      "unavailable_counts": {
+        "native": 0,
+        "attribution": 10
+      }
+    },
+    {
+      "leg_key": "auraface__native__ef34ab__cv4.10.0__ort1.18.0",
+      "arm": "cached_yunet_landmark_replay",
+      "scored": false,
+      "reason": "synthetic: paired attribution evidence not supplied",
+      "n_pairs": 0,
+      "n_psu": 0,
+      "n_eff": 0.0,
+      "delta": null,
+      "interval": null,
+      "unavailable_counts": {
+        "native": 0,
+        "attribution": 10
       }
     }
   ]

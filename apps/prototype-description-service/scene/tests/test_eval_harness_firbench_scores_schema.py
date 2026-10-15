@@ -38,6 +38,7 @@ def _absent(status: str = "unavailable") -> dict[str, Any]:
 def _leg(key: str, tau: float, misses: int) -> dict[str, Any]:
     return {
         "leg_key": key,
+        "pair_fmr": {"status": "not_evaluated", "reason": "pair_scores_not_supplied", "data": None},
         "tau": _available(
             {
                 "value": tau,
@@ -121,6 +122,57 @@ def test_committed_fixture_has_multiple_legs_and_no_shared_tau() -> None:
     assert "tau" not in payload
     assert len({leg["leg_key"] for leg in payload["legs"]}) >= 2
     assert len({leg["tau"]["data"]["value"] for leg in payload["legs"]}) >= 2
+
+
+def test_committed_fixture_has_an_honestly_synthetic_decision_path() -> None:
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    _validate(payload)
+    assert payload["schema_version"] == 1
+    assert payload["decision_path"] == [
+        "synthetic: schema fixture only; no core verdict execution or real evidence",
+        "eligibility:insufficient_independent_psus",
+    ]
+
+
+def test_decision_path_is_required_even_when_no_trace_is_available() -> None:
+    payload = _payload()
+    payload.pop("decision_path", None)
+    with pytest.raises(fc.FrameContractError, match="missing required key 'decision_path'"):
+        _validate(payload)
+
+
+@pytest.mark.parametrize("trace", [None, "eligibility:passed", {}, 1, True, ()])
+def test_decision_path_requires_an_array(trace: Any) -> None:
+    payload = _payload()
+    payload["decision_path"] = trace
+    with pytest.raises(fc.FrameContractError, match=r"decision_path: expected array"):
+        _validate(payload)
+
+
+@pytest.mark.parametrize("step", [None, 1, 0.5, True, {}, [], ""])
+def test_decision_path_steps_require_nonempty_strings(step: Any) -> None:
+    payload = _payload()
+    payload["decision_path"] = ["synthetic: valid first step", step]
+    with pytest.raises(fc.FrameContractError, match=r"decision_path\[1\]:"):
+        _validate(payload)
+
+
+def test_decision_path_preserves_step_order_and_repeated_steps_on_round_trip() -> None:
+    payload = _payload()
+    trace = ["synthetic: first step", "synthetic: second step", "synthetic: first step"]
+    payload["decision_path"] = trace
+    restored = json.loads(json.dumps(payload, sort_keys=True))
+    _validate(restored)
+    assert restored["decision_path"] == trace
+    assert restored["verdict"] == payload["verdict"]
+
+
+def test_explicit_legacy_no_trace_fixture_can_have_an_empty_decision_path() -> None:
+    payload = _payload()
+    payload["frame_id"] = "synthetic-legacy-no-decision-trace"
+    payload["decision_path"] = []
+    _validate(payload)
+    assert payload["decision_path"] == []
 
 
 def test_scalar_tau_payload_is_no_longer_a_valid_multi_leg_contract() -> None:
@@ -496,3 +548,241 @@ def test_mated_search_and_nonmated_source_unit_support_have_distinct_estimands()
     assert payload["n_eff"] == pytest.approx(float(Fraction(125, 31)), abs=1e-12)
     assert payload["n_nonmated_eff"] == pytest.approx(float(Fraction(80, 11)), abs=1e-12)
     assert payload["n_eff"] != payload["n_units"] / payload["design_effect"]
+
+
+def _wire_payload() -> dict[str, Any]:
+    """Tabulated synthetic evidence, never a claim of measured gallery outcomes."""
+    payload = _payload()
+    for leg in payload["legs"]:
+        leg["pair_fmr"] = {
+            "status": "not_evaluated", "reason": "pair_scores_not_supplied", "data": None,
+        }
+    payload["joint_gaps"] = [
+        {
+            "leg_key": LEGS[0], "arm": arm, "scored": False,
+            "reason": "synthetic: paired attribution evidence not supplied",
+            "n_pairs": 0, "n_psu": 0, "n_eff": 0.0, "delta": None, "interval": None,
+            "unavailable_counts": {"native": 2, "attribution": 3},
+        }
+        for arm in ("gt_crop_redetect", "cached_yunet_landmark_replay")
+    ]
+    payload["cells"][0].update(
+        query_occluder="mask+sunglasses", enrolled_occluder="unknown",
+        data_origin="synthetic", n_identities=4, n_eff=5.0, interval=None,
+    )
+    payload["guardrails"][0]["evidence"] = {
+        "leg_key": LEGS[0], "cohort": "synthetic: mask+sunglasses",
+        "n_units": 10, "n_psu": 5, "n_eff": 5.0, "limit": 0.01,
+        "reason": "synthetic: below declared cell floor",
+    }
+    return payload
+
+
+def test_final_wire_round_trip_keeps_explicit_absences_and_synthetic_origin() -> None:
+    payload = _wire_payload()
+    restored = json.loads(json.dumps(payload, sort_keys=True))
+    _validate(restored)
+    assert restored == payload
+    assert restored["cells"][0]["data_origin"] == "synthetic"
+    assert restored["cells"][0]["n_psu"] < restored["cell_floor_n_independent"]
+    assert restored["cells"][0]["scored"] is False
+    assert all(leg["pair_fmr"]["reason"] == "pair_scores_not_supplied" for leg in restored["legs"])
+
+
+def test_ordinary_interval_nonrejection_has_no_invented_reason() -> None:
+    payload = _payload()
+    # The schema cannot compare a paired interval with a sealed margin or check
+    # eligibility arithmetic. Those remain producer responsibilities, as do named
+    # reasons when a real eligibility check fails. These inputs are synthetic.
+    payload.update(admissibility="confirmatory", n_psu=100, n_units=1000,
+                   n_nonmated_eff=1000.0, n_eff=500.0)
+    payload["primary"]["resolvable"] = True
+    payload["guardrails"] = []
+    payload["verdict"].update(state="inconclusive", reason=None)
+    payload["hypotheses"][0].update(
+        state="inconclusive", reason=None, n_eff=500.0, mde=0.03,
+        interval={"lower": -0.01, "upper": 0.04, "level": 0.95},
+    )
+    _validate(payload)
+    assert payload["hypotheses"][0]["interval"]["lower"] <= 0
+
+
+@pytest.mark.parametrize("reason", [reason.value for reason in fc.InconclusiveReason])
+def test_named_inconclusive_reasons_remain_representable(reason: str) -> None:
+    payload = _payload()
+    payload["verdict"]["reason"] = reason
+    payload["hypotheses"][0]["reason"] = reason
+    _validate(payload)
+
+
+@pytest.mark.parametrize("reason", ["inconclusive", "interval_not_rejected", "", False, {}])
+@pytest.mark.parametrize("path", ["verdict", "hypotheses.0"])
+def test_no_generic_or_untyped_inconclusive_reason_is_added(path: str, reason: Any) -> None:
+    payload = _payload()
+    _at(payload, path)["reason"] = reason
+    with pytest.raises(fc.FrameContractError):
+        _validate(payload)
+
+
+@pytest.mark.parametrize("path", [
+    "joint_gaps.0", "joint_gaps.0.unavailable_counts", "cells.0",
+    "legs.0.pair_fmr", "guardrails.0.evidence",
+])
+def test_final_wire_rows_require_all_fields_and_reject_unknown_fields(path: str) -> None:
+    payload = _wire_payload()
+    _validate(payload)
+    for field in _at(payload, path):
+        removed = copy.deepcopy(payload)
+        del _at(removed, path)[field]
+        with pytest.raises(fc.FrameContractError):
+            _validate(removed)
+    _at(payload, path)["invented"] = 1
+    with pytest.raises(fc.FrameContractError, match="invented"):
+        _validate(payload)
+
+
+def test_joint_gaps_required_but_empty_array_is_explicitly_valid() -> None:
+    payload = _wire_payload()
+    payload["joint_gaps"] = []
+    _validate(payload)
+    del payload["joint_gaps"]
+    with pytest.raises(fc.FrameContractError, match="joint_gaps"):
+        _validate(payload)
+
+
+@pytest.mark.parametrize("path,value", [
+    ("joint_gaps", None), ("joint_gaps", {}), ("joint_gaps.0.leg_key", ""),
+    ("joint_gaps.0.arm", "native"), ("joint_gaps.0.arm", "probability"),
+    ("joint_gaps.0.scored", 0), ("joint_gaps.0.n_pairs", True),
+    ("joint_gaps.0.n_pairs", -1), ("joint_gaps.0.n_psu", 1.5),
+    ("joint_gaps.0.n_eff", float("nan")), ("joint_gaps.0.n_eff", -1),
+    ("joint_gaps.0.reason", None), ("joint_gaps.0.reason", ""),
+    ("joint_gaps.0.delta", 0.0), ("joint_gaps.0.interval", {}),
+    ("joint_gaps.0.unavailable_counts.native", False),
+    ("joint_gaps.0.unavailable_counts.attribution", -1),
+    ("cells.0.data_origin", None), ("cells.0.data_origin", "observed"),
+    ("cells.0.data_origin", True), ("cells.0.n_identities", True),
+    ("cells.0.n_identities", -1), ("cells.0.n_identities", 1.5),
+    ("cells.0.n_eff", -1), ("cells.0.n_eff", float("inf")),
+    ("cells.0.n_eff", "5"), ("cells.0.fnir", 0.0), ("cells.0.interval", {}),
+    ("guardrails.0.evidence", None), ("guardrails.0.evidence", "opaque"),
+    ("guardrails.0.evidence.leg_key", 1), ("guardrails.0.evidence.cohort", []),
+    ("guardrails.0.evidence.n_units", True), ("guardrails.0.evidence.n_psu", -1),
+    ("guardrails.0.evidence.n_eff", float("inf")),
+    ("guardrails.0.evidence.limit", "0.01"), ("guardrails.0.evidence.reason", {}),
+])
+def test_final_wire_rejects_wrong_types_origins_and_unscored_measurements(path: str, value: Any) -> None:
+    payload = _wire_payload()
+    _validate(payload)
+    if "." in path:
+        parent, field = path.rsplit(".", 1)
+        _at(payload, parent)[field] = value
+    else:
+        payload[path] = value
+    with pytest.raises(fc.FrameContractError):
+        _validate(payload)
+
+
+@pytest.mark.parametrize("origin", ["real", "synthetic", "unknown"])
+def test_cell_origin_and_occluder_strings_preserve_declared_context(origin: str) -> None:
+    payload = _wire_payload()
+    for query, enrolled in [("unknown", "clear"), ("clear", "unknown"), ("mask+sunglasses", "mask")]:
+        payload["cells"][0].update(data_origin=origin, query_occluder=query, enrolled_occluder=enrolled)
+        before = copy.deepcopy(payload)
+        _validate(payload)
+        assert payload == before  # No origin/gallery membership inferred by validation.
+
+
+@pytest.mark.parametrize("path", ["joint_gaps.0", "cells.0"])
+def test_scored_joint_and_cell_intervals_are_closed_and_typed(path: str) -> None:
+    payload = _wire_payload()
+    row = _at(payload, path)
+    row.update(scored=True, n_psu=40, interval={"lower": -0.1, "upper": 0.3, "level": 0.95})
+    if path.startswith("joint"):
+        row.update(reason=None, n_pairs=80, n_eff=40.0, delta=0.1)
+    else:
+        row.update(n_units=80, n_identities=45, n_eff=40.0, fnir=0.1)
+        row["interval"]["lower"] = 0.0
+    _validate(payload)
+    for field in ("lower", "upper", "level"):
+        removed = copy.deepcopy(payload)
+        del _at(removed, path)["interval"][field]
+        with pytest.raises(fc.FrameContractError):
+            _validate(removed)
+    for field, value in [("lower", False), ("upper", float("inf")), ("level", 0), ("level", 1), ("invented", 0)]:
+        changed = copy.deepcopy(payload)
+        _at(changed, path)["interval"][field] = value
+        with pytest.raises(fc.FrameContractError):
+            _validate(changed)
+    if path.startswith("joint"):
+        for field in ("delta", "interval"):
+            changed = copy.deepcopy(payload)
+            _at(changed, path)[field] = None
+            with pytest.raises(fc.FrameContractError):
+                _validate(changed)
+
+
+def test_pair_fmr_counts_nonmated_pairs_independently_of_search_units() -> None:
+    payload = _wire_payload()
+    # Seven independently supplied pair scores, versus ten FPIR source units.
+    pair_data = {"false_matches": 2, "n_nonmated_pairs": 7, "rate": float(Fraction(2, 7))}
+    payload["legs"][0]["pair_fmr"] = _available(pair_data)
+    _validate(payload)
+    assert pair_data["n_nonmated_pairs"] != payload["n_units"]
+    assert pair_data["rate"] == pytest.approx(2 / 7, abs=1e-12)
+    for field in pair_data:
+        changed = copy.deepcopy(payload)
+        del changed["legs"][0]["pair_fmr"]["data"][field]
+        with pytest.raises(fc.FrameContractError):
+            _validate(changed)
+    for field, value in [("false_matches", True), ("false_matches", -1),
+                         ("n_nonmated_pairs", 0), ("n_nonmated_pairs", 7.5),
+                         ("rate", float("nan")), ("rate", 1.01), ("n_searches", 10)]:
+        changed = copy.deepcopy(payload)
+        changed["legs"][0]["pair_fmr"]["data"][field] = value
+        with pytest.raises(fc.FrameContractError):
+            _validate(changed)
+
+
+@pytest.mark.parametrize("evidence", [
+    {"status": "available", "reason": None, "data": None},
+    {"status": "available", "reason": "absent", "data": {}},
+    {"status": "unavailable", "reason": None, "data": None},
+    {"status": "not_evaluated", "reason": "", "data": None},
+    {"status": "not_evaluated", "reason": "pair_scores_not_supplied", "data": {}},
+    {"status": "unknown", "reason": "absent", "data": None},
+])
+def test_pair_fmr_absence_obeys_existing_evidence_state_contract(evidence: dict[str, Any]) -> None:
+    payload = _wire_payload()
+    _validate(payload)
+    payload["legs"][0]["pair_fmr"] = evidence
+    with pytest.raises(fc.FrameContractError):
+        _validate(payload)
+
+
+@pytest.mark.parametrize("status", ["unavailable", "not_evaluated"])
+def test_pair_fmr_explicit_absence_remains_null(status: str) -> None:
+    payload = _wire_payload()
+    payload["legs"][0]["pair_fmr"] = _absent(status)
+    _validate(payload)
+
+
+def test_optional_guardrail_evidence_has_explicit_nullable_fields() -> None:
+    payload = _wire_payload()
+    evidence = payload["guardrails"][0].pop("evidence")
+    _validate(payload)
+    payload["guardrails"][0]["evidence"] = dict.fromkeys(evidence)
+    _validate(payload)
+
+
+def test_committed_fixture_exercises_the_final_synthetic_wire() -> None:
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    _validate(payload)
+    assert all(cell["data_origin"] == "synthetic" for cell in payload["cells"])
+    assert {row["arm"] for row in payload["joint_gaps"]} == {
+        "gt_crop_redetect", "cached_yunet_landmark_replay",
+    }
+    assert all(row["delta"] is None and row["reason"] for row in payload["joint_gaps"])
+    assert all(leg["pair_fmr"] == {
+        "status": "not_evaluated", "reason": "pair_scores_not_supplied", "data": None,
+    } for leg in payload["legs"])

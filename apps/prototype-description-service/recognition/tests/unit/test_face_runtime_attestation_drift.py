@@ -132,7 +132,7 @@ def config_for(module, root, **changes):
     cls = symbol(PREFIX + "loaded_session", "FrozenFaceRuntimeConfig")
     known = dict(profile="auraface", models_dir=root, embedder_models_dir=root,
                  score_threshold=0.9, nms_threshold=0.3, top_k=5000,
-                 embedding_dimension=512, pgvector_dimension=512)
+                 embedding_dimension=512, pgvector_dimension=512, retry_max_side=0)
     known.update(changes)
     assert {field.name for field in fields(cls)} == set(known), \
         "CAUSAL_RED: FrozenFaceRuntimeConfig must freeze exactly cache-key inputs"

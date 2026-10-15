@@ -161,6 +161,7 @@ export const useClusterSuggestionsLoader = ({
   debounceMs = DEFAULT_DEBOUNCE_MS,
 }: ClusterSuggestionsLoaderOptions): ClusterSuggestionsLoaderResult => {
   const queryClient = useQueryClient();
+  const canQuerySuggestions = Boolean(identityId && enabled);
   const [debouncedLabel, setDebouncedLabel] = React.useState(labelInput);
   const debouncedValue = debounceMs <= 0 ? labelInput : debouncedLabel;
   const isAtRestMode = debouncedValue.length < ACX_LABEL_SEARCH_MIN_CHARS;
@@ -192,7 +193,7 @@ export const useClusterSuggestionsLoader = ({
       }
       return fetchIdentitiesSuggestions([identityId], PROJECTION_TOP_K);
     },
-    enabled: Boolean(identityId && enabled),
+    enabled: canQuerySuggestions,
     staleTime: IDENTITY_BATCH_STALE_MS,
     initialData: () => (identityId ? readIdentityFromBatchCache(queryClient, identityId) : undefined),
     initialDataUpdatedAt: () => (identityId ? readIdentityBatchUpdatedAt(queryClient, identityId) : undefined),
@@ -261,10 +262,12 @@ export const useClusterSuggestionsLoader = ({
   }, [identityId, identityBatch, currentLabelByClusterId]);
 
   // Closest roster people for an unnamed card (c82 FIR). Lazy: only when expanded, the editable
-  // cluster is valid, the identity batch has resolved, and no eligible pending row exists. Once
-  // fetched, the choices are not removed when a pending row later disappears on refetch.
+  // cluster is valid, the identity batch has resolved, and no eligible pending row exists.
   const rosterClusterId = editableClusterId?.trim() ?? '';
   const hasEligiblePending = (identityProjection?.length ?? 0) > 0;
+  const canQueryRosterCandidates = Boolean(
+    canQuerySuggestions && identityBatch !== undefined && rosterClusterId && !hasEligiblePending,
+  );
   const {
     data: rosterCandidatesResponse,
     isError: rosterCandidatesError,
@@ -272,17 +275,17 @@ export const useClusterSuggestionsLoader = ({
   } = useQuery<RosterCandidatesResponse>({
     queryKey: queryKeys.clusters.rosterCandidates(rosterClusterId, ROSTER_CANDIDATES_TOP_K),
     queryFn: () => fetchClusterRosterCandidates(rosterClusterId, ROSTER_CANDIDATES_TOP_K),
-    enabled: Boolean(
-      enabled && identityId && identityBatch !== undefined && rosterClusterId && !hasEligiblePending,
-    ),
+    enabled: canQueryRosterCandidates,
     staleTime: 30000,
   });
 
   const { data: rosterEntries = [], isLoading: rosterLoading, isError: rosterError } = useRosterEntries();
 
   const rosterCandidateOptions = React.useMemo(
-    () => buildRosterCandidateOptions(rosterCandidatesResponse?.candidates ?? [], rosterEntries),
-    [rosterCandidatesResponse, rosterEntries],
+    () => canQueryRosterCandidates
+      ? buildRosterCandidateOptions(rosterCandidatesResponse?.candidates ?? [], rosterEntries)
+      : [],
+    [canQueryRosterCandidates, rosterCandidatesResponse, rosterEntries],
   );
 
   const { options: namingOptions, collisionsByLabel } = React.useMemo(() => {
@@ -309,13 +312,13 @@ export const useClusterSuggestionsLoader = ({
 
   // Retry only the read(s) that failed; a read that succeeded is not re-fetched here.
   const retry = React.useCallback(() => {
-    if (suggestionsError) {
+    if (canQuerySuggestions && suggestionsError) {
       void refetchSuggestions();
     }
-    if (rosterCandidatesError) {
+    if (canQueryRosterCandidates && rosterCandidatesError) {
       void refetchRosterCandidates();
     }
-  }, [suggestionsError, rosterCandidatesError, refetchSuggestions, refetchRosterCandidates]);
+  }, [canQuerySuggestions, canQueryRosterCandidates, suggestionsError, rosterCandidatesError, refetchSuggestions, refetchRosterCandidates]);
 
   return {
     identityProjection,
@@ -329,7 +332,7 @@ export const useClusterSuggestionsLoader = ({
       (enabled && rosterLoading),
     rosterError,
     rosterCandidateOptions,
-    isError: suggestionsError || rosterCandidatesError,
+    isError: (canQuerySuggestions && suggestionsError) || (canQueryRosterCandidates && rosterCandidatesError),
     retry,
     findClusterByLabel,
     atRestTotal: atRestLabeledClusters?.total ?? 0,

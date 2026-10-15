@@ -17,6 +17,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ClusterGroup } from '../types';
 import type { SaveDialogAction } from '../useClusterConfirmDialog';
 import { useClusterConfirmSuggestion } from '../useClusterConfirmSuggestion';
+import type { SuggestionProvenance } from '../useClusterMatchAction';
 
 const FACE_IDENTITY_ID = 'adcde572-ce74-446a-86e7-970865e533d8';
 const EDITABLE_CLUSTER_ID = '26d1cacb-351d-4e52-a007-f130764ba758';
@@ -73,9 +74,10 @@ const renderConfirm = ({
 const confirmSuggestion = async (
   result: ReturnType<typeof renderConfirm>['result'],
   suggestionId: string | undefined,
+  suggestionProvenance?: SuggestionProvenance,
 ) => {
   await act(async () => {
-    await result.current.handleConfirmSuggestion(TARGET_CLUSTER_ID, TARGET_LABEL, suggestionId);
+    await result.current.handleConfirmSuggestion(TARGET_CLUSTER_ID, TARGET_LABEL, suggestionId, suggestionProvenance);
   });
 };
 
@@ -89,7 +91,7 @@ describe('operator115 identity suggestion routing (RED, editable cluster)', () =
       canSearchForMatch: false,
     });
 
-    await confirmSuggestion(result, SUGGESTION_ID);
+    await confirmSuggestion(result, SUGGESTION_ID, { kind: 'identity', identityId: FACE_IDENTITY_ID });
 
     // Diagnostic first: on the current tree this prints the wrong merge accept args, which
     // carry the identity suggestion id into the whole-cluster merge path.

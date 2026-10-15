@@ -16,6 +16,7 @@ import { queryKeys } from '../../../api/queryKeys';
 import { listRosterEntries } from '../../../api/rosterApi';
 import { NameFaceControl, type NameFaceResolution } from './NameFaceControl';
 import { buildNamingOptions } from './buildNamingOptions';
+import { mergeRosterCandidateOptions, useClusterRosterCandidates } from './useClusterRosterCandidates';
 import { viewInRosterHref } from './personCommitCopy';
 import { getReservedLabelMessage, isReservedLabel } from './reservedLabel';
 import {
@@ -85,21 +86,30 @@ export const PersonCommitControl = ({
     void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
   }, [phase, queryClient]);
 
+  const candidates = useClusterRosterCandidates({
+    clusterId,
+    enabled:
+      !isBusy &&
+      phase !== PERSON_COMMIT_PHASE.SUCCEEDED &&
+      !hasMachineSuggestion &&
+      !rosterQuery.isLoading &&
+      !rosterQuery.isError &&
+      Boolean(rosterQuery.data?.length),
+    rosterEntries: rosterQuery.data ?? [],
+  });
+
   // Full roster for create-vs-bind (R1-07). Overlay budgets the display slice.
-  // Queue card has no cluster/similarity source; pass empty labelMatches and
-  // limit: null so the shared helper does not truncate the roster.
   const options = React.useMemo(
     () =>
-      buildNamingOptions({
-        rosterEntries: rosterQuery.data ?? [],
-        labelMatches: [],
-        limit: null,
-      }).options.map((option) => ({
-        value: option.value,
-        label: option.label,
-        source: option.source,
-      })),
-    [rosterQuery.data],
+      mergeRosterCandidateOptions(
+        candidates.options,
+        buildNamingOptions({
+          rosterEntries: rosterQuery.data ?? [],
+          labelMatches: [],
+          limit: null,
+        }).options.map((option) => ({ ...option })),
+      ),
+    [candidates.options, rosterQuery.data],
   );
 
   const boundPersonUuid = React.useMemo(() => {
@@ -197,6 +207,8 @@ export const PersonCommitControl = ({
           onCommit={handleCommitResolution}
           isPending={phase === PERSON_COMMIT_PHASE.COMMITTING}
           isLoading={rosterQuery.isLoading}
+          suggestionsError={candidates.isError}
+          onRetrySuggestions={candidates.retry}
           disabled={disabled || rosterQuery.isError}
           commitLabel={__('Save name', 'alt-context')}
           pendingLabel={__('Saving name…', 'alt-context')}

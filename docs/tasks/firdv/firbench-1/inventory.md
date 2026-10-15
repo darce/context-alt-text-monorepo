@@ -11,17 +11,20 @@
 | Checkout HEAD | `439cc18` in the completed source artifact; adjudication transport base `97ffc24` | Recorded / current `git rev-parse --short HEAD`; commit IDs differ under history stripping |
 | Lane branch | Source `feature/firbench-1-w2-inventory`; adjudication `feature/firbench-1-w2-inventory-adj` | Recorded / current `git branch --show-current` |
 | Canon | v0.26.2, read-only pinned mirror `/home/gate/firbench-1-context/canon-0.26.2`; rule IDs cited at use | Present manifest-listed files verified against `meta/release-manifest.json` (16 digests); mirror is partial |
-| Evidence scope | Completed Haiku artifact copied from `/home/gate/firbench-1-context/w2-inventory/inventory.md`; original probes retained as records | Adjudication rechecks tracked manifests/arithmetic and explicit paths only; no inference, downloads, package changes, or other tasks' sandbox/private-file searches |
+| Evidence scope | Completed W2 artifact copied from `/home/gate/firbench-1-context/w2-inventory/inventory.md`; original probes retained as records | Adjudication rechecks tracked manifests/arithmetic and explicit paths only; no inference, downloads, package changes, or other tasks' sandbox/private-file searches |
+| Location correction, 2026-10-15 | FB1-LOC-INV-01; dispatch SOURCE `44e9c285b80575bd41634def2572c9e0e4a949ae` | Supplied source tree governs the history-stripped checkout; coordinator MCP16912 supplies the three verified weight locations in §1a. Historical probes do not establish VM-wide absence. |
 
 ## 1. Leg pins (VM)
 
 ### 1a. Model files
 
-| Leg | File | Pinned bytes | Pinned sha256 | In probed paths | Probe |
+The three confirmed paths below supersede their historical not-found results as of 2026-10-15. Coordinator MCP16912 verified each file's full SHA-256 and byte count against these pins; this correction does not repeat that check. It establishes weight availability only, not live runtime, container configuration, model loading, or inference. The buffalo_l record retains its original probe scope.
+
+| Leg | File | Pinned bytes | Pinned sha256 | Confirmed location / recorded scope | Evidence |
 | --- | --- | --- | --- | --- | --- |
-| sface | `face_recognition_sface_2021dec.onnx` (provenance.py:119–127) | 38,696,353 | `0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79` | **not found** | `load_verified_model('sface')` → `ModelMissingError` |
-| auraface | `glintr100.onnx` (HF `fal/AuraFace-v1` @ `af6d057c9b0ec4071d4c49c80e3539258798b609`; provenance.py:136–144) | 260,694,151 | `a7933ea5330113b01c9b60351d8f4c33003f145d8470ac5f0e52ee2effe25c60` | **not found** | `load_verified_model('auraface')` → `ModelMissingError` |
-| yunet (context) | `face_detection_yunet_2026may.onnx` | 229,738 | `ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0` | **not found** | `ls` of models dir |
+| sface | `face_recognition_sface_2021dec.onnx` (provenance.py:119–127) | 38,696,353 | `0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79` | `/opt/acx-backend/data/dev-models/face_pipeline/face_recognition_sface_2021dec.onnx` | **confirmed**, MCP16912, 2026-10-15 |
+| auraface | `glintr100.onnx` (HF `fal/AuraFace-v1` @ `af6d057c9b0ec4071d4c49c80e3539258798b609`; provenance.py:136–144) | 260,694,151 | `a7933ea5330113b01c9b60351d8f4c33003f145d8470ac5f0e52ee2effe25c60` | `/opt/acx-backend/data/dev-models/face_pipeline/glintr100.onnx` | **confirmed**, MCP16912, 2026-10-15 |
+| yunet (context) | `face_detection_yunet_2026may.onnx` | 229,738 | `ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0` | `/opt/acx-backend/data/dev-models/face_pipeline/face_detection_yunet_2026may.onnx` | **confirmed**, MCP16912, 2026-10-15 |
 | buffalo_l | `~/.insightface/models/buffalo_l/` (5 ONNX + zip; see 1b) | see 1b | see 1b | **found** | `sha256sum` |
 
 | File | sha256 | Matches pin |
@@ -59,29 +62,37 @@
 
 ### 1d. AuraFace weight paths probed on the VM
 
+Retained bounded observations from before the 2026-10-15 supersession in §1a; the original probe dates were not recorded here. These checks were not repeated for this correction. The historical `load_verified_model('sface')` and `load_verified_model('auraface')` calls raised `ModelMissingError`, and the default models-directory listing did not find YuNet. None tested the now-confirmed paths in §1a.
+
 | Check | Result |
 | --- | --- |
 | `RECOGNITION_AURAFACE_MODELS_DIR`, `ACX_MODELS_PATH` | unset in this shell; `.env.auraface.example` points at a compose mount `/data/cache/face_pipeline` |
 | `/data/cache/face_pipeline` | absent (`ls -d`) |
 | `find` for `glintr100.onnx` under `~/.cache`, `/home/gate/dep-cache`, `/home/gate/cache-warm`, `/home/gate/models`, `~/.insightface` (maxdepth 7) | no hit outside pytest scratch dirs; scratch copies are not pinned or used |
 | Default models dir (`provenance.py:36`) | `recognition/infrastructure/face_pipeline/models/`: 3 licence files, README, .gitignore; **no ONNX weights** |
-| Result | **not found in probed paths**; model location elsewhere on the VM remains unresolved. The recorded maxdepth-7 search is bounded coverage, not a VM-wide absence claim. |
+| Result | **Historical: not found in the listed probed paths. Superseded 2026-10-15 for the three weights in §1a only.** The recorded maxdepth-7 search is bounded coverage, not a VM-wide absence claim; it does not resolve other locations or assets. |
 
 ## 2. Corpus on the VM
+
+> **Supersession, 2026-10-15.** The probe rows in this section that report the 646-image corpus directory, the 646 unresolved entries, or missing sha256 correspondence as "not found" or "unestablished" are bounded historical records of the explicitly inspected paths. They are **superseded** as statements about the corpus. The laptop primary checkout holds the originals: 643 of 646 entries match `sha256_source` exactly, 0 mismatch, and 3 entries are absent per its local provenance file (named there, not here). The recorded probe found no `benchmarks/images/` in the inspected VM checkout; corpus availability elsewhere on the VM remains unknown. Corpus locator authority: logical ID `corpus646-originals` in the tracked catalog, resolved by the shared resolver. Canonical benchmark home, status, and read-only check: [`benchmarks/README.md` § Images](../../../../benchmarks/README.md#images). Counts in this section are dated observations, not live catalog facts.
+>
+> Remaining gap, not established by these records: no independently exhaustive human ground truth, no observation or QC record of measurement production, and no capture-occasion independence found (§10 flag 13). This is not a global-absence claim.
+
+The private, ignored source archive is recorded as present on the laptop. It is not an active fallback or source of truth for the catalog; presence and authorized source-archive lineage do not confer benchmark eligibility or supply the missing evidence above. Follow the operator's existing authorization and explicit preference to keep pixels out of remote Git; private alias maps remain laptop-only.
 
 | Item | Value | Command / source |
 | --- | --- | --- |
 | Corpus manifest (v3r, tracked) | `benchmarks/manifests/corpus-manifest-v3r-20260814.json`, 646 entries, sha256 `2d9d5ba3e04bcfa7ea29f960b2fdc05431bdae7993bd22042a5369ceee7d9bff` | `git ls-files \| grep corpus-manifest`; `sha256sum` |
 | Corpus manifest (v3, tracked) | `benchmarks/manifests/corpus-manifest-v3.json`, sha256 `154eb2b735f947e5ce670886bb848fc2749aad5e952a448a4f1b75f3125abe7e` | same; this is the file Golden-150 selection names |
-| v3r `images_root` | macOS laptop home path; does not establish a usable location in the probed VM paths | key read only |
+| v3r `images_root` | macOS laptop home path; does not establish a usable location in the probed VM paths. It points at a deleted worktree's derived cache: the resolver ignores it, and the frozen manifest is not rewritten | key read only |
 | Hash basis | `sha256_space = downscaled`, `sha256_source_space = original`; `sha256` differs from `sha256_source` on 358 entries | key read, counts only |
-| Documented VM image root | `<primary checkout>/benchmarks/images/corpus646/originals/<bucket>/<file>` (gitignored; checked against `sha256_source`) | `apps/prototype-description-service/scene/tests/seed/README.md` lines 44–47 |
-| `benchmarks/images/` in this checkout | **not found**: `ls -d benchmarks/images` → absent | — |
+| Catalog-resolved root, logical ID `corpus646-originals` | `<primary checkout>/benchmarks/images/corpus646/originals/<bucket>/<file>` (gitignored; checked against `sha256_source`; canonical locator and shared `show` / `check` commands in [`benchmarks/README.md` § Images](../../../../benchmarks/README.md#images)) | Primary checkout discovery and explicit `--corpus-root` override follow that resolver; layout alone does not establish VM presence |
+| `benchmarks/images/` in the inspected VM checkout | **Historical: not found**: recorded `ls -d benchmarks/images` → absent in that checkout only; elsewhere on the VM unknown | — |
 | `GOLDEN_IMAGES_DIR` | unset | `echo "$GOLDEN_IMAGES_DIR"` |
-| 646-image corpus directory | **not found in probed paths**: recorded `find` (repo maxdepth 4, `/home/gate` maxdepth 3) for `corpus646`, `originals`, `downscaled`, `mock_images`, `eval-fixtures`; other locations unresolved | Tried `find` retained as historical bounded coverage, not repeated across home/sandboxes; `~/Development/eval-fixtures` absent |
-| Golden-150 image directory | **not found in probed paths**: same recorded search; location unresolved | same bounded coverage |
-| Files whose sha256 matches v3r | **unestablished**: no corpus files available to hash in measured scope; neither a global zero match count nor 646 mismatches | §2 path probes |
-| Unresolved image entries in measured scope | **646** manifest entries; file locations/hash correspondence unresolved, not verified globally missing ids | no ids listed |
+| 646-image corpus directory | **Superseded 2026-10-15:** present on the laptop primary checkout (see note above). On this VM, **not found in probed paths**: recorded `find` (repo maxdepth 4, `/home/gate` maxdepth 3) for `corpus646`, `originals`, `downscaled`, `mock_images`, `eval-fixtures`; other locations unresolved | Tried `find` retained as historical bounded coverage, not repeated across home/sandboxes; `~/Development/eval-fixtures` absent |
+| Golden-150 image directory | **not found in probed paths**: same recorded search; location unresolved. Not covered by the v3r observation above | same bounded coverage |
+| Files whose sha256 matches v3r | **Superseded for the laptop primary:** 643 exact `sha256_source` matches, 3 absent, 0 mismatched (dated 2026-10-15 observation; live counts from `check corpus646-originals`). **Unestablished in the recorded VM probe scope:** those probes located no corpus files for hashing; other VM locations and VM-wide match counts remain unknown | §2 explicit path probes only; no global zero-match or 646-mismatch claim |
+| Unresolved image entries in measured scope | **Superseded:** 643 resolved on the laptop primary; 3 absent per its provenance file. The recorded VM probes established no source-hash correspondence for the 646 entries within their inspected paths; elsewhere on the VM unknown | no ids listed; not a global missing-ids claim |
 
 ## 3. Frame sources (keys only)
 
@@ -237,11 +248,12 @@
 | 2 | Literal no-bench negative control gives a false pass in a warm venv; use `uv run --exact` for clean-env tests | S-lanes, README rule 9 |
 | 3 | `BuffaloLeg` does not exist; the class is `BuffaloFusedLeg` | S2 |
 | 4 | `best_similarity = 0.0` floor at centroid.py:78 drops negative-cosine matches | S4 / any reuse of centroid |
-| 5 | SFace/AuraFace not found in probed paths; recorded `load_verified_model` probes raise `ModelMissingError`; other model locations unresolved | any live leg run: locate and verify pins first |
-| 6 | No corpus files available to hash in measured scope; all 646 manifest entries unresolved there; VM-wide match/mismatch counts unestablished | any corpus-hash check: resolve image locations first |
+| 5 | **Confirmed 2026-10-15, MCP16912:** `/opt/acx-backend/data/dev-models/face_pipeline/glintr100.onnx`, `/opt/acx-backend/data/dev-models/face_pipeline/face_recognition_sface_2021dec.onnx`, and `/opt/acx-backend/data/dev-models/face_pipeline/face_detection_yunet_2026may.onnx`; full hashes and byte counts match §1a. Only these three weight-location uncertainties are superseded; §1d remains historical | any live leg run: use the confirmed paths; weight verification does not establish live runtime, loading, or inference |
+| 6 | **Superseded 2026-10-15 (laptop primary):** 643 of 646 originals present, 0 mismatch, 3 absent per local provenance. The historical VM probes located no corpus files within the explicit paths in §2; elsewhere on the VM and VM-wide counts remain unknown | any corpus-hash check: run `check corpus646-originals` ([`benchmarks/README.md` § Images](../../../../benchmarks/README.md#images)) where the originals are present; follow existing operator authorization, keep pixels out of remote Git, and keep private alias maps laptop-only |
 | 7 | Golden-150 selection names `corpus-manifest-v3.json` (sha `154eb2b7…`, matches), not v3r | S1 |
 | 8 | Report §0f M̃ 12.925 reproduces on neither manifest (v3r 18.192, v3 18.195) | S5 comparison only |
 | 9 | No exhaustive marker in inspected manifests; admissible nonmated N_units, n_eff and FPIR resolvability unestablished. Face M̃ 24.401 and image M̃ 18.192 are distinct conditional summaries (§4–§5). | S1/S3: exhaustive independent GT/PSU structure first; working ICC 0.10 is an assumption; no adequacy claim |
 | 10 | Renderer needs the sibling `.md` as well as the `.uxmap.json` | W2-uxmap / S5 |
 | 11 | Gate contract P0 values (`max_fpi`, `n_nonmated_declared`, `t14_exhaustive_subset_count`, `ratified_by_decision_id`) are null; they stay null | S0 |
 | 12 | fir-occ population draft is laptop-only; coordinator supplies a pseudonymized frame file | coordinator |
+| 13 | Remaining evidence gap, not established in the tracked records: no independently exhaustive human GT, no observation or QC record of measurement production, and no capture-occasion independence found. `named_boxes`/`detected_boxes` and the null signed subset contract do not establish these. Not a global-absence claim | later organization: supply these records or record their absence ([EVAL-19], [MEAS-29], [EXP-23]); §5 evidence gate applies |

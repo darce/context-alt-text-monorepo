@@ -136,8 +136,8 @@ describe('IdentityClusterItem inline identity suggestion (UI -> mutation -> fetc
     fireEvent.click(yes);
 
     // The inline match carries no member count, so the operator confirms first (FIX-3). This
-    // unlabeled singleton is the editable branch, so the dialog action is 'merge' (copy: "Merge").
-    fireEvent.click(await screen.findByRole('button', { name: 'Merge' }));
+    // identity suggestion assigns this selected face, so the dialog action is 'assign' (copy: "Assign").
+    fireEvent.click(await screen.findByRole('button', { name: 'Assign' }));
 
     await waitFor(() => expect(acceptCalls()).toHaveLength(1));
     expect(fetchMock).toHaveBeenCalledTimes(1);

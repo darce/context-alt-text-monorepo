@@ -37,6 +37,8 @@ export interface PersonCommitControlProps {
   onRetry: () => void;
   /** Optional prefilled create name (e.g. NAME suggestion). */
   suggestedCreateName?: string | null;
+  /** A persisted proposal owns the suggestion flow; keep ordinary lookup available. */
+  hasEligiblePendingProposal?: boolean;
   /** Person uuid after a successful commit — drives the roster deep-link. */
   committedPersonUuid?: string | null;
   /**
@@ -60,6 +62,7 @@ export const PersonCommitControl = ({
   onCommit,
   onRetry,
   suggestedCreateName = null,
+  hasEligiblePendingProposal = false,
   committedPersonUuid = null,
   accentPrimary = false,
   onCurateGroup,
@@ -92,6 +95,7 @@ export const PersonCommitControl = ({
       !isBusy &&
       phase !== PERSON_COMMIT_PHASE.SUCCEEDED &&
       !hasMachineSuggestion &&
+      !hasEligiblePendingProposal &&
       !rosterQuery.isLoading &&
       !rosterQuery.isError &&
       Boolean(rosterQuery.data?.length),

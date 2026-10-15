@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import math
@@ -51,6 +52,12 @@ LICENSE_BANNER = (
 
 BOOTSTRAP_RESAMPLES = 2000
 CI_LEVEL = 0.95
+# Binary IID mean bootstrap: per-(n, B, seed) draw multiplicities as uint16 rows.
+# Two entries at the cell cap bound the cache to 2 * 2 * 12e6 bytes = 48 MB.
+_BINARY_DRAW_CACHE_ENTRIES = 2
+_BINARY_DRAW_MAX_CELLS = 12_000_000
+_BINARY_DRAW_MAX_N = 65535
+_BINARY_DRAW_CHUNK_ROWS = 1024
 
 SAMPLING_FRAME_CROSSBENCH_NATIVE = "frame_fir5_native"
 SAMPLING_FRAME_E2E = "frame_e2e"
@@ -242,20 +249,26 @@ def bootstrap_paired_delta(
             units = [[i] for i in eligible]
             resampling_unit = "occasion+image" if partial else "image"
 
-    rng = random.Random(seed)
     k = len(units)
     if k == 0:
         raise BenchError("bootstrap_empty_series", "no resampling units")
+    binary_deltas = None
+    if metric == "mean" and occasion_ids is None and accepted_mask is None:
+        binary_deltas = _binary_mean_defined_deltas(a, b, seed, B)
     defined: list[float] = []
     n_undefined = 0
-    for _ in range(B):
-        picks = [units[rng.randrange(k)] for _ in range(k)]
-        idxs = [i for unit in picks for i in unit]
-        delta = _resample_delta(a, b, idxs, metric)
-        if delta is None:
-            n_undefined += 1
-        else:
-            defined.append(delta)
+    if binary_deltas is not None:
+        defined = binary_deltas
+    else:
+        rng = random.Random(seed)
+        for _ in range(B):
+            picks = [units[rng.randrange(k)] for _ in range(k)]
+            idxs = [i for unit in picks for i in unit]
+            delta = _resample_delta(a, b, idxs, metric)
+            if delta is None:
+                n_undefined += 1
+            else:
+                defined.append(delta)
     if not defined:
         raise BenchError("bootstrap_undefined", "every resample had an undefined ratio")
     # Sample space is all B draws. An undefined micro-ratio is treated as
@@ -284,6 +297,61 @@ def bootstrap_paired_delta(
         n_used=n_used,
         bootstrap_status="ok" if n_used == B else "partial",
     )
+
+
+def _binary_indicators(xs: list[Any]) -> list[float] | None:
+    # Genuine finite 0/1 bool/int/float legs only; anything else keeps the slow loop.
+    out: list[float] = []
+    for x in xs:
+        if type(x) not in (bool, int, float):
+            return None
+        if x == 1:
+            out.append(1.0)
+        elif x == 0:
+            out.append(0.0)
+        else:
+            return None
+    return out
+
+
+@functools.lru_cache(maxsize=_BINARY_DRAW_CACHE_ENTRIES)
+def _binary_draw_counts(n: int, reps: int, seed: int) -> Any:
+    # Row r holds how often each index appears among replicate r's n randrange(n)
+    # draws, consumed from Random(seed) in the original order. Read-only.
+    import numpy as np
+
+    rng = random.Random(seed)
+    counts = np.zeros((reps, n), dtype=np.uint16)
+    for r in range(reps):
+        draws = np.fromiter((rng.randrange(n) for _ in range(n)), dtype=np.intp, count=n)
+        counts[r] = np.bincount(draws, minlength=n)
+    counts.setflags(write=False)
+    return counts
+
+
+def _binary_mean_defined_deltas(a: list[Any], b: list[Any], seed: int, reps: int) -> list[float] | None:
+    # Per-replicate (sumA/n)-(sumB/n) for binary legs, or None to keep the slow loop.
+    if type(seed) is not int or type(reps) is not int or reps < 1:
+        return None
+    n = len(a)
+    if n > _BINARY_DRAW_MAX_N or reps * n > _BINARY_DRAW_MAX_CELLS:
+        return None
+    try:
+        import numpy as np
+    except ImportError:
+        return None
+    va = _binary_indicators(a)
+    vb = _binary_indicators(b)
+    if va is None or vb is None:
+        return None
+    counts = _binary_draw_counts(n, reps, seed)
+    legs = np.column_stack((np.asarray(va, dtype=np.float64), np.asarray(vb, dtype=np.float64)))
+    # Integer-valued sums are exact in float64 (each is at most n <= 65535).
+    sums = np.empty((reps, 2), dtype=np.float64)
+    for start in range(0, reps, _BINARY_DRAW_CHUNK_ROWS):
+        block = counts[start : start + _BINARY_DRAW_CHUNK_ROWS].astype(np.float64)
+        sums[start : start + block.shape[0]] = block @ legs
+    return ((sums[:, 0] / n) - (sums[:, 1] / n)).tolist()
 
 
 def _resample_delta(a: list[Any], b: list[Any], idxs: list[int], metric: str) -> float | None:

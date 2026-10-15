@@ -148,7 +148,7 @@ describe.each<Path>(['candidate merge', 'legacy selector'])('closest partial loo
     );
     expect(row(names[0])).toHaveTextContent('Strong match');
     expect(row(names[1])).toHaveTextContent('Possible match');
-    expect(row(names[2])).toHaveTextContent('Weak match');
+    expect(row(names[2])).toHaveTextContent('Below match threshold');
     expect(onCommit).not.toHaveBeenCalled();
     await user.click(row(names[5]));
     expect(onCommit).toHaveBeenCalledExactlyOnceWith({ kind: 'roster', rosterEntryId: 16, name: names[5] });

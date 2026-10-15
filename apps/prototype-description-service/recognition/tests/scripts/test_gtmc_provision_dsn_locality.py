@@ -4,6 +4,17 @@ import importlib
 
 import pytest
 
+from recognition.tests.scripts.test_gtmc_generic_dsn_locality import (
+    test_numeric_loopback_forms_are_refused as _generic_numeric_contract,
+)
+
+
+_NUMERIC_LOCAL_HOSTS = next(
+    mark.args[1]
+    for mark in _generic_numeric_contract.pytestmark
+    if mark.name == "parametrize" and mark.args[0] == "host"
+)
+
 
 @pytest.fixture(params=["provision_customer", "provision_demo", "sweep_expired_demos"])
 def cli(request):
@@ -12,6 +23,13 @@ def cli(request):
 
 def _dsn(host, query=""):
     return f"postgresql+asyncpg://fixture:fixture@{host}/fixture" + (f"?{query}" if query else "")
+
+
+@pytest.mark.parametrize("host", _NUMERIC_LOCAL_HOSTS)
+def test_numeric_loopback_forms_are_refused(cli, host):
+    refusal = cli._validate_env_vs_dsn("prod", _dsn(host))
+    assert refusal is not None, "numeric loopback must be refused"
+    assert "looks local; refusing to run" in refusal
 
 
 @pytest.mark.parametrize("host", [

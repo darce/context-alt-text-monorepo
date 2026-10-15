@@ -482,6 +482,8 @@ class Admin {
 					'recognitionSyncResetMirror'     => rest_url( 'acx/v1/recognition/sync/reset-mirror' ),
 					'recognitionSyncRetryFailed'     => rest_url( 'acx/v1/recognition/sync/retry-failed' ),
 					'recognitionMediaIdentities'     => rest_url( 'acx/v1/recognition/media-identities' ),
+					'recognitionGpuStatus'           => rest_url( 'acx/v1/recognition/gpu/status' ),
+					'recognitionGpuIntent'           => rest_url( 'acx/v1/recognition/gpu/intent' ),
 					'retentionStatus'                => rest_url( 'acx/v1/retention/status' ),
 					'retentionPolicy'                => rest_url( 'acx/v1/retention/policy' ),
 					'retentionExport'                => rest_url( 'acx/v1/retention/export' ),

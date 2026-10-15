@@ -61,6 +61,44 @@ afterEach(async () => {
 });
 
 describe('server match bands and explicit abstention', () => {
+  it('hides abstention for an ordinary-only unbanded list while roster selection and manual naming work', async () => {
+    const user = userEvent.setup();
+    const onCommit = vi.fn();
+    const onReject = vi.fn();
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const options: ComboboxOption[] = [7, 8].map((id) => ({
+      value: namingOptionValue('person', id),
+      label: `Person ${id}`,
+      source: 'person',
+      roster_entry_id: id,
+    }));
+    render(<Harness options={options} onCommit={onCommit} onReject={onReject} />);
+    const input = screen.getByRole('combobox', { name: 'Name this person' });
+    await user.keyboard('{ArrowDown}');
+
+    expect(screen.getByRole('listbox')).toBeVisible();
+    expect(screen.getAllByRole('option')).toHaveLength(2);
+    expect(screen.getByRole('option', { name: /Person 7/ })).toBeVisible();
+    expect(screen.getByRole('option', { name: /Person 8/ })).toBeVisible();
+    expect(screen.queryByRole('button', { name: abstainName })).not.toBeInTheDocument();
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(onReject).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('option', { name: /Person 8/ }));
+    expect(onCommit).toHaveBeenCalledExactlyOnceWith({ kind: 'roster', rosterEntryId: 8, name: 'Person 8' });
+    await user.clear(input);
+    await user.type(input, 'Novel Name');
+    expect(screen.queryByRole('button', { name: abstainName })).not.toBeInTheDocument();
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole('button', { name: 'Save name' }));
+    expect(onCommit).toHaveBeenCalledTimes(2);
+    expect(onCommit).toHaveBeenLastCalledWith({ kind: 'create', name: 'Novel Name' });
+    expect(onReject).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it.each([0.17, 0.11, 0.06])('labels band none at %s as below threshold without a probability', async (similarity) => {
     const user = userEvent.setup();
     const onCommit = vi.fn();

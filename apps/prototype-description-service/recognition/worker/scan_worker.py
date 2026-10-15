@@ -7,14 +7,16 @@ It claims pending `IdentityScanJobItem` rows and processes them in small batches
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import os
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import httpx
 from prometheus_client import start_http_server
@@ -562,6 +564,44 @@ class ScanWorker:
         await self._ensure_embedding_runtime()
         await self._heartbeat_embedding_runtime_capability()
 
+    def _observe_embedding_runtime(self, detector=None):
+        target = self._detector if detector is None else detector
+        observer = getattr(target, "loaded_runtime_record", None)
+        if observer is None:
+            if detector is None:
+                self._embedding_runtime_observation = None
+            return None
+        if detector is None:
+            self._embedding_runtime_ready = False
+        from db.settings import get_database_settings
+        from recognition.infrastructure.face_pipeline.loaded_session import FrozenFaceRuntimeConfig
+
+        settings = get_recognition_settings()
+        fp = settings.face_pipeline
+        # Match runtime_factory: SFace shares the detector store; AuraFace
+        # uses the dedicated embedder store (or a supplied face settings view).
+        embedder_dir = fp.resolved_models_dir
+        if fp.profile == "auraface":
+            embedder_dir = getattr(settings, "auraface_models_dir", None)
+            if embedder_dir is None:
+                embedder_dir = fp.resolved_embedder_models_dir
+        expected_config = FrozenFaceRuntimeConfig(
+            profile=fp.profile, models_dir=Path(fp.resolved_models_dir).resolve(),
+            embedder_models_dir=Path(embedder_dir).resolve(),
+            score_threshold=float(fp.score_threshold), nms_threshold=float(fp.nms_threshold),
+            top_k=int(fp.top_k), embedding_dimension=int(settings.identity_detection.embedding_dimension),
+            pgvector_dimension=int(get_database_settings().pgvector_dimension),
+        )
+        record = observer(
+            expected_config=expected_config,
+            active_generation_id=None,
+            captured_at=datetime.now(tz=UTC),
+        )
+        if detector is None:
+            self._embedding_runtime_observation = record
+            self._embedding_runtime_ready = record.state in {"loaded_unexercised", "ready", "exercised", "loaded_exercised"}
+        return record
+
     async def _ensure_embedding_runtime(self) -> None:
         """Initialize scan inference dependencies once per worker process.
 
@@ -575,6 +615,7 @@ class ScanWorker:
         # guard and capability heartbeat stay consistent (R2-06).
         if isinstance(self._detector, UnavailableFaceDetector):
             self._embedding_runtime_ready = False
+        retained = self._observe_embedding_runtime()
         if self._embedding_runtime_ready:
             return
         now = datetime.now(tz=UTC)
@@ -584,11 +625,28 @@ class ScanWorker:
         # Pre-S3 semantics (S3CR-02): do not allocate httpx.AsyncClient until the
         # factory returns a usable detector; on Unavailable close/clear any client
         # so none exists while the runtime is not ready. Retry after 30s.
-        self._detector, self._generator = await build_embedding_runtime(
+        detector, generator = await build_embedding_runtime(
             settings=settings,
             http_client=self._http_client,
             metrics=self._face_pipeline_metrics,
         )
+        if retained is not None:
+            replacement = self._observe_embedding_runtime(detector)
+            old_receipts = retained.sessions.values() if isinstance(retained.sessions, Mapping) else retained.sessions
+            new_receipts = (
+                replacement.sessions.values() if isinstance(replacement.sessions, Mapping) else replacement.sessions
+            ) if replacement is not None else ()
+            old_sessions = {row.session_id for row in old_receipts}
+            new_sessions = {row.session_id for row in new_receipts}
+            if (replacement is None
+                    or not replacement.runtime_generation_id
+                    or replacement.runtime_generation_id == retained.runtime_generation_id
+                    or not new_sessions or not all(new_sessions) or not new_sessions.isdisjoint(old_sessions)
+                    or replacement.state not in {"loaded_unexercised", "ready", "exercised", "loaded_exercised"}):
+                self._embedding_runtime_ready = False
+                self._embedding_retry_after = now + timedelta(seconds=30)
+                return
+        self._detector, self._generator = detector, generator
         if isinstance(self._detector, UnavailableFaceDetector):
             self._embedding_runtime_ready = False
             self._embedding_retry_after = now + timedelta(seconds=30)
@@ -631,6 +689,7 @@ class ScanWorker:
         if not is_postgres(session):
             return
         profile = get_recognition_settings().face_pipeline.profile
+        record = getattr(self, "_embedding_runtime_observation", None)
         if self._runtime_mode == "test" or self._embedding_runtime_ready:
             available = True
             reason = format_capability_reason(profile=profile, counters=self._scan_counters)
@@ -649,9 +708,16 @@ class ScanWorker:
                 available_detail="embedding runtime not initialized",
                 counters=self._scan_counters,
             )
+        if record is not None:
+            from recognition.application.health import encode_face_runtime_observation
+
+            snapshot = encode_face_runtime_observation(record)
+            reason += "; loaded_runtime=" + json.dumps(snapshot, sort_keys=True)
         await publish_embedding_runtime_capability(session, available=available, reason=reason)
 
     async def _heartbeat_embedding_runtime_capability(self) -> None:
+        if self._runtime_mode != "test":
+            self._observe_embedding_runtime()
         async with self._session_factory() as session:
             await enable_rls_bypass(session)
             await self._publish_embedding_runtime_capability(session)

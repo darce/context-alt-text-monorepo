@@ -1764,6 +1764,73 @@ else
   fail "archive reflog-only commit tree is not readable"
 fi
 
+# A shallow receiver must archive all names at a new tip on the first run.
+shallow_archive="$WORKDIR/shallow-archive.git"
+git clone --bare --depth 1 --quiet "file://${ORIGIN}" "$shallow_archive"
+git -C "$shallow_archive" config receive.shallowupdate true
+shallow_seed="$WORKDIR/shallow-seed"
+clone_lane "$shallow_seed"
+echo shallow >"$shallow_seed/SHALLOW"
+git -C "$shallow_seed" add SHALLOW
+git -C "$shallow_seed" commit -q -m "new shallow tip"
+lane_shallow="$HOME/w/lane-shallow"
+git clone --depth 1 --quiet "file://${shallow_seed}" "$lane_shallow"
+# Retain only the local branch so exactly three archive names share the tip.
+git -C "$lane_shallow" update-ref -d refs/remotes/origin/main
+git -C "$lane_shallow" symbolic-ref --delete refs/remotes/origin/HEAD
+shallow_sha="$(git -C "$lane_shallow" rev-parse HEAD)"
+shallow_generation="$(generation_of "$lane_shallow")"
+if [[ -f "$lane_shallow/.git/shallow" && -f "$shallow_archive/shallow" ]]; then
+  pass "shallow archive fixture has both shallow boundaries"
+else
+  fail "shallow archive fixture missing shallow boundary"
+fi
+run_reap --yes --archive-to "$shallow_archive" "$lane_shallow"
+assert_rc0 "shallow archive first run"
+assert_not_contains "shallow archive first run" "archive push failed"
+assert_gone "shallow archive first run" "$lane_shallow"
+for shallow_ref in main refs/heads/main HEAD; do
+  shallow_destination="refs/lanes/w/lane-shallow/$shallow_generation/$shallow_ref"
+  shallow_got="$(git -C "$shallow_archive" rev-parse --verify --quiet "$shallow_destination" || true)"
+  if [[ "$shallow_got" == "$shallow_sha" ]]; then
+    pass "shallow archive first run $shallow_ref archived"
+  else
+    fail "shallow archive first run $shallow_ref missing or mismatched"
+  fi
+done
+
+# Known options after the separator must fail before archiving or deleting.
+lane_separator="$HOME/w/lane-separator"
+clone_lane "$lane_separator"
+for misplaced_option in --yes --log --all --archive-to --help -h; do
+  lane_misplaced="$HOME/w/lane-misplaced${misplaced_option}"
+  clone_lane "$lane_misplaced"
+  run_reap --yes --archive-to "$ARCHIVE" -- "$lane_misplaced" "$misplaced_option"
+  if [[ "$rc" -eq 2 ]]; then
+    pass "separator rejects $misplaced_option with usage status"
+  else
+    fail "separator accepts $misplaced_option (status $rc)"
+  fi
+  assert_contains "separator $misplaced_option" "$misplaced_option"
+  assert_contains "separator $misplaced_option" 'before "--"'
+  assert_exists "separator $misplaced_option preserves lane" "$lane_misplaced"
+  archive_lacks_namespace "separator $misplaced_option" "w/${lane_misplaced##*/}"
+done
+run_reap -- "$lane_separator" --yes
+if [[ "$rc" -eq 2 ]]; then
+  pass "separator trailing --yes rejects accidental dry run"
+else
+  fail "separator trailing --yes accepts accidental dry run (status $rc)"
+fi
+assert_exists "separator trailing --yes preserves lane" "$lane_separator"
+# A relative path starting with a dash remains legal after the separator.
+clone_lane "$HOME/w/-lane"
+pushd "$HOME/w" >/dev/null
+run_reap -- -lane
+popd >/dev/null
+assert_rc0 "separator dash path"
+assert_contains "separator dash path" "WOULD REAP"
+
 } # REAP_CASE_END archive_verification
 
 reap_case_archive_races() {

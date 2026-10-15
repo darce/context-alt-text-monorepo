@@ -2,6 +2,10 @@
 
 Self-contained briefs for remote implementation lanes. Read in this order: this README, your brief, then the sections of the [task plan](../FIRBENCH-1-fir-benchmark-tool-task-plan.md) and [scope](../FIRBENCH-1-scope.md) that your brief names. Canon citations are Canon v0.26.2 row IDs.
 
+## Corpus entrypoint
+
+The benchmark corpus is addressed by logical ID, `corpus646-originals`, and located by the shared resolver. The tracked catalog and the resolver's `show` and `check` usage are documented in the [benchmark home](../../../../benchmarks/README.md#images); use that link rather than hand-built paths. Catalog metadata and original-file availability are separate from ground truth, QC, observation and independence evidence: a catalog entry or hash check establishes none of them. FIRBENCH's private input bindings are unchanged by the catalog.
+
 ## Delegated decisions (MCP 16732–16736, 16756, 16763, 16773, 16777, 16810, 16848, 16855, 16856)
 
 These decisions are the dispatch supplement for the FIRBENCH-1 briefs. Read them with the [v5 delegated choices](../FIRBENCH-1-fir-benchmark-tool-task-plan.md#delegated-choices-and-frozen-seams-revision-v5). Later runtime clarifications below override stale operator-pending, default and signature statements wherever they differ. They are reversible project policy. They are not human observation, real hashes, exhaustive ground truth or ratification. Canon v0.26.2 is the rule authority.

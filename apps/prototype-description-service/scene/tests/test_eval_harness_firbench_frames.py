@@ -311,6 +311,61 @@ def test_fold_count_above_psu_count_is_refused() -> None:
 # --- non-mated pool -----------------------------------------------------------
 
 
+def test_pool_separates_query_fold_from_declared_gallery_membership() -> None:
+    images = [_img("image-0001"), _img("image-0002"), _img("image-0003")]
+    faces = [
+        _named("face-mated", "image-0001", "id-enrolled"),
+        _named("face-heldout", "image-0001", "id-heldout"),
+        _unknown("face-unknown", "image-0001"),
+        _named("face-other-fold", "image-0003", "id-other"),
+        _unknown("face-unknown-other-fold", "image-0003"),
+    ]
+    component_map, _ = _pipeline(images, faces)
+    folds = {"image-0001": 0, "image-0002": 0, "image-0003": 1}
+    # Gallery-only identities are valid; membership is declared independently of query folds.
+    enrolled = frozenset({"id-enrolled", "id-gallery-only"})
+    pool = ff.build_nonmated_pool(
+        faces, images, folds, fold=0, component_map=component_map,
+        exhaustive=True, planning_icc=ICC, enrolled_identity_ids=enrolled,
+    )
+    assert {unit.unit_id for unit in pool.units} == {
+        "background:image-0001", "background:image-0002", "face-heldout", "face-unknown",
+    }
+    assert pool.n_units == 4
+    assert pool.design_effect == pytest.approx(float(Fraction(23, 20)), abs=TOL)
+    assert pool.n_nonmated_eff == pytest.approx(float(Fraction(80, 23)), abs=TOL)
+    other = ff.build_nonmated_pool(
+        faces, images, folds, fold=1, component_map=component_map,
+        exhaustive=True, planning_icc=ICC, enrolled_identity_ids=enrolled,
+    )
+    assert {unit.unit_id for unit in other.units} == {
+        "background:image-0003", "face-other-fold", "face-unknown-other-fold",
+    }
+
+
+def test_pool_requires_declared_gallery_membership() -> None:
+    images = [_img("image-0001")]
+    with pytest.raises(TypeError, match="enrolled_identity_ids"):
+        ff.build_nonmated_pool(
+            [], images, {"image-0001": 0}, fold=0,
+            component_map={"image-0001": "image-0001"}, exhaustive=True, planning_icc=ICC,
+        )
+
+
+@pytest.mark.parametrize("membership", [
+    None, "id-0001", [], {}, {"id-0001"}, frozenset({None}), frozenset({7}),
+    frozenset({""}), frozenset({" \t\n"}),
+])
+def test_pool_refuses_invalid_gallery_membership(membership) -> None:
+    images = [_img("image-0001")]
+    with pytest.raises(fc.FrameContractError, match="enrolled_identity_ids"):
+        ff.build_nonmated_pool(
+            [], images, {"image-0001": 0}, fold=0,
+            component_map={"image-0001": "image-0001"}, exhaustive=True, planning_icc=ICC,
+            enrolled_identity_ids=membership,
+        )
+
+
 def test_pool_has_one_background_unit_per_image_and_no_face_image_has_one() -> None:
     images = [_img("image-0001"), _img("image-0002")]
     faces = [_named("face-1", "image-0001", "id-0001")]
@@ -324,12 +379,13 @@ def test_pool_has_one_background_unit_per_image_and_no_face_image_has_one() -> N
             fold=fold,
             component_map=component_map,
             exhaustive=True,
+            enrolled_identity_ids=frozenset(),
             planning_icc=ICC,
         )
         for fold in (0, 1)
     ]
     unit_ids = sorted(unit.unit_id for pool in pools for unit in pool.units)
-    # The held-out named face is non-mated in its own fold; background units cover every image.
+    # The declared empty gallery makes the named face non-mated; every image has background.
     assert unit_ids == ["background:image-0001", "background:image-0002", "face-1"]
 
 
@@ -341,7 +397,8 @@ def test_unknown_faces_join_pool_of_their_component_fold() -> None:
     total = 0
     for fold in (0, 1):
         pool = ff.build_nonmated_pool(
-            faces, images, folds, fold=fold, component_map=component_map, exhaustive=True, planning_icc=ICC
+            faces, images, folds, fold=fold, component_map=component_map, exhaustive=True,
+            enrolled_identity_ids=frozenset(), planning_icc=ICC,
         )
         assert all(unit.fold == fold for unit in pool.units)
         total += pool.n_units
@@ -355,7 +412,8 @@ def test_unresolved_face_never_enters_pool_and_is_refused() -> None:
     folds = {component_map["image-0001"]: 0}
     with pytest.raises(fc.FrameContractError):
         ff.build_nonmated_pool(
-            faces, images, folds, fold=0, component_map=component_map, exhaustive=True, planning_icc=ICC
+            faces, images, folds, fold=0, component_map=component_map, exhaustive=True,
+            enrolled_identity_ids=frozenset(), planning_icc=ICC,
         )
 
 
@@ -365,7 +423,8 @@ def test_pool_is_refused_without_exhaustive_frame() -> None:
     folds = {component_map["image-0001"]: 0}
     with pytest.raises(fc.FrameContractError):
         ff.build_nonmated_pool(
-            [], images, folds, fold=0, component_map=component_map, exhaustive=False, planning_icc=ICC
+            [], images, folds, fold=0, component_map=component_map, exhaustive=False,
+            enrolled_identity_ids=frozenset(), planning_icc=ICC,
         )
 
 
@@ -374,7 +433,8 @@ def test_pool_refuses_malformed_component_and_fold_coverage() -> None:
     component_map = {"image-0001": "image-0001"}
     with pytest.raises(fc.FrameContractError):
         ff.build_nonmated_pool(
-            [], images, {"image-0001": 0}, fold=0, component_map=component_map, exhaustive=True, planning_icc=ICC
+            [], images, {"image-0001": 0}, fold=0, component_map=component_map, exhaustive=True,
+            enrolled_identity_ids=frozenset(), planning_icc=ICC,
         )
     with pytest.raises(fc.FrameContractError):
         ff.build_nonmated_pool(
@@ -384,6 +444,7 @@ def test_pool_refuses_malformed_component_and_fold_coverage() -> None:
             fold=0,
             component_map={"image-0001": "image-0001"},
             exhaustive=True,
+            enrolled_identity_ids=frozenset(),
             planning_icc=ICC,
         )
 
@@ -395,10 +456,12 @@ def test_pool_takes_no_detector_argument_and_ignores_detector_output() -> None:
     component_map, identity_map = _pipeline(images, faces)
     folds = ff.identity_disjoint_folds(component_map, identity_map, k=3, seed=8)
     first = ff.build_nonmated_pool(
-        faces, images, folds, fold=0, component_map=component_map, exhaustive=True, planning_icc=ICC
+        faces, images, folds, fold=0, component_map=component_map, exhaustive=True,
+        enrolled_identity_ids=frozenset(), planning_icc=ICC,
     )
     second = ff.build_nonmated_pool(
-        faces, images, folds, fold=0, component_map=component_map, exhaustive=True, planning_icc=ICC
+        faces, images, folds, fold=0, component_map=component_map, exhaustive=True,
+        enrolled_identity_ids=frozenset(), planning_icc=ICC,
     )
     assert first == second
 
@@ -409,7 +472,8 @@ def test_pool_deff_uses_units_psu_structure_at_planning_icc() -> None:
     component_map, identity_map = _pipeline(images, faces)
     folds = {component_map["image-0001"]: 0, component_map["image-0002"]: 0}
     pool = ff.build_nonmated_pool(
-        faces, images, folds, fold=0, component_map=component_map, exhaustive=True, planning_icc=ICC
+        faces, images, folds, fold=0, component_map=component_map, exhaustive=True,
+        enrolled_identity_ids=frozenset(), planning_icc=ICC,
     )
     assert pool.n_units == 4
     expected_deff = ff.design_effect([3, 1], ICC)
@@ -560,6 +624,7 @@ def _frame_inputs(k: int = 3, seed: int = 2468935812):
         "images": images,
         "faces": faces,
         "planning_icc": ICC,
+        "enrolled_identity_ids": frozenset(),
         "k": k,
         "seed": seed,
         "test_fold": 0,
@@ -574,6 +639,20 @@ def test_same_inputs_and_seed_give_byte_identical_frame_json_that_validates() ->
     fc.validate_interchange("frame-v1", json.loads(first))
 
 
+def test_frame_requires_declared_gallery_membership() -> None:
+    inputs = _frame_inputs()
+    del inputs["enrolled_identity_ids"]
+    with pytest.raises(TypeError, match="enrolled_identity_ids"):
+        ff.build_frame(**inputs)
+
+
+def test_frame_refuses_null_gallery_membership() -> None:
+    inputs = _frame_inputs()
+    inputs["enrolled_identity_ids"] = None
+    with pytest.raises(fc.FrameContractError, match="enrolled_identity_ids"):
+        ff.build_frame(**inputs)
+
+
 def test_frame_roles_and_counts_are_set_per_rotation() -> None:
     frame = ff.build_frame(**_frame_inputs(k=3))
     assert frame.fold_roles == {0: fc.FoldRole.test, 1: fc.FoldRole.fit, 2: fc.FoldRole.fit}
@@ -585,6 +664,7 @@ def test_frame_roles_and_counts_are_set_per_rotation() -> None:
         fold=0,
         component_map=frame.psu_map,
         exhaustive=True,
+        enrolled_identity_ids=frozenset(),
         planning_icc=ICC,
     )
     assert frame.n_units == pool.n_units
@@ -659,6 +739,7 @@ def test_end_to_end_from_corpus_manifest_to_validated_frame_json(tmp_path: Path)
         spec=_spec(),
         images=source.images,
         faces=source.faces,
+        enrolled_identity_ids=frozenset(),
         planning_icc=ICC,
         k=2,
         seed=5,

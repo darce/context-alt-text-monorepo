@@ -1,6 +1,7 @@
 """S1 loader gate regressions. All names, IDs, paths and hashes are synthetic."""
 
 import json
+from fractions import Fraction
 from pathlib import Path
 
 import pytest
@@ -49,9 +50,52 @@ def _frame(source, *, planning_icc=0.1, exhaustive=True):
     return ff.build_frame(
         spec=FrameSpec("frame-fixture", Admissibility.development, False, None, exhaustive),
         images=source.images, faces=source.faces, planning_icc=planning_icc,
+        enrolled_identity_ids=frozenset(),
         k=2, seed=2406466110, test_fold=0,
         gallery_sha256_by_fold={0: "a" * 64, 1: "b" * 64},
     )
+
+
+def test_mixed_gallery_denominator_is_independent_of_detector_alarms(tmp_path):
+    frames = []
+    sources = []
+    for n_alarms in (0, 1, 40):
+        payload = _manifest("corpus_manifest", ["A", "C"])
+        payload["entries"][1]["sha256"] = "b" * 64
+        boxes = payload["entries"][0]["named_boxes"]
+        boxes.extend([
+            {"x": 10, "y": 2, "w": 3, "h": 4, "name": "B", "source": "operator"},
+            {"x": 20, "y": 2, "w": 3, "h": 4, "name": None, "source": "operator"},
+        ])
+        # Includes repeated alarms over a represented GT face and spurious background alarms.
+        payload["entries"][0]["detected_boxes"] = [
+            {"x": 1 if i % 2 else 100, "y": 2, "w": 3, "h": 4}
+            for i in range(n_alarms)
+        ]
+        source = _load(tmp_path, "corpus_manifest", payload)
+        sources.append(source)
+        frame = ff.build_frame(
+            spec=FrameSpec("frame-mixed-gallery", Admissibility.development, False, None, True),
+            images=source.images, faces=source.faces, planning_icc=0.1,
+            k=2, seed=0, test_fold=0,
+            gallery_sha256_by_fold={0: "a" * 64, 1: "b" * 64},
+            enrolled_identity_ids=frozenset({"id-0001"}),  # Hand-declared A; B is held out.
+        )
+        assert frame.identity_fold == {"id-0001": 0, "id-0002": 0, "id-0003": 1}
+        pool = ff.build_nonmated_pool(
+            frame.faces, frame.images, frame.folds, fold=0, component_map=frame.psu_map,
+            exhaustive=True, planning_icc=0.1, enrolled_identity_ids=frozenset({"id-0001"}),
+        )
+        assert {unit.unit_id for unit in pool.units} == {
+            "background:1", "face-1-001", "face-1-002",
+        }
+        assert frame.n_units == pool.n_units == 3
+        assert frame.n_nonmated_eff == pytest.approx(float(Fraction(5, 2)), abs=1e-12)
+        # Frame.n_eff continues to describe all four GT faces, including the mated face.
+        assert frame.n_eff == pytest.approx(float(Fraction(80, 23)), abs=1e-12)
+        frames.append(ff.frame_json(frame))
+    assert sources[0] == sources[1] == sources[2]
+    assert frames[0] == frames[1] == frames[2]
 
 
 @pytest.mark.parametrize("kind", ["golden_manifest", "corpus_manifest"])

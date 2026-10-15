@@ -92,13 +92,13 @@ export const PersonCommitControl = ({
   const candidates = useClusterRosterCandidates({
     clusterId,
     enabled:
-      !isBusy &&
       phase !== PERSON_COMMIT_PHASE.SUCCEEDED &&
       !hasMachineSuggestion &&
       !hasEligiblePendingProposal &&
       !rosterQuery.isLoading &&
       !rosterQuery.isError &&
       Boolean(rosterQuery.data?.length),
+    paused: isBusy,
     rosterEntries: rosterQuery.data ?? [],
   });
 

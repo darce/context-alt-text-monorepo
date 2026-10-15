@@ -239,6 +239,9 @@ class FrozenFaceRuntimeConfig:
     top_k: int
     embedding_dimension: int
     pgvector_dimension: int
+    # Defaults to OFF so eight-argument expected-config builders stay valid; an enabled
+    # knob that is absent from an expected config is reported as effective_config_changed.
+    retry_max_side: int = 0
 
 
 @dataclass(frozen=True, slots=True)

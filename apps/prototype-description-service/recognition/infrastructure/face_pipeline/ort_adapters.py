@@ -32,6 +32,7 @@ import time
 from contextlib import contextmanager
 from typing import Final
 
+import cv2
 import numpy as np
 import onnxruntime as ort
 
@@ -455,6 +456,81 @@ def decode_yunet_outputs(
     )
 
 
+RETRY_MAX_SIDE_ENV: Final = "RECOGNITION_FACE_DETECTION_RETRY_MAX_SIDE"
+# Opt-in: one extra scaled pass when the original max side exceeds this value; 0 is OFF.
+RETRY_SCALE_MAX_SIDE: Final = 640
+RETRY_MAX_SIDES: Final = frozenset({0, RETRY_SCALE_MAX_SIDE})
+_RETRY_KNOB_MESSAGE: Final = f"{RETRY_MAX_SIDE_ENV} must be 0 (off) or {RETRY_SCALE_MAX_SIDE}"
+
+
+def resolve_retry_max_side(raw: str | None) -> int:
+    """Parse the retry knob: unset or blank is OFF; any value other than 0 or 640 fails closed."""
+    text = "" if raw is None else raw.strip()
+    if not text:
+        return 0
+    try:
+        value = int(text)
+    except ValueError as exc:
+        raise ValueError(_RETRY_KNOB_MESSAGE) from exc
+    if value not in RETRY_MAX_SIDES:
+        raise ValueError(_RETRY_KNOB_MESSAGE)
+    return value
+
+
+def _int_xywh(face: RawDetection) -> tuple[int, int, int, int]:
+    return (int(face.bbox[0]), int(face.bbox[1]), int(face.bbox[2]), int(face.bbox[3]))
+
+
+def _resize_for_retry(img: np.ndarray, max_side: int) -> tuple[np.ndarray, float, float]:
+    """Scale so the longer side is ``max_side``; sx/sy come from the rounded output sizes."""
+    h, w = img.shape[:2]
+    scale = max_side / float(max(h, w))
+    new_w = max(1, round(w * scale))
+    new_h = max(1, round(h * scale))
+    resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    return resized, new_w / float(w), new_h / float(h)
+
+
+def _project_to_original(face: RawDetection, sx: float, sy: float) -> RawDetection:
+    """Map a scaled-pass xywh box and its landmarks to original pixels; the score is unchanged."""
+    bbox = np.asarray(face.bbox, dtype=np.float64)
+    landmarks = np.asarray(face.landmarks, dtype=np.float64)
+    return RawDetection(
+        bbox=np.array([bbox[0] / sx, bbox[1] / sy, bbox[2] / sx, bbox[3] / sy], dtype=np.float32),
+        landmarks=(landmarks / np.array([sx, sy], dtype=np.float64)).astype(np.float32),
+        score=face.score,
+    )
+
+
+def _merge_scaled_rows(
+    original: list[RawDetection],
+    scaled: list[RawDetection],
+    *,
+    nms_threshold: float,
+    top_k: int,
+) -> list[RawDetection]:
+    """Return non-duplicate scaled rows in scaled-pass order; original rows are never dropped."""
+    room = len(scaled) if top_k <= 0 else max(0, top_k - len(original))
+    kept_boxes = [_int_xywh(face) for face in original]
+    accepted: list[RawDetection] = []
+    for face in scaled:
+        if len(accepted) >= room:
+            break
+        box = _int_xywh(face)
+        if any(_box_iou_xywh_int(box, kept) > nms_threshold for kept in kept_boxes):
+            continue
+        accepted.append(face)
+        kept_boxes.append(box)
+    return accepted
+
+
+def _record_scale_retry(trace: dict) -> None:
+    """Attach this call's retry lineage to the per-call tensor recorder, when one is active."""
+    recorder = getattr(_TENSOR_RECORDER, "current", None)
+    if recorder is not None:
+        recorder["input_lineage"] = {"scale_retry": trace}
+
+
 class OrtYuNetDetector:
     """ORT CPU YuNet detector with OpenCV FaceDetectorYN post-process semantics.
 
@@ -477,7 +553,10 @@ class OrtYuNetDetector:
         initial_input_size: tuple[int, int] = DEFAULT_INPUT_SIZE,
         verified_artifact: VerifiedModelBytes | None = None,
         acquire_verified: bool = False,
+        retry_max_side: int = 0,
     ) -> None:
+        if retry_max_side not in RETRY_MAX_SIDES:
+            raise ValueError(_RETRY_KNOB_MESSAGE)
         artifact = _constructor_artifact(model_name, models_dir, verified_artifact, acquire_verified)
         model_path = load_verified_model(model_name, models_dir=models_dir) if artifact is None else None
         self._verified_artifact = artifact
@@ -486,6 +565,7 @@ class OrtYuNetDetector:
         self._score_threshold = float(score_threshold)
         self._nms_threshold = float(nms_threshold)
         self._top_k = int(top_k)
+        self._retry_max_side = int(retry_max_side)
         # Accepted for DI/factory kwargs parity; per-image pad resets size (BR-07).
         self._initial_input_size = (int(initial_input_size[0]), int(initial_input_size[1]))
         self._session = _ort_session(model_path if artifact is None else artifact.model_bytes)
@@ -512,26 +592,61 @@ class OrtYuNetDetector:
     def top_k(self) -> int:
         return self._top_k
 
+    @property
+    def retry_max_side(self) -> int:
+        return self._retry_max_side
+
     def detect(self, images: Sequence[np.ndarray]) -> list[list[RawDetection]]:
         """Detect faces in a batch of BGR images (same contract as OpenCV path)."""
         results: list[list[RawDetection]] = []
         for i, image in enumerate(images):
             img = _ensure_bgr_u8(image, label=f"images[{i}]")
-            padded, pad_w, pad_h = _pad_to_divisor(img)
-            blob = _bgr_to_nchw_float(padded)
-            _capture_tensor("detector", blob, padding_geometry={"height": pad_h, "width": pad_w, "source_shape": tuple(img.shape)})
-            raw_outs = self._session.run(None, {self._input_name: blob})
-            outputs = dict(zip(self._output_names, raw_outs, strict=False))
-            faces = decode_yunet_outputs(
-                outputs,
-                pad_w=pad_w,
-                pad_h=pad_h,
-                score_threshold=self._score_threshold,
-                nms_threshold=self._nms_threshold,
-                top_k=self._top_k,
-            )
-            results.append(faces)
+            results.append(self._detect_image(img))
         return results
+
+    def _detect_image(self, img: np.ndarray) -> list[RawDetection]:
+        faces, _ = self._run_pass(img)
+        if not self._retry_max_side or max(img.shape[:2]) <= self._retry_max_side:
+            return faces
+        # Exactly one extra pass, and only when the original max side exceeds the scale.
+        resized, sx, sy = _resize_for_retry(img, self._retry_max_side)
+        scaled, input_shape = self._run_pass(resized)
+        accepted = _merge_scaled_rows(
+            faces,
+            [_project_to_original(face, sx, sy) for face in scaled],
+            nms_threshold=self._nms_threshold,
+            top_k=self._top_k,
+        )
+        trace = {
+            "kind": "scale_retry_pass",
+            "max_side": self._retry_max_side,
+            "original_wh": [int(img.shape[1]), int(img.shape[0])],
+            "resized_wh": [int(resized.shape[1]), int(resized.shape[0])],
+            "scale_xy": [sx, sy],
+            "interpolation": "INTER_AREA",
+            "resized_bgr_sha256": hashlib.sha256(resized.tobytes()).hexdigest(),
+            "pass2_input_shape": list(input_shape),
+            "pass2_candidates": len(scaled),
+            "accepted_new": len(accepted),
+        }
+        _record_scale_retry(trace)
+        return faces + accepted
+
+    def _run_pass(self, img: np.ndarray) -> tuple[list[RawDetection], tuple[int, ...]]:
+        padded, pad_w, pad_h = _pad_to_divisor(img)
+        blob = _bgr_to_nchw_float(padded)
+        _capture_tensor("detector", blob, padding_geometry={"height": pad_h, "width": pad_w, "source_shape": tuple(img.shape)})
+        raw_outs = self._session.run(None, {self._input_name: blob})
+        outputs = dict(zip(self._output_names, raw_outs, strict=False))
+        faces = decode_yunet_outputs(
+            outputs,
+            pad_w=pad_w,
+            pad_h=pad_h,
+            score_threshold=self._score_threshold,
+            nms_threshold=self._nms_threshold,
+            top_k=self._top_k,
+        )
+        return faces, tuple(int(v) for v in blob.shape)
 
 
 class OrtSFaceEmbedder:

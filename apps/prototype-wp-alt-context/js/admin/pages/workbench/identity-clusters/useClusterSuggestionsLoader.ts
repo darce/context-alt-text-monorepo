@@ -9,6 +9,7 @@
 import React from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import type { ComboboxOption } from '../../../../components/ui/combobox';
 import { queryKeys } from '../../../api/queryKeys';
 import {
   fetchIdentitiesSuggestions,
@@ -16,8 +17,20 @@ import {
   type ClusterSummary,
   type IdentityBatchSuggestionsResponse,
 } from '../../../api/recognition';
+import {
+  fetchClusterRosterCandidates,
+  ROSTER_CANDIDATES_TOP_K,
+  type RosterCandidate,
+  type RosterCandidatesResponse,
+} from '../../../api/recognition/rosterCandidatesApi';
 import { useRosterEntries } from '../../../hooks/useRosterHooks';
-import { buildNamingOptions, type NamingOption } from './buildNamingOptions';
+import {
+  buildNamingOptions,
+  NAMING_GROUP_SUGGESTED,
+  namingOptionValue,
+  type NamingOption,
+  type RosterNamingEntry,
+} from './buildNamingOptions';
 import { lookupClusterByLabel, unwrapClusterLabelLookup } from './clusterLabelLookup';
 import {
   IDENTITY_BATCH_STALE_MS,
@@ -69,6 +82,12 @@ export interface ClusterSuggestionsLoaderResult {
   atRestTruncated: boolean;
   /** True while the debounced input is below the typed-search minimum. */
   isAtRestMode: boolean;
+  /** Closest roster people for an unnamed card: person-source, committable, one row per person. */
+  rosterCandidateOptions?: ComboboxOption[];
+  /** The identity batch or the closest-roster read failed. Never reported as an empty list. */
+  isError?: boolean;
+  /** Re-runs only the failed read(s). Optional so existing loader mocks stay type-valid. */
+  retry?: () => void;
 }
 
 const DEFAULT_DEBOUNCE_MS = 300;
@@ -77,6 +96,62 @@ const EMPTY_COLLISIONS: ReadonlyMap<string, readonly NamingOption[]> = new Map()
 export const ACX_LABEL_SEARCH_MIN_CHARS = 2;
 /** RES-05: at-rest labelled list is capped at 50. If response.total > 50 the dropdown is incomplete until the operator types 2+ chars (server-side search). */
 const AT_REST_LABELED_LIMIT = 50;
+
+/** Closest-roster rows offered on one unnamed card (the backend window is the same size). */
+const ROSTER_CANDIDATE_OPTION_LIMIT = ROSTER_CANDIDATES_TOP_K;
+
+/**
+ * Closest roster people as person-source naming options. Only mapped rows (roster_entry_id
+ * present) are committable; unmapped rows are dropped. One row per roster person keeps the
+ * strongest similarity at its first payload position, so backend order is never re-sorted.
+ * The canonical name is the roster entry linked by ID, falling back to the payload name.
+ */
+export const buildRosterCandidateOptions = (
+  candidates: readonly RosterCandidate[],
+  rosterEntries: readonly RosterNamingEntry[],
+): ComboboxOption[] => {
+  const canonicalNameById = new Map<number, string>();
+  for (const entry of rosterEntries) {
+    const entryId = Number(entry.id);
+    const name = entry.name?.trim() ?? '';
+    if (Number.isFinite(entryId) && name) {
+      canonicalNameById.set(entryId, name);
+    }
+  }
+
+  const strongestByPerson = new Map<number, RosterCandidate>();
+  for (const candidate of candidates) {
+    const rosterEntryId = candidate.roster_entry_id;
+    if (typeof rosterEntryId !== 'number' || !Number.isFinite(rosterEntryId)) {
+      continue;
+    }
+    const current = strongestByPerson.get(rosterEntryId);
+    if (!current || candidate.similarity > current.similarity) {
+      strongestByPerson.set(rosterEntryId, candidate);
+    }
+  }
+
+  return Array.from(strongestByPerson.entries())
+    .slice(0, ROSTER_CANDIDATE_OPTION_LIMIT)
+    .flatMap(([rosterEntryId, candidate]): ComboboxOption[] => {
+      const label = canonicalNameById.get(rosterEntryId) ?? candidate.name.trim();
+      if (!label) {
+        return [];
+      }
+      return [
+        {
+          value: namingOptionValue('person', rosterEntryId),
+          label,
+          group: NAMING_GROUP_SUGGESTED,
+          source: 'person',
+          similarity: candidate.similarity,
+          band: candidate.band,
+          cluster_id: candidate.cluster_id,
+          roster_entry_id: rosterEntryId,
+        },
+      ];
+    });
+};
 
 export const useClusterSuggestionsLoader = ({
   identityId,
@@ -101,7 +176,12 @@ export const useClusterSuggestionsLoader = ({
 
   // BR-10: single-id key is canonical for the dropdown; seed/read from multi-id batch
   // cache so inline batch + loader share one stale window instead of dual entries.
-  const { data: identityBatch, isLoading: suggestionsLoading } = useQuery<IdentityBatchSuggestionsResponse>({
+  const {
+    data: identityBatch,
+    isLoading: suggestionsLoading,
+    isError: suggestionsError,
+    refetch: refetchSuggestions,
+  } = useQuery<IdentityBatchSuggestionsResponse>({
     queryKey: queryKeys.suggestions.projection.identityBatch(
       identityBatchIdsKey(identityId !== undefined ? [identityId] : []),
     ),
@@ -117,14 +197,6 @@ export const useClusterSuggestionsLoader = ({
     initialData: () => (identityId ? readIdentityFromBatchCache(queryClient, identityId) : undefined),
     initialDataUpdatedAt: () => (identityId ? readIdentityBatchUpdatedAt(queryClient, identityId) : undefined),
   });
-
-  const identityProjection = React.useMemo((): ProjectedSuggestion[] | undefined => {
-    if (!identityId || identityBatch === undefined) {
-      return undefined;
-    }
-    const rows = identityBatch.matches[identityId] ?? [];
-    return projectIdentityWindow(identityId, rows);
-  }, [identityId, identityBatch]);
 
   const { data: labelMatches, isLoading: labelMatchesLoading } = useQuery({
     queryKey: queryKeys.clusters.labelSearch(debouncedValue),
@@ -164,7 +236,54 @@ export const useClusterSuggestionsLoader = ({
     staleTime: 30000,
   });
 
+  // Canonical cluster name: a current label replaces the cached batch label only when the same
+  // cluster ID is labelled now. The join is by cluster ID, never by display name.
+  const currentLabelByClusterId = React.useMemo((): ReadonlyMap<string, string> => {
+    const labels = new Map<string, string>();
+    for (const cluster of [...(atRestLabeledClusters?.clusters ?? []), ...(labelMatches ?? [])]) {
+      const label = typeof cluster.label === 'string' ? cluster.label.trim() : '';
+      if (label) {
+        labels.set(cluster.id, label);
+      }
+    }
+    return labels;
+  }, [atRestLabeledClusters, labelMatches]);
+
+  const identityProjection = React.useMemo((): ProjectedSuggestion[] | undefined => {
+    if (!identityId || identityBatch === undefined) {
+      return undefined;
+    }
+    const rows = (identityBatch.matches[identityId] ?? []).map((row) => {
+      const currentLabel = currentLabelByClusterId.get(row.cluster_id);
+      return currentLabel ? { ...row, label: currentLabel } : row;
+    });
+    return projectIdentityWindow(identityId, rows);
+  }, [identityId, identityBatch, currentLabelByClusterId]);
+
+  // Closest roster people for an unnamed card (c82 FIR). Lazy: only when expanded, the editable
+  // cluster is valid, the identity batch has resolved, and no eligible pending row exists. Once
+  // fetched, the choices are not removed when a pending row later disappears on refetch.
+  const rosterClusterId = editableClusterId?.trim() ?? '';
+  const hasEligiblePending = (identityProjection?.length ?? 0) > 0;
+  const {
+    data: rosterCandidatesResponse,
+    isError: rosterCandidatesError,
+    refetch: refetchRosterCandidates,
+  } = useQuery<RosterCandidatesResponse>({
+    queryKey: queryKeys.clusters.rosterCandidates(rosterClusterId, ROSTER_CANDIDATES_TOP_K),
+    queryFn: () => fetchClusterRosterCandidates(rosterClusterId, ROSTER_CANDIDATES_TOP_K),
+    enabled: Boolean(
+      enabled && identityId && identityBatch !== undefined && rosterClusterId && !hasEligiblePending,
+    ),
+    staleTime: 30000,
+  });
+
   const { data: rosterEntries = [], isLoading: rosterLoading, isError: rosterError } = useRosterEntries();
+
+  const rosterCandidateOptions = React.useMemo(
+    () => buildRosterCandidateOptions(rosterCandidatesResponse?.candidates ?? [], rosterEntries),
+    [rosterCandidatesResponse, rosterEntries],
+  );
 
   const { options: namingOptions, collisionsByLabel } = React.useMemo(() => {
     // A11Y-24: roster error/empty degrade to cluster-only options.
@@ -188,13 +307,30 @@ export const useClusterSuggestionsLoader = ({
     [editableClusterId],
   );
 
+  // Retry only the read(s) that failed; a read that succeeded is not re-fetched here.
+  const retry = React.useCallback(() => {
+    if (suggestionsError) {
+      void refetchSuggestions();
+    }
+    if (rosterCandidatesError) {
+      void refetchRosterCandidates();
+    }
+  }, [suggestionsError, rosterCandidatesError, refetchSuggestions, refetchRosterCandidates]);
+
   return {
     identityProjection,
     namingOptions,
     collisionsByLabel: collisionsByLabel ?? EMPTY_COLLISIONS,
     labelMatches,
-    isLoading: suggestionsLoading || labelMatchesLoading || atRestLabeledLoading || (enabled && rosterLoading),
+    isLoading:
+      suggestionsLoading ||
+      labelMatchesLoading ||
+      atRestLabeledLoading ||
+      (enabled && rosterLoading),
     rosterError,
+    rosterCandidateOptions,
+    isError: suggestionsError || rosterCandidatesError,
+    retry,
     findClusterByLabel,
     atRestTotal: atRestLabeledClusters?.total ?? 0,
     atRestTruncated: atRestLabeledClusters?.truncated ?? false,

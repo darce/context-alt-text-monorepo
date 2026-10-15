@@ -19,7 +19,7 @@ Turn per-face search records into the frozen-τ answer: FNIR at the declared FPI
 
 ## Build
 
-1. `finish_outcomes(records, tau, boundary) -> per-record FaceOutcome`. A record is a mated GT face or a non-mated record (a non-mated GT face or a background detection).
+1. `finish_outcomes(records, tau, boundary) -> per-record FaceOutcome` (S0 Build 10). A record is a mated GT face or a non-mated record (a non-mated GT face or a background detection). A record with `arm_availability` other than `available` is not an outcome: it is excluded and counted per arm. A fused-leg record with stage `detected` (no embedding) finishes as `missed`; its stage stays `detected` in the waterfall.
    - `legacy_v1`: a non-mated record is accepted iff score > τ; a mated record iff score ≥ τ.
    - `v2`: accept iff score ≥ τ for both.
    - The semantics are recorded in the output.
@@ -49,7 +49,8 @@ Turn per-face search records into the frozen-τ answer: FNIR at the declared FPI
    - `level` is the two-sided interval level that `decide()` sets for the step: 0.95 for step 1, 0.90 for step 2. Callers do not choose it.
    - Return the percentile interval, n_psu, and the observed ICC/deff. The observed ICC is null when all outcomes are equal; it does not change n_eff, which uses the manifest ICC (S1).
    - No p-value and no test inversion.
-   - The probability arm uses inverse-probability weights from S1; the challenge arm is reported separately and never pooled.
+   - Unit of resampling: PSU (image–identity component). Unit of estimand: mated GT faces, weighted per face. Interval: percentile, two-sided at the step level.
+   - The `probability` sampling arm weights each record by 1 / `inclusion_probability` (S1 Build 1; the IPW weight). The `challenge` arm is reported separately and never pooled; its weight is 1.
 6. `decide(manifest, results) -> Verdict`. This is the only verdict rule. It uses confidence intervals only. It computes no p-values and does not call `holm_bonferroni`.
    - **Step order and levels.** The manifest's `hypotheses` list is the Holm step order: H1, then H2. K = 2, and `alpha_family` = 0.05 is one-sided. Step k tests at one-sided level α_family / (K − k + 1): step 1 = 0.025, step 2 = 0.05. The two-sided interval level is 1 − 2 × one-sided level: 0.95 for step 1, 0.90 for step 2.
    - **H1 (superiority)**, Δ = FNIR_SF − FNIR_AF: rejects iff the step-1 percentile lower bound is > 0 and every veto guardrail holds.
@@ -70,8 +71,8 @@ Turn per-face search records into the frozen-τ answer: FNIR at the declared FPI
    - A cell is "not scored" below `cell_floor_n_independent` independent PSUs.
    - Real and synthetic cells are kept in separate tables.
 8. Stage waterfall and joint gaps.
-   - Counts per `LedgerStage` outcome per leg, over mated GT faces.
-   - For each attribution arm (`gt_crop_redetect`, `cached_yunet_landmark_replay`), report the joint gap: ΔFNIR against `native` on the same faces, with its paired PSU interval. Report the count of `unavailable` or `unavailable_fused` faces per arm.
+   - Counts per `SearchStage` per leg, over mated GT faces on the native arm. The fused leg has no `unaligned` count.
+   - For each attribution arm (`gt_crop_redetect`, `cached_yunet_landmark_replay`), report the joint gap: ΔFNIR = FNIR(arm) − FNIR(native) over the mated faces where both the arm and native records are `available`, with its paired PSU interval. Faces with `arm_availability` `unavailable` or `unavailable_fused` are counted per arm and excluded from that gap. They are never imputed as misses.
    - No percentage shares are apportioned to localization, alignment or the embedder. No arm is named as a cause. The gap is a joint intervention effect.
 9. Guardrails from the manifest. Each guardrail has a `role` set in the sealed manifest: `veto` gates the verdict; `report_only` is written to `scores.json` and the report and never gates.
    - per-cohort FPIR (each cohort with resolvability, over that cohort's non-mated source units; background units count only in the all-cohort FPIR) — veto
@@ -80,7 +81,7 @@ Turn per-face search records into the frozen-τ answer: FNIR at the declared FPI
    - p95 ms per face — veto. It reads `timings.json` (Build 10), and its measured value is not written to `scores.json`.
    - cost per accepted description (nullable column) — report-only until its source (S2 timings plus the retry and abstention ledger) is wired
 10. Output files.
-    - `scores.json` is the semantic output only. It is deterministic and sorted, with no clock reads. It records τ and the calibration spread, the pooled FPI at τ, N_units, the FPI at the next lower candidate, n_eff, deff, MDE and step levels per step, each interval, the state and reason per hypothesis, and each guardrail value with its role. For the p95 veto it records the state only (`pass`, `fail` or `unscored`) and the sha256 of the `timings.json` it read. A rerun on the same run directory reads the same receipt, so the bytes match.
+    - `scores.json` is the semantic output only, validated against `scores-v1` (S0 Build 9). It is deterministic and sorted, with no clock reads. It records τ and the calibration spread, the pooled FPI at τ, N_units, the FPI at the next lower candidate, n_eff, deff, MDE and step levels per step, each interval, the state and reason per hypothesis, and each guardrail value with its role. For the p95 veto it records the state only (`pass`, `fail` or `unscored`) and the sha256 of the `timings.json` it read. A rerun on the same run directory reads the same receipt, so the bytes match.
     - `timings.json` is written by the run (S6a), never by `score`. `score` reads it and never rewrites it. Its contents are non-replayable and are excluded from the byte-identity rule.
 
 ## RED tests
@@ -92,6 +93,8 @@ Turn per-face search records into the frozen-τ answer: FNIR at the declared FPI
 - A no-face source image carrying an above-threshold spurious name raises the FPI numerator by one and leaves N_units unchanged.
 - A duplicate detection over a mated face with an above-threshold name increases additional spurious names and leaves FPI unchanged.
 - Bootstrap: identical outcomes give Δ = 0 with a degenerate interval, the observed ICC is null, and the verdict is `inconclusive`. Clustered fixture: the PSU interval is wider than the image-level interval.
+- Joint gap: a fixture with two `unavailable` replay faces reports the gap on the remaining faces only, and the two faces appear in the per-arm count, not as misses.
+- A fused record with stage `detected` finishes as `missed`, and the waterfall still counts it under `detected`.
 - Step levels: a fixture whose 95% lower bound is ≤ 0 is not `superior`, even when its 90% lower bound is > 0. A fixture that rejects H1 at the step-1 level reaches H2; one that does not leaves H2 without a state.
 - `decide()` never calls `holm_bonferroni` (a mock that raises fails the test).
 - An H2 leg not named in the manifest raises `UndeclaredH2LegError`.

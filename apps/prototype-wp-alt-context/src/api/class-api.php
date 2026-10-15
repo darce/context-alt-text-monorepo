@@ -966,7 +966,8 @@ class Api {
 					'person_uuid' => (string) ( $person->person_uuid ?? '' ),
 					'name'        => (string) ( $updated_person->name ?? $person->name ),
 					'tags'        => $updated_person->tags ?? array(),
-				)
+				),
+				$tenant_id
 			);
 
 		if ( ! $queued ) {
@@ -1135,9 +1136,10 @@ class Api {
 		string $entity_type,
 		string $entity_key,
 		int $local_revision,
-		array $payload
+		array $payload,
+		?string $tenant_id = null
 	): bool {
-		$tenant_id = $this->get_local_tenant_id();
+		$tenant_id = $tenant_id ?? $this->get_local_tenant_id();
 		if ( '' === $tenant_id ) {
 			return false;
 		}
@@ -1251,7 +1253,7 @@ class Api {
 			),
 			ARRAY_A
 		);
-		if ( ! is_array( $bound_clusters ) ) {
+		if ( ! is_array( $bound_clusters ) || ! empty( $wpdb->last_error ) ) {
 			return false;
 		}
 
@@ -1269,7 +1271,8 @@ class Api {
 				array(
 					'cluster_uuid' => $cluster_uuid,
 					'label'        => $label,
-				)
+				),
+				$tenant_id
 			);
 			if ( ! $queued ) {
 				return false;

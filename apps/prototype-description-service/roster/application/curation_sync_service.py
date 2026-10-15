@@ -59,8 +59,8 @@ class _ChainHead:
     operation_type: str
 
 
-# (tenant, cluster, shared expected base, positive local revision)
-_ChainKey = tuple[UUID, UUID, int, int]
+# (tenant, cluster, explicit intent, shared expected base, positive local revision)
+_ChainKey = tuple[UUID, UUID, UUID, int, int]
 # Lives for exactly one apply_batch call, so a continuation proof never outlives the batch that produced it.
 _BatchLedger = dict[_ChainKey, _ChainHead]
 
@@ -402,7 +402,16 @@ class CurationSyncService:
         local_revision = self._int_value(operation, "local_revision")
         if local_revision <= 0:
             return None
-        return (tenant_id, cluster_id, expected_base_version, local_revision)
+        intent_value = self._payload(operation).get("curation_intent_id")
+        if not isinstance(intent_value, str):
+            return None
+        try:
+            intent_id = UUID(intent_value.strip())
+        except ValueError:
+            return None
+        if intent_id.int == 0:
+            return None
+        return (tenant_id, cluster_id, intent_id, expected_base_version, local_revision)
 
     def _continues_batch_chain(
         self,
@@ -417,8 +426,8 @@ class CurationSyncService:
         if ledger is None or chain_key is None or operation_type != "cluster_person_bound":
             return False
         head = ledger.get(chain_key)
-        # A bind that already advanced the chain is final: a second bind on the same base is a concurrent write.
-        if head is None or head.operation_type == "cluster_person_bound":
+        # Only an applied label proves the intent; a bind consumes that continuation.
+        if head is None or head.operation_type != "cluster_label_updated":
             return False
         return head.version == cluster_backend_version
 

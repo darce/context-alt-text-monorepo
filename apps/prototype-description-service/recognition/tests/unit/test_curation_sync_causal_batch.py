@@ -65,12 +65,17 @@ def _bind_op(cluster_id: UUID, person_uuid: str, *, key: str, base: int) -> Simp
 
 
 def _same_intent_batch(cluster_id: UUID, *, person_uuid: str, base: int, key_prefix: str) -> list[SimpleNamespace]:
-    # One curation intent: label, person create and bind all carry the same expected base.
-    return [
+    from uuid import uuid5
+
+    intent_id = str(uuid5(cluster_id, key_prefix))
+    operations = [
         _label_op(cluster_id, key=f"{key_prefix}-label", base=base),
         _person_created_op(person_uuid, key=f"{key_prefix}-person", base=base),
         _bind_op(cluster_id, person_uuid, key=f"{key_prefix}-bind", base=base),
     ]
+    for operation in operations:
+        operation.payload["curation_intent_id"] = intent_id
+    return operations
 
 
 @pytest.mark.asyncio

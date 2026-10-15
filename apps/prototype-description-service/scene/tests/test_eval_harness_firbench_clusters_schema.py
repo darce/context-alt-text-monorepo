@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import copy
 import json
+import math
+import sys
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
@@ -198,6 +200,64 @@ def test_missing_production_threshold_has_uncut_labels_and_separate_tau() -> Non
     leg["dendrogram_cut"] = {"distance": None, "caption": "no production cut recorded", "labels": None}
     _validate(payload)
     assert leg["acceptance_tau_reference"]["data"]["distance"] == 0.59
+
+
+def test_synthetic_nextafter_tau_reference_roundtrips_without_changing_production_cut(tmp_path: Path) -> None:
+    payload = _payload()
+    leg = payload["legs"][0]
+    production_config = copy.deepcopy(leg["config"])
+    production_cut = copy.deepcopy(leg["dendrogram_cut"])
+    tau = math.nextafter(1.0, math.inf)
+    distance = 1.0 - tau
+    assert tau > 1.0 and distance < 0.0
+    leg["acceptance_tau_reference"]["data"].update(tau=tau, distance=distance)
+    _validate(payload)
+    output = tmp_path / "synthetic-nextafter-clusters.json"
+    output.write_text(json.dumps(payload, allow_nan=False), encoding="utf-8")
+    restored = json.loads(output.read_text(encoding="utf-8"))
+    _validate(restored)
+    reference = restored["legs"][0]["acceptance_tau_reference"]["data"]
+    assert reference == {"tau": tau, "distance": distance, "label": "acceptance tau (not a cluster cut)"}
+    assert restored["legs"][0]["config"] == production_config
+    assert restored["legs"][0]["dendrogram_cut"] == production_cut
+
+
+@pytest.mark.parametrize("field", ["tau", "distance"])
+@pytest.mark.parametrize("value", [-sys.float_info.max, -2, 0, 3, sys.float_info.max])
+def test_acceptance_reference_fields_accept_finite_json_numbers_without_cut_bounds(field: str, value: float) -> None:
+    payload = _payload()
+    payload["legs"][0]["acceptance_tau_reference"]["data"][field] = value
+    _validate(payload)
+
+
+@pytest.mark.parametrize("field", ["tau", "distance"])
+@pytest.mark.parametrize("value", [True, False, float("nan"), float("inf"), -float("inf"), "0.5", None, []])
+def test_acceptance_reference_fields_reject_booleans_nonfinite_and_nonnumbers(field: str, value: Any) -> None:
+    payload = _payload()
+    payload["legs"][0]["acceptance_tau_reference"]["data"][field] = value
+    with pytest.raises(fc.FrameContractError, match=field):
+        _validate(payload)
+
+
+@pytest.mark.parametrize(
+    "section,field,value",
+    [
+        ("config", "similarity_threshold", -math.nextafter(1.0, math.inf)),
+        ("config", "similarity_threshold", math.nextafter(1.0, math.inf)),
+        ("dendrogram_cut", "distance", math.nextafter(0.0, -math.inf)),
+        ("dendrogram_cut", "distance", math.nextafter(2.0, math.inf)),
+        *[
+            (section, field, value)
+            for section, field in [("config", "similarity_threshold"), ("dendrogram_cut", "distance")]
+            for value in [True, False, float("nan"), float("inf"), -float("inf")]
+        ],
+    ],
+)
+def test_production_threshold_and_cut_keep_their_numeric_domains(section: str, field: str, value: Any) -> None:
+    payload = _payload()
+    payload["legs"][0][section][field] = value
+    with pytest.raises(fc.FrameContractError, match=field):
+        _validate(payload)
 
 
 @pytest.mark.parametrize(

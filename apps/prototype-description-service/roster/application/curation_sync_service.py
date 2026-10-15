@@ -51,6 +51,20 @@ class CurationFollowupQueue(Protocol):
     ) -> Any: ...
 
 
+@dataclass(frozen=True)
+class _ChainHead:
+    """Cluster version produced by the latest applied write of one same-batch chain."""
+
+    version: int
+    operation_type: str
+
+
+# (tenant, cluster, shared expected base, positive local revision)
+_ChainKey = tuple[UUID, UUID, int, int]
+# Lives for exactly one apply_batch call, so a continuation proof never outlives the batch that produced it.
+_BatchLedger = dict[_ChainKey, _ChainHead]
+
+
 class CurationSyncService:
     """Apply one curation replay operation for a tenant."""
 
@@ -76,9 +90,13 @@ class CurationSyncService:
         self._job_service = job_service
 
     async def apply_batch(self, tenant_id: str, operations: list[Any]) -> list[CurationSyncResult]:
-        return [await self.apply(tenant_id=tenant_id, operation=operation) for operation in operations]
+        ledger: _BatchLedger = {}
+        return [await self._apply(tenant_id=tenant_id, operation=operation, ledger=ledger) for operation in operations]
 
     async def apply(self, tenant_id: str, operation: Any) -> CurationSyncResult:
+        return await self._apply(tenant_id=tenant_id, operation=operation, ledger=None)
+
+    async def _apply(self, tenant_id: str, operation: Any, ledger: _BatchLedger | None) -> CurationSyncResult:
         normalized_tenant_id = tenant_id.strip()
         if not normalized_tenant_id:
             raise ValueError("tenant_id is required")
@@ -147,7 +165,19 @@ class CurationSyncService:
             )
             return result
 
-        if expected_base_version < cluster_backend_version:
+        chain_key = self._batch_chain_key(
+            tenant_id=tenant_uuid,
+            cluster_id=cluster.id,
+            expected_base_version=expected_base_version,
+            operation=operation,
+        )
+        continues_chain = self._continues_batch_chain(
+            ledger=ledger,
+            chain_key=chain_key,
+            operation_type=operation_type,
+            cluster_backend_version=cluster_backend_version,
+        )
+        if expected_base_version < cluster_backend_version and not continues_chain:
             result = CurationSyncResult(
                 status="conflict",
                 backend_version=cluster_backend_version,
@@ -172,6 +202,11 @@ class CurationSyncService:
             cluster.dismissed_at = None
         cluster.updated_at = datetime.now(tz=UTC)
         await self._session.flush()
+        if ledger is not None and chain_key is not None:
+            ledger[chain_key] = _ChainHead(
+                version=self._version_from_datetime(cluster.updated_at),
+                operation_type=operation_type,
+            )
         acknowledged_version = await self._current_backend_version(tenant_uuid)
 
         result = CurationSyncResult(
@@ -355,6 +390,37 @@ class CurationSyncService:
         )
         latest_updated_at = result.scalar_one_or_none()
         return self._version_from_datetime(latest_updated_at)
+
+    def _batch_chain_key(
+        self,
+        *,
+        tenant_id: UUID,
+        cluster_id: UUID,
+        expected_base_version: int,
+        operation: Any,
+    ) -> _ChainKey | None:
+        local_revision = self._int_value(operation, "local_revision")
+        if local_revision <= 0:
+            return None
+        return (tenant_id, cluster_id, expected_base_version, local_revision)
+
+    def _continues_batch_chain(
+        self,
+        *,
+        ledger: _BatchLedger | None,
+        chain_key: _ChainKey | None,
+        operation_type: str,
+        cluster_backend_version: int,
+    ) -> bool:
+        # Only a bind may ride a same-batch chain, and only while the cluster still sits at the version the chain's
+        # last write produced. Any other write since then moves the version and falls back to the conflict check.
+        if ledger is None or chain_key is None or operation_type != "cluster_person_bound":
+            return False
+        head = ledger.get(chain_key)
+        # A bind that already advanced the chain is final: a second bind on the same base is a concurrent write.
+        if head is None or head.operation_type == "cluster_person_bound":
+            return False
+        return head.version == cluster_backend_version
 
     def _resolve_cluster_uuid(self, operation: Any) -> UUID:
         payload = self._payload(operation)

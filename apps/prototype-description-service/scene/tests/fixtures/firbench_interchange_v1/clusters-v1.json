@@ -212,7 +212,17 @@
             ]
           }
         }
-      ]
+      ],
+      "vector_coverage": {
+        "label": "diagnostics conditional on available GT vectors",
+        "conditional": true,
+        "n_gt_faces": 4,
+        "n_named_gt_faces": 4,
+        "n_embedded_gt_faces": 4,
+        "n_missing_gt_faces": 0,
+        "n_embedded_named_faces": 4,
+        "n_detector_only_rows": 0
+      }
     }
   ]
 }

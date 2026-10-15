@@ -775,7 +775,8 @@
             }
           },
           "minItems": 1
-        }
+        },
+        "vector_coverage": {"$ref": "#/$defs/vector_coverage"}
       },
       "description": "All contained evidence belongs to this leg_key and one embedding space [EMB-01]. Repeated leg keys are a producer error. Reference labels are written by reference_threshold_cluster (singleton/noise = -1), never recomputed by S5. Labels are unavailable/not_evaluated with a reason when no assignments were produced. No real names, pixels, image paths or crops are wire fields.",
       "if": {"properties": {"config": {"properties": {"similarity_threshold": {"const": null}}}}},
@@ -798,6 +799,22 @@
           }
         }
       }
+    },
+    "vector_coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "conditional", "n_gt_faces", "n_named_gt_faces", "n_embedded_gt_faces", "n_missing_gt_faces", "n_embedded_named_faces", "n_detector_only_rows"],
+      "properties": {
+        "label": {"const": "diagnostics conditional on available GT vectors"},
+        "conditional": {"const": true},
+        "n_gt_faces": {"type": "integer", "minimum": 0},
+        "n_named_gt_faces": {"type": "integer", "minimum": 0},
+        "n_embedded_gt_faces": {"type": ["integer", "null"], "minimum": 0},
+        "n_missing_gt_faces": {"type": ["integer", "null"], "minimum": 0},
+        "n_embedded_named_faces": {"type": ["integer", "null"], "minimum": 0},
+        "n_detector_only_rows": {"type": ["integer", "null"], "minimum": 0}
+      },
+      "description": "Optional per-leg diagnostic, conditional on usable embedded GT vectors. Ngt and Nnamed come from the frame inventory; the four nullable counts are null when the leg cache is absent, never fabricated as 0. Count identities and arithmetic (embedded + missing = Ngt) are enforced by production IO, not by this stdlib schema."
     }
   }
 }

@@ -4,11 +4,42 @@
   "frame_id": "fixture-v1",
   "admissibility": "development",
   "boundary_semantics": "v2",
+  "n_psu": 5,
+  "min_n_independent": 50,
+  "cell_floor_n_independent": 30,
+  "p_d": 0.15,
+  "power": 0.8,
   "planning_icc": 0.1,
   "design_effect": 2.0,
   "n_eff": 5.0,
   "n_units": 10,
   "n_nonmated_eff": 10,
+  "icc_sensitivity": [
+    {
+      "planning_icc": 0.05,
+      "design_effect": 1.5,
+      "n_eff": 6.666666666666667,
+      "n_nonmated_eff": 10.0,
+      "primary_resolvable": false,
+      "hypotheses": [{"id": "H1", "scored": false, "mde": null, "n_eff": 6.666666666666667}]
+    },
+    {
+      "planning_icc": 0.1,
+      "design_effect": 2.0,
+      "n_eff": 5.0,
+      "n_nonmated_eff": 10.0,
+      "primary_resolvable": false,
+      "hypotheses": [{"id": "H1", "scored": false, "mde": null, "n_eff": 5.0}]
+    },
+    {
+      "planning_icc": 0.2,
+      "design_effect": 3.0,
+      "n_eff": 3.3333333333333335,
+      "n_nonmated_eff": 10.0,
+      "primary_resolvable": false,
+      "hypotheses": [{"id": "H1", "scored": false, "mde": null, "n_eff": 3.3333333333333335}]
+    }
+  ],
   "primary": {
     "fpir_target": 0.01,
     "resolvable": false,
@@ -84,8 +115,16 @@
   ],
   "waterfall": [
     {
+      "leg_key": "sface__native__ab12cd__cv4.10.0__ort1.18.0",
+      "arm": "native",
       "stage": "embedded",
       "count": 3
+    },
+    {
+      "leg_key": "auraface__native__ef34ab__cv4.10.0__ort1.18.0",
+      "arm": "native",
+      "stage": "embedded",
+      "count": 7
     }
   ],
   "legs": [

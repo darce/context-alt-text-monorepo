@@ -11,11 +11,17 @@
     "frame_id",
     "admissibility",
     "boundary_semantics",
+    "n_psu",
+    "min_n_independent",
+    "cell_floor_n_independent",
+    "p_d",
+    "power",
     "planning_icc",
     "design_effect",
     "n_eff",
     "n_units",
     "n_nonmated_eff",
+    "icc_sensitivity",
     "legs",
     "primary",
     "verdict",
@@ -31,11 +37,27 @@
     "frame_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
     "admissibility": {"enum": ["diagnostic", "development", "confirmatory"]},
     "boundary_semantics": {"enum": ["legacy_v1", "v2"]},
-    "planning_icc": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
-    "design_effect": {"type": "number", "exclusiveMinimum": 0},
-    "n_eff": {"type": "number", "minimum": 0},
-    "n_units": {"type": "integer", "minimum": 0},
-    "n_nonmated_eff": {"type": "number", "minimum": 0},
+    "n_psu": {"type": "integer", "minimum": 0, "description": "Distinct PSU ids in the union of scored mated GT faces and nonmated source units; count shared PSUs once, never sum the two pool counts or substitute an image count."},
+    "min_n_independent": {"type": "integer", "minimum": 1, "description": "Global independent-PSU floor actually used from the manifest (project policy 50). Check before FPIR eligibility or intervals; this floor alone proves no power, MDE adequacy, resolvability or exhaustive GT."},
+    "cell_floor_n_independent": {"type": "integer", "minimum": 1, "description": "Pair-cell independent-PSU floor actually used from the manifest (project policy 30), separate from the global floor."},
+    "p_d": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1, "description": "Manifest discordance design assumption used for MDE (project policy 0.15), not observed discordance; no implicit default."},
+    "power": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1, "description": "Manifest target power used for MDE (project policy 0.80); no implicit default. Computed MDE never rewrites the sealed practical margin."},
+    "planning_icc": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1, "description": "Manifest design assumption, not observed ICC. Only this planning ICC feeds the verdict; sensitivity rows are report-only."},
+    "design_effect": {"type": "number", "exclusiveMinimum": 0, "description": "Mated-search design effect at planning_icc: 1 + (Mtilde - 1) * planning_icc, where Mtilde = sum(m_psu^2) / sum(m_psu) over scored mated GT-face/search counts per PSU. Never use all-GT-face or image-count sizes as a proxy for this estimand."},
+    "n_eff": {"type": "number", "minimum": 0, "description": "Effective scored mated searches = raw scored mated GT-face/search count / mated-search design_effect. FNIR and paired power use mated support, including undetected mates, never the nonmated source-unit count or all-GT/image proxy."},
+    "n_units": {"type": "integer", "minimum": 0, "description": "Fixed detector-independent nonmated source-unit count from exhaustive GT: one background unit per frame image plus independently verified nonmated GT-face units. Unresolved identities and duplicate detections add no units."},
+    "n_nonmated_eff": {"type": "number", "minimum": 0, "description": "n_units divided by the design effect of those nonmated source units' own PSU sizes at planning_icc; not the mated-search design_effect or all-GT/image-count proxy. Used for FPIR resolvability, never as fractional binomial n."},
+    "icc_sensitivity": {
+      "type": "array",
+      "minItems": 3,
+      "description": "Report-only design sensitivity at the three declared planning ICCs in ascending order (project policy 0.05/0.10/0.20; MCP16733). Mated-search design_effect/n_eff and nonmated source-unit n_nonmated_eff use their own PSU structures. primary_resolvable is the FPIR support check, not overall eligibility. Each hypothesis reports its own paired mated support and computed MDE, distinct from the sealed margin. Producers enforce arithmetic, distinct hypothesis ids, manifest binding and alignment with the primary planning row; the schema checker cannot compare fields. These rows never select the verdict ICC or replace exhaustive GT, floors or guardrails.",
+      "prefixItems": [
+        {"$ref": "#/$defs/iccSensitivity", "properties": {"planning_icc": {"const": 0.05}}},
+        {"$ref": "#/$defs/iccSensitivity", "properties": {"planning_icc": {"const": 0.10}}},
+        {"$ref": "#/$defs/iccSensitivity", "properties": {"planning_icc": {"const": 0.20}}}
+      ],
+      "items": false
+    },
     "legs": {
       "type": "array",
       "minItems": 1,
@@ -194,8 +216,11 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["stage", "count"],
+        "required": ["leg_key", "arm", "stage", "count"],
+        "description": "Stage counts over mated GT faces, attributed to this leg and pipeline arm (not SamplingArm). Producers enforce unique (leg_key, arm, stage) rows and no unaligned row for fused legs. Unavailable arm evidence remains separate from stage counts; never impute unavailable attribution faces as misses.",
         "properties": {
+          "leg_key": {"type": "string", "minLength": 1},
+          "arm": {"enum": ["native", "gt_crop_redetect", "cached_yunet_landmark_replay"]},
           "stage": {"enum": ["missed", "detected", "unaligned", "embedded", "unavailable", "wrong_identity", "rejected", "correct"]},
           "count": {"type": "integer", "minimum": 0}
         }
@@ -203,6 +228,34 @@
     }
   },
   "$defs": {
+    "iccSensitivity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["planning_icc", "design_effect", "n_eff", "n_nonmated_eff", "primary_resolvable", "hypotheses"],
+      "properties": {
+        "planning_icc": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+        "design_effect": {"type": "number", "exclusiveMinimum": 0},
+        "n_eff": {"type": "number", "minimum": 0},
+        "n_nonmated_eff": {"type": "number", "minimum": 0},
+        "primary_resolvable": {"type": "boolean"},
+        "hypotheses": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/sensitivityHypothesis"}}
+      }
+    },
+    "sensitivityHypothesis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "scored", "mde", "n_eff"],
+      "description": "Paired mated-search n_eff for this hypothesis at the row's ICC, computed from its paired mated PSU support, never all GT or nonmated units. scored describes MDE availability, not hypothesis rejection or reachability; even an inconclusive hypothesis may have a computed MDE. Null MDE is allowed only when explicitly unscored.",
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "scored": {"type": "boolean"},
+        "mde": {"type": ["number", "null"], "minimum": 0},
+        "n_eff": {"type": "number", "minimum": 0}
+      },
+      "if": {"properties": {"scored": {"const": true}}, "required": ["scored"]},
+      "then": {"properties": {"mde": {"type": "number", "minimum": 0}}},
+      "else": {"properties": {"mde": {"const": null}}}
+    },
     "rateResult": {
       "type": "object",
       "additionalProperties": false,

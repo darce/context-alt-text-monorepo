@@ -9,6 +9,7 @@
 > **Revision:** 1
 > **Review Coverage Target:** frontend + one contract read; PHP/service only if slice S1 shows the producer emits a score for an empty reference set
 > **Depends on:** WBTRUST-4 merged (the reference strip adds one cached request per visible card; its budget must exist first)
+> **Executor:** `claude-remote` `claude-haiku-5-5`, effort `xhigh` for implementation and grunt work (operator order 2026-10-15). Brief each slice separately (1–3 files), inline the slice text plus codemap snippets; if the write-enabled remote Claude harness is denied or unavailable, record a blocker and ask the operator — no silent fallback to another model.
 > **Prior art:** [scope](../../scopes/workbench-curation-trust-scope.md) (R1–R3), [UX-map evaluation](../../assessments/current/workbench-curation-trust-uxmap-evaluation-2026-10-15.md) (A1–A3, B1–B2, B6, C1, D1), [FIR report](../../../benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html), [workbench-review-queue map](../../ux-maps/workbench-review-queue.md), [workbench-2pane map](../../../apps/prototype-wp-alt-context/docs/ux-maps/workbench-2pane.uxmap.json), [GPUFLOW-3 plan](GPUFLOW-3-demo-triage-identity-gpu-lifecycle-and-unified-queue-task-plan.md) (queue unification, HAI-17 gate origin)
 > **Carried findings (by ID only):** none recorded yet; query `review_findings(list, task_ref="WBTRUST-1")`
 

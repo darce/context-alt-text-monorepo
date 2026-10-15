@@ -90,6 +90,8 @@ Wave C (after WBTRUST-3):           WBTRUST-2
 
 `WBTRUST-4` goes first so the 429 storm stops contaminating the repro for `WBTRUST-1/3`. `WBTRUST-2` reuses the naming control that `WBTRUST-3` settles. `WBTRUST-1` and `WBTRUST-2` both touch `ReviewQueue.tsx`; they are sequential by design.
 
+**Executor (operator order 2026-10-15):** implementation and grunt work run on `claude-remote` `claude-haiku-5-5`, effort `xhigh`; each slice is briefed separately (1–3 files). If that write-enabled harness is denied or unavailable, record a blocker and ask the operator; do not fall back silently.
+
 ## Success criteria
 
 1. A suggestion card never shows a percent without ≥ 1 rendered reference thumbnail; the contract test fails on the old behavior.

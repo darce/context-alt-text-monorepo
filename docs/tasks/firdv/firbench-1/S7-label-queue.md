@@ -24,6 +24,9 @@ The operator labels real occlusion from pixels. Captions only choose what goes i
    - Images are embedded as base64. No detector boxes, no captions, no model names appear in the HTML.
    - Existing confirmed GT boxes may be shown only when the queue entry carries `show_confirmed_boxes: true`.
    - Blind repeats (≈ 10%) are re-inserted under fresh item ids at shuffled positions, with the mapping held only in the export's hidden block. Gold items are inserted the same way.
+   - Annotator-visible content carries no repeat or gold status. No visible text, label, attribute value or class name in the HTML contains `repeat`, `gold` or `blind`. The item header shows position and progress only. Repeat and gold roles are internal states of the export.
+   - QC block: the queue file carries a `qc` block written before any import. It holds the gold share per queue, the per-field percent-agreement and kappa floors for blind repeats, and the per-annotator gold-accuracy floor. Each value is null until the operator sets it (task plan Open questions).
+   - Gold composition and provenance: gold items are known-answer items whose answers come from an author independent of the labelling operator. Reuse the checks of `pilot_draw.GoldItem` (`scripts/eval_harness/pilot_draw.py:106-137`: independent SME authorship and non-caption answer source) rather than writing new ones.
    - Keyboard map, as in the L1 screen of the task plan:
      - occluder keys: `m` mask, `s` sunglasses, `h` hand, `o` object, `x` mixed, `n` none, `?` cannot tell
      - `v` cycles region visibility (eyes, nose, mouth): visible, occluded, out-of-frame, uncertain
@@ -39,6 +42,9 @@ The operator labels real occlusion from pixels. Captions only choose what goes i
    - `repeat_agreement(export)` gives per-field percent agreement and Cohen's kappa over the blind repeats.
    - `gold_accuracy(export, gold)`.
    - `union_delta_counts(export)` returns the inputs `union_adjudication.detector_gap_bound` expects.
+   - QC gate: `to_face_instances` and the import are refused with `FrameContractError` when any `qc` value is null, and when any field agreement, kappa or per-annotator gold accuracy is below its floor. A below-floor set is not imported as labels. Its item ids go to a repair list, and the annotator repairs and resubmits that set.
+   - Every row carries `annotation_tier` (`a` for occluder labels with missed-face additions; `b` for exhaustive pixel labelling). Tier-(a) rows are never counted as exhaustive.
+   - Process observation (MEAS-29) is an operator task, not this lane's: the operator observes a sample of tier-(a) labelling in context and records what the sample does and does not establish, before any tier-(a) label feeds analysis. The export carries `observation_ref` (string or null); the importer stores it and does not verify it.
 
 ## RED tests (synthetic numpy images only)
 
@@ -48,6 +54,9 @@ The operator labels real occlusion from pixels. Captions only choose what goes i
 - Import round-trip: a synthetic export maps to fir-occ-v1 rows. A skip stays a nonresponse row. A duplicate group propagates.
 - Kappa on a constructed export matches a hand-computed value.
 - Union-delta counts feed `detector_gap_bound` without error.
+- The rendered HTML contains no `repeat`, `gold` or `blind` token in visible text, labels, attributes or class names.
+- Import with any null `qc` value raises `FrameContractError`. An export with a repeat-agreement kappa below its floor is refused and its item ids go to the repair list.
+- `to_face_instances` rows carry `annotation_tier`; a tier-(a) export never yields rows marked exhaustive.
 
 ## Done when
 

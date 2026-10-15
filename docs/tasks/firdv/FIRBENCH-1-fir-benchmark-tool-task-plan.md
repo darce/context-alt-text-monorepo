@@ -52,6 +52,7 @@ Binding defaults the S0 decision manifest must carry (values live in the manifes
 | Family α | 0.05 one-sided, fixed-order Holm: H1 (AuraFace superior to SFace) first; H2 (the in-house leg named in the sealed manifest non-inferior to InsightFace, δ = 0.05) only if H1 is rejected. Decisions use intervals only; no p-values. |
 | Guardrails | Veto: per-cohort FPIR, false names per 1k mentions, worst pair-cell FNIR floor, p95 ms/face. Report-only until wired: cost per accepted description. Each role is sealed in the manifest. A null or unscored veto gives `inconclusive` (`required_guardrail_unscored`). |
 | Threshold τ | identity-disjoint calibration folds, pooled, frozen before any test read. τ is the smallest threshold whose pooled calibration FPI (a count of non-mated source units with a false accept) is ≤ ⌊fpir_target × N⌋, N being the pooled calibration source-unit count (S3 Build 3). |
+| Cluster cut | production similarity threshold `s` recorded in the run manifest; dendrogram cut at cosine distance d = 1 − s. τ appears only as a reference line at d = 1 − τ, labelled acceptance τ, never as a cluster cut (S4 Build 5). |
 | Verdict states | superior · non-inferior · inconclusive · guardrail-vetoed · unratified |
 
 ## Current State Analysis (verified 2026-10-14, codemap + `wc -l`)
@@ -81,16 +82,16 @@ Binding defaults the S0 decision manifest must carry (values live in the manifes
 
 | Slice | New file(s) | Job |
 | --- | --- | --- |
-| S0 contract | `firbench_contract.py`, `benchmarks/manifests/fir-bench-decision-v1.json` | Decision-manifest schema: estimand, δ, α split, interval method, guardrails, harm direction, disconfirmers and their dates, seal hash. Frame registry with admissibility. Null means unratified. Frame-read tokens live in a local-only unseal ledger; a sealed frame is read once per token. Unseal refusal. |
+| S0 contract | `firbench_contract.py`, `benchmarks/manifests/fir-bench-decision-v1.json`, interchange schemas and fixtures | Decision-manifest schema: estimand, δ, α split, interval method, guardrails, harm direction, disconfirmers and their dates, seal hash, planning ICC, fold protocol, gallery lineage. Frame registry with admissibility. Null means unratified. Frame-read tokens live in a local-only unseal ledger; a sealed frame is read once per token. Unseal refusal. Shared enums (`SearchStage`, `IdentityStatus`, `SamplingArm`, `FoldRole`, `AlignmentMode`), versioned `frame-v1`, `face-search-record-v1`, `scores-v1`, `clusters-v1`, `comparison-v1` schemas, and the entry-point signatures fixed before batch B. |
 | S1 frames | `firbench_frames.py` | Load population queues. Build PSU components (union-find over image–identity, duplicate, session and synthetic-sibling edges), then identity-disjoint folds over whole components. Build the immutable non-mated source-unit inventory (non-mated GT faces plus one background unit per frame image; never detector-derived). Estimate deff and n_eff, emit admissibility. |
 | S2 legs | `firbench_legs.py` | In-process legs `sface` and `auraface` built from pinned manifests by an offline factory (not the shared runtime), and `insightface` (judge, fused: no separate alignment stage). Arms `native`, `gt_crop_redetect` (GT box crop re-detection) and `cached_yunet_landmark_replay` (cached YuNet landmarks; no human landmarks exist). Attribution arms apply to `sface` and `auraface` only. Per-leg cache keyed by the model-manifest fingerprint (weights sha, preprocessing, OpenCV/ORT). Raw detections are kept, and ledger rows are written per GT face. |
 | S3 score | `firbench_score.py` | FNIR-vs-FPIR curves on the fixed non-mated source-unit denominator, calibration-fold τ (smallest feasible on the pooled calibration pool of source units; calibration-leak refusal), paired PSU cluster intervals, fixed-order step decision on intervals only, primary-FPIR and MDE eligibility, pair cells, stage waterfall, guardrails (veto or report-only), versioned boundary semantics |
-| S4 clusters | `firbench_clusters.py` | Cluster metrics, mutual-kNN, dendrogram at τ, PCA spectra, UMAP diagnostic coordinates and companions |
+| S4 clusters | `firbench_clusters.py` | Cluster metrics, mutual-kNN, pure-numpy reference threshold clustering (`reference_threshold_cluster`), dendrogram cut at the production threshold s with τ as a reference line, PCA spectra, UMAP diagnostic coordinates and companions. The production loader `prepare_cluster_caches` is DB-coupled and is not called. |
 | S5 report | `firbench_report.py` | Static HTML (light/dark, no network, keyboard accessible, glyph plus colour) plus JSON/CSV, with a private-path guard |
 | S6a CLI | `firbench_cli.py`, `mk/evals.mk` | `run` and `score` (batch B, needed by the AE-12 tracer) |
 | S6b CLI | same files, after S6a merges | `report`, `compare`, `unseal` |
 | S7 label queue | `benchmarks/tools/fir_occ_label_queue.py` (allowlisted), `eval_harness/fir_occ_labels.py` | Generate the private single-file HTML queue. Import and validate exports into the fir-occ-v1 face-instance schema. Union-delta mode for T-14. |
-| S8 ux-map | `benchmarks/ux-maps/fir-bench.uxmap.json`, `.md`, `.gitignore` | Screen/zone/state/flow inventory, rendered with `UX_MAPS_DIR=benchmarks/ux-maps python3 apps/prototype-wp-alt-context/docs/ux-maps/render_ux_maps.py fir-bench`, then critique |
+| W2 ux-map | `benchmarks/ux-maps/fir-bench.uxmap.json`, `fir-bench.md` (rendered by the coordinator's canvas CLI; the `.gitignore` allowlist line already exists) | Screen/zone/state/flow inventory, rendered with `ux-map render --path benchmarks/ux-maps/fir-bench.uxmap.json --format markdown`, then critique |
 | S9 acceptance | `firbench_selftest.py`, `mk/evals.mk` target `fir-bench-acceptance` | Seeded clustered simulator (PSU sizes, ICC, per-leg error rates, planted effects by cell and stage), A/A and planted-effect Monte Carlo, determinism and replay checks. Runs the completion evals below. |
 
 Tests: `apps/prototype-description-service/scene/tests/test_eval_harness_firbench_*.py`, synthetic vectors and identifiers only.
@@ -171,11 +172,12 @@ S6 COMPARE ─ B "auraface preproc fix" d4e5f6 vs A baseline a1b2c3 · same fram
 ```
 
 ```
-S7 CLUSTERS ─ per leg, own space only · τ-cut · noise policy: singletons stay unassigned
+S7 CLUSTERS ─ per leg, own space only · s-cut (d = 1 − s) · noise policy: singletons stay unassigned
                   pair P/R     B³ P/R      merges  frags  unknown-absorbed  order-stab
    sface-128      .##/.##      .##/.##     ##      ##     ##                .##
    auraface-512   .##/.##      .##/.##     ##      ##     ##                .##
- Dendrogram (average, cosine) cut at τ .41 · cophenetic r .##       PCA spectrum ▇▅▃▂▁…
+ Dendrogram (average, cosine) cut at s .## (d = 1 − s) · acceptance τ .41 line at d .59, not a cluster cut · cophenetic r .##
+ PCA spectrum ▇▅▃▂▁… (variance only; retained components ##)
  UMAP — DIAGNOSTIC PROJECTION · n_neighbors 15 · min_dist .1 · seed 7 · distances not meaningful
  [table alternative] [select face → nearest neighbours in original space]     (VIZ-18/19)
 ```
@@ -191,7 +193,7 @@ S8 FRAMES & POWER ─ admissibility and what each frame can claim
 ```
 
 ```
-L1 OCCLUSION LABEL QUEUE (private single-file HTML) ─ item 37/150 · blind repeat ○ · gold ○
+L1 OCCLUSION LABEL QUEUE (private single-file HTML) ─ item 37/150
  [full image, no detector boxes, no caption shown]
  face 1  box ✓  occluder: [m]ask [s]unglasses [h]and [o]bject [x]mixed [n]one [?]can't tell
          regions: eyes ○ nose ○ mouth ○ (v cycles visible/occluded/out-of-frame/uncertain)
@@ -225,12 +227,14 @@ L1 OCCLUSION LABEL QUEUE (private single-file HTML) ─ item 37/150 · blind rep
 
 - Per-lane VM test command: `uv run --directory apps/prototype-description-service --locked --extra dev pytest scene/tests/test_eval_harness_firbench_<slice>.py -q`.
 - Every slice starts RED: tests committed and failing for the stated reason before any implementation.
-- `make lint-task-plans` passes. The renderer `--check` passes for `fir-bench`. Critique has no high findings.
+- `make lint-task-plans` passes. The canvas CLI renders `fir-bench` (`ux-map render`), and the coordinator critique has no high findings.
 
 ## Open questions
 
 - Minimum independent PSUs in a frame before H1 or H2 can reject, and the list of annotations a frame must carry before a verdict is eligible. Neither has a value yet. The manifest needs both before seal (S3 Build 6, eligibility).
 - Whether a duplicate detection that overlaps a mated GT face (not its one-to-one match) should open its own non-mated source unit. Until decided, its above-threshold names count only as additional spurious names (S3 Build 2).
+- Manifest values the operator sets before seal: `fold_protocol` (k and seed), `gallery_lineage.split_seed`, and `interval.n_boot` and `interval.seed`. The committed manifest carries null, and seal refuses null (S0 Build 2). `planning_icc` is 0.10 as a working value; the operator confirms it.
+- Queue QC values before the first label import: the gold share per queue, the per-field percent-agreement and kappa floors for blind repeats, and the per-annotator gold-accuracy floor. They are null in the queue's `qc` block, and the importer refuses null values (S7 Build 1 and 2).
 
 ## Completion evals (definition of done for the tool)
 
@@ -265,7 +269,7 @@ Lane-ready briefs: [firbench-1/README.md](firbench-1/README.md).
 | W3 batch A | gpt-6.1-sol xhigh standard | S0 contract |
 | W3 batch B | gpt-6.1-sol xhigh standard, parallel | S1, S2, S3, S6a, S7 |
 | Gate | coordinator, VM | AE-12 tracer run |
-| W3 batch C | gpt-6.1-sol xhigh standard, parallel | S4, S5, S6b, S9 |
+| W3 batch C | gpt-6.1-sol xhigh standard | S4 and S6b in parallel; then S5 (after S4) and S9 (after S6b). `mk/evals.mk` is edited serially: S6a, S6b, S9 |
 | W4 | one harmonizing review (sol xhigh) and one fix wave | AE-1 to AE-12 green, merge on green |
 | W5 | first VM run | Golden-150 (diagnostic) and the fir-occ development frames, three legs, private report |
 

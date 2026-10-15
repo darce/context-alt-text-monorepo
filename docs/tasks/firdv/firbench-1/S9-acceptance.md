@@ -1,11 +1,11 @@
 # S9 · Simulator and acceptance suite (`fir-bench-acceptance`)
 
-- **Wave:** W3 batch C · **Model:** gpt-6.1-sol xhigh, standard tier · **Depends on:** S0–S3 merged
+- **Wave:** W3 batch C · **Model:** gpt-6.1-sol xhigh, standard tier · **Depends on:** S0–S3 and S6b merged
 - **Owned paths:**
   - `apps/prototype-description-service/scripts/eval_harness/firbench_selftest.py`
   - `apps/prototype-description-service/scene/tests/fixtures/firbench_sim_v1.json`
   - `apps/prototype-description-service/scene/tests/test_eval_harness_firbench_acceptance.py`
-  - Plus one make target `fir-bench-acceptance` appended to `mk/evals.mk`. Coordinate through the merge order: S6b merges first.
+  - Plus one make target `fir-bench-acceptance` appended to `mk/evals.mk` after the S6b targets. `mk/evals.mk` is edited serially (S6a, then S6b, then this lane); S6b is merged before this lane starts (README dispatch).
 
 ## Goal
 

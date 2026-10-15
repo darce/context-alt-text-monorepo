@@ -18,10 +18,10 @@ Turn a frame source into the units every interval depends on. The independent un
 
 ## Build
 
-1. `FrameSource` records: `ImageUnit(image_id, sha256, arm, inclusion_probability | None, duplicate_group | None, session_id | None, synthetic_parent_id | None)` and `GtFace(face_id, image_id, box, identity_status, identity_id | None)`. `identity_status` is `named`, `unknown` or `unresolved`. `session_id` and `synthetic_parent_id` are optional; a missing field adds no edge.
+1. `FrameSource` records: `ImageUnit(image_id, sha256, sampling_arm: SamplingArm, inclusion_probability | None, duplicate_group | None, session_id | None, synthetic_parent_id | None)` and `GtFace(face_id, image_id, box, identity_status: IdentityStatus, identity_id | None, cohort | None)`. `cohort` holds `sex`, `age_band` and `origin` when the frame carries them, each a string or None. `session_id` and `synthetic_parent_id` are optional; a missing field adds no edge. `inclusion_probability` is set on the `probability` sampling arm and None on `challenge`.
 2. Loaders: `load_golden_manifest(path)`, `load_corpus_manifest(path)`, `load_population_draft(path)`. Each validates structure at load time and raises `FrameContractError` with the offending key [rg-008, repo rule].
 3. `build_psu_components(images, faces) -> dict[image_id, psu_id]`: union-find over one graph whose edges are: image–identity for named faces; exact-duplicate groups; shared `session_id`; and `synthetic_parent_id`, which joins a synthetic sibling to its parent image. Unknown and unresolved faces add no identity edge, so an unknown face in a shared image joins nothing; the image still joins through its named identities. An image with no GT face is its own component. psu_id is the sorted smallest image_id in the component, so it is deterministic. Components are computed before any fold is assigned.
-4. Sizes and design effect, all in face counts.
+4. Sizes and design effect, all in face counts. Every design effect and n_eff uses the manifest `planning_icc` (S0 Build 2).
    - PSU size m = number of GT faces in the component. Components with m = 0 are excluded from the size statistics below and still resample as their own PSU.
    - `size_weighted_mean(psu_sizes)`: M̃ = Σm² / Σm over components with m ≥ 1. This is the face-count M̃.
    - `design_effect(psu_sizes, icc)`: 1 + (M̃ − 1)·icc, with the face-count M̃.
@@ -35,8 +35,8 @@ Turn a frame source into the units every interval depends on. The independent un
    - Each unit carries the fold of its component.
    - The inventory is never derived from detector output, and the function takes no detector argument.
    - `unresolved` faces are refused as non-mated; passing one raises `FrameContractError`.
-   - Returns the units, `N_units` (their count) and `n_nonmated_eff` = N_units / deff of the units' PSU structure, computed with Build 4.
-8. `Frame` (frozen): spec, images, faces, psu map, folds, `identity_fold` (identity_id → fold), `gallery_sha256` per fold, deff at the manifest ICC, n_eff, `N_units` and `n_nonmated_eff` (from Build 7), per-arm counts. Per rotation, each fold has a role: calibration folds are `fit`, the held-out fold is `test`. Arms stay separate; the probability arm carries inclusion probabilities for IPW in S3. S3 reads `n_nonmated_eff` to decide whether the primary FPIR is resolvable; a frame does not decide admissibility by itself.
+   - Returns a `NonMatedPool` (frozen): `units` (tuple of `NonMatedUnit`, each with `unit_id`, `fold`, `psu_id`, `cohort` or None for background units), `n_units` (their count) and `n_nonmated_eff` = n_units / deff of the units' PSU structure, computed with Build 4 at `planning_icc`.
+8. `Frame` (frozen): spec, images, faces, psu map, folds, `identity_fold` (identity_id → fold), `gallery_sha256` per fold, deff at `planning_icc`, n_eff, `N_units` and `n_nonmated_eff` (from Build 7), per-`SamplingArm` counts. Per rotation, each fold has a `FoldRole`: calibration folds are `fit`, the held-out fold is `test`. Sampling arms stay separate; the `probability` arm carries inclusion probabilities for IPW in S3. S3 reads `n_nonmated_eff` to decide whether the primary FPIR is resolvable; a frame does not decide admissibility by itself. `Frame` is written as `frame-v1` (S0 Build 9).
 
 ## RED tests
 
@@ -51,7 +51,8 @@ Turn a frame source into the units every interval depends on. The independent un
 - Folds are identity-disjoint, and a PSU is never split across folds.
 - The non-mated pool is identical with and without any detector output passed in (the function takes none). A no-face image contributes exactly one background unit.
 - Loader rejects a manifest missing an identity field.
-- Same inputs and seed give byte-identical `Frame` JSON.
+- Same inputs and seed give byte-identical `Frame` JSON, and that JSON validates against `frame-v1`.
+- With `planning_icc` = 0.10 the design effect uses it, and changing only the observed ICC from `estimate_icc` leaves `deff` and `n_eff` unchanged.
 
 ## Done when
 

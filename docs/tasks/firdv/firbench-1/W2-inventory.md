@@ -31,9 +31,9 @@ Pin every fact the implementation lanes would otherwise guess. Each row gives th
    - faces with zero identity on exhaustively annotated images, and identities with ≥ 2 appearances
    - the non-mated source-unit count (non-mated GT faces plus one background unit per image) and the implied FPIR resolvability (3/n_nonmated_eff)
    - the current 207-probe non-mated set's provenance file
-6. **Reused API signatures**: `def` lines, with file:line, for every symbol named under "Read first" in the S0–S7 briefs. Flag any symbol that does not exist.
+6. **Reused API signatures**: `def` lines, with file:line, for every symbol named under "Read first" in the S0–S7 briefs. Flag any symbol that does not exist. Include `prepare_cluster_caches` (`discovery_pipeline.py`), `CentroidDiscovery._find_best_centroid_match` and its `best_similarity = 0.0` line (`recognition/application/discovery/centroid.py`), and `pilot_draw.GoldItem`.
 7. **Historical artifacts for AE-6 legacy parity**: the path and sha256 of the artifact that holds `face_unknown_rejection` 204/207, and of the Golden-150 FIR-8 bench output, if present on the VM.
-8. **Dependencies**: whether `umap-learn`, `scipy` and `hdbscan` import in the service env (`python -c 'import umap'` and so on).
+8. **Dependencies**: whether `umap-learn`, `scipy` and `hdbscan` import in the service env (`python -c 'import umap'` and so on). Also whether `insightface` imports under the bench extra with the eval flag set: `ACX_EVAL_BENCH=1 uv run --directory apps/prototype-description-service --locked --extra dev --extra bench python -c 'import insightface'`, and the same command without `--extra bench`, which must fail. Record the `bench` extra's pins and the buffalo_l model root.
 9. **Renderer**: whether `UX_MAPS_DIR=<tmpdir with a copy of febt-1-job-error-states.uxmap.json> python3 apps/prototype-wp-alt-context/docs/ux-maps/render_ux_maps.py --check` works from an external directory. Use a temp dir and delete it after.
 
 ## Rules

@@ -25,10 +25,13 @@ One command creates an immutable run, and one command scores it. This is the ent
    - Refuses a sealed frame unless an unspent `UnsealToken` exists in the unseal ledger whose `run_id` equals the basename of `--out`, whose `decision_sha256` equals the sha of `--decision`, and whose frame bytes match. Each sealed input read passes `require_frame_read_allowed` (S0 Build 7). Without that token the run raises `SealedFrameReadError` and writes nothing.
    - Refuses a `canary` leg on a sealed frame (`CanaryInSealedRunError`).
    - The run_dir must pass `require_private_output_path`.
-   - Writes the manifest (head sha, decision sha, frame spec, leg keys, seeds, token id when sealed) before any leg runs.
-   - Writes `timings.json` once, at the end of the run, as the attempt and timing receipt. It is never rewritten.
+   - Writes the manifest (head sha, decision sha, frame spec, leg keys, seeds, token id when sealed, and the production similarity threshold `s` from `settings.similarity_threshold` in a `firbench` block) before any leg runs.
+   - Writes `timings.json` once, at the end of the run, as the attempt and timing receipt, from the per-face milliseconds S2 returns (keys are `timing_receipt_ref`). It is never rewritten.
 2. `... score <run_dir>` writes `scores.json` (S3 Build 10). It reads `timings.json` for the p95 veto and never rewrites it. Re-scoring an already-scored run with a different decision sha refuses.
-3. Make targets `fir-bench-run` and `fir-bench-score`, passing `FRAME`, `LEGS`, `ARMS`, `SUBSET`, `RUN_DIR` through. Both use `uv run --directory apps/prototype-description-service`.
+3. Make targets `fir-bench-run` and `fir-bench-score`, passing `FRAME`, `LEGS`, `ARMS`, `SUBSET`, `RUN_DIR` through.
+   - `fir-bench-run` uses `uv run --directory apps/prototype-description-service --locked --extra dev --extra bench` with `ACX_EVAL_BENCH=1`, because the insightface leg needs both.
+   - `fir-bench-score` uses `--locked --extra dev` and no eval flag, because scoring reads files only.
+   - S6a is the first editor of `mk/evals.mk`. S6b and S9 edit it after this lane merges.
 
 ## RED tests
 
@@ -39,4 +42,4 @@ One command creates an immutable run, and one command scores it. This is the ent
 
 ## Done when
 
-Tests pass on the VM, and `make fir-bench-run FRAME=<synthetic> ...` works there. The coordinator then runs the AE-12 tracer.
+Tests pass on the VM with fakes. The integrated `make fir-bench-run FRAME=<synthetic> ...` is not this lane's Done: it is the coordinator AE-12 gate (task plan, Lane Decomposition, Gate row), which runs after S0–S3 merge. This lane reports `make -n fir-bench-run` and `make -n fir-bench-score` output.

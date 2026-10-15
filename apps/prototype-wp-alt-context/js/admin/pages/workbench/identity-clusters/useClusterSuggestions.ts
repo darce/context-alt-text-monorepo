@@ -19,6 +19,7 @@ import {
 import { useClusterSuggestionsLoader, type ClusterSuggestionsLoaderOptions } from './useClusterSuggestionsLoader';
 import type { ProjectedSuggestion } from './suggestionProjection';
 import type { ClusterLabelMatch, SuggestionProvenance } from './useClusterMatchAction';
+import { mergeRosterCandidateOptions } from './useClusterRosterCandidates';
 
 type UseClusterSuggestionsOptions = ClusterSuggestionsLoaderOptions;
 
@@ -92,13 +93,6 @@ export const selectClusterSuggestions = ({
     });
   });
 
-  // 1b. Closest roster people for this card (c82 FIR): already one committable row per person.
-  const rosterValues = new Set<string>();
-  (rosterOptions ?? []).forEach((option) => {
-    rosterValues.add(option.value);
-    result.push(option);
-  });
-
   // 2. Union naming options: person rows always render; cluster rows dedupe vs Suggested (FIX-5).
   (namingOptions ?? []).forEach((option) => {
     const key = option.label.toLowerCase();
@@ -107,10 +101,6 @@ export const selectClusterSuggestions = ({
     }
 
     if (option.source === 'person') {
-      // Same roster person already offered as a closest-roster row: one choice per person.
-      if (rosterValues.has(option.value)) {
-        return;
-      }
       result.push({
         value: option.value,
         label: option.label,
@@ -134,7 +124,7 @@ export const selectClusterSuggestions = ({
     });
   });
 
-  return result;
+  return mergeRosterCandidateOptions(rosterOptions ?? [], result);
 };
 
 /**

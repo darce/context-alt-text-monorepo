@@ -369,11 +369,7 @@ export const resolveActivityStatus = (input: ResolveActivityStatusInput): Activi
   }
 
   if (gpu.isError) {
-    return snapshot(ACTIVITY_KIND.FAILED, {
-      ...idleFields(gpu.gpuState),
-      reason: ACTIVITY_REASON.GPU_STATUS_UNAVAILABLE,
-      retryable: true,
-    });
+    return snapshot(ACTIVITY_KIND.IDLE, idleFields(GPU_STATE.UNKNOWN));
   }
 
   if (gpuIsWarming(gpu.gpuState)) {

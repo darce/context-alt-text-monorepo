@@ -9,6 +9,7 @@ import { __, sprintf } from '@wordpress/i18n';
 
 import type { ComboboxOption } from '../../../../components/ui/combobox';
 import { parseNamingOptionValue, unwrapClusterOptionId } from './buildNamingOptions';
+import type { SuggestionProvenance } from './useClusterMatchAction';
 import {
   budgetOverlayOptions as budgetRows,
   NameFaceControl,
@@ -43,7 +44,12 @@ interface ClusterEditFormProps {
    */
   onPersonSelect?: (label: string, rosterEntryId: number) => void;
   /** Called when a suggestion is confirmed (optional suggestionId resolves the pending row by id) */
-  onConfirmSuggestion?: (clusterId: string, label: string, suggestionId?: string) => void;
+  onConfirmSuggestion?: (
+    clusterId: string,
+    label: string,
+    suggestionId?: string,
+    suggestionProvenance?: SuggestionProvenance,
+  ) => void;
   /** Called when cancel button is clicked */
   onCancel: () => void;
   /** Called when a suggested match is rejected */
@@ -93,7 +99,18 @@ export const ClusterEditForm = ({
           typeof option.suggestion_id === 'string' && option.suggestion_id.length > 0
             ? option.suggestion_id
             : undefined;
-        onConfirmSuggestion(clusterId, option.label, suggestionId);
+        // Identity provenance: the dropdown option carries the source face of its suggestion row.
+        const sourceIdentityId =
+          typeof option.suggestion_identity_id === 'string' && option.suggestion_identity_id.length > 0
+            ? option.suggestion_identity_id
+            : undefined;
+        const suggestionProvenance: SuggestionProvenance | undefined =
+          suggestionId && sourceIdentityId ? { kind: 'identity', identityId: sourceIdentityId } : undefined;
+        if (suggestionProvenance) {
+          onConfirmSuggestion(clusterId, option.label, suggestionId, suggestionProvenance);
+        } else {
+          onConfirmSuggestion(clusterId, option.label, suggestionId);
+        }
         return true;
       }
       return false;

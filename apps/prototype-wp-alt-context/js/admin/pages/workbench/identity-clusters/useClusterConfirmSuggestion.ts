@@ -9,6 +9,7 @@ import { isAbortError } from './clusterMutationUtils';
 import type { ClusterGroup } from './types';
 import type { SaveDialogAction } from './useClusterConfirmDialog';
 import type { SaveStatus } from './useClusterSaveStatus';
+import type { SuggestionProvenance } from './useClusterMatchAction';
 import { useClusterMatchAction } from './useClusterMatchAction';
 
 interface ClusterConfirmMutations {
@@ -68,7 +69,7 @@ export const useClusterConfirmSuggestion = ({
   });
 
   const handleConfirmSuggestion = React.useCallback(
-    async (clusterId: string, label: string, suggestionId?: string) => {
+    async (clusterId: string, label: string, suggestionId?: string, suggestionProvenance?: SuggestionProvenance) => {
       if (saveStatus !== 'idle' || mutations.isPending) {
         return;
       }
@@ -94,7 +95,7 @@ export const useClusterConfirmSuggestion = ({
         }
 
         mutationStarted = await runMatchedAction(
-          { id: clusterId, label, suggestionId },
+          { id: clusterId, label, suggestionId, suggestionProvenance },
           abortController,
         );
       } catch (err) {

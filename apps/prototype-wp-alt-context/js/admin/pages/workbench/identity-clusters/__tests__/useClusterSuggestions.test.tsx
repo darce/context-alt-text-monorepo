@@ -155,6 +155,7 @@ describe('selectClusterSuggestions', () => {
       label: 'Alice',
       identityCount: 4,
       suggestionId: 'sug-free-type-1',
+      suggestionProvenance: { kind: 'identity', identityId: 'i1' },
     });
     // Case-insensitive free-type of the same suggested label also keeps the id.
     expect(resolveClusterMatchFromOptions(options, 'alice')?.suggestionId).toBe('sug-free-type-1');
@@ -417,6 +418,7 @@ describe('useClusterSuggestions', () => {
       label: 'Alice',
       identityCount: 3,
       suggestionId: 'sug-free-type-api',
+      suggestionProvenance: { kind: 'identity', identityId: 'identity-1' },
     });
 
   });

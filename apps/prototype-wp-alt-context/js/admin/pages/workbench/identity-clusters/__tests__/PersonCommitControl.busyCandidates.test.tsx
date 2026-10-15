@@ -146,7 +146,7 @@ const openNaming = () => {
 const primeFailedCache = async () => {
   const input = openNaming();
   expect(await screen.findByRole('option', { name: /Confirm match with Ellyn Heald/ })).toHaveTextContent(
-    /weak match/i,
+    /Below match threshold/i,
   );
   candidateStatus = 503;
   await act(async () => {
@@ -177,7 +177,7 @@ describe('PersonCommitControl busy candidate reads', () => {
     expect(screen.getByRole('button', { name: 'phase' in busy ? 'Saving name…' : /Create person/ })).toBeDisabled();
     // Pending commits already close the overlay; external holds keep its cached rows.
     if (!('phase' in busy)) {
-      expect(screen.getByRole('option', { name: /Confirm match with Ellyn Heald/ })).toHaveTextContent(/weak match/i);
+      expect(screen.getByRole('option', { name: /Confirm match with Ellyn Heald/ })).toHaveTextContent(/Below match threshold/i);
     }
     await user.click(retry);
     fireEvent.keyDown(input, { key: 'Enter' });
@@ -196,7 +196,7 @@ describe('PersonCommitControl busy candidate reads', () => {
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
     openNaming();
     expect(await screen.findByRole('option', { name: /Confirm match with Ellyn Heald/ })).toHaveTextContent(
-      /weak match/i,
+      /Below match threshold/i,
     );
     expect(input).toHaveValue('Zoe');
     expect(view.onCommit).not.toHaveBeenCalled();
@@ -215,11 +215,11 @@ describe('PersonCommitControl busy candidate reads', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
     const input = openNaming();
-    expect(screen.queryByText(/weak match/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Below match threshold/i)).not.toBeInTheDocument();
     expect(input).toBeEnabled();
     // Ordinary roster lookup remains available across the hard model-label boundary.
     fireEvent.change(input, { target: { value: CANONICAL_NAME } });
-    expect(screen.getByRole('option', { name: /Confirm match with Ellyn Heald/ })).not.toHaveTextContent(/weak match/i);
+    expect(screen.getByRole('option', { name: /Confirm match with Ellyn Heald/ })).not.toHaveTextContent(/Below match threshold/i);
     await act(async () => {
       await client.invalidateQueries({ queryKey: closestKey });
     });
@@ -237,7 +237,7 @@ describe('PersonCommitControl busy candidate reads', () => {
     view.update({ disabled: false });
     openNaming();
     expect(await screen.findByRole('option', { name: /Confirm match with Ellyn Heald/ })).toHaveTextContent(
-      /weak match/i,
+      /Below match threshold/i,
     );
     expect(candidateRequests()).toHaveLength(1);
     expect(view.onCommit).not.toHaveBeenCalled();

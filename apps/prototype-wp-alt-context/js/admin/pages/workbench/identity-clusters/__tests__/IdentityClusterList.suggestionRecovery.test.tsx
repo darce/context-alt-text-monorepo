@@ -99,7 +99,7 @@ const renderConsumer = () => render(
 const openEditor = () => fireEvent.click(screen.getByRole('button', { name: 'Find similar / Name' }));
 const showCachedChoice = () => {
   fireEvent.keyDown(screen.getByRole('combobox', { name: 'Person name' }), { key: 'ArrowDown' });
-  expect(screen.getByRole('option', { name: /Ellyn Heald/ })).toHaveTextContent('Weak match');
+  expect(screen.getByRole('option', { name: /Ellyn Heald/ })).toHaveTextContent('Below match threshold');
 };
 const awaitFailedRead = async () => {
   await waitFor(() => expect(client.getQueryState(['suggestion-recovery-fixture'])?.status).toBe('error'));

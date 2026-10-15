@@ -329,3 +329,170 @@ def test_p95_cannot_be_downgraded_to_report_only_but_missing_receipt_is_explicit
     payload["guardrails"][0]["role"] = "report_only"
     with pytest.raises(fc.FrameContractError):
         _validate(payload)
+
+
+def _planning_payload() -> dict[str, Any]:
+    payload = _payload()
+    # Synthetic tabulated evidence only; no score producer or power calculation.
+    payload.update(n_psu=5, min_n_independent=50, cell_floor_n_independent=30, p_d=0.15, power=0.80)
+    payload["icc_sensitivity"] = [
+        {
+            "planning_icc": icc,
+            "design_effect": deff,
+            "n_eff": float(Fraction(10) / Fraction(str(deff))),
+            "n_nonmated_eff": 10.0,
+            "primary_resolvable": False,
+            "hypotheses": [{"id": "H1", "scored": False, "mde": None,
+                            "n_eff": float(Fraction(10) / Fraction(str(deff)))}],
+        }
+        for icc, deff in [(0.05, 1.5), (0.10, 2.0), (0.20, 3.0)]
+    ]
+    payload["waterfall"] = [
+        {"leg_key": leg, "arm": arm.value, "stage": "embedded", "count": count}
+        for leg, count in zip(LEGS, (3, 7), strict=True)
+        for arm in fc.Arm
+    ]
+    return payload
+
+
+def test_planning_evidence_and_attributed_waterfalls_round_trip(tmp_path: Path) -> None:
+    payload = _planning_payload()
+    before = copy.deepcopy(payload)
+    path = tmp_path / "synthetic-planning-scores.json"
+    path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    restored = json.loads(path.read_text(encoding="utf-8"))
+    _validate(restored)
+    assert restored == before
+    assert restored["schema_version"] == 1
+    assert [row["planning_icc"] for row in restored["icc_sensitivity"]] == [0.05, 0.10, 0.20]
+    assert {(row["leg_key"], row["arm"]): row["count"] for row in restored["waterfall"]} == {
+        (leg, arm.value): count
+        for leg, count in zip(LEGS, (3, 7), strict=True)
+        for arm in fc.Arm
+    }
+    for field in ("legs", "primary", "hypotheses", "guardrails", "verdict"):
+        assert restored[field] == _payload()[field]
+
+
+def test_committed_fixture_has_policy_sensitivity_and_waterfall_evidence() -> None:
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    _validate(payload)
+    assert (payload["n_psu"], payload["min_n_independent"], payload["cell_floor_n_independent"]) == (5, 50, 30)
+    assert (payload["p_d"], payload["power"]) == (0.15, 0.80)
+    assert [row["planning_icc"] for row in payload["icc_sensitivity"]] == [0.05, 0.10, 0.20]
+    assert {row["leg_key"] for row in payload["waterfall"]} == set(LEGS)
+    assert all(row["arm"] == "native" for row in payload["waterfall"])
+
+
+@pytest.mark.parametrize("field", ["n_psu", "min_n_independent", "cell_floor_n_independent", "p_d", "power", "icc_sensitivity"])
+def test_planning_root_evidence_is_required(field: str) -> None:
+    payload = _payload()
+    payload.pop(field, None)
+    with pytest.raises(fc.FrameContractError, match=field):
+        _validate(payload)
+
+
+@pytest.mark.parametrize("path", ["icc_sensitivity.0", "icc_sensitivity.0.hypotheses.0", "waterfall.0"])
+def test_planning_and_waterfall_rows_are_required_and_closed(path: str) -> None:
+    payload = _planning_payload()
+    _validate(payload)
+    for field in tuple(_at(payload, path)):
+        removed = copy.deepcopy(payload)
+        del _at(removed, path)[field]
+        with pytest.raises(fc.FrameContractError):
+            _validate(removed)
+    _at(payload, path)["invented"] = 1
+    with pytest.raises(fc.FrameContractError, match="invented"):
+        _validate(payload)
+
+
+@pytest.mark.parametrize(
+    "path,value",
+    [
+        ("n_psu", True), ("n_psu", -1), ("n_psu", 5.5), ("n_psu", None),
+        ("min_n_independent", False), ("min_n_independent", 0), ("min_n_independent", 50.5),
+        ("cell_floor_n_independent", True), ("cell_floor_n_independent", 0),
+        ("cell_floor_n_independent", "30"),
+        ("p_d", False), ("p_d", 0), ("p_d", 1), ("p_d", float("nan")), ("p_d", None),
+        ("power", True), ("power", 0), ("power", 1), ("power", float("inf")), ("power", "0.8"),
+        ("icc_sensitivity", None), ("icc_sensitivity", {}), ("icc_sensitivity", []),
+        ("icc_sensitivity.0.planning_icc", 0.1),
+        ("icc_sensitivity.0.design_effect", 0), ("icc_sensitivity.0.design_effect", False),
+        ("icc_sensitivity.0.n_eff", -1), ("icc_sensitivity.0.n_eff", float("inf")),
+        ("icc_sensitivity.0.n_nonmated_eff", -1), ("icc_sensitivity.0.n_nonmated_eff", True),
+        ("icc_sensitivity.0.primary_resolvable", 0),
+        ("icc_sensitivity.0.hypotheses", None), ("icc_sensitivity.0.hypotheses", []),
+        ("icc_sensitivity.0.hypotheses.0.id", ""),
+        ("icc_sensitivity.0.hypotheses.0.scored", "unscored"),
+        ("icc_sensitivity.0.hypotheses.0.n_eff", -1),
+        ("waterfall.0.leg_key", ""), ("waterfall.0.leg_key", None),
+        ("waterfall.0.arm", "probability"), ("waterfall.0.arm", "challenge"),
+        ("waterfall.0.arm", "invented"), ("waterfall.0.count", True),
+    ],
+)
+def test_planning_evidence_and_waterfall_types_and_bounds(path: str, value: Any) -> None:
+    payload = _planning_payload()
+    _validate(payload)
+    if "." in path:
+        parent, field = path.rsplit(".", 1)
+        _at(payload, parent)[field] = value
+    else:
+        payload[path] = value
+    with pytest.raises(fc.FrameContractError):
+        _validate(payload)
+
+
+@pytest.mark.parametrize("iccs", [[0.05, 0.10], [0.05, 0.10, 0.20, 0.20], [0.05, 0.10, 0.10], [0.20, 0.10, 0.05]])
+def test_sensitivity_requires_each_declared_icc_once_in_ascending_order(iccs: list[float]) -> None:
+    payload = _planning_payload()
+    _validate(payload)
+    row = payload["icc_sensitivity"][0]
+    payload["icc_sensitivity"] = [dict(row, planning_icc=icc) for icc in iccs]
+    with pytest.raises(fc.FrameContractError):
+        _validate(payload)
+
+
+@pytest.mark.parametrize("mde", [None, -0.1, True, "0.05", float("nan"), float("inf")])
+def test_scored_sensitivity_requires_a_finite_nonnegative_mde(mde: Any) -> None:
+    payload = _planning_payload()
+    hypothesis = payload["icc_sensitivity"][0]["hypotheses"][0]
+    hypothesis.update(scored=True, mde=0.05)
+    _validate(payload)
+    hypothesis["mde"] = mde
+    with pytest.raises(fc.FrameContractError):
+        _validate(payload)
+
+
+def test_sensitivity_mde_absence_is_explicit_and_independent_of_verdict_state() -> None:
+    payload = _planning_payload()
+    _validate(payload)  # unscored MDE is null, including for an inconclusive hypothesis.
+    row = payload["icc_sensitivity"][0]
+    row["hypotheses"][0].update(scored=True, mde=0.2)
+    row["hypotheses"].append({"id": "H2", "scored": True, "mde": 0.25, "n_eff": 4.0})
+    before = copy.deepcopy(payload)
+    _validate(payload)
+    assert payload == before  # Validation does not recompute a verdict from sensitivity.
+    row["hypotheses"][0]["scored"] = False
+    with pytest.raises(fc.FrameContractError):
+        _validate(payload)
+
+
+def test_mated_search_and_nonmated_source_unit_support_have_distinct_estimands() -> None:
+    payload = _planning_payload()
+    # Five mated searches in PSU sizes [4, 1]; eight source units in [2, 2, 2, 2].
+    # The two pools share two PSUs: distinct union = 4, never 2 + 4 or an image proxy.
+    payload.update(n_psu=4, n_units=8)
+    for row in payload["icc_sensitivity"]:
+        icc = Fraction(str(row["planning_icc"]))
+        mated_deff = 1 + (Fraction(17, 5) - 1) * icc
+        row.update(design_effect=float(mated_deff), n_eff=float(5 / mated_deff),
+                   n_nonmated_eff=float(8 / (1 + icc)))
+        row["hypotheses"][0]["n_eff"] = row["n_eff"]
+    planning = payload["icc_sensitivity"][1]
+    payload.update(design_effect=planning["design_effect"], n_eff=planning["n_eff"],
+                   n_nonmated_eff=planning["n_nonmated_eff"])
+    _validate(payload)
+    assert payload["design_effect"] == pytest.approx(float(Fraction(31, 25)), abs=1e-12)
+    assert payload["n_eff"] == pytest.approx(float(Fraction(125, 31)), abs=1e-12)
+    assert payload["n_nonmated_eff"] == pytest.approx(float(Fraction(80, 11)), abs=1e-12)
+    assert payload["n_eff"] != payload["n_units"] / payload["design_effect"]

@@ -134,6 +134,8 @@ const UngroupedResidueEditor = ({ member, onClose }: UngroupedResidueEditorProps
   const {
     options,
     isLoading: suggestionsLoading,
+    isError: suggestionsError,
+    retry: retrySuggestions,
     findClusterByLabel,
     atRestTotal = 0,
     atRestTruncated = false,
@@ -264,6 +266,8 @@ const UngroupedResidueEditor = ({ member, onClose }: UngroupedResidueEditorProps
         onLabelChange={setLabel}
         options={options}
         isLoading={suggestionsLoading}
+        suggestionsError={suggestionsError}
+        onRetrySuggestions={retrySuggestions}
         isPending={mutations.isPending || saveStatus !== 'idle'}
         onSave={(labelOverride) => void handleSave(labelOverride)}
         onPersonSelect={handlePersonSelect}

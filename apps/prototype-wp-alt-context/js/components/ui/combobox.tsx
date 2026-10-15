@@ -56,10 +56,14 @@ CommandItem.displayName = CommandPrimitive.Item.displayName;
 
 // --- Combobox Component ---
 
+/** Backend match band; 'none' is below the automatic suggestion floor (a weak alternative). */
+export type ComboboxMatchBand = 'strong' | 'possible' | 'none';
+
 export interface ComboboxOption {
   value: string;
   label: string;
   group?: string;
+  band?: ComboboxMatchBand;
   [key: string]: unknown;
 }
 

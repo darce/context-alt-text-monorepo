@@ -158,7 +158,7 @@ describe('PersonCommitControl closest roster candidates (c82 F1)', () => {
     const { onCommit } = mount();
     await openNaming();
     const option = await screen.findByRole('option', { name: /Confirm match with Ellyn Heald/ });
-    await waitFor(() => expect(option).toHaveTextContent(/weak match/i));
+    await waitFor(() => expect(option).toHaveTextContent(/Below match threshold/i));
     expect(option).not.toHaveTextContent(/Gilded Cypress|medium|strong match|12%/i);
     expect(screen.queryByRole('option', { name: /Gilded Cypress/ })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /no close match|name as new person/i })).toBeInTheDocument();
@@ -174,7 +174,7 @@ describe('PersonCommitControl closest roster candidates (c82 F1)', () => {
     const input = await openNaming();
     await waitFor(() => expect(candidateRequests()).toHaveLength(1));
     await userEvent.setup().type(input, 'Zoe');
-    expect(await screen.findByRole('option', { name: /Confirm match with Ellyn Heald/ })).toHaveTextContent(/weak match/i);
+    expect(await screen.findByRole('option', { name: /Confirm match with Ellyn Heald/ })).toHaveTextContent(/Below match threshold/i);
     expect(screen.getByRole('button', { name: /no close match|name as new person/i })).toBeInTheDocument();
     expect(input).toHaveValue('Zoe');
     expect(writeRequests()).toHaveLength(0);
@@ -196,7 +196,7 @@ describe('PersonCommitControl closest roster candidates (c82 F1)', () => {
     await userEvent.setup().click(within(alert).getByRole('button', { name: /retry/i }));
     await waitFor(() => expect(candidateRequests()).toHaveLength(2));
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
-    expect(await screen.findByRole('option', { name: /Confirm match with Ellyn Heald/ })).toHaveTextContent(/weak match/i);
+    expect(await screen.findByRole('option', { name: /Confirm match with Ellyn Heald/ })).toHaveTextContent(/Below match threshold/i);
     expect(input).toHaveValue('Zoe');
     expect(writeRequests()).toHaveLength(0);
   });

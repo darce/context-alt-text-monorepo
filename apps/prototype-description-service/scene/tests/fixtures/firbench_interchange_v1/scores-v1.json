@@ -5,19 +5,19 @@
   "admissibility": "development",
   "boundary_semantics": "v2",
   "planning_icc": 0.1,
-  "design_effect": 2.2,
+  "design_effect": 2.0,
   "n_eff": 5.0,
   "n_units": 10,
   "n_nonmated_eff": 10,
-  "tau": {
-    "value": 0.41,
-    "calibration_spread": 0.0,
-    "pooled_units": 10,
-    "fpi_at_tau": {"count": 0, "rate": 0.0},
-    "fpi_next_lower": {"threshold": 0.4, "count": 1, "rate": 0.1}
+  "primary": {
+    "fpir_target": 0.01,
+    "resolvable": false,
+    "required_n_nonmated_eff": 300.0
   },
-  "primary": {"fpir_target": 0.01, "resolvable": false, "required_n_nonmated_eff": 300.0},
-  "verdict": {"state": "inconclusive", "reason": "primary_fpir_unresolvable"},
+  "verdict": {
+    "state": "inconclusive",
+    "reason": "insufficient_independent_psus"
+  },
   "hypotheses": [
     {
       "id": "H1",
@@ -27,17 +27,48 @@
       "mde": null,
       "n_eff": 5.0,
       "interval": null,
-      "state": null,
-      "reason": null
+      "state": "inconclusive",
+      "reason": "insufficient_independent_psus"
     }
   ],
   "guardrails": [
-    {"id": "G1", "metric": "per_cohort_fpir", "role": "veto", "state": "unscored", "value": null, "timings_sha256": null}
+    {
+      "id": "G1",
+      "metric": "per_cohort_fpir",
+      "role": "veto",
+      "state": "unscored",
+      "value": null,
+      "timings_sha256": null
+    },
+    {
+      "id": "G4",
+      "metric": "p95_ms_per_face",
+      "role": "veto",
+      "state": "unscored",
+      "value": null,
+      "timings_sha256": null
+    }
   ],
   "curves": [
     {
       "leg_key": "sface__native__ab12cd__cv4.10.0__ort1.18.0",
-      "points": [{"threshold": 0.4, "fpir": 0.1, "fnir": 0.5}]
+      "points": [
+        {
+          "threshold": 0.41,
+          "fpir": 0.0,
+          "fnir": 0.5
+        }
+      ]
+    },
+    {
+      "leg_key": "auraface__native__ef34ab__cv4.10.0__ort1.18.0",
+      "points": [
+        {
+          "threshold": 0.67,
+          "fpir": 0.0,
+          "fnir": 0.2
+        }
+      ]
     }
   ],
   "cells": [
@@ -51,5 +82,178 @@
       "fnir": null
     }
   ],
-  "waterfall": [{"stage": "embedded", "count": 3}]
+  "waterfall": [
+    {
+      "stage": "embedded",
+      "count": 3
+    }
+  ],
+  "legs": [
+    {
+      "leg_key": "sface__native__ab12cd__cv4.10.0__ort1.18.0",
+      "tau": {
+        "status": "available",
+        "reason": null,
+        "data": {
+          "value": 0.41,
+          "calibration_spread": 0.02,
+          "pooled_units": 20,
+          "fpi_at_tau": {
+            "count": 0,
+            "rate": 0.0
+          },
+          "fpi_next_lower": {
+            "status": "available",
+            "reason": null,
+            "data": {
+              "threshold": 0.39999999999999997,
+              "count": 1,
+              "rate": 0.05,
+              "fnir": {
+                "status": "available",
+                "reason": null,
+                "data": 0.1
+              }
+            }
+          }
+        }
+      },
+      "operating_point": {
+        "fnir": {
+          "status": "available",
+          "reason": null,
+          "data": {
+            "misses": 5,
+            "n_mated": 10,
+            "n_eff": 5.0,
+            "design_effect": 2.0,
+            "rate": 0.5,
+            "interval": {
+              "status": "available",
+              "reason": null,
+              "data": {
+                "lower": 0.0,
+                "upper": 0.8,
+                "level": 0.95,
+                "method": "psu_percentile"
+              }
+            }
+          }
+        },
+        "fpir": {
+          "status": "available",
+          "reason": null,
+          "data": {
+            "fpi": 0,
+            "n_units": 10,
+            "n_nonmated_eff": 10.0,
+            "rate": 0.0,
+            "iid_ucl": {
+              "status": "available",
+              "reason": null,
+              "data": {
+                "upper": 0.2588655508930523,
+                "level": 0.95,
+                "method": "clopper_pearson",
+                "approximate": true
+              }
+            },
+            "clustered_ucl": {
+              "status": "available",
+              "reason": null,
+              "data": {
+                "upper": 0.3,
+                "level": 0.95,
+                "method": "rule_of_three",
+                "approximate": true
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "leg_key": "auraface__native__ef34ab__cv4.10.0__ort1.18.0",
+      "tau": {
+        "status": "available",
+        "reason": null,
+        "data": {
+          "value": 0.67,
+          "calibration_spread": 0.02,
+          "pooled_units": 20,
+          "fpi_at_tau": {
+            "count": 0,
+            "rate": 0.0
+          },
+          "fpi_next_lower": {
+            "status": "available",
+            "reason": null,
+            "data": {
+              "threshold": 0.66,
+              "count": 1,
+              "rate": 0.05,
+              "fnir": {
+                "status": "available",
+                "reason": null,
+                "data": 0.1
+              }
+            }
+          }
+        }
+      },
+      "operating_point": {
+        "fnir": {
+          "status": "available",
+          "reason": null,
+          "data": {
+            "misses": 2,
+            "n_mated": 10,
+            "n_eff": 5.0,
+            "design_effect": 2.0,
+            "rate": 0.2,
+            "interval": {
+              "status": "available",
+              "reason": null,
+              "data": {
+                "lower": 0.0,
+                "upper": 0.8,
+                "level": 0.95,
+                "method": "psu_percentile"
+              }
+            }
+          }
+        },
+        "fpir": {
+          "status": "available",
+          "reason": null,
+          "data": {
+            "fpi": 0,
+            "n_units": 10,
+            "n_nonmated_eff": 10.0,
+            "rate": 0.0,
+            "iid_ucl": {
+              "status": "available",
+              "reason": null,
+              "data": {
+                "upper": 0.2588655508930523,
+                "level": 0.95,
+                "method": "clopper_pearson",
+                "approximate": true
+              }
+            },
+            "clustered_ucl": {
+              "status": "available",
+              "reason": null,
+              "data": {
+                "upper": 0.3,
+                "level": 0.95,
+                "method": "rule_of_three",
+                "approximate": true
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

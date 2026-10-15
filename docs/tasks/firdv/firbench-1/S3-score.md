@@ -7,7 +7,7 @@
 
 ## Goal
 
-Turn per-face search records into the frozen-τ answer: FNIR at the declared FPIR on a fixed non-mated source-unit denominator, end to end (EVAL-16, EVAL-18, EVAL-19). Produce paired PSU-cluster intervals, the sealed step-down decision, guardrails, and a verdict that can be "inconclusive" (CARD-27, WRIT-81).
+Turn per-face search records into the frozen-τ answer: FNIR at the declared FPIR on a fixed non-mated source-unit denominator, end to end (EVAL-16, EVAL-18, EVAL-19). Produce paired PSU-cluster intervals, the sealed step-down decision, guardrails, and a verdict that can be "inconclusive" (CARD-27).
 
 ## Read first
 

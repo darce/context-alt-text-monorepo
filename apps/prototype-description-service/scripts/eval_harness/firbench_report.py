@@ -719,13 +719,68 @@ def _cells_html(
 
 def _stages_html(scores: Mapping[str, Any]) -> str:
     stage_rank = {str(s): i for i, s in enumerate(_STAGE_ORDER)}
-    for index, row in enumerate(scores["waterfall"]):
+    reported = scores.get("waterfall") or []
+    for index, row in enumerate(reported):
         if row["leg_key"].startswith(_FUSED_PREFIX) and row["stage"] == SearchStage.unaligned:
             raise FrameContractError(f"waterfall[{index}]: the fused leg {row['leg_key']} writes no unaligned stage")
+    # INT-22 / VIZ-23: interpret only the reported S3 ledger, with its exact pool
+    # and evidence path. S3 emits sparse counts for available mated native test
+    # searches; challenge counts have their own sampling-qualified leg label.
+    scopes = {(leg["leg_key"], "native") for leg in scores.get("legs", [])}
+    scopes.update((row["leg_key"], row["arm"]) for row in reported)
+    summary_rows = []
+    for leg, arm in sorted(scopes):
+        rows = [(index, row) for index, row in enumerate(reported)
+                if (row["leg_key"], row["arm"]) == (leg, arm)]
+        counts = {}
+        for _, row in rows:
+            counts[row["stage"]] = counts.get(row["stage"], 0) + row["count"]
+        total = sum(counts.values())
+        failures = {stage: count for stage, count in counts.items()
+                    if stage in _FAILURE_STAGES and count > 0}
+        if failures:
+            peak = max(failures.values())
+            dominant = sorted((stage for stage, count in failures.items() if count == peak),
+                              key=lambda stage: stage_rank[stage])
+            failure_total = sum(failures.values())
+            if len(dominant) == 1:
+                state = (f"Dominant reported upstream stage: {dominant[0]} "
+                         f"({peak} of {failure_total} reported upstream failures)")
+            else:
+                state = (f"Tied dominant reported upstream stages: {', '.join(dominant)} "
+                         f"({peak} each of {failure_total} reported upstream failures)")
+        elif total > 0 and counts.get(SearchStage.embedded, 0) == total:
+            state = ("No reported upstream failure among these reported rows; "
+                     f"all {total} records reached embedded")
+        elif total == 0:
+            state = "Unavailable: no positive-count reported waterfall evidence"
+        else:
+            state = "Unavailable: reported waterfall does not establish an upstream-failure summary"
+        pool = f"{total} reported waterfall records" if total > 0 else "unavailable"
+        sources = " ".join(_code(_jp("scores.json", "waterfall", index)) for index, _ in rows)
+        if not sources:
+            sources = _code(_jp("scores.json", "waterfall"))
+        summary_rows.append(
+            f"<p><strong>{_e(leg)} · {_e(arm)}</strong><br>"
+            f"<strong>{_e(state)}</strong><br>Count pool: {_e(pool)}. {sources}</p>"
+        )
+    summary = (
+        "<h3>Reported upstream stages</h3>"
+        "<p>Scope: reported waterfall records for each leg and arm below. The S3 producer counts "
+        "available, mated native test-fold searches; probability and explicitly labeled challenge "
+        "scopes stay separate. Counts sum only those records, not the full GT inventory. "
+        "Missing or empty evidence is unavailable. Embedded means the embedding stage was reached; "
+        "it does not establish accepted or correct identity. "
+        "Unavailable arm counts remain separate in joint gaps.</p>"
+        + "\n".join(summary_rows)
+    )
+    if not summary_rows:
+        summary += ("<p><strong>Unavailable: no positive-count reported waterfall evidence</strong> "
+                    + _code(_jp("scores.json", "waterfall")) + "</p>")
     unavailable = {(g["leg_key"], g["arm"]): g["unavailable_counts"] for g in scores["joint_gaps"]}
     wrows = []
     for index, row in sorted(
-        enumerate(scores["waterfall"]),
+        enumerate(reported),
         key=lambda item: (item[1]["leg_key"], item[1]["arm"], stage_rank.get(item[1]["stage"], 99), item[0]),
     ):
         wrows.append(
@@ -774,7 +829,7 @@ def _stages_html(scores: Mapping[str, Any]) -> str:
         ["Leg", "Arm", "pairs", "Δ vs native", "interval", "arm_availability", "JSON path"],
         grows,
     )
-    return waterfall + "\n" + gaps
+    return summary + "\n" + waterfall + "\n" + gaps
 
 
 # --- S5 failures and pool ----------------------------------------------------------
@@ -2377,11 +2432,25 @@ def _comparison_html(comparison: Mapping[str, Any] | None) -> str:
             ]
             + [_code(_jp("comparison.json", "paired_deltas", index))]
         )
+    # Canon v0.26.2 INT-22 / VIZ-23: expose the recorded result and its evidence,
+    # independently of per-leg scoring status or the original run verdicts.
+    state = comparison["comparison_state"]
+    glyph = {"comparable": "↔", "exploratory": "△"}[state]
+    treatment = comparison["treatment"]
     summary = (
+        f'<p><strong>Input comparability:</strong> <span class="st">{glyph} {_e(state)}</span> '
+        f"{_code(_jp('comparison.json', 'comparison_state'))}</p>"
+        f"<p>Declared treatment name: {_e(treatment['name']) if treatment['name'] is not None else 'none'} "
+        f"{_code(_jp('comparison.json', 'treatment', 'name'))}; "
+        f"Declared treatment fields: {_e(', '.join(treatment['fields']) or 'none')} "
+        f"{_code(_jp('comparison.json', 'treatment', 'fields'))}.</p>"
         f"<p>{_e(comparison['label'])}. Descriptive contrasts only; no posthoc winner.</p>"
         f"<p>Runs {_e(comparison['run_a']['run_id'])} / {_e(comparison['run_b']['run_id'])}; "
-        f"differences: {_e(', '.join(comparison['differences']) or 'none')}. "
+        f"differences: {_e(', '.join(comparison['differences']) or 'none')} "
+        f"{_code(_jp('comparison.json', 'differences'))}. "
         f"Original run states: {_e(json.dumps(comparison['verdicts'], sort_keys=True))}.</p>"
+        "<p>Input compatibility does not establish inferential scoring eligibility; "
+        "the recorded per-leg status and reason below apply.</p>"
     )
     deltas = _table(
         "Recorded per-leg contrasts",

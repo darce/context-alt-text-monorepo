@@ -28,8 +28,10 @@ Where wp-admin passwords and API keys go:
 3. **Three credential kinds, kept separate:**
    - *WordPress admin interactive password*: a human login. The registry never
      logs in automatically and never uses it to call a service.
-   - *WordPress application password*: only if the site's existing permissions
-     support it. This design does not depend on it.
+   - *WordPress application password*: for REST/automation only; it cannot be
+     used for interactive wp-login/wp-admin login and is distinct from the
+     ordinary WordPress login password. Use only if the site's existing
+     permissions support it. This design does not depend on it.
    - *Tenant service API key*: the key the plugin sends to one hosted service,
      for one tenant, in one store.
 
@@ -70,6 +72,21 @@ correct only for the serving store its service base URL resolves to (see
 [key management, dev-fir client](key-management.md#localwp-dev-fir-client-remote-isolated-store)).
 The binding is per site and per store, not per portal user.
 
+### Proposed Keychain naming default
+
+Use service `com.altcontext.localwp.auth/<site-uuid>` and account
+`<credential-kind>`, with kind exactly `wp-admin-interactive`, `wp-application`,
+or `tenant-service-api`. The tuple uses the stable LocalWP site UUID and kind;
+it never uses a localhost port, origin, or login name as identity. The account
+label denotes the credential kind, not the WordPress login account.
+
+This is a proposed default, not an installed item or an observation of an
+existing Keychain account. It promises no particular Keychain API or reference
+format. SQLite records only the opaque item reference and non-secret binding
+metadata, never the value. A naming collision or changed site/store binding
+requires explicit reconciliation; it must not silently overwrite an item or
+rotate a credential. OS access controls still apply.
+
 ## Config source and drift
 
 The plugin resolves constants before options (see
@@ -96,7 +113,7 @@ copy is checked by effective source and key ID, never by value or hash.
   does not invent rotation flags; follow
   [tenant onboarding §3](tenant-onboarding-smoke-test.md#cli-mintrevoke-and-portal-rotation-are-different-contracts).
 - After revoke, prove the old key is denied and the new key still passes. That
-  negative control is what proves the replacement (canon TEST-15).
+  operational negative control checks the replacement.
 
 ## Single workflow for future implementation
 
@@ -155,8 +172,22 @@ In repo:
 - [LocalWP development runbook, gate secrets](../../apps/prototype-wp-alt-context/docs/localwp-development-runbook.md#gate-secrets-site-local-config):
   the site-local config include pattern.
 
-Canon (heuristics-canon v0.26.2): SEC-06, WEB-16, DATA-14, RES-01, RES-02,
-SEC-01, TEST-15, WRIT-81.
+Normative canon: [heuristics-canon](https://github.com/darce/heuristics-canon),
+release **v0.26.2**. The locators and full rule names below match the supplied
+released rows; source locators are in that release's `SOURCES.md`. Research
+sibling material is supporting depth only, not an alternative release.
+
+| Rule and full name | Released row locator | Published source and locator |
+| --- | --- | --- |
+| SEC-06 — **Don't teach the model what it must never say** | `lexicons/security.md#sec-06` | The Developer's Playbook for LLM Security, ch. 5 — `SOURCES.md#src-llm-security-playbook` |
+| WEB-16 — **Never commit plaintext secrets** | `lexicons/security.md#web-16` | OWASP Web Hardening Cheat Sheets, §secrets — `SOURCES.md#src-owasp-web-hardening` |
+| DATA-14 — **No dual writes** | `lexicons/engineering.md#data-14` | Designing Data-Intensive Applications, ch. 11 — `SOURCES.md#src-designing-data-intensive-applications` |
+| RES-01 — **Retry without idempotency** | `lexicons/engineering.md#res-01` | Designing Data-Intensive Applications, ch. 8 — `SOURCES.md#src-designing-data-intensive-applications` |
+| RES-02 — **Timeout on every blocking call** | `lexicons/engineering.md#res-02` | Release It!, ch. 5 — `SOURCES.md#src-release-it` |
+| SEC-01 — **Validate at every trust boundary** | `lexicons/security.md#sec-01` | The Developer's Playbook for LLM Security, ch. 3 — `SOURCES.md#src-llm-security-playbook` |
+| WRIT-81 — **Keep decision-changing limits in summary prose** | `lexicons/writing.md#writ-81` | tufte-beautiful-evidence § cognitive-style-of-powerpoint — `SOURCES.md#src-tufte-beautiful-evidence` |
+
+The following are proposed design applications, not executed compliance claims:
 
 - DATA-14: one system of record per value. The Keychain owns values; the registry
   derives status from observed effective source.
@@ -170,11 +201,12 @@ SEC-01, TEST-15, WRIT-81.
 - No secret value appears in logs, argv, exports, or the Git tree.
 - Drift is reported when the effective constant differs from the recorded
   source, and no file is overwritten.
-- A replacement revokes the old key ID only after the new key passes Test
-  Connection and the old key is denied.
+- A replacement first verifies the new key passes Test Connection, then revokes
+  the old key ID, then proves the old key is denied and the new key still passes.
 
-## Open decisions
+## Future availability check
 
-- Which LocalWP sites have WordPress application passwords enabled under their
-  existing permissions. Until that is checked, the design does not use them.
-- The Keychain item naming convention for each credential kind.
+- During future implementation, check which LocalWP sites have WordPress
+  application passwords enabled under their existing permissions. Until that
+  is checked, the design does not use them. This unknown does not block review
+  or approval of the proposal or its other credential kinds.

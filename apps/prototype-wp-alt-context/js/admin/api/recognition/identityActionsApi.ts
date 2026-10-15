@@ -3,15 +3,29 @@ import { getEndpoint, getConfig } from '../config';
 import { mapPendingMergeSuggestion } from './identitySuggestionMappers';
 import type { BulkAcceptRequest, BulkAcceptResponse, PendingMergeSuggestion, SuggestionActionResponse } from './types';
 
-export const acceptSuggestion = async (suggestionId: string): Promise<SuggestionActionResponse> => {
+/**
+ * Accept one identity suggestion (one face). The bare-id overload stays first so that
+ * `mutationFn: acceptSuggestion` remains assignable (react-query's second argument is a
+ * context, not an options object). Pass `{ signal }` to make the write abortable.
+ */
+export async function acceptSuggestion(suggestionId: string): Promise<SuggestionActionResponse>;
+export async function acceptSuggestion(
+  suggestionId: string,
+  options: { signal?: AbortSignal },
+): Promise<SuggestionActionResponse>;
+export async function acceptSuggestion(
+  suggestionId: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<SuggestionActionResponse> {
   const base = getEndpoint('recognitionSuggestions');
   const url = new URL(`${stripTrailingSlash(base)}/${suggestionId}/accept`, window.location.origin);
 
   return fetchRequiredApi<SuggestionActionResponse>(url.toString(), {
     method: 'POST',
     restNonce: getConfig().nonce,
+    signal: options.signal,
   });
-};
+}
 
 /**
  * Result of the atomic merge+accept endpoint.

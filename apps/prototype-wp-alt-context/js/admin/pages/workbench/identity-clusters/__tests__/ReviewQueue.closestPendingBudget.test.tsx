@@ -22,7 +22,7 @@ const pendingKinds = ['name', 'assignment'] as const;
 const bands = [
   ['strong', 'Strong match', 0.8],
   ['possible', 'Possible match', 0.45],
-  ['none', 'Weak match', 0.12],
+  ['none', 'Below match threshold', 0.12],
 ] as const;
 const roster: RosterEntry[] = ['Ellyn Heald', 'Zoe Adams', 'Pat Nguyen'].map((name, index) => ({
   id: index + 7, name, person_uuid: `fixture-person-${index + 7}`, tags: [],
@@ -224,13 +224,13 @@ describe('ReviewQueue persisted proposal closest-candidate budget (c82 F2)', () 
     mount();
     const input = await openNaming();
     const option = await screen.findByRole('option', { name: /Confirm match with Ellyn Heald/ });
-    expect(option).toHaveTextContent('Weak match');
+    expect(option).toHaveTextContent('Below match threshold');
     expect(closestRequests()).toHaveLength(1);
     expect(closestRequests()[0]?.url.searchParams.get('top_k')).toBe('5');
     expect(closestRequests()[0]?.method).toBe('GET');
     await userEvent.setup().type(input, 'Zoe');
     expect(input).toHaveValue('Zoe');
-    expect(option).toHaveTextContent('Weak match');
+    expect(option).toHaveTextContent('Below match threshold');
     expect(screen.getByRole('option', { name: /Confirm match with Zoe Adams/ })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: /Pat Nguyen/ })).not.toBeInTheDocument();
     expect(closestRequests()).toHaveLength(1);

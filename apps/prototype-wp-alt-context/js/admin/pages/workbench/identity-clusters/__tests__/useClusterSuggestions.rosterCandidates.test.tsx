@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseNamingOptionValue } from '../buildNamingOptions';
 import { useClusterSuggestions } from '../useClusterSuggestions';
 import * as recognitionApi from '../../../../api/recognition';
+import { registerConfig, resetConfigCache } from '../../../../api/config';
 import { useRosterEntries } from '../../../../hooks/useRosterHooks';
 import { buildTestQueryClient, createQueryWrapper } from '../../../../test-utils/queryClient';
 
@@ -88,6 +89,13 @@ const renderUnnamedCard = (enabled = true) =>
   );
 
 beforeEach(() => {
+  registerConfig({
+    nonce: 'fixture-nonce',
+    ajaxUrl: '/wp-admin/admin-ajax.php',
+    endpoints: {
+      recognitionClusters: '/wp-json/acx/v1/recognition/clusters',
+    },
+  });
   // No pending suggestion row for the unnamed identity: the batch comes back empty.
   vi.mocked(recognitionApi.fetchIdentitiesSuggestions).mockResolvedValue({ matches: {} });
   vi.mocked(recognitionApi.listRecognitionClusters).mockResolvedValue({
@@ -115,6 +123,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetConfigCache();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
 });

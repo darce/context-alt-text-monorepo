@@ -166,7 +166,7 @@ describe('F5 probe quality across the real HTTP adapter, query and naming contro
     expect(onCommit).not.toHaveBeenCalled();
   });
 
-  it.each([['low_quality', 'none', 'Weak match'], ['ok', 'strong', 'Strong match']] as const)(
+  it.each([['low_quality', 'none', 'Below match threshold'], ['ok', 'strong', 'Strong match']] as const)(
     'retains a valid %s/%s choice as %s and commits only on selection',
     async (quality, band, label) => {
       responseBody = body(quality, band);

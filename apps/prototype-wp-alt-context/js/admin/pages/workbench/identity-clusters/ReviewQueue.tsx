@@ -2185,6 +2185,9 @@ const CurrentCard = ({
           personCommit.phase === PERSON_COMMIT_PHASE.COMMITTING || personCommitPending || isBulkActive
         }
         suggestedCreateName={options?.suggestedCreateName}
+        hasEligiblePendingProposal={
+          kind === NEXT_ACTION_KIND.NAME || kind === NEXT_ACTION_KIND.ASSIGNMENT
+        }
         committedPersonUuid={personCommit.personUuid}
         onCurateGroup={onLabel}
         onCommit={(request) => {

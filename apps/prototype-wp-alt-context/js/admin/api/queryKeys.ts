@@ -36,6 +36,8 @@ export const queryKeys = {
     labels: () => [...queryKeys.clusters.all, 'labels'] as const,
     topUnlabeled: (tenantId: string) => [...queryKeys.clusters.all, 'top-unlabeled', tenantId] as const,
     labelSearch: (term: string) => [...queryKeys.clusters.all, 'label-search', term] as const,
+    rosterCandidates: (clusterId: string, topK: number) =>
+      [...queryKeys.clusters.all, 'roster-candidates', clusterId, topK] as const,
   },
   jobs: {
     all: ['jobs'] as const,

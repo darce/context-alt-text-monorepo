@@ -10,7 +10,7 @@
 > **Review Coverage Target:** frontend request behavior; no service or limiter change
 > **Depends on:** none (Wave A; ships first so the 429 storm stops contaminating WBTRUST-1/3 repros)
 > **Executor:** `claude-remote` `claude-haiku-5-5`, effort `xhigh` for implementation and grunt work (operator order 2026-10-15). Brief each slice separately (1–3 files), inline the slice text plus codemap snippets; if the write-enabled remote Claude harness is denied or unavailable, record a blocker and ask the operator — no silent fallback to another model.
-> **Prior art:** [scope](../../scopes/workbench-curation-trust-scope.md) (R14, root cause 8), [UXP-NET-1 scope](../../scopes/uxp-net-1-429-fanout-scope.md) (shipped partly; tier changes ruled out), [UX-map evaluation](../../assessments/current/workbench-curation-trust-uxmap-evaluation-2026-10-15.md) (A6, A7, C3), [workbench-operator-loop map](../../../apps/prototype-wp-alt-context/docs/ux-maps/workbench-operator-loop.md)
+> **Prior art:** [scope](../../scopes/workbench-curation-trust-scope.md) (R14, root cause 8), [UXP-NET-1 scope](../../scopes/uxp-net-1-429-fanout-scope.md) (shipped partly; tier changes ruled out), [UX-map evaluation](../../assessments/current/workbench-curation-trust-uxmap-evaluation-2026-10-15.md) (A6, A7, C3), [workbench-operator-loop map](../../../apps/prototype-wp-alt-context/docs/ux-maps/workbench-operator-loop.md); semantic prior art: FEBT-1 (HTTP 429/503 → cooldown; the `recognitionCooldown.ts` seam), UXW2-1 (shared write-through buffer), DEMOLAND-1 (`timeoutMs` once never aborted an unsettled fetch), E21-20 (name-suggestion query not refetched by retry handlers), E21-18 (live region re-announced every SSE tick), [clustering-UI latency scope](../../scopes/workbench-clustering-ui-latency-refresh-scope.md) (monotonic progress + projection refresh contract)
 > **Carried findings (by ID only):** none recorded yet; query `review_findings(list, task_ref="WBTRUST-4")`
 
 ## WBTRUST-4. Request budget — end the 429 storm
@@ -50,6 +50,9 @@ The console shows `429 (Too Many Requests)` on `recognition/suggestions`, `sugge
 - `hooks/useJobStateMachineEffects.ts`: scan success → `runAfterCooldown` → invalidate `media.identities()`, `clusters.all`, `suggestions.all`; batch-run terminal → `media.identities()` + `clusters.all`; the SSE clustering-completed branch invalidates **without** `runAfterCooldown`. `hooks/useJobProgressStream.ts` ticks every second.
 - Suggestion fan-out: `useInlineSuggestionBatch(identityIds)` makes one batched `fetchIdentitiesSuggestions` per ≤ `IDENTITY_SUGGESTIONS_MAX_BATCH_SIZE` (100) ids (≤ 4 workers) under `identityBatchIdsKey(ids)` and seeds single-id keys (`seedIdentityBatchSingles`). Hypothesis: the batch key changes whenever the id set changes, so each membership change refetches the whole set. Single-id queries come from `useClusterSuggestionsLoader` (mounted by `IdentityClusterItem` with `enabled: editState.isEditing`, and `UngroupedResidueEditor` with `enabled: true`) in `IdentityClusterList.tsx`; they take `initialData` from the batch cache but a mount that races the batch fires its own request. `unlabeledSuggestionBatchIds(groups)` (`utils.ts`) builds the batch list; `invalidateSuggestionProjection` invalidates `suggestions.projection.all`; `PROJECTION_TOP_K` 5; `IDENTITY_BATCH_STALE_MS` 60 000.
 - Save path: `utils/invalidateLabelSurfaces.ts` invalidates eight families on every label save (`media.identities()`, `clusters.labels()`, `clusters.all`, `roster.entries()`, `suggestions.projection.all`, `suggestions.mergePending()`, `suggestions.namePending()`, `roster.all`) via `useClusterMutations.ts`.
+
+- Already on `main` after the served build was cut (FIR-UI track): optional-read budgets for suggestions and closest-match reads (`useClusterSuggestions.optionalReadBudget`, `ReviewQueue.closestPendingBudget`, `ClusterLabelingPanel.hangingClosestBudget`), `useClusterMutations.failedReadBudget`, `useClusterRosterCandidates`, and identity-suggestion transport/routing tests. These bound per-surface optional reads but not the aggregate: the polling registry, SSE short-circuit and invalidation fan-out below are untouched by them.
+- The console log came from a JS-only overlay built before that work (scope Step 0); the driver ranking in S1 must be measured on current `main`, not inferred from the log.
 
 ## Target Outcome
 
@@ -94,14 +97,14 @@ Owned paths:
 
 Count before changing anything.
 Closes: R14 (diagnosis). Canon: PERF-02, EVAL-16.
-Design decision (binding): a reusable harness (fake timers + route-family counter) lands first with RED budget tests per scenario; the decision records requests/min per family and ranks the drivers (a)–(d) from the scope by measured share. Drivers that measure < 10 % of traffic are dropped from later slices.
+Design decision (binding): first record the served build (scope Step 0) and run the baseline on current `main`. A reusable harness (fake timers + route-family counter) lands first with RED budget tests per scenario; the decision records requests/min per family and ranks the drivers (a)–(d) from the scope by measured share. Drivers that measure < 10 % of traffic are dropped from later slices; any slice made redundant by the landed FIR-UI budgets is marked so in the decision rather than implemented.
 Acceptance: harness committed; per-family numbers recorded in the handoff decision; RED tests fail on the base SHA.
 
 ### Slice S2: aggregate-poll-budget
 
 One owner for polling cadence.
 Closes: R14. Canon: RES-05, RES-12, RES-15, PERC-07.
-Design decision (binding): `pollBudget` registry counts mounted pollers and returns each one's interval from the formula; `BUDGET_RPM` default 40 (headroom under 60). All listed pollers register with a base interval; `useMultiScanStatus` shares one registration per poller. `gateRefetchInterval` stays the cooldown gate and composes with the registry (never `false`). Unmount deregisters.
+Design decision (binding): `pollBudget` registry counts mounted pollers and returns each one's interval from the formula; `BUDGET_RPM` default 40 (headroom under 60). All listed pollers register with a base interval; `useMultiScanStatus` shares one registration per poller. `gateRefetchInterval` stays the cooldown gate and composes with the registry (never `false`). Unmount deregisters. A poll whose fetch never settles must not wedge the registry: confirm the request layer aborts on `timeoutMs` (DEMOLAND-1) and add the missing abort with a test if it does not.
 Acceptance: "20 jobs idle" scenario ≤ 40 requests/min; registering/deregistering a poller changes the others' intervals within one tick; cooldown tests unchanged.
 
 ### Slice S3: sse-short-circuit
@@ -115,7 +118,7 @@ Acceptance: stream-open scenario issues ≤ 1 status request/min per streamed jo
 
 Refresh what changed, not every family.
 Closes: R14, R10 (read-your-writes dependency). Canon: RES-06, RES-13.
-Design decision (binding): scan success/batch terminal refetch `media.identities()` and the suggestion batch, then re-seed singles; `suggestions.all` and `clusters.all` are no longer invalidated together. The `batchIdsKey` is made stable across membership changes (page-based key or incremental diff) so adding one identity does not refetch the other 29. `invalidateLabelSurfaces` keeps its family list; each family call goes through `runAfterCooldown` and de-duplicates within one tick. Coordinate with WBTRUST-3 S4: this slice provides the primitive, WBTRUST-3 uses it for the save path.
+Design decision (binding): scan success/batch terminal refetch `media.identities()` and the suggestion batch, then re-seed singles; `suggestions.all` and `clusters.all` are no longer invalidated together. The `batchIdsKey` is made stable across membership changes (page-based key or incremental diff) so adding one identity does not refetch the other 29. `invalidateLabelSurfaces` keeps its family list; each family call goes through `runAfterCooldown` and de-duplicates within one tick. Coordinate with WBTRUST-3 S4: this slice provides the primitive, WBTRUST-3 uses it for the save path. Reuse the FEBT-1 cooldown seam and the UXW2-1 shared write-through buffer where they fit; do not add a parallel mechanism.
 Acceptance: "30 identities, one membership change" ≤ 2 suggestion requests; "scan complete" ≤ 10 requests in 10 s.
 
 ### Slice S5: single-wait-state
@@ -123,7 +126,7 @@ Acceptance: "30 identities, one membership change" ≤ 2 suggestion requests; "s
 Say it once.
 Closes: R14. Canon: INT-08, PERC-07, A11Y-21.
 Design decision (binding): while the cooldown is open, per-card/per-query errors from rate limiting are suppressed in favour of one `role="status"` line "Busy — resuming in Ns" in the activity strip (countdown from `cooldownRemainingMs`), then a single retry wave through the registry.
-Acceptance: a 429 on `identities/suggestions` shows no "Could not load name suggestions" while cooling down; the line is announced once, not per tick.
+Acceptance: a 429 on `identities/suggestions` shows no "Could not load name suggestions" while cooling down; the line is announced once, not per tick (E21-18 fixed the same re-announce defect for the SSE live region; reuse its pattern). Retry handlers must refetch the name-suggestion query itself (E21-20).
 
 ### Slice S6: batch-jobs-status (optional)
 

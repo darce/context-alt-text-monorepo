@@ -7,10 +7,10 @@
 > **Target Branch:** feature/wbtrust-3
 > **Base SHA:** 372a6413a7ae0eb71baa3566716546684bac5a58
 > **Revision:** 1
-> **Review Coverage Target:** frontend + PHP label service read; PHP edits only if S1 proves a server-side persistence defect
+> **Review Coverage Target:** frontend + PHP label service read; PHP edits only if S1, run on a build that already contains the rename-durability fix, still proves a server-side persistence defect
 > **Depends on:** WBTRUST-4 merged (shared invalidation primitive; rate-limit-clean repro)
 > **Executor:** `claude-remote` `claude-haiku-5-5`, effort `xhigh` for implementation and grunt work (operator order 2026-10-15). Brief each slice separately (1–3 files), inline the slice text plus codemap snippets; if the write-enabled remote Claude harness is denied or unavailable, record a blocker and ask the operator — no silent fallback to another model.
-> **Prior art:** [scope](../../scopes/workbench-curation-trust-scope.md) (R9, R10, root causes 6–7), [UX-map evaluation](../../assessments/current/workbench-curation-trust-uxmap-evaluation-2026-10-15.md) (A5, A6, A7, C2), [GPUFLOW-3 plan](GPUFLOW-3-demo-triage-identity-gpu-lifecycle-and-unified-queue-task-plan.md) (cluster→person bind, I1), [workbench-identity-chips map](../../../apps/prototype-wp-alt-context/docs/ux-maps/workbench-identity-chips.md)
+> **Prior art:** [scope](../../scopes/workbench-curation-trust-scope.md) (R9, R10, root causes 6–7), [UX-map evaluation](../../assessments/current/workbench-curation-trust-uxmap-evaluation-2026-10-15.md) (A5, A6, A7, C2), [GPUFLOW-3 plan](GPUFLOW-3-demo-triage-identity-gpu-lifecycle-and-unified-queue-task-plan.md) (cluster→person bind, I1), [workbench-identity-chips map](../../../apps/prototype-wp-alt-context/docs/ux-maps/workbench-identity-chips.md); semantic prior art: IDREBIND-1-W3-01 (`invalidateLabelSurfaces`), UXW2-3-R1-02 (roster gate on commit), GTMSMOKE-1 decision 16666 (rename durable-enqueue audit; `person_updated` ACK is a no-op), `PersonRenameReplayTest.php`, [roster-person-binding scope](../../scopes/roster-person-binding-scope.md), contract `docs/workbay/contracts/curation-sync-api.md`, E21-20 (name-suggestion query not refetched by retry handlers)
 > **Carried findings (by ID only):** none recorded yet; query `review_findings(list, task_ref="WBTRUST-3")`
 
 ## WBTRUST-3. Naming — one option per person, non-blocking suggestions, saves that stick
@@ -53,6 +53,9 @@ Labelling `bea-burke_57b99d594f1b` (#106): the edit form shows "3 naming options
 - Save path: `utils/invalidateLabelSurfaces.ts` invalidates eight families per save; `useClusterMutations.ts` `invalidateQueries` wraps it — a 429 here is the leading "not saved" suspect.
 - `useMediaIdentities.ts`: `refetchInterval` 3000 ms while `hasPendingClustering`, `retry` ≤ 2 with Retry-After, `staleTime` 15 s, a recovery latch. `useClusterRosterCandidates.ts`; `useClusterSuggestionsLoader.ts` single-id `identityBatch` query with `initialData` from the batch cache, `staleTime` = `IDENTITY_BATCH_STALE_MS`, `retry`, `isError`.
 - Tests: `buildNamingOptions.test.ts`, `NameFaceControl*.test.tsx`, `useClusterLabelMutations.test.tsx`, `useClusterMutations*.test.tsx`; plugin PHP tests for the label service.
+- Rename durability is already addressed on `main`. By contract the backend `person_updated`/`person_created` operations are no-op acknowledgements; a rename persists through the WP cluster-label enqueue (`Api::update_person()` → `enqueue_bound_cluster_label_updates`), proven by `tests/Unit/PersonRenameReplayTest.php` (rename durable enqueue, conflict replay freshness, causal batch with real CAS). The PHP served on :10028 predates that fix (scope Step 0), so the operator's "does not save to media item" may be the stale deployment.
+- Already on `main` from the parallel FIR-UI track: `NameFaceControl` none-abstention, `useClusterRosterCandidates`, optional-read budgets in `useClusterSuggestions`/`useClusterSuggestionsLoader`, `useClusterMutations` failed-read budget, `PersonCommitControl` busy-candidate handling, `ClusterLabelingPanel` hanging-closest budget. Tests: `useClusterSuggestions.optionalReadBudget`, `.rosterRecovery`, `useClusterMutations.failedReadBudget`, `NameFaceControl.noneAbstention`, `ClusterLabelingPanel.hangingClosestBudget`. Read them before S3 and S4: a failure that no longer blocks the picker on `main` is not a defect to fix again.
+- Roster may be empty while cluster labels exist (roster-person-binding scope), which is why both sources exist; S2 hides the distinction in the UI without removing either source.
 
 ## Target Outcome
 
@@ -97,8 +100,8 @@ Owned paths:
 
 Find out whether "not saved" is a server defect or a lost refetch.
 Closes: R10 (diagnosis). Canon: INT-10, EVAL-16.
-Design decision (binding): reproduce on the fir tenant with the network panel open: record which `class-cluster-label-service.php` path ran, the PATCH/POST response, and the next `media-identities` read. RED tests: (a) JS — mutation succeeds, all refetches 429 ⇒ UI still shows "Saved" and the label; (b) PHP — both label paths ⇒ media-identities returns the label.
-Acceptance: decision names the path and the defect (server / client-refetch / both); RED tests fail on the base SHA for that reason.
+Design decision (binding): first record the served build and whether it contains `enqueue_bound_cluster_label_updates` (scope Step 0); if not, request an operator redeploy and reproduce only after it. Adopt `PersonRenameReplayTest.php` as the existing server-side proof instead of writing a duplicate. Then reproduce on the fir tenant with the network panel open: record which `class-cluster-label-service.php` path ran, the PATCH/POST response, and the next `media-identities` read. RED tests: (a) JS — mutation succeeds, all refetches 429 ⇒ UI still shows "Saved" and the label; (b) PHP — only for a path `PersonRenameReplayTest.php` does not already cover: both label paths ⇒ media-identities returns the label.
+Acceptance: decision names the path and the defect (stale deployment / server / client-refetch / combination); RED tests fail on the base SHA for that reason.
 
 ### Slice S2: one-option-per-person
 
@@ -111,14 +114,14 @@ Acceptance: fixture "Ellyn Heald (group, 60 %) + Ellyn Heald (person) + Bea Burk
 
 A failed advisory call stays advisory.
 Closes: R9. Canon: FORM-05, PERC-07, RES-06, A11Y-21.
-Design decision (binding): `suggestionsError` renders an inline note below the field ("Suggestions are busy — you can still type a name. Try again") with rate-limit-aware copy when the WBTRUST-4 cooldown is open; Save name stays enabled; no `role="alert"` for rate-limit (a polite `role="status"`); retry reuses the loader's `retry`.
+Design decision (binding): start by reading the landed optional-read budget tests; implement only what they do not cover. Confirm the Retry handler refetches the name-suggestion query itself (prior finding E21-20 said it did not). `suggestionsError` renders an inline note below the field ("Suggestions are busy — you can still type a name. Try again") with rate-limit-aware copy when the WBTRUST-4 cooldown is open; Save name stays enabled; no `role="alert"` for rate-limit (a polite `role="status"`); retry reuses the loader's `retry`.
 Acceptance: error fixture leaves the field and Save usable; cooldown fixture shows the busy copy and no alert role.
 
 ### Slice S4: read-your-writes
 
 Make the save visible without a refetch.
 Closes: R10. Canon: INT-10, INT-22, RES-13, A11Y-21.
-Design decision (binding): on mutation success `setQueryData` updates `media.identities()` entries and the cluster label caches from the response; a `role="status"` "Saved" appears within 1 s and clears after 4 s; `invalidateLabelSurfaces` then reconciles through `runAfterCooldown`, narrowed to the families the save actually changed (WBTRUST-4 S4 primitive). If S1 found a server defect, fix it in the PHP service with its RED test first.
+Design decision (binding): on mutation success `setQueryData` updates `media.identities()` entries and the cluster label caches from the response; a `role="status"` "Saved" appears within 1 s and clears after 4 s; the existing `invalidateLabelSurfaces` helper (IDREBIND-1-W3-01; extend it, never add a second one) then reconciles through `runAfterCooldown`, narrowed to the families the save actually changed (WBTRUST-4 S4 primitive). If S1 found a server defect, fix it in the PHP service with its RED test first.
 Acceptance: S1 RED tests green; request count for one save ≤ 1 write + ≤ 3 reads in 5 s.
 
 ### Slice S5: maps-and-browser-check

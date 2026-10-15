@@ -10,7 +10,7 @@
 > **Review Coverage Target:** frontend; request-count test for the commit sequence
 > **Depends on:** WBTRUST-3 merged (reuses the settled naming control); WBTRUST-1 merged (both edit `ReviewQueue.tsx`; sequential by design)
 > **Executor:** `claude-remote` `claude-haiku-5-5`, effort `xhigh` for implementation and grunt work (operator order 2026-10-15). Brief each slice separately (1–3 files), inline the slice text plus codemap snippets; if the write-enabled remote Claude harness is denied or unavailable, record a blocker and ask the operator — no silent fallback to another model.
-> **Prior art:** [scope](../../scopes/workbench-curation-trust-scope.md) (R4, root cause 5), [UX-map evaluation](../../assessments/current/workbench-curation-trust-uxmap-evaluation-2026-10-15.md) (A4, B3, B4, C4), [workbench-review-queue map](../../ux-maps/workbench-review-queue.md), [GPUFLOW-3 plan](GPUFLOW-3-demo-triage-identity-gpu-lifecycle-and-unified-queue-task-plan.md) (cluster→person bind, name weaving)
+> **Prior art:** [scope](../../scopes/workbench-curation-trust-scope.md) (R4, root cause 5), [UX-map evaluation](../../assessments/current/workbench-curation-trust-uxmap-evaluation-2026-10-15.md) (A4, B3, B4, C4), [workbench-review-queue map](../../ux-maps/workbench-review-queue.md), [GPUFLOW-3 plan](GPUFLOW-3-demo-triage-identity-gpu-lifecycle-and-unified-queue-task-plan.md) (cluster→person bind, name weaving); semantic prior art: E21-5-BR-37 (stale show-all member list after remove, fixed with a generation guard and snapshot reset on refetch), IDREBIND-1-W3-01 (`invalidateLabelSurfaces` helper), UXW2-3-R1-02 (roster-loading gate on commit), [roster-person-binding scope](../../scopes/roster-person-binding-scope.md) (roster may be empty while cluster labels exist)
 > **Carried findings (by ID only):** none recorded yet; query `review_findings(list, task_ref="WBTRUST-2")`
 
 ## WBTRUST-2. One curation surface — exclude mismatches, accept the rest
@@ -52,6 +52,9 @@ From a group of N faces the operator can exclude the wrong ones (reversibly), se
 - `identity-clusters/ClusterLabelingPanel.tsx` already hosts the name form (`NameFaceControl`, duplicate guard, merge undo) **and** a read-only member grid: `ClusterLabelingMemberGrid.tsx` (member loading, reading-order positions via `buildMemberPositions`, show-all expansion and announcement).
 - Entry points: `ReviewQueue.tsx` card `onReview(clusterId)` → `open_review`; `PersonCommitControl` `onCurateGroup` → `onLabel` → `open_label`; `useOpenReviewTargetLifecycle` `onRebindSync` → `open_review`.
 - Related tests: `ClusterReviewPanel.test.tsx`, `ClusterReviewPanel.expandError.test.tsx`, `ClusterLabelingPanel*.test.tsx` (rosterCandidates, busyCandidateError, candidateBudgetRegression, duplicateGuardBudget, hangingClosestBudget), `PersonCommitControl*.test.tsx`, `NameFaceControl*.test.tsx`, `ScanTabContent.*.test.tsx` (including `labelPanelReachable`).
+- Staleness prior art: the expanded-members list once showed removed faces after show-all plus remove (E21-5-BR-37; generation guard, snapshot reset on refetch). The R4 stale grid is a different defect (inspect-only panel), but S2/S3 must keep those properties: exclusions keyed by identity id, dropped when a refetch no longer returns the id.
+- Label/commit side effects: invalidation after a commit goes through `utils/invalidateLabelSurfaces.ts` (IDREBIND-1-W3-01), already wired from `useClusterMutations.ts`; `PersonCommitControl` already gates commit while the roster is loading or errored (UXW2-3-R1-02). Reuse both; do not add a second invalidation path.
+- Served-build caveat (scope "Step 0"): the fir site serves an older release; confirm the 47-face grid and the "×"-only behavior on current `main` before changes.
 - UX map text to change: `docs/ux-maps/workbench-review-queue.md` (the "remove an incorrect face with confirmation" job and its `ClusterReviewPanel` code references — currently line-anchored; re-anchor by symbol) and `workbench-2pane.uxmap.json`.
 
 ## Target Outcome
@@ -102,14 +105,14 @@ Owned paths:
 
 Decide what "accept" executes, then fail first.
 Closes: R4 (definition). Canon: HAI-13, INT-13.
-Design decision (binding): read `useClusterConfirmSuggestion`, `useClusterMatchAction`, `PersonCommitControl` and `useClusterLabelMutations` and write down, per entry context, the single server action Accept runs: (a) opened from a suggestion card ⇒ confirm that suggestion; (b) opened on an unnamed group ⇒ the name commit; (c) opened on a named group with no suggestion ⇒ apply exclusions and close ("Done — keep N faces"). Check whether the member wire carries filename/date. RED tests encode the request counts and the label text.
+Design decision (binding): record the served build first (scope Step 0). Then read `useClusterConfirmSuggestion`, `useClusterMatchAction`, `PersonCommitControl` and `useClusterLabelMutations` and write down, per entry context, the single server action Accept runs: (a) opened from a suggestion card ⇒ confirm that suggestion; (b) opened on an unnamed group ⇒ the name commit; (c) opened on a named group with no suggestion ⇒ apply exclusions and close ("Done — keep N faces"). Check whether the member wire carries filename/date. RED tests encode the request counts and the label text.
 Acceptance: decision recorded with the three mappings and the wire finding; RED tests fail on the base SHA.
 
 ### Slice S2: exclusion-state
 
 Selection without mutation.
 Closes: R4. Canon: INT-04, VIZ-15.
-Design decision (binding): `useClusterExclusions(clusterId)` holds a `Set<identityId>`, exposes `toggle`, `clear`, `count`; tile state is a sr-007 enum (`included | excluded`). State survives show-all expansion and resets on cluster change. Nothing is persisted.
+Design decision (binding): `useClusterExclusions(clusterId)` holds a `Set<identityId>`, exposes `toggle`, `clear`, `count`; tile state is a sr-007 enum (`included | excluded`). State survives show-all expansion and resets on cluster change; a member refetch drops ids that are no longer returned (E21-5-BR-37 property). Nothing is persisted.
 Acceptance: reducer tests; header reads "N faces · K excluded" via `role="status"`.
 
 ### Slice S3: selectable-grid
@@ -123,7 +126,7 @@ Acceptance: keyboard walk test; no confirm dialog in the DOM; tile target size a
 
 One primary action, bounded blast radius.
 Closes: R4. Canon: INT-10, INT-13, rg-002, rg-007.
-Design decision (binding): `useCurationCommit` mirrors the `useBulkReviewCommit` sequencer — run `removeClusterMember(id, true)` for each excluded face in order, stop on first failure, then run the S1-pinned commit; invalidate once at the end through the WBTRUST-4 `runAfterCooldown` primitive (not per removal). Failure UI: "Removed 1 of 3 — Retry remaining" keeping the rest selected; the Accept button is disabled-with-reason (aria-disabled) while running. Label states the outcome: "Accept {N} faces as {Name}" or "Done — keep {N} faces".
+Design decision (binding): `useCurationCommit` mirrors the `useBulkReviewCommit` sequencer — run `removeClusterMember(id, true)` for each excluded face in order, stop on first failure, then run the S1-pinned commit; invalidate once at the end through the WBTRUST-4 `runAfterCooldown` primitive wrapping the existing `invalidateLabelSurfaces` helper (not per removal, no new invalidation path). Failure UI: "Removed 1 of 3 — Retry remaining" keeping the rest selected; the Accept button is disabled-with-reason (aria-disabled) while running. Label states the outcome: "Accept {N} faces as {Name}" or "Done — keep {N} faces".
 Acceptance: K=3 ⇒ exactly 3 reassigns + 1 commit; failure on the 2nd leaves 2 exclusions pending and no commit.
 
 ### Slice S5: one-panel-two-entries

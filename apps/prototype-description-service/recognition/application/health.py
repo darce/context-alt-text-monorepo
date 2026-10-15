@@ -12,6 +12,7 @@ import contextvars
 import hashlib
 import json
 import logging
+import os
 import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass, replace
@@ -843,12 +844,17 @@ def check_face_pipeline_models(models_dir: Path) -> CheckResult:
         settings = get_settings()
         fp = settings.face_pipeline
         from db.settings import get_database_settings
+        from recognition.infrastructure.face_pipeline.ort_adapters import (
+            RETRY_MAX_SIDE_ENV,
+            resolve_retry_max_side,
+        )
 
         expected_config = FrozenFaceRuntimeConfig(
             profile="face_pipeline", models_dir=root.resolve(), embedder_models_dir=root.resolve(),
             score_threshold=float(fp.score_threshold), nms_threshold=float(fp.nms_threshold),
             top_k=int(fp.top_k), embedding_dimension=int(settings.identity_detection.embedding_dimension),
             pgvector_dimension=int(get_database_settings().pgvector_dimension),
+            retry_max_side=resolve_retry_max_side(os.environ.get(RETRY_MAX_SIDE_ENV)),
         )
         runtime = get_shared_face_pipeline_runtime(
             profile="face_pipeline",
@@ -921,6 +927,10 @@ def check_model_space(space: ModelSpace, store: Path, /) -> CheckResult:
         settings = get_settings()
         face_pipeline = settings.face_pipeline
         from db.settings import get_database_settings
+        from recognition.infrastructure.face_pipeline.ort_adapters import (
+            RETRY_MAX_SIDE_ENV,
+            resolve_retry_max_side,
+        )
 
         expected_config = FrozenFaceRuntimeConfig(
             profile=space.value, models_dir=Path(face_pipeline.resolved_models_dir).resolve(),
@@ -929,6 +939,7 @@ def check_model_space(space: ModelSpace, store: Path, /) -> CheckResult:
             nms_threshold=float(face_pipeline.nms_threshold), top_k=int(face_pipeline.top_k),
             embedding_dimension=int(settings.identity_detection.embedding_dimension),
             pgvector_dimension=int(get_database_settings().pgvector_dimension),
+            retry_max_side=resolve_retry_max_side(os.environ.get(RETRY_MAX_SIDE_ENV)),
         )
         runtime = get_shared_face_pipeline_runtime(
             profile=space,

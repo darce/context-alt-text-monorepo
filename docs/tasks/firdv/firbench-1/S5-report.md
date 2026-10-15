@@ -30,7 +30,7 @@ One self-contained HTML file per run that answers the decision question first, s
    - S1: verdict line with the state for each hypothesis, the `InconclusiveReason` text verbatim when one is set, admissibility, n_eff, the MDE of each step, and each interval. A hypothesis that was not reached shows "not evaluated".
    - S2: curves, with the unresolvable region shaded and labelled
    - S3: pair cells, with "no data → collect" cells
-   - S4: stage waterfall and attribution ladder
+   - S4: stage waterfall and joint-gap table (the judge row shows no arm deltas)
    - S5: failures, with the selection pool stated (VIZ-41); crops only when `include_crops`
    - S6: compare placeholder, filled by S6b
    - S7: clusters, with the UMAP caption "diagnostic projection · distances not meaningful" plus its parameters

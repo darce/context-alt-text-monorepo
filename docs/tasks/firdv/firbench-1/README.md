@@ -30,15 +30,16 @@ Batch B lanes run in parallel and must not edit each other's files. When a lane 
 4. **Bounded reads.** Never `cat` a large file. `report.py` is 5,982 lines and `face_metrics.py` 1,747: use `grep -n` and `sed -n 'a,bp'` ranges.
 5. **Python rules.**
    - `from __future__ import annotations`; frozen dataclasses for records.
-   - States are `StrEnum` members imported from `firbench_contract` [sr-007]. No magic status strings.
-   - Validation raises the named `FirBenchError` subclasses from `firbench_contract`. Never use `assert` for validation [sr-006].
-   - No module-level τ, FPIR, δ, α, floor or seed constants. Every binding value comes from the decision manifest [rg-009].
-   - Determinism (FLOW-18): RNG seeded from the manifest, sorted iteration, no wall-clock reads in outputs.
+   - States are `StrEnum` members imported from `firbench_contract` [sr-007, repo rule]. No magic status strings.
+   - Validation raises the named `FirBenchError` subclasses from `firbench_contract`. Never use `assert` for validation [sr-006, repo rule].
+   - No module-level τ, FPIR, δ, α, floor or seed constants. Every binding value comes from the decision manifest [rg-009, repo rule].
+   - Determinism (FLOW-18): RNG seeded from the manifest, sorted iteration, no wall-clock reads in semantic outputs.
    - numpy and scipy are available. Any other dependency is a blocker unless W2 inventory confirms it.
 6. **One space per comparison.** Never compare vectors from different legs (EMB-01). A leg's identity includes its model-manifest fingerprint and OpenCV/ORT versions.
 7. **Privacy.**
    - Tests use synthetic vectors, synthetic identities (`id-0001`) and numpy-generated images only.
    - No real names, no real images, no file from `benchmarks/private/` in a test, fixture or commit.
+   - The unseal ledger (`benchmarks/private/firbench/unseal-ledger.jsonl`) is local-only: never committed, never copied into a brief or report.
    - Any output that can hold pixels goes through `firbench_contract.require_private_output_path`.
    - InsightFace is a judge-side reference leg only.
 8. **Final report.** List the files changed, the RED evidence (failing test names and reason), the GREEN evidence (pass counts), ruff and mypy status (lint findings never block), and open questions.
@@ -52,29 +53,56 @@ Module `scripts.eval_harness.firbench_contract`:
 | `Admissibility` | StrEnum | `diagnostic`, `development`, `confirmatory` |
 | `VerdictState` | StrEnum | `superior`, `non_inferior`, `inconclusive`, `guardrail_vetoed`, `unratified` |
 | `InconclusiveReason` | StrEnum | `primary_fpir_unresolvable`, `required_guardrail_unscored`, `margin_unreachable_mde_gt_delta`, `non_confirmatory_frame`. Set only with `inconclusive`. |
-| `FaceOutcome` | StrEnum | mated faces: `missed`, `unaligned`, `wrong_identity`, `rejected`, `correct`. Non-mated faces: `false_accept`, `correct_reject`. |
+| `FaceOutcome` | StrEnum | mated faces: `missed`, `unaligned`, `wrong_identity`, `rejected`, `correct`. Non-mated source units: `false_accept`, `correct_reject`. |
 | `BoundarySemantics` | StrEnum | `legacy_v1` (non-mated accept iff score > τ, mated iff score ≥ τ), `v2` (accept iff score ≥ τ for both) |
-| `Arm` | StrEnum | `native`, `oracle_box`, `ref_landmarks` |
+| `Arm` | StrEnum | `native`, `gt_crop_redetect` (renamed from `oracle_box`), `cached_yunet_landmark_replay` (renamed from `ref_landmarks`) |
+| `ArmStatus` | StrEnum | `available`; `unavailable` (no cached landmark for the face; never a fallback); `unavailable_fused` (insightface, both arms) |
+| `LedgerStage` | StrEnum | `missed`, `detected`, `unaligned`, `embedded`. Separable legs write `missed`, `unaligned` or `embedded`. The fused leg writes `missed`, `detected` or `embedded`, never `unaligned`. |
 | `LegKind` | StrEnum | `sface`, `auraface`, `insightface`, `canary` |
 | `LegId` | frozen dataclass | `kind`, `arm`, `space_fingerprint`, `opencv_version`, `ort_version`; `.key()` gives a stable string |
 | `FrameSpec` | frozen dataclass | `frame_id`, `admissibility`, `sealed`, `source_sha256`, `exhaustive` |
 | `DecisionManifest` | frozen dataclass | see S0 |
-| Errors | `FirBenchError` subclasses | `UnratifiedDecisionError`, `SealedFrameReadError`, `CrossSpaceComparisonError`, `RuntimeMismatchError`, `CalibrationLeakError`, `NonPrivateOutputError`, `ProjectionLeakError`, `LinkageMetricError`, `CanaryInSealedRunError`, `FrameContractError`, `TauInfeasibleError`, `UndeclaredH2LegError` |
+| `UnsealToken` | frozen dataclass | `frame_id`, `frame_sha256`, `decision_sha256`, `run_id`, `code_sha`, `scorer_sha`, `consumed_at` (null until the first sealed read); see S0 Build 7 |
 | `require_private_output_path(path, *, repo_root)` | function | raises `NonPrivateOutputError` unless the path resolves under `benchmarks/private/` |
 
-Per-face record passed from S2 to S3 (`firbench_legs.FaceSearchRecord`): `face_id`, `image_id`, `psu_id`, `identity_id` (None for non-mated), `fold`, `cell` (query occluder, enrolled occluder), `stage_reached` (`FaceOutcome` up to embedding), `top_k` (tuple of `(identity_id, score)` in the leg's own space), `leg_key`.
+**Non-mated source unit.** The only unit of the FPIR denominator, of FPI, and of the calibration pool. A unit is either (a) a non-mated GT face, or (b) one background unit per frame image, which holds the native-arm detections of that image that overlap no GT face. A no-face image has only its background unit. Units come from the exhaustive frame and are fixed before any run, so detector output never adds or removes one. A unit counts once in FPI when it emits any false accept. Non-mated source units are the only denominator in every fraction, interval and resolvability rule. `N_units` is the count of units in a pool.
 
-## Run artifacts layout (the CLI writes; everything immutable once written)
+**Error raise conditions.** Every error is a `FirBenchError` subclass in `firbench_contract`.
+
+| Error | Raised when |
+| --- | --- |
+| `UnratifiedDecisionError` | a verdict is requested on a decision that is unratified or unsealed, or whose seal hash does not match |
+| `SealedFrameReadError` | a sealed input is read without an unspent `UnsealToken` for that frame, decision and run (`require_frame_read_allowed`), or a verdict is requested on a sealed frame with an unsealed manifest |
+| `CrossSpaceComparisonError` | a vector operation spans two `space_fingerprint` values |
+| `RuntimeMismatchError` | the OpenCV or ORT version differs within one leg kind, or a cache key does not match its file |
+| `CalibrationLeakError` | a calibration fit uses a probe, or any top-k gallery identity, from a test fold |
+| `NonPrivateOutputError` | an image-bearing or run output path resolves outside `benchmarks/private/` |
+| `ProjectionLeakError` | projection coordinates are passed to a metric |
+| `LinkageMetricError` | Ward, median or centroid linkage is requested on cosine distance |
+| `CanaryInSealedRunError` | a canary leg is requested on a sealed frame |
+| `CanaryConfigError` | a canary declares fewer than two identities, or the permutation leaves a selected label fixed |
+| `FrameContractError` | a frame loader finds a missing or malformed key, or an `unresolved` face is requested as non-mated |
+| `TauInfeasibleError` | the calibration pool is empty |
+| `UndeclaredH2LegError` | `results` lack the H2 leg named in the sealed manifest, or carry results for another in-house leg as H2 |
+
+`require_private_output_path` and the error names above are the only shared error surface. Lanes must not define a second error for the same condition.
+
+Per-search record passed from S2 to S3 (`firbench_legs.FaceSearchRecord`): `face_id`, `image_id`, `psu_id`, `identity_id` (None for non-mated), `fold`, `cell` (query occluder, enrolled occluder), `unit_id`, `stage_reached` (`LedgerStage`), `top_k` (tuple of `(identity_id, score)` in the leg's own space), `gallery_sha256` (hash of the gallery searched), `leg_key`. For a non-mated GT face, `unit_id` is its `face_id`. For a native-arm detection that overlaps no GT face, `unit_id` is `background:<image_id>`, `face_id` is `det:<image_id>:<index>` and `identity_id` is None. Mated GT-face records have `unit_id` None.
+
+## Run artifacts layout (the CLI writes; semantic files immutable once written)
 
 ```
-<run_dir>/                       private by default: benchmarks/private/firbench/runs/<run_id>/
-  manifest.json                  experiment_manifest.build_experiment_manifest output + firbench block
-  ledger/                        outcome_ledger rows, one per expected GT face per leg
-  legs/<leg_key>/cache.npz       embeddings + detections, keyed by LegId.key() and image sha
-  legs/<leg_key>/searches.jsonl  FaceSearchRecord rows
-  scores.json                    S3 output (curves, τ, intervals, verdict, guardrails, cells, waterfall)
-  clusters.json                  S4 output
-  report/index.html              S5 output (+ .json, .csv)
+<run_dir>/                              private by default: benchmarks/private/firbench/runs/<run_id>/
+  manifest.json                         experiment_manifest.build_experiment_manifest output + firbench block (decision sha, frame spec, leg keys, seeds, unseal token id when sealed)
+  ledger/                               outcome_ledger rows, one per expected GT face per leg and arm; no background rows
+  legs/<leg_key>/cache.npz              embeddings + detections, keyed by LegId.key() and image sha
+  legs/<leg_key>/searches.jsonl         FaceSearchRecord rows, including background-unit records (native arm)
+  scores.json                           S3 semantic output only (curves, τ, intervals, verdict, guardrails, cells, waterfall); byte-identical on rerun
+  timings.json                          attempt and timing receipt; non-replayable, written once, excluded from byte identity
+  clusters.json                         S4 output
+  report/index.html                     S5 output (+ .json, .csv)
+benchmarks/private/firbench/unseal-ledger.jsonl       append-only UnsealToken rows; outside every run dir; local-only
+benchmarks/private/firbench/spent/<frame_id>.spent    O_EXCL marker; a frame's sealed read happens once
 ```
 
 ## Reaper rule

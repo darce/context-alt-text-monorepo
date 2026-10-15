@@ -13,6 +13,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import os
+import tempfile
+import zipfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -42,14 +46,16 @@ from scripts.eval_harness.firbench_contract import (
     RuntimeMismatchError,
     SamplingArm,
     SearchStage,
+    _reject_duplicate_keys,
+    _reject_non_finite,
+    _require_sha,
     validate_interchange,
 )
 
 if TYPE_CHECKING:
     # S1 Build 1 names. firbench_frames is not merged yet; these are read by attribute only.
-    from scripts.eval_harness.firbench_frames import GtFace, ImageUnit
-
     from recognition.application.embedding.manifest import EmbeddingModelManifest
+    from scripts.eval_harness.firbench_frames import GtFace, ImageUnit
 
 
 _FACE_PIPELINE_KINDS = frozenset({LegKind.sface, LegKind.auraface})
@@ -453,6 +459,216 @@ def compare_guard(leg_a: LegId, leg_b: LegId) -> None:
 # --- contract-keyed cache ------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class CachedObservation:
+    """Immutable snapshot of the SAME execution and Hungarian assignment as a search row.
+
+    Missing image SHA is retained only for older in-process callers without ImageUnit;
+    packing refuses it. Geometry is in frame pixels, including shifted GT-crop geometry.
+    Replay has landmarks but no detector box/score. No identities or timings are cached.
+    """
+
+    leg_key: str
+    record_id: str
+    image_id: str
+    image_sha256: str | None
+    gt_face_id: str | None
+    stage: str | None
+    arm_availability: str
+    bbox_px: tuple[float, ...] | None
+    landmarks_px: tuple[tuple[float, ...], ...] | None
+    detector_score: float | None
+    embedding: tuple[float, ...] | None
+
+
+_CACHE_ROW_FIELDS = frozenset(
+    {
+        "record_id",
+        "image_id",
+        "image_sha256",
+        "gt_face_id",
+        "stage",
+        "arm_availability",
+        "bbox_px",
+        "landmarks_px",
+        "detector_score",
+        "embedding_index",
+    }
+)
+
+
+def validate_cache_observations(
+    arrays: Mapping[str, np.ndarray],
+    *,
+    leg_key: str,
+    image_sha256_by_id: Mapping[str, str] | None = None,
+    gt_image_by_id: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Validate frozen wire data independently of models, search rows and private inputs.
+
+    Readers supply the persisted frame's image hashes and GT/image map to check every
+    binding and exactly one row per declared GT. Absent caches remain ``LegCache.load()``
+    None; a valid cache without embedded GT remains explicit null rows, never zero vectors.
+    """
+
+    def fail(message: str) -> None:
+        raise FrameContractError(f"invalid firbench cache: {message}")
+
+    def number(value: Any) -> bool:
+        try:
+            return type(value) in (int, float) and math.isfinite(value)
+        except OverflowError:
+            return False
+
+    if not isinstance(leg_key, str) or not leg_key:
+        fail("leg key must be a nonempty string")
+    if set(arrays) != {"metadata_json", "vectors"}:
+        fail("expected metadata_json and vectors arrays only")
+    meta, vectors = arrays["metadata_json"], arrays["vectors"]
+    if not isinstance(meta, np.ndarray) or meta.shape != () or meta.dtype.kind != "U":
+        fail("metadata_json must be scalar unicode")
+    if (
+        not isinstance(vectors, np.ndarray)
+        or vectors.dtype != np.float32
+        or vectors.ndim != 2
+        or not np.isfinite(vectors).all()
+        or (len(vectors) and vectors.shape[1] == 0)
+    ):
+        fail("vectors must be finite float32 with shape (n_embeddings, dim)")
+    try:
+        metadata = json.loads(meta.item(), object_pairs_hook=_reject_duplicate_keys, parse_constant=_reject_non_finite)
+    except (TypeError, ValueError) as exc:
+        raise FrameContractError("invalid firbench cache metadata JSON") from exc
+    if not isinstance(metadata, dict) or set(metadata) != {"format", "leg_key", "rows"}:
+        fail("metadata fields")
+    if metadata["format"] != "firbench-cache/v1" or metadata["leg_key"] != leg_key:
+        fail("format or leg key mismatch")
+    rows = metadata["rows"]
+    if not isinstance(rows, list):
+        fail("rows must be a list")
+    record_ids, gt_ids, indices, order = set(), set(), [], []
+    hashes: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != _CACHE_ROW_FIELDS:
+            fail("row fields")
+        rid, iid, gid = row["record_id"], row["image_id"], row["gt_face_id"]
+        if any(not isinstance(v, str) or not v for v in (rid, iid)) or rid in record_ids:
+            fail("empty or duplicate record/image ID")
+        record_ids.add(rid)
+        order.append((iid, rid))
+        _require_sha(row["image_sha256"], "cache image sha256")
+        if len(row["image_sha256"]) != 64:
+            fail("cache image sha256 must be exactly 64 characters")
+        if hashes.setdefault(iid, row["image_sha256"]) != row["image_sha256"]:
+            fail("image sha256 binding conflicts")
+        if image_sha256_by_id is not None and image_sha256_by_id.get(iid) != row["image_sha256"]:
+            fail("frame image sha256 binding mismatch")
+        if gid is not None:
+            if not isinstance(gid, str) or not gid or gid != rid or gid in gt_ids:
+                fail("GT face ID must be unique and equal record_id")
+            gt_ids.add(gid)
+            if gt_image_by_id is not None and gt_image_by_id.get(gid) != iid:
+                fail("frame GT face/image binding mismatch")
+        stage, status, index = row["stage"], row["arm_availability"], row["embedding_index"]
+        if stage is not None and (not isinstance(stage, str) or stage not in {s.value for s in SearchStage}):
+            fail("unknown stage")
+        if not isinstance(status, str) or status not in {s.value for s in ArmStatus}:
+            fail("unknown arm availability")
+        if index is not None:
+            if type(index) is not int or not 0 <= index < len(vectors):
+                fail("embedding index out of range or not integer")
+            indices.append(index)
+        if (stage == SearchStage.embedded.value) != (index is not None):
+            fail("embedded stage/vector mismatch")
+        bbox, landmarks, score = row["bbox_px"], row["landmarks_px"], row["detector_score"]
+        if bbox is not None and (
+            not isinstance(bbox, list)
+            or len(bbox) != 4
+            or not all(number(v) for v in bbox)
+            or bbox[2] <= 0
+            or bbox[3] <= 0
+        ):
+            fail("malformed bbox_px")
+        if landmarks is not None and (
+            not isinstance(landmarks, list)
+            or len(landmarks) != 5
+            or any(not isinstance(p, list) or len(p) != 2 or not all(number(v) for v in p) for p in landmarks)
+        ):
+            fail("malformed landmarks_px")
+        if score is not None and not number(score):
+            fail("nonfinite detector_score")
+        if status != ArmStatus.available.value:
+            expected_stage = None if status == ArmStatus.unavailable_fused.value else SearchStage.unavailable.value
+            if stage != expected_stage or any(v is not None for v in (bbox, landmarks, score, index)):
+                fail("unavailable arm has observations")
+        elif stage is None or stage == SearchStage.unavailable.value:
+            fail("available arm has no stage")
+        if stage == SearchStage.missed.value and any(v is not None for v in (bbox, landmarks, score)):
+            fail("missed GT has detector geometry")
+        replay = "__cached_yunet_landmark_replay__" in leg_key
+        if replay and (bbox is not None or score is not None):
+            fail("replay cannot have detector box/score")
+        if (
+            status == ArmStatus.available.value
+            and stage != SearchStage.missed.value
+            and (landmarks is None or (not replay and (bbox is None or score is None)))
+        ):
+            fail("observed stage missing available geometry")
+        if gid is None and (replay or "__gt_crop_redetect__" in leg_key or stage == SearchStage.missed.value):
+            fail("only native detections may be unmatched GT rows")
+    if order != sorted(order):
+        fail("rows are not sorted by image_id,record_id")
+    if sorted(indices) != list(range(len(vectors))):
+        fail("embedding indices must be unique and complete")
+    if gt_image_by_id is not None and gt_ids != set(gt_image_by_id):
+        fail("rows do not cover exactly the declared GT faces")
+    return metadata
+
+
+def pack_cache_observations(observations: Sequence[CachedObservation], *, leg_key: str) -> dict[str, np.ndarray]:
+    """Pack firbench-cache/v1: scalar unicode metadata_json and finite float32 vectors.
+
+    Rows sort by image_id,record_id; every actual vector gets one unique complete index.
+    This API never reads model state, inputs or top-k scores, and never imputes vectors.
+    """
+    rows, vectors = [], []
+    if any(not isinstance(o, CachedObservation) for o in observations):
+        raise FrameContractError("malformed cache observations")
+    for observation in sorted(observations, key=lambda o: (o.image_id, o.record_id)):
+        if observation.leg_key != leg_key:
+            raise FrameContractError("cache observation leg key mismatch")
+        row = asdict(observation)
+        del row["leg_key"]
+        vector = row.pop("embedding")
+        row["embedding_index"] = None
+        if vector is not None:
+            row["embedding_index"] = len(vectors)
+            vectors.append(vector)
+        rows.append(row)
+    try:
+        with np.errstate(over="ignore", invalid="ignore"):
+            matrix = np.asarray(vectors, dtype=np.float32) if vectors else np.empty((0, 0), dtype=np.float32)
+        arrays = {
+            "metadata_json": np.asarray(
+                json.dumps(
+                    {"format": "firbench-cache/v1", "leg_key": leg_key, "rows": rows},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                )
+            ),
+            "vectors": matrix,
+        }
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise FrameContractError("malformed cache observations/vectors") from exc
+    validate_cache_observations(arrays, leg_key=leg_key)
+    return arrays
+
+
+class _CacheReadError(FrameContractError, ValueError):
+    """Preserve legacy corrupt-NPZ ValueError handling while naming the contract error."""
+
+
 class LegCache:
     """``legs/<leg_key>/cache.npz``. A key mismatch on read raises. It never recomputes into the same file."""
 
@@ -466,20 +682,81 @@ class LegCache:
     def load(self) -> dict[str, np.ndarray] | None:
         if not self.path.exists():
             return None
-        with np.load(self.path, allow_pickle=False) as data:
-            stored = str(data[self._KEY_FIELD])
-            if stored != self.leg_key:
-                raise RuntimeMismatchError(f"cache {self.path} holds key {stored!r}, expected {self.leg_key!r}")
-            prefix = self._ARRAY_PREFIX
-            return {name[len(prefix) :]: data[name] for name in data.files if name.startswith(prefix)}
+        try:
+            with np.load(self.path, allow_pickle=False) as data:
+                if len(data.files) != len(set(data.files)):
+                    raise FrameContractError("duplicate cache arrays")
+                if "metadata_json" in data.files or "vectors" in data.files:
+                    arrays = {name: data[name] for name in data.files}
+                    validate_cache_observations(arrays, leg_key=self.leg_key)
+                    return arrays
+                stored = data[self._KEY_FIELD]
+                if stored.shape != () or stored.dtype.kind != "U":
+                    raise FrameContractError("malformed cache leg key")
+                if stored.item() != self.leg_key:
+                    raise RuntimeMismatchError(
+                        f"cache {self.path} holds key {stored.item()!r}, expected {self.leg_key!r}"
+                    )
+                prefix = self._ARRAY_PREFIX
+                if any(name != self._KEY_FIELD and not name.startswith(prefix) for name in data.files):
+                    raise FrameContractError("unexpected cache arrays")
+                arrays = {name[len(prefix) :]: data[name] for name in data.files if name.startswith(prefix)}
+                self._check_arrays(arrays)
+                return arrays
+        except (OSError, ValueError, TypeError, KeyError, EOFError, zipfile.BadZipFile) as exc:
+            raise _CacheReadError("malformed cache archive") from exc
+
+    def read_frame(self, *, image_sha256_by_id: Mapping[str, str], gt_image_by_id: Mapping[str, str]) -> dict[str, Any]:
+        """Read a frame-bound assessment entry without producer/model state or input IO.
+
+        Only genuine absence or lack of embedded GT is unavailable. Malformed data and
+        binding mismatches raise FrameContractError; they must never become zero risk.
+        ``load`` retains its backward-compatible raw-array/None interface.
+        """
+        arrays = self.load()
+        if arrays is None:
+            return {"status": "unavailable", "reason": "cache_absent", "data": None}
+        metadata = validate_cache_observations(
+            arrays, leg_key=self.leg_key, image_sha256_by_id=image_sha256_by_id, gt_image_by_id=gt_image_by_id
+        )
+        if not any(r["gt_face_id"] is not None and r["embedding_index"] is not None for r in metadata["rows"]):
+            return {"status": "unavailable", "reason": "no_embedded_gt", "data": None}
+        return {"status": "available", "reason": None, "data": arrays}
+
+    @staticmethod
+    def _check_arrays(arrays: Mapping[str, np.ndarray]) -> None:
+        for array in arrays.values():
+            value = np.asarray(array)
+            if (
+                value.dtype.hasobject
+                or value.dtype.kind not in "biufUS"
+                or (value.dtype.kind in "f" and not np.isfinite(value).all())
+            ):
+                raise FrameContractError("cache arrays must not contain object or nonfinite data")
 
     def store(self, arrays: Mapping[str, np.ndarray]) -> None:
         self.load()  # refuses to overwrite a file written under another key
-        payload: dict[str, np.ndarray] = {self._KEY_FIELD: np.asarray(self.leg_key)}
-        for name in sorted(arrays):
-            payload[f"{self._ARRAY_PREFIX}{name}"] = np.asarray(arrays[name])
+        self._check_arrays(arrays)
+        if "metadata_json" in arrays or "vectors" in arrays:
+            validate_cache_observations(arrays, leg_key=self.leg_key)
+            payload = dict(arrays)
+        else:
+            # Older generic callers retain their keyed array format.
+            payload = {self._KEY_FIELD: np.asarray(self.leg_key)}
+            for name in sorted(arrays):
+                payload[f"{self._ARRAY_PREFIX}{name}"] = np.asarray(arrays[name])
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        np.savez(self.path, **payload)
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=self.path.parent, suffix=".npz", delete=False) as handle:
+                temporary = Path(handle.name)
+                np.savez(handle, **payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self.path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
 
 # --- search records and ledger --------------------------------------------------
@@ -553,6 +830,7 @@ class ArmResult:
     records: tuple[FaceSearchRecord, ...]
     ledger: tuple[LedgerRow, ...]
     timings_ms: Mapping[str, float]
+    cached_observations: tuple[CachedObservation, ...] = ()
 
 
 def write_searches_jsonl(path: Path, records: Sequence[FaceSearchRecord]) -> None:
@@ -680,6 +958,36 @@ def search_leg_arm(
     gt_records: list[FaceSearchRecord] = []
     det_records: list[FaceSearchRecord] = []
     timings: dict[str, float] = {}
+    cached: list[CachedObservation] = []
+
+    def _capture(
+        record: FaceSearchRecord,
+        gt_face_id: str | None,
+        observation: Observation | None = None,
+        *,
+        embedding: np.ndarray | None = None,
+        landmarks: np.ndarray | None = None,
+    ) -> None:
+        # Snapshot outside the existing receipt interval. No model call, private read or
+        # second assignment: the caller passes the observation already used for this row.
+        detection = observation.detection if observation is not None else None
+        vector = observation.embedding if observation is not None else embedding
+        points = detection.landmarks_px if detection is not None else landmarks
+        cached.append(
+            CachedObservation(
+                leg_key=leg_key,
+                record_id=record.face_id,
+                image_id=record.image_id,
+                image_sha256=getattr(image_units[record.image_id], "sha256", None),
+                gt_face_id=gt_face_id,
+                stage=record.stage_reached.value if record.stage_reached is not None else None,
+                arm_availability=record.arm_availability.value,
+                bbox_px=tuple(float(v) for v in detection.bbox_px) if detection is not None else None,
+                landmarks_px=tuple(tuple(float(v) for v in p) for p in points) if points is not None else None,
+                detector_score=float(detection.score) if detection is not None else None,
+                embedding=tuple(float(v) for v in vector) if vector is not None else None,
+            )
+        )
 
     def _emit(
         pending: _Pending,
@@ -761,6 +1069,7 @@ def search_leg_arm(
                     ms=0.0,
                 )
             )
+            _capture(gt_records[-1], face.face_id)
     elif arm is Arm.gt_crop_redetect:
         if crop_margin is None:
             raise FrameContractError("gt_crop_redetect needs the declared crop margin from the run manifest")
@@ -782,6 +1091,7 @@ def search_leg_arm(
                     ms=(perf_counter() - t0) * 1000.0,
                 )
             )
+            _capture(gt_records[-1], face.face_id, best)
     elif arm is Arm.cached_yunet_landmark_replay:
         landmarks_by_face = dict(cached_landmarks or {})
         for face in faces:
@@ -799,14 +1109,17 @@ def search_leg_arm(
                         ms=0.0,
                     )
                 )
+                _capture(gt_records[-1], face.face_id)
                 continue
             stage, hits = SearchStage.embedded, ()
+            vector = None
             try:
                 aligned = runtime.align(images[face.image_id], np.asarray(landmarks))  # type: ignore[attr-defined]
             except AlignmentError:
                 stage = SearchStage.unaligned
             else:
-                hits = _top_k(runtime.embed(aligned), gallery, top_k)  # type: ignore[attr-defined]
+                vector = runtime.embed(aligned)  # type: ignore[attr-defined]
+                hits = _top_k(vector, gallery, top_k)
             gt_records.append(
                 _emit(
                     _gt_pending(face),
@@ -817,6 +1130,7 @@ def search_leg_arm(
                     ms=(perf_counter() - t0) * 1000.0,
                 )
             )
+            _capture(gt_records[-1], face.face_id, embedding=vector, landmarks=landmarks)
     else:
         # Native arm. Every frame image runs, including images with no GT face (their background unit).
         for image_id in sorted(images):
@@ -883,6 +1197,12 @@ def search_leg_arm(
                     timings[record.timing_receipt_ref] = share  # type: ignore[index]
             else:
                 timings[f"{leg_key}/{arm.value}/image:{image_id}"] = elapsed_ms
+            for gt_j, record in enumerate(image_gt_records):
+                observation = observations[gt_to_det[gt_j]] if gt_j in gt_to_det else None
+                _capture(record, record.face_id, observation)
+            unmatched = (obs for det_i, obs in enumerate(observations) if det_i not in matched)
+            for record, observation in zip(image_det_records, unmatched, strict=True):
+                _capture(record, None, observation)
             gt_records.extend(image_gt_records)
             det_records.extend(image_det_records)
 
@@ -900,7 +1220,7 @@ def search_leg_arm(
         )
         for r in gt_records
     )
-    return ArmResult(records=records, ledger=ledger, timings_ms=dict(timings))
+    return ArmResult(records=records, ledger=ledger, timings_ms=dict(timings), cached_observations=tuple(cached))
 
 
 def _best_crop_detection(leg: LegRuntime, image: np.ndarray, face: GtFace, margin: float) -> Observation | None:

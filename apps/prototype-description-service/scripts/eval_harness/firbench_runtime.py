@@ -484,28 +484,16 @@ class _Adapter:
         ff.frame_json(prepared_frame)
 
         def run_legs(**_):
-            from scripts.eval_harness.firbench_cli import LegRunResult
+            from scripts.eval_harness.firbench_cli import LegRunResult, _check_run_result
 
             searches, ledger, timings = {}, {}, {}
+            observations = defaultdict(list)
             for kind, model in models.items():
                 for fold in range(k):
                     runtime = model[fold] if kind is fc.LegKind.canary else model
                     selected = {i: p for i, p in pixels.items() if folds[components[i]] == fold}
                     faces = [f for f in source.faces if f.image_id in selected]
                     landmarks = {}
-                    # Accepted cached YuNet landmark replay: cache detections once per image,
-                    # independent of GT identity and model predictions. Native search reuses them.
-                    cached_runtime = _Observed(runtime._base if kind is fc.LegKind.canary else runtime)
-                    searched_runtime = (
-                        fl.CanaryLeg(
-                            cached_runtime,
-                            canary_identities=runtime.canary_identities,
-                            seed=decision.gallery_lineage.split_seed,
-                            permutation=runtime.permutation,
-                        )
-                        if kind is fc.LegKind.canary
-                        else cached_runtime
-                    )
                     for arm in sorted(arms, key=lambda a: a is not fc.Arm.native):
                         key = runtime.leg_id(arm).key()
                         cells = {
@@ -518,7 +506,7 @@ class _Adapter:
                             for f in faces
                         }
                         result = fl.search_leg_arm(
-                            leg=searched_runtime,
+                            leg=runtime,
                             arm=arm,
                             images=selected,
                             image_units={i.image_id: i for i in source.images},
@@ -534,7 +522,14 @@ class _Adapter:
                             crop_margin=float(margin),
                         )
                         if arm is fc.Arm.native and runtime.alignment_mode is fc.AlignmentMode.separable:
-                            landmarks = _landmarks(cached_runtime, selected, faces)
+                            # Replay the very same native assignment; no private reads,
+                            # detector calls or repeated Hungarian matching.
+                            landmarks = {
+                                o.gt_face_id: np.asarray(o.landmarks_px)
+                                for o in result.cached_observations
+                                if o.gt_face_id is not None and o.landmarks_px is not None
+                            }
+                        observations[key].extend(result.cached_observations)
                         searches.setdefault(key, []).extend(r.to_dict() for r in result.records)
                         ledger.setdefault(key, []).extend(
                             {
@@ -547,7 +542,22 @@ class _Adapter:
                             for r in result.ledger
                         )
                         timings.update(result.timings_ms)
-            return LegRunResult(tuple(f.face_id for f in source.faces), searches, ledger, timings)
+            result = LegRunResult(tuple(f.face_id for f in source.faces), searches, ledger, timings)
+            keys = tuple(sorted({row["leg_key"] for row in registry}))
+            # Validate ALL query outcomes and ALL packed caches before publishing any cache.
+            # The driver keeps immutable declarations/failure evidence on an exception here.
+            _check_run_result(result, leg_keys=keys, arms=arms)
+            packed = {key: fl.pack_cache_observations(observations[key], leg_key=key) for key in keys}
+            for key, arrays in packed.items():
+                fl.validate_cache_observations(
+                    arrays,
+                    leg_key=key,
+                    image_sha256_by_id={i.image_id: i.sha256 for i in source.images},
+                    gt_image_by_id={f.face_id: f.image_id for f in source.faces},
+                )
+            for key, arrays in packed.items():
+                fl.LegCache(Path(out_dir) / "legs" / key / "cache.npz", leg_key=key).store(arrays)
+            return result
 
         registry.sort(key=lambda row: (row["leg_key"], row["fold"]))
         return PreparedRun(
@@ -562,37 +572,6 @@ class _Adapter:
 
 def _occluder(values):
     return "unknown" if values is None else "+".join(sorted(values)) if values else "clear"
-
-
-class _Observed:
-    """Retain native observations for the actual replay arm, without re-decoding pixels."""
-
-    def __init__(self, base):
-        self.base = base
-        self.observations = {}
-
-    def __getattr__(self, name):
-        return getattr(self.base, name)
-
-    def observe(self, image):
-        observations = self.base.observe(image)
-        self.observations[id(image)] = observations
-        return observations
-
-
-def _landmarks(runtime, images, faces):
-    from scripts.eval_harness.face_assignment import hungarian_iou_pairs, iou_pixel_corner
-
-    result = {}
-    for image_id, image in images.items():
-        gt = sorted((f for f in faces if f.image_id == image_id), key=lambda f: f.face_id)
-        observations = runtime.observations[id(image)]
-        matrix = np.array([[iou_pixel_corner(o.detection.bbox_px, f.box) for f in gt] for o in observations]).reshape(
-            len(observations), len(gt)
-        )
-        for det, face, _ in hungarian_iou_pairs(matrix, threshold=0.5):
-            result[gt[face].face_id] = observations[det].detection.landmarks_px
-    return result
 
 
 def default_collaborators():

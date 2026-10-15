@@ -36,6 +36,7 @@ import { ClusterLabelingMemberGrid } from './ClusterLabelingMemberGrid';
 import { MergeUndoBanner } from './MergeUndoBanner';
 import { DUPLICATE_GUARD_OUTCOME, useClusterLabelingDuplicateGuard } from './useClusterLabelingDuplicateGuard';
 import { useClusterLabelingMutations } from './useClusterLabelingMutations';
+import { mergeRosterCandidateOptions, useClusterRosterCandidates } from './useClusterRosterCandidates';
 
 interface ClusterLabelingPanelProps {
   clusterId: string;
@@ -137,21 +138,6 @@ export const ClusterLabelingPanel = ({
     [persons, rosterError, namedClusters, labelInput, clusterId],
   );
 
-  const comboboxOptions: ComboboxOption[] = useMemo(() => namingOptions.map(toComboboxOption), [namingOptions]);
-
-  // Full unfiltered union for create-vs-bind (UXW2-3-R1-07). Displayed options
-  // stay filter-before-slice; resolution must not inherit that truncation.
-  const resolutionOptions: ComboboxOption[] = useMemo(
-    () =>
-      buildNamingOptions({
-        rosterEntries: rosterError ? [] : persons,
-        labelMatches: namedClusters,
-        limit: null,
-        excludeClusterId: clusterId,
-      }).options.map(toComboboxOption),
-    [persons, rosterError, namedClusters, clusterId],
-  );
-
   const guard = useClusterLabelingDuplicateGuard({ clusterId, collisionsByLabel });
 
   const resetGuard = guard.reset;
@@ -167,6 +153,33 @@ export const ClusterLabelingPanel = ({
   });
 
   const { clearLastMerge } = mutations;
+
+  const candidates = useClusterRosterCandidates({
+    clusterId,
+    enabled: persons.length > 0 && !rosterLoading && !rosterError && !mutations.isBusy && !mutations.lastMerge,
+    rosterEntries: persons,
+  });
+
+  const comboboxOptions: ComboboxOption[] = useMemo(
+    () => mergeRosterCandidateOptions(candidates.options, namingOptions.map(toComboboxOption)),
+    [candidates.options, namingOptions],
+  );
+
+  // Full unfiltered union for create-vs-bind (UXW2-3-R1-07). Displayed options
+  // stay filter-before-slice; resolution must not inherit that truncation.
+  const resolutionOptions: ComboboxOption[] = useMemo(
+    () =>
+      mergeRosterCandidateOptions(
+        candidates.options,
+        buildNamingOptions({
+          rosterEntries: rosterError ? [] : persons,
+          labelMatches: namedClusters,
+          limit: null,
+          excludeClusterId: clusterId,
+        }).options.map(toComboboxOption),
+      ),
+    [candidates.options, persons, rosterError, namedClusters, clusterId],
+  );
 
   // Reset panel-local state when the labeled cluster changes (FIX-4). key= at call site
   // remounts; this effect covers non-key remounts / prop-only updates.
@@ -356,6 +369,8 @@ export const ClusterLabelingPanel = ({
                 onOptionConfirm={(option) => handleSelectOption(String(option.value))}
                 isPending={mutations.isBusy}
                 isLoading={rosterLoading}
+                suggestionsError={candidates.isError}
+                onRetrySuggestions={candidates.retry}
                 inputDisabled={mutations.isMerging}
                 disabled={mutations.isMerging}
                 commitLabel={__('Save name', 'alt-context')}

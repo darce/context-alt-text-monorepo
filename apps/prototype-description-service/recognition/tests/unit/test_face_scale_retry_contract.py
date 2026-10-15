@@ -251,8 +251,17 @@ def test_non_integer_resize_projects_with_separate_sx_sy_from_rounded_sizes(
     assert len(faces) == 1, "retry pass must recover the non-integer-scale face"
     box = np.array([300.0, 200.0, 120.0, 150.0], dtype=np.float32)
     tol = np.array([1.0 / sx, 1.0 / sy, 1.0 / sx, 1.0 / sy])
-    np.testing.assert_allclose(faces[0].bbox, box, atol=tol)
-    np.testing.assert_allclose(faces[0].landmarks, np.asarray(truth.landmarks), atol=np.array([1.0 / sx, 1.0 / sy]))
+    assert len(faces[0].bbox) == len(box) == len(tol) == 4
+    for actual, expected, bound in zip(faces[0].bbox, box, tol, strict=True):
+        np.testing.assert_allclose(actual, expected, atol=bound)
+    landmarks = np.asarray(truth.landmarks)
+    landmark_tol = np.array([1.0 / sx, 1.0 / sy])
+    assert faces[0].landmarks.shape == landmarks.shape == (5, 2)
+    assert len(faces[0].landmarks) == len(landmarks) == 5
+    for actual_point, expected_point in zip(faces[0].landmarks, landmarks, strict=True):
+        assert len(actual_point) == len(expected_point) == len(landmark_tol) == 2
+        for actual, expected, bound in zip(actual_point, expected_point, landmark_tol, strict=True):
+            np.testing.assert_allclose(actual, expected, atol=bound)
     assert yunet.input_shapes[-1] == (1, 3, 512, 640), "retry pass input is the rounded 640-max-side resize, padded"
 
 

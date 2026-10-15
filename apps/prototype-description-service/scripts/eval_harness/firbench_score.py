@@ -432,7 +432,8 @@ def curve(
                 names_by_unit[record.unit_id] += _above_names(record, tau, boundary)
                 if _nonmated_outcome(record, tau, boundary) is fc.FaceOutcome.false_accept:
                     false_accept_units.add(record.unit_id)
-            else:
+            elif record.identity_status is not fc.IdentityStatus.unresolved:
+                # Unitless unresolved GT is not a duplicate alarm or verified false name.
                 duplicate_names += _above_names(record, tau, boundary)
         spurious = duplicate_names + sum(names_by_unit[u] - 1 for u in false_accept_units)
         fnir = (miss_weight / weight_total) if n_mated else None

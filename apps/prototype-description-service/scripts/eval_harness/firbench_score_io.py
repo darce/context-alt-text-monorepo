@@ -138,8 +138,6 @@ def _inventory(payload, decision, enrolled) -> Inventory:
         face = frames.GtFace(**values)
         if face.face_id in faces:
             raise _fail("duplicate face_id")
-        if face.identity_status is fc.IdentityStatus.unresolved:
-            raise _fail("unresolved GT identity cannot enter scoring")
         faces[face.face_id] = face
     psus = _unique(payload["psu_map"], "image_id", "psu_id")
     folds = _unique(payload["folds"], "psu_id", "fold")
@@ -158,10 +156,13 @@ def _inventory(payload, decision, enrolled) -> Inventory:
     if roles != {f: "test" if f == test else "fit" for f in range(k)}:
         raise _fail("primary rotation must use seed % k, remaining folds fit")
     pools = {}
+    # Keep full GT for provenance, timing and per-face rows. Only identity-resolved
+    # faces may contribute face source units; unresolved faces add no PSU edges.
+    resolved_faces = tuple(f for f in faces.values() if f.identity_status is not fc.IdentityStatus.unresolved)
     for fold in range(k):
         try:
             pools[fold] = frames.build_nonmated_pool(
-                tuple(faces.values()),
+                resolved_faces,
                 tuple(images.values()),
                 folds,
                 fold=fold,
@@ -282,7 +283,9 @@ def _records(run_dir, firbench, inventory, registry):
                     raw["image_id"] != face.image_id
                     or raw["identity_status"] != face.identity_status
                     or raw["identity_id"] != (face.identity_id if mated else None)
-                    or raw["unit_id"] != (None if mated else face.face_id)
+                    or raw["unit_id"] != (
+                        None if mated or face.identity_status is fc.IdentityStatus.unresolved else face.face_id
+                    )
                 ):
                     raise _fail("search GT identity/unit binding mismatch")
                 if raw["cohort"] != (None if face.cohort is None else face.cohort.to_json()):
@@ -680,13 +683,26 @@ def _guardrails(decision, firbench, contexts, cells, receipt, digest, inventory,
                         for r in rows:
                             if r.arm_availability is not fc.ArmStatus.available:
                                 continue
+                            if r.identity_status is fc.IdentityStatus.unresolved:
+                                # Either membership could apply. At a legacy tie a mate
+                                # can emit a name even though a nonmate would reject it.
+                                if any(
+                                    core._accepts(score, tau, nonmated=False, boundary=decision.boundary_semantics)
+                                    for name, score in r.top_k
+                                ):
+                                    reason = "unresolved_identity"
+                                    break
+                                # No possible accepted name: a known zero contribution
+                                # to this count, without assigning an identity outcome.
+                                continue
                             mated = core._is_mated(r)
                             false_names += sum(
                                 name != r.identity_id or not mated
                                 for name, score in r.top_k
                                 if core._accepts(score, tau, nonmated=not mated, boundary=decision.boundary_semantics)
                             )
-                        value = false_names * 1000.0 / denominator
+                        else:
+                            value = false_names * 1000.0 / denominator
                     else:
                         reason = "external_mention_denominator_missing"
                 elif guard.metric == "per_cohort_fpir":
@@ -957,6 +973,62 @@ def _decision_binding(firbench, decision, run_dir=None):
         raise _fail("decision digest does not bind supplied decision")
 
 
+def _face_outcomes(records, inventory, registry, contexts, boundary):
+    """Join validated GT searches to their native tau, without changing inference.
+
+    Fit rows expose provenance only. Attribution arms use the matching native
+    embedding space's frozen threshold; detector-only searches remain in the raw
+    ledgers and background accounting, never in this GT inventory view.
+    """
+    output = []
+    for record in sorted(records, key=lambda r: (r.leg_key, r.face_id)):
+        face = inventory.faces.get(record.face_id)
+        if face is None:
+            continue
+        declaration = registry[record.leg_key, record.fold]
+        mated = (
+            None
+            if face.identity_status is fc.IdentityStatus.unresolved
+            else face.identity_id in declaration["enrolled_identity_ids"]
+        )
+        native = record.leg_key.split("__")
+        native[1] = fc.Arm.native.value
+        tau = contexts.get("__".join(native), {}).get("tau")
+        outcome = None
+        if record.fold_role is fc.FoldRole.fit:
+            reason = "fit_fold_not_scored"
+        elif record.arm_availability is not fc.ArmStatus.available:
+            reason = "arm_unavailable"
+        elif mated is None:
+            reason = "unresolved_identity"
+        elif tau is None:
+            reason = "calibration_unavailable"
+        else:
+            outcome = core._outcome(record, tau, boundary)
+            reason = None if outcome is not None else "outcome_unavailable"
+        output.append(
+            {
+                "face_id": face.face_id,
+                "image_id": face.image_id,
+                "psu_id": inventory.psus[face.image_id],
+                "fold": record.fold,
+                "fold_role": record.fold_role.value,
+                "sampling_arm": inventory.images[face.image_id].sampling_arm.value,
+                "leg_key": record.leg_key,
+                "arm": record.arm.value,
+                "arm_availability": record.arm_availability.value,
+                "stage_reached": None if record.stage_reached is None else record.stage_reached.value,
+                "identity_status": face.identity_status.value,
+                "mated": mated,
+                "cell": list(record.cell),
+                "outcome": None if outcome is None else outcome.value,
+                "outcome_available": outcome is not None,
+                "outcome_reason": reason,
+            }
+        )
+    return output
+
+
 def _score_run(run_dir: Path, *, decision: fc.DecisionManifest, pair_scores=None) -> dict:
     """Assemble validated scores-v1 from an already-spent persisted run.
 
@@ -1156,6 +1228,7 @@ def _score_run(run_dir: Path, *, decision: fc.DecisionManifest, pair_scores=None
         "curves": curves,
         "waterfall": waterfall,
         "joint_gaps": gaps,
+        "face_outcomes": _face_outcomes(all_records, inventory, registry, contexts, decision.boundary_semantics),
     }
     fc.validate_interchange("scores-v1", output)
     return output

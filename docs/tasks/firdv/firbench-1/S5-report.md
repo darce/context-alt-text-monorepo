@@ -27,7 +27,7 @@ One self-contained HTML file per run that answers the decision question first, s
    - Charts are inline SVG with range-frame axes and direct labels instead of legends (VIZ-35, VIZ-40).
    - No decoration that carries no data (VIZ-27).
 3. Screens follow the ux-map:
-   - S1: verdict line with state, admissibility, n_eff and interval
+   - S1: verdict line with the state for each hypothesis, the `InconclusiveReason` text verbatim when one is set, admissibility, n_eff, the MDE of each step, and each interval. A hypothesis that was not reached shows "not evaluated".
    - S2: curves, with the unresolvable region shaded and labelled
    - S3: pair cells, with "no data → collect" cells
    - S4: stage waterfall and attribution ladder
@@ -41,7 +41,7 @@ One self-contained HTML file per run that answers the decision question first, s
 ## RED tests
 
 - The HTML contains no `src=` or `href=` with a scheme other than `#` and `data:`.
-- The verdict line includes the admissibility, n_eff and interval for every leg row. An inconclusive fixture renders "INCONCLUSIVE" with the reason.
+- The verdict line includes the admissibility, n_eff and interval for every leg row. An inconclusive fixture renders "INCONCLUSIVE" with the reason. A fixture with H1 inconclusive renders H2 as "not evaluated". A fixture with `primary_fpir_unresolvable` renders that reason verbatim and names no winner.
 - Every element with a state class also contains a glyph.
 - Writing to `benchmarks/reports/` raises `NonPrivateOutputError`.
 - `include_crops=False` output contains no `data:image` URI.

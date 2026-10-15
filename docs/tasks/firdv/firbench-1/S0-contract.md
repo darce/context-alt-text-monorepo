@@ -25,10 +25,10 @@ Every other slice imports its enums, errors and binding values from here. Nothin
    - `gate_contract_path`, `gate_contract_sha256`
    - `primary`: estimand string, `comparison` (`["sface", "auraface"]`, Δ = first − second), `fpir_target` (number), `end_to_end` (true)
    - `secondary_fpir_targets` (list)
-   - `hypotheses`: list of `{id, kind: superiority|non_inferiority, legs, margin, direction}`
-   - `alpha_family`, `multiplicity` (`holm`)
-   - `interval`: `{method: paired_cluster_bootstrap, psu: image_identity_component, level: 0.95, n_boot, seed}`
-   - `guardrails`: list of `{id, metric, rule, cohort_scope}`
+   - `hypotheses`: ordered list; list order is the Holm step order that S3 follows. Each entry is `{id, kind: superiority|non_inferiority, legs, margin, direction}`. H1 is `superiority` with legs `["sface", "auraface"]` and margin 0. H2 is `non_inferiority` with legs `[<in-house leg>, "insightface"]` and margin 0.05. The in-house leg is named here before the first run on the frame (default `"auraface"`, the H1 candidate). Exactly one in-house leg is allowed for H2; load rejects zero or two.
+   - `alpha_family` (0.05, one-sided), `multiplicity` (`holm`: fixed-order step-down; the step levels are derived in S3 Build 6)
+   - `interval`: `{method: paired_cluster_bootstrap, psu: image_identity_component, n_boot, seed}`. There is no level field; the two-sided levels follow from `alpha_family` and the step order.
+   - `guardrails`: list of `{id, metric, rule, cohort_scope, role}`, where `role` is `veto` or `report_only`. Every guardrail carries a role; a guardrail without one fails load.
    - `cell_floor_n_independent` (minimum independent units before a pair cell is scored)
    - `boundary_semantics` (`BoundarySemantics`)
    - `frames`: list of `FrameSpec` entries (the frame registry)
@@ -39,12 +39,12 @@ Every other slice imports its enums, errors and binding values from here. Nothin
 4. `seal(manifest, *, sealed_at) -> DecisionManifest` returns a new manifest whose `seal.sha256` equals `manifest_sha256`. Re-sealing a sealed manifest raises.
 5. `require_verdict_allowed(manifest, *, frame: FrameSpec)` raises `UnratifiedDecisionError` if ratification or the seal is missing or the seal hash does not match. Raises `SealedFrameReadError` if `frame.sealed` and the manifest is not sealed.
 6. `require_private_output_path(path, *, repo_root)` as in the README.
-7. `benchmarks/manifests/fir-bench-decision-v1.json` filled with the binding defaults from the task plan table. Gate-contract sha computed from the real file. Ratification and seal null. Frames: `golden150-v1` diagnostic, `corpus646-v3r` development, `fir-occ-v1-prob` development, `fir-occ-v1-chal` development, `confirm-v1` confirmatory with `sealed: true`. The three disconfirmers, each with a review date: AuraFace ΔFNIR CI lower bound ≤ 0 on fir-occ-v1-prob; per-cohort FPIR guardrail breached; the AE-5 canary not detected.
+7. `benchmarks/manifests/fir-bench-decision-v1.json` filled with the binding defaults from the task plan table. H2 names the in-house leg `auraface`. Guardrail roles: per-cohort FPIR, false names per 1k mentions, worst pair-cell FNIR and p95 ms per face are `veto`; cost per accepted description is `report_only` until its source is wired. Gate-contract sha computed from the real file. Ratification and seal null. Frames: `golden150-v1` diagnostic, `corpus646-v3r` development, `fir-occ-v1-prob` development, `fir-occ-v1-chal` development, `confirm-v1` confirmatory with `sealed: true`. The three disconfirmers, each with a review date: AuraFace ΔFNIR CI lower bound ≤ 0 on fir-occ-v1-prob; per-cohort FPIR guardrail breached; the AE-5 canary not detected.
 
 ## RED tests (commit first; they must fail on missing module or names)
 
 - Every enum has exactly the README members.
-- Load rejects an unknown key and a missing `interval.seed`.
+- Load rejects an unknown key, a missing `interval.seed`, an `interval.level` field, an H2 entry with zero or two in-house legs, and a guardrail without `role`.
 - `manifest_sha256` is stable under key reordering and changes when `fpir_target` changes.
 - `require_verdict_allowed` raises for unratified, unsealed, tampered-after-seal, and sealed frame with unsealed manifest.
 - `require_private_output_path` accepts `benchmarks/private/x/y.html` and rejects `benchmarks/reports/x.html`, a `..` escape and a symlink pointing out of `benchmarks/private/`.

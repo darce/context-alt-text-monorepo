@@ -51,6 +51,7 @@ Module `scripts.eval_harness.firbench_contract`:
 | --- | --- | --- |
 | `Admissibility` | StrEnum | `diagnostic`, `development`, `confirmatory` |
 | `VerdictState` | StrEnum | `superior`, `non_inferior`, `inconclusive`, `guardrail_vetoed`, `unratified` |
+| `InconclusiveReason` | StrEnum | `primary_fpir_unresolvable`, `required_guardrail_unscored`, `margin_unreachable_mde_gt_delta`, `non_confirmatory_frame`. Set only with `inconclusive`. |
 | `FaceOutcome` | StrEnum | mated faces: `missed`, `unaligned`, `wrong_identity`, `rejected`, `correct`. Non-mated faces: `false_accept`, `correct_reject`. |
 | `BoundarySemantics` | StrEnum | `legacy_v1` (non-mated accept iff score > τ, mated iff score ≥ τ), `v2` (accept iff score ≥ τ for both) |
 | `Arm` | StrEnum | `native`, `oracle_box`, `ref_landmarks` |
@@ -58,7 +59,7 @@ Module `scripts.eval_harness.firbench_contract`:
 | `LegId` | frozen dataclass | `kind`, `arm`, `space_fingerprint`, `opencv_version`, `ort_version`; `.key()` gives a stable string |
 | `FrameSpec` | frozen dataclass | `frame_id`, `admissibility`, `sealed`, `source_sha256`, `exhaustive` |
 | `DecisionManifest` | frozen dataclass | see S0 |
-| Errors | `FirBenchError` subclasses | `UnratifiedDecisionError`, `SealedFrameReadError`, `CrossSpaceComparisonError`, `RuntimeMismatchError`, `CalibrationLeakError`, `NonPrivateOutputError`, `ProjectionLeakError`, `LinkageMetricError`, `CanaryInSealedRunError`, `FrameContractError` |
+| Errors | `FirBenchError` subclasses | `UnratifiedDecisionError`, `SealedFrameReadError`, `CrossSpaceComparisonError`, `RuntimeMismatchError`, `CalibrationLeakError`, `NonPrivateOutputError`, `ProjectionLeakError`, `LinkageMetricError`, `CanaryInSealedRunError`, `FrameContractError`, `TauInfeasibleError`, `UndeclaredH2LegError` |
 | `require_private_output_path(path, *, repo_root)` | function | raises `NonPrivateOutputError` unless the path resolves under `benchmarks/private/` |
 
 Per-face record passed from S2 to S3 (`firbench_legs.FaceSearchRecord`): `face_id`, `image_id`, `psu_id`, `identity_id` (None for non-mated), `fold`, `cell` (query occluder, enrolled occluder), `stage_reached` (`FaceOutcome` up to embedding), `top_k` (tuple of `(identity_id, score)` in the leg's own space), `leg_key`.

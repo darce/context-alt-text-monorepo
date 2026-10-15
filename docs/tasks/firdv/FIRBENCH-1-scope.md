@@ -33,15 +33,15 @@ Human confirmation changes the wording of the audit, not its conclusion for dete
   - Development uses the **already designed** fir-occ pilot (2026-09-19 population allocation): 120 probability draws (p = 120/588), 106 challenge candidates, 60 keyword negatives (p = 60/489), 6 caption failures and 23 zero-detection additions, for 286 unique images. These must be labelled pixel-first, without detector overlays (AUDIT-07, HITL-03).
   - Confirmatory needs **new, previously unexamined identities and sessions** with exhaustive pixel-first labels, sized by power on independent units (identities/PSUs, not images).
 
-**Power, for sizing the confirmatory frame.** Paired FNIR difference, McNemar-type: n = [z_{α/2}·√p_d + z_β·√(p_d − Δ²)]² / Δ², with discordance p_d = 0.15 and power 0.8.
+**Power, for sizing the confirmatory frame.** Paired FNIR difference, McNemar-type: n = [z·√p_d + z_β·√(p_d − Δ²)]² / Δ², with discordance p_d = 0.15, power 0.80 (z_β = 0.8416), and z the two-sided z of the step: 1.96 for H1 (one-sided 0.025) and 1.645 for H2 (one-sided 0.05). The estimand is the paired ΔFNIR at the primary point. The unit is effective mated searches, n_eff, with deff already applied. Compare effective with effective only. Raw rows equal n_eff × the measured deff, computed by S1 at run time.
 
-| Margin Δ | α = 0.05 | α = 0.025 (Holm first step) | ×deff 2.19 (ICC 0.10, M̃ = 12.925, report §0f) |
-| --- | --- | --- | --- |
-| 0.10 | ≈ 115 effective mated searches | ≈ 140 | ≈ 253–307 |
-| 0.05 | ≈ 468 | ≈ 568 | ≈ 1,026–1,244 |
+| Margin Δ | H1 step (z 1.96) | H2 step (z 1.645) |
+| --- | --- | --- |
+| 0.10 | ≈ 115 effective mated searches | ≈ 91 |
+| 0.05 | ≈ 469 | ≈ 369 |
 
-- **What the current corpus can resolve.** The whole 646-image corpus has n_eff ≈ 295–353 at ICC 0.10. It can resolve Δ ≈ 0.10 as development evidence, never Δ = 0.05. This matches the report: the frame cannot resolve the 0.05–0.10 gap.
-- **FPIR resolvability.** A zero-error claim needs about 3/n independent non-mated searches. FPIR 0.01 needs ≥ 300 and 0.001 needs ≥ 3,000. The current 207-probe non-mated set resolves only ≳ 0.0145 (CARD-27, EXP-12).
+- **What the current corpus can resolve.** The tracked corpus manifest v3r (646 images) gives 231 image–identity components (largest 79 images), size-weighted mean M̃ ≈ 18.2, and deff ≈ 2.72 at ICC 0.10, so n_eff ≈ 238. This is an image-level proxy. The report's M̃ = 12.925 does not reproduce from the tracked manifest, and the PSU recount on the pinned frame (S1) replaces this figure. At n_eff ≈ 238 the frame resolves Δ = 0.10 at both steps (115 and 91 required) and cannot resolve Δ = 0.05 (469 and 369 required). The H2 MDE at this n_eff is about 0.06, above δ = 0.05.
+- **FPIR resolvability.** A zero-error claim needs about 3/n independent non-mated searches. FPIR 0.01 needs ≥ 300 and 0.001 needs ≥ 3,000. The exact zero-event floor at 0.01 is about 298, so the 3/n rule is kept as the conservative floor. The current 207-probe non-mated set resolves only ≳ 0.0145 (CARD-27, EXP-12).
 
 ### Does the full report change the tool's design? Yes.
 
@@ -81,19 +81,23 @@ Yes, as diagnostics computed in each model's own space, never across spaces.
 1. **D3 operating point.**
    - Primary: FNIR at **FPIR = 0.01**, end to end, so detector misses count (EVAL-16, EVAL-18, EVAL-19). The gallery is the enrolled identities from `gallery_split`, with gallery size named.
    - Non-mated population: verified zero-identity faces plus held-out identities on identity-disjoint rotating folds. "Unlabeled" alone is not non-mated.
-   - τ is fit on identity-disjoint calibration folds, frozen, and tested once (CAL-07, CAL-04, EVAL-07).
+   - τ is fit on identity-disjoint calibration folds, frozen, and tested once (CAL-07, CAL-04, EVAL-07). The selection rule is the smallest τ whose pooled calibration FPI is within ⌊fpir_target × N⌋ over the pooled calibration non-mated faces (S3 Build 3). With an empty pool, the run refuses.
    - Secondary points are FPIR 0.05 and 0.001, each flagged "unresolvable" until n_nonmated_eff ≥ 3/FPIR. An unresolvable point shows the measured FPIR with its upper confidence limit as a designed unknown (CARD-03).
+   - The primary point has the same resolvability rule. If n_nonmated_eff < 3/0.01 (300) on the frame in use, the verdict is `inconclusive` with reason `primary_fpir_unresolvable`, whatever the FNIR interval says. No winner is named, and the frame is not admissible for a verdict at that point.
    - `fir-gate-contract-v1.json` `max_fpi` and `n_nonmated_declared` are written once S1 counts the frozen non-mated frame (max_fpi = ⌊0.01·n⌋), through the `firplan_d3_operating_point_<date>` decision named by FIR-13.
    - The point is revisable only before the first sealed run.
 2. **Margin and alpha (CARD-27, EXP-10, EXP-19, EXP-24).**
-   - **Estimand.** Primary is the paired ΔFNIR@FPIR0.01, computed as SFace − AuraFace. Intervals come from a paired cluster bootstrap with PSU = image–identity component, 95% two-sided.
-   - **Hypotheses.** The family α = 0.05 is split by Holm over two primary hypotheses:
-     - H1: AuraFace is superior to SFace iff the CI lower bound is > 0 and the guardrails hold.
-     - H2: the best in-house leg is non-inferior to the InsightFace reference iff the upper CL of (FNIR_inhouse − FNIR_IF) is < δ = 0.05.
+   - **Estimand.** Primary is the paired ΔFNIR@FPIR0.01, computed as SFace − AuraFace. The unit of resampling is the PSU (image–identity component), and the reported n is n_eff. Intervals come from a paired cluster percentile bootstrap.
+   - **Hypotheses and step order.** The sealed manifest fixes the order H1, then H2. The family α = 0.05 is one-sided. Holm step-down over two hypotheses gives one-sided levels 0.025 for step 1 and 0.05 for step 2, which are two-sided 95% and 90% intervals.
+     - H1 (step 1): AuraFace is superior to SFace iff the 95% two-sided lower bound is > 0 and the veto guardrails hold.
+     - H2 (step 2, tested only if H1 is rejected): the in-house leg named in the manifest is non-inferior to the InsightFace reference iff the 90% two-sided upper bound of (FNIR_inhouse − FNIR_IF) is < δ = 0.05 and the veto guardrails hold.
+     - The H2 leg is named in the sealed manifest before the first run on the frame (default AuraFace, the H1 candidate). `decide()` refuses any other leg. The other in-house leg is reported as exploratory, with no verdict word. A leg chosen after results are inspected is exploratory only.
+     - `decide()` computes no p-values and stops at the first non-rejection.
    - **Strata** are estimation-only, except where a guardrail applies.
-   - **Dominant harm** is a false name, so per-cohort FPIR is a guardrail (FAIR-04, FAIR-01). Other guardrails: p95 latency and cost per accepted description (COST-04).
-   - **Before unseal**, the tool displays MDE, power and n_eff.
-   - **Inconclusive.** A CI that spans the boundary yields "inconclusive", never a win.
+   - **Dominant harm** is a false name, so per-cohort FPIR is a veto guardrail (FAIR-04, FAIR-01). Other veto guardrails: false names per 1k mentions, worst pair-cell FNIR, and p95 ms per face. Cost per accepted description (COST-04) is report-only until its source is wired.
+   - **Before unseal**, the tool displays MDE, power and n_eff. MDE is defined in S3 Build 6 (step-level z, power 0.80, effective n_eff). When H2's MDE is above δ, H2 cannot be decided on that frame. It reports `margin_unreachable_mde_gt_delta`, never a bare inconclusive.
+   - **Inconclusive.** A CI that spans the boundary yields "inconclusive", never a win. A null or unscored veto guardrail also yields "inconclusive" (`required_guardrail_unscored`).
+   - **Non-confirmatory frames.** On a frame whose registry entry is not confirmatory, H2 never emits `non_inferior`. Its numbers are shown as development evidence.
 3. **Real-occlusion ground truth.** Yes, glean descriptions, then have the operator label from pixels.
    - **Queue source.** Use the 2026-09-19 mined queues and the widened-lexicon rescan (handoff decision 2924):
      - mask-tagged 162, 271, 276, 512, 536, plus 7 untriaged mask captions

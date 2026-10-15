@@ -36,7 +36,7 @@ Turn a frame source into the units every interval depends on. The independent un
    - The inventory is never derived from detector output, and the function takes no detector argument.
    - `unresolved` faces are refused as non-mated; passing one raises `FrameContractError`.
    - Returns a `NonMatedPool` (frozen): `units` (tuple of `NonMatedUnit`, each with `unit_id`, `fold`, `psu_id`, `cohort` or None for background units), `n_units` (their count) and `n_nonmated_eff` = n_units / deff of the units' PSU structure, computed with Build 4 at `planning_icc`.
-8. `Frame` (frozen): spec, images, faces, psu map, folds, `identity_fold` (identity_id → fold), `gallery_sha256` per fold, deff at `planning_icc`, n_eff, `N_units` and `n_nonmated_eff` (from Build 7), per-`SamplingArm` counts. Per rotation, each fold has a `FoldRole`: calibration folds are `fit`, the held-out fold is `test`. Sampling arms stay separate; the `probability` arm carries inclusion probabilities for IPW in S3. S3 reads `n_nonmated_eff` to decide whether the primary FPIR is resolvable; a frame does not decide admissibility by itself. `Frame` is written as `frame-v1` (S0 Build 9).
+8. `Frame` (frozen): spec, images, faces, psu map, folds, `identity_fold` (identity_id → fold), `gallery_sha256` per fold, deff at `planning_icc`, n_eff, `n_units` and `n_nonmated_eff` (from Build 7), per-`SamplingArm` counts. Per rotation, each fold has a `FoldRole`: calibration folds are `fit`, the held-out fold is `test`. Sampling arms stay separate; the `probability` arm carries inclusion probabilities for IPW in S3. S3 reads `n_nonmated_eff` to decide whether the primary FPIR is resolvable; a frame does not decide admissibility by itself. `Frame` is written as `frame-v1` (S0 Build 9).
 
 ## RED tests
 
@@ -47,9 +47,9 @@ Turn a frame source into the units every interval depends on. The independent un
 - Identities co-occurring in one image land in one fold.
 - An unknown face in a shared image adds no identity edge and does not change the component.
 - A synthetic sibling (`synthetic_parent_id` set) lands in its parent's component and fold.
-- An `unresolved` face never enters the non-mated pool. Requesting it raises `FrameContractError`.
+- An `unresolved` face never enters the `NonMatedPool`. Requesting it raises `FrameContractError`.
 - Folds are identity-disjoint, and a PSU is never split across folds.
-- The non-mated pool is identical with and without any detector output passed in (the function takes none). A no-face image contributes exactly one background unit.
+- The `NonMatedPool` is identical with and without any detector output passed in (the function takes none). A no-face image contributes exactly one background unit.
 - Loader rejects a manifest missing an identity field.
 - Same inputs and seed give byte-identical `Frame` JSON, and that JSON validates against `frame-v1`.
 - With `planning_icc` = 0.10 the design effect uses it, and changing only the observed ICC from `estimate_icc` leaves `deff` and `n_eff` unchanged.

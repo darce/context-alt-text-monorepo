@@ -15,7 +15,7 @@ Turn per-face search records into the frozen-τ answer: FNIR at the declared FPI
 - `scripts/eval_harness/open_set_identification.py`: `SearchResult`, `IETPoint`, `fnir_fpi_at_threshold(*, mated, nonmated, tau, n_enrolled_gallery_subjects)`, `iet_curve`. Reuse these where the face-level record maps onto `SearchResult`. If you write a face-level variant, it must equal `fnir_fpi_at_threshold` on single-face fixtures (parity test).
 - `scripts/eval_harness/calibrate_face_thresholds.py`: `identity_fold_assignment`, `select_fit_trials`, `build_trials` (lines ~376–525, bounded). `select_fit_trials` requires both the probe and the impostor-gallery identities to be in the fit set. Mirror it.
 - `scripts/bench/score_report.py`: `holm_bonferroni` is not called by `decide()`. `bootstrap_paired_delta` is image-level and is not used for verdicts; your interval resamples PSUs instead.
-- S0 `DecisionManifest` fields; S1 `Frame` fields (`identity_fold`, `N_units`, `n_nonmated_eff`)
+- S0 `DecisionManifest` fields; S1 `Frame` fields (`identity_fold`, `n_units`, `n_nonmated_eff`). In this brief N_units denotes `Frame.n_units`.
 
 ## Build
 

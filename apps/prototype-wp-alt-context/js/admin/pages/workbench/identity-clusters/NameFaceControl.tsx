@@ -157,7 +157,10 @@ const matchingOptionsFor = (
   if (!folded) {
     return [...options];
   }
-  return options.filter((option) => normalizeNameFaceLabel(option.label).includes(folded));
+  return options.filter((option) =>
+    (optionSource(option) === 'person' && option.roster_entry_id != null && option.band !== undefined)
+    || normalizeNameFaceLabel(option.label).includes(folded),
+  );
 };
 
 interface NameFaceControlProps {

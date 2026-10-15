@@ -109,7 +109,9 @@ beforeEach(() => {
     isError: false,
   } as never);
 
+  // eslint-disable-next-line @typescript-eslint/require-await
   fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string
     const url = new URL(String(input), 'http://localhost');
     if (url.pathname.includes('/roster-candidates')) {
       return new Response(JSON.stringify(rosterCandidatesBody([belowFloorEllyn])), {
@@ -151,6 +153,7 @@ describe('useClusterSuggestions roster candidates (RED c82 FIR)', () => {
     expect(option).toMatchObject({ band: 'none' });
 
     // Display is read-only: every request issued while showing candidates is a GET.
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
   });
 
@@ -176,7 +179,7 @@ describe('useClusterSuggestions roster candidates (RED c82 FIR)', () => {
           },
         ],
       },
-    } as never);
+    });
     vi.mocked(recognitionApi.listRecognitionClusters).mockResolvedValue({
       clusters: [{ id: ELLYN_CLUSTER_ID, label: 'Ellyn Heald', identity_count: 1 }],
       total: 1,

@@ -55,7 +55,7 @@ describe('F4 closest roster alternatives during manual naming', () => {
     await user.keyboard('{ArrowDown}');
 
     const option = screen.getByRole('option', { name: /Ellyn Heald/ });
-    expect(option).toHaveTextContent('Weak match');
+    expect(option).toHaveTextContent('Below match threshold');
     expect(screen.queryByRole('option', { name: /Pat Nguyen/ })).not.toBeInTheDocument();
     expect(onCommit).not.toHaveBeenCalled();
     await user.click(option);

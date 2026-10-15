@@ -12,6 +12,13 @@ import { unwrapClusterOptionId } from './buildNamingOptions';
 import type { ClusterGroup } from './types';
 import type { SaveDialogAction } from './useClusterConfirmDialog';
 
+/**
+ * Source of a pending suggestion id. `identity` is one face: accept that row by id and assign only
+ * that identity. `cluster_merge` is a whole-cluster merge. Without provenance the id keeps the
+ * legacy merge/assign behaviour.
+ */
+export type SuggestionProvenance = { kind: 'identity'; identityId: string } | { kind: 'cluster_merge' };
+
 /** Cluster match from option or remote label lookup (optional member count for merge confirm). */
 export interface ClusterLabelMatch {
   id: string;
@@ -19,6 +26,8 @@ export interface ClusterLabelMatch {
   identityCount?: number;
   /** Pending suggestion id — when set, merge/assign resolve the suggestion by id (BR-16). */
   suggestionId?: string;
+  /** Explicit source of `suggestionId`; an identity suggestion never routes to a whole-cluster merge. */
+  suggestionProvenance?: SuggestionProvenance;
 }
 
 interface ClusterMatchMutations {
@@ -82,7 +91,8 @@ export const useClusterMatchAction = ({
 }: UseClusterMatchActionOptions) => {
   const runMatchedAction = React.useCallback(
     async (match: ClusterLabelMatch, abortController: AbortController) => {
-      const action: SaveDialogAction = canSearchForMatch ? 'assign' : 'merge';
+      const action: SaveDialogAction =
+        match.suggestionProvenance?.kind === 'identity' || canSearchForMatch ? 'assign' : 'merge';
       const memberCount = resolveMatchMemberCount(match, options);
 
       if (requiresMergeConfirm(memberCount)) {
@@ -94,6 +104,17 @@ export const useClusterMatchAction = ({
 
       if (abortController.signal.aborted) {
         return false;
+      }
+
+      const provenance = match.suggestionProvenance;
+      if (match.suggestionId && provenance?.kind === 'identity') {
+        // One identity suggestion is one face: accept that row by id and assign only its source
+        // identity. Never a whole-cluster merge accept, and never a loop over the members.
+        if (!provenance.identityId) {
+          return false;
+        }
+        mutations.assignToCluster(provenance.identityId, match.id, abortController.signal, match.suggestionId);
+        return true;
       }
 
       if (editableClusterId) {

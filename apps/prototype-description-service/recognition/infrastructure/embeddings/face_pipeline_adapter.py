@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import threading
 import time
 from collections.abc import Iterable, Sequence
@@ -63,7 +64,8 @@ from recognition.infrastructure.face_pipeline.aligner import (
 )
 from recognition.infrastructure.face_pipeline.model_space import ModelSpace
 from recognition.infrastructure.face_pipeline.ort_adapters import (
-    OrtSFaceEmbedder, OrtYuNetDetector, recording_tensors, tensor_record,
+    RETRY_MAX_SIDE_ENV, OrtSFaceEmbedder, OrtYuNetDetector, recording_tensors,
+    resolve_retry_max_side, tensor_record,
 )
 from recognition.infrastructure.face_pipeline.loaded_session import (
     VerifiedModelBytes, SessionReceiptV1, ExecutionReceiptV1, LoadedRuntimeRecordV1,
@@ -483,6 +485,7 @@ def _runtime_cache_key(
     embedding_dimension: int,
     artifact_identity: tuple[Any, ...] | None = None,
     embedder_models_dir: Path | None = None,
+    retry_max_side: int = 0,
 ) -> tuple[Any, ...]:
     detector_root = Path(models_dir)
     embedder_root = Path(embedder_models_dir) if embedder_models_dir is not None else detector_root
@@ -504,6 +507,7 @@ def _runtime_cache_key(
         int(top_k),
         int(pgvector_dimension),
         int(embedding_dimension),
+        int(retry_max_side),
         artifacts,
     )
 
@@ -517,6 +521,22 @@ def _contract_digest(value):
                                      allow_nan=False, default=str).encode()).hexdigest()
 
 
+def _frozen_detector_recipe(detector) -> dict:
+    """Detector recipe; the scale-retry block exists only when enabled, so the OFF digest is unchanged."""
+    recipe = {"channel_order": "BGR", "dtype": "float32", "layout": "NCHW",
+              "pad_divisor": 32, "pad_value": 0, "score_threshold": detector.score_threshold,
+              "nms_threshold": detector.nms_threshold, "top_k": detector.top_k}
+    if detector.retry_max_side:
+        recipe["scale_retry"] = {
+            "max_side": detector.retry_max_side, "passes": 2, "interpolation": "INTER_AREA",
+            "resize": "longer_side_to_max_side_rounded_per_axis",
+            "projection": "original_pixels_with_sx_sy_from_rounded_sizes",
+            "dedupe": "nms_iou_against_all_original_and_accepted_rows",
+            "pass_one_rows": "unchanged_and_first", "top_k": "never_drops_pass_one",
+        }
+    return recipe
+
+
 def _freeze_pair(detector, embedder, aligner, manifest, space, detector_dir,
                  embedder_dir, score_threshold, nms_threshold, top_k, fingerprint):
     artifacts = [getattr(adapter, "_verified_artifact", None) for adapter in (detector, embedder)]
@@ -525,15 +545,13 @@ def _freeze_pair(detector, embedder, aligner, manifest, space, detector_dir,
     generation = str(uuid4())
     config = FrozenFaceRuntimeConfig(space.value, detector_dir.resolve(), embedder_dir.resolve(),
                                      float(score_threshold), float(nms_threshold), int(top_k),
-                                     manifest.dimensions, manifest.dimensions)
+                                     manifest.dimensions, manifest.dimensions, detector.retry_max_side)
     # Retain the exact destination consumed by alignment, independent of the
     # ambient template registry. Immutable bytes also prevent setflags(write=True).
     template = aligner.dst_landmarks
     aligner.dst_landmarks = np.frombuffer(template.tobytes(), dtype=template.dtype).reshape(template.shape)
     spec = FrozenPreprocessingSpecV1(
-            detector={"channel_order": "BGR", "dtype": "float32", "layout": "NCHW",
-                         "pad_divisor": 32, "pad_value": 0, "score_threshold": detector.score_threshold,
-                         "nms_threshold": detector.nms_threshold, "top_k": detector.top_k},
+            detector=_frozen_detector_recipe(detector),
             embedding={**asdict(artifacts[1].manifest_snapshot.preprocessing),
                        "layout": "NCHW", "dtype": "float32"},
             alignment={"template_sha256": tensor_record(aligner.dst_landmarks)["sha256"],
@@ -593,11 +611,14 @@ def _load_face_pipeline_runtime(
     top_k: int,
     space: ModelSpace = ModelSpace.FACE_PIPELINE,
     embedder_models_dir: Path | None = None,
+    retry_max_side: int | None = None,
 ) -> FacePipelineRuntime:
     """Load YuNet + embedder as one atomic unit; any failure raises (caller decides cache)."""
     assert_space_activatable(space)
     assert_embedding_pgvector_pair()
-    fingerprint = numeric_runtime_fingerprint() if space is ModelSpace.AURAFACE else None
+    if retry_max_side is None:
+        retry_max_side = resolve_retry_max_side(os.environ.get(RETRY_MAX_SIDE_ENV))
+    fingerprint =numeric_runtime_fingerprint() if space is ModelSpace.AURAFACE else None
     if space is ModelSpace.AURAFACE:
         manifest = auraface_embedding_model_manifest(_fingerprint=fingerprint)
     else:
@@ -611,6 +632,7 @@ def _load_face_pipeline_runtime(
             score_threshold=score_threshold,
             nms_threshold=nms_threshold,
             top_k=top_k,
+            retry_max_side=retry_max_side,
             **({"acquire_verified": True} if space is ModelSpace.AURAFACE else {}),
         )
     except ModelMissingError as exc:
@@ -669,6 +691,7 @@ def get_shared_face_pipeline_runtime(
     embedder_root = Path(embedder_models_dir) if embedder_models_dir is not None else root
     pg_dim = int(get_database_settings().pgvector_dimension)
     id_dim = int(get_settings().identity_detection.embedding_dimension)
+    retry_max_side = resolve_retry_max_side(os.environ.get(RETRY_MAX_SIDE_ENV))
     key = _runtime_cache_key(
         profile=space,
         models_dir=root,
@@ -678,6 +701,7 @@ def get_shared_face_pipeline_runtime(
         pgvector_dimension=pg_dim,
         embedding_dimension=id_dim,
         embedder_models_dir=embedder_root,
+        retry_max_side=retry_max_side,
     )
 
     # Atomic single-tuple fast-path read (CR-08).
@@ -705,6 +729,7 @@ def get_shared_face_pipeline_runtime(
                 top_k=top_k,
                 space=space,
                 embedder_models_dir=embedder_root,
+                retry_max_side=retry_max_side,
             )
         except FacePipelineRuntimeUnavailableError:
             raise
@@ -873,6 +898,7 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
         captured_at = datetime.now(timezone.utc)
         with recording_tensors() as tensors:
             tensors["alignment"] = {}
+            tensors["input_lineage"] = {}
             tensors["detections_sha256"] = None
             tensors["normalized"] = {}
             self._call_records.current = tensors
@@ -891,7 +917,7 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
                     execution_id=str(uuid4()), runtime_generation_id=runtime.runtime_generation_id,
                     detector_session_id=runtime.session_receipts["yunet"].session_id,
                     embedder_session_id=runtime.session_receipts["auraface"].session_id, captured_at=captured_at,
-                    input_lineage={}, detector_input=tensors["detector"][0] if tensors["detector"] else {},
+                    input_lineage=tensors["input_lineage"], detector_input=tensors["detector"][0] if tensors["detector"] else {},
                     detections_sha256=tensors["detections_sha256"], alignment=tensors["alignment"],
                     embedder_input=tensors["embedder"][-1] if tensors["embedder"] else {},
                     raw_output=tensors["raw"][-1] if tensors["raw"] else {},

@@ -47,10 +47,11 @@ Binding defaults the S0 decision manifest must carry (values live in the manifes
 | --- | --- |
 | Primary estimand | paired ΔFNIR (SFace − AuraFace) at FPIR 0.01, end to end, fixed non-mated denominator |
 | Secondary points | FPIR 0.05 and 0.001, each "unresolvable" until n_nonmated_eff ≥ 3/FPIR |
-| Interval | paired cluster bootstrap, PSU = image–identity component, 95% two-sided |
-| Family α | 0.05, Holm over H1 (AuraFace superior to SFace) and H2 (best in-house non-inferior to InsightFace, δ = 0.05) |
-| Guardrails (veto) | per-cohort FPIR, false names per 1k mentions, worst pair-cell FNIR floor, p95 ms/face, cost per accepted description |
-| Threshold τ | identity-disjoint calibration folds, frozen before any test read |
+| Primary resolvability | The primary FPIR point is unresolvable until n_nonmated_eff ≥ 3/FPIR (300 at 0.01). An unresolvable primary point makes the verdict `inconclusive` (`primary_fpir_unresolvable`), with no winner named. |
+| Interval | paired cluster percentile bootstrap, PSU = image–identity component. Two-sided 95% for step 1 (H1) and two-sided 90% for step 2 (H2), from one-sided levels 0.025 and 0.05 |
+| Family α | 0.05 one-sided, fixed-order Holm: H1 (AuraFace superior to SFace) first; H2 (the in-house leg named in the sealed manifest non-inferior to InsightFace, δ = 0.05) only if H1 is rejected. Decisions use intervals only; no p-values. |
+| Guardrails | Veto: per-cohort FPIR, false names per 1k mentions, worst pair-cell FNIR floor, p95 ms/face. Report-only until wired: cost per accepted description. Each role is sealed in the manifest. A null or unscored veto gives `inconclusive` (`required_guardrail_unscored`). |
+| Threshold τ | identity-disjoint calibration folds, pooled, frozen before any test read. τ is the smallest threshold whose pooled calibration FPI is ≤ ⌊fpir_target × N⌋ (S3 Build 3). |
 | Verdict states | superior · non-inferior · inconclusive · guardrail-vetoed · unratified |
 
 ## Current State Analysis (verified 2026-10-14, codemap + `wc -l`)
@@ -67,7 +68,7 @@ Binding defaults the S0 decision manifest must carry (values live in the manifes
 | Gate contract | `gate_contract.py`, `benchmarks/manifests/fir-gate-contract-v1.json` (ratification fields null) | D3 point and T-14 thresholds |
 | Union adjudication | `union_adjudication.py` (384) | T-14 bound and bootstrap UCL |
 | Synthetic occlusion | `synthetic_occlusion.py` (800) | Separate robustness arm, inherits parent PSU |
-| Paired stats | `scripts/bench/score_report.py` (`holm_bonferroni`, paired bootstrap) | Holm and paired CI |
+| Paired stats | `scripts/bench/score_report.py` (`holm_bonferroni`, paired bootstrap) | `holm_bonferroni` is not called by the verdict; the image-level bootstrap is not used for verdicts. The PSU resampling pattern is reused. |
 | Legs | `recognition/infrastructure/embeddings/face_pipeline_adapter.py` (SFace and AuraFace profiles, runtime fingerprint in model id), `eval_harness/buffalo_bench.py` | In-process legs |
 | Existing annotator | `benchmarks/tools/golden150-box-annotator.html` (local, ignored, 1.9 MB) | Pattern for the label queue |
 | Populations | `benchmarks/private/fir-capacity-20260919/fir-occ-population-review-draft-20260919.{csv,json}` | Queue membership and probabilities |
@@ -83,7 +84,7 @@ Binding defaults the S0 decision manifest must carry (values live in the manifes
 | S0 contract | `firbench_contract.py`, `benchmarks/manifests/fir-bench-decision-v1.json` | Decision-manifest schema: estimand, δ, α split, interval method, guardrails, harm direction, disconfirmers and their dates, seal hash. Frame registry with admissibility. Null means unratified. Unseal refusal. |
 | S1 frames | `firbench_frames.py` | Load population queues. Build PSU components (union-find over image–identity plus duplicate groups) and identity-disjoint folds. Build the non-mated pool (verified zero-identity plus held-out identities). Estimate deff and n_eff, emit admissibility. |
 | S2 legs | `firbench_legs.py` | In-process legs `sface`, `auraface` and `insightface` (judge). Arms `native`, `oracle_box` (GT box) and `ref_landmarks` (fixed reference landmarks from `landmark_cache`; no human landmarks exist, so this is a reference arm, not an oracle). Per-leg cache keyed by the model-manifest fingerprint (weights sha, preprocessing, OpenCV/ORT). Raw detections are kept, and ledger rows are written per GT face. |
-| S3 score | `firbench_score.py` | FNIR-vs-FPIR curves on the fixed non-mated denominator, calibration-fold τ, paired cluster bootstrap, Holm, pair cells, stage waterfall, guardrails, the inconclusive rule, versioned boundary semantics |
+| S3 score | `firbench_score.py` | FNIR-vs-FPIR curves on the fixed non-mated denominator, calibration-fold τ (smallest feasible on the pooled calibration pool), paired PSU cluster intervals, fixed-order step decision on intervals only, primary-FPIR and MDE eligibility, pair cells, stage waterfall, guardrails (veto or report-only), versioned boundary semantics |
 | S4 clusters | `firbench_clusters.py` | Cluster metrics, mutual-kNN, dendrogram at τ, PCA spectra, UMAP diagnostic coordinates and companions |
 | S5 report | `firbench_report.py` | Static HTML (light/dark, no network, keyboard accessible, glyph plus colour) plus JSON/CSV, with a private-path guard |
 | S6a CLI | `firbench_cli.py`, `mk/evals.mk` | `run` and `score` (batch B, needed by the AE-12 tracer) |
@@ -100,7 +101,7 @@ Tests: `apps/prototype-description-service/scene/tests/test_eval_harness_firbenc
 S1 VERDICT ─ run r-0007 · frame fir-occ-v1/dev [development] · OpenCV 5.0.0 · ORT 1.28 · git a1b2c3d
  Question  AuraFace-512 vs SFace-128 · FNIR @ FPIR 0.01 · end-to-end (misses count)
  Answer    Δ(SF−AF) +#.### [−#.###, +#.###] paired · PSU image–identity · n_eff ### (deff #.##)
-           → INCONCLUSIVE: interval spans 0 · MDE #.### > δ                              (WRIT-81)
+           → INCONCLUSIVE: interval spans 0 · H2 not evaluated                              (WRIT-81)
  Admissible as: development evidence — frame inspected before; not confirmatory
                                    FNIR@FPIR.01   FPIR measured [UCL]   τ (calib folds)
    sface-128           ├────●────┤     #.###      #.### [#.###]         #.## frozen
@@ -226,6 +227,10 @@ L1 OCCLUSION LABEL QUEUE (private single-file HTML) ─ item 37/150 · blind rep
 - Every slice starts RED: tests committed and failing for the stated reason before any implementation.
 - `make lint-task-plans` passes. The renderer `--check` passes for `fir-bench`. Critique has no high findings.
 
+## Open questions
+
+- Minimum independent PSUs in a frame before H1 or H2 can reject, and the list of annotations a frame must carry before a verdict is eligible. Neither has a value yet. The manifest needs both before seal (S3 Build 6, eligibility).
+
 ## Completion evals (definition of done for the tool)
 
 The tool is done when it is trustworthy, not when it has picked a model. A benchmark that has never been shown to detect a known effect, or to stay quiet on a null, cannot guide development (EXP-13, EXP-06). Each eval below runs on the VM at the merge-candidate HEAD and is recorded as a `test_result` tied to that SHA. `make fir-bench-acceptance` runs all simulated and fixture evals; the real-data evals run through the CLI.
@@ -233,14 +238,14 @@ The tool is done when it is trustworthy, not when it has picked a model. A bench
 | ID | Eval | Pass rule | Canon |
 | --- | --- | --- | --- |
 | AE-1 | Known answers | Synthetic fixtures with analytic FNIR, FPIR, FPI, B-cubed and ledger counts match exactly (rational arithmetic, no tolerance) | EVAL-18 |
-| AE-2 | A/A null | (a) Real data: one leg run twice cold on identical inputs gives identical per-face outcomes, Δ = 0 and verdict "inconclusive". (b) Simulated: 2,000 seeded null replicates at ICC 0.10, size-weighted PSU size ≈ 13, n_eff ≈ 300; the full decision procedure says "superior" in ≤ 6.0% of replicates (α 0.05 + 2 Monte Carlo SE). | EXP-13 |
+| AE-2 | A/A null (simulated Type-I behaviour) | Simulated only: 2,000 seeded null replicates at ICC 0.10, size-weighted PSU size ≈ 13, n_eff ≈ 300. Step 1: the full decision procedure says "superior" in ≤ 0.032 of replicates (nominal one-sided 0.025 + 2 MC SE, SE = 0.00349). Step 2: at the boundary Δ = δ, with H1 forced to pass, step 2 rejects in ≤ 0.060 of replicates (nominal 0.05 + 2 MC SE, SE = 0.00487). | EXP-13 |
 | AE-3 | Interval coverage | In 2,000 planted-effect replicates the 95% paired cluster interval covers the true Δ in 93–97% of replicates. The report also shows the image-level bootstrap's coverage on the same replicates, so the PSU correction is visible. | AUDIT-11, EXP-23 |
-| AE-4 | Planted-effect sensitivity | A planted ΔFNIR 0.10 at the power-table n_eff is detected in ≥ 75% of replicates (design power 0.80 minus Monte Carlo slack). An effect planted only in the clear→mask cell appears in that cell and not in clear→clear. A planted 10% detection drop is attributed to the "missed" stage, with the embedder share unchanged within Monte Carlo error. | EXP-12, EVAL-16 |
+| AE-4 | Planted-effect sensitivity | A planted ΔFNIR 0.10 at n_eff 115 (the step-1 requirement for Δ 0.10) is detected by H1 in ≥ 0.77 of 2,000 replicates (0.80 power minus 3 SE; SE = 0.0089). An effect planted only in the clear→mask cell appears in that cell and not in clear→clear. A planted 10% detection drop is attributed to the "missed" stage, with the embedder share changing by at most 0.05 (absolute) between planted and control runs. | EXP-12, EVAL-16 |
 | AE-5 | Real-data canary | On the Golden-150 diagnostic frame, a canary copy of the AuraFace leg with 10% of gallery template labels permuted shows higher FNIR and false-name rate with the CI excluding 0. Legs tagged canary are refused in sealed runs. | EXP-06 |
 | AE-6 | Legacy parity | In `legacy_v1` boundary mode the bench reproduces the pinned historical counts exactly (the W2 inventory pins the artifacts, including `face_unknown_rejection` 204/207). The `v2` mode lists every item whose outcome changes. | CAL-02 |
-| AE-7 | Determinism and replay | Two cold runs from pinned inputs give byte-identical scores JSON and report. Seeds come from the manifest, timestamps from the manifest, iteration is sorted. A warm-cache run equals the cold run. | FLOW-18, PROV-01 |
+| AE-7 | Determinism and replay | Two cold runs from pinned inputs give byte-identical scores JSON and report. Seeds come from the manifest, timestamps from the manifest, iteration is sorted. A warm-cache run equals the cold run. Identical inputs run twice give identical per-face outcomes, Δ = 0, and verdict "inconclusive" (real data, one leg, cold runs). | FLOW-18, PROV-01 |
 | AE-8 | Cache invalidation | Changing weights sha, preprocessing parameters, OpenCV or ORT version gives a cache miss and a new leg id. Cross-version compare refuses. | IDX-02, CARD-29 |
-| AE-9 | Refusal suite | Each refusal raises its named error and returns no numbers: cross-space compare, cross-runtime compare, sealed-frame read before unseal, τ fit on a test fold, unratified point used as a verdict, detector-dependent FPIR denominator, Ward/median/centroid linkage on cosine, projection coordinates feeding a metric (metrics byte-identical across projection parameters), image-bearing output outside `benchmarks/private/`. | EMB-01, EVAL-07, VIZ-18 |
+| AE-9 | Refusal suite | Each refusal raises its named error and returns no numbers: cross-space compare, cross-runtime compare, sealed-frame read before unseal, τ fit on a test fold, unratified point used as a verdict, detector-dependent FPIR denominator, Ward/median/centroid linkage on cosine, projection coordinates feeding a metric (metrics byte-identical across projection parameters), image-bearing output outside `benchmarks/private/`; an H2 leg the manifest does not name (`UndeclaredH2LegError`); τ from an empty calibration pool (`TauInfeasibleError`). The verdict cases return `inconclusive` with the named reason and name no winner: a superior or non-inferior verdict attempted with n_nonmated_eff < 3/FPIR (`primary_fpir_unresolvable`); a null or unscored veto guardrail (`required_guardrail_unscored`); `non_inferior` on a non-confirmatory frame (`non_confirmatory_frame`). | EMB-01, EVAL-07, VIZ-18 |
 | AE-10 | Privacy | The branch diff contains no image bytes or data URIs, nothing under `benchmarks/private/`, and (coordinator-run on the laptop, never shipped) zero hits against the private alias map. | PROV-01 |
 | AE-11 | Report task eval | Given only the HTML, the operator (or a reviewer agent) answers six questions correctly within 5 minutes: which leg wins at the primary point and whether it is conclusive; the frame's admissibility; the worst pair cell; the dominant failure stage; whether FPIR 0.001 is resolvable; whether runs A and B are comparable. All screens work keyboard-only, in light and dark, with glyph plus colour, and with no network requests. | INT-22, VIZ-32, WRIT-81 |
 | AE-12 | Early tracer and budget | After S0–S3 land, one three-leg run on a 20-image diagnostic subset completes on the VM with every GT face in exactly one ledger state, before S4–S6b start. Cold and warm times are recorded; the warm rerun takes ≤ 10% of cold; W5 budgets come from this measurement. | PROD-31 |
@@ -283,7 +288,7 @@ Training, detector replacement, deployments, stack mode, the description-utility
 - [ ] S0 decision manifest, frame registry, shared enums and errors, unseal refusal
 - [ ] S1 frames, PSU components, folds, non-mated pool, deff/n_eff
 - [ ] S2 three in-process legs, oracle_box and ref_landmarks arms, contract-keyed cache, ledger
-- [ ] S3 scoring, calibration folds, paired cluster bootstrap, Holm, pair cells, stage waterfall, guardrails
+- [ ] S3 scoring, calibration folds, paired PSU cluster intervals, fixed-order step decision, pair cells, stage waterfall, guardrails
 - [ ] S6a CLI `run` and `score`
 - [ ] S7 label queue generator and importer
 - [ ] AE-12 tracer run on the VM

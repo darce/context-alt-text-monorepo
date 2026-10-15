@@ -21,7 +21,7 @@ Make the screen, zone, state, action and flow inventory the single source for S5
 1. Jobs, at minimum: "decide whether a model change is real", "find where faces are lost", "compare two runs", "label occlusion from pixels".
 2. Screens: S1 verdict, S2 curves, S3 pair cells, S4 stages, S5 failures, S6 compare, S7 clusters, S8 frames & power, L1 label queue. Add overlays and exits only where a flow needs them.
 3. States for every screen: `default`, `empty`, `error`. Add the bench-specific states:
-   - `unratified`, `inconclusive`, `unresolvable_fpir`, `incompatible_runs`, `projection_unavailable`
+   - `unratified`, `inconclusive` (showing its `InconclusiveReason` text verbatim), `unresolvable_fpir` (display state for an FPIR point below 3/n_eff; the primary point's verdict reason is `primary_fpir_unresolvable`), `incompatible_runs`, `projection_unavailable`
    - for L1: `blind_repeat`, `gold_item`, `skipped_nonresponse`
 4. Flows: verdict → pair cell → failures → back (sort and filter kept, INT-25); compare refused → reason → exit (INT-24); label → add missed face → next.
 5. Each zone names the canon row it serves: VIZ-23, VIZ-32, VIZ-35, VIZ-40, VIZ-41, VIZ-24, EXP-31, INT-21 to INT-25, PERC-10, FORM-11, VIZ-18, VIZ-19, WRIT-81. Colour states always pair with glyphs.

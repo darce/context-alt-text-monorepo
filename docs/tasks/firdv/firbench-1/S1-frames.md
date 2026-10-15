@@ -21,15 +21,16 @@ Turn a frame source into the units every interval depends on. The independent un
 1. `FrameSource` records: `ImageUnit(image_id, sha256, arm, inclusion_probability | None, duplicate_group | None)` and `GtFace(face_id, image_id, box, identity_status, identity_id | None)`. `identity_status` is `named`, `unknown` or `unresolved`.
 2. Loaders: `load_golden_manifest(path)`, `load_corpus_manifest(path)`, `load_population_draft(path)`. Each validates structure at load time and raises `FrameContractError` with the offending key [rg-008].
 3. `build_psu_components(images, faces) -> dict[image_id, psu_id]`: union-find over the bipartite image–identity graph plus exact-duplicate groups. Unknown and unresolved faces never join components through identity. psu_id is the sorted smallest image_id in the component, so it is deterministic.
-4. `size_weighted_mean(psu_sizes)`: M̃ = Σm² / Σm. `design_effect(psu_sizes, icc)`: 1 + (M̃ − 1)·icc. `effective_n(n, deff)`.
-5. `estimate_icc(outcomes_by_psu)`: one-way ANOVA estimator on binary outcomes, floored at 0, returned with the number of PSUs. The planning ICC is a manifest input; this function supplies the observed one after a run.
+4. `size_weighted_mean(psu_sizes)`: M̃ = Σm² / Σm. `design_effect(psu_sizes, icc)`: 1 + (M̃ − 1)·icc. `effective_n(n, deff)`: n / deff, a float used for sizing and for `n_nonmated_eff` only. It is never passed to a binomial function as n.
+5. `estimate_icc(outcomes_by_psu)`: one-way ANOVA estimator on binary outcomes, floored at 0, returned with the number of PSUs. If all outcomes are equal (all zero or all one), the observed ICC is undefined and is returned as null. The planning ICC is a manifest input and sets deff and n_eff; this function supplies the observed one after a run, for reporting only.
 6. `identity_disjoint_folds(identity_ids, *, k, seed)`: identities, never images, assigned to folds; a PSU never spans folds.
 7. `build_nonmated_pool(faces, folds, *, fold)`: verified zero-identity faces (`identity_status == unknown` with the frame's `exhaustive` flag set) plus the identities held out in `fold`. `unresolved` faces are refused as non-mated (raise if a caller passes one explicitly). Returns the pool and `n_nonmated_eff` from the PSU structure.
-8. `Frame` (frozen): spec, images, faces, psu map, folds, deff at the manifest ICC, n_eff, per-arm counts. Arms stay separate; the probability arm carries inclusion probabilities for IPW in S3.
+8. `Frame` (frozen): spec, images, faces, psu map, folds, deff at the manifest ICC, n_eff, `n_nonmated_eff` (from the PSU structure of the non-mated pool), per-arm counts. Arms stay separate; the probability arm carries inclusion probabilities for IPW in S3. S3 reads `n_nonmated_eff` to decide whether the primary FPIR is resolvable; a frame does not decide admissibility by itself.
 
 ## RED tests
 
 - Sizes [1, 1, 2, 4]: M̃ = 22/8 = 2.75; deff at ICC 0.10 = 1.175.
+- All-zero outcomes: `estimate_icc` returns null, and deff and n_eff still come from the manifest ICC.
 - Two images sharing identity A and one sharing identity B with the second image form one PSU. A duplicate pair joins the same PSU.
 - An `unresolved` face never enters the non-mated pool. Requesting it raises `FrameContractError`.
 - Folds are identity-disjoint, and a PSU is never split across folds.

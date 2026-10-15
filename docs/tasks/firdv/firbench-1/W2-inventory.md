@@ -26,7 +26,7 @@ Pin every fact the implementation lanes would otherwise guess. Each row gives th
    - the number of image–identity connected components
    - the size distribution (min, median, max)
    - size-weighted mean M̃, and deff at ICC 0.05, 0.10 and 0.20
-   - check M̃ against report §0f (12.925 on v3; v3r may differ, so report both if both manifests exist)
+   - check M̃ against report §0f (12.925 on v3; v3r may differ, so report both if both manifests exist). The tracked v3r manifest was measured at 231 image–identity components (largest 79), M̃ ≈ 18.19, deff ≈ 2.72 at ICC 0.10, n_eff ≈ 238; this inventory re-runs that count and records the result, and the 12.925 figure is not reproduced from the tracked file
 5. **Non-mated frame count**:
    - faces with zero identity on exhaustively annotated images, and identities with ≥ 2 appearances
    - the implied FPIR resolvability (3/n)

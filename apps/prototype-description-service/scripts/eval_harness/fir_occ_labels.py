@@ -24,14 +24,18 @@ Machine Learning Systems. Numeric policy comes exclusively from queue.qc.
 from __future__ import annotations
 
 import copy
+import errno
 import hashlib
 import json
 import math
+import os
+import posixpath
 import re
+import stat
 import struct
 import zlib
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from dataclasses import field as dataclass_field
 from pathlib import Path
@@ -1386,3 +1390,378 @@ def require_real_analysis_rows(rows: Sequence[Mapping[str, Any]]) -> None:
             raise _refuse("synthetic rows are ineligible for real analysis")
         if row.get("annotation_tier", annotation.get("annotation_tier")) == "a" and not row.get("observation_evidence"):
             raise _refuse("real analysis requires resolved observation evidence")
+
+
+# --- packaged label evidence: firbench-label-evidence/v1 ----------------------------------
+#
+# freeze_label_evidence and requalify_label_evidence are read-only and never qualify
+# evidence themselves. Every verdict comes from the readers above, called on the
+# originals (freeze) or on run-local copies (requalify). These helpers decide only
+# which bytes those readers may open, and refuse anything they could not bind.
+
+LABEL_EVIDENCE_SCHEMA = "firbench-label-evidence/v1"
+_BUNDLE_ROOT = "label-evidence"
+_PRIVATE_ROOT = "benchmarks/private"
+_DESCRIPTOR_KEYS = frozenset({"schema", "frame_sha256", "export_path", "queue_path", "gold_path", "files"})
+_FILE_KEYS = frozenset({"path", "sha256"})
+# Named support edges the readers open: queue.acceptance_path, the four acceptance links,
+# and export.observation_ref for tier (a). No other reference is followed or copied.
+_ACCEPTANCE_LINKS = ("prior_export", "validation_queue", "validation_gold", "validation_export")
+# Keys that claim synthetic or eligible status. The readers ignore unknown keys, so these
+# are refused outright rather than left to look like evidence.
+_CLAIM_KEYS = frozenset({"synthetic", "analysis_eligible", "eligible", "qualified"})
+
+
+@dataclass(frozen=True)
+class LabelEvidenceBundle:
+    """Exact evidence bytes keyed by run-relative path, and the descriptor that binds them."""
+
+    descriptor: Mapping[str, Any]
+    files: Mapping[str, bytes]
+
+
+def freeze_label_evidence(
+    export_path: Path,
+    queue_path: Path,
+    gold_path: Path,
+    *,
+    repo_root: Path,
+    frame_sha256: str,
+) -> LabelEvidenceBundle:
+    """Copy the evidence the S7 import genuinely reads, as exact bytes. Writes nothing.
+
+    Raises ``FrameContractError`` before returning when a named edge is absolute,
+    escaping, symlinked, ambiguous or cyclic, when JSON repeats a key or is non-finite,
+    or when the actual readers refuse the evidence.
+    """
+    frame = _frame_hash(frame_sha256)
+    root = Path(repo_root).absolute()
+    roots = tuple(
+        _original_rel(root, path, name)
+        for name, path in (("export_path", export_path), ("queue_path", queue_path), ("gold_path", gold_path))
+    )
+    files = _closure(roots, lambda rel: _take_original(root, rel))
+    _qualify_rows(*(root / rel for rel in roots))
+    for rel, data in files.items():
+        if _take_original(root, rel) != data:
+            raise FrameContractError(f"evidence record {rel} changed while it was being verified")
+    bundle = {f"{_BUNDLE_ROOT}/{rel}": files[rel] for rel in sorted(files)}
+    descriptor = {
+        "schema": LABEL_EVIDENCE_SCHEMA,
+        "frame_sha256": frame,
+        "export_path": f"{_BUNDLE_ROOT}/{roots[0]}",
+        "queue_path": f"{_BUNDLE_ROOT}/{roots[1]}",
+        "gold_path": f"{_BUNDLE_ROOT}/{roots[2]}",
+        "files": [{"path": name, "sha256": hashlib.sha256(data).hexdigest()} for name, data in bundle.items()],
+    }
+    return LabelEvidenceBundle(descriptor=descriptor, files=bundle)
+
+
+def requalify_label_evidence(
+    run_dir: Path,
+    descriptor: Mapping[str, Any],
+    *,
+    frame_sha256: str,
+) -> tuple[dict[str, Any], ...]:
+    """Requalify a persisted bundle through the actual readers. Reads only run-local files."""
+    frame = _frame_hash(frame_sha256)
+    export_name, queue_name, gold_name, declared = _read_descriptor(descriptor, frame)
+    run = Path(run_dir)
+    on_disk = _bundle_files_on_disk(run)
+    if set(on_disk) != set(declared):
+        missing = sorted(set(declared) - set(on_disk))
+        unlisted = sorted(set(on_disk) - set(declared))
+        raise FrameContractError(
+            f"run-local label evidence does not match the descriptor (missing {missing}, unexpected {unlisted})"
+        )
+    content = {name: _verified_bytes(on_disk[name], name, digest) for name, digest in declared.items()}
+    by_rel = {name[len(_BUNDLE_ROOT) + 1 :]: data for name, data in content.items()}
+    roots = tuple(name[len(_BUNDLE_ROOT) + 1 :] for name in (export_name, queue_name, gold_name))
+    closure = _closure(roots, lambda rel: _enumerated(by_rel, rel))
+    outside = sorted(set(by_rel) - set(closure))
+    if outside:
+        raise FrameContractError(
+            f"descriptor enumerates files outside the S7 read closure: {[f'{_BUNDLE_ROOT}/{rel}' for rel in outside]}"
+        )
+    rows = _qualify_rows(*(run / name for name in (export_name, queue_name, gold_name)))
+    for name, digest in declared.items():
+        _verified_bytes(on_disk[name], name, digest)
+    return rows
+
+
+def _frame_hash(value: object) -> str:
+    if not isinstance(value, str) or not _SHA256.match(value):
+        raise FrameContractError("frame_sha256 must be a lowercase sha256 hex digest")
+    return value
+
+
+def _canonical_rel(value: object, name: str) -> str:
+    """One spelling per relative POSIX path: no empty, '.', or interior '..' segment."""
+    if not isinstance(value, str) or not value or "\x00" in value or "\\" in value:
+        raise FrameContractError(f"{name} must be a non-empty relative POSIX path")
+    if value.startswith("/") or re.match(r"^[A-Za-z]:", value):
+        raise FrameContractError(f"{name} is absolute and cannot be packaged")
+    if value == "." or posixpath.normpath(value) != value:
+        raise FrameContractError(f"{name} is ambiguous or non-canonical")
+    return value
+
+
+def _original_rel(root: Path, value: Path, name: str) -> str:
+    """Map a caller's original to its repository-relative private path."""
+    path = Path(value)
+    if ".." in path.parts:
+        raise FrameContractError(f"{name} is ambiguous: parent segments cannot be packaged")
+    try:
+        text = (path.relative_to(root) if path.is_absolute() else path).as_posix()
+    except ValueError as exc:
+        raise FrameContractError(f"{name} lies outside the repository root") from exc
+    rel = _canonical_rel(text, name)
+    if not rel.startswith(f"{_PRIVATE_ROOT}/"):
+        raise FrameContractError(f"{name} must lie under {_PRIVATE_ROOT}/")
+    return rel
+
+
+def _link_target(base_dir: str, value: object, name: str, chain: tuple[str, ...]) -> str:
+    """Resolve one named edge inside benchmarks/private. Escapes and cycles refuse before any read."""
+    rel = _canonical_rel(value, name)
+    target = posixpath.normpath(posixpath.join(base_dir, rel))
+    if not target.startswith(f"{_PRIVATE_ROOT}/"):
+        raise FrameContractError(f"{name} escapes {_PRIVATE_ROOT}: {value!r}")
+    if target in chain:
+        raise FrameContractError(f"{name} is cyclic: {value!r} returns to a record already in the chain")
+    return target
+
+
+def _strict_json(data: bytes, rel: str) -> Any:
+    """Parse UTF-8 JSON that repeats no key and holds only finite numbers."""
+
+    def pairs_without_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        counts = Counter(key for key, _ in pairs)
+        repeated = sorted(key for key, count in counts.items() if count > 1)
+        if repeated:
+            raise FrameContractError(f"{rel} repeats JSON keys {repeated}")
+        return dict(pairs)
+
+    def refuse_constant(token: str) -> float:
+        raise FrameContractError(f"{rel} contains non-finite JSON number {token}")
+
+    def finite_float(token: str) -> float:
+        value = float(token)
+        if not math.isfinite(value):
+            raise FrameContractError(f"{rel} contains a non-finite JSON number")
+        return value
+
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise FrameContractError(f"{rel} is not UTF-8 JSON") from exc
+    try:
+        return json.loads(
+            text,
+            object_pairs_hook=pairs_without_duplicates,
+            parse_constant=refuse_constant,
+            parse_float=finite_float,
+        )
+    except json.JSONDecodeError as exc:
+        raise FrameContractError(f"{rel} is malformed JSON: {exc.msg}") from exc
+
+
+def _document(data: bytes, rel: str) -> dict[str, Any]:
+    raw = _strict_json(data, rel)
+    if not isinstance(raw, dict):
+        raise FrameContractError(f"{rel} must be a JSON object")
+    _refuse_claims(raw, rel)
+    return raw
+
+
+def _refuse_claims(raw: Mapping[str, Any], rel: str) -> None:
+    """Synthetic and eligibility claims are never evidence, whatever their boolean value."""
+    items = raw.get("items")
+    for record in [raw, *(items if isinstance(items, list) else [])]:
+        if not isinstance(record, Mapping):
+            continue
+        claimed = sorted(_CLAIM_KEYS & set(record))
+        if claimed:
+            raise FrameContractError(
+                f"{rel} carries eligibility claim keys {claimed}; only the S7 gates decide evidence"
+            )
+        if record.get("data_origin") not in (None, "real") or record.get("fixture_recipe") is not None:
+            raise FrameContractError(f"{rel} has a synthetic, mixed or unknown origin and cannot qualify real analysis")
+
+
+def _closure(roots: tuple[str, str, str], take: Callable[[str], bytes]) -> dict[str, bytes]:
+    """Return every record the readers open, following only named edges.
+
+    Mirrors the reads in load_label_export, load_queue, _acceptance and
+    _require_observation. Each record is fetched once through ``take``, parsed
+    strictly, and checked before any edge leaving it is followed.
+    """
+    export_rel, queue_rel, gold_rel = roots
+    files: dict[str, bytes] = {}
+
+    def fetch(rel: str) -> bytes:
+        if rel not in files:
+            files[rel] = take(rel)
+        return files[rel]
+
+    export_bytes = fetch(export_rel)
+    export = parse_export(_document(export_bytes, export_rel), sha256=hashlib.sha256(export_bytes).hexdigest())
+    if export.mode != "face":
+        raise FrameContractError("label evidence packaging takes a face-mode export")
+    queue = _document(fetch(queue_rel), queue_rel)
+    _document(fetch(gold_rel), gold_rel)
+    queue_dir = posixpath.dirname(queue_rel)
+    acceptance_value = queue.get("acceptance_path")
+    if acceptance_value is not None:
+        acceptance_rel = _link_target(queue_dir, acceptance_value, "queue.acceptance_path", (queue_rel,))
+        acceptance = _document(fetch(acceptance_rel), acceptance_rel)
+        acceptance_dir = posixpath.dirname(acceptance_rel)
+        for role in _ACCEPTANCE_LINKS:
+            link = acceptance.get(role)
+            if not isinstance(link, dict) or set(link) != _FILE_KEYS:
+                raise FrameContractError(f"acceptance {role} must be an exact path and sha256 link")
+            target = _link_target(acceptance_dir, link["path"], f"acceptance.{role}", (queue_rel, acceptance_rel))
+            data = fetch(target)
+            if hashlib.sha256(data).hexdigest() != link["sha256"]:
+                raise FrameContractError(f"evidence link hash mismatch for acceptance.{role}")
+            _document(data, target)
+    if export.annotation_tier == "a":
+        if not export.observation_ref:
+            raise FrameContractError("real tier-a evidence requires an available genuine observation reference")
+        observation_rel = _link_target(
+            queue_dir, export.observation_ref, "export.observation_ref", (export_rel, queue_rel)
+        )
+        _document(fetch(observation_rel), observation_rel)
+    return files
+
+
+def _read_regular(path: Path, name: str) -> bytes:
+    """Read one regular file without following a final symlink."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise FrameContractError(f"evidence record {name} is a symlink") from exc
+        raise FrameContractError(f"cannot read evidence record {name}: {exc.strerror or exc}") from exc
+    with os.fdopen(fd, "rb") as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise FrameContractError(f"evidence record {name} is not a regular file")
+        return handle.read()
+
+
+def _take_original(root: Path, rel: str) -> bytes:
+    """Read one original under the repository, refusing a symlink at any component."""
+    path = root
+    mode = 0
+    for part in rel.split("/"):
+        path = path / part
+        try:
+            mode = os.lstat(path).st_mode
+        except OSError as exc:
+            raise FrameContractError(f"cannot resolve evidence record {rel}: {exc.strerror or exc}") from exc
+        if stat.S_ISLNK(mode):
+            raise FrameContractError(f"evidence record {rel} traverses a symlink at {part}")
+    if not stat.S_ISREG(mode):
+        raise FrameContractError(f"evidence record {rel} is not a regular file")
+    return _read_regular(path, rel)
+
+
+def _qualify_rows(export_path: Path, queue_path: Path, gold_path: Path) -> tuple[dict[str, Any], ...]:
+    """The only qualification path: the actual S7 readers and the real-analysis boundary."""
+    export = _through_readers(load_label_export, export_path)
+    queue = _through_readers(load_queue, queue_path, gold_path)
+    rows = _through_readers(to_face_instances, export, queue)
+    _through_readers(require_real_analysis_rows, rows)
+    return tuple(rows)
+
+
+def _through_readers(reader: Callable[..., Any], *args: Any) -> Any:
+    try:
+        return reader(*args)
+    except FrameContractError:
+        raise
+    except (OSError, KeyError, IndexError, TypeError, ValueError) as exc:
+        raise FrameContractError(f"S7 reader {reader.__name__} refused the evidence: {exc}") from exc
+
+
+def _bundle_path(value: object, name: str) -> str:
+    rel = _canonical_rel(value, name)
+    prefix = f"{_BUNDLE_ROOT}/{_PRIVATE_ROOT}/"
+    if not rel.startswith(prefix):
+        raise FrameContractError(f"{name} must lie under {prefix}")
+    return rel
+
+
+def _read_descriptor(raw: object, frame: str) -> tuple[str, str, str, dict[str, str]]:
+    payload = _object(raw, "label evidence descriptor")
+    _keys(payload, _DESCRIPTOR_KEYS, "label evidence descriptor")
+    if payload["schema"] != LABEL_EVIDENCE_SCHEMA:
+        raise FrameContractError(f"label evidence descriptor schema must be {LABEL_EVIDENCE_SCHEMA!r}")
+    if payload["frame_sha256"] != frame:  # a bool, another hash or a non-string all fail here
+        raise FrameContractError("label evidence descriptor is not bound to this frame_sha256")
+    files: dict[str, str] = {}
+    previous = ""
+    for index, entry in enumerate(_list(payload["files"], "label evidence descriptor files")):
+        item = _object(entry, f"files[{index}]")
+        _keys(item, _FILE_KEYS, f"files[{index}]")
+        name = _bundle_path(item["path"], f"files[{index}].path")
+        digest = item["sha256"]
+        if not isinstance(digest, str) or not _SHA256.match(digest):
+            raise FrameContractError(f"files[{index}].sha256 must be a sha256 hex digest")
+        if name <= previous:
+            raise FrameContractError("label evidence descriptor files must be sorted and unique by path")
+        files[name] = digest
+        previous = name
+    names = {key: _bundle_path(payload[key], key) for key in ("export_path", "queue_path", "gold_path")}
+    for key, name in names.items():
+        if name not in files:
+            raise FrameContractError(f"label evidence descriptor {key} names evidence absent from files")
+    return names["export_path"], names["queue_path"], names["gold_path"], files
+
+
+def _bundle_files_on_disk(run: Path) -> dict[str, Path]:
+    """Enumerate run-local label evidence. Symlinks and non-regular entries are refused."""
+    base = run / _BUNDLE_ROOT
+    try:
+        base_mode = os.lstat(base).st_mode
+    except OSError as exc:
+        raise FrameContractError(f"run-local label evidence is missing: {exc.strerror or exc}") from exc
+    if stat.S_ISLNK(base_mode):
+        raise FrameContractError(f"run-local {_BUNDLE_ROOT} is a symlink")
+    if not stat.S_ISDIR(base_mode):
+        raise FrameContractError(f"run-local {_BUNDLE_ROOT} is not a directory")
+    found: dict[str, Path] = {}
+
+    def walk(directory: Path, prefix: str) -> None:
+        try:
+            with os.scandir(directory) as scan:
+                entries = sorted(scan, key=lambda entry: entry.name)
+        except OSError as exc:
+            raise FrameContractError(f"cannot enumerate run-local label evidence {prefix}: {exc}") from exc
+        for entry in entries:
+            name = f"{prefix}/{entry.name}"
+            mode = entry.stat(follow_symlinks=False).st_mode
+            if stat.S_ISLNK(mode):
+                raise FrameContractError(f"run-local label evidence contains a symlink: {name}")
+            if stat.S_ISDIR(mode):
+                walk(Path(entry.path), name)
+            elif stat.S_ISREG(mode):
+                found[name] = Path(entry.path)
+            else:
+                raise FrameContractError(f"run-local label evidence contains a non-regular file: {name}")
+
+    walk(base, _BUNDLE_ROOT)
+    return found
+
+
+def _verified_bytes(path: Path, name: str, digest: str) -> bytes:
+    data = _read_regular(path, name)
+    if hashlib.sha256(data).hexdigest() != digest:
+        raise FrameContractError(f"label evidence {name} changed after packaging")
+    return data
+
+
+def _enumerated(by_rel: Mapping[str, bytes], rel: str) -> bytes:
+    if rel not in by_rel:
+        raise FrameContractError(f"S7 read closure requires {rel}, which the descriptor does not enumerate")
+    return by_rel[rel]

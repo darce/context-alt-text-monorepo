@@ -49,6 +49,12 @@ _ENV_CHOICES = ("prod", "dev", "local", "dev-fir", *AURA_LABELS)
 _DEFAULT_TTL_HOURS = 72
 _MIN_TTL_HOURS = 1
 _MAX_TTL_HOURS = 336
+# Match the repository's strip semantics, including legacy Unicode padding.
+_EMAIL_STRIP_CHARACTERS = "".join(
+    chr(codepoint)
+    for codepoint in range(sys.maxunicode + 1)
+    if _normalize_email(chr(codepoint)) is None
+)
 
 
 def _validate_env_vs_dsn(env: str, dsn: str) -> str | None:
@@ -201,7 +207,7 @@ async def _create(args: argparse.Namespace, session: AsyncSession) -> tuple[Port
             raise ValueError("target tenant occupied")
         conflict = (await session.execute(
             select(PortalIdentity).where(
-                func.lower(func.trim(PortalIdentity.email)).label("email") == args.email,
+                func.lower(func.btrim(PortalIdentity.email, _EMAIL_STRIP_CHARACTERS)).label("email") == args.email,
                 PortalIdentity.tenant_id != args.tenant,
             ).limit(1).with_for_update()
         )).scalar_one_or_none()

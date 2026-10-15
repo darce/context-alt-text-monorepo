@@ -268,7 +268,6 @@ export const useClusterSuggestionsLoader = ({
   const {
     data: rosterCandidatesResponse,
     isError: rosterCandidatesError,
-    isLoading: rosterCandidatesLoading,
     refetch: refetchRosterCandidates,
   } = useQuery<RosterCandidatesResponse>({
     queryKey: queryKeys.clusters.rosterCandidates(rosterClusterId, ROSTER_CANDIDATES_TOP_K),
@@ -327,8 +326,7 @@ export const useClusterSuggestionsLoader = ({
       suggestionsLoading ||
       labelMatchesLoading ||
       atRestLabeledLoading ||
-      (enabled && rosterLoading) ||
-      rosterCandidatesLoading,
+      (enabled && rosterLoading),
     rosterError,
     rosterCandidateOptions,
     isError: suggestionsError || rosterCandidatesError,

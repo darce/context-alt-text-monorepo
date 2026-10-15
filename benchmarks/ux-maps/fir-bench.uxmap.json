@@ -1,0 +1,606 @@
+{
+  "map_ref": "fir-bench",
+  "product": "FIRBENCH-1 benchmark tool: static private FIR bench report (S1 to S8) and the occlusion label queue (L1)",
+  "source_fixture": "docs/tasks/firdv/FIRBENCH-1-fir-benchmark-tool-task-plan.md#screens-ux-map-seeds-values-are-placeholders",
+  "goals": [
+    "Every verdict shows its admissibility, n_eff, MDE and interval. A result that is unratified, inconclusive or unresolvable names no winner.",
+    "An operator can find where faces are lost, from the verdict to the stage, then to the failing faces, without losing sort, filter or position.",
+    "Incompatible runs are refused with a reason before any difference is computed.",
+    "The label queue shows the annotator only what labelling from pixels needs, and no internal item role."
+  ],
+  "jobs": [
+    { "id": "decide-model-change", "label": "Decide whether a model change is real" },
+    { "id": "find-lost-faces", "label": "Find where faces are lost" },
+    { "id": "compare-two-runs", "label": "Compare two runs" },
+    { "id": "label-occlusion-pixels", "label": "Label occlusion from pixels" }
+  ],
+  "screens": [
+    {
+      "id": "s1-verdict",
+      "kind": "screen",
+      "title": "S1 Verdict",
+      "purpose": "Answers whether the model change is real at the primary point (FNIR at FPIR 0.01, end to end, misses count). Shows the verdict only with its admissibility, n_eff, MDE and interval. Bench states: unratified and inconclusive are degraded; unresolvable_fpir is degraded and its verdict reason is primary_fpir_unresolvable. None of them names a winner.",
+      "route": "report/index.html (static file, no network)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_report.py",
+      "primary_action_id": "open-pair-cells",
+      "states": ["default", "degraded", "empty", "error"],
+      "zones": [
+        {
+          "id": "verdict-line",
+          "label": "Verdict line: question, paired difference Δ(B−A) or per-leg state with its interval, PSU n_eff and deff. superior ✓ and non-inferior ✓ name a winner only when ratified and sealed. inconclusive ○ (degraded) prints INCONCLUSIVE and the InconclusiveReason value verbatim (primary_fpir_unresolvable, required_guardrail_unscored, margin_unreachable_mde_gt_delta, non_confirmatory_frame or insufficient_independent_psus). unratified ○ (degraded) prints the numbers and 'unratified: no verdict'. unresolvable_fpir ○ (degraded) prints primary_fpir_unresolvable and names no winner. A hypothesis not reached prints 'not evaluated'. Serves VIZ-23, WRIT-81.",
+          "role": "status",
+          "states": ["default", "degraded", "error"]
+        },
+        {
+          "id": "frame-admissibility",
+          "label": "Admissibility line: frame id and tag (diagnostic, development or confirmatory), frame-inspected flag, n_eff, deff, and MDE per step. Every number carries its frame's tag. Serves VIZ-23.",
+          "role": "content",
+          "states": ["default", "empty", "error"]
+        },
+        {
+          "id": "leg-range",
+          "label": "FNIR at FPIR 0.01 per leg (SF-128, AF-512, and the IF judge row) as a dot-range with its interval and the frozen τ. Range frame on the value axis; each leg labelled directly, not by legend. Serves VIZ-35, VIZ-40.",
+          "role": "content",
+          "states": ["default", "empty", "error"]
+        },
+        {
+          "id": "leg-table",
+          "label": "Exact-lookup table: per leg FNIR at FPIR 0.01, FPIR measured with its UCL, frozen τ, and stage counts. Same numbers as the range. Unratified rows show numbers with 'unratified: no verdict' (degraded). Serves VIZ-32.",
+          "role": "content",
+          "states": ["default", "degraded", "empty", "error"]
+        },
+        {
+          "id": "guardrails",
+          "label": "Guardrail veto table: false names per 1k mentions, worst pair-cell FNIR floor, worst cohort FPIR, p95 ms per face. Each row shows its rule (≤ sealed, floor or budget) and a mark: ✓ pass, ✗ veto, ○ unscored or unresolvable (cohort n_eff under 3/FPIR). A null or unscored veto is inconclusive with required_guardrail_unscored (degraded). Serves INT-22, VIZ-32.",
+          "role": "status",
+          "states": ["default", "degraded", "empty", "error"]
+        },
+        {
+          "id": "report-tabs",
+          "label": "Tabs: Curves, Pair cells, Stages, Failures, Clusters, Compare, Frames and power. Each tab is a keyboard-reachable anchor after a skip link. Switching tabs keeps the run. Serves INT-25.",
+          "role": "nav",
+          "states": ["default"]
+        }
+      ]
+    },
+    {
+      "id": "s2-curves",
+      "kind": "screen",
+      "title": "S2 Operating curves",
+      "purpose": "FNIR against FPIR on a log scale for each leg, with τ frozen on calibration folds and the test set read once. Bench states: unresolvable_fpir is degraded, for the region below 3/n_eff; unratified is degraded, with numbers only and no winner.",
+      "route": "report/index.html (static file, no network)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_report.py",
+      "states": ["default", "degraded", "empty", "error"],
+      "zones": [
+        {
+          "id": "curves",
+          "label": "Operating curves per leg on a log FPIR axis with a range frame and a direct label on each curve. Points below 3/n_eff are shaded (░) and marked ○ unresolvable, and no FNIR claim is drawn inside that region (degraded). A curve with no data reads 'no data' (empty). Serves VIZ-35, VIZ-40, VIZ-27.",
+          "role": "content",
+          "states": ["default", "degraded", "empty", "error"]
+        },
+        {
+          "id": "tau-readout",
+          "label": "At-τ table: per leg FNIR, FPIR measured with its UCL, false accepts as an integer over non-mated source units, and the gallery identity count. Same numbers as the τ marker on the curve. Serves VIZ-32, INT-22.",
+          "role": "content",
+          "states": ["default", "degraded", "empty", "error"]
+        },
+        {
+          "id": "explore-tau",
+          "label": "Explore τ is a mode. A banner reads 'exploring τ: nothing is saved'. Dev frames only; sealed frames are read-only. Leaving the mode restores the frozen τ and its values. Serves INT-23, INT-21.",
+          "role": "form",
+          "states": ["default", "degraded"]
+        }
+      ]
+    },
+    {
+      "id": "s3-pair-cells",
+      "kind": "screen",
+      "title": "S3 Pair cells",
+      "purpose": "Query by enrolled occluder cell, with FNIR at τ per leg and the faces, identities and PSUs in each cell. Bench states: unratified shows the cell numbers with 'unratified: no verdict' (degraded). An empty cell is 'collect', not an error.",
+      "route": "report/index.html (static file, no network)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_report.py",
+      "primary_action_id": "open-failures",
+      "states": ["default", "degraded", "empty", "error"],
+      "zones": [
+        {
+          "id": "cell-grid",
+          "label": "Query by enrolled grid: FNIR at τ per leg (SF-128, AF-512) with n faces, identities and PSUs per cell. Real and synthetic occlusion sit in separate panes. A cell with fewer than 30 independent units reads 'not scored'. An empty cell reads '○ no data → collect'. Serves EVAL-20, VIZ-32.",
+          "role": "content",
+          "states": ["default", "degraded", "empty", "error"]
+        },
+        {
+          "id": "cell-handoff",
+          "label": "Cell to failures for that cell and leg. Returning from failures restores this grid with sort, scroll and filter kept. Serves INT-25.",
+          "role": "nav",
+          "states": ["default"]
+        }
+      ]
+    },
+    {
+      "id": "s4-stages",
+      "kind": "screen",
+      "title": "S4 Stages",
+      "purpose": "Where each GT face ended in the end-to-end ledger, per leg, with the joint gaps against native. Rows are SearchStage values. Bench states: unratified shows the rows and gaps with 'unratified: no verdict' (degraded). The judge row shows no arm deltas.",
+      "route": "report/index.html (static file, no network)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_report.py",
+      "primary_action_id": "open-lost-faces",
+      "states": ["default", "degraded", "empty", "error"],
+      "zones": [
+        {
+          "id": "stage-ledger",
+          "label": "Stage waterfall as a table, in order: GT faces (exhaustive frame only), detected (IoU ≥ 0.50, one-to-one), aligned, top-1 correct identity, accepted at τ with the correct name. The fused leg has no unaligned row. Unavailable arm counts sit in their own arm_availability column, never as a stage. Serves VIZ-32, VIZ-23.",
+          "role": "content",
+          "states": ["default", "degraded", "empty", "error"]
+        },
+        {
+          "id": "joint-gaps",
+          "label": "Joint gaps against native with paired PSU intervals for gt_crop_redetect and cached_yunet_landmark_replay, one row each, with the unavailable face count per arm. No shares are apportioned: these are joint intervention gaps, not causal effects. Serves VIZ-23, VIZ-32.",
+          "role": "content",
+          "states": ["default", "degraded", "empty", "error"]
+        },
+        {
+          "id": "stage-handoff",
+          "label": "A stage row opens failures filtered to that stage, with the leg fixed. Back returns to this ledger. Serves INT-25.",
+          "role": "nav",
+          "states": ["default"]
+        }
+      ]
+    },
+    {
+      "id": "s5-failures",
+      "kind": "screen",
+      "title": "S5 Failures",
+      "purpose": "Failures for one query cell and one leg, with the selection pool stated before any face. Stage labels are FaceOutcome and SearchStage values. Bench states: unratified shows counts with 'unratified: no verdict' (degraded). No failure in the cell is empty, not an error.",
+      "route": "report/index.html (static file, no network)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_report.py",
+      "states": ["default", "degraded", "empty", "error"],
+      "zones": [
+        {
+          "id": "pool-accounting",
+          "label": "Selection pool, before any row: reuse the exhaustive frame inventory's overall image count and GT-face count, including existing mated/non-mated face counts and explicit unresolved identities. The source pool is fixed independently of detections; background source units are counted separately, never as GT faces. Show eligible images/faces after the current frame, sampling arm, query/enrolled cell, leg, stage and outcome filters; selected distinct images/faces in the displayed rows; and images actually shown as crops (0 when crops are off). Eligible/selected GT-face counts exclude detector-only rows; report detection counts and represented background-unit counts separately. Display the active filters, sort, offset, limit and omitted counts. Default: all eligible failure rows, no hidden cap, stable pseudonymous image_id then face_id order; any changed sort or limit is disclosed. Missing exhaustive GT reads 'pool not established'; it never implies admissible non-mated N. A selection is never shown without its pool. Serves [VIZ-41] Reveal the image-selection pool (Visual Explanations, ch. 1).",
+          "role": "content",
+          "states": ["default", "empty", "error"]
+        },
+        {
+          "id": "outcome-counts",
+          "label": "Outcome counts table: missed, unaligned, wrong_identity, rejected, false_accept. Each count is exact, and a nonzero row is marked ✗. Serves VIZ-32.",
+          "role": "content",
+          "states": ["default", "degraded", "empty", "error"]
+        },
+        {
+          "id": "failure-rows",
+          "label": "Failure table, one row per failing face: SearchStage reached, top-1 identity as a pseudonym, its score against τ, and its result on each other leg. Each row explicitly identifies its selected image_id and face_id with stable pseudonymous aliases; background detections identify their pseudonymous background source unit separately. Repeated faces from one image do not inflate the distinct-image count. Sort and filter controls are kept on return from pair cells. Only pseudonyms appear. Selection identities reconcile with pool-accounting. Serves VIZ-32, INT-25 and [VIZ-41] Reveal the image-selection pool (Visual Explanations, ch. 1).",
+          "role": "content",
+          "states": ["default", "empty", "error"]
+        },
+        {
+          "id": "private-crop",
+          "label": "Face crop, shown only when the run was written with include_crops. The output stays under benchmarks/private. Without it the zone reads 'crop off' (empty). Each displayed crop carries the same pseudonymous image_id and face_id as its failure row and links back to pool-accounting; shown-image counts count distinct images, with selected face/crop counts separate. Serves VIZ-23 and [VIZ-41] Reveal the image-selection pool (Visual Explanations, ch. 1).",
+          "role": "content",
+          "states": ["default", "empty"]
+        },
+        {
+          "id": "back-to-origin",
+          "label": "Back to pair cells or to the stage ledger, whichever opened this view. Sort and filter are kept. Serves INT-25.",
+          "role": "nav",
+          "states": ["default"]
+        }
+      ]
+    },
+    {
+      "id": "s6-compare",
+      "kind": "screen",
+      "title": "S6 Compare",
+      "purpose": "Compares run B with a baseline run A on the same frame. Only compatible runs can be compared. An incompatible pair is refused with its reason and no difference is computed. Bench states: incompatible_runs is error (reason shown, no subtraction, exit to run A). unratified is degraded: numbers for A and B, 'unratified: no verdict', never a ▼ winner.",
+      "route": "report/index.html (static file, no network)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_report.py",
+      "primary_action_id": "select-run-b",
+      "states": ["default", "degraded", "empty", "error"],
+      "zones": [
+        {
+          "id": "compat-checks",
+          "label": "Compatibility checks: frame, scorer boundary semantics, OpenCV and ORT versions, leg contracts. Each shows ✓ or ✗ with its reason. A changed leg contract is listed as expected or unexpected. The run B picker offers only runs that pass these checks. incompatible_runs is error: the reason is printed and no metric row shows. Serves INT-22, FORM-11.",
+          "role": "status",
+          "states": ["default", "error"]
+        },
+        {
+          "id": "metric-delta",
+          "label": "Metric table: A, B and Δ with a paired interval, and a moved mark: ▼ better, ▲ worse, ○ no change or unscored. The worst pair cell appears with its observation-level cells beside it, not only the aggregate. Unratified rows show numbers with 'unratified: no verdict' (degraded). Serves VIZ-32, EXP-31.",
+          "role": "content",
+          "states": ["default", "degraded", "empty", "error"]
+        },
+        {
+          "id": "history-spark",
+          "label": "History sparkline of AF FNIR over dated runs, latest value labelled. It states its baseline, units, window and actual dates. Serves VIZ-24.",
+          "role": "content",
+          "states": ["default", "empty", "error"]
+        },
+        {
+          "id": "tau-spread",
+          "label": "τ spread over the calibration folds and the FNIR range each τ gives, shown beside the single frozen τ the verdict uses. Serves EXP-30.",
+          "role": "content",
+          "states": ["default", "empty"]
+        },
+        {
+          "id": "refusal-reason",
+          "label": "Refusal reason for incompatible_runs, naming the first failing check. The exit to run A's verdict is the only way out. Serves INT-24.",
+          "role": "status",
+          "states": ["error"]
+        }
+      ]
+    },
+    {
+      "id": "s7-clusters",
+      "kind": "screen",
+      "title": "S7 Clusters",
+      "purpose": "Clusters for each leg, in that leg's own space only. The projection is a diagnostic and never a metric map. Bench states: projection_unavailable is degraded, and the table alternative stays.",
+      "route": "report/index.html (static file, no network)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_report.py",
+      "primary_action_id": "find-neighbours",
+      "states": ["default", "degraded", "empty", "error"],
+      "zones": [
+        {
+          "id": "cluster-metrics",
+          "label": "Per-leg cluster table: pair P/R, B³ P/R, merges, fragments, unknown-absorbed, order stability. Singletons stay unassigned. Retained PCA components are shown with a variance-only spectrum and no loadings. Also show S4 Build 3 chaining_check evidence: N = all eligible held-out named-face pairs independently verified as different identities, with usable vectors in this leg; D = those pairs linked by a cluster path; C = the subset linked through a third distinct verified identity. Label D/N 'known-different path links' and C/N 'chaining_check', each with integer numerator, denominator and rate, plus held-out scope and exclusions. Read S4 clusters.json evidence, never infer identity from co-assignment. N=0 reads 'not evaluated: no eligible held-out different-identity pairs' (empty), missing evidence reads 'not evaluated: chaining evidence unavailable', and malformed evidence is error; none reads zero risk. Select a pair to inspect its path in neighbour-table. Serves VIZ-32 and [GRPH-18] Never trust the transitive closure of a raw similarity threshold (Introduction to Information Retrieval, § 17.2).",
+          "role": "content",
+          "states": ["default", "empty", "error"]
+        },
+        {
+          "id": "dendrogram",
+          "label": "Average-linkage cosine dendrogram, cut at the production distance d = 1 − s, labelled with its cut or 'no production cut recorded'. The acceptance τ line is labelled 'acceptance τ (not a cluster cut)' at d = 1 − τ. Direct labels. Serves VIZ-40.",
+          "role": "content",
+          "states": ["default", "empty", "error"]
+        },
+        {
+          "id": "umap-projection",
+          "label": "UMAP diagnostic projection, captioned 'diagnostic projection · distances not meaningful', with n_neighbors, min_dist and seed beside it. Claims are limited to local contiguity: no gap, density or axis claims. If the projection cannot be drawn, projection_unavailable is degraded and the neighbour table stays. Serves VIZ-18, VIZ-19.",
+          "role": "content",
+          "states": ["default", "degraded", "empty", "error"]
+        },
+        {
+          "id": "neighbour-table",
+          "label": "Table alternative: select a face to list its nearest neighbours in the original leg space, with their scores. Distances come from that space, not from the projection. Inspect chaining pair opens a keyboard-reachable disclosure here: pseudonymous endpoint image_id/face_id and independently verified different identity aliases, held-out fold, pair eligibility, and ordered path face/image/identity aliases with each edge score, production s threshold and link rule from S4. Mark the third identity explicitly; direct links are distinguished from third-identity chaining. No real IDs, names or pixels. Closing the disclosure restores the selected pair, leg, sort and position. This evidence remains available when projection_unavailable. Serves VIZ-18, VIZ-32, [INT-25] Map the handoffs (Microinteractions, ch. 6) and [GRPH-18] Never trust the transitive closure of a raw similarity threshold (Introduction to Information Retrieval, § 17.2).",
+          "role": "content",
+          "states": ["default", "empty", "error"]
+        }
+      ]
+    },
+    {
+      "id": "s8-frames-power",
+      "kind": "screen",
+      "title": "S8 Frames and power",
+      "purpose": "What each frame can claim: units, identities, PSUs, deff, n_eff, admissibility tag and MDE per step. Shows decision-manifest status without a seal value unless the manifest is ratified. Bench states: unratified is degraded and reads 'unratified: no seal shown'.",
+      "route": "report/index.html (static file, no network)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_report.py",
+      "primary_action_id": "open-verdict",
+      "states": ["default", "degraded", "empty", "error"],
+      "zones": [
+        {
+          "id": "frame-table",
+          "label": "Frame table, one row per frame: units, identities, PSUs, deff, n_eff, admissible-as tag (diagnostic, development or confirmatory), MDE per step. deff uses planning ICC 0.10 as delegated project policy, not observed ICC; show sensitivity at 0.05/0.10/0.20. Show the global floor of 50 independent PSUs separately from the pair-cell floor of 30; check the global floor before FPIR intervals. Floors do not establish power, MDE adequacy, resolvability or exhaustive GT. Golden-150 is marked verification-biased. A frame not yet acquired reads 'not acquired' and claims nothing. Serves VIZ-32, VIZ-23.",
+          "role": "content",
+          "states": ["default", "empty", "error"]
+        },
+        {
+          "id": "manifest-status",
+          "label": "Decision manifest status: ratified and sealed (date, short hash, count of dated disconfirmers), or unratified (degraded, 'unratified: no seal shown'). Delegated project policy is declared before outcomes: k=5 identity/PSU-disjoint rotating folds (seed 2406466110), gallery seed 2468935812, paired cluster percentile bootstrap n_boot=10000 (seed 2429382368), label queue seed 336880394. Policy is not ratification; measured frame/template hashes, actual timestamps, genuine observation references and signatures stay unresolved until supplied. Queue tooling loads delegated gold/repeat shares 0.10/0.10, repeat agreement 0.90, Cohen kappa 0.80, independent-gold accuracy 0.90, support >=20 gold decisions per annotator and >=20 repeats per evaluated field; these remain hidden from L1. These are project QC defaults, not accuracy guarantees; real imports require genuine observation reference and support. Serves INT-21.",
+          "role": "status",
+          "states": ["default", "degraded", "empty", "error"]
+        }
+      ]
+    },
+    {
+      "id": "l1-label-queue",
+      "kind": "screen",
+      "title": "L1 Occlusion label queue",
+      "purpose": "Single-file HTML that the operator labels from pixels, one face box at a time. Captions, detector boxes and model names are never shown. The annotator sees position and progress only. skipped_nonresponse is the only item state the annotator sees. Other item roles are internal and never rendered on this screen.",
+      "route": "local single-file HTML (private output path)",
+      "code_ref": "benchmarks/tools/fir_occ_label_queue.py",
+      "primary_action_id": "label-occluder",
+      "states": ["default", "empty", "error"],
+      "zones": [
+        {
+          "id": "item-image",
+          "label": "Full image with no detector boxes and no caption. Confirmed boxes appear only when the queue entry carries show_confirmed_boxes. The header shows position and progress only. empty: the queue has no items. error: the image fails to embed, and the item stays in the queue. Serves FORM-11.",
+          "role": "queue",
+          "states": ["default", "empty", "error"]
+        },
+        {
+          "id": "face-controls",
+          "label": "Per face: a box mark ✓, and an occluder set chosen from m mask, s sunglasses, h hand, o object, x mixed, n none, ? can't tell. Region controls for eyes, nose and mouth cycle through visible, occluded, out-of-frame and uncertain. Only these values can be entered. Every control has a visible label and Tab reach. Serves FORM-11.",
+          "role": "form",
+          "states": ["default", "error"]
+        },
+        {
+          "id": "draw-mode",
+          "label": "Add missed face is a mode. a enters it with a visible 'drawing a box' banner. Enter commits the box. Esc cancels the draw and restores the item. u marks an unknown person in the same way. Serves INT-23.",
+          "role": "form",
+          "states": ["default"]
+        },
+        {
+          "id": "next-skip-undo",
+          "label": "Enter next, Esc undo, skip recorded as nonresponse. A skipped item shows ○ skipped, the only item state the annotator sees, and stays in the export. The loop ends at the last item or on an explicit export. Progress reads 'done n · skipped m'. Serves INT-24, PERC-10.",
+          "role": "nav",
+          "states": ["default"]
+        },
+        {
+          "id": "export",
+          "label": "Export JSON writes the labelled items to the private output path. Nothing is imported here. A failed export keeps every label, shows the error and offers a retry. Serves INT-25.",
+          "role": "status",
+          "states": ["default", "error"]
+        }
+      ]
+    },
+    {
+      "id": "exit-compare-refused",
+      "kind": "exit",
+      "title": "Back to run A verdict (compare refused)",
+      "purpose": "The only exit from incompatible_runs on S6. Opens run A's S1 verdict, with no comparison shown. Intentional static exit marker, with no independent content or asynchronous work. S6 error/refusal-reason owns the refusal; back-to-run-a hands off to s1-verdict, whose states own the destination. It has no separate loading, empty or error screen. [RLSE-04] Undesigned state is a bug (practice label): screen-state trigger does not apply to this marker.",
+      "route": "report/index.html (static file, no network)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_report.py"
+    }
+  ],
+  "actions": [
+    {
+      "id": "open-pair-cells",
+      "verb": "Open pair cells",
+      "target": "s3-pair-cells",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "s1-verdict"
+    },
+    {
+      "id": "explore-tau",
+      "verb": "Explore τ (dev frames only)",
+      "target": "s2-curves",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "s2-curves"
+    },
+    {
+      "id": "open-failures",
+      "verb": "Open failures for this cell and leg",
+      "target": "s5-failures",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "s3-pair-cells"
+    },
+    {
+      "id": "open-lost-faces",
+      "verb": "Open failures for this stage",
+      "target": "s5-failures",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "s4-stages"
+    },
+    {
+      "id": "back-to-pair-cells",
+      "verb": "Back to pair cells",
+      "target": "s3-pair-cells",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "s5-failures"
+    },
+    {
+      "id": "back-to-stages",
+      "verb": "Back to stage ledger",
+      "target": "s4-stages",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "s5-failures"
+    },
+    {
+      "id": "select-run-b",
+      "verb": "Select run B (compatible runs only)",
+      "target": "s6-compare",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "s6-compare"
+    },
+    {
+      "id": "back-to-run-a",
+      "verb": "Back to run A verdict",
+      "target": "exit-compare-refused",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "s6-compare"
+    },
+    {
+      "id": "find-neighbours",
+      "verb": "Show nearest neighbours",
+      "target": "s7-clusters",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "s7-clusters"
+    },
+    {
+      "id": "inspect-chaining-pair",
+      "verb": "Inspect chaining pair and path",
+      "target": "s7-clusters",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "s7-clusters"
+    },
+    {
+      "id": "open-verdict",
+      "verb": "Open verdict for this frame",
+      "target": "s1-verdict",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "s8-frames-power"
+    },
+    {
+      "id": "label-occluder",
+      "verb": "Set occluder",
+      "target": "l1-label-queue",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "l1-label-queue"
+    },
+    {
+      "id": "add-missed-face",
+      "verb": "Add missed face",
+      "target": "l1-label-queue",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "l1-label-queue"
+    },
+    {
+      "id": "mark-unknown-person",
+      "verb": "Mark unknown person",
+      "target": "l1-label-queue",
+      "hierarchy": "tertiary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "l1-label-queue"
+    },
+    {
+      "id": "skip-item",
+      "verb": "Skip (recorded as nonresponse)",
+      "target": "l1-label-queue",
+      "hierarchy": "tertiary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "l1-label-queue"
+    },
+    {
+      "id": "next-item",
+      "verb": "Next (Enter)",
+      "target": "l1-label-queue",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "l1-label-queue"
+    },
+    {
+      "id": "undo",
+      "verb": "Undo (Esc)",
+      "target": "l1-label-queue",
+      "hierarchy": "tertiary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "l1-label-queue"
+    },
+    {
+      "id": "export-labels",
+      "verb": "Export JSON",
+      "target": "l1-label-queue",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "l1-label-queue"
+    }
+  ],
+  "flows": [
+    {
+      "id": "verdict-to-failures",
+      "job": "decide-model-change",
+      "label": "verdict → pair cell → failures → back (sort and filter kept, INT-25)",
+      "steps": [
+        { "screen_id": "s1-verdict", "branch_label": "verdict" },
+        { "screen_id": "s3-pair-cells", "branch_label": "pair cell" },
+        { "screen_id": "s5-failures", "branch_label": "failures for cell and leg" },
+        { "screen_id": "s3-pair-cells", "branch_label": "back, sort and filter kept" }
+      ]
+    },
+    {
+      "id": "frame-before-verdict",
+      "job": "decide-model-change",
+      "label": "frame inspected before the verdict; development evidence is not confirmatory",
+      "steps": [
+        { "screen_id": "s8-frames-power", "branch_label": "admissibility and MDE" },
+        { "screen_id": "s1-verdict", "branch_label": "verdict" }
+      ]
+    },
+    {
+      "id": "lost-faces",
+      "job": "find-lost-faces",
+      "label": "verdict → stage ledger → failures at the stage → back to ledger",
+      "steps": [
+        { "screen_id": "s1-verdict", "branch_label": "verdict" },
+        { "screen_id": "s4-stages", "branch_label": "stage ledger" },
+        { "screen_id": "s5-failures", "branch_label": "failures at stage, leg fixed" },
+        { "screen_id": "s4-stages", "branch_label": "back to ledger" }
+      ]
+    },
+    {
+      "id": "compare-compatible",
+      "job": "compare-two-runs",
+      "label": "compatible runs compare to a Δ with its interval",
+      "steps": [
+        { "screen_id": "s6-compare", "branch_label": "select run B from compatible runs" },
+        { "screen_id": "s6-compare", "branch_label": "Δ with paired interval and history" }
+      ]
+    },
+    {
+      "id": "compare-refused-exit",
+      "job": "compare-two-runs",
+      "label": "compare refused → reason → exit (INT-24)",
+      "steps": [
+        { "screen_id": "s6-compare", "branch_label": "select run B" },
+        { "screen_id": "s6-compare", "branch_label": "incompatible_runs: reason, no subtraction" },
+        { "screen_id": "exit-compare-refused", "branch_label": "back to run A verdict" }
+      ]
+    },
+    {
+      "id": "label-add-missed-face",
+      "job": "label-occlusion-pixels",
+      "label": "label → add missed face → next",
+      "steps": [
+        { "screen_id": "l1-label-queue", "branch_label": "item: occluder and regions" },
+        { "screen_id": "l1-label-queue", "branch_label": "draw mode: add missed face" },
+        { "screen_id": "l1-label-queue", "branch_label": "next item (Enter)" }
+      ]
+    },
+    {
+      "id": "label-skip",
+      "job": "label-occlusion-pixels",
+      "label": "skip is recorded as nonresponse, never dropped",
+      "steps": [
+        { "screen_id": "l1-label-queue", "branch_label": "item" },
+        { "screen_id": "l1-label-queue", "branch_label": "skipped (nonresponse)" },
+        { "screen_id": "l1-label-queue", "branch_label": "next item" }
+      ]
+    }
+  ],
+  "open_questions": [],
+  "not_doing": [
+    "A winner shown while a decision is unratified, inconclusive or unresolvable",
+    "Confirmatory-frame acquisition, or any confirmatory-claim UI",
+    "Label import from any screen; import stays a CLI step",
+    "Real names, real pixels or private file contents in the map or its render",
+    "A tenth screen; the nine seeds are the whole inventory",
+    "Hand-written Markdown; the rendered .md comes from the canvas CLI"
+  ]
+}

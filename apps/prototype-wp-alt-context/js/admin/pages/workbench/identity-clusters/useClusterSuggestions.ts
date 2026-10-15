@@ -94,9 +94,6 @@ export const selectClusterSuggestions = ({
   // 1b. Closest roster people for this card (c82 FIR): already one committable row per person.
   const rosterValues = new Set<string>();
   (rosterOptions ?? []).forEach((option) => {
-    if (searchLower && !option.label.toLowerCase().includes(searchLower)) {
-      return;
-    }
     rosterValues.add(option.value);
     result.push(option);
   });

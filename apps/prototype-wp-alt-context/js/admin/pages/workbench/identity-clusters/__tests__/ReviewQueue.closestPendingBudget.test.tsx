@@ -189,7 +189,7 @@ describe('ReviewQueue persisted proposal closest-candidate budget (c82 F2)', () 
       assertPendingCard(kind);
       expect(closestRequests()).toHaveLength(0);
       expect(screen.queryByText(label), 'a cache warmed by another unnamed view must not leak ranked evidence').not.toBeInTheDocument();
-      expect(screen.queryByText(/^(Strong|Possible|Weak) match$/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/^(?:(Strong|Possible|Weak) match|Below match threshold)$/)).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /No close match: name as new person/ })).not.toBeInTheDocument();
     });
   });

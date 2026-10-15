@@ -262,6 +262,11 @@
           "count": {"type": "integer", "minimum": 0}
         }
       }
+    },
+    "face_outcomes": {
+      "type": "array",
+      "description": "Optional version-1 root field, absent in legacy payloads. Exact rows for every GT face on every declared leg, arm and fold, sorted by (leg_key, face_id) with ties in declared arm and fold order. Only GT face records appear; detector-only and duplicate rows stay in raw searches and background accounting. Available outcomes come from the actual S3 classifier on scored test-fold rows. Fit-fold rows are metadata only: outcome null, outcome_available false, reason fit_fold_not_scored. Unavailable arms, unresolved identities and calibration absence are named nulls, never zero-imputed. The stdlib checker cannot compare fields, so producers enforce FRAME foreign keys, sort order and one-to-one row coverage.",
+      "items": {"$ref": "#/$defs/faceOutcomeRow"}
     }
   },
   "$defs": {
@@ -579,6 +584,69 @@
         }
       },
       "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+    },
+    "faceOutcomeRow": {
+      "type": "object",
+      "description": "One GT-face row for one declared leg, arm and fold. mated is actual gallery membership for a known identity, and null for an unresolved identity or when membership is not declared; it is never inferred. An available row carries a FaceOutcome from the actual classifier with outcome_reason null. An unavailable row carries outcome null and a named nonempty reason, never a zero or a miss.",
+      "additionalProperties": false,
+      "required": [
+        "face_id",
+        "image_id",
+        "psu_id",
+        "fold",
+        "fold_role",
+        "sampling_arm",
+        "leg_key",
+        "arm",
+        "arm_availability",
+        "stage_reached",
+        "identity_status",
+        "mated",
+        "cell",
+        "outcome",
+        "outcome_available",
+        "outcome_reason"
+      ],
+      "properties": {
+        "face_id": {"type": "string", "minLength": 1},
+        "image_id": {"type": "string", "minLength": 1},
+        "psu_id": {"type": "string", "minLength": 1},
+        "fold": {"type": "integer", "minimum": 0},
+        "fold_role": {"enum": ["fit", "test"]},
+        "sampling_arm": {"enum": ["probability", "challenge"]},
+        "leg_key": {"type": "string", "minLength": 1},
+        "arm": {"enum": ["native", "gt_crop_redetect", "cached_yunet_landmark_replay"]},
+        "arm_availability": {"enum": ["available", "unavailable", "unavailable_fused"]},
+        "stage_reached": {"enum": ["missed", "detected", "unaligned", "embedded", "unavailable", null]},
+        "identity_status": {"enum": ["named", "unknown", "unresolved"]},
+        "mated": {"type": ["boolean", "null"]},
+        "cell": {
+          "type": "array",
+          "minItems": 2,
+          "prefixItems": [{"type": "string"}, {"type": "string"}],
+          "items": false
+        },
+        "outcome": {
+          "enum": ["missed", "unaligned", "wrong_identity", "rejected", "correct", "false_accept", "correct_reject", null]
+        },
+        "outcome_available": {"type": "boolean"},
+        "outcome_reason": {"type": ["string", "null"], "minLength": 1}
+      },
+      "if": {"properties": {"outcome_available": {"const": true}}, "required": ["outcome_available"]},
+      "then": {
+        "properties": {
+          "outcome": {
+            "enum": ["missed", "unaligned", "wrong_identity", "rejected", "correct", "false_accept", "correct_reject"]
+          },
+          "outcome_reason": {"const": null}
+        }
+      },
+      "else": {
+        "properties": {
+          "outcome": {"const": null},
+          "outcome_reason": {"type": "string", "minLength": 1}
+        }
+      }
     }
   }
 }

@@ -91,7 +91,8 @@ export const useClusterMatchAction = ({
 }: UseClusterMatchActionOptions) => {
   const runMatchedAction = React.useCallback(
     async (match: ClusterLabelMatch, abortController: AbortController) => {
-      const action: SaveDialogAction = canSearchForMatch ? 'assign' : 'merge';
+      const action: SaveDialogAction =
+        match.suggestionProvenance?.kind === 'identity' || canSearchForMatch ? 'assign' : 'merge';
       const memberCount = resolveMatchMemberCount(match, options);
 
       if (requiresMergeConfirm(memberCount)) {

@@ -9,6 +9,7 @@ import {
 } from '../../../api/recognition/rosterCandidatesApi';
 import type { RosterNamingEntry } from './buildNamingOptions';
 import { buildRosterCandidateOptions } from './useClusterSuggestionsLoader';
+import { budgetOverlayOptions } from './NameFaceControl';
 
 export const useClusterRosterCandidates = ({
   clusterId,
@@ -51,11 +52,15 @@ export const useClusterRosterCandidates = ({
   return { options, isLoading: canFetch && query.isLoading, isError: canQuery && query.isError, retry };
 };
 
-/** Preserve the closest row's evidence and payload order when the roster overlaps. */
+/** Only closest rows inside the display budget replace ordinary roster lookup. */
 export const mergeRosterCandidateOptions = (
   closest: readonly ComboboxOption[],
   ordinary: readonly ComboboxOption[],
 ): ComboboxOption[] => {
-  const values = new Set(closest.map((option) => option.value));
-  return [...closest, ...ordinary.filter((option) => !values.has(option.value))];
+  const visibleValues = new Set(budgetOverlayOptions(closest).map((option) => option.value));
+  const ordinaryValues = new Set(ordinary.map((option) => option.value));
+  return [
+    ...closest.filter((option) => visibleValues.has(option.value) || !ordinaryValues.has(option.value)),
+    ...ordinary.filter((option) => !visibleValues.has(option.value)),
+  ];
 };

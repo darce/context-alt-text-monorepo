@@ -575,6 +575,10 @@ class ScanWorker:
             self._embedding_runtime_ready = False
         from db.settings import get_database_settings
         from recognition.infrastructure.face_pipeline.loaded_session import FrozenFaceRuntimeConfig
+        from recognition.infrastructure.face_pipeline.ort_adapters import (
+            RETRY_MAX_SIDE_ENV,
+            resolve_retry_max_side,
+        )
 
         settings = get_recognition_settings()
         fp = settings.face_pipeline
@@ -591,6 +595,7 @@ class ScanWorker:
             score_threshold=float(fp.score_threshold), nms_threshold=float(fp.nms_threshold),
             top_k=int(fp.top_k), embedding_dimension=int(settings.identity_detection.embedding_dimension),
             pgvector_dimension=int(get_database_settings().pgvector_dimension),
+            retry_max_side=resolve_retry_max_side(os.environ.get(RETRY_MAX_SIDE_ENV)),
         )
         record = observer(
             expected_config=expected_config,

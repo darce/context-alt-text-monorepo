@@ -8,10 +8,11 @@
 > - **Task ID**: `FIRBENCH-1`
 > - **Target Branch**: `feature/firbench-1`
 > - **Review Coverage Target**: 2
-> - **Status**: draft v6. Reconciles the v5 plan and scope to the landed c274 producers and to the frozen S9 pre-outcome contract, before any Monte Carlo outcome. Earlier v5 reconciliations (FB1-DGAL-02, MCP 16810, MCP 16848/16855/16856, MCP 16732–16736, clarifications 16756, 16763, 16773 and 16777) stand unless this revision marks them superseded. The 29 original high/medium fixes are retained; the three deferred low findings (SOL17, MUSE11, MUSE12) are folded in. Canon-qualified citations, AE numeric gates and bootstrap and H1/H2 margins are unchanged. Implementation-status statements from v2–v5 (for example "only S1 landed" or "producer obligations still open") are superseded by [Current State](#current-state-analysis-verified-2026-10-15-on-the-c274-tree-code-read-wc--l-grep). The checklist is not ticked. This revision claims no S9 pass, no implementation completion, no real-data evidence, no observed ICC, no human observation, no ratification, no seal and no budget.
+> - **Status**: draft v6. Reconciles the v5 plan and scope to the landed c274 producers and to the frozen S9 pre-outcome contract, before any Monte Carlo outcome. Earlier v5 reconciliations (FB1-DGAL-02, MCP 16810, MCP 16848/16855/16856, MCP 16732–16736, clarifications 16756, 16763, 16773 and 16777) stand unless this revision marks them superseded. The 29 original high/medium fixes are retained; the three deferred low findings (SOL17, MUSE11, MUSE12) are folded in. Canon-qualified citations, AE numeric gates and bootstrap and H1/H2 margins are unchanged. Implementation-status statements from v2–v5 (for example "only S1 landed" or "producer obligations still open") are superseded by [Current State](#current-state-analysis-verified-2026-10-15-on-the-c274-tree-code-read-wc--l-grep). The checklist is not ticked. The frozen v6 S9 run is recorded in the [S9 post-outcome assessment](#s9-post-outcome-assessment-frozen-v6-run-2026-10-15). Numerical acceptance fails there (2 gated evals failed, 6 passed), so no S9 pass is claimed. Coding-slice completion is distinct from scientific and real-data acceptance. This document claims no real-data evidence, no observed ICC, no human observation, no ratification, no seal and no budget, and it is neither merge-ready nor task-complete.
 > - **Source (v6)**: `9bcb442e71e238de879ab7db651587e04c8e2320`. Where a declared SHA is not present in the local history, the source tree and actual producers govern. Revision v5 source (post-gate reconciliation): `44fa2defc2f07aa5665c9de0e2b9d36e8cf86dbf`.
 > - **Source HEAD (second dispatch)**: `ccf4119ccf3c81f34477aba80e84a4a7a454cc1c`
 > - **Historical source HEAD**: `b6dcaad70f93c2d385d30b31b148e83265d43874`
+> - **Source (S9 frozen v6 run, post-outcome)**: the run's raw source is `2ff389e72dbb0e9235f7240b26d9d0a17687bcb3` (tree `943a91311dbe9468ed67f28e6d3d5ca51d9cc625`, overlay `258b9d3661293024c0b294b6fdb47975179c5d01`). The accepted product that contains S9, catalog and UI is `43522276`. The run is not attributed to `43522276` or to any later commit. See the [S9 post-outcome assessment](#s9-post-outcome-assessment-frozen-v6-run-2026-10-15) for the author's file-by-file source check.
 >
 > Review counts and findings live in the handoff DB, not in this file. Canon citations are Canon v0.26.2 row IDs. Revision v5 decisions, seams and the canon key are in [Delegated choices and frozen seams (revision v5)](#delegated-choices-and-frozen-seams-revision-v5). Revision v6 additions (label evidence, prior art, asset audit) sit in the same section, and the frozen S9 pre-outcome contract is in [S9 acceptance contract (revision v6, pre-outcome)](#s9-acceptance-contract-revision-v6-pre-outcome).
 
@@ -28,7 +29,7 @@ Build the benchmark tool that guides in-house FIR development and selects the in
 ## Problem Statement
 
 - The model choice is undecided. Current evidence (30 probes, 17 identities) cannot pick a winner, and M-11 (+0.012 hard-face margin) has no artifact, predates CVUP-1 (OpenCV 5) and is rank-only.
-- FIRDV-2 was marked done while only S1 (`experiment_manifest.py`, `outcome_ledger.py`) and the S3a strict detection scorer (`face_metrics.detection_pr_strict`) had landed. The c274 tree now carries the composed path: the S0–S7 producers, the S6a and S6b CLI, the S4 materializer and the S5 report. Still open: the simulated acceptance suite (S9, not landed) and every real-data gate (AE-12 and the real-data evals), so no verdict is established yet.
+- FIRDV-2 was marked done while only S1 (`experiment_manifest.py`, `outcome_ledger.py`) and the S3a strict detection scorer (`face_metrics.detection_pr_strict`) had landed. The c274 snapshot carried the composed path: the S0–S7 producers, the S6a and S6b CLI, the S4 materializer and the S5 report. The S9 simulator and acceptance suite have since landed, and the frozen full v6 run fails two gated evals (see the [S9 post-outcome assessment](#s9-post-outcome-assessment-frozen-v6-run-2026-10-15)). Still open: S9 acceptance and every real-data gate (AE-5, AE-6, AE-10, AE-11, AE-12 and the real-data evals), so no verdict is established yet.
 - The QA report (`benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html`, v5–v8) and the 2026-09-19 assessments already set most rules. The tool has to enforce them, not restate them.
 
 ## Constraints
@@ -227,7 +228,7 @@ Cards cited in revision v6 (manifest slugs): CARD-03 `designed-unknown`, CARD-08
 
 ## Current State Analysis (verified 2026-10-15 on the c274 tree: code read, `wc -l`, grep)
 
-Paths are under `apps/prototype-description-service/scripts/` unless a full path is shown. "Landed" below means the producer is present in the tree and was read; it does not mean its tests were run in this revision or that any real-data gate passed.
+Paths are under `apps/prototype-description-service/scripts/` unless a full path is shown. "Landed" below means the producer is present in the tree and was read; it does not mean its tests were run in this revision or that any real-data gate passed. The table is the c274 snapshot except the S9 row, which is updated after the frozen v6 run. Any older statement that S9 is not landed is superseded.
 
 | Seam | Path | Reuse |
 | --- | --- | --- |
@@ -255,7 +256,7 @@ Paths are under `apps/prototype-description-service/scripts/` unless a full path
 | Landed S6a and S6b | `eval_harness/firbench_cli.py` (1442): `run`, `score`, `report`, `compare`, `unseal`; `eval_harness/firbench_runtime.py` (620): `default_collaborators`, `PreparedRun` (`label_evidence` last field, default `None`) | CLI and default loader |
 | Landed S7 | `eval_harness/fir_occ_labels.py` (1767): `load_label_export`, `load_queue`, `to_face_instances`, `require_real_analysis_rows`, `freeze_label_evidence`, `requalify_label_evidence`; `benchmarks/tools/fir_occ_label_queue.py` (590); keyboard test `scene/tests/test_eval_harness_fir_occ_label_queue_interaction.py` | Label queue, importer, packaged evidence |
 | Landed W2 ux-map | `benchmarks/ux-maps/fir-bench.uxmap.json` and `fir-bench.md` (733 lines) | Screen inventory and render |
-| Not landed: S9 | `eval_harness/firbench_selftest.py`, `scene/tests/fixtures/firbench_sim_v1.json`, `scene/tests/test_eval_harness_firbench_acceptance.py`, and a `fir-bench-acceptance` target in `mk/evals.mk` (none present) | Gated by the S9 launch rule in the S9 contract |
+| S9 acceptance (coding slice landed; updated post-outcome) | `eval_harness/firbench_selftest.py`, `scene/tests/fixtures/firbench_sim_v1.json`, `scene/tests/test_eval_harness_firbench_acceptance.py`, and a `fir-bench-acceptance` target in `mk/evals.mk` (all present in this checkout) | Frozen S9 contract, pass rules unchanged. The frozen full v6 run completed and FAILS two gated evals (`AE-2b` H2 boundary, `AE-4` cell-only power). See the [S9 post-outcome assessment](#s9-post-outcome-assessment-frozen-v6-run-2026-10-15). |
 | Weight files (2026-10-15) | `/opt/acx-backend/data/dev-models/face_pipeline/`: `glintr100.onnx`, `face_recognition_sface_2021dec.onnx`, `face_detection_yunet_2026may.onnx`; sizes and SHA-256 match `recognition/infrastructure/face_pipeline/provenance.py` (lines 107, 121, 138) | Located and hash-verified; no inference, download or change |
 
 ## Target Outcome
@@ -277,7 +278,7 @@ Paths are under `apps/prototype-description-service/scripts/` unless a full path
 | S6b CLI | same files, after S6a merges | `report`, `compare`, `unseal` |
 | S7 label queue | `benchmarks/tools/fir_occ_label_queue.py` (allowlisted), `eval_harness/fir_occ_labels.py` | Generate the private single-file HTML queue. Import and validate exports into the fir-occ-v1 face-instance schema. Union-delta mode for T-14. Packaged evidence (`freeze_label_evidence`, `requalify_label_evidence`, `firbench-label-evidence/v1`) lives in the same file; see Delegated choices. |
 | W2 ux-map | `benchmarks/ux-maps/fir-bench.uxmap.json`, `fir-bench.md` (rendered by the coordinator's canvas CLI; the `.gitignore` allowlist line already exists) | Screen/zone/state/flow inventory, rendered with `ux-map render --path benchmarks/ux-maps/fir-bench.uxmap.json --format markdown`, then critique |
-| S9 acceptance | Two independent owners after S6b merges: S9-simulator (`firbench_selftest.py`, `scene/tests/fixtures/firbench_sim_v1.json`) and S9-checks (`test_eval_harness_firbench_acceptance.py`, `mk/evals.mk` target `fir-bench-acceptance`, edited after S6a and S6b). A third owner, S9-comparator-perf, owns the measured comparator change. See the [S9 contract](#s9-acceptance-contract-revision-v6-pre-outcome). | Seeded clustered simulator (PSU sizes, ICC, per-leg error rates, planted effects by cell and stage), A/A and planted-effect Monte Carlo, determinism and replay checks. Runs the completion evals below. Not landed in this tree. |
+| S9 acceptance | Two independent owners after S6b merges: S9-simulator (`firbench_selftest.py`, `scene/tests/fixtures/firbench_sim_v1.json`) and S9-checks (`test_eval_harness_firbench_acceptance.py`, `mk/evals.mk` target `fir-bench-acceptance`, edited after S6a and S6b). A third owner, S9-comparator-perf, owns the measured comparator change. See the [S9 contract](#s9-acceptance-contract-revision-v6-pre-outcome). | Seeded clustered simulator (PSU sizes, ICC, per-leg error rates, planted effects by cell and stage), A/A and planted-effect Monte Carlo, determinism and replay checks. Runs the completion evals below. Landed in source; the frozen v6 result is in the [S9 post-outcome assessment](#s9-post-outcome-assessment-frozen-v6-run-2026-10-15). |
 
 Tests: `apps/prototype-description-service/scene/tests/test_eval_harness_firbench_*.py`, synthetic vectors and identifiers only.
 
@@ -414,6 +415,7 @@ L1 OCCLUSION LABEL QUEUE (private single-file HTML) ─ item 37/150
 - Per-lane VM test command: `env -u ACX_EVAL_BENCH uv run --exact --directory apps/prototype-description-service --locked --extra dev pytest scene/tests/test_eval_harness_firbench_<slice>.py -q`. This is the future implementation-lane command; this documentation-only dispatch adds and runs no tests.
 - Every slice starts RED: tests committed and failing for the stated reason before any implementation.
 - Static checks for this revision: markdown link and anchor validation, `git diff --check`, and the affected signature contracts (Delegated choices and the S9 contract). `make lint-task-plans` calls `scripts/hooks/guard-task-plan-findings.py`, which is absent from this tree, so it is not claimed as passed. The canvas CLI renders `fir-bench` (`ux-map render`), and the coordinator critique has no high findings.
+- Post-outcome static checks (2026-10-15): the canonical acceptance JSON SHA-256 (`809b2ed1…`) verified against the VM-context copy; the frozen-run source list checked against this checkout (75 of 76 match; see the [S9 post-outcome assessment](#s9-post-outcome-assessment-frozen-v6-run-2026-10-15)); markdown link and anchor validation of this file; `git diff --check`. No test was run for this prose. The tracked report link is expected to dangle until its sibling lane lands it.
 - Prior receipts, recorded from the handoff record and not re-run in this revision: CLI 518 tests, report 178 tests (actual Chrome light and dark render), joined-label 284. Their counts overlap existing suites. They are not counts of the S9 acceptance tests and are not AE evidence.
 
 ## Open questions
@@ -463,7 +465,7 @@ This is the frozen pre-outcome contract for the S9 simulator and acceptance runn
 
 ### Status and launch gate
 
-- The current S9 implementation is not accepted. Nothing here claims an S9 result.
+- The current S9 implementation is not accepted. Nothing here claims an S9 result. (Pre-outcome status, written before the frozen v6 run. The measured result is in the [S9 post-outcome assessment](#s9-post-outcome-assessment-frozen-v6-run-2026-10-15). This contract is unchanged.)
 - S6b must be merged into `feature/firbench-1` before either S9 owner starts. The `mk/evals.mk` writers run in order: S6a, then S6b, then S9-checks.
 - Owners are independent. Each uses an isolated native checkout and basetemp, and each checkout runs one test process at a time, because fixtures write under `benchmarks/private/`.
   - **S9-simulator**: `scripts/eval_harness/firbench_selftest.py` and `scene/tests/fixtures/firbench_sim_v1.json`.
@@ -581,6 +583,88 @@ This is the frozen pre-outcome contract for the S9 simulator and acceptance runn
 | Observed ICC; real frame, corpus and template hashes; exhaustive independent GT; admissible counts; real source and template bindings; human observation and QC; ratification; seal; budget | Unresolved evidence gates | S1, MEAS-29, S0 ratification, AE-12 |
 | Real AE-12 tracer | Outstanding; a fake or simulated trial never substitutes | AE-12 |
 
+## S9 post-outcome assessment (frozen v6 run, 2026-10-15)
+
+This section records one measured execution. It sits apart from the frozen pre-outcome contract above, which is unchanged: no seed, design, law, B, R, margin, floor, count or pass rule was altered to produce or change a result. The evidence is simulated only and establishes no real-data property. The 29 original high/medium fixes and the three folded low findings (SOL17, MUSE11, MUSE12) are unchanged.
+
+**Result.** The S9 coding slice is landed. Numerical acceptance fails: 2 gated evals failed and 6 passed. Full AE-1 to AE-12 acceptance is not passed. The S9 checklist item stays unchecked. Not all slices are complete, and the task is not merge-ready.
+
+### Coding-slice completion versus acceptance
+
+| Dimension | Status | Basis |
+| --- | --- | --- |
+| Coding slice: S9 simulator, S9-checks, S9-comparator-perf, `fir-bench-acceptance` target | Landed. Software component proofs: S9 146, catalog 69, report 197 (actual Chrome). Counts overlap and are not additional tests. | Frozen receipt `component_software_proofs` |
+| Simulated numerical acceptance, frozen v6 (ICC 0.10 gate) | **Fails**: 2 gated evals failed, 6 passed | Frozen receipt, 15 unique cases |
+| Real-data acceptance: AE-5, AE-6, AE-12 | Pending. Not supplied to the simulator. | Frozen receipt |
+| AE-10 privacy | Pending. Laptop read-only static scan at `43522276`: 106 files, 2,624,750 bytes, 0 hits. Real-run revision alignment not established. | Frozen receipt |
+| AE-11 report task eval | Not passed. Two preserved trials, 4/6 and then a revised 5/6 (102 s). A positive-stage fixture is under adjudication. | Frozen receipt |
+| Observed ICC; real frame, corpus and template hashes; exhaustive independent GT; admissible counts; human observation and QC; ratification; seal; budget | Unresolved | [Open questions](#open-questions) |
+
+### Pins and identity
+
+- **Authoritative acceptance JSON:** `benchmarks/private/firbench-1-validation/frozen-v6-2ff389e7/acceptance.json` in the primary checkout (ignored, not tracked). This is the single authoritative copy for agents. SHA-256 `809b2ed1f796fa89956d4e7bc104c966f8d5b3dbe12f39e1eb70355206151183`. This sandbox does not contain that path. The SHA was verified against the VM-context copy named in the receipt (`acceptance_path`).
+- **Tracked report:** [benchmarks/reports/firbench-1-simulation-v6-20261015.md](../../../benchmarks/reports/firbench-1-simulation-v6-20261015.md) owns the derived presentation and authoritative-JSON location pointer, pinned to the acceptance JSON SHA-256 above. It is not a second writable source. This source/projection distinction follows Canon v0.26.2 `REF-09` (Mutable/derived-data drift) and `GRPH-14` (provenance lineage), in the [heuristics canon](https://github.com/darce/heuristics-canon). A sibling lane produces it; the coordinator checks the link after join.
+- **Frozen-run source:** `2ff389e72dbb0e9235f7240b26d9d0a17687bcb3`, tree `943a91311dbe9468ed67f28e6d3d5ca51d9cc625`, overlay `258b9d3661293024c0b294b6fdb47975179c5d01`. The run is attributed to this source only, not to `43522276` or any later commit.
+- **Accepted product (S9, catalog and UI):** `43522276`, per the evidence handoff.
+- **Receipt:** `firbench-full-mc-receipt/v1`, receipt semantic SHA-256 `4c828aead54a4551135b0896021033fc67bf0c85b3cf89834f2bfd6f3cc54133` (distinct from the authoritative acceptance JSON's byte SHA-256 `809b2ed1…`), master seed 2208172209, bootstrap seed 2429382368, B = 10000, R = 2000 per case.
+- **Author's source check in the verification checkout:** 75 of the 76 frozen source files matched byte for byte. The S9 selftest, its fixture, its acceptance test and `mk/evals.mk` all matched. The exception was `firbench_report.py`, the S5 static report. `firbench_selftest.py`, `firbench_score.py` and `firbench_score_io.py` do not import it. Its length there was 2,999 lines, against 2,930 in the c274 snapshot.
+- **Case grid:** 15 unique preregistered cases. The source CLI enumerated 16 invocations because `coverage` at ICC 0.30 appeared twice (recorded defect `FB1-S9-DUP-CASE-01`). The coordinator assembled `acceptance_report` once over the 15 unique cases, in producer order. No outcome was rerun, modified or dropped. This is not 16 independent cases and not 32,000 new replicates.
+- **Raw result receipts and source pins:** 15 unique raw `result.json` receipts; their SHA-256 values match `full-mc-acceptance-receipt.json`, and `committed-producers/full-mc-review-context.json` confirms the 15-case grid. Each raw receipt carries the same 76 source-file hash pins and records them unchanged before and after that case. The 76 pins are source files, not a raw-result file count. All original receipts are retained.
+
+### Gated evals at the ICC 0.10 gate
+
+The frozen S9 plan contract is unchanged. Counts and recorded statuses come from the receipt under the actual frozen v6 fixture/code gates. For AE-4, the plan requires global H1 detection ≥ 0.77 but describes cell localization qualitatively: the effect appears in its own cell and clear→clear no more often than the null rate. The frozen fixture additionally binds an independent `cell_clear_mask_min_rate = 0.77`, enforced by `firbench_selftest.run_power_suite`; this numeric cell gate is not identical to the plan's qualitative text. The table distinguishes them without changing either rule or reclassifying the recorded result.
+
+| Receipt eval | Frozen plan rule / fixture gate | Measured | Result |
+| --- | --- | --- | --- |
+| `AE-2b` (AE-2, null) | Step 1: superior ≤ 0.032. Step 2: boundary ≤ 0.060 on the 400 design. | Step 1: 45/2000 = 0.0225. Step 2: 126/2000 = 0.063, Wilson 95% [0.05317, 0.07451]. | **FAIL** on step 2 (`FB1-S9-H2-BOUNDARY-01`) |
+| `AE-4` (power) | Plan: H1 detection ≥ 0.77; cell effect appears in its own cell; clear→clear no more than the null rate. Additional frozen fixture/code gate: clear→mask detection ≥ 0.77 independently. | H1: 1674/2000 = 0.837. Clear→mask: 1113/2000 = 0.5565. Clear→clear: 45/2000 = 0.0225. | **FAIL** under the frozen fixture/code cell gate: 0.5565 < 0.77 (`FB1-S9-CELL-POWER-01`) |
+| `AE-3` (coverage) | PSU coverage in [0.93, 0.97] | 1889/2000 = 0.9445 | pass |
+| `H2-branches` | (a) reject ≥ 0.77; (b) false rejection ≤ 0.060; (c) zero non-inferior where the interval spans δ | (a) 1654/2000 = 0.827; (b) 116/2000 = 0.058; (c) 0/2000 | pass |
+| `MDE-refusal` | Every replicate refused at n_eff 300; zero non-inferior | 2000/2000 refused; 0 non-inferior; mean H2 MDE 0.0554 | pass |
+| `eligibility-floors` | Fewer than 50 PSUs gives `insufficient_independent_psus`; cells below 30 PSUs unscored | 50 PSUs: 2000/2000 pass. 49 PSUs: 2000/2000 insufficient. 0 cells scored below floor. | pass |
+| `stage-defect` | Predeclared drops; missed count shift; embedded-wrong difference ≤ 0.05 | 13 drops per replicate (26,000 total); missed-delta exact count 4000; embedded-wrong maximum absolute difference 0.01004, within bound 2000/2000; native attribution gaps 104,000 = expected | pass |
+| `selection-control` (invalid negative control) | Post-selection non-inferior rate > 0.060 | 185/2000 = 0.0925 | pass; not a product verdict |
+
+Tally: 8 gated evals. 2 failed (`AE-2b`, `AE-4`). 6 passed (`AE-3`, `H2-branches`, `MDE-refusal`, `eligibility-floors`, `stage-defect`, `selection-control`).
+
+### Not gated: reported findings
+
+- **Negative image control, `coverage` at ICC 0.30:** `expected_fail_observed`. Image-level coverage 1297/2000 = 0.6485; PSU coverage 1872/2000 = 0.936. This is the expected failure of the broken-image control, not an unexpected gated failure.
+- **Sensitivities at ICC 0.05 and 0.20 (report-only):** Coverage passes at both (PSU 0.9465 and 0.946). Null passes at both (H1 superior 0.025 and 0.0215). Power fails at both (clear→mask 1082/2000 = 0.541 and 1156/2000 = 0.578), so the cell shortfall also appears at the sensitivity points.
+- **Observed ICC values in the receipt** (0.0993 for null and 0.0992 for power, at the 0.10 point) are simulator output, not measurements on real data. The planning ICC 0.10 remains a design assumption, and the real observed ICC is unresolved.
+
+### The two failed gated evals
+
+**H2 boundary (`AE-2b`, step 2).**
+
+- The measured rate is 0.063 against the 0.060 rule. The nominal level is 0.05.
+- If the true rate were exactly 0.05, the exact one-sided tail P(X ≥ 126 of 2000) would be 0.005612. This is a diagnostic. It is not proof that the true rate is exactly 0.05.
+- The `H2-branches` boundary rejection (116/2000 = 0.058) passes its own rule. It is a separate suite result. It is not pooled with, and does not replace, the failed null-suite boundary (126/2000 = 0.063).
+- A recorded diagnosis, not re-derived in this lane, attributes most of the variance to 44 large PSUs (size 16), which carry 90.9% of it. No algorithm fault is proven. The noise is not claimed to be harmless.
+
+**Cell-only power (`AE-4`, clear→mask).**
+
+- The clear→mask cell has an effective size of 59 over 35 PSUs, against the global 115 used to size the planted effect. Its computed cell MDE is 0.138425, above the planted 0.10. A recorded diagnosis, not re-derived here, reads this as a protocol sizing mismatch under [EXP-12]. No implementation fault is proven.
+- Global H1 detection (0.837) passes. The shortfall is at the cell level under the additional frozen fixture/code gate. The weaker qualitative plan wording does not turn the recorded AE-4 failure into a pass; the recorded independent diagnostic above already explains the sizing mismatch.
+
+**Prospective only: not implemented, not validated, not passed.**
+
+- A separate cell branch of 120 per cell, with an analytic MDE of 0.098081.
+- A studentized paired-PSU interval for the boundary.
+
+Each needs its own future preregistration, design, pass rules and run. Neither is part of v6, and neither can rehabilitate v6. No v7 implementation is claimed here.
+
+### What this assessment does not establish
+
+- No full AE-1 to AE-12 pass. In the acceptance report, AE-1, AE-6-fixture, AE-7, AE-8 and AE-9 are `not_run`: their fixture checks run separately and were not supplied to it.
+- No real-data canary (AE-5), legacy parity (AE-6), or bounded tracer and budget (AE-12). No AE-10 or AE-11 pass.
+- No real GT, QC, observation, capture occasion, budget, seal or ratification.
+- No winner between SFace-128 and AuraFace-512, and no real-data verdict.
+- No merge-ready state and no full-task completion. Not all slices are complete.
+
+**Static adjudication audit (`FB1-DVALID-PLAN-01`).** The frozen pre-outcome section, from `## S9 acceptance contract` through the byte before the next same-level heading, has identical SHA-256 before and after this prose-only correction: `e5704feba6918dcfa55fad629ba31461394cecc835f329c77ecefa8b6d658dd9` (20,100 bytes). Only post-outcome provenance/status prose was corrected; no fixture, code, seed, B, R, design or pass rule changed.
+
 ## Lane Decomposition (all remote; none on this host)
 
 Lane-ready briefs: [firbench-1/README.md](firbench-1/README.md). Current user override: all remote implementation lanes use Haiku xhigh first; post-gate adjudication uses `codex-remote gpt-6.1-sol` high STANDARD. These current routes supersede older implementation model pins in lane briefs; historical review and inventory pins below remain labelled historical. This table describes the project schedule, not authorization for this dispatch to launch agents or merge.
@@ -623,7 +707,7 @@ Training, detector replacement, deployments, stack mode, the description-utility
 - [ ] S4 cluster diagnostics (start authorized after verified S1/S2; code landed in `firbench_clusters.py` and `firbench_cluster_io.py`)
 - [ ] S5 private static report S1–S8 (code landed in `firbench_report.py`; light and dark, keyboard and no-network checks per AE-11)
 - [ ] S6b CLI `report`, `compare`, `unseal` (code landed in `firbench_cli.py`)
-- [ ] S9 simulator, S9-checks and S9-comparator-perf, and `fir-bench-acceptance` (not landed; launch gate in the S9 contract)
+- [ ] S9 simulator, S9-checks and S9-comparator-perf, and `fir-bench-acceptance` (coding slice landed; the frozen full v6 run fails 2 gated evals, so this item stays unchecked; see the [S9 post-outcome assessment](#s9-post-outcome-assessment-frozen-v6-run-2026-10-15))
 - [ ] AE-12 bounded tracer on the VM after actual S3/default-wire join and required lanes; warm budget preregistered before W5
 - [ ] AE-1 to AE-12 green at the merge-candidate HEAD
 - [ ] W5 first VM run report (development/diagnostic tier only)
@@ -635,4 +719,4 @@ Training, detector replacement, deployments, stack mode, the description-utility
 - The verdict line can say "inconclusive", and does so whenever the interval spans the boundary.
 - No number appears without its frame admissibility, n_eff and interval.
 - No image-bearing artifact is tracked by git.
-- The S9 acceptance report is not claimed until S9 lands and its full-replicate runs complete. A small-R or subset run is never full acceptance evidence.
+- The S9 acceptance report is not claimed as passed. The full-replicate v6 run completed and fails two gated evals. A small-R or subset run is never full acceptance evidence.

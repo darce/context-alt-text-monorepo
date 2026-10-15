@@ -7,6 +7,11 @@ the actual existing task authorization, including already authorized remote
 benchmark work and cleared image use. Private alias maps stay laptop-only.
 Source-archive image basenames and private mappings do not belong in tracked text.
 
+## Results
+
+- [FIRBENCH-1 simulation acceptance, full v6 (2026-10-15)](reports/firbench-1-simulation-v6-20261015.md):
+  numerical acceptance **FAILED** (6 gates PASS, 2 FAIL); frozen primary-checkout JSON remains authoritative. The independently pinned post-assembly synthetic AE-11 comprehension/browser component passes at `43522276` ([scope and proofs](reports/firbench-1-simulation-v6-20261015.md#91-independently-pinned-positive-stage-ae-11-component)); historical reader failures and real-data gates remain. [New-run instructions](reports/firbench-1-simulation-v6-20261015.md#10-verification) require an absent, separately named ignored target; never overwrite frozen evidence.
+
 ## Images
 
 One authority locates the corpus: the tracked catalog

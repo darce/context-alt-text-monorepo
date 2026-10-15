@@ -4,20 +4,18 @@
 - **Owned paths** (two authors share this contract):
   - S9-simulator: `apps/prototype-description-service/scripts/eval_harness/firbench_selftest.py` and `apps/prototype-description-service/scene/tests/fixtures/firbench_sim_v1.json`.
   - S9-checks: `apps/prototype-description-service/scene/tests/test_eval_harness_firbench_acceptance.py` and one make target `fir-bench-acceptance` in `mk/evals.mk`, appended after the S6b targets. `mk/evals.mk` is edited serially: S6a, then S6b, then S9.
-- **Policy basis:** Canon v0.26.2 rows EXP-12 (Power and practical significance, *Trustworthy Online Controlled Experiments*, ch. 2), EXP-13 (A/A before A/B, same source, ch. 19), EXP-22 (No circular analysis, *Statistics Done Wrong*, ch. 6), EXP-23 (Pseudoreplication check, same source, ch. 3) and AUDIT-11 (Account for cluster design effect, *Sampling: Design and Analysis*, ch. 5). CARD-27 is the exact supplement at `/home/gate/firbench-1-context/canon-supplement/margin-and-design-effect-before-the-run.md` (SHA-256 `186c94c2b0ba88897cebea26c39752d6f0e87bbab8bff3ec1fa9aace79f85aad`, matching the v0.26.2 release manifest). These sources establish the mechanisms. They do not establish this project's numeric gates, or any simulated or real pass.
+- **Policy basis:** Canon v0.26.2 rows EXP-12 (Power and practical significance, *Trustworthy Online Controlled Experiments*, ch. 2), EXP-13 (A/A before A/B, same source, ch. 19), EXP-22 (No circular analysis, *Statistics Done Wrong*, ch. 6), EXP-23 (Pseudoreplication check, same source, ch. 3) and AUDIT-11 (Account for cluster design effect, *Sampling: Design and Analysis*, ch. 5). CARD-27 is the exact supplement at the untracked context copy `canon-supplement/margin-and-design-effect-before-the-run.md` (SHA-256 `186c94c2b0ba88897cebea26c39752d6f0e87bbab8bff3ec1fa9aace79f85aad`, matching the v0.26.2 release manifest). These sources establish the mechanisms. They do not establish this project's numeric gates, or any simulated or real pass.
 - **Declared status:** This brief resolves the reviewed S9 implementation choices as declared project policy, under the canon-first delegation. Those values are not canon constants, not measured ICCs, not ratification and not a simulated pass.
 
 ## Status
 
-Verified against the accepted source tree (tree `21408d43562ef2f49a3b27c53112bae0cc822605`).
+**Current (2026-10-15).** The S9 simulator, fixture, acceptance tests and `fir-bench-acceptance` target are present in the checked tree. The report author's source audit recorded the simulator and fixture matching the run receipt's source hashes; this is not a live checkout comparison. The software checks have completed (coordinator-recorded counts, not re-run in the documentation pass). The full v6 acceptance run (R = 2000, B = 10000) executed and **failed numerically**: 2 of 8 gated checks failed (AE-2b H2 boundary, AE-4 cell-only power). Numerical acceptance is FAILED and full AE1–12 is not passed. The slice is not complete; do not claim it complete. Pins, per-case results and the post-outcome assessment are in [`benchmarks/reports/firbench-1-simulation-v6-20261015.md`](../../../../benchmarks/reports/firbench-1-simulation-v6-20261015.md). The pre-outcome numeric protocol clauses, seeds, distributions and original pass rules in this brief are unchanged by that run. The frozen fixture separately imposes a cell-only ≥ 0.77 bar, stronger than the qualitative plan clause; AE-4 remains FAILED under that fixture (report §4, note 2). The independently pinned post-assembly synthetic AE-11 comprehension/browser component passes at `43522276` (report §9.1); it changes no canonical MC status or real-data gate.
 
-**Not implemented in this tree.** No simulator, fixture, acceptance test or make target exists. Do not claim this slice complete.
+- Present in the checked tree: `scripts/eval_harness/firbench_selftest.py`, `scene/tests/fixtures/firbench_sim_v1.json`, `scene/tests/test_eval_harness_firbench_acceptance.py`, `scene/tests/test_eval_harness_firbench_acceptance_reporting.py`, the S6a and S6b targets and the `fir-bench-acceptance` target in `mk/evals.mk`.
+- The launch gate (S6b merged into `feature/firbench-1`) cannot be verified in this clone, which has a single history-stripped base commit.
+- Superseded snapshot (tree `21408d43562ef2f49a3b27c53112bae0cc822605`, earlier review): "Not implemented in this tree." That described an older tree and is not current.
 
-- Absent: `scripts/eval_harness/firbench_selftest.py`, `scene/tests/fixtures/firbench_sim_v1.json`, `scene/tests/test_eval_harness_firbench_acceptance.py`, and a `fir-bench-acceptance` target. The only S9-relevant symbols in tracked files are in the docs.
-- Present: the S6a and S6b targets in `mk/evals.mk` (`fir-bench-run`, `fir-bench-score`, `fir-bench-report`, `fir-bench-compare`, `fir-bench-unseal`; lines 149–221).
-- The launch gate (S6b merged into `feature/firbench-1`) cannot be verified in this clone, which has only `feature/firbench-1-d-final-ui`.
-
-**Producers consumed (exact names, verified).** S3 and the S0 contract are the only statistical producers. S9 must call them, not duplicate them.
+**Producers consumed (exact names; line numbers re-checked 2026-10-15).** S3 and the S0 contract are the only statistical producers. S9 must call them, not duplicate them.
 
 | Name | Location |
 | --- | --- |
@@ -27,9 +25,9 @@ Verified against the accepted source tree (tree `21408d43562ef2f49a3b27c53112bae
 | `decide(manifest, results)` | `firbench_score.py:844` |
 | `build_nonmated_pool(...)`, `build_frame(*, spec, images, ...)` | `firbench_frames.py:469`, `:595` |
 | `DecisionManifest`, `IntervalSpec`, `Hypothesis`, `InconclusiveReason`, `FrameContractError`, `NonPrivateOutputError`, `require_private_output_path` | `firbench_contract.py` (`:464`, `:418`, `:407`, `:155`, `:122`, `:102`, `:1049`) |
-| `bootstrap_paired_delta(a, b, seed, *, metric, occasion_ids, occasion_full_size, accepted_mask, B, cell)` | `scripts/bench/score_report.py:178` |
+| `bootstrap_paired_delta(a, b, seed, *, metric, occasion_ids, occasion_full_size, accepted_mask, B, cell)` | `scripts/bench/score_report.py:185` |
 
-`bootstrap_paired_delta` defaults `B` to `BOOTSTRAP_RESAMPLES = 2000` (`score_report.py:52`). The coverage suite must pass `B=10000` explicitly.
+`bootstrap_paired_delta` defaults `B` to `BOOTSTRAP_RESAMPLES = 2000` (`score_report.py:53`). The coverage suite must pass `B=10000` explicitly.
 
 **Committed decision manifest** (`benchmarks/manifests/fir-bench-decision-v1.json`, verified): `planning_icc` 0.1; `p_d` 0.15; `power` 0.8; `alpha_family` 0.05; `min_n_independent` 50; `cell_floor_n_independent` 30; `interval` = paired cluster percentile bootstrap, PSU `image_identity_component`, `n_boot` 10000, `seed` 2429382368. H1 is superiority of `[sface, auraface]` with margin 0 and direction `lower_bound_above_margin`. H2 is non-inferiority of `[auraface, insightface]` with margin 0.05 and direction `upper_bound_below_margin`. `ratification` and `seal` are null, so every verdict from this manifest is unratified.
 
@@ -43,7 +41,7 @@ Verified against the accepted source tree (tree `21408d43562ef2f49a3b27c53112bae
 
 ## Frozen public API
 
-This is the shared packet that both S9 authors implement and test against. It is declared, not implemented.
+This is the shared packet that both S9 authors implement and test against. It is declared here; the implementation is present in the checked tree (see Status).
 
 Module `scripts.eval_harness.firbench_selftest`:
 
@@ -63,9 +61,9 @@ Module `scripts.eval_harness.firbench_selftest`:
   - `floor`: `below_floor_reason`, `below_floor_interval_count`, `at_floor_passed`, `cell_below_floor_scored`.
   - `stage`: control and planted `missed` and `embedded_wrong` counts and rates, plus `embedded` counts; exact `drop_count`; `native_attribution_gaps`.
   - Additional keys: Monte Carlo standard errors, theoretical versus empirical discordance and ICC, and failure details.
-- **`acceptance_report(results: Sequence[Mapping]) -> dict`** returns `{'semantic': {'schema': 'firbench-acceptance/v1', 'rows': [...], 'evals': {...}, 'full_acceptance_evidence': bool, ...}, 'timing': {...}}`. The semantic part is stable JSON for the same fixture, manifest and seed. Timing is excluded from identity. AE-10 and real-data AE-5, AE-6 and AE-12 evidence stay pending unless supplied and verified separately. The report states which supplied suites ran. A partial, subset or small-R run never marks full acceptance passed. A suite that did not run is not a pass.
+- **`acceptance_report(results: Sequence[Mapping]) -> dict`** returns `{'semantic': {'schema': 'firbench-acceptance/v1', 'rows': [...], 'evals': {...}, 'full_acceptance_evidence': bool, ...}, 'timing': {...}}`. The semantic part is stable JSON for the same pinned implementation, protocol version, fixture, manifest and seed; identity across future protocol versions is not assumed. Timing is excluded from identity. AE-10 and real-data AE-5, AE-6 and AE-12 evidence stay pending unless supplied and verified separately. The report states which supplied suites ran. A partial, subset or small-R run never marks full acceptance passed. A suite that did not run is not a pass.
 - **CLI**: `python -m scripts.eval_harness.firbench_selftest --params PATH --decision PATH --out PRIVATE_DIR [--replicates INT] [--seed INT] [--suites null,selection,coverage,power,noninferiority,mde,floor,stage]`. Defaults: fixture `R = 2000` and master seed `2208172209`. Full defaults run every required case. ICC 0.05, 0.10 and 0.20 run for null, coverage and power. Planning ICC 0.10 gates. 0.05 and 0.20 are report-only, and a failing sensitivity row is written as a finding. `--suites` supports independent remote shards with separate output directories. Never run two tests concurrently in one checkout. The CLI writes `acceptance.json` only below the canonical `benchmarks/private`. It never changes the decision, fixture or real inputs. Incomplete or failed evidence cannot return a full success claim.
-- **Make target `fir-bench-acceptance`** invokes this CLI and the actual AE-1 and AE-6 to AE-9 fixture modules. Fixture checks are separate from unsupported historical or real-data claims.
+- **Make target `fir-bench-acceptance`** invokes this CLI, then the actual AE-1 and AE-6 to AE-9 fixture modules only if the CLI succeeds. With the parallel CLI status correction, full numerical failure preserves JSON and returns nonzero, so make stops before fixture pytest; this documentation pass does not integrate that code fix. Fixture checks are separate from unsupported historical or real-data claims.
 
 ## Ownership and launch gate
 
@@ -138,9 +136,9 @@ Module `scripts.eval_harness.firbench_selftest`:
    - **`run_mde_suite` and MDE refusal (Build 7).** At n_eff 300 and δ 0.05, a truly equal in-house leg gives `margin_unreachable_mde_gt_delta` for H2 in every replicate, and never `non_inferior`.
    - **`run_floor_suite`.** Item 9 below.
    - **`run_stage_suite`.** Item 8 below.
-7. **Acceptance report and CLI.** `acceptance_report(results)` gives pass or fail per AE with the numbers, written to the run directory. `make fir-bench-acceptance` runs the simulated suites, with replicates from the fixture (default 2000), and the fixture evals (AE-1, AE-6 to AE-9 test modules). Every full replicate uses `DecisionManifest.interval.n_boot` (10,000). Never reduce full replicate or bootstrap counts, stop early, or drop failing replicates to force a pass.
+7. **Acceptance report and CLI.** `acceptance_report(results)` gives pass or fail per AE with the numbers, written to the run directory. `make fir-bench-acceptance` runs the simulated suites, with replicates from the fixture (default 2000), then the fixture evals (AE-1, AE-6 to AE-9 test modules) only on CLI success. With the parallel CLI status correction, full numerical failure leaves the JSON available and stops make before fixture pytest. Every full replicate uses `DecisionManifest.interval.n_boot` (10,000). Never reduce full replicate or bootstrap counts, stop early, or drop failing replicates to force a pass.
    - Use chunked or vectorised paired PSU sufficient statistics (weighted miss totals and denominators per PSU, leg and cell) where needed. Preserve the paired PSU resampling, the face-weighted estimand and the declared seeded draw order. Bound memory by bootstrap chunks, not by materialising all face rows for every draw. Preserve image-level resampling for the coverage comparator.
-   - The report records requested and completed replicate and bootstrap counts. Its `semantic` part is byte-identical across reruns with pinned inputs. Its `timing` part records runtime and is excluded from identity.
+   - The report records requested and completed replicate and bootstrap counts. Its `semantic` part is byte-identical across reruns with the same pinned implementation, protocol version and inputs; this is not an identity claim across future versions. Its `timing` part records runtime and is excluded from identity.
    - The simulator's semantic branch reads no timings receipt and carries no receipt SHA or p95 state. The full AE runner still executes the receipt-dependent AE-7 score and report checks. Byte replay requires the same pinned receipt, and changed timing evidence must be able to change the real veto (MCP 16777, FLOW-18).
    - AE-10 is not computed here (see the pass-rule table).
 8. **Stage planting.** A predeclared `floor(0.10 · n_mated)` upstream detection drops, stratified between the already generated embedded-correct and embedded-wrong classes, with the integer rounding disclosed. The drops are shared between the in-house native arms and leave reference and latent identities fixed.
@@ -160,7 +158,7 @@ Module `scripts.eval_harness.firbench_selftest`:
     - Every full case uses all 2000 replicates and 10,000 draws. Requested and completed counts, and any omitted cases, are explicit.
     - Failures become findings, not new pass limits.
     - The deliberately broken interval (image-level bootstrap on a clustered fixture at ICC 0.3) is a separate declared negative-control case with multiple images per PSU, not a gated sensitivity row.
-    - **Measured pre-run exception (declared).** The actual image comparator at n = 660 and B = 10000 took 23.590922 s at 0.25 CPU for one replicate, projecting 13.1 h for 2000 replicates at that allocation. This is a prior measurement, not re-run in this revision. The draw loop calls `rng.randrange` once per resampled unit, so `k` calls per replicate (`score_report.py:245–252`). No reuse code exists in this tree.
+    - **Measured pre-run exception (declared).** The actual image comparator at n = 660 and B = 10000 took 23.590922 s at 0.25 CPU for one replicate, projecting 13.1 h for 2000 replicates at that allocation. This is a prior measurement, not re-run in this revision. The draw loop calls `rng.randrange` once per resampled unit, so `k` calls per replicate (`score_report.py:245–252` in the earlier tree). The 2026-10-15 author audit found the reuse path present in its checked tree (`score_report.py:317–347`); the original loop remains the fallback (`score_report.py:263–266`).
     - Owner `S9-comparator-perf` (an independent owner) implements bounded reuse of the identical `random.Random(seed).randrange(n)` draw counts for repeated `fixed(n, B, seed)` binary-mean calls, with parity tests against the actual function.
     - S9 may use that accepted implementation of the same public comparator if and only if its parity, source and memory gate passes.
     - Every replicate still evaluates all 10,000 statistics with the same logical draws, order, quantiles and return fields. No new RNG, reduced count or changed estimand. All other modes retain the original slow fallback.
@@ -195,8 +193,8 @@ Module `scripts.eval_harness.firbench_selftest`:
     | Eligibility floors: 50 PSUs globally, 30 per pair cell | Policy; not canon-prescribed; prove no adequacy | MCP 16736 | Manifest values match | Adequacy |
     | Master seed 2208172209 | Declared packet value | Build 2 | Derivation recomputed | — |
     | Bootstrap seed 2429382368; `n_boot` 10000 | Manifest-owned | `interval.seed`, `interval.n_boot` | Manifest values match | — |
-    | Coverage comparator `B` = 10000 | Declared | Build 12 | Default in source is 2000 (`score_report.py:52`); S9 passes 10000 | Coverage timing (not run) |
-    | Comparator reuse | Declared, measured exception | Build 12; prior timing receipt | Not present in tree | Parity gate, timings |
+    | Coverage comparator `B` = 10000 | Declared | Build 12 | Default in source is 2000 (`score_report.py:53`); S9 passes 10000 | Per-case coverage runtimes recorded in the report (§3); no separate timing study |
+    | Comparator reuse | Declared, measured exception | Build 12; prior timing receipt | Present in the checked tree (`score_report.py:317–347`; parity tests in `scripts/bench/tests/test_firbench_bootstrap_reuse.py`) | Parity-gate result and reuse timings are not in the canonical JSON |
     | Miss-law weights and couplings | Declared packet values | Build 3 and 4 | Fraction oracle arithmetic | Empirical law |
     | Interval on delta; A/A before A/B; no circular selection; count the independent unit | Source-established | EXP-12, EXP-13, EXP-22, EXP-23 | — | — |
 
@@ -217,7 +215,7 @@ Module `scripts.eval_harness.firbench_selftest`:
 
 ## RED tests (small replicate counts for CI speed; not full acceptance evidence)
 
-None of these tests exists in this tree. They are the declared acceptance cases for S9-checks.
+The acceptance modules are present in the checked tree: `test_eval_harness_firbench_acceptance.py` (34 test functions) and `test_eval_harness_firbench_acceptance_reporting.py` (5). Function names cover the replay, negative control, 9-of-200, loader and floor/refusal cases below; the Build 3 Fraction oracles and ICC1 covariance checks were not located by name in these modules. Software checks completed (coordinator-recorded, not re-run in this documentation pass); this is not a claim that every declared obligation below is verified. The full v6 baseline **FAILED numerically**. See the [report §8](../../../../benchmarks/reports/firbench-1-simulation-v6-20261015.md#8-assembly-and-software-notes) for recorded checks and [§4](../../../../benchmarks/reports/firbench-1-simulation-v6-20261015.md#4-gated-checks) for the failed baseline.
 
 - With 50 replicates and a fixed seed, the simulator semantic results are byte-identical across two runs. The `timing` part is excluded. This check does not exempt the full AE runner from AE-7's pinned-receipt checks (Build 7).
 - A deliberately broken interval (the image-level bootstrap on a clustered fixture at ICC 0.3) fails the coverage rule. This proves the check can fail.
@@ -232,13 +230,15 @@ None of these tests exists in this tree. They are the declared acceptance cases 
 
 Tests pass on the VM, using the command in the firbench-1 README with isolated basetemps and one test process per checkout. The full `make fir-bench-acceptance` (2,000 replicates, full manifest bootstrap count in each replicate) result is reported with its runtime and the attained sizing and floor counts. Runtime goes in the report's `timing` part, not the semantic part. The result is recorded as a `test_result` at HEAD by the run's recorder. AE-10 is recorded separately, and the S9 report does not mark it passed. Synthetic suite results do not supply real GT exhaustiveness, human observation or ratification evidence.
 
+**Status (2026-10-15): not met.** Software checks completed. The full run failed numerically at AE-2b step 2 (H2 boundary, 0.063 against ≤ 0.060) and at AE-4 cell-only power (clear→mask, 0.5565 against the stronger frozen fixture bar of 0.77; the original plan remains qualitative). AE-10 and real-data evidence are pending. Details are in [`benchmarks/reports/firbench-1-simulation-v6-20261015.md`](../../../../benchmarks/reports/firbench-1-simulation-v6-20261015.md).
+
 ## Policy, measured and unresolved
 
 | Item | Policy (declared) | Measured here | Unresolved |
 | --- | --- | --- | --- |
-| Simulator | Declared contract (this brief) | Not implemented | Implementation, tests, full run |
-| Sizing and floors | Declared before outcomes | Arithmetic recomputed | Empirical n_eff and PSU counts of any run |
+| Simulator | Declared contract (this brief) | Implemented in the checked tree; software checks completed (coordinator-recorded); full v6 run numerically FAILED (report) | Full AE pass; real-data gates; run-revision alignment |
+| Sizing and floors | Declared before outcomes | Arithmetic checked; frozen v6 attained n_eff and PSU counts recorded in [report §2–3](../../../../benchmarks/reports/firbench-1-simulation-v6-20261015.md#2-configuration) | Real-frame sizing and adequacy |
 | Miss laws and couplings | Declared packet values | Fraction oracle arithmetic | Empirical law of any run |
-| Coverage and power | Declared thresholds | None | Results |
+| Coverage and power | Original declared thresholds unchanged; fixture cell bar ≥ 0.77 is stronger than the qualitative plan | Frozen v6: PSU coverage 0.9445 PASS; global H1 power 0.837 PASS; cell-only power 0.5565 FAIL under fixture; overall numerical acceptance FAILED (AE-2b boundary 0.063 also FAIL). [Report §4](../../../../benchmarks/reports/firbench-1-simulation-v6-20261015.md#4-gated-checks) | Failed baseline unresolved; prospective cell-120/studentized-bootstrap proposals are not implemented or validated; real-data evidence pending |
 | Real decision | Committed manifest, unratified and unsealed | Values match the policy | Ratification, seal, budget |
 | Real GT, observation and ratification | — | — | All unestablished; S9 supplies none. Exhaustive GT must be detector-independent (MAINT-FIR-DETECTION-20260919, prior art; not located in this tree). |

@@ -9,6 +9,7 @@
 > **Revision:** 1
 > **Review Coverage Target:** frontend layout, focus and copy; browser pass required (planner had none)
 > **Depends on:** none (Wave A). Edits `MediaSelection.tsx`, `ActivityStatusStrip.tsx`, `AdvancedDrawer.tsx`, `WorkbenchPage.tsx` — no other WBTRUST task touches them.
+> **Executor:** `claude-remote` `claude-haiku-5-5`, effort `xhigh` for implementation and grunt work (operator order 2026-10-15). Brief each slice separately (1–3 files), inline the slice text plus codemap snippets; if the write-enabled remote Claude harness is denied or unavailable, record a blocker and ask the operator — no silent fallback to another model.
 > **Prior art:** [scope](../../scopes/workbench-curation-trust-scope.md) (R6, R8, R12, root causes 9–10), [UX-map evaluation](../../assessments/current/workbench-curation-trust-uxmap-evaluation-2026-10-15.md) (A8–A10, B6, C6, D2), [workbench-2pane map](../../../apps/prototype-wp-alt-context/docs/ux-maps/workbench-2pane.uxmap.json) (zones `z-lib-actions`, `z-lib-table`), [gpu-operator-control map](../../../apps/prototype-wp-alt-context/docs/ux-maps/gpu-operator-control.uxmap.json), [describe-gpu-tier map](../../../apps/prototype-wp-alt-context/docs/ux-maps/describe-gpu-tier.uxmap.json), E23 epic `docs/epics/v0.5.0/gpu-operator-control-and-named-captions-epic.md`
 > **Carried findings (by ID only):** none recorded yet; query `review_findings(list, task_ref="WBTRUST-5")`
 

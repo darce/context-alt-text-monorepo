@@ -9,6 +9,7 @@
 > **Revision:** 1
 > **Review Coverage Target:** measurement report + adjudication set; no product code unless the decision slice says so
 > **Depends on:** none (Wave A, measurement only). A product change, if any, becomes a new task.
+> **Executor:** `claude-remote` `claude-haiku-5-5`, effort `xhigh` for implementation and grunt work (operator order 2026-10-15). Brief each slice separately (1–3 files), inline the slice text plus codemap snippets; if the write-enabled remote Claude harness is denied or unavailable, record a blocker and ask the operator — no silent fallback to another model.
 > **Prior art:** [scope](../../scopes/workbench-curation-trust-scope.md) (R11, root cause 13), [UX-map evaluation](../../assessments/current/workbench-curation-trust-uxmap-evaluation-2026-10-15.md) (A12), [FIR report](../../../benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html) (detector findings, D-01, T-14), `docs/scopes/next-wave-gpu-ui-fir512-dag.md` (FT threshold resolvers)
 > **Carried findings (by ID only):** none recorded yet; query `review_findings(list, task_ref="WBTRUST-8")`
 

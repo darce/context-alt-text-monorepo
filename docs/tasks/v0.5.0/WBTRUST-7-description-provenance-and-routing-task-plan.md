@@ -9,6 +9,7 @@
 > **Revision:** 1
 > **Review Coverage Target:** description service (adapter routing, naming merge) + workbench draft UI + env manifest
 > **Depends on:** none (Wave A). Touches `QueueDraftCell.tsx` and `MediaAltSuggest.tsx`; WBTRUST-5 does not.
+> **Executor:** `claude-remote` `claude-haiku-5-5`, effort `xhigh` for implementation and grunt work (operator order 2026-10-15). Brief each slice separately (1–3 files), inline the slice text plus codemap snippets; if the write-enabled remote Claude harness is denied or unavailable, record a blocker and ask the operator — no silent fallback to another model.
 > **Prior art:** [scope](../../scopes/workbench-curation-trust-scope.md) (R13, root cause 12), [UX-map evaluation](../../assessments/current/workbench-curation-trust-uxmap-evaluation-2026-10-15.md) (A11), [GPUFLOW-3 plan](GPUFLOW-3-demo-triage-identity-gpu-lifecycle-and-unified-queue-task-plan.md) (unified status, name weaving), [describe-gpu-tier map](../../../apps/prototype-wp-alt-context/docs/ux-maps/describe-gpu-tier.uxmap.json), `docs/workbay/contracts/image-description-api.md`, E23 epic `docs/epics/v0.5.0/gpu-operator-control-and-named-captions-epic.md`
 > **Carried findings (by ID only):** none recorded yet; query `review_findings(list, task_ref="WBTRUST-7")`
 

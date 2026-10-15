@@ -9,6 +9,7 @@
 > **Revision:** 1
 > **Review Coverage Target:** frontend; request-count test for the commit sequence
 > **Depends on:** WBTRUST-3 merged (reuses the settled naming control); WBTRUST-1 merged (both edit `ReviewQueue.tsx`; sequential by design)
+> **Executor:** `claude-remote` `claude-haiku-5-5`, effort `xhigh` for implementation and grunt work (operator order 2026-10-15). Brief each slice separately (1–3 files), inline the slice text plus codemap snippets; if the write-enabled remote Claude harness is denied or unavailable, record a blocker and ask the operator — no silent fallback to another model.
 > **Prior art:** [scope](../../scopes/workbench-curation-trust-scope.md) (R4, root cause 5), [UX-map evaluation](../../assessments/current/workbench-curation-trust-uxmap-evaluation-2026-10-15.md) (A4, B3, B4, C4), [workbench-review-queue map](../../ux-maps/workbench-review-queue.md), [GPUFLOW-3 plan](GPUFLOW-3-demo-triage-identity-gpu-lifecycle-and-unified-queue-task-plan.md) (cluster→person bind, name weaving)
 > **Carried findings (by ID only):** none recorded yet; query `review_findings(list, task_ref="WBTRUST-2")`
 

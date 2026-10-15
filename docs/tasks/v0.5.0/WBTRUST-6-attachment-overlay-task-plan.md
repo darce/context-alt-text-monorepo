@@ -9,6 +9,7 @@
 > **Revision:** 1
 > **Review Coverage Target:** frontend + one PHP read; browser pass on `post.php?post=107&action=edit` required
 > **Depends on:** none (Wave A). Shares `components/ui/FaceOverlayLayer.tsx` with the review queue and the lightbox; no other WBTRUST task edits it.
+> **Executor:** `claude-remote` `claude-haiku-5-5`, effort `xhigh` for implementation and grunt work (operator order 2026-10-15). Brief each slice separately (1–3 files), inline the slice text plus codemap snippets; if the write-enabled remote Claude harness is denied or unavailable, record a blocker and ask the operator — no silent fallback to another model.
 > **Prior art:** [scope](../../scopes/workbench-curation-trust-scope.md) (R7, root cause 11), [UX-map evaluation](../../assessments/current/workbench-curation-trust-uxmap-evaluation-2026-10-15.md) (B5, C5), [workbench-identity-chips map](../../../apps/prototype-wp-alt-context/docs/ux-maps/workbench-identity-chips.md)
 > **Carried findings (by ID only):** none recorded yet; query `review_findings(list, task_ref="WBTRUST-6")`
 

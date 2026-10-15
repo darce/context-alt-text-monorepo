@@ -9,6 +9,7 @@
 > **Revision:** 1
 > **Review Coverage Target:** frontend request behavior; no service or limiter change
 > **Depends on:** none (Wave A; ships first so the 429 storm stops contaminating WBTRUST-1/3 repros)
+> **Executor:** `claude-remote` `claude-haiku-5-5`, effort `xhigh` for implementation and grunt work (operator order 2026-10-15). Brief each slice separately (1–3 files), inline the slice text plus codemap snippets; if the write-enabled remote Claude harness is denied or unavailable, record a blocker and ask the operator — no silent fallback to another model.
 > **Prior art:** [scope](../../scopes/workbench-curation-trust-scope.md) (R14, root cause 8), [UXP-NET-1 scope](../../scopes/uxp-net-1-429-fanout-scope.md) (shipped partly; tier changes ruled out), [UX-map evaluation](../../assessments/current/workbench-curation-trust-uxmap-evaluation-2026-10-15.md) (A6, A7, C3), [workbench-operator-loop map](../../../apps/prototype-wp-alt-context/docs/ux-maps/workbench-operator-loop.md)
 > **Carried findings (by ID only):** none recorded yet; query `review_findings(list, task_ref="WBTRUST-4")`
 

@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "firbench/comparison-v1",
+  "title": "FIRBENCH-1 comparison.json (S6b output), schema_version 1",
+  "description": "Two runs are comparable only when every compatibility field matches. Never-treatable fields refuse even under --treatment.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "estimand", "fpir_target", "compatibility", "treatment", "run_a", "run_b", "delta", "verdicts"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "estimand": {"type": "string", "minLength": 1},
+    "fpir_target": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "estimand",
+        "fpir_target",
+        "decision_sha256_without_treatment",
+        "gallery_sha256",
+        "enrolment_probe_allocation",
+        "fold_calibration_policy",
+        "arm",
+        "frame_bytes_sha256",
+        "annotation_bytes_sha256",
+        "psu_weighting_policy",
+        "scorer_sha",
+        "boundary_semantics",
+        "opencv_version",
+        "ort_version"
+      ],
+      "properties": {
+        "estimand": {"type": "string", "minLength": 1},
+        "fpir_target": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+        "decision_sha256_without_treatment": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "gallery_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "enrolment_probe_allocation": {"type": "string", "minLength": 1},
+        "fold_calibration_policy": {"type": "string", "minLength": 1},
+        "arm": {"enum": ["native", "gt_crop_redetect", "cached_yunet_landmark_replay"]},
+        "frame_bytes_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "annotation_bytes_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "psu_weighting_policy": {"type": "string", "minLength": 1},
+        "scorer_sha": {"type": "string", "minLength": 1},
+        "boundary_semantics": {"enum": ["legacy_v1", "v2"]},
+        "opencv_version": {"type": "string", "minLength": 1},
+        "ort_version": {"type": "string", "minLength": 1}
+      }
+    },
+    "treatment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "fields"],
+      "properties": {
+        "name": {"type": ["string", "null"]},
+        "fields": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "run_a": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "decision_sha256", "scores_sha256"],
+      "properties": {
+        "run_id": {"type": "string", "minLength": 1},
+        "decision_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "scores_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "run_b": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "decision_sha256", "scores_sha256"],
+      "properties": {
+        "run_id": {"type": "string", "minLength": 1},
+        "decision_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "scores_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "delta": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["point", "lower", "upper"],
+      "properties": {
+        "point": {"type": "number"},
+        "lower": {"type": "number"},
+        "upper": {"type": "number"}
+      }
+    },
+    "verdicts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_a", "run_b"],
+      "properties": {
+        "run_a": {"enum": ["superior", "non_inferior", "inconclusive", "guardrail_vetoed", "unratified"]},
+        "run_b": {"enum": ["superior", "non_inferior", "inconclusive", "guardrail_vetoed", "unratified"]}
+      }
+    }
+  }
+}

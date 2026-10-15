@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "decision_sha256": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+  "frame_id": "fixture-v1",
+  "admissibility": "development",
+  "boundary_semantics": "v2",
+  "planning_icc": 0.1,
+  "design_effect": 2.2,
+  "n_eff": 5.0,
+  "n_units": 10,
+  "n_nonmated_eff": 10,
+  "tau": {
+    "value": 0.41,
+    "calibration_spread": 0.0,
+    "pooled_units": 10,
+    "fpi_at_tau": {"count": 0, "rate": 0.0},
+    "fpi_next_lower": {"threshold": 0.4, "count": 1, "rate": 0.1}
+  },
+  "primary": {"fpir_target": 0.01, "resolvable": false, "required_n_nonmated_eff": 300.0},
+  "verdict": {"state": "inconclusive", "reason": "primary_fpir_unresolvable"},
+  "hypotheses": [
+    {
+      "id": "H1",
+      "kind": "superiority",
+      "step_index": 1,
+      "one_sided_alpha": 0.025,
+      "mde": null,
+      "n_eff": 5.0,
+      "interval": null,
+      "state": null,
+      "reason": null
+    }
+  ],
+  "guardrails": [
+    {"id": "G1", "metric": "per_cohort_fpir", "role": "veto", "state": "unscored", "value": null, "timings_sha256": null}
+  ],
+  "curves": [
+    {
+      "leg_key": "sface__native__ab12cd__cv4.10.0__ort1.18.0",
+      "points": [{"threshold": 0.4, "fpir": 0.1, "fnir": 0.5}]
+    }
+  ],
+  "cells": [
+    {
+      "leg_key": "sface__native__ab12cd__cv4.10.0__ort1.18.0",
+      "query_occluder": "none",
+      "enrolled_occluder": "none",
+      "n_units": 10,
+      "n_psu": 5,
+      "scored": false,
+      "fnir": null
+    }
+  ],
+  "waterfall": [{"stage": "embedded", "count": 3}]
+}

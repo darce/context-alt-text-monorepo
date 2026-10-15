@@ -1,0 +1,203 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "firbench/scores-v1",
+  "title": "FIRBENCH-1 scores.json (S3 semantic output), schema_version 1",
+  "description": "Semantic output only. Contains no clock reads and no p95 millisecond value; the p95 guardrail records state and the timings receipt sha256.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "decision_sha256",
+    "frame_id",
+    "admissibility",
+    "boundary_semantics",
+    "planning_icc",
+    "design_effect",
+    "n_eff",
+    "n_units",
+    "n_nonmated_eff",
+    "tau",
+    "primary",
+    "verdict",
+    "hypotheses",
+    "guardrails",
+    "curves",
+    "cells",
+    "waterfall"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "decision_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "frame_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+    "admissibility": {"enum": ["diagnostic", "development", "confirmatory"]},
+    "boundary_semantics": {"enum": ["legacy_v1", "v2"]},
+    "planning_icc": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+    "design_effect": {"type": "number", "exclusiveMinimum": 0},
+    "n_eff": {"type": "number", "minimum": 0},
+    "n_units": {"type": "integer", "minimum": 0},
+    "n_nonmated_eff": {"type": "number", "minimum": 0},
+    "tau": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "calibration_spread", "pooled_units", "fpi_at_tau", "fpi_next_lower"],
+      "properties": {
+        "value": {"type": "number"},
+        "calibration_spread": {"type": "number", "minimum": 0},
+        "pooled_units": {"type": "integer", "minimum": 0},
+        "fpi_at_tau": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["count", "rate"],
+          "properties": {"count": {"type": "integer", "minimum": 0}, "rate": {"type": "number", "minimum": 0, "maximum": 1}}
+        },
+        "fpi_next_lower": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["threshold", "count", "rate"],
+          "properties": {
+            "threshold": {"type": "number"},
+            "count": {"type": "integer", "minimum": 0},
+            "rate": {"type": "number", "minimum": 0, "maximum": 1}
+          }
+        }
+      }
+    },
+    "primary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fpir_target", "resolvable", "required_n_nonmated_eff"],
+      "properties": {
+        "fpir_target": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+        "resolvable": {"type": "boolean"},
+        "required_n_nonmated_eff": {"type": "number", "minimum": 0}
+      }
+    },
+    "verdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "reason"],
+      "properties": {
+        "state": {"enum": ["superior", "non_inferior", "inconclusive", "guardrail_vetoed", "unratified"]},
+        "reason": {
+          "enum": [
+            "primary_fpir_unresolvable",
+            "required_guardrail_unscored",
+            "margin_unreachable_mde_gt_delta",
+            "non_confirmatory_frame",
+            "insufficient_independent_psus",
+            null
+          ]
+        }
+      },
+      "if": {"properties": {"state": {"const": "inconclusive"}}, "required": ["state"]},
+      "then": {"properties": {"reason": {"enum": ["primary_fpir_unresolvable", "required_guardrail_unscored", "margin_unreachable_mde_gt_delta", "non_confirmatory_frame", "insufficient_independent_psus"]}}},
+      "else": {"properties": {"reason": {"const": null}}}
+    },
+    "hypotheses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "step_index", "one_sided_alpha", "mde", "n_eff", "interval", "state", "reason"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "kind": {"enum": ["superiority", "non_inferiority"]},
+          "step_index": {"type": "integer", "minimum": 1},
+          "one_sided_alpha": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+          "mde": {"type": ["number", "null"]},
+          "n_eff": {"type": "number", "minimum": 0},
+          "interval": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["lower", "upper", "level"],
+            "properties": {
+              "lower": {"type": "number"},
+              "upper": {"type": "number"},
+              "level": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1}
+            }
+          },
+          "state": {"enum": ["superior", "non_inferior", "inconclusive", null]},
+          "reason": {
+            "enum": [
+              "primary_fpir_unresolvable",
+              "required_guardrail_unscored",
+              "margin_unreachable_mde_gt_delta",
+              "non_confirmatory_frame",
+              "insufficient_independent_psus",
+              null
+            ]
+          }
+        }
+      }
+    },
+    "guardrails": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "metric", "role", "state", "value", "timings_sha256"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "metric": {"type": "string", "minLength": 1},
+          "role": {"enum": ["veto", "report_only"]},
+          "state": {"enum": ["pass", "fail", "unscored"]},
+          "value": {"type": ["number", "null"]},
+          "timings_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+        }
+      }
+    },
+    "curves": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["leg_key", "points"],
+        "properties": {
+          "leg_key": {"type": "string", "minLength": 1},
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["threshold", "fpir", "fnir"],
+              "properties": {
+                "threshold": {"type": "number"},
+                "fpir": {"type": "number", "minimum": 0, "maximum": 1},
+                "fnir": {"type": ["number", "null"], "minimum": 0, "maximum": 1}
+              }
+            }
+          }
+        }
+      }
+    },
+    "cells": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["leg_key", "query_occluder", "enrolled_occluder", "n_units", "n_psu", "scored", "fnir"],
+        "properties": {
+          "leg_key": {"type": "string", "minLength": 1},
+          "query_occluder": {"type": "string"},
+          "enrolled_occluder": {"type": "string"},
+          "n_units": {"type": "integer", "minimum": 0},
+          "n_psu": {"type": "integer", "minimum": 0},
+          "scored": {"type": "boolean"},
+          "fnir": {"type": ["number", "null"], "minimum": 0, "maximum": 1}
+        }
+      }
+    },
+    "waterfall": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["stage", "count"],
+        "properties": {
+          "stage": {"enum": ["missed", "detected", "unaligned", "embedded", "unavailable", "wrong_identity", "rejected", "correct"]},
+          "count": {"type": "integer", "minimum": 0}
+        }
+      }
+    }
+  }
+}

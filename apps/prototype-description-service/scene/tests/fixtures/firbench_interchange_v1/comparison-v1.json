@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "estimand": "paired delta FNIR (SFace minus AuraFace) at FPIR fpir_target",
+  "fpir_target": 0.01,
+  "compatibility": {
+    "estimand": "paired delta FNIR (SFace minus AuraFace) at FPIR fpir_target",
+    "fpir_target": 0.01,
+    "decision_sha256_without_treatment": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "gallery_sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+    "enrolment_probe_allocation": "fixture-allocation",
+    "fold_calibration_policy": "fixture-policy",
+    "arm": "native",
+    "frame_bytes_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "annotation_bytes_sha256": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5",
+    "psu_weighting_policy": "image-identity-component",
+    "scorer_sha": "9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b",
+    "boundary_semantics": "v2",
+    "opencv_version": "4.10.0",
+    "ort_version": "1.18.0"
+  },
+  "treatment": {"name": null, "fields": []},
+  "run_a": {"run_id": "run-0001", "decision_sha256": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4", "scores_sha256": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6"},
+  "run_b": {"run_id": "run-0002", "decision_sha256": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4", "scores_sha256": "0707070707070707070707070707070707070707070707070707070707070707"},
+  "delta": null,
+  "verdicts": {"run_a": "inconclusive", "run_b": "inconclusive"}
+}

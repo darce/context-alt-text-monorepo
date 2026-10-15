@@ -18,7 +18,7 @@ import {
 } from './buildNamingOptions';
 import { useClusterSuggestionsLoader, type ClusterSuggestionsLoaderOptions } from './useClusterSuggestionsLoader';
 import type { ProjectedSuggestion } from './suggestionProjection';
-import type { ClusterLabelMatch } from './useClusterMatchAction';
+import type { ClusterLabelMatch, SuggestionProvenance } from './useClusterMatchAction';
 
 type UseClusterSuggestionsOptions = ClusterSuggestionsLoaderOptions;
 
@@ -82,6 +82,7 @@ export const selectClusterSuggestions = ({
       similarity: projected.similarity,
       identityCount: projected.identityCount,
       suggestion_id: projected.suggestionId,
+      suggestion_identity_id: projected.identityId,
     });
   });
 
@@ -150,7 +151,15 @@ export const resolveClusterMatchFromOptions = (
       ? fromOptions.suggestion_id
       : undefined;
 
-  return { id, label: fromOptions.label, identityCount, suggestionId };
+  // Identity provenance travels with the option that carries the suggestion id (same source row).
+  const sourceIdentityId =
+    typeof fromOptions.suggestion_identity_id === 'string' && fromOptions.suggestion_identity_id.length > 0
+      ? fromOptions.suggestion_identity_id
+      : undefined;
+  const suggestionProvenance: SuggestionProvenance | undefined =
+    suggestionId && sourceIdentityId ? { kind: 'identity', identityId: sourceIdentityId } : undefined;
+
+  return { id, label: fromOptions.label, identityCount, suggestionId, suggestionProvenance };
 };
 
 /**

@@ -59,7 +59,7 @@ class LegRunResult:
 
 @dataclass(frozen=True)
 class FirBenchCollaborators:
-    """Seams to S1 (frames), S2 (legs) and S3 (scoring), which are not on this branch.
+    """Seams to the accepted S1 (frames), S2 (legs) and S3 (scoring) producers.
 
     ``leg_keys`` gives the ``LegId.key()`` values before any leg runs, for the manifest.
     ``run_legs`` returns searches, ledger rows and per-face milliseconds. ``score_run``
@@ -67,17 +67,17 @@ class FirBenchCollaborators:
     """
 
     leg_keys: Callable[..., tuple[str, ...]]
-    run_legs: Callable[..., LegRunResult]
+    run_legs: Callable[..., LegRunResult] | None
     score_run: Callable[..., Mapping[str, Any]]
     scorer_sha: str
     similarity_threshold: float
+    prepare_run: Callable[..., Any] | None = None
 
 
 def _load_collaborators() -> FirBenchCollaborators:
-    raise NotImplementedError(
-        "S1-S3 are not merged on this branch: wire firbench_frames, firbench_legs and firbench_score "
-        "into FirBenchCollaborators after batch B"
-    )
+    from scripts.eval_harness.firbench_runtime import default_collaborators
+
+    return default_collaborators()
 
 
 def _attempt_timestamp() -> str:
@@ -257,6 +257,8 @@ def _write_new(path: Path, text: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("x", encoding="utf-8") as handle:
             handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
     except OSError as exc:
         raise FrameContractError(f"cannot create run artifact {path}: {exc}") from exc
 
@@ -374,18 +376,55 @@ def run_frame(
                 "unseal_token_ref": token_ref,
             },
         }
-        result = collaborators.run_legs(
-            frame=frame,
-            legs=legs,
-            arms=arms,
-            subset=subset,
-            subset_seed=subset_seed,
-            decision=decision,
-            out_dir=run_dir,
-        )
-        _check_run_result(result, leg_keys=leg_keys, arms=arms)
-        # Validate all returned evidence before publishing any semantic artifact.
-        _write_new(run_dir / "manifest.json", json.dumps(manifest, sort_keys=True, indent=2) + "\n")
+        arguments = {
+            "frame": frame,
+            "legs": legs,
+            "arms": arms,
+            "subset": subset,
+            "subset_seed": subset_seed,
+            "decision": decision,
+            "out_dir": run_dir,
+        }
+        prepared = None
+        if collaborators.prepare_run is not None:
+            prepared = collaborators.prepare_run(**arguments, repo_root=repo_root)
+            from scripts.eval_harness.firbench_frames import frame_json
+
+            manifest["firbench"].update(
+                gallery_membership=list(prepared.gallery_membership),
+                gallery_hash_basis=prepared.gallery_hash_basis,
+                crop_margin=prepared.crop_margin,
+                canary_permutations=prepared.canary_permutations,
+            )
+            # The complete validated declaration is durable before any query outcome.
+            _write_new(run_dir / "frame.json", frame_json(prepared.frame) + "\n")
+            _write_new(run_dir / "manifest.json", json.dumps(manifest, sort_keys=True, indent=2) + "\n")
+        try:
+            runner = prepared.run_legs if prepared is not None else collaborators.run_legs
+            if runner is None:
+                raise FrameContractError("no prepared leg runner")
+            result = runner(**arguments)
+            _check_run_result(result, leg_keys=leg_keys, arms=arms)
+        except Exception as exc:
+            if prepared is not None:
+                _write_new(
+                    run_dir / "attempt-failure.json",
+                    json.dumps(
+                        {
+                            "schema_version": SCHEMA_VERSION,
+                            "attempt_started_at": attempt_started_at,
+                            "error_type": type(exc).__name__,
+                            "phase": "query_outcomes",
+                        },
+                        sort_keys=True,
+                        indent=2,
+                    )
+                    + "\n",
+                )
+            raise
+        if prepared is None:
+            # Backwards-compatible injected collaborators retain their original seam.
+            _write_new(run_dir / "manifest.json", json.dumps(manifest, sort_keys=True, indent=2) + "\n")
         for key in leg_keys:
             _write_new(run_dir / "legs" / key / "searches.jsonl", _jsonl(result.searches[key]))
             _write_new(run_dir / "ledger" / f"{key}.jsonl", _jsonl(result.ledger[key]))

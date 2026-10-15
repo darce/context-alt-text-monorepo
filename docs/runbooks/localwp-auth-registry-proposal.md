@@ -28,8 +28,10 @@ Where wp-admin passwords and API keys go:
 3. **Three credential kinds, kept separate:**
    - *WordPress admin interactive password*: a human login. The registry never
      logs in automatically and never uses it to call a service.
-   - *WordPress application password*: only if the site's existing permissions
-     support it. This design does not depend on it.
+   - *WordPress application password*: for REST/automation only; it cannot be
+     used for interactive wp-login/wp-admin login and is distinct from the
+     ordinary WordPress login password. Use only if the site's existing
+     permissions support it. This design does not depend on it.
    - *Tenant service API key*: the key the plugin sends to one hosted service,
      for one tenant, in one store.
 
@@ -96,7 +98,7 @@ copy is checked by effective source and key ID, never by value or hash.
   does not invent rotation flags; follow
   [tenant onboarding §3](tenant-onboarding-smoke-test.md#cli-mintrevoke-and-portal-rotation-are-different-contracts).
 - After revoke, prove the old key is denied and the new key still passes. That
-  negative control is what proves the replacement (canon TEST-15).
+  operational negative control checks the replacement.
 
 ## Single workflow for future implementation
 
@@ -170,8 +172,8 @@ SEC-01, TEST-15, WRIT-81.
 - No secret value appears in logs, argv, exports, or the Git tree.
 - Drift is reported when the effective constant differs from the recorded
   source, and no file is overwritten.
-- A replacement revokes the old key ID only after the new key passes Test
-  Connection and the old key is denied.
+- A replacement first verifies the new key passes Test Connection, then revokes
+  the old key ID, then proves the old key is denied and the new key still passes.
 
 ## Open decisions
 

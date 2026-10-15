@@ -57,7 +57,7 @@ const matchBandDisplay = (band: ComboboxMatchBand): { label: string; tone: 'high
   if (band === 'possible') {
     return { label: __('Possible match', 'alt-context'), tone: 'medium' };
   }
-  return { label: __('Weak match', 'alt-context'), tone: 'weak' };
+  return { label: __('Below match threshold', 'alt-context'), tone: 'weak' };
 };
 
 const personMatchesFor = (
@@ -674,7 +674,7 @@ export const NameFaceControl = ({
             })}
           </div>
         ) : null}
-        {overlayOpen && displayedOptions.some((option) => option.band === 'none') ? (
+        {overlayOpen && displayedOptions.some((option) => option.band !== undefined) ? (
           <button type="button" className={`${classPrefix}__abstain`} onClick={handleAbstainClick}>
             {__('No close match: name as new person', 'alt-context')}
           </button>

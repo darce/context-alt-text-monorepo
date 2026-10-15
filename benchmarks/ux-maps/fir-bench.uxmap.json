@@ -27,7 +27,7 @@
       "zones": [
         {
           "id": "verdict-line",
-          "label": "Verdict line: question, paired difference Δ(B−A) or per-leg state with its interval, PSU n_eff and deff. superior ✓ and non-inferior ✓ name a winner only when ratified and sealed. inconclusive ○ (degraded) prints INCONCLUSIVE and the InconclusiveReason value verbatim (primary_fpir_unresolvable, required_guardrail_unscored, margin_unreachable_mde_gt_delta, non_confirmatory_frame or insufficient_independent_psus). unratified ○ (degraded) prints the numbers and 'unratified: no verdict'. unresolvable_fpir ○ (degraded) prints primary_fpir_unresolvable and names no winner. A hypothesis not reached prints 'not evaluated'. Serves VIZ-23, WRIT-81.",
+          "label": "Verdict line: question, paired difference Δ(B−A) or per-leg state with its interval, PSU n_eff and deff. superior ✓ and non-inferior ✓ name a winner only when ratified and sealed. inconclusive ○ (degraded) prints INCONCLUSIVE and the InconclusiveReason value verbatim (primary_fpir_unresolvable, required_guardrail_unscored, margin_unreachable_mde_gt_delta, non_confirmatory_frame or insufficient_independent_psus). unratified ○ (degraded) prints the numbers and 'unratified: no verdict'. unresolvable_fpir ○ (degraded) prints primary_fpir_unresolvable and names no winner. A hypothesis not reached prints 'not evaluated'. Serves VIZ-23, INT-22.",
           "role": "status",
           "states": ["default", "degraded", "error"]
         },
@@ -39,7 +39,7 @@
         },
         {
           "id": "leg-range",
-          "label": "FNIR at FPIR 0.01 per leg (SF-128, AF-512, and the IF judge row) as a dot-range with its interval and the frozen τ. Range frame on the value axis; each leg labelled directly, not by legend. Serves VIZ-35, VIZ-40.",
+          "label": "FNIR at FPIR 0.01 per leg (SF-128, AF-512, and the IF judge row) as a dot-range with its interval and the frozen τ. Each leg labelled directly, not by legend. Serves VIZ-40, VIZ-23.",
           "role": "content",
           "states": ["default", "empty", "error"]
         },
@@ -67,14 +67,14 @@
       "id": "s2-curves",
       "kind": "screen",
       "title": "S2 Operating curves",
-      "purpose": "FNIR against FPIR on a log scale for each leg, with τ frozen on calibration folds and the test set read once. Bench states: unresolvable_fpir is degraded, for the region below 3/n_eff; unratified is degraded, with numbers only and no winner.",
+      "purpose": "FNIR against FPIR on a log scale for each leg, with τ frozen on calibration folds and the test set read once. Bench states: unresolvable_fpir is degraded, for the region below 3/n_eff; unratified is degraded, with numbers only and no winner. Chart treatment follows the actual rendered marks and task: [VIZ-35] Use a range-frame for observed extrema (The Visual Display of Quantitative Information, ch. 6) applies only to a bivariate-pattern scatterplot whose decision-relevant measured extrema are hidden by unneeded round-number frame tails. Trim those tails and label the extrema, retaining required references, scales, units, legibility and marginal views. No blanket mandate or ban covers S1–S8; chart names alone do not decide applicability. FPIR reference lines at 0.001, 0.01 and 0.05 remain.",
       "route": "report/index.html (static file, no network)",
       "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_report.py",
       "states": ["default", "degraded", "empty", "error"],
       "zones": [
         {
           "id": "curves",
-          "label": "Operating curves per leg on a log FPIR axis with a range frame and a direct label on each curve. Points below 3/n_eff are shaded (░) and marked ○ unresolvable, and no FNIR claim is drawn inside that region (degraded). A curve with no data reads 'no data' (empty). Serves VIZ-35, VIZ-40, VIZ-27.",
+          "label": "Operating curves per leg on a log FPIR axis, with reference lines at FPIR 0.001, 0.01 and 0.05 and a direct label on each curve. Points below 3/n_eff are shaded (░) and marked ○ unresolvable, and no FNIR claim is drawn inside that region (degraded). A curve with no data reads 'no data' (empty). Serves VIZ-40, VIZ-27.",
           "role": "content",
           "states": ["default", "degraded", "empty", "error"]
         },
@@ -253,7 +253,7 @@
         },
         {
           "id": "umap-projection",
-          "label": "UMAP diagnostic projection, captioned 'diagnostic projection · distances not meaningful', with n_neighbors, min_dist and seed beside it. Claims are limited to local contiguity: no gap, density or axis claims. If the projection cannot be drawn, projection_unavailable is degraded and the neighbour table stays. Serves VIZ-18, VIZ-19.",
+          "label": "UMAP diagnostic projection, captioned 'diagnostic projection · distances not meaningful', with n_neighbors, min_dist and seed beside it. Claims are limited to local contiguity: no gap, density or axis claims. If the projection cannot be drawn, projection_unavailable is degraded and the neighbour table stays. Serves VIZ-18, VIZ-19. Assess any scatterplot rendering against its actual task before applying VIZ-35; diagnostic projection coordinates do not establish original-space measured extrema.",
           "role": "content",
           "states": ["default", "degraded", "empty", "error"]
         },
@@ -283,7 +283,7 @@
         },
         {
           "id": "manifest-status",
-          "label": "Decision manifest status: ratified and sealed (date, short hash, count of dated disconfirmers), or unratified (degraded, 'unratified: no seal shown'). Delegated project policy is declared before outcomes: k=5 identity/PSU-disjoint rotating folds (seed 2406466110), gallery seed 2468935812, paired cluster percentile bootstrap n_boot=10000 (seed 2429382368), label queue seed 336880394. Policy is not ratification; measured frame/template hashes, actual timestamps, genuine observation references and signatures stay unresolved until supplied. Queue tooling loads delegated gold/repeat shares 0.10/0.10, repeat agreement 0.90, Cohen kappa 0.80, independent-gold accuracy 0.90, support >=20 gold decisions per annotator and >=20 repeats per evaluated field; these remain hidden from L1. These are project QC defaults, not accuracy guarantees; real imports require genuine observation reference and support. Serves INT-21.",
+          "label": "Decision manifest status: ratified and sealed (date, short hash, count of dated disconfirmers), or unratified (degraded, 'unratified: no seal shown'). Delegated project policy is declared before outcomes: k=5 identity/PSU-disjoint rotating folds (seed 2406466110), gallery seed 2468935812, paired cluster percentile bootstrap n_boot=10000 (seed 2429382368), label queue seed 336880394. Policy is not ratification; measured frame/template hashes, actual timestamps, genuine observation references and signatures stay unresolved until supplied. Queue tooling loads delegated gold/repeat shares 0.10/0.10, repeat agreement 0.90, Cohen kappa 0.80, independent-gold accuracy 0.90, support >=20 gold decisions per annotator and >=20 repeats per evaluated field; these remain hidden from L1. These are project QC defaults, not accuracy guarantees; real tier-(a) imports always require a genuine resolvable observation reference, documented applicability to the current measurement context and valid supported QC. No fixture flag bypasses the production gate; controlled generated-fixture helper output is synthetic and ineligible for real analysis. Preserve original answers and failed QC; a corrected version needs its own fresh independently blinded QC run or supported qualified SME resolution under S7, never worker deletion or revised historical QC. Reuse observation after documenting continuing applicability; unrelated version changes alone need no new human observation, while material changes beyond the observed scope or uncertainty block analysis pending a new bounded observation. Semantic created_at follows MCP 16773: seal.sealed_at, else ratification.ratified_at, else explicit ISO8601 literal. Seal and ratification may differ; a supplied explicit literal must match the highest-priority derived instant. Missing/invalid semantic dates or conflicting explicit literals raise FrameContractError. Actual attempt/private unseal-ledger consumed_at stays separate at the non-replayable receipt boundary; no clock fallback or substitution of a seal date. Serves INT-21.",
           "role": "status",
           "states": ["default", "degraded", "empty", "error"]
         }
@@ -307,19 +307,19 @@
         },
         {
           "id": "face-controls",
-          "label": "Per face: a box mark ✓, and an occluder set chosen from m mask, s sunglasses, h hand, o object, x mixed, n none, ? can't tell. Region controls for eyes, nose and mouth cycle through visible, occluded, out-of-frame and uncertain. Only these values can be entered. Every control has a visible label and Tab reach. Serves FORM-11.",
+          "label": "Per face: a box mark ✓, and an occluder set chosen from m mask, s sunglasses, h hand, o object, x mixed, n none, ? can't tell. Region controls for eyes, nose and mouth cycle through visible, occluded, out-of-frame and uncertain. Only these values can be entered. Every shortcut has a visible labelled button with the same action, reachable by Tab and activated with Enter or Space. Every focusable control shows a visible :focus-visible indicator. Serves FORM-11.",
           "role": "form",
           "states": ["default", "error"]
         },
         {
           "id": "draw-mode",
-          "label": "Add missed face is a mode. a enters it with a visible 'drawing a box' banner. Enter commits the box. Esc cancels the draw and restores the item. u marks an unknown person in the same way. Serves INT-23.",
+          "label": "Add missed face is a mode. a enters it with a visible 'drawing a box' banner. Enter or the visible Commit box button commits the box. Esc or the visible Cancel draw button cancels and restores the unchanged item; the banner disappears on exit. Button and shortcut paths agree. u marks an unknown person as a face attribute, not a second mode; at most one mode is active. Serves INT-23.",
           "role": "form",
           "states": ["default"]
         },
         {
           "id": "next-skip-undo",
-          "label": "Enter next, Esc undo, skip recorded as nonresponse. A skipped item shows ○ skipped, the only item state the annotator sees, and stays in the export. The loop ends at the last item or on an explicit export. Progress reads 'done n · skipped m'. Serves INT-24, PERC-10.",
+          "label": "Outside draw mode: Enter next, Esc undo, skip recorded as nonresponse. A skipped item shows ○ skipped, the only item state the annotator sees, and stays in the export. The loop ends at the last item or on an explicit export. Progress reads 'done n · skipped m'. No timer advances an item; only Enter, skip or export moves the annotator on. Serves INT-24, PERC-10.",
           "role": "nav",
           "states": ["default"]
         },

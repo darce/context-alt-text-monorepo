@@ -355,10 +355,7 @@ def load_params(path: Path | str, *, decision: fc.DecisionManifest) -> Simulatio
 
 def _suite_iccs(fixture: Mapping[str, Any], suite: str) -> tuple[float, ...]:
     block = fixture["suite_designs"][suite]
-    iccs = [float(key) for key in block if not key.startswith("branch_b")]
-    if suite == "coverage":
-        iccs.append(float(fixture["acceptance"]["negative_control_icc"]))
-    return tuple(iccs)
+    return tuple(float(key) for key in block if not key.startswith("branch_b"))
 
 
 def _as_suite(params: SimulationParams, suite: str) -> SimulationParams:
@@ -1967,10 +1964,38 @@ def acceptance_report(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
 
 def _default_runs(fixture: Mapping[str, Any], suites: Sequence[str]) -> list[tuple[str, float]]:
     runs: list[tuple[str, float]] = []
-    for suite in suites:
+    for suite in dict.fromkeys(suites):
         for icc in _suite_iccs(fixture, suite):
             runs.append((suite, icc))
     return runs
+
+
+def _acceptance_cli_status(
+    report: Mapping[str, Any], *, gated_icc: float, negative_control_icc: float
+) -> tuple[int, str]:
+    """Judge executed full rows without changing the report or its evidence scope."""
+    semantic = report["semantic"]
+    failures: list[str] = []
+    for row in semantic["rows"]:
+        if row["full_acceptance_evidence"] is not True:
+            continue
+        negative = row["suite"] == "coverage" and row["icc"] == negative_control_icc
+        if row["icc"] != gated_icc and not negative:
+            continue
+        expected = False if negative else True
+        if row["replicates_completed"] != row["replicates_requested"] or row["passed"] is not expected:
+            label = "coverage negative control" if negative else row["suite"]
+            failures.append(f"{label} at ICC {row['icc']:g}")
+    if failures:
+        return 1, "failed full acceptance checks: " + ", ".join(sorted(set(failures)))
+    if semantic["full_acceptance_evidence"] and all(
+        row["full_acceptance_evidence"] is True
+        and row["replicates_completed"] == row["replicates_requested"]
+        and row["passed"] is not None
+        for row in semantic["rows"]
+    ):
+        return 0, "full synthetic acceptance passed; real claims remain pending"
+    return 0, "partial evidence; full acceptance not established"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -2000,8 +2025,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     target = out_dir / "acceptance.json"
     target.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-    sys.stdout.write(f"wrote {target}\n")
-    return 0
+    status, message = _acceptance_cli_status(
+        report,
+        gated_icc=float(params.fixture["policy_mirror"]["planning_icc"]),
+        negative_control_icc=float(params.fixture["acceptance"]["negative_control_icc"]),
+    )
+    sys.stdout.write(f"wrote {target}: {message}\n")
+    return status
 
 
 if __name__ == "__main__":

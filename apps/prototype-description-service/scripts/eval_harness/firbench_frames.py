@@ -475,10 +475,20 @@ def build_nonmated_pool(
     component_map: Mapping[str, str],
     exhaustive: bool,
     planning_icc: float,
+    enrolled_identity_ids: frozenset[str],
 ) -> NonMatedPool:
-    """Build the fold's non-mated pool. The function takes no detector argument; detector output cannot shape it."""
+    """Build non-mated units for a query fold against its explicitly declared gallery.
+
+    Query folds and gallery membership are separate axes [MCP16810]. An empty
+    frozenset declares an empty gallery. Detector output cannot shape this pool
+    [EVAL-19]; unknown GT faces and one background unit per selected image remain.
+    """
     if exhaustive is not True:
         raise _fail("non-mated source units need an exhaustive frame; exhaustive is not established")
+    if not isinstance(enrolled_identity_ids, frozenset) or any(
+        not isinstance(identity, str) or not identity.strip() for identity in enrolled_identity_ids
+    ):
+        raise _fail("enrolled_identity_ids must be a frozenset of non-blank identity IDs")
     _integer(fold, "fold")
     _probability_open(planning_icc, "planning_icc")
     for face in faces:
@@ -504,6 +514,7 @@ def build_nonmated_pool(
             and folds[psu_id] == fold
             or face.identity_status is IdentityStatus.named
             and identity_fold[face.identity_id] == fold
+            and face.identity_id not in enrolled_identity_ids
         ):
             units.append(NonMatedUnit(face.face_id, fold, psu_id, face.cohort))
     for image in images:
@@ -591,8 +602,13 @@ def build_frame(
     seed: int,
     test_fold: int,
     gallery_sha256_by_fold: Mapping[int, str],
+    enrolled_identity_ids: frozenset[str],
 ) -> Frame:
-    """Build one rotation's frame. Non-mated counts need an exhaustive frame; the gallery hash is caller-supplied."""
+    """Build one rotation's frame using declared test-gallery membership and hashes.
+
+    Non-mated counts require an exhaustive frame and explicit gallery membership;
+    ``frozenset()`` declares an empty gallery, never missing context [MCP16810].
+    """
     if not isinstance(spec, FrameSpec):
         raise _fail("spec must be a FrameSpec")
     if spec.exhaustive is not True:
@@ -617,6 +633,7 @@ def build_frame(
         component_map=component_map,
         exhaustive=True,
         planning_icc=planning_icc,
+        enrolled_identity_ids=enrolled_identity_ids,
     )
     face_sizes = list(psu_face_counts(component_map, ordered_faces).values())
     deff = design_effect(face_sizes, planning_icc)

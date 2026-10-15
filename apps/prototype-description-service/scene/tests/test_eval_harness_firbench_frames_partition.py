@@ -62,6 +62,7 @@ def test_pool_refuses_split_required_edge_with_exact_key_coverage(edge: str, sec
             component_map={"image-a": "image-a", "image-b": "image-b"},
             exhaustive=True,
             planning_icc=0.10,
+            enrolled_identity_ids=frozenset(),
         )
 
 
@@ -77,6 +78,7 @@ def test_pool_refuses_noncanonical_component_id(psu_id: str) -> None:
             component_map={"image-a": psu_id, "image-b": psu_id},
             exhaustive=True,
             planning_icc=0.10,
+            enrolled_identity_ids=frozenset(),
         )
 
 
@@ -92,6 +94,7 @@ def test_pool_refuses_merging_independent_unknown_images() -> None:
             component_map={"image-a": "image-a", "image-b": "image-a"},
             exhaustive=True,
             planning_icc=0.10,
+            enrolled_identity_ids=frozenset(),
         )
 
 
@@ -121,6 +124,7 @@ def test_pool_refuses_split_transitive_component_even_for_an_empty_requested_fol
             },
             exhaustive=True,
             planning_icc=0.10,
+            enrolled_identity_ids=frozenset(),
         )
 
 
@@ -148,7 +152,14 @@ def test_valid_canonical_partition_preserves_units_counts_and_fold_assignments(e
     }
     for fold, entries in expected.items():
         pool = ff.build_nonmated_pool(
-            faces, images, folds, fold=fold, component_map=components, exhaustive=True, planning_icc=0.10
+            faces,
+            images,
+            folds,
+            fold=fold,
+            component_map=components,
+            exhaustive=True,
+            planning_icc=0.10,
+            enrolled_identity_ids=frozenset(),
         )
         assert [(unit.unit_id, unit.psu_id) for unit in pool.units] == entries
         assert all(unit.fold == pool.fold == fold for unit in pool.units)
@@ -171,6 +182,7 @@ def test_canonical_partition_still_requires_exhaustive_gt(exhaustive: bool | Non
             component_map={"image-a": "image-a", "image-b": "image-a"},
             exhaustive=exhaustive,
             planning_icc=0.10,
+            enrolled_identity_ids=frozenset(),
         )
 
 
@@ -186,4 +198,5 @@ def test_canonical_partition_still_refuses_unresolved_face_outside_requested_fol
             component_map={"image-a": "image-a", "image-b": "image-b"},
             exhaustive=True,
             planning_icc=0.10,
+            enrolled_identity_ids=frozenset(),
         )

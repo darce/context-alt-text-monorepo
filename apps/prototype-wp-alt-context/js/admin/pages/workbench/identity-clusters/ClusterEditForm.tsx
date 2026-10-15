@@ -54,6 +54,10 @@ interface ClusterEditFormProps {
   atRestTruncated?: boolean;
   /** True while the loader is still in at-rest (debounced) mode. */
   isAtRestMode?: boolean;
+  /** The suggestion read failed: shown as an error with retry, never as an empty list. */
+  suggestionsError?: boolean;
+  /** Re-runs the failed suggestion read. */
+  onRetrySuggestions?: () => void;
 }
 
 /**
@@ -74,6 +78,8 @@ export const ClusterEditForm = ({
   atRestTotal = 0,
   atRestTruncated = false,
   isAtRestMode = false,
+  suggestionsError,
+  onRetrySuggestions,
 }: ClusterEditFormProps): React.JSX.Element => {
   const prefillRef = React.useRef(labelInput);
   const selectedSuggestionRef = React.useRef<ComboboxOption | null>(null);
@@ -192,6 +198,8 @@ export const ClusterEditForm = ({
         onCancel={onCancel}
         isPending={isPending}
         isLoading={isLoading}
+        suggestionsError={suggestionsError}
+        onRetrySuggestions={onRetrySuggestions}
         searchPlaceholder={__('Enter a name…', 'alt-context')}
         commitLabel={saveButtonLabel}
         pendingLabel={saveButtonLabel}

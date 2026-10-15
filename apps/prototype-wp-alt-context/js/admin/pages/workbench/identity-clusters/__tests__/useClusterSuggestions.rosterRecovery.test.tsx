@@ -253,7 +253,7 @@ describe('useClusterSuggestions roster recovery (RED)', () => {
     await waitFor(() => expect(labelsOf(result)).toContain('Ellyn Heald'));
     const choice = result.current.options.find((option) => option.label === 'Ellyn Heald');
     expect(choice).toMatchObject({
-      value: namingOptionValue('cluster', ELLYN_CLUSTER_ID),
+      value: namingOptionValue('person', 7),
       roster_entry_id: 7,
     });
     expect(mutationRequests()).toHaveLength(0);

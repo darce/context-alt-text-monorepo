@@ -67,7 +67,7 @@ describe('NameFaceControl closest roster matches (RED c82 FIR)', () => {
     await user.type(screen.getByRole('combobox', { name: 'Name this person' }), 'Ell');
 
     const option = screen.getByRole('option', { name: /Ellyn Heald/ });
-    expect(option).toHaveTextContent(/weak|low confidence|below suggestion threshold/i);
+    expect(option).toHaveTextContent('Below match threshold');
     expect(option).not.toHaveTextContent(/medium/i);
   });
 

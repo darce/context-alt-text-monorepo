@@ -268,7 +268,7 @@ describe('F3 optional closest-read budget through the real hook and legacy edito
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(input()).toHaveValue('Zoe');
     openChoices();
-    expect(screen.getByRole('option', { name: /Ellyn Heald/ })).toHaveTextContent('Weak match');
+    expect(screen.getByRole('option', { name: /Ellyn Heald/ })).toHaveTextContent('Below match threshold');
     expect(screen.queryByText(/training|learned|cannot.link/i)).not.toBeInTheDocument();
     assertReadOnly();
   });
@@ -289,7 +289,7 @@ describe('F3 optional closest-read budget through the real hook and legacy edito
     expect(input()).toBeEnabled();
     await userEvent.setup().type(input(), 'Zoe');
     openChoices();
-    expect(screen.getByRole('option', { name: /Ellyn Heald/ })).toHaveTextContent('Weak match');
+    expect(screen.getByRole('option', { name: /Ellyn Heald/ })).toHaveTextContent('Below match threshold');
     expect(input()).toHaveValue('Zoe');
     expect(screen.getByRole('button', { name: 'Save name' })).toBeEnabled();
     assertReadOnly();

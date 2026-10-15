@@ -68,7 +68,20 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     -h|--help) usage ;;
-    --) shift; paths+=("$@"); break ;;
+    --)
+      shift
+      for path in "$@"; do
+        case "$path" in
+          --yes|--archive-to|--log|--all|-h|--help)
+            echo "reap-lane: option $path must appear before \"--\"" >&2
+            usage
+            ;;
+          -*) paths+=("./$path") ;;
+          *) paths+=("$path") ;;
+        esac
+      done
+      break
+      ;;
     -*)
       echo "reap-lane: unknown option: $1" >&2
       exit 2
@@ -960,7 +973,7 @@ archive_lane() {
   local dir="$1" ns="$2" head_sha want="" verify_want="" got ref sha source_ref
   local command_output existing_output existing_sha ancestry_status net_status refs_output
   local destination superseded_ref short_sha
-  local push_specs=()
+  local push_spec push_specs=()
   archive_error=""
   archive_head_ref=""
   if ! git -C "$dir" rev-parse --verify --quiet HEAD >/dev/null; then
@@ -1059,9 +1072,11 @@ archive_lane() {
     verify_want="${verify_want}${ref} ${sha}"$'\n'
   done <<<"$want"
 
-  if [[ ${#push_specs[@]} -gt 0 ]]; then
+  # Shallow receive-pack can omit statuses when several new refs share objects.
+  # Seed and publish each ref separately; every push retains its failure guard.
+  for push_spec in "${push_specs[@]}"; do
     if command_output="$(git_net -C "$dir" push --quiet --no-verify -- "$archive_to" \
-        "${push_specs[@]}" 2>&1)"; then
+        "$push_spec" 2>&1)"; then
       :
     else
       net_status=$?
@@ -1072,7 +1087,7 @@ archive_lane() {
       fi
       return 1
     fi
-  fi
+  done
 
   # Read the refs back out of the archive. A push that reported success but
   # landed nothing would otherwise be indistinguishable from one that worked,
@@ -1103,7 +1118,7 @@ archive_lane() {
 # The lane owns those reflogs; rm would otherwise remove their only names.
 archive_reflog_only_commits() {
   local dir="$1" ns="$2" reachable reflog_output got sha ref command_output net_status
-  local reflog_shas=() ref_specs=()
+  local ref_spec reflog_shas=() ref_specs=()
   reachable="$(git -C "$dir" rev-list --all)" || return 1
   reflog_output="$(git -C "$dir" reflog --all --format='%H' | LC_ALL=C sort -u)" || return 1
   while IFS= read -r sha; do
@@ -1115,15 +1130,17 @@ archive_reflog_only_commits() {
     fi
   done <<<"$reflog_output"
   [[ ${#ref_specs[@]} -gt 0 ]] || return 0
-  if command_output="$(git_net -C "$dir" push --quiet --no-verify -- "$archive_to" \
-      "${ref_specs[@]}" 2>&1)"; then
-    :
-  else
-    net_status=$?
-    if git_net_timed_out "$net_status"; then archive_error="archive transport timed out"
-    else set_archive_push_error "$command_output"; fi
-    return 1
-  fi
+  for ref_spec in "${ref_specs[@]}"; do
+    if command_output="$(git_net -C "$dir" push --quiet --no-verify -- "$archive_to" \
+        "$ref_spec" 2>&1)"; then
+      :
+    else
+      net_status=$?
+      if git_net_timed_out "$net_status"; then archive_error="archive transport timed out"
+      else set_archive_push_error "$command_output"; fi
+      return 1
+    fi
+  done
   if command_output="$(git_net ls-remote -- "$archive_to" "refs/reaped/${ns}/reflog/*" 2>&1)"; then
     :
   else

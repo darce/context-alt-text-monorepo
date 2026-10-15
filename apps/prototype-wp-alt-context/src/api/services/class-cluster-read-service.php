@@ -9,11 +9,13 @@ require_once __DIR__ . '/../../sovereign/class-projection-query-exception.php';
 use AltContext\Api\ClustersHostInterface;
 use AltContext\Sovereign\ProjectionQueryException;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
+use AltContext\Support\DetectsSystemDefinedLabels;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
 
 use function absint;
+use function array_key_exists;
 use function array_merge;
 use function array_slice;
 use function array_unique;
@@ -23,16 +25,20 @@ use function sort;
 use function is_array;
 use function is_bool;
 use function is_numeric;
+use function is_string;
 use function max;
 use function min;
 use function rest_sanitize_boolean;
 use function sanitize_text_field;
 use function sprintf;
 use function time;
+use function trim;
 use function wp_next_scheduled;
 use function wp_schedule_single_event;
 
 class ClusterReadService {
+	use DetectsSystemDefinedLabels;
+
 	private const GET_CLUSTER_MEMBERS_MAX_LIMIT = IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT;
 	private const LIST_CLUSTER_LABELS_DEFAULT_LIMIT = 50;
 	private const LIST_CLUSTER_LABELS_MAX_LIMIT = 500;
@@ -186,6 +192,7 @@ class ClusterReadService {
 				$tenant_id,
 				$preview_limit
 			);
+			$unlabeled_items = $this->resolve_suggested_target_labels( $unlabeled_items, $tenant_id );
 			$mapper_ids = $this->normalize_repair_cluster_ids(
 				$this->dependencies->cluster_mapper->requested_repair_cluster_ids()
 			);
@@ -459,6 +466,63 @@ class ClusterReadService {
 		}
 
 		return $normalized;
+	}
+
+	/**
+	 * Presentation only: a suggestion names its target by the target's current
+	 * same-tenant canonical name. Never confirms, binds or assigns the source.
+	 * A missing, deleted, foreign or unnamed target drops the stale label and
+	 * target id but keeps the unlabeled source row. Each distinct target is
+	 * looked up once per request.
+	 *
+	 * @param array<int,array<string,mixed>> $items
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function resolve_suggested_target_labels( array $items, string $tenant_id ): array {
+		$canonical_names = array();
+		foreach ( $items as $index => $item ) {
+			$target_id = $item['suggested_target_cluster_id'] ?? null;
+			if ( ! is_string( $target_id ) || '' === $target_id ) {
+				continue;
+			}
+
+			if ( ! array_key_exists( $target_id, $canonical_names ) ) {
+				$canonical_names[ $target_id ] = $this->canonical_target_name(
+					$this->dependencies->clusters_repository->find_by_uuid( $target_id ),
+					$tenant_id
+				);
+			}
+
+			$canonical_name = $canonical_names[ $target_id ];
+			if ( null === $canonical_name ) {
+				$items[ $index ]['suggested_label']             = null;
+				$items[ $index ]['suggested_target_cluster_id'] = null;
+				continue;
+			}
+
+			$items[ $index ]['suggested_label'] = $canonical_name;
+		}
+
+		return $items;
+	}
+
+	/**
+	 * @param array<string,mixed>|null $target_row
+	 */
+	private function canonical_target_name( ?array $target_row, string $tenant_id ): ?string {
+		// find_by_uuid scopes by tenant, but the returned row must still prove it.
+		if ( null === $target_row || (string) ( $target_row['tenant_id'] ?? '' ) !== $tenant_id ) {
+			return null;
+		}
+
+		// Projected label is person-first (projected_cluster_label_sql): a non-empty
+		// value is a person-bound name unless it has a system-reserved shape.
+		$name = trim( (string) ( $target_row['label'] ?? '' ) );
+		if ( '' === $name || $this->is_reserved_label_shape( $name ) ) {
+			return null;
+		}
+
+		return $name;
 	}
 
 	/**

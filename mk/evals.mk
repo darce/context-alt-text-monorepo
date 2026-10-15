@@ -220,3 +220,47 @@ fir-bench-unseal:
 	@uv run --directory "$(EVAL_SERVICE)" --locked --extra dev \
 		python -m scripts.eval_harness.firbench_cli unseal \
 		--decision "$(abspath $(FIR_BENCH_DECISION))" --frame "$(FRAME)" --run-id "$(RUN_ID)"
+
+# =============================================================================
+# FIRBENCH-1 S9 · simulated acceptance: AE-2b, AE-3, AE-4 and the H2/MDE/floor/stage rows
+# =============================================================================
+#
+# Synthetic only. The simulator writes acceptance.json under benchmarks/private/ and never changes the real
+# decision, fixture or run inputs. full_acceptance_evidence is true only when every suite ran at R=2000 with the
+# manifest n_boot; AE-10 and real-data AE-5/6/12 evidence stay pending until supplied and verified. Dev profile
+# only (no bench extra, no InsightFace), ACX_EVAL_BENCH unset, single-process pytest.
+
+FIR_BENCH_SIM_PARAMS ?= apps/prototype-description-service/scene/tests/fixtures/firbench_sim_v1.json
+FIR_BENCH_ACCEPTANCE_OUT ?= benchmarks/private/firbench/acceptance
+FIR_BENCH_ACCEPTANCE_SUITES ?= null,selection,coverage,power,noninferiority,mde,floor,stage
+# Service-relative, because pytest runs from EVAL_SERVICE. AE-1 known answers, AE-6 legacy parity,
+# AE-7 replay, AE-8 cache, AE-9 refusals.
+FIR_BENCH_AE_FIXTURE_TESTS ?= scene/tests/test_eval_harness_firbench_contract.py \
+	scene/tests/test_eval_harness_firbench_score.py \
+	scene/tests/test_eval_harness_firbench_clusters.py \
+	scene/tests/test_eval_harness_firbench_face_outcomes.py \
+	scene/tests/test_eval_harness_firbench_score_calibration.py \
+	scene/tests/test_eval_harness_firbench_frames_partition.py \
+	scene/tests/test_eval_harness_firbench_cache_runtime.py \
+	scene/tests/test_eval_harness_firbench_compare_compatibility.py \
+	scene/tests/test_eval_harness_firbench_compare_seals.py \
+	scene/tests/test_eval_harness_firbench_cli_integration.py \
+	scene/tests/test_eval_harness_firbench_report_binding.py \
+	scene/tests/test_eval_harness_firbench_score_timing_semantics.py
+
+.PHONY: fir-bench-acceptance
+
+## fir-bench-acceptance: simulated AE-2b/AE-3/AE-4 suites, then the AE-1 and AE-6..AE-9 fixture modules
+# Usage: make fir-bench-acceptance [FIR_BENCH_ACCEPTANCE_REPLICATES=<int>] [FIR_BENCH_ACCEPTANCE_SEED=<int>] [FIR_BENCH_ACCEPTANCE_OUT=<private dir>]
+#        Unset, the replicates and seed come from the fixture (R=2000) and the master seed inside the CLI.
+fir-bench-acceptance:
+	@env -u ACX_EVAL_BENCH uv run --exact --directory "$(EVAL_SERVICE)" --locked --extra dev \
+		python -m scripts.eval_harness.firbench_selftest \
+		--params "$(abspath $(FIR_BENCH_SIM_PARAMS))" \
+		--decision "$(abspath $(FIR_BENCH_DECISION))" \
+		--out "$(abspath $(FIR_BENCH_ACCEPTANCE_OUT))" \
+		--suites "$(FIR_BENCH_ACCEPTANCE_SUITES)" \
+		$(if $(FIR_BENCH_ACCEPTANCE_REPLICATES),--replicates "$(FIR_BENCH_ACCEPTANCE_REPLICATES)",) \
+		$(if $(FIR_BENCH_ACCEPTANCE_SEED),--seed "$(FIR_BENCH_ACCEPTANCE_SEED)",)
+	@env -u ACX_EVAL_BENCH uv run --exact --directory "$(EVAL_SERVICE)" --locked --extra dev \
+		python -m pytest $(FIR_BENCH_AE_FIXTURE_TESTS) -n0 -q --tb=short -p no:cacheprovider

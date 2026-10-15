@@ -14,6 +14,7 @@ Heuristics: [TEST-15][RES-02]
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -22,6 +23,7 @@ import pytest
 
 from db.settings import get_database_settings
 from recognition.config import get_settings
+from recognition.config import settings as detection_config
 from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
 from recognition.infrastructure.face_pipeline import ort_adapters
 from recognition.tests.unit.test_face_scale_retry_contract import (  # noqa: F401  (autouse fixture)
@@ -164,13 +166,91 @@ def test_shared_runtime_is_rebuilt_when_retry_knob_changes(monkeypatch: pytest.M
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def second_floor_provider(monkeypatch: pytest.MonkeyPatch):
+    provider = detection_config.IdentityDetectionSettings(default_threshold=0.97)
+    seen: list[detection_config.IdentityDetectionSettings] = []
+
+    def resolve():
+        seen.append(provider)
+        return provider
+
+    monkeypatch.setattr(detection_config, "resolve_effective_detection_settings", resolve)
+    return provider, seen
+
+
+def _spy_embed(monkeypatch: pytest.MonkeyPatch, runtime: fpa.FacePipelineRuntime):
+    batches = []
+    real_embed = runtime.embedder.embed
+
+    def spy(crops):
+        batch = real_embed(crops)
+        batches.append(batch)
+        return batch
+
+    monkeypatch.setattr(runtime.embedder, "embed", spy)
+    return batches
+
+
 def test_second_floor_still_applies_to_retry_recovered_face_control(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, second_floor_provider
 ) -> None:
-    monkeypatch.setenv("RECOGNITION_FACE_DETECTION_DEFAULT_THRESHOLD", "0.97")
-    runtime, _ = build_runtime(monkeypatch, tmp_path, _small_visible_only_at_640(0.5, 0.5), knob=RETRY_MAX_SIDE)
+    provider, seen = second_floor_provider
+    emitted_counts = []
+    retry_visible = _small_visible_only_at_640(0.5, 0.5)
+
+    def visible(h, w):
+        emitted = retry_visible(h, w)
+        emitted_counts.append(len(emitted))
+        return emitted
+
+    runtime, yunet = build_runtime(monkeypatch, tmp_path, visible, knob=RETRY_MAX_SIDE)
+    aligned = _spy_align(monkeypatch, runtime)
+    embedded = _spy_embed(monkeypatch, runtime)
     adapter = _adapter(monkeypatch, runtime)
 
     faces = adapter._detect_sync_impl(b"synthetic", "media-floor")
 
     assert [face for face in faces if face.confidence < 0.97] == []
+    assert faces == []
+    assert seen == [provider]
+    assert seen[0].default_threshold == 0.97
+    assert emitted_counts == [0, 1], "the floor must receive a real retry-recovered face"
+    assert yunet.input_shapes == [(1, 3, 960, 1280), (1, 3, 480, 640)]
+    assert len(aligned) == 1
+    assert len(embedded) == 1 and len(embedded[0].vectors) == 1
+
+
+@pytest.mark.parametrize("knob", [None, RETRY_MAX_SIDE], ids=["full-resolution-off", "retry-recovered"])
+def test_second_floor_healthy_above_threshold_face_is_not_dropped_control(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, second_floor_provider, knob: int | None
+) -> None:
+    provider, seen = second_floor_provider
+    emitted_counts = []
+    retry_visible = _small_visible_only_at_640(0.5, 0.5, score=0.99)
+
+    def visible(h, w):
+        emitted = [replace(BIG_FULL, score=0.99)] if knob is None else retry_visible(h, w)
+        emitted_counts.append(len(emitted))
+        return emitted
+
+    runtime, yunet = build_runtime(monkeypatch, tmp_path, visible, knob=knob)
+    aligned = _spy_align(monkeypatch, runtime)
+    embedded = _spy_embed(monkeypatch, runtime)
+    adapter = _adapter(monkeypatch, runtime)
+
+    faces = adapter._detect_sync_impl(b"synthetic", "media-floor-healthy")
+
+    assert len(faces) == 1, "a healthy face above the second floor must survive"
+    assert faces[0].confidence == pytest.approx(0.99)
+    assert faces[0].confidence >= 0.97
+    assert seen == [provider]
+    assert seen[0].default_threshold == 0.97
+    assert len(aligned) == 1
+    assert len(embedded) == 1 and len(embedded[0].vectors) == 1
+    if knob is None:
+        assert emitted_counts == [1]
+        assert yunet.input_shapes == [(1, 3, 960, 1280)]
+    else:
+        assert emitted_counts == [0, 1]
+        assert yunet.input_shapes == [(1, 3, 960, 1280), (1, 3, 480, 640)]

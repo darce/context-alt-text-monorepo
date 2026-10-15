@@ -34,16 +34,17 @@ export const useClusterRosterCandidates = ({
     retry: false,
   });
   const options = React.useMemo(
-    () => buildRosterCandidateOptions(query.data?.candidates ?? [], rosterEntries),
-    [query.data, rosterEntries],
+    () => canQuery ? buildRosterCandidateOptions(query.data?.candidates ?? [], rosterEntries) : [],
+    [canQuery, query.data, rosterEntries],
   );
+  const { refetch } = query;
   const retry = React.useCallback(() => {
     if (canQuery) {
-      void query.refetch();
+      void refetch();
     }
-  }, [canQuery, query.refetch]);
+  }, [canQuery, refetch]);
 
-  return { options, isLoading: query.isLoading, isError: query.isError, retry };
+  return { options, isLoading: canQuery && query.isLoading, isError: canQuery && query.isError, retry };
 };
 
 /** Preserve the closest row's evidence and payload order when the roster overlaps. */

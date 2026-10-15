@@ -37,16 +37,22 @@ interface UseClusterSuggestionsReturn {
   atRestTruncated: boolean;
   /** True while the debounced input is below the typed-search minimum. */
   isAtRestMode: boolean;
+  /** True when the identity batch or the closest-roster read failed (never shown as an empty list). */
+  isError: boolean;
+  /** Re-runs only the failed read(s). */
+  retry: () => void;
 }
 
 export const selectClusterSuggestions = ({
   identityProjection,
   namingOptions,
+  rosterOptions,
   editableClusterId,
   labelInput = '',
 }: {
   identityProjection?: readonly ProjectedSuggestion[];
   namingOptions?: readonly NamingOption[];
+  rosterOptions?: readonly ComboboxOption[];
   editableClusterId?: string | null;
   labelInput?: string;
 }): ComboboxOption[] => {
@@ -85,6 +91,16 @@ export const selectClusterSuggestions = ({
     });
   });
 
+  // 1b. Closest roster people for this card (c82 FIR): already one committable row per person.
+  const rosterValues = new Set<string>();
+  (rosterOptions ?? []).forEach((option) => {
+    if (searchLower && !option.label.toLowerCase().includes(searchLower)) {
+      return;
+    }
+    rosterValues.add(option.value);
+    result.push(option);
+  });
+
   // 2. Union naming options: person rows always render; cluster rows dedupe vs Suggested (FIX-5).
   (namingOptions ?? []).forEach((option) => {
     const key = option.label.toLowerCase();
@@ -93,6 +109,10 @@ export const selectClusterSuggestions = ({
     }
 
     if (option.source === 'person') {
+      // Same roster person already offered as a closest-roster row: one choice per person.
+      if (rosterValues.has(option.value)) {
+        return;
+      }
       result.push({
         value: option.value,
         label: option.label,
@@ -173,8 +193,11 @@ export const useClusterSuggestions = ({
   const {
     identityProjection,
     namingOptions,
+    rosterCandidateOptions,
     collisionsByLabel,
     isLoading,
+    isError,
+    retry,
     findClusterByLabel: findClusterByLabelRemote,
     atRestTotal,
     atRestTruncated,
@@ -187,9 +210,20 @@ export const useClusterSuggestions = ({
     debounceMs,
   });
 
+  const retryFailedReads = React.useCallback((): void => {
+    retry?.();
+  }, [retry]);
+
   const options = React.useMemo(
-    () => selectClusterSuggestions({ identityProjection, namingOptions, editableClusterId, labelInput }),
-    [identityProjection, namingOptions, editableClusterId, labelInput],
+    () =>
+      selectClusterSuggestions({
+        identityProjection,
+        namingOptions,
+        rosterOptions: rosterCandidateOptions,
+        editableClusterId,
+        labelInput,
+      }),
+    [identityProjection, namingOptions, rosterCandidateOptions, editableClusterId, labelInput],
   );
 
   const findClusterByLabel = React.useCallback(
@@ -212,5 +246,7 @@ export const useClusterSuggestions = ({
     atRestTotal,
     atRestTruncated,
     isAtRestMode,
+    isError: isError ?? false,
+    retry: retryFailedReads,
   };
 };

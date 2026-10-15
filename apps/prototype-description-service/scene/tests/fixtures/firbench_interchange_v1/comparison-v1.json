@@ -2,6 +2,9 @@
   "schema_version": 1,
   "estimand": "paired delta FNIR (SFace minus AuraFace) at FPIR fpir_target",
   "fpir_target": 0.01,
+  "comparison_state": "comparable",
+  "label": "synthetic fixture: no measured cohort",
+  "differences": [],
   "compatibility": {
     "estimand": "paired delta FNIR (SFace minus AuraFace) at FPIR fpir_target",
     "fpir_target": 0.01,
@@ -22,5 +25,64 @@
   "run_a": {"run_id": "run-0001", "decision_sha256": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4", "scores_sha256": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6"},
   "run_b": {"run_id": "run-0002", "decision_sha256": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4", "scores_sha256": "0707070707070707070707070707070707070707070707070707070707070707"},
   "delta": null,
-  "verdicts": {"run_a": "inconclusive", "run_b": "inconclusive"}
+  "verdicts": {"run_a": "inconclusive", "run_b": "inconclusive"},
+  "paired_deltas": [
+    {
+      "leg_kind": "sface",
+      "leg_key_a": "sface__native__ab12cd__cv4.10.0__ort1.18.0",
+      "leg_key_b": "sface__native__ab12cd__cv4.10.0__ort1.18.0",
+      "status": "not_scored",
+      "reason": "synthetic fixture: no paired cohort recorded",
+      "n_searches": 0,
+      "n_psu": 0,
+      "n_eff": 0,
+      "point": null,
+      "lower": null,
+      "upper": null
+    },
+    {
+      "leg_kind": "auraface",
+      "leg_key_a": "auraface__native__ab12cd__cv4.10.0__ort1.18.0",
+      "leg_key_b": "auraface__native__ab12cd__cv4.10.0__ort1.18.0",
+      "status": "not_scored",
+      "reason": "synthetic fixture: no paired cohort recorded",
+      "n_searches": 0,
+      "n_psu": 0,
+      "n_eff": 0,
+      "point": null,
+      "lower": null,
+      "upper": null
+    }
+  ],
+  "history": [
+    {
+      "leg_kind": "sface",
+      "leg_key": "sface__native__ab12cd__cv4.10.0__ort1.18.0",
+      "points": [
+        {"run_id": "run-0001", "fnir": null, "tau": null, "reason": "synthetic fixture: run point not measured"},
+        {"run_id": "run-0002", "fnir": null, "tau": null, "reason": "synthetic fixture: run point not measured"}
+      ]
+    }
+  ],
+  "tau_spread": [
+    {
+      "leg_kind": "sface",
+      "run_id": "run-0001",
+      "status": "unavailable",
+      "reason": "pooled_fit_threshold_no_per_fold_estimates",
+      "values": [],
+      "minimum": null,
+      "maximum": null
+    },
+    {
+      "leg_kind": "sface",
+      "run_id": "run-0002",
+      "status": "unavailable",
+      "reason": "pooled_fit_threshold_no_per_fold_estimates",
+      "values": [],
+      "minimum": null,
+      "maximum": null
+    }
+  ],
+  "leg_changes": []
 }

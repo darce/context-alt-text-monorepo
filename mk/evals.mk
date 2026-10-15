@@ -158,7 +158,7 @@ FIR_BENCH_DECISION ?= benchmarks/manifests/fir-bench-decision-v1.json
 FIR_BENCH_LEGS ?= sface,auraface,insightface
 FIR_BENCH_ARMS ?= native
 
-.PHONY: fir-bench-run fir-bench-score
+.PHONY: fir-bench-run fir-bench-score fir-bench-report fir-bench-compare fir-bench-unseal
 
 ## fir-bench-run: create one immutable FIRBENCH-1 run directory (scoring is a separate step)
 # Usage: make fir-bench-run FRAME=<frame_id> RUN_DIR=benchmarks/private/firbench/runs/<run_id>
@@ -187,3 +187,36 @@ fir-bench-score:
 	fi
 	@env -u ACX_EVAL_BENCH uv run --exact --directory "$(EVAL_SERVICE)" --locked --extra dev \
 		python -m scripts.eval_harness.firbench_cli score "$(abspath $(RUN_DIR))"
+
+## fir-bench-report: render the private S5 report into <run_dir>/report/ (no eval flag)
+# Usage: make fir-bench-report RUN_DIR=benchmarks/private/firbench/runs/<run_id>
+fir-bench-report:
+	@if [ -z "$(RUN_DIR)" ]; then \
+		echo "error: RUN_DIR is required (e.g. RUN_DIR=benchmarks/private/firbench/runs/run-0001)" >&2; \
+		exit 2; \
+	fi
+	@uv run --directory "$(EVAL_SERVICE)" --locked --extra dev \
+		python -m scripts.eval_harness.firbench_cli report "$(abspath $(RUN_DIR))"
+
+## fir-bench-compare: compare two scored runs; OUT must lie under benchmarks/private/
+# Usage: make fir-bench-compare RUN_A=<run dir> RUN_B=<run dir> OUT=<private dir> [TREATMENT=<field>]
+fir-bench-compare:
+	@if [ -z "$(RUN_A)" ] || [ -z "$(RUN_B)" ] || [ -z "$(OUT)" ]; then \
+		echo "error: RUN_A, RUN_B and OUT are required" >&2; \
+		exit 2; \
+	fi
+	@uv run --directory "$(EVAL_SERVICE)" --locked --extra dev \
+		python -m scripts.eval_harness.firbench_cli compare \
+		"$(abspath $(RUN_A))" "$(abspath $(RUN_B))" --out "$(abspath $(OUT))" \
+		$(if $(TREATMENT),--treatment "$(TREATMENT)",)
+
+## fir-bench-unseal: append one unspent unseal token; the ledger stays local under benchmarks/private/
+# Usage: make fir-bench-unseal FRAME=<sealed frame_id> RUN_ID=<run_id> [FIR_BENCH_DECISION=<decision.json>]
+fir-bench-unseal:
+	@if [ -z "$(FRAME)" ] || [ -z "$(RUN_ID)" ]; then \
+		echo "error: FRAME and RUN_ID are required" >&2; \
+		exit 2; \
+	fi
+	@uv run --directory "$(EVAL_SERVICE)" --locked --extra dev \
+		python -m scripts.eval_harness.firbench_cli unseal \
+		--decision "$(abspath $(FIR_BENCH_DECISION))" --frame "$(FRAME)" --run-id "$(RUN_ID)"

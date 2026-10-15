@@ -27,7 +27,7 @@ import math
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 import numpy as np
 
@@ -35,6 +35,9 @@ from scripts.eval_harness import firbench_contract as fc
 from scripts.eval_harness import firbench_frames as ff
 from scripts.eval_harness import firbench_legs as fl
 from scripts.eval_harness import gallery_split
+
+if TYPE_CHECKING:
+    from scripts.eval_harness.fir_occ_labels import LabelEvidenceBundle
 
 
 class DocumentBinding(TypedDict):
@@ -141,6 +144,7 @@ class PreparedRun:
     run_legs: Any
     crop_margin: float
     canary_permutations: dict[int, dict[str, str]]
+    label_evidence: LabelEvidenceBundle | None = None
 
 
 def _qualified_source(path: Path, binding: InputBinding, root: Path) -> None:
@@ -481,7 +485,23 @@ class _Adapter:
             gallery_sha256_by_fold={f: galleries[basis_kind, f].gallery_sha256 for f in range(k)},
             enrolled_identity_ids=frozenset(memberships[seed % k]),
         )
-        ff.frame_json(prepared_frame)
+        frame_bytes = (ff.frame_json(prepared_frame) + "\n").encode("utf-8")
+        label_evidence = None
+        if "label_evidence" in binding:
+            evidence = binding["label_evidence"]
+            if not isinstance(evidence, dict) or set(evidence) != {"export_path", "queue_path", "gold_path"}:
+                raise fc.FrameContractError("label_evidence requires export_path, queue_path and gold_path")
+            for value in evidence.values():
+                _private(root, value)
+            from scripts.eval_harness.fir_occ_labels import freeze_label_evidence
+
+            label_evidence = freeze_label_evidence(
+                root / evidence["export_path"],
+                root / evidence["queue_path"],
+                root / evidence["gold_path"],
+                repo_root=root,
+                frame_sha256=hashlib.sha256(frame_bytes).hexdigest(),
+            )
 
         def run_legs(**_):
             from scripts.eval_harness.firbench_cli import LegRunResult, _check_run_result
@@ -567,6 +587,7 @@ class _Adapter:
             run_legs,
             float(margin),
             {fold: dict(model.permutation) for fold, model in models.get(fc.LegKind.canary, {}).items()},
+            label_evidence,
         )
 
 

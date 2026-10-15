@@ -2,14 +2,34 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "firbench/comparison-v1",
   "title": "FIRBENCH-1 comparison.json (S6b output), schema_version 1",
-  "description": "Two runs are comparable only when every compatibility field matches. Never-treatable fields refuse even under --treatment.",
+  "description": "Two runs are comparable only when every compatibility field matches, except at most one declared treatment field. Never-treatable fields refuse even under --treatment. Two or more undeclared differing fields give comparison_state exploratory: label is exactly 'exploratory: multi-factor, no verdict', verdicts and delta are null, and only descriptive per-leg rows remain. Stdlib-checker limits: lower <= point <= upper, unique differences, delta equal to the primary paired_deltas row, and cohort identity across runs are producer invariants, not schema checks.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "estimand", "fpir_target", "compatibility", "treatment", "run_a", "run_b", "delta", "verdicts"],
+  "required": [
+    "schema_version",
+    "estimand",
+    "fpir_target",
+    "compatibility",
+    "treatment",
+    "run_a",
+    "run_b",
+    "comparison_state",
+    "label",
+    "differences",
+    "delta",
+    "verdicts",
+    "paired_deltas",
+    "history",
+    "tau_spread",
+    "leg_changes"
+  ],
   "properties": {
     "schema_version": {"const": 1},
     "estimand": {"type": "string", "minLength": 1},
     "fpir_target": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+    "comparison_state": {"enum": ["comparable", "exploratory"]},
+    "label": {"type": "string", "minLength": 1},
+    "differences": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "compatibility": {
       "type": "object",
       "additionalProperties": false,
@@ -76,6 +96,7 @@
       }
     },
     "delta": {
+      "description": "Legacy primary-leg summary, derived from the same primary paired_deltas row; null when that row is not_scored or the state is exploratory.",
       "type": ["object", "null"],
       "additionalProperties": false,
       "required": ["point", "lower", "upper"],
@@ -86,12 +107,153 @@
       }
     },
     "verdicts": {
-      "type": "object",
+      "description": "Original run verdict states. Null only for the exploratory state, which carries no verdict word.",
+      "type": ["object", "null"],
       "additionalProperties": false,
       "required": ["run_a", "run_b"],
       "properties": {
         "run_a": {"enum": ["superior", "non_inferior", "inconclusive", "guardrail_vetoed", "unratified"]},
         "run_b": {"enum": ["superior", "non_inferior", "inconclusive", "guardrail_vetoed", "unratified"]}
+      }
+    },
+    "paired_deltas": {"type": "array", "items": {"$ref": "#/$defs/paired_delta"}},
+    "history": {"type": "array", "items": {"$ref": "#/$defs/history_row"}},
+    "tau_spread": {"type": "array", "items": {"$ref": "#/$defs/tau_spread_row"}},
+    "leg_changes": {"type": "array", "items": {"$ref": "#/$defs/leg_change"}}
+  },
+  "if": {
+    "required": ["comparison_state"],
+    "properties": {"comparison_state": {"const": "exploratory"}}
+  },
+  "then": {
+    "properties": {
+      "label": {"const": "exploratory: multi-factor, no verdict"},
+      "differences": {"minItems": 2},
+      "delta": {"const": null},
+      "verdicts": {"const": null}
+    }
+  },
+  "else": {
+    "properties": {
+      "label": {"pattern": "^(?!exploratory: multi-factor, no verdict$)"},
+      "differences": {"maxItems": 1},
+      "treatment": {"properties": {"fields": {"maxItems": 1}}},
+      "verdicts": {"type": "object"}
+    }
+  },
+  "$defs": {
+    "leg_kind": {"enum": ["sface", "auraface", "insightface", "canary"]},
+    "paired_delta": {
+      "description": "Exact fixed native face and PSU cohort per leg pair. Scored rows carry a finite interval; not_scored rows name a reason and null numbers. Cross-run rows compare native outcomes only, never vectors across spaces (EMB-01).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["leg_kind", "leg_key_a", "leg_key_b", "status", "reason", "n_searches", "n_psu", "n_eff", "point", "lower", "upper"],
+      "properties": {
+        "leg_kind": {"$ref": "#/$defs/leg_kind"},
+        "leg_key_a": {"type": "string", "minLength": 1},
+        "leg_key_b": {"type": "string", "minLength": 1},
+        "status": {"enum": ["scored", "not_scored"]},
+        "reason": {"type": ["string", "null"], "minLength": 1},
+        "n_searches": {"type": "integer", "minimum": 0},
+        "n_psu": {"type": "integer", "minimum": 0},
+        "n_eff": {"type": "number", "minimum": 0},
+        "point": {"type": ["number", "null"]},
+        "lower": {"type": ["number", "null"]},
+        "upper": {"type": ["number", "null"]}
+      },
+      "if": {"required": ["status"], "properties": {"status": {"const": "scored"}}},
+      "then": {
+        "properties": {
+          "reason": {"const": null},
+          "n_searches": {"minimum": 1},
+          "n_psu": {"minimum": 1},
+          "point": {"type": "number"},
+          "lower": {"type": "number"},
+          "upper": {"type": "number"}
+        }
+      },
+      "else": {
+        "properties": {
+          "reason": {"type": "string"},
+          "point": {"const": null},
+          "lower": {"const": null},
+          "upper": {"const": null}
+        }
+      }
+    },
+    "history_row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["leg_kind", "leg_key", "points"],
+      "properties": {
+        "leg_kind": {"$ref": "#/$defs/leg_kind"},
+        "leg_key": {"type": "string", "minLength": 1},
+        "points": {"type": "array", "items": {"$ref": "#/$defs/history_point"}}
+      }
+    },
+    "history_point": {
+      "description": "One supplied run point. Unmeasured values stay null with a reason; nothing is interpolated.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "fnir", "tau", "reason"],
+      "properties": {
+        "run_id": {"type": "string", "minLength": 1},
+        "fnir": {"type": ["number", "null"]},
+        "tau": {"type": ["number", "null"]},
+        "reason": {"type": ["string", "null"], "minLength": 1}
+      }
+    },
+    "tau_spread_row": {
+      "description": "Per-fold tau spread exists only when real predeclared per-fold estimates were present. The pooled primary fit is unavailable and carries no values or extrema.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["leg_kind", "run_id", "status", "reason", "values", "minimum", "maximum"],
+      "properties": {
+        "leg_kind": {"$ref": "#/$defs/leg_kind"},
+        "run_id": {"type": "string", "minLength": 1},
+        "status": {"enum": ["available", "unavailable"]},
+        "reason": {"type": ["string", "null"], "minLength": 1},
+        "values": {"type": "array", "items": {"$ref": "#/$defs/tau_value"}},
+        "minimum": {"type": ["number", "null"]},
+        "maximum": {"type": ["number", "null"]}
+      },
+      "if": {"required": ["status"], "properties": {"status": {"const": "available"}}},
+      "then": {
+        "properties": {
+          "reason": {"const": null},
+          "values": {"minItems": 1},
+          "minimum": {"type": "number"},
+          "maximum": {"type": "number"}
+        }
+      },
+      "else": {
+        "properties": {
+          "reason": {"type": "string"},
+          "values": {"maxItems": 0},
+          "minimum": {"const": null},
+          "maximum": {"const": null}
+        }
+      }
+    },
+    "tau_value": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fold", "tau"],
+      "properties": {
+        "fold": {"type": "integer", "minimum": 0},
+        "tau": {"type": "number"}
+      }
+    },
+    "leg_change": {
+      "description": "A changed space fingerprint for the same leg kind across runs. Same-kind runtime mismatch is a hard refusal before any row is written.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["leg_kind", "leg_key_a", "leg_key_b", "label"],
+      "properties": {
+        "leg_kind": {"$ref": "#/$defs/leg_kind"},
+        "leg_key_a": {"type": "string", "minLength": 1},
+        "leg_key_b": {"type": "string", "minLength": 1},
+        "label": {"const": "leg contract changed (expected)"}
       }
     }
   }

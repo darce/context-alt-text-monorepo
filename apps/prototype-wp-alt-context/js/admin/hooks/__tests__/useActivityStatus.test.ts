@@ -530,15 +530,16 @@ describe('resolveActivityStatus', () => {
     expect(status.retryable).toBe(false);
   });
 
-  it('maps idle GPU status errors to failed with retry', () => {
+  it('maps idle GPU status errors to idle with unknown GPU state and no retry', () => {
     const status = resolveActivityStatus({
       scan: idleScan(),
       describe: idleDescribe(),
       gpu: gpuInput({ isError: true, gpuState: GPU_STATE.UNKNOWN }),
     });
-    expect(status.kind).toBe(ACTIVITY_KIND.FAILED);
-    expect(status.reason).toBe(ACTIVITY_REASON.GPU_STATUS_UNAVAILABLE);
-    expect(status.retryable).toBe(true);
+    expect(status.kind).toBe(ACTIVITY_KIND.IDLE);
+    expect(status.gpuState).toBe(GPU_STATE.UNKNOWN);
+    expect(status.reason).toBeNull();
+    expect(status.retryable).toBe(false);
   });
 
   it('maps a scan error to failed when nothing else is live', () => {
@@ -987,19 +988,23 @@ describe('useActivityStatus', () => {
     expect(submitBulkDescribeRunMock).not.toHaveBeenCalled();
   });
 
-  it('retries GPU_STATUS_UNAVAILABLE via gpu refetch without submitting a describe run', async () => {
+  it('does not retry an idle GPU status error or submit a describe run', async () => {
+    const { queryKeys } = await import('../../api/queryKeys');
     fetchGpuStatusMock.mockRejectedValue(new Error('gpu down'));
     queryClient = buildTestQueryClient();
     const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
 
-    await waitFor(() =>
-      expect(result.current.status.reason).toBe(ACTIVITY_REASON.GPU_STATUS_UNAVAILABLE),
-    );
+    await waitFor(() => expect(queryClient.getQueryState(queryKeys.gpu.status())?.status).toBe('error'));
+    await waitFor(() => expect(result.current.status.kind).toBe(ACTIVITY_KIND.IDLE));
+    expect(result.current.status.gpuState).toBe(GPU_STATE.UNKNOWN);
+    expect(result.current.status.reason).toBeNull();
+    expect(result.current.status.retryable).toBe(false);
+    expect(result.current.actions.onRetry).toBeNull();
     const callsBefore = fetchGpuStatusMock.mock.calls.length;
     act(() => {
       result.current.actions.onRetry?.();
     });
-    await waitFor(() => expect(fetchGpuStatusMock.mock.calls.length).toBeGreaterThan(callsBefore));
+    await waitFor(() => expect(fetchGpuStatusMock.mock.calls.length).toBe(callsBefore));
     expect(fetchDescribeRunItemsMock).not.toHaveBeenCalled();
     expect(submitBulkDescribeRunMock).not.toHaveBeenCalled();
   });

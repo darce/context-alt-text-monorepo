@@ -930,7 +930,7 @@ class Api {
 			return new WP_Error( 'acx_db_error', __( 'Could not update person in database.', 'alt-context' ), array( 'status' => 500 ) );
 		}
 
-		if ( null !== $name && $name !== $person->name && ! $this->sync_bound_cluster_labels( $id, $name, $now, $wpdb->prefix . 'acx_clusters' ) ) {
+		if ( null !== $name && $name !== $person->name && ! $this->sync_bound_cluster_labels( $id, $name, $now, $wpdb->prefix . 'acx_clusters', $tenant_id ) ) {
 			$this->rollback_database_transaction();
 			return new WP_Error( 'acx_db_error', __( 'Could not sync bound cluster labels.', 'alt-context' ), array( 'status' => 500 ) );
 		}
@@ -972,6 +972,11 @@ class Api {
 		if ( ! $queued ) {
 			$this->rollback_database_transaction();
 			return new WP_Error( 'acx_db_error', __( 'Could not queue person update replay operation.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
+		if ( null !== $name && $name !== $person->name && ! $this->enqueue_bound_cluster_label_updates( $id, $tenant_id, trim( $name ), $wpdb->prefix . 'acx_clusters' ) ) {
+			$this->rollback_database_transaction();
+			return new WP_Error( 'acx_db_error', __( 'Could not queue cluster label replay operation.', 'alt-context' ), array( 'status' => 500 ) );
 		}
 
 		if ( ! $this->commit_database_transaction() ) {
@@ -1210,7 +1215,7 @@ class Api {
 		return is_string( $resolved_name ) && '' !== trim( $resolved_name ) ? trim( $resolved_name ) : null;
 	}
 
-	private function sync_bound_cluster_labels( int $person_id, string $person_name, string $updated_at, string $table_clusters ): bool {
+	private function sync_bound_cluster_labels( int $person_id, string $person_name, string $updated_at, string $table_clusters, string $tenant_id ): bool {
 		global $wpdb;
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) || ! method_exists( $wpdb, 'prepare' ) ) {
@@ -1218,15 +1223,60 @@ class Api {
 		}
 
 		$sql = $wpdb->prepare(
-			'UPDATE %i SET label = %s, updated_at = %s, local_revision = local_revision + 1 WHERE person_id = %d',
+			'UPDATE %i SET label = %s, updated_at = %s, local_revision = local_revision + 1 WHERE person_id = %d AND tenant_id = %s',
 			$table_clusters,
 			trim( $person_name ),
 			$updated_at,
-			$person_id
+			$person_id,
+			$tenant_id
 		);
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		return false !== $wpdb->query( $sql );
+	}
+
+	/**
+	 * Enqueue one canonical cluster_label_updated per cluster bound to the person in the current tenant.
+	 * Must run inside the rename transaction after sync_bound_cluster_labels() has bumped local_revision.
+	 */
+	private function enqueue_bound_cluster_label_updates( int $person_id, string $tenant_id, string $label, string $table_clusters ): bool {
+		global $wpdb;
+
+		$bound_clusters = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT cluster_uuid, local_revision FROM %i WHERE person_id = %d AND tenant_id = %s',
+				$table_clusters,
+				$person_id,
+				$tenant_id
+			),
+			ARRAY_A
+		);
+		if ( ! is_array( $bound_clusters ) ) {
+			return false;
+		}
+
+		foreach ( $bound_clusters as $cluster_row ) {
+			$cluster_uuid = sanitize_text_field( (string) ( $cluster_row['cluster_uuid'] ?? '' ) );
+			if ( '' === $cluster_uuid ) {
+				continue;
+			}
+
+			$queued = $this->enqueue_curation_operation(
+				'cluster_label_updated',
+				'cluster',
+				$cluster_uuid,
+				max( 1, (int) ( $cluster_row['local_revision'] ?? 0 ) ),
+				array(
+					'cluster_uuid' => $cluster_uuid,
+					'label'        => $label,
+				)
+			);
+			if ( ! $queued ) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	private function get_local_tenant_id(): string {

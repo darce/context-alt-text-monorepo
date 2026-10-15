@@ -36,6 +36,9 @@ final class CurationIdempotencyKey {
 		int $target_revision,
 		array $payload
 	): string {
+		// Command provenance travels durably but does not change semantic identity.
+		unset( $payload['curation_intent_id'] );
+
 		$basis = wp_json_encode(
 			array(
 				'tenant_id'       => $tenant_id,

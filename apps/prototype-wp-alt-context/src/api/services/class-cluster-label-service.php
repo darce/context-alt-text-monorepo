@@ -29,6 +29,7 @@ use function max;
 use function method_exists;
 use function sanitize_text_field;
 use function sprintf;
+use function wp_generate_uuid4;
 
 /**
  * Label curation with person-projection write-through.
@@ -149,6 +150,8 @@ class ClusterLabelService {
 					);
 				}
 
+				$curation_intent_id = wp_generate_uuid4();
+
 				// Preserve the pre-write-through dual-write contract: label curation
 				// still emits cluster_label_updated as the primary outbox event when the
 				// label actually changed. Person-projection write-through below is additive (rg-002).
@@ -158,8 +161,9 @@ class ClusterLabelService {
 						$cluster_id,
 						$cluster,
 						array(
-							'cluster_uuid' => $cluster_id,
-							'label'        => $label,
+							'cluster_uuid'       => $cluster_id,
+							'label'              => $label,
+							'curation_intent_id' => $curation_intent_id,
 						)
 					) ) {
 						return new WP_Error( 'acx_db_error', 'Could not enqueue label replay operation.', array( 'status' => 500 ) );
@@ -170,7 +174,7 @@ class ClusterLabelService {
 				$resolver = new PersonResolutionService();
 				$resolved = $resolver->resolve_or_create(
 					$label,
-					function ( string $person_uuid, string $name, array $tags ) use ( $cluster ): bool {
+					function ( string $person_uuid, string $name, array $tags ) use ( $cluster, $curation_intent_id ): bool {
 						// person_created local_revision is always 1 for a newly created person.
 						return $this->host->enqueue_curation_operation(
 							'person_created',
@@ -180,9 +184,10 @@ class ClusterLabelService {
 								'snapshot_version' => max( 0, (int) ( $cluster['snapshot_version'] ?? 0 ) ),
 							),
 							array(
-								'person_uuid' => $person_uuid,
-								'name'        => $name,
-								'tags'        => $tags,
+								'person_uuid'        => $person_uuid,
+								'name'               => $name,
+								'tags'               => $tags,
+								'curation_intent_id' => $curation_intent_id,
 							),
 							'person'
 						);
@@ -203,9 +208,10 @@ class ClusterLabelService {
 					$cluster_id,
 					$cluster,
 					array(
-						'cluster_uuid' => $cluster_id,
-						'person_uuid'  => $resolved['person_uuid'],
-						'person_name'  => $resolved['name'],
+						'cluster_uuid'       => $cluster_id,
+						'person_uuid'        => $resolved['person_uuid'],
+						'person_name'        => $resolved['name'],
+						'curation_intent_id' => $curation_intent_id,
 					)
 				) ) {
 					return new WP_Error( 'acx_db_error', 'Could not enqueue person-bind replay operation.', array( 'status' => 500 ) );

@@ -200,7 +200,7 @@ export const useClusterActionMutations = ({
     }) => {
       // BR-16: confirm with a suggestion id resolves by id (accept assigns + marks accepted).
       if (suggestionId) {
-        await acceptSuggestion(suggestionId);
+        await (signal ? acceptSuggestion(suggestionId, { signal }) : acceptSuggestion(suggestionId));
         return;
       }
       await reassignClusterIdentity({ identityId, targetClusterId }, signal);

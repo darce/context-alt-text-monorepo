@@ -51,6 +51,12 @@ export const useClusterMutations = ({
     invalidateLabelSurfaces(queryClient);
   }, [queryClient]);
 
+  // A terminal 404 from a suggestion accept proves nothing committed, so only the
+  // merge-pending list holding the stale row is refreshed (see useClusterLabelMutations).
+  const invalidateMergeSuggestionMiss = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.mergePending() });
+  }, [queryClient]);
+
   const cancelIdentityQueries = useCallback(
     () => queryClient.cancelQueries({ queryKey: queryKeys.media.identities() }),
     [queryClient],
@@ -103,6 +109,7 @@ export const useClusterMutations = ({
     onAbort,
     cancelIdentityQueries,
     invalidateQueries,
+    invalidateMergeSuggestionMiss,
     updateCachedClusterLabel,
   });
 

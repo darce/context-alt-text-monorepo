@@ -19,6 +19,7 @@ import {
 import { useClusterSuggestionsLoader, type ClusterSuggestionsLoaderOptions } from './useClusterSuggestionsLoader';
 import type { ProjectedSuggestion } from './suggestionProjection';
 import type { ClusterLabelMatch, SuggestionProvenance } from './useClusterMatchAction';
+import { mergeRosterCandidateOptions } from './useClusterRosterCandidates';
 
 type UseClusterSuggestionsOptions = ClusterSuggestionsLoaderOptions;
 
@@ -37,16 +38,22 @@ interface UseClusterSuggestionsReturn {
   atRestTruncated: boolean;
   /** True while the debounced input is below the typed-search minimum. */
   isAtRestMode: boolean;
+  /** True when the identity batch or the closest-roster read failed (never shown as an empty list). */
+  isError: boolean;
+  /** Re-runs only the failed read(s). */
+  retry: () => void;
 }
 
 export const selectClusterSuggestions = ({
   identityProjection,
   namingOptions,
+  rosterOptions,
   editableClusterId,
   labelInput = '',
 }: {
   identityProjection?: readonly ProjectedSuggestion[];
   namingOptions?: readonly NamingOption[];
+  rosterOptions?: readonly ComboboxOption[];
   editableClusterId?: string | null;
   labelInput?: string;
 }): ComboboxOption[] => {
@@ -117,7 +124,7 @@ export const selectClusterSuggestions = ({
     });
   });
 
-  return result;
+  return mergeRosterCandidateOptions(rosterOptions ?? [], result);
 };
 
 /**
@@ -182,8 +189,11 @@ export const useClusterSuggestions = ({
   const {
     identityProjection,
     namingOptions,
+    rosterCandidateOptions,
     collisionsByLabel,
     isLoading,
+    isError,
+    retry,
     findClusterByLabel: findClusterByLabelRemote,
     atRestTotal,
     atRestTruncated,
@@ -196,9 +206,20 @@ export const useClusterSuggestions = ({
     debounceMs,
   });
 
+  const retryFailedReads = React.useCallback((): void => {
+    retry?.();
+  }, [retry]);
+
   const options = React.useMemo(
-    () => selectClusterSuggestions({ identityProjection, namingOptions, editableClusterId, labelInput }),
-    [identityProjection, namingOptions, editableClusterId, labelInput],
+    () =>
+      selectClusterSuggestions({
+        identityProjection,
+        namingOptions,
+        rosterOptions: rosterCandidateOptions,
+        editableClusterId,
+        labelInput,
+      }),
+    [identityProjection, namingOptions, rosterCandidateOptions, editableClusterId, labelInput],
   );
 
   const findClusterByLabel = React.useCallback(
@@ -221,5 +242,7 @@ export const useClusterSuggestions = ({
     atRestTotal,
     atRestTruncated,
     isAtRestMode,
+    isError: isError ?? false,
+    retry: retryFailedReads,
   };
 };

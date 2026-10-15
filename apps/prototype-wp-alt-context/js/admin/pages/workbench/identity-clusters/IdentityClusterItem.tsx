@@ -175,6 +175,8 @@ export const IdentityClusterItem = ({
   const {
     options,
     isLoading: suggestionsLoading,
+    isError: suggestionsError,
+    retry: retrySuggestions,
     findClusterByLabel,
     atRestTotal = 0,
     atRestTruncated = false,
@@ -523,6 +525,8 @@ export const IdentityClusterItem = ({
             onLabelChange={setLabel}
             options={options}
             isLoading={suggestionsLoading}
+            suggestionsError={suggestionsError}
+            onRetrySuggestions={retrySuggestions}
             isPending={mutations.isPending || saveStatus !== 'idle'}
             onSave={(labelOverride) => void handleSave(labelOverride)}
             onPersonSelect={handlePersonSelect}

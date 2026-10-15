@@ -13,7 +13,7 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
-import type { ComboboxOption } from '../../../../components/ui/combobox';
+import type { ComboboxMatchBand, ComboboxOption } from '../../../../components/ui/combobox';
 import { NAMING_GROUP_SUGGESTED, parseNamingOptionValue } from './buildNamingOptions';
 import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
 
@@ -47,6 +47,17 @@ const sourceBadgeLabel = (option: ComboboxOption): string | null => {
     return __('Group', 'alt-context');
   }
   return null;
+};
+
+/** Band display for backend roster-candidate rows: a band word, never a bare percentage (HAI-08). */
+const matchBandDisplay = (band: ComboboxMatchBand): { label: string; tone: 'high' | 'medium' | 'weak' } => {
+  if (band === 'strong') {
+    return { label: __('Strong match', 'alt-context'), tone: 'high' };
+  }
+  if (band === 'possible') {
+    return { label: __('Possible match', 'alt-context'), tone: 'medium' };
+  }
+  return { label: __('Weak match', 'alt-context'), tone: 'weak' };
 };
 
 const personMatchesFor = (
@@ -146,7 +157,10 @@ const matchingOptionsFor = (
   if (!folded) {
     return [...options];
   }
-  return options.filter((option) => normalizeNameFaceLabel(option.label).includes(folded));
+  return options.filter((option) =>
+    (optionSource(option) === 'person' && option.roster_entry_id != null && option.band !== undefined)
+    || normalizeNameFaceLabel(option.label).includes(folded),
+  );
 };
 
 interface NameFaceControlProps {
@@ -205,6 +219,10 @@ interface NameFaceControlProps {
   /** Optional hint rendered inside the input wrapper; described by the input. */
   hint?: React.ReactNode;
   hintId?: string;
+  /** The suggestion read failed: shown as an explicit error, never as an empty list. */
+  suggestionsError?: boolean;
+  /** Re-runs the failed suggestion read; the retry control renders only when provided. */
+  onRetrySuggestions?: () => void;
 }
 
 export const NameFaceControl = ({
@@ -237,6 +255,8 @@ export const NameFaceControl = ({
   suggestionsHeader,
   hint,
   hintId,
+  suggestionsError = false,
+  onRetrySuggestions,
 }: NameFaceControlProps): React.JSX.Element => {
   const inputRef = useRef<HTMLInputElement>(null);
   const reactId = useId();
@@ -499,6 +519,16 @@ export const NameFaceControl = ({
     [onRejectSuggestion],
   );
 
+  // "No close match" never commits an empty name: with a typed name it creates that name,
+  // otherwise it moves focus to manual entry.
+  const handleAbstainClick = React.useCallback(() => {
+    if (commitResolution?.kind === 'create' && !isPending && !isLoading) {
+      onCommit(commitResolution);
+      return;
+    }
+    inputRef.current?.focus();
+  }, [commitResolution, isPending, isLoading, onCommit]);
+
   const activeOptionId =
     overlayOpen && activeIndex >= 0 ? `${listboxId}-opt-${activeIndex}` : undefined;
 
@@ -552,6 +582,7 @@ export const NameFaceControl = ({
             {displayedOptions.map((option, index) => {
               const optionId = `${listboxId}-opt-${index}`;
               const selected = index === activeIndex;
+              const bandDisplay = option.band === undefined ? null : matchBandDisplay(option.band);
               const optionName = sourceBadgeLabel(option)
                 ? sprintf(
                     /* translators: 1: person/group name, 2: source (Person or Group) */
@@ -600,7 +631,12 @@ export const NameFaceControl = ({
                         {sourceBadgeLabel(option)}
                       </span>
                     )}
-                    {option.similarity !== undefined && (
+                    {bandDisplay !== null && (
+                      <span className={`${classPrefix}__match-score ${classPrefix}__match-score--${bandDisplay.tone}`}>
+                        <span className={`${classPrefix}__match-score-band`}>{bandDisplay.label}</span>
+                      </span>
+                    )}
+                    {bandDisplay === null && option.similarity !== undefined && (
                       <span
                         className={`${classPrefix}__match-score ${
                           (option.similarity as number) >= MATCH_BAND_HIGH_THRESHOLD
@@ -638,6 +674,11 @@ export const NameFaceControl = ({
             })}
           </div>
         ) : null}
+        {overlayOpen && displayedOptions.some((option) => option.band === 'none') ? (
+          <button type="button" className={`${classPrefix}__abstain`} onClick={handleAbstainClick}>
+            {__('No close match: name as new person', 'alt-context')}
+          </button>
+        ) : null}
         {hint}
       </div>
 
@@ -646,6 +687,17 @@ export const NameFaceControl = ({
           {resultCountAnnouncement}
         </p>
       )}
+
+      {suggestionsError ? (
+        <div className={`${classPrefix}__suggestions-error`} role="alert">
+          <span>{__('Could not load name suggestions.', 'alt-context')}</span>
+          {onRetrySuggestions ? (
+            <button type="button" className={`${classPrefix}__suggestions-retry`} onClick={onRetrySuggestions}>
+              {__('Retry', 'alt-context')}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className={`${classPrefix}__edit-actions`}>
         <button

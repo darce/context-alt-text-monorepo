@@ -7,33 +7,41 @@
 
 ## Goal
 
-Turn per-face search records into the frozen-τ answer: FNIR at the declared FPIR on a fixed non-mated denominator, end to end (EVAL-16, EVAL-18, EVAL-19). Produce paired PSU-cluster intervals, the sealed step-down decision, guardrails, and a verdict that can be "inconclusive" (CARD-27, WRIT-81).
+Turn per-face search records into the frozen-τ answer: FNIR at the declared FPIR on a fixed non-mated source-unit denominator, end to end (EVAL-16, EVAL-18, EVAL-19). Produce paired PSU-cluster intervals, the sealed step-down decision, guardrails, and a verdict that can be "inconclusive" (CARD-27, WRIT-81).
 
 ## Read first
 
-- README shared names, `FaceSearchRecord`, `VerdictState`, `InconclusiveReason`, `TauInfeasibleError`, `UndeclaredH2LegError`
+- README shared names, non-mated source unit, `FaceSearchRecord`, `VerdictState`, `InconclusiveReason`, `TauInfeasibleError`, `CalibrationLeakError`, `UndeclaredH2LegError`
 - `scripts/eval_harness/open_set_identification.py`: `SearchResult`, `IETPoint`, `fnir_fpi_at_threshold(*, mated, nonmated, tau, n_enrolled_gallery_subjects)`, `iet_curve`. Reuse these where the face-level record maps onto `SearchResult`. If you write a face-level variant, it must equal `fnir_fpi_at_threshold` on single-face fixtures (parity test).
-- `scripts/eval_harness/calibrate_face_thresholds.py`: `identity_fold_assignment`, `build_trials` (lines ~376–520, bounded)
+- `scripts/eval_harness/calibrate_face_thresholds.py`: `identity_fold_assignment`, `select_fit_trials`, `build_trials` (lines ~376–525, bounded). `select_fit_trials` requires both the probe and the impostor-gallery identities to be in the fit set. Mirror it.
 - `scripts/bench/score_report.py`: `holm_bonferroni` is not called by `decide()`. `bootstrap_paired_delta` is image-level and is not used for verdicts; your interval resamples PSUs instead.
-- S0 `DecisionManifest` fields
+- S0 `DecisionManifest` fields; S1 `Frame` fields (`identity_fold`, `N_units`, `n_nonmated_eff`)
 
 ## Build
 
-1. `finish_outcomes(records, tau, boundary) -> per-face FaceOutcome`.
-   - `legacy_v1`: a non-mated face is accepted iff score > τ; a mated face iff score ≥ τ.
+1. `finish_outcomes(records, tau, boundary) -> per-record FaceOutcome`. A record is a mated GT face or a non-mated record (a non-mated GT face or a background detection).
+   - `legacy_v1`: a non-mated record is accepted iff score > τ; a mated record iff score ≥ τ.
    - `v2`: accept iff score ≥ τ for both.
    - The semantics are recorded in the output.
-2. `curve(records, thresholds, boundary)`: FNIR and FPI, with FPIR = FPI / n_nonmated, where n_nonmated is the fixed pool from S1 and never a detector count. FPI is reported as an integer. Also 1:1 FMR when pair scores are supplied.
-3. `calibrate_tau(records, *, calibration_folds, fpir_target, boundary)`:
-   - Uses only faces from calibration folds. Any test-fold face raises `CalibrationLeakError`.
-   - **Selection rule (the only one).** Pool the calibration folds' non-mated faces, matched on sex, age and origin where the frame allows (CAL-04). Use each face's top-1 non-mated score. Let N be the pool size and m = floor(fpir_target × N).
-     - `legacy_v1` (accept iff score > τ): τ is the (m+1)-th largest pooled score. It is the smallest τ with FPI ≤ m.
-     - `v2` (accept iff score ≥ τ): let w be the (m+1)-th largest pooled score and u the smallest pooled score strictly greater than w. τ is the midpoint of w and u. If no pooled score is greater than w, τ is the next representable float above w. This keeps the cut strictly above w, so it stays feasible when scores tie.
+2. `curve(records, units, thresholds, boundary)`: FNIR over mated GT faces, and FPI and FPIR over non-mated source units.
+   - A unit is a false-accept unit at τ when any of its non-mated records is `false_accept`.
+   - FPI = the number of false-accept units. It is an integer and counts units, not searches.
+   - N_units is the fixed count from S1 `build_nonmated_pool` for the scored pool. It is never a detector count.
+   - FPIR = FPI / N_units. It is at most 1 by construction.
+   - Additional spurious names are reported separately as an integer. They are every above-threshold non-mated name beyond the first in a unit, and every above-threshold name on a duplicate detection over a mated face (S2 Build 5). They are reported per 1,000 frame images in their own field. They never enter FPI or FPIR.
+   - 1:1 FMR is also reported when pair scores are supplied.
+   - Verdict and FPIR use the native arm only (S2 Build 2).
+3. `calibrate_tau(records, *, units, calibration_folds, fpir_target, boundary)`:
+   - Uses only units and records from calibration folds. Any test-fold unit or test-fold probe raises `CalibrationLeakError`. Any top-k gallery identity whose fold is not in `calibration_folds` raises `CalibrationLeakError`, which mirrors `select_fit_trials`.
+   - **Unit score.** Each unit's score is the maximum top-1 non-mated score over its records. For a non-mated GT face this is its one score. For a background unit it is the maximum over its detections.
+   - **Selection rule (the only one).** Pool the calibration units. Match them on sex, age and origin where the frame allows (CAL-04). Background units have no demographic field and form their own stratum. Let N be the pooled unit count and m = floor(fpir_target × N).
+     - `legacy_v1` (accept iff score > τ): τ is the (m+1)-th largest pooled unit score. It is the smallest τ with FPI ≤ m.
+     - `v2` (accept iff score ≥ τ): let w be the (m+1)-th largest pooled unit score and u the smallest pooled unit score strictly greater than w. τ is the midpoint of w and u. If no pooled score is greater than w, τ is the next representable float above w. This keeps the cut strictly above w, so it stays feasible when scores tie.
      - If N = 0, raise `TauInfeasibleError`. Never return +inf or −inf.
    - Per-fold τ is computed the same way per fold and reported as the spread (EXP-30). It never feeds the test read.
-   - `scores.json` records the chosen τ, the pooled FPI at τ, and the FPI and FNIR at the next lower candidate threshold.
-4. `fpir_resolvable(target, n_nonmated_eff)`: true iff n_nonmated_eff ≥ 3/target (300 at 0.01, 3,000 at 0.001). This is the conservative floor; the exact zero-event floor at 0.01 is about 298. When unresolvable, report the measured FPIR with its upper limit as a designed unknown (CARD-03).
-   - The FPIR upper limit uses the exact one-sided 95% Clopper–Pearson bound on the raw integer count FPI and the raw non-mated count N, labelled as an iid approximation. For the clustered pool, report the PSU-resampled percentile bound when FPI > 0. When FPI = 0, report the rule-of-three bound 3/n_eff, labelled approximate.
+   - `scores.json` records the chosen τ, the pooled FPI at τ (unit count), and the FPI and FNIR at the next lower candidate threshold.
+4. `fpir_resolvable(target, n_nonmated_eff)`: true iff n_nonmated_eff ≥ 3/target (300 at 0.01, 3,000 at 0.001). n_nonmated_eff counts non-mated source units divided by their PSU deff (S1 Build 7). This is the conservative floor; the exact zero-event floor at 0.01 is about 298. When unresolvable, report the measured FPIR with its upper limit as a designed unknown (CARD-03).
+   - The FPIR upper limit uses the exact one-sided 95% Clopper–Pearson bound on the integer FPI and the integer unit count N_units, labelled as an iid approximation. For the clustered pool, report the PSU-resampled percentile bound when FPI > 0. When FPI = 0, report the rule-of-three bound 3/n_nonmated_eff, labelled approximate.
    - Never pass a fractional n_eff as the binomial n.
    - Validate FPIR-UCL coverage separately from FNIR-delta coverage (zero events, unequal cluster sizes, weighted probability arm).
 5. `paired_cluster_bootstrap(outcomes_a, outcomes_b, psu_of, *, n_boot, seed, level)`:
@@ -61,35 +69,42 @@ Turn per-face search records into the frozen-τ answer: FNIR at the declared FPI
    - Build the query occluder × enrolled occluder table with faces, identities, PSUs and FNIR per leg.
    - A cell is "not scored" below `cell_floor_n_independent` independent PSUs.
    - Real and synthetic cells are kept in separate tables.
-8. Stage waterfall: counts per `FaceOutcome` per leg. Attribution shares come from the arm ladder (native vs oracle_box vs ref_landmarks), labelled "attribution, not causal".
+8. Stage waterfall and joint gaps.
+   - Counts per `LedgerStage` outcome per leg, over mated GT faces.
+   - For each attribution arm (`gt_crop_redetect`, `cached_yunet_landmark_replay`), report the joint gap: ΔFNIR against `native` on the same faces, with its paired PSU interval. Report the count of `unavailable` or `unavailable_fused` faces per arm.
+   - No percentage shares are apportioned to localization, alignment or the embedder. No arm is named as a cause. The gap is a joint intervention effect.
 9. Guardrails from the manifest. Each guardrail has a `role` set in the sealed manifest: `veto` gates the verdict; `report_only` is written to `scores.json` and the report and never gates.
-   - per-cohort FPIR (each cohort with resolvability) — veto
+   - per-cohort FPIR (each cohort with resolvability, over that cohort's non-mated source units; background units count only in the all-cohort FPIR) — veto
    - false names per 1k name mentions — veto
    - worst pair-cell FNIR, over the cells named in the guardrail's `cohort_scope`; unscored if any named cell is not scored — veto
-   - p95 ms per face (from S2 timings) — veto
+   - p95 ms per face — veto. It reads `timings.json` (Build 10), and its measured value is not written to `scores.json`.
    - cost per accepted description (nullable column) — report-only until its source (S2 timings plus the retry and abstention ledger) is wired
-10. `scores.json` writer: deterministic and sorted, with no clock reads. It records τ and the calibration spread, the pooled FPI at τ, the FPI at the next lower candidate, n_eff, deff, MDE and step levels per step, each interval, the state and reason per hypothesis, and each guardrail value with its role.
+10. Output files.
+    - `scores.json` is the semantic output only. It is deterministic and sorted, with no clock reads. It records τ and the calibration spread, the pooled FPI at τ, N_units, the FPI at the next lower candidate, n_eff, deff, MDE and step levels per step, each interval, the state and reason per hypothesis, and each guardrail value with its role. For the p95 veto it records the state only (`pass`, `fail` or `unscored`) and the sha256 of the `timings.json` it read. A rerun on the same run directory reads the same receipt, so the bytes match.
+    - `timings.json` is written by the run (S6a), never by `score`. `score` reads it and never rewrites it. Its contents are non-replayable and are excluded from the byte-identity rule.
 
 ## RED tests
 
-- Analytic fixture: 10 mated faces with known top-1 and 20 non-mated; FNIR, FPI and FPIR at τ match hand counts exactly. The face-level result equals `fnir_fpi_at_threshold` on the same single-face data.
+- Analytic fixture: 10 mated faces with known top-1 and 20 non-mated source units; FNIR, FPI and FPIR at τ match hand counts exactly. The face-level result equals `fnir_fpi_at_threshold` on the same single-face data.
 - Boundary: a score exactly equal to τ flips between `legacy_v1` and `v2` exactly as specified.
-- `calibrate_tau` raises on a test-fold face.
-- τ selection: a hand-computed calibration fixture yields exactly the expected τ under `legacy_v1` and under `v2`, including a fixture with tied scores at the boundary. An empty pool raises `TauInfeasibleError`.
-- Adding detector false alarms does not change FPIR.
+- `calibrate_tau` raises `CalibrationLeakError` on a test-fold unit, on a test-fold probe, and on a calibration probe whose top-k contains a test-fold identity.
+- τ selection: a hand-computed calibration fixture yields exactly the expected τ under `legacy_v1` and under `v2`, including a fixture with tied unit scores at the boundary. An empty pool raises `TauInfeasibleError`.
+- A no-face source image carrying an above-threshold spurious name raises the FPI numerator by one and leaves N_units unchanged.
+- A duplicate detection over a mated face with an above-threshold name increases additional spurious names and leaves FPI unchanged.
 - Bootstrap: identical outcomes give Δ = 0 with a degenerate interval, the observed ICC is null, and the verdict is `inconclusive`. Clustered fixture: the PSU interval is wider than the image-level interval.
 - Step levels: a fixture whose 95% lower bound is ≤ 0 is not `superior`, even when its 90% lower bound is > 0. A fixture that rejects H1 at the step-1 level reaches H2; one that does not leaves H2 without a state.
 - `decide()` never calls `holm_bonferroni` (a mock that raises fails the test).
 - An H2 leg not named in the manifest raises `UndeclaredH2LegError`.
-- Primary resolvability: `fpir_resolvable(0.01, 207)` and `fpir_resolvable(0.001, 207)` are false. `decide()` at n_nonmated_eff = 207 with a favorable FNIR interval returns `inconclusive` with `primary_fpir_unresolvable` and names no winner. The FPI = 0 case reports the rule-of-three bound labelled approximate, not a resolved 0.01 point.
+- Primary resolvability: `fpir_resolvable(0.01, 207)` and `fpir_resolvable(0.001, 207)` are false, with 207 as n_nonmated_eff in non-mated source units. `decide()` at that n_nonmated_eff with a favorable FNIR interval returns `inconclusive` with `primary_fpir_unresolvable` and names no winner. The FPI = 0 case reports the rule-of-three bound labelled approximate, not a resolved 0.01 point.
 - Guardrails: a null veto guardrail gives `required_guardrail_unscored`; a null `report_only` cost does not block a verdict.
 - MDE: at n_eff = 300 and δ = 0.05, a truly equal in-house leg gives `margin_unreachable_mde_gt_delta` for H2 and never `non_inferior`.
 - Development frame: a fixture in which H2's interval would reject gives `inconclusive` with `non_confirmatory_frame`, not `non_inferior`.
 - An unratified manifest gives `unratified` and still returns the numbers.
+- The p95 veto reads `timings.json`, and `scores.json` contains no p95 millisecond value.
 
 ## Done when
 
-Tests pass on the VM. Owns AE-1 (scoring known answers) and AE-6, and supplies the functions AE-2 to AE-4 call through S9.
+Tests pass on the VM. This slice owns AE-1 (scoring known answers) and AE-6, and supplies the functions AE-2 to AE-4 call through S9.
 
 ## Out of scope
 

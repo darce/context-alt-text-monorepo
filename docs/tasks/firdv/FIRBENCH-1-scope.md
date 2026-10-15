@@ -40,16 +40,16 @@ Human confirmation changes the wording of the audit, not its conclusion for dete
 | 0.10 | ≈ 115 effective mated searches | ≈ 91 |
 | 0.05 | ≈ 469 | ≈ 369 |
 
-- **What the current corpus can resolve.** The tracked corpus manifest v3r (646 images) gives 231 image–identity components (largest 79 images), size-weighted mean M̃ ≈ 18.2, and deff ≈ 2.72 at ICC 0.10, so n_eff ≈ 238. This is an image-level proxy. The report's M̃ = 12.925 does not reproduce from the tracked manifest, and the PSU recount on the pinned frame (S1) replaces this figure. At n_eff ≈ 238 the frame resolves Δ = 0.10 at both steps (115 and 91 required) and cannot resolve Δ = 0.05 (469 and 369 required). The H2 MDE at this n_eff is about 0.06, above δ = 0.05.
-- **FPIR resolvability.** A zero-error claim needs about 3/n independent non-mated searches. FPIR 0.01 needs ≥ 300 and 0.001 needs ≥ 3,000. The exact zero-event floor at 0.01 is about 298, so the 3/n rule is kept as the conservative floor. The current 207-probe non-mated set resolves only ≳ 0.0145 (CARD-27, EXP-12).
+- **What the current corpus can resolve.** The tracked corpus manifest v3r (646 images) gives 231 image–identity components (largest 79 images), image-count size-weighted mean M̃ ≈ 18.2, and deff ≈ 2.72 at ICC 0.10, so n_eff ≈ 238. This is an image-level proxy. The report's M̃ = 12.925 does not reproduce from the tracked manifest, and the PSU recount on the pinned frame (S1) replaces this figure. At n_eff ≈ 238 the frame resolves Δ = 0.10 at both steps (115 and 91 required) and cannot resolve Δ = 0.05 (469 and 369 required). The H2 MDE at this n_eff is about 0.06, above δ = 0.05.
+- **FPIR resolvability.** A zero-error claim needs about 3/n independent non-mated source units (the README definition). FPIR 0.01 needs ≥ 300 and 0.001 needs ≥ 3,000. The exact zero-event floor at 0.01 is about 298, so the 3/n rule is kept as the conservative floor. The current 207-probe non-mated set resolves only ≳ 0.0145 (CARD-27, EXP-12).
 
 ### Does the full report change the tool's design? Yes.
 
 | Change | Source | Canon |
 | --- | --- | --- |
 | **Frame registry with admissibility tags**: diagnostic, development or confirmatory. Golden-150 is diagnostic and verification-biased, the 646 corpus is development, and only new data is confirmatory. Every number carries its frame's tag. | v8 binding sequence; 2026-09-19 allocation | AUDIT-07, EXP-22 |
-| **End-to-end primary metric, with stage attribution.** Raw detections are kept. Each GT face ends as one of: missed, unaligned, embedded-wrong, rejected, or correct. The attribution ladder (oracle_box from GT boxes; ref_landmarks from a fixed reference detector via `landmark_cache`, because human landmarks do not exist) answers T-01/D-02, alignment vs embedder. | T-01, D-02, FIR-15 | EVAL-16, EVAL-17 |
-| **Fixed non-mated denominator.** Detector false alarms never dilute FPIR. FPI is reported as an integer, alongside FPIR and 1:1 FMR. | D3 | EVAL-18, EVAL-19 |
+| **End-to-end primary metric, with stage attribution.** Raw detections are kept. Each GT face ends as one of: missed, unaligned, embedded-wrong, rejected, or correct. Two joint-intervention arms report the gap to native: `gt_crop_redetect` (re-detection on the GT box crop) and `cached_yunet_landmark_replay` (YuNet landmarks from `landmark_cache`, because human landmarks do not exist). They apportion no localization, alignment or embedder share, and they do not finish T-01 or D-02. The estimand is the model-compatible native pipeline, not an embedder-only contrast. | T-01, D-02, FIR-15 | EVAL-16, EVAL-17 |
+| **Fixed non-mated source-unit denominator.** Detector false alarms add no denominator units. A false accept they cause counts against its source unit, and a unit counts once. FPI is an integer count of false-accept units, alongside FPIR and 1:1 FMR. Additional spurious names are reported separately. | D3 | EVAL-18, EVAL-19 |
 | **PSU = image–identity connected component** (plus exact-duplicate groups). deff and n_eff are shown next to every interval. | §0f, D1 | AUDIT-11, EXP-23 |
 | **Query × enrolled pair cells.** Real and synthetic occlusion are reported separately, and empty cells say "collect". | corpus contract | EVAL-20, EVAL-28, CARD-32 |
 | **Thresholds on identity-disjoint calibration folds**, frozen before any test read, and on matched non-mates where possible. | FIR-13 | CAL-07, CAL-04, EVAL-07 |
@@ -80,8 +80,8 @@ Yes, as diagnostics computed in each model's own space, never across spaces.
 
 1. **D3 operating point.**
    - Primary: FNIR at **FPIR = 0.01**, end to end, so detector misses count (EVAL-16, EVAL-18, EVAL-19). The gallery is the enrolled identities from `gallery_split`, with gallery size named.
-   - Non-mated population: verified zero-identity faces plus held-out identities on identity-disjoint rotating folds. "Unlabeled" alone is not non-mated.
-   - τ is fit on identity-disjoint calibration folds, frozen, and tested once (CAL-07, CAL-04, EVAL-07). The selection rule is the smallest τ whose pooled calibration FPI is within ⌊fpir_target × N⌋ over the pooled calibration non-mated faces (S3 Build 3). With an empty pool, the run refuses.
+   - Non-mated population: verified zero-identity faces plus held-out identities on identity-disjoint rotating folds. "Unlabeled" alone is not non-mated. The denominator is the non-mated source units: non-mated GT faces plus one background unit per frame image.
+   - τ is fit on identity-disjoint calibration folds, frozen, and tested once (CAL-07, CAL-04, EVAL-07). The selection rule is the smallest τ whose pooled calibration FPI is within ⌊fpir_target × N⌋ over the pooled calibration non-mated source units (S3 Build 3). With an empty pool, the run refuses.
    - Secondary points are FPIR 0.05 and 0.001, each flagged "unresolvable" until n_nonmated_eff ≥ 3/FPIR. An unresolvable point shows the measured FPIR with its upper confidence limit as a designed unknown (CARD-03).
    - The primary point has the same resolvability rule. If n_nonmated_eff < 3/0.01 (300) on the frame in use, the verdict is `inconclusive` with reason `primary_fpir_unresolvable`, whatever the FNIR interval says. No winner is named, and the frame is not admissible for a verdict at that point.
    - `fir-gate-contract-v1.json` `max_fpi` and `n_nonmated_declared` are written once S1 counts the frozen non-mated frame (max_fpi = ⌊0.01·n⌋), through the `firplan_d3_operating_point_<date>` decision named by FIR-13.
@@ -118,6 +118,6 @@ Yes, as diagnostics computed in each model's own space, never across spaces.
 
 ### Definitions (out of scope this wave)
 
-- **Detector replacement:** swapping or retraining the face detector (YuNet vs SCRFD vs buffalo's RetinaFace). The bench *measures* detector misses end to end and isolates them with the oracle_box arm. It does not change the detector.
+- **Detector replacement:** swapping or retraining the face detector (YuNet vs SCRFD vs buffalo's RetinaFace). The bench *measures* detector misses end to end. The `gt_crop_redetect` arm reports their joint gap and does not isolate localization. It does not change the detector.
 - **Stack mode:** driving the deployed recognition services over their public APIs (FIR-8 `cross_stack_bench` style) instead of in-process legs. It waits on AuraFace serving stacks, which do not exist yet. v1 is in-process only, with identical bytes and identical preprocessing receipts.
 - **Description-utility rubric:** a human-rated rubric for whether the alt text is useful beyond correct names (§0a guardrail, DESCQUAL-2 packets). It cannot be automated. A reserved, nullable report column only.

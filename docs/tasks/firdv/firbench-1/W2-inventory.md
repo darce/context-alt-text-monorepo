@@ -25,11 +25,11 @@ Pin every fact the implementation lanes would otherwise guess. Each row gives th
 4. **PSU structure** from corpus manifest v3r:
    - the number of image–identity connected components
    - the size distribution (min, median, max)
-   - size-weighted mean M̃, and deff at ICC 0.05, 0.10 and 0.20
-   - check M̃ against report §0f (12.925 on v3; v3r may differ, so report both if both manifests exist). The tracked v3r manifest was measured at 231 image–identity components (largest 79), M̃ ≈ 18.19, deff ≈ 2.72 at ICC 0.10, n_eff ≈ 238; this inventory re-runs that count and records the result, and the 12.925 figure is not reproduced from the tracked file
+   - size-weighted mean M̃ in face counts (the value S1 uses) and in image counts (comparison only), and deff at ICC 0.05, 0.10 and 0.20 from the face-count M̃
+   - check the image-count M̃ against report §0f (12.925 on v3; v3r may differ, so report both if both manifests exist). The tracked v3r manifest was measured at 231 image–identity components (largest 79), M̃ ≈ 18.19, deff ≈ 2.72 at ICC 0.10, n_eff ≈ 238; this inventory re-runs that count and records the result, and the 12.925 figure is not reproduced from the tracked file
 5. **Non-mated frame count**:
    - faces with zero identity on exhaustively annotated images, and identities with ≥ 2 appearances
-   - the implied FPIR resolvability (3/n)
+   - the non-mated source-unit count (non-mated GT faces plus one background unit per image) and the implied FPIR resolvability (3/n_nonmated_eff)
    - the current 207-probe non-mated set's provenance file
 6. **Reused API signatures**: `def` lines, with file:line, for every symbol named under "Read first" in the S0–S7 briefs. Flag any symbol that does not exist.
 7. **Historical artifacts for AE-6 legacy parity**: the path and sha256 of the artifact that holds `face_unknown_rejection` 204/207, and of the Golden-150 FIR-8 bench output, if present on the VM.

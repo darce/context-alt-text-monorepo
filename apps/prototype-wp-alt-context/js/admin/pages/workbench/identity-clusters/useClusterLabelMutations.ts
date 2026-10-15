@@ -13,6 +13,7 @@ import {
   type AcceptedMergeSuggestion,
   type MergeClusterResponse,
 } from '../../../api/recognition';
+import { isHttpStatus } from '../../../utils/appError';
 import { getClusterMutationErrorMessage, isDeliberateCancelError } from './clusterMutationUtils';
 import { useOptionalMergeSurvivors } from './MergeSurvivorContext';
 import {
@@ -69,6 +70,11 @@ interface UseClusterLabelMutationsOptions {
   onAbort?: () => void;
   cancelIdentityQueries: () => Promise<void>;
   invalidateQueries: () => void;
+  /**
+   * Narrow reconcile for a terminal 404 on a suggestion accept. Falls back to
+   * `invalidateQueries` when the caller does not supply one.
+   */
+  invalidateMergeSuggestionMiss?: () => void;
   updateCachedClusterLabel: (targetClusterId: string, nextLabel: string) => void;
 }
 
@@ -83,6 +89,7 @@ export const useClusterLabelMutations = ({
   onAbort,
   cancelIdentityQueries,
   invalidateQueries,
+  invalidateMergeSuggestionMiss,
   updateCachedClusterLabel,
 }: UseClusterLabelMutationsOptions) => {
   const queryClient = useQueryClient();
@@ -190,7 +197,17 @@ export const useClusterLabelMutations = ({
       // L1V-02 rationale, retained for the manual (dropdown) path: a plain
       // mergeCluster failure can still race a merge that committed server-side.
       // The atomic accept path cannot half-apply, so it needs no compensation.
-      invalidateQueries();
+      // A terminal 404 on the accept is the exception: the server has no such
+      // suggestion, so nothing committed and no identity batch can be stale because
+      // of this request. A global invalidate would refetch every mounted identity
+      // batch for an error the operator already sees, so only the merge-pending list
+      // is reconciled. Unknown outcomes (transport, abort, other status) keep the full
+      // reconcile because the affected identities cannot be named.
+      if (variables.suggestionId && isHttpStatus(err, 404) && invalidateMergeSuggestionMiss) {
+        invalidateMergeSuggestionMiss();
+      } else {
+        invalidateQueries();
+      }
       // FEBT2 X-LANE-02: see the rename gate — an elapsed transport deadline is
       // not an operator cancel and must reach the operator as copy.
       if (isDeliberateCancelError(err)) {

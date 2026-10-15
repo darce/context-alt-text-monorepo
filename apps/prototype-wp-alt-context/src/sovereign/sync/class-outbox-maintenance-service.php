@@ -1934,6 +1934,18 @@ class OutboxMaintenanceService {
 		);
 		$format = array( '%s', '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s' );
 		$payload = $this->decode_payload( $operation['payload'] ?? null );
+		$is_person_bind = 'cluster_person_bound' === ( $operation['operation_type'] ?? '' );
+		$intent_changed = false;
+		if ( $is_person_bind ) {
+			$canonical_name = $this->canonical_person_name( $payload, $tenant_id );
+			if ( null === $canonical_name ) {
+				// Fail closed: a missing or foreign-tenant person must not re-enqueue the stale bind.
+				return false;
+			}
+
+			$intent_changed = $canonical_name !== trim( (string) ( $payload['person_name'] ?? '' ) );
+			$payload['person_name'] = $canonical_name;
+		}
 
 		$normalized_merged_value = is_string( $merged_value ) ? trim( $merged_value ) : '';
 		if ( '' !== $normalized_merged_value ) {
@@ -1949,6 +1961,11 @@ class OutboxMaintenanceService {
 		}
 
 		$data['payload'] = $this->reset_auto_attempt_payload( $payload );
+		if ( $is_person_bind && ( $intent_changed || (int) ( $operation['expected_base_version'] ?? 0 ) !== $data['expected_base_version'] ) ) {
+			// A changed bind or rebased base gets a fresh key so the backend cannot re-serve the cached conflict replay.
+			$data['idempotency_key'] = wp_generate_uuid4();
+			$format[] = '%s';
+		}
 
 		$updated = $this->update_operation_status(
 			$outbox_id,
@@ -1964,6 +1981,32 @@ class OutboxMaintenanceService {
 		$this->sync_state_repository->refresh_curation_metrics( $tenant_id );
 		OutboxDrain::maybe_schedule_drain();
 		return true;
+	}
+
+	/**
+	 * Same-tenant canonical name for the person a cluster_person_bound row binds to.
+	 * Null (fail closed) when the person_uuid is blank, the person is missing or exists
+	 * only under another tenant, or its name is blank.
+	 *
+	 * @param array<string,mixed> $payload
+	 */
+	private function canonical_person_name( array $payload, string $tenant_id ): ?string {
+		$person_uuid = trim( (string) ( $payload['person_uuid'] ?? '' ) );
+		if ( '' === $person_uuid ) {
+			return null;
+		}
+
+		$rows = $this->select_locked_rows(
+			'SELECT name FROM %i WHERE person_uuid = %s AND tenant_id = %s LIMIT 1 FOR UPDATE',
+			$this->related_table_name( 'acx_persons' ),
+			array( $person_uuid, $tenant_id )
+		);
+		if ( ! is_array( $rows ) || array() === $rows ) {
+			return null;
+		}
+
+		$name = trim( (string) ( $rows[0]['name'] ?? '' ) );
+		return '' === $name ? null : $name;
 	}
 
 	/**

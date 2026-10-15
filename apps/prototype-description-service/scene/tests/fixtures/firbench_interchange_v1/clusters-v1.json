@@ -1,0 +1,218 @@
+{
+  "schema_version": 1,
+  "legs": [
+    {
+      "leg_key": "sface__native__ab12cd__cv4.10.0__ort1.18.0",
+      "config": {
+        "similarity_threshold": 0.8,
+        "metric": "cosine",
+        "linkage": "average",
+        "production_algorithm": "hdbscan",
+        "cluster_selection_epsilon": 0.6324555320336759,
+        "production_parameters": [{"name": "min_cluster_size", "value": 2}]
+      },
+      "dendrogram_cut": {
+        "distance": 0.2,
+        "caption": "Cut at cosine distance 1 minus the production similarity threshold",
+        "labels": [
+          {"face_id": "face-0001", "label": 0},
+          {"face_id": "face-0002", "label": 0},
+          {"face_id": "face-0003", "label": 0},
+          {"face_id": "face-0004", "label": -1}
+        ]
+      },
+      "acceptance_tau_reference": {
+        "status": "available",
+        "reason": null,
+        "data": {"tau": 0.41, "distance": 0.59, "label": "acceptance tau (not a cluster cut)"}
+      },
+      "labels": {
+        "status": "available",
+        "reason": null,
+        "data": [
+          {"face_id": "face-0001", "label": 0},
+          {"face_id": "face-0002", "label": 0},
+          {"face_id": "face-0003", "label": 0},
+          {"face_id": "face-0004", "label": -1}
+        ]
+      },
+      "partition_metrics": {
+        "status": "available",
+        "reason": null,
+        "data": {
+          "unit": "gt_face",
+          "scored_identity_status": "named",
+          "excluded_identity_statuses": ["unknown", "unresolved"],
+          "noise_policy": "minus_one_is_unpaired_and_bcubed_singleton",
+          "named_faces": 4,
+          "unknown_faces": 0,
+          "unresolved_faces": 0,
+          "coassigned_true_pairs": 0,
+          "coassigned_predicted_pairs": 3,
+          "true_pairs": 0,
+          "merges": 1,
+          "fragmentation": 0,
+          "unknown_absorbed": 0,
+          "noise_faces": 1,
+          "pairwise_precision": {"status": "available", "reason": null, "data": 0.0},
+          "pairwise_recall": {"status": "unavailable", "reason": "no true named pairs", "data": null},
+          "bcubed_precision": {"status": "available", "reason": null, "data": 0.5},
+          "bcubed_recall": {"status": "available", "reason": null, "data": 1.0},
+          "noise_fraction": {"status": "available", "reason": null, "data": 0.25}
+        }
+      },
+      "order_stability": {
+        "status": "available",
+        "reason": null,
+        "data": {
+          "n_orders": 3,
+          "seed": 7,
+          "stable_pairs": 3,
+          "compared_pairs": 3,
+          "fraction": {"status": "available", "reason": null, "data": 1.0}
+        }
+      },
+      "chaining": {
+        "status": "available",
+        "reason": null,
+        "data": {
+          "scope": {
+            "frame_id": "frame-0001",
+            "fold": 0,
+            "fold_role": "test",
+            "pair_selection_rule": "synthetic held-out verified-different pairs"
+          },
+          "input_pairs": 3,
+          "eligible_pairs": 2,
+          "path_linked_pairs": 1,
+          "third_identity_linked_pairs": 1,
+          "D": {"status": "available", "reason": null, "data": 0.5},
+          "C": {"status": "available", "reason": null, "data": 0.5},
+          "exclusions": [{"reason": "unverified_endpoint", "count": 1}],
+          "pairs": [
+            {
+              "pair_id": "pair-0001",
+              "left": {"face_id": "face-0001", "identity_id": "id-0001", "verification_ref": "qc-0001"},
+              "right": {"face_id": "face-0003", "identity_id": "id-0003", "verification_ref": "qc-0003"},
+              "path_linked": true,
+              "through_third_identity": true,
+              "third_identity_id": "id-0002",
+              "path": [
+                {
+                  "face_id": "face-0001",
+                  "identity_id": "id-0001",
+                  "verification_ref": "qc-0001",
+                  "identity_status": "named"
+                },
+                {
+                  "face_id": "face-0002",
+                  "identity_id": "id-0002",
+                  "verification_ref": "qc-0002",
+                  "identity_status": "named"
+                },
+                {
+                  "face_id": "face-0003",
+                  "identity_id": "id-0003",
+                  "verification_ref": "qc-0003",
+                  "identity_status": "named"
+                }
+              ],
+              "edges": [
+                {"source_face_id": "face-0001", "target_face_id": "face-0002", "cosine_similarity": 0.85},
+                {"source_face_id": "face-0002", "target_face_id": "face-0003", "cosine_similarity": 0.85}
+              ]
+            },
+            {
+              "pair_id": "pair-0002",
+              "left": {"face_id": "face-0001", "identity_id": "id-0001", "verification_ref": "qc-0001"},
+              "right": {"face_id": "face-0004", "identity_id": "id-0004", "verification_ref": "qc-0004"},
+              "path_linked": false,
+              "through_third_identity": false,
+              "third_identity_id": null,
+              "path": null,
+              "edges": []
+            }
+          ]
+        }
+      },
+      "mutual_knn": {
+        "status": "available",
+        "reason": null,
+        "data": {
+          "k": 2,
+          "face_ids": ["face-0001", "face-0002", "face-0003", "face-0004"],
+          "edges": [
+            {"source_face_id": "face-0001", "target_face_id": "face-0002", "cosine_similarity": 0.85},
+            {"source_face_id": "face-0002", "target_face_id": "face-0003", "cosine_similarity": 0.85}
+          ]
+        }
+      },
+      "neighbours": {
+        "status": "available",
+        "reason": null,
+        "data": {
+          "k": 2,
+          "metric": "cosine",
+          "edges": [
+            {"source_face_id": "face-0001", "target_face_id": "face-0002", "cosine_similarity": 0.85},
+            {"source_face_id": "face-0001", "target_face_id": "face-0003", "cosine_similarity": 0.85}
+          ]
+        }
+      },
+      "dendrogram": {
+        "status": "available",
+        "reason": null,
+        "data": {
+          "leaf_face_ids": ["face-0001", "face-0002", "face-0003", "face-0004"],
+          "linkage": [[0, 1, 0.1, 2], [2, 4, 0.15, 3], [3, 5, 0.9, 4]],
+          "cophenetic_correlation": {"status": "available", "reason": null, "data": 0.9}
+        }
+      },
+      "pca_spectrum": {
+        "status": "available",
+        "reason": null,
+        "data": {"explained_variance_ratio": [0.75, 0.25], "effective_dimension": 1.6, "retained_components": 2}
+      },
+      "histograms": [
+        {
+          "kind": "intra_identity_cosine",
+          "result": {"status": "unavailable", "reason": "no true named pairs", "data": null}
+        },
+        {
+          "kind": "inter_identity_cosine",
+          "result": {"status": "available", "reason": null, "data": {"bins": [{"lower": -1, "upper": 1, "count": 6}]}}
+        },
+        {
+          "kind": "vector_norm",
+          "result": {"status": "available", "reason": null, "data": {"bins": [{"lower": 0, "upper": 2, "count": 4}]}}
+        }
+      ],
+      "companions": {
+        "knn_jaccard": {"status": "not_evaluated", "reason": "no comparison run recorded", "data": null},
+        "linear_cka": {"status": "not_evaluated", "reason": "no comparison run recorded", "data": null}
+      },
+      "projections": [
+        {
+          "name": "projection-0001",
+          "method": "umap",
+          "n_components": 2,
+          "seed": 7,
+          "diagnostic_only": true,
+          "caption": "diagnostic projection · distances not meaningful",
+          "parameters": {"n_neighbors": 15, "min_dist": 0.05},
+          "versions": [{"package": "umap-learn", "version": "synthetic-1"}],
+          "result": {
+            "status": "available",
+            "reason": null,
+            "data": [
+              {"face_id": "face-0001", "coordinates": [0.1, 0.2]},
+              {"face_id": "face-0002", "coordinates": [0.2, 0.4]},
+              {"face_id": "face-0003", "coordinates": [0.30000000000000004, 0.6000000000000001]},
+              {"face_id": "face-0004", "coordinates": [0.4, 0.8]}
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -156,7 +156,8 @@ export const ClusterLabelingPanel = ({
 
   const candidates = useClusterRosterCandidates({
     clusterId,
-    enabled: persons.length > 0 && !rosterLoading && !rosterError && !mutations.isBusy && !mutations.lastMerge,
+    enabled: persons.length > 0 && !rosterLoading && !rosterError && !mutations.lastMerge,
+    paused: mutations.isBusy,
     rosterEntries: persons,
   });
 

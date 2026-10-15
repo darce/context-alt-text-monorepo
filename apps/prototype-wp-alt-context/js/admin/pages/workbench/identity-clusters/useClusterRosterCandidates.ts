@@ -13,10 +13,13 @@ import { buildRosterCandidateOptions } from './useClusterSuggestionsLoader';
 export const useClusterRosterCandidates = ({
   clusterId,
   enabled,
+  paused = false,
   rosterEntries,
 }: {
   clusterId?: string | null;
   enabled: boolean;
+  /** Pause reads during a write without hiding eligible cached choices or errors. */
+  paused?: boolean;
   rosterEntries: readonly RosterNamingEntry[];
 }): {
   options: ComboboxOption[];
@@ -26,10 +29,11 @@ export const useClusterRosterCandidates = ({
 } => {
   const id = clusterId?.trim() ?? '';
   const canQuery = enabled && Boolean(id);
+  const canFetch = canQuery && !paused;
   const query = useQuery({
     queryKey: queryKeys.clusters.rosterCandidates(id, ROSTER_CANDIDATES_TOP_K),
     queryFn: () => fetchClusterRosterCandidates(id, ROSTER_CANDIDATES_TOP_K),
-    enabled: canQuery,
+    enabled: canFetch,
     staleTime: 30_000,
     retry: false,
   });
@@ -39,12 +43,12 @@ export const useClusterRosterCandidates = ({
   );
   const { refetch } = query;
   const retry = React.useCallback(() => {
-    if (canQuery) {
+    if (canFetch) {
       void refetch();
     }
-  }, [canQuery, refetch]);
+  }, [canFetch, refetch]);
 
-  return { options, isLoading: canQuery && query.isLoading, isError: canQuery && query.isError, retry };
+  return { options, isLoading: canFetch && query.isLoading, isError: canQuery && query.isError, retry };
 };
 
 /** Preserve the closest row's evidence and payload order when the roster overlaps. */

@@ -692,7 +692,12 @@ export const NameFaceControl = ({
         <div className={`${classPrefix}__suggestions-error`} role="alert">
           <span>{__('Could not load name suggestions.', 'alt-context')}</span>
           {onRetrySuggestions ? (
-            <button type="button" className={`${classPrefix}__suggestions-retry`} onClick={onRetrySuggestions}>
+            <button
+              type="button"
+              className={`${classPrefix}__suggestions-retry`}
+              onClick={onRetrySuggestions}
+              disabled={isPending || isLoading || disabled}
+            >
               {__('Retry', 'alt-context')}
             </button>
           ) : null}

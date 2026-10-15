@@ -12,7 +12,12 @@ in — nothing else.** The local `/admin` console writes your laptop's
 Postgres. The prod `/admin` console (or a CLI exec'd inside the prod
 container) writes the prod identity DB. There is no cross-environment
 minting: a key minted locally will never authenticate against
-`api.altcontext.com`, and vice versa.
+`api.altcontext.com`, and vice versa. The same holds for every other hosted
+serving store, such as the measured dev-fir stack at
+`fir.dev.api.altcontext.com`: each has its own database, so a prod-minted key
+does not authenticate there. The `--env` value on a CLI is a database guard
+only; it never selects a recognition provider or model space
+([tenant onboarding §3](tenant-onboarding-smoke-test.md#3-create-site-tenants-and-keys)).
 
 If a key is being rejected, the first question is always: *which DB was this
 key minted in, and which service is the client actually calling?*
@@ -21,10 +26,10 @@ key minted in, and which service is the client actually calling?*
 
 | Question | Track 1 — Hosted service (product path) | Track 2 — Local fast loop (dev path) |
 | --- | --- | --- |
-| What the plugin calls | `https://api.altcontext.com` (or staging/dev vhosts) | `http://localhost:8000` (local description-service) |
+| What the plugin calls | `https://api.altcontext.com` (prod). Other hosted vhosts, such as `https://fir.dev.api.altcontext.com`, are separate stores; see the dev-fir section below | `http://localhost:8000` (local description-service) |
 | Who uses it | Real sites, demo, **and any LocalWP install exercising the product path** | Developers iterating on recognition-service code |
-| Where tenants/keys live | **Prod identity DB on the OCI VM** | Laptop-local Postgres (throwaway fixtures) |
-| How to mint | **`make admin-oci-mint TENANT=<uuid>`** (automated, recommended for scratch/eval/LocalWP), the prod `/admin` console over the tailnet, `make provision-customer EMAIL=<e> ENV=prod` (real customers), or `manage_api_keys --env prod` exec'd in the prod container | `make dev-setup` / `make dev-mint-key`, or the local `admin-dev` console |
+| Where tenants/keys live | **Serving store of the URL the client calls.** For `api.altcontext.com`: the prod identity DB on the OCI VM. A dev vhost has its own store, not the prod DB | Laptop-local Postgres (throwaway fixtures) |
+| How to mint | Prod store only: **`make admin-oci-mint TENANT=<uuid>`** (automated, recommended for scratch/eval/LocalWP), the prod `/admin` console over the tailnet, `make provision-customer EMAIL=<e> ENV=prod` (real customers), or `manage_api_keys --env prod` exec'd in the prod container | `make dev-setup` / `make dev-mint-key`, or the local `admin-dev` console |
 | How the plugin selects it | Default — `recognition_source` resolves to `service`; no config needed | **Dev hatch only**: `ACX_RECOGNITION_SOURCE=local` constant/filter (RECOG-1 removed the product toggle) |
 | Key install in the plugin | wp-admin **Settings page** (user way, stored as options) or `wp-config.local.php` constants (gate/reproducible way) | Local fixture key via the same two mechanisms |
 | Product surface? | Yes | **Never.** Dev convenience only; retirement deferred, kept as a fast iteration loop ([tech-debt entry](../tasks/tech-debt/local-vs-oci-description-service-drift-and-retirement.md)) |
@@ -42,9 +47,17 @@ A LocalWP install pointing at `api.altcontext.com` is a Track 1 client. Its
 tenant and key live in **prod**, so minting happens on the prod console/CLI —
 never the local one.
 
+A LocalWP install pointing at a different hosted vhost, such as the dev-fir
+stack, is also a Track 1 client, but its tenant and key are minted in that
+stack's own store. The prod paths in this section do not apply to it; see
+[LocalWP dev-fir client](#localwp-dev-fir-client-remote-isolated-store) below.
+
 ### Tenant UUID discipline
 
 - Mint each WordPress instance its **own fresh UUID** (`uuidgen`).
+- Do not recycle an existing UUID in any store. `tenant create` updates the
+  site URL of a tenant whose UUID already exists, so reuse moves that tenant to
+  a different site ([tenant onboarding §1](tenant-onboarding-smoke-test.md#1-ordered-targets-and-stop-gates)).
 - **Never reuse `00000000-0000-4000-8000-000000000001` on prod.** That UUID is
   taken twice over: it is the demo site's tenant on prod
   (`demo.altcontext.com`, see the [demo tenant-mint
@@ -55,8 +68,9 @@ never the local one.
 
 ### Fastest: `make admin-oci-mint` (automated, no secret to the laptop)
 
-For a scratch/eval or LocalWP tenant, one command mints the key with no manual tunnel or
-token copy:
+For a scratch/eval or LocalWP tenant on the **prod** store (`api.altcontext.com`),
+one command mints the key with no manual tunnel or token copy. It does not mint
+for other hosted stores such as dev-fir:
 
 ```sh
 cd apps/prototype-description-service
@@ -92,7 +106,7 @@ need to browse/list/revoke keys, and `make provision-customer` for a real custom
    `apps/prototype-description-service/.env` is the *local* console's token —
    it will be rejected here, by design.)
 3. Create the tenant: fresh UUID + the site URL (e.g. `http://localhost:10010`
-   for a LocalWP install).
+   for a LocalWP install that calls this prod store).
 4. Mint the key. **It is shown exactly once** (hash-only storage) — copy it
    immediately.
 5. Install it in the plugin (choose one):
@@ -123,6 +137,41 @@ Rotate/revoke through the same prod console (revoke button; idempotent) or
 writes an `audit_events` row. Prod resets orphan **all** previously minted
 keys — after any prod DB reset, expect every Track 1 client (including LocalWP
 installs) to need a fresh tenant + key.
+
+The `manage_api_keys` operations documented in
+[tenant onboarding §3](tenant-onboarding-smoke-test.md#3-create-site-tenants-and-keys)
+are tenant create, create, list, and `revoke --key-id`. CLI/admin replacement is:
+create the new key, configure and verify it, revoke the old key ID, then prove
+the old key is denied and the new key still works. Portal rotation uses its own
+supported operation and contract; do not assume a `rotate` flag exists on the CLI.
+
+### LocalWP dev-fir client (remote, isolated store)
+
+The measured dev-fir stack is a separate hosted store with its own database,
+`ACX_ENV=dev-fir`, and an SFace 128D model space. It is not the prod identity DB,
+and a prod-minted key does not authenticate against it.
+
+- **Topology.** The LocalWP `fir` site at `http://localhost:10028/wp-admin/`
+  calls `https://fir.dev.api.altcontext.com`. The `localhost` origin is the
+  browser site's address; it does not make the key or the service local.
+- **Mint.** Use the dev-fir stack's own CLI with `--env dev-fir` on the dev-fir
+  service VM, after verifying `ACX_ENV` inside the API container, as
+  [tenant onboarding §3, Site 3](tenant-onboarding-smoke-test.md#site-3--measured-dev-fir-stack)
+  describes. The site URL is `http://localhost:10028`. Do not use
+  `make admin-oci-mint`, the prod `/admin` console, or `--env prod`, and do not
+  mint on the laptop.
+- **Install and verify.** Install the raw key as in Track 1 step 5, into the
+  approved secret manager and the matching WordPress setting, then verify with
+  Test Connection against the effective credentials. Record only tenant and key IDs.
+- **Replace or revoke.** Follow the CLI/admin replacement sequence above. Revoke
+  the old key ID only after the new key is verified.
+- **Scope.** This subsection records the measured topology. It does not claim
+  every dev-fir endpoint is ready; readiness gates are in
+  [tenant onboarding §1](tenant-onboarding-smoke-test.md#1-ordered-targets-and-stop-gates).
+  This file has no automated dev-fir mint. A proposal for a local, non-secret
+  credential inventory is in
+  [localwp-auth-registry-proposal.md](localwp-auth-registry-proposal.md); it is
+  not implemented.
 
 ---
 
@@ -223,7 +272,8 @@ make issue-demo-ci-account LABEL="ACX CI" ADMIN_USER=acx-demo-admin
 ```
 
 Both print `api_key=` once on stdout and never store the raw key. `ENV`
-selects the DB (`local` default; `prod` for hosted).
+selects the DB only (`local` default; `prod` is the generic prod store, not
+every hosted vhost). It does not select a provider or model space.
 
 ---
 
@@ -274,3 +324,4 @@ Rules:
 | `tenant create` 409 on prod for `…0001` | That UUID belongs to the demo site on prod. Generate a fresh UUID for your instance. |
 | Bootstrap `ERROR: failed to rotate WordPress credential` | `wp user update` failed after `WP_ADMIN_PASSWORD` changed. Check wp-cli/DB reachability; do not revert the secret to "make bootstrap green" — that re-issues the revoked password. |
 | Changed `WP_ADMIN_PASSWORD` but old login still works | Apply step (key 2) did not run, or bootstrap is an old copy without AUTH-01 converge. Re-run current `bootstrap-wp.sh`. |
+| dev-fir (`fir.dev.api`) rejects a key that `--env prod` minted | Wrong store. A prod-minted key is not valid on the dev-fir stack; mint with `--env dev-fir` per [tenant onboarding §3, Site 3](tenant-onboarding-smoke-test.md#site-3--measured-dev-fir-stack). |

@@ -10,7 +10,7 @@
 > **Review Coverage Target:** frontend + one PHP read; browser pass on `post.php?post=107&action=edit` required
 > **Depends on:** none (Wave A). Shares `components/ui/FaceOverlayLayer.tsx` with the review queue and the lightbox; no other WBTRUST task edits it.
 > **Executor:** `claude-remote` `claude-haiku-5-5`, effort `xhigh` for implementation and grunt work (operator order 2026-10-15). Brief each slice separately (1–3 files), inline the slice text plus codemap snippets; if the write-enabled remote Claude harness is denied or unavailable, record a blocker and ask the operator — no silent fallback to another model.
-> **Prior art:** [scope](../../scopes/workbench-curation-trust-scope.md) (R7, root cause 11), [UX-map evaluation](../../assessments/current/workbench-curation-trust-uxmap-evaluation-2026-10-15.md) (B5, C5), [workbench-identity-chips map](../../../apps/prototype-wp-alt-context/docs/ux-maps/workbench-identity-chips.md)
+> **Prior art:** [scope](../../scopes/workbench-curation-trust-scope.md) (R7, root cause 11), [UX-map evaluation](../../assessments/current/workbench-curation-trust-uxmap-evaluation-2026-10-15.md) (B5, C5), [workbench-identity-chips map](../../../apps/prototype-wp-alt-context/docs/ux-maps/workbench-identity-chips.md). Semantic prior art (handoff, by ID only): decision 10726 (GUIDE2IMG-1 `g2i-fitbox`: boxes drift when the overlay is sized to a wrapper whose painted image no longer has its natural aspect ratio), findings 4576 and 4477 (UXP-5: `faceOverlayDomId` id safety; `FaceOverlayLayer` prop contract vs list↔overlay cross-highlight), finding 3776 (E21-5: media-detail payload carries no bbox).
 > **Carried findings (by ID only):** none recorded yet; query `review_findings(list, task_ref="WBTRUST-6")`
 
 ## WBTRUST-6. Attachment overlay — over the real image, labels outside the face
@@ -56,6 +56,9 @@ On the attachment edit screen the face overlay sits on WordPress's own preview i
 - `js/attachment-edit/AttachmentFacesApp.tsx`: five states (loading, error/session-expired, degraded, empty, faces). In the faces state it renders its own `<figure className="acx-attachment-faces__figure"><div className="acx-attachment-faces__image-wrap"><img/><FaceOverlayLayer/></div></figure>` — a duplicate of core's preview — then `UncuratedFaceList`.
 - `js/components/ui/FaceOverlayLayer.tsx`: `controlStyle` places each chip at the bbox **centre** (`translate(-50%, -50%)` in `js/admin/styles/components/_face-overlay.scss`), so the label text (`acx-face-overlay__chip-label`, curated) sits on the face. Variants: curated chip with label, uncurated marker (`acx-face-overlay__marker-label` is sr-only), review "?" chip (`reviewFaceId`). Other consumers: `ReviewQueue.tsx`, `FaceLightbox.tsx`, `UncuratedFaceList.tsx`, `faceGeometry.ts`.
 - Tests: `js/attachment-edit/__tests__/AttachmentFacesApp.test.tsx`, `UncuratedFaceList.test.tsx`, `keyboardWalk.test.tsx`; `js/components/ui/__tests__/FaceOverlayLayer.test.tsx`, `FaceLightbox.test.tsx`.
+- Landed analogue to reuse, not copy: the guided press-photo overlay (`js/admin/pages/guided/GuidedFaceOverlay.tsx`, `GuidedSamplePhoto.tsx`) hit the same failure class (percent boxes resolved against a wrapper that is not the painted image) and was fixed by carrying the natural aspect ratio on the wrapper and `object-fit: contain` (decision 10726). The attachment host must be sized to the **displayed image rect**, never to a stretched container.
+- Dev-site caveat: `:10028` serves a pinned release (see scope § Step 0), so a defect seen there may predate `main`. S1 records the served build before reading the DOM.
+- `faceOverlayDomId` is the single id helper (three call sites in `FaceOverlayLayer.tsx`); it is also read by `UncuratedFaceList.tsx` and `ReviewQueue.tsx`. Keep it as is.
 - Unverified: which element WordPress renders as the preview inside `#media-head-107` on this site (the operator's DOM paste names only the container), and whether the image editor (`imgedit`) swaps the `<img>` after crop/rotate.
 
 ## Target Outcome
@@ -100,7 +103,7 @@ Owned paths:
 
 Pin the host element and fail first.
 Closes: R7 (diagnosis). Canon: EVAL-16, PERC-01.
-Design decision (binding): on `post.php?post=107` capture the real structure under `#media-head-107` (container classes, the preview `<img>`, whether it has a positioned parent, what `imgedit` replaces); record it in the decision. RED tests: label rect intersects bbox with today's centred chip; the faces state renders a second `<img>`.
+Design decision (binding): first record the served plugin build (scope § Step 0) so the defect is attributed to `main` or to the pinned release. Then, on `post.php?post=107`, capture the real structure under `#media-head-107` (container classes, the preview `<img>`, whether it has a positioned parent, what `imgedit` replaces); record it in the decision. RED tests: label rect intersects bbox with today's centred chip; the faces state renders a second `<img>`.
 Acceptance: decision contains the selector chosen and a fallback; RED tests fail on the base SHA.
 
 ### Slice S2: place-label
@@ -121,7 +124,7 @@ Acceptance: `FaceOverlayLayer.test.tsx`, `FaceLightbox.test.tsx`, `ReviewQueue` 
 
 Overlay the real image.
 Closes: R7. Canon: PERC-01, NAV-19, LAY-21.
-Design decision (binding): `useMediaHeadHost(attachmentId)` finds `#media-head-<id>`'s preview `<img>` (selector from S1), appends a host div to its positioned parent (adds `position: relative` via a class, not inline style on core elements), sizes it to the image's displayed rect with `ResizeObserver` + `load`, re-resolves on `MutationObserver` (imgedit), and removes the host on unmount. `OverlayPortal` renders `FaceOverlayLayer` into the host. If the head is missing, fall back to the compat-field figure.
+Design decision (binding): `useMediaHeadHost(attachmentId)` finds `#media-head-<id>`'s preview `<img>` (selector from S1), appends a host div to its positioned parent (adds `position: relative` via a class, not inline style on core elements), sizes it to the image's displayed rect (`getBoundingClientRect` relative to the parent, not the parent's box — decision 10726) with `ResizeObserver` + `load`, re-resolves on `MutationObserver` (imgedit), and removes the host on unmount. `OverlayPortal` renders `FaceOverlayLayer` into the host. If the head is missing, fall back to the compat-field figure.
 Acceptance: portal + resync tests; fallback test; no second `<img>` in the faces state when the head exists.
 
 ### Slice S5: remove-duplicate-figure

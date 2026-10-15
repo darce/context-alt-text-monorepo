@@ -24,7 +24,7 @@
    - Appends one unspent `UnsealToken` for `{frame_id, frame_sha256, decision_sha256, run_id, code_sha, scorer_sha}` to the ledger. The ledger is local-only under `benchmarks/private/`: never committed, never copied into a brief or report.
    - Records the token id in the run manifest for `run_id`.
    - The token is consumed only by the first sealed read in S6a (S0 Build 7).
-4. Make targets `fir-bench-report`, `fir-bench-compare` and `fir-bench-unseal`. This lane is the second editor of `mk/evals.mk`: it appends after S6a's targets and merges before S9 appends `fir-bench-acceptance`. Both targets use `uv run --directory apps/prototype-description-service --locked --extra dev`; `fir-bench-report` needs no eval flag.
+4. Make targets `fir-bench-report`, `fir-bench-compare` and `fir-bench-unseal`. This lane is the second editor of `mk/evals.mk`: it appends after S6a's targets and merges before S9 appends `fir-bench-acceptance`. All three targets use `uv run --directory apps/prototype-description-service --locked --extra dev`; `fir-bench-report` needs no eval flag.
 
 ## RED tests
 

@@ -144,3 +144,46 @@ EVAL_PYTHON ?= python3
 .PHONY: eval-zero-rule-baseline
 eval-zero-rule-baseline:
 	@cd $(EVAL_SERVICE) && PYTHONPATH=$$PWD $(EVAL_PYTHON) -m scripts.eval_harness.zero_rule_baseline $(EVAL_ARGS)
+
+# =============================================================================
+# FIRBENCH-1 S6a · one immutable run, then its score (AE-12 tracer entry point)
+# =============================================================================
+#
+# RUN_DIR must resolve under benchmarks/private/ (require_private_output_path); a
+# relative RUN_DIR resolves from the repository root. FIR_BENCH_DECISION defaults to the
+# committed decision manifest. fir-bench-run needs the bench extra and ACX_EVAL_BENCH=1
+# for the insightface leg. fir-bench-score reads files only: dev extra, no eval flag.
+
+FIR_BENCH_DECISION ?= benchmarks/manifests/fir-bench-decision-v1.json
+FIR_BENCH_LEGS ?= sface,auraface,insightface
+FIR_BENCH_ARMS ?= native
+
+.PHONY: fir-bench-run fir-bench-score
+
+## fir-bench-run: create one immutable FIRBENCH-1 run directory (scoring is a separate step)
+# Usage: make fir-bench-run FRAME=<frame_id> RUN_DIR=benchmarks/private/firbench/runs/<run_id>
+#        [LEGS=sface,auraface,insightface] [ARMS=native] [SUBSET=N SUBSET_SEED=S] [CREATED_AT=<ISO 8601 with offset>]
+fir-bench-run:
+	@if [ -z "$(FRAME)" ] || [ -z "$(RUN_DIR)" ]; then \
+		echo "error: FRAME and RUN_DIR are required (e.g. FRAME=golden150-v1 RUN_DIR=benchmarks/private/firbench/runs/run-0001)" >&2; \
+		exit 2; \
+	fi
+	@ACX_EVAL_BENCH=1 uv run --directory "$(EVAL_SERVICE)" --locked --extra dev --extra bench \
+		python -m scripts.eval_harness.firbench_cli run \
+		--frame "$(FRAME)" \
+		--decision "$(abspath $(FIR_BENCH_DECISION))" \
+		--legs "$(or $(LEGS),$(FIR_BENCH_LEGS))" \
+		--arms "$(or $(ARMS),$(FIR_BENCH_ARMS))" \
+		$(if $(SUBSET),--subset "$(SUBSET)" --subset-seed "$(SUBSET_SEED)",) \
+		$(if $(CREATED_AT),--created-at "$(CREATED_AT)",) \
+		--out "$(abspath $(RUN_DIR))"
+
+## fir-bench-score: write scores.json for an existing run (reads files; never rewrites timings.json)
+# Usage: make fir-bench-score RUN_DIR=benchmarks/private/firbench/runs/<run_id>
+fir-bench-score:
+	@if [ -z "$(RUN_DIR)" ]; then \
+		echo "error: RUN_DIR is required (e.g. RUN_DIR=benchmarks/private/firbench/runs/run-0001)" >&2; \
+		exit 2; \
+	fi
+	@env -u ACX_EVAL_BENCH uv run --exact --directory "$(EVAL_SERVICE)" --locked --extra dev \
+		python -m scripts.eval_harness.firbench_cli score "$(abspath $(RUN_DIR))"

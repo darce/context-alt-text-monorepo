@@ -9,6 +9,7 @@
 > - **Target Branch**: `feature/firbench-1`
 > - **Review Coverage Target**: 2
 > - **Status**: draft v6. Reconciles the v5 plan and scope to the landed c274 producers and to the frozen S9 pre-outcome contract, before any Monte Carlo outcome. Earlier v5 reconciliations (FB1-DGAL-02, MCP 16810, MCP 16848/16855/16856, MCP 16732–16736, clarifications 16756, 16763, 16773 and 16777) stand unless this revision marks them superseded. The 29 original high/medium fixes are retained; the three deferred low findings (SOL17, MUSE11, MUSE12) are folded in. Canon-qualified citations, AE numeric gates and bootstrap and H1/H2 margins are unchanged. Implementation-status statements from v2–v5 (for example "only S1 landed" or "producer obligations still open") are superseded by [Current State](#current-state-analysis-verified-2026-10-15-on-the-c274-tree-code-read-wc--l-grep). The checklist is not ticked. The frozen v6 S9 run is recorded in the [S9 post-outcome assessment](#s9-post-outcome-assessment-frozen-v6-run-2026-10-15). Numerical acceptance fails there (2 gated evals failed, 6 passed), so no S9 pass is claimed. Coding-slice completion is distinct from scientific and real-data acceptance. This document claims no real-data evidence, no observed ICC, no human observation, no ratification, no seal and no budget, and it is neither merge-ready nor task-complete.
+> - **Amendment CI-1 (2026-10-16; proposed, not yet in effect)**: appends [Code integration checkpoint CI-1](#code-integration-checkpoint-ci-1-amendment-2026-10-16-proposed), separating bounded software integration from research acceptance. It changes no frozen S9 section, AE rule, numerical fact or checklist box. It takes effect only after independent LAND-MERGE-1's exact replacements and expected plan hash are verified, latest planning PASS and zero open planning-subject findings are recorded, canonical plan-accept establishes this exact reviewed plan as the current accepted baseline, and the coordinator finalizes the plan before merge. Until then the v6 integration gate remains effective. Research acceptance, verdicts, model selection, W5 and task completion still require AE-1 through AE-12.
 > - **Source (v6)**: `9bcb442e71e238de879ab7db651587e04c8e2320`. Where a declared SHA is not present in the local history, the source tree and actual producers govern. Revision v5 source (post-gate reconciliation): `44fa2defc2f07aa5665c9de0e2b9d36e8cf86dbf`.
 > - **Source HEAD (second dispatch)**: `ccf4119ccf3c81f34477aba80e84a4a7a454cc1c`
 > - **Historical source HEAD**: `b6dcaad70f93c2d385d30b31b148e83265d43874`
@@ -687,7 +688,7 @@ Lane-ready briefs: [firbench-1/README.md](firbench-1/README.md). This section is
 - the current canon release (v0.26.2 full mirror, rows cited by ID and source);
 - the code-map coverage note: the code map excludes the `scripts/` subtree, so bounded actual source reads are the documented fallback, not a complete graph.
 
-**Holds.** H2 and the scientific backlog stay on HOLD. Frozen v6 H2 126/2000 = .063 and cell power 1113/2000 = .5565 remain failed. No task finish or `main` merge follows from any lane in this section.
+**Holds.** H2 and the scientific backlog stay on HOLD. Frozen v6 H2 126/2000 = .063 and cell power 1113/2000 = .5565 remain failed. No task finish or `main` merge follows from any lane in this section. Once in effect, [CI-1](#code-integration-checkpoint-ci-1-amendment-2026-10-16-proposed) is a separate coordinator path for code integration on `main`, gated by its own checkpoint gate. It lifts none of these holds. The W4 row's AE-1 to AE-12 gate still governs research acceptance.
 
 **UX historical explorer track.** Its contract is the [comparison explorer plan](../../../benchmarks/protocols/firbench-1-comparison-explorer-plan.md). A minimal useful browser on the existing `comparison-export` then `explore` commands can land before any future grouping bridge, GT or numerical work. UX-RENDER05 and the recorded product gaps stay pending until their owners' normal-VM regressions and an independent gate.
 
@@ -742,3 +743,162 @@ Training, detector replacement, deployments, stack mode, the description-utility
 - No number appears without its frame admissibility, n_eff and interval.
 - No image-bearing artifact is tracked by git.
 - The S9 acceptance report is not claimed as passed. The full-replicate v6 run completed and fails two gated evals. A small-R or subset run is never full acceptance evidence.
+
+## Code integration checkpoint CI-1 (amendment, 2026-10-16, proposed)
+
+**Status and authority.** This is a prospective amendment from remote lane LAND-scope-r3, the third corrective planning dispatch (claude-opus-5-5 xhigh, per the model governance table). It follows the coordinator's canon-sourced proposal recorded as MCP 17238.
+
+- **Input.** Public source `166c6cd9fb5888ed9a62ba4f2e736806d66be15c`, a history-stripped privacy transport (tree `c4173cbd3da3758d6cbc5dd35d808f8a13cb92d6`) carrying the exact candidate bytes of all 153 changed paths.
+- **Branches.** `main` `9cdecde83bf0c8e07cedaad80d9d44c69d7d2ce9` is unchanged. `feature/firbench-1` is `1e9e2a170c22b21fecb2bcddbcd5cec742471187`: the reviewed CSS and FPIR commits over `64e70e15`.
+- **Proposed merge.** Unlanded merge `c2d9260d090359c8657041bfa9aeb1cc776e66ae` (tree `3f26b15447ba3d05cf040cb0c2b6fef22db52c48`) replaces main draft v2 with exactly this plan's earlier bytes `c88109a2…` (PLAN-1 report `bdd5652a`). If this amendment lands, the merge candidate must be rebuilt, and G1 binds the rebuilt one.
+- **Effect.** Effective only as stated in the metadata. This is not a ratification, seal, waiver or MCP action.
+
+**Request and its limits.** The operator asked to keep landing the feature and to open the sample. The benchmark has a single user, and operator decision 17234 made accessibility-only requirements nonblocking. These authorize concrete work. They do not waive scientific accuracy, data preservation, privacy, provenance or any other merge safeguard, and this amendment reads them no wider.
+
+**Why a separate checkpoint.**
+
+- **The current gate.** Both master plans gate `main` on AE-1 to AE-12 green: main draft v2 through its Completion evals and W4 "merge on green"; this plan through its Completion evals, W4 and Success Criteria. That gate is unmet. The frozen v6 run fails AE-2b and AE-4. AE-5, AE-6, AE-11, AE-12 and the AE-10 real-run alignment are pending. PLAN-1 found no software-only exception.
+- **Why not wait.** One research-sized batch would hold verified descriptive software behind evidence that cannot exist soon ([OPS-64]).
+- **What may be split.** [PROD-18] allows releasing a slice the user can accept on its own, provided it drops no required safeguard. A planning split waives no release invariant. CI-1 is that slice.
+- **What stays.** AE-1 to AE-12 remain the unmodified gate for research acceptance, any verdict or model selection, W5 and task completion.
+
+**Why the descriptive path can be accepted independently, and its limits.**
+
+1. **No data edge.** `comparison-export` and `explore` read registered report bytes and the export wire only. Neither reads S9 output, a decision manifest, a frame, scores or any AE result ([GRPH-32]). The failed AE-2b and AE-4 gates characterise the H2 boundary and cell power of `decide` and `paired_cluster_bootstrap`. The descriptive path calls neither.
+2. **No new statistic.** The export copies a fixed whitelist of recorded numbers. A missing or refused value becomes null, never zero. Every report carries `compatibility: unknown` and its own pointer qualification, with no winner, delta or acceptance field (`firbench_comparison_export.py` module docstring and `summarize_legacy_report`). The page says no value is a winner, ranking, hypothesis result or gate (`firbench_explorer.py` glossary). Correctness is therefore a software property: exact projection, null semantics, refusals and no-clobber writes. It does not depend on numerical acceptance, and no frame, divisor or threshold moves (CARD-11 `measurement-integrity`).
+3. **The integrated research code stays fail-closed.** This was inspected in the code, not assumed:
+   - `firbench_score.decide` (`firbench_score.py:853`, `:904–909`) returns `unratified` with numbers only whenever `require_verdict_allowed` (`firbench_contract.py:948`) raises.
+   - The committed `fir-bench-decision-v1.json` (`7b89a350…`) has null ratification, a null seal and frames with `exhaustive: null`, so no superior or non-inferior verdict is reachable.
+   - Sealed reads require a single-use token (`require_frame_read_allowed`).
+   - The `fir-bench-acceptance` CLI returns exit 1 on any failed full check (`firbench_selftest._acceptance_cli_status`, `firbench_selftest.py:1973–1998`).
+   - A real run refuses a missing private input asset with `FrameContractError` (`firbench_runtime.py:97`).
+4. **Limits.** The values are historical. All five pointers are `partial`, compatibility is unknown, AuraFace has no report, and independent GT is absent. They support no winner, model selection, training or deployment, and CI-1 claims none of these. The tool's Objective, selecting the in-house pipeline, is not met by CI-1.
+
+**Unit ([RLSE-12], [GRPH-06]).** The deployable unit is the whole rebuilt merge-candidate tree, not an explorer subset. `explore` and `comparison-export` sit in `firbench_cli.py` (`_build_parser` 1371–1415, `main` 1431–1500) beside `run`, `score`, `report`, `compare`, `unseal` and `evidence`, and all of them import `firbench_contract`. The explorer and the research code are one connected component. Splitting them would need new production edits and a second, unreviewed byte set. So the CI-1 gate evaluates the whole tree's software, while CI-1's user-facing claims cover only the descriptive path.
+
+| Aspect | CI-1 definition |
+| --- | --- |
+| Accepted value | On the VM, the user turns registered existing evidence into a bounded aggregate export, renders an offline historical comparison page with definitions, and opens it. Existing developer and tool diagnostics are integrated as tools only: evidence pointer commands, refusal and eligibility guards, the software test suites, and small-R simulator checks with `full_acceptance_evidence = false`. |
+| Claims | **C1 Read-only consumption.** Only registered `report-json` pointers to `acx-eval/v1` `face_bakeoff` reports. The evidence DB is opened `mode=ro`, consumed bytes are hash-bound, and any other kind refuses the whole export. **C2 Faithful projection.** The exact v1 five-root-key wire with nested `clustering.parameters.d_cut` and whitelist values only. A null means VALUE UNAVAILABLE, SOURCE STATUS NOT EXPORTED. **C3 Offline render.** Strict wire validation, one self-contained `index.html`, no network requests, and glossary definitions including FNIR, FPIR and the H1-before-H2 condition. **C4 Data preservation.** The export writes an `O_EXCL` temporary, then claims the name with `os.link` (`write_export`, `firbench_comparison_export.py:532`). `explore` publishes a complete staged directory with Linux `renameat2(RENAME_NOREPLACE)` (`firbench_explorer.py:410`). A refusal publishes nothing. The DB, inputs and existing outputs stay byte-identical. **C5 Research guards** stay in force as listed above. **C6 Privacy.** Pseudonymous IDs only. No image bytes, data URIs or `benchmarks/private/` paths in the diff. |
+| Not claimed | Any AE pass. Scientific, numerical or real-data acceptance. A winner, ranking, model selection, training or deployment. GT, QC, observation, frame hashes, ratification, seal or budget. Input parity inferred from equal counts, nulls or digests. Full FB1-UX-GATE-07 or UX-03 coverage. Any v7 implementation. Darwin CLI support. Accessibility conformance. Task completion. |
+| Platform | **Linux VM only.** Use the retained venv `.venv-lane-feature-firbench-1-909fa00d` with numeric threads 1. The Constraints already permit no local execution except the AE-10 laptop scan. The Mac may only serve the VM-rendered page from a loopback-only static server, and only after its SHA-256 matches the VM render. Running the CLI on the Mac is outside CI-1. The Darwin `renamex_np` branch ships unverified and unsupported, and UX-RENDER-02 stays open for it. |
+| Inputs | The existing VM evidence DB with its registered pointers, unchanged. 1 to 64 artifact IDs. New output paths. **Sample:** safe export `e467cf574b5f24c1a51416205b1b0bb2f7b21ef3436f1235a8ea6a871f6bca15` (5 pointers, 4 unique reports; SFace 3, InsightFace 1, AuraFace 0; all `partial`). |
+| Outputs | A `firbench/comparison-explorer-export-v1` JSON. A new directory containing only `index.html`. On success: the path on stdout and exit 0. On refusal: exit 2 with a fixed message and no output. **Sample render:** renderer `cb025a4433e20d2d418f8a10b7b4b11425683696f236ff1737b55e4ad4c87f87` applied to the safe export produces HTML `084909126933f98dcdee989906bf95c50680fd19b50b4aa063bbb42d10319577`. |
+| Sample launch | After the merge, the coordinator renders the safe export on the VM with the merged renderer into a new `--out` directory and checks the HTML SHA-256 against the value above. A different hash means a changed product: stop and report. The user then opens those exact bytes. There is no inference, deployment or private-input transfer. |
+
+**Dependency map ([GRPH-01], [GRPH-32], [GRPH-31]).** Edges below exist only where data moves.
+
+- **Product path.** Evidence DB pointer row → `comparison-export` (reads pointer kind, resolved path, `file_sha256`, qualification and source pins, plus the bound report bytes) → export JSON → `explore` (reads the export only) → `index.html` → browser (VM, or Mac loopback reading the same bytes).
+- **Gate path.**
+  - G1 fixes the candidate bytes that every other item reads.
+  - G2 to G6 are mutually independent and may run in parallel. Launches are admitted by measured VM capacity, not graph width ([GRPH-31]).
+  - G7 reads whichever G2 to G6 results a disposition cites.
+  - G8 reads everything above. The coordinator joins it (G9), then merges and launches the sample.
+  - The limiting stage is the evidence join and the independent review, not compute. Add no lane or gate beyond G1 to G9 unless a measurement names a new constraint (CARD-33 `constraint-before-capacity`).
+- **The research track is disjoint.** No CI-1 node reads an AE-2 to AE-12 field. No research node may read CI-1 green as evidence. CI-1 green never moves a research checkbox.
+
+**Checkpoint gate (all items blocking; none waived).** Each item records source, command, platform, counts and outcome. An absent or incomplete item is pending, never a pass ([TEST-06], [DBG-06]).
+
+- [ ] **G1 Exact candidate.** Record the rebuilt merge commit and tree. Every changed-path blob matches the reviewed feature bytes. Name the renderer, exporter and CLI hashes explicitly: currently `cb025a44…`, `600806c1…` and `c5c648d8…`.
+- [ ] **G2 Terminal bounded QA join.** Bind the four completed 32-module selections to service tree `f6115d0013b549823095ab6c18137eb43c9abacb` by bytes, not transport ancestry: contract `4eb9f813` 483 passed/exit 0; cluster `cf0edfef` 554 passed/exit 0; score `1de0df7c` 664 passed/exit 0; compare `c7691de7` 193 passed, 1 failed, 1 explicitly deselected/exit 1. Total 1894 passes, not an all-pass or whole-core result. Preserve commands, stdout digests and original outcomes. Contract report's malformed JSON array is retained unchanged; LAND-MERGE-1 provides the normalized join.
+  - Sole failure: `test_exact_environment_and_own_module_origins`, line 86, expects 130 distribution names; retained actual is 137. LAND-MERGE-1 explicitly approves a provenance-only exception for descriptive CI-1 software integration, not S9 reproducibility or scientific acceptance. Its separate read-only measurement confirms all eight inspected modules originate within the reviewed service with matching hashes, and InsightFace is not installed. These observations do not make the failed original node PASS. Record actual 137 inventory digest `b6dc17b78901d39fdd7ac871de16360cc204f39d7334af3631edeaaebbd3d404` and a named owned S9 environment-reconciliation follow-up. Do not fake 130, edit/skip the test and claim green, or change the shared venv.
+  - Planned deselection `test_real_r1_all_suite_cli_smoke_is_partial` executes simulation outside this QA; not PASS. CORE-1 remains timed out without final counts. Historical 1021 is not current whole-core evidence.
+  - Combine these results with retained source-bound CORE/DATA/UI/producer/CLI/publication evidence under G3/G4. No fresh execution of all 77 changed-path modules merely because changed. Expand only for a demonstrated uncovered release invariant with named input/failure/minimal owned correction. This join requires no new test run, MC, inference or environment change.
+- [ ] **G3 Retained source-bound evidence**, cited by hash and never relabelled as fresh:
+  - Explorer final gate `72a873c3`: producer, CLI and browser at renderer `3f7bb7f7`.
+  - UI-2 `54008f59`: exact two-edit reversal from `cb025a44` back to `3f7bb7f7`; seven frozen regressions; 110 normal-VM states and 10 caller returns at 1440, 768, 390, 375 and 320 px, light and dark, with zero errors, network requests or text-contrast failures, producing HTML `08490912…`.
+  - DATA-1 `bc6c317c`: 33 focused passes and a producer-to-`explore` boundary probe.
+  - Operator first-use: `db_bytes_unchanged`, zero known private identifiers.
+- [ ] **G4 Data preservation on Linux at G1 bytes.**
+  - Export: competing-writer and refusal cases.
+  - `explore`: existing file, symlink and directory cases, and failure cleanup.
+  - The DB, inputs and existing outputs stay byte-identical.
+  - Evidence comes from the frozen tests `test_eval_harness_firbench_explorer_publication.py` `987e9005…`, `…_comparison_export_wire.py` `70916a93…` and `…_comparison_export_numeric.py` `9bf8b29c…`. They run fresh in G2, or are retained only if the publication functions are byte-unchanged.
+- [ ] **G5 Candidate-bound privacy.** Preserve exact candidate `72577c4231c06f62cfd4771b4446e528310482d0` read-only scan: 153 files/5088915 bytes, raw 9 hits/FAILED, scanner `0a00776375018da217cf3b0c30c9436e92e053ddd3fb818ed1df3ff066de6c24`, report `f0d59468ddf9f6240940662fa537c0a3e43fd7ec847ce049ce840a7e0162c5d3`. The separate contextual assessment identifies exactly nine public scholarly author citation/source-filename occurrences and zero actual private identifiers, image blobs, data URIs, private paths or unscannables. LAND-MERGE-1 verified all 153 hashes and nine contexts/token hashes. Approve only these enumerated public-bibliography false positives, not a privacy waiver or raw-scan PASS. After these plan-only changes, use the existing read-only AE-10 scanner against rebuilt G1, record new code/scanner/report digests and confirm only the same nine public false positives. Keep aliases local/private inputs unchanged. No scanner, alias map, cited author, case grid or frozen fact changes. Real-run AE-10 alignment remains research work.
+- [ ] **G6 Frozen science intact.**
+  - The S9 pre-outcome block (`e5704feba6918dcfa55fad629ba31461394cecc835f329c77ecefa8b6d658dd9`, 20,100 bytes) and the post-outcome section (`f58082824f51eaeb6edf55d2aea7651be371ee391682cc81777d9fb2968264ef`, 10,942 bytes) are unchanged.
+  - Fixture `d05b2215…` and selftest `d4a9f18d…` are unchanged.
+  - No new Monte Carlo run, inference, reseed, retune, pooling or dropped case.
+- [ ] **G7 Finding dispositions** are recorded by the coordinator through supported lifecycle actions as in the table below, with each follow-up linked before any deferral. The enforced close gate passes on its own terms, or CI-1 stays blocked.
+- [ ] **G8 Independent review.** LAND-MERGE-1 reviews exact candidate `72577c4231c06f62cfd4771b4446e528310482d0`, plan `fee33e76cc1cc5617122e8e2f21d111995bb361c437be935eb53782d9c02b42d` and all four terminal QA results. Software PASS is descriptive-scope only. Planning PASS requires precisely its nine source-scoped replacements and expected amended-plan hash. After exact verification no further model review is needed. Record latest planning PASS/zero open planning-subject findings and canonical plan-accept/current accepted baseline; the input proposal was not already accepted. Any other substantive change is outside this approval.
+- [ ] **G9 Coordinator join.** Join scoped CORE/DATA/UI/PLAN/QA; record per-ID actions and read back named owned links before deferral. Obtain the enforced close check in its own supported call for the actual integration scope. Finalize the canonically accepted plan before actual main merge; verify post-merge source/frozen integrity, launch the exact sample, then reap only owned merged local/remote feature worktrees after evidence/source retention. No such coordinator action occurred in LAND-MERGE-1.
+
+Green on G1 to G9 means CI-1 integration needs no further work ([RLSE-12]). It never means research acceptance.
+
+**Finding dispositions (a proposal; MCP owns status).**
+
+- **Which findings.** Use the actual 16 OPEN IDs (3 high, 13 medium) in `.task-state/firbench-1/landing/current-open-findings.json`, not the stale 24-ID snapshot/inferred set. LAND-MERGE-1 provides per-ID dispositions and named owned continuations. IDs outside this set receive no transition here; accessibility stays nonblocking under decision 17234.
+- **Status changes.** Nothing here changes a status. Each original source commit and severity is kept.
+- **Linking rule.** Link a follow-up first, then defer with the exact remainder. A finding is resolved only where its own fix is verified.
+
+| ID (severity) | Role | Proposed disposition and precondition | Blocks CI-1? |
+| --- | --- | --- | --- |
+| FB1-S9-H2-BOUNDARY-01 (high) | Research | Keep OPEN. FAILED: 126/2000 = .063 > .060, unchanged. Resume only after an independent analytic or actual-producer adjudication. No rerun, retune, pooling or reseed. Keep operative research OPEN. Under an explicitly accepted prospective split, defer an original integration-associated row only after recording/readback of its owned OPEN research successor with original ID/source/severity/FAILED result and resume criteria. This is not scientific closure. | No, since CI-1 claims no AE-2. Yes for research, verdicts and task completion. |
+| FB1-S9-CELL-POWER-01 (high) | Research | Keep OPEN. FAILED: 1113/2000 = .5565 < .77, unchanged. Same resume rule. Any v7 cell design is a separate preregistration. | Same as above. |
+| FB1-UX-GATE-07 (high) | Partial coverage | **v1 covers:** image counts (total, scored, failed); face counts (matched, named, stranger); detection tp, fn, fp, precision and recall; unknown rejection (correct rejects, false accepts, n, floor, rate and its numerator and denominator); clustering false merge and false split, purity, `n_faces`, `n_clusters`, co-clustered pairs, `p_same`, `p_diff` and `parameters.d_cut`; headline and full identification counts, rates and denominators (exported, not rendered); model id, pipeline, embedding dimension; source pins and dedup; compatibility unknown. **Missing:** demographic and occlusion category values; per-slice status, directional flag and sampling frame; refusal reasons; identification rows on the page; input, face, weight, template and gallery lineage. **Proposal:** first link a follow-up, "comparison export v2 typed category and status projection, plus renderer input v2", carrying the original acceptance criteria. Then record it as deferred with the list of satisfied fields. Never resolve it as full coverage, and never extend v1. | No, once the follow-up is linked and the page keeps disclosing the v1 limits. |
+| UX-03 (medium) | Partial coverage | **Present:** seven static availability rows, with no method result attributed. **Missing:** Ward, K-means and hybrid proposal rows; production average HAC distinguished from the analysis reference; per-method source hash, library version, recorded knobs, metric space and deployment overrides. **Proposal:** link a static grouping inventory and provenance follow-up based on the §5 recovery matrix of the explorer plan, with no runs or invented scores. Then defer it with that remainder. | No, once linked. |
+| UX-RENDER-02 (medium) | Platform scope | Linux no-clobber publication is verified. Native Darwin behaviour with a competing entry, a failure or reused staging is unproved. Keep OPEN, scoped to Darwin, until a linked follow-up for native Darwin verification exists. Then defer the Darwin remainder. Linux evidence never resolves it. The local Darwin lane stays prohibited. | No, because CI-1 is Linux-only. Yes before any Darwin CLI use. |
+| UX-DATA-05 (medium) | Software fixed; closure blocked | **Walkable lineage for a supported resolution attempt:** original finding at parentless `6d921bf2` (`firbench_explorer.py:999`) → correction landed at feature `64e70e15`, renderer `3f7bb7f7` (`product-landed.json`) → current renderer `cb025a44` (UI-2 exact two-edit reversal) → frozen test `e40a2761…` → six fresh DATA-1 null-status passes. If the orphan-source guard refuses, record the refusal and keep it OPEN. No re-anchoring, empty merge, false-positive close or guard bypass. | Only if the enforced close gate requires it. |
+| FB1-P0-CASES-01 (medium) | v7 artifact; closure blocked | Same handling, with original commit `f04e1f13` and the current case grid `82759cf7…`. No v7 acceptance follows. | Only if the close gate requires it. |
+| P1-KC-01, P1-ROOT-02 (medium) | Present v7 contradictions | Keep OPEN as the live blockers for v7. CI-1 suspends v7 execution until a VERIFY-PLAN owner prospectively corrects the predecessor and support-test chronology, plus the ROOT-04 PF-H2 artifact edge, and an independent review accepts the correction. Landing these documents on `main` does not make them executable. Deferral with a linked VERIFY-PLAN follow-up meets PLAN-1's own condition, but use it only if the enforced close gate would otherwise block CI-1. | No. |
+| P1-KC-02, P1-KC-03, P1-KC-04 (H2-CAL); P1-ROOT-03, P1-ROOT-04, P1-ROOT-05 (CON-S-TEST); P1-ROOT-01 (CON-M-TEST) (all medium) | Absent v7 tests | These test paths are absent from the candidate, so they are not shipped v1 bugs. Defer each only after the coordinator links it to its owner group (in parentheses; ROOT-04 also to VERIFY-PLAN). Keep the original `d1f1a8d6` provenance. | No. |
+| FB1-UX-GATE-09 (high), if still OPEN live | Accessibility remainder | **Residual:** native 200% zoom unobserved; under the CSS-zoom-2 proxy the page overflows to 526 px at 320, 375 and 390 px. This is nonblocking under operator decision 17234. Link an accessibility follow-up, then defer citing 17234. Never claim conformance. | No. |
+
+Low observation P-08 has no finding ID; it is recorded in the explorer plan. The producer accepts any finite `d_cut ≥ 0`, but the renderer refuses `d_cut > 2` with exit 2 and no output. This is a safe refusal and a retained known limit, not a CI-1 blocker.
+
+**Lifecycle (supported actions only; software integration is not research completion).**
+
+- Minimal route if supported by the enforced integration gate: keep FIRBENCH-1 `in_progress`, record CI-1 as a checkpoint, keep research OPEN/checklist unchecked, and after real merge retarget its active source to main. Research completion is not needed to remove owned merged worktrees once durable evidence and active source are preserved.
+- If that supported gate requires a separate software subject, prospectively distinguish software integration (registered evidence -> bounded export -> offline explorer -> sample opening) from owned nonterminal research (unchanged AE-1..AE-12, frozen FAILED outcomes, real qualification, suspended v7). Before any original deferral/transfer, create/read back a linked owned continuation with exact original ID/severity/source, full criteria, failed receipts and resume conditions. Keep operative research OPEN; then use only supported merge/record and defer on originals. Deferred never means fixed/passed.
+- UX-DATA-05 parentless `6d921bf2` and FB1-P0-CASES-01 parentless `f04e1f13` retain original provenance. Current fixes are verified, but do not repeat known orphan-ancestry closure, re-anchor, empty-merge or call them false positives. Preserve originals OPEN or supported deferred only after linked provenance continuation; never claim nonexistent ancestry.
+- Record accepted scope/per-ID actions, finalize canonical accepted plan, and obtain passing enforced close check in its own supported call before merge. If neither route passes, report the specific rejection and stop that merge; no raw SQL/guard bypass/new WorkBay implementation.
+- Only an explicitly separated, accepted software objective may later complete after actual merge, integrity/sample and its enforced gate. Original full task/research stays nonterminal unless explicitly split by accepted plan; all research continues on its owned nonterminal task. CI-1 grants no research checklist tick or archive.
+
+**Retained research obligations and resume conditions.** These stay unchanged and blocking for research acceptance, verdicts, model selection, W5 and task completion:
+
+- AE-1 to AE-12 at the merge-candidate HEAD.
+- The two FAILED v6 evals: independent adjudication first. Any v7 work happens only as a separate prospective preregistration document, never as this plan's v6 history.
+- The real-data gates: exhaustive independent GT; frame, corpus and template hashes; S7 QC and the MEAS-29 observation; ratification; seal; budget.
+- AE-5, AE-6 and AE-12; AE-10 real-run alignment; AE-11 at six of six.
+- VERIFY-PLAN correction before any v7 execution.
+- The FB1-UX-GATE-07 and UX-03 continuations.
+- A native Darwin race check before any Darwin CLI support.
+- A native 200% zoom check, only if operator decision 17234 is reversed.
+
+A demonstrated product defect needs an owned minimal remote correction and required original-sequence verification. The single environment-cardinality failure is governed only by explicit G2 provenance exception; it stays FAILED and is not automatically a core algorithm defect. Mechanical evidence joins and these exact preapproved replacements need no new model lane or broad test rerun.
+
+**Alternatives.**
+
+Accepted: the whole-tree, Linux-VM-only, bounded-claim CI-1 described above ([OPS-64], [PROD-18], [RLSE-12], [GRPH-06]).
+
+Rejected:
+
+- Ticking the checklist, renaming the feature as complete, or counting software passes as AE evidence ([PROD-18]; semantic records 16783 and 16967).
+- Cherry-picking an explorer-only subset. It is one connected component with the research code, and the subset would add unreviewed bytes and two drifting byte sets ([GRPH-06], [REF-09]).
+- Holding all integration until AE-1 to AE-12 are green ([OPS-64]). That gate stays in force for research.
+- Rerunning, tuning, pooling or reinterpreting v6, or letting H2-branches .058 offset the failed .063 (CARD-11, CARD-08 `falsification-disconfirmers`, [DBG-06]).
+- Adding a new qualification gate such as all-GT-embedded (semantic record 16885), or silently extending the v1 wire with category or status fields.
+- Inferring Darwin support from a Linux pass, a header check or one operator publish ([DBG-06]).
+- Adding a code-level Darwin refusal now. It would change reviewed bytes and reopen review, and the Constraints already keep execution on the VM. It remains possible future hardening.
+- Blanket deferral of the 16 findings, or changing their status in plan text ([GRPH-14]; MCP owns status).
+- Counting the CORE-1 timeout or the historical 1021 checks as a current pass.
+- Restarting accessibility lanes (operator decision 17234).
+- Treating the canon as authority over project acceptance. The canon supplies review discipline only.
+
+**Canon (v0.26.2 full mirror; manifest `46636aa71f2e2e0c413b6ccff1cae4959543026c6ee7e4abde2bc7f30645a260`).** Rules are cited by ID with their source as printed in the mirror.
+
+| ID | Rule | Source (as printed) | Used for |
+| --- | --- | --- | --- |
+| OPS-64 | Small-batch transfer | The Principles of Product Development Flow, ch. 5 | Releasing the verified descriptive slice instead of the whole research batch |
+| PROD-18 | Split by accepted value | Agile Estimating and Planning, ch. 12 | A slice the user can accept on its own; no waived release invariant |
+| RLSE-12 | Pipeline scope = deployable unit | Modern Software Engineering, ch. 14 | Whole-tree gate; green on G1 to G9 means no more work for CI-1 |
+| GRPH-01 | Model the work as a DAG, then topological-sort | The Algorithm Design Manual, ch. 7 | Dependency map |
+| GRPH-06 | Partition by connected components first | Graph Theory with Applications, ch. 1 | Explorer and research share one component |
+| GRPH-14 | Record provenance as a walkable lineage graph | Building Knowledge Graphs, ch. 8 + Mental Models, ch. 8 | UX-DATA-05 and FB1-P0-CASES-01 lineage; MCP owns status |
+| GRPH-31 | Critical-path schedule the task DAG | The Algorithm Design Manual, ch. 17 + Scheduling: Theory, Algorithms, and Systems, ch. 5 | Parallel G2 to G6 admitted by measured capacity |
+| GRPH-32 | An edge exists only where data moves | bootstrap | No edge between the research track and CI-1 |
+| TEST-06 | Watch it fail once / predict the failure | Modern Software Engineering, ch. 8 | A skip, timeout or absent API is not a pass or a RED |
+| DBG-06 | Confirm on the original failing sequence | Debugging: The 9 Indispensable Rules | Darwin races and the v6 failures |
+| REF-09 | Mutable/derived-data drift | Refactoring: Improving the Design of Existing Code (2nd ed), ch. 9 | No second byte set; no plan copy of live status |
+
+Cards are cited by ID and manifest slug: CARD-11 `measurement-integrity`, CARD-08 `falsification-disconfirmers` and CARD-33 `constraint-before-capacity`. CARD-29 `runtime-fork-is-part-of-provenance` was read, and its trigger (a required vendor runtime fork) does not fire here.

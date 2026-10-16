@@ -192,6 +192,16 @@ section = "Image description"
 values = { dev = "3", staging = "3", prod = "3" }
 
 [[var]]
+name = "ACX_GPU_ROUTING_MODE"
+class = "config"
+targets = ["svc-vm"]
+example = "static"
+required = false
+doc = "static supports the single AD-2 endpoint. Set winner on every API/worker before enabling multiple lifecycle candidates; missing, stale or unready winner snapshots then fail closed."
+section = "GPU lifecycle"
+values = { dev = "static", staging = "static", prod = "static" }
+
+[[var]]
 name = "ACX_GPU_ENDPOINT_API_KEY"
 class = "secret"
 targets = ["svc-vm"]

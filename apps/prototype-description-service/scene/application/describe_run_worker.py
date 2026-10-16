@@ -25,6 +25,7 @@ from db.tenant_context import get_tenant_record, set_tenant_context
 from recognition.application.services.usage_settlement_service import capture_usage_fence, settle_usage_job
 from scene.application.describe_load import dump_load_snapshot
 from scene.application.describe_run_repository import DescribeRunRepository
+from scene.application.gpu_state import GpuRoute, GpuRouteSource, GpuState, resolve_gpu_route
 from scene.application.identity_merge import NamingRealizer, NamingSkipReason, NamingStatus
 from scene.application.naming_preview_service import (
     faces_for_naming_preview,
@@ -117,6 +118,14 @@ class GpuRunPolicy:
     endpoint_url: str
     api_key: str | None
     warmup_timeout_seconds: float
+    endpoint_allowlist: tuple[str, ...] = ()
+
+    def route(self) -> GpuRoute:
+        return resolve_gpu_route(
+            static_endpoint_url=self.endpoint_url,
+            allowlist=self.endpoint_allowlist,
+            require_ready=False,
+        )
 
 
 class DescribeRunTerminalCode(enum.StrEnum):
@@ -195,6 +204,7 @@ def gpu_run_policy(*, adapter_kind: DescriptionAdapterKind, settings: Descriptio
         endpoint_url=settings.gpu_endpoint_url.rstrip("/"),
         api_key=settings.gpu_endpoint_api_key,
         warmup_timeout_seconds=settings.gpu_warmup_timeout_seconds,
+        endpoint_allowlist=settings.gpu_endpoint_allowlist,
     )
 
 
@@ -341,13 +351,13 @@ async def _wait_for_gpu_ready(
     api_key: str | None,
     timeout_seconds: float,
     cancel_requested: Callable[[], Awaitable[bool]] | None = None,
+    resolve_route: Callable[[], GpuRoute] | None = None,
 ) -> bool:
     """Poll the burst endpoint until it reports healthy or warmup expires.
 
     Returns True when the first probe already succeeded (warm; no cold ramp-up).
     """
 
-    health_url = f"{endpoint_url}/health"
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     loop = asyncio.get_running_loop()
     deadline = loop.time() + max(0.0, timeout_seconds)
@@ -363,6 +373,21 @@ async def _wait_for_gpu_ready(
             if remaining <= 0:
                 raise TimeoutError(f"GPU endpoint did not become ready within {timeout_seconds:g}s ({last_error})")
             try:
+                route = None
+                target = endpoint_url
+                if resolve_route is not None:
+                    route = await asyncio.wait_for(
+                        asyncio.to_thread(resolve_route),
+                        timeout=min(_GPU_HEALTH_REQUEST_TIMEOUT_SECONDS, remaining),
+                    )
+                    target = route.endpoint_url
+                if target is None:
+                    last_error = f"no READY GPU winner ({route.reason})"
+                    raise TimeoutError(last_error)
+                health_url = f"{target}/health"
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    raise TimeoutError("GPU routing exhausted the warmup budget")
                 # The httpx timeout bounds transport phases individually. The
                 # outer wait_for also caps the whole request to the remaining
                 # warmup budget, so one hung health request cannot overrun the
@@ -372,8 +397,11 @@ async def _wait_for_gpu_ready(
                     timeout=min(_GPU_HEALTH_REQUEST_TIMEOUT_SECONDS, remaining),
                 )
                 if 200 <= response.status_code < 300:
-                    return immediately_ready
-                last_error = f"HTTP {response.status_code}"
+                    if route is None or route.source is GpuRouteSource.STATIC or route.state is GpuState.READY:
+                        return immediately_ready
+                    last_error = f"no READY GPU winner (state={route.state.value})"
+                else:
+                    last_error = f"HTTP {response.status_code}"
             except (TimeoutError, httpx.HTTPError) as exc:
                 # Connection refusal and 503 are normal while cloud-init/model
                 # loading is still in progress. Keep the log quiet until the
@@ -968,6 +996,7 @@ async def run_describe_job(
                     api_key=gpu_policy.api_key,
                     timeout_seconds=gpu_policy.warmup_timeout_seconds,
                     cancel_requested=cancel_requested,
+                    resolve_route=gpu_policy.route,
                 )
             except TimeoutError as warmup_timeout:
                 fallback = await _apply_warmup_cpu_fallback(

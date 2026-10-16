@@ -72,6 +72,7 @@ from recognition.interface_adapters.http.routers.billing_webhooks import router 
 from recognition.interface_adapters.http.routers.portal import router as portal_router
 from recognition.observability.curation_refresh_metrics import get_default_curation_refresh_metrics
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
+from scene.application.gpu_state import GpuRoutingMode, GpuState, read_gpu_snapshot, resolve_gpu_routing_mode
 from scene.application.seeded_adapter import SeededDescriptionAdapter
 from scene.config.profiles import DescriptionProfile, ProfileSpec, get_profile_spec
 from scene.config.settings import _parse_allowlist
@@ -296,8 +297,18 @@ async def _description_adapter_readiness(profile: DescriptionProfile) -> dict[st
     """Per-request GPU adapter readiness; DNS never runs inline on the loop."""
     spec = get_profile_spec(profile)
     endpoint_url = os.environ.get("ACX_GPU_ENDPOINT_URL") or None
+    snapshot = await asyncio.to_thread(read_gpu_snapshot)
+    winner_routing = resolve_gpu_routing_mode() is GpuRoutingMode.WINNER or snapshot.advertises_endpoint
+    if winner_routing:
+        endpoint_url = snapshot.endpoint_url if isinstance(snapshot.endpoint_url, str) else None
     endpoint_configured = bool(endpoint_url)
     url_valid = endpoint_url is not None and _gpu_endpoint_url_is_valid(endpoint_url)
+    if winner_routing and url_valid:
+        parsed = _parse_endpoint_url(endpoint_url)
+        url_valid = (
+            parsed.username is None and parsed.password is None
+            and parsed.path in {"", "/"} and not parsed.query and not parsed.fragment
+        )
     host = _endpoint_hostname(endpoint_url) if url_valid else None
     parsed_allowlist = _parse_allowlist(os.environ.get("ACX_GPU_ENDPOINT_ALLOWLIST"))
     effective_allowlist = parsed_allowlist or _DEFAULT_GPU_ENDPOINT_ALLOWLIST
@@ -346,6 +357,9 @@ async def _description_adapter_readiness(profile: DescriptionProfile) -> dict[st
         usable = False
         reason = AdapterReadinessReason.ENDPOINT_NOT_PRIVATE.value
     elif not (endpoint_private is True and fresh):
+        usable = False
+        reason = AdapterReadinessReason.ENDPOINT_RESOLUTION_PENDING.value
+    elif winner_routing and (snapshot.state is not GpuState.READY or snapshot.instance_id is None):
         usable = False
         reason = AdapterReadinessReason.ENDPOINT_RESOLUTION_PENDING.value
     else:

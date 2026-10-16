@@ -18,6 +18,10 @@
 #     --ready-url http://<gpu-private-ip>:8000/health
 # READY_URL has no default: production installs must name the endpoint that
 # supplies current, evidence-backed GPU readiness.
+# Ordered failover (GPUFAIL-1): GPU_INSTANCE_IDS lists candidates AD-2 first and
+# GPU_CANDIDATE_ENDPOINTS maps every one to its own serving base URL
+# ("INSTANCE_ID=http://host:port", space/comma separated). The mapping replaces
+# the shared READY_URL: each candidate is probed, and published, on its own URL.
 # Dry run (print what would change, touch nothing):
 #   scripts/deploy/gpu-lifecycle-install.sh --host ... --dry-run
 
@@ -105,9 +109,9 @@ verify_gpu_lifecycle_timers() {
             ;;
     esac
     case "$exec_start" in
-        *"--ready-url"*) ;;
+        *"--ready-url"* | *'$GPU_CANDIDATE_ENDPOINT_ARGS'*) ;;
         *)
-            echo "error: effective acx-gpu-reap.service lacks the ready-url argument" >&2
+            echo "error: effective acx-gpu-reap.service lacks the ready-url or candidate-endpoint argument" >&2
             return 1
             ;;
     esac
@@ -485,6 +489,10 @@ SSH_USER="${OCI_USER:-ubuntu}"
 SSH_USER_EXPLICIT=0
 GPU_INSTANCE_NAME="${GPU_INSTANCE_NAME:-acx-gpu-burst}"
 GPU_INSTANCE_ID="${GPU_INSTANCE_ID:-}"
+# Ordered failover candidates (space/comma separated). GPU_INSTANCE_ID is the
+# legacy singular alias and remains the first candidate when set.
+GPU_INSTANCE_IDS="${GPU_INSTANCE_IDS:-}"
+GPU_INSTANCE_ID_ARGS=""
 MAX_LEASE_SECONDS="${MAX_LEASE_SECONDS:-3600}"
 # Only unset operator overrides receive defaults. An explicitly empty value
 # remains invalid and reaches the fail-closed validation below.
@@ -492,6 +500,9 @@ IDLE_SECONDS="${IDLE_SECONDS-300}"
 START_INTERVAL="${START_INTERVAL-30s}"
 REAP_INTERVAL="${REAP_INTERVAL-2min}"
 READY_URL="${READY_URL-}"
+# INSTANCE_ID=base-URL tokens; when set, replaces the shared READY_URL probe.
+GPU_CANDIDATE_ENDPOINTS="${GPU_CANDIDATE_ENDPOINTS:-}"
+GPU_CANDIDATE_ENDPOINT_ARGS=""
 LOAD_STALE_GRACE_SECONDS="${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS:-600}"
 REMOTE_COMMAND_TIMEOUT_SECONDS="${REMOTE_COMMAND_TIMEOUT_SECONDS:-180}"
 # The API container publishes load and intent dumps as its pinned uid/gid. The
@@ -592,12 +603,14 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --user) SSH_USER="$2"; SSH_USER_EXPLICIT=1; shift 2 ;;
         --host) HOST="$2"; shift 2 ;;
-        --instance-id) GPU_INSTANCE_ID="$2"; shift 2 ;;
+        --instance-id) GPU_INSTANCE_ID="$2"; GPU_INSTANCE_IDS="${GPU_INSTANCE_IDS:+$GPU_INSTANCE_IDS }$2"; shift 2 ;;
+        --instance-ids) GPU_INSTANCE_IDS="${GPU_INSTANCE_IDS:+$GPU_INSTANCE_IDS }${2//,/ }"; shift 2 ;;
         --max-lease-seconds) MAX_LEASE_SECONDS="$2"; shift 2 ;;
         --idle-seconds) IDLE_SECONDS="$2"; shift 2 ;;
         --ready-url) READY_URL="$2"; shift 2 ;;
+        --candidate-endpoint) GPU_CANDIDATE_ENDPOINTS="${GPU_CANDIDATE_ENDPOINTS:+$GPU_CANDIDATE_ENDPOINTS }$2"; shift 2 ;;
         --dry-run) DRY_RUN=1; shift ;;
-        -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -669,50 +682,70 @@ if ! [ "$REMOTE_COMMAND_TIMEOUT_SECONDS" -gt 0 ] 2>/dev/null; then
     echo "error: REMOTE_COMMAND_TIMEOUT_SECONDS must be a positive integer (> 0)" >&2
     exit 2
 fi
-if [ -z "$READY_URL" ]; then
+if [ -z "$READY_URL" ] && [ -z "$GPU_CANDIDATE_ENDPOINTS" ]; then
     echo "error: READY_URL (--ready-url) is required; provide the GPU service readiness endpoint" >&2
+    echo "       (or GPU_CANDIDATE_ENDPOINTS for per-candidate failover endpoints)" >&2
     exit 2
 fi
-# Parse the authority instead of accepting any character soup after ``http://``.
-# In particular, ``http:///health`` has a scheme and path but no host.
-case "$READY_URL" in
-    http://*) ready_url_remainder=${READY_URL#http://} ;;
-    https://*) ready_url_remainder=${READY_URL#https://} ;;
-    *)
-        echo "error: READY_URL (--ready-url) must use http or https" >&2
+if [ -n "$READY_URL" ]; then
+    # Parse the authority instead of accepting any character soup after ``http://``.
+    # In particular, ``http:///health`` has a scheme and path but no host.
+    case "$READY_URL" in
+        http://*) ready_url_remainder=${READY_URL#http://} ;;
+        https://*) ready_url_remainder=${READY_URL#https://} ;;
+        *)
+            echo "error: READY_URL (--ready-url) must use http or https" >&2
+            exit 2
+            ;;
+    esac
+    ready_url_pattern='^https?://[][A-Za-z0-9._~:/?#%+,={}-]+$'
+    if [[ ! "$READY_URL" =~ $ready_url_pattern ]]; then
+        echo "error: READY_URL (--ready-url) contains whitespace or shell metacharacters" >&2
         exit 2
-        ;;
-esac
-ready_url_pattern='^https?://[][A-Za-z0-9._~:/?#%+,={}-]+$'
-if [[ ! "$READY_URL" =~ $ready_url_pattern ]]; then
-    echo "error: READY_URL (--ready-url) contains whitespace or shell metacharacters" >&2
-    exit 2
+    fi
+    ready_url_authority=${ready_url_remainder%%[/?#]*}
+    if [ -z "$ready_url_authority" ] || [[ "$ready_url_authority" == *@* ]]; then
+        echo "error: READY_URL (--ready-url) must contain a non-empty hostname without userinfo" >&2
+        exit 2
+    fi
+    ready_url_port=""
+    if [[ "$ready_url_authority" =~ ^\[([0-9A-Fa-f:.]+)\](:([0-9]+))?$ ]]; then
+        ready_url_hostname=${BASH_REMATCH[1]}
+        ready_url_port=${BASH_REMATCH[3]:-}
+    elif [[ "$ready_url_authority" =~ ^([A-Za-z0-9][A-Za-z0-9.-]*)(:([0-9]+))?$ ]]; then
+        ready_url_hostname=${BASH_REMATCH[1]}
+        ready_url_port=${BASH_REMATCH[3]:-}
+    else
+        echo "error: READY_URL (--ready-url) has a malformed hostname or port" >&2
+        exit 2
+    fi
+    if [ -z "$ready_url_hostname" ]; then
+        echo "error: READY_URL (--ready-url) must contain a non-empty hostname" >&2
+        exit 2
+    fi
+    if [ -n "$ready_url_port" ] \
+        && { ! [ "$ready_url_port" -ge 1 ] 2>/dev/null \
+            || ! [ "$ready_url_port" -le 65535 ] 2>/dev/null; }; then
+        echo "error: READY_URL (--ready-url) port must be between 1 and 65535" >&2
+        exit 2
+    fi
 fi
-ready_url_authority=${ready_url_remainder%%[/?#]*}
-if [ -z "$ready_url_authority" ] || [[ "$ready_url_authority" == *@* ]]; then
-    echo "error: READY_URL (--ready-url) must contain a non-empty hostname without userinfo" >&2
-    exit 2
-fi
-ready_url_port=""
-if [[ "$ready_url_authority" =~ ^\[([0-9A-Fa-f:.]+)\](:([0-9]+))?$ ]]; then
-    ready_url_hostname=${BASH_REMATCH[1]}
-    ready_url_port=${BASH_REMATCH[3]:-}
-elif [[ "$ready_url_authority" =~ ^([A-Za-z0-9][A-Za-z0-9.-]*)(:([0-9]+))?$ ]]; then
-    ready_url_hostname=${BASH_REMATCH[1]}
-    ready_url_port=${BASH_REMATCH[3]:-}
-else
-    echo "error: READY_URL (--ready-url) has a malformed hostname or port" >&2
-    exit 2
-fi
-if [ -z "$ready_url_hostname" ]; then
-    echo "error: READY_URL (--ready-url) must contain a non-empty hostname" >&2
-    exit 2
-fi
-if [ -n "$ready_url_port" ] \
-    && { ! [ "$ready_url_port" -ge 1 ] 2>/dev/null \
-        || ! [ "$ready_url_port" -le 65535 ] 2>/dev/null; }; then
-    echo "error: READY_URL (--ready-url) port must be between 1 and 65535" >&2
-    exit 2
+
+# Normalize ordered candidates: dedupe preserving order, legacy singular first.
+GPU_INSTANCE_IDS="${GPU_INSTANCE_IDS//,/ }"
+_normalized_instance_ids=""
+for _candidate in $GPU_INSTANCE_IDS; do
+    case " $_normalized_instance_ids " in
+        *" $_candidate "*) ;;
+        *) _normalized_instance_ids="${_normalized_instance_ids:+$_normalized_instance_ids }$_candidate" ;;
+    esac
+done
+GPU_INSTANCE_IDS="$_normalized_instance_ids"
+if [ -n "$GPU_INSTANCE_ID" ]; then
+    case " $GPU_INSTANCE_IDS " in
+        *" $GPU_INSTANCE_ID "*) ;;
+        *) GPU_INSTANCE_IDS="${GPU_INSTANCE_ID}${GPU_INSTANCE_IDS:+ $GPU_INSTANCE_IDS}" ;;
+    esac
 fi
 
 # --- resolve the GPU instance OCID -------------------------------------------
@@ -720,7 +753,7 @@ fi
 # unit file cannot silently point the reaper at an instance that no longer
 # exists and report a clean exit forever (rg-005).
 gpu_instance_id_source="pinned"
-if [ -z "$GPU_INSTANCE_ID" ]; then
+if [ -z "$GPU_INSTANCE_IDS" ] && [ -z "$GPU_INSTANCE_ID" ]; then
     gpu_instance_id_source="resolved-by-name"
     command -v oci >/dev/null 2>&1 || {
         echo "error: no --instance-id given and no local oci CLI to resolve '${GPU_INSTANCE_NAME}'" >&2
@@ -736,12 +769,92 @@ if [ -z "$GPU_INSTANCE_ID" ]; then
         exit 2
     }
 fi
-if [[ ! "$GPU_INSTANCE_ID" =~ ^ocid1\.instance\.oc1\.[a-z0-9-]+\.[a-z0-9]+$ ]]; then
-    echo "error: GPU instance OCID must match ocid1.instance.oc1.<region>.<identifier>" >&2
+[ -n "$GPU_INSTANCE_IDS" ] || GPU_INSTANCE_IDS="$GPU_INSTANCE_ID"
+for _candidate in $GPU_INSTANCE_IDS; do
+    if [[ ! "$_candidate" =~ ^ocid1\.instance\.oc1\.[a-z0-9-]+\.[a-z0-9]+$ ]]; then
+        echo "error: GPU instance OCID must match ocid1.instance.oc1.<region>.<identifier>: $_candidate" >&2
+        exit 2
+    fi
+    GPU_INSTANCE_ID_ARGS="${GPU_INSTANCE_ID_ARGS:+$GPU_INSTANCE_ID_ARGS }--instance-id $_candidate"
+done
+GPU_INSTANCE_ID="${GPU_INSTANCE_IDS%% *}"
+
+candidate_endpoint_error() {
+    echo "error: GPU_CANDIDATE_ENDPOINTS $1" >&2
     exit 2
+}
+
+# One endpoint per configured candidate, rendered in candidate (failover) order.
+# The lifecycle parser re-validates at runtime; this rejects a bad mapping before
+# any host is touched. IPv4 literals must be RFC 1918 private (mirrors
+# probe.parse_candidate_endpoint); hostnames stay subject to the API allowlist.
+if [ -n "$GPU_CANDIDATE_ENDPOINTS" ]; then
+    # "id=url" entries, newline separated (bash 3.2 has no associative arrays).
+    candidate_endpoint_entries=""
+    set -f  # split on whitespace only; never glob operator-supplied tokens
+    for _token in ${GPU_CANDIDATE_ENDPOINTS//,/ }; do
+        [[ "$_token" == *=* ]] || candidate_endpoint_error "token must be INSTANCE_ID=http(s)://host:port: $_token"
+        _candidate=${_token%%=*}
+        _endpoint=${_token#*=}
+        case " $GPU_INSTANCE_IDS " in
+            *" $_candidate "*) ;;
+            *) candidate_endpoint_error "names an instance that is not a configured candidate: $_candidate" ;;
+        esac
+        case "$candidate_endpoint_entries" in
+            *"
+${_candidate}="*) candidate_endpoint_error "repeats candidate $_candidate" ;;
+        esac
+        if [[ ! "$_endpoint" =~ ^https?://([A-Za-z0-9][A-Za-z0-9.-]*)(:([0-9]+))?/?$ ]]; then
+            candidate_endpoint_error "endpoint must be a base URL http(s)://host[:port] without userinfo, path or shell characters: $_token"
+        fi
+        _endpoint_host=${BASH_REMATCH[1]}
+        _endpoint_port=${BASH_REMATCH[3]:-}
+        if [ -n "$_endpoint_port" ] \
+            && { ! [ "$_endpoint_port" -ge 1 ] 2>/dev/null || ! [ "$_endpoint_port" -le 65535 ] 2>/dev/null; }; then
+            candidate_endpoint_error "endpoint port must be between 1 and 65535: $_token"
+        fi
+        if [[ "$_endpoint_host" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
+            _o1=$((10#${BASH_REMATCH[1]})) _o2=$((10#${BASH_REMATCH[2]}))
+            _o3=$((10#${BASH_REMATCH[3]})) _o4=$((10#${BASH_REMATCH[4]}))
+            if [ "$_o1" -gt 255 ] || [ "$_o2" -gt 255 ] || [ "$_o3" -gt 255 ] || [ "$_o4" -gt 255 ] \
+                || ! { [ "$_o1" -eq 10 ] \
+                    || { [ "$_o1" -eq 172 ] && [ "$_o2" -ge 16 ] && [ "$_o2" -le 31 ]; } \
+                    || { [ "$_o1" -eq 192 ] && [ "$_o2" -eq 168 ]; }; }; then
+                candidate_endpoint_error "endpoint IP must be RFC 1918 private: $_token"
+            fi
+        fi
+        candidate_endpoint_entries="${candidate_endpoint_entries}
+${_candidate}=${_endpoint%/}"
+    done
+    set +f
+    for _candidate in $GPU_INSTANCE_IDS; do
+        case "$candidate_endpoint_entries" in
+            *"
+${_candidate}="*) ;;
+            *) candidate_endpoint_error "has no endpoint for candidate $_candidate" ;;
+        esac
+        _endpoint=${candidate_endpoint_entries#*"
+${_candidate}="}
+        _endpoint=${_endpoint%%"
+"*}
+        GPU_CANDIDATE_ENDPOINT_ARGS="${GPU_CANDIDATE_ENDPOINT_ARGS:+$GPU_CANDIDATE_ENDPOINT_ARGS }--candidate-endpoint ${_candidate}=${_endpoint}"
+    done
+    if [ -n "$READY_URL" ]; then
+        echo "gpu-lifecycle: GPU_CANDIDATE_ENDPOINTS supersedes the shared READY_URL; it is not rendered" >&2
+    fi
+    # Standalone systemd \$VAR expansion splits this into separate argv words.
+    readiness_unit_args='\$GPU_CANDIDATE_ENDPOINT_ARGS'
+    readiness_display_args='$GPU_CANDIDATE_ENDPOINT_ARGS'
+else
+    readiness_unit_args='--ready-url \${READY_URL}'
+    readiness_display_args='--ready-url ${READY_URL}'
 fi
+printf -v remote_gpu_candidate_endpoint_args '%q' "$GPU_CANDIDATE_ENDPOINT_ARGS"
 printf -v remote_gpu_instance_id '%q' "$GPU_INSTANCE_ID"
+printf -v remote_gpu_instance_ids '%q' "$GPU_INSTANCE_IDS"
+printf -v remote_gpu_instance_id_args '%q' "$GPU_INSTANCE_ID_ARGS"
 echo "gpu instance: ${GPU_INSTANCE_NAME} (...${GPU_INSTANCE_ID: -12})"
+echo "gpu instance ids: ${GPU_INSTANCE_IDS}"
 echo "OCID source:  ${gpu_instance_id_source}"
 echo "max lease:    ${MAX_LEASE_SECONDS}s   idle: ${IDLE_SECONDS}s"
 
@@ -753,8 +866,9 @@ release_id=$({
     done
     printf 'installer %s\n' "$(git -C "$repo_root" hash-object "$0")"
     printf 'instance=%s\nmax=%s\nidle=%s\nready=%s\nstart=%s\nreap=%s\ngrace=%s\ndeployments=%s\n' \
-        "$GPU_INSTANCE_ID" "$MAX_LEASE_SECONDS" "$IDLE_SECONDS" "$READY_URL" \
+        "$GPU_INSTANCE_IDS" "$MAX_LEASE_SECONDS" "$IDLE_SECONDS" "$READY_URL" \
         "$START_INTERVAL" "$REAP_INTERVAL" "$LOAD_STALE_GRACE_SECONDS" "$LOAD_ENVIRONMENTS"
+    printf 'candidates=%s\n' "$GPU_CANDIDATE_ENDPOINT_ARGS"
 } | git -C "$repo_root" hash-object --stdin)
 remote_release="/opt/acx-gpu/releases/${release_id}"
 remote_stage="/opt/acx-gpu/releases/.staging-${release_id}"
@@ -808,7 +922,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
     echo "--- dry run: would atomically switch /opt/acx-gpu/current -> ${remote_release}"
     echo "--- dry run: would install acx-gpu-start.{service,timer} + acx-gpu-reap.{service,timer} + acx-gpu-intent.path"
     echo "--- dry run: would create host-owned /run/acx and isolated API-writable deployment directories: ${LOAD_ENVIRONMENT_DIRS}"
-    echo "ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id \${GPU_INSTANCE_ID} --idle-seconds \${IDLE_SECONDS} --max-lease-seconds \${MAX_LEASE_SECONDS} --ready-url \${READY_URL} (rendered MAX_LEASE_SECONDS=${MAX_LEASE_SECONDS})"
+    echo "ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap \$GPU_INSTANCE_ID_ARGS --idle-seconds \${IDLE_SECONDS} --max-lease-seconds \${MAX_LEASE_SECONDS} ${readiness_display_args} (rendered MAX_LEASE_SECONDS=${MAX_LEASE_SECONDS})"
     echo "--- dry run: would verify systemctl is-enabled + is-active for lifecycle timers and acx-gpu-intent.path"
     exit 0
 fi
@@ -919,10 +1033,13 @@ unit_stage=\$(sudo mktemp -d '${remote_release}/.systemd.XXXXXX')
 sudo chmod 0755 \"\$unit_stage\"
 sudo tee \"\$unit_stage/gpu-lifecycle.env\" >/dev/null <<ENV
 GPU_INSTANCE_ID=${remote_gpu_instance_id}
+GPU_INSTANCE_IDS=${remote_gpu_instance_ids}
+GPU_INSTANCE_ID_ARGS=${remote_gpu_instance_id_args}
 MAX_LEASE_SECONDS=${MAX_LEASE_SECONDS}
 IDLE_SECONDS=${IDLE_SECONDS}
 ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS=${LOAD_STALE_GRACE_SECONDS}
 READY_URL=${READY_URL}
+GPU_CANDIDATE_ENDPOINT_ARGS=${remote_gpu_candidate_endpoint_args}
 ENV
 sudo chmod 0644 \"\$unit_stage/gpu-lifecycle.env\"
 
@@ -945,7 +1062,7 @@ StateDirectoryMode=0700
 Environment=OCI_CLI_AUTH=instance_principal
 EnvironmentFile=/etc/acx/gpu-lifecycle.env
 WorkingDirectory=/opt/acx-gpu/current
-ExecStart=/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode start --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --intent-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /var/lib/acx-gpu/running-since.json --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci --ready-url \\\${READY_URL}
+ExecStart=/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode start \\\$GPU_INSTANCE_ID_ARGS --load-dir /run/acx-write --intent-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /var/lib/acx-gpu/running-since.json --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci ${readiness_unit_args}
 UNIT
 
 sudo tee \"\$unit_stage/acx-gpu-start.timer\" >/dev/null <<UNIT
@@ -993,7 +1110,7 @@ StateDirectoryMode=0700
 Environment=OCI_CLI_AUTH=instance_principal
 EnvironmentFile=/etc/acx/gpu-lifecycle.env
 WorkingDirectory=/opt/acx-gpu/current
-ExecStart=/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --intent-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /var/lib/acx-gpu/running-since.json --idle-seconds \\\${IDLE_SECONDS} --max-lease-seconds \\\${MAX_LEASE_SECONDS} --fence-delay-seconds 2 --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci --ready-url \\\${READY_URL}
+ExecStart=/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap \\\$GPU_INSTANCE_ID_ARGS --load-dir /run/acx-write --intent-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /var/lib/acx-gpu/running-since.json --idle-seconds \\\${IDLE_SECONDS} --max-lease-seconds \\\${MAX_LEASE_SECONDS} --fence-delay-seconds 2 --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci ${readiness_unit_args}
 UNIT
 
 sudo tee \"\$unit_stage/acx-gpu-reap.timer\" >/dev/null <<UNIT

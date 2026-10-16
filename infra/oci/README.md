@@ -90,6 +90,29 @@ terraform -chdir=infra/oci output -raw gpu_instance_id    # → idle reaper
 
 ### Idle reaper (decision → fence → OCI STOP)
 
+The preferred GPU domain is AD-2. New provisioning tries AD-2, AD-1, then
+AD-3; `ADS_CSV` can override that order. These are provisioning candidates,
+not a transfer of an existing instance between domains.
+
+The initial live AD-2 cutover uses one lifecycle candidate. Set
+`ACX_GPU_INSTANCE_ID` to the AD-2 instance and `ACX_GPU_READY_URL` to its
+private `/health` endpoint in GitHub repository variables. The active
+GPU producers and demo assertion use that same host in
+`config/env/manifest.d/10-service-shared.toml`. Dev, staging and production use
+`gpu_qwen30b` on the same burst fleet.
+Prove health from the backend host and API container before switching.
+Keep runtime API and worker endpoint settings, lifecycle instance ID, and
+readiness URL aligned. Multi-instance START support alone does not redirect
+description traffic; enable additional candidates only with winner-aware
+endpoint routing and readiness probes.
+
+For a later multi-candidate rollout, deploy the winner-aware API first and
+materialize `ACX_GPU_ROUTING_MODE=winner` for all consumers. Pass ordered
+`GPU_INSTANCE_IDS` and a complete `GPU_CANDIDATE_ENDPOINTS` mapping
+(`INSTANCE_ID=http://private-ip:8000`, space-separated) to the lifecycle
+installer. Each candidate uses its own health URL. AD-3 is a provisioning
+fallback only until an actual GPU instance and endpoint exist there.
+
 Each description-service environment dumps load to
 `/run/acx-write/<env>/describe-load.json` (override with
 `ACX_DESCRIBE_LOAD_PATH`) on async enqueue/terminal poll and at startup. The JSON
@@ -372,6 +395,13 @@ without an SSH tunnel, publish the loopback admin port with `tailscale serve`:
    ```
 3. From any tailnet device, browse `https://acx-backend.<tailnet>.ts.net/admin/`
    and auth with the VM's `RECOGNITION_ADMIN_TOKEN` (HTTP Basic in the browser).
+
+When Serve owns tailnet port 443, set `ACX_CADDY_BIND_ADDRESS` in
+`/opt/acx-backend/.env` to the VM's public-facing private interface address
+(currently `10.0.1.137`). Caddy then binds ports 80 and 443 on that interface
+and Serve keeps its tailnet listener. A wildcard Caddy bind conflicts with
+Serve after reboot. Verify both public `/health` and tailnet `/health` after
+restarting `acx-caddy.service`.
 
 From the repo, `make -C apps/prototype-description-service admin-oci-serve` runs
 step 2 over SSH and `make -C apps/prototype-description-service admin-oci` opens

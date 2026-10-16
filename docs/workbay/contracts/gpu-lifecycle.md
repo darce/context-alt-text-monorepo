@@ -206,6 +206,34 @@ that placeholder is a single shared endpoint: multi-id waits are refused so a
 healthy sibling cannot mask a dead instance. Missing HTTP status is
 `NOT_READY` (never invented as 200).
 
+### Failover candidates and winner routing (GPUFAIL-1)
+
+`--instance-id` order is failover priority; AD-2 (`10.0.1.9`) is listed first.
+START tries candidates in order and stops at the first acknowledged START (the
+winner); out-of-host-capacity moves to the next. While any candidate is OCI
+`RUNNING` or `STARTING`, no sibling is started: one burst GPU at a time.
+
+`--candidate-endpoint <ocid>=http(s)://host:port`, repeated for every
+candidate, replaces `--ready-url` (the two are mutually exclusive). Readiness
+probes `<endpoint>/health` of each waited-on candidate; a candidate without an
+endpoint probes as `ERROR`. IP literals must be private and non-loopback.
+
+The snapshot names the winner as `instance_id` when it is the only candidate
+`RUNNING`/`STARTING` and every sibling is `STOPPED`; any other mix publishes
+`instance_id: null`. With candidate endpoints configured, the snapshot adds
+`endpoint_url` (the winner's base URL) next to that `instance_id`; it is
+absent whenever `instance_id` is null. Readers validate freshness, identity,
+READY state and the private-endpoint allowlist before inference. Warmup polls
+the same winner's `/health` within the run deadline, and requires its snapshot
+to become READY before releasing inference.
+
+Before enabling multiple candidates, materialize `ACX_GPU_ROUTING_MODE=winner`
+on every API/worker. In that mode an absent, stale, invalid or unready winner
+fails closed; it never redirects to the static AD-2 address. The default
+`static` mode preserves the existing single-instance deployment when snapshots
+have no `endpoint_url`. A snapshot that advertises an endpoint still follows
+the winner validation rules in either mode.
+
 - Timeout and stall fail loudly (non-zero process exit, errors on the result).
 - Stall counts probe ERROR / exception only. `NOT_READY` is pending boot and
   stays in the wait until `--ready-max-cycles` timeout; it does not increment

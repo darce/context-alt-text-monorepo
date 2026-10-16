@@ -535,3 +535,133 @@ def test_installer_provisions_every_supplementary_group_it_references(tmp_path: 
             f"{unit} names supplementary group {group_name!r}, which resolves to "
             f"GID {groups_by_name[group_name]}, not image-pinned GID {image_gid}"
         )
+
+
+# --- GPUFAIL-1: per-candidate readiness endpoints (AD-2 first) ---
+
+AD2_GPU_ID = "ocid1.instance.oc1.phx.anyhqljad2candidate"
+AD1_GPU_ID = "ocid1.instance.oc1.phx.anyhqljad1candidate"
+AD2_ENDPOINT = "http://10.0.1.9:8000"
+AD1_ENDPOINT = "http://10.0.0.7:8000"
+CANDIDATE_ENDPOINTS = f"{AD2_GPU_ID}={AD2_ENDPOINT} {AD1_GPU_ID}={AD1_ENDPOINT}"
+
+
+def _candidate_environment(endpoints: str = CANDIDATE_ENDPOINTS) -> dict[str, str]:
+    return {
+        "GPU_INSTANCE_ID": AD2_GPU_ID,
+        "GPU_INSTANCE_IDS": f"{AD2_GPU_ID} {AD1_GPU_ID}",
+        "GPU_CANDIDATE_ENDPOINTS": endpoints,
+        "READY_URL": "",
+    }
+
+
+def test_candidate_endpoints_replace_the_shared_ready_url_in_dry_run() -> None:
+    result = _run_installer(environment=_candidate_environment())
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "$GPU_CANDIDATE_ENDPOINT_ARGS" in result.stdout
+    assert "--ready-url" not in result.stdout
+
+
+def test_candidate_endpoint_mapping_accepts_comma_separators() -> None:
+    result = _run_installer(environment=_candidate_environment(CANDIDATE_ENDPOINTS.replace(" ", ",")))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "endpoints",
+    [
+        f"{AD2_GPU_ID}={AD2_ENDPOINT}",  # AD-1 candidate has no endpoint
+        f"{AD2_GPU_ID}={AD2_ENDPOINT} {AD1_GPU_ID}={AD1_ENDPOINT} ocid1.instance.oc1.phx.other=http://10.0.3.3:8000",
+        f"{AD2_GPU_ID}={AD2_ENDPOINT} {AD2_GPU_ID}={AD1_ENDPOINT} {AD1_GPU_ID}={AD1_ENDPOINT}",
+        f"{AD2_GPU_ID}=http://8.8.8.8:8000 {AD1_GPU_ID}={AD1_ENDPOINT}",
+        f"{AD2_GPU_ID}=http://127.0.0.1:8000 {AD1_GPU_ID}={AD1_ENDPOINT}",
+        f"{AD2_GPU_ID}=http://169.254.1.1:8000 {AD1_GPU_ID}={AD1_ENDPOINT}",
+        f"{AD2_GPU_ID}=http://10.0.1.9:8000/health {AD1_GPU_ID}={AD1_ENDPOINT}",
+        f"{AD2_GPU_ID}=http://u@10.0.1.9:8000 {AD1_GPU_ID}={AD1_ENDPOINT}",
+        f"{AD2_GPU_ID}=http://10.0.1.9:99999 {AD1_GPU_ID}={AD1_ENDPOINT}",
+        f"{AD2_GPU_ID}=ftp://10.0.1.9:8000 {AD1_GPU_ID}={AD1_ENDPOINT}",
+        f"{AD2_GPU_ID}=http://10.0.1.9:8000;id {AD1_GPU_ID}={AD1_ENDPOINT}",
+        f"{AD2_GPU_ID}=http://$(id):8000 {AD1_GPU_ID}={AD1_ENDPOINT}",
+        f"{AD2_GPU_ID} {AD1_GPU_ID}={AD1_ENDPOINT}",
+    ],
+)
+def test_installer_rejects_unsafe_or_incomplete_candidate_endpoints(endpoints: str) -> None:
+    result = _run_installer(environment=_candidate_environment(endpoints))
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "GPU_CANDIDATE_ENDPOINTS" in result.stderr
+
+
+def test_single_ready_url_install_remains_backward_compatible() -> None:
+    result = _run_installer(environment={"READY_URL": "http://10.0.1.9:8000/health"})
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "--ready-url ${READY_URL}" in result.stdout
+    assert "GPU_CANDIDATE_ENDPOINT_ARGS" not in result.stdout
+
+
+@pytest.fixture(scope="module")
+def candidate_endpoint_install(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    install_root = tmp_path_factory.mktemp("gpu-lifecycle-candidates")
+    environment = _candidate_environment()
+    environment.pop("READY_URL")
+    result, _ = _run_lifecycle(
+        install_root,
+        enabled=True,
+        # The pipeline still forwards its legacy single ready URL.
+        ready_url="http://10.0.1.9:8000/health",
+        dry_run=False,
+        full_remote_install=True,
+        instance_id=AD2_GPU_ID,
+        reap_exec_start=(
+            "/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap "
+            "--max-lease-seconds ${MAX_LEASE_SECONDS} $GPU_CANDIDATE_ENDPOINT_ARGS"
+        ),
+        extra_environment=environment,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return install_root
+
+
+def _systemd_split_environment_word(install_root: Path, service_name: str, name: str) -> list[str]:
+    """Emulate systemd: unescape the EnvironmentFile value, split ``$NAME`` on whitespace."""
+    unit = _rendered_unit(install_root, service_name)
+    (environment_file,) = unit[("Service", "EnvironmentFile")]
+    for line in Path(environment_file).read_text(encoding="utf-8").splitlines():
+        key, _, value = line.partition("=")
+        if key == name:
+            (unescaped,) = shlex.split(value)
+            return unescaped.split()
+    raise AssertionError(f"{name} missing from {environment_file}")
+
+
+@pytest.mark.parametrize("service_name", ["acx-gpu-start.service", "acx-gpu-reap.service"])
+def test_units_render_per_candidate_endpoints_without_shared_ready_url(
+    candidate_endpoint_install: Path, service_name: str
+) -> None:
+    from infra.oci.gpu_lifecycle.reaper import _build_parser
+
+    arguments = _rendered_execstart(_rendered_unit(candidate_endpoint_install, service_name))
+    assert "--ready-url" not in arguments
+    # Standalone $NAME: systemd splits the value into separate argv words.
+    assert "$GPU_CANDIDATE_ENDPOINT_ARGS" in arguments
+    endpoint_args = _systemd_split_environment_word(
+        candidate_endpoint_install, service_name, "GPU_CANDIDATE_ENDPOINT_ARGS"
+    )
+    assert endpoint_args == [
+        "--candidate-endpoint",
+        f"{AD2_GPU_ID}={AD2_ENDPOINT}",
+        "--candidate-endpoint",
+        f"{AD1_GPU_ID}={AD1_ENDPOINT}",
+    ]
+    instance_args = _systemd_split_environment_word(candidate_endpoint_install, service_name, "GPU_INSTANCE_ID_ARGS")
+    assert instance_args == ["--instance-id", AD2_GPU_ID, "--instance-id", AD1_GPU_ID]
+    # The rendered argv is accepted by the real lifecycle parser (AD-2 first).
+    parsed = _build_parser().parse_args(
+        [*instance_args, *endpoint_args, "--queue-depth", "0", "--in-flight", "0"]
+    )
+    assert parsed.instance_ids == [AD2_GPU_ID, AD1_GPU_ID]
+    assert parsed.candidate_endpoints == {AD2_GPU_ID: AD2_ENDPOINT, AD1_GPU_ID: AD1_ENDPOINT}
+    assert parsed.ready_url is None

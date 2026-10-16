@@ -6,7 +6,7 @@
 > **Task ID:** WBTRUST-6
 > **Target Branch:** feature/wbtrust-6
 > **Base SHA:** 372a6413a7ae0eb71baa3566716546684bac5a58
-> **Revision:** 1
+> **Revision:** 2
 > **Review Coverage Target:** frontend + one PHP read; browser pass on `post.php?post=107&action=edit` required
 > **Depends on:** none (Wave A). Shares `components/ui/FaceOverlayLayer.tsx` with the review queue and the lightbox; no other WBTRUST task edits it.
 > **Executor:** `claude-remote` `claude-haiku-5-5`, effort `xhigh` for implementation and grunt work (operator order 2026-10-15). Brief each slice separately (1–3 files), inline the slice text plus codemap snippets; if the write-enabled remote Claude harness is denied or unavailable, record a blocker and ask the operator — no silent fallback to another model.
@@ -19,7 +19,7 @@ Paths are relative to `apps/prototype-wp-alt-context/` (JS under `js/`, PHP unde
 
 ## Objective
 
-On the attachment edit screen the face overlay sits on WordPress's own preview image (`#media-head-<id>`) and no face label intersects any face bounding box.
+On the attachment edit screen the face overlay sits on WordPress's own preview image (`#media-head-<id>`) and no rendered face label intersects any face bounding box. If no valid placement exists, suppress the visual chip while retaining the face outline’s accessible identity, activation and focus.
 
 ## Problem Statement
 
@@ -63,13 +63,15 @@ On the attachment edit screen the face overlay sits on WordPress's own preview i
 
 ## Target Outcome
 
-- The overlay host is a child of the element wrapping WP's preview `<img>` inside `#media-head-<id>`, sized to the displayed image rect (kept in sync by `ResizeObserver` and image `load`).
-- Each face is a transparent-fill bbox outline (2 px line + halo, focus ring), padded to ≥ 24×24; the curated label sits outside the bbox on the side chosen by `placeLabel`; icon-only markers straddle the bbox's top-right corner point.
+- The overlay host is a child of the element wrapping WP's preview `<img>` inside `#media-head-<id>`, sized to the actual painted image rect, including object-fit/letterboxing offsets (kept in sync by `ResizeObserver` and image `load`).
+- Each face is a transparent-fill bbox outline (2 px line + halo, focus ring), padded to ≥ 24×24; a curated label renders only at a validated `placed` result outside all face bboxes and within the painted image. A `noFit` result draws no visual label; the same outline retains its accessible identity, activation and focus. Icon-only markers straddle the bbox's top-right corner point.
 - `#acx-attachment-faces` keeps the status messages and the uncurated list; it no longer draws a second image.
 
 ## Context Loading
 
 `class-attachment-fields.php`, `js/attachment-edit/{main.tsx,AttachmentFacesApp.tsx,UncuratedFaceList.tsx,attachment-edit.scss,copy.ts}`, `js/components/ui/{FaceOverlayLayer.tsx,faceGeometry.ts,FaceLightbox.tsx}`, `js/admin/styles/components/_face-overlay.scss`. Canon (v0.26.2): VIZ-12, VIZ-25, PERC-01, INT-22, A11Y-13, A11Y-14, A11Y-16, LAY-24, UI-01.
+
+The outside-bbox, containment and no-fit rules are accepted product requirements. Canon v0.26.2: **PERC-01 — Proximity binds meaning** (`lexicons/interaction-ux.md#perc-01`) checks label-to-target association; **A11Y-13 — Focus not obscured (2.4.11)** (`lexicons/accessibility.md#a11y-13`) checks focus visibility. **VIZ-12 — Layered transparency discipline** (`lexicons/interaction-ux.md#viz-12`) concerns transparent outline/layer legibility, not an outside-bbox placement rule. EVAL-16 does not apply to DOM recon.
 
 ## Contract and Boundary Impact
 
@@ -78,7 +80,16 @@ On the attachment edit screen the face overlay sits on WordPress's own preview i
 
 ## Proposed Solution
 
-A portal renders `FaceOverlayLayer` into a host appended to the preview image's positioned parent. The layer gets a pure `placeLabel(bbox, container, labelSize)` that returns `below | above | right | left` plus clamped coordinates, preferring below, falling back by available room. The duplicate figure is deleted.
+A portal renders `FaceOverlayLayer` into a host appended to the preview image's positioned parent. The pure `placeLabel(bbox, container, labelSize, faceRects)` uses measured CSS-pixel geometry in the painted image's coordinate space. Its planned result is a typed discriminant:
+
+```ts
+type LabelPlacement =
+  | { kind: 'placed'; side: 'below' | 'above' | 'right' | 'left';
+      left: number; top: number; width: number; height: number }
+  | { kind: 'noFit' };
+```
+
+Try below, above, right, left. Return `placed` only for a finite, positive-size final label rect wholly contained in the painted image and outside every rect in `faceRects` (including the target bbox). Revalidate after clamping; if all valid sides fail, return `noFit`, never a least-overlap rectangle. Invalid, unavailable or unsupported geometry/label size also returns `noFit`. Any shortening or size constraint must be re-measured under the actual final CSS and passed through the same validation; until validated, draw no visual chip. If it still cannot fit, suppress the visual chip and keep the outline's accessible identity, activation and focus; do not create a hidden functional action or guess a position. The duplicate figure is deleted. No `onLabelPlacement` production callback API is introduced: the browser gate reads actual rendered DOM/CSS geometry (decision 17075).
 
 ## Files and Surfaces to Change
 
@@ -92,9 +103,9 @@ Owned paths:
 
 ## Verification Strategy
 
-- Unit: `placeLabel` table tests (face near each edge, tiny face, wide label, container smaller than label) assert the label rect never intersects the bbox rect and stays inside the container; ids/reading order unchanged; keyboard walk (`keyboardWalk.test.tsx`) green.
-- Integration: host creation/removal, `ResizeObserver` resync, image `load` resync, `imgedit` swap handled (re-query the `<img>` via `MutationObserver` on the head element).
-- Browser (fir site, post 107): overlay aligned to the preview at several window widths; label outside bbox for every face; hover/focus reveals the outline; Tab order matches reading order; the same layer in the review queue and lightbox still reads correctly.
+- Unit: `placeLabel` table/property tests cover each edge, tiny face, multiple faces, wide label, container smaller than label, face filling the container, and invalid/unsupported sizes. For `placed`, assert finite final dimensions, containment and no intersection with any face bbox. Impossible cases assert `noFit`. Rendering tests assert `noFit` draws no visual chip and retains outline accessible identity, activation, focus, ids and reading order; keyboard walk (`keyboardWalk.test.tsx`) green. Any shortened label is re-measured and revalidated before drawing.
+- Integration: host creation/reuse without duplication, `ResizeObserver` resync, image `load` resync, `imgedit` swap handled (re-query the `<img>` via `MutationObserver` on the head element); rebind observers/listeners to the replacement image, invalidate stale label measurements, and clean up only this instance’s host/listeners/observers and owned positioning class.
+- Browser (fir site, post 107; decision 17075): measure actual painted image bounds, face outlines and final rendered label rects under production CSS at several window widths, after load/resize and image replacement. For each rendered label assert finite containment and no overlap with any face bbox. Include a controlled impossible-fit case: no visual chip, no visual label/face overlap, and outline identity, keyboard activation and focus retained. Check host reuse/rebinding/scoped cleanup; Tab order matches reading order; review queue and lightbox remain correct. No callback, mocked geometry or offline unit result substitutes for this browser gate.
 - `npm run typecheck`, `npm run lint`, `vitest run`, `composer test` (if PHP touched) on the VM; `make lint-ux-maps`.
 
 ## Slice Delivery
@@ -102,7 +113,7 @@ Owned paths:
 ### Slice S1: dom-recon-and-red-tests
 
 Pin the host element and fail first.
-Closes: R7 (diagnosis). Canon: EVAL-16, PERC-01.
+Closes: R7 (diagnosis). Canon: PERC-01.
 Design decision (binding): first record the served plugin build (scope § Step 0) so the defect is attributed to `main` or to the pinned release. Then, on `post.php?post=107`, capture the real structure under `#media-head-107` (container classes, the preview `<img>`, whether it has a positioned parent, what `imgedit` replaces); record it in the decision. RED tests: label rect intersects bbox with today's centred chip; the faces state renders a second `<img>`.
 Acceptance: decision contains the selector chosen and a fallback; RED tests fail on the base SHA.
 
@@ -110,22 +121,22 @@ Acceptance: decision contains the selector chosen and a fallback; RED tests fail
 
 A pure function, fully tested.
 Closes: R7. Canon: VIZ-12, VIZ-25, PERC-01.
-Design decision (binding): `placeLabel(bbox, container, labelSize)` in `js/components/ui/placeLabel.ts` returns `{ side, left, top }`; preference order below, above, right, left; clamps to the container; never returns a rect intersecting `bbox` unless no side fits (then picks the side with least overlap and flags `overlaps: true` so the UI can shorten the label via `max-width`).
-Acceptance: table tests including edge and tiny-face cases; property test: for random bbox/container, result does not intersect bbox when `overlaps === false`.
+Design decision (binding): `placeLabel(bbox, container, labelSize, faceRects)` in `js/components/ui/placeLabel.ts` uses the `LabelPlacement` contract above: `placed` with finite, contained final geometry outside every face rect, or `noFit` with no drawable rectangle. Preference order below, above, right, left; validate after clamping and after any final-size/shortening re-measurement. All sides failing or unsupported size means `noFit`; never return overlap as fallback.
+Acceptance: table/property tests cover edge/tiny-face cases and both impossible-fit counterexamples (label wider than image; face fills image). Every `placed` rect is finite, contained and outside all face rects; impossible or unsupported input yields `noFit`. Final-size changes require a new measurement and validation, with no visual label until successful.
 
 ### Slice S3: outline-as-control
 
 Take the control off the face.
 Closes: R7. Canon: VIZ-12, A11Y-14, A11Y-16, UI-01.
-Design decision (binding): in `FaceOverlayLayer` the interactive element is the bbox outline (transparent fill, 2 px line, halo via `--acx-*` tokens, focus ring) with padding to 24×24 for small faces; the curated label renders at the `placeLabel` position, `pointer-events` on the label forwards to the same control; icon-only markers and the review "?" chip anchor on the bbox's top-right corner point. Applies to every consumer (greenfield; no flag) — update the review-queue and lightbox tests that read chip position.
-Acceptance: `FaceOverlayLayer.test.tsx`, `FaceLightbox.test.tsx`, `ReviewQueue` overlay tests green; no chip centre inside any bbox in the test fixtures.
+Design decision (binding): in `FaceOverlayLayer` the interactive element is the bbox outline (transparent fill, 2 px line, halo via `--acx-*` tokens, focus ring) with padding to 24×24 for small faces; the curated label renders only for `kind: 'placed'` at its validated final rect, `pointer-events` on the label forwards to the same control; `noFit` renders no visual chip while that outline keeps its accessible identity, activation and focus (no hidden functional action); icon-only markers and the review "?" chip anchor on the bbox's top-right corner point. Applies to every consumer (greenfield; no flag) — update the review-queue and lightbox tests that read chip position.
+Acceptance: `FaceOverlayLayer.test.tsx`, `FaceLightbox.test.tsx`, `ReviewQueue` overlay tests green; every rendered label’s full rect is outside all face bboxes and contained in the painted image. No-fit cases draw no visual chip and retain outline identity, activation and focus.
 
 ### Slice S4: portal-onto-media-head
 
 Overlay the real image.
 Closes: R7. Canon: PERC-01, NAV-19, LAY-21.
-Design decision (binding): `useMediaHeadHost(attachmentId)` finds `#media-head-<id>`'s preview `<img>` (selector from S1), appends a host div to its positioned parent (adds `position: relative` via a class, not inline style on core elements), sizes it to the image's displayed rect (`getBoundingClientRect` relative to the parent, not the parent's box — decision 10726) with `ResizeObserver` + `load`, re-resolves on `MutationObserver` (imgedit), and removes the host on unmount. `OverlayPortal` renders `FaceOverlayLayer` into the host. If the head is missing, fall back to the compat-field figure.
-Acceptance: portal + resync tests; fallback test; no second `<img>` in the faces state when the head exists.
+Design decision (binding): `useMediaHeadHost(attachmentId)` finds `#media-head-<id>`'s preview `<img>` (selector from S1), appends a host div to its positioned parent (adds `position: relative` via a class, not inline style on core elements), sizes it to the actual painted image rect (account for object-fit/letterboxing and offsets relative to the parent, not just the parent or img element box — decision 10726) with `ResizeObserver` + `load`, and re-resolves/rebinds on `MutationObserver` (imgedit). Reuse this instance’s host without duplication; invalidate stale label measurements on load/resize/rebind. On replacement/unmount disconnect its observers/listeners and remove only its host and positioning class if this instance added it, preserving unrelated hosts/styles. `OverlayPortal` renders `FaceOverlayLayer` into the host. If the head is missing, fall back to the compat-field figure.
+Acceptance: portal + load/resize/rebind tests, host reuse and scoped cleanup tests; fallback test; no second `<img>` in the faces state when the head exists. Browser acceptance measures painted geometry under actual CSS; mocked rects alone do not prove alignment.
 
 ### Slice S5: remove-duplicate-figure
 
@@ -138,5 +149,5 @@ Acceptance: `AttachmentFacesApp.test.tsx` states (loading, error, degraded, empt
 
 Verify on the real screen.
 Closes: R7. Canon: A11Y-13, INT-22.
-Design decision (binding): browser walk on post 107 (and one multi-face media item) at three widths, recorded in the decision with the label-outside check per face; update the identity-chips map text and hand-mirror the `.md`; `make lint-ux-maps`.
+Design decision (binding): browser walk on post 107 (and one multi-face media item) at three widths, recorded in the decision with actual CSS-rendered image/outline/label rects and the conditional rendered-label checks above (decision 17075). Exercise load/resize/rebind, host reuse/scoped cleanup and an impossible-fit case with no visual chip and outline identity/activation/focus retained; update the identity-chips map text and hand-mirror the `.md`; `make lint-ux-maps`.
 Acceptance: walk recorded; map lint green; slice-complete decision per template.

@@ -31,18 +31,17 @@ def test_public_guide_collects_desktop_and_phone_cases() -> None:
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
 
-    # Three acceptance cases in the real spec, each repeated for desktop and Pixel 7.
+    # Three acceptance cases in the real spec, each repeated for desktop and mobile 390x844.
     titles = (
-        "signed-out /guide/ is 200 with canonical, scope copy, keyboard apply/undo, and no REST",
+        "signed-out /guide/ is 200 with canonical, scope copy, keyboard name choice/use/undo, and no REST",
         "direct reload of /guide/ keeps the page working",
         "route-blocked guide bundle shows the fallback paragraph",
     )
     collected = [line.strip() for line in result.stdout.splitlines() if "[public-guide]" in line]
     assert len(collected) == 2 * len(titles), output
-    for viewport in ("desktop 1440x900", "mobile Pixel 7"):
+    for viewport in ("desktop 1440x900", "mobile 390x844"):
         for title in titles:
             suffix = f"public guide signed-out › {viewport} › {title}"
             assert sum(line.endswith(suffix) for line in collected) == 1, output
     assert all("public-guide.spec.ts:" in line for line in collected), output
     assert re.search(r"Total: 6 tests in 1 file\b", result.stdout), output
-

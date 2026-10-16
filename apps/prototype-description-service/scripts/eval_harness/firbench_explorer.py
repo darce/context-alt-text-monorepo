@@ -738,7 +738,7 @@ _GLOSSARY = (
         "fpir",
         "FPIR (false positive identification rate)",
         "fpir",
-        "Definition pending. The manifest names this rate; this page does not define it.",
+        "The number of non-mated source units (strangers who are not enrolled) producing any false identification, divided by the recorded eligible non-mated source-unit population under the active aggregation rule. This descriptive page does not evaluate FPIR or declare a winner; independent ground truth and qualification remain unknown.",
     ),
     (
         "guardrail",

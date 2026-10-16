@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "frame_id": "fixture-v1",
+  "admissibility": "development",
+  "sealed": false,
+  "source_sha256": null,
+  "exhaustive": true,
+  "planning_icc": 0.1,
+  "design_effect": 2.2,
+  "n_eff": 5.0,
+  "n_units": 1,
+  "n_nonmated_eff": 1,
+  "sampling_arm_counts": {"probability": 1, "challenge": 0},
+  "images": [
+    {
+      "image_id": "image-0001",
+      "sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "sampling_arm": "probability",
+      "inclusion_probability": 0.5,
+      "duplicate_group": null,
+      "session_id": "session-0001",
+      "synthetic_parent_id": null
+    }
+  ],
+  "faces": [
+    {
+      "face_id": "face-0001",
+      "image_id": "image-0001",
+      "box": [1.0, 2.0, 30.0, 40.0],
+      "identity_status": "named",
+      "identity_id": "id-0001",
+      "cohort": {"sex": null, "age_band": null, "origin": null},
+      "annotation": {
+        "occluders": null,
+        "visibility": {"left_eye": null, "right_eye": null, "nose": null, "mouth": null},
+        "annotation_tier": null,
+        "exhaustive": null,
+        "provenance_ref": null,
+        "rule_id": null,
+        "observation_ref": null,
+        "qc_ref": null
+      }
+    }
+  ],
+  "psu_map": [{"image_id": "image-0001", "psu_id": "psu-0001"}],
+  "folds": [{"psu_id": "psu-0001", "fold": 0}],
+  "identity_folds": [{"identity_id": "id-0001", "fold": 0}],
+  "gallery_sha256_by_fold": [{"fold": 0, "sha256": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"}],
+  "fold_roles": [{"fold": 0, "role": "fit"}]
+}

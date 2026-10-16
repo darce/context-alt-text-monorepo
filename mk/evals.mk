@@ -144,3 +144,123 @@ EVAL_PYTHON ?= python3
 .PHONY: eval-zero-rule-baseline
 eval-zero-rule-baseline:
 	@cd $(EVAL_SERVICE) && PYTHONPATH=$$PWD $(EVAL_PYTHON) -m scripts.eval_harness.zero_rule_baseline $(EVAL_ARGS)
+
+# =============================================================================
+# FIRBENCH-1 S6a · one immutable run, then its score (AE-12 tracer entry point)
+# =============================================================================
+#
+# RUN_DIR must resolve under benchmarks/private/ (require_private_output_path); a
+# relative RUN_DIR resolves from the repository root. FIR_BENCH_DECISION defaults to the
+# committed decision manifest. fir-bench-run needs the bench extra and ACX_EVAL_BENCH=1
+# for the insightface leg. fir-bench-score reads files only: dev extra, no eval flag.
+
+FIR_BENCH_DECISION ?= benchmarks/manifests/fir-bench-decision-v1.json
+FIR_BENCH_LEGS ?= sface,auraface,insightface
+FIR_BENCH_ARMS ?= native
+
+.PHONY: fir-bench-run fir-bench-score fir-bench-report fir-bench-compare fir-bench-unseal
+
+## fir-bench-run: create one immutable FIRBENCH-1 run directory (scoring is a separate step)
+# Usage: make fir-bench-run FRAME=<frame_id> RUN_DIR=benchmarks/private/firbench/runs/<run_id>
+#        [LEGS=sface,auraface,insightface] [ARMS=native] [SUBSET=N SUBSET_SEED=S] [CREATED_AT=<ISO 8601 with offset>]
+fir-bench-run:
+	@if [ -z "$(FRAME)" ] || [ -z "$(RUN_DIR)" ]; then \
+		echo "error: FRAME and RUN_DIR are required (e.g. FRAME=golden150-v1 RUN_DIR=benchmarks/private/firbench/runs/run-0001)" >&2; \
+		exit 2; \
+	fi
+	@ACX_EVAL_BENCH=1 uv run --directory "$(EVAL_SERVICE)" --locked --extra dev --extra bench \
+		python -m scripts.eval_harness.firbench_cli run \
+		--frame "$(FRAME)" \
+		--decision "$(abspath $(FIR_BENCH_DECISION))" \
+		--legs "$(or $(LEGS),$(FIR_BENCH_LEGS))" \
+		--arms "$(or $(ARMS),$(FIR_BENCH_ARMS))" \
+		$(if $(SUBSET),--subset "$(SUBSET)" --subset-seed "$(SUBSET_SEED)",) \
+		$(if $(CREATED_AT),--created-at "$(CREATED_AT)",) \
+		--out "$(abspath $(RUN_DIR))"
+
+## fir-bench-score: write scores.json for an existing run (reads files; never rewrites timings.json)
+# Usage: make fir-bench-score RUN_DIR=benchmarks/private/firbench/runs/<run_id>
+fir-bench-score:
+	@if [ -z "$(RUN_DIR)" ]; then \
+		echo "error: RUN_DIR is required (e.g. RUN_DIR=benchmarks/private/firbench/runs/run-0001)" >&2; \
+		exit 2; \
+	fi
+	@env -u ACX_EVAL_BENCH uv run --exact --directory "$(EVAL_SERVICE)" --locked --extra dev \
+		python -m scripts.eval_harness.firbench_cli score "$(abspath $(RUN_DIR))"
+
+## fir-bench-report: render the private S5 report into <run_dir>/report/ (no eval flag)
+# Usage: make fir-bench-report RUN_DIR=benchmarks/private/firbench/runs/<run_id>
+fir-bench-report:
+	@if [ -z "$(RUN_DIR)" ]; then \
+		echo "error: RUN_DIR is required (e.g. RUN_DIR=benchmarks/private/firbench/runs/run-0001)" >&2; \
+		exit 2; \
+	fi
+	@uv run --directory "$(EVAL_SERVICE)" --locked --extra dev \
+		python -m scripts.eval_harness.firbench_cli report "$(abspath $(RUN_DIR))"
+
+## fir-bench-compare: compare two scored runs; OUT must lie under benchmarks/private/
+# Usage: make fir-bench-compare RUN_A=<run dir> RUN_B=<run dir> OUT=<private dir> [TREATMENT=<field>]
+fir-bench-compare:
+	@if [ -z "$(RUN_A)" ] || [ -z "$(RUN_B)" ] || [ -z "$(OUT)" ]; then \
+		echo "error: RUN_A, RUN_B and OUT are required" >&2; \
+		exit 2; \
+	fi
+	@uv run --directory "$(EVAL_SERVICE)" --locked --extra dev \
+		python -m scripts.eval_harness.firbench_cli compare \
+		"$(abspath $(RUN_A))" "$(abspath $(RUN_B))" --out "$(abspath $(OUT))" \
+		$(if $(TREATMENT),--treatment "$(TREATMENT)",)
+
+## fir-bench-unseal: append one unspent unseal token; the ledger stays local under benchmarks/private/
+# Usage: make fir-bench-unseal FRAME=<sealed frame_id> RUN_ID=<run_id> [FIR_BENCH_DECISION=<decision.json>]
+fir-bench-unseal:
+	@if [ -z "$(FRAME)" ] || [ -z "$(RUN_ID)" ]; then \
+		echo "error: FRAME and RUN_ID are required" >&2; \
+		exit 2; \
+	fi
+	@uv run --directory "$(EVAL_SERVICE)" --locked --extra dev \
+		python -m scripts.eval_harness.firbench_cli unseal \
+		--decision "$(abspath $(FIR_BENCH_DECISION))" --frame "$(FRAME)" --run-id "$(RUN_ID)"
+
+# =============================================================================
+# FIRBENCH-1 S9 · simulated acceptance: AE-2b, AE-3, AE-4 and the H2/MDE/floor/stage rows
+# =============================================================================
+#
+# Synthetic only. The simulator writes acceptance.json under benchmarks/private/ and never changes the real
+# decision, fixture or run inputs. full_acceptance_evidence is true only when every suite ran at R=2000 with the
+# manifest n_boot; AE-10 and real-data AE-5/6/12 evidence stay pending until supplied and verified. Dev profile
+# only (no bench extra, no InsightFace), ACX_EVAL_BENCH unset, single-process pytest.
+
+FIR_BENCH_SIM_PARAMS ?= apps/prototype-description-service/scene/tests/fixtures/firbench_sim_v1.json
+FIR_BENCH_ACCEPTANCE_OUT ?= benchmarks/private/firbench/acceptance
+FIR_BENCH_ACCEPTANCE_SUITES ?= null,selection,coverage,power,noninferiority,mde,floor,stage
+# Service-relative, because pytest runs from EVAL_SERVICE. AE-1 known answers, AE-6 legacy parity,
+# AE-7 replay, AE-8 cache, AE-9 refusals.
+FIR_BENCH_AE_FIXTURE_TESTS ?= scene/tests/test_eval_harness_firbench_contract.py \
+	scene/tests/test_eval_harness_firbench_score.py \
+	scene/tests/test_eval_harness_firbench_clusters.py \
+	scene/tests/test_eval_harness_firbench_face_outcomes.py \
+	scene/tests/test_eval_harness_firbench_score_calibration.py \
+	scene/tests/test_eval_harness_firbench_frames_partition.py \
+	scene/tests/test_eval_harness_firbench_cache_runtime.py \
+	scene/tests/test_eval_harness_firbench_compare_compatibility.py \
+	scene/tests/test_eval_harness_firbench_compare_seals.py \
+	scene/tests/test_eval_harness_firbench_cli_integration.py \
+	scene/tests/test_eval_harness_firbench_report_binding.py \
+	scene/tests/test_eval_harness_firbench_score_timing_semantics.py
+
+.PHONY: fir-bench-acceptance
+
+## fir-bench-acceptance: simulated AE-2b/AE-3/AE-4 suites, then the AE-1 and AE-6..AE-9 fixture modules
+# Usage: make fir-bench-acceptance [FIR_BENCH_ACCEPTANCE_REPLICATES=<int>] [FIR_BENCH_ACCEPTANCE_SEED=<int>] [FIR_BENCH_ACCEPTANCE_OUT=<private dir>]
+#        Unset, the replicates and seed come from the fixture (R=2000) and the master seed inside the CLI.
+fir-bench-acceptance:
+	@env -u ACX_EVAL_BENCH uv run --exact --directory "$(EVAL_SERVICE)" --locked --extra dev \
+		python -m scripts.eval_harness.firbench_selftest \
+		--params "$(abspath $(FIR_BENCH_SIM_PARAMS))" \
+		--decision "$(abspath $(FIR_BENCH_DECISION))" \
+		--out "$(abspath $(FIR_BENCH_ACCEPTANCE_OUT))" \
+		--suites "$(FIR_BENCH_ACCEPTANCE_SUITES)" \
+		$(if $(FIR_BENCH_ACCEPTANCE_REPLICATES),--replicates "$(FIR_BENCH_ACCEPTANCE_REPLICATES)",) \
+		$(if $(FIR_BENCH_ACCEPTANCE_SEED),--seed "$(FIR_BENCH_ACCEPTANCE_SEED)",)
+	@env -u ACX_EVAL_BENCH uv run --exact --directory "$(EVAL_SERVICE)" --locked --extra dev \
+		python -m pytest $(FIR_BENCH_AE_FIXTURE_TESTS) -n0 -q --tb=short -p no:cacheprovider

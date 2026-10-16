@@ -81,20 +81,29 @@ ADR-003 makes the WordPress local projection the rendering authority. It also sa
      - Each row carries adapter, model, version, prompt/task version, tier, hashes and timing (PROV-01, PROV-09).
      - It also carries the adapter output *before* identity weaving.
      - It never carries the woven named draft, the applied names or cluster ids.
-   - WordPress writes `wp_acx_description_events` (`applied`, `corrected`, `discarded`, `reset`) with the same `generation_id` (HAI-06, HAI-02).
+   - WordPress writes `wp_acx_description_events` (`applied`, `corrected`, `discarded`, `reset`) with a distinct source event id and nullable `generation_id` (HAI-06, HAI-02). Multiple events may reference one generation.
+   - Projection refresh updates service-owned columns only. It never clears a WordPress discard, even for a newer result. Regenerate creates a new generation; old discarded bulk items stay excluded from apply.
    - `audit_events` stays a security trail. It is not history.
 6. **Reset is a WordPress-first replayable mutation (DOM-06, RES-17).**
    - In one `run_transactional` call, WordPress clears its local description state and enqueues an outbox op, `descriptions_purged`.
-   - The service purge is idempotent.
+   - Descriptions and all use the same local-first outbox path. Disposed keeps the existing recognition flow.
+   - WordPress serializes bulk submissions, shared single-image/CLI submissions and reset on one durable tenant admission row. Reserve each submission before transport; retain uncertain and active reservations until verified terminal. Refuse reset before clearing if any reservation is active.
+   - Service admission and purge share a transaction-scoped tenant lock. Active operation/run reservations commit before compute dispatch.
+   - Require a stable idempotency key. The service uniquely records `(tenant_id,idempotency_key)`, performs deletion and stores the final acknowledgement in one transaction. A duplicate returns that acknowledgement without deleting newer data.
+   - Replay receipts survive descriptions/all and age retention. They contain no content and live until tenant deletion, which reclaims them. This tenant-lifetime safety metadata is the explicit exception to content-history retention.
+   - A busy service result (`description_work_active`) is retryable under the bounded outbox policy. It is not a curation version conflict.
    - While that op is pending, WordPress refuses describe submissions and new resets, so a late replay cannot delete newer drafts.
-   - Reset is refused while a run is active.
+   - Reset is refused while a run, single-image operation or uncertain submission is active. Local clears and outbox enqueue use one transaction; per-image helpers never start a nested transaction.
    - Alt text with a human edit is kept unless the operator opts in.
 7. **Purge scopes.**
    - `descriptions` deletes the service cache, runs, items and terminal describe operations. It keeps the generation log, because that is the history.
-   - `all` additionally deletes the generation log and all description tables, so "All machine data" becomes true.
-   - The generation log has a fixed age limit of 365 days, applied by the startup retention purge (MLDATA-15).
+   - `all` additionally deletes the generation log and all description content tables, preserving replay receipts, so "All machine data" becomes true.
+   - Generation content expires at 365 days. A supervised startup/hourly service job deletes expired rows in bounded batches without requiring restart. Physical deletion SLA is 24 h after expiration; failures and remaining/oldest backlog are visible (MLDATA-15, RES-07).
+   - WordPress events expire at 180 days. Completed run projections/items and terminal submission reservations expire at 30 days. An hourly scheduled job drains bounded batches, retries remaining backlog after 60 s and reports completion/failures. Active work and pending reset metadata are never aged out.
+   - Alert when expired backlog exceeds the 24 h deletion SLA or either job has no successful tick for 2 h. History expiration never clears authoritative alt/provenance meta.
 8. **Benchmarks are derived (STOR-07, STOR-05).**
    - Accuracy and performance comparisons use a local SQLite export built from the two logs, keyed by image sha256 and `generation_id`.
+   - Export generations use `(tenant_id,generation_id)` as their key; curation events use `(tenant_id,event_id)`. Event generation ids are nullable, non-unique join references.
    - The export is never a source of truth, and it never goes into Git, MCP or prompts. It is separate from the FIRBENCH private DB.
 9. **Per-image recovery over tenant wipe (INT-11).**
    - "Regenerate" bypasses the cache and replaces the cache row.
@@ -104,7 +113,7 @@ ADR-003 makes the WordPress local projection the rendering authority. It also sa
 
 ### Target outcome
 
-With the service stopped, the Review Queue still shows every draft from completed runs, and bulk apply still works. A reset of #116 clears its AI alt text locally at once and erases the service copy when the outbox drains. Every applied alt text can be traced back to the generation that produced it.
+With the service stopped, the Review Queue still shows drafts from retained completed runs, and bulk apply still works. A reset of #116 clears its AI alt text locally at once and erases the service copy when the outbox drains. Within the history retention periods, an applied alt event can be traced back to its generation. Expiration never clears the saved alt or its provenance meta.
 
 ## Why This Decision
 

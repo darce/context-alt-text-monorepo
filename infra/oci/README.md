@@ -388,6 +388,13 @@ without an SSH tunnel, publish the loopback admin port with `tailscale serve`:
 3. From any tailnet device, browse `https://acx-backend.<tailnet>.ts.net/admin/`
    and auth with the VM's `RECOGNITION_ADMIN_TOKEN` (HTTP Basic in the browser).
 
+When Serve owns tailnet port 443, set `ACX_CADDY_BIND_ADDRESS` in
+`/opt/acx-backend/.env` to the VM's public-facing private interface address
+(currently `10.0.1.137`). Caddy then binds ports 80 and 443 on that interface
+and Serve keeps its tailnet listener. A wildcard Caddy bind conflicts with
+Serve after reboot. Verify both public `/health` and tailnet `/health` after
+restarting `acx-caddy.service`.
+
 From the repo, `make -C apps/prototype-description-service admin-oci-serve` runs
 step 2 over SSH and `make -C apps/prototype-description-service admin-oci` opens
 the console; both honour `OCI_HOST` / `OCI_USER` (same env contract as

@@ -1979,9 +1979,15 @@ svg .dot { fill: var(--accent); } svg text.s1 { stroke: none; fill: var(--warn);
 """
 
 
+def _strict_json(value: object, *, where: str, **options: Any) -> str:
+    """JSON text with no non-finite token; refuses instead of emitting ``NaN``/``Infinity``."""
+    _assert_finite_tree(value, where)
+    return json.dumps(value, allow_nan=False, sort_keys=True, **options)
+
+
 def _ui_json(value: object) -> str:
     """Inert JSON for HTML raw-text elements, including hostile pseudonymous IDs."""
-    return (json.dumps(value, ensure_ascii=True, sort_keys=True)
+    return (_strict_json(value, where="inline report JSON", ensure_ascii=True)
             .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
 
 
@@ -2376,6 +2382,20 @@ def _legs_csv(scores: Mapping[str, Any]) -> str:
     return _csv_text(["leg_key", "admissibility", "n_eff", "misses", "n_mated", "fpi", "n_units"], rows)
 
 
+def _assert_finite_tree(value: object, where: str) -> None:
+    """Refuse any non-finite number in a parsed or emitted value; iterative, so depth cannot escape."""
+    stack: list[object] = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, float):
+            if not math.isfinite(item):
+                raise FrameContractError(f"{where}: non-finite JSON number refused")
+        elif isinstance(item, Mapping):
+            stack.extend(item.values())
+        elif isinstance(item, (list, tuple)):
+            stack.extend(item)
+
+
 def _binding_json(raw: bytes, where: str) -> Any:
     def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
         result = {}
@@ -2389,9 +2409,11 @@ def _binding_json(raw: bytes, where: str) -> Any:
         raise FrameContractError(f"{where}: non-finite JSON constant {value}")
 
     try:
-        return json.loads(raw, object_pairs_hook=pairs, parse_constant=constant)
+        value = json.loads(raw, object_pairs_hook=pairs, parse_constant=constant)
     except (ValueError, UnicodeError) as exc:
         raise FrameContractError(f"{where}: malformed JSON: {exc}") from exc
+    _assert_finite_tree(value, where)
+    return value
 
 
 def _binding_file(run: Path, name: str) -> Path:
@@ -2984,7 +3006,7 @@ def render_report(run_dir: Path | str, *, out_dir: Path | str, include_crops: bo
         "table_exports": exports,
         "dependencies_pending": dependencies,
     }
-    report_text = json.dumps(report, sort_keys=True, indent=2, ensure_ascii=False) + "\n"
+    report_text = _strict_json(report, where="report.json", indent=2, ensure_ascii=False) + "\n"
     # Complete validation precedes every write; refuse redirected existing artifacts.
     for name in ("index.html", "report.json", *tables):
         destination = target / name

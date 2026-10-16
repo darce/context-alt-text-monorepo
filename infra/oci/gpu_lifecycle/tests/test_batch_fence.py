@@ -117,12 +117,24 @@ def test_partial_stop_publishes_state_of_still_running_instance(tmp_path: Path) 
 
     assert result.actuated == [("STOP", "ocid1.idle")]
     assert actuator.stopped == ["ocid1.idle"]
+    # After the partial stop the busy instance is the sole active candidate,
+    # so the snapshot names it (and carries its C2 metadata). The prior READY
+    # had no identity, so it is never carried onto busy: WARMING until a
+    # readiness probe proves READY for this instance.
     assert _snapshot(path) | {"written_at": 0, "since": 0} == {
         "state": "warming",
-        "instance_id": None,
+        "instance_id": "ocid1.busy",
         "written_at": 0,
         "reason": None,
         "since": 0,
+        "intent": "auto",
+        "intent_expires_at": None,
+        "intent_status": "none",
+        "honoured_nonce": None,
+        "lease_expires_at": None,
+        "instance_running_since": None,
+        # Cycle-level: why this cycle last actuated (the sibling's idle STOP).
+        "last_transition_reason": "idle",
     }
     # The defect this test exists for: a partial stop must never publish
     # STOPPED while another instance is still RUNNING.

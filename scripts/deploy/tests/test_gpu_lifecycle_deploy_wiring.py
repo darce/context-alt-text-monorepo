@@ -19,6 +19,21 @@ INSTALLER = REPO_ROOT / "scripts/deploy/gpu-lifecycle-install.sh"
 DEPLOYMENTS_FILE = REPO_ROOT / "scripts/deploy/gpu-snapshot-deployments.conf"
 
 
+@pytest.mark.parametrize("mode", ["start", "reap"])
+def test_instance_arguments_use_systemd_word_splitting(tmp_path: Path, mode: str) -> None:
+    result, _ = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://10.0.1.9:8000/health",
+        dry_run=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    unit = tmp_path / f"host/opt-acx-gpu/current/systemd/acx-gpu-{mode}.service"
+    command = next(line for line in unit.read_text().splitlines() if line.startswith("ExecStart="))
+    # systemd expands ${VAR} as one argument; $VAR splits the OCID flags into argv.
+    assert "$GPU_INSTANCE_ID_ARGS" in command.split()
+
+
 def _run_lifecycle(
     tmp_path: Path,
     *,
@@ -62,6 +77,7 @@ def _run_lifecycle(
     seed_stale_reaper_units: bool = False,
     external_failure: str = "",
     full_remote_install: bool = False,
+    extra_environment: dict[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir(exist_ok=True)
@@ -643,6 +659,8 @@ exec "$FAKE_REAL_RM" "$@"
         environment["ACX_GPU_READY_URL"] = ready_url
     if dry_run:
         environment["ACX_GPU_LIFECYCLE_DRY_RUN"] = "1"
+    if extra_environment:
+        environment.update(extra_environment)
 
     result = subprocess.run(
         [str(DEPLOY), "gpu-lifecycle"],
@@ -927,7 +945,7 @@ def test_effective_reaper_must_retain_ready_url_argument(tmp_path: Path) -> None
     )
 
     assert result.returncode != 0
-    assert "lacks the ready-url argument" in result.stderr
+    assert "lacks the ready-url or candidate-endpoint argument" in result.stderr
     assert "systemctl <disable> <--now> <acx-gpu-start.timer>" in calls
 
 

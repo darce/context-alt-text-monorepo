@@ -8,7 +8,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MANIFEST_PATH = REPO_ROOT / "config/env/manifest.d/21-service-vm.toml"
-RUNTIME_PATH = REPO_ROOT / "apps/prototype-description-service/scene/interface_adapters/http/deps.py"
+RUNTIME_PATH = REPO_ROOT / "apps/prototype-description-service/scene/application/gpu_state.py"
 PREFLIGHT_PATH = REPO_ROOT / "scripts/deploy/preflight-gpu-env.sh"
 ALLOWLIST_VAR = "ACX_GPU_ENDPOINT_ALLOWLIST"
 
@@ -19,7 +19,7 @@ def _runtime_default_patterns() -> set[str]:
         if not isinstance(node, ast.Assign):
             continue
         if any(
-            isinstance(target, ast.Name) and target.id == "_DEFAULT_GPU_ENDPOINT_ALLOWLIST"
+            isinstance(target, ast.Name) and target.id == "DEFAULT_GPU_ENDPOINT_ALLOWLIST"
             for target in node.targets
         ):
             patterns = ast.literal_eval(node.value)

@@ -21,6 +21,7 @@ import httpx
 from PIL import Image
 
 from scene.application.description_adapter import AdapterResult
+from scene.application.gpu_state import GpuRoute
 from scene.application.identity_merge.merge import NormalizedBox, PhraseBox, span_replaceable
 from scene.application.identity_merge.realizer import find_generic_person_nps
 from scene.domain.description import DescriptionAdapterKind
@@ -425,8 +426,15 @@ class GpuRemoteDescriptionAdapter:
         grounding_enabled: bool | None = None,
         grounding_timeout_s: float = _DEFAULT_GROUNDING_TIMEOUT_S,
         receipt_sink: GpuReceiptSink | None = None,
+        endpoint_resolver: Callable[[], GpuRoute] | None = None,
     ) -> None:
+        # Static endpoint. With ``endpoint_resolver`` every invocation instead
+        # targets the route resolved at call time (GPUFAIL-1 failover winner).
         self.endpoint_url = endpoint_url.rstrip("/")
+        self._endpoint_resolver = endpoint_resolver
+        # The resolved endpoint is per call, so it lives on the calling thread
+        # (describe is synchronous) and ``_post`` keeps its private signature.
+        self._invocation = threading.local()
         self._receipt_sink = receipt_sink
         # llama.cpp served id stays unadorned; wire provenance is hub-repo@pin
         # so the citation is walkable (rg-015: do not stamp a SHA we were not given).
@@ -479,6 +487,14 @@ class GpuRemoteDescriptionAdapter:
     def _describe(
         self, *, image_bytes: bytes, context: Mapping[str, Any] | None, n_probs: int | None
     ) -> tuple[AdapterResult, tuple[GpuRemoteTokenTrace, ...]]:
+        try:
+            return self._describe_at_invocation_endpoint(image_bytes=image_bytes, context=context, n_probs=n_probs)
+        finally:
+            self._invocation.endpoint_url = None
+
+    def _describe_at_invocation_endpoint(
+        self, *, image_bytes: bytes, context: Mapping[str, Any] | None, n_probs: int | None
+    ) -> tuple[AdapterResult, tuple[GpuRemoteTokenTrace, ...]]:
         started = time.monotonic()
         user_text, context_sources, context_applied = _user_text(context)
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
@@ -491,6 +507,7 @@ class GpuRemoteDescriptionAdapter:
         lineage: _Lineage | None = None
         try:
             with semaphore:
+                self._invocation.endpoint_url = self._invocation_endpoint_url()
                 media_type, encoded_image = _image_payload(image_bytes)
                 payload = _completion_payload(
                     model_id=self._endpoint_model_id,
@@ -679,6 +696,21 @@ class GpuRemoteDescriptionAdapter:
         except Exception as exc:  # noqa: BLE001 - the receipt hook is observational; the caption path is unchanged
             logger.warning("GPU remote adapter receipt sink failed kind=%s error=%s", kind, type(exc).__name__)
 
+    def _invocation_endpoint_url(self) -> str:
+        """Resolve this invocation's endpoint; no routable winner fails closed."""
+        if self._endpoint_resolver is None:
+            return self.endpoint_url
+        route = self._endpoint_resolver()
+        if route.endpoint_url is None:
+            raise GpuRemoteAdapterError(
+                GpuRemoteAdapterErrorReason.ENDPOINT_UNREACHABLE,
+                raw_diagnostic=(
+                    f"no READY GPU winner endpoint: reason={route.reason} state={route.state.value} "
+                    f"instance_id={route.instance_id}"
+                ),
+            )
+        return route.endpoint_url
+
     def _post(
         self,
         *,
@@ -687,11 +719,13 @@ class GpuRemoteDescriptionAdapter:
         timeout: httpx.Timeout | None = None,
     ) -> httpx.Response:
         timeout = timeout or self._timeout
+        endpoint_url = getattr(self._invocation, "endpoint_url", None) or self.endpoint_url
+        url = f"{endpoint_url}/v1/chat/completions"
         if self._transport is not None:
             with httpx.Client(timeout=timeout, transport=self._transport) as client:
-                return client.post(f"{self.endpoint_url}/v1/chat/completions", json=json, headers=headers)
+                return client.post(url, json=json, headers=headers)
         client = _get_shared_client(self._timeout)
-        return client.post(f"{self.endpoint_url}/v1/chat/completions", json=json, headers=headers, timeout=timeout)
+        return client.post(url, json=json, headers=headers, timeout=timeout)
 
 
 def _get_gpu_call_semaphore(max_concurrent_calls: int) -> threading.Semaphore:

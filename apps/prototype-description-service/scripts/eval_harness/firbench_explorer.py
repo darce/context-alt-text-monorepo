@@ -792,6 +792,7 @@ a { color: var(--accent); }
 .controls { display: flex; flex-wrap: wrap; gap: .75rem 1.25rem; align-items: flex-end; margin: 1rem 0 .5rem; }
 .controls label, .variant-label { display: block; font-weight: 600; font-size: .875rem; margin-bottom: .25rem; }
 select, input[type="search"] { font: inherit; min-height: 2.5rem; max-width: 100%; padding: .375rem .5rem; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--fg); }
+input[type="search"]::placeholder { color: var(--muted); opacity: 1; }
 button { font: inherit; min-height: 2.5rem; padding: .375rem .75rem; border: 2px solid var(--fg); border-radius: 4px; background: var(--bg); color: var(--fg); cursor: pointer; }
 button:hover:not(:disabled) { background: var(--sel); }
 button:disabled { border-color: var(--line); color: var(--muted); cursor: not-allowed; }

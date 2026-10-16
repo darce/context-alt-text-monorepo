@@ -64,9 +64,9 @@ FIR_CONTROL = {
 # captured from unchanged production (tree 1fb33a6) with the fake resolver below.
 EXISTING_RENDER_GOLDEN = {
     ("svc-local", "local"): ("0b4466bebdf663a9e427912cafdb0dd73085cd3921fc05b71547c2d17b216092", 18),
-    ("svc-vm", "dev"): ("8ae88a5bdb294eed87b6a85fe4f90ad977ff14a3a0ea361e5b4d252870b6ac29", 44),
-    ("svc-vm", "staging"): ("1c918c65a696e81561a547aff97420bda3499d926833f033465923bb493ef110", 36),
-    ("svc-vm", "prod"): ("8f817a1478e0c6e4ba22b52c15eddeb5b2c0c53536d9eff728fb2b05e9d2d67a", 49),
+    ("svc-vm", "dev"): ("cb7bcdab5c1154b31e57b2feefcd3259aee9e80ed2004e46bb50999290fa8c13", 45),
+    ("svc-vm", "staging"): ("ba61ef3dbe64ca8a027e4e7816e5073cb44c6bf1f6c64da2638133de8bc5c3ff", 37),
+    ("svc-vm", "prod"): ("ea3cad3480d3e6935973e9e215a4074b13ae52ee1c4b5fad7e0db5be63652596", 50),
     ("svc-fir", "fir"): ("61391317a2500419470638bd6f8378ba945e1bba8ce38c10888b341a5cf23f37", 32),
     ("demo", "demo"): ("1b07a0150a4b99495c4caceddc761b6f7b5894398ee27b0c3be07737c2cc7daa", 16),
 }

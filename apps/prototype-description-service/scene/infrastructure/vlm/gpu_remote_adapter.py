@@ -506,8 +506,8 @@ class GpuRemoteDescriptionAdapter:
             headers = {**headers, _RECEIPT_CORRELATION_HEADER: correlation_id}
         lineage: _Lineage | None = None
         try:
-            self._invocation.endpoint_url = self._invocation_endpoint_url()
             with semaphore:
+                self._invocation.endpoint_url = self._invocation_endpoint_url()
                 media_type, encoded_image = _image_payload(image_bytes)
                 payload = _completion_payload(
                     model_id=self._endpoint_model_id,

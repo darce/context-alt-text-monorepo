@@ -98,12 +98,20 @@ The initial live AD-2 cutover uses one lifecycle candidate. Set
 `ACX_GPU_INSTANCE_ID` to the AD-2 instance and `ACX_GPU_READY_URL` to its
 private `/health` endpoint in GitHub repository variables. The active
 GPU producers and demo assertion use that same host in
-`config/env/manifest.d/10-service-shared.toml`. Staging retains its CPU profile.
+`config/env/manifest.d/10-service-shared.toml`. Dev, staging and production use
+`gpu_qwen30b` on the same burst fleet.
 Prove health from the backend host and API container before switching.
 Keep runtime API and worker endpoint settings, lifecycle instance ID, and
 readiness URL aligned. Multi-instance START support alone does not redirect
 description traffic; enable additional candidates only with winner-aware
 endpoint routing and readiness probes.
+
+For a later multi-candidate rollout, deploy the winner-aware API first and
+materialize `ACX_GPU_ROUTING_MODE=winner` for all consumers. Pass ordered
+`GPU_INSTANCE_IDS` and a complete `GPU_CANDIDATE_ENDPOINTS` mapping
+(`INSTANCE_ID=http://private-ip:8000`, space-separated) to the lifecycle
+installer. Each candidate uses its own health URL. AD-3 is a provisioning
+fallback only until an actual GPU instance and endpoint exist there.
 
 Each description-service environment dumps load to
 `/run/acx-write/<env>/describe-load.json` (override with

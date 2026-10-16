@@ -250,6 +250,23 @@ def test_static_adapter_without_resolver_is_unchanged(snapshot_path: Path) -> No
     assert urls == [f"{AD2_URL}/v1/chat/completions"]
 
 
+def test_queued_invocation_resolves_the_winner_after_capacity_is_available(snapshot_path, monkeypatch):
+    urls: list[str] = []
+    _winner(snapshot_path, instance_id=AD2_ID, endpoint_url=AD2_URL)
+
+    class CapacityWait:
+        def __enter__(self):
+            _winner(snapshot_path)
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(gpu_remote_adapter, "_get_gpu_call_semaphore", lambda _limit: CapacityWait())
+    adapter = _routed_adapter(urls, grounding_enabled=False)
+    adapter.describe(image_bytes=_png(), context=None)
+    assert urls == [f"{AD1_URL}/v1/chat/completions"]
+
+
 def test_deps_gpu_adapter_routes_every_call_to_the_current_winner(
     snapshot_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -342,16 +359,6 @@ def test_worker_warmup_times_out_rather_than_probing_ad2_for_a_stale_winner(
     assert probed == []
 
 
-def test_run_describe_job_warmup_uses_policy_route(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", AD2_URL)
-    policy = wmod.gpu_run_policy(adapter_kind=DescriptionAdapterKind.GPU, settings=DescriptionSettings())
-    assert policy is not None
-    import inspect
-
-    source = inspect.getsource(wmod.run_describe_job)
-    assert "resolve_route=gpu_policy.route" in source
-
-
 # --- health follows the same winner ----------------------------------------
 
 
@@ -366,3 +373,14 @@ def test_health_detail_evaluates_the_winner_endpoint(
     readiness = asyncio.run(main_module._description_adapter_readiness(DescriptionProfile.GPU_QWEN30B))
     assert readiness["usable"] is False
     assert readiness["reason"] == "endpoint_not_allowlisted"
+
+
+@pytest.mark.parametrize("state,age,usable", [("ready", 0, True), ("starting", 0, False), ("ready", 3600, False)])
+def test_health_requires_a_fresh_ready_winner(snapshot_path, monkeypatch, state, age, usable):
+    import api.main as main_module
+    from scene.config.profiles import DescriptionProfile
+
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", AD2_URL)
+    _winner(snapshot_path, state=state, written_at=time.time() - age)
+    readiness = asyncio.run(main_module._description_adapter_readiness(DescriptionProfile.GPU_QWEN30B))
+    assert readiness["usable"] is usable

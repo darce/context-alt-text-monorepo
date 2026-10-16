@@ -126,8 +126,10 @@ def test_repo_host_secrets_are_required_only_when_consumers_read_them():
     requirements = _repo_host_requirements()
 
     assert not any(name == "RECOGNITION_ADMIN_TOKEN" for _, _, name in requirements)
-    assert {(target, env) for target, env, name in requirements if name == "ACX_GPU_ENDPOINT_API_KEY"} == set()
-    # The source now records the minted refs; staging still has an unused HOST key.
+    assert {(target, env) for target, env, name in requirements if name == "ACX_GPU_ENDPOINT_API_KEY"} == {
+        ("svc-vm", "staging")
+    }
+    # Staging consumes its host key; dev/prod resolve their existing OCI refs.
     manifest = load_module("manifest").load_manifest(MANIFEST_ROOT)
     gpu = next(var for var in manifest.vars if var.name == "ACX_GPU_ENDPOINT_API_KEY")
     assert {env: ref.partition(":")[0] for env, ref in gpu.secret.items()} == {

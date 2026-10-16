@@ -8,7 +8,7 @@ from conftest import load_module
 REPO = Path(__file__).resolve().parents[3]
 
 
-@pytest.mark.parametrize("target,environment", [("svc-vm", "dev"), ("svc-vm", "prod"), ("demo", "demo")])
+@pytest.mark.parametrize("target,environment", [("svc-vm", "dev"), ("svc-vm", "staging"), ("svc-vm", "prod"), ("demo", "demo")])
 def test_gpu_consumers_render_the_verified_ad2_endpoint(target, environment):
     manifest = load_module("manifest").load_manifest(REPO / "config/env")
     render = load_module("render_env")

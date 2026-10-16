@@ -54,6 +54,7 @@ from typing import Any, Protocol
 from infra.oci.gpu_lifecycle.controller import (
     FallbackDecision,
     GpuInstance,
+    GpuInstanceState,
     GpuLifecycleController,
     JobLoadSnapshot,
     LifecycleAction,
@@ -75,11 +76,13 @@ from infra.oci.gpu_lifecycle.intent import (
 )
 from infra.oci.gpu_lifecycle.load_source import AggregateJobLoadSource, ConsumedPublication
 from infra.oci.gpu_lifecycle.probe import (
+    CandidateEndpointProbe,
     HttpReadinessProbe,
     InstanceReadinessProbe,
     ProbeStatus,
     ReadinessWaitResult,
     WarmReadinessWait,
+    parse_candidate_endpoint,
 )
 from infra.oci.gpu_lifecycle.state_snapshot import (
     DEFAULT_GPU_STATE_PATH,
@@ -2213,12 +2216,42 @@ def _actuate_stop_with_fence_receipt(
     return attempt
 
 
+_ACTIVE_CANDIDATE_STATES = frozenset({GpuInstanceState.RUNNING, GpuInstanceState.STARTING})
+
+
+def _active_candidate_ids(instances: list[GpuInstance]) -> list[str]:
+    """Failover candidates OCI reports as booting or running."""
+    return [instance.instance_id for instance in instances if instance.state in _ACTIVE_CANDIDATE_STATES]
+
+
 def _snapshot_instance_id(instances: list[GpuInstance]) -> str | None:
-    """Return the instance id when an aggregate snapshot has one subject."""
+    """Name the one subject: the sole instance, or the sole active failover winner.
+
+    A winner is named only when every sibling is positively STOPPED; any
+    other mix is ambiguous and publishes no identity (CAL-02).
+    """
     instance_ids = {instance.instance_id for instance in instances}
     if len(instance_ids) == 1:
         return next(iter(instance_ids))
+    active_ids = set(_active_candidate_ids(instances))
+    if len(active_ids) != 1:
+        return None
+    if all(
+        instance.instance_id in active_ids or instance.state == GpuInstanceState.STOPPED
+        for instance in instances
+    ):
+        return next(iter(active_ids))
     return None
+
+
+def _snapshot_endpoint_url(
+    candidate_endpoints: Mapping[str, str] | None,
+    instance_id: str | None,
+) -> str | None:
+    """Routing target for the published subject, when one is configured."""
+    if not candidate_endpoints or instance_id is None:
+        return None
+    return candidate_endpoints.get(instance_id)
 
 
 def _start_snapshot_instance_id(
@@ -3176,8 +3209,10 @@ def _finalize_reap_snapshot_state(
         or stop_actuated
         or has_errors
         or snapshot_instance_id is None
-        or not instances
-        or any(instance.state != "RUNNING" for instance in instances)
+        or not any(
+            instance.instance_id == snapshot_instance_id and instance.state == GpuInstanceState.RUNNING
+            for instance in instances
+        )
     ):
         return candidate
     previous = read_previous_gpu_state(
@@ -3234,6 +3269,7 @@ def run_reap_cycle(
     authority_store: IntentAuthorityStore | None = None,
     deferred_stop_store: DeferredStopStore | None = None,
     decision_log_store: DecisionLogStore | None = None,
+    candidate_endpoints: Mapping[str, str] | None = None,
 ) -> ReapCycleResult:
     """Serialize observe/decide/actuate/publish as one lifecycle transition."""
     resolved_durable_dir, resolved_authority, resolved_deferred, resolved_log = _intent_stores(
@@ -3343,6 +3379,7 @@ def run_reap_cycle(
                 has_errors=bool(result.errors),
             ),
             path=gpu_state_path,
+            endpoint_url=_snapshot_endpoint_url(candidate_endpoints, snapshot_instance_id),
             **snapshot_kwargs,
         )
     return replace(
@@ -3499,6 +3536,11 @@ def _start_work_decision(
         waiting_ids = (
             controller.instances_waiting_on_boot(instances) if load.has_work else []
         )
+        active_ids = _active_candidate_ids(instances)
+        if decided and active_ids:
+            # One burst GPU at a time: an active failover winner already serves.
+            logger.info("failover winner %s active; not starting %s", active_ids, [i for _, i in decided])
+            decided = []
     running_ids = [instance.instance_id for instance in instances if instance.state == "RUNNING"]
     return _StartDecision(
         load=load,
@@ -3611,7 +3653,7 @@ def _start_pre_actuation(
     if isinstance(probe, HttpReadinessProbe) and not probe.is_per_instance and len(wait_ids) > 1:
         msg = (
             "HttpReadinessProbe URL is a single shared endpoint; refusing "
-            "multi-id wait (template {instance_id} required)"
+            "multi-id wait (use --candidate-endpoint per failover candidate)"
         )
         logger.error(msg)
         errors.append(msg)
@@ -4109,6 +4151,7 @@ def _publish_starting_issued_snapshot(
     effective_intent: EffectiveIntent,
     running_since_store: RunningSinceLeaseStore | None,
     max_lease_seconds: int,
+    candidate_endpoints: Mapping[str, str] | None = None,
 ) -> None:
     """Publish STARTING under the snapshot lock so readers see the boot wait."""
     snapshot_instance_id = _snapshot_instance_id(instances)
@@ -4142,6 +4185,7 @@ def _publish_starting_issued_snapshot(
             lease_expires_at=lease_expires_at,
             instance_running_since=instance_running_since,
             last_transition_reason=last_transition_reason,
+            endpoint_url=_snapshot_endpoint_url(candidate_endpoints, snapshot_instance_id),
         )
 
 
@@ -4165,8 +4209,13 @@ def run_start_cycle(
     authority_store: IntentAuthorityStore | None = None,
     deferred_stop_store: DeferredStopStore | None = None,
     decision_log_store: DecisionLogStore | None = None,
+    candidate_endpoints: Mapping[str, str] | None = None,
 ) -> StartCycleResult:
-    """Serialize observe/decide/actuate/publish as one lifecycle transition."""
+    """Serialize observe/decide/actuate/publish as one lifecycle transition.
+
+    ``candidate_endpoints`` maps each failover candidate to its serving base
+    URL; the snapshot publishes the winner's as ``endpoint_url``.
+    """
     resolved_durable_dir, resolved_authority, resolved_deferred, resolved_log = _intent_stores(
         intent_dir=intent_dir,
         durable_intent_dir=durable_intent_dir,
@@ -4205,6 +4254,7 @@ def run_start_cycle(
             effective_intent=effective_intent,
             running_since_store=running_since_store,
             max_lease_seconds=max_lease_seconds,
+            candidate_endpoints=candidate_endpoints,
         )
 
     cycle_started_at = time.time()
@@ -4256,6 +4306,7 @@ def run_start_cycle(
             lease_expires_at=lease_expires_at,
             instance_running_since=instance_running_since,
             last_transition_reason=result.last_transition_reason,
+            endpoint_url=_snapshot_endpoint_url(candidate_endpoints, snapshot_instance_id),
         )
     return replace(
         result,
@@ -4296,7 +4347,29 @@ class _LifecycleParser(argparse.ArgumentParser):
         parsed.instance_ids = combined
         if not combined:
             self.error("--instance-id is required")
+        parsed.candidate_endpoints = self._candidate_endpoints(parsed, combined)
         return parsed
+
+    def _candidate_endpoints(self, parsed: argparse.Namespace, instance_ids: list[str]) -> dict[str, str]:
+        specs = getattr(parsed, "candidate_endpoint_specs", None) or []
+        endpoints: dict[str, str] = {}
+        for spec in specs:
+            try:
+                instance_id, url = parse_candidate_endpoint(spec)
+            except ValueError as exc:
+                self.error(f"--candidate-endpoint: {exc}")
+            if instance_id not in instance_ids:
+                self.error(f"--candidate-endpoint names {instance_id}, which is not a configured --instance-id")
+            if instance_id in endpoints:
+                self.error(f"--candidate-endpoint repeats {instance_id}")
+            endpoints[instance_id] = url
+        if endpoints:
+            missing = [instance_id for instance_id in instance_ids if instance_id not in endpoints]
+            if missing:
+                self.error(f"--candidate-endpoint required for every candidate; missing {missing}")
+            if getattr(parsed, "ready_url", None):
+                self.error("--candidate-endpoint and --ready-url are mutually exclusive")
+        return endpoints
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -4460,6 +4533,18 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--candidate-endpoint",
+        action="append",
+        dest="candidate_endpoint_specs",
+        default=None,
+        metavar="INSTANCE_ID=URL",
+        help=(
+            "Serving base URL of one failover candidate (e.g. ocid=http://10.0.1.9:8000); "
+            "repeat for every --instance-id. Readiness probes <URL>/health on the winner "
+            "and the snapshot publishes it as endpoint_url. Excludes --ready-url"
+        ),
+    )
+    parser.add_argument(
         "--ready-max-cycles",
         type=int,
         default=_DEFAULT_READY_MAX_CYCLES,
@@ -4501,6 +4586,14 @@ def _publish_initial_probe_failure(
             exc,
         )
         return False
+
+
+def _readiness_probe(args: argparse.Namespace) -> InstanceReadinessProbe | None:
+    if args.candidate_endpoints:
+        return CandidateEndpointProbe(args.candidate_endpoints)
+    if args.ready_url:
+        return HttpReadinessProbe(url=args.ready_url)
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -4603,9 +4696,8 @@ def main(argv: list[str] | None = None) -> int:
             max_wait_seconds=args.max_wait_seconds,
         )
         readiness_wait = None
-        probe = None
-        if args.ready_url:
-            probe = HttpReadinessProbe(url=args.ready_url)
+        probe = _readiness_probe(args)
+        if probe is not None:
             readiness_wait = WarmReadinessWait(
                 max_cycles=args.ready_max_cycles,
                 stall_cycles=args.ready_stall_cycles,
@@ -4623,6 +4715,7 @@ def main(argv: list[str] | None = None) -> int:
             max_lease_seconds=args.max_lease_seconds,
             dry_run=args.dry_run,
             intent_dir=args.intent_dir,
+            candidate_endpoints=args.candidate_endpoints or None,
         )
         logger.info(
             "start cycle decided=%s actuated=%s errors=%s wait=%s fallbacks=%s",
@@ -4640,9 +4733,7 @@ def main(argv: list[str] | None = None) -> int:
         auth=args.oci_auth,
         timeout_seconds=args.oci_timeout_seconds,
     )
-    probe = None
-    if args.ready_url:
-        probe = HttpReadinessProbe(url=args.ready_url)
+    probe = _readiness_probe(args)
     result = run_reap_cycle(
         controller=controller,
         instances=instances,
@@ -4656,6 +4747,7 @@ def main(argv: list[str] | None = None) -> int:
         use_recorded_lease_age=not explicit_idle_override,
         dry_run=args.dry_run,
         intent_dir=args.intent_dir,
+        candidate_endpoints=args.candidate_endpoints or None,
     )
     logger.info(
         "reap cycle decided=%s actuated=%s fenced_off=%s lease_expired=%s errors=%s",

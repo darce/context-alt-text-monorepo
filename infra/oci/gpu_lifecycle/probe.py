@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import ipaddress
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
@@ -122,6 +125,44 @@ class WarmReadinessWait:
         )
 
 
+def parse_candidate_endpoint(value: str) -> tuple[str, str]:
+    """Parse ``INSTANCE_ID=BASE_URL`` into a normalised (id, base URL) pair.
+
+    The base URL is the serving root (``http(s)://host:port``) shared by the
+    readiness probe and the published routing target. IP literals must be
+    private and routable (no loopback/unspecified/link-local), mirroring
+    preflight-gpu-env.sh; hostnames stay subject to the API allowlist.
+    """
+    instance_id, sep, raw_url = value.partition("=")
+    instance_id = instance_id.strip()
+    raw_url = raw_url.strip()
+    if not sep or not instance_id or not raw_url:
+        raise ValueError("expected INSTANCE_ID=http(s)://host:port")
+    parsed = urllib.parse.urlsplit(raw_url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("candidate endpoint must use http or https")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("candidate endpoint must not carry userinfo")
+    if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        raise ValueError("candidate endpoint must be a base URL without path, query or fragment")
+    try:
+        host = parsed.hostname
+        parsed.port  # noqa: B018 - raises ValueError on a malformed port
+    except ValueError as exc:
+        raise ValueError(f"candidate endpoint has a malformed host or port: {exc}") from exc
+    if not host:
+        raise ValueError("candidate endpoint must name a host")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address is not None and (
+        not address.is_private or address.is_loopback or address.is_unspecified or address.is_link_local
+    ):
+        raise ValueError("candidate endpoint IP must be private and non-loopback")
+    return instance_id, raw_url.rstrip("/")
+
+
 class HttpReadinessProbe:
     """GET a health URL; non-2xx / transport failure is NOT_READY, not a hang.
 
@@ -166,3 +207,25 @@ class HttpReadinessProbe:
                 status=ProbeStatus.NOT_READY,
                 detail=str(exc),
             )
+
+
+class CandidateEndpointProbe:
+    """Per-candidate readiness: probe each failover candidate's own endpoint.
+
+    A candidate with no configured endpoint is an ERROR (counts toward stall),
+    never a borrowed sibling's health (rg-007).
+    """
+
+    def __init__(self, endpoints: Mapping[str, str], *, timeout_seconds: float = 2.0) -> None:
+        self._endpoints = dict(endpoints)
+        self._timeout_seconds = timeout_seconds
+
+    def probe(self, instance_id: str) -> ProbeSample:
+        endpoint = self._endpoints.get(instance_id)
+        if endpoint is None:
+            return ProbeSample(
+                instance_id=instance_id,
+                status=ProbeStatus.ERROR,
+                detail="no candidate endpoint configured",
+            )
+        return HttpReadinessProbe(url=f"{endpoint}/health", timeout_seconds=self._timeout_seconds).probe(instance_id)

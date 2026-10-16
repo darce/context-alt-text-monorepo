@@ -558,6 +558,7 @@ def _write_snapshot_atomically(
     written_at: int | float,
     reason: str | None,
     c2_payload: dict[str, object],
+    endpoint_url: str | None = None,
 ) -> bool:
     """Own directory setup, durable temp-file replacement, and write-error handling."""
     temporary: Path | None = None
@@ -573,6 +574,8 @@ def _write_snapshot_atomically(
             "since": since,
         }
         payload.update(c2_payload)
+        if endpoint_url is not None:
+            payload["endpoint_url"] = endpoint_url
         with tempfile.NamedTemporaryFile(
             mode="w",
             encoding="utf-8",
@@ -611,11 +614,20 @@ def write_gpu_state_snapshot(
     lease_expires_at: datetime | str | None | object = _SNAPSHOT_FIELD_UNSET,
     instance_running_since: datetime | str | None | object = _SNAPSHOT_FIELD_UNSET,
     last_transition_reason: LastTransitionReason | str | None | object = _SNAPSHOT_FIELD_UNSET,
+    endpoint_url: str | None = None,
 ) -> bool:
-    """Atomically publish a fresh snapshot; telemetry failures never escape."""
+    """Atomically publish a fresh snapshot; telemetry failures never escape.
+
+    ``endpoint_url`` names the serving endpoint of ``instance_id`` (the
+    failover winner) and is published only alongside that identity.
+    """
     published_state = _coerce_snapshot_state(state)
     written_at = _resolve_snapshot_written_at(now)
     _validate_snapshot_instance_id(instance_id)
+    if endpoint_url is not None and (
+        instance_id is None or not isinstance(endpoint_url, str) or not endpoint_url.strip()
+    ):
+        raise ValueError("endpoint_url must be a non-blank string published with an instance_id")
     _validate_snapshot_reason(published_state, reason)
     c2_payload = _build_intent_snapshot_fields(
         intent=intent,
@@ -634,4 +646,5 @@ def write_gpu_state_snapshot(
         written_at=written_at,
         reason=reason,
         c2_payload=c2_payload,
+        endpoint_url=endpoint_url,
     )

@@ -1398,10 +1398,20 @@ def _build_parser() -> argparse.ArgumentParser:
     compare.add_argument("run_b", type=Path)
     compare.add_argument("--out", required=True, type=Path)
     compare.add_argument("--treatment")
+    explore = commands.add_parser("explore", help="render the historical comparison page from one export file")
+    explore.add_argument("--data", required=True, type=Path)
+    explore.add_argument("--out", required=True, type=Path)
     unseal = commands.add_parser("unseal", help="append one unspent unseal token for a sealed frame")
     unseal.add_argument("--decision", required=True, type=Path)
     unseal.add_argument("--frame", required=True)
     unseal.add_argument("--run-id", required=True)
+    comparison = commands.add_parser(
+        "comparison-export",
+        help="write a bounded JSON export of registered historical face_bakeoff reports for the UX explorer",
+    )
+    comparison.add_argument("--evidence-db", type=Path, required=True)
+    comparison.add_argument("--artifact-id", action="append", required=True)
+    comparison.add_argument("--out", type=Path, required=True)
     return parser
 
 
@@ -1458,6 +1468,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 treatment=args.treatment,
                 repo_root=repo_root,
             )
+        elif args.command == "comparison-export":
+            from scripts.eval_harness import firbench_comparison_export
+
+            export = firbench_comparison_export.export_comparison(args.evidence_db, args.artifact_id)
+            path = firbench_comparison_export.write_export(export, args.out)
+        elif args.command == "explore":
+            from scripts.eval_harness import firbench_explorer
+
+            try:
+                path = firbench_explorer.render_explorer(args.data, args.out)
+            except firbench_explorer.ExplorerError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
         else:
             path = unseal_frame(
                 decision_path=args.decision,

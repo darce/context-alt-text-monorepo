@@ -1,0 +1,820 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "firbench/clusters-v1",
+  "title": "FIRBENCH-1 clusters.json (S4 output), schema_version 1",
+  "description": "Pre-acceptance S0 freeze: per-leg S4 diagnostic evidence for S5. Production similarity s cuts at cosine d=1-s; acceptance tau is a separate reference only. Explicit result states distinguish absent, uncomputed and available evidence. Only pseudonymous identifiers; no real names or pixels. This schema checks the frozen stdlib subset, not cross-field arithmetic, identity verification or numerical correctness, which S4 must enforce.",
+  "$comment": "Canon v0.26.2: [GRPH-18] Never trust the transitive closure of a raw similarity threshold (Introduction to Information Retrieval, § 17.2); [GRPH-22] Replace hard-τ-plus-components with partition-plus-verification (practice label); [EMB-01] One embedding space per comparison (Foundations of Vector Retrieval, ch. 1). Chaining counts are descriptive: CARD-27 has no inference/floor trigger here. The imported scalar/projection-metadata-only baseline was not accepted; this freeze establishes the wire shape before S4/S5 producers/consumers exist.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "legs"],
+  "properties": {"schema_version": {"const": 1}, "legs": {"type": "array", "items": {"$ref": "#/$defs/leg"}, "minItems": 1}},
+  "$defs": {
+    "rate_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason", "data"],
+      "properties": {
+        "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+        "reason": {"type": ["string", "null"], "minLength": 1},
+        "data": {}
+      },
+      "if": {"properties": {"status": {"const": "available"}}},
+      "then": {"properties": {"reason": {"const": null}, "data": {"type": "number", "minimum": 0, "maximum": 1}}},
+      "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+    },
+    "correlation_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason", "data"],
+      "properties": {
+        "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+        "reason": {"type": ["string", "null"], "minLength": 1},
+        "data": {}
+      },
+      "if": {"properties": {"status": {"const": "available"}}},
+      "then": {"properties": {"reason": {"const": null}, "data": {"type": "number", "minimum": -1, "maximum": 1}}},
+      "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+    },
+    "face_label": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["face_id", "label"],
+      "properties": {"face_id": {"type": "string", "minLength": 1}, "label": {"type": "integer", "minimum": -1}}
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_face_id", "target_face_id", "cosine_similarity"],
+      "properties": {
+        "source_face_id": {"type": "string", "minLength": 1},
+        "target_face_id": {"type": "string", "minLength": 1},
+        "cosine_similarity": {"type": "number", "minimum": -1, "maximum": 1}
+      },
+      "description": "Pseudonymous endpoints; similarity is computed in this leg's original embedding space, never from projection coordinates."
+    },
+    "verified_node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["face_id", "identity_id", "verification_ref"],
+      "properties": {
+        "face_id": {"type": "string", "minLength": 1},
+        "identity_id": {"type": "string", "minLength": 1},
+        "verification_ref": {"type": "string", "minLength": 1}
+      },
+      "description": "Pseudonymous independently verified identity and evidence reference. Never a real name or image payload."
+    },
+    "path_node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["face_id", "identity_id", "verification_ref", "identity_status"],
+      "properties": {
+        "face_id": {"type": "string", "minLength": 1},
+        "identity_id": {"type": ["string", "null"], "minLength": 1},
+        "verification_ref": {"type": ["string", "null"], "minLength": 1},
+        "identity_status": {"enum": ["named", "unknown", "unresolved"]}
+      },
+      "description": "Unknown or unresolved intermediate nodes may establish a path for D, but cannot establish a verified third identity for C. Named intermediate nodes may lack independent verification; such a node cannot establish C.",
+      "if": {"properties": {"identity_status": {"const": "named"}}},
+      "then": {"properties": {"identity_id": {"type": "string", "minLength": 1}}},
+      "else": {"properties": {"identity_id": {"const": null}, "verification_ref": {"const": null}}}
+    },
+    "chaining_pair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pair_id", "left", "right", "path_linked", "through_third_identity", "third_identity_id", "path", "edges"],
+      "properties": {
+        "pair_id": {"type": "string", "minLength": 1},
+        "left": {"$ref": "#/$defs/verified_node"},
+        "right": {"$ref": "#/$defs/verified_node"},
+        "path_linked": {"type": "boolean"},
+        "through_third_identity": {"type": "boolean"},
+        "third_identity_id": {"type": ["string", "null"], "minLength": 1},
+        "path": {"type": ["array", "null"], "items": {"$ref": "#/$defs/path_node"}},
+        "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}}
+      },
+      "description": "One eligible held-out pair. S4 verifies left/right identities differ independently of clustering. The ordered path includes both endpoints; edges join successive nodes. For C the third identity differs from both endpoint identities and has independent verification. S4 must check references, adjacency, distinctness and count/rate arithmetic; JSON Schema cannot compare fields.",
+      "if": {"properties": {"path_linked": {"const": true}}},
+      "then": {
+        "properties": {"path": {"type": "array", "minItems": 2}, "edges": {"minItems": 1}},
+        "if": {"properties": {"through_third_identity": {"const": true}}},
+        "then": {
+          "properties": {"third_identity_id": {"type": "string", "minLength": 1}, "path": {"minItems": 3}, "edges": {"minItems": 2}}
+        },
+        "else": {"properties": {"third_identity_id": {"const": null}}}
+      },
+      "else": {
+        "properties": {
+          "through_third_identity": {"const": false},
+          "third_identity_id": {"const": null},
+          "path": {"const": null},
+          "edges": {"maxItems": 0}
+        }
+      }
+    },
+    "histogram": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "result"],
+      "properties": {
+        "kind": {"enum": ["intra_identity_cosine", "inter_identity_cosine", "vector_norm"]},
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason", "data"],
+          "properties": {
+            "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+            "reason": {"type": ["string", "null"], "minLength": 1},
+            "data": {}
+          },
+          "if": {"properties": {"status": {"const": "available"}}},
+          "then": {
+            "properties": {
+              "reason": {"const": null},
+              "data": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["bins"],
+                "properties": {
+                  "bins": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["lower", "upper", "count"],
+                      "properties": {
+                        "lower": {"type": "number"},
+                        "upper": {"type": "number"},
+                        "count": {"type": "integer", "minimum": 0}
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+        }
+      },
+      "description": "Bins are explicit ordered intervals [lower, upper), with the final upper bound included. S4 checks lower < upper, nonoverlap/order, input counts and original-space provenance. Cosine histograms use named GT identities; unknown/unresolved pairs are excluded. Empty support is unavailable with a reason.",
+      "if": {"properties": {"kind": {"const": "vector_norm"}}},
+      "then": {
+        "properties": {
+          "result": {
+            "properties": {
+              "data": {
+                "properties": {
+                  "bins": {
+                    "items": {
+                      "properties": {"lower": {"type": "number", "minimum": 0}, "upper": {"type": "number", "minimum": 0}}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "result": {
+            "properties": {
+              "data": {
+                "properties": {
+                  "bins": {
+                    "items": {
+                      "properties": {
+                        "lower": {"type": "number", "minimum": -1, "maximum": 1},
+                        "upper": {"type": "number", "minimum": -1, "maximum": 1}
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "leg": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "leg_key",
+        "config",
+        "dendrogram_cut",
+        "acceptance_tau_reference",
+        "partition_metrics",
+        "labels",
+        "order_stability",
+        "chaining",
+        "mutual_knn",
+        "neighbours",
+        "dendrogram",
+        "pca_spectrum",
+        "histograms",
+        "companions",
+        "projections"
+      ],
+      "properties": {
+        "leg_key": {"type": "string", "minLength": 1},
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "similarity_threshold",
+            "metric",
+            "linkage",
+            "production_algorithm",
+            "cluster_selection_epsilon",
+            "production_parameters"
+          ],
+          "properties": {
+            "similarity_threshold": {"type": ["number", "null"], "minimum": -1, "maximum": 1},
+            "metric": {"const": "cosine"},
+            "linkage": {"enum": ["average", "complete"]},
+            "production_algorithm": {"const": "hdbscan"},
+            "cluster_selection_epsilon": {"type": ["number", "null"], "minimum": 0, "maximum": 2},
+            "production_parameters": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "value"],
+                "properties": {"name": {"type": "string", "minLength": 1}, "value": {"type": ["string", "number", "boolean", "null"]}}
+              }
+            }
+          },
+          "description": "Production config is metadata only. Read s from the run manifest firbench block. HDBSCAN epsilon = sqrt(2*(1-s)) is Euclidean metadata, never the dendrogram height. Parameters are scalar entries emitted by production describe_algorithm; do not call the DB-coupled loader."
+        },
+        "dendrogram_cut": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["distance", "caption", "labels"],
+          "properties": {
+            "distance": {"type": ["number", "null"], "minimum": 0, "maximum": 2},
+            "caption": {"type": "string", "minLength": 1},
+            "labels": {"type": ["array", "null"], "items": {"$ref": "#/$defs/face_label"}}
+          },
+          "description": "Cut labels in leaf/face space, distinct from reference_threshold_cluster labels. S4 computes distance = 1-s, never 1-tau. Missing production s requires null distance and labels and the exact uncut caption."
+        },
+        "acceptance_tau_reference": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason", "data"],
+          "properties": {
+            "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+            "reason": {"type": ["string", "null"], "minLength": 1},
+            "data": {}
+          },
+          "description": "Acceptance tau is a separate 1:N reference at distance = 1-tau, never a pairwise cluster operating point. S4 checks arithmetic. Unavailable calibration remains explicit.",
+          "if": {"properties": {"status": {"const": "available"}}},
+          "then": {
+            "properties": {
+              "reason": {"const": null},
+              "data": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["tau", "distance", "label"],
+                "properties": {
+                  "tau": {"type": "number"},
+                  "distance": {"type": "number"},
+                  "label": {"const": "acceptance tau (not a cluster cut)"}
+                }
+              }
+            }
+          },
+          "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+        },
+        "partition_metrics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason", "data"],
+          "properties": {
+            "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+            "reason": {"type": ["string", "null"], "minLength": 1},
+            "data": {}
+          },
+          "if": {"properties": {"status": {"const": "available"}}},
+          "then": {
+            "properties": {
+              "reason": {"const": null},
+              "data": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "unit",
+                  "scored_identity_status",
+                  "excluded_identity_statuses",
+                  "noise_policy",
+                  "named_faces",
+                  "unknown_faces",
+                  "unresolved_faces",
+                  "coassigned_true_pairs",
+                  "coassigned_predicted_pairs",
+                  "true_pairs",
+                  "merges",
+                  "fragmentation",
+                  "unknown_absorbed",
+                  "noise_faces",
+                  "pairwise_precision",
+                  "pairwise_recall",
+                  "bcubed_precision",
+                  "bcubed_recall",
+                  "noise_fraction"
+                ],
+                "properties": {
+                  "unit": {"const": "gt_face"},
+                  "scored_identity_status": {"const": "named"},
+                  "excluded_identity_statuses": {"const": ["unknown", "unresolved"]},
+                  "noise_policy": {"const": "minus_one_is_unpaired_and_bcubed_singleton"},
+                  "named_faces": {"type": "integer", "minimum": 0},
+                  "unknown_faces": {"type": "integer", "minimum": 0},
+                  "unresolved_faces": {"type": "integer", "minimum": 0},
+                  "coassigned_true_pairs": {"type": "integer", "minimum": 0},
+                  "coassigned_predicted_pairs": {"type": "integer", "minimum": 0},
+                  "true_pairs": {"type": "integer", "minimum": 0},
+                  "merges": {"type": "integer", "minimum": 0},
+                  "fragmentation": {"type": "integer", "minimum": 0},
+                  "unknown_absorbed": {"type": "integer", "minimum": 0},
+                  "noise_faces": {"type": "integer", "minimum": 0},
+                  "pairwise_precision": {"$ref": "#/$defs/rate_result"},
+                  "pairwise_recall": {"$ref": "#/$defs/rate_result"},
+                  "bcubed_precision": {"$ref": "#/$defs/rate_result"},
+                  "bcubed_recall": {"$ref": "#/$defs/rate_result"},
+                  "noise_fraction": {"$ref": "#/$defs/rate_result"}
+                },
+                "description": "Named GT faces only for pairwise/B-cubed metrics; noise (-1) forms no predicted pairs, misses true pairs, and is a B-cubed singleton. Unknown absorption counts unknown faces in clusters containing named faces. Merges count named clusters with multiple verified identities; fragmentation counts named identities spanning multiple clusters. Undefined denominators are unavailable, never zero by default."
+              }
+            }
+          },
+          "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason", "data"],
+          "properties": {
+            "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+            "reason": {"type": ["string", "null"], "minLength": 1},
+            "data": {}
+          },
+          "if": {"properties": {"status": {"const": "available"}}},
+          "then": {
+            "properties": {
+              "reason": {"const": null},
+              "data": {"type": "array", "items": {"$ref": "#/$defs/face_label"}, "minItems": 1}
+            }
+          },
+          "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+        },
+        "order_stability": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason", "data"],
+          "properties": {
+            "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+            "reason": {"type": ["string", "null"], "minLength": 1},
+            "data": {}
+          },
+          "description": "Repeated permutations of the same original-space vectors using reference_threshold_cluster at s. Fraction = stable_pairs/compared_pairs; no comparison pairs is unavailable. S4 checks count arithmetic.",
+          "if": {"properties": {"status": {"const": "available"}}},
+          "then": {
+            "properties": {
+              "reason": {"const": null},
+              "data": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["n_orders", "seed", "stable_pairs", "compared_pairs", "fraction"],
+                "properties": {
+                  "n_orders": {"type": "integer", "minimum": 2},
+                  "seed": {"type": "integer", "minimum": 0},
+                  "stable_pairs": {"type": "integer", "minimum": 0},
+                  "compared_pairs": {"type": "integer", "minimum": 0},
+                  "fraction": {"$ref": "#/$defs/rate_result"}
+                }
+              }
+            }
+          },
+          "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+        },
+        "chaining": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason", "data"],
+          "properties": {
+            "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+            "reason": {"type": ["string", "null"], "minLength": 1},
+            "data": {}
+          },
+          "if": {"properties": {"status": {"const": "available"}}},
+          "then": {
+            "properties": {
+              "reason": {"const": null},
+              "data": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "scope",
+                  "input_pairs",
+                  "eligible_pairs",
+                  "path_linked_pairs",
+                  "third_identity_linked_pairs",
+                  "D",
+                  "C",
+                  "exclusions",
+                  "pairs"
+                ],
+                "properties": {
+                  "scope": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["frame_id", "fold", "fold_role", "pair_selection_rule"],
+                    "properties": {
+                      "frame_id": {"type": "string", "minLength": 1},
+                      "fold": {"type": "integer", "minimum": 0},
+                      "fold_role": {"const": "test"},
+                      "pair_selection_rule": {"type": "string", "minLength": 1}
+                    }
+                  },
+                  "input_pairs": {"type": "integer", "minimum": 0},
+                  "eligible_pairs": {"type": "integer", "minimum": 0},
+                  "path_linked_pairs": {"type": "integer", "minimum": 0},
+                  "third_identity_linked_pairs": {"type": "integer", "minimum": 0},
+                  "D": {"$ref": "#/$defs/rate_result"},
+                  "C": {"$ref": "#/$defs/rate_result"},
+                  "exclusions": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["reason", "count"],
+                      "properties": {
+                        "reason": {
+                          "enum": [
+                            "same_verified_identity",
+                            "unknown_identity",
+                            "unresolved_identity",
+                            "unverified_endpoint",
+                            "not_held_out",
+                            "missing_vector"
+                          ]
+                        },
+                        "count": {"type": "integer", "minimum": 0}
+                      }
+                    }
+                  },
+                  "pairs": {"type": "array", "items": {"$ref": "#/$defs/chaining_pair"}}
+                },
+                "description": "Descriptive held-out chaining diagnostic, not a population estimate or decision gate. N = eligible_pairs: held-out pairs independently verified as different identities. D = path_linked_pairs / N; C = third_identity_linked_pairs / N (same N, never conditioned on D). C requires a path through a third distinct independently verified identity. Exclusion counts partition ineligible input pairs using the recorded selection rule. pairs contains all eligible pseudonymous pair/path/edge drilldown, including unlinked pairs. S4 must verify N = len(pairs), input_pairs = N + excluded counts, 0 <= third_identity_linked_pairs <= path_linked_pairs <= N, all identity/reference bindings, and exact counts and rate arithmetic; the frozen validator checks wire types/states only.",
+                "if": {"properties": {"eligible_pairs": {"const": 0}}},
+                "then": {
+                  "properties": {
+                    "path_linked_pairs": {"const": 0},
+                    "third_identity_linked_pairs": {"const": 0},
+                    "D": {"properties": {"status": {"const": "unavailable"}}},
+                    "C": {"properties": {"status": {"const": "unavailable"}}},
+                    "pairs": {"maxItems": 0}
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "D": {"properties": {"status": {"const": "available"}}},
+                    "C": {"properties": {"status": {"const": "available"}}},
+                    "pairs": {"minItems": 1}
+                  }
+                }
+              }
+            }
+          },
+          "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+        },
+        "mutual_knn": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason", "data"],
+          "properties": {
+            "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+            "reason": {"type": ["string", "null"], "minLength": 1},
+            "data": {}
+          },
+          "description": "Mutual-kNN graph in the original space; edges are undirected and stored once. S4 verifies mutual membership, IDs and duplicate-free edges.",
+          "if": {"properties": {"status": {"const": "available"}}},
+          "then": {
+            "properties": {
+              "reason": {"const": null},
+              "data": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["k", "face_ids", "edges"],
+                "properties": {
+                  "k": {"type": "integer", "minimum": 1},
+                  "face_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+                  "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}}
+                }
+              }
+            }
+          },
+          "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+        },
+        "neighbours": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason", "data"],
+          "properties": {
+            "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+            "reason": {"type": ["string", "null"], "minLength": 1},
+            "data": {}
+          },
+          "description": "Directed original-space nearest-neighbour table for S5 when the projection is unavailable. Group by source_face_id; sort by decreasing cosine similarity with deterministic ID tie-breaks.",
+          "if": {"properties": {"status": {"const": "available"}}},
+          "then": {
+            "properties": {
+              "reason": {"const": null},
+              "data": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["k", "metric", "edges"],
+                "properties": {
+                  "k": {"type": "integer", "minimum": 1},
+                  "metric": {"const": "cosine"},
+                  "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}}
+                }
+              }
+            }
+          },
+          "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+        },
+        "dendrogram": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason", "data"],
+          "properties": {
+            "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+            "reason": {"type": ["string", "null"], "minLength": 1},
+            "data": {}
+          },
+          "description": "SciPy linkage rows [left_node, right_node, cosine_distance, leaf_count]. Leaves index leaf_face_ids; internal node indices follow scipy conventions. S4 verifies references, n-1 rows and counts. Cophenetic correlation is unavailable for degenerate/undefined inputs. Average or complete only on unit-vector cosine distances.",
+          "if": {"properties": {"status": {"const": "available"}}},
+          "then": {
+            "properties": {
+              "reason": {"const": null},
+              "data": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["leaf_face_ids", "linkage", "cophenetic_correlation"],
+                "properties": {
+                  "leaf_face_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 2},
+                  "linkage": {
+                    "type": "array",
+                    "items": {
+                      "type": "array",
+                      "prefixItems": [
+                        {"type": "integer", "minimum": 0},
+                        {"type": "integer", "minimum": 0},
+                        {"type": "number", "minimum": 0, "maximum": 2},
+                        {"type": "integer", "minimum": 2}
+                      ],
+                      "items": false,
+                      "minItems": 4,
+                      "maxItems": 4
+                    },
+                    "minItems": 1
+                  },
+                  "cophenetic_correlation": {"$ref": "#/$defs/correlation_result"}
+                }
+              }
+            }
+          },
+          "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+        },
+        "pca_spectrum": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason", "data"],
+          "properties": {
+            "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+            "reason": {"type": ["string", "null"], "minLength": 1},
+            "data": {}
+          },
+          "description": "Variance-only full component spectrum, no loadings or distance-preservation claim. Retained count accompanies the display. Effective dimension is participation ratio (sum(lambda))^2 / sum(lambda^2). S4 checks count/spectrum length and variance arithmetic; zero variance is unavailable.",
+          "if": {"properties": {"status": {"const": "available"}}},
+          "then": {
+            "properties": {
+              "reason": {"const": null},
+              "data": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["explained_variance_ratio", "effective_dimension", "retained_components"],
+                "properties": {
+                  "explained_variance_ratio": {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 1}, "minItems": 1},
+                  "effective_dimension": {"type": "number", "minimum": 1},
+                  "retained_components": {"type": "integer", "minimum": 1}
+                }
+              }
+            }
+          },
+          "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+        },
+        "histograms": {
+          "type": "array",
+          "prefixItems": [
+            {"$ref": "#/$defs/histogram", "properties": {"kind": {"const": "intra_identity_cosine"}}},
+            {"$ref": "#/$defs/histogram", "properties": {"kind": {"const": "inter_identity_cosine"}}},
+            {"$ref": "#/$defs/histogram", "properties": {"kind": {"const": "vector_norm"}}}
+          ],
+          "items": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "companions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["knn_jaccard", "linear_cka"],
+          "properties": {
+            "knn_jaccard": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status", "reason", "data"],
+              "properties": {
+                "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+                "reason": {"type": ["string", "null"], "minLength": 1},
+                "data": {}
+              },
+              "description": "Original-space kNN-Jaccard drift between two runs of exactly this leg_key; matched face inputs, no cross-leg comparison.",
+              "if": {"properties": {"status": {"const": "available"}}},
+              "then": {
+                "properties": {
+                  "reason": {"const": null},
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["reference_run_id", "comparison_run_id", "k", "value"],
+                    "properties": {
+                      "reference_run_id": {"type": "string", "minLength": 1},
+                      "comparison_run_id": {"type": "string", "minLength": 1},
+                      "k": {"type": "integer", "minimum": 1},
+                      "value": {"type": "number", "minimum": 0, "maximum": 1}
+                    }
+                  }
+                }
+              },
+              "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+            },
+            "linear_cka": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status", "reason", "data"],
+              "properties": {
+                "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+                "reason": {"type": ["string", "null"], "minLength": 1},
+                "data": {}
+              },
+              "description": "Linear CKA of matched face rows from two runs of this leg kind; dimension is shared by both runs. S4 refuses different dimensions before computation; incompatible comparisons are unavailable with a reason.",
+              "if": {"properties": {"status": {"const": "available"}}},
+              "then": {
+                "properties": {
+                  "reason": {"const": null},
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["reference_run_id", "comparison_run_id", "dimension", "value"],
+                    "properties": {
+                      "reference_run_id": {"type": "string", "minLength": 1},
+                      "comparison_run_id": {"type": "string", "minLength": 1},
+                      "dimension": {"type": "integer", "minimum": 1},
+                      "value": {"type": "number", "minimum": 0, "maximum": 1}
+                    }
+                  }
+                }
+              },
+              "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+            }
+          }
+        },
+        "projections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "method", "n_components", "seed", "diagnostic_only", "caption", "parameters", "versions", "result"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "method": {"enum": ["umap", "pca"]},
+              "n_components": {"const": 2},
+              "seed": {"type": "integer", "minimum": 0},
+              "diagnostic_only": {"const": true},
+              "caption": {"const": "diagnostic projection · distances not meaningful"},
+              "parameters": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["n_neighbors", "min_dist"],
+                "properties": {
+                  "n_neighbors": {"type": ["integer", "null"], "minimum": 2},
+                  "min_dist": {"type": ["number", "null"], "minimum": 0}
+                }
+              },
+              "versions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["package", "version"],
+                  "properties": {"package": {"type": "string", "minLength": 1}, "version": {"type": "string", "minLength": 1}}
+                },
+                "description": "Actual package/version pairs; an available projection requires at least one."
+              },
+              "result": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["status", "reason", "data"],
+                "properties": {
+                  "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+                  "reason": {"type": ["string", "null"], "minLength": 1},
+                  "data": {}
+                },
+                "if": {"properties": {"status": {"const": "available"}}},
+                "then": {
+                  "properties": {
+                    "reason": {"const": null},
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["face_id", "coordinates"],
+                        "properties": {
+                          "face_id": {"type": "string", "minLength": 1},
+                          "coordinates": {
+                            "type": "array",
+                            "prefixItems": [{"type": "number"}, {"type": "number"}],
+                            "items": false,
+                            "minItems": 2,
+                            "maxItems": 2
+                          }
+                        }
+                      },
+                      "minItems": 1,
+                      "description": "Ordered face coordinates; S4 checks face IDs refer to this leg input and coordinates cover that projection input."
+                    }
+                  }
+                },
+                "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+              }
+            },
+            "description": "Coordinates are diagnostic-only pictures, never metric inputs or evidence for gap/density/axis claims. UMAP fits are reused for the same embedding set across clustering configs; retain seed, parameters and actual package versions. If UMAP is unavailable, preserve its explicit unavailable result and emit a separately identified PCA-2 fallback plus the original-space neighbour table. Versions may be empty only for unavailable/not-evaluated results; do not invent an installed version.",
+            "if": {"properties": {"method": {"const": "umap"}}},
+            "then": {
+              "properties": {"parameters": {"properties": {"n_neighbors": {"type": "integer"}, "min_dist": {"type": "number"}}}},
+              "if": {"properties": {"result": {"properties": {"status": {"const": "available"}}}}},
+              "then": {"properties": {"versions": {"minItems": 1}}}
+            },
+            "else": {
+              "properties": {"parameters": {"properties": {"n_neighbors": {"const": null}, "min_dist": {"const": null}}}},
+              "if": {"properties": {"result": {"properties": {"status": {"const": "available"}}}}},
+              "then": {"properties": {"versions": {"minItems": 1}}}
+            }
+          },
+          "minItems": 1
+        },
+        "vector_coverage": {"$ref": "#/$defs/vector_coverage"}
+      },
+      "description": "All contained evidence belongs to this leg_key and one embedding space [EMB-01]. Repeated leg keys are a producer error. Reference labels are written by reference_threshold_cluster (singleton/noise = -1), never recomputed by S5. Labels are unavailable/not_evaluated with a reason when no assignments were produced. No real names, pixels, image paths or crops are wire fields.",
+      "if": {"properties": {"config": {"properties": {"similarity_threshold": {"const": null}}}}},
+      "then": {
+        "properties": {
+          "config": {"properties": {"cluster_selection_epsilon": {"const": null}}},
+          "dendrogram_cut": {
+            "properties": {"distance": {"const": null}, "labels": {"const": null}, "caption": {"const": "no production cut recorded"}}
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "dendrogram_cut": {
+            "properties": {
+              "distance": {"type": "number"},
+              "labels": {"type": "array"},
+              "caption": {"const": "Cut at cosine distance 1 minus the production similarity threshold"}
+            }
+          }
+        }
+      }
+    },
+    "vector_coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "conditional", "n_gt_faces", "n_named_gt_faces", "n_embedded_gt_faces", "n_missing_gt_faces", "n_embedded_named_faces", "n_detector_only_rows"],
+      "properties": {
+        "label": {"const": "diagnostics conditional on available GT vectors"},
+        "conditional": {"const": true},
+        "n_gt_faces": {"type": "integer", "minimum": 0},
+        "n_named_gt_faces": {"type": "integer", "minimum": 0},
+        "n_embedded_gt_faces": {"type": ["integer", "null"], "minimum": 0},
+        "n_missing_gt_faces": {"type": ["integer", "null"], "minimum": 0},
+        "n_embedded_named_faces": {"type": ["integer", "null"], "minimum": 0},
+        "n_detector_only_rows": {"type": ["integer", "null"], "minimum": 0}
+      },
+      "description": "Optional per-leg diagnostic, conditional on usable embedded GT vectors. Ngt and Nnamed come from the frame inventory; the four nullable counts are null when the leg cache is absent, never fabricated as 0. Count identities and arithmetic (embedded + missing = Ngt) are enforced by production IO, not by this stdlib schema."
+    }
+  }
+}

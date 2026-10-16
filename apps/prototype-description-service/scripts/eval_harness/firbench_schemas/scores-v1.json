@@ -1,0 +1,652 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "firbench/scores-v1",
+  "title": "FIRBENCH-1 scores.json (S3 semantic output), schema_version 1",
+  "description": "Semantic output only. Contains no clock reads and no p95 millisecond value; the p95 guardrail records state and the timings receipt sha256.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "decision_sha256",
+    "frame_id",
+    "admissibility",
+    "boundary_semantics",
+    "n_psu",
+    "min_n_independent",
+    "cell_floor_n_independent",
+    "p_d",
+    "power",
+    "planning_icc",
+    "design_effect",
+    "n_eff",
+    "n_units",
+    "n_nonmated_eff",
+    "icc_sensitivity",
+    "legs",
+    "primary",
+    "verdict",
+    "decision_path",
+    "hypotheses",
+    "guardrails",
+    "curves",
+    "cells",
+    "joint_gaps",
+    "waterfall"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "decision_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "frame_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+    "admissibility": {"enum": ["diagnostic", "development", "confirmatory"]},
+    "boundary_semantics": {"enum": ["legacy_v1", "v2"]},
+    "n_psu": {"type": "integer", "minimum": 0, "description": "Distinct PSU ids in the union of scored mated GT faces and nonmated source units; count shared PSUs once, never sum the two pool counts or substitute an image count."},
+    "min_n_independent": {"type": "integer", "minimum": 1, "description": "Global independent-PSU floor actually used from the manifest (project policy 50). Check before FPIR eligibility or intervals; this floor alone proves no power, MDE adequacy, resolvability or exhaustive GT."},
+    "cell_floor_n_independent": {"type": "integer", "minimum": 1, "description": "Pair-cell independent-PSU floor actually used from the manifest (project policy 30), separate from the global floor."},
+    "p_d": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1, "description": "Manifest discordance design assumption used for MDE (project policy 0.15), not observed discordance; no implicit default."},
+    "power": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1, "description": "Manifest target power used for MDE (project policy 0.80); no implicit default. Computed MDE never rewrites the sealed practical margin."},
+    "planning_icc": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1, "description": "Manifest design assumption, not observed ICC. Only this planning ICC feeds the verdict; sensitivity rows are report-only."},
+    "design_effect": {"type": "number", "exclusiveMinimum": 0, "description": "Mated-search design effect at planning_icc: 1 + (Mtilde - 1) * planning_icc, where Mtilde = sum(m_psu^2) / sum(m_psu) over scored mated GT-face/search counts per PSU. Never use all-GT-face or image-count sizes as a proxy for this estimand."},
+    "n_eff": {"type": "number", "minimum": 0, "description": "Effective scored mated searches = raw scored mated GT-face/search count / mated-search design_effect. FNIR and paired power use mated support, including undetected mates, never the nonmated source-unit count or all-GT/image proxy."},
+    "n_units": {"type": "integer", "minimum": 0, "description": "Fixed detector-independent nonmated source-unit count from exhaustive GT: one background unit per frame image plus independently verified nonmated GT-face units. Unresolved identities and duplicate detections add no units."},
+    "n_nonmated_eff": {"type": "number", "minimum": 0, "description": "n_units divided by the design effect of those nonmated source units' own PSU sizes at planning_icc; not the mated-search design_effect or all-GT/image-count proxy. Used for FPIR resolvability, never as fractional binomial n."},
+    "icc_sensitivity": {
+      "type": "array",
+      "minItems": 3,
+      "description": "Report-only design sensitivity at the three declared planning ICCs in ascending order (project policy 0.05/0.10/0.20; MCP16733). Mated-search design_effect/n_eff and nonmated source-unit n_nonmated_eff use their own PSU structures. primary_resolvable is the FPIR support check, not overall eligibility. Each hypothesis reports its own paired mated support and computed MDE, distinct from the sealed margin. Producers enforce arithmetic, distinct hypothesis ids, manifest binding and alignment with the primary planning row; the schema checker cannot compare fields. These rows never select the verdict ICC or replace exhaustive GT, floors or guardrails.",
+      "prefixItems": [
+        {"$ref": "#/$defs/iccSensitivity", "properties": {"planning_icc": {"const": 0.05}}},
+        {"$ref": "#/$defs/iccSensitivity", "properties": {"planning_icc": {"const": 0.10}}},
+        {"$ref": "#/$defs/iccSensitivity", "properties": {"planning_icc": {"const": 0.20}}}
+      ],
+      "items": false
+    },
+    "legs": {
+      "type": "array",
+      "minItems": 1,
+      "description": "One record per unique native leg_key, including its embedding-space fingerprint and runtime. All legs use the unchanged shared primary FPIR target, but calibrate thresholds independently. operating_point uses this row tau only. Missing mated/nonmated evidence has an explicit absence state. Producers enforce unique keys, calibration/test separation, numerator <= denominator, rate/weight arithmetic, interval ordering and shared-pool consistency; the stdlib schema checker cannot compare fields. These descriptive rows do not replace paired hypothesis intervals or alter the sealed decision policy.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["leg_key", "tau", "operating_point", "pair_fmr"],
+        "properties": {
+          "leg_key": {"type": "string", "minLength": 1},
+          "tau": {"$ref": "#/$defs/calibrationResult"},
+          "pair_fmr": {"$ref": "#/$defs/pairFmrResult"},
+          "operating_point": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["fnir", "fpir"],
+            "properties": {"fnir": {"$ref": "#/$defs/fnirResult"}, "fpir": {"$ref": "#/$defs/fpirResult"}}
+          }
+        }
+      }
+    },
+    "primary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fpir_target", "resolvable", "required_n_nonmated_eff"],
+      "properties": {
+        "fpir_target": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+        "resolvable": {"type": "boolean"},
+        "required_n_nonmated_eff": {"type": "number", "minimum": 0}
+      }
+    },
+    "verdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "reason"],
+      "properties": {
+        "state": {"enum": ["superior", "non_inferior", "inconclusive", "guardrail_vetoed", "unratified"]},
+        "reason": {
+          "enum": [
+            "primary_fpir_unresolvable",
+            "required_guardrail_unscored",
+            "margin_unreachable_mde_gt_delta",
+            "non_confirmatory_frame",
+            "insufficient_independent_psus",
+            null
+          ]
+        }
+      },
+      "if": {"properties": {"state": {"const": "inconclusive"}}, "required": ["state"]},
+      "then": {"description": "Ordinary paired-interval nonrejection has reason null. Producers must still emit the named reason for any failed eligibility check; a null reason cannot bypass floors, power, FPIR resolvability, exhaustive GT or required guardrails. Interval/margin comparisons and eligibility arithmetic remain producer checks, not schema comparisons."},
+      "else": {"properties": {"reason": {"const": null}}}
+    },
+    "decision_path": {
+      "type": "array",
+      "description": "Actual ordered decision trace from the core Verdict, serialized as a JSON list without inventing, reordering or deduplicating steps. Producers serialize the actual verdict path. An empty array is permitted for explicitly labelled legacy/no-trace fixtures; synthetic traces must be honestly labelled. This trace records the decision and does not change eligibility, margins, floors, thresholds or guardrail policy.",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "hypotheses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "step_index", "one_sided_alpha", "mde", "n_eff", "interval", "state", "reason"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "kind": {"enum": ["superiority", "non_inferiority"]},
+          "step_index": {"type": "integer", "minimum": 1},
+          "one_sided_alpha": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+          "mde": {"type": ["number", "null"]},
+          "n_eff": {"type": "number", "minimum": 0},
+          "interval": {"$ref": "#/$defs/interval"},
+          "state": {"enum": ["superior", "non_inferior", "inconclusive", "guardrail_vetoed", "unratified", null]},
+          "reason": {
+            "enum": [
+              "primary_fpir_unresolvable",
+              "required_guardrail_unscored",
+              "margin_unreachable_mde_gt_delta",
+              "non_confirmatory_frame",
+              "insufficient_independent_psus",
+              null
+            ]
+          }
+        }
+      }
+    },
+    "guardrails": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "metric", "role", "state", "value", "timings_sha256"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "metric": {"type": "string", "minLength": 1},
+          "role": {"enum": ["veto", "report_only"]},
+          "state": {"enum": ["pass", "fail", "unscored"]},
+          "value": {"type": ["number", "null"]},
+          "timings_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+          "evidence": {"$ref": "#/$defs/guardrailEvidence"}
+        },
+        "if": {"properties": {"metric": {"const": "p95_ms_per_face"}}, "required": ["metric"]},
+        "then": {
+          "description": "The actual p95 assessment remains a veto input. Store state and the sha256 of the timings receipt read, never measured milliseconds. Full scores/report replay pins this receipt; changed timing evidence may change this state and the real verdict. Unscored may have no receipt or an incomplete receipt. S3 reads but never rewrites timings.json.",
+          "properties": {"role": {"const": "veto"}, "value": {"const": null}},
+          "if": {"properties": {"state": {"const": "unscored"}}, "required": ["state"]},
+          "then": {},
+          "else": {"properties": {"timings_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}
+        }
+      }
+    },
+    "curves": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["leg_key", "points"],
+        "properties": {
+          "leg_key": {"type": "string", "minLength": 1},
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["threshold", "fpir", "fnir"],
+              "properties": {
+                "threshold": {"type": "number"},
+                "fpir": {"type": "number", "minimum": 0, "maximum": 1},
+                "fnir": {"type": ["number", "null"], "minimum": 0, "maximum": 1}
+              }
+            }
+          }
+        }
+      }
+    },
+    "cells": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["leg_key", "query_occluder", "enrolled_occluder", "data_origin", "n_units", "n_identities", "n_psu", "n_eff", "scored", "fnir", "interval"],
+        "description": "Mated GT-face cell at this leg's primary tau. n_units counts mated faces, not nonmated source units or detections; n_identities counts their distinct identities, n_psu their distinct PSUs, and n_eff their effective mated support. Producers enforce the declared cell_floor_n_independent and support arithmetic. Unscored cells retain counts but have null FNIR and interval. Occluder sets serialize as sorted '+' composites, null annotations as 'unknown', empty sets as 'clear'. Enrolled occluders come from declared gallery context, never predicted identity. Origin is synthetic only from an explicit synthetic parent, real only from explicit real provenance, otherwise unknown; the validator never infers provenance.",
+        "properties": {
+          "leg_key": {"type": "string", "minLength": 1},
+          "query_occluder": {"type": "string"},
+          "enrolled_occluder": {"type": "string"},
+          "data_origin": {"enum": ["real", "synthetic", "unknown"]},
+          "n_units": {"type": "integer", "minimum": 0},
+          "n_identities": {"type": "integer", "minimum": 0},
+          "n_psu": {"type": "integer", "minimum": 0},
+          "n_eff": {"type": "number", "minimum": 0},
+          "scored": {"type": "boolean"},
+          "fnir": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+          "interval": {"$ref": "#/$defs/interval", "properties": {"lower": {"minimum": 0, "maximum": 1}, "upper": {"minimum": 0, "maximum": 1}}}
+        },
+        "if": {"properties": {"scored": {"const": true}}, "required": ["scored"]},
+        "then": {"properties": {"fnir": {"type": "number"}}},
+        "else": {"properties": {"fnir": {"const": null}, "interval": {"const": null}}}
+      }
+    },
+    "joint_gaps": {
+      "type": "array",
+      "description": "Paired native-versus-attribution FNIR gaps on the same mated queries. Producers enforce pairing, interval ordering, PSU/effective-support arithmetic and unique (leg_key, arm) rows. Unavailable native/attribution counts are separate from n_pairs; no missing arm is imputed as a miss. These descriptive gaps do not change hypothesis gates or margins.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["leg_key", "arm", "scored", "reason", "n_pairs", "n_psu", "n_eff", "delta", "interval", "unavailable_counts"],
+        "properties": {
+          "leg_key": {"type": "string", "minLength": 1},
+          "arm": {"enum": ["gt_crop_redetect", "cached_yunet_landmark_replay"]},
+          "scored": {"type": "boolean"},
+          "reason": {"type": ["string", "null"], "minLength": 1},
+          "n_pairs": {"type": "integer", "minimum": 0},
+          "n_psu": {"type": "integer", "minimum": 0},
+          "n_eff": {"type": "number", "minimum": 0},
+          "delta": {"type": ["number", "null"]},
+          "interval": {"$ref": "#/$defs/interval"},
+          "unavailable_counts": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["native", "attribution"],
+            "properties": {"native": {"type": "integer", "minimum": 0}, "attribution": {"type": "integer", "minimum": 0}}
+          }
+        },
+        "if": {"properties": {"scored": {"const": true}}, "required": ["scored"]},
+        "then": {"properties": {"reason": {"const": null}, "delta": {"type": "number"}, "interval": {"type": "object"}}},
+        "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "delta": {"const": null}, "interval": {"const": null}}}
+      }
+    },
+    "waterfall": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["leg_key", "arm", "stage", "count"],
+        "description": "Stage counts over mated GT faces, attributed to this leg and pipeline arm (not SamplingArm). Producers enforce unique (leg_key, arm, stage) rows and no unaligned row for fused legs. Unavailable arm evidence remains separate from stage counts; never impute unavailable attribution faces as misses.",
+        "properties": {
+          "leg_key": {"type": "string", "minLength": 1},
+          "arm": {"enum": ["native", "gt_crop_redetect", "cached_yunet_landmark_replay"]},
+          "stage": {"enum": ["missed", "detected", "unaligned", "embedded", "unavailable", "wrong_identity", "rejected", "correct"]},
+          "count": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "face_outcomes": {
+      "type": "array",
+      "description": "Optional version-1 root field, absent in legacy payloads. Exact rows for every GT face on every declared leg, arm and fold, sorted by (leg_key, face_id) with ties in declared arm and fold order. Only GT face records appear; detector-only and duplicate rows stay in raw searches and background accounting. Available outcomes come from the actual S3 classifier on scored test-fold rows. Fit-fold rows are metadata only: outcome null, outcome_available false, reason fit_fold_not_scored. Unavailable arms, unresolved identities and calibration absence are named nulls, never zero-imputed. The stdlib checker cannot compare fields, so producers enforce FRAME foreign keys, sort order and one-to-one row coverage.",
+      "items": {"$ref": "#/$defs/faceOutcomeRow"}
+    }
+  },
+  "$defs": {
+    "interval": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["lower", "upper", "level"],
+      "properties": {
+        "lower": {"type": "number"},
+        "upper": {"type": "number"},
+        "level": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1}
+      }
+    },
+    "guardrailEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["leg_key", "cohort", "n_units", "n_psu", "n_eff", "limit", "reason"],
+      "description": "Optional structured assessment evidence. Unknown fields are explicit nulls; counts and effective support retain their units. Does not replace the guardrail state or the pinned p95 timing receipt.",
+      "properties": {
+        "leg_key": {"type": ["string", "null"], "minLength": 1},
+        "cohort": {"type": ["string", "null"], "minLength": 1},
+        "n_units": {"type": ["integer", "null"], "minimum": 0},
+        "n_psu": {"type": ["integer", "null"], "minimum": 0},
+        "n_eff": {"type": ["number", "null"], "minimum": 0},
+        "limit": {"type": ["number", "null"]},
+        "reason": {"type": ["string", "null"], "minLength": 1}
+      }
+    },
+    "pairFmrResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason", "data"],
+      "properties": {
+        "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+        "reason": {"type": ["string", "null"], "minLength": 1},
+        "data": {}
+      },
+      "description": "Verification FMR at this leg's primary tau, from independently supplied nonmated PAIR scores, never search/source-unit FPIR counts. Producers enforce false_matches <= n_nonmated_pairs and rate arithmetic. Without supplied pair scores, emit not_evaluated, reason pair_scores_not_supplied, data null; never substitute searches or invent zero FMR.",
+      "if": {"properties": {"status": {"const": "available"}}, "required": ["status"]},
+      "then": {
+        "properties": {
+          "reason": {"const": null},
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["false_matches", "n_nonmated_pairs", "rate"],
+            "properties": {
+              "false_matches": {"type": "integer", "minimum": 0},
+              "n_nonmated_pairs": {"type": "integer", "minimum": 1},
+              "rate": {"type": "number", "minimum": 0, "maximum": 1}
+            }
+          }
+        }
+      },
+      "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+    },
+    "iccSensitivity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["planning_icc", "design_effect", "n_eff", "n_nonmated_eff", "primary_resolvable", "hypotheses"],
+      "properties": {
+        "planning_icc": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+        "design_effect": {"type": "number", "exclusiveMinimum": 0},
+        "n_eff": {"type": "number", "minimum": 0},
+        "n_nonmated_eff": {"type": "number", "minimum": 0},
+        "primary_resolvable": {"type": "boolean"},
+        "hypotheses": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/sensitivityHypothesis"}}
+      }
+    },
+    "sensitivityHypothesis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "scored", "mde", "n_eff"],
+      "description": "Paired mated-search n_eff for this hypothesis at the row's ICC, computed from its paired mated PSU support, never all GT or nonmated units. scored describes MDE availability, not hypothesis rejection or reachability; even an inconclusive hypothesis may have a computed MDE. Null MDE is allowed only when explicitly unscored.",
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "scored": {"type": "boolean"},
+        "mde": {"type": ["number", "null"], "minimum": 0},
+        "n_eff": {"type": "number", "minimum": 0}
+      },
+      "if": {"properties": {"scored": {"const": true}}, "required": ["scored"]},
+      "then": {"properties": {"mde": {"type": "number", "minimum": 0}}},
+      "else": {"properties": {"mde": {"const": null}}}
+    },
+    "rateResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason", "data"],
+      "properties": {
+        "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+        "reason": {"type": ["string", "null"], "minLength": 1},
+        "data": {}
+      },
+      "description": "A measured rate, or an explicit absence; never silently impute zero.",
+      "if": {"properties": {"status": {"const": "available"}}, "required": ["status"]},
+      "then": {"properties": {"reason": {"const": null}, "data": {"type": "number", "minimum": 0, "maximum": 1}}},
+      "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+    },
+    "nextLowerResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason", "data"],
+      "properties": {
+        "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+        "reason": {"type": ["string", "null"], "minLength": 1},
+        "data": {}
+      },
+      "description": "Calibration-pool FPI count and FPIR, and mated FNIR at the next lower candidate; unavailable if no candidate exists.",
+      "if": {"properties": {"status": {"const": "available"}}, "required": ["status"]},
+      "then": {
+        "properties": {
+          "reason": {"const": null},
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["threshold", "count", "rate", "fnir"],
+            "properties": {
+              "threshold": {"type": "number"},
+              "count": {"type": "integer", "minimum": 0},
+              "rate": {"type": "number", "minimum": 0, "maximum": 1},
+              "fnir": {"$ref": "#/$defs/rateResult"}
+            }
+          }
+        }
+      },
+      "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+    },
+    "calibrationResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason", "data"],
+      "properties": {
+        "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+        "reason": {"type": ["string", "null"], "minLength": 1},
+        "data": {}
+      },
+      "description": "This native leg selects one finite tau for the single primary rotation, test_fold = fold_protocol.seed % k, using the other folds as pooled fit at primary.fpir_target. Query fit/test fold and searched-gallery membership are separate axes; the manifest declares gallery membership and full identity-fold provenance. pooled_units is the integer calibration source-unit denominator, distinct from test n_units. Spread summarizes fit-fold thresholds as a diagnostic only; other rotations are unsealed development diagnostics, never pooled CV verdicts or repeated confirmatory reads. Empty calibration pools are unavailable, never infinite thresholds.",
+      "if": {"properties": {"status": {"const": "available"}}, "required": ["status"]},
+      "then": {
+        "properties": {
+          "reason": {"const": null},
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["value", "calibration_spread", "pooled_units", "fpi_at_tau", "fpi_next_lower"],
+            "properties": {
+              "value": {"type": "number"},
+              "calibration_spread": {"type": "number", "minimum": 0},
+              "pooled_units": {"type": "integer", "minimum": 1},
+              "fpi_at_tau": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["count", "rate"],
+                "properties": {"count": {"type": "integer", "minimum": 0}, "rate": {"type": "number", "minimum": 0, "maximum": 1}}
+              },
+              "fpi_next_lower": {"$ref": "#/$defs/nextLowerResult"}
+            }
+          }
+        }
+      },
+      "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+    },
+    "fnirIntervalResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason", "data"],
+      "properties": {
+        "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+        "reason": {"type": ["string", "null"], "minLength": 1},
+        "data": {}
+      },
+      "description": "Descriptive per-leg mated FNIR interval resampling PSUs; not the paired delta interval or the step decision.",
+      "if": {"properties": {"status": {"const": "available"}}, "required": ["status"]},
+      "then": {
+        "properties": {
+          "reason": {"const": null},
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["lower", "upper", "level", "method"],
+            "properties": {
+              "lower": {"type": "number", "minimum": 0, "maximum": 1},
+              "upper": {"type": "number", "minimum": 0, "maximum": 1},
+              "level": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+              "method": {"const": "psu_percentile"}
+            }
+          }
+        }
+      },
+      "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+    },
+    "fnirResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason", "data"],
+      "properties": {
+        "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+        "reason": {"type": ["string", "null"], "minLength": 1},
+        "data": {}
+      },
+      "description": "Native end-to-end FNIR at this leg tau over mated GT faces (including undetected mates). Counts are raw integers; effective mated support uses manifest planning ICC. The probability arm uses IPW rates; the challenge arm stays separate. An absent interval does not erase an available measured rate.",
+      "if": {"properties": {"status": {"const": "available"}}, "required": ["status"]},
+      "then": {
+        "properties": {
+          "reason": {"const": null},
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["misses", "n_mated", "n_eff", "design_effect", "rate", "interval"],
+            "properties": {
+              "misses": {"type": "integer", "minimum": 0},
+              "n_mated": {"type": "integer", "minimum": 1},
+              "n_eff": {"type": "number", "minimum": 0},
+              "design_effect": {"type": "number", "exclusiveMinimum": 0},
+              "rate": {"type": "number", "minimum": 0, "maximum": 1},
+              "interval": {"$ref": "#/$defs/fnirIntervalResult"}
+            }
+          }
+        }
+      },
+      "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+    },
+    "iidUclResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason", "data"],
+      "properties": {
+        "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+        "reason": {"type": ["string", "null"], "minLength": 1},
+        "data": {}
+      },
+      "description": "The iid upper bound can be absent independently of an available measured FPIR; retain the rate and give an explicit reason.",
+      "if": {"properties": {"status": {"const": "available"}}, "required": ["status"]},
+      "then": {"properties": {"reason": {"const": null}, "data": {"$ref": "#/$defs/iidUcl"}}},
+      "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+    },
+    "iidUcl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["upper", "level", "method", "approximate"],
+      "properties": {
+        "upper": {"type": "number", "minimum": 0, "maximum": 1},
+        "level": {"const": 0.95},
+        "method": {"const": "clopper_pearson"},
+        "approximate": {"const": true}
+      },
+      "description": "Exact one-sided 95% Clopper-Pearson computation on integer fpi and integer n_units. It is labelled an iid approximation for clustered source units; never use fractional n_nonmated_eff as binomial n."
+    },
+    "clusteredUclResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason", "data"],
+      "properties": {
+        "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+        "reason": {"type": ["string", "null"], "minLength": 1},
+        "data": {}
+      },
+      "description": "One-sided 95% clustered bound: PSU percentile for positive FPI; approximate 3/n_nonmated_eff for zero events. The raw rule-of-three approximation may exceed one for tiny support. No eligible bound is an explicit unavailable/not_evaluated state. Both clustered methods are approximate; no coverage validation is asserted by this wire record.",
+      "if": {"properties": {"status": {"const": "available"}}, "required": ["status"]},
+      "then": {
+        "properties": {
+          "reason": {"const": null},
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["upper", "level", "method", "approximate"],
+            "properties": {
+              "upper": {"type": "number", "minimum": 0},
+              "level": {"const": 0.95},
+              "method": {"enum": ["psu_percentile", "rule_of_three"]},
+              "approximate": {"const": true}
+            },
+            "if": {"properties": {"method": {"const": "rule_of_three"}}, "required": ["method"]},
+            "then": {},
+            "else": {"properties": {"upper": {"maximum": 1}}}
+          }
+        }
+      },
+      "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+    },
+    "fpirResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason", "data"],
+      "properties": {
+        "status": {"enum": ["available", "unavailable", "not_evaluated"]},
+        "reason": {"type": ["string", "null"], "minLength": 1},
+        "data": {}
+      },
+      "description": "Native FPIR at this leg tau. fpi counts false-accept source units once, never detections or extra names. n_units is the fixed exhaustive test-pool integer denominator (the same inventory as root n_units), and n_nonmated_eff is its PSU-adjusted support. An unresolvable point still reports measured rates and bounds; eligibility remains in primary/verdict.",
+      "if": {"properties": {"status": {"const": "available"}}, "required": ["status"]},
+      "then": {
+        "properties": {
+          "reason": {"const": null},
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["fpi", "n_units", "n_nonmated_eff", "rate", "iid_ucl", "clustered_ucl"],
+            "properties": {
+              "fpi": {"type": "integer", "minimum": 0},
+              "n_units": {"type": "integer", "minimum": 1},
+              "n_nonmated_eff": {"type": "number", "exclusiveMinimum": 0},
+              "rate": {"type": "number", "minimum": 0, "maximum": 1},
+              "iid_ucl": {"$ref": "#/$defs/iidUclResult"},
+              "clustered_ucl": {"$ref": "#/$defs/clusteredUclResult"}
+            },
+            "if": {"properties": {"fpi": {"const": 0}}, "required": ["fpi"]},
+            "then": {
+              "properties": {"clustered_ucl": {"properties": {"data": {"properties": {"method": {"const": "rule_of_three"}}}}}}
+            },
+            "else": {
+              "properties": {"clustered_ucl": {"properties": {"data": {"properties": {"method": {"const": "psu_percentile"}}}}}}
+            }
+          }
+        }
+      },
+      "else": {"properties": {"reason": {"type": "string", "minLength": 1}, "data": {"const": null}}}
+    },
+    "faceOutcomeRow": {
+      "type": "object",
+      "description": "One GT-face row for one declared leg, arm and fold. mated is actual gallery membership for a known identity, and null for an unresolved identity or when membership is not declared; it is never inferred. An available row carries a FaceOutcome from the actual classifier with outcome_reason null. An unavailable row carries outcome null and a named nonempty reason, never a zero or a miss.",
+      "additionalProperties": false,
+      "required": [
+        "face_id",
+        "image_id",
+        "psu_id",
+        "fold",
+        "fold_role",
+        "sampling_arm",
+        "leg_key",
+        "arm",
+        "arm_availability",
+        "stage_reached",
+        "identity_status",
+        "mated",
+        "cell",
+        "outcome",
+        "outcome_available",
+        "outcome_reason"
+      ],
+      "properties": {
+        "face_id": {"type": "string", "minLength": 1},
+        "image_id": {"type": "string", "minLength": 1},
+        "psu_id": {"type": "string", "minLength": 1},
+        "fold": {"type": "integer", "minimum": 0},
+        "fold_role": {"enum": ["fit", "test"]},
+        "sampling_arm": {"enum": ["probability", "challenge"]},
+        "leg_key": {"type": "string", "minLength": 1},
+        "arm": {"enum": ["native", "gt_crop_redetect", "cached_yunet_landmark_replay"]},
+        "arm_availability": {"enum": ["available", "unavailable", "unavailable_fused"]},
+        "stage_reached": {"enum": ["missed", "detected", "unaligned", "embedded", "unavailable", null]},
+        "identity_status": {"enum": ["named", "unknown", "unresolved"]},
+        "mated": {"type": ["boolean", "null"]},
+        "cell": {
+          "type": "array",
+          "minItems": 2,
+          "prefixItems": [{"type": "string"}, {"type": "string"}],
+          "items": false
+        },
+        "outcome": {
+          "enum": ["missed", "unaligned", "wrong_identity", "rejected", "correct", "false_accept", "correct_reject", null]
+        },
+        "outcome_available": {"type": "boolean"},
+        "outcome_reason": {"type": ["string", "null"], "minLength": 1}
+      },
+      "if": {"properties": {"outcome_available": {"const": true}}, "required": ["outcome_available"]},
+      "then": {
+        "properties": {
+          "outcome": {
+            "enum": ["missed", "unaligned", "wrong_identity", "rejected", "correct", "false_accept", "correct_reject"]
+          },
+          "outcome_reason": {"const": null}
+        }
+      },
+      "else": {
+        "properties": {
+          "outcome": {"const": null},
+          "outcome_reason": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

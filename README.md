@@ -95,6 +95,9 @@ make test              # pytest
 | Architecture diagrams   | [docs/workbay/diagrams/](docs/workbay/diagrams/)             |
 | Active roadmap (v0.1.0) | [docs/roadmaps/v0.1.0/](docs/roadmaps/v0.1.0/)               |
 | Roadmap overview        | [docs/roadmaps/](docs/roadmaps/)                             |
+| Benchmark corpus        | [benchmarks/README.md#images](benchmarks/README.md#images)   |
+
+Benchmark corpora are addressed by logical ID, for example `corpus646-originals`, through the [benchmark home](benchmarks/README.md#images). Pixels and private maps stay out of Git.
 
 ---
 

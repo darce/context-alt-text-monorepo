@@ -40,22 +40,25 @@ wins; a face center in no box resolves to no name — the stranger case).
 Authored in VLM-2C Slice 3 from the operator-located identities; covers scenes
 12, 19, 21, 23, 30, and 38.
 
-Image bytes are **not vendored in git** (59 MB corpus). The canonical local
-(gitignored) image root is `<primary checkout>/benchmarks/images/`, holding
-`mock_images/`, `mock_entities/`, and `corpus646/originals/<bucket>/<file>`
-(source-space originals verified against `corpus-manifest-v3r` `sha256_source`;
-provenance in `benchmarks/images/corpus646/provenance.json`).
-`~/Development/eval-fixtures` is a transitional symlink to that directory.
+Image bytes are **not vendored in git** (59 MB corpus). They live in the ignored
+`benchmarks/images/` directory of the primary checkout. The 646 originals
+(`corpus646/originals/<bucket>/<file>`, verified against `sha256_source`) are
+located only by the catalog logical ID `corpus646-originals`, resolved by
+`scripts.eval_harness.corpus_catalog`. Run `show` or `check` from
+`apps/prototype-description-service`; see
+[benchmarks/README.md § Images](../../../../../benchmarks/README.md#images). Do
+not set a path for them by hand. The catalog never reads `GOLDEN_IMAGES_DIR`.
 
-Re-hydrate mock fixtures from the Butter archive into that directory and point
-`GOLDEN_IMAGES_DIR` at it:
+The legacy golden loaders take their image directory from `GOLDEN_IMAGES_DIR`.
+This step re-hydrates the mock fixtures (`mock_images/`, `mock_entities/`) into
+that directory from the laptop archive, then points `GOLDEN_IMAGES_DIR` at it:
 
 ```bash
 IMAGES="$(cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && pwd)/benchmarks/images"
 mkdir -p "$IMAGES"
 rsync -av \
-  /Volumes/Butter/archives/archived-recognition-service/scripts/mock_images \
-  /Volumes/Butter/archives/archived-recognition-service/scripts/mock_entities \
+  "<laptop archive root>/archived-recognition-service/scripts/mock_images" \
+  "<laptop archive root>/archived-recognition-service/scripts/mock_entities" \
   "$IMAGES/"
 export GOLDEN_IMAGES_DIR="$IMAGES"
 ```

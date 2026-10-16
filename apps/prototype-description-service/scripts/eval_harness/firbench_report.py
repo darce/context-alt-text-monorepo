@@ -27,6 +27,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from scripts.eval_harness.firbench_glossary import render_glossary, term_link
 from scripts.eval_harness.firbench_contract import (
     FaceOutcome,
     FrameContractError,
@@ -304,7 +305,10 @@ def _leg_table(scores: Mapping[str, Any]) -> str:
             fnir_interval = "not evaluated"
         rows.append(
             [
-                _ui_leg_label(leg["leg_key"]),
+                _ui_leg_label(leg["leg_key"]).replace(
+                    '<strong>sface</strong>', '<strong>SFace</strong>'
+                ).replace('<strong>auraface</strong>', '<strong>AuraFace</strong>'
+                ).replace('<strong>insightface</strong>', '<strong>InsightFace</strong>'),
                 _e(scores["admissibility"]),
                 f"{n_eff} {_code(_jp('scores.json', 'legs', index, 'operating_point', 'fnir', 'data', 'n_eff'))}",
                 f"{fnir_text} {_code(_jp('scores.json', 'legs', index, 'operating_point', 'fnir'))}",
@@ -314,17 +318,22 @@ def _leg_table(scores: Mapping[str, Any]) -> str:
                 f"{tau_text} {_code(_jp('scores.json', 'legs', index, 'tau'))}",
             ]
         )
-    return _table(
-        "Per-leg operating point at the frozen τ (the leg's own space)",
+    return (
+        '<p>' + term_link('fnir', 'Missed enrolled-person searches (FNIR)') + '; '
+        + term_link('fpir', 'False identifications among nonmated sources (FPIR)') + '; '
+        + term_link('neff', 'Effective sample size (n_eff)') + '; '
+        + term_link('threshold', 'Acceptance threshold τ') + '.</p>'
+    ) + _table(
+        "Per-model operating point at the frozen acceptance threshold (each model's own space)",
         [
-            "Leg",
-            "Admissibility",
-            "n_eff",
-            "FNIR (misses/mated)",
-            "FNIR interval",
-            "FPIR (fpi/units)",
-            "FPIR interval",
-            "τ",
+            "Model / implementation identifier",
+            "Permitted frame use",
+            "Effective sample size (n_eff)",
+            "Miss rate (FNIR: misses/mated searches)",
+            "Miss-rate interval (FNIR)",
+            "False-identification rate (FPIR: false identifications/source units)",
+            "False-identification interval (FPIR)",
+            "Acceptance threshold τ",
         ],
         rows,
     )
@@ -355,8 +364,13 @@ def _hypotheses_html(scores: Mapping[str, Any]) -> str:
             reason = hyp["reason"] or ""
         rows.append(
             [
-                _e(hyp["id"]),
-                _e(hyp["kind"]),
+                ("Is the recorded model change better?" if hyp["kind"] == "superiority"
+                 else "Is the recorded model change within the allowed loss?" if hyp["kind"] == "non_inferiority"
+                 else "Comparison question unavailable")
+                + f'<br><small>Protocol identifier: {_e(hyp["id"])}</small>',
+                _e(hyp["kind"]) + '<br><small>Comparison question unavailable in full: '
+                'comparison legs unavailable; direction unavailable; margin unavailable '
+                'in this score record.</small>',
                 _f(hyp["step_index"], 0),
                 _f(hyp["one_sided_alpha"], 3),
                 _f(hyp["mde"]) if hyp["mde"] is not None else "null",
@@ -370,8 +384,8 @@ def _hypotheses_html(scores: Mapping[str, Any]) -> str:
     if len(hypotheses) < 2 and (first_state == VerdictState.inconclusive or not hypotheses):
         rows.append(
             [
-                "H2",
-                "non_inferiority",
+                "Comparison question unavailable (H2)",
+                "Policy details unavailable: no H2 record",
                 "2",
                 "",
                 "",
@@ -382,9 +396,11 @@ def _hypotheses_html(scores: Mapping[str, Any]) -> str:
                 "",
             ]
         )
-    return _table(
+    return ('<p>' + term_link('hypothesis', 'Comparison questions and pass rules')
+            + ': H2 is reached only after H1 passes. '
+            + term_link('mde', 'Minimum detectable effect (MDE)') + '.</p>') + _table(
         "Hypotheses (each state is shown with its reason)",
-        ["H", "kind", "step", "one-sided α", "MDE", "n_eff", "interval", "state", "reason", "JSON path"],
+        ["Hypothesis", "Rule / recorded policy availability", "Step", "One-sided error rate α", "MDE", "Effective sample size (n_eff)", "Interval", "State", "Reason", "Source"],
         rows,
     )
 
@@ -403,26 +419,38 @@ def _guardrails_html(scores: Mapping[str, Any]) -> str:
         reason = evidence.get("reason") if isinstance(evidence, Mapping) else None
         rows.append(
             [
-                _e(g["id"]),
-                _e(g["metric"]),
+                term_link('guardrail', {
+                    'per_cohort_fpir': 'False-match rate by demographic group',
+                    'p95_ms_per_face': '95th-percentile time per face',
+                }.get(g['metric'], 'Recorded guardrail'))
+                + f'<br><small>Protocol identifier: {_e(g["id"])}</small>',
+                (term_link('kind-per-cohort-fpir', 'Demographic subgroup FPIR')
+                 if g['metric'] == 'per_cohort_fpir' else
+                 term_link('kind-p95', 'Amortized native processing cost')
+                 if g['metric'] == 'p95_ms_per_face' else 'Definition unavailable')
+                + f'<br><small>Technical key: {_e(g["metric"])}</small>',
                 _e(g["role"]),
                 _st(glyph_state, label),
                 _e(value),
                 _e(g["timings_sha256"] or "none"),
-                _e(reason or ""),
+                _e(reason or "") + '<br><small>Active limit and comparison policy: '
+                'inspect recorded evidence; unavailable details are not inferred.</small>',
                 _code(_jp("scores.json", "guardrails", index)),
             ]
         )
     return _table(
         "Guardrails (veto or report-only; unscored is not a pass)",
-        ["ID", "metric", "role", "state", "value", "timings sha256", "reason", "JSON path"],
+        ["Guardrail / protocol identifier", "Metric / technical key", "Role", "State", "Value", "Timing artifact fingerprint (SHA-256)", "Reason / policy availability", "Source"],
         rows,
     )
 
 
 def _decision_path_html(scores: Mapping[str, Any]) -> str:
     items = "".join(f"<li>{_e(step)}</li>" for step in scores["decision_path"])
-    return f"<details><summary>Decision path ({len(scores['decision_path'])} steps)</summary><ol>{items}</ol></details>"
+    return (f"<details><summary>Recorded decision path ({len(scores['decision_path'])} steps)</summary>"
+            + '<p>' + term_link('hypothesis', 'Hypothesis rules') + '; '
+            + term_link('guardrail', 'Guardrail roles and unavailable states') + '.</p>'
+            + f"<ol>{items}</ol></details>")
 
 
 # --- S2 curves ----------------------------------------------------------------------
@@ -696,8 +724,12 @@ def _cells_html(
                 path,
             ]
         )
-    return _table(
-        f"Query by enrolled occluder cell (cells below {floor} independent PSUs read not scored)",
+    return ('<p>' + term_link('occlusion-cell', 'Occlusion cells and cell origin')
+            + ': synthetic cell origin describes generated cell data; it does not establish '
+            'that the whole run is a software fixture. '
+            + term_link('psu', 'Independent sampling units (PSUs)') + '; '
+            + term_link('neff', 'Effective sample size (n_eff)') + '.</p>') + _table(
+        f"Query by enrolled occlusion subgroup (below {floor} independent sampling units: not scored)",
         [
             "Leg",
             "query / enrolled",
@@ -1885,7 +1917,7 @@ def _frames_html(scores: Mapping[str, Any], frame: Mapping[str, Any] | None, cre
         ]
     frame_table = _table(
         "Frame (one row per frame)",
-        ["frame", "admissible as", "exhaustive", "n_psu", "n_eff", "deff", "planning ICC", "JSON path"],
+        ["Frame identifier", "Permitted use", "Exhaustive ground truth", "Independent sampling units (n_psu)", "Effective sample size (n_eff)", "Design effect (deff)", "Planning within-unit correlation (ICC)", "Source"],
         [frame_row],
     )
     sens_rows = []
@@ -1902,8 +1934,8 @@ def _frames_html(scores: Mapping[str, Any], frame: Mapping[str, Any] | None, cre
                 ]
             )
     sens = _table(
-        "Planning-ICC sensitivity (report-only; planning ICC 0.10 is declared project policy, not observed ICC)",
-        ["planning ICC", "deff", "n_eff", "H", "MDE", "JSON path"],
+        "Sensitivity to recorded planning within-unit correlation (report-only; assumptions, not observed correlations)",
+        ["Planning correlation (ICC)", "Design effect (deff)", "Effective sample size (n_eff)", "Hypothesis identifier", "Minimum detectable effect (MDE)", "Source"],
         sens_rows,
     )
     floors = _table(
@@ -1934,7 +1966,13 @@ def _frames_html(scores: Mapping[str, Any], frame: Mapping[str, Any] | None, cre
         if unratified
         else f"<p>Recorded run date: {_e(created)}.</p>"
     )
-    return f"{frame_table}\n{sens}\n{floors}\n<p>{_e(_FLOOR_NOTE)}</p>\n{seal_line}"
+    return ('<p>' + term_link('admissibility', 'Permitted frame use') + '; '
+            + term_link('psu', 'Independent sampling units (n_psu)') + '; '
+            + term_link('neff', 'Effective sample size (n_eff)') + '; '
+            + term_link('mde', 'Minimum detectable effect (MDE)') + '; '
+            + term_link('ratified', 'Policy approval (ratification)') + '; '
+            + term_link('sealed', 'Run seal') + '.</p>'
+            + f"{frame_table}\n{sens}\n{floors}\n<p>{_e(_FLOOR_NOTE)}</p>\n{seal_line}")
 
 
 # --- page assembly -------------------------------------------------------------------
@@ -2010,7 +2048,7 @@ def _ui_selection_counts(rows: Sequence[Mapping[str, Any]], selected: Sequence[M
 
 def _ui_failure_controls(rows: Sequence[Mapping[str, Any]]) -> str:
     fields = [("sampling_arm", "Sampling arm"), ("fold_role", "Fold role"), ("arm", "Arm"),
-              ("leg_key", "Leg"), ("cell", "Query / enrolled cell"), ("stage", "SearchStage"),
+              ("leg_key", "Model / implementation identifier"), ("cell", "Query / enrolled occlusion subgroup"), ("stage", "Search stage"),
               ("outcome", "Outcome"), ("identity_status", "Identity status"), ("qualified", "Qualified")]
     controls = [
         '<fieldset id="failure-filters"><legend>Filter GT inventory</legend>'
@@ -2039,8 +2077,8 @@ def _ui_failure_table(rows: Sequence[Mapping[str, Any]]) -> str:
             _f(r.get("top1_score")), _e(r.get("fold")), _e(r.get("fold_role") or "unknown"),
             _e(r.get("cell")), _e(r.get("annotation_tier") or "unknown"), _code(r["ref"]),
         ])
-    return _table("GT inventory selection (outcomes supplied by producer)",
-                  ["image_id", "face_id", "Leg", "SearchStage", "Outcome / reason", "top-1 identity",
+    return _table("Ground-truth (GT) inventory selection (outcomes supplied by producer)",
+                  ["Image identifier (image_id)", "Face identifier (face_id)", "Model", "Search stage", "Outcome / reason", "Top-ranked identity",
                    "top-1 score", "Fold", "Fold role", "Cell", "Label tier", "Source"], cells)
 
 
@@ -2343,8 +2381,16 @@ def _page(
         f"<title>{_e(title)}</title>\n<style>{_CSS}</style>\n</head>\n<body>\n"
         '<a class="skip" href="#verdict">Skip to verdict</a>\n'
         f'<header><h1>FIRBENCH-1 report</h1></header>\n<nav class="tabs" aria-label="Report sections">{nav}</nav>\n'
-        f'{provenance}<main>\n<section id="verdict" tabindex="-1" aria-label="Verdict"><h2>Verdict</h2>\n{verdict_html}\n</section>\n'
-        f'{sections}\n</main>\n'
+        '<p><a href="#glossary">Report glossary</a></p>\n'
+        f'{provenance}<main>\n<section id="verdict" tabindex="-1" aria-label="Verdict"><h2>Verdict</h2>\n'
+        '<p>Compare recorded model outcomes under the recorded decision policy. '
+        + term_link('fnir', 'Missed enrolled-person searches (FNIR)') + '; '
+        + term_link('fpir', 'False identifications (FPIR)') + '; '
+        + term_link('admissibility', 'Permitted frame use') + '; '
+        + term_link('native', 'Native processing') + '; '
+        + term_link('gt-crop-redetect', 'GT-crop redetect') + '; '
+        + term_link('cached-landmark-replay', 'Cached landmark replay') + '.</p>\n'
+        + f'{verdict_html}\n</section>\n{sections}\n{render_glossary()}\n</main>\n'
         '<dialog id="source-inspector" aria-labelledby="inspector-title">'
         '<h2 id="inspector-title">Inspection</h2>'
         '<button type="button" id="close-inspector">↩ Close inspection (Esc)</button>'

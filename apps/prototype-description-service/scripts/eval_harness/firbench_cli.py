@@ -32,6 +32,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from scripts.eval_harness import firbench_evidence
 from scripts.eval_harness.firbench_contract import (
     Arm,
     CanaryInSealedRunError,
@@ -1384,6 +1385,14 @@ def _build_parser() -> argparse.ArgumentParser:
     report = commands.add_parser("report", help="render the private report for an existing run")
     report.add_argument("run_dir", type=Path)
     report.add_argument("--include-crops", action="store_true")
+    report.add_argument("--evidence-db", type=Path, default=None)
+    report.add_argument("--artifact-id", default=None)
+    # Listed for --help only: main() delegates ``evidence`` to firbench_evidence before this parser runs.
+    commands.add_parser(
+        "evidence",
+        help="artifact pointers in the evidence DB: register, show, check, resolve, list",
+        add_help=False,
+    )
     compare = commands.add_parser("compare", help="compare two scored runs under the compatibility key")
     compare.add_argument("run_a", type=Path)
     compare.add_argument("run_b", type=Path)
@@ -1396,9 +1405,27 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _register_report(index_path: Path, evidence_db: Path, artifact_id: str) -> str:
+    """Register the rendered HTML. A failure keeps the report files and never reports success."""
+    try:
+        registered = firbench_evidence.register_artifact(
+            evidence_db, artifact_id, kind="report-html", path=index_path
+        )
+    except firbench_evidence.EvidenceError as exc:
+        raise firbench_evidence.EvidenceError(
+            f"report rendered and kept, but evidence registration failed: {exc}"
+        ) from None
+    return registered["status"]
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    args = _build_parser().parse_args(argv)
+    raw = list(sys.argv[1:] if argv is None else argv)
+    if raw[:1] == ["evidence"]:
+        return firbench_evidence.main(raw[1:])
+    parser = _build_parser()
+    args = parser.parse_args(argv)
     repo_root = _repo_root()
+    evidence_status = None
     try:
         if args.command == "run":
             path = run_frame(
@@ -1415,7 +1442,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "score":
             path = score_run(args.run_dir, repo_root=repo_root)
         elif args.command == "report":
+            if (args.evidence_db is None) != (args.artifact_id is None):
+                parser.error("report --evidence-db and --artifact-id must be given together")
+            if args.evidence_db is not None:
+                # Refuse a bad DB or ID before the producer writes anything.
+                firbench_evidence.preflight_artifact(args.evidence_db, args.artifact_id)
             path = report_run(args.run_dir, include_crops=args.include_crops, repo_root=repo_root)
+            if args.evidence_db is not None:
+                evidence_status = _register_report(path, args.evidence_db, args.artifact_id)
         elif args.command == "compare":
             path = compare_runs(
                 args.run_a,
@@ -1431,10 +1465,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 run_id=args.run_id,
                 repo_root=repo_root,
             )
+    except firbench_evidence.EvidenceError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     except (FirBenchError, NotImplementedError) as exc:
         print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
     print(path)
+    if evidence_status is not None:
+        print(f"evidence: {evidence_status}")
     return 0
 
 

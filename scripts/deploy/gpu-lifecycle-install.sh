@@ -485,6 +485,10 @@ SSH_USER="${OCI_USER:-ubuntu}"
 SSH_USER_EXPLICIT=0
 GPU_INSTANCE_NAME="${GPU_INSTANCE_NAME:-acx-gpu-burst}"
 GPU_INSTANCE_ID="${GPU_INSTANCE_ID:-}"
+# Ordered failover candidates (space/comma separated). GPU_INSTANCE_ID is the
+# legacy singular alias and remains the first candidate when set.
+GPU_INSTANCE_IDS="${GPU_INSTANCE_IDS:-}"
+GPU_INSTANCE_ID_ARGS=""
 MAX_LEASE_SECONDS="${MAX_LEASE_SECONDS:-3600}"
 # Only unset operator overrides receive defaults. An explicitly empty value
 # remains invalid and reaches the fail-closed validation below.
@@ -592,7 +596,8 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --user) SSH_USER="$2"; SSH_USER_EXPLICIT=1; shift 2 ;;
         --host) HOST="$2"; shift 2 ;;
-        --instance-id) GPU_INSTANCE_ID="$2"; shift 2 ;;
+        --instance-id) GPU_INSTANCE_ID="$2"; GPU_INSTANCE_IDS="${GPU_INSTANCE_IDS:+$GPU_INSTANCE_IDS }$2"; shift 2 ;;
+        --instance-ids) GPU_INSTANCE_IDS="${GPU_INSTANCE_IDS:+$GPU_INSTANCE_IDS }${2//,/ }"; shift 2 ;;
         --max-lease-seconds) MAX_LEASE_SECONDS="$2"; shift 2 ;;
         --idle-seconds) IDLE_SECONDS="$2"; shift 2 ;;
         --ready-url) READY_URL="$2"; shift 2 ;;
@@ -715,12 +720,29 @@ if [ -n "$ready_url_port" ] \
     exit 2
 fi
 
+# Normalize ordered candidates: dedupe preserving order, legacy singular first.
+GPU_INSTANCE_IDS="${GPU_INSTANCE_IDS//,/ }"
+_normalized_instance_ids=""
+for _candidate in $GPU_INSTANCE_IDS; do
+    case " $_normalized_instance_ids " in
+        *" $_candidate "*) ;;
+        *) _normalized_instance_ids="${_normalized_instance_ids:+$_normalized_instance_ids }$_candidate" ;;
+    esac
+done
+GPU_INSTANCE_IDS="$_normalized_instance_ids"
+if [ -n "$GPU_INSTANCE_ID" ]; then
+    case " $GPU_INSTANCE_IDS " in
+        *" $GPU_INSTANCE_ID "*) ;;
+        *) GPU_INSTANCE_IDS="${GPU_INSTANCE_ID}${GPU_INSTANCE_IDS:+ $GPU_INSTANCE_IDS}" ;;
+    esac
+fi
+
 # --- resolve the GPU instance OCID -------------------------------------------
 # Resolved by display name against OCI rather than pasted, so a stale OCID in a
 # unit file cannot silently point the reaper at an instance that no longer
 # exists and report a clean exit forever (rg-005).
 gpu_instance_id_source="pinned"
-if [ -z "$GPU_INSTANCE_ID" ]; then
+if [ -z "$GPU_INSTANCE_IDS" ] && [ -z "$GPU_INSTANCE_ID" ]; then
     gpu_instance_id_source="resolved-by-name"
     command -v oci >/dev/null 2>&1 || {
         echo "error: no --instance-id given and no local oci CLI to resolve '${GPU_INSTANCE_NAME}'" >&2
@@ -736,12 +758,20 @@ if [ -z "$GPU_INSTANCE_ID" ]; then
         exit 2
     }
 fi
-if [[ ! "$GPU_INSTANCE_ID" =~ ^ocid1\.instance\.oc1\.[a-z0-9-]+\.[a-z0-9]+$ ]]; then
-    echo "error: GPU instance OCID must match ocid1.instance.oc1.<region>.<identifier>" >&2
-    exit 2
-fi
+[ -n "$GPU_INSTANCE_IDS" ] || GPU_INSTANCE_IDS="$GPU_INSTANCE_ID"
+for _candidate in $GPU_INSTANCE_IDS; do
+    if [[ ! "$_candidate" =~ ^ocid1\.instance\.oc1\.[a-z0-9-]+\.[a-z0-9]+$ ]]; then
+        echo "error: GPU instance OCID must match ocid1.instance.oc1.<region>.<identifier>: $_candidate" >&2
+        exit 2
+    fi
+    GPU_INSTANCE_ID_ARGS="${GPU_INSTANCE_ID_ARGS:+$GPU_INSTANCE_ID_ARGS }--instance-id $_candidate"
+done
+GPU_INSTANCE_ID="${GPU_INSTANCE_IDS%% *}"
 printf -v remote_gpu_instance_id '%q' "$GPU_INSTANCE_ID"
+printf -v remote_gpu_instance_ids '%q' "$GPU_INSTANCE_IDS"
+printf -v remote_gpu_instance_id_args '%q' "$GPU_INSTANCE_ID_ARGS"
 echo "gpu instance: ${GPU_INSTANCE_NAME} (...${GPU_INSTANCE_ID: -12})"
+echo "gpu instance ids: ${GPU_INSTANCE_IDS}"
 echo "OCID source:  ${gpu_instance_id_source}"
 echo "max lease:    ${MAX_LEASE_SECONDS}s   idle: ${IDLE_SECONDS}s"
 
@@ -753,7 +783,7 @@ release_id=$({
     done
     printf 'installer %s\n' "$(git -C "$repo_root" hash-object "$0")"
     printf 'instance=%s\nmax=%s\nidle=%s\nready=%s\nstart=%s\nreap=%s\ngrace=%s\ndeployments=%s\n' \
-        "$GPU_INSTANCE_ID" "$MAX_LEASE_SECONDS" "$IDLE_SECONDS" "$READY_URL" \
+        "$GPU_INSTANCE_IDS" "$MAX_LEASE_SECONDS" "$IDLE_SECONDS" "$READY_URL" \
         "$START_INTERVAL" "$REAP_INTERVAL" "$LOAD_STALE_GRACE_SECONDS" "$LOAD_ENVIRONMENTS"
 } | git -C "$repo_root" hash-object --stdin)
 remote_release="/opt/acx-gpu/releases/${release_id}"
@@ -808,7 +838,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
     echo "--- dry run: would atomically switch /opt/acx-gpu/current -> ${remote_release}"
     echo "--- dry run: would install acx-gpu-start.{service,timer} + acx-gpu-reap.{service,timer} + acx-gpu-intent.path"
     echo "--- dry run: would create host-owned /run/acx and isolated API-writable deployment directories: ${LOAD_ENVIRONMENT_DIRS}"
-    echo "ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id \${GPU_INSTANCE_ID} --idle-seconds \${IDLE_SECONDS} --max-lease-seconds \${MAX_LEASE_SECONDS} --ready-url \${READY_URL} (rendered MAX_LEASE_SECONDS=${MAX_LEASE_SECONDS})"
+    echo "ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap \${GPU_INSTANCE_ID_ARGS} --idle-seconds \${IDLE_SECONDS} --max-lease-seconds \${MAX_LEASE_SECONDS} --ready-url \${READY_URL} (rendered MAX_LEASE_SECONDS=${MAX_LEASE_SECONDS})"
     echo "--- dry run: would verify systemctl is-enabled + is-active for lifecycle timers and acx-gpu-intent.path"
     exit 0
 fi
@@ -919,6 +949,8 @@ unit_stage=\$(sudo mktemp -d '${remote_release}/.systemd.XXXXXX')
 sudo chmod 0755 \"\$unit_stage\"
 sudo tee \"\$unit_stage/gpu-lifecycle.env\" >/dev/null <<ENV
 GPU_INSTANCE_ID=${remote_gpu_instance_id}
+GPU_INSTANCE_IDS=${remote_gpu_instance_ids}
+GPU_INSTANCE_ID_ARGS=${remote_gpu_instance_id_args}
 MAX_LEASE_SECONDS=${MAX_LEASE_SECONDS}
 IDLE_SECONDS=${IDLE_SECONDS}
 ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS=${LOAD_STALE_GRACE_SECONDS}
@@ -945,7 +977,7 @@ StateDirectoryMode=0700
 Environment=OCI_CLI_AUTH=instance_principal
 EnvironmentFile=/etc/acx/gpu-lifecycle.env
 WorkingDirectory=/opt/acx-gpu/current
-ExecStart=/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode start --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --intent-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /var/lib/acx-gpu/running-since.json --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci --ready-url \\\${READY_URL}
+ExecStart=/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode start \\\${GPU_INSTANCE_ID_ARGS} --load-dir /run/acx-write --intent-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /var/lib/acx-gpu/running-since.json --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci --ready-url \\\${READY_URL}
 UNIT
 
 sudo tee \"\$unit_stage/acx-gpu-start.timer\" >/dev/null <<UNIT
@@ -993,7 +1025,7 @@ StateDirectoryMode=0700
 Environment=OCI_CLI_AUTH=instance_principal
 EnvironmentFile=/etc/acx/gpu-lifecycle.env
 WorkingDirectory=/opt/acx-gpu/current
-ExecStart=/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --intent-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /var/lib/acx-gpu/running-since.json --idle-seconds \\\${IDLE_SECONDS} --max-lease-seconds \\\${MAX_LEASE_SECONDS} --fence-delay-seconds 2 --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci --ready-url \\\${READY_URL}
+ExecStart=/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap \\\${GPU_INSTANCE_ID_ARGS} --load-dir /run/acx-write --intent-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /var/lib/acx-gpu/running-since.json --idle-seconds \\\${IDLE_SECONDS} --max-lease-seconds \\\${MAX_LEASE_SECONDS} --fence-delay-seconds 2 --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci --ready-url \\\${READY_URL}
 UNIT
 
 sudo tee \"\$unit_stage/acx-gpu-reap.timer\" >/dev/null <<UNIT

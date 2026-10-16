@@ -159,6 +159,30 @@ def test_all_capacity_fail_records_capacity_failed() -> None:
     assert result.capacity_failed == (A, B)
 
 
+def test_non_capacity_failure_does_not_failover() -> None:
+    class GenericFailActuator:
+        def __init__(self) -> None:
+            self.attempts: list[str] = []
+
+        def start_instance(self, instance_id: str) -> None:
+            self.attempts.append(instance_id)
+            if instance_id == A:
+                raise RuntimeError("authentication failed")
+
+    actuator = GenericFailActuator()
+    result = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=_instances(A, B),
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=actuator,
+    )
+    assert actuator.attempts == [A]
+    assert result.actuated == []
+    assert result.capacity_failed == ()
+    assert result.fallbacks
+    assert all(f.reason == "start_failed" for f in result.fallbacks)
+
+
 def test_installer_supports_plural_instance_ids_backward_compatible() -> None:
     repo = Path(__file__).resolve().parents[4]
     script = (repo / "scripts/deploy/gpu-lifecycle-install.sh").read_text()

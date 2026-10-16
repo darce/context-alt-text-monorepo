@@ -111,6 +111,54 @@ def test_reap_all_running_idle_instances() -> None:
     assert sorted(i for _, i in result.actuated) == sorted([A, B])
 
 
+def test_parser_accepts_instance_ids_plural_and_comma_forms() -> None:
+    parser = _build_parser()
+    args = parser.parse_args(["--instance-ids", f"{A},{B}", "--queue-depth", "1", "--in-flight", "0"])
+    assert args.instance_ids == [A, B]
+    args = parser.parse_args(["--instance-id", f"{A},{B}", "--queue-depth", "1", "--in-flight", "0"])
+    assert args.instance_ids == [A, B]
+    args = parser.parse_args(
+        ["--instance-id", A, "--instance-ids", B, "--instance-id", A, "--queue-depth", "1", "--in-flight", "0"]
+    )
+    assert args.instance_ids == [A, B]
+
+
+def test_subprocess_stderr_capacity_failover_and_tracking() -> None:
+    import subprocess
+
+    class SubprocessActuator:
+        def __init__(self) -> None:
+            self.attempts: list[str] = []
+
+        def start_instance(self, instance_id: str) -> None:
+            self.attempts.append(instance_id)
+            if instance_id == A:
+                raise subprocess.CalledProcessError(1, ["oci"], stderr=b"Error: Out of host capacity.")
+
+    actuator = SubprocessActuator()
+    result = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=_instances(A, B),
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=actuator,
+    )
+    assert actuator.attempts == [A, B]
+    assert result.actuated == [("START", B)]
+    assert result.capacity_failed == (A,)
+    assert result.fallbacks == ()
+
+
+def test_all_capacity_fail_records_capacity_failed() -> None:
+    actuator = OrderedActuator(fail_all=True)
+    result = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=_instances(A, B),
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=actuator,
+    )
+    assert result.capacity_failed == (A, B)
+
+
 def test_installer_supports_plural_instance_ids_backward_compatible() -> None:
     repo = Path(__file__).resolve().parents[4]
     script = (repo / "scripts/deploy/gpu-lifecycle-install.sh").read_text()

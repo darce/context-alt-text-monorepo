@@ -6,7 +6,7 @@
 > **Task ID:** WBTRUST-4
 > **Target Branch:** feature/wbtrust-4
 > **Base SHA:** 372a6413a7ae0eb71baa3566716546684bac5a58
-> **Revision:** 1
+> **Revision:** 2
 > **Review Coverage Target:** frontend request behavior; no service or limiter change
 > **Depends on:** none (Wave A; ships first so the 429 storm stops contaminating WBTRUST-1/3 repros)
 > **Executor:** `claude-remote` `claude-haiku-5-5`, effort `xhigh` for implementation and grunt work (operator order 2026-10-15). Brief each slice separately (1–3 files), inline the slice text plus codemap snippets; if the write-enabled remote Claude harness is denied or unavailable, record a blocker and ask the operator — no silent fallback to another model.
@@ -31,6 +31,7 @@ The console shows `429 (Too Many Requests)` on `recognition/suggestions`, `sugge
 - Keep `recognitionCooldown.ts` semantics: `gateRefetchInterval` never returns `false` mid-cooldown; `runAfterCooldown` re-checks on wake.
 - No new endpoint in the required slices. rg-007: bounded stall detection in any new loop. sr-008: ≤ 8 destructured params.
 - Tests run on the remote VM lane; no local containers.
+- WBTRUST-4 owns request admission, cooldown state/data and retry scheduling; it never edits `ActivityStatusStrip.tsx` rendering or layout. WBTRUST-5 is the sole Wave A strip interactivity/layout owner. Preserve admission targets of ≤ 40 requests/min and ≤ 10 requests/5 s, plus existing cancellation, CAS, backoff and 20-job data guards; the scan-complete ≤ 10 requests/10 s target also remains.
 
 ## Workflow Principles
 
@@ -69,7 +70,8 @@ The console shows `429 (Too Many Requests)` on `recognition/suggestions`, `sugge
 
 ## Contract and Boundary Impact
 
-- None in required slices. Optional S6 adds `GET recognition/jobs?ids=` (contract extension, rg-015 pass-through).
+- Handoff to one later integration owner: WBTRUST-4 produces actual cooldown observations (`cooldownRemainingMs`, suppression and retry outcomes); WBTRUST-5 produces the final strip and accepted copy. Integration consumes both to add the wait-state rendering after both producers finish. The strip file is an exclusive resource: no concurrent WBTRUST-4 render edit. Reuse the existing cooldown seam; no new UI prop or callback API is prescribed. This is a producer/consumer and resource-exclusivity edge (canon v0.26.2, GRPH-32, **An edge exists only where data moves**, `lexicons/graph-theory.md#grph-32`).
+- None in required API slices. Optional S6 adds `GET recognition/jobs?ids=` (contract extension, rg-015 pass-through).
 - **Open decision (operator, flagged not made):** limiter tier for the workbench key. UXP-NET-1 ruled out tier changes; record the measured request profile in the S1 decision so the operator can revisit with numbers.
 
 ## Proposed Solution
@@ -96,7 +98,7 @@ Owned paths:
 ### Slice S1: request-counting-harness
 
 Count before changing anything.
-Closes: R14 (diagnosis). Canon: PERF-02, EVAL-16.
+Closes: R14 (diagnosis). Canon: TEST-15 (Prove the green can go red; `lexicons/engineering.md#test-15`); request-count targets come from the accepted scope.
 Design decision (binding): first record the served build (scope Step 0) and run the baseline on current `main`. A reusable harness (fake timers + route-family counter) lands first with RED budget tests per scenario; the decision records requests/min per family and ranks the drivers (a)–(d) from the scope by measured share. Drivers that measure < 10 % of traffic are dropped from later slices; any slice made redundant by the landed FIR-UI budgets is marked so in the decision rather than implemented.
 Acceptance: harness committed; per-family numbers recorded in the handoff decision; RED tests fail on the base SHA.
 
@@ -125,8 +127,8 @@ Acceptance: "30 identities, one membership change" ≤ 2 suggestion requests; "s
 
 Say it once.
 Closes: R14. Canon: INT-08, PERC-07, A11Y-21.
-Design decision (binding): while the cooldown is open, per-card/per-query errors from rate limiting are suppressed in favour of one `role="status"` line "Busy — resuming in Ns" in the activity strip (countdown from `cooldownRemainingMs`), then a single retry wave through the registry.
-Acceptance: a 429 on `identities/suggestions` shows no "Could not load name suggestions" while cooling down; the line is announced once, not per tick (E21-18 fixed the same re-announce defect for the SSE live region; reuse its pattern). Retry handlers must refetch the name-suggestion query itself (E21-20).
+Design decision (binding): own suppression of per-card/per-query rate-limit errors, cooldown state/data (`cooldownRemainingMs`) and a single retry wave through the registry. Supply actual observations and copy "Busy — resuming in Ns" to the later integration owner; do not edit the strip. After the final WBTRUST-5 strip lands, integration renders one `role="status"` line and reuses the E21-18 once-per-state announcement pattern, not a per-tick announcement.
+Acceptance: state/data tests show suppression of "Could not load name suggestions" on a 429 on `identities/suggestions` while cooling down and one retry wave. Retry handlers refetch the name-suggestion query itself (E21-20). Single-line rendering/announcement acceptance belongs to later integration consuming these observations and WBTRUST-5's final strip.
 
 ### Slice S6: batch-jobs-status (optional)
 
@@ -138,6 +140,6 @@ Acceptance: contract doc, PHP controller test, service test, and the "20 jobs" s
 ### Slice S7: replay-and-docs
 
 Prove it on the real tenant.
-Closes: R14. Canon: EVAL-16.
-Design decision (binding): record a 5-minute browser capture on the fir tenant (route-family table before/after) in the decision; update `workbench-operator-loop` map text if the wait-state line becomes a named zone; run `make lint-ux-maps`.
-Acceptance: 0 × 429 in the capture; operator-visible limiter-tier question restated with the final numbers.
+Closes: R14.
+Design decision (binding): record a 5-minute browser capture on the fir tenant (route-family table before/after) in the decision; supply actual cooldown observations, final wait-state copy and a rendering/map integration request to the later integration owner after WBTRUST-5 finalizes the strip. WBTRUST-4 does not write the shared `describe-gpu-tier` JSON/Markdown map; one later integration owner updates it after WBTRUST-5 and WBTRUST-7 supply final copy, and updates `workbench-operator-loop` text if needed, then runs `make lint-ux-maps`.
+Acceptance: 0 × 429 in the capture; operator-visible limiter-tier question restated with the final numbers; handoff names the observations/copy consumed by integration. Offline checks do not satisfy browser acceptance.

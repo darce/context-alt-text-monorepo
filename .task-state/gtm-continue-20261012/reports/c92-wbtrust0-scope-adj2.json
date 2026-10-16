@@ -1,0 +1,44 @@
+{
+  "status": "COMMITTED_PARTIAL_PENDING_PARENT",
+  "lane_id": "c92-wbtrust0-scope-adj2",
+  "source_verdict": "OWNED_F2_F3_F5_REVISED_PARENT_REVIEW_REQUIRED",
+  "summary": "Owned umbrella F2/F3/F5 revisions committed as 6739ecae7e338aaab7a557e989c9df3b039ecf4c. Offline documentation checks: 49/49 local links, 11/11 literal repository paths, 18/18 document-contract assertions, 11/11 rendered maps and 1/1 Unicode fixture check pass. Existing renderer suite: 25 tests + 3343 subtests passed in 150.74s; 6/6 report/schema/custody assertions passed. Required task-plan guard unavailable (exit 2); sibling documentation synchronization and parent review remain. No product-task, E2E, quality or merge PASS.",
+  "source_identity": "Requested source 55cb4113b0327074a7a293ee49de2f65227393c7; initial synthetic HEAD 431603cec7e3e6a418075528dc48385110e0e4c8; EXECUTED git rev-parse HEAD^{tree}: af531f783e555cdf84a5891efabae0fe351394e3, exact requested tree. Source-commit ancestry is not required for this history-stripped transport.",
+  "evidence": [
+    "EXECUTED: initial worktree clean. Early doc checkpoint 2b864ba33460df066500feb28110ffeb8b94ada1; owned ignored report explicitly added and committed as ea47a22e86261d93efc43e85b4ec462fd47dfae8. No Co-Authored-By trailers.",
+    "EXECUTED: scratch-only audit of 10 planning documents resolved 49/49 local Markdown links and 11/11 exact literal repository paths in the umbrella (shorthand, wildcard, fragment and placeholder references excluded); 18/18 documentation assertions passed. These assertions inspect planning text, not production behavior.",
+    "EXECUTED: existing render_ux_maps.py --check exits 0: 11 artifacts current. Existing sync_unicode_width.py --check exits 0: fixture property ranges match Unicode 15.0.0. In-sandbox .venv Python 3.12.7 / pytest 9.1.1. All checks bounded with OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1.",
+    "EXECUTED: unchanged existing renderer pytest suite exits 0: 25 tests passed, 3343 subtests passed in 150.74s, with outer timeout 300s and per-test --timeout=60. No failed tests, setup errors or skips reported. Separately 6/6 report/schema/custody assertions passed.",
+    "SUPPLIED, NOT EXECUTED/LOADED HERE: decisions 17052/17053 approve/activate baseline 372a6413a7ae0eb71baa3566716546684bac5a58 at 22:01Z; receipt reports 7 HTTP PASS only, no browser/rename/new GPU proof. Full100 run 019c6776-d511-4531-8294-20dc99dabd7b: 100 seeded-fixtures, 97 fresh, 3 cache, 54 naming-applied. Unavailable runtime fields remain UNKNOWN; idle stopped GPU is expected.",
+    "EXECUTED: git diff --check clean and cumulative diff path list exactly the two OWNEDPATHS. Existing tests, maps, source and configuration unchanged. No DB/network/credential/GPU/OCI/deployment operations; no boot-volume changes. No MCP receipts fabricated."
+  ],
+  "findings": [
+    "F2 umbrella revised: current approved activation replaces blanket redeploy/global Wave A wait; read-only fingerprint freshness remains, with escalation only for evidenced mismatch. Historical observations are explicitly dated/superseded; Small is retired and never restored; exact supported Qwen profile remains to be verified.",
+    "F3 umbrella revised: Wave A 4/5/6/7/8, B 1/3 after actual WB4 primitive, C2 after WB1+WB3. WB4 produces admission/cooldown state; WB5 owns strip interactivity/layout; one later integration owner alone adds cooldown rendering after both. One later integration owner updates shared describe-gpu-tier JSON/rendered Markdown after WB5+WB7 final copy. Logical independence is not simultaneous shared-file admission.",
+    "F5 umbrella revised: pending suggestion K reassigns + 1 existing confirm commit; unnamed group K + 1 existing name commit; named group without suggestion K + 0 commits then close. K=0 is explicit in every context, named/no-suggestion has zero writes. Stop on first failure; no invented server mutation.",
+    "Causal production RED: 0, not sought in this docs-only lane. Fixture/setup test errors: 0; existing renderer suite has 0 failed tests. Missing task-plan guard exit 2 is a tooling availability error, not causal RED or a fixture error. No new tests authored; existing tests immutable.",
+    "Supplied canon v0.26.2 remains read-only. Corrected inherited umbrella attribution for top/bottom paging, outside-bbox labels and generic measurement; accepted product requirements remain binding. GTMSMOKE-1 stays ACTIVE, finding 18547 untouched. Haiku xhigh / Sol HIGH / LOUD odd Opus-even Sol xhigh loop retained."
+  ],
+  "commands": [
+    "git rev-parse --show-toplevel HEAD HEAD^{tree}; git status --short (separate invocations)",
+    "git add -- docs/scopes/workbench-curation-trust-scope.md; git commit -m <owned checkpoint/revision message> (separate invocations)",
+    "git add -f -- .task-state/gtm-continue-20261012/reports/c92-wbtrust0-scope-adj2.json; git commit -m <report checkpoint message> (separate invocations; explicit ignored owned report only)",
+    "env OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 60s .venv/bin/python /tmp/c92-wbtrust0-scope-adj2/audit_docs.py",
+    "env OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 180s .venv/bin/python apps/prototype-wp-alt-context/docs/ux-maps/render_ux_maps.py --check",
+    "env OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 120s .venv/bin/python apps/prototype-wp-alt-context/docs/ux-maps/sync_unicode_width.py --check",
+    "env OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 300s .venv/bin/python -m pytest --timeout=60 -q apps/prototype-wp-alt-context/docs/ux-maps/test_render_ux_maps.py",
+    "env OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 60s .venv/bin/python scripts/hooks/guard-task-plan-findings.py --scan-repo (exit 2: script absent)",
+    "git diff --check 431603cec7e3e6a418075528dc48385110e0e4c8 HEAD; git diff --name-only 431603cec7e3e6a418075528dc48385110e0e4c8 HEAD (separate invocations)"
+  ],
+  "blockers": [
+    "Parent integration required: task-plan contradictions outside OWNEDPATHS remain for their documentation owners; this lane cannot certify all five source findings closed. Fresh Sol xhigh R2 after five-disjoint-doc join is required before actual main landing; author does not merge.",
+    "UNAVAILABLE: scripts/hooks/guard-task-plan-findings.py (executed command exit 2), scripts/review_pipeline.py absent by exact-path existence check. make plan-analyze UNRUN; historical unavailability is retained, not a new execution claim.",
+    "UNRUN: runtime/E2E, browser/geometry/focus, rename persistence, fresh model-backed GPU output, product JS/PHP suites and live model/config binding verification. Task lifecycle/MCP writes and DB/network checks prohibited in this lane."
+  ],
+  "next_actions": [
+    "SCOPE_PROPOSAL[type=documentation_contract_sync; owner=WBTRUST-4/5/7 documentation lanes; paths=docs/tasks/v0.5.0/WBTRUST-4-request-budget-task-plan.md, docs/tasks/v0.5.0/WBTRUST-5-control-placement-task-plan.md, docs/tasks/v0.5.0/WBTRUST-7-description-provenance-and-routing-task-plan.md; change=remove contemporaneous shared-map/strip ownership and mirror umbrella producer/layout/later-integration handoffs; replace stale baseline/unknown-run premises without restoring Small].",
+    "SCOPE_PROPOSAL[type=acceptance_contract_sync; owner=WBTRUST-2 documentation lane; path=docs/tasks/v0.5.0/WBTRUST-2-cluster-curation-surface-task-plan.md; change=replace blanket K+1 acceptance/count tests at overview, verification and S4 with contextual confirm/name/close counts including K=0, preserving stop-on-first-failure; no new server commit].",
+    "PARENT_GATE[type=five_disjoint_document_join; action=combine sibling F1/F4 and other owned documentation revisions, then request fresh independent Sol xhigh R2; do not infer task/E2E/quality PASS or merge from these offline checks].",
+    "INTEGRATION_HANDOFF[type=exclusive_shared_surfaces; owner=one later integration owner; prerequisites=WB4+WB5 for cooldown rendering and WB5+WB7 final copy for describe-gpu-tier JSON/rendered Markdown; action=retain exclusive custody, reuse existing maps/ASCII, preserve FIRBENCH-1 reservations and concurrent EDGEF15 gate/image e689/API-holder fence/retry OFF]."
+  ]
+}

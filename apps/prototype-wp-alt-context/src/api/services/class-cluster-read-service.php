@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Api\Services;
 
 require_once __DIR__ . '/../../sovereign/class-projection-query-exception.php';
+require_once __DIR__ . '/../../support/trait-detects-system-defined-labels.php';
 
 use AltContext\Api\ClustersHostInterface;
 use AltContext\Sovereign\ProjectionQueryException;

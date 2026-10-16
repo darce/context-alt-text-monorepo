@@ -3415,7 +3415,7 @@ class _StartActuationContext:
     use_write_ahead_start: bool
     prepare_start: Callable[..., object] | None
     commit_start: Callable[..., object] | None
-    on_start_issued: Callable[[], None] | None = None
+    on_start_issued: Callable[[str | None], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -3793,12 +3793,19 @@ def _start_instance_attempt(
     )
 
 
-def _invoke_on_start_issued(on_start_issued: Callable[[], None] | None) -> None:
-    """Publish STARTING before a blocking wait; never fail the start itself."""
+def _invoke_on_start_issued(
+    on_start_issued: Callable[[str | None], None] | None,
+    winner_id: str | None = None,
+) -> None:
+    """Publish STARTING before a blocking wait; never fail the start itself.
+
+    ``winner_id`` names the candidate whose START was acknowledged, so readers
+    follow the failover winner during its boot wait (GPUFAIL1-R1).
+    """
     if on_start_issued is None:
         return
     try:
-        on_start_issued()
+        on_start_issued(winner_id)
     except Exception:
         logger.exception("failed to publish starting GPU state before boot wait")
 
@@ -3823,6 +3830,8 @@ def _actuate_start_instances(
             capacity_failed.append(instance_id)
         if attempt.actuated:
             actuated.append((action, instance_id))
+            if not context.dry_run:
+                _invoke_on_start_issued(context.on_start_issued, instance_id)
             break
         if attempt.failed:
             start_failed.append(instance_id)
@@ -3931,7 +3940,7 @@ def _run_start_cycle(
     running_since_store: RunningSinceLeaseStore | None = None,
     dry_run: bool = False,
     effective_intent: EffectiveIntent | None = None,
-    on_start_issued: Callable[[], None] | None = None,
+    on_start_issued: Callable[[str | None], None] | None = None,
 ) -> StartCycleResult:
     """Emit START for STOPPED instances when the job store has work."""
     effective_intent = effective_intent or EffectiveIntent()
@@ -4152,13 +4161,15 @@ def _publish_starting_issued_snapshot(
     running_since_store: RunningSinceLeaseStore | None,
     max_lease_seconds: int,
     candidate_endpoints: Mapping[str, str] | None = None,
+    winner_id: str | None = None,
 ) -> None:
     """Publish STARTING under the snapshot lock so readers see the boot wait."""
-    snapshot_instance_id = _snapshot_instance_id(instances)
+    snapshot_instance_id = winner_id if winner_id is not None else _snapshot_instance_id(instances)
     instance_running_since, lease_expires_at, persisted_nonce = _lease_snapshot_metadata(
         instances,
         running_since_store,
         max_lease_seconds=max_lease_seconds,
+        snapshot_instance_id=snapshot_instance_id,
     )
     honoured_nonce = (
         effective_intent.nonce if effective_intent.action is IntentAction.START else persisted_nonce
@@ -4247,7 +4258,7 @@ def run_start_cycle(
         )
         return _record_decision(result, mode="start", now=now, store=resolved_log)
 
-    def on_start_issued() -> None:
+    def on_start_issued(winner_id: str | None) -> None:
         _publish_starting_issued_snapshot(
             gpu_state_path=gpu_state_path,
             instances=instances,
@@ -4255,6 +4266,7 @@ def run_start_cycle(
             running_since_store=running_since_store,
             max_lease_seconds=max_lease_seconds,
             candidate_endpoints=candidate_endpoints,
+            winner_id=winner_id,
         )
 
     cycle_started_at = time.time()

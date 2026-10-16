@@ -5,23 +5,26 @@ from __future__ import annotations
 import importlib.util
 import logging
 import os
-import socket
-from fnmatch import fnmatch
-from ipaddress import ip_address
-from urllib.parse import urlparse
 
 from scene.application.description_adapter import DescriptionAdapter
+from scene.application.gpu_state import (
+    DEFAULT_GPU_ENDPOINT_ALLOWLIST as _DEFAULT_GPU_ENDPOINT_ALLOWLIST,
+)
+from scene.application.gpu_state import (
+    GpuRoute,
+    resolve_gpu_route,
+)
+from scene.application.gpu_state import (
+    hostname_matches_allowlist as _hostname_matches_allowlist,
+)
+from scene.application.gpu_state import (
+    is_private_gpu_endpoint as _is_private_gpu_endpoint,
+)
 from scene.application.seeded_adapter import SeededDescriptionAdapter
 from scene.config.profiles import DescriptionProfile, get_profile_spec
 from scene.config.settings import DescriptionSettings
 from scene.domain.description import DescriptionAdapterKind
 from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
-
-_DEFAULT_GPU_ENDPOINT_ALLOWLIST = (
-    "localhost",
-    "acx-gpu-burst",
-    "*.oraclevcn.com",
-)
 
 logger = logging.getLogger(__name__)
 
@@ -31,61 +34,20 @@ def _missing_vlm_dependencies() -> tuple[str, ...]:
     return tuple(module for module in ("torch", "transformers") if importlib.util.find_spec(module) is None)
 
 
-def _hostname_matches_allowlist(host: str, allowlist: tuple[str, ...]) -> bool:
-    host_lower = host.lower()
-    for entry in allowlist:
-        pattern = entry.lower()
-        if pattern.startswith("*.") and host_lower.endswith(pattern[1:]):
-            return True
-        if fnmatch(host_lower, pattern):
-            return True
-        if host_lower == pattern:
-            return True
-    return False
+def gpu_route_resolver(settings: DescriptionSettings):
+    """Per-invocation GPU route: the fresh READY failover winner, else static AD-2.
 
-
-def _resolved_addresses_are_private(host: str) -> bool:
-    try:
-        infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
-    except socket.gaierror:
-        return False
-    if not infos:
-        return False
-    for info in infos:
-        sockaddr = info[4]
-        try:
-            addr = ip_address(sockaddr[0])
-        except ValueError:
-            return False
-        if not (addr.is_private or addr.is_loopback):
-            return False
-    return True
-
-
-def _is_private_gpu_endpoint(endpoint_url: str, *, allowlist: tuple[str, ...]) -> bool:
-    """Accept only private/loopback GPU endpoints under an authoritative allowlist.
-
-    VLMFIX-S1-02: non-allowlisted hostnames are rejected with no DNS fallback
-    (a private A record for evil-c2.example.com must not pass). Literal IPs
-    still require is_private/is_loopback. Allowlisted hostnames still require
-    every resolved address to be private/loopback.
+    Re-read on every call, never cached in the adapter: the lifecycle may move
+    the winner between AD-2 and AD-1 while the process runs (GPUFAIL-1).
     """
-    parsed = urlparse(endpoint_url)
-    if parsed.scheme not in {"http", "https"}:
-        return False
-    host = parsed.hostname
-    if host is None:
-        return False
 
-    effective_allowlist = allowlist or _DEFAULT_GPU_ENDPOINT_ALLOWLIST
-    try:
-        addr = ip_address(host)
-    except ValueError:
-        # Hostname path: allowlist is authoritative — no DNS for non-matches.
-        if not _hostname_matches_allowlist(host, effective_allowlist):
-            return False
-        return _resolved_addresses_are_private(host)
-    return addr.is_private or addr.is_loopback
+    def resolve() -> GpuRoute:
+        return resolve_gpu_route(
+            static_endpoint_url=settings.gpu_endpoint_url,
+            allowlist=settings.gpu_endpoint_allowlist,
+        )
+
+    return resolve
 
 
 def get_gpu_description_adapter() -> DescriptionAdapter:
@@ -110,6 +72,7 @@ def get_gpu_description_adapter() -> DescriptionAdapter:
             read_timeout_s=settings.gpu_read_timeout_seconds,
             api_key=settings.gpu_endpoint_api_key,
             max_concurrent_calls=settings.gpu_max_concurrent_calls,
+            endpoint_resolver=gpu_route_resolver(settings),
         )
     return UnavailableDescriptionAdapter(
         "ACX_GPU_ENDPOINT_URL must be set to a private/loopback in-tenancy endpoint for the GPU profile",

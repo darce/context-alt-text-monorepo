@@ -2066,6 +2066,20 @@ def _ui_failure_controls(rows: Sequence[Mapping[str, Any]]) -> str:
     return '\n'.join(controls)
 
 
+def _ui_failure_sources(r: Mapping[str, Any]) -> str:
+    """Outcome source is the producer classification record; Search source is the search record."""
+    sources = (
+        ("outcome_ref", "Outcome source", "Classification evidence unavailable: no outcome record supplied"),
+        ("ref", "Search source", "Search evidence unavailable: no search record supplied"),
+    )
+    return " ".join(
+        f'<button type="button" class="source" data-source="{_e(r[key])}" '
+        f'aria-label="Inspect {label} {_e(r[key])}" title="{_e(r[key])}">↗ {label}</button>'
+        if r.get(key) else f'<span class="note">○ {missing}</span>'
+        for key, label, missing in sources
+    )
+
+
 def _ui_failure_table(rows: Sequence[Mapping[str, Any]]) -> str:
     cells = []
     for r in rows:
@@ -2075,7 +2089,7 @@ def _ui_failure_table(rows: Sequence[Mapping[str, Any]]) -> str:
             _e(r["image_id"]), _e(r["face_id"]), _ui_leg_label(r["leg_key"]),
             _e(r.get("stage") or "unknown"), _e(outcome), _e(r.get("top1_identity") or "none"),
             _f(r.get("top1_score")), _e(r.get("fold")), _e(r.get("fold_role") or "unknown"),
-            _e(r.get("cell")), _e(r.get("annotation_tier") or "unknown"), _code(r["ref"]),
+            _e(r.get("cell")), _e(r.get("annotation_tier") or "unknown"), _ui_failure_sources(r),
         ])
     return _table("Ground-truth (GT) inventory selection (outcomes supplied by producer)",
                   ["Image identifier (image_id)", "Face identifier (face_id)", "Model", "Search stage", "Outcome / reason", "Top-ranked identity",
@@ -2156,6 +2170,18 @@ def _ui_script() -> str:
     button.type = 'button'; button.dataset.source = path;
     button.setAttribute('aria-label', 'Inspect source ' + path);
   };
+  // Outcome source is the producer classification record; Search source is the search record.
+  const failureSources = (parent, row) => {
+    for (const [key, label, missing] of [
+      ['outcome_ref', 'Outcome source', 'Classification evidence unavailable: no outcome record supplied'],
+      ['ref', 'Search source', 'Search evidence unavailable: no search record supplied']]) {
+      if (parent.childNodes.length) parent.append(' ');
+      if (!row[key]) { node('span', '○ ' + missing, parent).className = 'note'; continue; }
+      const button = node('button', '↗ ' + label, parent);
+      button.type = 'button'; button.className = 'source'; button.dataset.source = row[key]; button.title = row[key];
+      button.setAttribute('aria-label', 'Inspect ' + label + ' ' + row[key]);
+    }
+  };
   document.addEventListener('click', event => {
     const button = event.target.closest('[data-source]');
     if (!button) return;
@@ -2200,6 +2226,45 @@ def _ui_script() -> str:
     }
     return t;
   };
+  // Empty-selection recovery offers only actions that can select supplied inventory rows.
+  const scopeLabel = value => scope.querySelector(`option[value="${value}"]`).textContent;
+  const changedFilters = () => filters.filter(f => f.value !== '*').map(f =>
+    `${f.closest('label')?.firstChild?.textContent.trim() || f.dataset.filter} = ${f.value}`);
+  const recoveryButton = (id, label) => {
+    if (!scope || !rows.length) return null;
+    const button = document.createElement('button');
+    button.type = 'button'; button.id = id; button.textContent = label;
+    return button;
+  };
+  const inspectInventory = recoveryButton('inspect-available-inventory', 'Inspect available inventory');
+  const clearChanged = recoveryButton('clear-changed-filters', 'Clear changed filters');
+  const explainEmpty = body => {
+    if (!rows.length) {
+      node('p', '○ No GT inventory rows were supplied' + (own(files, 'frame.json') ? '' :
+        ' (frame.json, which lists GT faces, is not among the inline source files)') +
+        ', so there is nothing to select or filter; this does not establish absence of failures. ' +
+        'Inspect the supplied source evidence with the ↗ Source buttons in ' +
+        (document.querySelector('#verdict [data-source]') ? 'Verdict.' : 'Inline source files.'), body);
+      return;
+    }
+    const inScope = rows.filter(row => scope.value === 'all' || row.default_visible === true).length;
+    const unknown = rows.filter(row => row.outcome_available !== true).length;
+    node('p', (inScope
+      ? `○ Empty selection: none of the ${inScope} rows in scope ${scope.selectedOptions[0].textContent} matches the changed filters (${changedFilters().join('; ')})`
+      : `○ Empty selection in primary scope (${scopeLabel('default')}): 0 of ${rows.length} GT inventory rows are in it, and ${unknown} of ${rows.length} are unclassified (outcome unknown)`) +
+      `; this does not establish absence of failures. Inspect available inventory selects ${scopeLabel('all')} and clears changed filters; sort is kept.`, body);
+    body.append(inspectInventory);
+  };
+  const announce = note => $('failure-counts').prepend(note + ' ');
+  const legLabel = (parent, key) => {
+    const parts = text(key).split('__');
+    const names = new Map([['sface', 'SFace'], ['auraface', 'AuraFace'], ['insightface', 'InsightFace']]);
+    parent.replaceChildren();
+    node('strong', names.get(parts[0]) || parts[0], parent); parent.append(' ');
+    node('span', parts.slice(1, 3).join(' · '), parent).className = 'note';
+    const details = node('details', null, parent);
+    node('summary', 'Leg contract', details); details.append(document.createTextNode(text(key)));
+  };
   const drawFailures = () => {
     if (!scope) return;
     const selected = rows.filter(row => (scope.value === 'all' || row.default_visible === true) &&
@@ -2209,23 +2274,53 @@ def _ui_script() -> str:
     selected.sort((a, b) => { for (const key of keys) { const n = compare(text(a[key]), text(b[key])); if (n) return n; } return 0; });
     const faces = new Set(selected.map(r => r.face_id)).size;
     const images = new Set(selected.map(r => r.image_id)).size;
-    $('failure-counts').textContent = `Inventory: ${rows.length} rows. Eligible after filters: ${selected.length} rows, ${faces} faces, ${images} images. Selected: ${selected.length} rows, ${faces} faces, ${images} images. Shown ${selected.length}; omitted ${rows.length - selected.length} inventory rows; eligible omitted 0; offset 0; no limit. Sort: ${sort.selectedOptions[0].textContent}.`;
+    const unknown = selected.filter(r => r.outcome_available !== true).length;
+    $('failure-counts').textContent = `Inventory: ${rows.length} rows. Eligible after filters: ${selected.length} rows, ${faces} faces, ${images} images. Selected: ${selected.length} rows, ${faces} faces, ${images} images. Shown ${selected.length}; omitted ${rows.length - selected.length} inventory rows; eligible omitted 0; offset 0; no limit. Scope: ${scope.selectedOptions[0].textContent}. Sort: ${sort.selectedOptions[0].textContent}.` +
+      (unknown ? ` Outcome unknown (unclassified): ${unknown} of ${selected.length} selected rows.` : '') +
+      (selected.length ? '' : ' Empty selection; this does not establish absence of failures.');
     const body = $('failure-table'); body.replaceChildren();
-    if (!selected.length) node('p', '○ Empty selection; this does not establish absence of failures.', body);
+    if (!selected.length) explainEmpty(body);
     const t = table(body, 'GT inventory selection (outcomes supplied by producer)',
-      ['image_id', 'face_id', 'Leg', 'SearchStage', 'Outcome / reason', 'top-1 identity', 'top-1 score', 'Fold', 'Fold role', 'Cell', 'Label tier', 'Source'],
+      ['Image identifier (image_id)', 'Face identifier (face_id)', 'Model', 'Search stage', 'Outcome / reason', 'Top-ranked identity', 'top-1 score', 'Fold', 'Fold role', 'Cell', 'Label tier', 'Source'],
       selected.map(r => [r.image_id, r.face_id, r.leg_key, r.stage ?? 'unknown',
         r.outcome_available === true ? r.outcome : '○ unclassified: ' + (r.outcome_reason || 'classification unavailable'),
         r.top1_identity, r.top1_score, r.fold, r.fold_role, cellOf(r), r.annotation_tier, '']));
-    [...t.tBodies[0].rows].forEach((tr, i) => sourceButton(tr.lastElementChild, selected[i].ref));
+    [...t.tBodies[0].rows].forEach((tr, i) => legLabel(tr.cells[2], selected[i].leg_key));
+    [...t.tBodies[0].rows].forEach((tr, i) => failureSources(tr.lastElementChild, selected[i]));
   };
   if (scope) {
     for (const el of [scope, sort, ...filters]) el.addEventListener('change', drawFailures);
+    $('reset-filters').textContent = '↩ Reset to primary scope';
     $('reset-filters').addEventListener('click', () => {
       scope.value = 'default'; sort.value = 'image'; filters.forEach(f => { f.value = '*'; }); drawFailures();
+      announce('Reset to primary scope, all filters and default sort.');
     });
+    if (clearChanged) {
+      $('reset-filters').after(clearChanged);
+      clearChanged.addEventListener('click', () => {
+        const cleared = changedFilters();
+        filters.forEach(f => { f.value = '*'; }); drawFailures();
+        announce(cleared.length ? `Cleared changed filters (${cleared.join('; ')}); scope and sort kept.` :
+          'No changed filters to clear; scope and sort kept.');
+      });
+      inspectInventory.addEventListener('click', () => {
+        const cleared = changedFilters();
+        scope.value = 'all'; filters.forEach(f => { f.value = '*'; }); drawFailures();
+        announce(`Inspecting available inventory${cleared.length ? '; cleared ' + cleared.join('; ') : ''}; sort kept.`);
+        const result = $('failure-table').querySelector('table');
+        result.tabIndex = -1; focus(result);
+      });
+    }
     $('failure-pool').textContent = JSON.stringify(view.failure_pool || fallback.pool || {}, null, 2);
     drawFailures();
+  } else if (Array.isArray(view.failure_rows) && !rows.length && $('failures')) {
+    // The producer renders no filter view for zero inventory; state that result and an evidence path that works.
+    const status = node('p', 'Inventory: 0 rows. Selected: 0 rows, 0 faces, 0 images. ' +
+      'Empty selection; this does not establish absence of failures.');
+    status.id = 'failure-counts'; status.setAttribute('aria-live', 'polite');
+    const body = node('div'); body.id = 'failure-table'; explainEmpty(body);
+    const fallbackTable = $('failures').querySelector(':scope > table');
+    if (fallbackTable) fallbackTable.before(status, body); else $('failures').append(status, body);
   }
   // Existing mapped cell/stage -> failures -> back handoffs; preserve the prior filter state.
   let origin = null;

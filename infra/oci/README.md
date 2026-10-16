@@ -90,6 +90,21 @@ terraform -chdir=infra/oci output -raw gpu_instance_id    # → idle reaper
 
 ### Idle reaper (decision → fence → OCI STOP)
 
+The preferred GPU domain is AD-2. New provisioning tries AD-2, AD-1, then
+AD-3; `ADS_CSV` can override that order. These are provisioning candidates,
+not a transfer of an existing instance between domains.
+
+The initial live AD-2 cutover uses one lifecycle candidate. Set
+`ACX_GPU_INSTANCE_ID` to the AD-2 instance and `ACX_GPU_READY_URL` to its
+private `/health` endpoint in GitHub repository variables. The active
+GPU producers and demo assertion use that same host in
+`config/env/manifest.d/10-service-shared.toml`. Staging retains its CPU profile.
+Prove health from the backend host and API container before switching.
+Keep runtime API and worker endpoint settings, lifecycle instance ID, and
+readiness URL aligned. Multi-instance START support alone does not redirect
+description traffic; enable additional candidates only with winner-aware
+endpoint routing and readiness probes.
+
 Each description-service environment dumps load to
 `/run/acx-write/<env>/describe-load.json` (override with
 `ACX_DESCRIBE_LOAD_PATH`) on async enqueue/terminal poll and at startup. The JSON

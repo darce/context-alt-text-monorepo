@@ -19,6 +19,21 @@ INSTALLER = REPO_ROOT / "scripts/deploy/gpu-lifecycle-install.sh"
 DEPLOYMENTS_FILE = REPO_ROOT / "scripts/deploy/gpu-snapshot-deployments.conf"
 
 
+@pytest.mark.parametrize("mode", ["start", "reap"])
+def test_instance_arguments_use_systemd_word_splitting(tmp_path: Path, mode: str) -> None:
+    result, _ = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://10.0.1.9:8000/health",
+        dry_run=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    unit = tmp_path / f"host/opt-acx-gpu/current/systemd/acx-gpu-{mode}.service"
+    command = next(line for line in unit.read_text().splitlines() if line.startswith("ExecStart="))
+    # systemd expands ${VAR} as one argument; $VAR splits the OCID flags into argv.
+    assert "$GPU_INSTANCE_ID_ARGS" in command.split()
+
+
 def _run_lifecycle(
     tmp_path: Path,
     *,

@@ -127,6 +127,26 @@ _ABSENT_BATCH_KEY_WARNED = False
 _OPERATOR_STOP_WITH_WORK_REASON = "operator_stop_with_work"
 _PROBE_TIMEOUT_FALLBACK_REASONS = frozenset({"readiness_timeout", "readiness_stall"})
 _READINESS_WAIT_TIMEOUT_REASON = "readiness_wait_timeout"
+_CAPACITY_ERROR_MARKERS = ("out of host capacity", "out of capacity")
+
+
+def _error_text(exc: BaseException) -> str:
+    parts = [str(exc)]
+    for attr in ("stderr", "stdout", "output"):
+        value = getattr(exc, attr, None)
+        if value:
+            parts.append(_decode_captured(value) if isinstance(value, (bytes, str)) else str(value))
+    return " ".join(parts)
+
+
+def is_capacity_error(exc: BaseException) -> bool:
+    """True when an OCI START failure is a host-capacity failure eligible for failover."""
+    text = _error_text(exc).lower()
+    return any(marker in text for marker in _CAPACITY_ERROR_MARKERS)
+
+
+# Backwards-friendly alias for callers/tests that use the OCI phrasing.
+is_out_of_host_capacity_error = is_capacity_error
 
 
 def _acquire_flock_with_timeout(
@@ -711,7 +731,16 @@ class OciCliStartActuator:
             logger.info("START already converged for %s", instance_id)
             return
         logger.info("actuating START for %s", instance_id)
-        subprocess.run(cmd, check=True, timeout=self._timeout_seconds)
+        try:
+            subprocess.run(cmd, check=True, timeout=self._timeout_seconds, capture_output=True)
+        except subprocess.CalledProcessError as exc:
+            logger.error(
+                "OCI START action exited %s for %s: %s",
+                exc.returncode,
+                instance_id,
+                _decode_captured(exc.stderr)[-512:],
+            )
+            raise
 
     def get_instance_state(self, instance_id: str) -> str | None:
         observed = fetch_instance_idle_seconds(
@@ -1457,6 +1486,7 @@ class StartCycleResult:
     lease_expires_at: datetime | None = None
     last_transition_reason: LastTransitionReason = LastTransitionReason.UNKNOWN
     lease_recorded: bool = False
+    capacity_failed: tuple[str, ...] = ()
 
 
 def _intent_store_paths(
@@ -1921,11 +1951,12 @@ def _lease_snapshot_metadata(
     *,
     max_lease_seconds: int,
     stopped_instance_ids: set[str] | None = None,
+    snapshot_instance_id: str | None = None,
 ) -> tuple[datetime | None, datetime | None, str | None]:
     """Return C2 lease fields and the persisted START nonce for one subject."""
     if store is None:
         return None, None, None
-    instance_id = _snapshot_instance_id(instances)
+    instance_id = snapshot_instance_id if snapshot_instance_id is not None else _snapshot_instance_id(instances)
     if instance_id is None:
         return None, None, None
     read_record = getattr(store, "read", None)
@@ -2188,6 +2219,16 @@ def _snapshot_instance_id(instances: list[GpuInstance]) -> str | None:
     if len(instance_ids) == 1:
         return next(iter(instance_ids))
     return None
+
+
+def _start_snapshot_instance_id(
+    instances: list[GpuInstance],
+    result: StartCycleResult,
+) -> str | None:
+    """Snapshot names the START winner; falls back to the single-subject rule."""
+    if result.actuated:
+        return result.actuated[0][1]
+    return _snapshot_instance_id(instances)
 
 
 def _readiness_wait_timed_out(wait_result: ReadinessWaitResult | None) -> bool:
@@ -3345,6 +3386,7 @@ class _StartInstanceAttempt:
     actuated: bool = False
     failed: bool = False
     errors: tuple[str, ...] = ()
+    capacity_failed: bool = False
 
 
 @dataclass(frozen=True)
@@ -3352,6 +3394,7 @@ class _StartActuationResult:
     actuated: list[tuple[str, str]]
     start_failed: list[str]
     errors: list[str]
+    capacity_failed: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -3681,12 +3724,22 @@ def _start_instance_attempt(
             instance_id,
             desired_state="RUNNING",
         ):
-            msg = f"{instance_id}: START outcome unknown after {type(exc).__name__}: {exc}"
-            return _StartInstanceAttempt(failed=True, errors=(msg,))
+            capacity = is_capacity_error(exc)
+            detail = _error_text(exc).strip()
+            msg = f"{instance_id}: START outcome unknown after {type(exc).__name__}: {detail or exc}"
+            if capacity:
+                msg = f"{msg} [out_of_host_capacity]"
+                logger.error("START capacity failure (failover eligible): %s", msg)
+            return _StartInstanceAttempt(failed=True, errors=(msg,), capacity_failed=capacity)
     except Exception as exc:  # noqa: BLE001 - isolate per-instance (rg-007)
+        capacity = is_capacity_error(exc)
         msg = f"{instance_id}: {type(exc).__name__}: {exc}"
-        logger.error("START failed: %s", msg)
-        return _StartInstanceAttempt(failed=True, errors=(msg,))
+        if capacity:
+            msg = f"{msg} [out_of_host_capacity]"
+            logger.error("START capacity failure (failover eligible): %s", msg)
+        else:
+            logger.error("START failed: %s", msg)
+        return _StartInstanceAttempt(failed=True, errors=(msg,), capacity_failed=capacity)
     commit_error = _commit_start_lease(
         context,
         instance_id=instance_id,
@@ -3712,9 +3765,10 @@ def _actuate_start_instances(
     context: _StartActuationContext,
     decided: list[tuple[str, str]],
 ) -> _StartActuationResult:
-    """Apply START authority and actuator calls while isolating each instance failure."""
+    """Sequential ordered failover: try candidates in order, stop after first success."""
     actuated: list[tuple[str, str]] = []
     start_failed: list[str] = []
+    capacity_failed: list[str] = []
     errors: list[str] = []
     if not context.dry_run and any(action == LifecycleAction.START for action, _ in decided):
         _invoke_on_start_issued(context.on_start_issued)
@@ -3723,23 +3777,28 @@ def _actuate_start_instances(
             continue
         attempt = _start_instance_attempt(context, instance_id=instance_id)
         errors.extend(attempt.errors)
+        if attempt.capacity_failed:
+            capacity_failed.append(instance_id)
         if attempt.actuated:
             actuated.append((action, instance_id))
+            break
         if attempt.failed:
             start_failed.append(instance_id)
     return _StartActuationResult(
         actuated=actuated,
         start_failed=start_failed,
         errors=errors,
+        capacity_failed=capacity_failed,
     )
 
 
 def _wait_for_start_readiness(context: _StartReadinessContext) -> _StartReadinessResult:
     """Wait for newly started or already-running instances and collect fallbacks."""
     wait_result: ReadinessWaitResult | None = None
+    # No CPU fallback when a later candidate won the START (GPUFAIL-1 failover).
     fallbacks: list[FallbackDecision] = list(
         context.controller.fallback_on_boot_failure(context.start_failed, reason="start_failed")
-        if context.start_failed
+        if context.start_failed and not context.actuated
         else ()
     )
     wait_ids = list(
@@ -3797,7 +3856,7 @@ def _finalize_start_result(
             else LastTransitionReason.WORK
         )
         lease_recorded = True
-    if actuation.start_failed:
+    if actuation.start_failed and not actuation.actuated:
         last_transition_reason = LastTransitionReason.START_FAILED
     if any(
         fallback.reason == _OPERATOR_STOP_WITH_WORK_REASON for fallback in readiness.fallbacks
@@ -3815,6 +3874,7 @@ def _finalize_start_result(
         honoured_nonce=honoured_nonce,
         last_transition_reason=last_transition_reason,
         lease_recorded=lease_recorded,
+        capacity_failed=tuple(actuation.capacity_failed),
     )
 
 
@@ -4161,7 +4221,7 @@ def run_start_cycle(
         on_start_issued=on_start_issued,
     )
     with _serialized_gpu_state_publish(gpu_state_path):
-        snapshot_instance_id = _snapshot_instance_id(instances)
+        snapshot_instance_id = _start_snapshot_instance_id(instances, result)
         resolved_snapshot_path = resolve_gpu_state_path() if gpu_state_path is None else Path(gpu_state_path)
         state, result = _finalize_start_snapshot_state(
             result,
@@ -4176,6 +4236,7 @@ def run_start_cycle(
             instances,
             running_since_store,
             max_lease_seconds=max_lease_seconds,
+            snapshot_instance_id=snapshot_instance_id,
         )
         snapshot_persisted = write_gpu_state_snapshot(
             state,
@@ -4217,14 +4278,43 @@ def _positive_integer(value: str) -> int:
     return parsed
 
 
+def _flatten_instance_ids(raw: list[str] | None) -> list[str]:
+    flattened: list[str] = []
+    for value in raw or ():
+        for part in value.replace(",", " ").split():
+            if part and part not in flattened:
+                flattened.append(part)
+    return flattened
+
+
+class _LifecycleParser(argparse.ArgumentParser):
+    def parse_args(self, args=None, namespace=None):  # type: ignore[override]
+        parsed = super().parse_args(args, namespace)
+        combined = _flatten_instance_ids(
+            [*(getattr(parsed, "instance_ids", None) or []), *(getattr(parsed, "instance_ids_plural", None) or [])]
+        )
+        parsed.instance_ids = combined
+        if not combined:
+            self.error("--instance-id is required")
+        return parsed
+
+
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="ACX GPU idle reaper (STOP actuator)")
+    parser = _LifecycleParser(description="ACX GPU idle reaper (STOP actuator)")
     parser.add_argument(
         "--instance-id",
         action="append",
         dest="instance_ids",
-        required=True,
-        help="OCI instance OCID to consider (exactly one is supported)",
+        required=False,
+        default=None,
+        help="OCI instance OCID to consider; repeat in priority order for failover (comma-separated also accepted)",
+    )
+    parser.add_argument(
+        "--instance-ids",
+        action="append",
+        dest="instance_ids_plural",
+        default=None,
+        help="Comma/space-separated OCI instance OCIDs in priority order (alternative to repeated --instance-id)",
     )
     parser.add_argument(
         "--mode",
@@ -4416,12 +4506,6 @@ def _publish_initial_probe_failure(
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     args = _build_parser().parse_args(argv)
-    if len(args.instance_ids) != 1:
-        print(
-            "error: exactly one --instance-id is supported; run one lifecycle unit per instance",
-            file=sys.stderr,
-        )
-        return 2
     if (
         args.oci_timeout_seconds <= 0
         or args.max_wait_seconds <= 0

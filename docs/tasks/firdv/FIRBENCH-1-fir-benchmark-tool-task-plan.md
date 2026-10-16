@@ -667,9 +667,31 @@ Each needs its own future preregistration, design, pass rules and run. Neither i
 
 ## Lane Decomposition (all remote; none on this host)
 
-Lane-ready briefs: [firbench-1/README.md](firbench-1/README.md). Current user override: all remote implementation lanes use Haiku xhigh first; post-gate adjudication uses `codex-remote gpt-6.1-sol` high STANDARD. These current routes supersede older implementation model pins in lane briefs; historical review and inventory pins below remain labelled historical. This table describes the project schedule, not authorization for this dispatch to launch agents or merge.
+Lane-ready briefs: [firbench-1/README.md](firbench-1/README.md). This section is the single authority for model routing, lane admission and review packets. Other plans point here instead of copying it. It describes the project schedule. It does not authorize any dispatch to launch agents, finish the task or merge.
 
-| Wave | Who / model | Output |
+**Model governance (current user policy).** It overrides every older model pin: in the wave table below, in lane briefs and in other plans.
+
+| Dispatch of a lane | Route |
+| --- | --- |
+| First implementation or grunt dispatch | remote Haiku 5.5 xhigh (`claude-remote claude-haiku-5-5`) |
+| Second dispatch, after merge-gate defects | remote Sol 6.1 high STANDARD (`codex-remote gpt-6.1-sol`) |
+| Third and later dispatches | Each starts from a loud, canon-sourced proposal recorded before work. Odd-numbered dispatches (3rd, 5th, …) use remote Opus 5.5 xhigh (`claude-remote claude-opus-5-5`); even-numbered dispatches (4th, 6th, …) use remote Sol 6.1 xhigh STANDARD. |
+| Merge to `main` | Independent remote Sol 6.1 xhigh STANDARD review |
+
+**Admission.** Lanes are admitted from fresh measurements of VM CPU, cgroup quota, co-tenancy, PSI pressure, memory and disk, taken at launch. There is no arbitrary lane-count cap. The width of the dependency graph is not admission capacity ([GRPH-31] Critical-path schedule the task DAG, *The Algorithm Design Manual*, ch. 17 + *Scheduling: Theory, Algorithms, and Systems*, ch. 5).
+
+**Review packets.** Every review packet includes:
+
+- prior art;
+- the verified semantic reinjection (fresh ONNX `gte-base-en-v1.5` records, each with its stated limit; for example 18762 is 150 shared entries with 64 same and 86 different representation hashes, not pixel parity);
+- the current canon release (v0.26.2 full mirror, rows cited by ID and source);
+- the code-map coverage note: the code map excludes the `scripts/` subtree, so bounded actual source reads are the documented fallback, not a complete graph.
+
+**Holds.** H2 and the scientific backlog stay on HOLD. Frozen v6 H2 126/2000 = .063 and cell power 1113/2000 = .5565 remain failed. No task finish or `main` merge follows from any lane in this section.
+
+**UX historical explorer track.** Its contract is the [comparison explorer plan](../../../benchmarks/protocols/firbench-1-comparison-explorer-plan.md). A minimal useful browser on the existing `comparison-export` then `explore` commands can land before any future grouping bridge, GT or numerical work. UX-RENDER05 and the recorded product gaps stay pending until their owners' normal-VM regressions and an independent gate.
+
+| Wave | Who / model (older pins are historical; current routing is above) | Output |
 | --- | --- | --- |
 | W0 | coordinator (done) | `make task-start TASK=FIRBENCH-1`, handoff row |
 | W1 (historical review pins) | adversarial review in parallel: codex-remote gpt-6.1-sol xhigh standard + Muse muse-wonder-1.0 high, read-only on a frozen snapshot | Findings in MCP. A REVISE verdict goes to claude-remote claude-haiku-5-5 xhigh adjudication, then plan v3. |
@@ -678,7 +700,7 @@ Lane-ready briefs: [firbench-1/README.md](firbench-1/README.md). Current user ov
 | W3 batch B | claude-remote claude-haiku-5-5 xhigh, parallel | S1, S2, S3, S6a, S7 |
 | W3 batch C | claude-remote claude-haiku-5-5 xhigh | S4 is authorized after verified S1/S2, independently of AE-12; S6b follows S6a; S5 follows S4. S9 starts only after S6b is merged: S9-simulator and S9-checks are independent owners, and S9-comparator-perf (first Haiku owner) runs on the actual comparator separately. `mk/evals.mk` is edited serially: S6a, then S6b, then S9-checks. |
 | Post-lane gate | coordinator, VM | After actual S3/default-wire join and required lanes: AE-12 bounded tracer and preregistered warm-budget rerun, before completion claims. |
-| W4 | harmonizing review (historical sol xhigh pin); implementation fixes: remote Haiku 5.5 xhigh; gate-defect second dispatch: remote Sol 6.1 high standard | AE-1 to AE-12 green, merge on green |
+| W4 | harmonizing review (historical sol xhigh pin); fixes and later dispatches routed by the model governance table above | AE-1 to AE-12 green; merge only after the independent remote Sol 6.1 xhigh STANDARD review |
 | W5 | first VM run | Golden-150 (diagnostic) and the fir-occ development frames, three legs, private report |
 
 Every launch prints a reaper command, but only for lanes whose result is terminal and landed.

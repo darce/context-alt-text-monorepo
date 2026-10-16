@@ -3784,8 +3784,6 @@ def _actuate_start_instances(
             break
         if attempt.failed:
             start_failed.append(instance_id)
-            if not attempt.capacity_failed:
-                break
     return _StartActuationResult(
         actuated=actuated,
         start_failed=start_failed,

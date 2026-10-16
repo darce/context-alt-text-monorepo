@@ -29,9 +29,10 @@ def registered():
     try:
         db = root / "evidence #?.sqlite3"
         raw = b'{"synthetic":"manifest"}\n'
-        assert cc.import_evidence_manifest(
-            db, "synthetic", raw, expected_sha256=hashlib.sha256(raw).hexdigest()
-        ) == "imported"
+        assert (
+            cc.import_evidence_manifest(db, "synthetic", raw, expected_sha256=hashlib.sha256(raw).hexdigest())
+            == "imported"
+        )
         active = root / "active"
         active.mkdir()
         report = active / "report.json"

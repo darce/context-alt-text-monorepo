@@ -306,10 +306,10 @@ def default_fetch(repo: str, timeout: float = DEFAULT_TIMEOUT_S) -> FetchResult:
         return FetchResult(status=None, payload=None, error="network_error")
     except TimeoutError:
         return FetchResult(status=None, payload=None, error="timeout")
-    except (OSError, http.client.HTTPException):
-        # HTTPException is http.client's family for what the server sent:
-        # status line, headers, chunking, body length, redirect target. The
-        # message can quote remote bytes, so it is dropped, not reported.
+    except (OSError, http.client.HTTPException, ValueError):
+        # Protocol, redirect URL and local proxy configuration failures make
+        # metadata unavailable. Drop messages that may quote remote bytes or
+        # local credentials; ValueError is scoped to the request/read boundary.
         return FetchResult(status=None, payload=None, error="network_error")
     if len(body) > MAX_METADATA_BYTES:
         return FetchResult(status=status, payload=None, error="oversized")

@@ -1,0 +1,86 @@
+{
+  "content": [],
+  "structuredContent": {
+    "ok": true,
+    "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+    "status": "selected",
+    "skip_reason": null,
+    "embeddings_mode": "verified",
+    "semantic_degrade_reason": null,
+    "relevant_lines": [
+      "relevant:",
+      "- Prepare a versioned replacement for the missing\u2026: Operator asked how to unblock the missing regression original and whether it can be amended using [decision:17796]",
+      "- CAPTION-G1-01: A cross-namespace ID collision is incorrectly declared selection/heldout leakage. Evidence: Fixture [finding:19033]",
+      "- SUBJECT-GATE-01: Independent SUBJECT-METADATA-G2 PASS0 verifies concrete private authority sidecar/note-only amendments [finding:19100]",
+      "- CORPUS-G1-01: Rejected private protocol subjects are retired, not repaired or published. Corrected replacement passed [finding:19024]",
+      "- Persist concrete replacement and subject audit \u2026: REGRESSION-REPLACE returned actual new37 loader/resolver37/37, retained36 exact metadata/text equality [decision:17799]"
+    ],
+    "semantic_reinjection": {
+      "anchor_sources": [
+        "visible_text"
+      ],
+      "chars_budget": 6000,
+      "chars_used": 755,
+      "effective_config": {
+        "candidate_pool": 32,
+        "max_concepts": 8,
+        "max_redundancy": 0.92,
+        "max_score_drop": 0.2,
+        "min_score": 0.35,
+        "mmr_relevance_weight": 0.7,
+        "notify_allowance_chars": 220,
+        "refresh_budget_chars": 1500,
+        "snippet_chars": 120
+      },
+      "fallback_scope": null,
+      "model_id": "gte-base-en-v1.5",
+      "score_hi": 0.6351647973060608,
+      "score_lo": 0.5875213146209717,
+      "selected": [
+        {
+          "emitted_chars": 176,
+          "id": "17796",
+          "kind": "decision",
+          "label": "Prepare a versioned replacement for the missing\u2026",
+          "score": 0.6234397888183594,
+          "snippet": "Operator asked how to unblock the missing regression original and whether it can be amended using [decision:17796]"
+        },
+        {
+          "emitted_chars": 133,
+          "id": "19033",
+          "kind": "finding",
+          "label": "CAPTION-G1-01",
+          "score": 0.6104562282562256,
+          "snippet": "A cross-namespace ID collision is incorrectly declared selection/heldout leakage. Evidence: Fixture [finding:19033]"
+        },
+        {
+          "emitted_chars": 138,
+          "id": "19100",
+          "kind": "finding",
+          "label": "SUBJECT-GATE-01",
+          "score": 0.6083425879478455,
+          "snippet": "Independent SUBJECT-METADATA-G2 PASS0 verifies concrete private authority sidecar/note-only amendments [finding:19100]"
+        },
+        {
+          "emitted_chars": 136,
+          "id": "19024",
+          "kind": "finding",
+          "label": "CORPUS-G1-01",
+          "score": 0.5875213146209717,
+          "snippet": "Rejected private protocol subjects are retired, not repaired or published. Corrected replacement passed [finding:19024]"
+        },
+        {
+          "emitted_chars": 172,
+          "id": "17799",
+          "kind": "decision",
+          "label": "Persist concrete replacement and subject audit \u2026",
+          "score": 0.6351647973060608,
+          "snippet": "REGRESSION-REPLACE returned actual new37 loader/resolver37/37, retained36 exact metadata/text equality [decision:17799]"
+        }
+      ],
+      "skip_reason": null,
+      "status": "selected"
+    }
+  },
+  "isError": false
+}

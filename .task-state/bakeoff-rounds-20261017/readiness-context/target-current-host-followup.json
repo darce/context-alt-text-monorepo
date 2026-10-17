@@ -1,0 +1,37 @@
+{
+  "normal_remote_host_context": true,
+  "calls": 2,
+  "results": [
+    {
+      "normal_remote_host_context": true,
+      "role": "primary",
+      "start_utc": "2026-10-17T18:35:37.849629+00:00",
+      "end_utc": "2026-10-17T18:35:39.570622+00:00",
+      "exit_code": 0,
+      "observation": {
+        "shape": "VM.GPU.A10.1",
+        "state": "STOPPED"
+      },
+      "stdout_sha256": "43d4deb26c6c94d3dea40b5c6490ffda3727cbca251c86946b61915b391acbd0",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "private_evidence": "/tmp/target-current-host-c482f89dd29643f8912d489d169ac7b3",
+      "no_state_changes": true,
+      "prior_native_EPERM_preserved": true
+    },
+    {
+      "role": "alternate",
+      "start_utc": "2026-10-17T18:36:32.178008+00:00",
+      "end_utc": "2026-10-17T18:36:34.301345+00:00",
+      "exit_code": 0,
+      "observation": {
+        "shape": "VM.GPU.A10.1",
+        "state": "STOPPED"
+      },
+      "stdout_sha256": "43d4deb26c6c94d3dea40b5c6490ffda3727cbca251c86946b61915b391acbd0",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "prior_native_EPERM_preserved": true,
+  "no_state_changes": true,
+  "private_evidence": "/tmp/target-current-host-c482f89dd29643f8912d489d169ac7b3"
+}

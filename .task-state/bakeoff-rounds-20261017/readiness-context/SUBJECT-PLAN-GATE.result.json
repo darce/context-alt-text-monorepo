@@ -1,0 +1,42 @@
+{
+  "status": "revise",
+  "summary": "The four evidence states are appropriate, but mixed legacy and qualified subject keys lack a safe comparison contract. Resolve SUBJECT-GATE-03 before further implementation planning; no adoption or quality approval.",
+  "source_sha": "d9f08ee5351908b2fd03c6d8071402940ea98689",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/reviews/SUBJECT-PLAN-GATE.json",
+    ".task-state/bakeoff-rounds-20261017/reviews/SUBJECT-PLAN-GATE.md"
+  ],
+  "commits": [],
+  "findings": [
+    {
+      "id": "SUBJECT-GATE-03",
+      "severity": "high",
+      "file": "docs/tasks/vlm/SUBJECT-EVIDENCE-1-task-plan.md:20",
+      "description": "The proposed contract preserves legacy identity strings when evidence is omitted but compares qualified keys when it is present, without defining cross-representation or cross-namespace identity resolution. The same known person can therefore appear disjoint solely because the keys differ.",
+      "evidence": "Lines 15/20/32 specify qualified-key comparison, legacy fallback and source namespaces without a common identity binding or an incomparable result. The actual report boundary intersects literal sets at build_bakeoff_report.py:809. A synthetic public comparison witness retaining the same present_identities on both sides exits 5 with matching legacy keys, 0 after qualifying only one key, and 5 after aligning the keys; genuinely distinct qualified people exit 0. This exercises the existing alias boundary, not an unimplemented subject_evidence consumer.",
+      "fix": "Before resubmission, define an authority-backed subject identity namespace distinct from manifest/frame binding, with explicit legacy-to-qualified equivalence or a fail-closed incomparable outcome. Specify mixed and different-namespace comparisons, preserve legacy/legacy behavior and identity truth, and add public same-person negative controls plus a distinct-person positive control. Keep the unseen-person guard and require a separate protocol for any known-person mode."
+    }
+  ],
+  "tests": [
+    {
+      "command": "env PYTHONDONTWRITEBYTECODE=1 python /tmp/subject-plan-gate/custody.py",
+      "exit_code": 0,
+      "summary": "Exact plan/tree bytes and native base verified; six attached Canon files, 12 rows and three cards match release 0.26.2. Current source map covers eight files; 313 earlier artifacts are retained and hashed."
+    },
+    {
+      "command": "env PYTHONDONTWRITEBYTECODE=1 python /tmp/subject-plan-gate/boundary_audit.py",
+      "exit_code": 0,
+      "summary": "18 bounded public controls matched predictions: identity representation witness 5/0/5, distinct qualified identities 0, empty/unknown/group/depiction/content/baseline refusals 5, and strict v3 digest refusals 4 without output."
+    },
+    {
+      "command": "env PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=apps/prototype-description-service python -m pytest -q -c /tmp/subject-plan-gate/pytest.ini -p no:cacheprovider --confcutdir=apps/prototype-description-service/scene/tests --basetemp=/tmp/subject-plan-gate/pytest-isolated apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_bakeoff_gate_rejects_selection_subject_or_image_overlap apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_matching_manifest_sha_renders_unbadged apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_foreign_manifest_sha_is_fatal_and_writes_nothing",
+      "exit_code": 0,
+      "summary": "Three named existing overlap/digest selectors passed under a private minimal pytest configuration; four expected metadata-only hash-skip warnings."
+    }
+  ],
+  "limitations": [
+    "Live handoff/graph tools were unavailable. Supplied verified semantic reinjection and exact-checkout source tracing were used; no fresh database, graph generation or inference is claimed.",
+    "Native context verifies gpt-6.1-sol and xhigh. STANDARD service tier is not exposed. Native base 68568c191031cde744be50b227c0270dbc1958d8 matches the requested tree; the logical commit object is unavailable and ancestry is not asserted.",
+    "Planning review only. The metadata package, source implementation, current report quality and face ground truth are not approved. Default pytest setup, an initial release-verifier TypeError and a custody check's pre-existing dangling-symlink assumption are retained privately as reporter failures."
+  ]
+}

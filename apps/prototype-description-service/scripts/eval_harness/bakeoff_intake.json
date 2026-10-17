@@ -7,7 +7,12 @@
     "network_authentication": "anonymous public HTTPS requests; no token or shell credentials used",
     "scope": "public Hugging Face model API metadata, tree listings for file names and sizes, and cardData. Proves repo reachability and declared metadata only, not serving or quality acceptance."
   },
-  "docs_links": [],
+  "docs_links": [
+    {"label": "Unsloth documentation", "url": "https://unsloth.ai/docs", "kind": "docs"},
+    {"label": "Unsloth Qwen3.8 documentation", "url": "https://unsloth.ai/docs/models/qwen3.8", "kind": "docs"},
+    {"label": "Unsloth Muse Glimmer documentation", "url": "https://unsloth.ai/docs/models/muse-glimmer", "kind": "docs"},
+    {"label": "Unsloth Qwen3.8 Next documentation", "url": "https://unsloth.ai/docs/models/qwen3.8-next", "kind": "docs"}
+  ],
   "research_rows": [
     {
       "id": "embeddinggemma-2",

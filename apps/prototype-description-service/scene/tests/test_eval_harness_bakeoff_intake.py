@@ -24,6 +24,8 @@ from typing import Any
 
 import pytest
 from pydantic import ValidationError
+
+from scripts.eval_harness.bakeoff_candidates import CandidateRole, default_registry_path, load_bakeoff_candidates
 from scripts.eval_harness.bakeoff_intake import (
     DEFAULT_INTAKE_PATH,
     DEFAULT_TIMEOUT_S,
@@ -45,8 +47,6 @@ from scripts.eval_harness.bakeoff_intake import (
     render_markdown,
     runnable_candidate_ids,
 )
-
-from scripts.eval_harness.bakeoff_candidates import CandidateRole, default_registry_path, load_bakeoff_candidates
 
 FIXED_UTC = "2026-10-17T02:48:11Z"
 

@@ -6,19 +6,21 @@
     "Operator can always see Description Service state, effective intent, activity and load freshness in one place (INT-10 status–predict–stop, OBS-08 stale is shown as unknown with age).",
     "Operator can request Start, Stop or Return to automatic; each request is acknowledged within one poll and its outcome (honoured, pending, deferred until idle) is visible (HAI-04 activate–operate–override).",
     "Cost is disclosed before commitment; the user is never surprised by an hourly charge (INT-07, CARD-15, COST-10).",
-    "Stop stays available while load.has_work; confirm asks Stop after the current run finishes? and the pending indicator is Stopping after the current work finishes until idle. Stale or unknown telemetry hides Start/Stop and offers tertiary Refresh; degraded copy is Service unavailable. Start service to retry. gpu_state is unknown|stopped|starting|warming|ready|degraded (INT-10, FLOW-08, A11Y-18, PERC-02)."
+    "Stop stays available while load.has_work; confirm asks Stop after the current run finishes? and the pending indicator is Stopping after the current work finishes until idle. Stale or unknown telemetry hides Start/Stop and offers tertiary Refresh; degraded copy is Service unavailable. Start service to retry. gpu_state is unknown|stopped|starting|warming|ready|degraded (INT-10, FLOW-08, A11Y-18, PERC-02).",
+    "Operator can autosave the Description API URL and API key together from Settings, see the save state without exposing the key, and get a health result only after persisted settings have been reloaded. A failed save keeps the unsaved key in memory; edits during save remain pending; stale health responses are discarded (FORM-11, INT-20)."
   ],
   "jobs": [
     { "id": "job-prewarm-gpu", "label": "Pre-warm Description Service before a demo so the first describe run is fast" },
     { "id": "job-stop-gpu", "label": "Stop Description Service now to end spend" },
-    { "id": "job-return-auto", "label": "Return Description Service to automatic lifecycle" }
+    { "id": "job-return-auto", "label": "Return Description Service to automatic lifecycle" },
+    { "id": "job-save-description-api-routing", "label": "Configure the Description API URL and API key with local autosave feedback" }
   ],
   "screens": [
     {
       "id": "settings-burst-gpu",
       "kind": "screen",
       "title": "Settings › Description Service",
-      "purpose": "Card on the Settings page showing Description Service state, intent, activity and load, with Start / Stop / Return to automatic / Refresh controls. Domain vocabulary: stopped and ready = default; starting and warming = loading; snapshot missing or stale = empty; service unreachable = error; lifecycle degraded or intent pending = degraded. gpu_state is unknown|stopped|starting|warming|ready|degraded. Seven sketches: stopped → [PRIMARY] Start service; stopped by operator (intent STOP) → Stopped by operator · auto-start paused, [PRIMARY] Start service, [secondary] Return to automatic; starting/warming with eta_seconds → Warming up, about {eta} left and [secondary] Stop service; starting/warming without eta → Warming up, this can take a few minutes; ready → Service: ready · idle|N in flight and [secondary] Stop service; unknown/stale → Status unavailable, last seen {age} with [tertiary] Refresh, Start/Stop hidden; degraded → Service unavailable. Start service to retry. [PRIMARY] Start service. Typed description_service_unavailable is copy on degraded/unknown, not a gpu_state. Warm-up ETA comes from the load/status payload or is omitted; never invent a retry countdown.",
+      "purpose": "Card on the Settings page showing Description Service state, intent, activity and load, with Start / Stop / Return to automatic / Refresh controls. The same Settings screen also owns Description API URL/key autosave feedback and post-save health status. Domain vocabulary: stopped and ready = default; starting and warming = loading; snapshot missing or stale = empty; service unreachable = error; lifecycle degraded or intent pending = degraded. gpu_state is unknown|stopped|starting|warming|ready|degraded. Seven sketches: stopped → [PRIMARY] Start service; stopped by operator (intent STOP) → Stopped by operator · auto-start paused, [PRIMARY] Start service, [secondary] Return to automatic; starting/warming with eta_seconds → Warming up, about {eta} left and [secondary] Stop service; starting/warming without eta → Warming up, this can take a few minutes; ready → Service: ready · idle|N in flight and [secondary] Stop service; unknown/stale → Status unavailable, last seen {age} with [tertiary] Refresh, Start/Stop hidden; degraded → Service unavailable. Start service to retry. [PRIMARY] Start service. Typed description_service_unavailable is copy on degraded/unknown, not a gpu_state. Warm-up ETA comes from the load/status payload or is omitted; never invent a retry countdown.",
       "route": "#/settings",
       "job_entry": true,
       "deep_link": true,
@@ -33,7 +35,10 @@
         { "id": "z-gpu-lease", "label": "Service activity — idle or running since, auto-stops by HH:MM (run limit); never show lease ids", "role": "status", "states": ["default", "empty"] },
         { "id": "z-gpu-load", "label": "Describe load — work in flight yes/no with load snapshot freshness", "role": "status", "states": ["default", "empty", "degraded"] },
         { "id": "z-gpu-cost", "label": "Cost disclosure — hourly rate and warm-up time before Start, not in the headline", "role": "content", "states": ["default"] },
-        { "id": "z-gpu-controls", "label": "Start service / Stop service / Return to automatic / Refresh status", "role": "form", "states": ["default", "loading", "error", "degraded"] }
+        { "id": "z-gpu-controls", "label": "Start service / Stop service / Return to automatic / Refresh status", "role": "form", "states": ["default", "loading", "error", "degraded"] },
+        { "id": "z-description-api-routing", "label": "Description API URL and API key — concealed key input; edits stay in memory and the key is never echoed or written to local storage", "role": "form", "states": ["default", "first_time", "edge_input", "loading", "error", "offline"] },
+        { "id": "z-routing-save-status", "label": "Local autosave status — dirty / saving / saved / failed; failed or partial save retains the typed key, and newer edits remain dirty", "role": "status", "states": ["default", "loading", "error", "degraded"] },
+        { "id": "z-routing-health-status", "label": "Connection health — automatic check after persisted Settings reload; discard a stale result after a newer URL or key edit", "role": "status", "states": ["default", "loading", "error", "degraded", "empty"] }
       ]
     },
     {
@@ -119,6 +124,29 @@
       "steps": [
         { "screen_id": "settings-burst-gpu", "branch_label": "intent start until HH:MM → Return to automatic" },
         { "screen_id": "settings-burst-gpu", "branch_label": "intent automatic; idle reap resumes" }
+      ]
+    },
+    {
+      "id": "flow-routing-autosave-success",
+      "job": "job-save-description-api-routing",
+      "label": "Autosave Description API URL and key, then check persisted connection",
+      "steps": [
+        { "screen_id": "settings-burst-gpu", "branch_label": "routing clean → edit URL and/or concealed key → routing dirty" },
+        { "screen_id": "settings-burst-gpu", "branch_label": "blur or Enter → save dirty URL + key pair; show routing saving; newer edits remain queued/dirty" },
+        { "screen_id": "settings-burst-gpu", "branch_label": "save succeeded → reload persisted Settings → run automatic health check with saved target" },
+        { "screen_id": "settings-burst-gpu", "branch_label": "current health response → show result; stale response after newer edit → discard" },
+        { "screen_id": "settings-burst-gpu", "branch_label": "persisted health result visible; stale result discarded" }
+      ]
+    },
+    {
+      "id": "flow-routing-autosave-failure",
+      "job": "job-save-description-api-routing",
+      "label": "Retain unsaved key after Description API settings save failure",
+      "steps": [
+        { "screen_id": "settings-burst-gpu", "branch_label": "routing clean → edit URL and/or concealed key → routing dirty" },
+        { "screen_id": "settings-burst-gpu", "branch_label": "blur or Enter → save dirty URL + key pair; show routing saving" },
+        { "screen_id": "settings-burst-gpu", "branch_label": "save failed or partial → show routing failed; retain key draft in memory; no health check" },
+        { "screen_id": "settings-burst-gpu", "branch_label": "failure remains visible with key draft available for repair" }
       ]
     }
   ],

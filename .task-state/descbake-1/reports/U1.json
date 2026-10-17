@@ -1,7 +1,7 @@
 {
   "report_id": "U1",
   "task": "CURUX-1 follow-up scope",
-  "status": "PROVISIONAL",
+  "status": "FINAL",
   "created_on": "2026-10-17",
   "source_sha": "08a1d066950911c98a0eb2e9080cd45873d7c3f4",
   "source_sha_verified": false,
@@ -16,115 +16,294 @@
       "description": "Person-name combobox remains at Loading people while suggestion reads are pending.",
       "status": "NEW_DEBT",
       "priority": "P1",
-      "canonical_owner": "CURUX-2 / ADR-019 proposed; WBTRUST-3 S3 for advisory suggestion behavior",
-      "evidence": ["SOURCE-READ"],
-      "source_anchors": ["NameFaceControl.tsx:355-377,550-568", "ADR-019-person-anchored-curation-surfaces.md:3,215-220"],
-      "existing_coverage": ["ADR-019 specifies input enabled during suggestion loading but is Proposed", "WBTRUST-3 S3 makes failed suggestion reads advisory"],
-      "missing_acceptance": ["Slow/error suggestions do not block valid free typing and naming", "Roster-dependent Add as new person remains disabled with a reason until prerequisite data is ready"]
+      "canonical_owner": "CURUX-2 / ADR-019 proposed for free typing versus roster-gated Add as a new person; WBTRUST-3 S3 owns advisory suggestion failure and usable Save.",
+      "evidence": [
+        "SOURCE-READ"
+      ],
+      "source_anchors": [
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/NameFaceControl.tsx:355-377,550-568",
+        "docs/adrs/ADR-019-person-anchored-curation-surfaces.md:3,215-220"
+      ],
+      "task_anchors": [
+        "docs/tasks/v0.5.0/WBTRUST-3-naming-ux-and-persistence-task-plan.md:113-118"
+      ],
+      "existing_coverage": [
+        "WBTRUST-3 S3 keeps the field and Save usable after suggestion error; ADR-019 specifies the loading split but remains Proposed."
+      ],
+      "missing_acceptance": [
+        "Slow/error suggestions do not block valid free typing and naming.",
+        "Roster-dependent Add as a new person stays disabled with a reason until roster data is ready."
+      ]
     },
     {
       "id": "U1-02",
       "description": "Review Queue may show Unable to load unlabeled faces and Retry in a reported zero state.",
       "status": "COVERED_NOT_VERIFIED",
       "priority": "P1",
-      "canonical_owner": "WBTRUST-1 / E21-14-R3-GOLDENS-01",
-      "evidence": ["SOURCE-READ"],
-      "source_anchors": ["ReviewQueue.tsx:773-794,1548-1568,1627-1645"],
-      "existing_coverage": ["UI distinguishes isTopUnlabeledError from successful empty state", "WBTRUST-1 covers zero-member groups remaining in the queue"],
-      "missing_acceptance": ["Successful zero-face response is empty/degraded, fetch failure is error", "Retry issues top-unlabeled request and renders the settled result"]
+      "canonical_owner": "WBTRUST-1 queue trust / E21-14-R3-GOLDENS-01 zero-member behavior.",
+      "evidence": [
+        "SOURCE-READ"
+      ],
+      "source_anchors": [
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/ReviewQueue.tsx:773-794,1548-1568,1627-1645"
+      ],
+      "task_anchors": [
+        "docs/tasks/v0.5.0/WBTRUST-1-review-queue-trust-task-plan.md:13,63,115"
+      ],
+      "existing_coverage": [
+        "Source branches on isTopUnlabeledError and has a successful empty/caught-up path.",
+        "WBTRUST-1 names zero-member clusters remaining in the queue."
+      ],
+      "missing_acceptance": [
+        "Successful zero-face response renders truthful empty/degraded state; a transport/server failure renders error.",
+        "Retry issues the top-unlabeled request and presents its settled result."
+      ]
     },
     {
       "id": "U1-03",
       "description": "Description Service status unavailable copy is reported during dormant/no-scan periods.",
       "status": "COVERED_NOT_VERIFIED",
       "priority": "P2",
-      "canonical_owner": "WBTRUST-5 / ActivityStatusStrip.tsx",
-      "evidence": ["SOURCE-READ"],
-      "source_anchors": ["ActivityStatusStrip.tsx:87-95", "useActivityStatus.ts:363-382"],
-      "existing_coverage": ["GPU-only status query error without an active scan/run maps to idle with unknown GPU state"],
-      "missing_acceptance": ["No-scan dormant/not-checked does not emit outage toast", "Real status failure during an active operation remains an explicit error"]
+      "canonical_owner": "GPUFLOW-3 spa-activity-status and spa-activity-toasts own status/edge copy; WBTRUST-5 owns placement/layout only.",
+      "evidence": [
+        "SOURCE-READ"
+      ],
+      "source_anchors": [
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/ActivityStatusStrip.tsx:87-95",
+        "apps/prototype-wp-alt-context/js/admin/hooks/useActivityStatus.ts:363-382"
+      ],
+      "task_anchors": [
+        "docs/tasks/v0.5.0/GPUFLOW-3-demo-triage-identity-gpu-lifecycle-and-unified-queue-task-plan.md:594,600",
+        "docs/tasks/v0.5.0/WBTRUST-5-control-placement-task-plan.md:11,91"
+      ],
+      "existing_coverage": [
+        "GPUFLOW-3 specifies one activity status authority and edge-triggered toasts.",
+        "Without an active scan/run, the source maps a GPU status query error to idle with unknown GPU state."
+      ],
+      "missing_acceptance": [
+        "No-scan dormant/not-checked state emits no outage toast.",
+        "A real status failure during an active operation remains an explicit error."
+      ]
     },
     {
       "id": "U1-04",
       "description": "URL/API-key local autosave needs atomic save feedback, failed-key draft retention, and persisted-credential health sequencing.",
       "status": "NEW_DEBT",
       "priority": "P1",
-      "canonical_owner": "GPUOPS-1 L5 SettingsPage.tsx; GPUOPS-1 L6 SettingsForm.tsx after shared state contract",
-      "evidence": ["SOURCE-READ"],
-      "source_anchors": ["SettingsForm.tsx:237-273", "SettingsPage.tsx:526-555,344-365,526-530", "useSettingsPageState.ts:53-64"],
-      "existing_coverage": ["URL/key save together on blur/Enter", "Successful save refetches settings then schedules health check", "Probe generation/credential bindings reject stale responses"],
-      "missing_acceptance": ["Retain typed key in memory after failed or partial save", "Do not lose edits made during in-flight save", "Health check only after a fresh GET confirms saved target", "Never echo or persist a secret", "Ignore stale health response after newer edit"]
+      "canonical_owner": "GPUOPS-1 L5 SettingsPage.tsx owns save/probe sequencing; L6 SettingsForm.tsx owns controls after the state contract.",
+      "evidence": [
+        "SOURCE-READ"
+      ],
+      "source_anchors": [
+        "apps/prototype-wp-alt-context/js/admin/pages/settings/SettingsForm.tsx:237-273",
+        "apps/prototype-wp-alt-context/js/admin/pages/SettingsPage.tsx:105-156,344-365,432-490,526-555,665-672",
+        "apps/prototype-wp-alt-context/js/admin/pages/settings/useSettingsPageState.ts:53-64"
+      ],
+      "task_anchors": [
+        "docs/tasks/v0.5.0/GPUOPS-1-gpu-operator-control-and-named-captions-task-plan.md:79-97,138-143"
+      ],
+      "existing_coverage": [
+        "URL and key are sent together on blur/Enter.",
+        "Successful save refreshes settings before scheduling health check; probe generations/credential bindings reject stale responses.",
+        "GPU operator map did not previously include URL/key autosave states; the existing map now models them.",
+        "The user-reported globalSave-only path is not confirmed by this checkout: SettingsForm commits on blur/Enter."
+      ],
+      "missing_acceptance": [
+        "Local URL/key autosave does not require the distant global Save; keep URL and key atomic.",
+        "Retain typed key in memory after failed or partial save, never echo/store it.",
+        "Do not lose edits during in-flight save.",
+        "Health check only after fresh persisted Settings confirms target.",
+        "Discard stale health response after a newer URL/key edit.",
+        "Do not run old-key tests or probe an unsaved/incomplete secret."
+      ]
     },
     {
       "id": "U1-05",
       "description": "Cold GPU run may lose visible continuity after navigation away and back.",
       "status": "COVERED_NOT_VERIFIED",
       "priority": "P1",
-      "canonical_owner": "GPUFLOW-2 operation context; DESCAUTH-1 S15 browser recovery evidence",
-      "evidence": ["SOURCE-READ", "USER-PROVIDED GPUFAIL2 evidence"],
-      "source_anchors": ["MediaSelection.tsx:78-98,255-310,1094-1129", "useActivityStatus.ts:402-512"],
-      "existing_coverage": ["Source retains active/pending run context", "User reports GPUFAIL2 winner routing and completed persisted Qwen3-VL-30B final_gpu API run; infrastructure is FIXED_USER_EVIDENCE"],
-      "missing_acceptance": ["Browser navigate away during cold start and return to discover same run and review completed persisted output", "Report endpoint/config/entitlement failure distinctly", "Check fir.dev.api.altcontext.com versus proven api.altcontext.com as hypothesis only"]
+      "canonical_owner": "GPUFLOW-3 spa-run-resume; GPUFLOW-2 operation context; DESCAUTH-1 S15 owns post-deploy browser recovery evidence.",
+      "infrastructure_status": "FIXED_USER_EVIDENCE",
+      "evidence": [
+        "SOURCE-READ",
+        "USER-PROVIDED GPUFAIL2 evidence; infrastructure only, not independently executed"
+      ],
+      "source_anchors": [
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx:78-98,255-310,1094-1129",
+        "apps/prototype-wp-alt-context/js/admin/hooks/useActivityStatus.ts:402-512"
+      ],
+      "task_anchors": [
+        "docs/tasks/v0.5.0/GPUFLOW-3-demo-triage-identity-gpu-lifecycle-and-unified-queue-task-plan.md:191,203,521,571",
+        "docs/tasks/v0.5.0/DESCAUTH-1-description-authority-history-and-reset-task-plan.md:1101-1107"
+      ],
+      "existing_coverage": [
+        "GPUFLOW-3 spa-run-resume reload/remount contract uses sessionStorage and GET /describe/run/{id}.",
+        "User reports AD1 out of host capacity since July 16, AD2 available, AD2-first winner route, GPUFAIL2 d25922fa5 deployed dev/staging/prod, ACX_GPU_ROUTING_MODE=winner, environment suite 847 passing, completed persisted demo run 1f957ad7 on Qwen3-VL-30B final_gpu, production /ready and demo API healthy, demand cleared and idle-reaped.",
+        "User reports beta_active entitlement fix; identity stores wiped with keys/tenants preserved and old 22-v-5 generation mismatch gone at reset. Polarbilling is separate."
+      ],
+      "missing_acceptance": [
+        "Browser navigate away during cold start, return, discover same run, and review persisted completed output.",
+        "Keep endpoint/config/entitlement/readiness errors distinct.",
+        "fir.dev.api.altcontext.com versus proven production api.altcontext.com remains a hypothesis, not a verified mismatch.",
+        "After the reported reset, a later authorized clean-generation scan produces and discovers the current generation; no scan was performed here."
+      ]
     },
     {
       "id": "U1-06",
-      "description": "Retention unavailable state can conflate dormant/unconfigured endpoint with an actual backend failure; Retry may perform no network request.",
-      "status": "NEW_DEBT",
+      "description": "Retention unavailable state can conflate dormant/unconfigured endpoint with actual backend failure; Retry may perform no request.",
+      "status": "COVERED_NOT_VERIFIED",
       "priority": "P2",
-      "canonical_owner": "RetentionPage / retentionStatus API owner (identify before implementation)",
-      "evidence": ["SOURCE-READ"],
-      "source_anchors": ["retentionApi.ts:120-134", "RetentionPage.tsx:91-95,137-170"],
-      "existing_coverage": [],
-      "missing_acceptance": ["Name actual Description API/retentionStatus dependency", "Distinguish endpoint not configured from fetched error", "Retry says whether it will issue a request and refetches when configured"]
+      "canonical_owner": "GPUFLOW-3 S1 php-unavailable-reason and S2 spa-unavailable-reason; existing client retentionStatus no-endpoint branch remains to verify.",
+      "evidence": [
+        "SOURCE-READ"
+      ],
+      "source_anchors": [
+        "apps/prototype-wp-alt-context/js/admin/api/recognition/retentionApi.ts:120-134",
+        "apps/prototype-wp-alt-context/js/admin/pages/RetentionPage.tsx:91-95,137-170"
+      ],
+      "task_anchors": [
+        "docs/tasks/v0.5.0/GPUFLOW-3-demo-triage-identity-gpu-lifecycle-and-unified-queue-task-plan.md:73-80,217-233,529,532"
+      ],
+      "existing_coverage": [
+        "GPUFLOW-3 typed unavailable contract includes not_configured, service, fix, and checked_at through retention producer and SPA consumer.",
+        "Current source names fetchRetentionStatus() and retentionStatus; no descriptionAPI symbol was found in the inspected files."
+      ],
+      "missing_acceptance": [
+        "Name the Recognition/Description API service and retentionStatus dependency.",
+        "Distinguish unconfigured/dormant endpoint from actual request failure.",
+        "Retry communicates whether it will issue a request and, when configured, refetches and updates checked-at state."
+      ]
     },
     {
       "id": "U1-07",
       "description": "Settings Description Service unavailable state with 15-second retry/refresh reported ineffective.",
       "status": "COVERED_NOT_VERIFIED",
       "priority": "P2",
-      "canonical_owner": "GPUOPS-1 C5 / useGpuControl.ts",
-      "evidence": ["SOURCE-READ"],
-      "source_anchors": ["useGpuControl.ts:14-25,68-77", "GpuControlCard.tsx:325-343,360-414,626-630"],
-      "existing_coverage": ["Refresh/Retry buttons call query refetch", "Status query polls every 15 seconds normally and 5 seconds while starting/warming"],
-      "missing_acceptance": ["Observe request, cache timestamp, isFetching suppression, and any server Retry-After/cooldown during live repro; do not guess a fix"]
+      "canonical_owner": "GPUOPS-1 C5 / useGpuControl; WBTRUST-4 owns cooldown/request budget data.",
+      "evidence": [
+        "SOURCE-READ"
+      ],
+      "source_anchors": [
+        "apps/prototype-wp-alt-context/js/admin/pages/settings/useGpuControl.ts:14-25,68-77",
+        "apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx:325-343,360-414,626-630"
+      ],
+      "task_anchors": [
+        "docs/tasks/v0.5.0/GPUOPS-1-gpu-operator-control-and-named-captions-task-plan.md:79-97"
+      ],
+      "existing_coverage": [
+        "Refresh/Retry controls call query refetch.",
+        "Status query polls every 15 seconds normally and every 5 seconds while starting/warming."
+      ],
+      "missing_acceptance": [
+        "During live repro observe whether click emits GET, isFetching suppresses it, Retry-After/cooldown applies, and cached/error timestamp advances. No cause or fix is established."
+      ]
     },
     {
       "id": "U1-08",
       "description": "Four July 8 failed cluster-label updates remain in a stale timeline.",
       "status": "COVERED_NOT_VERIFIED",
       "priority": "P2",
-      "canonical_owner": "GPUFLOW-2 failed outbox history; DESCAUTH-1 description history/reset remains separate",
-      "evidence": ["SOURCE-READ", "USER-REPORTED exact live rows not queried"],
-      "source_anchors": ["GPUFLOW-2-durable-describe-roster-identity-and-cluster-recovery-task-plan.md:40", "DeadLetterPanel.tsx recovery surface"],
-      "existing_coverage": ["GPUFLOW-2 identifies four failed Cluster label update rows dated 2026-07-08 and operator discard", "DESCAUTH-1 covers description history/reset and replay guards"],
-      "missing_acceptance": ["Separate immutable history from pending work", "Retry/discard/archive effects explicit and preserve event evidence", "Never blindly replay obsolete label/generation"]
+      "canonical_owner": "GPUFLOW-2 failed outbox history and GPUFLOW-3 spa-timeline-actions; DESCAUTH-1 description history/reset is separate.",
+      "evidence": [
+        "SOURCE-READ",
+        "USER-REPORTED exact live rows not queried"
+      ],
+      "source_anchors": [
+        "docs/tasks/v0.5.0/GPUFLOW-2-durable-describe-roster-identity-and-cluster-recovery-task-plan.md:40",
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx"
+      ],
+      "task_anchors": [
+        "docs/tasks/v0.5.0/GPUFLOW-3-demo-triage-identity-gpu-lifecycle-and-unified-queue-task-plan.md:237,576,588",
+        "docs/tasks/v0.5.0/DESCAUTH-1-description-authority-history-and-reset-task-plan.md:857,878"
+      ],
+      "existing_coverage": [
+        "GPUFLOW-2 records four failed Cluster label update rows from 2026-07-08 and per-row discard.",
+        "GPUFLOW-3 timeline actions name code/attempts and Retry/Discard.",
+        "DESCAUTH retry/discard rules govern description reset operations, not cluster-label replay."
+      ],
+      "missing_acceptance": [
+        "Separate immutable history from actionable pending work.",
+        "Make retry/discard/archive effects explicit and preserve event evidence.",
+        "Never blindly replay obsolete label or generation."
+      ]
     },
     {
       "id": "U1-09",
       "description": "Tribeca/Trudeau/Katy labels appear on wrong or repeated groups.",
       "status": "NEW_DEBT",
       "priority": "P1",
-      "canonical_owner": "GPUFLOW-3 identity weaving; WBTRUST-2 curation and WBTRUST-3 naming are partial coverage",
-      "evidence": ["SOURCE-READ", "USER-REPORTED labels not live-reproduced"],
-      "source_anchors": ["useClusterSuggestions.ts:47-118", "ClusterReviewPanel.tsx:148-169", "ClusterDrawerPanel.tsx:418-445"],
-      "existing_coverage": ["Curation/member rows use identity_id and person/cluster option IDs are retained"],
-      "missing_acceptance": ["Show curated person identity_uuid, cluster_uuid, source face IDs, and generation before name commit", "Machine labels remain distinct from curated names", "Unknown/stale lineage abstains; no filename or name-based inference"]
+      "canonical_owner": "Extend GPUFLOW-3 identity integrity (svc-scan-lock / spa-person-card); WBTRUST-2 curation and WBTRUST-3 naming remain partial UI coverage.",
+      "evidence": [
+        "SOURCE-READ",
+        "USER-REPORTED labels not live-reproduced"
+      ],
+      "source_anchors": [
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/useClusterSuggestions.ts:47-118",
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/ClusterReviewPanel.tsx:148-169",
+        "apps/prototype-wp-alt-context/js/admin/pages/roster/ClusterDrawerPanel.tsx:418-445"
+      ],
+      "task_anchors": [
+        "docs/tasks/v0.5.0/GPUFLOW-3-demo-triage-identity-gpu-lifecycle-and-unified-queue-task-plan.md:57,151,269,585,598",
+        "docs/tasks/v0.5.0/WBTRUST-2-cluster-curation-surface-task-plan.md",
+        "docs/tasks/v0.5.0/WBTRUST-3-naming-ux-and-persistence-task-plan.md:106-118"
+      ],
+      "existing_coverage": [
+        "Person/cluster options retain IDs; review rows key by identity_id.",
+        "GPUFLOW-3 covers serialized identity persistence and one-card-per-person, but not visible person→group→face→generation lineage before name commit."
+      ],
+      "missing_acceptance": [
+        "Show curated identity_uuid, cluster_uuid, source face IDs, and producing generation before naming.",
+        "Separate user-curated names from machine labels; stale/unknown lineage abstains.",
+        "No filename inference, display-name merge, or similarity-as-proof."
+      ]
     },
     {
       "id": "U1-10",
-      "description": "emma_watson_14-scaled.jpeg repeats three times with identical crop for one user-confirmed person.",
-      "status": "NEW_DEBT",
+      "description": "emma_watson_14-scaled.jpeg appears three times with the same crop for the one user-confirmed person.",
+      "status": "COVERED_NOT_VERIFIED",
       "priority": "P2",
-      "canonical_owner": "GPUFLOW-2 singleton-group recovery; cross-link prior E15/E21 findings rather than duplicate them",
-      "evidence": ["SOURCE-READ", "USER-PROVIDED ground truth"],
-      "source_anchors": ["GPUFLOW-2-durable-describe-roster-identity-and-cluster-recovery-task-plan.md:39", "ClusterReviewPanel.tsx:148-169", "ClusterDrawerPanel.tsx:418-426"],
-      "existing_coverage": ["GPUFLOW-2 names same-person singleton residue", "E15-17 finding 8472; E21-19 finding 8760; E21-15 finding 7867 / decision 4412; E21-14 finding 7699"],
-      "missing_acceptance": ["Same face not duplicated across cards", "Two different faces in one image remain distinct", "Use face/identity IDs and generation lineage; never dedup on thumbnail URL alone"]
+      "canonical_owner": "GPUFLOW-3 svc-scan-lock and spa-person-card; GPUFLOW-2 singleton recovery; cross-link prior E15/E21 findings, no duplicate task.",
+      "evidence": [
+        "SOURCE-READ",
+        "USER-PROVIDED same-person ground truth"
+      ],
+      "source_anchors": [
+        "docs/tasks/v0.5.0/GPUFLOW-2-durable-describe-roster-identity-and-cluster-recovery-task-plan.md:39",
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/ClusterReviewPanel.tsx:148-169",
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/ClusterDrawerPanel.tsx:418-426"
+      ],
+      "task_anchors": [
+        "docs/tasks/v0.5.0/GPUFLOW-3-demo-triage-identity-gpu-lifecycle-and-unified-queue-task-plan.md:57,151,585,598"
+      ],
+      "existing_coverage": [
+        "GPUFLOW-3 targets one row per physical face and one card per person; GPUFLOW-2 names the exact singleton-residue example.",
+        "Prior mechanisms stay distinct: E15-17 finding 8472; E21-19 finding 8760; E21-15 finding 7867 / decision 4412; E21-14 finding 7699."
+      ],
+      "missing_acceptance": [
+        "Same verified face is not duplicated across groups/cards, while two different faces in one image remain distinct.",
+        "Use face/identity IDs plus generation lineage; never deduplicate by thumbnail URL alone.",
+        "Preserve user ground truth; do not merge by name/image or copy another face bbox."
+      ]
     }
   ],
   "limitations": [
     "The supplied source commit is absent from the mounted Git object database; source identity is not independently verified.",
     "No browser/live reproduction was performed; source/task coverage does not establish deployed behavior.",
-    "The JSON and the existing gpu-operator-control map are provisional pending exact task/source reconciliation and map rendering."
-  ]
+    "GPUFAIL2 infrastructure status is user-provided evidence only; it was not independently executed or checked.",
+    "The map renderer CLI could not run because optional workbay_canvas_mcp is unavailable; changed owned Markdown sections were synchronized with local renderer helpers, and shared projection parity was not verified."
+  ],
+  "classification_semantics": {
+    "FIXED_USER_EVIDENCE": "User-supplied runtime/infrastructure evidence only; not independently reproduced.",
+    "COVERED_NOT_VERIFIED": "A source/task contract covers all or part of the behavior, but browser/deployment acceptance is unverified.",
+    "NEW_DEBT": "The current source or planned acceptance leaves a stated criterion uncovered; extend the named owner rather than duplicate its task.",
+    "UNKNOWN": "Evidence is insufficient to classify; no finding currently uses this state."
+  },
+  "map_update": {
+    "map_ref": "gpu-operator-control",
+    "source": "apps/prototype-wp-alt-context/docs/ux-maps/gpu-operator-control.uxmap.json",
+    "rendered_markdown": "apps/prototype-wp-alt-context/docs/ux-maps/gpu-operator-control.md",
+    "scope": "Added Description API URL/key autosave, local save feedback, post-persist health sequencing, in-flight edits, failed-key retention, and stale health states to the existing Settings map.",
+    "render_method": "The standard CLI could not import optional workbay_canvas_mcp. The changed Markdown sections were synchronized from JSON using render_ux_maps.py local formatting helpers; shared projection snapshot and renderer parity were not changed/verified."
+  },
+  "checkpoint_commit": "9b815cc"
 }

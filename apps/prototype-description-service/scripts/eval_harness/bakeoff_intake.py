@@ -18,9 +18,12 @@ reported as proof that a repo is missing.
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
+import os
 import re
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
@@ -303,7 +306,7 @@ def default_fetch(repo: str, timeout: float = DEFAULT_TIMEOUT_S) -> FetchResult:
         return FetchResult(status=None, payload=None, error="network_error")
     except TimeoutError:
         return FetchResult(status=None, payload=None, error="timeout")
-    except OSError:
+    except (OSError, http.client.IncompleteRead):
         return FetchResult(status=None, payload=None, error="network_error")
     if len(body) > MAX_METADATA_BYTES:
         return FetchResult(status=status, payload=None, error="oversized")
@@ -315,7 +318,11 @@ def default_fetch(repo: str, timeout: float = DEFAULT_TIMEOUT_S) -> FetchResult:
 
 
 def _text_or_none(value: object) -> str | None:
-    return value if isinstance(value, str) else None
+    if not isinstance(value, str):
+        return None
+    # JSON escapes can decode to lone surrogates that neither renderer can emit.
+    value.encode("utf-8")
+    return value
 
 
 def audit_one(
@@ -381,9 +388,12 @@ def audit_one(
     payload = result.payload
     if payload is None:
         return record(AuditStatus.ERROR, AuditReason.MALFORMED_JSON)
-    pipeline = _text_or_none(payload.get("pipeline_tag"))
-    card = payload.get("cardData")
-    license_id = _text_or_none(card.get("license")) if isinstance(card, dict) else None
+    try:
+        pipeline = _text_or_none(payload.get("pipeline_tag"))
+        card = payload.get("cardData")
+        license_id = _text_or_none(card.get("license")) if isinstance(card, dict) else None
+    except UnicodeEncodeError:
+        return record(AuditStatus.ERROR, AuditReason.MALFORMED_JSON)
     sha = payload.get("sha")
     if not isinstance(sha, str) or not _SHA_RE.fullmatch(sha.strip().lower()):
         return record(AuditStatus.ERROR, AuditReason.MALFORMED_SHA, pipeline=pipeline, license_id=license_id)
@@ -607,6 +617,26 @@ def _is_protected(path: Path) -> bool:
     return path.resolve() in protected
 
 
+def _write_report(path: Path, text: str) -> None:
+    """Replace a prior report only after a complete sibling has been closed."""
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(text)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -642,7 +672,11 @@ def main(
     if args.output is None:
         sys.stdout.write(text)
     else:
-        args.output.write_text(text, encoding="utf-8")
+        try:
+            _write_report(args.output, text)
+        except OSError:
+            print("FAIL: cannot write report", file=sys.stderr)
+            return 1
     return 0
 
 

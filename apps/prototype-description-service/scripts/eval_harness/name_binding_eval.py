@@ -26,9 +26,23 @@ Measurement contract (denominators fixed before any arm is scored; CARD-11, Prin
   evidence. Embedding similarity is not caption truth or identity (prior attempted path, task brief;
   no embedding or similarity library is imported).
 
-Provenance (PROV-01, GRPH-14): the report carries the SHA-256 of the input bytes and the fixture's
-source anonymous-base digest and generation/reweave IDs. A prediction must carry the same
-anonymous-base digest; a mismatch is refused, not re-derived at score time.
+Provenance (PROV-01, GRPH-14): each frozen image declares its own source anonymous-base digest
+and generation/reweave IDs. Each prediction must match all three fields for that image.
+The report carries these image-keyed sources and the SHA-256 of the input bytes. Lineage is
+declared evidence, not a verification of unavailable caption/model bytes.
+https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/ml-systems.md#prov-01
+https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/graph-theory.md#grph-14
+
+Version 2 replaces the v1 fixture-global ``source`` with required ``frozen_images[].source``;
+predictions retain ``source_anonymous_base_digest`` and require ``source_generation_id`` and
+``source_reweave_id``. The report replaces global ``source`` with ``image_sources`` keyed by image ID.
+V1 is refused: individual caption lineage cannot be recovered from a batch-global value.
+Both ``gold_bindings`` and prediction ``bindings`` must be explicit; [] is a measured negative
+or abstention, while omission is refused (CAL-02, CARD-03, CARD-11; Principles 15 and 18).
+https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/designed-unknown.md
+https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/measurement-integrity.md
+Raw error categories may overlap. This diagnostic report supplies no zero-error acceptance gate;
+any future gate needs a deduplicated event union and complete gold/prediction coverage.
 
 Per-arm aggregates are reported for every arm with a per-image ledger, never one pooled number
 (EVAL-04). A fixture emits no ranking (``ranking`` is null): synthetic fixtures do not declare a winner.
@@ -39,16 +53,18 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-INPUT_SCHEMA = "name_binding_eval/v1"
-REPORT_SCHEMA = "name_binding_eval_report/v1"
+INPUT_SCHEMA = "name_binding_eval/v2"
+REPORT_SCHEMA = "name_binding_eval_report/v2"
 GOLD_OUTCOMES = ("correct", "wrong_person", "wrong_phrase", "abstained", "missing_record")
 EXIT_OK = 0
 EXIT_INVALID_INPUT = 1
@@ -94,9 +110,10 @@ class FrozenImage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     image_id: str = Field(min_length=1)
+    source: SourceProvenance
     phrases: list[str]
     identity_roles: IdentityRoles
-    gold_bindings: list[Binding] = Field(default_factory=list)
+    gold_bindings: list[Binding]
 
 
 class PredictionRecord(BaseModel):
@@ -107,22 +124,23 @@ class PredictionRecord(BaseModel):
     arm_id: str = Field(min_length=1)
     image_id: str = Field(min_length=1)
     source_anonymous_base_digest: str
-    bindings: list[Binding] = Field(default_factory=list)
+    source_generation_id: str = Field(min_length=1)
+    source_reweave_id: str = Field(min_length=1)
+    bindings: list[Binding]
 
 
 class NameBindingInput(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    schema_id: Literal["name_binding_eval/v1"] = Field(alias="schema")
+    schema_id: Literal["name_binding_eval/v2"] = Field(alias="schema")
     fixture_id: str = Field(min_length=1)
-    source: SourceProvenance
     arm_ids: list[str]
     frozen_images: list[FrozenImage]
     predictions: list[PredictionRecord] = Field(default_factory=list)
 
 
 def evaluate_bytes(raw: bytes) -> dict[str, Any]:
-    """Validate a ``name_binding_eval/v1`` fixture and score every declared arm."""
+    """Validate a ``name_binding_eval/v2`` fixture and score every declared arm."""
     try:
         data = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -146,7 +164,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         prog="python -m scripts.eval_harness.name_binding_eval",
         description="Offline name/phrase-binding ledger over precomputed proposals (no model calls).",
     )
-    parser.add_argument("input", type=Path, help="name_binding_eval/v1 fixture (JSON)")
+    parser.add_argument("input", type=Path, help="name_binding_eval/v2 fixture (JSON)")
     parser.add_argument("--output", type=Path, required=True, help="report path; written only if the input validates")
     args = parser.parse_args(argv)
     try:
@@ -154,8 +172,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (OSError, NameBindingEvalError) as exc:
         print(f"name_binding_eval: refused: {exc}", file=sys.stderr)
         return EXIT_INVALID_INPUT
-    args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
+    try:
+        _write_report(args.output, rendered)
+    except OSError as exc:
+        print(f"name_binding_eval: cannot write report: {exc}", file=sys.stderr)
+        return EXIT_INVALID_INPUT
     return EXIT_OK
+
+
+def _write_report(output: Path, rendered: str) -> None:
+    """Replace only after a complete sibling write; failures leave any prior report intact."""
+    temporary: Path | None = None
+    try:
+        fd, name = tempfile.mkstemp(dir=output.parent, prefix=f".{output.name}.", suffix=".tmp")
+        temporary = Path(name)
+        os.close(fd)
+        temporary.write_text(rendered, encoding="utf-8")
+        os.replace(temporary, output)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def _reject_duplicates(values: Sequence[str], message: str) -> None:
@@ -230,12 +267,13 @@ def _check_predictions(model: NameBindingInput, images: dict[str, FrozenImage]) 
         if key in seen:
             raise NameBindingEvalError(f"duplicate prediction record for arm {record.arm_id} image {record.image_id}")
         seen.add(key)
-        if record.source_anonymous_base_digest != model.source.anonymous_base_digest:
-            raise NameBindingEvalError(
-                f"source_anonymous_base_digest does not match the fixture source for arm {record.arm_id} "
-                f"image {record.image_id}"
-            )
         image = images[record.image_id]
+        for field in ("anonymous_base_digest", "generation_id", "reweave_id"):
+            if getattr(record, f"source_{field}") != getattr(image.source, field):
+                raise NameBindingEvalError(
+                    f"source_{field} does not match the frozen image source for arm {record.arm_id} "
+                    f"image {record.image_id}"
+                )
         roles = image.identity_roles
         declared = set(roles.required) | set(roles.allowed) | set(roles.prohibited)
         phrases = set(image.phrases)
@@ -265,7 +303,7 @@ def _score(model: NameBindingInput, *, input_sha256: str) -> dict[str, Any]:
         "input_schema": INPUT_SCHEMA,
         "fixture_id": model.fixture_id,
         "input_sha256": input_sha256,
-        "source": model.source.model_dump(),
+        "image_sources": {image.image_id: image.source.model_dump() for image in images},
         "frozen_image_count": len(images),
         "gold_binding_count": sum(len(image.gold_bindings) for image in images),
         "required_identity_count": sum(len(image.identity_roles.required) for image in images),

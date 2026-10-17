@@ -1,0 +1,98 @@
+{
+  "schema_version": "semantic-selection-eval/v1",
+  "description": "Hand-authored known-answer fixture for scripts/eval_harness/semantic_selection_eval.py. The 4-dimensional vectors are synthetic and were not produced by any encoder, so this file documents the contract and the cosine arithmetic only; it says nothing about model quality. ctx-* are approved context candidates and form the only ranking pool. decoy-x is denied with cosine 1.0 to q-2 and must never rank or be selected. policy-1 is a protected record that must never rank and must appear in every frozen pack for every query. q-3 has no gold ids and is reported as no_relevant, not dropped. Expected: top1 = 1/3 and MRR = 4/9 over the three frozen queries.",
+  "query_encoder": {
+    "model_id": "synthetic/hand-authored-vectors",
+    "revision": "0000000000000000000000000000000000000000",
+    "preprocessing": "none-hand-authored",
+    "dimension": 4,
+    "normalization": "l2",
+    "namespace": "approved_context",
+    "space_id": "synthetic-shared-4d"
+  },
+  "candidate_encoder": {
+    "model_id": "synthetic/hand-authored-vectors",
+    "revision": "0000000000000000000000000000000000000000",
+    "preprocessing": "none-hand-authored",
+    "dimension": 4,
+    "normalization": "l2",
+    "namespace": "approved_context",
+    "space_id": "synthetic-shared-4d"
+  },
+  "candidates": [
+    {
+      "id": "ctx-a",
+      "source_id": "src-1",
+      "status": "approved",
+      "text": "a coat hanging on a hatstand",
+      "vector": [1, 0, 0, 0]
+    },
+    {
+      "id": "ctx-b",
+      "source_id": "src-1",
+      "status": "approved",
+      "text": "a doorway with a brass handle",
+      "vector": [0.6, 0.8, 0, 0]
+    },
+    {
+      "id": "ctx-c",
+      "source_id": "src-2",
+      "status": "approved",
+      "text": "a window with net curtains",
+      "vector": [0, 1, 0, 0]
+    },
+    {
+      "id": "ctx-d",
+      "source_id": "src-2",
+      "status": "approved",
+      "text": "a rug on a wooden floor",
+      "vector": [0.8, 0, 0.6, 0]
+    },
+    {
+      "id": "decoy-x",
+      "source_id": "src-3",
+      "status": "denied",
+      "text": "a hatstand with a sign on it",
+      "vector": [1, 0, 0, 0]
+    },
+    {
+      "id": "policy-1",
+      "source_id": "policy-src",
+      "status": "protected",
+      "text": "naming policy: do not name the depicted person",
+      "vector": [0.5, 0.5, 0.5, 0.5]
+    }
+  ],
+  "queries": [
+    {
+      "id": "q-1",
+      "modality": "image",
+      "gold_ids": ["ctx-c"],
+      "vector": [0.7071067811865476, 0.7071067811865476, 0, 0]
+    },
+    {
+      "id": "q-2",
+      "modality": "image",
+      "gold_ids": ["ctx-a"],
+      "vector": [1, 0, 0, 0]
+    },
+    {
+      "id": "q-3",
+      "modality": "text",
+      "gold_ids": [],
+      "vector": [0, 0, 1, 0]
+    }
+  ],
+  "selections": {
+    "baseline": {
+      "q-1": ["policy-1", "ctx-a"],
+      "q-2": ["policy-1", "ctx-a"],
+      "q-3": ["policy-1", "ctx-d"]
+    },
+    "full_pack": {
+      "q-1": ["policy-1", "ctx-b", "ctx-a", "ctx-c"],
+      "q-2": ["policy-1", "ctx-a", "ctx-b"],
+      "q-3": ["policy-1", "ctx-d", "ctx-a"]
+    }
+  }
+}

@@ -48,7 +48,14 @@ def _ranked_ids(report: dict[str, Any], query_id: str) -> list[str]:
 def _run_cli(input_path: Path, output: Path) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
     return subprocess.run(
-        [sys.executable, "-m", "scripts.eval_harness.semantic_selection_eval", str(input_path), "--output", str(output)],
+        [
+            sys.executable,
+            "-m",
+            "scripts.eval_harness.semantic_selection_eval",
+            str(input_path),
+            "--output",
+            str(output),
+        ],
         cwd=APP_ROOT,
         capture_output=True,
         text=True,
@@ -149,9 +156,7 @@ def test_no_approved_candidates_keeps_every_query_explicit() -> None:
         **base,
         "candidates": [c for c in base["candidates"] if c["id"] in {"policy-1", "decoy-x"}],
         "queries": [{**q, "gold_ids": []} for q in base["queries"]],
-        "selections": {
-            pack: {q["id"]: ["policy-1"] for q in base["queries"]} for pack in ("baseline", "full_pack")
-        },
+        "selections": {pack: {q["id"]: ["policy-1"] for q in base["queries"]} for pack in ("baseline", "full_pack")},
     }
     report = _run(doc)
 

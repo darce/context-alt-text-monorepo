@@ -1,0 +1,53 @@
+{
+  "status": "PROPOSED",
+  "summary": "Proposed three pinned document edits for QOA-G1-05: remove two unused alternate SSH trust checks and explain the primary route. Private RED/GREEN controls preserve primary refusal and alternate-winner rejection. No adoption or live effects.",
+  "source_sha": "ceca4dca14b09a75dbb887378e32764180bebc93",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/adjudications/OWNER-R2-TRUST.json",
+    ".task-state/bakeoff-rounds-20261017/adjudications/OWNER-R2-TRUST.md",
+    ".task-state/bakeoff-rounds-20261017/adjudications/OWNER-R2-TRUST.edits.json"
+  ],
+  "commits": [
+    "36b3a9175db08e338ae804fbbf8604e81d175b48"
+  ],
+  "findings": [
+    {
+      "id": "QOA-G1-05",
+      "severity": "medium",
+      "file": ".task-state/bakeoff-rounds-20261017/adjudications/QWEN-OWNER-ADMISSION.md:268",
+      "description": "The unused alternate SSH trust lookup aborts the primary route under root-flow errexit. A correction is proposed; the finding remains open for independent review.",
+      "evidence": "Supplied root receipt: primary lookup0, alternate1. Original exact offline segments reproduce failure with primary present/alternate missing; proposed segments pass and still refuse missing primary. Exact selector retains alternate refusal. /tmp/owner-r2-trust retains raw cases, commands and exits.",
+      "fix": "Apply the three exact fragments in OWNER-R2-TRUST.edits.json only through root composition and independent whole-procedure G2; preserve strict primary binding and all sibling code."
+    }
+  ],
+  "tests": [
+    {
+      "command": "python3 -B /tmp/owner-r2-trust/record.py context python3 -B /tmp/owner-r2-trust/context.py",
+      "exit_code": 0,
+      "summary": "Verified eight complete Canon v0.26.2 bodies by exact release path, four complete original distillations, five supplied semantic records, full prior packets/audits and exact source/AST fallback. Logical commit absent; native base has requested tree."
+    },
+    {
+      "command": "python3 -B /tmp/owner-r2-trust/record.py trust-red python3 -B /tmp/owner-r2-trust/trust_boundary.py red",
+      "exit_code": 1,
+      "summary": "Expected RED exit1 before private fix: primary-present/alternate-missing lookup segments fail; primary-missing refuses and both-present passes. External sudo/lookup stubs only; no SSH or hostfile access."
+    },
+    {
+      "command": "python3 -B /tmp/owner-r2-trust/record.py trust-green python3 -B /tmp/owner-r2-trust/trust_boundary.py green",
+      "exit_code": 0,
+      "summary": "All six boundary controls match: primary-present/alternate-missing and both-present pass; primary-missing refuses. Every proposed case queries primary only. External stubs only."
+    },
+    {
+      "command": "python3 -B /tmp/owner-r2-trust/record.py verify-proposal python3 -B /tmp/owner-r2-trust/verify_proposal.py",
+      "exit_code": 0,
+      "summary": "All six edit application orders agree; nine embedded blocks parse; four sibling scripts and every other root-flow byte remain exact. Unchanged selector primary0/alternate1/short-lease1; strict SSH binding retained. All 2162 prior-audit files unchanged."
+    }
+  ],
+  "limitations": [
+    "Static/external-stub and extracted-predicate evidence only; no SSH, live trust-file edit, intent, cloud, guest, secret, model, service or production effect. QOA-G1-01/02/03/04/06 remain unchanged and unclosed.",
+    "Initial preflight lookup harness adds errexit; full interactive preflight has none. No automatic refusal or end-to-end lifecycle qualification is claimed beyond the tested boundary.",
+    "Logical input2187fcfa78c19b4aad2b83048a81d05ab127c1c8 is absent. source_sha is the honest native base with exact input tree69dfc234e8a33a8fa0095ff110fbeb6a7040071f; equal trees are not ancestry.",
+    "Fresh live ONNX/handoff/graph access unavailable. Supplied verified records were read/hash-reinjected; exact source/AST fallback used. Canon upstream fetch failed; supplied complete v0.26.2 release mirror was verified.",
+    "Root owns three-map composition, independent whole-procedure G2, adoption and effects. No new dispatch, self-approval, finding closure or merge. Complete private audit remains /tmp/owner-r2-trust; previous roots are unchanged.",
+    "Requested gpt-6.1-sol HIGH/STANDARD,1500s,1GiB/25%CPU are requested settings, not independently attested model/tier or enforced allocation. commits identifies the substantive artifact commit; later JSON-only metadata avoids self-reference."
+  ]
+}

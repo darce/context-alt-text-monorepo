@@ -1,0 +1,123 @@
+{
+  "reinjection": {
+    "ok": true,
+    "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+    "status": "selected",
+    "skip_reason": null,
+    "embeddings_mode": "verified",
+    "semantic_degrade_reason": null,
+    "relevant_lines": [
+      "relevant:",
+      "- cdx_decision_bakerounds_p2_gate_c2_typed_depend…: P2LOWtestauthorcompleted/custodyecbfc499:26realpublicdecoderassertionRED+60interfacebootstrap,25oldcont [decision:17851]",
+      "- Intake first owner procedure and P2 binding map…: QWEN-OWNER-ADMISSION LOWterminal0/custodybd390a36 usesexistingwrite_gpu_intent [decision:17878]",
+      "- Persist concrete replacement and subject audit …: REGRESSION-REPLACE returned actual new37 loader/resolver37/37, retained36 exact metadata/text equality [decision:17799]",
+      "- cdx_decision_bakerounds_memory_remote_reap_comp…: Owned native reapwave44 completed exit0:12terminalMclones [decision:17838]",
+      "- cdx_decision_bakerounds_r3_combined_one_termina…: R3A/BbothcompleteindependentnativeSolXHIGHstandardREVISEsamedeffect, [decision:17707]",
+      "- cdx_decision_bakerounds_e2_initial_tests_partia…: E2initialLOW author exit0 but explicitlybootstrap_incomplete, [decision:17848]",
+      "- BAKEROUNDS-DETECT-ENV-01: Initial2GiB OOM preserved. Required4GiB retry/controlled diagnosis completed; remaining runtime/quality [finding:19023]",
+      "- CACHE-R2-A-01: Reconcile P-R/P-I across ownership, DAG, Slice Delivery, final G proof and Consolidated Checklist: E [finding:19055]"
+    ],
+    "semantic_reinjection": {
+      "anchor_sources": [
+        "visible_text"
+      ],
+      "chars_budget": 10000,
+      "chars_used": 1180,
+      "effective_config": {
+        "candidate_pool": 32,
+        "max_concepts": 8,
+        "max_redundancy": 0.92,
+        "max_score_drop": 0.2,
+        "min_score": 0.35,
+        "mmr_relevance_weight": 0.7,
+        "notify_allowance_chars": 220,
+        "refresh_budget_chars": 1500,
+        "snippet_chars": 120
+      },
+      "fallback_scope": null,
+      "model_id": "gte-base-en-v1.5",
+      "score_hi": 0.6600172519683838,
+      "score_lo": 0.5406864881515503,
+      "selected": [
+        {
+          "emitted_chars": 182,
+          "id": "17851",
+          "kind": "decision",
+          "label": "cdx_decision_bakerounds_p2_gate_c2_typed_depend…",
+          "score": 0.6393544673919678,
+          "snippet": "P2LOWtestauthorcompleted/custodyecbfc499:26realpublicdecoderassertionRED+60interfacebootstrap,25oldcont [decision:17851]"
+        },
+        {
+          "emitted_chars": 148,
+          "id": "17878",
+          "kind": "decision",
+          "label": "Intake first owner procedure and P2 binding map…",
+          "score": 0.6600172519683838,
+          "snippet": "QWEN-OWNER-ADMISSION LOWterminal0/custodybd390a36 usesexistingwrite_gpu_intent [decision:17878]"
+        },
+        {
+          "emitted_chars": 172,
+          "id": "17799",
+          "kind": "decision",
+          "label": "Persist concrete replacement and subject audit …",
+          "score": 0.6029138565063477,
+          "snippet": "REGRESSION-REPLACE returned actual new37 loader/resolver37/37, retained36 exact metadata/text equality [decision:17799]"
+        },
+        {
+          "emitted_chars": 127,
+          "id": "17838",
+          "kind": "decision",
+          "label": "cdx_decision_bakerounds_memory_remote_reap_comp…",
+          "score": 0.5602904558181763,
+          "snippet": "Owned native reapwave44 completed exit0:12terminalMclones [decision:17838]"
+        },
+        {
+          "emitted_chars": 138,
+          "id": "17707",
+          "kind": "decision",
+          "label": "cdx_decision_bakerounds_r3_combined_one_termina…",
+          "score": 0.5977897047996521,
+          "snippet": "R3A/BbothcompleteindependentnativeSolXHIGHstandardREVISEsamedeffect, [decision:17707]"
+        },
+        {
+          "emitted_chars": 131,
+          "id": "17848",
+          "kind": "decision",
+          "label": "cdx_decision_bakerounds_e2_initial_tests_partia…",
+          "score": 0.6401420831680298,
+          "snippet": "E2initialLOW author exit0 but explicitlybootstrap_incomplete, [decision:17848]"
+        },
+        {
+          "emitted_chars": 148,
+          "id": "19023",
+          "kind": "finding",
+          "label": "BAKEROUNDS-DETECT-ENV-01",
+          "score": 0.5685945749282837,
+          "snippet": "Initial2GiB OOM preserved. Required4GiB retry/controlled diagnosis completed; remaining runtime/quality [finding:19023]"
+        },
+        {
+          "emitted_chars": 134,
+          "id": "19055",
+          "kind": "finding",
+          "label": "CACHE-R2-A-01",
+          "score": 0.5406864881515503,
+          "snippet": "Reconcile P-R/P-I across ownership, DAG, Slice Delivery, final G proof and Consolidated Checklist: E [finding:19055]"
+        }
+      ],
+      "skip_reason": null,
+      "status": "selected"
+    }
+  },
+  "previous_context_files": [
+    "owner-r2-semantic.json",
+    "owner-gate-semantic.json"
+  ],
+  "explicit_previous_paths": [
+    "Original gate->ubuntu sudo issue disproved by directubuntu+passwordlesssudo",
+    "LocalWP socket refused beforekey; no credentialsroute neededforOSownerwriter",
+    "Originalbd390 firstprocedure WHOLE1492 sixcounterexamples01-06",
+    "SecondHIGH authority/phases/trustmaps and exactall6orderjoin; no wholeacceptance",
+    "Phase capacity-read helper/AUTO unknown-load integration mustbeverified acrossmaps"
+  ],
+  "canon_release": "0.26.2"
+}

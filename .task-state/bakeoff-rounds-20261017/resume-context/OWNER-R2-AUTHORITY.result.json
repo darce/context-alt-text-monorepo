@@ -1,0 +1,63 @@
+{
+  "status": "candidate_pending_independent_review",
+  "summary": "Authored a source-pinned 19-edit procedure candidate for QOA-G1-01/04/06. Eight confined boundary controls pass; privileged and whole-procedure qualification remain with root.",
+  "source_sha": "15e5eb31fe84042cafe5f85badbe0b3e8073eb7c",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/adjudications/OWNER-R2-AUTHORITY.json",
+    ".task-state/bakeoff-rounds-20261017/adjudications/OWNER-R2-AUTHORITY.md",
+    ".task-state/bakeoff-rounds-20261017/adjudications/OWNER-R2-AUTHORITY.edits.json"
+  ],
+  "commits": [
+    "82921f6b47bbe3118cd533db11efcbe0f0a62189"
+  ],
+  "findings": [
+    {
+      "id": "QOA-G1-01",
+      "severity": "high",
+      "file": ".task-state/bakeoff-rounds-20261017/adjudications/QWEN-OWNER-ADMISSION.md",
+      "description": "Final comparison and public publication were not atomic.",
+      "evidence": "Expected RED replaced a real foreign STOP before sequence refusal. GREEN exercises native writer interleaving and all four persistent producer fences.",
+      "fix": "NEW pinned procedural producer compares and publishes once under actual shared fences; no nested writer flock or invented issuer."
+    },
+    {
+      "id": "QOA-G1-04",
+      "severity": "high",
+      "file": ".task-state/bakeoff-rounds-20261017/adjudications/QWEN-OWNER-ADMISSION.md",
+      "description": "Post-publication caller failure selected stale recovery authority.",
+      "evidence": "Real writer SIGALRM persists STOP with empty stdout. GREEN reaps the owned native producer and recovers unconsumed and controller-rearmed STOP.",
+      "fix": "Bind immutable operation/candidate before effects; reconcile read-only; withdraw only the latest proven owned publication; retain unknown custody/locks."
+    },
+    {
+      "id": "QOA-G1-06",
+      "severity": "medium",
+      "file": ".task-state/bakeoff-rounds-20261017/adjudications/QWEN-OWNER-ADMISSION.md",
+      "description": "Mutable window locator and replaceable receipts broke custody.",
+      "evidence": "Original symlink predicate is RED. GREEN verifies no-follow held identities, expected owner, exclusive receipts and explicit window mismatch refusal.",
+      "fix": "Stage reviewed hashes through held identities; use exact window/ID handoff and fresh operation/observation directories."
+    }
+  ],
+  "tests": [
+    {
+      "command": "python3 -B /tmp/owner-r2-authority/red.py",
+      "exit_code": 1,
+      "summary": "Expected RED: real public writer replaces foreign STOP; actual post-write SIGALRM leaves stale AUTO; original output predicate follows symlink."
+    },
+    {
+      "command": "python3 -B /tmp/owner-r2-authority/green.py green7",
+      "exit_code": 0,
+      "summary": "Eight confined real-writer/controller/native-OS controls pass, including atomic interleaving, all four producer fences, post-write SIGALRM/native identity, unconsumed/rearmed STOP withdrawal, foreign preservation and retained locks. All owned fixture children reaped."
+    },
+    {
+      "command": "python3 -B /tmp/owner-r2-authority/validate.py",
+      "exit_code": 0,
+      "summary": "19 unique nonoverlapping exact edits; source blob/SHA256; all six script syntax checks; observer/guest/TRUST/selection bytes preserved; eight exact Canon release entries; four original hashes; 2239 prior files unchanged."
+    }
+  ],
+  "limitations": [
+    "Root must compose all three maps and independently review the WHOLE procedure. This author does not approve, close findings, adopt, dispatch, merge or execute live effects. PHASES/TRUST source remains unchanged in the private copy.",
+    "Native root staging, uid/gid10001 transition, mounted Docker/path compatibility and the full composed shell flow were not executed. Only confined producer/controller/OS controls passed; no live qualification is claimed.",
+    "Live MCP/ONNX/graph tools were unavailable. Supplied verified handoff/reinjection packets were reread and hash-pinned. Public Canon refresh failed DNS; eight full supplied v0.26.2 bodies/release entries and four full original distillations were verified.",
+    "Unknown I/O or missing native completion retains guardian/fences/custody and blocks advancement. Forced guardian/host death and uncooperative writers bypassing native fences remain outside the qualified controls.",
+    "Logical commit object is absent; source_sha names native stripped base with the exact supplied tree. Model/tier identity and a hard25% CPU cap are not independently exposed; recorded processes use1GiB RLIMIT_AS and reduced priority. No target capacity, boot, stop, GPU/cache ownership, fit or raw-run claim."
+  ]
+}

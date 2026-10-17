@@ -1,0 +1,104 @@
+{
+  "status": "REVISE",
+  "summary": "REVISE: six material procedure defects remain in publication fencing, phase observation, boot completion, failed-publication recovery, unnecessary alternate trust, and receipt handoff. The normal owner route and installed writer are confirmed; no live admission or target action occurred.",
+  "source_sha": "bba6e7c52ff6da27024f55275eda534a4550e034",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/reviews/OWNER-ADMISSION-GATE.json",
+    ".task-state/bakeoff-rounds-20261017/reviews/OWNER-ADMISSION-GATE.md"
+  ],
+  "commits": [
+    "8ba2d43ae5f43afe7e2cf35121ecafb6aec4bf4b"
+  ],
+  "findings": [
+    {
+      "id": "QOA-G1-01",
+      "severity": "high",
+      "file": ".task-state/bakeoff-rounds-20261017/adjudications/QWEN-OWNER-ADMISSION.md:137",
+      "description": "Ownership checks precede the publication fence, so a concurrent foreign intent can be overwritten before refusal.",
+      "evidence": "owner-window.py:61-85 checks global/runtime state, then calls the writer. The real writer interleaving in confined-controls.result.json passes high=0, publishes foreign STOP sequence1, then replaces it with owned START sequence2; the high+1 assertion fails after replacement. The matched no-race publication returns sequence1.",
+      "fix": "Make the final ownership comparison and publication indivisible with respect to every producer through a real supported shared boundary or an evidenced exclusive producer window. A post-write assertion or increment-and-retry cannot preserve the foreign publication."
+    },
+    {
+      "id": "QOA-G1-02",
+      "severity": "high",
+      "file": ".task-state/bakeoff-rounds-20261017/adjudications/QWEN-OWNER-ADMISSION.md:175",
+      "description": "Phase-insensitive receipt reads break normal STOP/release and prevent withdrawal when load files are unknown.",
+      "evidence": "Real run_reap_cycle on two STOPPED fixture targets removes running-since.json; unchanged observe.py then raises FileNotFoundError for STOP and AUTO. Reap also omits intent fields on an aggregate stopped snapshot, so the AUTO predicate rejects that canonical shape. Running AUTO is the matched accepted parent. owner-window.py:61 decodes every load even for AUTO; missing/malformed controls fail before its permissive guard.",
+      "fix": "Handle the optional lease file by phase, retain/retry bounded read races, and distinguish required uncertainty from canonical absence. Consume actual stopped snapshot shapes plus matching durable AUTO authority. Let owned AUTO withdrawal proceed with explicit unknown load without authorizing START or STOP from unknown evidence."
+    },
+    {
+      "id": "QOA-G1-03",
+      "severity": "medium",
+      "file": ".task-state/bakeoff-rounds-20261017/adjudications/QWEN-OWNER-ADMISSION.md:193",
+      "description": "The START observer advances on in-progress and failed boot snapshots.",
+      "evidence": "The unchanged observer accepts matched ready, starting and degraded/readiness_timeout snapshots produced by the real public snapshot writer with a real publication/authority/lease chain. reaper.py:4156 publishes starting with honoured status before readiness completes; :3882 preserves honour after readiness failure. The primary selector then checks identity and lease only.",
+      "fix": "Define and observe the minimum boot condition required for this capacity-only guest sample. Keep starting pending, handle controller/readiness failure explicitly, and bound any guest-readiness retry. Do not silently equate honoured publication with completed boot or impose unrelated raw/quality gates."
+    },
+    {
+      "id": "QOA-G1-04",
+      "severity": "high",
+      "file": ".task-state/bakeoff-rounds-20261017/adjudications/QWEN-OWNER-ADMISSION.md:317",
+      "description": "A publication that succeeds before its caller fails can leave cleanup using the previous receipt and retain an owned STOP.",
+      "evidence": "final-stop.sh:24-25 assigns latest only after success. A real private writer child terminated by its own SIGALRM exits -14 with empty stdout after STOP sequence2 persists. The stale AUTO locator is refused; even a known unconsumed STOP is refused by the consumed-only guard. Real busy reap controls retain/rearm STOP beyond its original 600s TTL; the correctly located consumed STOP supports AUTO withdrawal.",
+      "fix": "Bind a unique operation/window and candidate receipt before effects; on failure perform bounded read-only reconciliation before choosing the latest proven publication and attempting owned AUTO. Preserve genuine unknowns/foreign state and block advancement. Supply the concrete recovery path for retained STOP; a dead client and the 3600s power cap do not clear it."
+    },
+    {
+      "id": "QOA-G1-05",
+      "severity": "medium",
+      "file": ".task-state/bakeoff-rounds-20261017/adjudications/QWEN-OWNER-ADMISSION.md:267",
+      "description": "An unused alternate SSH trust prerequisite blocks the confirmed primary-only normal route.",
+      "evidence": "Root owner-installed-route-preflight.json records primary ssh-keygen exit0 and alternate exit1. root-flow.sh:26 requires the alternate under set -e, before START, while guest-read.sh connects only to primary. The actual primary-selection block rejects the alternate winner before a guest probe.",
+      "fix": "Require existing trust only for the guest address actually queried. Keep strict primary checking and the alternate-winner refusal, while acknowledging failover boot effects. Add no host entry, accept-new, keyscan trust, key or credential."
+    },
+    {
+      "id": "QOA-G1-06",
+      "severity": "medium",
+      "file": ".task-state/bakeoff-rounds-20261017/adjudications/QWEN-OWNER-ADMISSION.md:248",
+      "description": "The operator-window handoff and receipt filenames are mutable and insufficiently bound.",
+      "evidence": "root-flow.sh:7 replaces a global locator before preflight; final-stop.sh:5 trusts it. An owned retry control redirects final STOP to a new window with no withdrawal receipt. owner-window.py:37 accepts a symlink to a mode0700 gate-owned directory without checking owner/traversal; :84 overwrites the same publication filename on retry. Actual private writer receipts demonstrate replacement.",
+      "fix": "Pass the exact window explicitly into final STOP; make the locator diagnostic only. Validate expected owner and every path component, reject symlinks/traversal, and retain exclusive per-attempt publication/output files. Stage reviewed scripts in protected owner custody before privileged execution; preserve the current private author root unchanged."
+    }
+  ],
+  "tests": [
+    {
+      "command": "python3 -B /tmp/owner-admission-gate/context.py; additional.py; finish_context.py (separate recorded invocations)",
+      "exit_code": 0,
+      "summary": "Complete context/private snapshots, eight exact-path release-manifest Canon hashes, four full research-distillation hashes, full source/AST, and six installed lifecycle byte comparisons verified."
+    },
+    {
+      "command": "python3 -B /tmp/owner-admission-gate/controls.py final-controls",
+      "exit_code": 1,
+      "summary": "All behavioral assertions completed; the final diagnostic formatter failed on a boolean result. Exact attempt/script/output retained and corrected; this is an audit harness error."
+    },
+    {
+      "command": "python3 -B /tmp/owner-admission-gate/controls.py confined-controls",
+      "exit_code": 0,
+      "summary": "Real private writer/controller/observer controls reproduce the six findings and verify matched valid parents, foreign/marker refusal, alternate selection, deferred STOP withdrawal, monotonic TTL/reboot fencing and separate 3600s power cap."
+    },
+    {
+      "command": "python3 -B /tmp/owner-admission-gate/post_publication.py confined",
+      "exit_code": 0,
+      "summary": "Actual private writer success control exits0; its owned post-publication SIGALRM child exits-14 with no stdout and a persisted STOP. Locator and receipt-overwrite controls reproduced."
+    },
+    {
+      "command": "bash -n /tmp/qwen-owner-admission/root-flow.sh /tmp/qwen-owner-admission/final-stop.sh /tmp/qwen-owner-admission/guest-read.sh",
+      "exit_code": 0,
+      "summary": "Prepared shell syntax passes; these service/guest scripts were never executed."
+    },
+    {
+      "command": "python3 -B /tmp/owner-admission-gate/verify_review.py",
+      "exit_code": 0,
+      "summary": "Strict common schema, exact source/tree and embedded-script locators, two-file ownership, prior-root hashes, control outcomes and final committed JSON equality checked."
+    }
+  ],
+  "limitations": [
+    "Pure private boundary controls only: no live execution, admission, guest access, target fit, raw result, source approval or finding closure. No production publication, cloud/API/service execution, secret/key read, model/weight/image operation, auth change, install, broad suite, repair, adoption, dispatch, agent or merge.",
+    "Root owns MCP, later adjudication and actual effects. Route REVISE to the actual second procedure author at HIGH/STANDARD; no author or implementation lane was launched here.",
+    "Live graph/MCP/ONNX tools were unavailable. Supplied owner-gate-semantic.json and resume-fresh-context.json record verified retrieval/reinjection; current maps are used only within their coverage, with complete source/AST fallback for this seam.",
+    "Logical input 5bd66facfda43675abf1039015c880b391e32294 is absent locally. source_sha is the honest native base with the exact requested tree d13287a13d52cebcab171d1b26c419894b4503f8; equal tree is not ancestry.",
+    "Root receipts confirm ubuntu uid1001/passwordless sudo and exact prod writer/config. The Vault admin-token receipt is distinct from tenant GPU endpoint authentication. Prior gate-user sudo refusal and LocalWP socket refusal do not negate owner authorization; no historical revoked key was used.",
+    "Intent TTL600, power cap3600 and unit deadline1200 remain distinct. Unknown publication/consumption/terminal effects retain evidence and block advancement; timeout or client death is never shutdown proof. Runtime capacity/identity/fit are future measured conditions, not design findings by absence.",
+    "Requested model/XHIGH/STANDARD and an enforced 25% CPU allocation are not independently attestable. Recorded subprocesses use a 1GiB address-space bound and reduced scheduling priority. Full reproducible private evidence and hash manifest remain under /tmp/owner-admission-gate; all three prior audit roots were kept read-only.",
+    "commits identifies the substantive review commit; a subsequent JSON metadata commit records that pointer without self-reference. Final response equals the committed JSON object."
+  ]
+}

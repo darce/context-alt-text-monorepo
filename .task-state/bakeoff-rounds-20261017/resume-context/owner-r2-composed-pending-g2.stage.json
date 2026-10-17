@@ -1,0 +1,19 @@
+{
+  "sha": "55af04670dc9040abd409def695022911852f4aa",
+  "tree": "e8102f0556cd83da903d96ab1d13b4eb3253cc4f",
+  "branch": "feature/bakerounds-20261017-owner-r2-composed",
+  "base": "d00b51749da40241a9d5742ac07d5378f54dbe7e",
+  "target_path": ".task-state/bakeoff-rounds-20261017/adjudications/QWEN-OWNER-ADMISSION.md",
+  "source_blob": "57b3790ebaece3d5b554b101e8e4385e45c5498d",
+  "source_sha256": "e46920eb55c20d4bd105af83eedf3d17f93a421fda27634d0912db219fc44310",
+  "proposed_blob": "297bf8c2af05c2ed90e659aeb4eafb94a79c91db",
+  "proposed_sha256": "7e55a1049d9e1fe20579ccf4ecf57075973035062f6de0701af8415988cae680",
+  "maps": [
+    "25ef740fd16b7752fedc257b567dc303d6b990a0",
+    "b647f8e3d27152357068c7acc452ff173f3d758c",
+    "64c8d798820720af54d454104e243342821f616a"
+  ],
+  "edit_count": 23,
+  "commuting_orders": 6,
+  "adopted": false
+}

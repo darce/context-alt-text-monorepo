@@ -1,0 +1,70 @@
+{
+  "status": "test_spec_pending_review",
+  "summary": "Committed the nine approved SUBJECT-EVIDENCE-1 test specifications. Final run: 45 expected failures, 31 passes; required legacy controls remain green. Independent test gate must precede source implementation.",
+  "source_sha": "cfdae990650393c5639131616b59bb91c1b46a8d",
+  "changed_files": [
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py",
+    "apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py",
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py",
+    ".task-state/bakeoff-rounds-20261017/implementation/S-EVIDENCE-TESTS.json",
+    ".task-state/bakeoff-rounds-20261017/implementation/S-EVIDENCE-TESTS.md"
+  ],
+  "commits": [
+    "9fce963fec5e512127b7fec48cf7966154984b5e"
+  ],
+  "findings": [],
+  "tests": [
+    {
+      "command": ".venv/bin/python /tmp/s-evidence-tests/baseline.py",
+      "exit_code": 0,
+      "summary": "Required first formatter: two files reformatted, one unchanged; all three before/after AST hashes identical."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-evidence-tests/run.py old-selectors .venv/bin/python -m pytest -q -c /tmp/s-evidence-tests/pytest.ini -p no:cacheprovider --confcutdir=apps/prototype-description-service/scene/tests --basetemp=/tmp/s-evidence-tests/old-pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_bakeoff_gate_rejects_selection_subject_or_image_overlap apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_matching_manifest_sha_renders_unbadged apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_foreign_manifest_sha_is_fatal_and_writes_nothing apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_manifest_version_as_string_fails_closed",
+      "exit_code": 0,
+      "summary": "Four required existing overlap, matching-digest, foreign-digest and string-version selectors passed."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-evidence-tests/run.py controls-verified .venv/bin/python -m pytest -q -c /tmp/s-evidence-tests/pytest.ini -p no:cacheprovider --confcutdir=apps/prototype-description-service/scene/tests --basetemp=/tmp/s-evidence-tests/controls-verified-pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_bakeoff_gate_passes_only_with_roster_baselines_and_observability apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_matching_manifest_sha_renders_unbadged apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_bakeoff_gate_is_not_ready_for_a_serving_skip_or_missing_baselines apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py::test_subject_evidence_omission_preserves_canonical_dump",
+      "exit_code": 0,
+      "summary": "Four separate controls passed: ready raw gate, matching strict digest, missing-baseline refusal and pinned omitted-field/v2 compatibility."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-evidence-tests/run.py all-nine-final .venv/bin/python -m pytest -q -c /tmp/s-evidence-tests/pytest.ini -p no:cacheprovider --confcutdir=apps/prototype-description-service --basetemp=/tmp/s-evidence-tests/all-nine-final-pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py -k subject_evidence --tb=short",
+      "exit_code": 1,
+      "summary": "All nine approved selector IDs collected: 76 cases; expected RED, observed 45 failed and 31 passed. Raw evidence is ignored; strict models reject subject_evidence. No collection/setup failure in this final run."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-evidence-tests/run.py invariant-verified .venv/bin/python -m pytest -q -c /tmp/s-evidence-tests/pytest.ini -p no:cacheprovider --confcutdir=apps/prototype-description-service/scripts/eval_harness/tests --basetemp=/tmp/s-evidence-tests/invariant-verified-pytest apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py::test_subject_evidence_never_changes_identity_truth --tb=short",
+      "exit_code": 1,
+      "summary": "Actual prompt/caller/digest AST controls executed; expected and observed RED at real GoldenManifest acceptance (extra_forbidden), before amended-input equality assertions."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-evidence-tests/run.py lint-verified .venv/bin/ruff check apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py",
+      "exit_code": 0,
+      "summary": "Scoped Ruff lint passed."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-evidence-tests/run.py format-check-final .venv/bin/ruff format --check apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py",
+      "exit_code": 0,
+      "summary": "All three owned test files already formatted."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-evidence-tests/run.py ast-census-final .venv/bin/python /tmp/s-evidence-tests/audit.py",
+      "exit_code": 0,
+      "summary": "All 161 old selectors and 187 existing definitions retain identical ASTs; exact nine new plan selectors; 41 actual CLI receipts retain output/exits/import SHA; production source and plan pins unchanged."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-evidence-tests/run.py packet-verify-final .venv/bin/python /tmp/s-evidence-tests/verify_packet.py",
+      "exit_code": 0,
+      "summary": "Strict summary equality, five-file scope, plan/source hashes, original ASTs, exact nine IDs and 41 actual CLI receipts verified."
+    }
+  ],
+  "limitations": [
+    "Tests only: no production implementation, finding closure, metadata/identity adoption, inference, bakeoff or quality authorization. Source-lane mutant discrimination remains deferred until implementation; independent root test review is pending.",
+    "Current invalid strict-record rejection is extra_forbidden, not evidence of implemented state/support/binding validation. Amended strict digest and identity-isolation assertions remain blocked by real model rejection. Synthetic attestations, scores and run records assert protocol behavior only.",
+    "Exact nine selector IDs and expected/observed cases are in S-EVIDENCE-TESTS.md. Full raw scripts, fixtures, stdout/stderr, exits, CLI import hashes, native custody and artifact inventory are retained at /tmp/s-evidence-tests; an intermediate author fixture KeyError and lint failure are preserved separately.",
+    "Logical input object is unavailable; native base 1a2a66c1e26f74e2818fadfe886ab2317ef6d3d2 has the exact requested tree 940b641b3a36c44a320e91ea37cdc0c9d1c79db0. Native gpt-6.1-sol/low is verified; STANDARD service tier is not exposed.",
+    "Supplied verified semantic receipts, six hash-verified Canon 0.26.2 bodies and exact-checkout source-map fallback were used. Supplied readiness codemap concerns another scope; no fresh live graph/handoff query or ONNX inference is claimed."
+  ]
+}

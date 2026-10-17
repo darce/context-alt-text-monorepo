@@ -13,7 +13,6 @@ import pytest
 from pydantic import ValidationError
 
 from scene.tests.test_eval_harness_cli import _assert_child_ascii_locale, _c_locale_child_env
-
 from scripts.eval_harness.manifest import (
     AnnotationMode,
     GoldenEntry,
@@ -1524,3 +1523,182 @@ def test_adjudicated_fact_with_empty_pre_adjudication_raises():
             adjudication_rule="disagreement-escalate-to-sme",
             pre_adjudication=[],
         )
+
+
+def test_subject_evidence_omission_preserves_canonical_dump(tmp_path: Path) -> None:
+    """Pinned pre-change dump retains old nulls; only absent evidence is omitted."""
+    model = GoldenManifest.model_validate(_valid_manifest_dict())
+    dump = model.model_dump()
+    assert hashlib.sha256(json.dumps(dump, sort_keys=True).encode()).hexdigest() == (
+        "0fff9297b4c1d04eebaf41224e5eee0c51502895356aa294d2fc2dcdbc83494c"
+    )
+    for entry in dump["entries"]:
+        assert "subject_evidence" not in entry
+        assert entry["domain"] is None
+        assert entry["provenance"]["url"] is None
+        assert entry["context_pack"]["description"] is None
+    legacy = _valid_manifest_dict()
+    legacy["manifest_version"] = 2
+    path = _write_manifest(tmp_path, legacy)
+    frozen = load_legacy_manifest(path)
+    assert frozen.manifest_version == 2
+    assert all("subject_evidence" not in entry for entry in frozen.model_dump()["entries"])
+    with pytest.raises(ManifestError):
+        load_manifest(path, metadata_only=True, skip_hash_verification=True, hash_skip_reason="protocol fixture")
+    legacy["entries"][0]["subject_evidence"] = None
+    path = _write_manifest(tmp_path, legacy)
+    with pytest.raises(ManifestError):
+        load_legacy_manifest(path)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "known",
+        "partial",
+        "unknown",
+        "not_applicable",
+        "null",
+        "missing-version",
+        "bool-version",
+        "string-version",
+        "unknown-version",
+        "null-version",
+        "coerced-complete",
+        "duplicate-keys",
+        "wrong-namespace",
+        "extra-evidence",
+        "extra-support",
+        "extra-binding",
+        "known-incomplete",
+        "partial-complete",
+        "unknown-keys",
+        "empty-with-person",
+        "support-hash",
+        "support-source",
+        "support-authority",
+        "support-review",
+        "same-reviewer",
+        "operator-complete",
+        "wrong-claim",
+        "missing-support",
+        "reordered",
+        "changed-path",
+        "changed-original",
+        "changed-profile",
+    ],
+)
+def test_subject_evidence_state_consistency(tmp_path: Path, case: str) -> None:
+    from scene.tests.test_eval_harness_bakeoff_report import _se_attach, _se_sha
+
+    status = case if case in ("known", "partial", "unknown", "not_applicable") else "known"
+    ordinal = 2 if status == "not_applicable" else 1
+    doc = _se_attach(_valid_manifest_dict(), status, ordinal=ordinal)
+    evidence = doc["entries"][ordinal - 1]["subject_evidence"]
+    valid = case in ("known", "partial", "unknown", "not_applicable")
+    if case == "null":
+        doc["entries"][0]["subject_evidence"] = None
+    elif case == "missing-version":
+        evidence.pop("version")
+    elif case in ("bool-version", "string-version", "unknown-version", "null-version"):
+        evidence["version"] = {"bool-version": True, "string-version": "1", "unknown-version": 2, "null-version": None}[
+            case
+        ]
+    elif case == "coerced-complete":
+        evidence["complete"] = "true"
+    elif case == "duplicate-keys":
+        evidence["subject_ids"] *= 2
+    elif case == "wrong-namespace":
+        evidence["identity_namespace"] = "foreign"
+    elif case.startswith("extra-"):
+        target = {
+            "extra-evidence": evidence,
+            "extra-support": evidence["support"],
+            "extra-binding": evidence["source_binding"],
+        }[case]
+        target["unrecognized"] = True
+    elif case == "known-incomplete":
+        evidence["complete"] = False
+    elif case == "partial-complete":
+        doc = _se_attach(_valid_manifest_dict(), "partial")
+        doc["entries"][0]["subject_evidence"]["complete"] = True
+    elif case == "unknown-keys":
+        doc = _se_attach(_valid_manifest_dict(), "unknown")
+        doc["entries"][0]["subject_evidence"]["subject_ids"] = ["fixture:person"]
+    elif case == "empty-with-person":
+        doc = _se_attach(_valid_manifest_dict(), "not_applicable")
+        doc["entries"][0].update(present_identities=["Alice Example"], face_count=1)
+        # Rebind to a consistent projection, so the defect is the person conflict.
+        projection = json.loads(json.dumps(doc))
+        projection["entries"][0].pop("subject_evidence")
+        projection = GoldenManifest.model_validate(projection).model_dump()
+        binding = doc["entries"][0]["subject_evidence"]["source_binding"]
+        digest = _se_sha(projection)
+        binding.update(
+            namespace=f"manifest-sha256:{digest}",
+            source_manifest_sha256=digest,
+            source_entry_sha256=_se_sha(projection["entries"][0]),
+        )
+    elif case == "support-hash":
+        evidence["support_sha256"] = "f" * 64
+    elif case in (
+        "support-source",
+        "support-authority",
+        "support-review",
+        "same-reviewer",
+        "operator-complete",
+        "wrong-claim",
+    ):
+        field, value = {
+            "support-source": ("source_original_sha256", "f" * 64),
+            "support-authority": ("authority_reference", "other-authority"),
+            "support-review": ("review_reference", "other-review"),
+            "same-reviewer": ("reviewer_id", "fixture-declarer"),
+            "operator-complete": ("basis", "operator_image_declaration"),
+            "wrong-claim": ("claim", "no_people_or_depictions"),
+        }[case]
+        evidence["support"][field] = value
+        evidence["support_sha256"] = _se_sha(evidence["support"])
+    elif case == "missing-support":
+        evidence.pop("support")
+        evidence.pop("support_sha256")
+    elif case == "reordered":
+        doc["entries"].reverse()
+    elif case == "changed-path":
+        doc["entries"][0]["path"] = "mock_images/changed.jpg"
+    elif case == "changed-original":
+        doc["entries"][0]["sha256"] = "b" * 64
+    elif case == "changed-profile":
+        evidence["source_binding"]["digest_profile"] = "raw_report"
+    path = _write_manifest(tmp_path, doc)
+    if valid:
+        # This is the actual acceptance boundary, not a future-validator stand-in.
+        loaded = load_manifest(
+            path, metadata_only=True, skip_hash_verification=True, hash_skip_reason="synthetic protocol fixture"
+        )
+        assert loaded.model_dump()["entries"][ordinal - 1]["subject_evidence"]["status"] == status
+        from scripts.eval_harness.build_bakeoff_report import _manifest_sha
+
+        assert _manifest_sha(loaded) == _se_sha(loaded.model_dump())
+        dump = loaded.model_dump()
+        observed = dump["entries"][ordinal - 1]["subject_evidence"]
+        for row in dump["entries"]:
+            row.pop("subject_evidence", None)
+        digest = _se_sha(dump)
+        assert observed["source_binding"] == {
+            "digest_profile": "golden_v3",
+            "namespace": f"manifest-sha256:{digest}",
+            "source_manifest_sha256": digest,
+            "source_entry_ordinal": ordinal,
+            "source_entry_sha256": _se_sha(dump["entries"][ordinal - 1]),
+            "source_original_sha256": dump["entries"][ordinal - 1]["sha256"],
+        }
+        if status != "unknown":
+            assert observed["support_sha256"] == _se_sha(observed["support"])
+        else:
+            assert "support_sha256" not in observed
+    else:
+        with pytest.raises(ManifestError):
+            load_manifest(
+                path, metadata_only=True, skip_hash_verification=True, hash_skip_reason="synthetic protocol fixture"
+            )

@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -340,3 +341,176 @@ def test_module_imports_no_network_model_client_or_similarity_library():
         "sentence_transformers",
     }
     assert not imported & forbidden
+
+
+def _per_image_fixture():
+    """Synthetic proposals: local phrase IDs may recur in independently frozen captions."""
+    payload = _fixture()
+    payload["schema"] = "name_binding_eval/v2"
+    payload.pop("source", None)
+    payload["frozen_images"] = []
+    payload["predictions"] = []
+    for number, digest in ((1, DIGEST), (2, OTHER_DIGEST)):
+        image = _image(f"img-{number}", phrases=("ph-local",), required=("alice",), gold=[("ph-local", "alice")])
+        source = {
+            "anonymous_base_digest": digest,
+            "generation_id": f"synthetic-gen-{number}",
+            "reweave_id": f"synthetic-reweave-{number}",
+        }
+        image["source"] = source
+        payload["frozen_images"].append(image)
+        prediction = _pred(image["image_id"], bindings=[("ph-local", "alice")], digest=digest)
+        prediction["source_generation_id"] = source["generation_id"]
+        prediction["source_reweave_id"] = source["reweave_id"]
+        payload["predictions"].append(prediction)
+    return payload
+
+
+def test_independent_image_lineage_accepts_distinct_bases_with_reused_local_phrase_ids():
+    payload = _per_image_fixture()
+    report = _run(payload)
+    assert _arm(report)["gold_outcome_counts"] == _outcome_counts(correct=2)
+    assert _arm(report)["coverage"] == 1
+    assert report["image_sources"] == {image["image_id"]: image["source"] for image in payload["frozen_images"]}
+    assert "source" not in report  # No batch value is presented as an individual caption digest.
+
+
+@pytest.mark.parametrize("field", ["anonymous_base_digest", "generation_id", "reweave_id"])
+def test_cross_image_lineage_field_swap_is_refused_even_when_phrase_and_person_match(field):
+    payload = _per_image_fixture()
+    payload["predictions"][1][f"source_{field}"] = payload["frozen_images"][0]["source"][field]
+    with pytest.raises(nbe.NameBindingEvalError, match=f"source_{field} does not match.*img-2"):
+        _run(payload)
+
+
+def test_entire_cross_image_source_swap_is_refused():
+    payload = _per_image_fixture()
+    for field, value in payload["frozen_images"][0]["source"].items():
+        payload["predictions"][1][f"source_{field}"] = value
+    with pytest.raises(nbe.NameBindingEvalError, match="source_anonymous_base_digest does not match.*img-2"):
+        _run(payload)
+
+
+def test_legacy_fixture_global_lineage_is_refused_instead_of_silently_trusted():
+    payload = _per_image_fixture()
+    payload["schema"] = "name_binding_eval/v1"
+    payload["source"] = {
+        "anonymous_base_digest": DIGEST,
+        "generation_id": "gen-unit",
+        "reweave_id": "reweave-unit",
+    }
+    for image in payload["frozen_images"]:
+        image.pop("source", None)
+    for prediction in payload["predictions"]:
+        prediction["source_anonymous_base_digest"] = DIGEST
+        prediction.pop("source_generation_id", None)
+        prediction.pop("source_reweave_id", None)
+    with pytest.raises(nbe.NameBindingEvalError, match="input schema violation"):
+        _run(payload)
+
+
+@pytest.mark.parametrize("field", ["gold_bindings", "bindings"])
+def test_omitted_evidence_is_refused_not_converted_to_negative_gold_or_abstention(field):
+    payload = _fixture(
+        frozen_images=[_image(required=(), allowed=("alice",), gold=[])],
+        predictions=[_pred(bindings=[])],
+    )
+    record = payload["frozen_images"][0] if field == "gold_bindings" else payload["predictions"][0]
+    del record[field]
+    with pytest.raises(nbe.NameBindingEvalError, match=field):
+        _run(payload)
+
+
+def test_explicit_negative_gold_and_empty_prediction_remain_measured():
+    arm = _arm(_run(_fixture(frozen_images=[_image(required=(), gold=[])], predictions=[_pred(bindings=[])])))
+    assert arm["status"] == "complete"
+    assert arm["coverage"] == 1
+    assert arm["gold_binding_count"] == 0
+    assert arm["gold_outcome_rates"] is None
+    assert arm["all_abstain_images"] == 1
+
+
+def test_missing_negative_control_prediction_is_unknown_even_with_zero_gold_errors():
+    arm = _arm(_run(_fixture(frozen_images=[_image(required=(), gold=[])])))
+    assert arm["status"] == "no_records"
+    assert arm["coverage"] == 0
+    assert arm["gold_outcome_rates"] is None
+    assert arm["all_abstain_images"] == 0
+    assert arm["image_ledger"][0]["all_abstain"] is None
+
+
+def test_cli_missing_output_parent_is_a_concise_error(tmp_path, capsys):
+    inp = tmp_path / "in.json"
+    inp.write_text(json.dumps(_fixture()))
+    out = tmp_path / "missing" / "report.json"
+    assert nbe.main([str(inp), "--output", str(out)]) == 1
+    error = capsys.readouterr().err
+    assert "cannot write report" in error
+    assert "Traceback" not in error
+    assert not out.exists()
+    assert list(tmp_path.iterdir()) == [inp]
+
+
+@pytest.mark.parametrize("prior_exists", [False, True])
+def test_cli_mid_write_failure_preserves_prior_report_and_removes_temporary_file(
+    tmp_path, monkeypatch, capsys, prior_exists
+):
+    inp = tmp_path / "in.json"
+    inp.write_text(json.dumps(_fixture()))
+    out = tmp_path / "report.json"
+    previous = b"previous complete report\n"
+    if prior_exists:
+        out.write_bytes(previous)
+    original_write = Path.write_text
+    written = []
+
+    def fail_after_partial_write(path, text, *args, **kwargs):
+        # Exercise the real filesystem write boundary, not a replacement evaluator.
+        written.append(path)
+        original_write(path, text[:20], *args, **kwargs)
+        raise OSError("simulated-full-disk")
+
+    monkeypatch.setattr(Path, "write_text", fail_after_partial_write)
+    assert nbe.main([str(inp), "--output", str(out)]) == 1
+    assert written and all(path.parent == out.parent for path in written)
+    assert "cannot write report" in capsys.readouterr().err
+    assert out.read_bytes() == previous if prior_exists else not out.exists()
+    assert set(tmp_path.iterdir()) == ({inp, out} if prior_exists else {inp})
+
+
+def test_cli_replace_failure_preserves_prior_report_and_cleans_sibling(tmp_path, monkeypatch, capsys):
+    inp = tmp_path / "in.json"
+    inp.write_text(json.dumps(_fixture()))
+    out = tmp_path / "report.json"
+    previous = b"previous complete report\n"
+    out.write_bytes(previous)
+
+    def fail_replace(src, dst):
+        assert Path(src).parent == out.parent
+        assert Path(dst) == out
+        assert json.loads(Path(src).read_text())["schema"] == nbe.REPORT_SCHEMA
+        assert out.read_bytes() == previous
+        raise OSError("simulated-replace-failure")
+
+    monkeypatch.setattr(os, "replace", fail_replace)
+    assert nbe.main([str(inp), "--output", str(out)]) == 1
+    assert "cannot write report" in capsys.readouterr().err
+    assert out.read_bytes() == previous
+    assert set(tmp_path.iterdir()) == {inp, out}
+
+
+def test_cli_invalid_input_preserves_prior_report_without_attempting_output(tmp_path, monkeypatch, capsys):
+    inp = tmp_path / "in.json"
+    inp.write_text(json.dumps(_fixture(frozen_images=[])))
+    out = tmp_path / "report.json"
+    previous = b"previous complete report\n"
+    out.write_bytes(previous)
+
+    def unexpected_write(*args, **kwargs):
+        pytest.fail("invalid input attempted report creation")
+
+    monkeypatch.setattr(Path, "write_text", unexpected_write)
+    assert nbe.main([str(inp), "--output", str(out)]) == 1
+    assert "frozen_images" in capsys.readouterr().err
+    assert out.read_bytes() == previous
+    assert set(tmp_path.iterdir()) == {inp, out}

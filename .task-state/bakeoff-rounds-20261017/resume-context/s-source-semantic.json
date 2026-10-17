@@ -1,0 +1,68 @@
+{
+  "content": [],
+  "structuredContent": {
+    "ok": true,
+    "task_ref": "SUBJECT-EVIDENCE-1",
+    "status": "selected",
+    "skip_reason": null,
+    "embeddings_mode": "verified",
+    "semantic_degrade_reason": null,
+    "relevant_lines": [
+      "relevant:",
+      "- S-TEST-G1-02: Actual independent testgate1483: committed publicraw negatives omit state_consistency/evidence_conflict [finding:19106]",
+      "- S-TEST-G1-01: Actual independent testgate1483: missing/zero-face refusal test accepts selection=pass hidden by [finding:19105]",
+      "- Adopt exact independently reviewed narrow v1 su…: Newtaskscopesrealindependentfeature, not a waiverofparentSUBJECT-GATE-03. Approvedplan06033dd9 [decision:17814]"
+    ],
+    "semantic_reinjection": {
+      "anchor_sources": [
+        "visible_text"
+      ],
+      "chars_budget": 5500,
+      "chars_used": 438,
+      "effective_config": {
+        "candidate_pool": 32,
+        "max_concepts": 8,
+        "max_redundancy": 0.92,
+        "max_score_drop": 0.2,
+        "min_score": 0.35,
+        "mmr_relevance_weight": 0.7,
+        "notify_allowance_chars": 220,
+        "refresh_budget_chars": 1500,
+        "snippet_chars": 120
+      },
+      "fallback_scope": null,
+      "model_id": "gte-base-en-v1.5",
+      "score_hi": 0.680650532245636,
+      "score_lo": 0.5178213119506836,
+      "selected": [
+        {
+          "emitted_chars": 145,
+          "id": "19106",
+          "kind": "finding",
+          "label": "S-TEST-G1-02",
+          "score": 0.680650532245636,
+          "snippet": "Actual independent testgate1483: committed publicraw negatives omit state_consistency/evidence_conflict [finding:19106]"
+        },
+        {
+          "emitted_chars": 129,
+          "id": "19105",
+          "kind": "finding",
+          "label": "S-TEST-G1-01",
+          "score": 0.635873556137085,
+          "snippet": "Actual independent testgate1483: missing/zero-face refusal test accepts selection=pass hidden by [finding:19105]"
+        },
+        {
+          "emitted_chars": 164,
+          "id": "17814",
+          "kind": "decision",
+          "label": "Adopt exact independently reviewed narrow v1 su…",
+          "score": 0.5178213119506836,
+          "snippet": "Newtaskscopesrealindependentfeature, not a waiverofparentSUBJECT-GATE-03. Approvedplan06033dd9 [decision:17814]"
+        }
+      ],
+      "skip_reason": null,
+      "status": "selected"
+    }
+  },
+  "isError": false
+}

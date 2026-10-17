@@ -1,0 +1,90 @@
+{
+  "status": "MAP_READY",
+  "summary": "Authored a three-fragment privacy-only edit map for RAW-AUTH-TEST-G1-02. Five unique malformed-payload sentinels close the observed disclosure gap;150 leak controls reject and redacted parents pass. Real public49-case behavior remains44RED/5GREEN; independent whole G2 is pending.",
+  "source_sha": "1f81d880a2299df1ff30e38495034175a4700eff",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/adjudications/RAW-AUTH-R2-PRIVACY.json",
+    ".task-state/bakeoff-rounds-20261017/adjudications/RAW-AUTH-R2-PRIVACY.md",
+    ".task-state/bakeoff-rounds-20261017/adjudications/RAW-AUTH-R2-PRIVACY.edits.json"
+  ],
+  "commits": [
+    "5cd4f5bc8c2c48385be7027a29c399e98123136f"
+  ],
+  "findings": [
+    {
+      "id": "RAW-AUTH-TEST-G1-02",
+      "severity": "medium",
+      "file": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py:330",
+      "description": "Original malformed oversize/multiline/space/NUL/non-ASCII files replace KEY, but the privacy call tracks only KEY/path and accepts rejected payload disclosure.",
+      "evidence": "Exact original oracle accepts all5 full-payload repr disclosures. New per-case printable sentinels occur once in their real fixture bytes;150 raw/escaped/repr/chained/stdout/stderr disclosures fail with new args while identical data passes old args.40 redacted controls pass;valid-KEY helper AST unchanged.",
+      "fix": "Apply only the committed bakecache-test-edits/v1 map after root pin/span/sibling-composition validation. Keep exact4097 oversize length and isolated invalidity; retain KEY/path checks for empty/metadata cases and leave descriptor instrumentation untouched."
+    }
+  ],
+  "tests": [
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-r2-privacy/scripts/context.py",
+      "exit_code": 0,
+      "summary": "2483 complete reads/snapshots; 8 Canon v0.26.2 body/release pins, 4 original distillations, 3 upstream pins verified; 2203 prior-root files frozen. Native tree equals requested tree; logical commit absent."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-r2-privacy/scripts/build_map.py",
+      "exit_code": 0,
+      "summary": "Three unique, nonoverlapping exact edits; all six application orders equal; only assigned shared-test AST changes. Nested open/fstat observers, valid-FD test, helpers and all49 case identities preserved."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-r2-privacy/scripts/privacy_oracles.py",
+      "exit_code": 0,
+      "summary": "150 original-payload disclosures accepted by old assertion;150 private-payload disclosures rejected by new assertion and accepted by old args on identical bytes.40 redacted controls pass;10 other cases coherent;10 real owned descriptors closed. Oracle qualification only."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-r2-privacy/scripts/pytest_run.py original",
+      "exit_code": 1,
+      "summary": "Normal checkout configuration/conftests/pytest-timeout2.4.0:49 cases,44 failed/5 passed/3 warnings in25.10s;33.09s process. Complete output/HTTP/import receipts retained;8 clients closed."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-r2-privacy/scripts/pytest_run.py private",
+      "exit_code": 1,
+      "summary": "Exact private test with byte-identical normal configuration/conftests, real checkout SUT:49 cases,44 failed/5 passed/3 warnings in24.88s;34.68s process. Same ordered case IDs/outcomes;22 identical production-module import hashes;8 clients closed."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-r2-privacy/scripts/pytest_run.py controls",
+      "exit_code": 0,
+      "summary": "Five existing anonymous/refusal/service controls independently pass in11.09s;18.40s process. Normal copied config/plugins, complete output and import/HTTP receipts."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-r2-privacy/scripts/public_controls.py",
+      "exit_code": 0,
+      "summary": "Eight real-current-public observations;11 raw HTTP requests plus1 service request. Anonymous v3/two-pass, clean/reflected200/401 privacy,403 breaker,307 no-forwarding, configured/injected0.2s timeout and service/tenant headers;8 clients closed."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-r2-privacy/scripts/lint_private.py check",
+      "exit_code": 0,
+      "summary": "Private bytes supplied on stdin with original target identity so normal Ruff discovery, first-party grouping and per-file ignores apply; all checks pass. No source formatting/edit."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-r2-privacy/scripts/lint_private.py format",
+      "exit_code": 0,
+      "summary": "Private bytes supplied on stdin under normal target/config identity; format check passes without rewriting."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-r2-privacy/scripts/qualify.py",
+      "exit_code": 0,
+      "summary": "All49 case IDs/order and44RED/5GREEN outcomes match; same22 real SUT import hashes; copied config/conftests equal. Public keyword/option still absent. Sparse-private receipt full is explicitly only this module."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-r2-privacy/scripts/verify.py",
+      "exit_code": 0,
+      "summary": "Strict common/map schemas, source pins, all six edit orders, unchanged target/sibling AST, actual case/import evidence,2483 unchanged inputs/snapshots and2203 unchanged prior audit files verified."
+    }
+  ],
+  "limitations": [
+    "Private test-map authorship only. Checkout source/tests are unchanged. Root must validate both sibling-map application orders, compose READ-ORDER, run independent whole G2 and obtain independent remote RED acknowledgment before initial LOW source authorship; findings01/03 remain outside this map.",
+    "44 current failures are actual missing public keyword/parser capability (including parser private-path reflection); deeper loader/auth/redaction assertions remain latent. Observer-only real-FD controls qualify the assertion, never a future consumer or live authenticated runtime.",
+    "Logical input0fd8e05f5281a993fd0684bb0c61d044e22abf9b is absent locally. source_sha is honest native base1f81d880a2299df1ff30e38495034175a4700eff; exact equal tree09b6903c4d3e8f1ec44f864e9c7f2007957721c6 proves bytes, not ancestry.",
+    "Graph/coverage/semantic/ONNX MCP interfaces are unexposed. Supplied verified gte-base-en-v1.5/no-degradation and selected-reinjection receipts are prior evidence only; exact source/AST fallback is syntactic, with no index-completeness or fresh embedding claim.",
+    "Private pytest uses exact copied service config/conftests and real checkout production modules. Its sparse-layout receipt says full because only scene/tests exists; this is49 selected cases, not full service coverage or independent whole G2 approval. Original checkout receipt correctly says narrowed.",
+    "Immutable llama.cpp d261223d24e97f2df50220e4a5b7f0adb69bba81 selects Bearer compatibility only; installed/runtime identity and real acceptance remain unqualified. MockTransport proves configured/injected timeout behavior, not physical socket timing.",
+    "All failed audit setup attempts are retained: initial AST extraction selected the earlier tuple assignment (KeyError:path); structural-receipt regeneration initially used non-idempotent mkdir (FileExistsError); out-of-tree Ruff invocation mismatched existing import/per-file discovery. Corrected controls pass; proposed test bytes never changed after initial map construction.",
+    "Requested HIGH/STANDARD/model/1500s are session context, not independently attested runtime metadata. Actual cgroup limits are1GiB and CPU25000/100000. No nested agents, source implementation, installs, sockets/live services, credentials, inference, dispatch, adoption, merge or central finding closure."
+  ]
+}

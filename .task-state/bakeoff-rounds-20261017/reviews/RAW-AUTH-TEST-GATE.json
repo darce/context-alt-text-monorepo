@@ -1,0 +1,95 @@
+{
+  "status": "REVISE",
+  "summary": "Three material test-oracle defects require revision. Independent normal scoped run reproduced 44 failures and 5 passing controls; missing public auth inputs are real RED, while deeper auth/file/redaction behavior remains latent.",
+  "source_sha": "c4560598c1e460bb2a6b93d8ef3d3f0346222f45",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/reviews/RAW-AUTH-TEST-GATE.json",
+    ".task-state/bakeoff-rounds-20261017/reviews/RAW-AUTH-TEST-GATE.md"
+  ],
+  "commits": [
+    "7fdf2ef12e05680ff75e5f44149348acd153df50"
+  ],
+  "findings": [
+    {
+      "id": "RAW-AUTH-TEST-G1-01",
+      "severity": "medium",
+      "file": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py:409",
+      "description": "The descriptor observer rejects correct bounded reads and requires particular Python read entry points, beyond the frozen opened-descriptor contract.",
+      "evidence": "Original lines413-414/424-425 sum requested sizes rather than bytes returned. On the real owned0600 KEY descriptor, read(4097) returns64 bytes; a bounded EOF read(4033) is rejected although total content remains64 bytes. A single validated io.FileIO(fd).read(4097) also returns64 correctly but leaves reads empty and fails line457. The same observer accepts a single os.read(4097) parent. Reproduced with original AST-extracted observers in /tmp/raw-auth-test-gate/manifests/public-and-oracle-results.json; this is oracle sensitivity, not future-client GREEN.",
+      "fix": "Observe actual credential bytes and validation/reopen ordering without imposing a read primitive or total requested-size sum. Retain the4097 cap and real opened-descriptor/path-replacement/closure controls; qualify the observer with a bounded short-read/EOF loop and a standard descriptor stream as valid parents."
+    },
+    {
+      "id": "RAW-AUTH-TEST-G1-02",
+      "severity": "medium",
+      "file": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py:330",
+      "description": "Five malformed-file privacy checks track KEY after replacing the file with unrelated bytes, so disclosed rejected credential content can pass.",
+      "evidence": "Lines332-338 use a*4097, one\\ntwo, space-padded key, key\\x00 and key\\xff; line370 only checks KEY and the private path. Original no_leak(diagnostics(ValueError(\"invalid credential content: \"+repr(payload))), KEY, path, basename) accepts complete payload disclosure for all five, with a generic redacted refusal as valid parent and actual KEY disclosure correctly rejected. Reproduced in public-and-oracle-results.json. An implementation that handles valid credentials privately but echoes only malformed input would escape these cases. Current parser RED does not exercise this assertion against a file loader.",
+      "fix": "Place an independently observable unique credential sentinel in each nonempty malformed payload and check its raw/escaped diagnostic forms, or check the actual payload. Keep each invalidity isolated, and pair the original assertion with a leaking diagnostic and a redacted valid refusal; do not replace the loader."
+    },
+    {
+      "id": "RAW-AUTH-TEST-G1-03",
+      "severity": "medium",
+      "file": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py:341",
+      "description": "Negative metadata cases observe final refusal but cannot reject reading credential content before owner/mode validation, contrary to the frozen before-content-read requirement.",
+      "evidence": "Lines344-361 wrap open/fstat only; lines365-373 and579-590 check typed/private refusal and absent HTTP/output, with no read observation. The valid-file descriptor case merely records fstat before reading. Consequently open(flags), fstat(fd), read(fd,4097), then reject foreign uid/insecure mode satisfies these observers and final assertions while violating the required order. Original observer-only real-FD probes allow64-byte reads on both0640 and injected foreign-owner descriptors, alongside0400/0600 valid parents; metadata-oracle-results.json records this sensitivity gap, not a future implementation run.",
+      "fix": "At the real CLI boundary, make attempted credential reads observable for the existing foreign-owner/insecure-mode cases and assert zero reads before their refusal, paired with runner-owned0400/0600 parents that do read and proceed. Cover supported descriptor read paths without naming a private loader or constraining stat representation/syscall choice."
+    }
+  ],
+  "tests": [
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-test-gate/scripts/context.py",
+      "exit_code": 0,
+      "summary": "1475 complete byte reads/snapshots; eight Canon v0.26.2 bodies/release pins, four original distillations and three immutable upstream files verified; 1317 prior-root files preserved; exact-source AST fallback."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-test-gate/scripts/pytest_run.py whole",
+      "exit_code": 1,
+      "summary": "Normal service config/conftests/required pytest-timeout: 49 collected, 44 failed/5 passed/3 empty-rubric warnings in 23.68s; process 30.80s. Full outputs, per-case results, actual import hashes and 12 HTTP exchanges retained; all 8 clients closed."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-test-gate/scripts/pytest_run.py controls",
+      "exit_code": 0,
+      "summary": "Five existing valid anonymous/refusal/service controls passed in 11.52s; normal collection receipt/import hashes/HTTP transcript retained."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-test-gate/scripts/public_and_oracles.py",
+      "exit_code": 0,
+      "summary": "22 independent public-boundary/external-stub/original-oracle observations and 14 real HTTP requests. Confirmed valid-reader false rejections and five malformed-payload disclosure false negatives; current 403/breaker/redirect/timeout/service-tenant/reflection controls. Successful ledger entry public-and-oracles-final2; two earlier private probe setup failures retained, not product RED."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-test-gate/scripts/metadata_oracle.py",
+      "exit_code": 0,
+      "summary": "Original negative-case OS observers allow reads on insecure/foreign-owner descriptors and both valid private-mode parents; original terminal privacy/no-output/no-network assertions do not detect the order violation. Oracle analysis only."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-test-gate/scripts/matrix.py",
+      "exit_code": 0,
+      "summary": "All 49 collected cases mapped to exact source lines, valid/negative parents, current result, latent assertions and unresolved defects."
+    },
+    {
+      "command": ".venv/bin/ruff check --no-cache apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py",
+      "exit_code": 0,
+      "summary": "All checks passed."
+    },
+    {
+      "command": ".venv/bin/ruff format --check --no-cache apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py",
+      "exit_code": 0,
+      "summary": "File already formatted."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-test-gate/scripts/verify.py --committed",
+      "exit_code": 0,
+      "summary": "Strict common schema, committed report equality, exact native source/tree, only two owned paths, all 1475 frozen byte reads and 1317 unchanged prior files, actual import hashes, collection/oracle receipts and closed clients verified."
+    }
+  ],
+  "limitations": [
+    "Logical input 5fcd9c70280c8da8bf222f5c5f96b7eda7d591ce is absent locally. Honest native source_sha has exact requested tree a8f16c85f52e71c295591b0f377c73e83df6c97e; equal tree establishes byte identity, not ancestry.",
+    "REVISE is a whole-test gate only. No source repair/test repair/future consumer/source patch/sys.modules replacement, implementation GREEN, adoption, main merge, dispatch or finding closure. Root owns the actual SECOND test-author HIGH STANDARD slice with this gate, first-author/route reports and both prior audit roots, then independent re-review and root remote RED acknowledgment BEFORE any initial LOW source slice.",
+    "Current TypeError/rejected CLI option and reflected synthetic path are meaningful public missing-capability RED, not behavioral qualification of future credential loading/redaction. Oracle counterexamples use original assertion logic and real external dependencies only; no future client was manufactured.",
+    "Pinned llama.cpp b6887/d261223d24e97f2df50220e4a5b7f0adb69bba81 supports selected raw Bearer compatibility only. Installed runtime identity, real server acceptance, boot/admission/runtime/quality remain unknown. Existing clone seed/model_revision omission is preexisting and outside these findings.",
+    "No live graph/semantic/ONNX retrieval tool exposed or executed. Supplied verified gte/ONNX retrieval and selected reinjection plus full original attempts were read; exact source/AST used without graph completeness/freshness claims. Canon mirrors/distillations are supplied pinned materials, not freshly retrieved books.",
+    "MockTransport observes HTTP encoding, configured 0.2s timeouts and injected timeout handling, not socket deadline enforcement. Zero-byte image fixtures and synthetic credentials only; empty-rubric warnings establish no quality or GT result.",
+    "Private audit /tmp/raw-auth-test-gate retains snapshots/scripts/fulloutputs/exits/importhashes/manifests and owned fixtures; /tmp/raw-auth-tests and /tmp/qwen-raw-auth-route remain immutable. Clients/descriptors closed. No installs, broad suites, foreign signals, cache deletion, GPU/cloud/guest/secret/model/weight/media/GT/inference/shared-service/auth operation or nested agent.",
+    "Actual cgroup 1GiB and CPU 25000/100000 verified. Requested gpt-6.1-sol/XHIGH/STANDARD/1500s is session context, not independently attested execution metadata. commits identifies the substantive report commit; a later JSON-only commit records its pointer without self-reference."
+  ]
+}

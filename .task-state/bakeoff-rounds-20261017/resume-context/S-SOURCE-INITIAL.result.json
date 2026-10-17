@@ -1,0 +1,75 @@
+{
+  "status": "implemented_pending_independent_review",
+  "summary": "Implemented narrow v1 subject evidence in the two authorized source files. Final87 cases GREEN;four legacy and12 adjacent controls GREEN;independent negatives and seven isolated mutants discriminate the public boundary.",
+  "source_sha": "adbe9187433f7490110f8aaa2d16c2a5470c480a",
+  "changed_files": [
+    "apps/prototype-description-service/scripts/eval_harness/manifest.py",
+    "apps/prototype-description-service/scripts/eval_harness/build_bakeoff_report.py",
+    ".task-state/bakeoff-rounds-20261017/implementation/S-SOURCE-INITIAL.json",
+    ".task-state/bakeoff-rounds-20261017/implementation/S-SOURCE-INITIAL.md"
+  ],
+  "commits": [
+    "122726c604201740dd98b1562f69acd0644d5c0b"
+  ],
+  "findings": [],
+  "tests": [
+    {
+      "command": ".venv/bin/python /tmp/s-source-initial/run.py final-subject .venv/bin/python -m pytest -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider --collection-scope-receipt=/tmp/s-source-initial/final-collection.json --basetemp=/tmp/s-source-initial/final-subject-pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py -k subject_evidence --tb=short",
+      "exit_code": 0,
+      "summary": "87 passed,170 deselected; nine approved selectors;74 actual CLI receipts match current report import; no collection/setup errors."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-source-initial/run.py legacy-four .venv/bin/python -m pytest -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider --collection-scope-receipt=/tmp/s-source-initial/legacy-collection.json --basetemp=/tmp/s-source-initial/legacy-pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_bakeoff_gate_rejects_selection_subject_or_image_overlap apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_matching_manifest_sha_renders_unbadged apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_foreign_manifest_sha_is_fatal_and_writes_nothing apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_manifest_version_as_string_fails_closed",
+      "exit_code": 0,
+      "summary": "All four required legacy overlap/digest/version controls pass."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-source-initial/run.py adjacent-load-routing .venv/bin/python -m pytest -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider --collection-scope-receipt=/tmp/s-source-initial/adjacent-collection.json --basetemp=/tmp/s-source-initial/adjacent-pytest apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py -k 'load_manifest_metadata_only or roster_only_more_boxes or unsupported_manifest_version or non_v3_manifest or structural_mismatch or load_manifest_skip_true_reason or load_manifest_hash_skip_reason' --tb=short",
+      "exit_code": 0,
+      "summary": "12 adjacent metadata-only,byte-verification,routing and unchanged coverage controls pass;204 deselected."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-source-initial/run.py private-controls-r2 .venv/bin/python /tmp/s-source-initial/public-controls.py real-r2 all",
+      "exit_code": 0,
+      "summary": "24 independent checks pass: both roles,allow-foreign,coherent parents,state/support/source negatives,unresolved identities,missing evidence,omission,matching digest and each of six stale pins."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-source-initial/run.py mutant-approved-comparison .venv/bin/python /tmp/s-source-initial/pytest-mutant.py /tmp/s-source-initial/mutants/comparison -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider --basetemp=/tmp/s-source-initial/mutant-approved-comparison-pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_subject_evidence_namespace_comparison_public_cli --tb=short",
+      "exit_code": 1,
+      "summary": "Expected RED: unchanged approved namespace selector rejects bypassed incomparability in all four cases; actual isolated imports retained."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-source-initial/run.py mutant-approved-source .venv/bin/python /tmp/s-source-initial/pytest-mutant.py /tmp/s-source-initial/mutants/source -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider --basetemp=/tmp/s-source-initial/mutant-approved-source-pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py -k 'subject_evidence_foreign_binding_and_version_public_cli and (namespace or strict-binding)' --tb=short",
+      "exit_code": 1,
+      "summary": "Expected RED: unchanged approved public selector rejects bypassed binding in three raw/strict and reported/selection cases; actual isolated imports retained."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-source-initial/run.py lint-final-r2 .venv/bin/ruff check apps/prototype-description-service/scripts/eval_harness/manifest.py apps/prototype-description-service/scripts/eval_harness/build_bakeoff_report.py",
+      "exit_code": 0,
+      "summary": "Scoped lint passes for the two owned source files."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-source-initial/run.py format-final-r2 .venv/bin/ruff format --check apps/prototype-description-service/scripts/eval_harness/manifest.py apps/prototype-description-service/scripts/eval_harness/build_bakeoff_report.py",
+      "exit_code": 0,
+      "summary": "Both owned source files pass format check."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-source-initial/run.py direct-script .venv/bin/python apps/prototype-description-service/scripts/eval_harness/build_bakeoff_report.py --help",
+      "exit_code": 0,
+      "summary": "Direct file-path invocation imports successfully and renders CLI help."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-source-initial/run.py source-audit .venv/bin/python /tmp/s-source-initial/audit.py",
+      "exit_code": 0,
+      "summary": "1291 retained G2 artifacts hash-verified; exact source/test/plan baseline pins and five-file origins verified;readonly pins unchanged; unchanged definitions checked by AST."
+    }
+  ],
+  "limitations": [
+    "Initial implementation only;root owns finding disposition,independent WHOLE source XHIGH gate,all next dispatches and main merge. Synthetic protocol fixtures establish no attestation truth,identity equivalence,quality,score,face qualification or bakeoff approval. Metadata17811 and regression37 replacement17805 remain unchanged.",
+    "Logical input8a871a8485f3685b3f4cd9b22299c9a5daa14f49 is represented by honest native base adbe9187433f7490110f8aaa2d16c2a5470c480a with exact requested tree5fe7ee17435cb02dd2f9b765390499437026f42f;no ancestry claim. Exact canonical921d30df three test blobs and approved plan06033dd9 verified before production edits against independently RED source.",
+    "Live graph/handoff MCP is unavailable. Used supplied verified ONNX retrieval/reinjection19105/19106/17814,current five-file origin pins and exact checkout/AST fallback;no fresh ONNX inference or refreshed403-node/1808-edge graph claim. Requested runtime/tier is not independently exposed by these tools.",
+    "Private audit retained at /tmp/s-source-initial; prior audits remain intact. Initial87-case implementation run was already GREEN. Initial lint/format failures and the private digest-control stale-fixture failure are preserved; corrected controls pass. Seven intentional source mutants fail their behavioral assertions,including both-role state/support/source checks. No tests were edited.",
+    "Source formatting was limited to the two owned files;existing formatting debt and one equivalent preexisting roster-only lint condition were normalized there. Digest helpers,corpus readiness,prompt builders,context-only callers and other existing definitions remain AST-equivalent outside named integration boundaries.",
+    "Focused subprocesses are bounded55s/1GiB/one CPU at50% duty; no timeout,broad suite,downloads,model inference or runtime changes. Implementation commit is listed;the separate report custody commit is recorded in the private postcommit audit to avoid a self-referential committed JSON hash."
+  ]
+}

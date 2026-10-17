@@ -1,0 +1,41 @@
+{
+  "project": "subject-evidence-initial-source-test-map",
+  "nodes": 431,
+  "edges": 1934,
+  "origin": {
+    "stage": {
+      "sha": "ff0e089940b4d6e4e809019ae26475816fc45f10",
+      "tree": "244b9ee3a43acc0d57079527c3286c073f42fe75",
+      "base": "8a871a8485f3685b3f4cd9b22299c9a5daa14f49",
+      "branch": "feature/bakerounds-20261017-s-source-initial-delivered",
+      "changed_files": [
+        ".task-state/bakeoff-rounds-20261017/implementation/S-SOURCE-INITIAL.json",
+        ".task-state/bakeoff-rounds-20261017/implementation/S-SOURCE-INITIAL.md",
+        "apps/prototype-description-service/scripts/eval_harness/build_bakeoff_report.py",
+        "apps/prototype-description-service/scripts/eval_harness/manifest.py"
+      ]
+    },
+    "files": [
+      {
+        "path": "apps/prototype-description-service/scripts/eval_harness/manifest.py",
+        "sha256": "b3b414ab5c422d6c1fe1733f6c67db256aea003723d91e75c261714487cf4850"
+      },
+      {
+        "path": "apps/prototype-description-service/scripts/eval_harness/build_bakeoff_report.py",
+        "sha256": "a02cf99c3e42b47ac818305dde5173e941a883b1f2107501f4e5250503fd9833"
+      },
+      {
+        "path": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py",
+        "sha256": "3b867574b78b24b49b5086a7d680763f73bec833aa584f6b33c7450528a0f0de"
+      },
+      {
+        "path": "apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py",
+        "sha256": "70862e9415dcba8f54f46bf1eade9a34247cce4a5204982ce8ab766c8ce92fa5"
+      },
+      {
+        "path": "apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py",
+        "sha256": "83ae4bfbc8671617b8cfec4eb718c0a772f27e8dbadf1a6615bebaac8e691be7"
+      }
+    ]
+  }
+}

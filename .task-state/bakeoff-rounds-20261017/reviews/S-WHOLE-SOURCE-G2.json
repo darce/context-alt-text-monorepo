@@ -1,0 +1,63 @@
+{
+  "status": "pass",
+  "summary": "PASS0: no unresolved material whole-source defects. Both G1 corrections verified;117 subject+4 legacy+12 adjacent cases pass; independent public controls and source mutants discriminate.",
+  "source_sha": "1255bff052b655ee3a0263b50cf40d7a1515211e",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/reviews/S-WHOLE-SOURCE-G2.json",
+    ".task-state/bakeoff-rounds-20261017/reviews/S-WHOLE-SOURCE-G2.md"
+  ],
+  "commits": [
+    "f119485e7951ecded88b98fb80425d579c79e914"
+  ],
+  "findings": [],
+  "tests": [
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-whole-sour-81554e72/.venv/bin/python /tmp/s-whole-source-g2/scripts/verify.py",
+      "exit_code": 0,
+      "summary": "Verified117 completed subject cases under normal config/conftests/required plugins,4 legacy,12 adjacent;107 in-process and17 native import receipts; all output hashes match."
+    },
+    {
+      "command": "python /tmp/s-whole-source-g2/scripts/batch.py /tmp/s-whole-source-g2/scripts/independent-spec.json",
+      "exit_code": 0,
+      "summary": "46 public controls,21 date/precedence cases,68 serializer comparisons pass; eight deliberate source mutants rejected in both roles."
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-whole-sour-81554e72/.venv/bin/python /tmp/s-whole-source-g2/scripts/native_replay.py",
+      "exit_code": 0,
+      "summary": "Six native CLI controls meet exact exits/codes/output contracts, including genuine foreign-run parent and both unnamed-face roles."
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-whole-sour-81554e72/.venv/bin/python /tmp/s-whole-source-g2/scripts/pytest_mutant.py absence -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider --tb=short --collection-scope-receipt=/tmp/s-whole-source-g2/outputs/approved-mutant-absence.collection-scope.json --basetemp=/tmp/s-whole-source-g2/tmp/approved-mutant-absence apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_subject_evidence_supported_empty_face_conflict_public_cli",
+      "exit_code": 1,
+      "summary": "Expected behavioral RED:4 unnamed-face failures/4 named passes on the unchanged approved regression; valid empty parents pass."
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-whole-sour-81554e72/.venv/bin/python /tmp/s-whole-source-g2/scripts/pytest_mutant.py dates -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider --tb=short --collection-scope-receipt=/tmp/s-whole-source-g2/outputs/approved-mutant-dates-r2.collection-scope.json --basetemp=/tmp/s-whole-source-g2/tmp/approved-mutant-dates-r2 'apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py::test_subject_evidence_review_dates_public_cli[selection-dated-stale]'",
+      "exit_code": 1,
+      "summary": "Expected behavioral RED: valid parent0; actual dated native CLI1/TypeError fails required4/source_binding, with no collection error."
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-whole-sour-81554e72/.venv/bin/ruff check --config pyproject.toml apps/prototype-description-service/scripts/eval_harness/manifest.py apps/prototype-description-service/scripts/eval_harness/build_bakeoff_report.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py",
+      "exit_code": 0,
+      "summary": "Scoped lint passes for both source files and all three tests using repository-root configuration."
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-whole-sour-81554e72/.venv/bin/ruff format --check --config pyproject.toml apps/prototype-description-service/scripts/eval_harness/manifest.py apps/prototype-description-service/scripts/eval_harness/build_bakeoff_report.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py",
+      "exit_code": 0,
+      "summary": "All five files pass format check."
+    },
+    {
+      "command": "python /tmp/s-whole-source-g2/scripts/batch.py /tmp/s-whole-source-g2/scripts/custody-spec.json",
+      "exit_code": 0,
+      "summary": "All5697 original checkout files and12380 files in three required prior roots hash-match;11 bounded custody partitions."
+    }
+  ],
+  "limitations": [
+    "Source review only. Root retains MCP disposition, adoption, parent SUBJECT-GATE-03 closure and actual effects; no source/test repair, agents, acceptance or main merge.",
+    "Logical inputbb366f0946c5bf54e140f06c7130ff73e6a8c730 is unavailable as a native object. Honest stripped base has exact treeed0dca57aeb2baddeb448fc52db80b14b4787376; equal trees are not ancestry.",
+    "Live graph/ONNX/handoff tools are unavailable. Supplied verified semantic receipts/reinjection and exact five-file source/AST checks were used. Exact owner-gate-semantic ancestor body was not found in readable searched paths; no live retrieval/inference claim.",
+    "Legacy omitted dated reported-manifest digest limitation remains unchanged. Synthetic attestations/run records prove protocol behavior, not identity/absence truth, quality, scores or live qualification.",
+    "Full audit retained at /tmp/s-whole-source-g2, including three55s timeouts and corrected interpreter/config/provenance/mutant-package setup failures. Early conftest ini overrides could refresh its canonical temporary receipt; later explicit options suppress this. Uncertain shared state was preserved.",
+    "Requested model/effort/STANDARD custody and aggregate VM quota are not independently exposed. Owned checks used1GiB address-space/one-CPU25%-duty/55s bounds and finally cleanup. commits lists the content commit; summary custody is recorded privately."
+  ]
+}

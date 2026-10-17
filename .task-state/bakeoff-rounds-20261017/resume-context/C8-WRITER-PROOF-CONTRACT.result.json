@@ -1,0 +1,71 @@
+{
+  "status": "map_pending_independent_planning",
+  "summary": "Proposed joint E/P/C writer fence, proof scope and original cleanup-actor lifetime in14 immutable edits. Independent whole-contract planning G2 is required; no adoption, source GREEN or finding closure.",
+  "source_sha": "895efea644c6947f6913b69fc6e179049c37cfdc",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/adjudications/C8-WRITER-PROOF-CONTRACT.edits.json",
+    ".task-state/bakeoff-rounds-20261017/adjudications/C8-WRITER-PROOF-CONTRACT.json",
+    ".task-state/bakeoff-rounds-20261017/adjudications/C8-WRITER-PROOF-CONTRACT.md"
+  ],
+  "commits": [
+    "cd32f1c035367430adb401733dc737ad7d83aa48"
+  ],
+  "findings": [
+    {
+      "id": "C-STORAGE-PLAN-GATE-01",
+      "severity": "medium",
+      "file": "docs/tasks/vlm/BAKECACHE-1-storage-observation-proposal.md:262",
+      "description": "The old registered-helper/finish cycle still governs until an explicit joint owner amendment is independently adopted; this map proposes that amendment without declaring closure.",
+      "evidence": "Accepted plan262/394 and composed proposal132/136 require helper death before proof but helper cleanup after proof. Both C7 maps and the exact original coupling witness are preserved. Source C/E/storage implementations are absent.",
+      "fix": "Root must obtain independent whole-contract planning G2 and E/P/C agreement on the proposed W/A scope, original fence/cleanup authority and lifetime, including both1477 requests and preserved physical transfer, before adoption or dependent work."
+    }
+  ],
+  "tests": [
+    {
+      "command": "python -B /tmp/c8-writer-proof-contract/scripts/context_audit.py",
+      "exit_code": 0,
+      "summary": "Rehashed5684 prior manifest entries; both actual C7 maps commute and exactly reproduce frozen input. Reused OS/specification evidence only."
+    },
+    {
+      "command": "python -B /tmp/c8-writer-proof-contract/scripts/contract_exercises.py",
+      "exit_code": 0,
+      "summary": "Healthy phase constraints and15 negatives checked; old lifecycle cycle preserved and explicitly removed only by the proposed scope amendment."
+    },
+    {
+      "command": "python -B /tmp/c8-writer-proof-contract/scripts/contract_exercises.py --drop-ack",
+      "exit_code": 1,
+      "summary": "Expected assertion rejects removal of the effect-ack requirement; proposal sensitivity only."
+    },
+    {
+      "command": "python -B /tmp/c8-writer-proof-contract/scripts/contract_exercises.py --allow-payload",
+      "exit_code": 1,
+      "summary": "Expected assertion rejects removal of post-fence workload-write refusal; proposal sensitivity only."
+    },
+    {
+      "command": "python -B /tmp/c8-writer-proof-contract/scripts/os_controls.py",
+      "exit_code": 0,
+      "summary": "Five tiny OS controls; actual child waits, live cleanup actor, post-fence refusal, controlled stalls, alias and preserved replacement. No C/E behavior."
+    },
+    {
+      "command": "python -B /tmp/c8-writer-proof-contract/scripts/verify_map.py",
+      "exit_code": 0,
+      "summary": "14 exact-once/nonoverlapping original anchors; both application orders; five protected C7 blocks;10 invalid-map controls rejected. Actual proposal unchanged."
+    },
+    {
+      "command": "python -B /tmp/c8-writer-proof-contract/scripts/native_custody.py",
+      "exit_code": 0,
+      "summary": "Native model/effort, remote host, exact input tree and1GiB/0.5CPU verified; supplied root decision and unavailable live MCP qualified."
+    }
+  ],
+  "limitations": [
+    "Only the three assigned artifacts change. Actual proposal, accepted plan, source, tests, P1/M1 records and old evidence remain read-only. Canonical C-BASE-GATE-01/19085 and supervision disposition remain root-owned/open.",
+    "Logical input50a35894 is absent; source_sha names the honest native base with exact supplied tree74342ea7e15b9262401575a4579788e8f6cc3a66. Equal trees imply no ancestry.",
+    "Finite return qualification covers ready storage wrappers under stated scheduling/control assumptions. Startup, raw C component I/O, whole E execution and unqualified device readers are not established. Kernel-I/O death/FD closure is never inferred from timers or TERM/KILL.",
+    "Typed constraints and tiny private OS controls test proposal sensitivity/ordinary feasibility only; no future adapter simulator, P2 decoder, C/E behavior, full coverage or behavioral GREEN. Prior physical controls were rehashed/reused, not rerun.",
+    "No live graph/handoff/planning MCP or semantic refresh is exposed. Supplied verified ONNX/handoff, six hash-verified Canon0.26.2 bodies, fired rows/cards, original supplied excerpts and exact source/AST fallback were used. Root decision17825 is supplied dispatch context.",
+    "Preserve /tmp/c8-writer-proof-contract with complete snapshots/scripts/typed exercises/OS events/raw outputs/exits/failed attempts/prior-blobs/native custody/hash manifest. Native gpt-6.1-sol/xhigh and1GiB/0.5CPU verified; STANDARD tier not independently exposed.",
+    "No agents, installs, broad/unchanged P suites, model/media/GT/vector/weight/OCI/GPU/server/download/cache eviction/foreign signal/shared-runtime/network/auth changes. All tiny fixture children reaped; audit files retained.",
+    "Qwen procedure remains NOT_READY; a separately qualified narrow one-arm procedure may precede generic P2 completion. This lane adds no full-quality/all-candidate raw-generation gate. No adoption, closure, merge, readiness or ninth-author dispatch.",
+    "Private audit manifest SHA256 d0ca8b7c072c67d7fde0a153cacfc0c5cb1d15e8d5e4a2717dda5b499bf3afdb binds 1500 files. The commits field names the substantive artifact commit; the later pointer commit is supplemental custody. Final response equals committed JSON."
+  ]
+}

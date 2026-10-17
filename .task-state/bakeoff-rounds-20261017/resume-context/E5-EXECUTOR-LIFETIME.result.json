@@ -1,0 +1,76 @@
+{
+  "status": "map_pending_independentwholegate",
+  "summary": "Committed executor-only lifetime/monitor edit map; 233 IDs/assertions preserved, 171 canonical fixture leaves qualified, real OS controls pass. Independent whole gate remains required.",
+  "source_sha": "c503cbf165d8bafec643113f9d0d3ce25d41643e",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/adjudications/E5-EXECUTOR-LIFETIME.edits.json",
+    ".task-state/bakeoff-rounds-20261017/adjudications/E5-EXECUTOR-LIFETIME.json",
+    ".task-state/bakeoff-rounds-20261017/adjudications/E5-EXECUTOR-LIFETIME.md"
+  ],
+  "commits": [
+    "27c0e45f4a25aa0e496949dd8f1e2582424f5893"
+  ],
+  "findings": [
+    {
+      "id": "C-FULL-GATE-01",
+      "severity": "HIGH",
+      "file": "apps/prototype-description-service/scene/tests/test_eval_harness_owned_executor.py:1492",
+      "description": "Proposed executor fixture cleanup excludes live/unknown writer references before removal.",
+      "evidence": "Original helper deletes ordinary/unlinked external-writer roots; the candidate retains those plus inode aliases/self FDs and unreadable views. Matched stopped/closed writers and all94 normal factory roots are removed.",
+      "fix": "13-anchor map adds a bounded owned reference-check worker, no-follow stable snapshots, inode/FD exclusion and frozen-entry revalidation. Runner correction and independent finding disposition remain external."
+    },
+    {
+      "id": "E-TEST-G3-01",
+      "severity": "MEDIUM",
+      "file": "apps/prototype-description-service/scene/tests/test_eval_harness_owned_executor.py:1367",
+      "description": "Proposed containment monitor tolerates native ENOENT/ESRCH without fabricating death proof.",
+      "evidence": "Preceding native ESRCH traceback is hash-verified. Candidate keeps captured identities;64 real unpaced short-lived children and36 immediate/child/work controls pass.",
+      "fix": "Handle native disappearance during ancestry/census/signal revalidation, then require independent direct wait/kernel pidfd exit proof. Unknown observations retain fixtures."
+    }
+  ],
+  "tests": [
+    {
+      "command": ".venv/bin/python -B /tmp/e5-executor-lifetime/audit_verify.py",
+      "exit_code": 0,
+      "summary": "484 sealed evidence entries verify; all actual source/test/P/plan pins unchanged; 94 exact projections and171 leaf/container controls pass; all233 IDs,215 executor assertions and83 legacy assertions preserved."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/e5-executor-lifetime/lifetimes.py after",
+      "exit_code": 0,
+      "summary": "Eight actual writer controls retain ordinary/unlinked/self FDs and linked aliases, while stopped or closed ordinary writers permit removal. Original before-map controls expose the deletion defect."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/e5-executor-lifetime/safety.py",
+      "exit_code": 0,
+      "summary": "Seven real OS safety controls pass, including actual unreadable-process retention, owned escaped-child reap, timeout retention, replacements and symlink target preservation."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/e5-executor-lifetime/uncertainty.py",
+      "exit_code": 0,
+      "summary": "Five observation pairs pass, including stable cleanup and retention on changes, ESRCH and a blocked scan; the bounded scanner is reaped."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/e5-executor-lifetime/short_children.py",
+      "exit_code": 0,
+      "summary": "64 unpaced real short-lived children are captured/waited; normal protected root removed. No E behavior."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/e5-executor-lifetime/lint.py check",
+      "exit_code": 0,
+      "summary": "Focused exact-candidate Ruff check passes; format check and whole AST/ID/assertion validation also pass."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/e5-executor-lifetime/echeck.py",
+      "exit_code": 4,
+      "summary": "Exact accepted-plan nine selectors: expected bootstrap4 in25.45s, absent owned_executor, zero E behavior assertions; raw warnings retained."
+    }
+  ],
+  "limitations": [
+    "Proposal only: compose with the independent runner map in both peer orders and run complete CURRENTv1 G4 independent gate. No source, main, closure, P-v2 or bakeoff approval. A sixth semantic E author needs a new LOUD proposal.",
+    "Logical input is bound by native provenance to base1ae46c1f and tree a6750ebc; no ancestry inference. Actual tests/source/P-v1/accepted-plan4c2a9d73 and prior maps are unchanged.",
+    "Supplied verified semantic/codemap/Canon0.26.2 context used with checkout fallback; no live MCP retrieval or new semantic/model execution. Six bodies, matched rows/cards and963 preceding raw review entries verify.",
+    "Requested/admitted profile: codex-remote gpt-6.1-sol/xhigh/standard1500s,1GiB/0.25CPU after Claude exhaustion. Visible codex-linux-sandbox exposes no independent model/tier or cgroup quota attestation. Actual probe limits are1GiB address space/30 CPU-seconds/55s.",
+    "Preserve /tmp/e5-executor-lifetime; sealed manifest SHA2563356c543c6f2215926fdbe6d968c924ab119f8554de193975b5a939dbf0791b1 binds484 entries and candidate17515d63. Raw setup failures remain. One earlier uncertain fixture .bakecache-owned-e-hakwifth is retained with a21-entry private snapshot because its original inode was not exported.",
+    "Read-only reference exclusion covers the visible Linux namespace and retains unreadable/unstable observations. It is bounded fixture evidence retention, with no security-platform or future-opener guarantee. No discovered foreign process receives signals."
+  ]
+}

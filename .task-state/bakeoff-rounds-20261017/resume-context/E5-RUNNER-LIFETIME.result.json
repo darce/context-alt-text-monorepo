@@ -1,0 +1,77 @@
+{
+  "status": "map_pending_independentwholegate",
+  "summary": "Committed three runner fixture lifetime edits as a map; real hardlink regression retained, positive cleanup preserved. Independent whole gate pending.",
+  "source_sha": "418adc65a81daeb3baec785ad0115c4b487d713a",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/adjudications/E5-RUNNER-LIFETIME.edits.json",
+    ".task-state/bakeoff-rounds-20261017/adjudications/E5-RUNNER-LIFETIME.json",
+    ".task-state/bakeoff-rounds-20261017/adjudications/E5-RUNNER-LIFETIME.md"
+  ],
+  "commits": [
+    "6b9f63c4c8ff291c8e19a60408d76422257c5308"
+  ],
+  "findings": [
+    {
+      "id": "C-FULL-GATE-01",
+      "severity": "HIGH",
+      "file": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_runner.py",
+      "description": "Runner lifetime correction proposed; independent review and finding disposition remain pending.",
+      "evidence": "Current real external-hardlink writer safety check exits1: root deleted, links2\u001a1. Candidate exits0: caller sees inode-writer refusal, root and links2\u001a2 retained. Stopped-writer/read-only controls actually remove roots.",
+      "fix": "Compose with the separately owned executor/census map in both orders and obtain independent whole G4 CURRENTv1 review."
+    }
+  ],
+  "tests": [
+    {
+      "command": ".venv/bin/python -B /tmp/e5-runner-lifetime/validate_map.py",
+      "exit_code": 0,
+      "summary": "Exact schema; three exact-once nonoverlapping edits reproduce candidate; all187 initial files unchanged."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/e5-runner-lifetime/verify.py",
+      "exit_code": 0,
+      "summary": "All233 IDs/assertion multisets/legacy83 preserved; E3/E4 orders, plan/P/source/Canon pins and963 prior raw-manifest entries verify."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/e5-runner-lifetime/witness.py current safety",
+      "exit_code": 1,
+      "summary": "Predicted fixture safety RED: live external-hardlink evidence removed. No E behavior."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/e5-runner-lifetime/witness.py candidate safety",
+      "exit_code": 0,
+      "summary": "Same real witness retains root/both links and raises to caller; owned writer stops/reaps."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/e5-runner-lifetime/controls.py",
+      "exit_code": 0,
+      "summary": "Nine real OS controls preserve positive cleanup, writer/unknown/foreign retention and session/reap checks."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/e5-runner-lifetime/fixtures.py 2 0 5",
+      "exit_code": 0,
+      "summary": "Final partition passes; all seven completed partitions qualify133 runner cases/136 factory calls/352 P-valid leaves and containers."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/e5-runner-lifetime/timeout.py",
+      "exit_code": 0,
+      "summary": "Actual45s timeout retains proof after owned TERM/KILL/reap; complete command49.35s<55s."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/e5-runner-lifetime/lint_stdin.py",
+      "exit_code": 0,
+      "summary": "Exact private candidate passes Ruff with actual checkout filename; final format check also passes."
+    },
+    {
+      "command": "../../.venv/bin/python -B -m pytest --noconftest -o required_plugins= -p no:cacheprovider -q scene/tests/test_eval_harness_owned_executor.py::test_success_error_interrupt_cleanup scene/tests/test_eval_harness_owned_executor.py::test_unknown_exit_blocks_eviction scene/tests/test_eval_harness_owned_executor.py::test_missing_subprocess_is_typed scene/tests/test_eval_harness_owned_executor.py::test_collector_armed_before_exec scene/tests/test_eval_harness_owned_executor.py::test_no_next_arm_without_cleanup_receipt scene/tests/test_eval_harness_bakeoff_runner.py::test_owned_shell_preserves_outputs_and_score_control scene/tests/test_eval_harness_bakeoff_runner.py::test_owned_batch_report_preserves_sealed_legs scene/tests/test_eval_harness_bakeoff_runner.py::test_owned_batch_rerun_and_all_refused scene/tests/test_eval_harness_bakeoff.py::test_custom_out_does_not_prune_module_out",
+      "exit_code": 4,
+      "summary": "Expected bootstrap4 in41.45s: owned_executor.py absent; zero E behavior assertions."
+    }
+  ],
+  "limitations": [
+    "Actual checkout tests/source/P/accepted plan and peer maps remain unchanged. Root still owes both E5 composition orders and independent whole G4 CURRENTv1 gate; no source/P2 approval, finding closure or sixth author dispatch.",
+    "Logical aa8904c36e3c3170ccf44631c58eb2817a752522 object is absent; native base above has exact supplied tree a6750ebc00739ce0f4cdb5faaa6ad2e0175baa69. Commits lists the substantive map/Markdown commit; this common summary is committed separately.",
+    "Requested native gpt-6.1-sol XHIGH STANDARD1500s, Claude exhausted,1GiB/0.25CPU is supplied admission. Actual host/Linux/cwd and1GiB AS/30CPU-second/55s validation bounds are recorded; launcher/model/native CPU quota and host-wide process visibility are not independently attested.",
+    "Private evidence /tmp/e5-runner-lifetime/audit-manifest.json SHA256 1487d9f49aa676203f81354ce7a8a0154fc6c49aff53ef98a840fed0b56266a0 binds804 files. Failed private setup/bounded qualification attempts remain recorded; final controls/partitions pass. All28 retained/uncertain roots remain with private custody copies; no unknown/foreign resource was signalled or removed.",
+    "Supplied verified ONNX/handoff/codemap and six hashed Canon0.26.2 bodies were used with checkout fallback; no live semantic/graph execution or MCP catalog scan. OS/record controls are not C/E GREEN."
+  ]
+}

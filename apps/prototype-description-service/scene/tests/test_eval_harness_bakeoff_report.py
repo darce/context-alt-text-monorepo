@@ -1296,33 +1296,54 @@ def test_subject_evidence_supported_empty_scene_public_cli(tmp_path: Path, role:
 
 
 @pytest.mark.parametrize(
-    "kind", ["missing", "zero-only", "unknown", "partial-group", "partial-reflection", "partial-depiction"]
+    "kind",
+    ["missing", "zero-only", "unknown", "partial-group", "partial-reflection", "partial-depiction", "missing-reported"],
 )
 def test_subject_evidence_unknown_partial_depiction_public_cli(tmp_path: Path, kind: str) -> None:
+    import re
+    from html import unescape
+
     reported, selection = _se_frames(tmp_path)
-    if kind in ("missing", "zero-only"):
-        selection["entries"][0].update(subject_ids=[], present_identities=[])
+    # Exactly one cross-frame pair: no other legacy row can supply a refusal.
+    # Finalize both documents' ordering BEFORE attaching source-bound evidence.
+    reported["entries"] = reported["entries"][:1]
+    selection["entries"] = selection["entries"][:1]
+    role = "reported" if kind in ("partial-reflection", "missing-reported") else "selection"
+    target = reported if role == "reported" else selection
+    if kind in ("missing", "zero-only", "missing-reported"):
+        target["entries"][0].update(subject_ids=[], present_identities=[])
         if kind == "zero-only":
-            selection["entries"][0]["face_count"] = 0
+            target["entries"][0]["face_count"] = 0
     else:
-        if kind == "partial-reflection":
-            reported = _se_attach(reported, "partial", token=kind)
-        else:
-            selection = _se_attach(selection, "unknown" if kind == "unknown" else "partial", token=kind)
+        target = _se_attach(target, "unknown" if kind == "unknown" else "partial", token=kind)
     # A supported empty opposite must not hide an incomplete observation.
-    if kind == "partial-reflection":
+    if role == "reported":
+        reported = target
         selection = _se_attach(selection, "not_applicable")
     else:
+        selection = target
         reported = _se_attach(reported, "not_applicable")
     rc, out = _se_public(tmp_path / kind, reported, selection)
     assert rc == 5
     doc = out.read_text()
-    if kind in ("missing", "zero-only"):
+    assert "selection=not_ready" in doc
+    if kind in ("missing", "zero-only", "missing-reported"):
         assert "subject" in doc and "selection" in doc
+        code = "missing_subject_evidence"
     else:
         assert (
             f"subject comparison incomparable: {'unknown' if kind == 'unknown' else 'partial'}_subject_evidence" in doc
         )
+        code = "unknown_subject_evidence" if kind == "unknown" else "partial_subject_evidence"
+    # Public reason carries the incomplete operand's role and one-based ordinal;
+    # accept punctuation/markup differences without accepting an unrelated axis.
+    reasons = [unescape(re.sub(r"<[^>]*>", " ", reason.split("</li>")[0])) for reason in doc.split("<li>")[1:]]
+    matching = [reason for reason in reasons if re.search(rf"subject comparison incomparable: {code}\b", reason)]
+    assert matching, f"missing public incomparable diagnostic: {code}"
+    assert any(
+        re.search(rf"\b{role}\b", reason) and re.search(r"\b(?:entry|ordinal)\s*(?:=|:|#)?\s*1\b", reason)
+        for reason in matching
+    ), f"diagnostic must identify {role} entry ordinal 1: {matching}"
 
 
 @pytest.mark.parametrize(
@@ -1348,6 +1369,16 @@ def test_subject_evidence_unknown_partial_depiction_public_cli(tmp_path: Path, k
         ("reported", "hidden-ordinal", "evidence_shape", True),
         ("selection", "hidden-ordinal", "evidence_shape", True),
         ("selection2", "hidden-ordinal", "evidence_shape", True),
+        ("reported", "known-incomplete", "state_consistency", False),
+        ("selection", "known-incomplete", "state_consistency", False),
+        ("reported", "empty-person", "evidence_conflict", False),
+        ("selection", "empty-person", "evidence_conflict", False),
+        ("selection", "outer-and-evidence-version", "outer_version", False),
+        ("reported", "evidence-version-and-shape", "evidence_version", False),
+        ("selection", "shape-and-state", "evidence_shape", False),
+        ("reported", "state-and-source", "state_consistency", False),
+        ("selection", "source-and-support", "source_binding", False),
+        ("reported", "support-and-conflict", "support_binding", False),
     ],
 )
 def test_subject_evidence_foreign_binding_and_version_public_cli(
@@ -1362,9 +1393,65 @@ def test_subject_evidence_foreign_binding_and_version_public_cli(
     base = reported if role == "reported" else selection
     if defect == "strict-binding":
         base = json.loads(Path(_V3_MANIFEST).read_text())
-    target = _se_attach(base, "known")
+    paired_defects = {
+        "known-incomplete",
+        "empty-person",
+        "outer-and-evidence-version",
+        "evidence-version-and-shape",
+        "shape-and-state",
+        "state-and-source",
+        "source-and-support",
+        "support-and-conflict",
+    }
+    status = "not_applicable" if defect in ("empty-person", "support-and-conflict") else "known"
+    target = _se_attach(base, status)
     evidence = target["entries"][0]["subject_evidence"]
-    if defect == "hidden-ordinal":
+    if defect in paired_defects:
+        # The same real public route accepts the coherent parent. Exploratory
+        # mode still has to validate supplied evidence, even with allow-foreign.
+        parent_reported = target if role == "reported" else reported
+        parent_selection = target if role == "selection" else selection
+        parent_rc, parent_out = _se_public(
+            tmp_path / "valid-parent", parent_reported, parent_selection, gate=gate, allow_foreign=True
+        )
+        assert parent_rc == 0
+        assert parent_out.exists()
+        capsys.readouterr()
+    if defect in ("empty-person", "support-and-conflict"):
+        target["entries"][0].update(present_identities=["synthetic-person"], face_count=1)
+        # Retain the absence attestation and bind it to the actual conflicting
+        # row; a stale projection must not mask the intended conflict code.
+        from copy import deepcopy
+
+        projection = deepcopy(target)
+        for row in projection["entries"]:
+            row.pop("subject_evidence", None)
+        digest = _se_sha(projection)
+        evidence["source_binding"].update(
+            namespace=f"manifest-sha256:{digest}",
+            source_manifest_sha256=digest,
+            source_entry_sha256=_se_sha(projection["entries"][0]),
+        )
+        if defect == "support-and-conflict":
+            evidence["support_sha256"] = "f" * 64
+    elif defect in ("known-incomplete", "state-and-source", "shape-and-state"):
+        evidence["complete"] = False
+        if defect == "state-and-source":
+            evidence["source_binding"]["source_entry_sha256"] = "f" * 64
+        elif defect == "shape-and-state":
+            evidence["support"]["unrecognized"] = True
+            evidence["support_sha256"] = _se_sha(evidence["support"])
+    elif defect == "outer-and-evidence-version":
+        target["manifest_version"] = 2
+        evidence["version"] = 2
+    elif defect == "evidence-version-and-shape":
+        evidence["version"] = 2
+        evidence["support"]["unrecognized"] = True
+        evidence["support_sha256"] = _se_sha(evidence["support"])
+    elif defect == "source-and-support":
+        evidence["source_binding"]["source_entry_sha256"] = "f" * 64
+        evidence["support_sha256"] = "f" * 64
+    elif defect == "hidden-ordinal":
         # A later row with the same media ID cannot erase an invalid earlier row.
         target["entries"][0]["subject_evidence"] = None
         target["entries"][1]["media_id"] = target["entries"][0]["media_id"]
@@ -1386,6 +1473,7 @@ def test_subject_evidence_foreign_binding_and_version_public_cli(
         evidence["support_sha256"] = "f" * 64
     elif defect == "review-missing":
         evidence["support"].pop("review_reference")
+        evidence["support_sha256"] = _se_sha(evidence["support"])
     else:
         field, value = {
             "namespace": ("namespace", "foreign"),
@@ -1395,6 +1483,15 @@ def test_subject_evidence_foreign_binding_and_version_public_cli(
             "original-hash": ("source_original_sha256", "f" * 64),
         }[defect]
         evidence["source_binding"][field] = value
+    if defect.startswith("outer-"):
+        # Invalid outer version is the targeted defect, not a stale raw digest.
+        from copy import deepcopy
+
+        projection = deepcopy(target)
+        for row in projection["entries"]:
+            row.pop("subject_evidence", None)
+        digest = _se_sha(projection)
+        evidence["source_binding"].update(namespace=f"manifest-sha256:{digest}", source_manifest_sha256=digest)
     if role == "reported":
         reported = target
     else:
@@ -1408,6 +1505,9 @@ def test_subject_evidence_foreign_binding_and_version_public_cli(
     assert rc == 4
     assert not out.exists()
     assert f"subject evidence invalid: {code}" in err
+    import re
+
+    assert re.findall(r"subject evidence invalid: ([a-z_]+)\b", err) == [code]
     assert "protocol-fixture-authority" not in err
 
 

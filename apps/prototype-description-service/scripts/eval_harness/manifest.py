@@ -76,9 +76,7 @@ from ._pathtext import _printable_message, _printable_path
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _ADJUDICATION_RECORD_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-_HUMAN_ADJUDICATION_SOURCE_RE = re.compile(
-    r"^human_adjudicated:([A-Za-z0-9][A-Za-z0-9._-]{0,127})$"
-)
+_HUMAN_ADJUDICATION_SOURCE_RE = re.compile(r"^human_adjudicated:([A-Za-z0-9][A-Za-z0-9._-]{0,127})$")
 
 
 def _validate_relative_image_path(value: str) -> str:
@@ -124,15 +122,12 @@ def _printable_validation_value(value: object, *, depth: int = 0) -> str:
         return str(_printable_message(value.decode("utf-8", errors="backslashreplace")))
     if isinstance(value, Mapping):
         items = ", ".join(
-            f"{_printable_validation_value(key, depth=depth + 1)}: "
-            f"{_printable_validation_value(item, depth=depth + 1)}"
+            f"{_printable_validation_value(key, depth=depth + 1)}: {_printable_validation_value(item, depth=depth + 1)}"
             for key, item in value.items()
         )
         return "{" + items + "}"
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-        return "[" + ", ".join(
-            _printable_validation_value(item, depth=depth + 1) for item in value
-        ) + "]"
+        return "[" + ", ".join(_printable_validation_value(item, depth=depth + 1) for item in value) + "]"
     try:
         rendered = str(value)
     except Exception:
@@ -144,20 +139,16 @@ def _format_validation_error(error: ValidationError) -> str:
     """Return a strict-UTF-8, deterministic summary of validation failures."""
     details: list[str] = []
     for item in error.errors(include_url=False):
-        location = ".".join(
-            _printable_validation_value(part) for part in item.get("loc", ())
-        ) or "<document>"
+        location = ".".join(_printable_validation_value(part) for part in item.get("loc", ())) or "<document>"
         message = _printable_validation_value(item.get("msg", "validation error"))
         suffix: list[str] = []
         if "input" in item:
             suffix.append(f"input={_printable_validation_value(item['input'])}")
         if "ctx" in item and item["ctx"]:
             suffix.append(f"context={_printable_validation_value(item['ctx'])}")
-        details.append(
-            f"{location}: {message}"
-            + (f" ({'; '.join(suffix)})" if suffix else "")
-        )
+        details.append(f"{location}: {message}" + (f" ({'; '.join(suffix)})" if suffix else ""))
     return "; ".join(details) or "validation error"
+
 
 SUPPORTED_MANIFEST_VERSION = 3
 LEGACY_MANIFEST_VERSION = 2
@@ -361,33 +352,22 @@ class ScoreInvariant(StrEnum):
     DETECTION_UNRECOGNISED_ANNOTATION_MODE = "detection_unrecognised_annotation_mode"
     DETECTION_REFUSES_EMPTY_ENTRIES = "detection_refuses_empty_entries"
     DETECTION_REFUSES_MIXED_ANNOTATION_MODE = "detection_refuses_mixed_annotation_mode"
-    IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS = (
-        "identification_refuses_unboxed_identity_claims"
-    )
+    IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS = "identification_refuses_unboxed_identity_claims"
     DETECTION_REFUSES_UNCOVERED_FACE_COUNT = "detection_refuses_uncovered_face_count"
     DETECTION_REFUSES_EMPTY_OBSERVATIONS = "detection_refuses_empty_observations"
     IDENTIFICATION_REFUSES_EMPTY_OBSERVATIONS = "identification_refuses_empty_observations"
     DETECTION_REQUIRES_LOCALIZATION = "detection_requires_localization"
-    DETECTION_REQUIRES_LOCALIZATION_FRAME_AGREEMENT = (
-        "detection_requires_localization_frame_agreement"
-    )
-    DETECTION_REQUIRES_RATIFIED_IOU_THRESHOLD = (
-        "detection_requires_ratified_iou_threshold"
-    )
-    DETECTION_REQUIRES_HUMAN_ADJUDICATED_GT_LINEAGE = (
-        "detection_requires_human_adjudicated_gt_lineage"
-    )
-    DETECTION_REQUIRES_INDEPENDENT_GT_SOURCE = (
-        "detection_requires_independent_gt_source"
-    )
+    DETECTION_REQUIRES_LOCALIZATION_FRAME_AGREEMENT = "detection_requires_localization_frame_agreement"
+    DETECTION_REQUIRES_RATIFIED_IOU_THRESHOLD = "detection_requires_ratified_iou_threshold"
+    DETECTION_REQUIRES_HUMAN_ADJUDICATED_GT_LINEAGE = "detection_requires_human_adjudicated_gt_lineage"
+    DETECTION_REQUIRES_INDEPENDENT_GT_SOURCE = "detection_requires_independent_gt_source"
 
 
 # Published markdown explanation per fired invariant (S2R5-04). A refusal
 # reason that names a condition that did not fire is worse than no reason.
 REFUSAL_EXPLANATIONS: dict[ScoreInvariant, str] = {
     ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE: (
-        "detection P/R is not computed without a resolved annotation_mode; "
-        "omission is not exhaustive"
+        "detection P/R is not computed without a resolved annotation_mode; omission is not exhaustive"
     ),
     ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY: (
         "detection P/R is not computed unless annotation_mode is exhaustive"
@@ -396,20 +376,17 @@ REFUSAL_EXPLANATIONS: dict[ScoreInvariant, str] = {
         "detection P/R is not computed from an unrecognised annotation_mode token"
     ),
     ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES: (
-        "detection P/R is not computed from zero score entries; "
-        "an empty entry list cannot witness a detection contract"
+        "detection P/R is not computed from zero score entries; an empty entry list cannot witness a detection contract"
     ),
     ScoreInvariant.DETECTION_REFUSES_MIXED_ANNOTATION_MODE: (
         "detection P/R is not computed from mixed annotation_mode stamps; "
         "the scorer will not guess which detection contract applies"
     ),
     ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS: (
-        "identification P/R is not computed from identity claims that carry no "
-        "per-face box lineage"
+        "identification P/R is not computed from identity claims that carry no per-face box lineage"
     ),
     ScoreInvariant.DETECTION_REFUSES_UNCOVERED_FACE_COUNT: (
-        "detection P/R is not computed from an exhaustive stamp whose boxes "
-        "do not cover face_count"
+        "detection P/R is not computed from an exhaustive stamp whose boxes do not cover face_count"
     ),
     ScoreInvariant.DETECTION_REFUSES_EMPTY_OBSERVATIONS: (
         "detection P/R is not computed from zero scored observations"
@@ -428,8 +405,7 @@ REFUSAL_EXPLANATIONS: dict[ScoreInvariant, str] = {
         "detection P/R is not computed from an absent or unratified IoU threshold"
     ),
     ScoreInvariant.DETECTION_REQUIRES_HUMAN_ADJUDICATED_GT_LINEAGE: (
-        "detection P/R is not computed from ground-truth boxes without human-adjudicated "
-        "lineage"
+        "detection P/R is not computed from ground-truth boxes without human-adjudicated lineage"
     ),
     ScoreInvariant.DETECTION_REQUIRES_INDEPENDENT_GT_SOURCE: (
         "detection P/R is not computed from ground-truth boxes with missing, unrecognised, "
@@ -455,9 +431,7 @@ def refusal_explanation(invariant: object) -> str:
         try:
             member = ScoreInvariant(invariant)  # type: ignore[arg-type]
         except (TypeError, ValueError):
-            raise ManifestError(
-                f"no refusal explanation for invariant {invariant!r}"
-            ) from None
+            raise ManifestError(f"no refusal explanation for invariant {invariant!r}") from None
     text = REFUSAL_EXPLANATIONS.get(member)
     if text is None:
         raise ManifestError(f"no refusal explanation for invariant {member!r}")
@@ -488,8 +462,7 @@ def parse_annotation_mode(value: object) -> AnnotationMode | None:
                 invariant=ScoreInvariant.DETECTION_UNRECOGNISED_ANNOTATION_MODE,
             ) from None
     raise ManifestError(
-        f"unrecognised annotation_mode {value!r}; "
-        f"expected one of {[member.value for member in AnnotationMode]}",
+        f"unrecognised annotation_mode {value!r}; expected one of {[member.value for member in AnnotationMode]}",
         invariant=ScoreInvariant.DETECTION_UNRECOGNISED_ANNOTATION_MODE,
     )
 
@@ -689,9 +662,7 @@ class AdjudicationRule(StrEnum):
 # Allowlist, not complement-of-AGENT: any future ConfirmationSource member must
 # be named here to become human gold. Complement-of-AGENT would silently promote
 # a new non-human member (MLDATA-04).
-HUMAN_CONFIRMATION_SOURCES: frozenset[ConfirmationSource] = frozenset(
-    {ConfirmationSource.OPERATOR}
-)
+HUMAN_CONFIRMATION_SOURCES: frozenset[ConfirmationSource] = frozenset({ConfirmationSource.OPERATOR})
 
 
 class PreAdjudicationLabel(BaseModel):
@@ -754,11 +725,7 @@ class ReferenceFact(BaseModel):
         if self.confirmed_by not in HUMAN_CONFIRMATION_SOURCES:
             return self
         required = ("annotator_id", "annotation_batch", "annotated_at", "source_pool")
-        missing = [
-            name
-            for name in required
-            if not (getattr(self, name) and str(getattr(self, name)).strip())
-        ]
+        missing = [name for name in required if not (getattr(self, name) and str(getattr(self, name)).strip())]
         if missing:
             raise ValueError(
                 "human-confirmed reference_fact requires "
@@ -771,10 +738,7 @@ class ReferenceFact(BaseModel):
     def _adjudication_requires_written_rule(self) -> ReferenceFact:
         has_adjudicator = bool(self.adjudicated_by and self.adjudicated_by.strip())
         if has_adjudicator and self.adjudication_rule is None:
-            raise ValueError(
-                "adjudicated_by requires adjudication_rule "
-                "(MLDATA-03 written disagreement rule)"
-            )
+            raise ValueError("adjudicated_by requires adjudication_rule (MLDATA-03 written disagreement rule)")
         return self
 
     @model_validator(mode="after")
@@ -782,8 +746,7 @@ class ReferenceFact(BaseModel):
         has_adjudicator = bool(self.adjudicated_by and self.adjudicated_by.strip())
         if has_adjudicator and not self.pre_adjudication:
             raise ValueError(
-                "adjudicated_by requires non-empty pre_adjudication "
-                "(HITL-07 / MLDATA-03 disagreement trail)"
+                "adjudicated_by requires non-empty pre_adjudication (HITL-07 / MLDATA-03 disagreement trail)"
             )
         return self
 
@@ -966,6 +929,291 @@ class FaceBox(BaseModel):
         return value
 
 
+class _SubjectModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+
+class EvidenceSupportV1(_SubjectModel):
+    """Embedded audit declaration; acceptance establishes consistency, not truth."""
+
+    version: Literal[1]
+    authority_reference: str = Field(min_length=1)
+    review_reference: str = Field(min_length=1)
+    declarer_id: str = Field(min_length=1)
+    reviewer_id: str = Field(min_length=1)
+    basis: Literal["operator_image_declaration", "independent_image_evidence"]
+    claim: Literal["incomplete_subjects", "complete_subjects", "no_people_or_depictions"]
+    scope: Literal["image_people_and_depictions"]
+    source_original_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def _strict_version(cls, value: object) -> object:
+        if type(value) is not int or value != 1:
+            raise ValueError("version must be integer 1")
+        return value
+
+
+class SourceBindingV1(_SubjectModel):
+    digest_profile: Literal["golden_v3", "raw_report"]
+    namespace: str = Field(min_length=1)
+    source_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_entry_ordinal: int = Field(gt=0)
+    source_entry_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_original_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class SubjectEvidenceV1(_SubjectModel):
+    version: Literal[1]
+    status: Literal["known", "partial", "unknown", "not_applicable"]
+    subject_ids: list[str]
+    identity_namespace: str | None
+    complete: bool
+    scope: Literal["image_people_and_depictions"]
+    authority: str = Field(min_length=1)
+    evidence_reference: str = Field(min_length=1)
+    support: EvidenceSupportV1 | None = Field(default=None, exclude_if=lambda value: value is None)
+    support_sha256: str | None = Field(default=None, exclude_if=lambda value: value is None, pattern=r"^[0-9a-f]{64}$")
+    source_binding: SourceBindingV1
+
+    _strict_version = field_validator("version", mode="before")(EvidenceSupportV1._strict_version.__func__)
+
+    @field_validator("support", "support_sha256", mode="before")
+    @classmethod
+    def _present_support_not_null(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("present support fields cannot be null")
+        return value
+
+    def state_is_consistent(self) -> bool:
+        ids, namespace = self.subject_ids, self.identity_namespace
+        if len(ids) != len(set(ids)):
+            return False
+        if self.status in ("known", "partial"):
+            if not ids or not namespace or ":" in namespace:
+                return False
+            if any(not key.startswith(namespace + ":") or not key[len(namespace) + 1 :] for key in ids):
+                return False
+        elif ids or namespace is not None:
+            return False
+        return self.complete == (self.status in ("known", "not_applicable"))
+
+    @model_validator(mode="after")
+    def _state(self, info: ValidationInfo) -> SubjectEvidenceV1:
+        if not (info.context and info.context.get("subject_shape_only")) and not self.state_is_consistent():
+            raise ValueError("inconsistent subject evidence state")
+        return self
+
+
+@dataclass(frozen=True)
+class SubjectRole:
+    kind: Literal["reported", "selection"]
+    selection_index: int | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            self.kind not in ("reported", "selection")
+            or (self.kind == "reported" and self.selection_index is not None)
+            or (self.kind == "selection" and (type(self.selection_index) is not int or self.selection_index < 1))
+        ):
+            raise ValueError("invalid subject role")
+
+
+SubjectErrorCode = Literal[
+    "outer_version",
+    "evidence_version",
+    "evidence_shape",
+    "state_consistency",
+    "source_binding",
+    "support_binding",
+    "evidence_conflict",
+]
+
+
+class SubjectEvidenceError(ManifestError):
+    def __init__(self, code: SubjectErrorCode, role: SubjectRole, entry_ordinal: int | None):
+        self.code = code
+        self.role = role
+        self.entry_ordinal = entry_ordinal
+        super().__init__(f"subject evidence invalid: {code}")
+
+
+@dataclass(frozen=True)
+class LegacySubjects:
+    labels: frozenset[str]
+
+
+@dataclass(frozen=True)
+class KnownSubjects:
+    keys: tuple[str, ...]
+    identity_namespace: str
+    support: EvidenceSupportV1
+
+
+@dataclass(frozen=True)
+class SupportedEmpty:
+    support: EvidenceSupportV1
+
+
+@dataclass(frozen=True)
+class IncompleteSubjects:
+    reason: Literal["missing_subject_evidence", "partial_subject_evidence", "unknown_subject_evidence"]
+
+
+SubjectObservation = LegacySubjects | KnownSubjects | SupportedEmpty | IncompleteSubjects
+
+
+@dataclass(frozen=True)
+class ValidatedSubjectDocument:
+    role: SubjectRole
+    entries: tuple[Mapping[str, object], ...]
+    observations: tuple[SubjectObservation, ...]
+
+
+def _subject_labels(value: object) -> tuple[str, ...]:
+    # Keep the report's original alias and recursive categorical-label behavior.
+    if isinstance(value, str):
+        return (value.strip(),) if value.strip() else ()
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return tuple(label for item in value for label in _subject_labels(item))
+    return ()
+
+
+_SUBJECT_ALIASES = ("subject_id", "subject_ids", "subject", "subjects", "present_identities")
+
+
+def _subject_digest(value: object) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+
+def validate_subject_document(raw: Mapping[str, object], *, role: SubjectRole) -> ValidatedSubjectDocument:
+    """Validate every ordered row before display/indexing can discard provenance.
+
+    Phases run document-wide, so an earlier binding defect cannot mask a later
+    shape defect. Projection never calls the loader or verifies original bytes.
+    """
+    rows = raw.get("entries", raw.get("items", []))
+    if not isinstance(rows, list):
+        raise SubjectEvidenceError("evidence_shape", role, None)
+    entries = tuple(rows)
+    supplied = [
+        (i, row["subject_evidence"])
+        for i, row in enumerate(entries, 1)
+        if isinstance(row, Mapping) and "subject_evidence" in row
+    ]
+    if (
+        supplied
+        and "manifest_version" in raw
+        and (type(raw["manifest_version"]) is not int or raw["manifest_version"] != 3)
+    ):
+        raise SubjectEvidenceError("outer_version", role, None)
+    for ordinal, value in supplied:
+        if isinstance(value, Mapping):
+            versions = [value]
+            if isinstance(value.get("support"), Mapping):
+                versions.append(value["support"])
+            if any(type(item.get("version")) is not int or item.get("version") != 1 for item in versions):
+                raise SubjectEvidenceError("evidence_version", role, ordinal)
+    if any(not isinstance(row, Mapping) for row in entries):
+        raise SubjectEvidenceError("evidence_shape", role, None)
+    evidence: dict[int, SubjectEvidenceV1] = {}
+    for ordinal, value in supplied:
+        try:
+            evidence[ordinal] = SubjectEvidenceV1.model_validate(value, context={"subject_shape_only": True})
+        except ValidationError:
+            raise SubjectEvidenceError("evidence_shape", role, ordinal) from None
+    for ordinal, item in evidence.items():
+        if not item.state_is_consistent():
+            raise SubjectEvidenceError("state_consistency", role, ordinal)
+    if supplied:
+        container = "entries" if "entries" in raw else "items"
+        projection = dict(raw)
+        projection[container] = [
+            {key: value for key, value in row.items() if key != "subject_evidence"} for row in entries
+        ]
+        profile = "golden_v3" if "manifest_version" in raw else "raw_report"
+        if profile == "golden_v3":
+            try:
+                projection = GoldenManifest.model_validate(projection).model_dump()
+            except (ValidationError, ManifestError):
+                raise SubjectEvidenceError("evidence_shape", role, None) from None
+        try:
+            digest = _subject_digest(projection)
+        except (TypeError, ValueError):
+            # C(model_dump()) has no date encoding. Existing review datetimes
+            # cannot bind this projection; retain all legacy dump/hash recipes.
+            raise SubjectEvidenceError("source_binding", role, supplied[0][0]) from None
+        for ordinal, item in evidence.items():
+            projected = projection[container][ordinal - 1]
+            expected = {
+                "digest_profile": profile,
+                "namespace": f"manifest-sha256:{digest}",
+                "source_manifest_sha256": digest,
+                "source_entry_ordinal": ordinal,
+                "source_entry_sha256": _subject_digest(projected),
+                "source_original_sha256": projected.get("sha256"),
+            }
+            if item.source_binding.model_dump() != expected:
+                raise SubjectEvidenceError("source_binding", role, ordinal)
+    for ordinal, item in evidence.items():
+        support = item.support
+        if support is None:
+            valid = item.status == "unknown" and item.support_sha256 is None
+        else:
+            claim = {
+                "known": "complete_subjects",
+                "partial": "incomplete_subjects",
+                "not_applicable": "no_people_or_depictions",
+                "unknown": "incomplete_subjects",
+            }[item.status]
+            valid = (
+                item.support_sha256 == _subject_digest(support.model_dump())
+                and support.source_original_sha256 == item.source_binding.source_original_sha256
+                and support.authority_reference == item.authority
+                and support.review_reference == item.evidence_reference
+                and support.declarer_id != support.reviewer_id
+                and support.claim == claim
+                and (not item.complete or support.basis == "independent_image_evidence")
+            )
+        if not valid:
+            raise SubjectEvidenceError("support_binding", role, ordinal)
+    for ordinal, item in evidence.items():
+        row = entries[ordinal - 1]
+        if item.status == "not_applicable" and (
+            row.get("face_count") != 0
+            or type(row.get("face_count")) is not int
+            or any(_subject_labels(row.get(key)) for key in _SUBJECT_ALIASES)
+            or not isinstance(row.get("face_boxes", []), list)
+            # Human face declarations conflict with absence even without identity.
+            or bool(row.get("face_boxes", []))
+            or any(
+                not isinstance(box, Mapping) or _subject_labels(box.get("name")) for box in row.get("face_boxes", [])
+            )
+        ):
+            raise SubjectEvidenceError("evidence_conflict", role, ordinal)
+    observations: list[SubjectObservation] = []
+    for ordinal, row in enumerate(entries, 1):
+        item = evidence.get(ordinal)
+        if item is None:
+            labels = next((_subject_labels(row[key]) for key in _SUBJECT_ALIASES if key in row), ())
+            observations.append(
+                LegacySubjects(frozenset(labels)) if labels else IncompleteSubjects("missing_subject_evidence")
+            )
+        elif item.status == "known":
+            assert item.support is not None and item.identity_namespace is not None
+            observations.append(KnownSubjects(tuple(item.subject_ids), item.identity_namespace, item.support))
+        elif item.status == "not_applicable":
+            assert item.support is not None
+            observations.append(SupportedEmpty(item.support))
+        else:
+            observations.append(
+                IncompleteSubjects(
+                    "partial_subject_evidence" if item.status == "partial" else "unknown_subject_evidence"
+                )
+            )
+    return ValidatedSubjectDocument(role, entries, tuple(observations))
+
+
 class GoldenEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
     # annotation_mode is intentionally absent (S2R3-10 / S2R4-20): extra=forbid,
@@ -974,6 +1222,15 @@ class GoldenEntry(BaseModel):
     # (report.py). The loader refuses an on-disk per-entry stamp by name
     # (annotation_mode_is_document_level) rather than as an extra=forbid
     # accident, so the contract is testable against real JSON.
+
+    subject_evidence: SubjectEvidenceV1 | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @field_validator("subject_evidence", mode="before")
+    @classmethod
+    def _evidence_not_null(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("present subject_evidence cannot be null")
+        return value
 
     path: str
     sha256: str
@@ -1058,9 +1315,7 @@ class GoldenManifest(BaseModel):
     def _version_is_supported(cls, value: int, info: ValidationInfo) -> int:
         if info.context and info.context.get("legacy"):
             if value != LEGACY_MANIFEST_VERSION:
-                raise ValueError(
-                    f"legacy loader understands version {LEGACY_MANIFEST_VERSION} only; got {value}"
-                )
+                raise ValueError(f"legacy loader understands version {LEGACY_MANIFEST_VERSION} only; got {value}")
             return value
         if value != SUPPORTED_MANIFEST_VERSION:
             raise ValueError(
@@ -1114,16 +1369,15 @@ class GoldenManifest(BaseModel):
                         entry_index=index,
                         entry_path=entry.path,
                     )
-            elif self.annotation_mode is AnnotationMode.ROSTER_ONLY:
-                if n_boxes > entry.face_count:
-                    raise ManifestError(
-                        f"boxes_cover_face_count: roster_only entry[{index}] "
-                        f"{_printable_path(entry.path)}: len(face_boxes)={n_boxes} > "
-                        f"face_count={entry.face_count}",
-                        invariant="boxes_cover_face_count",
-                        entry_index=index,
-                        entry_path=entry.path,
-                    )
+            elif self.annotation_mode is AnnotationMode.ROSTER_ONLY and n_boxes > entry.face_count:
+                raise ManifestError(
+                    f"boxes_cover_face_count: roster_only entry[{index}] "
+                    f"{_printable_path(entry.path)}: len(face_boxes)={n_boxes} > "
+                    f"face_count={entry.face_count}",
+                    invariant="boxes_cover_face_count",
+                    entry_index=index,
+                    entry_path=entry.path,
+                )
 
     def _lineage_required_on_boxes(self) -> None:
         """PROV-01: a label without lineage cannot be audited."""
@@ -1154,10 +1408,7 @@ class GoldenManifest(BaseModel):
                     detail = (
                         "is missing capture_session_id"
                         if not session
-                        else (
-                            f"carries unknown-occasion sentinel "
-                            f"{LEGACY_IMPORT_CAPTURE_SESSION_ID!r}"
-                        )
+                        else (f"carries unknown-occasion sentinel {LEGACY_IMPORT_CAPTURE_SESSION_ID!r}")
                     )
                     raise ManifestError(
                         f"capture_session_id_required: exhaustive entry[{index}] "
@@ -1194,9 +1445,7 @@ class GoldenManifest(BaseModel):
             }
         )
 
-    def _adjudication_references_resolve(
-        self, *, require_strict_scoring_reviews: bool = False
-    ) -> None:
+    def _adjudication_references_resolve(self, *, require_strict_scoring_reviews: bool = False) -> None:
         records: dict[str, HumanAdjudicationRecord] = {}
         for record in self.adjudication_records:
             if record.record_id in records:
@@ -1211,10 +1460,7 @@ class GoldenManifest(BaseModel):
             for box_index, box in enumerate(entry.face_boxes):
                 source = box.adjudication_source
                 if source is None:
-                    if (
-                        require_strict_scoring_reviews
-                        and self._box_has_strict_scoring_lineage(box)
-                    ):
+                    if require_strict_scoring_reviews and self._box_has_strict_scoring_lineage(box):
                         raise ManifestError(
                             "strict scoring requires a confirmed independent blind review "
                             f"for entry[{entry_index}] "
@@ -1253,8 +1499,7 @@ class GoldenManifest(BaseModel):
                     )
                 if box.lineage is None or record.reviewer_id == box.lineage.labeler_id:
                     raise ManifestError(
-                        f"human adjudication record {record_id!r} is not independent of "
-                        f"the original labeler",
+                        f"human adjudication record {record_id!r} is not independent of the original labeler",
                         invariant="adjudication_record_invalid",
                         entry_index=entry_index,
                         entry_path=entry.path,
@@ -1264,8 +1509,7 @@ class GoldenManifest(BaseModel):
         unused = set(records) - referenced
         if unused:
             raise ManifestError(
-                "human adjudication records must be referenced by a box: "
-                + ", ".join(sorted(unused)),
+                "human adjudication records must be referenced by a box: " + ", ".join(sorted(unused)),
                 invariant="adjudication_record_invalid",
             )
 
@@ -1422,8 +1666,7 @@ METRIC_BACKING_SLICE_THRESHOLD: int = 5
 # Kept next to the registry so disclosure cannot drift from SHIPPED_CORPUS_COVERAGE_GAPS.
 _GAP_SCORER_CONSEQUENCES: dict[str, str] = {
     "face_boxes": (
-        "positional_identification never runs; set-based identity scoring "
-        "cannot catch right-names-on-wrong-faces"
+        "positional_identification never runs; set-based identity scoring cannot catch right-names-on-wrong-faces"
     ),
     "spatial_facts": "placement accuracy is vacuous (0 asserted claims)",
     "reference_facts": "no trap coverage for fabricated-fact scoring (rate is undefined)",
@@ -1468,11 +1711,7 @@ def compute_corpus_coverage_gaps(
                 # validated GoldenEntry objects. Read the same field from
                 # either representation so live provenance cannot undercount
                 # authored metric backing (AUDIT-07).
-                value = (
-                    entry.get(field)
-                    if isinstance(entry, Mapping)
-                    else getattr(entry, field, None)
-                )
+                value = entry.get(field) if isinstance(entry, Mapping) else getattr(entry, field, None)
                 if value is None:
                     continue
                 if isinstance(value, list) and len(value) == 0:
@@ -1544,9 +1783,7 @@ def resolve_verified_image(entry: GoldenEntry, images_root: Path | str) -> Path:
             message = str(exc.args[0] if exc.args else type(exc).__name__)
         filename2 = getattr(exc, "filename2", None)
         filename_display = _printable_path(filename)
-        filename2_display = (
-            _printable_path(filename2) if filename2 is not None else None
-        )
+        filename2_display = _printable_path(filename2) if filename2 is not None else None
         message_display = _printable_message(message)
         details = f"filename={filename_display}"
         if filename2_display is not None:
@@ -1644,20 +1881,20 @@ def load_manifest(
         raw = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
     except OSError as exc:
         if exc.filename is None:
-            raise ManifestError(
-                f"golden manifest unreadable or malformed JSON: {exc.strerror}"
-            ) from exc
+            raise ManifestError(f"golden manifest unreadable or malformed JSON: {exc.strerror}") from exc
         raise ManifestError(
-            f"golden manifest unreadable or malformed JSON: "
-            f"{exc.strerror}: {_printable_path(exc.filename)}"
+            f"golden manifest unreadable or malformed JSON: {exc.strerror}: {_printable_path(exc.filename)}"
         ) from exc
     except ValueError as exc:
         raise ManifestError(f"golden manifest unreadable or malformed JSON: {exc}") from exc
 
     if not isinstance(raw, dict):
-        raise ManifestError(
-            f"golden manifest must be a JSON object, got {type(raw).__name__}"
-        )
+        raise ManifestError(f"golden manifest must be a JSON object, got {type(raw).__name__}")
+
+    if isinstance(raw.get("entries"), list) and any(
+        isinstance(row, Mapping) and "subject_evidence" in row for row in raw["entries"]
+    ):
+        validate_subject_document(raw, role=SubjectRole("reported"))
 
     # Version and structural shape fail before field-level holes (FIR-11-SL1-R1-04):
     # unsupported version / entries-not-a-list / entry-not-an-object must not
@@ -1665,20 +1902,16 @@ def load_manifest(
     version = raw.get("manifest_version")
     if version is not None and version != SUPPORTED_MANIFEST_VERSION:
         raise ManifestError(
-            f"unsupported manifest_version {version}; this loader understands "
-            f"version {SUPPORTED_MANIFEST_VERSION} only"
+            f"unsupported manifest_version {version}; this loader understands version {SUPPORTED_MANIFEST_VERSION} only"
         )
     entries_raw = raw.get("entries")
     if entries_raw is not None and not isinstance(entries_raw, list):
-        raise ManifestError(
-            f"manifest 'entries' must be a list, got {type(entries_raw).__name__}"
-        )
+        raise ManifestError(f"manifest 'entries' must be a list, got {type(entries_raw).__name__}")
     if isinstance(entries_raw, list):
         for index, raw_entry in enumerate(entries_raw):
             if not isinstance(raw_entry, dict):
                 raise ManifestError(
-                    f"manifest entry at index {index} must be an object, "
-                    f"got {type(raw_entry).__name__}"
+                    f"manifest entry at index {index} must be an object, got {type(raw_entry).__name__}"
                 )
 
     # v2 corpus contract (S6-01 / rg-008): base_caption is a first-class field, not
@@ -1721,8 +1954,7 @@ def load_manifest(
     if missing_provenance:
         listed = ", ".join(missing_provenance)
         raise ManifestError(
-            f"provenance is required (fail-closed); missing on "
-            f"{len(missing_provenance)} entries: {listed}"
+            f"provenance is required (fail-closed); missing on {len(missing_provenance)} entries: {listed}"
         )
 
     if raw.get("annotation_mode") is None:
@@ -1737,31 +1969,23 @@ def load_manifest(
     except ManifestError:
         raise
     except ValidationError as exc:
-        raise ManifestError(
-            f"golden manifest schema violation: {_format_validation_error(exc)}"
-        ) from exc
+        raise ManifestError(f"golden manifest schema violation: {_format_validation_error(exc)}") from exc
 
     seen_ids: set[int] = set()
     seen_paths: set[str] = set()
     for entry in manifest.entries:
         if entry.media_id in seen_ids:
-            raise ManifestError(
-                f"duplicate media_id {entry.media_id} ({_printable_path(entry.path)})"
-            )
+            raise ManifestError(f"duplicate media_id {entry.media_id} ({_printable_path(entry.path)})")
         seen_ids.add(entry.media_id)
         if entry.path in seen_paths:
-            raise ManifestError(
-                f"duplicate path {_printable_path(entry.path)} (each image must appear once)"
-            )
+            raise ManifestError(f"duplicate path {_printable_path(entry.path)} (each image must appear once)")
         seen_paths.add(entry.path)
 
     roster = set(manifest.roster)
     for entry in manifest.entries:
         for name in (*entry.present_identities, *entry.must_right, *entry.easy_wrong):
             if name not in roster:
-                raise ManifestError(
-                    f"identity {name!r} in {_printable_path(entry.path)} is not in the roster"
-                )
+                raise ManifestError(f"identity {name!r} in {_printable_path(entry.path)} is not in the roster")
     for cohort_key in manifest.roster_cohorts:
         if cohort_key not in roster:
             raise ManifestError(f"roster_cohorts key {cohort_key!r} is not in the roster")
@@ -1795,9 +2019,7 @@ def load_manifest(
                 "metadata_only never resolves an images directory"
             )
         if not skip_hash_verification or hash_skip_reason is None:
-            raise ManifestError(
-                "metadata_only=True requires skip_hash_verification=True and hash_skip_reason"
-            )
+            raise ManifestError("metadata_only=True requires skip_hash_verification=True and hash_skip_reason")
         warnings.warn(
             f"load_manifest: hash verification skipped ({hash_skip_reason}) for {_printable_path(path)}",
             HashVerificationSkippedWarning,
@@ -1809,9 +2031,7 @@ def load_manifest(
     images_exist = bool(candidate) and Path(candidate).is_dir()
     # Explicit images_dir is always verified. Env is verified when the dir
     # exists; a set-but-missing env does not resolve when skip is True.
-    must_verify = images_dir is not None or (
-        bool(candidate) and (images_exist or not skip_hash_verification)
-    )
+    must_verify = images_dir is not None or (bool(candidate) and (images_exist or not skip_hash_verification))
     if must_verify:
         _verify_hashes(manifest, Path(candidate))
     elif skip_hash_verification:
@@ -1855,44 +2075,37 @@ def load_legacy_manifest(path: str, images_dir: str | None = None) -> GoldenMani
     """
     manifest_path = Path(path)
     if not manifest_path.is_file():
-        raise ManifestError(
-            f"legacy manifest not found: {_printable_path(manifest_path)}"
-        )
+        raise ManifestError(f"legacy manifest not found: {_printable_path(manifest_path)}")
     try:
         raw = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
     except OSError as exc:
         if exc.filename is None:
-            raise ManifestError(
-                f"legacy manifest unreadable or malformed JSON: {exc.strerror}"
-            ) from exc
+            raise ManifestError(f"legacy manifest unreadable or malformed JSON: {exc.strerror}") from exc
         raise ManifestError(
-            f"legacy manifest unreadable or malformed JSON: "
-            f"{exc.strerror}: {_printable_path(exc.filename)}"
+            f"legacy manifest unreadable or malformed JSON: {exc.strerror}: {_printable_path(exc.filename)}"
         ) from exc
     except ValueError as exc:
         raise ManifestError(f"legacy manifest unreadable or malformed JSON: {exc}") from exc
 
     if not isinstance(raw, dict):
-        raise ManifestError(
-            f"legacy manifest must be a JSON object, got {type(raw).__name__}"
-        )
+        raise ManifestError(f"legacy manifest must be a JSON object, got {type(raw).__name__}")
+
+    if isinstance(raw.get("entries"), list) and any(
+        isinstance(row, Mapping) and "subject_evidence" in row for row in raw["entries"]
+    ):
+        raise ManifestError("subject evidence invalid: outer_version")
 
     version = raw.get("manifest_version")
     if version != LEGACY_MANIFEST_VERSION:
-        raise ManifestError(
-            f"legacy loader understands version {LEGACY_MANIFEST_VERSION} only; got {version}"
-        )
+        raise ManifestError(f"legacy loader understands version {LEGACY_MANIFEST_VERSION} only; got {version}")
     entries_raw = raw.get("entries")
     if entries_raw is not None and not isinstance(entries_raw, list):
-        raise ManifestError(
-            f"manifest 'entries' must be a list, got {type(entries_raw).__name__}"
-        )
+        raise ManifestError(f"manifest 'entries' must be a list, got {type(entries_raw).__name__}")
     if isinstance(entries_raw, list):
         for index, raw_entry in enumerate(entries_raw):
             if not isinstance(raw_entry, dict):
                 raise ManifestError(
-                    f"manifest entry at index {index} must be an object, "
-                    f"got {type(raw_entry).__name__}"
+                    f"manifest entry at index {index} must be an object, got {type(raw_entry).__name__}"
                 )
 
     for raw_entry in entries_raw or []:
@@ -1923,36 +2136,26 @@ def load_legacy_manifest(path: str, images_dir: str | None = None) -> GoldenMani
     except ManifestError:
         raise
     except ValidationError as exc:
-        raise ManifestError(
-            f"legacy manifest schema violation: {_format_validation_error(exc)}"
-        ) from exc
+        raise ManifestError(f"legacy manifest schema violation: {_format_validation_error(exc)}") from exc
 
     seen_ids: set[int] = set()
     seen_paths: set[str] = set()
     for entry in manifest.entries:
         if entry.media_id in seen_ids:
-            raise ManifestError(
-                f"duplicate media_id {entry.media_id} ({_printable_path(entry.path)})"
-            )
+            raise ManifestError(f"duplicate media_id {entry.media_id} ({_printable_path(entry.path)})")
         seen_ids.add(entry.media_id)
         if entry.path in seen_paths:
-            raise ManifestError(
-                f"duplicate path {_printable_path(entry.path)} (each image must appear once)"
-            )
+            raise ManifestError(f"duplicate path {_printable_path(entry.path)} (each image must appear once)")
         seen_paths.add(entry.path)
 
     roster = set(manifest.roster)
     for entry in manifest.entries:
         for name in (*entry.present_identities, *entry.must_right, *entry.easy_wrong):
             if name not in roster:
-                raise ManifestError(
-                    f"identity {name!r} in {_printable_path(entry.path)} is not in the roster"
-                )
+                raise ManifestError(f"identity {name!r} in {_printable_path(entry.path)} is not in the roster")
     for cohort_key in manifest.roster_cohorts:
         if cohort_key not in roster:
-            raise ManifestError(
-                f"roster_cohorts key {cohort_key!r} is not in the roster"
-            )
+            raise ManifestError(f"roster_cohorts key {cohort_key!r} is not in the roster")
 
     if images_dir is not None:
         _verify_hashes(manifest, Path(images_dir))
@@ -2000,17 +2203,12 @@ def _resolve_image(images_root: Path, rel_path: str) -> Path | None:
             message = str(exc)
             filename2 = None
         filename_display = _printable_path(filename)
-        filename2_display = (
-            _printable_path(filename2) if filename2 is not None else None
-        )
+        filename2_display = _printable_path(filename2) if filename2 is not None else None
         message_display = _printable_message(message)
         details = f"filename={filename_display}"
         if filename2_display is not None:
             details = f"{details}, filename2={filename2_display}"
-        error_message = (
-            f"image root cannot be resolved: {_printable_path(images_root)} "
-            f"({details}): {message_display}"
-        )
+        error_message = f"image root cannot be resolved: {_printable_path(images_root)} ({details}): {message_display}"
         raise ManifestError(
             error_message,
             invariant="image_path_containment",
@@ -2038,16 +2236,13 @@ def _resolve_image(images_root: Path, rel_path: str) -> Path | None:
                 message = str(exc)
                 filename2 = None
             filename_display = _printable_path(filename)
-            filename2_display = (
-                _printable_path(filename2) if filename2 is not None else None
-            )
+            filename2_display = _printable_path(filename2) if filename2 is not None else None
             message_display = _printable_message(message)
             details = f"root={_printable_path(images_root)}; filename={filename_display}"
             if filename2_display is not None:
                 details = f"{details}, filename2={filename2_display}"
             error_message = (
-                f"image path is outside corpus root: {_printable_path(rel_path)} "
-                f"({details}): {message_display}"
+                f"image path is outside corpus root: {_printable_path(rel_path)} ({details}): {message_display}"
             )
             raise ManifestError(
                 error_message,

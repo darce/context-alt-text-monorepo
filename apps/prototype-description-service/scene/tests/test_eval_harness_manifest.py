@@ -1702,3 +1702,163 @@ def test_subject_evidence_state_consistency(tmp_path: Path, case: str) -> None:
             load_manifest(
                 path, metadata_only=True, skip_hash_verification=True, hash_skip_reason="synthetic protocol fixture"
             )
+
+
+def _subject_review_date_manifest(case: str) -> dict:
+    """Existing reviewed-box producer shape; bindings are made before any date."""
+    from scene.tests.test_eval_harness_bakeoff_report import _se_attach
+
+    doc = _valid_manifest_dict()
+    doc["entries"][0]["face_boxes"] = [
+        {
+            "x": 0.5,
+            "y": 0.5,
+            "w": 0.2,
+            "h": 0.2,
+            "name": "Alice Example",
+            "source": "operator",
+            "lineage": _test_lineage(),
+        }
+    ]
+    if "omitted" not in case:
+        doc = _se_attach(doc, "unknown")
+        if "stale" in case:
+            binding = doc["entries"][0]["subject_evidence"]["source_binding"]
+            binding.update(namespace="manifest-sha256:" + "f" * 64, source_manifest_sha256="f" * 64)
+    if case.startswith("dated-"):
+        doc["entries"][0]["face_boxes"][0]["adjudication_source"] = "human_adjudicated:review-1"
+        doc["adjudication_records"] = [
+            {
+                "record_id": "review-1",
+                "media_id": 1,
+                "box_index": 0,
+                "reviewer_id": "independent-reviewer",
+                "reviewer_kind": "human",
+                "review_method": "independent_blind_review",
+                "decision": "confirmed",
+                "reviewed_at": "2026-06-01T12:00:00+00:00",
+            }
+        ]
+    if case == "dated-version":
+        doc["entries"][0]["subject_evidence"]["version"] = True
+    elif case == "dated-shape":
+        doc["entries"][0]["subject_evidence"].pop("authority")
+    elif case == "dated-state":
+        doc["entries"][0]["subject_evidence"]["complete"] = True
+    return doc
+
+
+@pytest.mark.parametrize("case", ["dated-omitted", "dated-unknown", "dated-stale", "undated-unknown", "undated-stale"])
+def test_subject_evidence_review_dates_public_load(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str) -> None:
+    from datetime import datetime
+
+    from scripts.eval_harness.manifest import SubjectEvidenceError, SubjectRole
+
+    doc = _subject_review_date_manifest(case)
+    path = _write_manifest(tmp_path, doc)
+    original_open = Path.open
+
+    def metadata_open(self, *args, **kwargs):
+        assert self.suffix.lower() not in {".jpg", ".jpeg", ".png"}, "metadata-only must not read pixels"
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", metadata_open)
+    kwargs = {
+        "metadata_only": True,
+        "skip_hash_verification": True,
+        "hash_skip_reason": "synthetic review-date protocol",
+    }
+    if case in {"dated-unknown", "dated-stale", "undated-stale"}:
+        with pytest.raises(SubjectEvidenceError, match="^subject evidence invalid: source_binding$") as failure:
+            load_manifest(path, **kwargs)
+        assert failure.value.code == "source_binding"
+        assert failure.value.role == SubjectRole("reported")
+        assert failure.value.entry_ordinal == 1
+    else:
+        loaded = load_manifest(path, **kwargs)
+        assert loaded.model_dump() == GoldenManifest.model_validate(doc).model_dump()
+        assert loaded.model_dump_json() == GoldenManifest.model_validate(doc).model_dump_json()
+        if case == "dated-omitted":
+            assert isinstance(loaded.adjudication_records[0].reviewed_at, datetime)
+            assert all("subject_evidence" not in row for row in loaded.model_dump()["entries"])
+            doc["manifest_version"] = 2
+            legacy = load_legacy_manifest(_write_manifest(tmp_path, doc))
+            assert (
+                legacy.model_dump_json()
+                == GoldenManifest.model_validate(doc, context={"legacy": True}).model_dump_json()
+            )
+
+
+@pytest.mark.parametrize(
+    "role,case",
+    [("selection", "dated-omitted")]
+    + [
+        (role, case)
+        for role in ("reported", "selection")
+        for case in (
+            "undated-omitted",
+            "undated-unknown",
+            "undated-stale",
+            "dated-unknown",
+            "dated-stale",
+            "dated-version",
+            "dated-shape",
+            "dated-state",
+        )
+    ],
+)
+def test_subject_evidence_review_dates_public_cli(tmp_path: Path, role: str, case: str) -> None:
+    from scene.tests.test_eval_harness_bakeoff_report import _se_frames, _se_public
+    from scripts.eval_harness import manifest as manifest_module
+
+    reported, selection = _se_frames(tmp_path)
+    parent = tmp_path / "parent"
+    rc, out = _se_public(parent, reported, selection, gate=False, allow_foreign=True)
+    assert rc == 0 and out.exists()
+    receipt = json.loads((parent / "cli-receipt.json").read_text())
+    argv = receipt["argv"]
+    target = Path(argv[argv.index("--manifest" if role == "reported" else "--selection-manifest") + 1])
+    target.write_text(json.dumps(_subject_review_date_manifest(case)))
+    output = tmp_path / "actual.html"
+    argv[argv.index("--out") + 1] = str(output)
+    imports = tmp_path / "native-imports.json"
+    # Observe real imports and reject pixel reads while executing the real module CLI.
+    driver = (
+        "import hashlib,importlib.util,json,pathlib,runpy,sys; from scripts.eval_harness import manifest; "
+        "p=pathlib.Path(manifest.__file__); r=pathlib.Path(importlib.util.find_spec('scripts.eval_harness.build_bakeoff_report').origin); "
+        "pathlib.Path(sys.argv.pop(1)).write_text(json.dumps(dict(manifest_path=str(p),manifest_sha256=hashlib.sha256(p.read_bytes()).hexdigest(),report_path=str(r),report_sha256=hashlib.sha256(r.read_bytes()).hexdigest()))); "
+        "sys.addaudithook(lambda event,args: (_ for _ in ()).throw(AssertionError('pixel read')) "
+        "if event=='open' and str(args[0]).lower().endswith(('.jpg','.jpeg','.png')) else None); "
+        "runpy.run_module('scripts.eval_harness.build_bakeoff_report',run_name='__main__')"
+    )
+    command = [sys.executable, "-c", driver, str(imports), *argv]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=15)
+    (tmp_path / "native-cli-receipt.json").write_text(
+        json.dumps(
+            {
+                "command": command,
+                "exit_code": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "output": output.exists(),
+                "imports": json.loads(imports.read_text()),
+            },
+            indent=2,
+        )
+    )
+    observed = json.loads(imports.read_text())
+    assert observed["manifest_path"] == manifest_module.__file__
+    assert observed["manifest_sha256"] == hashlib.sha256(Path(manifest_module.__file__).read_bytes()).hexdigest()
+    expected_code = {
+        "dated-version": "evidence_version",
+        "dated-shape": "evidence_shape",
+        "dated-state": "state_consistency",
+    }.get(case, "source_binding")
+    if case in {"dated-unknown", "dated-stale", "undated-stale", "dated-version", "dated-shape", "dated-state"}:
+        assert result.returncode == 4, result.stderr
+        assert f"subject evidence invalid: {expected_code}" in result.stderr
+        assert "Traceback" not in result.stderr
+        assert not output.exists()
+    else:
+        assert result.returncode == 0, result.stderr
+        assert output.exists()

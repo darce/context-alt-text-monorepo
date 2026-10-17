@@ -34,6 +34,28 @@ acx_sha="${5:-}"
 acx_target="${6:-}"
 acx_deadline_epoch="${7:-}"
 acx_build_dir="${8:-}"
+acx_source_tree="${9:-}"
+acx_context_digest="${10:-}"
+acx_lock_digest="${11:-}"
+acx_build_time="${12:-}"
+acx_source_inputs="${13:-}"
+
+[[ "$acx_source_tree" =~ ^[a-f0-9]{40}$ && "$acx_context_digest" =~ ^[a-f0-9]{64}$ && "$acx_lock_digest" =~ ^[a-f0-9]{64}$ ]] \
+  || acx_bulkhead_fail "missing or invalid complete source identity"
+python3 - "$acx_sha" "$acx_source_tree" "$acx_build_time" "$acx_source_inputs" <<'PY_VALIDATE_IDENTITY'
+import datetime, json, re, sys
+try:
+    sha, tree, timestamp, raw = sys.argv[1:]
+    document = json.loads(raw)
+    assert document["source_git_sha"] == sha and document["source_tree"] == tree
+    assert type(document["source_clean"]) is bool
+    assert document["source_scope"] == ["apps/prototype-description-service"]
+    assert re.fullmatch("[a-f0-9]{64}", document["source_diff_sha256"])
+    assert re.fullmatch("[a-f0-9]{64}", document["files_sha256"])
+    assert datetime.datetime.fromisoformat(timestamp.replace("Z", "+00:00")).tzinfo
+except (ValueError, TypeError, KeyError, AssertionError):
+    raise SystemExit("invalid complete source input identity")
+PY_VALIDATE_IDENTITY
 
 case "$acx_builder" in
   ''|-*|*[!A-Za-z0-9_.-]*) acx_bulkhead_fail "unsafe or missing builder name" ;;
@@ -335,6 +357,11 @@ acx_build_args=(
   --builder "$acx_builder"
   --load
   --build-arg "GIT_COMMIT_SHA=$acx_sha"
+  --build-arg "SOURCE_TREE=$acx_source_tree"
+  --build-arg "BUILD_CONTEXT_MANIFEST_SHA256=$acx_context_digest"
+  --build-arg "SERVICE_LOCK_SHA256=$acx_lock_digest"
+  --build-arg "BUILD_TIME=$acx_build_time"
+  --build-arg "SOURCE_INPUTS_JSON=$acx_source_inputs"
 )
 if [[ -n "$acx_target" ]]; then
   acx_build_args+=(--target "$acx_target")
@@ -342,4 +369,117 @@ fi
 acx_build_args+=(-t "${acx_image}:${acx_sha}" .)
 acx_run "remote BuildKit build" docker "${acx_build_args[@]}"
 REMOTE_BUILD_PROGRAM
+}
+
+# Build inputs come from the pinned producer, never from inherited SOURCE_* vars.
+# [GRPH-14] Record provenance as a walkable lineage graph (Building Knowledge
+# Graphs, ch. 8 + Mental Models, ch. 8). The canonical manifest binds the file
+# inventory to commit/tree, diff, scope and cleanliness; its digest feeds the v1
+# baked identity.
+# The canonical manifest binds commit/tree, diff, scope, cleanliness and the file
+# inventory. Its digest feeds shared.source_identity's existing v1 contract.
+prepare_build_identity() {
+  local fields
+  fields="$(
+    python3 - "${REPO_ROOT}" "${SERVICE_DIR}" "${DEPLOY_SHA}" "${DEPLOY_SNAPSHOT_DIR:-}" <<'PY_IDENTITY'
+import datetime
+import fnmatch
+import hashlib
+import json
+from pathlib import Path
+import stat
+import subprocess
+import sys
+
+repo, service, commit, snapshot = sys.argv[1:]
+root = Path(service)
+scope = "apps/prototype-description-service"
+
+def git(*args):
+    return subprocess.check_output(["git", "-C", repo, *args], timeout=30)
+
+def digest(value):
+    return hashlib.sha256(value).hexdigest()
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+
+try:
+    tree = git("rev-parse", commit + "^{tree}").decode().strip()
+    if snapshot:
+        paths = [p.decode().split("\t", 1)[1][len(scope)+1:] for p in git("ls-tree", "-rz", commit, "--", scope).split(b"\0") if p]
+        diff = b""
+    else:
+        paths = [p.decode()[len(scope)+1:] for p in git("ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", scope).split(b"\0") if p]
+        diff = git("diff", "--binary", commit, "--", scope)
+    excluded_dirs = {".git", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".venv", "build", "dist", "data", "logs", "node_modules"}
+    patterns = ("*.pyc", "*.safetensors", "*.bin", "*.pt", "*.pth", "*.gguf", "*.msgpack")
+    files = []
+    blob_ids = {}
+    for path in sorted(set(paths)):
+        parts = Path(path).parts
+        if any(p in excluded_dirs or p.endswith(".egg-info") or p.startswith("models--") for p in parts):
+            continue
+        if any(fnmatch.fnmatch(parts[-1], pattern) for pattern in patterns):
+            continue
+        if path.startswith("recognition/infrastructure/face_pipeline/models/") and path.endswith(".onnx"):
+            continue
+        item = root / path
+        if not item.exists() and not item.is_symlink():
+            continue  # tracked deletion is represented by diff and the inventory
+        metadata = item.lstat()
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("source input is not a regular file")
+        content = item.read_bytes()
+        blob_ids[path] = hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest()
+        files.append({"path": path, "sha256": digest(content), "executable": bool(metadata.st_mode & 0o111)})
+    lock = root / "uv.lock"
+    if not lock.is_file() or lock.is_symlink():
+        raise ValueError("build context requires regular uv.lock")
+    # Compare to the pinned inventory as well: an untracked source file is a diff,
+    # even when git diff (which reports tracked paths only) is empty.
+    expected = []
+    for record in git("ls-tree", "-rz", commit, "--", scope).split(b"\0"):
+        if not record:
+            continue
+        info, path = record.split(b"\t", 1)
+        mode, kind, oid = info.split()
+        relative = path.decode()[len(scope)+1:]
+        parts = Path(relative).parts
+        if any(p in excluded_dirs or p.endswith(".egg-info") or p.startswith("models--") for p in parts):
+            continue
+        if any(fnmatch.fnmatch(parts[-1], pattern) for pattern in patterns):
+            continue
+        if relative.startswith("recognition/infrastructure/face_pipeline/models/") and relative.endswith(".onnx"):
+            continue
+        expected.append((relative, mode, oid))
+    clean = not diff and len(expected) == len(files)
+    if clean:
+        for path, mode, oid in expected:
+            if blob_ids[path] != oid.decode() or (mode == b"100755") != next(f["executable"] for f in files if f["path"] == path):
+                clean = False
+                break
+    manifest = {"schema": "acx-build-inputs@1", "source_git_sha": commit, "source_tree": tree,
+                "source_diff_sha256": digest(b"" if clean else diff + canonical(files)),
+                "source_scope": [scope], "source_clean": clean, "files": files}
+    encoded = canonical(manifest)
+    # Compact inputs preserve the full input lineage without overflowing argv with
+    # the file inventory; the inventory's own digest remains bound to the record.
+    inputs = {k: v for k, v in manifest.items() if k != "files"}
+    inputs["files_sha256"] = digest(canonical(files))
+    print(tree)
+    print(digest(encoded))
+    print(digest(lock.read_bytes()))
+    print(datetime.datetime.now(datetime.timezone.utc).isoformat())
+    print(canonical(inputs).decode())
+except (OSError, ValueError, subprocess.SubprocessError):
+    print("cannot bind build source identity to pinned source and service lock", file=sys.stderr)
+    raise SystemExit(1)
+PY_IDENTITY
+  )" || return 1
+  ACX_SOURCE_TREE="$(printf '%s\n' "$fields" | sed -n '1p')"
+  ACX_BUILD_CONTEXT_MANIFEST_SHA256="$(printf '%s\n' "$fields" | sed -n '2p')"
+  ACX_SERVICE_LOCK_SHA256="$(printf '%s\n' "$fields" | sed -n '3p')"
+  ACX_BUILD_TIME="$(printf '%s\n' "$fields" | sed -n '4p')"
+  ACX_SOURCE_INPUTS_JSON="$(printf '%s\n' "$fields" | sed -n '5p')"
 }

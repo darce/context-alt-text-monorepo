@@ -33,6 +33,8 @@ def _repo(tmp_path: Path) -> tuple[Path, str]:
     _git(repo, "config", "user.email", "deploy-snapshot@example.invalid")
     (repo / ".gitignore").write_text("out/\n*.onnx.partial\n")
     (service / "Dockerfile").write_text("FROM scratch\n")
+    # The real Dockerfile requires uv.lock; identity now hashes that producer input.
+    (service / "uv.lock").write_text("version = 1\n")
     (service / "app.txt").write_text("A\n")
     (deploy / "gpu-snapshot-deployments.conf").write_text("dev\n")
     (deploy / "check-gpu-snapshots.sh").write_text("#!/usr/bin/env bash\nexit 0\n")
@@ -113,7 +115,7 @@ def _dispatch_tools(tmp_path: Path, *, fail_archive: bool = False) -> tuple[Path
         '    if [[ "$argument" == "ship-ref^{commit}" ]]; then\n'
         '      "$REAL_GIT_BIN" -C "$GIT_FIXTURE_ROOT" update-ref refs/heads/ship-ref "$GIT_MUTATE_TO"\n'
         '      printf "mutated\\n" > "$GIT_MUTATED_RECORD"\n'
-        '      GIT_MUTATED=1\n'
+        "      GIT_MUTATED=1\n"
         "      break\n"
         "    fi\n"
         "  done\n"
@@ -127,7 +129,7 @@ def _dispatch_tools(tmp_path: Path, *, fail_archive: bool = False) -> tuple[Path
         'if [[ "${FAIL_ARCHIVE:-0}" == "1" ]]; then exit 1; fi\n'
         '"$REAL_TAR_BIN" "$@" || exit $?\n'
         'destination=""\n'
-        'while (($#)); do\n'
+        "while (($#)); do\n"
         '  if [[ "$1" == "-C" ]]; then destination="$2"; shift 2; else shift; fi\n'
         "done\n"
         'if [[ -n "$destination" && -f "$destination/apps/prototype-description-service/app.txt" ]]; then\n'
@@ -143,11 +145,7 @@ def _dispatch_tools(tmp_path: Path, *, fail_archive: bool = False) -> tuple[Path
         "exit 97\n"
     )
     (fake_bin / "docker").chmod(0o755)
-    (fake_bin / "ssh").write_text(
-        "#!/usr/bin/env bash\n"
-        'printf "ssh %s\\n" "$*" >> "$EXTERNAL_EVENT_RECORD"\n'
-        "exit 97\n"
-    )
+    (fake_bin / "ssh").write_text('#!/usr/bin/env bash\nprintf "ssh %s\\n" "$*" >> "$EXTERNAL_EVENT_RECORD"\nexit 97\n')
     (fake_bin / "ssh").chmod(0o755)
 
     return fake_bin, {
@@ -444,10 +442,7 @@ def test_dispatch_materializes_only_shipping_commands_after_sha_pin(tmp_path: Pa
         tmpdir=tmpdir,
     )
     assert result.returncode != 0
-    assert any(
-        event.startswith("archive\t")
-        for event in Path(tools_env["GIT_EVENT_RECORD"]).read_text().splitlines()
-    )
+    assert any(event.startswith("archive\t") for event in Path(tools_env["GIT_EVENT_RECORD"]).read_text().splitlines())
     assert not Path(tools_env["EXTERNAL_EVENT_RECORD"]).exists()
 
 
@@ -474,7 +469,7 @@ def test_gpu_gate_inputs_come_from_snapshot(tmp_path: Path) -> None:
         + "pin_deploy_sha\nmaterialize_deploy_snapshot build\n"
         + "printf 'LIVE-CONF\\n' > \"$REPO_ROOT/scripts/deploy/gpu-snapshot-deployments.conf\"\n"
         + "printf '#!/usr/bin/env bash\\nprintf live-checker\\n' > "
-        + '\"$REPO_ROOT/scripts/deploy/check-gpu-snapshots.sh\"\n'
+        + '"$REPO_ROOT/scripts/deploy/check-gpu-snapshots.sh"\n'
         + 'printf "SNAPSHOT_CONF=%s\\n" "$(paste -sd, "$DEPLOY_ASSETS_DIR/gpu-snapshot-deployments.conf")"\n'
         + "verify_live_gpu_snapshots dev\n",
         TMPDIR=str(tmpdir),

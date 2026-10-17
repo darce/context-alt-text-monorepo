@@ -1,0 +1,47 @@
+{
+  "status": "private_repair_pending_independent_review",
+  "summary": "Qualified S-SOURCE-G1-01 absence repair in private copies; committed two-file exact edit map.95 subject+4 legacy+12 adjacent cases GREEN; root composition and whole-source G2 remain pending.",
+  "source_sha": "c48f0df37ef3fd50fa4c34e98d7edbb142340626",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/adjudications/S-SOURCE-R2-ABSENCE.edits.json",
+    ".task-state/bakeoff-rounds-20261017/adjudications/S-SOURCE-R2-ABSENCE.json",
+    ".task-state/bakeoff-rounds-20261017/adjudications/S-SOURCE-R2-ABSENCE.md"
+  ],
+  "commits": [
+    "901a4dc315fb7e94ae25ab30554605b87758f4b8"
+  ],
+  "findings": [],
+  "tests": [
+    {
+      "command": ".venv/bin/python /tmp/s-source-r2-absence/scripts/focused_audit.py",
+      "exit_code": 0,
+      "summary": "Verified expected4-failure RED,95 GREEN subject cases (87 original+8 new),4 legacy,12 adjacent and genuine foreign-run parents."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-source-r2-absence/scripts/audit_map.py",
+      "exit_code": 0,
+      "summary": "Unique exact maps;5684 checkout files unchanged;161 old selectors/187 definitions and every prior assertion retained."
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b/.venv/bin/ruff check --config pyproject.toml apps/prototype-description-service/scripts/eval_harness/manifest.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py",
+      "exit_code": 0,
+      "summary": "Both target private files pass scoped Ruff lint."
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b/.venv/bin/ruff format --check --config pyproject.toml apps/prototype-description-service/scripts/eval_harness/manifest.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py",
+      "exit_code": 0,
+      "summary": "Both target private files pass Ruff format check."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-source-r2-absence/scripts/verify_packet.py",
+      "exit_code": 0,
+      "summary": "Map schema, source pins, retained output/exit hashes and all9 prior-root inventories verified."
+    }
+  ],
+  "limitations": [
+    "Checkout source/tests/plan/metadata and9 prior roots remain unchanged. Root owns composition, independent WHOLE source G2, MCP/adoption and finding disposition; sibling projection repair remains separate.",
+    "Native base has requested tree797c54a4474cb6c91b450c3c9853ed6491bb81be; logical inputdc33becd8cd8bc9e2055f250c185172a0159bf71. Equal tree is not ancestry. Live MCP/ONNX and HIGH/STANDARD custody are unavailable; supplied verified retrieval/reinjection and exact AST fallback were used.",
+    "Full audit retained at /tmp/s-source-r2-absence, including two bounded timeouts and corrected setup/lint/format/badge attempts. Final scoped checks pass; synthetic fixtures establish no identity/absence truth or bakeoff readiness.",
+    "commits lists the map delivery commit; separate summary-custody commit is recorded in the private final audit to avoid a self-referential hash."
+  ]
+}

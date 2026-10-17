@@ -1,0 +1,40 @@
+{
+  "sha": "852a4c303ba098c80957ef2da7c187c32822ff27",
+  "tree": "a4fa90e227ef36dd31c0ec3cd59069cea361c7d5",
+  "base": "6ed0b2ece4587844735d9ece924237f8d8c97875",
+  "parents": [
+    "f760b6ed9dfe229c354ef2c1bd5d6ed6699ccb75",
+    "eb3d8670bec35f93ac5bdcc88028976f817e5cc6"
+  ],
+  "branch": "feature/bakerounds-20261017-s-source-r2-composed",
+  "pins": {
+    "apps/prototype-description-service/scripts/eval_harness/manifest.py": {
+      "blob": "37fbea822e393a3909eaf455535f69d534c23555",
+      "sha256": "e5c5b998754a0b640b6ada6f128c762e43d6a087dca323ed9e805ac742cb0220",
+      "edits": 2
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py": {
+      "blob": "0b284a426387c74db086ad646c4d058e1ad5614b",
+      "sha256": "02bdefb6f30883c5f31bf93a27ef072d960bbd6749eee3994ca6ea94feb08049",
+      "edits": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py": {
+      "blob": "77cd56c2415dec520a7007c0cd5a745ef6c36c01",
+      "sha256": "02991cd7ea4641a39cd018c86c4e9f84a574c57fb1bc3aada3c54de6c2887e7f",
+      "edits": 1
+    }
+  },
+  "both_orders_commute": true,
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/adjudications/S-SOURCE-R2-ABSENCE.edits.json",
+    ".task-state/bakeoff-rounds-20261017/adjudications/S-SOURCE-R2-ABSENCE.json",
+    ".task-state/bakeoff-rounds-20261017/adjudications/S-SOURCE-R2-ABSENCE.md",
+    ".task-state/bakeoff-rounds-20261017/adjudications/S-SOURCE-R2-DATES.edits.json",
+    ".task-state/bakeoff-rounds-20261017/adjudications/S-SOURCE-R2-DATES.json",
+    ".task-state/bakeoff-rounds-20261017/adjudications/S-SOURCE-R2-DATES.md",
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py",
+    "apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py",
+    "apps/prototype-description-service/scripts/eval_harness/manifest.py"
+  ],
+  "adopted": false
+}

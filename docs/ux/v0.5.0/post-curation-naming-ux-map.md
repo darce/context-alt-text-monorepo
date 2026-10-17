@@ -218,15 +218,16 @@ on unchecking (rare, consequential, so it confirms):
 
 ```text
 generic draft ──(curation event, mirror ACK)──► names proposal
-     │                                              │
-     │ Accept (generic)                             ├─ Apply ─────────► machine-owned alt (named)
-     ▼                                              ├─ Not <name> ────► unbind ─► re-weave
-machine-owned alt ──(curation event)──► proposal    ├─ Don't name here ► withhold ─► re-weave
-     │                                              ├─ Edit ──────────► human-edited alt
-     │ removal event ──► auto-revert + notice       └─ (left unselected) stays a proposal
-     │                    Undo = undo the curation op
+     │                                          ├─ Apply ──────► machine-owned alt
+     │ Accept (generic)                         ├─ Not <name> ─► unbind, re-weave
+     ▼                                          ├─ Don't name ─► withhold, re-weave
+machine-owned alt ──(curation)──► proposal      ├─ Edit ───────► human-edited alt
+     │                                          └─ unselected ─► stays a proposal
+     │ removal event ──► auto-revert + notice
+     │                   Undo = undo the curation op
      ▼
-human-edited alt ──(curation event)──► name-only suggestion; removal ─► review item
+human-edited alt ──(curation)──► name-only suggestion
+                 ──(removal)───► review item
 ```
 
 ## What this walkthrough changed

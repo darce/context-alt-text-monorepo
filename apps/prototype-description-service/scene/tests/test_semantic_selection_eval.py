@@ -21,6 +21,7 @@ from typing import Any
 
 import pytest
 
+from scene.interface_adapters.http.schemas.requests import DescribeImageEnvelope
 from scripts.eval_harness import semantic_selection_eval as sse
 
 APP_ROOT = Path(__file__).resolve().parents[2]
@@ -379,3 +380,189 @@ def test_cli_rejects_nonfinite_input_without_writing_report(tmp_path: Path) -> N
     assert result.returncode == 1
     assert "not finite" in result.stderr
     assert not output.exists()
+
+
+# DESCBAKE-1 second dispatch: behavioral regressions, not the historical
+# missing-module collection RED. These exercise the real evaluator boundary.
+@pytest.mark.parametrize("query_scale", [1.0, 1.3e308, 5e-324], ids=["ordinary", "huge", "subnormal"])
+@pytest.mark.parametrize("candidate_scale", [1.0, 1.3e308, 5e-324], ids=["ordinary", "huge", "subnormal"])
+def test_cosine_scores_and_ranks_are_scale_invariant(query_scale: float, candidate_scale: float) -> None:
+    doc = _base_doc()
+    for side in ("query_encoder", "candidate_encoder"):
+        doc[side].update(dimension=2, normalization="none")
+    doc["candidates"] = [
+        {"id": "a-decoy", "source_id": "src-a", "status": "approved", "text": "decoy", "vector": [candidate_scale, 0]},
+        {
+            "id": "z-gold",
+            "source_id": "src-z",
+            "status": "approved",
+            "text": "gold",
+            "vector": [candidate_scale, candidate_scale],
+        },
+    ]
+    doc["queries"] = [{"id": "q", "modality": "image", "gold_ids": ["z-gold"], "vector": [query_scale, query_scale]}]
+    doc["selections"] = {"baseline": {"q": []}, "full_pack": {"q": ["z-gold"]}}
+    report = _run(doc)
+    ranking = report["queries"][0]["ranking"]
+    assert [item["candidate_id"] for item in ranking] == ["z-gold", "a-decoy"], "cosine rank changed with scale"
+    assert all(math.isfinite(item["score"]) for item in ranking)
+    assert [item["score"] for item in ranking] == pytest.approx([1.0, 1 / math.sqrt(2)]), (
+        "cosine score changed with scale"
+    )
+    assert report["metrics"]["top1"]["value"] == 1.0
+    assert report["metrics"]["mrr"]["value"] == 1.0
+    json.dumps(report, allow_nan=False)
+
+
+@pytest.mark.parametrize("owner", ["candidates", "queries"])
+def test_out_of_float_range_json_integer_is_a_typed_rejection(owner: str) -> None:
+    doc = _base_doc()
+    doc[owner][0]["vector"][0] = 10**400
+    with pytest.raises(sse.SemanticSelectionError, match=r"vector\[0\].*outside.*float64"):
+        _run(doc)
+
+
+def test_cli_rejects_out_of_float_range_integer_without_traceback(tmp_path: Path) -> None:
+    doc = _base_doc()
+    doc["queries"][0]["vector"][0] = 10**400
+    input_path, output = tmp_path / "oversize.json", tmp_path / "report.json"
+    input_path.write_text(json.dumps(doc), encoding="utf-8")
+    result = _run_cli(input_path, output)
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "outside float64" in result.stderr
+    assert not output.exists()
+
+
+def _image_scoped_doc() -> dict[str, Any]:
+    """Synthetic inputs validated by the actual per-media producer schema.
+
+    This is an explicit test adapter, not a production ContextPack exporter.
+    Identity vectors below are irrelevant placeholders and never rank.
+    """
+    envelopes = [
+        DescribeImageEnvelope.model_validate(
+            {
+                "tenant_id": "00000000-0000-0000-0000-000000000001",
+                "media_id": media_id,
+                "context_pack": {
+                    "identity": {
+                        "policy": {"person_naming": policy},
+                        "identities": [{"name": name, "identity_id": f"person-{media_id}", "source": "user_confirmed"}],
+                        "review_reasons": [reason],
+                    }
+                },
+            }
+        )
+        for media_id, name, policy, reason in [
+            (1, "Alice", "allow", "curated_for_image_1"),
+            (2, "Bob", "withhold", "review_required_for_image_2"),
+        ]
+    ]
+    doc = _base_doc()
+    doc["queries"] = [
+        {"id": f"q-{e.media_id}", "modality": "image", "gold_ids": ["ctx-a"], "vector": [1, 0, 0, 0]} for e in envelopes
+    ]
+    doc["candidates"] = [c for c in doc["candidates"] if c["status"] != "protected"]
+    doc["candidates"].append(
+        {
+            "id": "global-policy",
+            "source_id": "policy:all-images",
+            "status": "protected",
+            "text": "Preserve supplied identity and review constraints",
+            "vector": [1, 0, 0, 0],
+            "protected_scope": {"kind": "global"},
+        }
+    )
+    local_ids: dict[str, list[str]] = {}
+    for envelope in envelopes:
+        qid = f"q-{envelope.media_id}"
+        # Same serialized shape used by describe.py:981, without importing its
+        # database/router dependencies or substituting a simplified schema.
+        assert envelope.context_pack is not None
+        identity = envelope.context_pack.model_dump(exclude_none=True)["identity"]
+        facts = {"identity": identity["identities"], "policy": identity["policy"], "review": identity["review_reasons"]}
+        local_ids[qid] = []
+        for kind, fact in facts.items():
+            cid = f"{qid}-{kind}"
+            local_ids[qid].append(cid)
+            doc["candidates"].append(
+                {
+                    "id": cid,
+                    "source_id": f"image:{envelope.media_id}",
+                    "status": "protected",
+                    "text": json.dumps(fact, sort_keys=True),
+                    "vector": [-1, 0, 0, 0],
+                    "protected_scope": {"kind": "queries", "query_ids": [qid]},
+                }
+            )
+    doc["selections"] = {
+        pack: {qid: ["global-policy", *ids, "ctx-a"] for qid, ids in local_ids.items()}
+        for pack in ("baseline", "full_pack")
+    }
+    return doc
+
+
+def test_protected_records_require_explicit_applicability() -> None:
+    doc = _base_doc()
+    next(c for c in doc["candidates"] if c["status"] == "protected").pop("protected_scope", None)
+    # Before the fix, the ambiguous record is accepted and forced into every
+    # image. Unknown scope must not silently become global authorization.
+    with pytest.raises(sse.SemanticSelectionError, match="protected_scope"):
+        _run(doc)
+
+
+def test_producer_shaped_image_scopes_and_explicit_global_policy() -> None:
+    doc = _image_scoped_doc()
+    report = _run(doc)
+    expected = {qid: ["global-policy", f"{qid}-identity", f"{qid}-policy", f"{qid}-review"] for qid in ("q-1", "q-2")}
+    assert report["protected_records"]["applicable_ids_by_query"] == expected
+    assert report["protected_records"]["required_in_every_applicable_frozen_pack"] is True
+    for pack in ("baseline", "full_pack"):
+        for qid, ids in expected.items():
+            assert report["packs"][pack][qid]["selected_ids"] == [*ids, "ctx-a"]
+    for qid in expected:
+        assert not set(report["protected_records"]["ids"]) & set(_ranked_ids(report, qid))
+
+
+@pytest.mark.parametrize("pack", ["baseline", "full_pack"])
+@pytest.mark.parametrize("kind", ["identity", "policy", "review"])
+def test_cross_image_protected_records_are_rejected(pack: str, kind: str) -> None:
+    doc = _image_scoped_doc()
+    doc["selections"][pack]["q-2"].append(f"q-1-{kind}")
+    with pytest.raises(sse.SemanticSelectionError, match=f"{pack} query 'q-2'.*q-1-{kind}.*out of scope"):
+        _run(doc)
+
+
+@pytest.mark.parametrize("pack", ["baseline", "full_pack"])
+@pytest.mark.parametrize("cid", ["q-2-identity", "q-2-policy", "q-2-review", "global-policy"])
+def test_applicable_protected_records_cannot_be_suppressed(pack: str, cid: str) -> None:
+    doc = _image_scoped_doc()
+    doc["selections"][pack]["q-2"].remove(cid)
+    with pytest.raises(sse.SemanticSelectionError, match=f"{pack} query 'q-2'.*{cid}.*suppressed"):
+        _run(doc)
+
+
+@pytest.mark.parametrize(
+    "scope, message",
+    [
+        ({"kind": "queries", "query_ids": []}, "query_ids"),
+        ({"kind": "queries", "query_ids": ["q-1", "q-1"]}, "duplicate.*query"),
+        ({"kind": "queries", "query_ids": ["q-unknown"]}, "unknown.*query"),
+        ({"kind": "global", "query_ids": ["q-1"]}, "query_ids"),
+        ({"kind": "unknown"}, "protected_scope"),
+    ],
+)
+def test_invalid_protected_scope_is_rejected(scope: dict[str, Any], message: str) -> None:
+    doc = _image_scoped_doc()
+    doc["candidates"][-1]["protected_scope"] = scope
+    with pytest.raises(sse.SemanticSelectionError, match=message):
+        _run(doc)
+
+
+def test_scope_cannot_authorize_an_approved_or_denied_record() -> None:
+    for status in ("approved", "denied"):
+        doc = _image_scoped_doc()
+        next(c for c in doc["candidates"] if c["status"] == status)["protected_scope"] = {"kind": "global"}
+        with pytest.raises(sse.SemanticSelectionError, match="only protected.*protected_scope"):
+            _run(doc)

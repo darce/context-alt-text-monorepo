@@ -1,0 +1,200 @@
+{
+  "canon_version": "0.26.2",
+  "verified_files": {
+    "lexicons/engineering.md": {
+      "sha256": "20e2cfe911755dfbd983b48e7b93be9cb46674f0ec0bce3dfec45a75a25fce6d",
+      "verified": true
+    },
+    "reasoning/measurement-integrity.md": {
+      "sha256": "789a3475bc9067d2d284e464eacb047fe86518bb0b506ca71397586f43a3eca8",
+      "verified": true
+    }
+  },
+  "rules": [
+    {
+      "line": 495,
+      "text": "| TEST-07<a name=\"test-07\"></a> | A test fixture or persistent record is created in shared scope, and a later test reads or mutates it | **Fresh fixture per test**: give each test its own starting state, using a unique identity, a partition, or a transaction that is rolled back, and clean that state up; create only the acceptance state the test needs through public application behavior where possible, because shared or ordered test data makes failures difficult to localize and parallel execution unsafe (\u2194 [[TEST-08]](engineering.md#test-08) a suite that changes its result for the same code certifies nothing) | Can this test establish and remove its own starting state without reading or mutating another test's records? | B\u00b7r | [Refactoring: Improving the Design of Existing Code (2nd ed), ch. 4](../SOURCES.md#src-refactoring-fowler-beck) + [Continuous Delivery, ch. 8](../SOURCES.md#src-continuous-delivery-humble-farley) + [Continuous Delivery, ch. 12](../SOURCES.md#src-continuous-delivery-humble-farley) |"
+    },
+    {
+      "line": 497,
+      "text": "| TEST-09<a name=\"test-09\"></a> | A test is hard to write, needs threads, or needs a real DB/file/network | **Hard test = design defect**: when a test is difficult to write, improve the design rather than complicating the test. | What part of the design makes this test difficult to write? | S\u00b7w | [Modern Software Engineering, ch. 14](../SOURCES.md#src-modern-software-engineering) |"
+    },
+    {
+      "line": 503,
+      "text": "| TEST-15<a name=\"test-15\"></a> | A passing test is being evaluated to confirm it catches the regression it claims to prevent, or a bug has slipped through the existing tests. | **Prove the green can go red**: before trusting a passing test, take a separate branch, deliberately introduce a bug, and confirm that the tests catch it; when a bug escapes the suite, add a regression test to trap it next time. | Would the tests catch a deliberately introduced bug, and would an escaped bug become a regression test? | S\u00b7r | [The Pragmatic Programmer, ch. 9](../SOURCES.md#src-pragmatic-programmer) |"
+    },
+    {
+      "line": 504,
+      "text": "| TEST-16<a name=\"test-16\"></a> | A behavior's effect can't be asserted without exposing privates | **Add a measurement point**: inject the dependency and assert via a fake; never break encapsulation for tests (\u2194 [[TEST-04]](engineering.md#test-04) find the seam that makes substitution possible; \u2194 [[TEST-12]](engineering.md#test-12) private-method urge is an SRP signal, not a license to open the class) | Where can a fake observe this effect through the public contract? | S\u00b7w | [Modern Software Engineering, ch. 14](../SOURCES.md#src-modern-software-engineering) |"
+    },
+    {
+      "line": 513,
+      "text": "| TEST-25<a name=\"test-25\"></a> | A required acceptance case is written as the current API's calls and payloads rather than as the external behavior | **Specify behavior at the boundary**: write the executable specification in domain terms, translate it through a protocol driver, and keep external stubs outside the system, because another implementation should be able to satisfy the same behavioral contract (\u2194 [[TEST-12]](engineering.md#test-12) a private-method test is a signal to use the public interface or to move the method; \u2194 [[TEST-10]](engineering.md#test-10) end-to-end checks supplement a strategy and do not replace this specification; \u2194 [[TEST-21]](engineering.md#test-21) repeated GUI selectors belong in a window driver) | Would this case still describe the needed behavior if the API implementation changed? | S\u00b7w | [Continuous Delivery Pipelines, ch. 10](../SOURCES.md#src-continuous-delivery-pipelines-farley) |"
+    },
+    {
+      "line": 549,
+      "text": "| DBG-03<a name=\"dbg-03\"></a> | Diff bundles multiple speculative changes \"to see if it helps\" | **Change one factor per trial**: a multi-change success leaves the cause unknown; isolate a single factor each run | Did this trial change only one variable? | S\u00b7w | [Debugging: The 9 Indispensable Rules](../SOURCES.md#src-debugging-9-rules) |"
+    },
+    {
+      "line": 551,
+      "text": "| DBG-05<a name=\"dbg-05\"></a> | Internals investigated before verifying foundations (right binary/branch, service up, config present) | **Check foundations first**: wrong binary, branch, config, or environment looks like a deep bug while setup is wrong  (\u2194 [[AGT-02]](engineering.md#agt-02) Both verify the setup behind a claim before acting; check binary and configuration, and resolve path or API assumptions at their source.)| Have binary, branch, config, and environment been verified? | S\u00b7p | [Debugging: The 9 Indispensable Rules](../SOURCES.md#src-debugging-9-rules) |"
+    },
+    {
+      "line": 556,
+      "text": "| DBG-10<a name=\"dbg-10\"></a> | Fix special-cases the failing value or symptom (`if (x == badcase)`) | **Repair the causal path, not the symptom**: symptom patches leave the defect live; the fix must break the defect-to-failure chain; then sweep for sibling defects | Does the fix remove the defect, or only hide this instance? | B\u00b7r | [Why Programs Fail](../SOURCES.md#src-why-programs-fail) |"
+    }
+  ],
+  "original_distillations": [
+    {
+      "path": "/Users/daniel/Development/heuristics-canon-research/distilled/engineering/modern-software-engineering.md",
+      "sha256": "f72c96aa473fee608fd444198e51e3123b4be597bb542643e600fe6db407075d",
+      "lines": [
+        301,
+        325
+      ],
+      "text": "The chapter that operationalizes everything: five interlocking tools \u2014 **testability, deployability, speed, controlling the variables, continuous delivery**. Adopt only these as organizing principles and the rest of the book re-derives itself.\n\nFour things development must learn, continuously: *Are we solving the right problem? Does our solution work as we think? What is the quality of our work? Are we working efficiently?* Humans can't proofread their way to correct software (we see what we expect); code that has never been run is a hostage to fortune; separate testing teams give slow, late, low-context feedback. So testing must be automated, continuous, and designed-for.\n\n### Testability\n\nTestable code is *forced* to be modular, cohesive, well-separated, information-hiding, appropriately coupled \u2014 testability is the one property that implies the others, and the only early objective signal of design quality besides taste.\n\nCanonical micro-example (**BetterCar**): `Car` constructing `new PetrolEngine()` internally has *nothing to assert* \u2014 the effect of `start()` is invisible without breaking encapsulation (making fields public / backdoor hacks \u2014 both terrible). Inject the engine:\n\n```java\nclass Car { private final Engine engine = new PetrolEngine(); ... }   // untestable endpoint\nclass BetterCar { BetterCar(Engine engine) { this.engine = engine; } } // injectable\n// test: FakeEngine engine; new BetterCar(engine); car.start();\n//       assertTrue(engine.startedSuccessfully());\n```\nOne DI step abstracts `Engine`, removes construction responsibility, and as a side effect the car now takes Petrol/Electric/Jet/Fake engines \u2014 **designing for testability produced the flexibility**. Fakes recording interactions are the measurement instrument.\n\n**Measurement points** are the unit of testability: places to establish state, invoke behavior, and observe results without compromising integrity. Fine-grained: parameters, return values, injected fakes. System-level: fake every external dependency at the system's integration points and treat the whole system as a black box (the exchange faked banks/clearinghouses and injected account registrations).\n\n**Edge problem (technical)**: at system edges (disk, screen, DOM, hardware) you can't inject/collect. Solution: push edges to the margins and minimize their complexity \u2014 define an abstraction for the interaction, test against a fake of it, write a dumb adapter to the real edge (\"add a level of indirection; you can always do this\"). Example: a `Display` interface with `ConsoleDisplay` at runtime and a mock in tests; project example: a JavaScript component factory \"in front of the DOM\" (Ports & Adapters for the DOM) making web UI logic unit-testable without a browser.\n\n**Culture problem**: every team claiming \"we tried TDD and it didn't work\" turns out to have written unit tests *after* the code. Test-after encourages corner-cutting, encapsulation-breaking, and tests tightly coupled to existing structure \u2014 producing exactly the \"tests block change\" symptom then blamed on TDD. Test-first is the practice; Farley has never met a team that genuinely practiced it and found it didn't work. (\u2194 working-effectively-with-legacy-code: for code that already exists, characterization tests written after the fact are the entry ramp \u2014 different problem, not a contradiction.)\n\n**Test discipline per increment**: work iteratively, one test per small piece; structure each test as an experiment \u2014 predict the failure and its message before running (verifies the test tests what you think); make it pass; then use the passing code+test platform to refactor safely. **If the test before you is difficult to write, the design of the code is poor and needs improvement \u2014 fix the design, not the test.** Testability is fractal: enterprise system down to three lines."
+    },
+    {
+      "path": "/Users/daniel/Development/heuristics-canon-research/distilled/engineering/continuous-delivery-pipelines-farley.md",
+      "sha256": "7c3fa435cb0d876ba1d3667f28a4e2fde399c574abc2a647df9840787ac4a004",
+      "lines": [
+        245,
+        265
+      ],
+      "text": "\nDerived from text: ch-10, \u201cSteps in Running Acceptance Tests\u201d\n```mermaid\nflowchart LR\n    Configure[\"Configure environment\"] --> Deploy[\"Deploy Release Candidate\"]\n    Deploy --> Health[\"Smoke test / health check\"]\n    Health --> Run[\"Run Acceptance Tests\"]\n```\n\nThe proposed four-layer test architecture isolates the language of the expected behavior from the transport mechanics. Figure 10.2 shows repeated executable-specification cases above a DSL, protocol drivers and external stubs in the next layer, and the system under test below.\n\nDerived from image: chapter12-02 (Figure 10.2)\n\n| Position in figure | Elements shown |\n|---|---|\n| Top | Four `Test Case (Executable Specification)` boxes |\n| Second layer | `Domain Specific Language` |\n| Third layer | `Protocol Driver (e.g. UI)`, `Protocol Driver (e.g. API)`, two `External System Stub` shapes |\n| Bottom | `System Under Test` |\n\nExecutable specifications state desired behavior in domain terms. A small domain-specific language offers reusable operations; protocol drivers translate those operations into interactions with the system; the system under test is the deployed application. Keep system knowledge in the protocol drivers and fake dependencies outside the system boundary. This allows a different implementation to satisfy the same useful behavioral specification."
+    },
+    {
+      "path": "/Users/daniel/Development/heuristics-canon-research/distilled/engineering/pragmatic-programmer.md",
+      "sha256": "18ee4cc144c4950db3565d53c2fb3d1645a63ebc086317e4d0a0cbf9c4748455",
+      "lines": [
+        172,
+        179
+      ],
+      "text": "## ch-9 \u2014 Pragmatic Projects {#ch-9}\n\n- Topic 49 teams (Tips 84\u201386): small stable teams; schedule communication; organize fully functional teams that can build end-to-end (Conway-relevant; cross-link `TEAM-*`).\n- Topic 50 **Coconuts don't cut it** (Tip 87): do what works, not what's fashionable; cargo-cult the surface of a method and you get the coconut radio, not the airport.\n- Topic 51 **Pragmatic starter kit** \u2014 the magic trio:\n  - Version control driving builds/tests/releases (Tip 89)\n  - Ruthless automated testing (Tips 90\u201394): test early/often/automatically; coding ain't done 'til tests run; saboteurs to test the tests; state coverage not just line coverage; find bugs once (then automate the regression)\n  - Tip 95: **Don't use manual procedures** \u2014 \"People just aren't as repeatable as computers are.\" Shell script or program for anything you would otherwise click through twice. This is the workflow rule the user intent points at; partial overlap with `AGT-14` (never prompt in automation path) but broader: any manual runbook step that can be scripted should be."
+    },
+    {
+      "path": "/Users/daniel/Development/heuristics-canon-research/distilled/engineering/debugging-9-rules.md",
+      "sha256": "51c51e6b0fe75b023bc3a29d6b11db9fd5796112477a2a1a8d655f0da328eebb",
+      "lines": [
+        34,
+        44
+      ],
+      "text": "| # | Rule | Observable agent violation | Corrective action | War story (compressed) |\n|---|------|---------------------------|-------------------|------------------------|\n| 1 | **Understand the System** | Editing/diagnosing code whose contract it never read: guesses an API default, a config semantic, a pin/parameter order from memory; skips the referenced doc/spec | Read the manual/spec/schema for the failing component cover to cover before theorizing; look up (don't recall) every default, signature, and parameter | Interrupt controller never fired: page 37 of the data book said interrupts need a deselected clock strobe his cost-saving design never produced. All-nighter ended when he finally read the book (ch-3) |\n| 2 | **Make It Fail** | Proposes a fix without having reproduced the failure; no failing command/test cited before the diff | Reproduce deliberately and repeatably from a known starting state; write the repro steps down; only then debug | Dealer inspected a car at 11 a.m., 37\u00b0F, for a whine that only occurs below 25\u00b0F in the first 10 minutes \u2014 found nothing, fixed nothing (ch-4) |\n| 3 | **Quit Thinking and Look** | Asserts a root cause with no observation behind it (no log line, trace, breakpoint, or failing assertion cited); starts \"fixing\" the hypothesized mechanism | Instrument the system and watch the actual failure mechanism happen before touching the code | Junior engineers spent months building a memory-timing fix board for a \"marginal timing\" theory; senior engineer injected `00 55 AA FF`, saw `00 55 55 AA FF` \u2014 a doubled write pulse from bus noise, nothing to do with memory timing (ch-5) |\n| 4 | **Divide and Conquer** | Reads the whole system linearly or verifies working components first; no bisection of the failure path (or of history) | Successive approximation: pick a midpoint on the bad path, determine which side the bug is on, halve again; start from the failure and work upstream | Hotel-reservation tech chased bad serial signals by halving the wiring path \u2014 computer end, breakout box, cable \u2014 to cracked solder joints, then a miswired purple wire (ch-6) |\n| 5 | **Change One Thing at a Time** | Diff bundles several speculative changes \"to see if it helps\"; an experiment that didn't help is left in while the next one starts | One variable per experiment; if a change doesn't fix it, back it out immediately | Engineer added framing bits on a guess; it didn't help but he left it in. The real fix then still sounded bad \u2014 his leftover change was corrupting audio on its own. Hours lost re-verifying a correct fix (ch-7) |\n| 6 | **Keep an Audit Trail** | Debugging across many attempts with no written record of what was tried, in what order, with what result; relies on conversation memory | Log every action and result with timestamps as you go; save and annotate the failing logs | Video chip dropped 30 fps\u21922 fps \"randomly\" for days; the audit clue was what shirt he wore \u2014 moving plaid flannel overloaded the compressor. The insignificant-seeming detail was the key (ch-8) |\n| 7 | **Check the Plug** | Deep-dives component internals before checking foundations: wrong binary/branch running, service not started, env var unset, stale build, tool misconfigured | Question the \"obvious\" assumptions first \u2014 is it plugged in, initialized, the version you think? Test the test tool itself | Cold showers blamed on the water heater for months; the upstream furnace thermostat was set to 165\u00b0 instead of 190\u00b0. He'd bounded his search below the real problem (ch-9) |\n| 8 | **Get a Fresh View** | Grinds solo in a rut past the point of progress; when it does ask, it hands over its theory instead of the symptoms | Ask (colleague, expert, vendor, docs, bug database) early; report symptoms, conditions, and what's intermittent \u2014 never your theory | Brake-light fuse blew in reverse; a colleague said instantly \"dome light wire pinched against the frame \u2014 happens all the time.\" Minutes instead of days (ch-10) |\n| 9 | **If You Didn't Fix It, It Ain't Fixed** | Declares fixed without re-running the original failing sequence; tests the fix under different conditions; accepts \"can't reproduce anymore\" as closure | Re-run the exact repro against the fix; then remove the fix and confirm it fails again, restore and confirm it passes (fixed\u2192broken\u2192fixed) | Shop charged $75 for \"an electrical problem\", never reproduced the stall, car stalled next day; a 50-cent fuel filter \u2014 found via repro reasoning \u2014 was the fix (ch-11) |"
+    }
+  ],
+  "semantic_reinjection": {
+    "content": [],
+    "structuredContent": {
+      "ok": true,
+      "task_ref": "BAKECACHE-1",
+      "status": "selected",
+      "skip_reason": null,
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null,
+      "relevant_lines": [
+        "relevant:",
+        "- C-BASE-GATE-01: Observe identities/blocks for every permitted allocation path using public OS observations/no-follow [finding:19085]",
+        "- LOUD STOP and Canon-sourced proposal before FOU\u2026: ActualC-BASE-G2independentREVISErecurs C-BASE-GATE-01 at e6d8c6a5/test937545fc: blanket [decision:17790]",
+        "- LOUD STOP and Canon-sourced proposal before THI\u2026: C-BASE-GATE native0 independently found C-BASE-GATE-01 at a860f8b0/testf513ce7c. Current public OS [decision:17779]",
+        "- Keep memory independent while five remote revie\u2026: First C-R author returned CONTRACT_NOT_FROZEN with no tests: inventory evidence resolution/closure and [decision:17770]",
+        "- BAKECACHE-P-I-GATE-01: Verified on feature branch by second source gate1452; not integrated into main. See BCPI-G2.result.json [finding:19065]",
+        "- BAKECACHE-P-I-GATE-01: In the isolated CacheReceipt can_advance predicate, require appropriate after_cleanup measurements for [finding:19065]",
+        "- BAKECACHE-C-R-CONTRACT-01: Before the affected inventory tests/source, E and C should freeze one offline admitted completeness [finding:19079]",
+        "- C-BASE-GATE-01: Physical-release verification is vacuous for permitted reservation allocation methods that bypass [finding:19085]"
+      ],
+      "semantic_reinjection": {
+        "anchor_sources": [
+          "visible_text"
+        ],
+        "chars_budget": 7000,
+        "chars_used": 1207,
+        "effective_config": {
+          "candidate_pool": 32,
+          "max_concepts": 8,
+          "max_redundancy": 0.92,
+          "max_score_drop": 0.2,
+          "min_score": 0.35,
+          "mmr_relevance_weight": 0.7,
+          "notify_allowance_chars": 220,
+          "refresh_budget_chars": 1500,
+          "snippet_chars": 120
+        },
+        "fallback_scope": null,
+        "model_id": "gte-base-en-v1.5",
+        "score_hi": 0.7015994191169739,
+        "score_lo": 0.5966546535491943,
+        "selected": [
+          {
+            "emitted_chars": 144,
+            "id": "19085",
+            "kind": "finding",
+            "label": "C-BASE-GATE-01",
+            "score": 0.7015994191169739,
+            "snippet": "Observe identities/blocks for every permitted allocation path using public OS observations/no-follow [finding:19085]"
+          },
+          {
+            "emitted_chars": 157,
+            "id": "17790",
+            "kind": "decision",
+            "label": "LOUD STOP and Canon-sourced proposal before FOU\u2026",
+            "score": 0.6866662502288818,
+            "snippet": "ActualC-BASE-G2independentREVISErecurs C-BASE-GATE-01 at e6d8c6a5/test937545fc: blanket [decision:17790]"
+          },
+          {
+            "emitted_chars": 168,
+            "id": "17779",
+            "kind": "decision",
+            "label": "LOUD STOP and Canon-sourced proposal before THI\u2026",
+            "score": 0.671829104423523,
+            "snippet": "C-BASE-GATE native0 independently found C-BASE-GATE-01 at a860f8b0/testf513ce7c. Current public OS [decision:17779]"
+          },
+          {
+            "emitted_chars": 172,
+            "id": "17770",
+            "kind": "decision",
+            "label": "Keep memory independent while five remote revie\u2026",
+            "score": 0.6212072372436523,
+            "snippet": "First C-R author returned CONTRACT_NOT_FROZEN with no tests: inventory evidence resolution/closure and [decision:17770]"
+          },
+          {
+            "emitted_chars": 145,
+            "id": "19065",
+            "kind": "finding",
+            "label": "BAKECACHE-P-I-GATE-01",
+            "score": 0.5966546535491943,
+            "snippet": "Verified on feature branch by second source gate1452; not integrated into main. See BCPI-G2.result.json [finding:19065]"
+          },
+          {
+            "emitted_chars": 144,
+            "id": "19065",
+            "kind": "finding",
+            "label": "BAKECACHE-P-I-GATE-01",
+            "score": 0.5999622941017151,
+            "snippet": "In the isolated CacheReceipt can_advance predicate, require appropriate after_cleanup measurements for [finding:19065]"
+          },
+          {
+            "emitted_chars": 145,
+            "id": "19079",
+            "kind": "finding",
+            "label": "BAKECACHE-C-R-CONTRACT-01",
+            "score": 0.6198044419288635,
+            "snippet": "Before the affected inventory tests/source, E and C should freeze one offline admitted completeness [finding:19079]"
+          },
+          {
+            "emitted_chars": 132,
+            "id": "19085",
+            "kind": "finding",
+            "label": "C-BASE-GATE-01",
+            "score": 0.6231440305709839,
+            "snippet": "Physical-release verification is vacuous for permitted reservation allocation methods that bypass [finding:19085]"
+          }
+        ],
+        "skip_reason": null,
+        "status": "selected"
+      }
+    },
+    "isError": false
+  },
+  "decision_id": 17806,
+  "engineering_inference": "Separate independently observed reservation allocation/release from permitted accounting retention. Existing public receipt has no implicit file-role observation. Prove sufficiency with coherent OS/P-typed paired controls; if insufficient, return indistinguishability witness and smallest public edge contract proposal for independent review. No guessed credits or private ledger. Protected fresh per-test parent before child spawn; cleanup only after confirmed owned child stop/reap."
+}

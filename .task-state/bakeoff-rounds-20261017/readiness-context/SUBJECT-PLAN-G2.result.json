@@ -1,0 +1,40 @@
+{
+  "status": "PASS0",
+  "summary": "PASS0: the revised plan satisfies the requested fail-closed comparison, validation and compatibility requirements within its narrow v1 scope. No material planning defects; root disposition and separate source implementation/review remain pending.",
+  "source_sha": "99cf0b53bb8011b981134d115ef7285e62c659ea",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/reviews/SUBJECT-PLAN-G2.json",
+    ".task-state/bakeoff-rounds-20261017/reviews/SUBJECT-PLAN-G2.md"
+  ],
+  "commits": [
+    "209308b886e13904494a7fb304299af88549c86b"
+  ],
+  "findings": [],
+  "tests": [
+    {
+      "command": "python /tmp/subject-plan-g2/scripts/audit_run.py custody python /tmp/subject-plan-g2/scripts/custody.py",
+      "exit_code": 0,
+      "summary": "Exact input tree, six Canon bodies, current ML lexicon, semantic receipts and ten source snapshots verified. All 1,367 protected application files match R2; twenty public controls and four existing selector passes reused after verifying saved inputs/outputs/exits. Nine proposed selectors remain absent."
+    },
+    {
+      "command": "python /tmp/subject-plan-g2/scripts/audit_run.py acceptance-audit python /tmp/subject-plan-g2/scripts/acceptance_audit.py",
+      "exit_code": 0,
+      "summary": "Whole-plan contract and actual caller, CLI, digest and context boundaries checked by source/AST inspection. No structured consumer, proposed test or model execution claimed."
+    },
+    {
+      "command": "python /tmp/subject-plan-g2/scripts/audit_run.py fixed-frame-metadata-reproducible python /tmp/subject-plan-g2/scripts/fixed_frame_metadata.py",
+      "exit_code": 0,
+      "summary": "Read-only metadata check confirms fixed 10/20/37 rows, disjoint selection/heldout IDs/hashes/paths and four shared legacy labels."
+    },
+    {
+      "command": "python /tmp/subject-plan-g2/scripts/audit_run.py verify-final-records python /tmp/subject-plan-g2/scripts/verify_review.py",
+      "exit_code": 0,
+      "summary": "Strict common JSON, exact plan/source bytes, owned-file-only diff and retained audit verified."
+    }
+  ],
+  "limitations": [
+    "Planning review only. The structured consumer and nine proposed tests are unimplemented; current SUBJECT-GATE-03 remains open. Root alone retains central disposition/adoption authority. No metadata, source, model, score, quality or face-truth adoption is granted.",
+    "Native gpt-6.1-sol/xhigh is verified; STANDARD service tier is not exposed. Logical commit object is unavailable; native base ae2126fa449c06b57bd94368c83887657f11858e matches requested tree 920bd8b6a9cd357b99339cb773fb978838af418a without an ancestry claim.",
+    "Supplied verified context and exact-checkout source fallback were used; no live graph/handoff refresh, new ONNX inference or public-control rerun. Full audit is retained under /tmp/subject-plan-g2; no agents, model runs, original-media access or resource cleanup occurred."
+  ]
+}

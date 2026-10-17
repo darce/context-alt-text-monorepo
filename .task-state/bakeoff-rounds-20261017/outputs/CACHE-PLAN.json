@@ -1,0 +1,57 @@
+{
+  "status": "pass",
+  "summary": "Committed implementation-ready BAKECACHE-1 plan for an owned single-model cache executor and concurrent identity-bound memory collector. Planning scope complete; no implementation, target qualification or research-quality claim.",
+  "source_sha": "b2e0c98458023fb8864e1ff5a434765c691f902c",
+  "changed_files": [
+    "docs/tasks/vlm/BAKECACHE-1-owned-cache-executor-task-plan.md",
+    ".task-state/bakeoff-rounds-20261017/outputs/CACHE-PLAN.json",
+    ".task-state/bakeoff-rounds-20261017/outputs/CACHE-PLAN.md"
+  ],
+  "commits": [
+    "a40c4fd286b3dc5f598eb86051bb2fed711959f4"
+  ],
+  "findings": [
+    {
+      "id": "CACHE-PLAN-TARGET-01",
+      "severity": "blocker",
+      "file": "docs/tasks/vlm/BAKECACHE-1-owned-cache-executor-task-plan.md",
+      "description": "Real operations require complete component inventory, expected hashes and measured target/runtime admission.",
+      "evidence": "This planning slice supplies contracts only; MiniCPM 4.6 completeness and target capacity/unload evidence remain unknown.",
+      "fix": "Supply verified private inventory and separately admitted target evidence before any actual fetch/load; emit INVENTORY_INCOMPLETE or TARGET_ADMISSION_MISSING otherwise."
+    }
+  ],
+  "tests": [
+    {
+      "command": "git rev-parse HEAD^{tree}; compare .workbay-source-provenance",
+      "exit_code": 0,
+      "summary": "Initial tree 41b684a04dda562adbc01e564b2a0b6f2139d8f2 matches supplied snapshot; transport base a69d00fc35e1eebe87949337faf100bee1af87ed."
+    },
+    {
+      "command": "git cat-file -t b2e0c98458023fb8864e1ff5a434765c691f902c",
+      "exit_code": 128,
+      "summary": "Source commit object absent as expected in stripped history; tree verified without ancestry claim."
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../../.venv/bin/python -B -m pytest --noconftest -o required_plugins= -p no:cacheprovider -q scene/tests/test_eval_harness_bakeoff_runner.py::test_emit_shell_is_bash_n_clean_and_mentions_incumbents scene/tests/test_eval_harness_bakeoff_runner.py::test_emit_shell_download_hint_includes_artifacts scene/tests/test_eval_harness_bakeoff_runner.py::test_build_plans_is_deterministic",
+      "exit_code": 0,
+      "summary": "3 passed, 3 configuration warnings, 6.97s; existing synthetic planner/emitter checks only, including bash syntax. No GPU/server/download operations."
+    },
+    {
+      "command": ".venv/bin/python -I -B /tmp/cache-plan-verify.py",
+      "exit_code": 0,
+      "summary": "Source/provenance, exact current symbols, required contracts, original tracked-byte preservation, owned-path restriction, safe-content signatures and strict .schema.json validation pass."
+    },
+    {
+      "command": "git diff --cached --check",
+      "exit_code": 0,
+      "summary": "Owned staged artifacts pass whitespace/error checks."
+    }
+  ],
+  "limitations": [
+    "No source or test changes; future RED cases and proposed APIs have not been implemented or executed. Three existing scoped checks are not cache-executor qualification.",
+    "No model download, inference, GPU/OCI/server changes, private media reads, shared-store writes or historical 219/75 test rerun. No nested agents.",
+    "Research readiness remains NOT_READY; selection10/report20/regression37, pins, baselines and score-marker rules remain unchanged. KV, first-token and cold-memory peaks remain unknown.",
+    "Canon v0.26.2 exact rule rows supplied in the dispatch govern citations. Upstream repository page was read; an older discovered cache was not treated as v0.26.2 or used to replace the pin.",
+    "No independent review or main merge authority; code readiness and actual target admission remain future separate gates."
+  ]
+}

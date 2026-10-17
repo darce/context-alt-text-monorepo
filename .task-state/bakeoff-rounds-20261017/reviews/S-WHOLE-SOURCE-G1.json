@@ -1,0 +1,104 @@
+{
+  "status": "revise",
+  "summary": "REVISE: two material source defects—unnamed face boxes bypass supported-absence conflicts, and dated v3 subject bindings escape with TypeError. Required87+4+12 tests pass.",
+  "source_sha": "59d367ec8907572964200844b715fec066ba4f25",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/reviews/S-WHOLE-SOURCE-G1.json",
+    ".task-state/bakeoff-rounds-20261017/reviews/S-WHOLE-SOURCE-G1.md"
+  ],
+  "commits": [
+    "80760ceb4e88f584f9a66b86ca3d2ec9c411ab71"
+  ],
+  "findings": [
+    {
+      "id": "S-SOURCE-G1-01",
+      "severity": "high",
+      "file": "apps/prototype-description-service/scripts/eval_harness/manifest.py:1182",
+      "description": "Supported absence accepts an unnamed human face box. The conflict check examines its name rather than the existing human-face declaration,allowing a contradictory selection to pass.",
+      "evidence": "Rebound raw selection with face_count=0,empty aliases,valid independent support and a real FaceBox(name=null) exits0 with selection=pass;reported gate writes output and exits5 for corpus readiness. Exploratory/allow-foreign calls exit0 in both roles. Matched empty parents0;named-box negatives4/evidence_conflict/no output. Inputs and receipts: /tmp/s-whole-source-g1/absence-probe-results.json and public-controls/candidate-r2.",
+      "fix": "Reject nonempty human face-box declarations as evidence_conflict for not_applicable even when identity is unknown;preserve boxes and existing guards,and add paired public empty/unnamed/named controls in both roles through the authorized repair lane."
+    },
+    {
+      "id": "S-SOURCE-G1-02",
+      "severity": "medium",
+      "file": "apps/prototype-description-service/scripts/eval_harness/manifest.py:1140",
+      "description": "The new golden projection passes existing review datetime values to plain json.dumps,raising an uncaught TypeError instead of a stable subject-evidence refusal.",
+      "evidence": "An existing-shaped dated v3 parent loads metadata-only and renders as selection with evidence omitted(exit0). Adding a typed unknown record with stale binding makes the native report CLI exit1/traceback;the undated stale-binding control exits4/source_binding/no output. Public load_manifest also raises TypeError at the new helper. Evidence: /tmp/s-whole-source-g1/native-public-results.json and serialization-results.json. The older report date-hash limitation is pre-existing and excluded.",
+      "fix": "Handle canonicalization failures at the new projection boundary with a documented SubjectEvidenceError;any supported date encoding must follow the reviewed date contract. Preserve legacy dump/hash recipes and add dated omitted/present plus undated stale-binding public controls."
+    }
+  ],
+  "tests": [
+    {
+      "command": ".venv/bin/python /tmp/s-whole-source-g1/scripts/run.py focused-87 .venv/bin/python -m pytest -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider --collection-scope-receipt=/tmp/s-whole-source-g1/focused-collection.json --basetemp=/tmp/s-whole-source-g1/focused-pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py -k subject_evidence --tb=short",
+      "exit_code": 0,
+      "summary": "87 passed,170 deselected under normal service configuration;74 public CLI import receipts match current source."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-whole-source-g1/scripts/run.py legacy-four .venv/bin/python -m pytest -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider --collection-scope-receipt=/tmp/s-whole-source-g1/legacy-collection.json --basetemp=/tmp/s-whole-source-g1/legacy-pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_bakeoff_gate_rejects_selection_subject_or_image_overlap apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_matching_manifest_sha_renders_unbadged apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_foreign_manifest_sha_is_fatal_and_writes_nothing apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_manifest_version_as_string_fails_closed",
+      "exit_code": 0,
+      "summary": "All four required existing overlap,digest and version controls pass."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-whole-source-g1/scripts/run.py adjacent-12 .venv/bin/python -m pytest -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider --collection-scope-receipt=/tmp/s-whole-source-g1/adjacent-collection.json --basetemp=/tmp/s-whole-source-g1/adjacent-pytest apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py -k 'load_manifest_metadata_only or roster_only_more_boxes or unsupported_manifest_version or non_v3_manifest or structural_mismatch or load_manifest_skip_true_reason or load_manifest_hash_skip_reason' --tb=short",
+      "exit_code": 0,
+      "summary": "12 adjacent loader,hash-skip,coverage and routing controls pass;204 deselected."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-whole-source-g1/scripts/run.py independent-public-r2 .venv/bin/python /tmp/s-whole-source-g1/scripts/public_controls.py candidate-r2",
+      "exit_code": 0,
+      "summary": "46 public calls:44 match the contract;two reproduce the unnamed-face absence bypass. Characterization succeeds;product counterexamples remain."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-whole-source-g1/scripts/run.py absence-probes .venv/bin/python /tmp/s-whole-source-g1/scripts/absence_probe.py",
+      "exit_code": 0,
+      "summary": "Both roles:empty parents0,unnamed-face contradictions0,named-face conflicts4/no output,including exploratory/allow-foreign;all support hashes valid."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-whole-source-g1/scripts/run.py native-public .venv/bin/python /tmp/s-whole-source-g1/scripts/native_public.py",
+      "exit_code": 0,
+      "summary": "Real module CLI:dated omitted-evidence selection0;dated stale binding1/traceback;undated stale binding4/no output. This records the product failure."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-whole-source-g1/scripts/run.py independent-digests .venv/bin/python /tmp/s-whole-source-g1/scripts/digest_controls.py",
+      "exit_code": 0,
+      "summary": "Matching amended-v3 pins0;candidate,incumbent and four baseline stale pins each4/no output;both actual hash helpers agree."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-whole-source-g1/scripts/run.py serialization .venv/bin/python /tmp/s-whole-source-g1/scripts/serialization.py",
+      "exit_code": 0,
+      "summary": "15 dump/JSON option combinations preserve ordinary and dated absent-field parents;v3/v2 routes and old date hashes preserved. New dated binding probe raises TypeError."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-whole-source-g1/scripts/run.py mutant-wrong-code-both .venv/bin/python /tmp/s-whole-source-g1/scripts/mutant_probe.py wrong-code",
+      "exit_code": 1,
+      "summary": "Intentional RED:both roles return4/no output with the wrong public code;the independent behavioral oracle rejects both."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-whole-source-g1/scripts/run.py scoped-lint .venv/bin/ruff check apps/prototype-description-service/scripts/eval_harness/manifest.py apps/prototype-description-service/scripts/eval_harness/build_bakeoff_report.py",
+      "exit_code": 0,
+      "summary": "Both source files pass scoped Ruff lint."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-whole-source-g1/scripts/run.py scoped-format .venv/bin/ruff format --check apps/prototype-description-service/scripts/eval_harness/manifest.py apps/prototype-description-service/scripts/eval_harness/build_bakeoff_report.py",
+      "exit_code": 0,
+      "summary": "Both source files pass format check."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-whole-source-g1/scripts/run.py structural-audit .venv/bin/python /tmp/s-whole-source-g1/scripts/structural_audit.py",
+      "exit_code": 0,
+      "summary": "Exact frozen plan and canonical tests verified;10/20/37 metadata and three consumers unchanged;normalization is AST-equivalent."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-whole-source-g1/scripts/run.py verify-audit .venv/bin/python /tmp/s-whole-source-g1/scripts/verify_audit.py",
+      "exit_code": 0,
+      "summary": "5,676 tracked files and11,049 prior files unchanged;74 CLI imports verified;seven isolated mutants discriminate,including both-role missing-evidence masking."
+    }
+  ],
+  "limitations": [
+    "Source review only. Root owns finding disposition,second source-author dispatch,adoption and parent SUBJECT-GATE-03 closure. No source/test/plan/metadata edits,main merge,identity truth,quality or bakeoff approval;fixtures are synthetic protocol evidence.",
+    "Native base87ea6df8ae21ea591b0852fff0b548f7ce65737c has the exact requested207496b519266f5460baf31ef48308dc6a39033d tree. Live graph/ONNX tools and runtime/tier verification are unavailable;saved semantic context is verified with null degradation and19105/19106/17814 reinjection. Used post-author file pins and exact AST/source fallback.",
+    "Full private audit retained at /tmp/s-whole-source-g1;eight prior roots remain read-only. Seven independent source mutants are rejected. Auxiliary stale-fixture,wrong-parent and namespace-package preparation failures are retained;the initial unisolated mutation attempt is excluded.",
+    "Focused runs only;no broad suite,inference,original-media inspection,downloads or shared-service changes. Audit children have55s/1GiB/one-CPU50%-duty bounds;aggregate VM quota is not independently observed. The pre-existing report date-hash limitation is not filed as new.",
+    "The listed commit contains review details;the later JSON-summary commit and final artifact manifest are recorded privately to avoid a self-referential committed hash."
+  ]
+}

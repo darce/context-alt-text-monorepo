@@ -1,9 +1,10 @@
 import React from 'react';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SettingsPage } from '../SettingsPage';
+import { useSettingsPageState } from '../settings/useSettingsPageState';
 import { saveSettings, testConnection, type SettingsResponse, type SaveSettingsResponse } from '../../api/settingsApi';
 import { createMockMutation, createMockQuery } from '../../test-utils/mockHooks';
 
@@ -122,6 +123,41 @@ beforeEach(() => {
       return createMockMutation({ mutate: testMutate });
     }
     throw new Error('Unexpected mutation in SettingsPage autosave test.');
+  });
+});
+
+describe('SettingsPage draft revision acknowledgements', () => {
+  it('retains a newer URL revert until its own acknowledgement, then follows persisted updates', () => {
+    const { result, rerender } = renderHook(({ settings }) => useSettingsPageState(settings), {
+      initialProps: { settings: configuredSettings },
+    });
+    const urlA = 'https://pending.example.com';
+    act(() => { result.current.dispatch({ type: 'setUrl', value: urlA }); });
+    const revisionA = result.current.state.urlRevision;
+    act(() => { result.current.dispatch({ type: 'setUrl', value: configuredSettings.url }); });
+    const revisionRevert = result.current.state.urlRevision;
+    act(() => { result.current.dispatch({ type: 'acknowledgeUrl', revision: revisionA }); });
+    rerender({ settings: { ...configuredSettings, url: urlA, effective_target_url: urlA } });
+    expect(result.current.state.url).toBe(configuredSettings.url);
+    expect(result.current.state.acknowledgedUrlRevision).toBe(revisionA);
+    act(() => { result.current.dispatch({ type: 'acknowledgeUrl', revision: revisionRevert }); });
+    rerender({ settings: { ...configuredSettings } });
+    const externalUrl = 'https://external.example.com';
+    rerender({ settings: { ...configuredSettings, url: externalUrl, effective_target_url: externalUrl } });
+    expect(result.current.state.url).toBe(externalUrl);
+  });
+
+  it('clears a same-value key only for its own edit revision', () => {
+    const { result } = renderHook(() => useSettingsPageState(configuredSettings));
+    act(() => { result.current.dispatch({ type: 'setApiKey', value: 'draft-A' }); });
+    const revisionA = result.current.state.apiKeyRevision;
+    act(() => { result.current.dispatch({ type: 'setApiKey', value: 'draft-B' }); });
+    act(() => { result.current.dispatch({ type: 'setApiKey', value: 'draft-A' }); });
+    const revisionNewA = result.current.state.apiKeyRevision;
+    act(() => { result.current.dispatch({ type: 'acknowledgeApiKey', value: 'draft-A', revision: revisionA }); });
+    expect(result.current.state.apiKey).toBe('draft-A');
+    act(() => { result.current.dispatch({ type: 'acknowledgeApiKey', value: 'draft-A', revision: revisionNewA }); });
+    expect(result.current.state.apiKey).toBe('');
   });
 });
 

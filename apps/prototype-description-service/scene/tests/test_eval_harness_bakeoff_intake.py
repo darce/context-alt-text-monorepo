@@ -887,6 +887,13 @@ _PROTOCOL_FAULTS: dict[str, tuple[bytes, str, str, int | None]] = {
         "network_error",
         None,
     ),
+    # ValueError: Invalid IPv6 URL (remote redirect target; decision 17617)
+    "redirect_bad_ipv6": (
+        f"HTTP/1.1 302 Found\r\nLocation: https://[{_MARKER}/x\r\nContent-Length: 0\r\n\r\n".encode(),
+        "unverified",
+        "network_error",
+        None,
+    ),
     # RecursionError: maximum recursion depth exceeded while decoding a JSON array ...
     "deep_json": (_ok_wire(b"[" * 100_000), "error", "malformed_json", 200),
 }
@@ -979,7 +986,7 @@ def test_actual_urllib_protocol_failure_is_one_typed_row_and_refresh_continues(
 
 
 @pytest.mark.parametrize("output_format", ["json", "markdown"])
-@pytest.mark.parametrize("fault", ["bad_status", "long_header"])
+@pytest.mark.parametrize("fault", ["bad_status", "long_header", "redirect_bad_ipv6"])
 def test_cli_protocol_failure_has_no_traceback_and_does_not_echo_remote_text(
     tmp_path: Path,
     output_format: str,
@@ -1077,13 +1084,140 @@ def test_default_fetch_does_not_swallow_programming_errors(monkeypatch: pytest.M
         default_fetch("o/r")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=ValueError,
-    reason="open residual: urllib raises bare ValueError (Invalid IPv6 URL) for a malformed redirect Location",
-)
-def test_malformed_redirect_location_is_an_open_residual(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_malformed_redirect_location_is_an_operational_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
     wire = f"HTTP/1.1 302 Found\r\nLocation: https://[{_MARKER}/x\r\nContent-Length: 0\r\n\r\n".encode()
     _route_real_urllib(monkeypatch.setattr, _baseline_wire_router(wire, []))
     report = build_report(refresh=True, clock=lambda: FIXED_UTC)
     assert report.audit is not None and len(report.audit) == 26
+    row = report.audit[_FAULT_INDEX]
+    assert (row.status, row.reason, row.http_status) == ("unverified", "network_error", None)
+    assert (row.latest_main_sha, row.remote_pipeline_tag, row.remote_license) == (None, None, None)
+    baseline = build_report(refresh=True, fetch=_fake_fetch(_baseline_table()), clock=lambda: FIXED_UTC)
+    assert baseline.audit is not None
+    for index, peer in enumerate(report.audit):
+        if index != _FAULT_INDEX:
+            assert peer == baseline.audit[index].model_copy(update={"remote_pipeline_tag": "image-text-to-text"})
+
+
+# --- fourth dispatch: scoped ValueError is unavailable metadata (17617) -----
+
+_MALFORMED_PROXY = "http:/proxy-user:proxy-secret@/private-proxy-path"
+
+
+def _route_malformed_local_proxy(set_attr: Callable[[object, str, object], None], calls: list[str]) -> None:
+    """Run the actual ProxyHandler parser; malformed configuration must never reach a socket."""
+    handler = urllib.request.ProxyHandler({"https": _MALFORMED_PROXY})
+    proxy_open = handler.https_open
+
+    def observe(request: urllib.request.Request) -> Any:
+        calls.append(request.full_url.removeprefix("https://huggingface.co/api/models/"))
+        return proxy_open(request)
+
+    def no_connect(_connection: object) -> None:
+        raise AssertionError("malformed local proxy reached a socket")
+
+    set_attr(handler, "https_open", observe)
+    set_attr(http.client.HTTPConnection, "connect", no_connect)
+    set_attr(http.client.HTTPSConnection, "connect", no_connect)
+    set_attr(urllib.request, "_opener", urllib.request.build_opener(handler))
+
+
+def _assert_all_rows_are_operational_unknown(text: str, output_format: str) -> None:
+    """Exit 0 certifies report emission; every unavailable row stays unknown."""
+    assert all(marker not in text for marker in (_MALFORMED_PROXY, "proxy-secret", "private-proxy-path", "ValueError"))
+    if output_format == "json":
+        report = IntakeReport.model_validate_json(text)
+        assert report.audit is not None and len(report.audit) == 26
+        baseline = build_report(refresh=True, fetch=_fake_fetch(_baseline_table()), clock=lambda: FIXED_UTC)
+        assert baseline.audit is not None
+        for row, expected in zip(report.audit, baseline.audit, strict=True):
+            assert (row.status, row.reason, row.http_status) == ("unverified", "network_error", None)
+            assert (row.latest_main_sha, row.remote_pipeline_tag, row.remote_license) == (None, None, None)
+            assert row == expected.model_copy(
+                update={
+                    "status": row.status,
+                    "reason": row.reason,
+                    "http_status": None,
+                    "latest_main_sha": None,
+                    "remote_pipeline_tag": None,
+                    "remote_license": None,
+                    "fetched_utc": row.fetched_utc,
+                }
+            )
+        assert all(row.status == "pending_verification" and not row.runnable for row in report.research)
+    else:
+        audit_lines = text.split("## Checkpoint audit", 1)[1]
+        rows = [line for line in audit_lines.splitlines() if line.startswith(("| sealed |", "| research |"))]
+        assert len(rows) == 26
+        assert audit_lines.count("| unverified | network_error |") == 26
+        assert "| unchanged |" not in audit_lines and "| outdated |" not in audit_lines
+        for repo in _baseline_table():
+            assert sum(f"| {repo} |" in line for line in rows) == 1
+
+
+@pytest.mark.parametrize("output_format", ["json", "markdown"])
+def test_actual_malformed_local_proxy_keeps_all_26_rows_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    output_format: str,
+) -> None:
+    calls: list[str] = []
+    _route_malformed_local_proxy(monkeypatch.setattr, calls)
+    out = tmp_path / f"audit.{output_format}"
+    out.write_bytes(b"prior usable report\n")
+    # Initial RED: ValueError: proxy URL with no authority: 'http:/proxy-user:proxy-secret@/private-proxy-path'
+    assert main(["--refresh", "--format", output_format, "--output", str(out)]) == 0
+    captured = capsys.readouterr()
+    assert (captured.out, captured.err) == ("", "")
+    assert calls == list(_baseline_table())
+    _assert_all_rows_are_operational_unknown(out.read_text(encoding="utf-8"), output_format)
+    assert set(tmp_path.iterdir()) == {out}
+
+
+@pytest.mark.parametrize("output_format", ["json", "markdown"])
+def test_cli_malformed_local_proxy_has_no_traceback_or_credentials(
+    tmp_path: Path,
+    output_format: str,
+) -> None:
+    out = tmp_path / f"audit.{output_format}"
+    out.write_bytes(b"prior usable report\n")
+    child = "\n".join(
+        [
+            "from scene.tests import test_eval_harness_bakeoff_intake as t",
+            "from scripts.eval_harness.bakeoff_intake import main",
+            "calls = []",
+            "t._route_malformed_local_proxy(setattr, calls)",
+            "try:",
+            f"    code = main(['--refresh', '--format', {output_format!r}, '--output', {str(out)!r}])",
+            "finally:",
+            "    print(len(calls))",
+            "raise SystemExit(code)",
+        ]
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", child],
+        cwd=_APP_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert "Traceback" not in proc.stderr, "proxy configuration failure escaped the CLI"
+    assert all(marker not in proc.stderr + proc.stdout for marker in ("proxy-secret", "private-proxy-path"))
+    assert (proc.returncode, proc.stdout, proc.stderr) == (0, "26\n", "")
+    _assert_all_rows_are_operational_unknown(out.read_text(encoding="utf-8"), output_format)
+    assert set(tmp_path.iterdir()) == {out}
+
+
+@pytest.mark.parametrize("bug", [TypeError("bug"), AttributeError("bug"), KeyError("bug"), RuntimeError("bug")])
+def test_default_fetch_does_not_swallow_response_read_programming_errors(
+    monkeypatch: pytest.MonkeyPatch, bug: Exception
+) -> None:
+    def broken_read(_response: _FakeResponse, _size: int) -> bytes:
+        raise bug
+
+    monkeypatch.setattr(_FakeResponse, "read", broken_read)
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *_args, **_kwargs: _FakeResponse(b"{}"))
+    with pytest.raises(type(bug)):
+        default_fetch("o/r")

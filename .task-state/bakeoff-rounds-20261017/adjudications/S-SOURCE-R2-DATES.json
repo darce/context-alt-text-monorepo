@@ -1,0 +1,39 @@
+{
+  "status": "correction_qualified_pending_independent_review",
+  "summary": "S-SOURCE-G1-02 private correction qualified: native CLI RED reproduced;22 new controls and87+4+12 existing controls GREEN. Pinned two-file edit map awaits root composition and independent whole-source G2.",
+  "source_sha": "079b209f755f0ac2400ee8066945708d6fed108a",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/adjudications/S-SOURCE-R2-DATES.edits.json",
+    ".task-state/bakeoff-rounds-20261017/adjudications/S-SOURCE-R2-DATES.json",
+    ".task-state/bakeoff-rounds-20261017/adjudications/S-SOURCE-R2-DATES.md"
+  ],
+  "commits": [
+    "27007d17ab552d4d4521b899c7d2ff8fbe3381d6"
+  ],
+  "findings": [],
+  "tests": [
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--67ff053d/.venv/bin/python -m pytest -q -x -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider --collection-scope-receipt=/tmp/s-source-r2-dates/cli-red-collection.json --basetemp=/tmp/s-source-r2-dates/cli-red-pytest 'apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py::test_subject_evidence_review_dates_public_cli[selection-dated-stale]' --tb=line",
+      "exit_code": 1,
+      "summary": "Expected behavioral RED before production edit: matched parent0; dated stale-binding native selection1/TypeError/traceback/no output; regression requires4/source_binding."
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--67ff053d/.venv/bin/python /tmp/s-source-r2-dates/scripts/final_regressions.py",
+      "exit_code": 0,
+      "summary": "22 final public loader/native CLI cases pass; reported role split into5+3 bounded checks."
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--67ff053d/.venv/bin/python /tmp/s-source-r2-dates/scripts/audit.py",
+      "exit_code": 0,
+      "summary": "Verified retained87+4+12 GREEN,60 serialization comparisons and scoped lint/format; all161 old selectors/187 definitions and prior assertions retained; exact production region, actual imports, checkout and nine prior roots verified."
+    }
+  ],
+  "limitations": [
+    "Author correction and private qualification only. Root owns byte-map composition, source pins/regions and both-order checks, independent whole-source G2, MCP disposition and adoption; no finding closure or source/main integration here.",
+    "The reviewed C(model_dump()) contract has no subject date encoding. Dated golden projections with present evidence refuse source_binding. Legacy omitted-evidence v3/v2 dumps and hash recipes stay unchanged; the pre-existing dated reported-manifest digest limitation is explicitly outside this repair.",
+    "Honest native base079b209f755f0ac2400ee8066945708d6fed108a has exact input tree797c54a4474cb6c91b450c3c9853ed6491bb81be for logical0dfcacc11d7db511fc954d445b65a4ff85920362. Tree equality is not ancestry.",
+    "Live graph/ONNX/handoff tools and requested model/effort/STANDARD-tier custody are not independently exposed. Supplied verified ONNX/handoff.db retrieval with selected19105/19106/17814 reinjection, origin-pinned431-node/1934-edge map metadata and exact checkout AST fallback were used; the supplied map exposes counts/origin pins rather than a traversable edge inventory.",
+    "All protocol runs, score markers and subject attestations are synthetic; no identity truth, quality, face qualification or readiness claim. No media/model/inference execution, installs, broad suites, shared-service changes or sibling absence-conflict edits.",
+    "Audit retained at /tmp/s-source-r2-dates. New-test lint/style findings were corrected. Three55s runs timed out before completing; an initial v2 expected-model setup mismatch was corrected. Those results and the corrected new-test lint findings are retained and excluded from behavioral RED evidence. Completed checks use55s/1GiB/one-CPU25%-duty owned-process-group bounds; no aggregate VM quota claim."
+  ]
+}

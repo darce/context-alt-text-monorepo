@@ -8,11 +8,13 @@
 - Operator can request Start, Stop or Return to automatic; each request is acknowledged within one poll and its outcome (honoured, pending, deferred until idle) is visible (HAI-04 activate–operate–override).
 - Cost is disclosed before commitment; the user is never surprised by an hourly charge (INT-07, CARD-15, COST-10).
 - Stop stays available while load.has_work; confirm asks Stop after the current run finishes? and the pending indicator is Stopping after the current work finishes until idle. Stale or unknown telemetry hides Start/Stop and offers tertiary Refresh; degraded copy is Service unavailable. Start service to retry. gpu_state is unknown|stopped|starting|warming|ready|degraded (INT-10, FLOW-08, A11Y-18, PERC-02).
+- Operator can autosave the Description API URL and API key together from Settings, see the save state without exposing the key, and get a health result only after persisted settings have been reloaded. A failed save keeps the unsaved key in memory; edits during save remain pending; stale health responses are discarded (FORM-11, INT-20).
 
 ## Jobs
 - `job-prewarm-gpu` — Pre-warm Description Service before a demo so the first describe run is fast
 - `job-stop-gpu` — Stop Description Service now to end spend
 - `job-return-auto` — Return Description Service to automatic lifecycle
+- `job-save-description-api-routing` — Configure the Description API URL and API key with local autosave feedback
 
 ## Screens
 | id | kind | route | title |
@@ -24,7 +26,7 @@
 
 ### Settings › Description Service (`settings-burst-gpu`)
 
-Purpose: Card on the Settings page showing Description Service state, intent, activity and load, with Start / Stop / Return to automatic / Refresh controls. Domain vocabulary: stopped and ready = default; starting and warming = loading; snapshot missing or stale = empty; service unreachable = error; lifecycle degraded or intent pending = degraded. gpu_state is unknown|stopped|starting|warming|ready|degraded. Seven sketches: stopped → [PRIMARY] Start service; stopped by operator (intent STOP) → Stopped by operator · auto-start paused, [PRIMARY] Start service, [secondary] Return to automatic; starting/warming with eta_seconds → Warming up, about {eta} left and [secondary] Stop service; starting/warming without eta → Warming up, this can take a few minutes; ready → Service: ready · idle|N in flight and [secondary] Stop service; unknown/stale → Status unavailable, last seen {age} with [tertiary] Refresh, Start/Stop hidden; degraded → Service unavailable. Start service to retry. [PRIMARY] Start service. Typed description_service_unavailable is copy on degraded/unknown, not a gpu_state. Warm-up ETA comes from the load/status payload or is omitted; never invent a retry countdown.
+Purpose: Card on the Settings page showing Description Service state, intent, activity and load, with Start / Stop / Return to automatic / Refresh controls. The same Settings screen also owns Description API URL/key autosave feedback and post-save health status. Domain vocabulary: stopped and ready = default; starting and warming = loading; snapshot missing or stale = empty; service unreachable = error; lifecycle degraded or intent pending = degraded. gpu_state is unknown|stopped|starting|warming|ready|degraded. Seven sketches: stopped → [PRIMARY] Start service; stopped by operator (intent STOP) → Stopped by operator · auto-start paused, [PRIMARY] Start service, [secondary] Return to automatic; starting/warming with eta_seconds → Warming up, about {eta} left and [secondary] Stop service; starting/warming without eta → Warming up, this can take a few minutes; ready → Service: ready · idle|N in flight and [secondary] Stop service; unknown/stale → Status unavailable, last seen {age} with [tertiary] Refresh, Start/Stop hidden; degraded → Service unavailable. Start service to retry. [PRIMARY] Start service. Typed description_service_unavailable is copy on degraded/unknown, not a gpu_state. Warm-up ETA comes from the load/status payload or is omitted; never invent a retry countdown.
 
 Action states: stopped, unknown, starting, warming, ready, degraded
 
@@ -36,11 +38,14 @@ Action states: stopped, unknown, starting, warming, ready, degraded
 | `z-gpu-load` | Describe load — work in flight yes/no with load snapshot freshness | status | default, empty, degraded |
 | `z-gpu-cost` | Cost disclosure — hourly rate and warm-up time before Start, not in the headline | content | default |
 | `z-gpu-controls` | Start service / Stop service / Return to automatic / Refresh status | form | default, loading, error, degraded |
+| `z-description-api-routing` | Description API URL and API key — concealed key input; edits stay in memory and the key is never echoed or written to local storage | form | default, first_time, edge_input, loading, error, offline |
+| `z-routing-save-status` | Local autosave status — dirty / saving / saved / failed; failed or partial save retains the typed key, and newer edits remain dirty | status | default, loading, error, degraded |
+| `z-routing-health-status` | Connection health — automatic check after persisted Settings reload; discard a stale result after a newer URL or key edit | status | default, loading, error, degraded, empty |
 
 ```
 +------------------------------------------------------------+
 | Settings › Description Service  [screen]  #/settings       |
-| Card on the Settings page showing Description Service stat…|
+| Description Service controls and Description API URL/key a…|
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Service status chip — Service: not reported / stopped …|
@@ -49,6 +54,9 @@ Action states: stopped, unknown, starting, warming, ready, degraded
 |   - Describe load — work in flight yes/no with load snapsh…|
 |   - Cost disclosure — hourly rate and warm-up time before …|
 |   - Start service / Stop service / Return to automatic / R…|
+|   - Description API URL and API key — concealed key input;…|
+|   - Local autosave status — dirty / saving / saved / faile…|
+|   - Connection health — automatic check after persisted Se…|
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 | when stopped                                               |
@@ -308,6 +316,31 @@ flowchart TD
   n_settings_burst_gpu -->|intent start until HH:MM → Return to automatic| n_settings_burst_gpu
 ```
 
+### Autosave Description API URL and key, then check persisted connection (`flow-routing-autosave-success`)
+
+```mermaid
+flowchart TD
+  %% flow: Autosave Description API URL and key, then check persisted connection job=job-save-description-api-routing
+  %% steps: [{"screen_id":"settings-burst-gpu","branch_label":"routing clean → edit URL and/or concealed key → routing dirty"},{"screen_id":"settings-burst-gpu","branch_label":"blur or Enter → save dirty URL + key pair; show routing saving; newer edits remain queued/dirty"},{"screen_id":"settings-burst-gpu","branch_label":"save succeeded → reload persisted Settings → run automatic health check with saved target"},{"screen_id":"settings-burst-gpu","branch_label":"current health response → show result; stale response after newer edit → discard"},{"screen_id":"settings-burst-gpu","branch_label":"persisted health result visible; stale result discarded"}]
+  n_settings_burst_gpu["Settings › Description Service (screen)"]
+  n_settings_burst_gpu -->|routing clean → edit URL and/or concealed key → routing dirty| n_settings_burst_gpu
+  n_settings_burst_gpu -->|blur or Enter → save dirty URL + key pair; show routing saving; newer edits remain queued/dirty| n_settings_burst_gpu
+  n_settings_burst_gpu -->|save succeeded → reload persisted Settings → run automatic health check with saved target| n_settings_burst_gpu
+  n_settings_burst_gpu -->|current health response → show result; stale response after newer edit → discard| n_settings_burst_gpu
+```
+
+### Retain unsaved key after Description API settings save failure (`flow-routing-autosave-failure`)
+
+```mermaid
+flowchart TD
+  %% flow: Retain unsaved key after Description API settings save failure job=job-save-description-api-routing
+  %% steps: [{"screen_id":"settings-burst-gpu","branch_label":"routing clean → edit URL and/or concealed key → routing dirty"},{"screen_id":"settings-burst-gpu","branch_label":"blur or Enter → save dirty URL + key pair; show routing saving"},{"screen_id":"settings-burst-gpu","branch_label":"save failed or partial → show routing failed; retain key draft in memory; no health check"},{"screen_id":"settings-burst-gpu","branch_label":"failure remains visible with key draft available for repair"}]
+  n_settings_burst_gpu["Settings › Description Service (screen)"]
+  n_settings_burst_gpu -->|routing clean → edit URL and/or concealed key → routing dirty| n_settings_burst_gpu
+  n_settings_burst_gpu -->|blur or Enter → save dirty URL + key pair; show routing saving| n_settings_burst_gpu
+  n_settings_burst_gpu -->|save failed or partial → show routing failed; retain key draft in memory; no health check| n_settings_burst_gpu
+```
+
 ## Open questions
 - Should Start service be offered on the Workbench media selection as well as Settings? Current recommendation: Settings only; Workbench keeps enqueue-triggered start and the cold-start cost hint (describe-gpu-tier not_doing).
 - Default intent TTL is 30 min server-clamped to 120 min; confirm against the measured cold-start and typical demo length.
@@ -320,7 +353,7 @@ below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*` id may appea
 that the JSON does not define. Regenerate with `docs/ux-maps/render_ux_maps.py` — never
 hand-edit one side.
 
-Zone ids: z-gpu-state-chip z-gpu-intent z-gpu-lease z-gpu-load z-gpu-cost z-gpu-controls z-start-preview z-start-actions z-stop-preview z-stop-actions z-wb-entry
+Zone ids: z-gpu-state-chip z-gpu-intent z-gpu-lease z-gpu-load z-gpu-cost z-gpu-controls z-description-api-routing z-routing-save-status z-routing-health-status z-start-preview z-start-actions z-stop-preview z-stop-actions z-wb-entry
 
 Action ids: act-gpu-start act-gpu-confirm-start act-gpu-stop act-gpu-confirm-stop act-gpu-auto act-gpu-refresh act-cancel-confirm act-goto-workbench
 
@@ -332,13 +365,16 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Describe load — work in flight yes/no with load snapshot freshness
 - Cost disclosure — hourly rate and warm-up time before Start, not in the headline
 - Start service / Stop service / Return to automatic / Refresh status
+- Description API URL and API key — concealed key input; edits stay in memory and the key is never echoed or written to local storage
+- Local autosave status — dirty / saving / saved / failed; failed or partial save retains the typed key, and newer edits remain dirty
+- Connection health — automatic check after persisted Settings reload; discard a stale result after a newer URL or key edit
 - Start preview — cost per hour, warm-up estimate, auto-return after TTL
 - Confirm start / Cancel
 - Stop preview — Stop after the current run finishes? then Stopping after the current work finishes until idle
 - Confirm stop / Cancel
 - Workbench entry
 
-States (all zones and screens): default loading empty error degraded
+States (all zones and screens): default loading empty error degraded first_time edge_input offline
 
 ## Not doing
 - No modal dialog; confirmation is an inline strip (consistent with describe-gpu-tier not_doing).

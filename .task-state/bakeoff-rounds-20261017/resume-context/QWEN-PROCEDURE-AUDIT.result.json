@@ -1,0 +1,82 @@
+{
+  "status": "not_ready",
+  "summary": "NOT_READY for the first Qwen30 Q4_K_M raw-caption run. The accepted packet permits a qualified owned procedure before general Pv2 completion, but no such executable procedure is established here. Target capacity/runtime admission and owned reservation, serving, preservation and exit/unload/cleanup proof remain missing. Full C/E/M gates, every candidate and quality gold are not blanket first-raw prerequisites. The companion Markdown gives commands, owners and parallel dependencies.",
+  "source_sha": "d24f81dc0571b826eb910d8da83a2e9aef673836",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/reviews/QWEN-PROCEDURE-AUDIT.json",
+    ".task-state/bakeoff-rounds-20261017/reviews/QWEN-PROCEDURE-AUDIT.md"
+  ],
+  "commits": [
+    "3a459d64b3b512104b181139c3fbd25b44503e94"
+  ],
+  "findings": [
+    {
+      "id": "QWEN-PROCEDURE-01",
+      "severity": "high",
+      "file": "benchmarks/experiments/rounds-20261017/accepted-packet.md:112",
+      "description": "Operational blocker: an owned one-arm procedure is allowed but is not already established by the supplied executable tools.",
+      "evidence": "Packet114 and JSON1101-1129 require dedicated lease, real reservations, preserved outputs, owned exit/unload and cleanup/free-byte evidence. Runner311-313/368-370 uses PID-only kill and unbounded wait with suppressed errors; prepull193-211 only checks estimated missing bytes plus margin. Current C/E/M implementations are absent; P2171 explicitly observes no live authority. A TERM-ignoring child or concurrent disk consumer defeats the bare chain. Actual candidate-shell syntax and soft-presence controls establish only their documented behavior.",
+      "fix": "Root, C/cache and E/execution owners must qualify one concrete bounded procedure with the existing admission/proof requirements, or implement its smallest missing effects under separate ownership. Keep cache authority through cleanup/seal, preserve uncertain diagnostics and block advancement without exit/unload/free-byte proof. An independently reviewed existing procedure with those receipts would disconfirm this gap. Do not require all future Pv2 gates merely by authoring order."
+    },
+    {
+      "id": "QWEN-PROCEDURE-02",
+      "severity": "high",
+      "file": ".task-state/bakeoff-rounds-20261017/readiness-context/target-current-host-followup.json:8",
+      "description": "Operational blocker: both targets are observed stopped; actual guest capacity, complete runtime closure and fit are unqualified.",
+      "evidence": "18:35/18:36 hostroute GETs both exited0 and observed STOPPED VM.GPU.A10.1; raw hashes verify. Earlier EPERM remains sandbox-context evidence, not auth failure. Retained pinned primary metadata identifies18556688096B backbone plus1083500224B projector, total19640188320B, with expected hashes matching cloud-init30-31. Installed bytes, supported loader closure, actual digest/recipe, free disk/RAM/VRAM, KV/headroom and guest leases remain unknown; configured shape and size estimates cannot establish them.",
+      "fix": "Infrastructure/runtime and inventory owners can prepare measurements and closure independently of general C/E/M work; root joins them before admission. Reuse verified resident weights if present, otherwise reserve all simultaneous byte categories before one-arm acquisition. Use the existing operator-intent/lifecycle route only after root admits boot effects; it may automatically start the baked VLM service. No target start is performed here."
+    },
+    {
+      "id": "QWEN-PROCEDURE-03",
+      "severity": "medium",
+      "file": "apps/prototype-description-service/scripts/eval_harness/bakeoff_runner.py:507",
+      "description": "The present planner/pre-pull and baked-service interfaces do not supply a ready Qwen30 command route.",
+      "evidence": "Registry348-370 marks Qwen30 incumbent/noncompeting at revision0af19e7479857aa7f3246466a4ad16c7e7299639 and Q4_K_M. Actual runner-only call exits2 and prepull-only exits3; a competing MiniCPM control exits0. Incumbent-run accepts an existing record only. Bakeoff554 supplies an empty key, remote_client75 installs empty X-API-Key, while cloud-init341 requires API-key-file; the raw parser has no key option. This is a source-grounded integration counterexample, not an observed live401.",
+      "fix": "E/execution and runtime owners must bind an actually supported, qualified acquisition/serve/client route to the frozen Qwen recipe and ownership controls. Preserve incumbent refusal and authentication; do not invent include-incumbent, owned or key flags, alter registry eligibility, disable service protection or substitute authenticated production cli fetch as the same v3/two-pass experiment."
+    },
+    {
+      "id": "QWEN-PROCEDURE-04",
+      "severity": "medium",
+      "file": "apps/prototype-description-service/scripts/eval_harness/bakeoff.py:1760",
+      "description": "A unique --out alone does not establish immutable output preservation or safe interruption handling.",
+      "evidence": "Main1760 creates module out and1874 invokes cli.prune_out_dir821-845 even with external --out, so old timestamped module records can be deleted. Records persist at normal completion or the explicit BoundedStallError path1818-1844; arbitrary termination has no equivalent durable-partial path. Runner353 separately removes prior run/marker on rerun. Current post-ready GPU sampling is aggregate telemetry, not owned cold-load/unload evidence.",
+      "fix": "The execution owner must use a demonstrably fresh disposable module output scope plus new immutable results outside cache, or another independently approved confinement mechanism, and supply bounded failure/interrupt preservation and teardown. Retain per-image errors, raw generations, timings and provenance; leave unmeasured metrics unknown. Successful scoring alone creates any later score marker; never fabricate one."
+    }
+  ],
+  "tests": [
+    {
+      "command": "hostname; uname -s; pwd; git rev-parse HEAD; git rev-parse HEAD^{tree}",
+      "exit_code": 0,
+      "summary": "Remote Linux checkout verified first. Native stripped base c6faa460d1691829dc757a2b991393ad00a925b7 and logical input share exact tree3813c3b5185537551370bc5d418fc654171169de; no ancestry claim."
+    },
+    {
+      "command": "python3 -B /tmp/qwen-procedure-audit/verify_context.py",
+      "exit_code": 1,
+      "summary": "First extended pointer check found absent historical sandbox manifest paths. Exact failing script/output retained; this was audit pointer handling, not missing corpus content or a product failure."
+    },
+    {
+      "command": "python3 -B /tmp/qwen-procedure-audit/verify_context.py",
+      "exit_code": 0,
+      "summary": "Corrected check verifies six Canon0.26.2 bodies against supplied pins and retained release manifest, ten fired rows, three cards, original excerpt hashes, fresh target output digests, Qwen primary metadata and adopted37 pointer. Inherited10/20 loader positives and corrupt-hash negatives retained; current fixed manifest pins match. Historical pointer absence remains explicit. No image/weight bytes read."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/qwen-procedure-audit/check_interfaces.py",
+      "exit_code": 0,
+      "summary": "Actual source-bound public CLI: Qwen runner2/prepull3, candidate control0, six default plans0. Emitted control shell bash-n0, never executed. Actual presence helper accepts differing900B contents and refuses899B at1000B expected size. Raw parser/auth AST checked without importing bakeoff or issuing requests; no product readiness PASS."
+    },
+    {
+      "command": "python3 -B /tmp/qwen-procedure-audit/verify_report.py",
+      "exit_code": 0,
+      "summary": "Strict common JSON, exact source/tree binding, references/privacy, unchanged non-owned tracked bytes and two-file-only ownership verified. Final delivery additionally checks committed JSON equality and clean index/worktree."
+    }
+  ],
+  "limitations": [
+    "First-raw operational verdict only. Root owns central review/MCP, any adoption and actual execution. No source/test/plan/proposal/old-record changes, agents, installs, broad suites, model/media/GT/vector/weight access, download, GPU/serving/OCI action, cache eviction, foreign signal or shared runtime/network/auth change.",
+    "Existing raw client command and bounded operator-start template are in the companion Markdown with opaque substitutions. They are conditional interface pieces, not a newly implemented manual procedure. Before first raw: qualified target/closure/recipe plus actual reservation/lease/lifetime/preservation proof plus fixed report-loader binding must join. The next arm consumes the terminal cleanup/free-byte receipt.",
+    "Selection10/report20 retain inherited actual loader qualification; current fixed bytes match packet pins, but old sandbox pointers are absent and must be explicitly rebound on the actual execution host. Adopted regression37-v2 remains technical37/37; image-level metadata does not implement structured subject consumption. No fact GT is required for raw generation. All-candidate/baseline/subject/quality gates remain at their actual later report/adoption boundary; no winner or score is fabricated.",
+    "P decoder PASS is not live resource authority. Protected-fixture/OS controls are not C behavior; E bootstrap4 has zero E assertions; M36GREEN does not close its current source findings. These prior scoped reviews remain unchanged and are not blanket dependencies of an alternative qualified narrow procedure.",
+    "Live graph/MCP/index coverage and fresh ONNX execution were unavailable. Codebase-memory used supplied verified handoff/ONNX snapshots and codemap with actual checkout source/AST fallback. Exact current Canon ARCH-24 supports a minimal path while RES-02/21, TEST-09/16/25/15/33 and GRPH-06/31 retain observation, bounds, review and measured capacity. Original full research-file hashes remain supplied provenance; local excerpts were verified.",
+    "Preserve the user-designated /tmp/qwen-procedure-audit before owned cleanup. Final223-file evidence seal SHA256d9e9a8a55775a9414586f4d43e886855bc49be3942d7599995d2613a0995ade9 binds scripts/source/context/raw outputs/exits and original failed diagnostics; later delivery checks are supplemental. Initial source-name guesses and unavailable root cgroup files are retained setup observations, never target-capacity evidence. STANDARD tier is not independently exposed or attested here.",
+    "The commits field identifies the substantive review commit; the later JSON-only delivery commit records that pointer without self-reference. Final response equals the committed JSON object."
+  ]
+}

@@ -1,0 +1,180 @@
+{
+  "prior_work": {
+    "content": [],
+    "structuredContent": {
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "1384",
+          "task_ref": "VLM-2B",
+          "score": 0.6357969045639038,
+          "snippet": "## Changes\nSlice 3 (out of order; Slice 2 blocked on A1 SSH approval): added `scripts/eval_harness/bakeoff.py` — `BakeoffClient(RemoteSceneClient)` inherits Nygard discipline (timeout, 3-strike breaker, 429 backoff) via reused `_request`;…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "2437",
+          "task_ref": "vlm-review-parallel-REV-20260709a-S3-A",
+          "score": 0.6254415512084961,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "2450",
+          "task_ref": "vlm-review-parallel",
+          "score": 0.6254415512084961,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "2136",
+          "task_ref": "VLM-3B",
+          "score": 0.6066862940788269,
+          "snippet": "First bake host (...guwqptd47gc...) ran ~1hr but was unobservable: root-caused to acx-security-list (only SL on acx-public-subnet) permitting :22 ONLY from 99.237.250.28/32 — my laptop + intra-VCN both blocked; SSH failures were the SL,…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "10046",
+          "task_ref": "EVAL-LANDING-1",
+          "score": 0.6012663841247559,
+          "snippet": "The requested build_bakeoff_report.py warning/success handoffs and cli.py determinism parent/child handoffs now pass the shared _printable_path wire while native JSON fields and labels remain stable. The direct script import fallback…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "2141",
+          "task_ref": "VLM-3B",
+          "score": 0.5959575176239014,
+          "snippet": "Two bake bugs found via console self-reporting + fixed. (1) image_pull failed: ghcr.io/ggerganov/llama.cpp 404 (GHCR org renamed to ggml-org) — fixed to ghcr.io/ggml-org/llama.cpp:server-cuda in bake + golden cloud-init (73c6173c). (2)…",
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    "isError": false
+  },
+  "reinjection": {
+    "content": [],
+    "structuredContent": {
+      "ok": true,
+      "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+      "status": "selected",
+      "skip_reason": null,
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null,
+      "relevant_lines": [
+        "relevant:",
+        "- Intake first owner procedure and P2 binding map…: QWEN-OWNER-ADMISSION LOWterminal0/custodybd390a36 usesexistingwrite_gpu_intent [decision:17878]",
+        "- cdx_decision_bakerounds_normal_owner_ssh_discon…: Ordinary known serviceownerSSH ubuntu@acx-backend.tail1a44b8.ts.net BatchMode/ConnectTimeout10 [decision:17837]",
+        "- CACHE-R2-B-02: Freeze one concrete E-owned main/adapter route from the emitted JSON to the complete preserved [finding:19057]",
+        "- cdx_decision_bakerounds_remote_admission_and_ta…: 3native remote launches requested C8WHOLEPLAN xhigh/E5WHOLETEST xhigh/SREPAIR high, [decision:17832]",
+        "- Wind down this orchestration session at user re…: MwholeG4 rawPASS0/40GREEN+32controls recorded1482/test4982 custody1945d17b, [decision:17826]",
+        "- ROSTER-G1-04: The incumbent minimum-build constraint is incorrectly described as an exact runtime pin. Evidence: [finding:19046]",
+        "- cdx_decision_bakerounds_r3_combined_one_termina…: R3A/BbothcompleteindependentnativeSolXHIGHstandardREVISEsamedeffect, [decision:17707]",
+        "- bakeoff_self_clearing_weight_stack: User explicitly notes VM cannot retain all LLMweights; adopt self-clearing benchmark-owned stack. GPU [decision:17643]"
+      ],
+      "semantic_reinjection": {
+        "anchor_sources": [
+          "visible_text"
+        ],
+        "chars_budget": 8000,
+        "chars_used": 1173,
+        "effective_config": {
+          "candidate_pool": 32,
+          "max_concepts": 8,
+          "max_redundancy": 0.92,
+          "max_score_drop": 0.2,
+          "min_score": 0.35,
+          "mmr_relevance_weight": 0.7,
+          "notify_allowance_chars": 220,
+          "refresh_budget_chars": 1500,
+          "snippet_chars": 120
+        },
+        "fallback_scope": null,
+        "model_id": "gte-base-en-v1.5",
+        "score_hi": 0.6754274368286133,
+        "score_lo": 0.580619752407074,
+        "selected": [
+          {
+            "emitted_chars": 157,
+            "id": "17878",
+            "kind": "decision",
+            "label": "Intake first owner procedure and P2 binding map…",
+            "score": 0.6754274368286133,
+            "snippet": "QWEN-OWNER-ADMISSION LOWterminal0/custodybd390a36 usesexistingwrite_gpu_intent [decision:17878]"
+          },
+          {
+            "emitted_chars": 164,
+            "id": "17837",
+            "kind": "decision",
+            "label": "cdx_decision_bakerounds_normal_owner_ssh_discon…",
+            "score": 0.6707205772399902,
+            "snippet": "Ordinary known serviceownerSSH ubuntu@acx-backend.tail1a44b8.ts.net BatchMode/ConnectTimeout10 [decision:17837]"
+          },
+          {
+            "emitted_chars": 128,
+            "id": "19057",
+            "kind": "finding",
+            "label": "CACHE-R2-B-02",
+            "score": 0.6153359413146973,
+            "snippet": "Freeze one concrete E-owned main/adapter route from the emitted JSON to the complete preserved [finding:19057]"
+          },
+          {
+            "emitted_chars": 153,
+            "id": "17832",
+            "kind": "decision",
+            "label": "cdx_decision_bakerounds_remote_admission_and_ta…",
+            "score": 0.6202974915504456,
+            "snippet": "3native remote launches requested C8WHOLEPLAN xhigh/E5WHOLETEST xhigh/SREPAIR high, [decision:17832]"
+          },
+          {
+            "emitted_chars": 145,
+            "id": "17826",
+            "kind": "decision",
+            "label": "Wind down this orchestration session at user re…",
+            "score": 0.6345914602279663,
+            "snippet": "MwholeG4 rawPASS0/40GREEN+32controls recorded1482/test4982 custody1945d17b, [decision:17826]"
+          },
+          {
+            "emitted_chars": 131,
+            "id": "19046",
+            "kind": "finding",
+            "label": "ROSTER-G1-04",
+            "score": 0.6010334491729736,
+            "snippet": "The incumbent minimum-build constraint is incorrectly described as an exact runtime pin. Evidence: [finding:19046]"
+          },
+          {
+            "emitted_chars": 138,
+            "id": "17707",
+            "kind": "decision",
+            "label": "cdx_decision_bakerounds_r3_combined_one_termina…",
+            "score": 0.5877802968025208,
+            "snippet": "R3A/BbothcompleteindependentnativeSolXHIGHstandardREVISEsamedeffect, [decision:17707]"
+          },
+          {
+            "emitted_chars": 157,
+            "id": "17643",
+            "kind": "decision",
+            "label": "bakeoff_self_clearing_weight_stack",
+            "score": 0.580619752407074,
+            "snippet": "User explicitly notes VM cannot retain all LLMweights; adopt self-clearing benchmark-owned stack. GPU [decision:17643]"
+          }
+        ],
+        "skip_reason": null,
+        "status": "selected"
+      }
+    },
+    "isError": false
+  }
+}

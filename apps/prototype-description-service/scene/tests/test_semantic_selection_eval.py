@@ -3,8 +3,8 @@
 Known answers come from the committed fixture
 ``scripts/eval_harness/semantic_selection_example.json``; the hand-computed
 values are noted inline. Scores are exact cosines over precomputed vectors and
-measure retrieval relevance only (TEST-06: the first run is expected to fail
-at import, before the module exists).
+measure retrieval relevance only. The historical first run failed at import;
+the second-dispatch regressions below execute behavior before the fix.
 """
 
 from __future__ import annotations
@@ -130,7 +130,8 @@ def test_protected_policy_record_is_never_ranked_or_authorized() -> None:
     assert report["protected_records"] == {
         "ids": ["policy-1"],
         "ranked": False,
-        "required_in_every_frozen_pack": True,
+        "required_in_every_applicable_frozen_pack": True,
+        "applicable_ids_by_query": {qid: ["policy-1"] for qid in ("q-1", "q-2", "q-3")},
     }
 
     doc = _base_doc()

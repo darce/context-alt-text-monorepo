@@ -1295,6 +1295,95 @@ def test_subject_evidence_supported_empty_scene_public_cli(tmp_path: Path, role:
         assert "subject comparison incomparable" not in doc
 
 
+@pytest.mark.parametrize("role", ["reported", "selection"])
+@pytest.mark.parametrize("gate,allow_foreign", [(True, False), (False, True)])
+@pytest.mark.parametrize("face_name", [None, "explicit-person"], ids=["unnamed", "named"])
+def test_subject_evidence_supported_empty_face_conflict_public_cli(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    role: str,
+    gate: bool,
+    allow_foreign: bool,
+    face_name: str | None,
+) -> None:
+    from copy import deepcopy
+
+    from scripts.eval_harness.manifest import FaceBox
+
+    reported, selection = _se_frames(tmp_path)
+    pins = None
+    if allow_foreign:
+        pins = dict.fromkeys(
+            (
+                "candidate",
+                "incumbent",
+                "zero_rule_context_echo",
+                "context_only_heuristic",
+                "current_production",
+                "blinded_human",
+            ),
+            "e" * 64,
+        )
+        pins["candidate"] = "f" * 64
+    target = _se_attach(reported if role == "reported" else selection, "not_applicable")
+    if role == "reported":
+        reported = target
+    else:
+        selection = target
+    parent_rc, parent_out = _se_public(
+        tmp_path / "empty-parent", reported, selection, gate=gate, allow_foreign=allow_foreign, pins=pins
+    )
+    assert parent_rc == (5 if role == "reported" and gate else 0)
+    assert parent_out.exists()
+    if allow_foreign:
+        assert "NOT COMPARABLE" in parent_out.read_text()
+    if gate:
+        parent_html = parent_out.read_text()
+        assert "selection=pass" in parent_html
+        if role == "reported":
+            assert "mandatory subject strata unavailable: 99/100" in parent_html
+        else:
+            assert "bakeoff-gate: pass" in parent_html
+    capsys.readouterr()
+
+    # A human-drawn face is a person declaration even without a known name.
+    # This is the real FaceBox shape, not detector output or an identity claim.
+    target = deepcopy(target)
+    row = target["entries"][0]
+    box = {"x": 0.5, "y": 0.5, "w": 0.2, "h": 0.2, "name": face_name, "source": "operator"}
+    assert FaceBox.model_validate(box).name == face_name
+    row["face_boxes"] = [box]
+    assert row["face_count"] == 0 and row["present_identities"] == []
+    assert not any(row.get(key) for key in ("subject_id", "subject_ids", "subject", "subjects"))
+
+    # Rebind after the conflicting declaration; stale hashes must not supply
+    # the refusal. Support still refers to the same original and absence claim.
+    projection = deepcopy(target)
+    for entry in projection["entries"]:
+        entry.pop("subject_evidence", None)
+    digest = _se_sha(projection)
+    evidence = row["subject_evidence"]
+    evidence["source_binding"].update(
+        namespace=f"manifest-sha256:{digest}",
+        source_manifest_sha256=digest,
+        source_entry_sha256=_se_sha(projection["entries"][0]),
+    )
+    assert evidence["support_sha256"] == _se_sha(evidence["support"])
+    assert evidence["support"]["source_original_sha256"] == row["sha256"]
+    assert evidence["source_binding"]["source_original_sha256"] == row["sha256"]
+    if role == "reported":
+        reported = target
+    else:
+        selection = target
+    rc, out = _se_public(
+        tmp_path / "face-conflict", reported, selection, gate=gate, allow_foreign=allow_foreign, pins=pins
+    )
+    assert rc == 4
+    assert "subject evidence invalid: evidence_conflict" in capsys.readouterr().err
+    assert not out.exists()
+    assert row["face_boxes"] == [box]
+
+
 @pytest.mark.parametrize(
     "kind",
     ["missing", "zero-only", "unknown", "partial-group", "partial-reflection", "partial-depiction", "missing-reported"],

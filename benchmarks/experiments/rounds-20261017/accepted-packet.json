@@ -1,0 +1,2200 @@
+{
+  "schema": "rounds-operator-reference/v1",
+  "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+  "status": "SUBMITTED_FOR_INDEPENDENT_ARTIFACT_GATE",
+  "research_readiness": "NOT_READY",
+  "winner": null,
+  "model_adoption_authorized": false,
+  "scope": "Self-contained operator reference and historical measurement receipt; no future feature implementation authorization",
+  "operator_document": {
+    "path": "benchmarks/experiments/rounds-20261017/accepted-packet.md",
+    "sha256": "74d1e4465b783b4de30d5c9726b71705c836599a50ed8992f50076248e916578",
+    "line_limit": 200
+  },
+  "artifact_gate": {
+    "status": "PENDING_INDEPENDENT_REVIEW",
+    "scope": "fresh main plus exactly accepted-packet.md/json",
+    "acceptance_means": "artifact merge readiness only",
+    "research_adoption_gate_satisfied": false
+  },
+  "provenance": {
+    "source_sha": "444d9cd4dbec96da1c63eec5143cc62af714ce44",
+    "source_tree": "7a7cf64e1579296deafaa090b67468a8f846d9dc",
+    "transport_base_commit": "f144322a3a5c6013a18b48cee51679ea27ce5873",
+    "transport_tree": "7a7cf64e1579296deafaa090b67468a8f846d9dc",
+    "verification": "actual tree equals provenance source_tree and sandbox_base_tree; no unavailable ancestry assertion",
+    "native_remote_worker": true,
+    "nested_dispatch_or_subagents": false,
+    "continuation_anchor": "cont-20261017T043014387888Z-b06a280a (supplied historical context; not independently queried)",
+    "MCP_decision_anchors": {
+      "17668": "fourth-writer proposal; evidence before merge and immutable attempts",
+      "17654": "retrieval v2 shared pool and upstream eligibility correction",
+      "17659": "closest documented detector recipe, OpenCV retained in arena ablation"
+    },
+    "anchor_status": "user-supplied semantic prior, verified embeddings flag reported by attachment; not a fresh MCP lookup",
+    "prior_writers": "Third writer exited 9 after weekly quota; supplied salvage receipt says no owned files or commits. This checkout initially clean with neither output present.",
+    "attempt_preservation": "all 58 existing artifacts retained byte-identically; initial subjects rejected as operator authority",
+    "snapshot_artifact_count": 58,
+    "independently_verified_draft_defects": 27,
+    "correction_JSON_blocks_parsed": 18,
+    "published_artifact_dependencies": "code/registry/scope/manifest references below; archived attempt paths identify evidence and are not required to publish this reference",
+    "self_referential_commit_id": false,
+    "source_commit_object_lookup": {
+      "exit_code": 128,
+      "expected_in_history_stripped_transport": true,
+      "ancestry_verified": false
+    }
+  },
+  "authority": {
+    "order": [
+      "current source and accepted scopes",
+      "independent G1 observations",
+      "consistent sibling correction maps",
+      "bounded historical receipts"
+    ],
+    "retired": "original corpus/caption/cluster/detect/retrieval/roster protocols are rejected review subjects, not operator commands",
+    "new_gates_or_thresholds_adopted": false,
+    "canon_version": "0.26.2",
+    "canon_status": "exact rows/cards supplied by operator; no network or release refresh",
+    "decision_rules": {
+      "traceability": [
+        "PROV-01",
+        "GRPH-14",
+        "CARD-06",
+        "Principles 9,13"
+      ],
+      "unknown": [
+        "CARD-03",
+        "Principle 11"
+      ],
+      "measurement": [
+        "EVAL-01",
+        "EVAL-04",
+        "CARD-19",
+        "CARD-23",
+        "CARD-30",
+        "Principles 15,20"
+      ],
+      "face_boundaries": [
+        "GRPH-18",
+        "GRPH-22",
+        "GRPH-23",
+        "EVAL-16",
+        "EVAL-17",
+        "EVAL-20",
+        "CARD-12"
+      ],
+      "diagnosis": [
+        "DBG-01",
+        "DBG-02",
+        "DBG-11",
+        "CARD-08"
+      ],
+      "retrieval": [
+        "EMB-01",
+        "EVAL-24",
+        "GRPH-36",
+        "CARD-18"
+      ],
+      "residency": [
+        "GRPH-31",
+        "GRPH-32"
+      ],
+      "runtime_terms": [
+        "CARD-26",
+        "CARD-29"
+      ]
+    }
+  },
+  "sealed_models": [
+    {
+      "id": "minicpm-v-45",
+      "model_id": "MiniCPM-V-4.5",
+      "role": "candidate",
+      "repo": "openbmb/MiniCPM-V-4_5-gguf",
+      "revision": "cefe1580fe9402b06c4e1b8ed7343809377b8147",
+      "revision_status": "sealed_registry_pin_preserved",
+      "public_revision_url": "https://huggingface.co/openbmb/MiniCPM-V-4_5-gguf/tree/cefe1580fe9402b06c4e1b8ed7343809377b8147",
+      "quant": "Q5_K_M",
+      "artifact": "MiniCPM-V-4_5-Q5_K_M.gguf",
+      "declared_artifact_gb": 6.0,
+      "declared_gb_semantics": "registry disk estimate; not VRAM/RSS/KV or completeness proof",
+      "recipe": {
+        "stack": "llama_cpp",
+        "ctx_size": 8192,
+        "image_max_tokens": 1536,
+        "parallel": 1,
+        "gguf": "MiniCPM-V-4_5-Q5_K_M.gguf",
+        "mmproj": "mmproj-model-f16.gguf"
+      },
+      "prompt_template": "v3",
+      "qualification_scope": "runtime_qualification_pending",
+      "component_completeness": "UNKNOWN",
+      "complete_model_bytes": null,
+      "actual_runtime_identity": null,
+      "target_fit": "UNKNOWN",
+      "caption_quality": "NOT_READY",
+      "runtime_measured_here": false,
+      "quality_measured_here": false
+    },
+    {
+      "id": "gemma-4-12b",
+      "model_id": "gemma-4-12B-it",
+      "role": "candidate",
+      "repo": "google/gemma-4-12B-it-qat-q4_0-gguf",
+      "revision": "29d097773436b69ff9feafd636ab4cf873786537",
+      "revision_status": "sealed_registry_pin_preserved",
+      "public_revision_url": "https://huggingface.co/google/gemma-4-12B-it-qat-q4_0-gguf/tree/29d097773436b69ff9feafd636ab4cf873786537",
+      "quant": "q4_0-qat",
+      "artifact": "gemma-4-12b-it-qat-q4_0.gguf",
+      "declared_artifact_gb": 7.2,
+      "declared_gb_semantics": "registry disk estimate; not VRAM/RSS/KV or completeness proof",
+      "recipe": {
+        "stack": "llama_cpp",
+        "ctx_size": 8192,
+        "image_max_tokens": 1536,
+        "parallel": 1,
+        "gguf": "gemma-4-12b-it-qat-q4_0.gguf",
+        "mmproj": "mmproj-gemma-4-12b-it-qat-q4_0.gguf",
+        "mmproj_gb": 0.18
+      },
+      "prompt_template": "v3",
+      "qualification_scope": "runtime_qualification_pending",
+      "component_completeness": "UNKNOWN",
+      "complete_model_bytes": null,
+      "actual_runtime_identity": null,
+      "target_fit": "UNKNOWN",
+      "caption_quality": "NOT_READY",
+      "runtime_measured_here": false,
+      "quality_measured_here": false
+    },
+    {
+      "id": "qwen38-27b",
+      "model_id": "Qwen3.8-27B",
+      "role": "candidate",
+      "repo": "unsloth/Qwen3.8-27B-GGUF",
+      "revision": "1cff334a4a228324d4ee1f76d55d372588f0d556",
+      "revision_status": "sealed_registry_pin_preserved",
+      "public_revision_url": "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/tree/1cff334a4a228324d4ee1f76d55d372588f0d556",
+      "quant": "UD-Q4_K_XL",
+      "artifact": "Qwen3.8-27B-UD-Q4_K_XL.gguf",
+      "declared_artifact_gb": 17.9,
+      "declared_gb_semantics": "registry disk estimate; not VRAM/RSS/KV or completeness proof",
+      "recipe": {
+        "stack": "llama_cpp",
+        "ctx_size": 8192,
+        "image_max_tokens": 1536,
+        "parallel": 1,
+        "extra_flags": [
+          "--no-think"
+        ],
+        "gguf": "Qwen3.8-27B-UD-Q4_K_XL.gguf",
+        "mmproj": "mmproj-F16.gguf",
+        "min_runtime_build": "b6887",
+        "min_runtime_build_is_lower_bound": true
+      },
+      "prompt_template": "v3",
+      "qualification_scope": "runtime_qualification_pending",
+      "component_completeness": "UNKNOWN",
+      "complete_model_bytes": null,
+      "actual_runtime_identity": null,
+      "target_fit": "UNKNOWN",
+      "caption_quality": "NOT_READY",
+      "runtime_measured_here": false,
+      "quality_measured_here": false
+    },
+    {
+      "id": "qwen36-27b",
+      "model_id": "Qwen3.6-27B",
+      "role": "candidate",
+      "repo": "unsloth/Qwen3.6-27B-GGUF",
+      "revision": "82d411acf4a06cfb8d9b073a5211bf410bfc29bf",
+      "revision_status": "sealed_registry_pin_preserved",
+      "public_revision_url": "https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/tree/82d411acf4a06cfb8d9b073a5211bf410bfc29bf",
+      "quant": "UD-Q4_K_XL",
+      "artifact": "Qwen3.6-27B-UD-Q4_K_XL.gguf",
+      "declared_artifact_gb": 17.6,
+      "declared_gb_semantics": "registry disk estimate; not VRAM/RSS/KV or completeness proof",
+      "recipe": {
+        "stack": "llama_cpp",
+        "ctx_size": 8192,
+        "image_max_tokens": 1536,
+        "parallel": 1,
+        "extra_flags": [
+          "--no-think"
+        ],
+        "gguf": "Qwen3.6-27B-UD-Q4_K_XL.gguf",
+        "mmproj": "mmproj-F16.gguf",
+        "min_runtime_build": "b6887",
+        "min_runtime_build_is_lower_bound": true
+      },
+      "prompt_template": "v3",
+      "qualification_scope": "runtime_qualification_pending",
+      "component_completeness": "UNKNOWN",
+      "complete_model_bytes": null,
+      "actual_runtime_identity": null,
+      "target_fit": "UNKNOWN",
+      "caption_quality": "NOT_READY",
+      "runtime_measured_here": false,
+      "quality_measured_here": false
+    },
+    {
+      "id": "minicpm-v-46",
+      "model_id": "MiniCPM-V-4.6",
+      "role": "candidate",
+      "repo": "openbmb/MiniCPM-V-4_6-gguf",
+      "revision": "78e02f066e9819a60573b78a4275df8a0c27f698",
+      "revision_status": "sealed_registry_pin_preserved",
+      "public_revision_url": "https://huggingface.co/openbmb/MiniCPM-V-4_6-gguf/tree/78e02f066e9819a60573b78a4275df8a0c27f698",
+      "quant": "Q4_K_M",
+      "artifact": "MiniCPM-V-4_6-Q4_K_M.gguf",
+      "declared_artifact_gb": 4.0,
+      "declared_gb_semantics": "registry disk estimate; not VRAM/RSS/KV or completeness proof",
+      "recipe": {
+        "stack": "llama_cpp",
+        "ctx_size": 8192,
+        "image_max_tokens": 1536,
+        "parallel": 1,
+        "gguf": "MiniCPM-V-4_6-Q4_K_M.gguf",
+        "mmproj": "mmproj-model-f16.gguf"
+      },
+      "prompt_template": "v3",
+      "qualification_scope": "conditional_component_inventory",
+      "component_completeness": "UNKNOWN",
+      "complete_model_bytes": null,
+      "actual_runtime_identity": null,
+      "target_fit": "UNKNOWN",
+      "caption_quality": "NOT_READY",
+      "runtime_measured_here": false,
+      "quality_measured_here": false
+    },
+    {
+      "id": "qwen3-vl-8b",
+      "model_id": "Qwen3-VL-8B-Instruct",
+      "role": "candidate",
+      "repo": "Qwen/Qwen3-VL-8B-Instruct",
+      "revision": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+      "revision_status": "sealed_registry_pin_preserved",
+      "public_revision_url": "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct/tree/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+      "quant": "bf16",
+      "artifact": "weights",
+      "declared_artifact_gb": 17.5,
+      "declared_gb_semantics": "registry disk estimate; not VRAM/RSS/KV or completeness proof",
+      "recipe": {
+        "stack": "vllm",
+        "ctx_size": 8192,
+        "image_max_tokens": 1536,
+        "parallel": 1
+      },
+      "prompt_template": "v3",
+      "qualification_scope": "runtime_qualification_pending",
+      "component_completeness": "UNKNOWN",
+      "complete_model_bytes": null,
+      "actual_runtime_identity": null,
+      "target_fit": "UNKNOWN",
+      "caption_quality": "NOT_READY",
+      "runtime_measured_here": false,
+      "quality_measured_here": false
+    },
+    {
+      "id": "qwen3-vl-30b-a3b",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "role": "incumbent",
+      "repo": "unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF",
+      "revision": "0af19e7479857aa7f3246466a4ad16c7e7299639",
+      "revision_status": "sealed_registry_pin_preserved",
+      "public_revision_url": "https://huggingface.co/unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF/tree/0af19e7479857aa7f3246466a4ad16c7e7299639",
+      "quant": "Q4_K_M",
+      "artifact": "Qwen3-VL-30B-A3B-Instruct-Q4_K_M.gguf",
+      "declared_artifact_gb": 18.6,
+      "declared_gb_semantics": "registry disk estimate; not VRAM/RSS/KV or completeness proof",
+      "recipe": {
+        "stack": "llama_cpp",
+        "ctx_size": 8192,
+        "image_max_tokens": 1536,
+        "parallel": 1,
+        "extra_flags": [
+          "--no-think"
+        ],
+        "gguf": "Qwen3-VL-30B-A3B-Instruct-Q4_K_M.gguf",
+        "mmproj": "mmproj-F16.gguf",
+        "min_runtime_build": "b6887"
+      },
+      "prompt_template": "v3",
+      "qualification_scope": "frozen_incumbent_anchor",
+      "component_completeness": "UNKNOWN",
+      "complete_model_bytes": null,
+      "actual_runtime_identity": null,
+      "target_fit": "UNKNOWN",
+      "caption_quality": "NOT_READY",
+      "runtime_measured_here": false,
+      "quality_measured_here": false
+    },
+    {
+      "id": "florence-2-base-ft",
+      "model_id": "Florence-2-base-ft",
+      "role": "incumbent",
+      "repo": "microsoft/Florence-2-base-ft",
+      "revision": "f6c1a25888ffc1d945ee8a1a77ac833c7303d46e",
+      "revision_status": "sealed_registry_pin_preserved",
+      "public_revision_url": "https://huggingface.co/microsoft/Florence-2-base-ft/tree/f6c1a25888ffc1d945ee8a1a77ac833c7303d46e",
+      "quant": "bf16",
+      "artifact": "weights",
+      "declared_artifact_gb": 0.5,
+      "declared_gb_semantics": "registry disk estimate; not VRAM/RSS/KV or completeness proof",
+      "recipe": {
+        "stack": "hf_transformers",
+        "ctx_size": 8192,
+        "image_max_tokens": 1536,
+        "parallel": 1
+      },
+      "prompt_template": "v3",
+      "qualification_scope": "frozen_incumbent_anchor",
+      "component_completeness": "UNKNOWN",
+      "complete_model_bytes": null,
+      "actual_runtime_identity": null,
+      "target_fit": "UNKNOWN",
+      "caption_quality": "NOT_READY",
+      "runtime_measured_here": false,
+      "quality_measured_here": false
+    },
+    {
+      "id": "florence-2-large-ft",
+      "model_id": "Florence-2-large-ft",
+      "role": "candidate",
+      "repo": "microsoft/Florence-2-large-ft",
+      "revision": "4a12a2b54b7016a48a22037fbd62da90cd566f2a",
+      "revision_status": "sealed_registry_pin_preserved",
+      "public_revision_url": "https://huggingface.co/microsoft/Florence-2-large-ft/tree/4a12a2b54b7016a48a22037fbd62da90cd566f2a",
+      "quant": "bf16",
+      "artifact": "weights",
+      "declared_artifact_gb": 2.0,
+      "declared_gb_semantics": "registry disk estimate; not VRAM/RSS/KV or completeness proof",
+      "recipe": {
+        "stack": "hf_transformers",
+        "ctx_size": 8192,
+        "image_max_tokens": 1536,
+        "parallel": 1
+      },
+      "prompt_template": "v3",
+      "qualification_scope": "optional_family_comparator",
+      "component_completeness": "UNKNOWN",
+      "complete_model_bytes": null,
+      "actual_runtime_identity": null,
+      "target_fit": "UNKNOWN",
+      "caption_quality": "NOT_READY",
+      "runtime_measured_here": false,
+      "quality_measured_here": false
+    }
+  ],
+  "observed_intake_models": [
+    {
+      "id": "mimo-v2.6-distill-qwen-9b-gguf",
+      "repo": "bartowski/MiMo-V2.6-Distill-Qwen-9B-GGUF",
+      "revision": "4371da10c84fb26da3592d4cf312d24aa82b7b65",
+      "revision_status": "observed_intake_NOT_SEALED",
+      "public_revision_url": "https://huggingface.co/bartowski/MiMo-V2.6-Distill-Qwen-9B-GGUF/tree/4371da10c84fb26da3592d4cf312d24aa82b7b65",
+      "quants": [
+        "Q4_K_M",
+        "Q5_K_M"
+      ],
+      "selected_artifact_names": [
+        "MiMo-V2.6-Distill-Qwen-9B-Q4_K_M.gguf",
+        "MiMo-V2.6-Distill-Qwen-9B-Q5_K_M.gguf"
+      ],
+      "projector_options_observed": [
+        {
+          "path": "mmproj-MiMo-V2.6-Distill-Qwen-9B-bf16.gguf",
+          "size_bytes": 921704992
+        },
+        {
+          "path": "mmproj-MiMo-V2.6-Distill-Qwen-9B-f16.gguf",
+          "size_bytes": 918166048
+        }
+      ],
+      "projector_pairing_qualified": false,
+      "runtime_qualified": false,
+      "quality": "NOT_READY",
+      "sequence": "Q4_K_M intake first; Q5_K_M optional follow-up",
+      "minimum_serving_build": null,
+      "quantizer_build_provenance": "b10964",
+      "applicable_terms": "UNRESOLVED; upstream declarations and absent quantizer metadata imply neither clearance nor prohibition"
+    },
+    {
+      "id": "qwen3.8-27b-gsq-rco-gguf",
+      "repo": "ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF",
+      "revision": "d562806dbafae37109975e970aae91b43e73b440",
+      "revision_status": "observed_intake_NOT_SEALED",
+      "public_revision_url": "https://huggingface.co/ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF/tree/d562806dbafae37109975e970aae91b43e73b440",
+      "quants": [
+        "IQ3_S"
+      ],
+      "selected_artifact_names": [
+        "Qwen3.8-27B-GSQ-RCO-IQ3_S.gguf"
+      ],
+      "projector_options_observed": [
+        {
+          "path": "mmproj-Qwen3.8-27B-BF16.gguf",
+          "size_bytes": 931146528
+        }
+      ],
+      "projector_pairing_qualified": false,
+      "runtime_qualified": false,
+      "quality": "NOT_READY",
+      "sequence": "conditional numerical-change arm; compare stratified task deltas before promotion",
+      "minimum_serving_build": null,
+      "quantizer_build_provenance": null,
+      "applicable_terms": "UNRESOLVED; upstream declarations and absent quantizer metadata imply neither clearance nor prohibition"
+    }
+  ],
+  "runtime_bounds": {
+    "qwen3-vl-30b-a3b": "numeric minimum >=b6887",
+    "qwen38-27b_and_qwen36-27b": "numeric >b6887 preflight; exact supported build unproven",
+    "actual_runtime_build_or_digest": null,
+    "MiMo_b10964": "quantizer provenance only",
+    "MiniCPM46_selected_weight_bytes": 529101504,
+    "MiniCPM46_selected_projector_bytes": 1108746944,
+    "MiniCPM46_whole_model_bytes": null,
+    "memory_fit_from_disk_bytes": false
+  },
+  "images": {
+    "namespaces": {
+      "fixture_selection": {
+        "path": "apps/prototype-description-service/scene/tests/seed/bakeoff_golden.json",
+        "count": 10,
+        "physical_coverage": "UNKNOWN"
+      },
+      "fixture_report": {
+        "path": "apps/prototype-description-service/scene/tests/seed/held_out_golden.json",
+        "count": 20,
+        "historical_contents_found": 20,
+        "renamed": 11
+      },
+      "fixture_regression": {
+        "path": "apps/prototype-description-service/scene/tests/seed/golden.json",
+        "count": 37,
+        "historical_contents_found": 36,
+        "renamed": 16,
+        "absent": 1
+      },
+      "benchmark_and_corpus": "separate namespaces; numeric ID equality is not lineage"
+    },
+    "fixture_selection_report_intersection": {
+      "IDs": 0,
+      "recorded_hashes": 0,
+      "subject_gate_proven": false
+    },
+    "regression_containment": "intentional",
+    "private_resolution_map_qualified_here": false,
+    "loader": "manifest.py:resolve_verified_image/load_manifest; resolve private path mapping before use",
+    "corpus_catalog": {
+      "path": "benchmarks/manifests/corpus-catalog-v1.json",
+      "id": "corpus646-originals",
+      "hash_field": "sha256_source",
+      "derived_hash_fallback": false,
+      "entries": 646,
+      "matched": 643,
+      "missing": 3,
+      "mismatched": 0,
+      "unsafe": 0,
+      "status": "INCOMPLETE"
+    },
+    "accepted_frame": {
+      "path": "benchmarks/manifests/fir12-selection-v1.json",
+      "count": 640,
+      "accounting": {
+        "duplicate_source_exclusions": 3,
+        "already_declared_missing_originals": 3
+      }
+    },
+    "lineage_diagnostic": {
+      "explicit_original_hash_exclusions": 11,
+      "remainder": 629,
+      "approved_new_pool": false,
+      "transformations_and_actual_usage": "UNRESOLVED"
+    },
+    "existing_labels": "operator-confirmed identity/count labels preserved; do not declare all labels non-gold",
+    "boxed_and_full_caption_report_gold_established_here": false,
+    "Golden150": "existing draft and selection must be audited/reused where qualified; no automatic Golden100 substitution",
+    "coverage": [
+      "genuine groups",
+      "unknown people",
+      "no-face",
+      "pose",
+      "occlusion",
+      "eyewear",
+      "low light",
+      "spatial relations",
+      "text",
+      "non-person scenes"
+    ],
+    "synthetic_controls": "separate arm and claims",
+    "partition": "identity/event/source/session/group as appropriate before calibration/reporting"
+  },
+  "annotation_scope": {
+    "authority": "docs/scopes/descqual-2-fact-annotation-pilot.md",
+    "estimand": "whole IMAGE trap-caught indicator",
+    "whole_frame_N": 640,
+    "PSUs": 241,
+    "sum_m_squared": 6942,
+    "Kish_a": 10.846875,
+    "planning": {
+      "n": 198,
+      "ICC_assumption": 0.2
+    },
+    "sensitivity": {
+      "n": 239,
+      "ICC_assumption": 0.3
+    },
+    "B_eyewear": {
+      "N": 80,
+      "SRS_precision_floor_n": 44,
+      "cluster_adjusted_floor_n": 48,
+      "own_Kish_a": 2.1,
+      "ICC_assumption": 0.2
+    },
+    "pilot": {
+      "approximate_n": 30,
+      "purpose": "annotation-cost and instrument pilot",
+      "ICC_estimator": false
+    },
+    "universal_all_slice_all_cohort_precision_gate": false
+  },
+  "workflow": {
+    "cwd": "apps/prototype-description-service",
+    "existing_chain": [
+      "bakeoff_runner dry planning",
+      "separately admitted stack-specific serve",
+      "bakeoff raw run",
+      "cli score",
+      "build_bakeoff_report"
+    ],
+    "separate_tools": [
+      "name_binding_eval/v2 phrase ledger",
+      "semantic_selection_eval/v2 precomputed vectors"
+    ],
+    "frozen_configuration": [
+      "v3 plus two-pass",
+      "context treatment and authority",
+      "caption band",
+      "per-pass token budgets",
+      "image max tokens / resize / preprocessing",
+      "sampling and seed",
+      "precision",
+      "complete weights/projector identities",
+      "actual immutable runtime identity",
+      "actual report manifest and separate selection usage"
+    ],
+    "sealed_report_candidates": [
+      "minicpm-v-45",
+      "qwen3-vl-8b",
+      "qwen38-27b",
+      "qwen36-27b",
+      "internvl35-8b",
+      "mimo-vl-7b-rl",
+      "kimi-vl-a3b",
+      "gemma-4-12b",
+      "glm-41v-9b",
+      "ovis25-9b",
+      "ovis2-8b",
+      "minicpm-v-46",
+      "florence-2-large-ft"
+    ],
+    "sealed_report_incumbents": [
+      "florence-2-base-ft",
+      "qwen3-vl-30b-a3b"
+    ],
+    "required_baselines": [
+      "zero_rule_context_echo",
+      "context_only_heuristic",
+      "current_production",
+      "blinded_human"
+    ],
+    "report_binding": "all records use the same intended report manifest; actual selection namespace and subject evidence retained",
+    "score_markers": "candidate markers required by existing gate; created only by successful-score control flow, never manual touch",
+    "forbidden_cures": [
+      "allow-foreign-run to satisfy gate",
+      "manifest relabeling to hide split mismatch",
+      "limit 0",
+      "fabricated baseline/incumbent"
+    ],
+    "manual_model_revision": "stamps operator value only; not verification of served weights/runtime",
+    "all_failures_and_counts": "retain per-image attempts, successes, errors, passes and denominators; no dropping failures"
+  },
+  "command_templates": [
+    {
+      "id": "plan",
+      "argv": [
+        "python",
+        "-B",
+        "-m",
+        "scripts.eval_harness.bakeoff_runner",
+        "--json"
+      ],
+      "preconditions": [
+        "metadata only"
+      ],
+      "execution_here": "dry run only if recorded in checks",
+      "expected_exit": 0
+    },
+    {
+      "id": "unsupported_stack_control",
+      "argv": [
+        "python",
+        "-B",
+        "-m",
+        "scripts.eval_harness.bakeoff_runner",
+        "--only",
+        "qwen3-vl-8b",
+        "--json"
+      ],
+      "preconditions": [
+        "metadata only"
+      ],
+      "execution_here": "dry refusal only if recorded in checks",
+      "expected_exit": 2
+    },
+    {
+      "id": "raw_caption",
+      "argv": [
+        "python",
+        "-B",
+        "-m",
+        "scripts.eval_harness.bakeoff",
+        "--endpoint",
+        "{QUALIFIED_ENDPOINT}",
+        "--model-id",
+        "{MODEL_ID}",
+        "--model-version",
+        "{QUANT}",
+        "--model-revision",
+        "{VERIFIED_REVISION}",
+        "--manifest",
+        "{REPORT_MANIFEST}",
+        "--prompt-variant",
+        "v3",
+        "--two-pass",
+        "--caption-length",
+        "standard",
+        "--out",
+        "{NEW_PRIVATE_OUT}/run.json"
+      ],
+      "preconditions": [
+        "target/runtime/cache admission complete",
+        "private loader and report manifest qualified",
+        "ACX_EVAL_LIVE=1 and GOLDEN_IMAGES_DIR={QUALIFIED_PRIVATE_IMAGES_ROOT} only for an authorized real run",
+        "add frozen reasoning controls (--no-think for declared pair/anchor) and seed/token budgets via existing supported interfaces",
+        "new output directory isolated from automatic pruning; full frozen serving recipe retained"
+      ],
+      "execution_here": "PARSE_ONLY; incomplete serving protocol, no API calls"
+    },
+    {
+      "id": "score",
+      "argv": [
+        "python",
+        "-B",
+        "-m",
+        "scripts.eval_harness.cli",
+        "score",
+        "--manifest",
+        "{REPORT_MANIFEST}",
+        "--run-record",
+        "{NEW_PRIVATE_OUT}/run.json",
+        "--rubric-gate",
+        "enforce",
+        "--allow-refused",
+        "detection",
+        "--allow-refused",
+        "identification"
+      ],
+      "preconditions": [
+        "actual bound raw run",
+        "refused face metrics remain refused and cannot justify quality"
+      ],
+      "execution_here": "PARSE_ONLY; no scoring or marker creation"
+    },
+    {
+      "id": "report",
+      "argv": [
+        "python",
+        "-B",
+        "-m",
+        "scripts.eval_harness.build_bakeoff_report",
+        "--manifest",
+        "{REPORT_MANIFEST}",
+        "--selection-manifest",
+        "{ACTUAL_SELECTION_MANIFEST}",
+        "--out",
+        "{NEW_PRIVATE_REPORT_HTML}",
+        "--bakeoff-gate",
+        "--expected-candidate",
+        "minicpm-v-45",
+        "--run",
+        "minicpm-v-45={PRIVATE_RUN_minicpm-v-45}",
+        "--score-ok",
+        "minicpm-v-45={SUCCESSFUL_SCORE_MARKER_minicpm-v-45}",
+        "--expected-candidate",
+        "qwen3-vl-8b",
+        "--run",
+        "qwen3-vl-8b={PRIVATE_RUN_qwen3-vl-8b}",
+        "--score-ok",
+        "qwen3-vl-8b={SUCCESSFUL_SCORE_MARKER_qwen3-vl-8b}",
+        "--expected-candidate",
+        "qwen38-27b",
+        "--run",
+        "qwen38-27b={PRIVATE_RUN_qwen38-27b}",
+        "--score-ok",
+        "qwen38-27b={SUCCESSFUL_SCORE_MARKER_qwen38-27b}",
+        "--expected-candidate",
+        "qwen36-27b",
+        "--run",
+        "qwen36-27b={PRIVATE_RUN_qwen36-27b}",
+        "--score-ok",
+        "qwen36-27b={SUCCESSFUL_SCORE_MARKER_qwen36-27b}",
+        "--expected-candidate",
+        "internvl35-8b",
+        "--run",
+        "internvl35-8b={PRIVATE_RUN_internvl35-8b}",
+        "--score-ok",
+        "internvl35-8b={SUCCESSFUL_SCORE_MARKER_internvl35-8b}",
+        "--expected-candidate",
+        "mimo-vl-7b-rl",
+        "--run",
+        "mimo-vl-7b-rl={PRIVATE_RUN_mimo-vl-7b-rl}",
+        "--score-ok",
+        "mimo-vl-7b-rl={SUCCESSFUL_SCORE_MARKER_mimo-vl-7b-rl}",
+        "--expected-candidate",
+        "kimi-vl-a3b",
+        "--run",
+        "kimi-vl-a3b={PRIVATE_RUN_kimi-vl-a3b}",
+        "--score-ok",
+        "kimi-vl-a3b={SUCCESSFUL_SCORE_MARKER_kimi-vl-a3b}",
+        "--expected-candidate",
+        "gemma-4-12b",
+        "--run",
+        "gemma-4-12b={PRIVATE_RUN_gemma-4-12b}",
+        "--score-ok",
+        "gemma-4-12b={SUCCESSFUL_SCORE_MARKER_gemma-4-12b}",
+        "--expected-candidate",
+        "glm-41v-9b",
+        "--run",
+        "glm-41v-9b={PRIVATE_RUN_glm-41v-9b}",
+        "--score-ok",
+        "glm-41v-9b={SUCCESSFUL_SCORE_MARKER_glm-41v-9b}",
+        "--expected-candidate",
+        "ovis25-9b",
+        "--run",
+        "ovis25-9b={PRIVATE_RUN_ovis25-9b}",
+        "--score-ok",
+        "ovis25-9b={SUCCESSFUL_SCORE_MARKER_ovis25-9b}",
+        "--expected-candidate",
+        "ovis2-8b",
+        "--run",
+        "ovis2-8b={PRIVATE_RUN_ovis2-8b}",
+        "--score-ok",
+        "ovis2-8b={SUCCESSFUL_SCORE_MARKER_ovis2-8b}",
+        "--expected-candidate",
+        "minicpm-v-46",
+        "--run",
+        "minicpm-v-46={PRIVATE_RUN_minicpm-v-46}",
+        "--score-ok",
+        "minicpm-v-46={SUCCESSFUL_SCORE_MARKER_minicpm-v-46}",
+        "--expected-candidate",
+        "florence-2-large-ft",
+        "--run",
+        "florence-2-large-ft={PRIVATE_RUN_florence-2-large-ft}",
+        "--score-ok",
+        "florence-2-large-ft={SUCCESSFUL_SCORE_MARKER_florence-2-large-ft}",
+        "--expected-incumbent",
+        "florence-2-base-ft",
+        "--run",
+        "florence-2-base-ft={PRIVATE_INCUMBENT_RUN_florence-2-base-ft}",
+        "--expected-incumbent",
+        "qwen3-vl-30b-a3b",
+        "--run",
+        "qwen3-vl-30b-a3b={PRIVATE_INCUMBENT_RUN_qwen3-vl-30b-a3b}",
+        "--baseline-run",
+        "zero_rule_context_echo={PRIVATE_BASELINE_zero_rule_context_echo}",
+        "--baseline-run",
+        "context_only_heuristic={PRIVATE_BASELINE_context_only_heuristic}",
+        "--baseline-run",
+        "current_production={PRIVATE_BASELINE_current_production}",
+        "--baseline-run",
+        "blinded_human={PRIVATE_BASELINE_blinded_human}"
+      ],
+      "preconditions": [
+        "all real records and successful-score evidence",
+        "qualified gold and selection/subject evidence",
+        "full original sealed roster; no shortlist narrowing"
+      ],
+      "execution_here": "PARSE_ONLY; no report rendering or readiness result"
+    },
+    {
+      "id": "phrase_ledger",
+      "argv": [
+        "python",
+        "-B",
+        "-m",
+        "scripts.eval_harness.name_binding_eval",
+        "{PRIVATE_QUALIFIED_V2_LEDGER}",
+        "--output",
+        "{NEW_PRIVATE_OUT}/name-binding.json"
+      ],
+      "preconditions": [
+        "qualified independent v2 ledger and geometry"
+      ],
+      "execution_here": "INTERFACE_SOURCE_CHECK_ONLY"
+    },
+    {
+      "id": "precomputed_semantic",
+      "argv": [
+        "python",
+        "-B",
+        "-m",
+        "scripts.eval_harness.semantic_selection_eval",
+        "{PRIVATE_QUALIFIED_V2_DOCUMENT}",
+        "--output",
+        "{NEW_PRIVATE_OUT}/semantic.json"
+      ],
+      "preconditions": [
+        "upstream approval and eligibility",
+        "one matched space",
+        "real qrels for quality claims"
+      ],
+      "execution_here": "INTERFACE_SOURCE_CHECK_ONLY; no encoder"
+    }
+  ],
+  "caption_metric_units": {
+    "insertion_rate": {
+      "implementation": "existing",
+      "numerator": "inserted identity entries on insertion-eligible rows",
+      "denominator": "inserted + missing identity entries on insertion-eligible rows",
+      "unit": "identity coverage",
+      "exclusions": "recognition-disabled rows",
+      "zero_denominator": null,
+      "image_independent_trials": false
+    },
+    "name_precision": {
+      "implementation": "existing",
+      "numerator": "eligible correct inserted names",
+      "denominator": "inserted + wrong + hallucinated name entries on ALL rows",
+      "unit": "asserted name entries",
+      "policy_disabled": "insertions counted in denominator but never numerator",
+      "zero_denominator": null
+    },
+    "wrong_name_image_rate": {
+      "implementation": "existing",
+      "numerator": "scored images naming anyone absent",
+      "denominator": "all scored images",
+      "unit": "image",
+      "present_name_policy_violation": "separate count",
+      "zero_denominator": null
+    },
+    "fabricated_fact_rate": {
+      "implementation": "existing trap-limited caught-rate",
+      "numerator": "images triggering at least one authored fabrication trap",
+      "denominator": {
+        "all": "all scored images",
+        "trapped": "scored images with authored traps"
+      },
+      "unit": "image",
+      "no_authored_traps": null,
+      "full_hallucination_rate": false
+    },
+    "phrase_binding": {
+      "implementation": "existing name_binding_eval/v2",
+      "unit": "gold identity-to-phrase bindings; image exposure and required identities reported separately",
+      "outcomes": "correct person/phrase geometry, wrong person, omissions, unbound phrases, prohibited additions, abstention",
+      "denominators": "gold outcome rates / gold_binding_count; required omissions / required_identity_count; all-abstain / frozen_image_count",
+      "missing_records": "separate missing_image_count/coverage; no inferred correctness"
+    },
+    "general_visual_fact_quality": {
+      "implementation": "independent rubric/annotation qualification pending",
+      "unit": "declare fact, image, relation and role claim units separately",
+      "needs": [
+        "supported facts",
+        "omissions",
+        "unsupported assertions",
+        "spatial/role truth rules",
+        "human validation"
+      ],
+      "dedicated_role_metric_implemented": false
+    },
+    "human_comparison": {
+      "implementation": "prospective protocol; no review performed here",
+      "design": [
+        "blinded paired fact review",
+        "balanced random candidate order",
+        "A/B and B/A or equivalent counterbalancing",
+        "length matching or measured verbosity effects",
+        "critical-stratum denominators",
+        "dependency-aware intervals"
+      ],
+      "intervals_emitted_by_current_caption_scorer": false,
+      "identity_trial_Wilson_as_image_trials": false
+    }
+  },
+  "enums": {
+    "FactKind": [
+      "OBJECT",
+      "ATTRIBUTE",
+      "COUNT",
+      "RELATION",
+      "SCENE",
+      "TEXT"
+    ],
+    "FactPolarity": "distinct enum containing TRUE/FALSE",
+    "SpatialRelation": "distinct enum containing LEFT_OF/RIGHT_OF",
+    "dedicated_role_metric": false
+  },
+  "faces": {
+    "AuraFace_role": "ArcFace R100 recognition embedding; not detector",
+    "detector": "named pinned YuNet",
+    "public_weight_pins_source": "apps/prototype-description-service/recognition/infrastructure/face_pipeline/provenance.py:MODEL_MANIFEST",
+    "alignment": "qualified 5-point aligned oracle crops pending; raw-photo smoke is not that protocol",
+    "arms": [
+      "oracle aligned crops for attribution",
+      "end-to-end fixed detections with upstream misses counted"
+    ],
+    "space_contract": "independent AuraFace512 and SFace128 fingerprints; no mixed-space vectors or centroid reuse",
+    "thresholds": {
+      "source_default": 0.9,
+      "historical_deployment_override": 0.85,
+      "sensitivity_only": 0.3,
+      "chosen_here": null
+    },
+    "truth": "independent all-visible-face boxes including negatives and frozen matching/IoU/truth rules required",
+    "quality_surfaces": [
+      "pair false merges",
+      "pair precision",
+      "pair recall",
+      "pair F1",
+      "B-cubed",
+      "purity",
+      "completeness",
+      "splits",
+      "merges",
+      "noise",
+      "unknown rejection",
+      "assignment coverage"
+    ],
+    "metric_status": "claim-specific qualification protocol pending; listed surfaces are not claims that all are shipped scorer outputs",
+    "proposed_definitions": {
+      "pair_precision": "TP/(TP+FP)",
+      "pair_recall": "TP/(TP+FN)",
+      "pair_F1": "2TP/(2TP+FP+FN)",
+      "pair_FMR": "FP/N_cross",
+      "split_count": "sum(max(0,n_t-1)); n_t = qualifying clusters per identity under frozen positive min_members",
+      "zero_assignments": "separate losses in recall/coverage, never negative splits",
+      "zero_denominator": "null with explicit reason; dependent gate NOT_EVALUATED"
+    },
+    "boundary": "raw-threshold connected components diagnostic only pending independently validated entity boundaries and residual-bridge pair audit",
+    "comparator": "all-singleton FMR0 and all-in-one recall1 are descriptive ceiling baselines; metric-specific feasible comparator/direction/margin must be prospectively accepted",
+    "production_algorithm_change": false,
+    "FIRBENCH_original_findings": "16 OPEN",
+    "frozen_failed_receipts": [
+      {
+        "observed": 0.063,
+        "bound": 0.06,
+        "relation": ">",
+        "status": "FAILED"
+      },
+      {
+        "observed": 0.5565,
+        "bound": 0.77,
+        "relation": "<",
+        "status": "FAILED"
+      }
+    ]
+  },
+  "retrieval": {
+    "model_id": "google/embeddinggemma-2",
+    "revision": "914f7f89142e33e77833254d9c9b90c3cef7303b",
+    "public_revision_url": "https://huggingface.co/google/embeddinggemma-2/tree/914f7f89142e33e77833254d9c9b90c3cef7303b",
+    "pin_status": "intake observation and retained public primary-card/config evidence; no fresh network or weight verification",
+    "retained_public_card_config_sha256": {
+      "README.md": "b677a0ee2818c36f091b65fd3d9b4baea9f04d53b02b49cae916c74bf9682037",
+      "config.json": "b8f1e9931b57fbc054acdb445c41765d55b0074c58d145fa82839941ad1b5bb3",
+      "preprocessor_config.json": "ea2ae257e901064abdd98dceb19f2b0da06af600bed15e0f99f5c85c37ee9d78",
+      "processor_config.json": "168f6a08522f3ce5dea596d94d003af2fd691742d4f41fe1f9d8cce76bfbf69c",
+      "modules.json": "3d02572a0455b832de67fb8e63a54981bc7e8b46e337c95e917bd8122a533bfd",
+      "1_Pooling/config.json": "8759bdf7c77efc7df7723f64856a593c8943b71ee38baf2a88771fbaf78438f9",
+      "2_Normalize/config.json": "cdb09dfca347a56aa2d691744e38d5ad3c7cbc2834e7181272b9a15328b82524",
+      "config_sentence_transformers.json": "031e56a498d33c349ab489a21885bcfe25b4fcba841149dc99e1e90d4a7c28f5"
+    },
+    "text_image_effective_parameters_card": 440000000,
+    "real_encoder_ran_here": false,
+    "namespace": "approved_context",
+    "recipe": {
+      "native_dimension": 768,
+      "MRL_dimensions": [
+        768,
+        512,
+        256,
+        128
+      ],
+      "precision_allowed": [
+        "bf16",
+        "fp32"
+      ],
+      "fp16_allowed": false,
+      "text_query_prefix_exact": "task: search result | query: ",
+      "text_document_prefix_without_title_exact": "title: none | text: ",
+      "titled_document_format": "title: {title} | text: {content}",
+      "image_prefix": null,
+      "pooling": "mean, include_prompt=true",
+      "normalization": "L2",
+      "image_processor": {
+        "RGB": true,
+        "resize": true,
+        "rescale_factor": "1/255",
+        "normalize": false,
+        "resample": 3,
+        "patch_size": 16,
+        "pooling_kernel_size": 3,
+        "max_soft_tokens": 280
+      },
+      "image_resize_target": "UNKNOWN until processor implementation/version pinned",
+      "text_image_loading": {
+        "audio_config": null
+      },
+      "context_budget_tokens": 8192,
+      "library_versions": "unpinned/unqualified here; record actual immutable versions before use",
+      "MRL": "leading truncate then renormalize allowed; new dimension/recipe/space identity must match both sides; evaluator checks declarations, lengths and norms, not operation history",
+      "encoder_call_truncate_dim": "chosen reproducibility policy, not universal model restriction"
+    },
+    "encoder_contract_existing_fields": [
+      "model_id",
+      "revision",
+      "preprocessing",
+      "dimension",
+      "normalization",
+      "namespace",
+      "space_id"
+    ],
+    "full_recipe_identity": "precision/pooling/prompts/libraries/image recipe/weight digest encoded in preprocessing and space identity; no extra v2 API fields invented",
+    "exporter_status": "NEW_WORK_PENDING_NOT_IMPLEMENTED",
+    "encoder_integration_status": "NEW_WORK_PENDING_NOT_IMPLEMENTED",
+    "partition": "one document per tenant/request/eligible pool unless all-query candidate eligibility proved identical",
+    "ranking_scope": "all approved candidates in one document ranked for every query; source_id is provenance, not filter",
+    "approval": "explicit upstream hard constraint, including per-entry private evidence; no similarity-based authorization",
+    "protection": "policy/review/identity default to source-query scope; global only with demonstrated all-query applicability; mandatory retention independent of cosine",
+    "naming": "confirmed identity, geometry and authorization remain separate; neither retention nor similarity licenses naming",
+    "media_search": "deferred separate versioned task/corpus/query/relevance/eligibility/space; no relabeling",
+    "metrics": {
+      "implemented": [
+        "top1",
+        "MRR"
+      ],
+      "recall_at_k": "not emitted by current v2; only if separately implemented",
+      "nDCG": "no claim without graded qrels",
+      "judged_no_relevant": "retained in denominator with RR=0; unjudged is different"
+    },
+    "quality_baselines": [
+      "deterministic selection",
+      "full approved context",
+      "random selection"
+    ],
+    "EVAL18": "face open-set identity rule; no retrieval-threshold/API obligation",
+    "duplicate_evaluator_requested": false
+  },
+  "residency": {
+    "status": "PROCEDURE_EXECUTOR_MISSING_NON_EXECUTABLE_FILL_COMMANDS",
+    "policy": "one loaded vision generator per measured GPU slot; dedicated benchmark-owned cache lease",
+    "existing_emit_shell": {
+      "owned_server_stop_wait": true,
+      "automatic_weight_download": false,
+      "weight_eviction": false,
+      "fixed_run_and_score_marker_deletion_on_rerun": true
+    },
+    "outputs": "new unique immutable private directory OUTSIDE evictable cache; isolate module output pruning",
+    "before_load": [
+      "own exclusive lease",
+      "full expected component byte/hash inventory",
+      "actual target disk/RAM/VRAM measurement",
+      "reserve download/temp/cache/runtime/report bytes",
+      "refuse inadequate reservation",
+      "download one arm only",
+      "compare actual to expected hashes",
+      "record served model/projector/runtime identities"
+    ],
+    "after_arm": [
+      "persist raw outputs/errors/timings/provenance and score evidence",
+      "stop/wait only own server",
+      "prove unload",
+      "release own lease only after process exit",
+      "clean verified own inactive weights/partial downloads",
+      "verify free bytes before next arm; next arm reads this receipt"
+    ],
+    "failure": "preserve diagnostics; prove owned process exit/unload/cleanup or block advancement",
+    "never_evict": [
+      "production artifacts",
+      "foreign lanes",
+      "shared caches",
+      "active leases",
+      "permanent reports"
+    ],
+    "resource_edges": "GPU-slot/cache exclusivity is a named non-data constraint, not precedence from authoring order"
+  },
+  "measurement_windows": {
+    "existing_VRAM": "post-ready warmup/fetch, device-wide usage summed across returned GPU rows; not owned cold-load peak",
+    "serve_to_ready": "only stated serve-to-ready interval, not first-token latency",
+    "post_exit_pgrep_RSS": "invalid attribution; no owned-process measurement",
+    "UNKNOWN": [
+      "first-token latency",
+      "KV allocation",
+      "owned-process RSS peak",
+      "owned cold-load VRAM peak",
+      "target fit"
+    ],
+    "future_collector": "NEW_WORK_PENDING: concurrent owned PID/start identity + GPU slot from load through inference; lifecycle timestamps, sampling windows, CPU quota and units",
+    "orchestration_vm_supplied_envelope": {
+      "vCPU": 4,
+      "CPU_quota": 3.25,
+      "user_memory_limit_GiB": 16,
+      "fresh_admission_receipt": false
+    },
+    "target_OCI": "UNKNOWN; absent local tools and earlier read-only query exit1 do not establish unreachable",
+    "fresh_df_receipt": null,
+    "cleanup_prior": {
+      "clones": 17,
+      "du_sb_decimal_GB": 27.804,
+      "physical_df_delta": null,
+      "sibling_acknowledgments": "pending in supplied context; no sibling cleanup completion asserted"
+    },
+    "local_unfinished_CURUX": "preserved; no local implementation work authorized"
+  },
+  "historical_rounds": {
+    "CORPUS": {
+      "status": "INCOMPLETE",
+      "entries": 646,
+      "matched": 643,
+      "missing": 3,
+      "mismatched": 0,
+      "unsafe": 0,
+      "exit_code": 1,
+      "evidence_group": "CORPUS-G1 + CORPUS-LINEAGE/RECOVERY/PLANNING"
+    },
+    "CAPTION": {
+      "status": "NOT_READY",
+      "served_candidates_measured": 0,
+      "historical_tests": 219,
+      "anchor": "byte-stable seeded stub, positive pass and ANCHOR_MISMATCH negative refusal",
+      "zero_rule": {
+        "images": 20,
+        "scored": 20,
+        "evaluation_status": "unvalidated_proxy",
+        "authored_traps": 0,
+        "fabricated_fact_rate": null,
+        "latency_is_inference": false
+      },
+      "native_remote_execution": true
+    },
+    "CLUSTER": {
+      "status": "RUNTIME_SMOKE_ONLY",
+      "raw_fixture_photos": 18,
+      "AuraFace_dimension": 512,
+      "SFace_dimension": 128,
+      "five_point_alignment_applied": false,
+      "per_crop_label_qualification": false,
+      "independent_spaces": true,
+      "finite_and_unit_L2": true,
+      "repeated_saved_buffer_evidence": "repeatability only; not recognition quality",
+      "historical_inference_seconds": 39.6,
+      "quality_gates": "NOT_EVALUATED"
+    },
+    "DETECT_MEMORY": {
+      "status": "PARTIAL_RESOURCE_STOP",
+      "manifest_scenes": 37,
+      "complete_three_arm_scenes": 19,
+      "not_reached": 17,
+      "absent": 1,
+      "RSS_watchdog_kB": 3500000,
+      "observed_stop_RSS_kB": 3548220,
+      "memory_cap_bytes": 4294967296,
+      "recall": "REFUSED_ROSTER_ONLY_NO_BOXES",
+      "original_runner_identity": "UNVERIFIED"
+    },
+    "DETECT_DIAG": {
+      "status": "COMPONENT_DIAGNOSIS_ONLY",
+      "calls": 12,
+      "allowance": 12,
+      "original_failure_reproduced": false,
+      "two_ORT_pair_peak_kB": 2318200,
+      "parity": "two images: bbox rounded to 3 decimals before hashing; excludes scores and landmarks",
+      "raw_bit_or_full_output_parity": false
+    },
+    "DETECT_REPRO_D4": {
+      "status": "BLOCKED_PREFLIGHT",
+      "calls": 0,
+      "allowance": 160,
+      "protocol_sealed": false,
+      "blockers": [
+        "swap.max=max instead of 0",
+        "required private artifact parent read-only/outside writable roots"
+      ]
+    },
+    "DETECT_MATRIX_D5": {
+      "status": "PARTIAL_DIAGNOSTIC",
+      "recipe": "closest documented recipe / verified image-order replay",
+      "original_run2_executed_runner_identity": "UNVERIFIED",
+      "ordinals": [
+        0,
+        19
+      ],
+      "ordinal_interpretation": "inclusive range",
+      "preflight": {
+        "own_unit_identity_verified": true,
+        "cap_bytes": 4294967296,
+        "own_transient_swap_limit_before": "infinity/max",
+        "own_transient_swap_limit_after": 0,
+        "child_scope_and_swap_verified": true,
+        "private_write_probe": true,
+        "runner_and_protocol_hashed_before_execution": true,
+        "sibling_scope_launched": false
+      },
+      "runtime": {
+        "python": "3.12.7",
+        "architecture": "aarch64",
+        "onnxruntime": "1.29.0",
+        "opencv": "5.0.0",
+        "numpy": "2.5.2",
+        "ORT_threads": [
+          1,
+          1
+        ],
+        "OpenCV_threads": 1,
+        "OMP_OPENBLAS_threads": 1
+      },
+      "watchdog": {
+        "RSS_limit_kB": 3500000,
+        "sampling_seconds": 0.05
+      },
+      "A": {
+        "composition": "2 default ORT + resident OpenCV",
+        "complete": 58,
+        "interrupted": 1,
+        "reserved": 59,
+        "exit_code": 3,
+        "stop_RSS_kB": 3504484,
+        "stop_ordinal": 19,
+        "stop_arm": "ort_sens_s030"
+      },
+      "B": {
+        "composition": "2 default ORT, no OpenCV object",
+        "complete": 40,
+        "exit_code": 0,
+        "max_per_call_VmHWM_kB": 2350708
+      },
+      "C": {
+        "composition": "2 ORT arena-off + resident OpenCV",
+        "complete": 60,
+        "exit_code": 0,
+        "max_per_call_VmHWM_kB": 2088212,
+        "process_time_maxrss_kB": 1628592,
+        "accounting": "distinct recorded measurement sources; use the reported per-call value for the matrix"
+      },
+      "reservations": 159,
+      "completed": 158,
+      "call_allowance": 160,
+      "inference_seconds_recorded": 160.87,
+      "interrupted_seconds_upper_bound": 5.94,
+      "inference_seconds_total_upper_bound": 166.81,
+      "inference_allowance_seconds": 180,
+      "parity": {
+        "encoding": "prospectively declared full unrounded bbox, score, landmarks in returned order/dtype with shape/dtype tags",
+        "A_C_equal_common": 58,
+        "A_C_common": 58,
+        "A_B_equal_common": 39,
+        "A_B_common": 39,
+        "C_only_without_A_counterpart": 2,
+        "raw_ORT_tensor_parity": false
+      },
+      "controls": {
+        "corrupt_manifest_exit": 7,
+        "corrupt_manifest_calls": 0,
+        "valid_blank": "NOT_RUN_NO_ALLOCATED_CALLS"
+      },
+      "attribution": "in this recipe both OpenCV residency and default ORT arena retention necessary for trip; neither sufficient alone",
+      "OpenCV_first_call_retained_kB": {
+        "A": 1210516,
+        "C": 1220188
+      },
+      "claim_limits": [
+        "ablation attribution, not instrumented allocator internals",
+        "not original-runner root cause",
+        "no production arena recommendation",
+        "no threshold selection",
+        "no truth recall or model readiness"
+      ]
+    },
+    "RETRIEVAL": {
+      "status": "PRECOMPUTED_CONTRACT_DIAGNOSTIC_ONLY",
+      "encoder_ran": false,
+      "historical_tests": 75,
+      "synthetic_top1": {
+        "numerator": 1,
+        "denominator": 3
+      },
+      "synthetic_MRR": {
+        "numerator": 4,
+        "denominator": 9
+      },
+      "real_qrels_qualified": false,
+      "encoder_latency_seconds": null,
+      "encoder_RSS_bytes": null
+    },
+    "ROSTER": {
+      "status": "DRY_PLANNING_ONLY",
+      "sealed_entries": 16,
+      "competing_candidates": 13,
+      "planned_llama_cpp": 6,
+      "unsupported_stack_refusals": 7,
+      "noncompeting_refusals": 3,
+      "planner_only_extra_candidate": "kimi-vl-a3b",
+      "target_capacity": "UNKNOWN",
+      "runtime_fit": "UNKNOWN"
+    }
+  },
+  "missing_inputs": [
+    {
+      "id": "target_runtime",
+      "surface": "runtime",
+      "status": "MISSING_OR_UNQUALIFIED",
+      "required_evidence": "Actual target GPU/disk/RAM/VRAM receipt, complete expected components, served identity and immutable runtime build/digest",
+      "new_work_pending_not_implemented": false
+    },
+    {
+      "id": "owned_cache_executor",
+      "surface": "residency",
+      "status": "MISSING_OR_UNQUALIFIED",
+      "required_evidence": "One owned cache procedure/executor with reservation, lease, verified cleanup and downstream free-byte receipts",
+      "new_work_pending_not_implemented": true
+    },
+    {
+      "id": "concurrent_memory_collector",
+      "surface": "measurement",
+      "status": "MISSING_OR_UNQUALIFIED",
+      "required_evidence": "Owned PID/start identity and GPU slot collector through load and inference, declared windows and units",
+      "new_work_pending_not_implemented": true
+    },
+    {
+      "id": "private_loader_mapping",
+      "surface": "images",
+      "status": "MISSING_OR_UNQUALIFIED",
+      "required_evidence": "Verified private original-hash resolution map and actual loader/path qualification",
+      "new_work_pending_not_implemented": false
+    },
+    {
+      "id": "report_partition",
+      "surface": "report",
+      "status": "MISSING_OR_UNQUALIFIED",
+      "required_evidence": "Qualified report manifest and actual selection usage/namespace with subject evidence and accepted group/source/session partition",
+      "new_work_pending_not_implemented": false
+    },
+    {
+      "id": "report_gold",
+      "surface": "caption",
+      "status": "MISSING_OR_UNQUALIFIED",
+      "required_evidence": "Independently qualified full visual-fact/phrase/spatial judgments; audit/reuse existing Golden150 and confirmed labels",
+      "new_work_pending_not_implemented": false
+    },
+    {
+      "id": "all_comparison_records",
+      "surface": "report",
+      "status": "MISSING_OR_UNQUALIFIED",
+      "required_evidence": "Same-manifest candidate + actual incumbent + four baseline records and real successful-score evidence",
+      "new_work_pending_not_implemented": false
+    },
+    {
+      "id": "face_box_truth",
+      "surface": "detection",
+      "status": "MISSING_OR_UNQUALIFIED",
+      "required_evidence": "Independent all-visible-face boxes, negatives and fixed matching/IoU/truth rules",
+      "new_work_pending_not_implemented": false
+    },
+    {
+      "id": "aligned_face_labels",
+      "surface": "recognition",
+      "status": "MISSING_OR_UNQUALIFIED",
+      "required_evidence": "Qualified five-point aligned per-crop labels, separate-space partitions and end-to-end missed-face denominators",
+      "new_work_pending_not_implemented": false
+    },
+    {
+      "id": "cluster_boundary_protocol",
+      "surface": "clustering",
+      "status": "MISSING_OR_UNQUALIFIED",
+      "required_evidence": "Independent entity-boundary/residual-bridge pair verification with feasible metric comparators and prospectively accepted uncertainty/margins",
+      "new_work_pending_not_implemented": false
+    },
+    {
+      "id": "retrieval_encoder",
+      "surface": "retrieval",
+      "status": "MISSING_OR_UNQUALIFIED",
+      "required_evidence": "Verified encoder weight bytes and fully pinned libraries/processor/precision/recipe plus qualified runtime",
+      "new_work_pending_not_implemented": true
+    },
+    {
+      "id": "retrieval_exporter",
+      "surface": "retrieval",
+      "status": "MISSING_OR_UNQUALIFIED",
+      "required_evidence": "Request/tenant/eligible-pool exporter with upstream approval evidence and per-query protected applicability",
+      "new_work_pending_not_implemented": true
+    },
+    {
+      "id": "relevance_gold",
+      "surface": "retrieval",
+      "status": "MISSING_OR_UNQUALIFIED",
+      "required_evidence": "Realistic information needs, explicit judged/unjudged distinction, qrels and fixed baseline results",
+      "new_work_pending_not_implemented": false
+    }
+  ],
+  "evidence": {
+    "source_anchors": {
+      "planner": [
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/bakeoff_runner.py",
+          "symbol": "main",
+          "line": 397
+        },
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/bakeoff_runner.py",
+          "symbol": "build_plans",
+          "line": 135
+        },
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/bakeoff_runner.py",
+          "symbol": "emit_shell",
+          "line": 280
+        },
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/bakeoff_runner.py",
+          "symbol": "_emit_ready_run_lines",
+          "line": 254
+        },
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/bakeoff_runner.py",
+          "symbol": "_emit_runtime_build_preflight",
+          "line": 608
+        },
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/bakeoff_runner.py",
+          "symbol": "_report_argv",
+          "line": 759
+        }
+      ],
+      "raw_caption": [
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/bakeoff.py",
+          "symbol": "build_parser",
+          "line": 1479
+        },
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/bakeoff.py",
+          "symbol": "main",
+          "line": 1651
+        },
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/bakeoff.py",
+          "symbol": "_stamp_timing_and_gpu",
+          "line": 1392
+        }
+      ],
+      "score": [
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/cli.py",
+          "symbol": "main",
+          "line": 3193
+        }
+      ],
+      "report": [
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/build_bakeoff_report.py",
+          "symbol": "build_parser",
+          "line": 1007
+        },
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/build_bakeoff_report.py",
+          "symbol": "_gate_evaluation",
+          "line": 830
+        },
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/build_bakeoff_report.py",
+          "symbol": "_corpus_readiness_reasons",
+          "line": 700
+        },
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/build_bakeoff_report.py",
+          "symbol": "_selection_disjointness_reasons",
+          "line": 745
+        },
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/build_bakeoff_report.py",
+          "symbol": "_check_comparability",
+          "line": 488
+        }
+      ],
+      "caption_metrics": [
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/caption_metrics.py",
+          "symbol": "insertion_rate",
+          "line": 285
+        },
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/caption_metrics.py",
+          "symbol": "name_precision",
+          "line": 327
+        },
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/caption_metrics.py",
+          "symbol": "wrong_name_image_rate",
+          "line": 344
+        },
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/caption_metrics.py",
+          "symbol": "fabricated_fact_rate",
+          "line": 482
+        },
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/caption_metrics.py",
+          "symbol": "fabrication_by_kind",
+          "line": 508
+        }
+      ],
+      "phrase_ledger": [
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/name_binding_eval.py",
+          "symbol": "evaluate_bytes",
+          "line": 142
+        },
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/name_binding_eval.py",
+          "symbol": "main",
+          "line": 162
+        },
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/name_binding_eval.py",
+          "symbol": "_score_arm",
+          "line": 317
+        }
+      ],
+      "semantic_v2": [
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/semantic_selection_eval.py",
+          "symbol": "EncoderContract",
+          "line": 123
+        },
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/semantic_selection_eval.py",
+          "symbol": "_check_vector",
+          "line": 227
+        },
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/semantic_selection_eval.py",
+          "symbol": "_evaluate",
+          "line": 349
+        },
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/semantic_selection_eval.py",
+          "symbol": "main",
+          "line": 483
+        }
+      ],
+      "catalog": [
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/corpus_catalog.py",
+          "symbol": "main",
+          "line": 540
+        }
+      ],
+      "loader": [
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/manifest.py",
+          "symbol": "resolve_verified_image",
+          "line": 1515
+        },
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/manifest.py",
+          "symbol": "load_manifest",
+          "line": 1582
+        }
+      ],
+      "pilot": [
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/pilot_draw.py",
+          "symbol": "draw_pilot",
+          "line": 243
+        },
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/pilot_draw.py",
+          "symbol": "emit_annotation_packet",
+          "line": 288
+        }
+      ],
+      "face_leg": [
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/firbench_legs.py",
+          "symbol": "build_face_pipeline_leg",
+          "line": 201
+        }
+      ],
+      "face_pipeline": [
+        {
+          "path": "apps/prototype-description-service/scripts/eval_harness/face_bakeoff.py",
+          "symbol": "process_image_bgr",
+          "line": 132
+        }
+      ],
+      "ORT": [
+        {
+          "path": "apps/prototype-description-service/recognition/infrastructure/face_pipeline/ort_adapters.py",
+          "symbol": "_ort_session",
+          "line": 137
+        }
+      ]
+    },
+    "source_artifact_bindings": [
+      {
+        "path": "apps/prototype-description-service/scripts/eval_harness/bakeoff_candidates.yaml",
+        "artifact_sha256": "8c7f828f49178213a3f803dd88ab5a41729bee2985827716865c6f4f1391cef6"
+      },
+      {
+        "path": "apps/prototype-description-service/scripts/eval_harness/bakeoff_intake.json",
+        "artifact_sha256": "ba8eaa212ac630aee29c3df5a13518463ba7587a215fa4cfd4beadeaceef084b"
+      },
+      {
+        "path": "apps/prototype-description-service/scripts/eval_harness/bakeoff_runner.py",
+        "artifact_sha256": "8d8dcd9c6113a2c9ed8fbc53ec2e2b2d305f023de46c03be47d871d0cc6e376c"
+      },
+      {
+        "path": "apps/prototype-description-service/scripts/eval_harness/bakeoff.py",
+        "artifact_sha256": "f50cc3670964a9f13f05081785525ede736b8098e0bedbd5fbb9111e0f64d082"
+      },
+      {
+        "path": "apps/prototype-description-service/scripts/eval_harness/cli.py",
+        "artifact_sha256": "b35fc5aafc3544ed804daddf6a2c5edd1d4c8ae9dc29242405d385d18b1b03a9"
+      },
+      {
+        "path": "apps/prototype-description-service/scripts/eval_harness/build_bakeoff_report.py",
+        "artifact_sha256": "e39b82bd70a4fe8562c85e04e8b9d6803ba0493629cf47d5d9d20075d7090ea0"
+      },
+      {
+        "path": "apps/prototype-description-service/scripts/eval_harness/caption_metrics.py",
+        "artifact_sha256": "3e7d5ebf7f0b1a05b1f35c4eb5427dc4cf644c73696a3c8cbbe21c7b71ba0f9a"
+      },
+      {
+        "path": "apps/prototype-description-service/scripts/eval_harness/name_binding_eval.py",
+        "artifact_sha256": "04118498e5d96bd85552645fb599d702ea33209f1079c39c6399793a7fcfdbae"
+      },
+      {
+        "path": "apps/prototype-description-service/scripts/eval_harness/semantic_selection_eval.py",
+        "artifact_sha256": "1fbee33ad1c1b9512665155fc4e33c26bc690b2b3de04da5b84726c27696c5e9"
+      },
+      {
+        "path": "apps/prototype-description-service/scripts/eval_harness/manifest.py",
+        "artifact_sha256": "d3cd812fe5816d1a9ee3d13472086e8666b33c0c10e534f2a81e62b9bd4cec8c"
+      },
+      {
+        "path": "apps/prototype-description-service/scripts/eval_harness/corpus_catalog.py",
+        "artifact_sha256": "5292a2d7e6cf605b3fb3deda9860e71fd06505b2619dcd7a612ab47ca7a332b5"
+      },
+      {
+        "path": "apps/prototype-description-service/scripts/eval_harness/pilot_draw.py",
+        "artifact_sha256": "73c8e7064ac88219f610cfdbd3bd1bad21c1d50b94d17c92cb019c1f32c4c248"
+      },
+      {
+        "path": "apps/prototype-description-service/scripts/eval_harness/audit_sampling.py",
+        "artifact_sha256": "ec2199e9226384f44657e8148a9f69579e30398ff2acfbb39cea4151cfc5b7bd"
+      },
+      {
+        "path": "apps/prototype-description-service/scripts/eval_harness/firbench_cli.py",
+        "artifact_sha256": "c5c648d8ffbe6558d569fbedaf61a097f2c4437f8b048ff42edba01d22abf832"
+      },
+      {
+        "path": "apps/prototype-description-service/scripts/eval_harness/firbench_legs.py",
+        "artifact_sha256": "66d9d05bfe23e1d291b8a16f6b079ca0f24e1670932b8a5b750a596357679eaa"
+      },
+      {
+        "path": "apps/prototype-description-service/scripts/eval_harness/face_bakeoff.py",
+        "artifact_sha256": "1336d58ee9af5d5153f9e1b9a747ff018392b1a55a620a880b94742c70965826"
+      },
+      {
+        "path": "apps/prototype-description-service/scripts/eval_harness/bench_capture.py",
+        "artifact_sha256": "a327f244df27d898f0dab0fe7966355a9fb67b4ecf743020b77de2417aca7737"
+      },
+      {
+        "path": "apps/prototype-description-service/recognition/infrastructure/face_pipeline/ort_adapters.py",
+        "artifact_sha256": "5bcb4db9e544a35ced8598867a27fa0ac0a9e1ede5099f661dce4b5598dec7de"
+      },
+      {
+        "path": "apps/prototype-description-service/recognition/infrastructure/face_pipeline/opencv_ref.py",
+        "artifact_sha256": "cb53ef96b8146767914249fbcef1f10670702b60bfb036776b6cfebc55beaabd"
+      },
+      {
+        "path": "apps/prototype-description-service/recognition/infrastructure/face_pipeline/provenance.py",
+        "artifact_sha256": "e897bf760e0ed75662ee7fb776653c9950f2631ec8ea39fdd0dd28d13c45fe93"
+      },
+      {
+        "path": "docs/scopes/descqual-2-fact-annotation-pilot.md",
+        "artifact_sha256": "75e04e1ab9d0f491adc0623843f0cf93b917360fe466256cd5e1f50ba614eb5c"
+      },
+      {
+        "path": "benchmarks/manifests/corpus-catalog-v1.json",
+        "artifact_sha256": "b7ad36bef33f1553848080a4083b50af78b6a99ba5f21b65fc1d20e604155281"
+      },
+      {
+        "path": "benchmarks/manifests/fir12-selection-v1.json",
+        "artifact_sha256": "26738d63d88fec632981f7229803898ba34a9356d8232ed5c6301d27293aa49f"
+      },
+      {
+        "path": "benchmarks/manifests/golden150-draft-20260723.json",
+        "artifact_sha256": "0dc89a1d0378630522a16080a176c1533357419fcfbe704a7c2bfc487580ac54"
+      },
+      {
+        "path": "benchmarks/manifests/golden150-selection-v1.json",
+        "artifact_sha256": "50ad031d4dca14dcf2aaaab7633c5ec16732826ffb73211566fe0760aad06924"
+      },
+      {
+        "path": "apps/prototype-description-service/scene/tests/seed/bakeoff_golden.json",
+        "artifact_sha256": "2318b216d2124b038b3e4e9f60e47a8b6d61fc3d72945bb61a9641465fb08b7b"
+      },
+      {
+        "path": "apps/prototype-description-service/scene/tests/seed/held_out_golden.json",
+        "artifact_sha256": "40270ff3d5b5ce26044cb378844a5a2477013f17cdcfbed745f99fcebd1c7347"
+      },
+      {
+        "path": "apps/prototype-description-service/scene/tests/seed/golden.json",
+        "artifact_sha256": "93fc86b2bf014d3783ff0999a47e88949ccb72e8cab9eec7cee9faa6891bcd0b"
+      }
+    ],
+    "immutable_attempt_inventory": [
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/reports/CAPTION.json",
+        "artifact_sha256": "3282488ad8b7f803b236d555367ffdc66e8f0969b7785ad83175fd675e99cd6a",
+        "role": "rejected_first_author_subject",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/reports/CLUSTER.json",
+        "artifact_sha256": "e9762bc0743f5f1fb8bf3ba3d47727ffb4691ce02c39f1fe6432b60f56af35d8",
+        "role": "rejected_first_author_subject",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/reports/CORPUS.json",
+        "artifact_sha256": "f9086398c6b9fc3ae25333af5ab076227360acee59004a1348f9331832feae4b",
+        "role": "rejected_first_author_subject",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/reports/DETECT.json",
+        "artifact_sha256": "c8c5e1b2da70e20850e0634565a1f81c159488c5c819780813bc6c22cd538557",
+        "role": "rejected_first_author_subject",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/reports/RETRIEVAL.json",
+        "artifact_sha256": "5d1641017ce3a42a1220b15338e828a27f5dfa1f32349411a9bc6371bf1d43fd",
+        "role": "rejected_first_author_subject",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/reports/ROSTER.json",
+        "artifact_sha256": "2e870a45ccc2063fd4565d14db2847ed3fa72aa4be81736e7f6f8c7ade9d82df",
+        "role": "rejected_first_author_subject",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/reviews/CAPTION-G1.json",
+        "artifact_sha256": "407734ce9371c2d7dec2f1efa3f7f9a6266ead734b6a20b01c8fe776f4c8fe8a",
+        "role": "independent_G1_review",
+        "publication": "snapshot_archive_only; not required in published main",
+        "verified_draft_defect_count": 6
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/reviews/CAPTION-G1.md",
+        "artifact_sha256": "6f8c6f42bc1e37cc4d8da760e42d6fb7b511817f03955fec54553d58d18cdb92",
+        "role": "independent_G1_review",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/reviews/CORPUS-G1.json",
+        "artifact_sha256": "052031b457110df87778994240357d5ce6da229855b6f3af5af71c8b70cfc08a",
+        "role": "independent_G1_review",
+        "publication": "snapshot_archive_only; not required in published main",
+        "verified_draft_defect_count": 5
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/reviews/CORPUS-G1.md",
+        "artifact_sha256": "c918805e18008a7f925d7f0aecceb81b418672438171a3fbf32569297c0d353f",
+        "role": "independent_G1_review",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/reviews/DETECT-DIAG.json",
+        "artifact_sha256": "85961579eea2db1b5c0044ef2420734088c6164fd4b00d3c2623f6e06afca263",
+        "role": "resource_diagnostic_receipt",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/reviews/DETECT-DIAG.md",
+        "artifact_sha256": "c8d229744f97b117bce521a1b4cc6424a2af874347c2bb50b0d098ab83c0618c",
+        "role": "resource_diagnostic_receipt",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/reviews/DETECT-MATRIX.json",
+        "artifact_sha256": "f8ace4143aab98a86773b1e834138a0b644e97e5fe5b2cde2bcf94facb2eaf86",
+        "role": "resource_diagnostic_receipt",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/reviews/DETECT-MATRIX.md",
+        "artifact_sha256": "c873eebb1913f7c7c53a31e6238cde1a9a170ceca9ebaf40950aeec1782ff41c",
+        "role": "resource_diagnostic_receipt",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/reviews/DETECT-REPRO.json",
+        "artifact_sha256": "4ab786b0156c252713525e20d0d843cd1587b9ed9b5a8c1619115300507e7049",
+        "role": "resource_diagnostic_receipt",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/reviews/DETECT-REPRO.md",
+        "artifact_sha256": "f7a664ffdc9e647fb303bdc647996c0e4652a7629b88eb709dfb7fa74de2bcf3",
+        "role": "resource_diagnostic_receipt",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/reviews/FACE-G1.json",
+        "artifact_sha256": "78790798545242235abb78305e1777ab136c219af410d78e2a7bae99cc6e8843",
+        "role": "independent_G1_review",
+        "publication": "snapshot_archive_only; not required in published main",
+        "verified_draft_defect_count": 4
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/reviews/FACE-G1.md",
+        "artifact_sha256": "6cbfb20085feafe2c15484f34e8e007702dc759a944bacfe27f43e3b601110ce",
+        "role": "independent_G1_review",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/reviews/RETRIEVAL-G1.json",
+        "artifact_sha256": "7be8d80ba39d3fd642d026638547753057732b0cce70a395d06ee36c01dc7ba4",
+        "role": "independent_G1_review",
+        "publication": "snapshot_archive_only; not required in published main",
+        "verified_draft_defect_count": 4
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/reviews/RETRIEVAL-G1.md",
+        "artifact_sha256": "9ed1ac0d0bea6e6130681ee4ca38cdde8bbf089103e98f1198fcf438b15e6804",
+        "role": "independent_G1_review",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/reviews/ROSTER-G1.json",
+        "artifact_sha256": "3823ccca3275a4fafd6a366f9350c8130b8aaf08cd9edbc09194e359fab811a4",
+        "role": "independent_G1_review",
+        "publication": "snapshot_archive_only; not required in published main",
+        "verified_draft_defect_count": 8
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/reviews/ROSTER-G1.md",
+        "artifact_sha256": "4f8ab6e85fe875dbb4ca57803d4f0978dfb7afc6bf0c235fecaa14d87a2d2193",
+        "role": "independent_G1_review",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/CAPTION-INPUTS.json",
+        "artifact_sha256": "9dca8881ae02c17152a641c6499268a986b9d8979712afc3e27252caed38a84e",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/CAPTION-INPUTS.md",
+        "artifact_sha256": "632749b0be1084538474353f8b037092d346fa8269ba5bfabfe54a4b7f742389",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/CAPTION-METRICS.json",
+        "artifact_sha256": "2fb885ba18192817e9056cbc52c8b68bba0465211be494355edd0bd169393a42",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/CAPTION-METRICS.md",
+        "artifact_sha256": "f657bc4e438903f0f1462592fc2fd112153211b214b3315d3a1f24f3b50e8622",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/CORPUS-LINEAGE.json",
+        "artifact_sha256": "ad4ff58f31506cec438756c2ffb79462b1950b14ee7365b624d713036e2c5261",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/CORPUS-LINEAGE.md",
+        "artifact_sha256": "f0518453d749d19d99fefbf9463c325aa00bcd40118d33887248dd9a387d85e0",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/CORPUS-PLANNING.json",
+        "artifact_sha256": "3c6bb9ccf5f2a11c7de7ebfb3a1bfc413609ac1916b8b2b239835b55b0d9990a",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/CORPUS-PLANNING.md",
+        "artifact_sha256": "b0e79e317407b01269206ea35dfd3413c1724a812b4aa90bfea187f40861d367",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/CORPUS-RECOVERY.json",
+        "artifact_sha256": "71cf27bc211f6d8d99177e339419d84ea79c8caffb9003cf9a2ec35728744e3d",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/CORPUS-RECOVERY.md",
+        "artifact_sha256": "b5967db590257697c31847fd1a73f5b0b5d873885fee1e191d6cb88d32b267a3",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/FACE-BOUNDARIES.json",
+        "artifact_sha256": "ec67c3a7b25fe77d2019a3a859e9b52c26729a46d0a7db5d8ead6d2990b1f159",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/FACE-BOUNDARIES.md",
+        "artifact_sha256": "934195b0c23fc28e18e1b8b696077710ebc29b0ea613d28da71910467da8600e",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/FACE-METRICS.json",
+        "artifact_sha256": "d563b50f38a11e4d785ae9dddf20840bc69447a2c490446f95a05a8aa0948655",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/FACE-METRICS.md",
+        "artifact_sha256": "6311aa4c0a5e606832b12e2effeaea4dbb07b8d6c93a062633bbd45546169b87",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/RETRIEVAL-POLICY.json",
+        "artifact_sha256": "19d31b073b0e4ebe7be3b340442deee74e80f97e9be393af7028893b12dc7f45",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/RETRIEVAL-POLICY.md",
+        "artifact_sha256": "6e3dc8f36320d5bd3ae55c820e6c117c29230437ccff256e6bd0ae0ca29fd679",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/RETRIEVAL-POOLS.json",
+        "artifact_sha256": "a31ca9398fc91509df1349ad346b2036823bd3e2b709ea8ef43407c38efb09b2",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/RETRIEVAL-POOLS.md",
+        "artifact_sha256": "22cf7210302c447d42ebd4e09205f874f3265f109b4bee86e698466f90d22d2a",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/ROSTER-CAPACITY.json",
+        "artifact_sha256": "c1293eedc3aed005aed0be17349a8fed84167a72b1fbd76afc048114ed0319d4",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/ROSTER-CAPACITY.md",
+        "artifact_sha256": "8ec1a910e503a44c7139e1241cd2ce0722a701fe80e1be66ab2717b8ea28e54d",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/ROSTER-IDENTITY.json",
+        "artifact_sha256": "448e5c61fe512126779d6293100a30ecfbbb77a9e32604ffdae402f62d4d8ff9",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/ROSTER-IDENTITY.md",
+        "artifact_sha256": "fb3086ebede787d7ff332e98bfdc70e7ad8b8f3ae6b2d167746c985dd413f908",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/ROSTER-RESIDENCY.json",
+        "artifact_sha256": "cb61e0450a9c2d2391469ba5e3f7f1ea76525f4d3841894bf870c5ab3aaa2f73",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": ".task-state/bakeoff-rounds-20261017/adjudications/ROSTER-RESIDENCY.md",
+        "artifact_sha256": "c33e8a38c5a2334a24a602d62543c63501739fe400c3b0c07b764dc9437d434d",
+        "role": "proposed_correction_map",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": "benchmarks/experiments/rounds-20261017/caption.json",
+        "artifact_sha256": "f0642eeea79772ce2fdcc437a3aa1a874dc4f83d0f978e790c7d0d44d26fe91d",
+        "role": "rejected_first_author_subject",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": "benchmarks/experiments/rounds-20261017/caption.md",
+        "artifact_sha256": "5c00e79449215bb30da82907c768045b37fd66222e4a79640e7c1f4e47dceac1",
+        "role": "rejected_first_author_subject",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": "benchmarks/experiments/rounds-20261017/cluster.json",
+        "artifact_sha256": "f8b4b5b9b2ce5629cf4d0be0f2dfac38396276196e7b9dd8787d045f06eb7eb1",
+        "role": "rejected_first_author_subject",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": "benchmarks/experiments/rounds-20261017/cluster.md",
+        "artifact_sha256": "d4b1cd2317d226202c679387437326e8390f5d8f2490fc78ac29ee86bbf0326d",
+        "role": "rejected_first_author_subject",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": "benchmarks/experiments/rounds-20261017/corpus.json",
+        "artifact_sha256": "0f38cf61bccdc5f33642d8fe006daa6705738d058639ef7555c6a26eeb17d852",
+        "role": "rejected_first_author_subject",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": "benchmarks/experiments/rounds-20261017/corpus.md",
+        "artifact_sha256": "081e5ff282a137c28b6db2014b2bcbade63ecdb2fba382250929b743a709228d",
+        "role": "rejected_first_author_subject",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": "benchmarks/experiments/rounds-20261017/detect.json",
+        "artifact_sha256": "96411ffcae6562fee6e062035beeb86c95c4adb7cedbd25f9dc785bd234c45ec",
+        "role": "rejected_first_author_subject",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": "benchmarks/experiments/rounds-20261017/detect.md",
+        "artifact_sha256": "14b3bdbe04e5f072eedb3b8edffd032c0ce02c74ac7dadd01c2f5f72c0baef79",
+        "role": "rejected_first_author_subject",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": "benchmarks/experiments/rounds-20261017/retrieval.json",
+        "artifact_sha256": "3113e68c679b7b6c91b6868b016923132d7fcedeece23a0fff74c0c51928208f",
+        "role": "rejected_first_author_subject",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": "benchmarks/experiments/rounds-20261017/retrieval.md",
+        "artifact_sha256": "694b8c8c9f5c447b35961718004f094b6ccd9a5fd3f4312b9a6c40a68c425497",
+        "role": "rejected_first_author_subject",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": "benchmarks/experiments/rounds-20261017/roster.json",
+        "artifact_sha256": "dcc6fb2be7393bfa9465c3d2218535075844bb63aeec0f37c68671edc648e6b7",
+        "role": "rejected_first_author_subject",
+        "publication": "snapshot_archive_only; not required in published main"
+      },
+      {
+        "snapshot_path": "benchmarks/experiments/rounds-20261017/roster.md",
+        "artifact_sha256": "a66b33fff1e15f675e2b603af404d0af3401a63ab3e4f26c06759110d7187805",
+        "role": "rejected_first_author_subject",
+        "publication": "snapshot_archive_only; not required in published main"
+      }
+    ],
+    "digest_semantics": "whole tracked report/source/manifest digests and public model pins only; no per-image hashes, private maps or identifiers",
+    "supporting_attempts_need_publication": false
+  },
+  "checks_this_job": [
+    {
+      "command": "git status --short; git rev-parse HEAD HEAD^{tree}; compare .workbay-source-provenance",
+      "exit_code": 0,
+      "summary": "Initially clean; both owned outputs absent; source tree 7a7cf64e1579296deafaa090b67468a8f846d9dc matches source and transport provenance."
+    },
+    {
+      "command": "git cat-file -e 444d9cd4dbec96da1c63eec5143cc62af714ce44^{commit}",
+      "exit_code": 128,
+      "summary": "Expected absent source commit object. Verified tree bytes and preserved attribution; no original ancestry claimed."
+    },
+    {
+      "command": ".venv/bin/python -I -B /tmp/validate_operator_packet.py all",
+      "exit_code": 1,
+      "summary": "Metadata/anchors/pins and all parser/dry-planner checks passed. Privacy helper then flagged the public corpus identifier in required manifest paths as an identity token. No private data match or product failure; helper classification corrected and separately rechecked."
+    },
+    {
+      "command": ".venv/bin/python -I -B /tmp/validate_operator_packet.py privacy (diagnostic invocation)",
+      "exit_code": 1,
+      "summary": "Same public-corpus-name classification issue, diagnosed using category/length/line numbers without printing token contents."
+    },
+    {
+      "command": ".venv/bin/python -I -B /tmp/validate_operator_packet.py privacy",
+      "exit_code": 0,
+      "summary": "1,035 input hashes, 1,364 image paths/names and 134 nested identity-name values compared internally; zero hits, host paths, inline media or trailers. Root public corpus identifiers excluded from identity classification; no media bytes opened."
+    },
+    {
+      "command": ".venv/bin/python -I -B /tmp/validate_operator_packet.py ownership",
+      "exit_code": 0,
+      "summary": "All 5,701 acquisition paths unchanged. Temporary index with only the two new outputs, then removing exactly them, reproduces source tree. Separately removing 58 historical artifacts reproduces original-main content tree 56cd7bc2c862fde5df35b0258912baf37f0a9bee; no ancestry claim."
+    },
+    {
+      "command": ".venv/bin/python -I -B /tmp/validate_operator_packet.py metadata; .venv/bin/python -I -B /tmp/validate_operator_packet.py privacy",
+      "exit_code": 0,
+      "summary": "Final typed packet schema, JSON parse, MD digest/120-line cap, 58 prior-artifact and 28 source digests, 35 symbol anchors, exact selected pins and links passed. Privacy remains zero sensitive matches after final receipt additions."
+    },
+    {
+      "command": "Remove the newly import-created disposable session file; git add -f -- <exact two owned paths>; git diff --cached --check",
+      "exit_code": 0,
+      "summary": "Import side effect cleaned using its exact new path only. Exactly accepted-packet.md/json staged; whitespace check passes. No original tracked or existing database changes."
+    }
+  ],
+  "verification_method": {
+    "scope": "document/provenance/pin/source-anchor/CLI-parse checks only",
+    "ownership": "isolated index removal of only the two new paths must reconstruct the exact supplied source tree; all original tracked bytes checked against transport base",
+    "links": "all repo-relative source/manifest paths exist; each source anchor symbol/line checked by AST",
+    "pin_check": "focused sealed fields equal registry; intake revisions equal current intake; all revisions 40 lowercase hex",
+    "privacy": "scan only outputs using forbidden tokens collected internally from existing metadata; emit aggregate count only; no media bytes opened",
+    "JSON": "native typed packet contract plus machine parse, not the unrelated strict final-report schema",
+    "final_response": "root .schema.json strict eight-field report; containing commit discovered after commit, never self-embedded",
+    "CLI_checks_detail": {
+      "raw_v3_two_pass": "parser accepted",
+      "score": "real parser intercepted before dispatch",
+      "report": "real parser accepts 13 expected candidates, 2 incumbents, 4 baseline runs and 13 score markers",
+      "phrase_ledger_and_semantic_v2": "real parsers intercepted before opening inputs or dispatch",
+      "raw_limit_0_refusal_exit": 2,
+      "dry_planner_exit": 0,
+      "dry_planned_count": 6,
+      "unsupported_vllm_refusal_exit": 2,
+      "templates_verified": "all seven; none executed beyond read-only dry planning",
+      "import_note": "Existing CLI imports imported ONNX Runtime (telemetry persistence warning) and created an untracked disposable session file. The newly created file was removed after verification; no existing database changed, no model/session constructed and no inference ran."
+    }
+  },
+  "limits": [
+    "No inference, model loading, GPU/OCI operations, network, weight acquisition or live API calls in this job.",
+    "No broad or repeated 219/75/126 test suites; only bounded document and interface checks.",
+    "No source/test/registry/GT/threshold/accepted-scope/shared-runtime/database edits.",
+    "No raw pixels/vectors/labels/private paths/filenames/input hashes/aliases enter the two artifacts.",
+    "Graph/MCP tools unavailable in this worker; supplied graph/semantic context advisory; exact bounded source fallback used.",
+    "Historical receipts are inherited evidence, never relabeled as fresh measurements.",
+    "Independent artifact gate pending; all research quality remains NOT_READY."
+  ]
+}

@@ -3,7 +3,7 @@
 - **Status:** Proposed (needs operator acceptance before CURUX-2..5 slices and the WBTRUST-3 S2 amendment)
 - **Date:** 2026-10-16
 - **Context task:** CURUX-1
-- **Amends:** [ADR-003](ADR-003-wordpress-local-authority-and-durable-outbox-replay.md) rules 7 and 8 (stale references only); [WBTRUST-3](../tasks/v0.5.0/WBTRUST-3-naming-ux-and-persistence-task-plan.md) Slice S2 row content; [WBTRUST-2](../tasks/v0.5.0/WBTRUST-2-cluster-curation-surface-task-plan.md) contextual commits, adding the explicit stale-rebind context in rule 2e.
+- **Amends:** [ADR-003](ADR-003-wordpress-local-authority-and-durable-outbox-replay.md) rules 7 and 8 (stale references only); [WBTRUST-3](../tasks/v0.5.0/WBTRUST-3-naming-ux-and-persistence-task-plan.md) Slice S2 row content; [WBTRUST-2](../tasks/v0.5.0/WBTRUST-2-cluster-curation-surface-task-plan.md) contextual commits, ordinary K>0 producer-readiness hold (rule 6) and the explicit stale-rebind context in rule 2e.
 - **Extends:** [ADR-009](ADR-009-recognition-curation-refresh-and-person-review-projection.md) rule 1 (WordPress owns the person binding).
 - **Coordinates with:** ADR-018 post-curation identity weaving (Proposed, branch `feature/idweave-1`).
 - **Screens and map deltas:** [CURUX-1 screens](../assessments/current/curux-1-identity-curation-screens-2026-10-16.md) (S-A..S-F).
@@ -11,7 +11,7 @@
 
 ## Status
 
-Proposed, third corrective author revision. This candidate integrates independent proposal inputs; it records no operator acceptance or implementation proof. Independent review of the resulting exact blobs is the next gate, followed by recorded operator acceptance before changed consumers land. AGT-13 ("No silent ADR override") applies to the proposed ADR-003, WBTRUST-2 and WBTRUST-3 amendments below. The historical source review and earlier corrected portions remain in force.
+Proposed, fourth corrective author revision. This bounded revision addresses CURUX1-ADR3-01: ordinary K>0 exclusions stay in an explained hold pending WBTRUST-2's owned, independently verified valid atomic exclusion producer. It preserves the third revision's eight independently closed residual contracts; it records no operator acceptance or implementation proof. Independent review of the resulting exact blobs is the next gate, followed by recorded operator acceptance before changed consumers land. AGT-13 ("No silent ADR override") applies to the proposed ADR-003, WBTRUST-2 and WBTRUST-3 amendments below. The historical source review and earlier corrected portions remain in force.
 
 ## Date
 
@@ -75,7 +75,7 @@ Prior art comes from `find_related_prior_work` (handoff ids). Each item was re-c
   - WBTRUST-4: request budgets.
   - WBTRUST-5: control placement, rg-003.
 
-  Preserve their existing corrections. This proposal adds the fourth WBTRUST-2 recovery context and amends WBTRUST-3 option/provenance and binding semantics explicitly below.
+  Preserve their existing corrections. This proposal adds the fourth WBTRUST-2 recovery context, holds ordinary K>0 on its separate owned producer prerequisite, and amends WBTRUST-3 option/provenance and binding semantics explicitly below.
 - **ADR-018 (Proposed).**
   - Names are never generation inputs.
   - Every naming-relevant curation event (bind, unbind, label, merge, split, member move) triggers a derived re-weave.
@@ -346,6 +346,7 @@ Prior art comes from `find_related_prior_work` (handoff ids). Each item was re-c
    - Cards for unnamed groups label their button "Name these faces", which opens label mode.
    - Named-suggestion cards keep Yes/No (WBTRUST-1).
    - The panel's name field is the rule 1 control.
+   - **Ordinary exclusions have their own readiness prerequisite.** The current `removeClusterMember` sends a null target (`clusterApiMembers.ts:64-73`; `clusterApiMutations.ts:42-62`); WordPress rejects it with `missing_target_cluster_id`/400 before proxy/local mutation (`class-cluster-membership-service.php::reassign_cluster_identity:74-79`). This is the source-backed K=1 counterexample CURUX1-ADR3-01, not an executed endpoint defect. Follow [WBTRUST-2's ordinary K>0 contract](../tasks/v0.5.0/WBTRUST-2-cluster-curation-surface-task-plan.md#ordinary-k0-owned-producer-readiness-and-explained-hold): WBTRUST-2 owns the valid atomic exclusion producer and its independent verification at the actual frontend/WordPress membership/curation/outbox seams. Until ready, retain selected exclusions and name text with an explained hold; no request, label/confirm/final action or successful close may bypass them. Read/review navigation stays usable; Back/discard follows draft confirmation semantics. No fake Retry for an absent producer. Pending/unknown/partial exclusions retain work and block the final action. K=0 keeps the exact three mappings and their existing naming/confirmation gates: pending suggestion confirm, unnamed valid-name commit, named/no-suggestion zero-write close. K=0-only plus hold may be delivered under normal gates; K>0 cannot be marked complete. This prerequisite is separate from the fourth-context recovery journal and adds no dependency on all of CURUX-3. FORM-11 (Microinteractions, ch. 3), RLSE-04, designed-unknown and evidence-before-commitment apply.
 
 7. **One vocabulary.**
    - **Visible copy** uses person, face, face group and Needs attention. It never uses cluster, identity, topology, phase, payload or compound, and it comes from one source (UXP-4; NAV-13, WRIT-02, WRIT-27).
@@ -498,7 +499,7 @@ Rejected. Photos already live in the workspace, and a second surface would split
 | Task | Scope | Depends on |
 |---|---|---|
 | WBTRUST-3 amendment | S2 row content per rule 1d; S2/S3 consume 1a–1c and 1e | CURUX-2 for 1a–1c |
-| WBTRUST-2 amendment | S5 card label (rule 6); fourth stale-rebind context and commit/failure contract (rule 2e) | Ordinary contexts retain WBTRUST-3's settled naming control and the WBTRUST-1 shared-file exclusion. Only the fourth-context renderer consumes the proposed CURUX-3 recovery journal and command receipts; it does not wait for the whole CURUX-3 surface. |
+| WBTRUST-2 amendment | S5 card label and ordinary exclusion readiness/hold (rule 6); fourth stale-rebind context and commit/failure contract (rule 2e) | Ordinary contexts retain WBTRUST-3's settled naming control and the WBTRUST-1 shared-file exclusion. Ordinary K>0 additionally consumes WBTRUST-2's owned, independently verified valid exclusion producer; K=0-only/hold delivery does not. Only the fourth-context renderer consumes the proposed CURUX-3 recovery journal and command receipts; it does not wait for the whole CURUX-3 surface. |
 | CURUX-2 | Provenance columns and gate (1a, 1b); person-grain ranking (1c); service split flag (2g) | Step 0 |
 | CURUX-3 | Stale-reference core: anchors, resolver, guarded local command/journal, replay and copy; then Needs attention/review entry (rule 2) | Step 0. Core produces the proposed recovery record, validated group map and command receipts without a panel dependency. Exposing `act-review-rebind-faces` consumes WBTRUST-2 S5's fourth-context renderer and exclusion support; no static-grid fallback. |
 | CURUX-4 | Roster and workspace (rules 3, 4) | Step 0; CURUX-2 (rule 1 control and provenance); WBTRUST-3 control (rule 1e) |
@@ -514,6 +515,8 @@ Step 0 (rule 8) runs once as the first slice of whichever task starts first, and
 | CURUX-2 | WBTRUST-3-options | human provenance and UUID-grain candidate projection (rules 1a–1c) |
 | WBTRUST-3-control | WBTRUST-3-options | settled naming-control behavior and roster guards |
 | WBTRUST-3-options | WBTRUST-2-ordinary | amended naming control/options; existing contextual commits |
+| WBTRUST-2-exclusion-producer | WBTRUST-2-ordinary-K-positive | independently verified valid atomic exclusion capability, guarded inputs/results and replay/failure semantics; K=0 and explained hold do not consume it |
+| WBTRUST-2-ordinary | WBTRUST-2-ordinary-K-positive | selected identities and resolved ordinary entry context from the shared panel |
 | CURUX-3-core | WBTRUST-2-recovery | recovery record, acknowledged draft, `review_source_ref`, guarded exclusion/rebind commands and receipts |
 | WBTRUST-2-ordinary | WBTRUST-2-recovery | shared selectable panel component and resolved ordinary contexts |
 | WBTRUST-2-recovery | CURUX-3-entry | explicit record-based recovery renderer/resume action |
@@ -523,7 +526,7 @@ Step 0 (rule 8) runs once as the first slice of whichever task starts first, and
 | WBTRUST-2-ordinary | CURUX-5-panel | resolved ordinary panel entry for the row's exact target |
 | CURUX-3-core | CURUX-5-stale | local summary/count scope and open recovery record |
 
-CURUX-3-core may implement manual source/intent/receipt producers without the automatic `face_evidence_v1` producer; its automatic branch remains ineligible until 2c is independently verified. CURUX-5 queue navigation consumes existing `ReviewQueueItem` and per-source query states directly. There is no edge from CURUX-3-entry/panel back to core. WBTRUST-1 versus WBTRUST-2 writes to `ReviewQueue.tsx`, and provenance versus recovery writes to `class-cluster-snapshot-merger.php`, are shared-file exclusions to serialize at integration, not data dependencies. WBTRUST-3 retains its WBTRUST-4 prerequisite throughout.
+CURUX-3-core may implement manual source/intent/receipt producers without the automatic `face_evidence_v1` producer; its automatic branch remains ineligible until 2c is independently verified. The ordinary K-positive branch is part of WBTRUST-2, distinct from its K=0/hold panel and from CURUX-3-core: it consumes the ordinary panel's selection/resolved context as well as the producer capability. CURUX-5 queue navigation consumes existing `ReviewQueueItem` and per-source query states directly. There is no edge from CURUX-3-entry/panel back to core. WBTRUST-1 versus WBTRUST-2 writes to `ReviewQueue.tsx`, provenance versus recovery writes to `class-cluster-snapshot-merger.php`, and ordinary/recovery writes to shared membership/curation/outbox seams are resource exclusions to serialize at integration, not data dependencies. WBTRUST-3 retains its WBTRUST-4 prerequisite throughout.
 
 
 ## Open Questions

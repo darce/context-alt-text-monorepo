@@ -259,12 +259,18 @@ TARGET (WBTRUST-2 S5 one-panel-two-entries + WBTRUST-3 control)
 ┌ Name these faces — 12 faces · 1 excluded ───────────────┐
 │ [face][face][▒▒][face] …       click = exclude / undo   │
 │ Name  [ Type a name…                        ▾ ] (S-A)    │
-│                        [Save name for 11 faces]         │
+│                 [Save name for 11 faces]*               │
+│ * Unavailable: Face exclusions are not available yet.   │
+│   Your choice is kept here.                            │
+│ [Keep reviewing] [Undo exclusion]                       │
 │ ← Back to review queue                                  │
 └─────────────────────────────────────────────────────────┘
 ```
 Deltas
 - Owned by WBTRUST-2 S5 (ordinary label/review entries; heading id preserved) with the S-A control from WBTRUST-3. Ordinary named-group entry without a pending suggestion stays close-only, including reload. The explicit recovery-record entry selects the fourth `StaleRebind` context shown in S-B; no bare named-group URL does so. ADR-019 proposes that context, its source/intent guards and the Name these faces label for unnamed groups.
+- The illustrated K=1 is held while the **WBTRUST-2-owned ordinary exclusion producer readiness** prerequisite is absent, unknown or failed. The current null-target helper is rejected by WordPress before mutation, not a valid removal producer. Keep selection/name, show and announce the reason, and gate Save/Enter, suggestion confirm, Accept and named Done/close alike. No effect request, silent discard, success announcement or fake Retry network action. Read, Show all and navigation retaining the draft remain available; Back/Close or changing/reloading the group uses existing draft confirmation: cancel keeps work, explicit discard exits without claiming success. Ordinary browser drafts are transient; reload never auto-submits or claims unsaved choices survived, and any durable partial operation results must reconcile before continuation. Refetch marks changed/missing selected evidence rather than silently converting it to a clean K=0 case.
+- Once the owned producer is specified and independently verified, its required tenant/source/current-member/version guards, atomic block/curation/outbox postconditions and verified operation results govern ordinary K>0. Pending/sync-pending, unknown or partial errors keep choices/results and block the final action; reconcile unknown results before a real remaining-work retry. New contract/result fields remain proposed. See [WBTRUST-2 ordinary readiness/hold](../../tasks/v0.5.0/WBTRUST-2-cluster-curation-surface-task-plan.md#ordinary-k0-owned-producer-readiness-and-explained-hold) for actual insertion seams and gates; no new endpoint is claimed here.
+- K=0 remains unchanged: selected pending suggestion ⇒ ONE existing confirm; unnamed/valid name ⇒ ONE existing name commit; named/no pending suggestion ⇒ zero-write close, with existing naming/confirmation/pending gates. With a verified producer and all K exclusions successful, these same final mappings apply. K=0-only plus this hold is independently implementable under normal gates; ordinary K>0 cannot be accepted as complete while held. S-B's fourth-context journal/readiness and normal named-group close-only remain distinct.
 
 ---
 
@@ -281,8 +287,8 @@ Deltas
 - Actions proposed: `act-rebind-person-faces`, `act-review-rebind-faces`, `act-keep-person-unlinked`, `act-rescan-person-photos`, `act-resume-rebind`, `act-retry-rebind-remaining`, `act-finding-name-next`, `act-finding-open-rebind`, `act-finding-resync`. The fourth context and per-kind findings navigation add pending/unavailable/error/target-removed/partial-progress/resume branches to the existing zones; preserve JSON/rendered Markdown parity for all branches before acceptance.
 
 `workbench-operator-loop`
-- Screen `workbench-review-panel` retitled "Name these faces"; zone added `z-review-name`; action added `act-save-review-name` (WBTRUST-2 S5 panel).
+- Screen `workbench-review-panel` retitled "Name these faces"; zone added `z-review-name`; action added `act-save-review-name` (WBTRUST-2 S5 panel). Mirror S-F's ordinary K>0 unavailable/held, pending/unknown/partial-result and discard/reload branches into this panel and its existing naming action, alongside unchanged K=0 gates.
 
 Historical iteration 1–2 critique (`ux-map critique`, earlier target maps) reported no finding on added/changed ids. It predates this corrective revision and does not validate these new interactions. Four baseline findings remain, all outside this scope: `act-undo-person-merge` preview (INT-07), `z-person-merge-preview` max_candidates (HAI-16), `workbench-2pane-shell` primary action (INT-05), `z-review-suggestions-group-card` evidence link (HAI-01; WBTRUST-1 owns it).
 
-The three UX-map JSON files and their rendered Markdown are outside this revision's four-file ownership. They are unchanged. Follow-on owners must mirror the S-B recovery source/destination choices, receipt/status/resume/Undo states and S-E per-kind targets/filter holds/availability into those existing map IDs, then run renderer parity and `make lint-ux-maps`. This revision verifies Markdown/link/contract consistency only; it claims no map-lint, renderer or browser result.
+The three UX-map JSON files and their rendered Markdown are outside this revision's three-document ownership. They are unchanged. Follow-on owners must mirror the S-B recovery source/destination choices, receipt/status/resume/Undo states, S-E per-kind targets/filter holds/availability and S-F ordinary exclusion readiness/retained-draft/discard states into those existing map IDs, then run renderer parity and `make lint-ux-maps`. This revision verifies Markdown/link/contract consistency only; it claims no map-lint, renderer or browser result.

@@ -1956,11 +1956,12 @@ def _assert_runbook_recovery_transport(text: str) -> None:
         ["scp", str(source.relative_to(REPO_ROOT)), f"acx-backend:/tmp/{destination}"]
         for source, destination in (
             (SCRIPT, "app-portal-recovery.sh"),
+            (REPO_ROOT / "scripts/deploy/lib/shared-edge.sh", "app-portal-recovery.shared-edge.sh"),
             (SNIPPET, "app-portal-recovery.Caddyfile.app"),
             (OVERLAY, "app-portal-recovery.overlay.yml"),
         )
     ]
-    # Permit only these three complete workstation commands, anywhere in the document.
+    # Permit only these four complete workstation commands, anywhere in the document.
     # The one SSH mention is explanatory prose, never an executable remote shell.
     transport_lines = [line for line in text.splitlines() if re.search(r"\b(?:ssh|scp)\b", line, re.IGNORECASE)]
     prose = "SSH alias is the same existing VM used for deployment; no VM checkout is assumed):"
@@ -1976,6 +1977,7 @@ def _assert_runbook_recovery_transport(text: str) -> None:
         "APP_UPSTREAM": "prod-api:8000",
         "APP_SNIPPET": "/tmp/app-portal-recovery.Caddyfile.app",
         "APP_OVERLAY": "/tmp/app-portal-recovery.overlay.yml",
+        "APP_SHARED_EDGE_LIB": "/tmp/app-portal-recovery.shared-edge.sh",
         "APP_HEALTH_CMD": "/usr/local/bin/app-portal-health-check",
     }
     assert shlex.split(blocks[1].replace("\\\n", "")) == [

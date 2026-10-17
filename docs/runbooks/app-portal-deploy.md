@@ -12,13 +12,15 @@ Bounded artifacts:
 - `infra/oci/app/env.example` — deploy input names only
 - `scripts/deploy/app-portal.sh` — dry-run by default; `--apply` on the VM
 
-Canon: [GRPH-09] keep this vhost off the shared Caddyfile so demo/API owners
-do not collide; exact `path /portal /portal/*` (not `/portal*`) so `/portalfoo`
-is not proxied; [GRPH-31] render the overlay to the chosen `APP_WWW`;
-[RES-02] fail closed on missing builds, failed `caddy validate`, and any
-promote/reload/health failure with rollback; [RES-01]/[RES-05] no remote-shell
-retries, and reject `/`, symlink components, and paths outside
-`APP_APPROVED_ROOTS` before any write.
+Canon v0.26.2: the shared lock serializes portal and recognition publication:
+[GRPH-09 — Colour the conflict graph](https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/graph-theory.md#grph-09)
+(*Graph Theory with Applications*, ch. 8). Snapshot, journal, restore and recovery
+are rehearsed before publication:
+[RLSE-08 — Rollback written before ship](https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/engineering.md#rlse-08)
+(*Continuous Delivery*, ch. 10 and ch. 12). The exact source, prior P baseline and
+bounded test receipts travel in the author report:
+[GRPH-14 — Record provenance as a walkable lineage graph](https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/graph-theory.md#grph-14)
+(*Building Knowledge Graphs*, ch. 8; *Mental Models*, ch. 8).
 
 ## What the vhost exposes
 
@@ -426,6 +428,77 @@ drop this vhost. Re-run `scripts/deploy/app-portal.sh --apply` after those
 promotes until a later shared-Caddyfile owner absorbs the snippet (not this
 lane; [GRPH-09]).
 
+**Protected hosts.** `app-portal.sh` refuses to claim any host that another stack
+owns, using `EDGE_PROTECTED_HOSTS` from `scripts/deploy/lib/shared-edge.sh`:
+`api.altcontext.com`, `staging.api.altcontext.com`, `dev.api.altcontext.com`,
+`fir.dev.api.altcontext.com`, `demo.altcontext.com`, `129-213-40-111.sslip.io`,
+`dl.darce.xyz`, and the three AuraFace hosts `auraface.dev.altcontext.com`,
+`auraface.staging.api.altcontext.com`, and `auraface.api.altcontext.com`.
+A managed portal block that names any of these hosts is refused as malformed.
+
+**Shared deploy lock.** Apply takes `${APP_ROOT}/activation.journal.lock`, the same
+inode the shared edge uses. The wait is `APP_DEPLOY_LOCK_WAIT` seconds (default
+30; integers 0 through 3600). A busy lock refuses with no mutation. A short holder
+process keeps the flock, and the script releases it on every exit path. The holder
+also exits if the apply shell dies, so a crashed apply does not block later deploys
+for longer than the owner's exit. Never truncate, unlink, or replace the lock file.
+Recognition-side convergence adopts the same lock in its own change; this runbook
+does not claim that behavior until that change lands.
+
+The holder cap is 7200 seconds. The complete apply/recovery transaction gets
+7080 seconds, with a watchdog that also exits on owner death. Before each
+operation, the next operation's deadline plus kill grace must fit both the
+transaction budget and the ownership expiry. Each filesystem mutation is
+fenced, including journal transitions, snapshots, promotion, restoration,
+cleanup and sync. Validation and health calls are checked again on return.
+A dead, expired, unknown or insufficient hold exits 5 immediately and retains
+any existing journal and staged files; it never attempts an unfenced rollback.
+The next apply acquires its own hold, validates the pending journal's paths and
+recovers it before checking for a replacement frontend build.
+
+**Frozen D/P helper ABI (2026-10-17).** Source the reviewed helper; it changes
+neither shell options nor caller traps. It requires Bash, coreutils/flock,
+Python 3 for managed-block parsing, and Docker Compose/jq for resolved models.
+
+```bash
+handle=$(edge_lock_acquire "$APP_ROOT/activation.journal.lock" "$wait_seconds" "$hold_max_seconds" "$owner_pid_or_0")
+edge_lock_check "$handle" "$remaining_operation_budget"
+edge_effective_caddyfile "$repository_base" "$live_caddyfile" # stdout only
+edge_compose_args "$base_compose" "$installed_portal_overlay" # EDGE_COMPOSE_ARGV array
+edge_required_networks "$base_compose" "$installed_portal_overlay" # stdout: actual names
+# Caller checks ownership before each mutation, including recovery/back-out.
+edge_lock_release "$handle" "$cleanup_deadline"
+```
+
+The last two acquire arguments, the check budget and the release deadline are
+optional. Capture the handle explicitly; the acquire is not an in-shell lock
+side effect. Owner 0 permits separate remote calls to use the same handle. Keep
+the persistent lock inode; do not delete or replace it. D ships the helper and
+owns recognition callsites and back-out separately.
+
+**Effective Compose generation.** The marked repository Caddy Compose base
+opts into generation selection. The helper resolves the base plus the installed
+portal overlay using the real `docker compose config --format json` producer,
+then reads `docker network ls`. Only absent staging/prod Aura memberships are
+omitted. Generic, FIR and dev Aura memberships stay external and unchanged;
+no stores or networks are started or created. An unreadable inventory refuses.
+The resulting private JSON model preserves resolved network names, bind paths,
+volumes and project identity. Every Compose operation must use
+`"${EDGE_COMPOSE_ARGV[@]}"`; raw base-only `up` still requires every listed
+network. The array may select a generated model rather than the original file
+pair. Selection remains stable in that shell until base/overlay bytes change.
+Call `edge_compose_cleanup` after the last use to remove that shell's private
+model; it changes no traps. App-portal does this on owned exit. Independent D
+callers can use the frozen functions without changing their signatures.
+
+The managed-block parser handles Unicode whitespace, schemes, ports, multiple
+addresses, quotes and token-initial comments. It counts structural brace tokens,
+not braces inside comments or strings, and refuses imports, environment
+expansions, unquoted escapes/heredocs and other syntax whose ownership it cannot prove.
+Accepted managed-block bytes, including an END marker without a newline, are
+preserved. Caddy validation remains required before publication. The lexical
+reference is the [Caddy v2 lexer](https://github.com/caddyserver/caddy/blob/v2.10.2/caddyconfig/caddyfile/lexer.go).
+
 ## Rollback
 
 ### Backend back-out
@@ -466,14 +539,19 @@ backend portal is disabled.
 A retained `/opt/acx-backend/app/activation.journal` blocks manual back-out.
 Recovery must use the same reviewed deploy script and input paths as the
 interrupted apply. If those files exist only on the operator workstation, copy
-these three reviewed files from that release to the VM first (the `acx-backend`
+these four reviewed files from that release to the VM first (the `acx-backend`
 SSH alias is the same existing VM used for deployment; no VM checkout is assumed):
 
 ```bash
 scp scripts/deploy/app-portal.sh acx-backend:/tmp/app-portal-recovery.sh
+scp scripts/deploy/lib/shared-edge.sh acx-backend:/tmp/app-portal-recovery.shared-edge.sh
 scp infra/oci/app/Caddyfile.app acx-backend:/tmp/app-portal-recovery.Caddyfile.app
 scp infra/oci/app/docker-compose.app.yml acx-backend:/tmp/app-portal-recovery.overlay.yml
 ```
+
+The standalone script needs the shared-edge helper. It is not found beside
+`/tmp/app-portal-recovery.sh`, so the recovery invocation names it with
+`APP_SHARED_EDGE_LIB`. Recovery refuses if that file is missing or is a symlink.
 
 In an operator shell on the VM, with the same filesystem and Docker permissions
 as the original apply, run this exact recovery invocation. These are the default
@@ -491,6 +569,7 @@ env -u FRONTEND_DIST \
   APP_UPSTREAM=prod-api:8000 \
   APP_SNIPPET=/tmp/app-portal-recovery.Caddyfile.app \
   APP_OVERLAY=/tmp/app-portal-recovery.overlay.yml \
+  APP_SHARED_EDGE_LIB=/tmp/app-portal-recovery.shared-edge.sh \
   APP_HEALTH_CMD=/usr/local/bin/app-portal-health-check \
   bash /tmp/app-portal-recovery.sh --apply
 ```
@@ -725,4 +804,4 @@ after activation has started.
 
 - Live deploy from this sandbox, production remote-shell from the worker
 - Clerk Dashboard changes, billing-provider catalog setup, or new OCI VM
-- Editing `apps/prototype-description-service/Caddyfile` or `docker-compose.caddy.yml`
+- Recognition deploy callsites and live publication; P only supplies the helper ABI and Compose generation contract

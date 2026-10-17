@@ -1,0 +1,72 @@
+{
+  "status": "PROPOSED_FOR_G2",
+  "summary": "Prepared exact phase-observation edits for QOA-G1-02/03. Private boundary regressions pass; AUTHORITY integration and independent whole-procedure G2 remain root-owned. No live effects or finding closure.",
+  "source_sha": "c556567f81dd26172a16f6992df681c25cc94ebd",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/adjudications/OWNER-R2-PHASES.json",
+    ".task-state/bakeoff-rounds-20261017/adjudications/OWNER-R2-PHASES.md",
+    ".task-state/bakeoff-rounds-20261017/adjudications/OWNER-R2-PHASES.edits.json"
+  ],
+  "commits": [
+    "2f5c7b3bae7939a32454cc9b4a993f97f86ce9b3"
+  ],
+  "findings": [
+    {
+      "id": "QOA-G1-02",
+      "severity": "high",
+      "file": ".task-state/bakeoff-rounds-20261017/adjudications/QWEN-OWNER-ADMISSION.md:175",
+      "description": "Original observer rejects canonical stopped STOP/AUTO after real reap removes the lease; mandatory load reads also obstruct AUTO withdrawal.",
+      "evidence": "qualified-red reproduces failures; qualified-green passes canonical stopped, missing optional, unknown-load and bounded required-state cases. AUTHORITY still owns owner-window AUTO preflight.",
+      "fix": "Proposed phase-aware observer and integration notes are in the exact edit map; root must compose sibling changes and independently review G2."
+    },
+    {
+      "id": "QOA-G1-03",
+      "severity": "medium",
+      "file": ".task-state/bakeoff-rounds-20261017/adjudications/QWEN-OWNER-ADMISSION.md:193",
+      "description": "Original observer accepts honoured STARTING and degraded readiness failure as ordinary START observation.",
+      "evidence": "Matched public snapshot-writer controls reproduce the original acceptance. Corrected STARTING remains pending; warming/ready are capacity candidates; readiness failures are failure-diagnostic/NOTrawready.",
+      "fix": "Require actual trusted guest identity and successful bounded resource reads for a capacity sample; integrate the proposed bounded read-only caller without imposing raw-serving health."
+    }
+  ],
+  "tests": [
+    {
+      "command": "python3 -B /tmp/owner-r2-phases/record.py context python3 -B /tmp/owner-r2-phases/context.py",
+      "exit_code": 0,
+      "summary": "Eight complete Canon0.26.2 bodies/exact manifest entries, four full supplied distillations and semantic handoffs verified; prior roots snapshotted."
+    },
+    {
+      "command": "python3 -B /tmp/owner-r2-phases/record.py qualified-red python3 -B /tmp/owner-r2-phases/regression.py /tmp/qwen-owner-admission/observe.py qualified-red",
+      "exit_code": 1,
+      "summary": "Original observer:15 required phase/error failures among23 matched controls; intentional RED."
+    },
+    {
+      "command": "python3 -B /tmp/owner-r2-phases/record.py qualified-green python3 -B /tmp/owner-r2-phases/regression.py /tmp/owner-r2-phases/observe.py qualified-green",
+      "exit_code": 0,
+      "summary": "Corrected observer:23 controls pass using real public writer/authority/lease/snapshot/reap boundaries in private roots."
+    },
+    {
+      "command": "python3 -B /tmp/owner-r2-phases/record.py qualified-source-errors python3 -B /tmp/owner-r2-phases/extended.py /tmp/owner-r2-phases/observe.py qualified-source-errors",
+      "exit_code": 0,
+      "summary": "18 extended controls pass, including exact controller errors, boot/monotonic fences, unknown loads and preserved evidence."
+    },
+    {
+      "command": "python3 -B /tmp/owner-r2-phases/record.py guest-controls python3 -B /tmp/owner-r2-phases/guest_controls.py",
+      "exit_code": 0,
+      "summary": "SSH stub caller controls pass: recovery, three-attempt exhaustion, actual35s timeout and no-overwrite. No real guest qualification."
+    },
+    {
+      "command": "python3 -B /tmp/owner-r2-phases/record.py verify-final python3 -B /tmp/owner-r2-phases/verify.py",
+      "exit_code": 0,
+      "summary": "Exact source/map region, sibling blocks, schema, allowed files and2239 unchanged prior files verified."
+    }
+  ],
+  "limitations": [
+    "Exact document proposal only. Root owns three-map pin/region/commutation checks, independent whole-procedure G2, semantic adoption and effects; no finding is closed.",
+    "AUTHORITY must integrate capacity-read.sh, unknown-load-tolerant AUTO preflight, protected per-attempt custody and publication/recovery/flow fixes. Owner-window, guest-read, root-flow, final-stop and trust blocks remain unchanged.",
+    "No live cloud/guest/service/intent/API/secret/model/inference action. Controller STOPPED fixtures used actuator=None; boot states used the real public snapshot writer. External SSH stubs qualify retry/error handling only.",
+    "Logical input3fac332a7a87bdea053586337d69375f78499dfc is absent; honest native base shares supplied tree69dfc234e8a33a8fa0095ff110fbeb6a7040071f. Equal trees are not ancestry.",
+    "Supplied verified ONNX/handoff selections were read/hash-recorded; live graph/ONNX retrieval was unavailable. S map441/1974 declares five-file coverage but its three explicit pending-composition pins differ from checkout; lifecycle conclusions use actual source/AST.",
+    "Private audit /tmp/owner-r2-phases retains scripts, outputs/exits, snapshots, import hashes, failed paths and manifests. Historical observer revisions are labelled reconstructions verified against actual run hashes. Requested model/tier and25% CPU enforcement are not independently exposed; children have1GiB RLIMIT_AS and reduced priority.",
+    "TTL600, powercap3600 and unit1200 remain distinct. Missing lease/read races/SSH failure never prove death, stop, unload, cleanup, fit or raw readiness. Read-only collection cannot fence a future writer."
+  ]
+}

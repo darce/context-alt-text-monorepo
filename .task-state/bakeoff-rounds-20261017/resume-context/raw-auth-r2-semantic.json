@@ -1,0 +1,81 @@
+{
+  "content": [],
+  "structuredContent": {
+    "status": "ok_with_results",
+    "results": [
+      {
+        "entity_kind": "decision.rationale",
+        "entity_id": "17813",
+        "task_ref": "BAKECACHE-1",
+        "score": 0.565727949142456,
+        "snippet": "Root remotely read/rehashverified exact current sourcec678e0b6, witnesslogd9f92c48 andordinarycontrollogbc8404b0 from/tmp/memory-source-g2. Witness contains_read236→252 secondValueError and…",
+        "model_id": "gte-base-en-v1.5"
+      },
+      {
+        "entity_kind": "decision.rationale",
+        "entity_id": "17763",
+        "task_ref": "BAKECACHE-1",
+        "score": 0.5618131160736084,
+        "snippet": "All3actualthirdauthorsnativeexit0. REG adds196cases(152valid44invalid), old2933IDs/order/fullpayload/categories/helperdriver preserved; actualoldsource42rejectionsRED/154pass inclall152valid. Rootindependentremoteexactselectorexit1…",
+        "model_id": "gte-base-en-v1.5"
+      },
+      {
+        "entity_kind": "finding.fix",
+        "entity_id": "19086",
+        "task_ref": "BAKECACHE-1",
+        "score": 0.5602462291717529,
+        "snippet": "Before source approval, validate the reader Outcome discriminator and Failure variant through the frozen canonical boundary, translating malformed values into bounded COLLECTOR_UNAVAILABLE diagnostics. Complete fallible diagnostic handling…",
+        "model_id": "gte-base-en-v1.5"
+      },
+      {
+        "entity_kind": "finding.description",
+        "entity_id": "19087",
+        "task_ref": "BAKECACHE-1",
+        "score": 0.5596233010292053,
+        "snippet": "Intervals elapsed inside the final read disappear from missed_samples, allowing false complete coverage.",
+        "model_id": "gte-base-en-v1.5"
+      },
+      {
+        "entity_kind": "decision.rationale",
+        "entity_id": "17793",
+        "task_ref": "BAKECACHE-1",
+        "score": 0.5471645593643188,
+        "snippet": "M source gate launchedremotePID27795/PT Y29289; rubriccleanproduct gatePID28438/PTY38729 aftersharedIO fell belowadmission. All6nativeworkers confirmed model_process_started by bounded helperlogs,…",
+        "model_id": "gte-base-en-v1.5"
+      },
+      {
+        "entity_kind": "decision.rationale",
+        "entity_id": "17758",
+        "task_ref": "BAKECACHE-1",
+        "score": 0.5440633296966553,
+        "snippet": "Remote HIGH integration native0, actual full P-checkGREEN2933IDs(484valid/2435invalid+14checks), all2745oldIDs/order/payloads/categories preserved plus188 independent additions. Source formatter no byte change, TestREADONLY. Verified…",
+        "model_id": "gte-base-en-v1.5"
+      },
+      {
+        "entity_kind": "decision.rationale",
+        "entity_id": "17804",
+        "task_ref": "BAKECACHE-1",
+        "score": 0.5309926271438599,
+        "snippet": "Wave41guard preview/apply actual9reaped/live0locked0, logical14,740,625,276B, no physicalgainclaim. Beforecleanup sevenprivateauditdirs4998regularfiles156819303B/no-symlinks…",
+        "model_id": "gte-base-en-v1.5"
+      },
+      {
+        "entity_kind": "decision.rationale",
+        "entity_id": "17807",
+        "task_ref": "BAKECACHE-1",
+        "score": 0.5298445224761963,
+        "snippet": "Measured remote user cgroup3.25CPU/16GiB, working headroom12.55GB/free disk55.94GB. Six ready independent jobs at.5CPU/1GiB max3CPU; admission also enforces currentco-tenant/memory/IO/space. WorkBay compiler graph9nodes L1width6…",
+        "model_id": "gte-base-en-v1.5"
+      }
+    ],
+    "min_score": 0.35,
+    "query_mode": "text",
+    "query_model_id": "gte-base-en-v1.5",
+    "note": null,
+    "ok": true,
+    "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+    "embeddings_mode": "verified",
+    "semantic_degrade_reason": null
+  },
+  "isError": false
+}

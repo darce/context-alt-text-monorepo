@@ -1,0 +1,81 @@
+{
+  "content": [],
+  "structuredContent": {
+    "status": "ok_with_results",
+    "results": [
+      {
+        "entity_kind": "decision.rationale",
+        "entity_id": "17804",
+        "task_ref": "BAKECACHE-1",
+        "score": 0.6228606700897217,
+        "snippet": "Wave41guard preview/apply actual9reaped/live0locked0, logical14,740,625,276B, no physicalgainclaim. Beforecleanup sevenprivateauditdirs4998regularfiles156819303B/no-symlinks…",
+        "model_id": "gte-base-en-v1.5"
+      },
+      {
+        "entity_kind": "finding.fix",
+        "entity_id": "19080",
+        "task_ref": "BAKECACHE-1",
+        "score": 0.5914527177810669,
+        "snippet": "Before the affected C controls, freeze one public C-controlled staging-creation/writer handoff, or explicitly assign that role to an existing operation: bind each exclusively created component/partial opened identity and registered creator…",
+        "model_id": "gte-base-en-v1.5"
+      },
+      {
+        "entity_kind": "decision.rationale",
+        "entity_id": "17793",
+        "task_ref": "BAKECACHE-1",
+        "score": 0.5894551277160645,
+        "snippet": "M source gate launchedremotePID27795/PT Y29289; rubriccleanproduct gatePID28438/PTY38729 aftersharedIO fell belowadmission. All6nativeworkers confirmed model_process_started by bounded helperlogs,…",
+        "model_id": "gte-base-en-v1.5"
+      },
+      {
+        "entity_kind": "decision.rationale",
+        "entity_id": "17763",
+        "task_ref": "BAKECACHE-1",
+        "score": 0.5772280693054199,
+        "snippet": "All3actualthirdauthorsnativeexit0. REG adds196cases(152valid44invalid), old2933IDs/order/fullpayload/categories/helperdriver preserved; actualoldsource42rejectionsRED/154pass inclall152valid. Rootindependentremoteexactselectorexit1…",
+        "model_id": "gte-base-en-v1.5"
+      },
+      {
+        "entity_kind": "decision.rationale",
+        "entity_id": "17762",
+        "task_ref": "BAKECACHE-1",
+        "score": 0.5681176781654358,
+        "snippet": "Read-only /proc inspection confirms3distinctownedR3sandboxes each runningactualvendorcodexexec -m gpt-6.1-sol xhigh service_tierdefault; parent/node/boundary processes are not extra lanes. VMremainingcapacity doesnotcreateindependentwork…",
+        "model_id": "gte-base-en-v1.5"
+      },
+      {
+        "entity_kind": "finding.resolution_notes",
+        "entity_id": "19082",
+        "task_ref": "BAKECACHE-1",
+        "score": 0.5421962738037109,
+        "snippet": "Verified on canonical current3983e619 via exact unchanged reviewed bytes; review1461 independently rechecked this canonical finding. Prior attempts naming older review subject as verified_commit were rejected without mutation; current SHA…",
+        "model_id": "gte-base-en-v1.5"
+      },
+      {
+        "entity_kind": "finding.resolution_notes",
+        "entity_id": "19083",
+        "task_ref": "BAKECACHE-1",
+        "score": 0.5421962738037109,
+        "snippet": "Verified on canonical current3983e619 via exact unchanged reviewed bytes; review1461 independently rechecked this canonical finding. Prior attempts naming older review subject as verified_commit were rejected without mutation; current SHA…",
+        "model_id": "gte-base-en-v1.5"
+      },
+      {
+        "entity_kind": "finding.resolution_notes",
+        "entity_id": "19084",
+        "task_ref": "BAKECACHE-1",
+        "score": 0.5421962738037109,
+        "snippet": "Verified on canonical current3983e619 via exact unchanged reviewed bytes; review1461 independently rechecked this canonical finding. Prior attempts naming older review subject as verified_commit were rejected without mutation; current SHA…",
+        "model_id": "gte-base-en-v1.5"
+      }
+    ],
+    "min_score": 0.35,
+    "query_mode": "text",
+    "query_model_id": "gte-base-en-v1.5",
+    "note": null,
+    "ok": true,
+    "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+    "embeddings_mode": "verified",
+    "semantic_degrade_reason": null
+  },
+  "isError": false
+}

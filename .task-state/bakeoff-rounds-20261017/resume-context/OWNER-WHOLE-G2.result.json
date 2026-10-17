@@ -1,0 +1,84 @@
+{
+  "status": "REVISE",
+  "summary": "REVISE: two material recurrences remain. START/STOP publication accepts malformed load scalars, and the composed flow neither stages nor invokes the bounded capacity caller. Other named boundary controls pass within the stated confined scope; no live admission or finding closure.",
+  "source_sha": "9a90bb2f7bf081fe893f835e6d03b37e0a883d98",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/reviews/OWNER-WHOLE-G2.json",
+    ".task-state/bakeoff-rounds-20261017/reviews/OWNER-WHOLE-G2.md"
+  ],
+  "commits": [
+    "2fe5ca85bb863d7f1de7ccc7cf90891042255779"
+  ],
+  "findings": [
+    {
+      "id": "QOA-G1-02",
+      "severity": "high",
+      "file": ".task-state/bakeoff-rounds-20261017/adjudications/QWEN-OWNER-ADMISSION.md:301",
+      "description": "The pre-publication load guard accepts malformed boolean/float counters as idle and publishes START or STOP before the stricter observer can refuse.",
+      "evidence": "malformed.result.json: integer queue_depth=0 is the matched trustworthy parent; queue_depth=false and 0.0 are both malformed/unknown in the actual AggregateJobLoadSource, yet the unchanged composed guardian persists START sequence1. malformed-stop.result.json likewise persists STOP sequence3 with in_flight=false. owner-custody.py uses ==0 at MD301; the observer type check at MD673 occurs after publication.",
+      "fix": "Validate the required load object and finite typed fields consistently with the real public load boundary while holding the actual publication/load fences, before allocating/publishing START or STOP. Boolean/float counters must remain unknown. Preserve the existing load-independent guarded AUTO withdrawal and its foreign-state protections."
+    },
+    {
+      "id": "QOA-G1-03",
+      "severity": "medium",
+      "file": ".task-state/bakeoff-rounds-20261017/adjudications/QWEN-OWNER-ADMISSION.md:858",
+      "description": "The proposed bounded capacity caller is disconnected from protected staging and the actual measured-boot flow.",
+      "evidence": "Bootstrap MD71 admits exactly six filenames and omits capacity-read.sh; root-flow MD858 still pipes guest-read.sh directly once. The exact current pipeline succeeds on the normal SSH stub but exits255 after one recoverable failure; the exact proposed caller succeeds on attempt2 and preserves diagnostic classification. It is never called, so its protected attempt/classification/completion output contract is absent from the composed path.",
+      "fix": "Compose capacity-read.sh into the approved hash manifest and protected staging, then replace the direct guest pipeline with that caller using the exact start-observed receipt and a fresh protected output directory. Keep root custody and open the pinned guest script for bounded execution through normal ubuntu stdin, preserving existing SSH identity, per-attempt exits and observer classification; root-owned0700/0400 files cannot simply be passed to an ubuntu path-based bash. Recheck normal, retry, diagnostic, exhaustion and cleanup as one flow."
+    }
+  ],
+  "tests": [
+    {
+      "command": "python3 -B /tmp/owner-whole-g2/record.py context2 python3 -B /tmp/owner-whole-g2/context.py",
+      "exit_code": 0,
+      "summary": "Exact input/native tree, eight full Canon bodies/exact release entries, four full supplied distillations, 11,783 prior files, current source/AST and composed script hashes snapshotted. Supplemental inspect-context and imports pass."
+    },
+    {
+      "command": "python3 -B /tmp/owner-whole-g2/record.py phases python3 -B /tmp/owner-whole-g2/regression.py /tmp/owner-whole-g2/composed/observe.py composed-phases",
+      "exit_code": 0,
+      "summary": "23 phase controls pass; the separate recorded phase-errors command also passes18 error controls. Exact composed observer bytes and actual public writer/authority/lease/reap/snapshot boundaries."
+    },
+    {
+      "command": "python3 -B /tmp/owner-whole-g2/authority_controls.py composed-authority",
+      "exit_code": 0,
+      "summary": "Eight confined groups pass: real foreign writer ordering/all four fences, native SIGALRM recovery, unconsumed/rearmed STOP withdrawal, later foreign preservation, held custody identities and unknown I/O retaining real locks. All owned children reaped."
+    },
+    {
+      "command": "python3 -B /tmp/owner-whole-g2/whole_controls.py",
+      "exit_code": 0,
+      "summary": "Final whole3 run passes private STOPPED->START receipt->AUTO->safeSTOP->AUTO, canonical lease absence and missing/malformed-load AUTO withdrawal with guarded STOP refusal. Guest transport tested separately; no privileged whole-shell execution claimed."
+    },
+    {
+      "command": "python3 -B /tmp/owner-whole-g2/record.py malformed python3 -B /tmp/owner-whole-g2/malformed_controls.py",
+      "exit_code": 0,
+      "summary": "Malformed START counterexamples pass; separate recorded malformed-stop also reproduces STOP. Matched integer-zero parents and actual public aggregate-parser unknown results; native publications retained privately."
+    },
+    {
+      "command": "python3 -B /tmp/owner-whole-g2/guest_boundary.py",
+      "exit_code": 0,
+      "summary": "Exact current guest pipeline normal0/transient255 after one call; disconnected helper recovery0 after two calls, diagnostic label retained, exhaustion255 after three. Strict external SSH stubs only; staged/callsite omission verified."
+    },
+    {
+      "command": "python3 -B /tmp/owner-whole-g2/record.py client-death python3 -B /tmp/owner-whole-g2/client_death.py",
+      "exit_code": 0,
+      "summary": "Owned client SIGTERM leaves actual detached guardian/fence handles intact; completion reconciled read-only and all children reaped. Separate extra-boundaries passes six primary-only trust, three exact selector and executable syntax controls."
+    },
+    {
+      "command": "python3 -B /tmp/owner-whole-g2/verify_review.py",
+      "exit_code": 0,
+      "summary": "Common schema, exact source/tree/procedure hashes, two-file ownership, immutable prior evidence and committed final JSON checked; complete audit/import/hash manifests retained."
+    }
+  ],
+  "limitations": [
+    "Review only: no live intent/cloud/API/service/guest/secret/model/media/GT/inference action, target admission, source approval, finding closure, repair, implementation, adoption, dispatch, agent or merge. Root owns MCP/composition and all later effects.",
+    "Boundary controls use actual unchanged public writer/authority/controller/lease/snapshot code in independent private directories, exact proposed helper bytes and explicit filesystem/clock adapters. Only external SSH/offline lookup/delegation is stubbed. STOPPED inputs and SSH-stub success are not live boot/stop/capacity or cryptographic guest attestations.",
+    "Privileged root staging, native uid/gid10001 mounted-path interoperability, full root-flow/final-stop shell cancellation and actual systemd deadlines were not executed. Concrete defects suffice for REVISE; component GREEN and mechanical map commutation do not qualify the whole procedure.",
+    "Logical input a043302daccaee9e2c6455c422cfd29923760cf2 is absent locally. source_sha is the honest native base with exact requested tree56e0b8c81fcdc34cf4daed6ad5603ce720c0b6d4. Equal trees are not ancestry.",
+    "Supplied owner-g2/earlier semantic packets report verified gte-base-en-v1.5 selection/reinjection. No live graph/MCP/ONNX interface was exposed; exact source/AST fallback covers lifecycle. Public Canon refresh returned Cache miss; supplied complete v0.26.2 release bodies and exact manifest entries were verified, not current upstream freshness.",
+    "Normal ubuntu/passwordless sudo, installed writer54f7bd83/config, primary trust and earlier STOPPED/idle state are supplied point-in-time root receipts. No credential question, reread or trust change occurred. Admin/tenant/guest identities remain distinct; alternate boot and baked service effects remain in root execution scope.",
+    "TTL600, power cap3600 and unit1200 are distinct; none guarantees shutdown. Unknown I/O/publication/consumption/terminal effects retain evidence, guardian/locks/lease and block advancement. No client death or timeout is treated as shutdown/unload/free capacity; no general C/E/P/M/S/GT or raw/quality boot gate was added.",
+    "All prior private roots were hash-checked unchanged. Initial context extraction counted a signature presentation as an executable block; two whole-harness setup errors (extra fixture lease, function-name shadowing) were retained and corrected only in this audit. Final whole3 controls pass. No proposed script or source was repaired.",
+    "Requested model/XHIGH/STANDARD and enforced25% CPU allocation are not independently exposed. Recorded children use1GiB RLIMIT_AS and reduced priority; all fixture waits are bounded. Complete private snapshots/scripts/full outputs/exits/import hashes/manifests remain under /tmp/owner-whole-g2.",
+    "commits identifies the substantive review commit; a later JSON-only metadata commit avoids self-reference. Final response equals committed JSON."
+  ]
+}

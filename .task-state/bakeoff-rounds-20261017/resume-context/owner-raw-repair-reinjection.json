@@ -1,0 +1,113 @@
+{
+  "content": [],
+  "structuredContent": {
+    "ok": true,
+    "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+    "status": "selected",
+    "skip_reason": null,
+    "embeddings_mode": "verified",
+    "semantic_degrade_reason": null,
+    "relevant_lines": [
+      "relevant:",
+      "- Raw authenticated route characterization comple…: QWEN-RAW-AUTH-ROUTE terminal0 custody689f349a actual publicBakeoffClient anonymousv3twopass works, [decision:17912]",
+      "- bakeoff_native_admission_preserves_co_tenants: First all6admission deferred CPU61.57-62.98>=55, no modelturn launched. FreshlaterCPU43.50/IO9.04 [decision:17641]",
+      "- CAPTION-G1-02: Filename misses are incorrectly reported as eleven absent heldout inputs. Evidence: Fresh SHA256 [finding:19034]",
+      "- cdx_decision_bakerounds_remote_admission_and_ta…: 3native remote launches requested C8WHOLEPLAN xhigh/E5WHOLETEST xhigh/SREPAIR high, [decision:17832]",
+      "- Intake subject whole-source PASS, authority map…: SwholeG2 terminal0 rawPASS0 [decision:17928]",
+      "- Final reference writer uses Sol xhigh standard …: PACKET-INTEGRATE actual third Opus worker returned429 weekly usage_limit_reached (nativeexit9), no [decision:17670]",
+      "- Ownedcleanupwave4complete:7terminalclones reape…: Wave4preview7eligible/0live/0locked, freshmutationsame7/0skips; sourceguardloopunchanged. [decision:17662]",
+      "- Confirmed normal ubuntu passwordless sudo and l…: User correction verified by direct ubuntu SSH uid1001 and sudo -n true. Semantic gte-base-en-v1.5 [decision:17853]"
+    ],
+    "semantic_reinjection": {
+      "anchor_sources": [
+        "visible_text"
+      ],
+      "chars_budget": 10000,
+      "chars_used": 1215,
+      "effective_config": {
+        "candidate_pool": 32,
+        "max_concepts": 8,
+        "max_redundancy": 0.92,
+        "max_score_drop": 0.2,
+        "min_score": 0.35,
+        "mmr_relevance_weight": 0.7,
+        "notify_allowance_chars": 220,
+        "refresh_budget_chars": 1500,
+        "snippet_chars": 120
+      },
+      "fallback_scope": null,
+      "model_id": "gte-base-en-v1.5",
+      "score_hi": 0.6355650424957275,
+      "score_lo": 0.5595259666442871,
+      "selected": [
+        {
+          "emitted_chars": 177,
+          "id": "17912",
+          "kind": "decision",
+          "label": "Raw authenticated route characterization comple…",
+          "score": 0.6355650424957275,
+          "snippet": "QWEN-RAW-AUTH-ROUTE terminal0 custody689f349a actual publicBakeoffClient anonymousv3twopass works, [decision:17912]"
+        },
+        {
+          "emitted_chars": 164,
+          "id": "17641",
+          "kind": "decision",
+          "label": "bakeoff_native_admission_preserves_co_tenants",
+          "score": 0.6313257813453674,
+          "snippet": "First all6admission deferred CPU61.57-62.98>=55, no modelturn launched. FreshlaterCPU43.50/IO9.04 [decision:17641]"
+        },
+        {
+          "emitted_chars": 130,
+          "id": "19034",
+          "kind": "finding",
+          "label": "CAPTION-G1-02",
+          "score": 0.5695787668228149,
+          "snippet": "Filename misses are incorrectly reported as eleven absent heldout inputs. Evidence: Fresh SHA256 [finding:19034]"
+        },
+        {
+          "emitted_chars": 153,
+          "id": "17832",
+          "kind": "decision",
+          "label": "cdx_decision_bakerounds_remote_admission_and_ta…",
+          "score": 0.6076645851135254,
+          "snippet": "3native remote launches requested C8WHOLEPLAN xhigh/E5WHOLETEST xhigh/SREPAIR high, [decision:17832]"
+        },
+        {
+          "emitted_chars": 97,
+          "id": "17928",
+          "kind": "decision",
+          "label": "Intake subject whole-source PASS, authority map…",
+          "score": 0.618279218673706,
+          "snippet": "SwholeG2 terminal0 rawPASS0 [decision:17928]"
+        },
+        {
+          "emitted_chars": 168,
+          "id": "17670",
+          "kind": "decision",
+          "label": "Final reference writer uses Sol xhigh standard …",
+          "score": 0.5701006650924683,
+          "snippet": "PACKET-INTEGRATE actual third Opus worker returned429 weekly usage_limit_reached (nativeexit9), no [decision:17670]"
+        },
+        {
+          "emitted_chars": 159,
+          "id": "17662",
+          "kind": "decision",
+          "label": "Ownedcleanupwave4complete:7terminalclones reape…",
+          "score": 0.5970267057418823,
+          "snippet": "Wave4preview7eligible/0live/0locked, freshmutationsame7/0skips; sourceguardloopunchanged. [decision:17662]"
+        },
+        {
+          "emitted_chars": 167,
+          "id": "17853",
+          "kind": "decision",
+          "label": "Confirmed normal ubuntu passwordless sudo and l…",
+          "score": 0.5595259666442871,
+          "snippet": "User correction verified by direct ubuntu SSH uid1001 and sudo -n true. Semantic gte-base-en-v1.5 [decision:17853]"
+        }
+      ],
+      "skip_reason": null,
+      "status": "selected"
+    }
+  },
+  "isError": false
+}

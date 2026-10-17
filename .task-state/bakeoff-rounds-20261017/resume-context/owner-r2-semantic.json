@@ -1,0 +1,113 @@
+{
+  "content": [],
+  "structuredContent": {
+    "ok": true,
+    "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+    "status": "selected",
+    "skip_reason": null,
+    "embeddings_mode": "verified",
+    "semantic_degrade_reason": null,
+    "relevant_lines": [
+      "relevant:",
+      "- cdx_decision_bakerounds_second_subject_test_int…: Remote HIGH secondauthorS-TEST-REPAIR-R2 exit0. Strict final/committedJSON/provenancetree/grants [decision:17839]",
+      "- cdx_decision_bakerounds_runtime_receipts_indepe…: IndependentnativeSol6.1XHIGHSTANDARD RUNTIMEFINALGATE PASS0materialdefects exact4informationalreceipts [decision:17694]",
+      "- Current-session owned cleanup now25 terminal cl…: Guardednativeprefixwave6 verified clean quota-onlyOpus base tree7a7c/onecommit/nochangedfiles; [decision:17672]",
+      "- bakeoff_native_admission_preserves_co_tenants: First all6admission deferred CPU61.57-62.98>=55, no modelturn launched. FreshlaterCPU43.50/IO9.04 [decision:17641]",
+      "- cdx_decision_bakerounds_cache_plan_r1_b_corrobo…: IndependentnativeSol6.1XHIGHSTANDARD gateB exactsametreeb65d639 REVISE threegroups [decision:17689]",
+      "- Recovered actualCORPUS-RECOVERY containingcommi…: Current8liveworker specs/source snapshot unchanged; prospectiveintegrationmanifest routing annotated. [decision:17653]",
+      "- Additional3 terminalROSTER/CAPTION/CORPUS-G1san…: Nativeper-sandboxlock/lease/procguardsverbatim; ownallowlistonly, no globalmaintenance/cacheprune. [decision:17651]",
+      "- WEB-FINAL-GATE-01: IndependentWEBROSTERGATEPASS0materialdefects; exactprivateartifactfixed. Receiptintegrationcommit [finding:19054]"
+    ],
+    "semantic_reinjection": {
+      "anchor_sources": [
+        "visible_text"
+      ],
+      "chars_budget": 9000,
+      "chars_used": 1301,
+      "effective_config": {
+        "candidate_pool": 32,
+        "max_concepts": 8,
+        "max_redundancy": 0.92,
+        "max_score_drop": 0.2,
+        "min_score": 0.35,
+        "mmr_relevance_weight": 0.7,
+        "notify_allowance_chars": 220,
+        "refresh_budget_chars": 1500,
+        "snippet_chars": 120
+      },
+      "fallback_scope": null,
+      "model_id": "gte-base-en-v1.5",
+      "score_hi": 0.696644127368927,
+      "score_lo": 0.6368551850318909,
+      "selected": [
+        {
+          "emitted_chars": 175,
+          "id": "17839",
+          "kind": "decision",
+          "label": "cdx_decision_bakerounds_second_subject_test_int…",
+          "score": 0.696644127368927,
+          "snippet": "Remote HIGH secondauthorS-TEST-REPAIR-R2 exit0. Strict final/committedJSON/provenancetree/grants [decision:17839]"
+        },
+        {
+          "emitted_chars": 172,
+          "id": "17694",
+          "kind": "decision",
+          "label": "cdx_decision_bakerounds_runtime_receipts_indepe…",
+          "score": 0.6873823404312134,
+          "snippet": "IndependentnativeSol6.1XHIGHSTANDARD RUNTIMEFINALGATE PASS0materialdefects exact4informationalreceipts [decision:17694]"
+        },
+        {
+          "emitted_chars": 164,
+          "id": "17672",
+          "kind": "decision",
+          "label": "Current-session owned cleanup now25 terminal cl…",
+          "score": 0.6779739856719971,
+          "snippet": "Guardednativeprefixwave6 verified clean quota-onlyOpus base tree7a7c/onecommit/nochangedfiles; [decision:17672]"
+        },
+        {
+          "emitted_chars": 164,
+          "id": "17641",
+          "kind": "decision",
+          "label": "bakeoff_native_admission_preserves_co_tenants",
+          "score": 0.6773279309272766,
+          "snippet": "First all6admission deferred CPU61.57-62.98>=55, no modelturn launched. FreshlaterCPU43.50/IO9.04 [decision:17641]"
+        },
+        {
+          "emitted_chars": 152,
+          "id": "17689",
+          "kind": "decision",
+          "label": "cdx_decision_bakerounds_cache_plan_r1_b_corrobo…",
+          "score": 0.6802704334259033,
+          "snippet": "IndependentnativeSol6.1XHIGHSTANDARD gateB exactsametreeb65d639 REVISE threegroups [decision:17689]"
+        },
+        {
+          "emitted_chars": 171,
+          "id": "17653",
+          "kind": "decision",
+          "label": "Recovered actualCORPUS-RECOVERY containingcommi…",
+          "score": 0.6368551850318909,
+          "snippet": "Current8liveworker specs/source snapshot unchanged; prospectiveintegrationmanifest routing annotated. [decision:17653]"
+        },
+        {
+          "emitted_chars": 168,
+          "id": "17651",
+          "kind": "decision",
+          "label": "Additional3 terminalROSTER/CAPTION/CORPUS-G1san…",
+          "score": 0.6615998148918152,
+          "snippet": "Nativeper-sandboxlock/lease/procguardsverbatim; ownallowlistonly, no globalmaintenance/cacheprune. [decision:17651]"
+        },
+        {
+          "emitted_chars": 135,
+          "id": "19054",
+          "kind": "finding",
+          "label": "WEB-FINAL-GATE-01",
+          "score": 0.6606165766716003,
+          "snippet": "IndependentWEBROSTERGATEPASS0materialdefects; exactprivateartifactfixed. Receiptintegrationcommit [finding:19054]"
+        }
+      ],
+      "skip_reason": null,
+      "status": "selected"
+    }
+  },
+  "isError": false
+}

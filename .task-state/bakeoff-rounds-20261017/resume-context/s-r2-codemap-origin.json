@@ -1,0 +1,35 @@
+{
+  "stage": {
+    "sha": "cc8d019a65f0ef5804fe1532afa0b2ff0bb0d3ce",
+    "tree": "95d936acc1d86fa8d1971b7ed305505d40b07ae6",
+    "base": "b82673478d052cfa2ffa7d844df30c1b027c8b4d",
+    "branch": "feature/bakerounds-20261017-s-test-repair-r2-delivered",
+    "changed_files": [
+      ".task-state/bakeoff-rounds-20261017/adjudications/S-TEST-REPAIR-R2.json",
+      ".task-state/bakeoff-rounds-20261017/adjudications/S-TEST-REPAIR-R2.md",
+      "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py"
+    ]
+  },
+  "files": [
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py",
+      "sha256": "3b867574b78b24b49b5086a7d680763f73bec833aa584f6b33c7450528a0f0de"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py",
+      "sha256": "70862e9415dcba8f54f46bf1eade9a34247cce4a5204982ce8ab766c8ce92fa5"
+    },
+    {
+      "path": "apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py",
+      "sha256": "83ae4bfbc8671617b8cfec4eb718c0a772f27e8dbadf1a6615bebaac8e691be7"
+    },
+    {
+      "path": "apps/prototype-description-service/scripts/eval_harness/manifest.py",
+      "sha256": "d3cd812fe5816d1a9ee3d13472086e8666b33c0c10e534f2a81e62b9bd4cec8c"
+    },
+    {
+      "path": "apps/prototype-description-service/scripts/eval_harness/build_bakeoff_report.py",
+      "sha256": "e39b82bd70a4fe8562c85e04e8b9d6803ba0493629cf47d5d9d20075d7090ea0"
+    }
+  ]
+}

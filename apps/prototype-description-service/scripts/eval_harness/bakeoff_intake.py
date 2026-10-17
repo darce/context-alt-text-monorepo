@@ -306,13 +306,18 @@ def default_fetch(repo: str, timeout: float = DEFAULT_TIMEOUT_S) -> FetchResult:
         return FetchResult(status=None, payload=None, error="network_error")
     except TimeoutError:
         return FetchResult(status=None, payload=None, error="timeout")
-    except (OSError, http.client.IncompleteRead):
+    except (OSError, http.client.HTTPException):
+        # HTTPException is http.client's family for what the server sent:
+        # status line, headers, chunking, body length, redirect target. The
+        # message can quote remote bytes, so it is dropped, not reported.
         return FetchResult(status=None, payload=None, error="network_error")
     if len(body) > MAX_METADATA_BYTES:
         return FetchResult(status=status, payload=None, error="oversized")
     try:
         payload = json.loads(body)
-    except ValueError:
+    except (ValueError, RecursionError):
+        # Nesting deeper than the interpreter recursion limit fits well inside
+        # the size bound and is malformed metadata, like any other bad body.
         return FetchResult(status=status, payload=None)
     return FetchResult(status=status, payload=payload if isinstance(payload, dict) else None)
 

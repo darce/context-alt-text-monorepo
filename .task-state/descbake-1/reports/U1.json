@@ -1,0 +1,130 @@
+{
+  "report_id": "U1",
+  "task": "CURUX-1 follow-up scope",
+  "status": "PROVISIONAL",
+  "created_on": "2026-10-17",
+  "source_sha": "08a1d066950911c98a0eb2e9080cd45873d7c3f4",
+  "source_sha_verified": false,
+  "mounted_head": "635c48b1eb9843305d6398da5090d5d539384eaf",
+  "canon_version": "0.26.2",
+  "evidence_policy": "SOURCE-READ for mounted code/task artifacts; user-provided GPUFAIL2 evidence is explicitly marked and was not independently executed.",
+  "browser_or_live_reproduction": false,
+  "tests_executed": [],
+  "findings": [
+    {
+      "id": "U1-01",
+      "description": "Person-name combobox remains at Loading people while suggestion reads are pending.",
+      "status": "NEW_DEBT",
+      "priority": "P1",
+      "canonical_owner": "CURUX-2 / ADR-019 proposed; WBTRUST-3 S3 for advisory suggestion behavior",
+      "evidence": ["SOURCE-READ"],
+      "source_anchors": ["NameFaceControl.tsx:355-377,550-568", "ADR-019-person-anchored-curation-surfaces.md:3,215-220"],
+      "existing_coverage": ["ADR-019 specifies input enabled during suggestion loading but is Proposed", "WBTRUST-3 S3 makes failed suggestion reads advisory"],
+      "missing_acceptance": ["Slow/error suggestions do not block valid free typing and naming", "Roster-dependent Add as new person remains disabled with a reason until prerequisite data is ready"]
+    },
+    {
+      "id": "U1-02",
+      "description": "Review Queue may show Unable to load unlabeled faces and Retry in a reported zero state.",
+      "status": "COVERED_NOT_VERIFIED",
+      "priority": "P1",
+      "canonical_owner": "WBTRUST-1 / E21-14-R3-GOLDENS-01",
+      "evidence": ["SOURCE-READ"],
+      "source_anchors": ["ReviewQueue.tsx:773-794,1548-1568,1627-1645"],
+      "existing_coverage": ["UI distinguishes isTopUnlabeledError from successful empty state", "WBTRUST-1 covers zero-member groups remaining in the queue"],
+      "missing_acceptance": ["Successful zero-face response is empty/degraded, fetch failure is error", "Retry issues top-unlabeled request and renders the settled result"]
+    },
+    {
+      "id": "U1-03",
+      "description": "Description Service status unavailable copy is reported during dormant/no-scan periods.",
+      "status": "COVERED_NOT_VERIFIED",
+      "priority": "P2",
+      "canonical_owner": "WBTRUST-5 / ActivityStatusStrip.tsx",
+      "evidence": ["SOURCE-READ"],
+      "source_anchors": ["ActivityStatusStrip.tsx:87-95", "useActivityStatus.ts:363-382"],
+      "existing_coverage": ["GPU-only status query error without an active scan/run maps to idle with unknown GPU state"],
+      "missing_acceptance": ["No-scan dormant/not-checked does not emit outage toast", "Real status failure during an active operation remains an explicit error"]
+    },
+    {
+      "id": "U1-04",
+      "description": "URL/API-key local autosave needs atomic save feedback, failed-key draft retention, and persisted-credential health sequencing.",
+      "status": "NEW_DEBT",
+      "priority": "P1",
+      "canonical_owner": "GPUOPS-1 L5 SettingsPage.tsx; GPUOPS-1 L6 SettingsForm.tsx after shared state contract",
+      "evidence": ["SOURCE-READ"],
+      "source_anchors": ["SettingsForm.tsx:237-273", "SettingsPage.tsx:526-555,344-365,526-530", "useSettingsPageState.ts:53-64"],
+      "existing_coverage": ["URL/key save together on blur/Enter", "Successful save refetches settings then schedules health check", "Probe generation/credential bindings reject stale responses"],
+      "missing_acceptance": ["Retain typed key in memory after failed or partial save", "Do not lose edits made during in-flight save", "Health check only after a fresh GET confirms saved target", "Never echo or persist a secret", "Ignore stale health response after newer edit"]
+    },
+    {
+      "id": "U1-05",
+      "description": "Cold GPU run may lose visible continuity after navigation away and back.",
+      "status": "COVERED_NOT_VERIFIED",
+      "priority": "P1",
+      "canonical_owner": "GPUFLOW-2 operation context; DESCAUTH-1 S15 browser recovery evidence",
+      "evidence": ["SOURCE-READ", "USER-PROVIDED GPUFAIL2 evidence"],
+      "source_anchors": ["MediaSelection.tsx:78-98,255-310,1094-1129", "useActivityStatus.ts:402-512"],
+      "existing_coverage": ["Source retains active/pending run context", "User reports GPUFAIL2 winner routing and completed persisted Qwen3-VL-30B final_gpu API run; infrastructure is FIXED_USER_EVIDENCE"],
+      "missing_acceptance": ["Browser navigate away during cold start and return to discover same run and review completed persisted output", "Report endpoint/config/entitlement failure distinctly", "Check fir.dev.api.altcontext.com versus proven api.altcontext.com as hypothesis only"]
+    },
+    {
+      "id": "U1-06",
+      "description": "Retention unavailable state can conflate dormant/unconfigured endpoint with an actual backend failure; Retry may perform no network request.",
+      "status": "NEW_DEBT",
+      "priority": "P2",
+      "canonical_owner": "RetentionPage / retentionStatus API owner (identify before implementation)",
+      "evidence": ["SOURCE-READ"],
+      "source_anchors": ["retentionApi.ts:120-134", "RetentionPage.tsx:91-95,137-170"],
+      "existing_coverage": [],
+      "missing_acceptance": ["Name actual Description API/retentionStatus dependency", "Distinguish endpoint not configured from fetched error", "Retry says whether it will issue a request and refetches when configured"]
+    },
+    {
+      "id": "U1-07",
+      "description": "Settings Description Service unavailable state with 15-second retry/refresh reported ineffective.",
+      "status": "COVERED_NOT_VERIFIED",
+      "priority": "P2",
+      "canonical_owner": "GPUOPS-1 C5 / useGpuControl.ts",
+      "evidence": ["SOURCE-READ"],
+      "source_anchors": ["useGpuControl.ts:14-25,68-77", "GpuControlCard.tsx:325-343,360-414,626-630"],
+      "existing_coverage": ["Refresh/Retry buttons call query refetch", "Status query polls every 15 seconds normally and 5 seconds while starting/warming"],
+      "missing_acceptance": ["Observe request, cache timestamp, isFetching suppression, and any server Retry-After/cooldown during live repro; do not guess a fix"]
+    },
+    {
+      "id": "U1-08",
+      "description": "Four July 8 failed cluster-label updates remain in a stale timeline.",
+      "status": "COVERED_NOT_VERIFIED",
+      "priority": "P2",
+      "canonical_owner": "GPUFLOW-2 failed outbox history; DESCAUTH-1 description history/reset remains separate",
+      "evidence": ["SOURCE-READ", "USER-REPORTED exact live rows not queried"],
+      "source_anchors": ["GPUFLOW-2-durable-describe-roster-identity-and-cluster-recovery-task-plan.md:40", "DeadLetterPanel.tsx recovery surface"],
+      "existing_coverage": ["GPUFLOW-2 identifies four failed Cluster label update rows dated 2026-07-08 and operator discard", "DESCAUTH-1 covers description history/reset and replay guards"],
+      "missing_acceptance": ["Separate immutable history from pending work", "Retry/discard/archive effects explicit and preserve event evidence", "Never blindly replay obsolete label/generation"]
+    },
+    {
+      "id": "U1-09",
+      "description": "Tribeca/Trudeau/Katy labels appear on wrong or repeated groups.",
+      "status": "NEW_DEBT",
+      "priority": "P1",
+      "canonical_owner": "GPUFLOW-3 identity weaving; WBTRUST-2 curation and WBTRUST-3 naming are partial coverage",
+      "evidence": ["SOURCE-READ", "USER-REPORTED labels not live-reproduced"],
+      "source_anchors": ["useClusterSuggestions.ts:47-118", "ClusterReviewPanel.tsx:148-169", "ClusterDrawerPanel.tsx:418-445"],
+      "existing_coverage": ["Curation/member rows use identity_id and person/cluster option IDs are retained"],
+      "missing_acceptance": ["Show curated person identity_uuid, cluster_uuid, source face IDs, and generation before name commit", "Machine labels remain distinct from curated names", "Unknown/stale lineage abstains; no filename or name-based inference"]
+    },
+    {
+      "id": "U1-10",
+      "description": "emma_watson_14-scaled.jpeg repeats three times with identical crop for one user-confirmed person.",
+      "status": "NEW_DEBT",
+      "priority": "P2",
+      "canonical_owner": "GPUFLOW-2 singleton-group recovery; cross-link prior E15/E21 findings rather than duplicate them",
+      "evidence": ["SOURCE-READ", "USER-PROVIDED ground truth"],
+      "source_anchors": ["GPUFLOW-2-durable-describe-roster-identity-and-cluster-recovery-task-plan.md:39", "ClusterReviewPanel.tsx:148-169", "ClusterDrawerPanel.tsx:418-426"],
+      "existing_coverage": ["GPUFLOW-2 names same-person singleton residue", "E15-17 finding 8472; E21-19 finding 8760; E21-15 finding 7867 / decision 4412; E21-14 finding 7699"],
+      "missing_acceptance": ["Same face not duplicated across cards", "Two different faces in one image remain distinct", "Use face/identity IDs and generation lineage; never dedup on thumbnail URL alone"]
+    }
+  ],
+  "limitations": [
+    "The supplied source commit is absent from the mounted Git object database; source identity is not independently verified.",
+    "No browser/live reproduction was performed; source/task coverage does not establish deployed behavior.",
+    "The JSON and the existing gpu-operator-control map are provisional pending exact task/source reconciliation and map rendering."
+  ]
+}

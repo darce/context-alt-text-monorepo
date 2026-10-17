@@ -11,9 +11,9 @@ CLI::
 
     python -m scripts.eval_harness.semantic_selection_eval INPUT --output PATH
 
-``INPUT`` is a ``semantic-selection-eval/v1`` JSON document; the committed
+``INPUT`` is a ``semantic-selection-eval/v2`` JSON document; the committed
 ``semantic_selection_example.json`` is the reference fixture. The report is
-written to ``PATH`` as ``semantic-selection-eval-report/v1`` JSON. Exit status is
+written to ``PATH`` as ``semantic-selection-eval-report/v2`` JSON. Exit status is
 0 on success, 1 when the input is rejected or the report cannot be written (no
 report is written), and 2 for CLI usage errors. Nothing is printed to stdout.
 
@@ -23,7 +23,9 @@ Contract:
   ``model_id``, an immutable 40-char hex ``revision``, ``preprocessing``,
   ``dimension``, ``normalization``, ``namespace``, and ``space_id``. Every
   field must match across the two sides. Equal vector length alone never
-  proves compatibility.
+  proves compatibility. A shared preprocessing recipe may explicitly pair
+  different image and text paths; the modality preprocessing bytes need not
+  be identical (EMB-01).
 - Only the ``approved_context`` namespace is accepted. Face or identity
   embeddings cannot be mixed in or ranked here.
 - Vectors must be finite JSON numbers, non-zero, and of the declared
@@ -31,8 +33,14 @@ Contract:
   declared ``l2`` normalization is verified to unit norm within 1e-6.
 - Candidate ``status``: ``approved`` candidates are the only ranking pool.
   ``denied`` candidates are never ranked or selected. ``protected`` naming or
-  policy records are never ranked, never authorized by the ranker, and must
-  appear in every frozen pack for every query; a suppressed one is rejected.
+  policy records are never ranked or authorized by the ranker. In v2 each
+  requires ``protected_scope``: ``{"kind": "global"}`` or
+  ``{"kind": "queries", "query_ids": ["q-1", ...]}``. Query IDs refer to
+  frozen query/image records, not text parsed from ``source_id``. All
+  applicable protected records must appear in both packs, and out-of-scope
+  records are rejected. Only protected records may declare this scope.
+  Migrate v1 by explicitly annotating scope and changing the schema version;
+  v1's implicit all-query scope is no longer accepted (CARD-18/ATTRIB-05).
 - Gold ids must name approved candidates. A query with no gold ids stays in
   every denominator as ``no_relevant`` with reciprocal rank 0; it is never
   dropped. A query whose approved pool is empty is reported as
@@ -46,6 +54,11 @@ Contract:
 Interpretation: a score is retrieval relevance between a query vector and a
 candidate vector in one shared embedding space. It is not visual truth,
 identity, consent, or authority, and it never grants a protected record.
+
+Canon v0.26.2 (supplied offline packet):
+
+- EMB-01: https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/ml-systems.md#emb-01
+- CARD-18/ATTRIB-05: https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/attribute-claims-to-their-bearer.md
 
 Limitations:
 
@@ -73,8 +86,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-SCHEMA_VERSION = "semantic-selection-eval/v1"
-REPORT_SCHEMA_VERSION = "semantic-selection-eval-report/v1"
+SCHEMA_VERSION = "semantic-selection-eval/v2"
+REPORT_SCHEMA_VERSION = "semantic-selection-eval-report/v2"
 APPROVED_CONTEXT_NAMESPACE = "approved_context"
 PACK_NAMES = ("baseline", "full_pack")
 NORM_TOLERANCE = 1e-6
@@ -95,7 +108,10 @@ def _parse_vector(value: Any, owner: str) -> tuple[float, ...]:
     for index, item in enumerate(value):
         if isinstance(item, bool) or not isinstance(item, int | float):
             raise ValueError(f"{owner}: vector[{index}] must be a JSON number, got {type(item).__name__}")
-        number = float(item)
+        try:
+            number = float(item)
+        except OverflowError as exc:
+            raise ValueError(f"{owner}: vector[{index}] is outside float64 range") from exc
         if not math.isfinite(number):
             raise ValueError(f"{owner}: vector[{index}] is not finite")
         numbers.append(number)
@@ -133,6 +149,19 @@ class EncoderContract(BaseModel):
         return value
 
 
+class GlobalProtectionScope(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["global"]
+
+
+class QueryProtectionScope(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["queries"]
+    query_ids: tuple[str, ...] = Field(min_length=1)
+
+
 class CandidateRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -141,6 +170,7 @@ class CandidateRecord(BaseModel):
     status: Literal["approved", "denied", "protected"]
     text: str = Field(min_length=1)
     vector: tuple[float, ...]
+    protected_scope: GlobalProtectionScope | QueryProtectionScope | None = Field(default=None, discriminator="kind")
 
     @model_validator(mode="before")
     @classmethod
@@ -176,7 +206,7 @@ class PackSelections(BaseModel):
 class SemanticSelectionDocument(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal["semantic-selection-eval/v1"]
+    schema_version: Literal["semantic-selection-eval/v2"]
     description: str = Field(min_length=1)
     query_encoder: EncoderContract
     candidate_encoder: EncoderContract
@@ -206,6 +236,22 @@ def _check_vector(vector: tuple[float, ...], contract: EncoderContract, owner: s
             raise SemanticSelectionError(f"{owner}: normalization is 'l2' but vector norm is {norm:.9g}")
 
 
+def _protected_ids_by_query(doc: SemanticSelectionDocument) -> dict[str, list[str]]:
+    return {
+        query.id: [
+            candidate.id
+            for candidate in doc.candidates
+            if candidate.status == "protected"
+            and (
+                isinstance(candidate.protected_scope, GlobalProtectionScope)
+                or isinstance(candidate.protected_scope, QueryProtectionScope)
+                and query.id in candidate.protected_scope.query_ids
+            )
+        ]
+        for query in doc.queries
+    }
+
+
 def _check_document(doc: SemanticSelectionDocument) -> None:
     query_side, candidate_side = doc.query_encoder, doc.candidate_encoder
     differing = [name for name in _CONTRACT_FIELDS if getattr(query_side, name) != getattr(candidate_side, name)]
@@ -222,9 +268,24 @@ def _check_document(doc: SemanticSelectionDocument) -> None:
         raise SemanticSelectionError(f"duplicate query id {duplicate!r}")
 
     status_by_id = {candidate.id: candidate.status for candidate in doc.candidates}
-    protected_ids = [candidate.id for candidate in doc.candidates if candidate.status == "protected"]
     for candidate in doc.candidates:
         _check_vector(candidate.vector, query_side, f"candidate {candidate.id!r}")
+        scope = candidate.protected_scope
+        if candidate.status == "protected" and scope is None:
+            raise SemanticSelectionError(f"protected record {candidate.id!r}: explicit protected_scope is required")
+        if candidate.status != "protected" and scope is not None:
+            raise SemanticSelectionError(
+                f"candidate {candidate.id!r}: only protected records may declare protected_scope"
+            )
+        if isinstance(scope, QueryProtectionScope):
+            if duplicate := _first_duplicate(scope.query_ids):
+                raise SemanticSelectionError(
+                    f"protected record {candidate.id!r}: duplicate scope query id {duplicate!r}"
+                )
+            unknown = sorted(set(scope.query_ids) - set(query_ids))
+            if unknown:
+                raise SemanticSelectionError(f"protected record {candidate.id!r}: unknown scope query ids {unknown}")
+    protected_by_query = _protected_ids_by_query(doc)
     for query in doc.queries:
         _check_vector(query.vector, query_side, f"query {query.id!r}")
         if duplicate := _first_duplicate(query.gold_ids):
@@ -259,17 +320,25 @@ def _check_document(doc: SemanticSelectionDocument) -> None:
                     raise SemanticSelectionError(
                         f"{pack_name} query {query_id!r}: denied candidate {candidate_id!r} cannot be selected"
                     )
-            for protected_id in protected_ids:
+                if status_by_id[candidate_id] == "protected" and candidate_id not in protected_by_query[query_id]:
+                    raise SemanticSelectionError(
+                        f"{pack_name} query {query_id!r}: protected record {candidate_id!r} is out of scope"
+                    )
+            for protected_id in protected_by_query[query_id]:
                 if protected_id not in selected:
                     raise SemanticSelectionError(
                         f"{pack_name} query {query_id!r}: protected record {protected_id!r} is suppressed; "
-                        "every frozen pack must include it"
+                        "every applicable frozen pack must include it"
                     )
 
 
 def _unit(vector: tuple[float, ...]) -> tuple[float, ...]:
-    norm = math.hypot(*vector)
-    return tuple(component / norm for component in vector)
+    # EMB-01: cosine direction must survive finite scaling. Computing the norm
+    # before scaling can overflow or lose direction at subnormal magnitudes.
+    scale = max(abs(component) for component in vector)
+    scaled = tuple(component / scale for component in vector)
+    norm = math.hypot(*scaled)
+    return tuple(component / norm for component in scaled)
 
 
 def _cosine(left: tuple[float, ...], right: tuple[float, ...]) -> float:
@@ -366,7 +435,8 @@ def _evaluate(doc: SemanticSelectionDocument, input_sha256: str) -> dict[str, An
         "protected_records": {
             "ids": [candidate.id for candidate in doc.candidates if candidate.status == "protected"],
             "ranked": False,
-            "required_in_every_frozen_pack": True,
+            "required_in_every_applicable_frozen_pack": True,
+            "applicable_ids_by_query": _protected_ids_by_query(doc),
         },
         "metrics": metrics,
         "queries": rows,
@@ -415,7 +485,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         prog="python -m scripts.eval_harness.semantic_selection_eval",
         description="Offline semantic-selection evaluator over precomputed vectors.",
     )
-    parser.add_argument("input", type=Path, help="semantic-selection-eval/v1 JSON document")
+    parser.add_argument("input", type=Path, help="semantic-selection-eval/v2 JSON document")
     parser.add_argument("--output", type=Path, required=True, help="path for the report JSON")
     args = parser.parse_args(argv)
     try:

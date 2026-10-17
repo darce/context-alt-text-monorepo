@@ -1,6 +1,6 @@
 {
-  "schema_version": "semantic-selection-eval/v1",
-  "description": "Hand-authored known-answer fixture for scripts/eval_harness/semantic_selection_eval.py. The 4-dimensional vectors are synthetic and were not produced by any encoder, so this file documents the contract and the cosine arithmetic only; it says nothing about model quality. ctx-* are approved context candidates and form the only ranking pool. decoy-x is denied with cosine 1.0 to q-2 and must never rank or be selected. policy-1 is a protected record that must never rank and must appear in every frozen pack for every query. q-3 has no gold ids and is reported as no_relevant, not dropped. Expected: top1 = 1/3 and MRR = 4/9 over the three frozen queries.",
+  "schema_version": "semantic-selection-eval/v2",
+  "description": "Hand-authored known-answer fixture for scripts/eval_harness/semantic_selection_eval.py. The 4-dimensional vectors are synthetic and were not produced by any encoder, so this file documents the contract and the cosine arithmetic only; it says nothing about model quality. ctx-* are approved context candidates and form the only ranking pool. decoy-x is denied with cosine 1.0 to q-2 and must never rank or be selected. policy-1 explicitly declares global protected_scope in v2: it must never rank and must appear in every frozen pack for every query. Image-local protected records instead declare kind=queries and their frozen query_ids; unrelated packs must omit them. The all-zero revision is a synthetic shape placeholder, not an immutable model pin. q-3 has no gold ids and is reported as no_relevant, not dropped. Expected: top1 = 1/3 and MRR = 4/9 over the three frozen queries.",
   "query_encoder": {
     "model_id": "synthetic/hand-authored-vectors",
     "revision": "0000000000000000000000000000000000000000",
@@ -59,6 +59,7 @@
       "id": "policy-1",
       "source_id": "policy-src",
       "status": "protected",
+      "protected_scope": {"kind": "global"},
       "text": "naming policy: do not name the depicted person",
       "vector": [0.5, 0.5, 0.5, 0.5]
     }

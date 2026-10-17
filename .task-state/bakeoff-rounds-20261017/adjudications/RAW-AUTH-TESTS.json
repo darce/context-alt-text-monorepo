@@ -1,0 +1,70 @@
+{
+  "status": "tests_authored_expected_red",
+  "summary": "Authored raw-only auth boundary tests; unchanged source yields44 expected failures and5 passing controls. Independent review and remote RED acknowledgment remain with root.",
+  "source_sha": "5ccc5d46c504c995f4229c54d7b4eab3e42f0cda",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/adjudications/RAW-AUTH-TESTS.json",
+    ".task-state/bakeoff-rounds-20261017/adjudications/RAW-AUTH-TESTS.md",
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py"
+  ],
+  "commits": [
+    "6f136e42c6564b47f44f46138e00dd85b8cc0ad7"
+  ],
+  "findings": [
+    {
+      "id": "RAW-AUTH-TESTS-01",
+      "severity": "medium",
+      "file": "apps/prototype-description-service/scripts/eval_harness/bakeoff.py",
+      "description": "The requested raw credential constructor keyword and private-file CLI option are absent. New behavior tests fail at those actual public boundaries.",
+      "evidence": "Final normal scoped pytest:44 failed/5 passed in24.10s; missing server_api_key raises TypeError; --server-api-key-file is rejected and argparse exposes its supplied synthetic path. Matched anonymous v3/main/warmup/401/breaker and service-auth controls pass.",
+      "fix": "Root independently reviews tests and acknowledges remote RED before a separately authorized production-author slice; preserve raw-only Bearer contract, private-file bounds, redaction, warmup propagation and existing service auth."
+    }
+  ],
+  "tests": [
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-tests/scripts/context.py",
+      "exit_code": 0,
+      "summary": "1481 complete byte reads; eight Canon0.26.2 bodies/release pins and four full original distillations hash-verified; whole prior audits/source/tests and2496-function AST fallback preserved."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-tests/scripts/observe.py",
+      "exit_code": 0,
+      "summary": "Verified native/equal tree, logical object absence,1GiB/25percentCPU cgroup and all three immutable upstream primary file hashes."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B -m pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py -q (initial fixture attempt)",
+      "exit_code": 1,
+      "summary": "40 failed/2 passed; retained setup mistakes in existing output field and provenance enum, subsequently corrected. Not auth RED evidence."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B -m pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py -q --collection-scope-receipt /tmp/raw-auth-tests/manifests/collection-final.json",
+      "exit_code": 1,
+      "summary": "Expected RED:44 failed/5 passed/3 expected empty-rubric warnings in24.10s; normal conftest/config/plugins; no collection ImportError or source replacement."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-tests/scripts/green_controls.py",
+      "exit_code": 0,
+      "summary": "Five matched controls passed in11.51s, two expected empty-rubric warnings; real HTTP encoder/transcript, actual import hashes and owned CLI fixture records retained."
+    },
+    {
+      "command": ".venv/bin/ruff check apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py",
+      "exit_code": 0,
+      "summary": "All checks passed."
+    },
+    {
+      "command": ".venv/bin/ruff format --check apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py",
+      "exit_code": 0,
+      "summary": "File already formatted."
+    }
+  ],
+  "limitations": [
+    "Logical input c76df05508662d7343b1a622651060d4f07ef37b is absent locally; honest native source_sha shares exact tree111780ec9693fad45f6b81df71fe7635f7f8593f. Equal trees do not establish ancestry.",
+    "Author handoff only: no test approval, root remote RED acknowledgment, production implementation/GREEN, adoption, dispatch or main merge. Deeper file-security/auth/redaction assertions remain latent behind missing public inputs.",
+    "Bearer is the selected immutable upstream compatibility contract at llama.cpp d261223d24e97f2df50220e4a5b7f0adb69bba81, not qualified installed runtime identity or actual guest auth. Mutable images/minimum builds are not pins.",
+    "No live graph/MCP/ONNX retrieval exposed or executed; supplied verified semantic retrieval/reinjection and exact source/AST used. Missing historical original-review bodies are not inferred from semantic snippets.",
+    "Only three owned files change. No installs, broad suites, nested agents, cloud/guest/credentials/model/weights/media/GT/inference/shared-service/auth/cache operation. HTTP uses MockTransport and synthetic sentinels; image fixture is zero bytes.",
+    "MockTransport proves request encoding/configured timeouts/injected failures, not physical socket deadlines. Empty-rubric warnings qualify no caption or identity quality. Syscall controls delegate real owned file operations; unreadable/foreign-owner outcomes are injected.",
+    "Private audit /tmp/raw-auth-tests retains snapshots/scripts/fulloutputs/exits/importhashes/manifests and owned fixture records; prior roots remain read-only. All clients close; no external process/socket/service was created. Temporary owned fixture evidence is retained.",
+    "Actual cgroup is1GiB/25percentCPU; requested model/LOW/STANDARD/1500s is not independently attested. commits lists the substantive artifact commit; a later JSON-only commit records its pointer without self-reference."
+  ]
+}

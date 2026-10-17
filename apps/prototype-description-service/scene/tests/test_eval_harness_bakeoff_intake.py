@@ -830,3 +830,260 @@ def test_successful_output_atomically_replaces_prior_report(tmp_path: Path, monk
     assert len(probes) == 1, "report must replace from a complete temporary sibling"
     assert len(IntakeReport.model_validate_json(out.read_bytes()).sealed) == 16
     assert set(tmp_path.iterdir()) == {out}
+
+
+# --- third-dispatch regressions (actual urllib HTTP protocol failures) ------
+
+_FAULT_INDEX = 11  # the 12th of 26 requests, so rows on both sides must survive
+_MARKER = "remote-body-marker"
+_APP_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _ok_wire(body: bytes) -> bytes:
+    return b"HTTP/1.1 200 OK\r\nContent-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+
+
+def _status_wire(code: int, reason: str) -> bytes:
+    return f"HTTP/1.1 {code} {reason}\r\nContent-Length: 0\r\n\r\n".encode()
+
+
+# wire -> (status, reason, http_status). The comment names what the frozen
+# source raised out of the whole refresh for that wire.
+_PROTOCOL_FAULTS: dict[str, tuple[bytes, str, str, int | None]] = {
+    # http.client.BadStatusLine: not-an-HTTP-status /remote-body-marker
+    "bad_status": (f"not-an-HTTP-status /{_MARKER}\r\n\r\n".encode(), "unverified", "network_error", None),
+    # http.client.LineTooLong: got more than 65536 bytes when reading header line
+    "long_header": (
+        b"HTTP/1.1 200 OK\r\nX-Metadata: " + b"a" * 65537 + b"\r\n\r\n",
+        "unverified",
+        "network_error",
+        None,
+    ),
+    # http.client.HTTPException: got more than 100 headers
+    "too_many_headers": (
+        b"HTTP/1.1 200 OK\r\n" + b"".join(b"X-%d: v\r\n" % i for i in range(101)) + b"\r\n",
+        "unverified",
+        "network_error",
+        None,
+    ),
+    # http.client.UnknownProtocol: HTTP/remote-body-marker
+    "unknown_protocol": (
+        f"HTTP/{_MARKER} 200 OK\r\nContent-Length: 2\r\n\r\n{{}}".encode(),
+        "unverified",
+        "network_error",
+        None,
+    ),
+    # http.client.LineTooLong: got more than 65536 bytes when reading chunk size
+    "long_chunk_size": (
+        b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n" + b"f" * 65537 + b"\r\n",
+        "unverified",
+        "network_error",
+        None,
+    ),
+    # http.client.InvalidURL: nonnumeric port: 'remote-body-marker' (remote redirect target)
+    "redirect_bad_port": (
+        f"HTTP/1.1 302 Found\r\nLocation: https://huggingface.co:{_MARKER}/x\r\nContent-Length: 0\r\n\r\n".encode(),
+        "unverified",
+        "network_error",
+        None,
+    ),
+    # RecursionError: maximum recursion depth exceeded while decoding a JSON array ...
+    "deep_json": (_ok_wire(b"[" * 100_000), "error", "malformed_json", 200),
+}
+
+
+class _RoutedSocket:
+    """In-memory socket behind the real HTTPSConnection; answers the request it was sent."""
+
+    def __init__(self, respond: Callable[[str], bytes]) -> None:
+        self._respond = respond
+        self._sent = b""
+
+    def sendall(self, data: bytes) -> None:
+        self._sent += data
+
+    def makefile(self, *_args: Any, **_kwargs: Any) -> io.BytesIO:
+        path = self._sent.split(b" ", 2)[1].decode("ascii")
+        return io.BytesIO(self._respond(path))
+
+    def close(self) -> None:
+        pass
+
+
+def _route_real_urllib(set_attr: Callable[[object, str, object], None], respond: Callable[[str], bytes]) -> None:
+    """Keep the real urlopen, opener, HTTPSConnection and HTTPResponse parser.
+
+    Only the socket is in memory. Proxy discovery is disabled, so nothing
+    leaves the sandbox. ``set_attr`` is ``monkeypatch.setattr`` in-process.
+    """
+
+    def connect(connection: http.client.HTTPSConnection) -> None:
+        connection.sock = _RoutedSocket(respond)
+
+    set_attr(http.client.HTTPSConnection, "connect", connect)
+    set_attr(urllib.request, "_opener", urllib.request.build_opener(urllib.request.ProxyHandler({})))
+
+
+def _baseline_wire_router(fault_wire: bytes | None, calls: list[str]) -> Callable[[str], bytes]:
+    """Every repo answers its own baseline sha, except request ``_FAULT_INDEX``."""
+    table = _baseline_table()
+
+    def respond(path: str) -> bytes:
+        repo = path.removeprefix("/api/models/")
+        calls.append(repo)
+        if fault_wire is not None and len(calls) - 1 == _FAULT_INDEX:
+            return fault_wire
+        payload = dict(table[repo].payload or {})
+        payload.update(pipeline_tag="image-text-to-text", cardData={"license": "mit"})
+        return _ok_wire(json.dumps(payload).encode())
+
+    return respond
+
+
+@pytest.mark.parametrize("output_format", ["json", "markdown"])
+@pytest.mark.parametrize("fault", sorted(_PROTOCOL_FAULTS))
+def test_actual_urllib_protocol_failure_is_one_typed_row_and_refresh_continues(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    output_format: str,
+    fault: str,
+) -> None:
+    wire, status, reason, http_status = _PROTOCOL_FAULTS[fault]
+    calls: list[str] = []
+    _route_real_urllib(monkeypatch.setattr, _baseline_wire_router(wire, calls))
+    out = tmp_path / f"audit.{output_format}"
+    out.write_text("prior report\n", encoding="utf-8")
+    # Initial RED prediction: main raises the exception named beside the fault wire.
+    assert main(["--refresh", "--format", output_format, "--output", str(out)]) == 0
+    captured = capsys.readouterr()
+    assert (captured.out, captured.err) == ("", "")
+    assert calls == list(_baseline_table())
+    text = out.read_text(encoding="utf-8")
+    assert _MARKER not in text
+    text.encode("utf-8")
+    if output_format == "json":
+        report = IntakeReport.model_validate_json(text)
+        assert report.audit is not None and len(report.audit) == 26
+        failed = report.audit[_FAULT_INDEX]
+        assert failed.repo == calls[_FAULT_INDEX]
+        assert (failed.status, failed.reason, failed.http_status) == (status, reason, http_status)
+        assert (failed.latest_main_sha, failed.remote_pipeline_tag, failed.remote_license) == (None, None, None)
+        others = report.audit[:_FAULT_INDEX] + report.audit[_FAULT_INDEX + 1 :]
+        assert all(row.status is AuditStatus.UNCHANGED for row in others)
+        assert all(row.remote_pipeline_tag == "image-text-to-text" for row in others)
+    else:
+        audit_lines = text.split("## Checkpoint audit", 1)[1]
+        assert audit_lines.count(f"| {status} | {reason} |") == 1
+        assert audit_lines.count("| unchanged |") == 25
+
+
+@pytest.mark.parametrize("output_format", ["json", "markdown"])
+@pytest.mark.parametrize("fault", ["bad_status", "long_header"])
+def test_cli_protocol_failure_has_no_traceback_and_does_not_echo_remote_text(
+    tmp_path: Path,
+    output_format: str,
+    fault: str,
+) -> None:
+    out = tmp_path / f"audit.{output_format}"
+    out.write_bytes(b"prior usable report\n")
+    child = "\n".join(
+        [
+            "import sys",
+            "from scene.tests import test_eval_harness_bakeoff_intake as t",
+            "from scripts.eval_harness.bakeoff_intake import main",
+            "calls = []",
+            f"t._route_real_urllib(setattr, t._baseline_wire_router(t._PROTOCOL_FAULTS[{fault!r}][0], calls))",
+            "try:",
+            f"    code = main(['--refresh', '--format', {output_format!r}, '--output', {str(out)!r}])",
+            "finally:",
+            "    print(len(calls))",
+            "raise SystemExit(code)",
+        ]
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", child],
+        cwd=_APP_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert "Traceback" not in proc.stderr, "protocol failure escaped the CLI"
+    assert _MARKER not in proc.stderr + proc.stdout
+    assert (proc.returncode, proc.stdout, proc.stderr) == (0, "26\n", "")
+    text = out.read_text(encoding="utf-8")
+    if output_format == "json":
+        report = IntakeReport.model_validate_json(text)
+        assert report.audit is not None and len(report.audit) == 26
+        assert (report.audit[_FAULT_INDEX].status, report.audit[_FAULT_INDEX].reason) == ("unverified", "network_error")
+        assert sum(row.status is AuditStatus.UNCHANGED for row in report.audit) == 25
+    else:
+        audit_lines = text.split("## Checkpoint audit", 1)[1]
+        assert audit_lines.count("| unverified | network_error |") == 1
+        assert audit_lines.count("| unchanged |") == 25
+
+
+@pytest.mark.parametrize(
+    ("wire", "status", "reason", "http_status"),
+    [
+        (_status_wire(401, "Unauthorized"), "unverified", "auth_required", 401),
+        (_status_wire(403, "Forbidden"), "unverified", "inaccessible", 403),
+        (_status_wire(404, "Not Found"), "unverified", "http_404", 404),
+        (_status_wire(429, "Too Many Requests"), "unverified", "http_429", 429),
+        (_status_wire(503, "Service Unavailable"), "unverified", "http_5xx", 503),
+        (_status_wire(418, "Teapot"), "error", "unexpected_http_status", 418),
+        # Empty reply is RemoteDisconnected, already an OSError before this dispatch.
+        (b"", "unverified", "network_error", None),
+    ],
+)
+def test_actual_urllib_keeps_http_status_distinctions(
+    monkeypatch: pytest.MonkeyPatch,
+    wire: bytes,
+    status: str,
+    reason: str,
+    http_status: int | None,
+) -> None:
+    calls: list[str] = []
+    _route_real_urllib(monkeypatch.setattr, _baseline_wire_router(wire, calls))
+    report = build_report(refresh=True, clock=lambda: FIXED_UTC)
+    assert report.audit is not None and len(report.audit) == 26 and len(calls) == 26
+    failed = report.audit[_FAULT_INDEX]
+    assert (failed.status, failed.reason, failed.http_status) == (status, reason, http_status)
+    assert sum(row.status is AuditStatus.UNCHANGED for row in report.audit) == 25
+
+
+def test_actual_urllib_valid_unicode_row_is_classified_normally(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {"sha": _sha("b"), "pipeline_tag": "vision-\U0001f30d", "cardData": {"license": "许可"}}
+    calls: list[str] = []
+    _route_real_urllib(monkeypatch.setattr, _baseline_wire_router(_ok_wire(json.dumps(payload).encode()), calls))
+    report = build_report(refresh=True, clock=lambda: FIXED_UTC)
+    assert report.audit is not None and len(report.audit) == 26
+    row = report.audit[_FAULT_INDEX]
+    assert (row.status, row.latest_main_sha, row.http_status) == (AuditStatus.OUTDATED, _sha("b"), 200)
+    assert (row.remote_pipeline_tag, row.remote_license) == ("vision-\U0001f30d", "许可")
+    assert row.baseline_sha != _sha("b"), "an observed latest sha never repins the baseline"
+    assert sum(r.status is AuditStatus.UNCHANGED for r in report.audit) == 25
+    assert "许可" in render_markdown(report) and "vision-\U0001f30d" in report.model_dump_json()
+
+
+@pytest.mark.parametrize("bug", [TypeError("bug"), AttributeError("bug"), KeyError("bug"), RuntimeError("bug")])
+def test_default_fetch_does_not_swallow_programming_errors(monkeypatch: pytest.MonkeyPatch, bug: Exception) -> None:
+    def broken_urlopen(*_args: Any, **_kwargs: Any) -> None:
+        raise bug
+
+    monkeypatch.setattr(urllib.request, "urlopen", broken_urlopen)
+    with pytest.raises(type(bug)):
+        default_fetch("o/r")
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=ValueError,
+    reason="open residual: urllib raises bare ValueError (Invalid IPv6 URL) for a malformed redirect Location",
+)
+def test_malformed_redirect_location_is_an_open_residual(monkeypatch: pytest.MonkeyPatch) -> None:
+    wire = f"HTTP/1.1 302 Found\r\nLocation: https://[{_MARKER}/x\r\nContent-Length: 0\r\n\r\n".encode()
+    _route_real_urllib(monkeypatch.setattr, _baseline_wire_router(wire, []))
+    report = build_report(refresh=True, clock=lambda: FIXED_UTC)
+    assert report.audit is not None and len(report.audit) == 26

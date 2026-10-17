@@ -1,0 +1,13 @@
+{
+  "commit": "921d30dfedf59b47ecb9f02c1100a3240045260f",
+  "parent": "ffd43b2c20460f30d5632b1975e9febc9866c1d6",
+  "review_parent": "4d805510082e5d5a72fcd6e135164ba1bbd4b8ee",
+  "tree": "f4fa6e7f04900a019aaa1cd0baa17d6f442ec549",
+  "pins": {
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py": "d7dd24cea51ee54f10c87f78ef79831f447f3334",
+    "apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py": "13b8025a60a0d75e386673d458e75fecad49a6f5",
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py": "74c68b0ee4595db0de2e70b5a9a38932381d14a1"
+  },
+  "source_unchanged": true,
+  "counts": "87cases58expectedRED29GREEN;4legacyPASS;wholeindependentreviewPASS0"
+}

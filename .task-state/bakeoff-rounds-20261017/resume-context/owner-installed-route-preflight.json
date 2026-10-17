@@ -1,0 +1,69 @@
+{
+  "observed_at": 1792275605.297044,
+  "actor": 1001,
+  "effects": "read-only; no intents/cloud/actions",
+  "guest_known_host": [
+    {
+      "address": "10.0.1.9",
+      "exit": 0,
+      "trusted_entry_present": true
+    },
+    {
+      "address": "10.0.1.36",
+      "exit": 1,
+      "trusted_entry_present": false
+    }
+  ],
+  "installed_writer_probe_exit": 0,
+  "installed_writer": {
+    "writer_sha256": "54f7bd837f20c24529ce3e1ea53e91a405b16234c62092890c22b507c149a2d9",
+    "config": {
+      "ACX_ENV": "prod",
+      "ACX_DESCRIBE_LOAD_PATH": "/run/acx-write/prod/describe-load.json",
+      "ACX_GPU_INTENT_PATH": null,
+      "ACX_GPU_INTENT_DURABLE_PATH": null
+    }
+  },
+  "authority": {
+    "highest_sequence": 0,
+    "intent_count": 0
+  },
+  "optional_state_files": {
+    "running-since.json": false,
+    "deferred-stop.json": false
+  },
+  "loads": [
+    {
+      "env": "dev",
+      "age_seconds": 13.85239863395691,
+      "queue_depth": 0,
+      "in_flight": 0,
+      "batch_in_progress": false,
+      "lease_demand": 0
+    },
+    {
+      "env": "dev-fir",
+      "age_seconds": 36.453410625457764,
+      "queue_depth": 0,
+      "in_flight": 0,
+      "batch_in_progress": false,
+      "lease_demand": 0
+    },
+    {
+      "env": "staging",
+      "age_seconds": 19.333918571472168,
+      "queue_depth": 0,
+      "in_flight": 0,
+      "batch_in_progress": false,
+      "lease_demand": 0
+    },
+    {
+      "env": "prod",
+      "age_seconds": 17.306687593460083,
+      "queue_depth": 0,
+      "in_flight": 0,
+      "batch_in_progress": false,
+      "lease_demand": 0
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "status": "authored_pending_root_review",
+  "summary": "Authored one bounded normal-ubuntu owner procedure using the existing service intent writer, durable controller receipts, trusted primary guest measurement, owned AUTO withdrawal and guarded final STOP/release. No lifecycle action, secret read, guest measurement, benchmark or admission occurred.",
+  "source_sha": "6e7c1ab4a2985f850bac4cd06ec636aad9d6b9b9",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/adjudications/QWEN-OWNER-ADMISSION.json",
+    ".task-state/bakeoff-rounds-20261017/adjudications/QWEN-OWNER-ADMISSION.md"
+  ],
+  "commits": [
+    "a2befa498ac211c027f13b0a4aa545062ba09936"
+  ],
+  "findings": [
+    {
+      "id": "QOA-01",
+      "severity": "info",
+      "file": ".task-state/bakeoff-rounds-20261017/adjudications/QWEN-OWNER-ADMISSION.md",
+      "description": "Existing host-owner writer avoids an HTTP key; authority store validates sequences but does not issue them.",
+      "evidence": "Installed lifecycle matches checkout. Existing write_gpu_intent allocates publication sequence; first-use guard binds supplied global sequence0/intents0; controller durable receipt required. Installed application source/path verification remains a precise root-only preflight.",
+      "fix": "Root runs the exact read-only owner preflight, independently reviews the concrete boot/failover effects, then may execute the bounded procedure. Preserve conflicts and unknowns; never manufacture authority or force cleanup."
+    }
+  ],
+  "tests": [
+    {
+      "command": "python3 -B /tmp/qwen-owner-admission/verify_delivery.py (first attempt)",
+      "exit_code": 1,
+      "summary": "Documentation signature notation was not valid executable Python; retained exact failure, corrected to declaration stubs and reran."
+    },
+    {
+      "command": "python3 -B /tmp/qwen-owner-admission/verify_delivery.py",
+      "exit_code": 0,
+      "summary": "Strict common schema fields, honest provenance/tree, exact embedded scripts, all Markdown shell/Python syntax and owned diff pass."
+    },
+    {
+      "command": "python3 -B /tmp/qwen-owner-admission/read_context.py",
+      "exit_code": 0,
+      "summary": "493 complete reads snapshotted; eight Canon bodies verify against pins and release manifest, four full original distillations verify, six installed lifecycle modules match checkout."
+    },
+    {
+      "command": "python3 -B /tmp/qwen-owner-admission/checks.py; bash -n /tmp/qwen-owner-admission/root-flow.sh /tmp/qwen-owner-admission/final-stop.sh",
+      "exit_code": 0,
+      "summary": "Source signatures/AST, prepared shell syntax, one positive/six matched specification refusals and tiny finally-clean 64-byte OS control pass; no consumer execution."
+    }
+  ],
+  "limitations": [
+    "Native stripped base is reported honestly; logical input object is absent and equal tree is not ancestry.",
+    "No live MCP/embedding, cloud/API/secret/lifecycle/guest/model operation. Normal-owner private root was permission-denied; supplied redacted receipts used.",
+    "Root-only installed application/source-path and guest host-key trust preflight remains; no admission, fit, consumer qualification, acceptance, finding closure, promotion or bakeoff readiness claim.",
+    "Installed intent route can boot the alternate and automatically start baked serving. Intent TTL600s is distinct from power cap3600s; timeout or foreign work requires preservation and root reconciliation.",
+    "Requested model/tier/resource envelope is not independently attestable. Private audit and all previous audit roots are preserved."
+  ]
+}

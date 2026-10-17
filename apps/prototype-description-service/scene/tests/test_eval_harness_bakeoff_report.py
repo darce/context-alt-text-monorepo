@@ -31,8 +31,14 @@ from scripts.eval_harness.build_bakeoff_report import (
 _ENTRY = {"path": "mock_images/alice-pool.jpg", "present_identities": ["Alice Example"]}
 _RUN = {
     "Qwen3-VL-30B": {
-        1: {"title": "Alice", "alt": "Alice by a pool.", "caption": "A long caption.",
-            "latency_s": 5.0, "model_calls": 2, "error": None},
+        1: {
+            "title": "Alice",
+            "alt": "Alice by a pool.",
+            "caption": "A long caption.",
+            "latency_s": 5.0,
+            "model_calls": 2,
+            "error": None,
+        },
     }
 }
 
@@ -57,12 +63,18 @@ def test_card_no_cost_when_latency_missing_even_with_rate() -> None:
 
 
 def _write_fixtures(tmp_path: Path) -> tuple[Path, Path]:
-    manifest = {"entries": [{"media_id": 1, "path": "mock_images/a.jpg", "present_identities": []},
-                            {"media_id": 2, "path": "mock_images/b.jpg", "present_identities": []}]}
-    record = {"items": [
-        {"media_id": 1, "describe": {"alt_text_draft": "a", "passes": [{"latency_s": 4.0}]}},
-        {"media_id": 2, "describe": {"alt_text_draft": "b", "passes": [{"latency_s": 6.0}]}},
-    ]}
+    manifest = {
+        "entries": [
+            {"media_id": 1, "path": "mock_images/a.jpg", "present_identities": []},
+            {"media_id": 2, "path": "mock_images/b.jpg", "present_identities": []},
+        ]
+    }
+    record = {
+        "items": [
+            {"media_id": 1, "describe": {"alt_text_draft": "a", "passes": [{"latency_s": 4.0}]}},
+            {"media_id": 2, "describe": {"alt_text_draft": "b", "passes": [{"latency_s": 6.0}]}},
+        ]
+    }
     mpath = tmp_path / "manifest.json"
     rpath = tmp_path / "run.json"
     mpath.write_text(json.dumps(manifest))
@@ -75,16 +87,27 @@ def test_main_hourly_rate_renders_per_image_cost(tmp_path: Path) -> None:
     out = tmp_path / "report.html"
 
     # 7.2 $/hr x 4.0 s / 3600 = $0.00800/img ; x 6.0 s = $0.01200/img
-    rc = main(["--manifest", str(mpath), "--run", f"M={rpath}",
-               "--media-ids", "1,2", "--out", str(out), "--hourly-rate", "7.2"])
+    rc = main(
+        [
+            "--manifest",
+            str(mpath),
+            "--run",
+            f"M={rpath}",
+            "--media-ids",
+            "1,2",
+            "--out",
+            str(out),
+            "--hourly-rate",
+            "7.2",
+        ]
+    )
     assert rc == 0
     doc = out.read_text()
     assert "$0.00800/exposure" in doc
     assert "$0.01200/exposure" in doc
 
     # Discrimination guard: no --hourly-rate => the per-image cost token vanishes.
-    rc = main(["--manifest", str(mpath), "--run", f"M={rpath}",
-               "--media-ids", "1,2", "--out", str(out)])
+    rc = main(["--manifest", str(mpath), "--run", f"M={rpath}", "--media-ids", "1,2", "--out", str(out)])
     assert rc == 0
     assert "/img" not in out.read_text()
 
@@ -93,8 +116,9 @@ def test_main_hourly_rate_zero_is_free_not_suppressed(tmp_path: Path) -> None:
     # 0 $/hr is a legitimate free-tier rate; it must render $0, not be dropped as falsy.
     mpath, rpath = _write_fixtures(tmp_path)
     out = tmp_path / "report.html"
-    rc = main(["--manifest", str(mpath), "--run", f"M={rpath}",
-               "--media-ids", "1,2", "--out", str(out), "--hourly-rate", "0"])
+    rc = main(
+        ["--manifest", str(mpath), "--run", f"M={rpath}", "--media-ids", "1,2", "--out", str(out), "--hourly-rate", "0"]
+    )
     assert rc == 0
     assert "$0.00000/exposure" in out.read_text()
 
@@ -104,25 +128,36 @@ def test_main_rejects_negative_cost_args(tmp_path: Path) -> None:
     out = tmp_path / "report.html"
     for bad in (["--hourly-rate", "-1"], ["--cost-total", "-5"]):
         with pytest.raises(SystemExit):  # argparse .error() exits non-zero
-            main(["--manifest", str(mpath), "--run", f"M={rpath}",
-                  "--media-ids", "1,2", "--out", str(out), *bad])
+            main(["--manifest", str(mpath), "--run", f"M={rpath}", "--media-ids", "1,2", "--out", str(out), *bad])
 
 
 def test_subtitle_cost_total_rendered_only_with_flag(tmp_path: Path) -> None:
     mpath, rpath = _write_fixtures(tmp_path)
     out = tmp_path / "report.html"
 
-    rc = main(["--manifest", str(mpath), "--run", f"M={rpath}",
-               "--media-ids", "1,2", "--out", str(out), "--cost-total", "10.0",
-               "--cost-denominator", "exposure"])
+    rc = main(
+        [
+            "--manifest",
+            str(mpath),
+            "--run",
+            f"M={rpath}",
+            "--media-ids",
+            "1,2",
+            "--out",
+            str(out),
+            "--cost-total",
+            "10.0",
+            "--cost-denominator",
+            "exposure",
+        ]
+    )
     assert rc == 0
     doc = out.read_text()
     assert "total $10.00" in doc
     assert "$5.0000/exposure" in doc  # 10.0 / 2 model exposures
 
     # Discrimination guard: drop --cost-total, the subtitle cost fragment goes away.
-    rc = main(["--manifest", str(mpath), "--run", f"M={rpath}",
-               "--media-ids", "1,2", "--out", str(out)])
+    rc = main(["--manifest", str(mpath), "--run", f"M={rpath}", "--media-ids", "1,2", "--out", str(out)])
     assert rc == 0
     doc = out.read_text()
     assert "total $" not in doc
@@ -175,9 +210,7 @@ def test_tokens_label_integer_zero_does_not_crash() -> None:
     # not raise. No kill power on the BR-04 mutations — those live above.
     bare = _tokens_label(0)
     assert isinstance(bare, str)
-    zeros = _tokens_label(
-        {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "complete": False}
-    )
+    zeros = _tokens_label({"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "complete": False})
     assert isinstance(zeros, str)
 
 
@@ -263,6 +296,7 @@ def test_index_run_rejects_duplicate_media_ids(tmp_path: Path) -> None:
 # BR-01 — sampling frame + cost denominator admit attempted failures
 # ---------------------------------------------------------------------------
 
+
 def test_pick_varied_admits_errored_attempted_ids() -> None:
     manifest = {
         10: {"present_identities": []},
@@ -344,10 +378,10 @@ def test_cost_denominator_is_attempted_corpus_including_errors(tmp_path: Path) -
             "1,2",
             "--out",
             str(out),
-                "--cost-total",
-                "9.0",
-                "--cost-denominator",
-                "exposure",
+            "--cost-total",
+            "9.0",
+            "--cost-denominator",
+            "exposure",
         ]
     )
     assert rc == 0
@@ -361,19 +395,34 @@ def test_cost_exposure_denominator_counts_each_run_exposure(tmp_path: Path) -> N
     mpath, rpath = _write_fixtures(tmp_path)
     second = tmp_path / "second.json"
     second.write_text(
-        json.dumps({
-            "items": [
-                {"media_id": 1, "describe": {"passes": [{"latency_s": 2.0}]}},
-                {"media_id": 2, "describe": {"passes": [{"latency_s": 3.0}]}},
-            ]
-        })
+        json.dumps(
+            {
+                "items": [
+                    {"media_id": 1, "describe": {"passes": [{"latency_s": 2.0}]}},
+                    {"media_id": 2, "describe": {"passes": [{"latency_s": 3.0}]}},
+                ]
+            }
+        )
     )
     out = tmp_path / "report.html"
-    rc = main([
-        "--manifest", str(mpath), "--run", f"A={rpath}", "--run", f"B={second}",
-        "--media-ids", "1,2", "--out", str(out), "--cost-total", "10.0",
-        "--cost-denominator", "exposure",
-    ])
+    rc = main(
+        [
+            "--manifest",
+            str(mpath),
+            "--run",
+            f"A={rpath}",
+            "--run",
+            f"B={second}",
+            "--media-ids",
+            "1,2",
+            "--out",
+            str(out),
+            "--cost-total",
+            "10.0",
+            "--cost-denominator",
+            "exposure",
+        ]
+    )
     assert rc == 0
     doc = out.read_text()
     assert "$2.5000/exposure" in doc  # 10 / (2 exposures per run × 2 runs)
@@ -382,18 +431,34 @@ def test_cost_exposure_denominator_counts_each_run_exposure(tmp_path: Path) -> N
 
 def test_cost_call_denominator_refuses_unknown_calls(tmp_path: Path) -> None:
     mpath, rpath = _write_fixtures(tmp_path)
-    rpath.write_text(json.dumps({
-        "items": [
-            {"media_id": 1, "describe": {"alt_text_draft": "a"}},
-            {"media_id": 2, "describe": {"alt_text_draft": "b"}},
-        ]
-    }))
+    rpath.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {"media_id": 1, "describe": {"alt_text_draft": "a"}},
+                    {"media_id": 2, "describe": {"alt_text_draft": "b"}},
+                ]
+            }
+        )
+    )
     out = tmp_path / "report.html"
     with pytest.raises(SystemExit):
-        main([
-            "--manifest", str(mpath), "--run", f"M={rpath}", "--media-ids", "1,2",
-            "--out", str(out), "--cost-total", "10.0", "--cost-denominator", "call",
-        ])
+        main(
+            [
+                "--manifest",
+                str(mpath),
+                "--run",
+                f"M={rpath}",
+                "--media-ids",
+                "1,2",
+                "--out",
+                str(out),
+                "--cost-total",
+                "10.0",
+                "--cost-denominator",
+                "call",
+            ]
+        )
 
 
 def test_auto_pick_renders_failure_card_for_errored_item(tmp_path: Path) -> None:
@@ -408,59 +473,71 @@ def test_auto_pick_renders_failure_card_for_errored_item(tmp_path: Path) -> None
 
 
 def _write_gate_record(path: Path, *, n: int = 100) -> None:
-    path.write_text(json.dumps({
-        "items": [
+    path.write_text(
+        json.dumps(
             {
-                "media_id": media_id,
-                "describe": {"alt_text_draft": f"d{media_id}", "passes": [{"latency_s": 1.0}]},
-                "error": None,
+                "items": [
+                    {
+                        "media_id": media_id,
+                        "describe": {"alt_text_draft": f"d{media_id}", "passes": [{"latency_s": 1.0}]},
+                        "error": None,
+                    }
+                    for media_id in range(1, n + 1)
+                ],
+                "timing": {"loop": "closed_serial"},
+                "gpu": {"sampling": "enabled"},
             }
-            for media_id in range(1, n + 1)
-        ],
-        "timing": {"loop": "closed_serial"},
-        "gpu": {"sampling": "enabled"},
-    }))
+        )
+    )
 
 
 def _write_gate_manifest(path: Path, *, n: int = 100) -> None:
-    path.write_text(json.dumps({
-        "entries": [
+    path.write_text(
+        json.dumps(
             {
-                "media_id": media_id,
-                "path": f"image-{media_id}.jpg",
-                "sha256": f"{media_id:064x}",
-                "subject_ids": [f"subject-{(media_id - 1) % 10}"],
-                "demographic_cohort": f"cohort-{(media_id - 1) % 2}",
-                "domain": "faces",
-                "difficulty": "medium",
-                "capture_device": "fixture-camera",
-                "lighting": "daylight",
-                "environment": "studio",
-                "session": f"session-{(media_id - 1) % 5}",
-                "reference_facts": [{"kind": "visible", "value": f"fact-{media_id}"}],
-                "spatial_facts": [{"relation": "left_of", "value": f"fact-{media_id}"}],
-                "face_boxes": [{"name": f"subject-{(media_id - 1) % 10}"}],
-                "present_identities": [f"subject-{(media_id - 1) % 10}"],
+                "entries": [
+                    {
+                        "media_id": media_id,
+                        "path": f"image-{media_id}.jpg",
+                        "sha256": f"{media_id:064x}",
+                        "subject_ids": [f"subject-{(media_id - 1) % 10}"],
+                        "demographic_cohort": f"cohort-{(media_id - 1) % 2}",
+                        "domain": "faces",
+                        "difficulty": "medium",
+                        "capture_device": "fixture-camera",
+                        "lighting": "daylight",
+                        "environment": "studio",
+                        "session": f"session-{(media_id - 1) % 5}",
+                        "reference_facts": [{"kind": "visible", "value": f"fact-{media_id}"}],
+                        "spatial_facts": [{"relation": "left_of", "value": f"fact-{media_id}"}],
+                        "face_boxes": [{"name": f"subject-{(media_id - 1) % 10}"}],
+                        "present_identities": [f"subject-{(media_id - 1) % 10}"],
+                    }
+                    for media_id in range(1, n + 1)
+                ]
             }
-            for media_id in range(1, n + 1)
-        ]
-    }))
+        )
+    )
 
 
 def _write_gate_selection_manifest(path: Path, *, n: int = 10) -> None:
     """A disjoint selection/calibration corpus for the sealed gate fixture."""
-    path.write_text(json.dumps({
-        "entries": [
+    path.write_text(
+        json.dumps(
             {
-                "media_id": 1000 + media_id,
-                "path": f"selection-{media_id}.jpg",
-                "sha256": f"{1000 + media_id:064x}",
-                "subject_ids": [f"selection-subject-{(media_id - 1) % 5}"],
-                "present_identities": [f"selection-subject-{(media_id - 1) % 5}"],
+                "entries": [
+                    {
+                        "media_id": 1000 + media_id,
+                        "path": f"selection-{media_id}.jpg",
+                        "sha256": f"{1000 + media_id:064x}",
+                        "subject_ids": [f"selection-subject-{(media_id - 1) % 5}"],
+                        "present_identities": [f"selection-subject-{(media_id - 1) % 5}"],
+                    }
+                    for media_id in range(1, n + 1)
+                ]
             }
-            for media_id in range(1, n + 1)
-        ]
-    }))
+        )
+    )
 
 
 def test_bakeoff_gate_passes_only_with_roster_baselines_and_observability(tmp_path: Path) -> None:
@@ -481,11 +558,25 @@ def test_bakeoff_gate_passes_only_with_roster_baselines_and_observability(tmp_pa
     score.touch()
     out = tmp_path / "gate.html"
     argv = [
-        "--manifest", str(manifest), "--out", str(out), "--bakeoff-gate",
-        "--selection-manifest", str(selection),
-        "--expected-candidate", "candidate", "--expected-incumbent", "incumbent",
-        "--run", f"candidate={candidate}", "--run", f"incumbent={incumbent}",
-        "--score-ok", f"candidate={score}", "--media-ids", "1",
+        "--manifest",
+        str(manifest),
+        "--out",
+        str(out),
+        "--bakeoff-gate",
+        "--selection-manifest",
+        str(selection),
+        "--expected-candidate",
+        "candidate",
+        "--expected-incumbent",
+        "incumbent",
+        "--run",
+        f"candidate={candidate}",
+        "--run",
+        f"incumbent={incumbent}",
+        "--score-ok",
+        f"candidate={score}",
+        "--media-ids",
+        "1",
     ]
     for label, path in baselines.items():
         argv.extend(["--baseline-run", f"{label}={path}"])
@@ -509,8 +600,9 @@ def test_bakeoff_gate_rejects_selection_subject_or_image_overlap(tmp_path: Path)
     evaluation = _gate_evaluation_for_test(manifest, selection)
     assert evaluation["status"] == "not_ready"
     assert evaluation["axes"]["selection"] == "not_ready"
-    assert any("selection" in reason and ("media_id" in reason or "sha256" in reason)
-               for reason in evaluation["reasons"])
+    assert any(
+        "selection" in reason and ("media_id" in reason or "sha256" in reason) for reason in evaluation["reasons"]
+    )
     assert any("subject" in reason for reason in evaluation["reasons"])
 
 
@@ -574,10 +666,23 @@ def test_bakeoff_gate_rejects_incomplete_media_id_multiset(tmp_path: Path) -> No
     score.touch()
     out = tmp_path / "gate.html"
     argv = [
-        "--manifest", str(manifest), "--out", str(out), "--bakeoff-gate",
-        "--expected-candidate", "candidate", "--expected-incumbent", "incumbent",
-        "--run", f"candidate={candidate}", "--run", f"incumbent={incumbent}",
-        "--score-ok", f"candidate={score}", "--media-ids", "1",
+        "--manifest",
+        str(manifest),
+        "--out",
+        str(out),
+        "--bakeoff-gate",
+        "--expected-candidate",
+        "candidate",
+        "--expected-incumbent",
+        "incumbent",
+        "--run",
+        f"candidate={candidate}",
+        "--run",
+        f"incumbent={incumbent}",
+        "--score-ok",
+        f"candidate={score}",
+        "--media-ids",
+        "1",
     ]
     for label, path in baselines.items():
         argv.extend(["--baseline-run", f"{label}={path}"])
@@ -611,11 +716,25 @@ def test_bakeoff_gate_rejects_consented_foreign_required_record(tmp_path: Path) 
     score.touch()
     out = tmp_path / "gate.html"
     argv = [
-        "--manifest", str(manifest), "--out", str(out), "--bakeoff-gate",
-        "--allow-foreign-run", "candidate",
-        "--expected-candidate", "candidate", "--expected-incumbent", "incumbent",
-        "--run", f"candidate={candidate}", "--run", f"incumbent={incumbent}",
-        "--score-ok", f"candidate={score}", "--media-ids", "1",
+        "--manifest",
+        str(manifest),
+        "--out",
+        str(out),
+        "--bakeoff-gate",
+        "--allow-foreign-run",
+        "candidate",
+        "--expected-candidate",
+        "candidate",
+        "--expected-incumbent",
+        "incumbent",
+        "--run",
+        f"candidate={candidate}",
+        "--run",
+        f"incumbent={incumbent}",
+        "--score-ok",
+        f"candidate={score}",
+        "--media-ids",
+        "1",
     ]
     for label, path in baselines.items():
         argv.extend(["--baseline-run", f"{label}={path}"])
@@ -629,17 +748,38 @@ def test_bakeoff_gate_is_not_ready_for_a_serving_skip_or_missing_baselines(tmp_p
     manifest = tmp_path / "golden-100.json"
     _write_gate_manifest(manifest)
     failure = tmp_path / "skip.json"
-    failure.write_text(json.dumps({
-        "schema": "acx-eval/v1", "kind": "serving-gate-failed", "status": "serving-gate-failed",
-        "candidate_id": "candidate", "model_id": "m", "stack": "vllm",
-        "reason": "stack not supported", "evidence": {"planner": "test"},
-    }))
+    failure.write_text(
+        json.dumps(
+            {
+                "schema": "acx-eval/v1",
+                "kind": "serving-gate-failed",
+                "status": "serving-gate-failed",
+                "candidate_id": "candidate",
+                "model_id": "m",
+                "stack": "vllm",
+                "reason": "stack not supported",
+                "evidence": {"planner": "test"},
+            }
+        )
+    )
     out = tmp_path / "gate.html"
-    rc = main([
-        "--manifest", str(manifest), "--out", str(out), "--bakeoff-gate",
-        "--expected-candidate", "candidate", "--expected-incumbent", "incumbent",
-        "--serving-gate-failed", f"candidate={failure}", "--media-ids", "1",
-    ])
+    rc = main(
+        [
+            "--manifest",
+            str(manifest),
+            "--out",
+            str(out),
+            "--bakeoff-gate",
+            "--expected-candidate",
+            "candidate",
+            "--expected-incumbent",
+            "incumbent",
+            "--serving-gate-failed",
+            f"candidate={failure}",
+            "--media-ids",
+            "1",
+        ]
+    )
     assert rc != 0
     doc = out.read_text()
     assert "bakeoff-gate: not_ready" in doc
@@ -690,8 +830,11 @@ def _v3_media_ids() -> list[int]:
 
 
 def _run_record(tmp_path: Path, name: str, media_ids: list[int], sha: object) -> Path:
-    rec: dict = {"items": [{"media_id": m, "describe": {"alt_text_draft": f"d{m}", "passes": [{"latency_s": 1.0}]}}
-                           for m in media_ids]}
+    rec: dict = {
+        "items": [
+            {"media_id": m, "describe": {"alt_text_draft": f"d{m}", "passes": [{"latency_s": 1.0}]}} for m in media_ids
+        ]
+    }
     if sha is not None:
         rec["provenance"] = {"manifest_sha256": sha}
     path = tmp_path / name
@@ -703,8 +846,7 @@ def _build(tmp_path: Path, runs: list[str], *extra: str, manifest: str = _V3_MAN
     from scripts.eval_harness.build_bakeoff_report import main as build_main
 
     out = tmp_path / f"report-{len(list(tmp_path.iterdir()))}.html"
-    argv = ["--manifest", manifest, "--out", str(out),
-            "--media-ids", ",".join(str(m) for m in _v3_media_ids())]
+    argv = ["--manifest", manifest, "--out", str(out), "--media-ids", ",".join(str(m) for m in _v3_media_ids())]
     for spec in runs:
         argv += ["--run", spec]
     return build_main(argv + list(extra)), out
@@ -753,8 +895,18 @@ def test_refusal_warns_that_a_pre_existing_report_is_stale(tmp_path: Path, capsy
     stale.write_text("<html>older report</html>")
     from scripts.eval_harness.build_bakeoff_report import main as build_main
 
-    rc = build_main(["--manifest", _V3_MANIFEST, "--out", str(stale),
-                     "--media-ids", ",".join(str(m) for m in _v3_media_ids()), "--run", f"C={rec}"])
+    rc = build_main(
+        [
+            "--manifest",
+            _V3_MANIFEST,
+            "--out",
+            str(stale),
+            "--media-ids",
+            ",".join(str(m) for m in _v3_media_ids()),
+            "--run",
+            f"C={rec}",
+        ]
+    )
     assert rc == _NOT_COMPARABLE
     assert stale.read_text() == "<html>older report</html>"  # untouched, not half-written
     assert "still holds an older report" in capsys.readouterr().err
@@ -784,8 +936,7 @@ def test_consent_keeps_the_column_but_badges_it(tmp_path: Path) -> None:
     ids = _v3_media_ids()
     foreign = _run_record(tmp_path, "foreign2.json", ids, "a" * 64)
     native = _run_record(tmp_path, "native.json", ids, _v3_sha())
-    rc, out = _build(tmp_path, [f"Control={foreign}", f"Candidate={native}"],
-                     "--allow-foreign-run", "Control")
+    rc, out = _build(tmp_path, [f"Control={foreign}", f"Candidate={native}"], "--allow-foreign-run", "Control")
     assert rc == 0
     doc = out.read_text()
     # Exactly one column per card is badged, and it is the foreign one. An
@@ -814,15 +965,18 @@ def test_structural_mismatch_is_fatal_under_a_non_v3_manifest(tmp_path: Path) ->
 
     superset = _run_record(tmp_path, "toy_superset.json", [1, 2, 424242], None)
     out_bad = tmp_path / "toy_bad.html"
-    assert build_main(["--manifest", str(mpath), "--run", f"A={superset}",
-                       "--media-ids", "1,2", "--out", str(out_bad)]) == _NOT_COMPARABLE
+    assert (
+        build_main(["--manifest", str(mpath), "--run", f"A={superset}", "--media-ids", "1,2", "--out", str(out_bad)])
+        == _NOT_COMPARABLE
+    )
     assert not out_bad.exists()
 
     # Discrimination guard: same manifest, in-corpus run => renders.
     inside = _run_record(tmp_path, "toy_inside.json", [1, 2], None)
     out_ok = tmp_path / "toy_ok.html"
-    assert build_main(["--manifest", str(mpath), "--run", f"A={inside}",
-                       "--media-ids", "1,2", "--out", str(out_ok)]) == 0
+    assert (
+        build_main(["--manifest", str(mpath), "--run", f"A={inside}", "--media-ids", "1,2", "--out", str(out_ok)]) == 0
+    )
     assert "manifest identity: structural only" in out_ok.read_text()
 
 
@@ -870,12 +1024,543 @@ def test_non_v3_manifest_falls_back_to_cross_run_agreement(tmp_path: Path) -> No
     from scripts.eval_harness.build_bakeoff_report import main as build_main
 
     out_ok = tmp_path / "ok.html"
-    assert build_main(["--manifest", str(mpath), "--run", f"A={a}", "--run", f"B={b_same}",
-                       "--media-ids", "1,2", "--out", str(out_ok)]) == 0
+    assert (
+        build_main(
+            [
+                "--manifest",
+                str(mpath),
+                "--run",
+                f"A={a}",
+                "--run",
+                f"B={b_same}",
+                "--media-ids",
+                "1,2",
+                "--out",
+                str(out_ok),
+            ]
+        )
+        == 0
+    )
     assert "manifest identity: structural only" in out_ok.read_text()
 
     # Discrimination guard: same code path, one disagreeing sha => fatal.
     out_bad = tmp_path / "bad.html"
-    assert build_main(["--manifest", str(mpath), "--run", f"A={a}", "--run", f"B={b_diff}",
-                       "--media-ids", "1,2", "--out", str(out_bad)]) == _NOT_COMPARABLE
+    assert (
+        build_main(
+            [
+                "--manifest",
+                str(mpath),
+                "--run",
+                f"A={a}",
+                "--run",
+                f"B={b_diff}",
+                "--media-ids",
+                "1,2",
+                "--out",
+                str(out_bad),
+            ]
+        )
+        == _NOT_COMPARABLE
+    )
     assert not out_bad.exists()
+
+
+# SUBJECT-EVIDENCE-1: synthetic protocol records, never inference or quality scores.
+def _se_sha(value: object) -> str:
+    import hashlib
+
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+
+def _se_attach(doc: dict, status: str, *, ordinal: int = 1, namespace: str = "fixture", token: str = "person") -> dict:
+    """Construct an attestation fixture, independently of the proposed validator."""
+    from copy import deepcopy
+
+    from scripts.eval_harness.manifest import GoldenManifest
+
+    doc = deepcopy(doc)
+    container = "entries" if "entries" in doc else "items"
+    entry = doc[container][ordinal - 1]
+    if status == "not_applicable":
+        for key in ("subject_id", "subject_ids", "subject", "subjects", "present_identities"):
+            entry.pop(key, None)
+        entry.update(present_identities=[], face_count=0, face_boxes=[])
+    projection = deepcopy(doc)
+    for row in projection[container]:
+        row.pop("subject_evidence", None)
+    profile = "golden_v3" if doc.get("manifest_version") == 3 else "raw_report"
+    if profile == "golden_v3":
+        projection = GoldenManifest.model_validate(projection).model_dump()
+    projected = projection[container][ordinal - 1]
+    digest = _se_sha(projection)
+    evidence = {
+        "version": 1,
+        "status": status,
+        "subject_ids": [f"{namespace}:{token}"] if status in ("known", "partial") else [],
+        "identity_namespace": namespace if status in ("known", "partial") else None,
+        "complete": status in ("known", "not_applicable"),
+        "scope": "image_people_and_depictions",
+        "authority": "protocol-fixture-authority",
+        "evidence_reference": "immutable-protocol-review-é",
+        "source_binding": {
+            "digest_profile": profile,
+            "namespace": f"manifest-sha256:{digest}",
+            "source_manifest_sha256": digest,
+            "source_entry_ordinal": ordinal,
+            "source_entry_sha256": _se_sha(projected),
+            "source_original_sha256": projected["sha256"],
+        },
+    }
+    if status != "unknown":
+        support = {
+            "version": 1,
+            "authority_reference": evidence["authority"],
+            "review_reference": evidence["evidence_reference"],
+            "declarer_id": "fixture-declarer",
+            "reviewer_id": "fixture-independent-reviewer",
+            "basis": "independent_image_evidence",
+            "claim": {
+                "known": "complete_subjects",
+                "partial": "incomplete_subjects",
+                "not_applicable": "no_people_or_depictions",
+            }[status],
+            "scope": "image_people_and_depictions",
+            "source_original_sha256": projected["sha256"],
+        }
+        evidence.update(support=support, support_sha256=_se_sha(support))
+    entry["subject_evidence"] = evidence
+    return doc
+
+
+def _se_frames(tmp_path: Path) -> tuple[dict, dict]:
+    reported, selection = tmp_path / "reported.json", tmp_path / "selection.json"
+    _write_gate_manifest(reported)
+    _write_gate_selection_manifest(selection)
+    return json.loads(reported.read_text()), json.loads(selection.read_text())
+
+
+def _se_invoke(tmp_path: Path, argv: list[str]) -> int:
+    """Retain the actual boundary output and imported source identity per call."""
+    import hashlib
+    from contextlib import redirect_stderr, redirect_stdout
+    from io import StringIO
+
+    from scripts.eval_harness import build_bakeoff_report
+
+    stdout, stderr = StringIO(), StringIO()
+    with redirect_stdout(stdout), redirect_stderr(stderr):
+        result = main(argv)
+    source = Path(build_bakeoff_report.__file__)
+    (tmp_path / "cli-receipt.json").write_text(
+        json.dumps(
+            {
+                "argv": argv,
+                "exit_code": result,
+                "stdout": stdout.getvalue(),
+                "stderr": stderr.getvalue(),
+                "import_path": str(source),
+                "import_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+            },
+            indent=2,
+        )
+    )
+    print(stdout.getvalue(), end="")
+    import sys
+
+    print(stderr.getvalue(), end="", file=sys.stderr)
+    return result
+
+
+def _se_public(
+    tmp_path: Path,
+    reported: dict,
+    *selections: dict,
+    gate: bool = True,
+    allow_foreign: bool = False,
+    pins: dict | None = None,
+) -> tuple[int, Path]:
+    """Drive real main grammar; all arms are bounded synthetic protocol fixtures."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    manifest = tmp_path / "reported.json"
+    manifest.write_text(json.dumps(reported))
+    out = tmp_path / "report.html"
+    argv = [
+        "--manifest",
+        str(manifest),
+        "--out",
+        str(out),
+        "--media-ids",
+        "1",
+        "--expected-candidate",
+        "candidate",
+        "--expected-incumbent",
+        "incumbent",
+    ]
+    if gate:
+        argv.append("--bakeoff-gate")
+    for index, selection in enumerate(selections, 1):
+        path = tmp_path / f"selection-{index}.json"
+        path.write_text(json.dumps(selection))
+        argv += ["--selection-manifest", str(path)]
+    labels = (
+        "candidate",
+        "incumbent",
+        "zero_rule_context_echo",
+        "context_only_heuristic",
+        "current_production",
+        "blinded_human",
+    )
+    for label in labels:
+        path = tmp_path / f"{label}.json"
+        _write_gate_record(path, n=len(reported["entries"]))
+        if pins is not None:
+            record = json.loads(path.read_text())
+            record["provenance"] = {"manifest_sha256": pins[label]}
+            path.write_text(json.dumps(record))
+        argv += ["--run" if label in labels[:2] else "--baseline-run", f"{label}={path}"]
+        if allow_foreign:
+            argv += ["--allow-foreign-run", label]
+    score = tmp_path / "synthetic-protocol.score.ok"
+    score.touch()
+    argv += ["--score-ok", f"candidate={score}"]
+    return _se_invoke(tmp_path, argv), out
+
+
+@pytest.mark.parametrize("structured_role,shared", [("selection", True), ("reported", True), ("selection", False)])
+def test_subject_evidence_mixed_same_person_public_cli(tmp_path: Path, structured_role: str, shared: bool) -> None:
+    reported, selection = _se_frames(tmp_path)
+    # Omitted evidence keeps the old disjoint and shared-label routes.
+    rc, out = _se_public(tmp_path / "legacy-disjoint", reported, selection)
+    assert rc == 0
+    assert "bakeoff-gate: pass" in out.read_text()
+    if shared:
+        selection["entries"][0].update(subject_ids=["subject-0"], present_identities=["subject-0"])
+        rc, out = _se_public(tmp_path / "legacy-overlap", reported, selection)
+        assert rc == 5
+        assert "overlaps reported subject values" in out.read_text()
+    if structured_role == "selection":
+        selection = _se_attach(selection, "known")
+    else:
+        reported = _se_attach(reported, "known")
+    rc, out = _se_public(tmp_path / "structured", reported, selection)
+    assert rc == 5
+    assert "subject comparison incomparable: identity_authority_unresolved" in out.read_text()
+    assert "protocol-fixture-authority" not in out.read_text()
+
+
+@pytest.mark.parametrize(
+    "namespace,token,collision",
+    [
+        ("other-frame", "same-person", False),
+        ("fixture", "same-person", False),
+        ("distinct", "different-person", False),
+        ("other-frame", "same-person", True),
+    ],
+)
+def test_subject_evidence_namespace_comparison_public_cli(
+    tmp_path: Path,
+    namespace: str,
+    token: str,
+    collision: bool,
+) -> None:
+    reported, selection = _se_frames(tmp_path)
+    if collision:
+        selection["entries"][0]["media_id"] = 1
+    reported = _se_attach(reported, "known", token="same-person")
+    selection = _se_attach(selection, "known", namespace=namespace, token=token)
+    rc, out = _se_public(tmp_path / "keys", reported, selection)
+    assert rc == 5
+    assert "subject comparison incomparable: identity_authority_unresolved" in out.read_text()
+    if collision:
+        assert "media_id" in out.read_text()
+
+
+@pytest.mark.parametrize("role", ["selection", "selection-items", "reported"])
+def test_subject_evidence_supported_empty_scene_public_cli(tmp_path: Path, role: str) -> None:
+    reported, selection = _se_frames(tmp_path)
+    if role == "selection-items":
+        selection["items"] = selection.pop("entries")
+    selection = _se_attach(selection, "not_applicable")
+    if role == "reported":
+        reported = _se_attach(reported, "not_applicable")
+    rc, out = _se_public(tmp_path / role, reported, selection)
+    if role.startswith("selection"):
+        assert rc == 0
+        assert "bakeoff-gate: pass" in out.read_text()
+    else:
+        assert rc == 5
+        doc = out.read_text()
+        assert "mandatory subject strata unavailable: 99/100" in doc
+        assert "lacks explicit subject evidence" not in doc
+        assert "subject comparison incomparable" not in doc
+
+
+@pytest.mark.parametrize(
+    "kind",
+    ["missing", "zero-only", "unknown", "partial-group", "partial-reflection", "partial-depiction", "missing-reported"],
+)
+def test_subject_evidence_unknown_partial_depiction_public_cli(tmp_path: Path, kind: str) -> None:
+    import re
+    from html import unescape
+
+    reported, selection = _se_frames(tmp_path)
+    # Exactly one cross-frame pair: no other legacy row can supply a refusal.
+    # Finalize both documents' ordering BEFORE attaching source-bound evidence.
+    reported["entries"] = reported["entries"][:1]
+    selection["entries"] = selection["entries"][:1]
+    role = "reported" if kind in ("partial-reflection", "missing-reported") else "selection"
+    target = reported if role == "reported" else selection
+    if kind in ("missing", "zero-only", "missing-reported"):
+        target["entries"][0].update(subject_ids=[], present_identities=[])
+        if kind == "zero-only":
+            target["entries"][0]["face_count"] = 0
+    else:
+        target = _se_attach(target, "unknown" if kind == "unknown" else "partial", token=kind)
+    # A supported empty opposite must not hide an incomplete observation.
+    if role == "reported":
+        reported = target
+        selection = _se_attach(selection, "not_applicable")
+    else:
+        selection = target
+        reported = _se_attach(reported, "not_applicable")
+    rc, out = _se_public(tmp_path / kind, reported, selection)
+    assert rc == 5
+    doc = out.read_text()
+    assert "selection=not_ready" in doc
+    if kind in ("missing", "zero-only", "missing-reported"):
+        assert "subject" in doc and "selection" in doc
+        code = "missing_subject_evidence"
+    else:
+        assert (
+            f"subject comparison incomparable: {'unknown' if kind == 'unknown' else 'partial'}_subject_evidence" in doc
+        )
+        code = "unknown_subject_evidence" if kind == "unknown" else "partial_subject_evidence"
+    # Public reason carries the incomplete operand's role and one-based ordinal;
+    # accept punctuation/markup differences without accepting an unrelated axis.
+    reasons = [unescape(re.sub(r"<[^>]*>", " ", reason.split("</li>")[0])) for reason in doc.split("<li>")[1:]]
+    matching = [reason for reason in reasons if re.search(rf"subject comparison incomparable: {code}\b", reason)]
+    assert matching, f"missing public incomparable diagnostic: {code}"
+    assert any(
+        re.search(rf"\b{role}\b", reason) and re.search(r"\b(?:entry|ordinal)\s*(?:=|:|#)?\s*1\b", reason)
+        for reason in matching
+    ), f"diagnostic must identify {role} entry ordinal 1: {matching}"
+
+
+@pytest.mark.parametrize(
+    "role,defect,code,gate",
+    [
+        ("selection", "null", "evidence_shape", True),
+        ("reported", "nested-missing", "evidence_version", False),
+        ("selection", "nested-version", "evidence_version", True),
+        ("reported", "outer-string", "outer_version", True),
+        ("selection", "outer-null", "outer_version", False),
+        ("selection", "outer-bool", "outer_version", True),
+        ("selection", "outer-v2", "outer_version", True),
+        ("selection", "namespace", "source_binding", True),
+        ("reported", "profile", "source_binding", False),
+        ("selection", "ordinal", "source_binding", True),
+        ("selection", "order", "source_binding", True),
+        ("selection", "entry-hash", "source_binding", True),
+        ("reported", "original-hash", "source_binding", True),
+        ("selection", "support-hash", "support_binding", False),
+        ("selection", "review-missing", "evidence_shape", True),
+        ("selection", "strict-binding", "source_binding", True),
+        ("reported", "strict-binding", "source_binding", False),
+        ("reported", "hidden-ordinal", "evidence_shape", True),
+        ("selection", "hidden-ordinal", "evidence_shape", True),
+        ("selection2", "hidden-ordinal", "evidence_shape", True),
+        ("reported", "known-incomplete", "state_consistency", False),
+        ("selection", "known-incomplete", "state_consistency", False),
+        ("reported", "empty-person", "evidence_conflict", False),
+        ("selection", "empty-person", "evidence_conflict", False),
+        ("selection", "outer-and-evidence-version", "outer_version", False),
+        ("reported", "evidence-version-and-shape", "evidence_version", False),
+        ("selection", "shape-and-state", "evidence_shape", False),
+        ("reported", "state-and-source", "state_consistency", False),
+        ("selection", "source-and-support", "source_binding", False),
+        ("reported", "support-and-conflict", "support_binding", False),
+    ],
+)
+def test_subject_evidence_foreign_binding_and_version_public_cli(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    role: str,
+    defect: str,
+    code: str,
+    gate: bool,
+) -> None:
+    reported, selection = _se_frames(tmp_path)
+    base = reported if role == "reported" else selection
+    if defect == "strict-binding":
+        base = json.loads(Path(_V3_MANIFEST).read_text())
+    paired_defects = {
+        "known-incomplete",
+        "empty-person",
+        "outer-and-evidence-version",
+        "evidence-version-and-shape",
+        "shape-and-state",
+        "state-and-source",
+        "source-and-support",
+        "support-and-conflict",
+    }
+    status = "not_applicable" if defect in ("empty-person", "support-and-conflict") else "known"
+    target = _se_attach(base, status)
+    evidence = target["entries"][0]["subject_evidence"]
+    if defect in paired_defects:
+        # The same real public route accepts the coherent parent. Exploratory
+        # mode still has to validate supplied evidence, even with allow-foreign.
+        parent_reported = target if role == "reported" else reported
+        parent_selection = target if role == "selection" else selection
+        parent_rc, parent_out = _se_public(
+            tmp_path / "valid-parent", parent_reported, parent_selection, gate=gate, allow_foreign=True
+        )
+        assert parent_rc == 0
+        assert parent_out.exists()
+        capsys.readouterr()
+    if defect in ("empty-person", "support-and-conflict"):
+        target["entries"][0].update(present_identities=["synthetic-person"], face_count=1)
+        # Retain the absence attestation and bind it to the actual conflicting
+        # row; a stale projection must not mask the intended conflict code.
+        from copy import deepcopy
+
+        projection = deepcopy(target)
+        for row in projection["entries"]:
+            row.pop("subject_evidence", None)
+        digest = _se_sha(projection)
+        evidence["source_binding"].update(
+            namespace=f"manifest-sha256:{digest}",
+            source_manifest_sha256=digest,
+            source_entry_sha256=_se_sha(projection["entries"][0]),
+        )
+        if defect == "support-and-conflict":
+            evidence["support_sha256"] = "f" * 64
+    elif defect in ("known-incomplete", "state-and-source", "shape-and-state"):
+        evidence["complete"] = False
+        if defect == "state-and-source":
+            evidence["source_binding"]["source_entry_sha256"] = "f" * 64
+        elif defect == "shape-and-state":
+            evidence["support"]["unrecognized"] = True
+            evidence["support_sha256"] = _se_sha(evidence["support"])
+    elif defect == "outer-and-evidence-version":
+        target["manifest_version"] = 2
+        evidence["version"] = 2
+    elif defect == "evidence-version-and-shape":
+        evidence["version"] = 2
+        evidence["support"]["unrecognized"] = True
+        evidence["support_sha256"] = _se_sha(evidence["support"])
+    elif defect == "source-and-support":
+        evidence["source_binding"]["source_entry_sha256"] = "f" * 64
+        evidence["support_sha256"] = "f" * 64
+    elif defect == "hidden-ordinal":
+        # A later row with the same media ID cannot erase an invalid earlier row.
+        target["entries"][0]["subject_evidence"] = None
+        target["entries"][1]["media_id"] = target["entries"][0]["media_id"]
+    elif defect == "strict-binding":
+        evidence["source_binding"]["source_entry_sha256"] = "f" * 64
+    elif defect == "order":
+        target["entries"].reverse()
+    elif defect == "null":
+        target["entries"][0]["subject_evidence"] = None
+    elif defect == "nested-missing":
+        evidence.pop("version")
+    elif defect == "nested-version":
+        evidence["version"] = 2
+    elif defect.startswith("outer-"):
+        target["manifest_version"] = {"outer-string": "3", "outer-null": None, "outer-bool": True, "outer-v2": 2}[
+            defect
+        ]
+    elif defect == "support-hash":
+        evidence["support_sha256"] = "f" * 64
+    elif defect == "review-missing":
+        evidence["support"].pop("review_reference")
+        evidence["support_sha256"] = _se_sha(evidence["support"])
+    else:
+        field, value = {
+            "namespace": ("namespace", "foreign"),
+            "profile": ("digest_profile", "golden_v3"),
+            "ordinal": ("source_entry_ordinal", 2),
+            "entry-hash": ("source_entry_sha256", "f" * 64),
+            "original-hash": ("source_original_sha256", "f" * 64),
+        }[defect]
+        evidence["source_binding"][field] = value
+    if defect.startswith("outer-"):
+        # Invalid outer version is the targeted defect, not a stale raw digest.
+        from copy import deepcopy
+
+        projection = deepcopy(target)
+        for row in projection["entries"]:
+            row.pop("subject_evidence", None)
+        digest = _se_sha(projection)
+        evidence["source_binding"].update(namespace=f"manifest-sha256:{digest}", source_manifest_sha256=digest)
+    if role == "reported":
+        reported = target
+    else:
+        selection = target
+    selections = (selection,)
+    if role == "selection2":
+        _, legacy_selection = _se_frames(tmp_path)
+        selections = (legacy_selection, selection)
+    rc, out = _se_public(tmp_path / "invalid", reported, *selections, gate=gate, allow_foreign=True)
+    err = capsys.readouterr().err
+    assert rc == 4
+    assert not out.exists()
+    assert f"subject evidence invalid: {code}" in err
+    import re
+
+    assert re.findall(r"subject evidence invalid: ([a-z_]+)\b", err) == [code]
+    assert "protocol-fixture-authority" not in err
+
+
+@pytest.mark.parametrize(
+    "stale",
+    [
+        "candidate",
+        "incumbent",
+        "zero_rule_context_echo",
+        "context_only_heuristic",
+        "current_production",
+        "blinded_human",
+    ],
+)
+def test_subject_evidence_amendment_rejects_old_digest(tmp_path: Path, stale: str) -> None:
+    from scripts.eval_harness.manifest import GoldenManifest
+
+    original = json.loads(Path(_V3_MANIFEST).read_text())
+    old = GoldenManifest.model_validate(original)
+    amended = _se_attach(original, "known")
+    # Real model acceptance is deliberately required; no fake future module/oracle.
+    model = GoldenManifest.model_validate(amended)
+    old_sha, new_sha = _se_sha(old.model_dump()), _se_sha(model.model_dump())
+    assert new_sha != old_sha
+    labels = (
+        "candidate",
+        "incumbent",
+        "zero_rule_context_echo",
+        "context_only_heuristic",
+        "current_production",
+        "blinded_human",
+    )
+    pins = dict.fromkeys(labels, new_sha)
+    # These strict fixtures use their actual media IDs, unlike the raw 1..100 frame.
+    for label in labels:
+        _run_record(tmp_path, f"{label}.json", [e["media_id"] for e in amended["entries"]], new_sha)
+    manifest = tmp_path / "amended.json"
+    manifest.write_text(json.dumps(amended))
+
+    def render(name: str) -> tuple[int, Path]:
+        out = tmp_path / f"{name}.html"
+        args = ["--manifest", str(manifest), "--out", str(out), "--media-ids", str(amended["entries"][0]["media_id"])]
+        for label in labels:
+            args += ["--run" if label in labels[:2] else "--baseline-run", f"{label}={tmp_path / (label + '.json')}"]
+        receipt_dir = tmp_path / name
+        receipt_dir.mkdir()
+        return _se_invoke(receipt_dir, args), out
+
+    rc, out = render("matching")
+    assert rc == 0
+    assert "NOT COMPARABLE" not in out.read_text()
+    pins[stale] = old_sha
+    _run_record(tmp_path, f"{stale}.json", [e["media_id"] for e in amended["entries"]], pins[stale])
+    rc, out = render("stale")
+    assert rc == 4
+    assert not out.exists()

@@ -40,7 +40,9 @@ const SETTINGS_SECTION_RETENTION_HEADING_ID = 'acx-retention-title';
 
 interface SettingsFormSnapshot {
   url: string;
+  urlRevision: number;
   apiKey: string;
+  apiKeyRevision: number;
   descriptionBudgetMaxAttempts: string;
   recognitionEnabled: boolean;
   allowPersonNames: boolean | null;
@@ -74,7 +76,7 @@ export const SettingsPage = (): React.JSX.Element => {
   const routingSavePending = useRef(false);
   const routingSaveFeedback = useRef(false);
   const routingSaveIncludesOtherSettings = useRef(false);
-  const inFlightRoutingApiKey = useRef<string | null>(null);
+  const inFlightRoutingSnapshot = useRef<SettingsFormSnapshot | null>(null);
   // A blur queues routing fields only; an explicit submit queues the full form.
   const queuedRoutingOnly = useRef(false);
   const queuedSaveSnapshot = useRef<SettingsFormSnapshot | null>(null);
@@ -201,7 +203,9 @@ export const SettingsPage = (): React.JSX.Element => {
 
   const captureFormSnapshot = (): SettingsFormSnapshot => ({
     url: state.url,
+    urlRevision: state.urlRevision,
     apiKey: state.apiKey,
+    apiKeyRevision: state.apiKeyRevision,
     descriptionBudgetMaxAttempts: state.descriptionBudgetMaxAttempts,
     recognitionEnabled: state.recognitionEnabled,
     allowPersonNames: state.allowPersonNames,
@@ -279,13 +283,12 @@ export const SettingsPage = (): React.JSX.Element => {
       );
       routingSaveFeedback.current = hasRoutingChanges && !routingSaveIncludesOtherSettings.current;
     }
-    inFlightRoutingApiKey.current = payload.api_key ?? null;
+    inFlightRoutingSnapshot.current = values;
     saveMutation.mutate(payload);
   };
 
   const drainQueuedSave = (
     refreshedSettings?: SettingsResponse,
-    alreadySavedApiKey: string | null = null,
   ): void => {
     const snapshot = queuedSaveSnapshot.current;
     if (!snapshot) {
@@ -305,22 +308,25 @@ export const SettingsPage = (): React.JSX.Element => {
     routingSaveIncludesOtherSettings.current = false;
     dispatch({ type: 'clearSaveMessage' });
     dispatch({ type: 'clearTestResult' });
-    const snapshotForSave = alreadySavedApiKey !== null && snapshot.apiKey === alreadySavedApiKey
-      ? { ...snapshot, apiKey: '' }
-      : snapshot;
-    submitSnapshot(snapshotForSave, data, true, routingOnly);
+    submitSnapshot(snapshot, data, true, routingOnly);
   };
 
   const saveMutation = useMutation({
     mutationFn: saveSettings,
     onSuccess: async (data: SaveSettingsResponse) => {
-      const settledApiKey = inFlightRoutingApiKey.current;
-      inFlightRoutingApiKey.current = null;
-      const alreadySavedApiKey = settledApiKey !== null && data.saved.includes('api_key')
-        ? settledApiKey
-        : null;
-      if (alreadySavedApiKey !== null) {
-        dispatch({ type: 'acknowledgeApiKey', value: alreadySavedApiKey });
+      const settled = inFlightRoutingSnapshot.current;
+      inFlightRoutingSnapshot.current = null;
+      if (settled && data.saved.includes('url')) {
+        dispatch({ type: 'acknowledgeUrl', revision: settled.urlRevision });
+      }
+      if (settled?.apiKey && data.saved.includes('api_key')) {
+        dispatch({ type: 'acknowledgeApiKey', value: settled.apiKey, revision: settled.apiKeyRevision });
+        // Retire the acknowledged intent before readback can reject onSuccess
+        // and React Query enters onError. Never retire a newer edit's intent.
+        const queued = queuedSaveSnapshot.current;
+        if (queued?.apiKeyRevision === settled.apiKeyRevision && queued.apiKey === settled.apiKey) {
+          queuedSaveSnapshot.current = { ...queued, apiKey: '' };
+        }
       }
       const isRoutingAutosave = routingSavePending.current;
       const includesOtherSettings = routingSaveIncludesOtherSettings.current;
@@ -351,7 +357,7 @@ export const SettingsPage = (): React.JSX.Element => {
           queryFn: fetchSettings,
         });
         syncLocalizedRouting(refreshedOnFail);
-        drainQueuedSave(refreshedOnFail, alreadySavedApiKey);
+        drainQueuedSave(refreshedOnFail);
         return;
       }
 
@@ -376,10 +382,10 @@ export const SettingsPage = (): React.JSX.Element => {
         scheduledHealthCheck.current = { afterRoutingSave: true, request: null };
         startScheduledHealthCheck();
       }
-      drainQueuedSave(refreshed, alreadySavedApiKey);
+      drainQueuedSave(refreshed);
     },
     onError: (error) => {
-      inFlightRoutingApiKey.current = null;
+      inFlightRoutingSnapshot.current = null;
       const isRoutingAutosave = routingSavePending.current;
       if (isRoutingAutosave) {
         routingSavePending.current = false;
@@ -543,10 +549,20 @@ export const SettingsPage = (): React.JSX.Element => {
       return;
     }
     if (saveMutation.isPending || routingSavePending.current) {
+      const committed = captureFormSnapshot();
       if (!queuedSaveSnapshot.current) {
         queuedRoutingOnly.current = true;
       }
-      queuedSaveSnapshot.current = captureFormSnapshot();
+      // A routing commit changes only routing intent in an already submitted form.
+      queuedSaveSnapshot.current = queuedSaveSnapshot.current
+        ? {
+          ...queuedSaveSnapshot.current,
+          url: committed.url,
+          urlRevision: committed.urlRevision,
+          apiKey: committed.apiKey,
+          apiKeyRevision: committed.apiKeyRevision,
+        }
+        : committed;
       return;
     }
 
@@ -569,7 +585,7 @@ export const SettingsPage = (): React.JSX.Element => {
 
     routingSavePending.current = true;
     routingSaveFeedback.current = true;
-    inFlightRoutingApiKey.current = payload.api_key ?? null;
+    inFlightRoutingSnapshot.current = captureFormSnapshot();
     invalidateHealthProbe();
     dispatch({ type: 'setSaveMessage', message: __('Saving…', 'alt-context'), tone: 'info' });
     saveMutation.mutate(payload);
@@ -684,16 +700,10 @@ export const SettingsPage = (): React.JSX.Element => {
         }}
         actions={{
           onUrlChange: (value) => {
-            if (queuedSaveSnapshot.current) {
-              queuedSaveSnapshot.current = { ...queuedSaveSnapshot.current, url: value };
-            }
             invalidateHealthProbe();
             dispatch({ type: 'setUrl', value });
           },
           onApiKeyChange: (value) => {
-            if (queuedSaveSnapshot.current) {
-              queuedSaveSnapshot.current = { ...queuedSaveSnapshot.current, apiKey: value };
-            }
             invalidateHealthProbe();
             dispatch({ type: 'setApiKey', value });
           },

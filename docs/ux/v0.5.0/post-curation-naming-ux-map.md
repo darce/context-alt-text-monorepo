@@ -17,7 +17,7 @@
 | Re-weave status, pause, retry | Activity status strip (existing `useActivityStatus()` authority), plus a `naming` state | Background work gets quiet status ([NAV-18]), and there is no second poller. |
 | Review name proposals | Media queue, as a filter: `?hasDraft=1&proposal=names` | Proposals are drafts, so they need no second queue ([NAV-05]), and the view deep-links ([NAV-11]). |
 | Don't name a person in one photo | A proposal row, or the editor correction chip | Disclosure is decided per photo, beside that photo's text ([NAV-19]). |
-| Not this person | Proposal row, face grid, editor chip | Identity errors go back to the cluster ([HAI-02]). |
+| Not this person | Proposal row, face grid, editor chip | Identity errors go back to the cluster ([CARD-02]). |
 | Consent and pause | Settings, under People in descriptions | Override and operate are separate controls ([HAI-04]). |
 
 ## Screens
@@ -79,11 +79,11 @@ after Leave unnamed:
 ```text
 | Activity: Adding names · 9 of 14 descriptions              [Pause] [Details] |
 | Activity: Names ready for 14 descriptions          [Review names] [Dismiss]  |
-| Activity: Name updates paused · 3 changes waiting                 [Resume]   |
+| Activity: Adding names paused · 3 waiting · removals still run   [Resume]   |
 | Activity: 2 descriptions couldn't get names                [Retry] [Details] |
 ```
 
-- **Status, next step and stop ([INT-10], [HAI-04]).** Pause is the HAI-04 control that the ADR left without a place.
+- **Status, next step and stop ([INT-10], [HAI-04]).** Pause is the HAI-04 control that the ADR left without a place. It stops name additions and proposal refresh. Removals still run, so a pause never keeps a revoked name public.
 - **Coalesce.** Naming five people in a row produces one rolling entry, not five. Toasts are already suppressed while the strip is mounted.
 - **Manual recovery ([INT-20]).** When the bounded retries run out (rg-007), the item says so and offers Retry. The ADR had bounded retries but no way to recover by hand.
 - **Visible mode ([INT-15]).** While paused, the strip says so wherever names would otherwise appear.
@@ -118,7 +118,7 @@ after batch apply:
   - Each row is a diff, and the name appears with the crop the weave used.
   - Verification is placed where the risk is (the name span and its crop), not in a standing banner ([HAI-13]).
 - **Per-person crop strip.** The question "is this Daniel?" is answered once across all 14 crops. An outlier face stands out in a uniform strip ([PERC-03]). Rubber-stamping row by row is how a wrong name slips through.
-- **Three reasons, three actions ([HAI-02], [HAI-11], [INT-19]).**
+- **Three reasons, three actions ([CARD-02], [HAI-11], [INT-19]).**
 
   | Action | Records | Reaches |
   | --- | --- | --- |
@@ -154,7 +154,7 @@ strip, after removal (no confirm dialog):
 - **Removal is the safe direction for privacy.** It runs immediately, with a notice that states the effect on published text ([INT-22], [PERC-05]).
   - There is no per-face confirm dialog. WBTRUST C4 already found per-face confirms costly, and [INT-13] applies.
 - **Undo reverses the unbind, not the text.** An undo that only re-applied the old text would publish a name with no binding behind it. Replay would fail (PROV-01), and the next re-weave would remove the name again, so it would flap.
-  - The alt text is never edited apart from its source. It follows the weave.
+  - The alt text is never edited apart from its source. It follows the weave, and the name comes back as a proposal.
 
 ### S6. A human-edited alt gets a suggestion, never a replacement
 
@@ -186,7 +186,7 @@ after Save, where the edit removed a woven name (inline, not a modal):
 ```
 
 - **Modeless and after save ([INT-13], [INT-28]).** "Just wording" is the default and records nothing.
-- **The identity correction reaches the cluster ([HAI-02]).**
+- **The identity correction reaches the cluster ([CARD-02]).**
 - **The effect of becoming human-edited is stated ([HAI-18]).**
 
 ### S8. Consent and pause
@@ -211,18 +211,18 @@ on unchecking (rare, consequential, so it confirms):
 
   | Control | Effect |
   | --- | --- |
-  | Pause | Stops updates ([HAI-04], operate) |
+  | Pause | Stops name additions; removals still run ([HAI-04], operate) |
   | Turn off names | Removes names (override) |
 
 ## Per-photo naming states
 
 ```text
-generic draft ──(curation event, mirror ACK)──► names proposal
-     │                                          ├─ Apply ──────► machine-owned alt
-     │ Accept (generic)                         ├─ Not <name> ─► unbind, re-weave
-     ▼                                          ├─ Don't name ─► withhold, re-weave
-machine-owned alt ──(curation)──► proposal      ├─ Edit ───────► human-edited alt
-     │                                          └─ unselected ─► stays a proposal
+generic draft ──(curation, mirror ACK)──► names proposal
+     │                                  ├─ Apply ──────► machine-owned alt
+     │ Accept (generic)                 ├─ Not <name> ─► unbind, re-weave
+     ▼                                  ├─ Don't name ─► withhold, re-weave
+machine-owned alt ──(curation)──► prop. ├─ Edit ───────► human-edited alt
+     │                                  └─ unselected ─► stays a proposal
      │ removal event ──► auto-revert + notice
      │                   Undo = undo the curation op
      ▼
@@ -232,7 +232,7 @@ human-edited alt ──(curation)──► name-only suggestion
 
 ## What this walkthrough changed
 
-The screens were drawn after the first ADR draft (`d5fe620`), not before it. These changes come from walking each screen against the canon rows below.
+The screens were drawn after the first ADR draft (`d5fe620`), not before it. These changes come from walking each screen against the canon rows below. The sol review and its adjudication then sharpened two of them: a pause never blocks removals, and a correction is cited to the correction-at-source card rather than a training-feedback row.
 
 | ADR rule | First draft | Changed to |
 | --- | --- | --- |
@@ -248,10 +248,10 @@ The screens were drawn after the first ADR draft (`d5fe620`), not before it. The
 
 ## Canon v0.26.2 rows used
 
-| ID | Rule | Lexicon |
+| ID | Rule | Source |
 | --- | --- | --- |
 | [CAL-10] | Inconclusive is a valid human output | ml-systems |
-| [HAI-02] | Correction must reach the source | interaction-ux |
+| [CARD-02] | Correction at source | reasoning card |
 | [HAI-04] | Activate–operate–override | interaction-ux |
 | [HAI-05] | Imperceptible AI is not ethical | interaction-ux |
 | [HAI-06] | Audit trail as design fuel | interaction-ux |

@@ -8,9 +8,13 @@ sandbox.
 from __future__ import annotations
 
 import hashlib
+import http.client
+import io
 import json
+import os
 import re
 import socket
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -539,10 +543,7 @@ def test_refresh_with_output_writes_only_the_requested_file(tmp_path: Path) -> N
 @pytest.mark.parametrize("protected", [default_registry_path(), DEFAULT_INTAKE_PATH])
 def test_output_cannot_overwrite_the_sealed_registry_or_the_intake_file(protected: Path) -> None:
     before = protected.read_bytes()
-    try:
-        code = main(["--output", str(protected)])
-    finally:
-        protected.write_bytes(before)  # guard: never leave a repo file changed by a failing test
+    code = main(["--output", str(protected)])
 
     assert code == 2
     assert protected.read_bytes() == before
@@ -586,3 +587,246 @@ def test_json_output_round_trips_as_the_report_schema(capsys: pytest.CaptureFixt
     assert report.schema_id == "bakeoff-intake-report/v1"
     assert len(report.sealed) == 16
     assert len(report.research) == 10
+
+
+# --- second-dispatch regressions (synthetic HTTP / filesystem failures) -----
+
+
+def test_supplied_unsloth_docs_are_recovered_without_model_admission() -> None:
+    expected = {
+        "https://unsloth.ai/docs",
+        "https://unsloth.ai/docs/models/qwen3.8",
+        "https://unsloth.ai/docs/models/muse-glimmer",
+        "https://unsloth.ai/docs/models/qwen3.8-next",
+    }
+    report = build_report()
+    assert {link.url for link in report.docs_links} == expected, "supplied docs links were lost"
+    assert len(report.docs_links) == 4
+    assert all(link.kind == "docs" and link.label for link in report.docs_links)
+    for url in expected:
+        assert url in render_markdown(report)
+        assert url in report.model_dump_json()
+    assert len(report.sealed) == 16
+    assert len(report.research) == 10
+    assert generation_roster(load_intake()) == []
+    assert all(row.status == "pending_verification" and row.runnable is False for row in report.research)
+
+
+class _HTTPBytesSocket:
+    """Synthetic wire bytes; HTTPResponse itself parses and reads the response."""
+
+    def __init__(self, wire: bytes) -> None:
+        self.wire = wire
+
+    def makefile(self, *_args: Any, **_kwargs: Any) -> io.BytesIO:
+        return io.BytesIO(self.wire)
+
+
+def _http_response(body: bytes, *, incomplete: bool = False) -> http.client.HTTPResponse:
+    if incomplete:
+        # A declared 100-byte chunk with only 7 bytes exercises the real read exception.
+        wire = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n64\r\npartial"
+    else:
+        wire = b"HTTP/1.1 200 OK\r\nContent-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+    response = http.client.HTTPResponse(_HTTPBytesSocket(wire))
+    response.begin()
+    return response
+
+
+@pytest.mark.parametrize("output_format", ["json", "markdown"])
+@pytest.mark.parametrize(
+    ("fault", "status", "reason"),
+    [
+        ("incomplete", "unverified", "network_error"),
+        ("pipeline_high", "error", "malformed_json"),
+        ("pipeline_low", "error", "malformed_json"),
+        ("license_high", "error", "malformed_json"),
+        ("license_low", "error", "malformed_json"),
+        ("array", "error", "malformed_json"),
+        ("null", "error", "malformed_json"),
+        ("invalid_utf8", "error", "malformed_json"),
+        ("bad_sha", "error", "malformed_sha"),
+    ],
+)
+def test_real_http_failures_keep_every_audit_row_and_both_renderers_usable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    output_format: str,
+    fault: str,
+    status: str,
+    reason: str,
+) -> None:
+    table = _baseline_table()
+    repos = list(table)
+    calls: list[str] = []
+
+    def urlopen(request: urllib.request.Request, timeout: float) -> http.client.HTTPResponse:
+        repo = request.full_url.removeprefix("https://huggingface.co/api/models/")
+        calls.append(repo)
+        assert timeout == DEFAULT_TIMEOUT_S
+        payload = dict(table[repo].payload or {})
+        payload["pipeline_tag"] = "image-text-to-text"
+        payload["cardData"] = {"license": "mit"}
+        if repo == repos[0]:
+            if fault.startswith("pipeline_"):
+                payload["pipeline_tag"] = "\ud800" if fault.endswith("high") else "\udfff"
+            elif fault.startswith("license_"):
+                payload["cardData"] = {"license": "\ud800" if fault.endswith("high") else "\udfff"}
+            elif fault == "bad_sha":
+                payload["sha"] = []
+        body = json.dumps(payload).encode("utf-8")
+        if repo == repos[0]:
+            body = {"array": b"[]", "null": b"null", "invalid_utf8": b"\xff"}.get(fault, body)
+        return _http_response(body, incomplete=repo == repos[0] and fault == "incomplete")
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    out = tmp_path / f"audit.{output_format}"
+    assert main(["--refresh", "--format", output_format, "--output", str(out)]) == 0
+    text = out.read_text(encoding="utf-8")
+    assert calls == repos
+    assert len(calls) == 26
+    if output_format == "json":
+        report = IntakeReport.model_validate_json(text)
+        assert report.audit is not None
+        assert len(report.audit) == 26
+        assert (report.audit[0].status, report.audit[0].reason) == (status, reason)
+        assert report.audit[0].latest_main_sha is None
+        assert all(row.status is AuditStatus.UNCHANGED for row in report.audit[1:])
+    else:
+        audit_lines = text.split("## Checkpoint audit", 1)[1]
+        assert f"| {status} | {reason} |" in audit_lines
+        assert audit_lines.count("| unchanged |") == 25
+    assert "partial" not in text
+    assert "\\ud800" not in text and "\\udfff" not in text
+    text.encode("utf-8")
+
+
+def test_valid_unicode_metadata_is_preserved_in_both_renderers(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {"sha": _sha("a"), "pipeline_tag": "vision-\U0001f30d", "cardData": {"license": "许可"}}
+    monkeypatch.setattr(
+        urllib.request, "urlopen", lambda *_args, **_kwargs: _http_response(json.dumps(payload).encode())
+    )
+    report = build_report(refresh=True, clock=lambda: FIXED_UTC)
+    assert report.audit is not None and len(report.audit) == 26
+    assert all(row.remote_pipeline_tag == "vision-\U0001f30d" and row.remote_license == "许可" for row in report.audit)
+    assert "vision-\U0001f30d" in report.model_dump_json()
+    assert "许可" in render_markdown(report)
+
+
+@pytest.mark.parametrize("field", ["pipeline_tag", "license"])
+def test_injected_fetch_cannot_bypass_unicode_validation(field: str) -> None:
+    table = _baseline_table()
+    repo = next(iter(table))
+    payload = dict(table[repo].payload or {})
+    if field == "license":
+        payload["cardData"] = {"license": "\ud800"}
+    else:
+        payload[field] = "\ud800"
+    table[repo] = FetchResult(status=200, payload=payload)
+    report = build_report(refresh=True, fetch=_fake_fetch(table), clock=lambda: FIXED_UTC)
+    # Initial RED prediction: PydanticSerializationError wrapping UnicodeEncodeError.
+    IntakeReport.model_validate_json(report.model_dump_json())
+    render_markdown(report).encode("utf-8")
+    assert report.audit is not None and len(report.audit) == 26
+    assert report.audit[0].status is AuditStatus.ERROR
+    assert report.audit[0].reason == "malformed_json"
+    assert all(row.status is AuditStatus.UNCHANGED for row in report.audit[1:])
+
+
+@pytest.mark.parametrize("output_format", ["json", "markdown"])
+def test_cli_missing_output_parent_is_a_concise_error(tmp_path: Path, output_format: str) -> None:
+    out = tmp_path / "missing-parent" / "audit.json"
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.eval_harness.bakeoff_intake", "--format", output_format, "--output", str(out)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert proc.returncode == 1
+    assert proc.stderr == "FAIL: cannot write report\n", "report write escaped the CLI error boundary"
+    assert proc.stdout == ""
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("failure", ["write", "replace"])
+def test_failed_output_preserves_prior_report_and_cleans_temporary_sibling(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    failure: str,
+) -> None:
+    out = tmp_path / "audit.json"
+    prior = b"previous complete audit\n"
+    out.write_bytes(prior)
+    real_open = io.open
+    probes: list[str] = []
+
+    class FailingWriter:
+        def __init__(self, stream: Any) -> None:
+            self.stream = stream
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.stream, name)
+
+        def __enter__(self) -> FailingWriter:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            self.stream.close()
+
+        def write(self, text: str) -> int:
+            probes.append("write")
+            self.stream.write(text[:20])
+            self.stream.flush()
+            raise OSError("synthetic-full-disk /secret/path hf_secret")
+
+    def open_with_failure(file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        stream = real_open(file, mode, *args, **kwargs)
+        if failure == "write" and "w" in mode and "b" not in mode:
+            return FailingWriter(stream)
+        return stream
+
+    def replace_with_failure(source: Any, target: Any) -> None:
+        probes.append("replace")
+        assert Path(target) == out
+        assert Path(source).parent == out.parent
+        assert Path(source) != out
+        IntakeReport.model_validate_json(Path(source).read_bytes())
+        assert out.read_bytes() == prior
+        raise OSError("synthetic-replace-denied /secret/path hf_secret")
+
+    monkeypatch.setattr(io, "open", open_with_failure)
+    if failure == "replace":
+        monkeypatch.setattr(os, "replace", replace_with_failure)
+    code = main(["--format", "json", "--output", str(out)])
+    assert code == 1, "failed atomic report emission must return 1"
+    assert probes == [failure]
+    assert out.read_bytes() == prior
+    assert set(tmp_path.iterdir()) == {out}
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "FAIL: cannot write report\n"
+
+
+def test_successful_output_atomically_replaces_prior_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    out = tmp_path / "audit.json"
+    prior = b"previous complete audit\n"
+    out.write_bytes(prior)
+    real_replace = os.replace
+    probes: list[Path] = []
+
+    def observe_replace(source: Any, target: Any) -> None:
+        temporary = Path(source)
+        assert temporary.parent == out.parent and temporary != out
+        assert Path(target) == out
+        assert out.read_bytes() == prior
+        IntakeReport.model_validate_json(temporary.read_bytes())
+        probes.append(temporary)
+        real_replace(source, target)
+
+    monkeypatch.setattr(os, "replace", observe_replace)
+    assert main(["--format", "json", "--output", str(out)]) == 0
+    assert len(probes) == 1, "report must replace from a complete temporary sibling"
+    assert len(IntakeReport.model_validate_json(out.read_bytes()).sealed) == 16
+    assert set(tmp_path.iterdir()) == {out}

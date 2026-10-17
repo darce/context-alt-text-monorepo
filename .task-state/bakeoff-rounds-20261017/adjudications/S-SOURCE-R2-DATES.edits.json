@@ -1,0 +1,103 @@
+{
+  "schema": "bakeoff-source-edits/v1",
+  "task_ref": "SUBJECT-EVIDENCE-1",
+  "finding_ids": [
+    "S-SOURCE-G1-02"
+  ],
+  "files": [
+    {
+      "target_path": "apps/prototype-description-service/scripts/eval_harness/manifest.py",
+      "source_blob": "243d8684c1e5fb8be4d38e5cb8adb053b0bc4b9f",
+      "source_sha256": "b3b414ab5c422d6c1fe1733f6c67db256aea003723d91e75c261714487cf4850",
+      "edits": [
+        {
+          "old": "        digest = _subject_digest(projection)\n        for ordinal, item in evidence.items():",
+          "new": "        try:\n            digest = _subject_digest(projection)\n        except (TypeError, ValueError):\n            # C(model_dump()) has no date encoding. Existing review datetimes\n            # cannot bind this projection; retain all legacy dump/hash recipes.\n            raise SubjectEvidenceError(\"source_binding\", role, supplied[0][0]) from None\n        for ordinal, item in evidence.items():",
+          "rationale": "Translate unsupported canonical projection values, including legacy review datetime, into the existing source_binding refusal after shape/state validation; do not invent a date binding encoding."
+        }
+      ]
+    },
+    {
+      "target_path": "apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py",
+      "source_blob": "13b8025a60a0d75e386673d458e75fecad49a6f5",
+      "source_sha256": "70862e9415dcba8f54f46bf1eade9a34247cce4a5204982ce8ab766c8ce92fa5",
+      "edits": [
+        {
+          "old": "            assert \"support_sha256\" not in observed\n    else:\n        with pytest.raises(ManifestError):\n            load_manifest(\n                path, metadata_only=True, skip_hash_verification=True, hash_skip_reason=\"synthetic protocol fixture\"\n            )\n",
+          "new": "            assert \"support_sha256\" not in observed\n    else:\n        with pytest.raises(ManifestError):\n            load_manifest(\n                path, metadata_only=True, skip_hash_verification=True, hash_skip_reason=\"synthetic protocol fixture\"\n            )\n\n\ndef _subject_review_date_manifest(case: str) -> dict:\n    \"\"\"Existing reviewed-box producer shape; bindings are made before any date.\"\"\"\n    from scene.tests.test_eval_harness_bakeoff_report import _se_attach\n\n    doc = _valid_manifest_dict()\n    doc[\"entries\"][0][\"face_boxes\"] = [\n        {\n            \"x\": 0.5,\n            \"y\": 0.5,\n            \"w\": 0.2,\n            \"h\": 0.2,\n            \"name\": \"Alice Example\",\n            \"source\": \"operator\",\n            \"lineage\": _test_lineage(),\n        }\n    ]\n    if \"omitted\" not in case:\n        doc = _se_attach(doc, \"unknown\")\n        if \"stale\" in case:\n            binding = doc[\"entries\"][0][\"subject_evidence\"][\"source_binding\"]\n            binding.update(namespace=\"manifest-sha256:\" + \"f\" * 64, source_manifest_sha256=\"f\" * 64)\n    if case.startswith(\"dated-\"):\n        doc[\"entries\"][0][\"face_boxes\"][0][\"adjudication_source\"] = \"human_adjudicated:review-1\"\n        doc[\"adjudication_records\"] = [\n            {\n                \"record_id\": \"review-1\",\n                \"media_id\": 1,\n                \"box_index\": 0,\n                \"reviewer_id\": \"independent-reviewer\",\n                \"reviewer_kind\": \"human\",\n                \"review_method\": \"independent_blind_review\",\n                \"decision\": \"confirmed\",\n                \"reviewed_at\": \"2026-06-01T12:00:00+00:00\",\n            }\n        ]\n    if case == \"dated-version\":\n        doc[\"entries\"][0][\"subject_evidence\"][\"version\"] = True\n    elif case == \"dated-shape\":\n        doc[\"entries\"][0][\"subject_evidence\"].pop(\"authority\")\n    elif case == \"dated-state\":\n        doc[\"entries\"][0][\"subject_evidence\"][\"complete\"] = True\n    return doc\n\n\n@pytest.mark.parametrize(\"case\", [\"dated-omitted\", \"dated-unknown\", \"dated-stale\", \"undated-unknown\", \"undated-stale\"])\ndef test_subject_evidence_review_dates_public_load(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str) -> None:\n    from datetime import datetime\n\n    from scripts.eval_harness.manifest import SubjectEvidenceError, SubjectRole\n\n    doc = _subject_review_date_manifest(case)\n    path = _write_manifest(tmp_path, doc)\n    original_open = Path.open\n\n    def metadata_open(self, *args, **kwargs):\n        assert self.suffix.lower() not in {\".jpg\", \".jpeg\", \".png\"}, \"metadata-only must not read pixels\"\n        return original_open(self, *args, **kwargs)\n\n    monkeypatch.setattr(Path, \"open\", metadata_open)\n    kwargs = {\n        \"metadata_only\": True,\n        \"skip_hash_verification\": True,\n        \"hash_skip_reason\": \"synthetic review-date protocol\",\n    }\n    if case in {\"dated-unknown\", \"dated-stale\", \"undated-stale\"}:\n        with pytest.raises(SubjectEvidenceError, match=\"^subject evidence invalid: source_binding$\") as failure:\n            load_manifest(path, **kwargs)\n        assert failure.value.code == \"source_binding\"\n        assert failure.value.role == SubjectRole(\"reported\")\n        assert failure.value.entry_ordinal == 1\n    else:\n        loaded = load_manifest(path, **kwargs)\n        assert loaded.model_dump() == GoldenManifest.model_validate(doc).model_dump()\n        assert loaded.model_dump_json() == GoldenManifest.model_validate(doc).model_dump_json()\n        if case == \"dated-omitted\":\n            assert isinstance(loaded.adjudication_records[0].reviewed_at, datetime)\n            assert all(\"subject_evidence\" not in row for row in loaded.model_dump()[\"entries\"])\n            doc[\"manifest_version\"] = 2\n            legacy = load_legacy_manifest(_write_manifest(tmp_path, doc))\n            assert (\n                legacy.model_dump_json()\n                == GoldenManifest.model_validate(doc, context={\"legacy\": True}).model_dump_json()\n            )\n\n\n@pytest.mark.parametrize(\n    \"role,case\",\n    [(\"selection\", \"dated-omitted\")]\n    + [\n        (role, case)\n        for role in (\"reported\", \"selection\")\n        for case in (\n            \"undated-omitted\",\n            \"undated-unknown\",\n            \"undated-stale\",\n            \"dated-unknown\",\n            \"dated-stale\",\n            \"dated-version\",\n            \"dated-shape\",\n            \"dated-state\",\n        )\n    ],\n)\ndef test_subject_evidence_review_dates_public_cli(tmp_path: Path, role: str, case: str) -> None:\n    from scene.tests.test_eval_harness_bakeoff_report import _se_frames, _se_public\n    from scripts.eval_harness import manifest as manifest_module\n\n    reported, selection = _se_frames(tmp_path)\n    parent = tmp_path / \"parent\"\n    rc, out = _se_public(parent, reported, selection, gate=False, allow_foreign=True)\n    assert rc == 0 and out.exists()\n    receipt = json.loads((parent / \"cli-receipt.json\").read_text())\n    argv = receipt[\"argv\"]\n    target = Path(argv[argv.index(\"--manifest\" if role == \"reported\" else \"--selection-manifest\") + 1])\n    target.write_text(json.dumps(_subject_review_date_manifest(case)))\n    output = tmp_path / \"actual.html\"\n    argv[argv.index(\"--out\") + 1] = str(output)\n    imports = tmp_path / \"native-imports.json\"\n    # Observe real imports and reject pixel reads while executing the real module CLI.\n    driver = (\n        \"import hashlib,importlib.util,json,pathlib,runpy,sys; from scripts.eval_harness import manifest; \"\n        \"p=pathlib.Path(manifest.__file__); r=pathlib.Path(importlib.util.find_spec('scripts.eval_harness.build_bakeoff_report').origin); \"\n        \"pathlib.Path(sys.argv.pop(1)).write_text(json.dumps(dict(manifest_path=str(p),manifest_sha256=hashlib.sha256(p.read_bytes()).hexdigest(),report_path=str(r),report_sha256=hashlib.sha256(r.read_bytes()).hexdigest()))); \"\n        \"sys.addaudithook(lambda event,args: (_ for _ in ()).throw(AssertionError('pixel read')) \"\n        \"if event=='open' and str(args[0]).lower().endswith(('.jpg','.jpeg','.png')) else None); \"\n        \"runpy.run_module('scripts.eval_harness.build_bakeoff_report',run_name='__main__')\"\n    )\n    command = [sys.executable, \"-c\", driver, str(imports), *argv]\n    result = subprocess.run(command, capture_output=True, text=True, timeout=15)\n    (tmp_path / \"native-cli-receipt.json\").write_text(\n        json.dumps(\n            {\n                \"command\": command,\n                \"exit_code\": result.returncode,\n                \"stdout\": result.stdout,\n                \"stderr\": result.stderr,\n                \"output\": output.exists(),\n                \"imports\": json.loads(imports.read_text()),\n            },\n            indent=2,\n        )\n    )\n    observed = json.loads(imports.read_text())\n    assert observed[\"manifest_path\"] == manifest_module.__file__\n    assert observed[\"manifest_sha256\"] == hashlib.sha256(Path(manifest_module.__file__).read_bytes()).hexdigest()\n    expected_code = {\n        \"dated-version\": \"evidence_version\",\n        \"dated-shape\": \"evidence_shape\",\n        \"dated-state\": \"state_consistency\",\n    }.get(case, \"source_binding\")\n    if case in {\"dated-unknown\", \"dated-stale\", \"undated-stale\", \"dated-version\", \"dated-shape\", \"dated-state\"}:\n        assert result.returncode == 4, result.stderr\n        assert f\"subject evidence invalid: {expected_code}\" in result.stderr\n        assert \"Traceback\" not in result.stderr\n        assert not output.exists()\n    else:\n        assert result.returncode == 0, result.stderr\n        assert output.exists()\n",
+          "rationale": "Append public loader and real native module-CLI regression cases for existing review dates, omitted evidence, coherent undated bindings, stable refusals, phase precedence and no pixel reads; retain every old test byte."
+        }
+      ]
+    }
+  ],
+  "validation": [
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--67ff053d/.venv/bin/python -m pytest -q -x -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider --collection-scope-receipt=/tmp/s-source-r2-dates/cli-red-collection.json --basetemp=/tmp/s-source-r2-dates/cli-red-pytest 'apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py::test_subject_evidence_review_dates_public_cli[selection-dated-stale]' --tb=line",
+      "exit_code": 1,
+      "summary": "Expected behavioral RED before production edit: matched parent0; dated stale-binding native selection1/TypeError/traceback/no output; regression requires4/source_binding."
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--67ff053d/.venv/bin/python -m pytest -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider --collection-scope-receipt=/tmp/s-source-r2-dates/load-final-collection.json --basetemp=/tmp/s-source-r2-dates/load-final-pytest apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py -k review_dates_public_load --tb=line",
+      "exit_code": 0,
+      "summary": "5 public loader cases pass: dated omission and frozen v2 bytes, typed review datetime, undated valid/stale and dated present refusals; metadata-only pixel-read guard."
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--67ff053d/.venv/bin/python -m pytest -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider --collection-scope-receipt=/tmp/s-source-r2-dates/cli-selection-final-collection.json --basetemp=/tmp/s-source-r2-dates/cli-selection-final-pytest apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py -k 'review_dates_public_cli and selection' --tb=line",
+      "exit_code": 0,
+      "summary": "9 native selection CLI cases pass, including coherent controls, stable4/source_binding/no output/no traceback, and nested-version/shape/state precedence."
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--67ff053d/.venv/bin/python -m pytest -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider --collection-scope-receipt=/tmp/s-source-r2-dates/cli-reported-final-a-collection.json --basetemp=/tmp/s-source-r2-dates/cli-reported-final-a-pytest apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py -k 'review_dates_public_cli and reported and not dated-version and not dated-shape and not dated-state' --tb=line",
+      "exit_code": 0,
+      "summary": "5 final native reported CLI controls pass: omitted/matched undated and stable dated/undated source_binding refusals; pre-existing dated reported digest limit excluded."
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--67ff053d/.venv/bin/python -m pytest -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider --collection-scope-receipt=/tmp/s-source-r2-dates/cli-reported-final-b-collection.json --basetemp=/tmp/s-source-r2-dates/cli-reported-final-b-pytest apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py -k 'review_dates_public_cli and reported and (dated-version or dated-shape or dated-state)' --tb=line",
+      "exit_code": 0,
+      "summary": "3 final native reported CLI cases pass: dated nested-version/shape/state defects retain their earlier public codes."
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--67ff053d/.venv/bin/python -m pytest -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider --collection-scope-receipt=/tmp/s-source-r2-dates/affected-87-collection.json --basetemp=/tmp/s-source-r2-dates/affected-87-pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py -k 'subject_evidence and not review_dates' --tb=line",
+      "exit_code": 0,
+      "summary": "All87 existing subject cases pass; 192 deselected; original nine selectors unchanged."
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--67ff053d/.venv/bin/python -m pytest -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider --collection-scope-receipt=/tmp/s-source-r2-dates/legacy-four-collection.json --basetemp=/tmp/s-source-r2-dates/legacy-four-pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_bakeoff_gate_rejects_selection_subject_or_image_overlap apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_matching_manifest_sha_renders_unbadged apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_foreign_manifest_sha_is_fatal_and_writes_nothing apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_manifest_version_as_string_fails_closed --tb=line",
+      "exit_code": 0,
+      "summary": "All4 required legacy overlap, matching/foreign digest and string-version controls pass."
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--67ff053d/.venv/bin/python -m pytest -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider --collection-scope-receipt=/tmp/s-source-r2-dates/adjacent-12-collection.json --basetemp=/tmp/s-source-r2-dates/adjacent-12-pytest apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py -k 'load_manifest_metadata_only or roster_only_more_boxes or unsupported_manifest_version or non_v3_manifest or structural_mismatch or load_manifest_skip_true_reason or load_manifest_hash_skip_reason' --tb=line",
+      "exit_code": 0,
+      "summary": "All12 adjacent metadata-only/hash-skip/coverage/routing controls pass."
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--67ff053d/.venv/bin/python /tmp/s-source-r2-dates/scripts/serialization_check.py",
+      "exit_code": 0,
+      "summary": "Actual before/after modules: dated and ordinary omitted-evidence public v3/frozen-v2 loading match across all15 dump/JSON options each."
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--67ff053d/.venv/bin/ruff check apps/prototype-description-service/scripts/eval_harness/manifest.py apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py",
+      "exit_code": 0,
+      "summary": "Scoped source/test Ruff lint passes."
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--67ff053d/.venv/bin/ruff format --check apps/prototype-description-service/scripts/eval_harness/manifest.py apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py",
+      "exit_code": 0,
+      "summary": "Scoped source/test Ruff format check passes."
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--67ff053d/.venv/bin/python /tmp/s-source-r2-dates/scripts/audit.py",
+      "exit_code": 0,
+      "summary": "Verified retained87+4+12 GREEN,60 serialization comparisons and scoped lint/format; all161 old selectors/187 definitions and prior assertions retained; exact production region, actual imports, checkout and nine prior roots verified."
+    }
+  ],
+  "limitations": [
+    "Author correction and private qualification only. Root owns byte-map composition, source pins/regions and both-order checks, independent whole-source G2, MCP disposition and adoption; no finding closure or source/main integration here.",
+    "The reviewed C(model_dump()) contract has no subject date encoding. Dated golden projections with present evidence refuse source_binding. Legacy omitted-evidence v3/v2 dumps and hash recipes stay unchanged; the pre-existing dated reported-manifest digest limitation is explicitly outside this repair.",
+    "Honest native base079b209f755f0ac2400ee8066945708d6fed108a has exact input tree797c54a4474cb6c91b450c3c9853ed6491bb81be for logical0dfcacc11d7db511fc954d445b65a4ff85920362. Tree equality is not ancestry.",
+    "Live graph/ONNX/handoff tools and requested model/effort/STANDARD-tier custody are not independently exposed. Supplied verified ONNX/handoff.db retrieval with selected19105/19106/17814 reinjection, origin-pinned431-node/1934-edge map metadata and exact checkout AST fallback were used; the supplied map exposes counts/origin pins rather than a traversable edge inventory.",
+    "All protocol runs, score markers and subject attestations are synthetic; no identity truth, quality, face qualification or readiness claim. No media/model/inference execution, installs, broad suites, shared-service changes or sibling absence-conflict edits.",
+    "Audit retained at /tmp/s-source-r2-dates. New-test lint/style findings were corrected. Three55s runs timed out before completing; an initial v2 expected-model setup mismatch was corrected. Those results and the corrected new-test lint findings are retained and excluded from behavioral RED evidence. Completed checks use55s/1GiB/one-CPU25%-duty owned-process-group bounds; no aggregate VM quota claim."
+  ]
+}

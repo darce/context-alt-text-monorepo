@@ -42,7 +42,7 @@ TARGET
 └───────────────────────────────────────────────────────┘
 ```
 Deltas
-- z-name-curate states: `loading` = suggestions pending (input stays enabled; create-new disabled until the roster list settles, UXW2-3 race); new state `empty` = "No named people yet — type a name".
+- z-name-curate states: `loading` = suggestions pending (input stays enabled; create-new disabled until the roster list loads successfully, UXW2-3 race); new states `error-roster` ("Couldn't load people", Retry refetches the roster, create-new disabled) and `error-closest` ("Closest people unavailable", Retry, A–Z still shown); new state `empty` = "No named people yet — type a name".
 - Option source: human-named people only (roster persons and human-confirmed labels); machine auto-labels and reserved labels never become options.
 - Order: similarity rank (people-grain, max over that person's faces, UXW2-5), at most 5, then the alphabetical remainder; no re-sort of the ranked block while open (NAV-02). Below the suggestion floor a person is not ranked (CAL-02).
 - Each ranked option shows up to 3 of that person's faces closest to this group, plus the face count (HAI-17: several references, not one); A–Z rows show the name and count only. No match score or band word beside a name (iteration 2: a verdict word beside a name is a model same-label shown before the operator compares faces; HAI-15 spirit).
@@ -85,7 +85,7 @@ Zero-successor case: "None of the faces you named are in the current analysis. Y
 Deltas
 - New state on z-conflict-detail: `stale_reference` (service no longer has the face group) — distinct from a true concurrent edit (`version_conflict`).
 - New actions: `act-rebind-person-faces` (primary), `act-review-rebind-faces`, `act-keep-person-unlinked`, `act-rescan-person-photos`. Payload JSON moves behind a closed disclosure.
-- Auto path (ADR-019 rule 2d): exactly one successor face group, unbound and unnamed, holding only faces that were shown under this person → re-link with a status line and Undo. Two or more groups, extra unreviewed faces, another person's faces, or zero faces → this inbox screen.
+- Auto path (ADR-019 rule 2d): exactly one successor face group, unbound and unnamed, every face matching an anchor of this person under ADR-019 rule 2c, no face anchored to another person → re-link with a status line and Undo. Two or more groups, extra unreviewed faces, another person's faces, a geometric-only match, or zero faces → this inbox screen.
 
 ---
 
@@ -159,7 +159,7 @@ TARGET
 └──────────────────────────────────────────────────────────────┘
 ```
 Deltas
-- Zone `z-person-photos`: the Photos section already ships (pages of 50, `PersonWorkspacePanel.tsx:817-868`, lightbox only) but is missing from the map; iteration 2 records it and adds the face box, `act-open-media-item` (exit to WordPress media edit) and keeps `act-page-person-photos`.
+- Zone `z-person-photos`: the Photos section already ships (pages of 50, `PersonWorkspacePanel.tsx:817-868`, lightbox and Use as cover) but is missing from the map; iteration 2 records it and adds the face box, `act-open-media-item` (exit to WordPress media edit) and keeps `act-page-person-photos`.
 - The reported "click does nothing": the open path needs a person UUID and a `current` projection (`RosterEntriesTable.tsx:150`, `RosterPage.tsx:60-65`); otherwise a gate notice replaces the workspace. Target: every rendered row has a UUID; a non-current projection opens the workspace read-only with a status line, not a replaced panel.
 - Header carries the larger face crop, counts and provenance in words; debug meta removed from the header (kept behind a details disclosure only if needed for support).
 - The operator's proposal (click → images containing the person) is adopted as this zone, reached by the avatar/name/photo-count click; not a separate surface.
@@ -189,7 +189,7 @@ TARGET
 └──────────────────────────────────────────────────────────┘
 ```
 Deltas
-- New zone `z-findings` with one row per finding kind; each button names its effect and routes by `nextAction.kind` (review → curation panel for the target group; conflict → conflict detail; repair → resync job with status).
+- New zone `z-findings` with one row per finding kind; each button names its effect and routes by `nextAction.kind` (assignment review → curation panel for the target group; merge → focus the queue merge card; conflict → conflict detail; repair → Resync refetch).
 - A row with nothing to act on is not rendered (no disabled buttons without a reason); "View all findings" is removed.
 
 ---

@@ -36,6 +36,11 @@ def _image(
         gold = [("ph-left", "alice"), ("ph-right", "bob")]
     return {
         "image_id": image_id,
+        "source": {
+            "anonymous_base_digest": DIGEST,
+            "generation_id": "gen-unit",
+            "reweave_id": "reweave-unit",
+        },
         "phrases": list(phrases),
         "identity_roles": {
             "required": list(required),
@@ -51,19 +56,16 @@ def _pred(image_id="img-1", arm_id="arm-a", bindings=(), digest=DIGEST):
         "arm_id": arm_id,
         "image_id": image_id,
         "source_anonymous_base_digest": digest,
+        "source_generation_id": "gen-unit",
+        "source_reweave_id": "reweave-unit",
         "bindings": [{"phrase_id": p, "person_id": q} for p, q in bindings],
     }
 
 
 def _fixture(**overrides):
     payload = {
-        "schema": "name_binding_eval/v1",
+        "schema": "name_binding_eval/v2",
         "fixture_id": "unit-fixture",
-        "source": {
-            "anonymous_base_digest": DIGEST,
-            "generation_id": "gen-unit",
-            "reweave_id": "reweave-unit",
-        },
         "arm_ids": ["arm-a"],
         "frozen_images": [_image()],
         "predictions": [],
@@ -87,8 +89,8 @@ def _outcome_counts(**expected):
 
 
 def test_schema_identifiers_are_versioned():
-    assert nbe.INPUT_SCHEMA == "name_binding_eval/v1"
-    assert nbe.REPORT_SCHEMA == "name_binding_eval_report/v1"
+    assert nbe.INPUT_SCHEMA == "name_binding_eval/v2"
+    assert nbe.REPORT_SCHEMA == "name_binding_eval_report/v2"
 
 
 def test_role_swapped_names_are_wrong_person_and_not_hidden_by_set_equality():
@@ -275,10 +277,12 @@ def test_report_carries_input_digest_source_provenance_and_no_ranking():
     report = nbe.evaluate_bytes(raw)
     assert report["schema"] == nbe.REPORT_SCHEMA
     assert report["input_sha256"] == hashlib.sha256(raw).hexdigest()
-    assert report["source"] == {
-        "anonymous_base_digest": DIGEST,
-        "generation_id": "gen-unit",
-        "reweave_id": "reweave-unit",
+    assert report["image_sources"] == {
+        "img-1": {
+            "anonymous_base_digest": DIGEST,
+            "generation_id": "gen-unit",
+            "reweave_id": "reweave-unit",
+        }
     }
     assert report["ranking"] is None
 

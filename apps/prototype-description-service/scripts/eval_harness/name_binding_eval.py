@@ -19,9 +19,12 @@ Measurement contract (denominators fixed before any arm is scored; CARD-11, Prin
   image carries ``misattributed_to_phrase``, so a cross-person role swap stays visible instead of
   being hidden by set equality over people.
 - Prohibited-name additions, unbound-phrase bindings and required-identity omissions are reported
-  beside the gold outcomes, never folded into them.
+  beside the gold outcomes, never folded into them. A name on a stranger or unnamed person
+  (ADR-018 section 13 wrong-name event) is an unbound-phrase binding: it has no gold binding to attach
+  to, so it is listed per image and counted as ``unbound_phrase_bindings`` rather than in the gold partition.
 - Matching is exact equality on frozen IDs. Phrase text, name order and string similarity are not
-  evidence (no semantic similarity; EMB-01 scope: embedding similarity is not caption truth or identity).
+  evidence. Embedding similarity is not caption truth or identity (prior attempted path, task brief;
+  no embedding or similarity library is imported).
 
 Provenance (PROV-01, GRPH-14): the report carries the SHA-256 of the input bytes and the fixture's
 source anonymous-base digest and generation/reweave IDs. A prediction must carry the same

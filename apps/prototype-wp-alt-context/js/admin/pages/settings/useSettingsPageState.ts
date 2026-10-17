@@ -11,6 +11,7 @@ import type { HealthProbeBinding } from './healthProbeProof';
 
 interface SettingsPageState {
   url: string;
+  persistedUrl: string | null;
   apiKey: string;
   descriptionBudgetMaxAttempts: string;
   recognitionEnabled: boolean;
@@ -26,6 +27,7 @@ type SettingsPageAction =
   | { type: 'syncFromSettings'; settings: SettingsResponse }
   | { type: 'setUrl'; value: string }
   | { type: 'setApiKey'; value: string }
+  | { type: 'acknowledgeApiKey'; value: string }
   | { type: 'setDescriptionBudgetMaxAttempts'; value: string }
   | { type: 'setRecognitionEnabled'; value: boolean }
   | { type: 'setAllowPersonNames'; value: boolean }
@@ -37,6 +39,7 @@ type SettingsPageAction =
 
 const INITIAL_STATE: SettingsPageState = {
   url: '',
+  persistedUrl: null,
   apiKey: '',
   descriptionBudgetMaxAttempts: '-1',
   recognitionEnabled: true,
@@ -51,12 +54,16 @@ const INITIAL_STATE: SettingsPageState = {
 const reducer = (state: SettingsPageState, action: SettingsPageAction): SettingsPageState => {
   switch (action.type) {
     case 'syncFromSettings':
+      // Readback updates persisted values without replacing an in-memory draft.
+      // The write acknowledgement below is the only operation that clears a key.
       return {
         ...state,
         testResult: null,
         testProof: null,
-        url: action.settings.url,
-        apiKey: '',
+        url: state.persistedUrl === null || state.url === state.persistedUrl
+          ? action.settings.url
+          : state.url,
+        persistedUrl: action.settings.url,
         descriptionBudgetMaxAttempts: String(action.settings.description_budget.max_attempts),
         recognitionEnabled: action.settings.recognition_enabled,
         allowPersonNames: action.settings.allow_person_names ?? null,
@@ -64,6 +71,8 @@ const reducer = (state: SettingsPageState, action: SettingsPageAction): Settings
       };
     case 'setUrl':
       return { ...state, url: action.value, testResult: null, testProof: null };
+    case 'acknowledgeApiKey':
+      return state.apiKey === action.value ? { ...state, apiKey: '' } : state;
     case 'setApiKey':
       return { ...state, apiKey: action.value, testResult: null, testProof: null };
     case 'setDescriptionBudgetMaxAttempts':

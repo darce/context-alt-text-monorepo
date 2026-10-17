@@ -75,6 +75,8 @@ export const SettingsPage = (): React.JSX.Element => {
   const routingSaveFeedback = useRef(false);
   const routingSaveIncludesOtherSettings = useRef(false);
   const inFlightRoutingApiKey = useRef<string | null>(null);
+  // A blur queues routing fields only; an explicit submit queues the full form.
+  const queuedRoutingOnly = useRef(false);
   const queuedSaveSnapshot = useRef<SettingsFormSnapshot | null>(null);
 
   const settingsQuery = useQuery<SettingsResponse>({
@@ -251,8 +253,14 @@ export const SettingsPage = (): React.JSX.Element => {
     values: SettingsFormSnapshot,
     data: SettingsResponse,
     queued = false,
+    routingOnly = false,
   ): void => {
-    const payload = buildSavePayload(values, data);
+    const payload = routingOnly
+      ? {
+        ...(values.url !== data.url ? { url: values.url } : {}),
+        ...(values.apiKey ? { api_key: values.apiKey } : {}),
+      }
+      : buildSavePayload(values, data);
     if (Object.keys(payload).length === 0) {
       dispatch({
         type: 'setSaveMessage',
@@ -271,6 +279,7 @@ export const SettingsPage = (): React.JSX.Element => {
       );
       routingSaveFeedback.current = hasRoutingChanges && !routingSaveIncludesOtherSettings.current;
     }
+    inFlightRoutingApiKey.current = payload.api_key ?? null;
     saveMutation.mutate(payload);
   };
 
@@ -283,6 +292,8 @@ export const SettingsPage = (): React.JSX.Element => {
       return;
     }
     queuedSaveSnapshot.current = null;
+    const routingOnly = queuedRoutingOnly.current;
+    queuedRoutingOnly.current = false;
     const data = refreshedSettings
       ?? queryClient.getQueryData<SettingsResponse>(queryKeys.settings.all)
       ?? settingsQuery.data;
@@ -297,7 +308,7 @@ export const SettingsPage = (): React.JSX.Element => {
     const snapshotForSave = alreadySavedApiKey !== null && snapshot.apiKey === alreadySavedApiKey
       ? { ...snapshot, apiKey: '' }
       : snapshot;
-    submitSnapshot(snapshotForSave, data, true);
+    submitSnapshot(snapshotForSave, data, true, routingOnly);
   };
 
   const saveMutation = useMutation({
@@ -308,6 +319,9 @@ export const SettingsPage = (): React.JSX.Element => {
       const alreadySavedApiKey = settledApiKey !== null && data.saved.includes('api_key')
         ? settledApiKey
         : null;
+      if (alreadySavedApiKey !== null) {
+        dispatch({ type: 'acknowledgeApiKey', value: alreadySavedApiKey });
+      }
       const isRoutingAutosave = routingSavePending.current;
       const includesOtherSettings = routingSaveIncludesOtherSettings.current;
       if (isRoutingAutosave) {
@@ -348,7 +362,6 @@ export const SettingsPage = (): React.JSX.Element => {
           : __('Settings saved.', 'alt-context'),
         tone: isRoutingAutosave && !includesOtherSettings ? 'info' : 'success',
       });
-      dispatch({ type: 'setApiKey', value: '' });
       await queryClient.invalidateQueries({ queryKey: queryKeys.settings.all });
       // A saved URL/key may repair the recognition breaker; refetch sync health
       // so the degraded/offline banner clears without waiting for its 15s poll.
@@ -505,6 +518,7 @@ export const SettingsPage = (): React.JSX.Element => {
     e.preventDefault();
     invalidateHealthProbe();
     if (saveMutation.isPending) {
+      queuedRoutingOnly.current = false;
       queuedSaveSnapshot.current = captureFormSnapshot();
       dispatch({ type: 'setSaveMessage', message: __('Saving…', 'alt-context'), tone: 'info' });
       return;
@@ -525,7 +539,14 @@ export const SettingsPage = (): React.JSX.Element => {
 
   const commitRoutingFields = (checkIfUnchanged = false): void => {
     const data = settingsQuery.data;
-    if (!data || saveMutation.isPending || routingSavePending.current) {
+    if (!data) {
+      return;
+    }
+    if (saveMutation.isPending || routingSavePending.current) {
+      if (!queuedSaveSnapshot.current) {
+        queuedRoutingOnly.current = true;
+      }
+      queuedSaveSnapshot.current = captureFormSnapshot();
       return;
     }
 
@@ -663,10 +684,16 @@ export const SettingsPage = (): React.JSX.Element => {
         }}
         actions={{
           onUrlChange: (value) => {
+            if (queuedSaveSnapshot.current) {
+              queuedSaveSnapshot.current = { ...queuedSaveSnapshot.current, url: value };
+            }
             invalidateHealthProbe();
             dispatch({ type: 'setUrl', value });
           },
           onApiKeyChange: (value) => {
+            if (queuedSaveSnapshot.current) {
+              queuedSaveSnapshot.current = { ...queuedSaveSnapshot.current, apiKey: value };
+            }
             invalidateHealthProbe();
             dispatch({ type: 'setApiKey', value });
           },

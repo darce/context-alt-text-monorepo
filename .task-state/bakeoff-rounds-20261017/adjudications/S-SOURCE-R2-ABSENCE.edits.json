@@ -1,0 +1,158 @@
+{
+  "schema": "bakeoff-source-edits/v1",
+  "task_ref": "SUBJECT-EVIDENCE-1",
+  "finding_ids": [
+    "S-SOURCE-G1-01"
+  ],
+  "files": [
+    {
+      "target_path": "apps/prototype-description-service/scripts/eval_harness/manifest.py",
+      "source_blob": "243d8684c1e5fb8be4d38e5cb8adb053b0bc4b9f",
+      "source_sha256": "b3b414ab5c422d6c1fe1733f6c67db256aea003723d91e75c261714487cf4850",
+      "edits": [
+        {
+          "old": "            or not isinstance(row.get(\"face_boxes\", []), list)\n            or any(\n",
+          "new": "            or not isinstance(row.get(\"face_boxes\", []), list)\n            # Human face declarations conflict with absence even without identity.\n            or bool(row.get(\"face_boxes\", []))\n            or any(\n",
+          "rationale": "A nonempty human FaceBox declaration contradicts supported absence regardless of its name; retain existing aliases, face-count/name guards and validation order."
+        }
+      ]
+    },
+    {
+      "target_path": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py",
+      "source_blob": "d7dd24cea51ee54f10c87f78ef79831f447f3334",
+      "source_sha256": "3b867574b78b24b49b5086a7d680763f73bec833aa584f6b33c7450528a0f0de",
+      "edits": [
+        {
+          "old": "\n\n@pytest.mark.parametrize(\n    \"kind\",\n    [\"missing\", \"zero-only\", \"unknown\", \"partial-group\", \"partial-reflection\", \"partial-depiction\", \"missing-reported\"],\n)\n",
+          "new": "\n\n@pytest.mark.parametrize(\"role\", [\"reported\", \"selection\"])\n@pytest.mark.parametrize(\"gate,allow_foreign\", [(True, False), (False, True)])\n@pytest.mark.parametrize(\"face_name\", [None, \"explicit-person\"], ids=[\"unnamed\", \"named\"])\ndef test_subject_evidence_supported_empty_face_conflict_public_cli(\n    tmp_path: Path,\n    capsys: pytest.CaptureFixture,\n    role: str,\n    gate: bool,\n    allow_foreign: bool,\n    face_name: str | None,\n) -> None:\n    from copy import deepcopy\n\n    from scripts.eval_harness.manifest import FaceBox\n\n    reported, selection = _se_frames(tmp_path)\n    pins = None\n    if allow_foreign:\n        pins = dict.fromkeys(\n            (\n                \"candidate\",\n                \"incumbent\",\n                \"zero_rule_context_echo\",\n                \"context_only_heuristic\",\n                \"current_production\",\n                \"blinded_human\",\n            ),\n            \"e\" * 64,\n        )\n        pins[\"candidate\"] = \"f\" * 64\n    target = _se_attach(reported if role == \"reported\" else selection, \"not_applicable\")\n    if role == \"reported\":\n        reported = target\n    else:\n        selection = target\n    parent_rc, parent_out = _se_public(\n        tmp_path / \"empty-parent\", reported, selection, gate=gate, allow_foreign=allow_foreign, pins=pins\n    )\n    assert parent_rc == (5 if role == \"reported\" and gate else 0)\n    assert parent_out.exists()\n    if allow_foreign:\n        assert \"NOT COMPARABLE\" in parent_out.read_text()\n    if gate:\n        parent_html = parent_out.read_text()\n        assert \"selection=pass\" in parent_html\n        if role == \"reported\":\n            assert \"mandatory subject strata unavailable: 99/100\" in parent_html\n        else:\n            assert \"bakeoff-gate: pass\" in parent_html\n    capsys.readouterr()\n\n    # A human-drawn face is a person declaration even without a known name.\n    # This is the real FaceBox shape, not detector output or an identity claim.\n    target = deepcopy(target)\n    row = target[\"entries\"][0]\n    box = {\"x\": 0.5, \"y\": 0.5, \"w\": 0.2, \"h\": 0.2, \"name\": face_name, \"source\": \"operator\"}\n    assert FaceBox.model_validate(box).name == face_name\n    row[\"face_boxes\"] = [box]\n    assert row[\"face_count\"] == 0 and row[\"present_identities\"] == []\n    assert not any(row.get(key) for key in (\"subject_id\", \"subject_ids\", \"subject\", \"subjects\"))\n\n    # Rebind after the conflicting declaration; stale hashes must not supply\n    # the refusal. Support still refers to the same original and absence claim.\n    projection = deepcopy(target)\n    for entry in projection[\"entries\"]:\n        entry.pop(\"subject_evidence\", None)\n    digest = _se_sha(projection)\n    evidence = row[\"subject_evidence\"]\n    evidence[\"source_binding\"].update(\n        namespace=f\"manifest-sha256:{digest}\",\n        source_manifest_sha256=digest,\n        source_entry_sha256=_se_sha(projection[\"entries\"][0]),\n    )\n    assert evidence[\"support_sha256\"] == _se_sha(evidence[\"support\"])\n    assert evidence[\"support\"][\"source_original_sha256\"] == row[\"sha256\"]\n    assert evidence[\"source_binding\"][\"source_original_sha256\"] == row[\"sha256\"]\n    if role == \"reported\":\n        reported = target\n    else:\n        selection = target\n    rc, out = _se_public(\n        tmp_path / \"face-conflict\", reported, selection, gate=gate, allow_foreign=allow_foreign, pins=pins\n    )\n    assert rc == 4\n    assert \"subject evidence invalid: evidence_conflict\" in capsys.readouterr().err\n    assert not out.exists()\n    assert row[\"face_boxes\"] == [box]\n\n\n@pytest.mark.parametrize(\n    \"kind\",\n    [\"missing\", \"zero-only\", \"unknown\", \"partial-group\", \"partial-reflection\", \"partial-depiction\", \"missing-reported\"],\n)\n",
+          "rationale": "Paired public empty/unnamed/named FaceBox regressions in both roles, with coherent binding/support and gated/exploratory allow-foreign coverage."
+        }
+      ]
+    }
+  ],
+  "validation": [
+    {
+      "command": ".venv/bin/python /tmp/s-source-r2-absence/scripts/ground.py",
+      "exit_code": 0,
+      "summary": "Eight Canon v0.26.2 bodies, four original distillations, complete supplied semantic retrieval/reinjection and exact 431-node/1934-edge source origins verified; plan blob06033dd9 pinned. cwd=/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b; receipt=/tmp/s-source-r2-absence/outputs/grounding-r2.json"
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b/.venv/bin/python -m pytest -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider -p audit_imports --collection-scope-receipt=/tmp/s-source-r2-absence/outputs/red-collection.json --basetemp=/tmp/s-source-r2-absence/red-pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_subject_evidence_supported_empty_face_conflict_public_cli --tb=short",
+      "exit_code": 1,
+      "summary": "Before private production edit: four actual unnamed-face failures/four named passes; all eight empty parents accepted with original0/5 corpus semantics. cwd=/tmp/s-source-r2-absence/work; receipt=/tmp/s-source-r2-absence/outputs/regression-red.json"
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-source-r2-absence/scripts/replay_review.py red",
+      "exit_code": 1,
+      "summary": "Reviewer accepted FaceBox(name=null) fixtures reproduced both real public bypasses with independently checked source/support hashes; empty/named controls valid. cwd=/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b; receipt=/tmp/s-source-r2-absence/outputs/reviewer-fixture-red.json"
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-source-r2-absence/scripts/edit_source.py",
+      "exit_code": 0,
+      "summary": "Only private manifest.py absence conflict logic changed after the observed behavioral RED. cwd=/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b; receipt=/tmp/s-source-r2-absence/outputs/source-correction.json"
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b/.venv/bin/python -m pytest -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider -p audit_imports --collection-scope-receipt=/tmp/s-source-r2-absence/outputs/green-collection.json --basetemp=/tmp/s-source-r2-absence/green-pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_subject_evidence_supported_empty_face_conflict_public_cli --tb=short",
+      "exit_code": 0,
+      "summary": "Initial paired regression: eight cases pass; each conflict returns4/evidence_conflict/no output. cwd=/tmp/s-source-r2-absence/work; receipt=/tmp/s-source-r2-absence/outputs/regression-green.json"
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b/.venv/bin/python /tmp/s-source-r2-absence/scripts/pytest_run.py -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider -p audit_imports --collection-scope-receipt=/tmp/s-source-r2-absence/outputs/final-red-r2-collection.json --basetemp=/tmp/s-source-r2-absence/final-red-r2-pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_subject_evidence_supported_empty_face_conflict_public_cli --tb=short",
+      "exit_code": 1,
+      "summary": "Strengthened actual foreign-run parents accept and badge; frozen original source still fails exactly four unnamed cases while named controls pass. cwd=/tmp/s-source-r2-absence/red-final-work; receipt=/tmp/s-source-r2-absence/outputs/regression-final-red-r2.json"
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b/.venv/bin/python /tmp/s-source-r2-absence/scripts/pytest_run.py -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider -p audit_imports --collection-scope-receipt=/tmp/s-source-r2-absence/outputs/report-final-collection.json --basetemp=/tmp/s-source-r2-absence/report-final-pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py -k subject_evidence --tb=short",
+      "exit_code": 0,
+      "summary": "61 report cases pass, including the eight strengthened paired regressions and all53 original report cases;90 CLI receipts. cwd=/tmp/s-source-r2-absence/work; receipt=/tmp/s-source-r2-absence/outputs/report-subject-final.json"
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b/.venv/bin/python /tmp/s-source-r2-absence/scripts/pytest_run.py -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider -p audit_imports --collection-scope-receipt=/tmp/s-source-r2-absence/outputs/manifest-collection.json --basetemp=/tmp/s-source-r2-absence/manifest-pytest apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py -k subject_evidence --tb=short",
+      "exit_code": 0,
+      "summary": "All33 original strict subject-evidence cases pass. cwd=/tmp/s-source-r2-absence/work; receipt=/tmp/s-source-r2-absence/outputs/manifest-subject.json"
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b/.venv/bin/python /tmp/s-source-r2-absence/scripts/pytest_run.py -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider -p audit_imports --collection-scope-receipt=/tmp/s-source-r2-absence/outputs/invariants-collection.json --basetemp=/tmp/s-source-r2-absence/invariants-pytest apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py -k subject_evidence --tb=short",
+      "exit_code": 0,
+      "summary": "Original identity/prompt/digest isolation invariant passes. cwd=/tmp/s-source-r2-absence/work; receipt=/tmp/s-source-r2-absence/outputs/invariants-subject.json"
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b/.venv/bin/python /tmp/s-source-r2-absence/scripts/pytest_run.py -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider -p audit_imports --collection-scope-receipt=/tmp/s-source-r2-absence/outputs/complete-green-collection.json --basetemp=/tmp/s-source-r2-absence/complete-green-pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_subject_evidence_supported_empty_face_conflict_public_cli --tb=short",
+      "exit_code": 0,
+      "summary": "Exact final formatted regression bytes: eight passed; four genuinely foreign exploratory parents accepted and badged; conflicts4/evidence_conflict/no output. cwd=/tmp/s-source-r2-absence/work; receipt=/tmp/s-source-r2-absence/outputs/regression-complete-green.json"
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b/.venv/bin/python /tmp/s-source-r2-absence/scripts/pytest_run.py -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider -p audit_imports --collection-scope-receipt=/tmp/s-source-r2-absence/outputs/legacy-collection.json --basetemp=/tmp/s-source-r2-absence/legacy-pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_bakeoff_gate_rejects_selection_subject_or_image_overlap apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_matching_manifest_sha_renders_unbadged apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_foreign_manifest_sha_is_fatal_and_writes_nothing apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_manifest_version_as_string_fails_closed --tb=short",
+      "exit_code": 0,
+      "summary": "Four required original overlap, matching-digest, foreign-digest and string-version controls pass. cwd=/tmp/s-source-r2-absence/work; receipt=/tmp/s-source-r2-absence/outputs/legacy-four.json"
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b/.venv/bin/python /tmp/s-source-r2-absence/scripts/pytest_run.py -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider -p audit_imports --collection-scope-receipt=/tmp/s-source-r2-absence/outputs/adjacent-collection.json --basetemp=/tmp/s-source-r2-absence/adjacent-pytest apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py -k 'load_manifest_metadata_only or roster_only_more_boxes or unsupported_manifest_version or non_v3_manifest or structural_mismatch or load_manifest_skip_true_reason or load_manifest_hash_skip_reason' --tb=short",
+      "exit_code": 0,
+      "summary": "Twelve adjacent metadata-only/loader/routing/hash-skip/structural controls pass. cwd=/tmp/s-source-r2-absence/work; receipt=/tmp/s-source-r2-absence/outputs/adjacent-twelve.json"
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-source-r2-absence/scripts/replay_review.py green",
+      "exit_code": 0,
+      "summary": "All six original reviewer controls now satisfy the public contract with new output paths and retained original fixtures. cwd=/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b; receipt=/tmp/s-source-r2-absence/outputs/reviewer-fixture-green.json"
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b/.venv/bin/ruff check --config pyproject.toml apps/prototype-description-service/scripts/eval_harness/manifest.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py",
+      "exit_code": 0,
+      "summary": "Scoped Ruff lint passes for exactly the two target private files using unchanged root configuration. cwd=/tmp/s-source-r2-absence/work; receipt=/tmp/s-source-r2-absence/outputs/scoped-lint-complete.json"
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b/.venv/bin/ruff format --check --config pyproject.toml apps/prototype-description-service/scripts/eval_harness/manifest.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py",
+      "exit_code": 0,
+      "summary": "Both target private files pass Ruff format check. cwd=/tmp/s-source-r2-absence/work; receipt=/tmp/s-source-r2-absence/outputs/scoped-format-complete.json"
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-source-r2-absence/scripts/audit_map.py",
+      "exit_code": 0,
+      "summary": "Exact source pins and unique byte maps reconstruct qualified private files; all161 old selectors/187 old definitions and all prior assertions retained; only absence validator production AST changes. cwd=/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b; receipt=/tmp/s-source-r2-absence/outputs/map-audit.json"
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-source-r2-absence/scripts/focused_audit.py",
+      "exit_code": 0,
+      "summary": "95 subject cases (87 original plus8 new),4 legacy and12 adjacent verified; public outputs/imports/foreign-parent controls checked. cwd=/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b; receipt=/tmp/s-source-r2-absence/outputs/focused-audit.json"
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-source-r2-absence/scripts/prior_pins.py before 0",
+      "exit_code": 0,
+      "summary": "Read-only prior-root group0 full file/hash inventory saved. cwd=/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b; receipt=/tmp/s-source-r2-absence/outputs/prior-before-0.json"
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-source-r2-absence/scripts/prior_pins.py before 1",
+      "exit_code": 0,
+      "summary": "Read-only prior-root group1 full file/hash inventory saved. cwd=/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b; receipt=/tmp/s-source-r2-absence/outputs/prior-before-1.json"
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-source-r2-absence/scripts/prior_pins.py before 2",
+      "exit_code": 0,
+      "summary": "Read-only prior-root group2 full file/hash inventory saved. cwd=/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b; receipt=/tmp/s-source-r2-absence/outputs/prior-before-2.json"
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-source-r2-absence/scripts/prior_pins.py after 0",
+      "exit_code": 0,
+      "summary": "Read-only prior-root group0 full file/hash inventory matches its saved inventory. cwd=/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b; receipt=/tmp/s-source-r2-absence/outputs/prior-after-0.json"
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-source-r2-absence/scripts/prior_pins.py after 1",
+      "exit_code": 0,
+      "summary": "Read-only prior-root group1 full file/hash inventory matches its saved inventory. cwd=/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b; receipt=/tmp/s-source-r2-absence/outputs/prior-after-1.json"
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-source-r2-absence/scripts/prior_pins.py after 2",
+      "exit_code": 0,
+      "summary": "Read-only prior-root group2 full file/hash inventory matches its saved inventory. cwd=/home/gate/workbay-sandbox/feature-bakerounds-20261017-s-source-r2--6805b12b; receipt=/tmp/s-source-r2-absence/outputs/prior-after-2.json"
+    }
+  ],
+  "limitations": [
+    "Private author qualification only. Root owns deterministic composition, pin/region and commuting-order checks, independent WHOLE source G2, MCP/adoption and finding disposition. S-SOURCE-G1-02 projection repair belongs to the sibling; no source integration, parent closure or readiness claim.",
+    "Native base c48f0df37ef3fd50fa4c34e98d7edbb142340626 has exact requested tree797c54a4474cb6c91b450c3c9853ed6491bb81be for logical inputdc33becd8cd8bc9e2055f250c185172a0159bf71. Tree equality is not ancestry.",
+    "Live graph/handoff/ONNX tools and independent HIGH/STANDARD runtime custody are unavailable. Used complete supplied verified ONNX/handoff.db retrieval plus selected19105/19106/17814 reinjection, current origin pins and exact AST/source fallback; no fresh live retrieval/inference claimed.",
+    "All fixtures are synthetic protocol declarations; acceptance establishes consistency, not absence/identity truth or detector ground truth. No model, original-media, score, quality or bakeoff execution qualification is claimed.",
+    "Initial grounding and combined95-case commands reached their55-second bounds; split scoped runs completed. Setup-only missing-copy, Ruff configuration/format and wrong public-badge assertion attempts are retained separately. Final checks pass; no masked corpus refusal was used as behavioral RED.",
+    "Children used55s/1GiB/one-CPU25%-duty limits; aggregate VM quota was not independently measured. All nine prior audit roots remain untouched and hash-verified."
+  ]
+}

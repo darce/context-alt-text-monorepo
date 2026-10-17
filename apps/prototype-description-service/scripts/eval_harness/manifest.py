@@ -1137,7 +1137,12 @@ def validate_subject_document(raw: Mapping[str, object], *, role: SubjectRole) -
                 projection = GoldenManifest.model_validate(projection).model_dump()
             except (ValidationError, ManifestError):
                 raise SubjectEvidenceError("evidence_shape", role, None) from None
-        digest = _subject_digest(projection)
+        try:
+            digest = _subject_digest(projection)
+        except (TypeError, ValueError):
+            # C(model_dump()) has no date encoding. Existing review datetimes
+            # cannot bind this projection; retain all legacy dump/hash recipes.
+            raise SubjectEvidenceError("source_binding", role, supplied[0][0]) from None
         for ordinal, item in evidence.items():
             projected = projection[container][ordinal - 1]
             expected = {
@@ -1179,6 +1184,8 @@ def validate_subject_document(raw: Mapping[str, object], *, role: SubjectRole) -
             or type(row.get("face_count")) is not int
             or any(_subject_labels(row.get(key)) for key in _SUBJECT_ALIASES)
             or not isinstance(row.get("face_boxes", []), list)
+            # Human face declarations conflict with absence even without identity.
+            or bool(row.get("face_boxes", []))
             or any(
                 not isinstance(box, Mapping) or _subject_labels(box.get("name")) for box in row.get("face_boxes", [])
             )

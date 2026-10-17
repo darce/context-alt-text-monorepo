@@ -1,8 +1,11 @@
 # Standalone Caddy reverse proxy for multi-environment routing.
-# Joins all three environment networks and routes subdomains to env-specific API aliases.
-# Start after environment stacks are up (networks must exist).
+# shared-edge: optional-auraface-networks
+# The shared-edge helper selects a resolved generation for config/up/exec.
+# Absent staging/prod Aura memberships are omitted; generic/FIR/dev stay required.
 #
-# Usage: cd /opt/acx-backend && docker compose -f docker-compose.caddy.yml up -d
+# Use edge_compose_args <this-file> <installed-portal-overlay> and pass
+# "${EDGE_COMPOSE_ARGV[@]}" to every Compose call; edge_compose_cleanup releases
+# its private model. Direct Compose invocation requires all listed networks.
 
 services:
   caddy:
@@ -45,8 +48,8 @@ networks:
   # AuraFace per-target networks (GTMSMOKE-1, edge E). Each is intended to be created
   # by its acx-<env> stack (proposed configuration, not an observed resource); caddy
   # only joins them as external and never creates them.
-  # Create-before-up: an external network that is absent makes `docker compose up`
-  # fail for the whole edge, so bring each acx-<env> stack up first.
+  # The helper omits only absent staging/prod Aura networks from its effective
+  # generation. A dev-only rollout never starts their stores to satisfy Caddy.
   acx-dev-auraface-net:
     external: true
   acx-staging-auraface-net:

@@ -1,0 +1,62 @@
+{
+  "status": "pass",
+  "summary": "PASS0: whole independent test gate qualifies all nine selectors. Fresh87-case run:58 expected RED/29 GREEN;four legacy controls pass;S-TEST-G1-01/02 repairs verified;no unresolved material test defects.",
+  "source_sha": "ca3433b1e8b3c644471fc72ada555fc030bd82f3",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/reviews/S-WHOLE-TEST-G2.json",
+    ".task-state/bakeoff-rounds-20261017/reviews/S-WHOLE-TEST-G2.md"
+  ],
+  "commits": [
+    "24a84acfb13d971fa63b2d14d9d945c8e9927c9b"
+  ],
+  "findings": [],
+  "tests": [
+    {
+      "command": ".venv/bin/python /tmp/s-whole-test-g2/run.py ruff-check .venv/bin/ruff check apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py",
+      "exit_code": 0,
+      "summary": "Scoped lint passes for all three approved test files."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-whole-test-g2/run.py ruff-format .venv/bin/ruff format --check apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py",
+      "exit_code": 0,
+      "summary": "All three approved test files pass format check."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-whole-test-g2/run.py ast-census-import .venv/bin/python /tmp/s-whole-test-g2/census.py",
+      "exit_code": 0,
+      "summary": "Exact nine selectors; all161 old selectors/187 old definitions and prior assertions preserved; five supplied pins and actual report/manifest imports verified."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-whole-test-g2/run.py all-nine .venv/bin/python -m pytest -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider --collection-scope-receipt=/tmp/s-whole-test-g2/all-nine-collection.json --basetemp=/tmp/s-whole-test-g2/all-nine-pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py -k subject_evidence --tb=short",
+      "exit_code": 1,
+      "summary": "Fresh normal-config run:87 cases,58 expected failures,29 passes,170 deselected; no collection/setup errors;62 actual CLI receipts."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-whole-test-g2/run.py legacy-four .venv/bin/python -m pytest -q -c apps/prototype-description-service/pyproject.toml -p no:cacheprovider --collection-scope-receipt=/tmp/s-whole-test-g2/legacy-four-collection.json --basetemp=/tmp/s-whole-test-g2/legacy-four-pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_bakeoff_gate_rejects_selection_subject_or_image_overlap apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_matching_manifest_sha_renders_unbadged apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_foreign_manifest_sha_is_fatal_and_writes_nothing apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_manifest_version_as_string_fails_closed",
+      "exit_code": 0,
+      "summary": "All four required legacy overlap/digest/version controls pass under normal service configuration."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-whole-test-g2/run.py grounding .venv/bin/python /tmp/s-whole-test-g2/ground.py",
+      "exit_code": 0,
+      "summary": "Eight Canon0.26.2 bodies/four original distillations hash-verified; supplied verified semantic receipt selects19105/19106/17814 without degradation."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-whole-test-g2/run.py independent-public-controls .venv/bin/python /tmp/s-whole-test-g2/public-controls.py",
+      "exit_code": 0,
+      "summary": "Seven orthogonal public controls; ten coherent parent/negative pairs re-driven; repaired assertions reject corpus-only and wrong-code exit4 witnesses; seven isolated incomplete fixtures and32 strict containing parents verified."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-whole-test-g2/run.py acceptance-audit .venv/bin/python /tmp/s-whole-test-g2/audit.py",
+      "exit_code": 0,
+      "summary": "Final current source/plan pins,87-case scope,62 import receipts,old assertions,fixed10/20/37 metadata and native gpt-6.1-sol/xhigh custody verified."
+    }
+  ],
+  "limitations": [
+    "Test qualification only: no source/main adoption,identity truth,quality,score or actual bakeoff approval. Root owns central finding disposition,test adoption and next dispatch; no agents or source/test/plan/metadata edits.",
+    "Structured consumer remains absent. Raw evidence is ignored;strict valid records fail extra_forbidden. The28 strict negative passes are characterization,not proof of intended validation. Post-acceptance digest/prompt assertions and genuine source mutants remain for the source lane;all run/score/attestation fixtures are synthetic.",
+    "Native gpt-6.1-sol/xhigh verified;STANDARD tier is not exposed. Logical input82de2d1e6ff0c219c923bb71b05ff56880ca4d6f is unavailable as a native object;reported native base has exact requested tree10d32fac03f8ac8e2d5dee1ad44b969447ff3dcb,without an ancestry claim.",
+    "Live graph/handoff MCP tools are unavailable. Used hash-verified current five-file origin pins,supplied verified ONNX/handoff.db semantic evidence and exact checkout AST/source checks across eight files;unrelated readiness charts are not freshness authority. No live ONNX inference claimed.",
+    "Full private audit retained at /tmp/s-whole-test-g2;prior audit roots remain read-only and retained,including author KeyError/lint failures. Complete stdout/stderr/exits and import hashes preserved. Focused subprocesses completed within55s/1GiB/one CPU at50% duty;maximum20.18s. No broad suites,media access,inference,downloads or runtime changes."
+  ]
+}

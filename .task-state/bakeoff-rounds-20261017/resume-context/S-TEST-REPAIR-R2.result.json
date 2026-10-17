@@ -1,0 +1,58 @@
+{
+  "status": "test_repair_pending_independent_review",
+  "summary": "Repaired S-TEST-G1-01/02 test oracles. Expected RED:58 failed,29 passed;four legacy controls pass. Independent whole test gate remains required before source work.",
+  "source_sha": "7e93533c09e9ee3d39827f402af21136fdbab6e5",
+  "changed_files": [
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py",
+    ".task-state/bakeoff-rounds-20261017/adjudications/S-TEST-REPAIR-R2.md",
+    ".task-state/bakeoff-rounds-20261017/adjudications/S-TEST-REPAIR-R2.json"
+  ],
+  "commits": [
+    "bcebf48dc3cc8b8a304140a842515a8bda76aabb"
+  ],
+  "findings": [],
+  "tests": [
+    {
+      "command": ".venv/bin/python /tmp/s-test-repair-r2/run.py grounding-r2 .venv/bin/python /tmp/s-test-repair-r2/ground.py",
+      "exit_code": 0,
+      "summary": "Eight supplied Canon bodies and four original distillation hashes verified; exact approved plan blob and input snapshots retained."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-test-repair-r2/run.py all-nine-final .venv/bin/python -m pytest -q -c /tmp/s-test-repair-r2/pytest.ini -p no:cacheprovider --confcutdir=apps/prototype-description-service --basetemp=/tmp/s-test-repair-r2/all-nine-final-pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py -k subject_evidence --tb=short",
+      "exit_code": 1,
+      "summary": "Expected RED: 58 failed,29 passed,170 deselected;87 cases across exactly nine selectors; no collection/setup errors."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-test-repair-r2/run.py legacy-four .venv/bin/python -m pytest -q -c /tmp/s-test-repair-r2/pytest.ini -p no:cacheprovider --confcutdir=apps/prototype-description-service/scene/tests --basetemp=/tmp/s-test-repair-r2/legacy-four-pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_bakeoff_gate_rejects_selection_subject_or_image_overlap apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_matching_manifest_sha_renders_unbadged apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_foreign_manifest_sha_is_fatal_and_writes_nothing apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_manifest_version_as_string_fails_closed",
+      "exit_code": 0,
+      "summary": "Four required legacy controls pass."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-test-repair-r2/run.py sensitivity-r2 .venv/bin/python /tmp/s-test-repair-r2/sensitivity.py",
+      "exit_code": 0,
+      "summary": "Fresh corpus-only witness fools old oracle and is rejected by repaired assertions; ten coherent public parents exit0,ten invalid cases also exit0 and are rejected by repaired negatives. Both-role state/conflict hashes independently recomputed."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-test-repair-r2/run.py lint-verified .venv/bin/ruff check apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py",
+      "exit_code": 0,
+      "summary": "Focused Ruff lint passes for all three approved files."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-test-repair-r2/run.py format-check-final .venv/bin/ruff format --check apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py",
+      "exit_code": 0,
+      "summary": "All three approved files pass Ruff format check."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-test-repair-r2/run.py audit .venv/bin/python /tmp/s-test-repair-r2/audit.py",
+      "exit_code": 0,
+      "summary": "All161 old selectors/187 old definitions and every prior assertion retained; exact nine IDs,62 actual CLI receipts/import hashes; source and approved plan unchanged."
+    }
+  ],
+  "limitations": [
+    "Author repair only; no finding closure, self-approval, adoption or source repair. Root owns MCP, disposition and next dispatch; independent whole test gate must precede initial LOW source author.",
+    "Structured consumer remains absent: raw records are ignored and strict valid records fail extra_forbidden. Strict negative passes do not prove validation; post-acceptance digest/prompt assertions and genuine source mutants remain deferred.",
+    "Logical input b82673478d052cfa2ffa7d844df30c1b027c8b4d is unavailable as a native object. source_sha is honest native base7e93533c09e9ee3d39827f402af21136fdbab6e5; its tree exactly matches a80289d863e61644ed030b7f36cd126bf554c34f. No ancestry claim.",
+    "HIGH/STANDARD gpt-6.1-sol was requested; this session does not expose independently verifiable model/effort/service-tier custody or a codex-remote dispatch tool. No nested dispatch or live graph/handoff claim; supplied verified ONNX/handoff.db retrieval/reinjection and exact checkout fallback were used.",
+    "Complete private audit retained at /tmp/s-test-repair-r2, including preserved prior-gate contents, scripts, snapshots, outputs/exits/import hashes and manifest. Initial grounding SameFileError, sensitivity duplicate pytest-current alias assertion and ignored/unstaged report commit attempts are retained and corrected. Checks bounded55s,1GiB,one CPU at50% duty; no timeouts, foreign signals or prior-root cleanup."
+  ]
+}

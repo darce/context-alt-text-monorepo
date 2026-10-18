@@ -1,0 +1,109 @@
+{
+  "ok": true,
+  "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+  "status": "selected",
+  "skip_reason": null,
+  "embeddings_mode": "verified",
+  "semantic_degrade_reason": null,
+  "relevant_lines": [
+    "relevant:",
+    "- Prepare independent whole RAW source gate with …: NewRAW-AUTH-WHOLE-SOURCE-G1 preparedONLY [decision:18074]",
+    "- cdx_raw_source_landing_preflight_capacity_recon…: RAW terminal/custody settled (18073/author test5028), whole SOURCE XHIGH input8ae8c54e prepared [decision:18078]",
+    "- Qualify narrow native cleanup wave48 and preser…: Wave48ONLYterminal0clean C9wholeG3/rawauthresearch/trustHIGHsourceclones:3base.commit+delta.bundle [decision:17920]",
+    "- Apply researched eventwise fairness at actual R…: R3 AUTHOR_GREEN actualnative8e966430/fce4dae9 exact4paths approved, sixnew genuineREDGREEN [decision:18188]",
+    "- Persist immutable cache-review prior-art packet…: R1–R3 plans/findings, raw third author maps and selection, canon/template and semantic context have [decision:17709]",
+    "- Raw authenticated route characterization comple…: QWEN-RAW-AUTH-ROUTE terminal0 custody689f349a actual publicBakeoffClient anonymousv3twopass works, [decision:17912]",
+    "- ROOT LOUD before actual THIRD RAW SOURCE author…: Independent G2 review1522 native4980fd43 REVISE2: actualcredential propertykey reflections leak [decision:18173]",
+    "- Publish authoritative sibling-capacity/bakeoff.…: Actual ownerproofs, notidle inference, determine pending resources. [decision:18134]"
+  ],
+  "semantic_reinjection": {
+    "anchor_sources": [
+      "visible_text"
+    ],
+    "chars_budget": 6000,
+    "chars_used": 1251,
+    "effective_config": {
+      "candidate_pool": 32,
+      "max_concepts": 8,
+      "max_redundancy": 0.92,
+      "max_score_drop": 0.2,
+      "min_score": 0.35,
+      "mmr_relevance_weight": 0.7,
+      "notify_allowance_chars": 220,
+      "refresh_budget_chars": 1500,
+      "snippet_chars": 120
+    },
+    "fallback_scope": null,
+    "model_id": "gte-base-en-v1.5",
+    "score_hi": 0.6247513890266418,
+    "score_lo": 0.5444583296775818,
+    "selected": [
+      {
+        "emitted_chars": 119,
+        "id": "18074",
+        "kind": "decision",
+        "label": "Prepare independent whole RAW source gate with …",
+        "score": 0.6247513890266418,
+        "snippet": "NewRAW-AUTH-WHOLE-SOURCE-G1 preparedONLY [decision:18074]"
+      },
+      {
+        "emitted_chars": 165,
+        "id": "18078",
+        "kind": "decision",
+        "label": "cdx_raw_source_landing_preflight_capacity_recon…",
+        "score": 0.6167123317718506,
+        "snippet": "RAW terminal/custody settled (18073/author test5028), whole SOURCE XHIGH input8ae8c54e prepared [decision:18078]"
+      },
+      {
+        "emitted_chars": 168,
+        "id": "17920",
+        "kind": "decision",
+        "label": "Qualify narrow native cleanup wave48 and preser…",
+        "score": 0.6075152158737183,
+        "snippet": "Wave48ONLYterminal0clean C9wholeG3/rawauthresearch/trustHIGHsourceclones:3base.commit+delta.bundle [decision:17920]"
+      },
+      {
+        "emitted_chars": 160,
+        "id": "18188",
+        "kind": "decision",
+        "label": "Apply researched eventwise fairness at actual R…",
+        "score": 0.5936245918273926,
+        "snippet": "R3 AUTHOR_GREEN actualnative8e966430/fce4dae9 exact4paths approved, sixnew genuineREDGREEN [decision:18188]"
+      },
+      {
+        "emitted_chars": 169,
+        "id": "17709",
+        "kind": "decision",
+        "label": "Persist immutable cache-review prior-art packet…",
+        "score": 0.5647063255310059,
+        "snippet": "R1–R3 plans/findings, raw third author maps and selection, canon/template and semantic context have [decision:17709]"
+      },
+      {
+        "emitted_chars": 168,
+        "id": "17912",
+        "kind": "decision",
+        "label": "Raw authenticated route characterization comple…",
+        "score": 0.5998642444610596,
+        "snippet": "QWEN-RAW-AUTH-ROUTE terminal0 custody689f349a actual publicBakeoffClient anonymousv3twopass works, [decision:17912]"
+      },
+      {
+        "emitted_chars": 165,
+        "id": "18173",
+        "kind": "decision",
+        "label": "ROOT LOUD before actual THIRD RAW SOURCE author…",
+        "score": 0.5444583296775818,
+        "snippet": "Independent G2 review1522 native4980fd43 REVISE2: actualcredential propertykey reflections leak [decision:18173]"
+      },
+      {
+        "emitted_chars": 137,
+        "id": "18134",
+        "kind": "decision",
+        "label": "Publish authoritative sibling-capacity/bakeoff.…",
+        "score": 0.568365216255188,
+        "snippet": "Actual ownerproofs, notidle inference, determine pending resources. [decision:18134]"
+      }
+    ],
+    "skip_reason": null,
+    "status": "selected"
+  }
+}

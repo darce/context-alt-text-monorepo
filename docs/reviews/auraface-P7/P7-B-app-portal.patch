@@ -1,0 +1,29 @@
+--- a/docs/runbooks/app-portal-deploy.md
++++ b/docs/runbooks/app-portal-deploy.md
+@@ -456,18 +456,19 @@
+   edge_bounded_run "${compose[@]}" exec -T caddy \
+     caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 9>&-
+   sha256sum /opt/acx-backend/Caddyfile
+-  if [ "${EDGE_COMPOSE_ARGV[1]}" = docker-compose.caddy.yml ]; then
+-    edge_bounded_run docker compose -f docker-compose.caddy.yml exec -T caddy \
+-      sha256sum /etc/caddy/Caddyfile 9>&-
+-  else
+-    edge_bounded_run "${compose[@]}" exec -T caddy sha256sum /etc/caddy/Caddyfile 9>&-
+-  fi
++  edge_bounded_run "${compose[@]}" exec -T caddy sha256sum /etc/caddy/Caddyfile 9>&-
+   edge_bounded_run /usr/local/bin/app-portal-health-check 9>&-
+ )
+ ```
+
++The selected Compose generation is retained through recreation, readiness,
++reload, and container hash verification. This includes an installed legacy
++overlay's `name:` project selection; using the base alone for any stage can
++address a different project. The host hash still reads the host Caddyfile, while
++the container hash reads `/etc/caddy/Caddyfile` in that same selected project.
+ The subshell stops on recreation/reload failure or readiness exhaustion, before
+-hash/health verification. The probe uses container-local BusyBox `wget`, a
++hash/health verification, and on either hash command's failure before health.
++The probe uses container-local BusyBox `wget`, a
+ one-second request timeout, and at most nine one-second pauses between ten
+ attempts. On exhaustion, follow frontend back-out. Recheck both hashes and
+ health after recovery. If the hashes still differ or

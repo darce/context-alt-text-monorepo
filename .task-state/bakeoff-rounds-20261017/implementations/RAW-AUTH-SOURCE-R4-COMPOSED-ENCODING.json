@@ -8,7 +8,9 @@
     ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-SOURCE-R4-COMPOSED-ENCODING.json",
     ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-SOURCE-R4-COMPOSED-ENCODING.md"
   ],
-  "commits": [],
+  "commits": [
+    "4043c7bc7b654fed2b4aeee9a0837d0fe8e59ea8"
+  ],
   "findings": [
     {
       "id": "RAW-AUTH-SOURCE-G3-01",

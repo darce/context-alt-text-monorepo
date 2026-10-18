@@ -71,25 +71,17 @@ const personMatchesFor = (
   });
 };
 
-/** Prefer a unique curated person without conflating distinct same-name roster IDs. */
+/** Producers resolve binding proof before truncation; the control dedupes IDs only. */
 const canonicalNamingOptions = (
   options: readonly ComboboxOption[],
-  resolutionOptions: readonly ComboboxOption[],
 ): ComboboxOption[] => {
   const seen = new Set<string>();
   const canonical: ComboboxOption[] = [];
-  const candidates = [...resolutionOptions, ...options];
   for (const option of options) {
-    const people = optionSource(option) === 'cluster'
-      ? personMatchesFor(candidates, option.label)
-      : [];
-    // Use the roster option itself: suggestion IDs and rejection provenance stay
-    // with their original suggestion, never with the manual roster binding.
-    const choice = people.length === 1 ? people[0] : option;
-    const key = String(choice.value);
+    const key = String(option.value);
     if (!seen.has(key)) {
       seen.add(key);
-      canonical.push(choice);
+      canonical.push(option);
     }
   }
   return canonical;
@@ -300,8 +292,8 @@ export const NameFaceControl = ({
   }, []);
 
   const canonicalOptions = React.useMemo(
-    () => canonicalNamingOptions(options, resolutionOptions),
-    [options, resolutionOptions],
+    () => canonicalNamingOptions(options),
+    [options],
   );
   const matchingOptions = React.useMemo(
     () => matchingOptionsFor(canonicalOptions, value),

@@ -9,6 +9,7 @@ import type {
   PendingSuggestion,
 } from '../../../api/recognition';
 import type { TopUnlabeledClustersResponse } from '../../../api/recognition/types/cluster';
+import type { CanonicalRosterPerson } from './buildNamingOptions';
 
 /** Shared fetch depth for all identity-keyed reads (fetch K, filter client-side). */
 export const PROJECTION_TOP_K = 5;
@@ -79,6 +80,8 @@ export interface ProjectedSuggestionEnrichment {
  * - `enrichment` review-leg only.
  */
 export interface ProjectedSuggestion {
+  /** Optional existing binding resolved by ID against the mandatory roster read. */
+  canonicalPerson?: CanonicalRosterPerson;
   suggestionId?: string;
   identityId: string;
   clusterId: string;

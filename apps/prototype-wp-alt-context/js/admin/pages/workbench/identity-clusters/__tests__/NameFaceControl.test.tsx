@@ -130,7 +130,7 @@ describe('curated person picker choices', () => {
     }
   });
 
-  it('CURATION-PERSON-P1 collapses repeated copies of one ID through the real pipeline', () => {
+  it('CURATION-PERSON-P1 collapses repeated person IDs while preserving an unproved group', () => {
     const built = buildNamingOptions({
       rosterEntries: [{ id: 41, name: 'Alex Rivera' }, { id: 41, name: 'Alex Rivera' }],
       labelMatches: [],
@@ -142,21 +142,20 @@ describe('curated person picker choices', () => {
     const onOptionConfirm = vi.fn();
     const { onCommit } = renderControl({ options, value: 'Alex', onOptionConfirm });
     fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
-    expect(screen.getAllByRole('option')).toHaveLength(1);
-    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' });
+    expect(screen.getAllByRole('option')).toHaveLength(2);
+    fireEvent.click(screen.getAllByRole('option')[1]);
     expect(onCommit).toHaveBeenCalledExactlyOnceWith({ kind: 'roster', rosterEntryId: 41, name: 'Alex Rivera' });
     expect(onOptionConfirm).not.toHaveBeenCalled();
   });
 
   it('shows one canonical person for a mirrored suggestion and binds its stored ID', () => {
-    const rosterPerson = person(41, 'Kirstie McCarrel');
+    const built = buildNamingOptions({
+      rosterEntries: [{ id: 41, name: 'Kirstie McCarrel', person_uuid: 'backend-kirstie' }],
+      labelMatches: [{ id: 'synthetic', label: 'kirstie mccarrel', person_uuid: 'backend-kirstie' }],
+    });
     const onOptionConfirm = vi.fn();
     const { onCommit } = renderControl({
-      options: [
-        { value: 'cluster:synthetic', label: 'kirstie mccarrel', source: 'cluster', group: NAMING_GROUP_SUGGESTED, suggestion_id: 'synthetic-suggestion' },
-        rosterPerson,
-        rosterPerson,
-      ],
+      options: selectClusterSuggestions({ namingOptions: built.options }),
       value: 'Kirst',
       onOptionConfirm,
       onRejectSuggestion: vi.fn(),
@@ -172,9 +171,10 @@ describe('curated person picker choices', () => {
     expect(onOptionConfirm).not.toHaveBeenCalled();
   });
 
-  it('canonicalizes against the full roster before budgeting and keyboard confirmation', () => {
+  it('never uses a separate roster resolution set as proof of a group binding', () => {
     const rosterPerson = person(41, 'Kirstie McCarrel');
     const others = [person(42, 'Ada'), person(43, 'Grace'), person(44, 'Alan'), person(45, 'Pat')];
+    const onOptionConfirm = vi.fn();
     const { onCommit } = renderControl({
       options: [
         { value: 'cluster:first', label: 'Kirstie McCarrel', source: 'cluster', group: NAMING_GROUP_SUGGESTED },
@@ -182,13 +182,15 @@ describe('curated person picker choices', () => {
         ...others,
       ],
       resolutionOptions: [rosterPerson, ...others],
+      onOptionConfirm,
     });
     const input = screen.getByRole('combobox');
     fireEvent.keyDown(input, { key: 'ArrowDown' });
     expect(screen.getAllByRole('option')).toHaveLength(5);
-    expect(screen.getByRole('option', { name: 'Confirm match with Pat' })).toBeInTheDocument();
+    expect(screen.getAllByRole('option', { name: 'Confirm match with Kirstie McCarrel' })).toHaveLength(2);
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(onCommit).toHaveBeenCalledExactlyOnceWith({ kind: 'roster', rosterEntryId: 41, name: 'Kirstie McCarrel' });
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(onOptionConfirm).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ value: 'cluster:first' }));
   });
 
   it('keeps distinct same-name person IDs as explicit choices and typed input ambiguous', () => {

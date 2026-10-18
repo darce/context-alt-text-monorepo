@@ -28,6 +28,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
 from conftest import _write_executable
 
 SCRIPT = Path(__file__).resolve().parents[1] / "recognition-service.sh"
@@ -197,6 +198,9 @@ def _capture_abort_payload(tmp_path: Path, env: str = "dev") -> str:
     command = f'''
 source "{SCRIPT}"
 GREEN=; YELLOW=; RED=; RESET=
+# Payload-only boundary; real edge refusal is covered in test_aura_edge_fence.
+recognition_edge_assert_if_active() {{ return 0; }}
+recognition_edge_command() {{ run_with_deadline 5 "owned command" ssh "$1"; }}
 run_with_deadline() {{ shift 2; "$@"; }}
 ssh() {{ printf '%s\\n' "${{@: -1}}" >"{payload}"; return 0; }}
 abort_cutover_candidate {env}

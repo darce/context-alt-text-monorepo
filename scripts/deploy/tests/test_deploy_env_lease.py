@@ -53,9 +53,12 @@ def _run_driver(
     sudo = bin_dir / "sudo"
     sudo.write_text('#!/usr/bin/env bash\nexec "$@"\n', encoding="utf-8")
     sudo.chmod(0o755)
-    command = f'''
+    command = f"""
 source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
+# These unit tests isolate environment leases; the edge fence has real-helper coverage.
+recognition_edge_begin() {{ return 0; }}
+recognition_edge_finish() {{ return 0; }}
 export PATH={shlex.quote(str(bin_dir))}:$PATH
 run_with_deadline() {{ shift 2; "$@"; }}
 ssh() {{
@@ -64,7 +67,7 @@ ssh() {{
 }}
 ACX_DEPLOY_BACKUP_ROOT={shlex.quote(str(tmp_path / "vm-backups"))}
 {statements}
-'''
+"""
     env = os.environ.copy()
     env.update({"ACX_DEPLOY_TRANSACTION_ID": transaction, **extra_env})
     return subprocess.run(
@@ -200,7 +203,7 @@ def test_do_verify_renews_a_held_lease_once_per_attempt(tmp_path: Path) -> None:
     for lease_env, expected_renewals in (("dev", 3), ("", 0)):
         case_dir = tmp_path / (lease_env or "no-lease")
         renew_log = case_dir / "renew.log"
-        statements = f'''
+        statements = f"""
 env_to_health_url() {{ printf 'https://verify.invalid/health'; }}
 env_to_ready_url() {{ printf 'https://verify.invalid/ready'; }}
 pin_deploy_sha() {{ DEPLOY_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; GIT_REF=test; }}
@@ -211,7 +214,7 @@ emit_verify_ready_diagnostic() {{ :; }}
 ACX_DEPLOY_LEASE_ENV={shlex.quote(lease_env)}
 ACX_VERIFY_EXPECT_LOCAL=1
 if do_verify dev; then printf 'VERIFY=pass\\n'; else printf 'VERIFY=fail\\n'; fi
-'''
+"""
 
         result = _run_driver(
             case_dir,
@@ -497,7 +500,7 @@ def test_ship_refuses_before_rollback_tag_when_env_is_held(tmp_path: Path) -> No
     path = _lease_path(tmp_path)
     original = path.read_bytes()
     records = tmp_path / "records.log"
-    statements = f'''
+    statements = f"""
 RECORDS={shlex.quote(str(records))}
 record() {{ printf '%s\\n' "$*" >>"$RECORDS"; }}
 pin_deploy_sha() {{ DEPLOY_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; }}
@@ -513,7 +516,7 @@ cleanup_remote_build_generation_on_exit() {{ :; }}
 _purge_deploy_ocir_docker_config() {{ :; }}
 _purge_deploy_snapshot() {{ :; }}
 _ship_selected_env dev aggregate
-'''
+"""
 
     result = _run_driver(tmp_path, statements, transaction="transaction-b")
 
@@ -542,7 +545,7 @@ exit 0
 
 def test_lost_lease_before_restart_stops_without_compensation(tmp_path: Path) -> None:
     records = tmp_path / "records.log"
-    statements = f'''
+    statements = f"""
 RECORDS={shlex.quote(str(records))}
 record() {{ printf '%s\\n' "$*" >>"$RECORDS"; }}
 pin_deploy_sha() {{ DEPLOY_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; }}
@@ -570,7 +573,7 @@ cleanup_remote_build_generation_on_exit() {{ :; }}
 _purge_deploy_ocir_docker_config() {{ :; }}
 _purge_deploy_snapshot() {{ :; }}
 _ship_selected_env dev aggregate
-'''
+"""
 
     result = _run_driver(tmp_path, statements, transaction="transaction-a")
 
@@ -587,7 +590,7 @@ _ship_selected_env dev aggregate
 def test_lost_lease_after_promote_gate_stops_before_tag_push(tmp_path: Path) -> None:
     marker = tmp_path / "tag-push-ran"
     lease_path = _lease_path(tmp_path)
-    statements = f'''
+    statements = f"""
 pin_deploy_sha() {{ DEPLOY_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; }}
 init_deploy_ocir_docker_config() {{ install_deploy_interrupt_traps; }}
 preflight_ssh() {{ :; }}
@@ -607,7 +610,7 @@ cleanup_remote_build_generation_on_exit() {{ :; }}
 _purge_deploy_ocir_docker_config() {{ :; }}
 _purge_deploy_snapshot() {{ :; }}
 _ship_selected_env dev aggregate
-'''
+"""
 
     result = _run_driver(tmp_path, statements)
 
@@ -620,11 +623,11 @@ def test_clear_image_repo_refuses_when_env_is_held(tmp_path: Path) -> None:
     first = _run_driver(tmp_path, "deploy_env_lease acquire dev", transaction="transaction-a")
     assert first.returncode == 0, first.stdout + first.stderr
     marker = tmp_path / "image-repo-clear-ran"
-    statements = f'''
+    statements = f"""
 preflight_ssh() {{ :; }}
 image_repo_resource() {{ touch {shlex.quote(str(marker))}; }}
 clear_remote_image_repo_env dev
-'''
+"""
 
     result = _run_driver(tmp_path, statements, transaction="transaction-b")
 
@@ -637,14 +640,14 @@ clear_remote_image_repo_env dev
 def test_clear_image_repo_holds_and_releases_lease(tmp_path: Path) -> None:
     marker = tmp_path / "image-repo-clear-ran"
     lease_path = _lease_path(tmp_path)
-    statements = f'''
+    statements = f"""
 preflight_ssh() {{ :; }}
 image_repo_resource() {{
   [[ -f {shlex.quote(str(lease_path))} ]] || return 1
   touch {shlex.quote(str(marker))}
 }}
 clear_remote_image_repo_env dev
-'''
+"""
 
     result = _run_driver(tmp_path, statements)
 
@@ -672,7 +675,7 @@ def test_reset_refuses_with_other_live_transaction_before_ssh_mutation(tmp_path:
     held = _run_driver(tmp_path, "deploy_env_lease acquire dev", transaction="transaction-a")
     assert held.returncode == 0, held.stdout + held.stderr
     ssh_log = tmp_path / "reset-ssh.log"
-    statements = f'''
+    statements = f"""
 SSH_LOG={shlex.quote(str(ssh_log))}
 ssh() {{
   local remote_command="${{@: -1}}"
@@ -689,7 +692,7 @@ preflight_remote_face_pipeline_models() {{ :; }}
 curl() {{ return 0; }}
 sleep() {{ :; }}
 do_reset dev
-'''
+"""
 
     result = _run_driver(tmp_path, statements, transaction="transaction-b")
 
@@ -722,7 +725,7 @@ def test_acquire_calls_precede_mutations() -> None:
 def test_manual_rollback_stops_if_lease_was_lost_during_pulls(tmp_path: Path) -> None:
     marker = tmp_path / "rollback-mutation-ran"
     lease_path = _lease_path(tmp_path)
-    statements = f'''
+    statements = f"""
 preflight_ssh() {{ :; }}
 preflight_remote_ocir_auth() {{ :; }}
 _pull_ref_remote() {{ rm -f {shlex.quote(str(lease_path))}; }}
@@ -731,7 +734,7 @@ remote_image_id_for_digest() {{ printf 'image-id\\n'; }}
 capture_prior_runtime_identity() {{ :; }}
 restore_env_tag_to_rollback() {{ touch {shlex.quote(str(marker))}; }}
 do_rollback dev aaaaaaaaaaaa
-'''
+"""
 
     result = _run_driver(tmp_path, statements)
 

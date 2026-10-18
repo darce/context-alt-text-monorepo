@@ -1,0 +1,29 @@
+{
+  "js/guide/main.tsx": {
+    "file": "assets/guide-main.js",
+    "name": "guide",
+    "src": "js/guide/main.tsx",
+    "isEntry": true,
+    "imports": ["_shared-abc.js"],
+    "dynamicImports": ["_lazy-xyz.js"],
+    "css": ["assets/guide-main.css"]
+  },
+  "_shared-abc.js": {
+    "file": "assets/shared-abc.js",
+    "name": "shared-abc",
+    "imports": ["_deep-def.js"],
+    "css": ["assets/shared-abc.css"]
+  },
+  "_deep-def.js": {
+    "file": "assets/deep-def.js",
+    "name": "deep-def",
+    "imports": ["_shared-abc.js"],
+    "css": ["assets/deep-def.css", "assets/shared-abc.css"]
+  },
+  "_lazy-xyz.js": {
+    "file": "assets/lazy-xyz.js",
+    "name": "lazy-xyz",
+    "isDynamicEntry": true,
+    "css": ["assets/lazy-xyz.css"]
+  }
+}

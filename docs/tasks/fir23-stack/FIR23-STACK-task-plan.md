@@ -1,0 +1,131 @@
+# FIR23-STACK. acx-dev-fir — isolated FIR/SFace benchmarking backend
+
+**Task ref:** FIR23-STACK · **Branch:** feature/fir23-stack · **Status:** in_progress
+
+> Rev 3 — incorporates the shared runtime-fingerprint provenance contract; retains planning-review fixes for findings FIR23-STACK-BR-01..08.
+
+> **Superseded auth choice (AUTHPIPE-1, 2026-09-22):** `fir.dev.api.altcontext.com` is a public
+> vhost, so `acx-dev-fir` runs `RECOGNITION_AUTH_ENABLED=true` and the fir site needs a tenant
+> key minted in the dev-fir stack (commands in `apps/prototype-description-service/.env.fir.example`).
+> The stack identity and slices below are updated to match (AUTHPIPE-1).
+
+## Objective
+
+Stand up `acx-dev-fir`, a profile-pinned recognition backend running the `face_pipeline`
+profile (SFace 128d, YuNet detector), fully isolated from the InsightFace `acx-dev` stack, so
+InsightFace-vs-FIR curated clusters can be compared side-by-side in two Workbenches.
+
+## Why isolated stacks (not a runtime toggle)
+
+Canon **[EMB-01]** one embedding space per comparison · **[IDX-02]** mixed-space query is
+meaningless. InsightFace `buffalo_l` = 512d, SFace = 128d; the DB `media_identities.embedding`
+column is dimension-pinned by `PGVECTOR_DIM`, fail-closed by the **three-way guard**
+`assert_three_way_embedding_dimensions` (`face_pipeline_adapter.py:318-329`; the two-way
+pgvector-pair guard is separately `settings.py:321-333`). Two models = two DBs = two stacks.
+Supersedes the dropped per-request header design (decision #2947).
+
+## Verified anchors
+
+- One parameterized compose `apps/prototype-description-service/docker-compose.env.yml`; per-env
+  `.env`; **each stack owns its own postgres container, volume, AND network** (per-stack external
+  nets on the VM: `acx-dev-net`, `acx-prod-net`, `acx-staging-net`, `acx-demo-net`).
+- **Persist the canonical numeric runtime fingerprint with each comparable run** <span>(QA v8 re-gate, updated 2026-10-01)</span>. Call the shared `recognition.infrastructure.face_pipeline.numeric_runtime_fingerprint()` producer (exported by the `face_pipeline` package) and persist its full object as `numeric_runtime_fingerprint` beside the ONNX sha256 in run provenance. The source contract is `NumericRuntimeFingerprint` in `apps/prototype-description-service/recognition/infrastructure/face_pipeline/provenance.py`; persist all nine dataclass fields: `opencv_version`, `opencv_major`, `onnxruntime_version`, `numpy_version`, `scipy_version`, `pillow_version`, `hdbscan_version`, `pgvector_version`, and `opencv_distribution_versions`. `comparison_token` is a derived digest, not a dataclass field. `/health/detailed` exposes all nine fields in its serialized `model_cache.detail` object and adds `comparison_token` for remote equality checks. Do not create a private `cv2_major` or `cv_runtime_version` field. Runs with different fingerprint objects must **not** compare; the OpenCV major alone cannot identify the producing runtime. This pin records which stack produced the FIRTRAIN-05 re-run **under 5.x**.
+- **Provision a candidate-detector lane alongside the 512d/128d embedder split.** The current design is an embedder-dimension split only. QA v8 leaves the detector-vs-embedder question **undecided** — which leg wins is not known — so building only the embedder lane presupposes the answer.
+- SFace model_id `opencv-sface@128d/l2/cosine` (`provenance.py:86-99`). ONNX fetched + sha256-verified by
+  `scripts/fetch_face_pipeline_models.py`. **Not baked into the `dev` image** (Dockerfile:44-45; `*.onnx`
+  gitignored; remote-build rsync excludes `face_pipeline/models/*.onnx`).
+- Dimension root: `PGVECTOR_DIM` only (`db/settings.py:212-224`, default "512"); `RECOGNITION_EMBEDDING_DIMENSION`
+  ignored (`settings.py:60-68`). Must set BOTH `RECOGNITION_FACE_PIPELINE_PROFILE=face_pipeline` AND `PGVECTOR_DIM=128`.
+- **Runtime ONNX load path** = `settings.face_pipeline.resolved_models_dir` = env
+  `RECOGNITION_FACE_PIPELINE_MODELS_DIR`, else package `DEFAULT_MODELS_DIR`
+  (`settings.py:52-57,222-224`; `runtime_factory.py:73`; `health.py:393`). The compose mount
+  `${ACX_MODELS_PATH}:/data/cache` does NOT overlay the package dir — so the env var MUST point at the mount.
+- Deploy driver `recognition-service.sh` env-mapping case blocks: `env_to_tag`, `env_to_unit`,
+  `env_to_remote_dir`, `env_to_health_url`, `env_to_ready_url`, `env_to_compose_files`.
+  Also `do_status()` iterates `for env in dev dev-fir staging prod`. `sync-compose.sh:22` allow-list.
+  `db-reset-remote.sh:66-83` arms hardcode PG_CONTAINER/API_CONTAINER/PG_USER/PG_DB/HEALTH_URL per env.
+- Systemd unit from `systemd/acx-env.service.template`; `WorkingDirectory=/opt/acx-backend/{{ENV}}`,
+  `ExecStart=docker compose {{COMPOSE_FILES}} up`. `converge_runtime` ships compose to `env_to_remote_dir`.
+  **WorkingDirectory basename must equal ENV** → remote dir MUST be
+  `/opt/acx-backend/dev-fir` (NOT `/opt/acx-backend/fir`).
+- **Edge ownership:** the deploy driver owns edge convergence. `converge_runtime` ships the shared
+  Caddyfile + `docker-compose.caddy.yml` checksum-gated, verifies caddy's network membership of
+  `acx-dev-fir-net`, and **refuses to mutate the edge unless `ACX_EDGE_APPLY=1`** (fail-closed; it
+  prints the lever). Caddy multi-homed via `/opt/acx-backend/docker-compose.caddy.yml` (networks:
+  per-stack, `external: true`). Caddyfile vhost: `fir.dev.api.altcontext.com { reverse_proxy dev-fir-api:8000 }`
+  (alongside existing `dev.api.altcontext.com { reverse_proxy dev-api:8000 }`).
+- `dev` tier secrets: `/opt/acx-backend/dev/.env` uses **inline plaintext** `POSTGRES_DSN`,
+  **no vault** (only prod/staging use `oci_vault`). `dev.api.altcontext.com` is public too, so dev's auth must be on (operator follow-up).
+- VM disk: `/` 193G, 72G avail (ample).
+
+## Canonical stack identity (single source of truth)
+
+- `ACX_ENV=dev-fir` · `COMPOSE_PROJECT_NAME=acx-dev-fir` · `ACX_IMAGE_TAG=dev-fir` (independent tag promoted from `:dev`)
+- containers: `acx-dev-fir-postgres-1`, `acx-dev-fir-api-1`, `acx-dev-fir-worker-1` · api alias `dev-fir-api`
+- network: `acx-dev-fir-net` (OWN network, `external`) · remote dir `/opt/acx-backend/dev-fir`
+- data: `ACX_PGDATA_PATH=/opt/acx-backend/data/dev-fir-pgdata`, `ACX_MODELS_PATH=/opt/acx-backend/data/dev-models` (shared with dev)
+- POSTGRES_USER=`acx_dev_fir` POSTGRES_DB=`alt_context_dev_fir`
+- `RECOGNITION_FACE_PIPELINE_PROFILE=face_pipeline` · `PGVECTOR_DIM=128` · `RECOGNITION_AUTH_ENABLED=true` (public vhost; tenant key minted in the dev-fir stack DB)
+- `RECOGNITION_FACE_PIPELINE_MODELS_DIR=/data/cache/face_pipeline` (under the mounted `ACX_MODELS_PATH`)
+- ingress: `fir.dev.api.altcontext.com → dev-fir-api:8000`
+
+## Decisions (operator-confirmed 2026-07-23)
+
+- Durable/scripted path via **remote grok flock**. Public DNS ingress via Caddy (operator adds A record).
+
+## Slices
+
+### Slice 1 — deploy-tooling `dev-fir` support (CODE · grok flock · gated)
+
+- `recognition-service.sh`: add `dev-fir)` arm to all 6 env-mapping case blocks — tag=`dev`,
+  unit=`acx-dev-fir`, **remote dir=`/opt/acx-backend/dev-fir`** (BR-04), health/ready=`https://fir.dev.api.altcontext.com/health|/ready`,
+  compose files=`-f docker-compose.env.yml`. Add `dev-fir` to `do_status()` loop (BR-08).
+- `sync-compose.sh:22`: add `dev-fir` to allow-list.
+- `db-reset-remote.sh`: add `dev-fir)` arm with PG_CONTAINER=`acx-dev-fir-postgres-1`,
+  API_CONTAINER=`acx-dev-fir-api-1`, PG_USER=`acx_dev_fir`, PG_DB=`alt_context_dev_fir`,
+  HEALTH_URL=`https://fir.dev.api.altcontext.com/health` (BR-06).
+- `mk/deploy.mk`: `deploy-dev-fir` (`.PHONY`; `deploy-verify ENV=dev-fir` already generic).
+  `deploy-reset-dev-fir-to-dev` promotes `:dev` -> `:dev-fir` (dev-fir has its own tag; this resets
+  forward). Previous-digest rollback: `recognition-service.sh rollback dev-fir <id>`.
+- New `apps/prototype-description-service/.env.fir.example` = the "Canonical stack identity" above, incl.
+  **`RECOGNITION_FACE_PIPELINE_MODELS_DIR=/data/cache/face_pipeline`** (BR-01) and inline dev-style secrets,
+  auth **enabled** (public vhost), **no vault**; the fir site's tenant key is minted in the dev-fir stack (recipe in the template; supersedes BR-05).
+- Tests: extend shell/case coverage to include `dev-fir`; unknown env still fails closed.
+
+### Slice 2 — VM provisioning + deploy (INFRA · operator + orchestrator)
+
+Ordered (gates matter):
+1. Create `/opt/acx-backend/dev-fir/.env` from `.env.fir.example` (inline secrets, fir DB password).
+2. Ensure models land where `RECOGNITION_FACE_PIPELINE_MODELS_DIR=/data/cache/face_pipeline` reads them
+   (BR-01): `fetch_face_pipeline_models.py --dest /opt/acx-backend/data/dev-models/face_pipeline`
+   is **mandatory** — `preflight_remote_face_pipeline_models` / boot smoke only verify/probe
+   existing weights; neither provisions them.
+3. **Operator adds DNS A/CNAME record `fir.dev.api.altcontext.com → VM`; CONFIRM it resolves** (BR-07)
+   BEFORE public health verify.
+4. Edit the live `/opt/acx-backend/dev-fir/.env` so `ACX_IMAGE_TAG=dev-fir` (independent
+   `:dev-fir` tag promoted from `:dev`; compose selects the image via `${ACX_IMAGE_TAG}`). Do this
+   before the first `dev-fir` deploy. See
+   `apps/prototype-description-service/docs/secrets-inventory.md` section
+   "Per-environment runtime files".
+5. **First dev-fir deploy:** run `make deploy-dev-fir` with `ACX_EDGE_APPLY=1` so `converge_runtime`
+   creates/attaches `acx-dev-fir-net`, ships Caddyfile + `docker-compose.caddy.yml`, and applies edge
+   mutation (vhost + network membership). Without the lever the driver fail-closes and prints it.
+   Fallback only if the net must be pre-created by hand: `docker network create --label com.docker.compose.network=backend --label com.docker.compose.project=acx-dev-fir acx-dev-fir-net`
+   (compose refuses adopting an unlabeled pre-existing net; the deploy driver auto-creates it in
+   boot smoke + converge, so this is rarely needed).
+6. Verify: container Up, boot migration at `vector(128)`, three-way guard passes,
+   `active_embedding_model_id()==opencv-sface@128d/l2/cosine`, **local** `/health` green.
+7. Verify public `https://fir.dev.api.altcontext.com/health` green + TLS issued.
+
+### Slice 3 — fir LocalWP wiring + benchmark (ORCHESTRATION)
+
+- fir site (`/Volumes/Butter/WP/fir`, plugin symlinked): `wp plugin activate alt-context` (LocalWP shell).
+- Set `acx_recognition_url=https://fir.dev.api.altcontext.com` and paste the fir tenant key minted in the dev-fir stack (tenant `fa22a16e-ec19-5e04-a49c-1f884914c945` for `http://localhost:10028`; recipe in `.env.fir.example`).
+- Scan the SAME image set on both stacks → compare curated clusters in the two Workbenches.
+
+## Open threads
+
+- Edge ownership: deploy driver (`converge_runtime`) owns Caddy/net convergence gated by `ACX_EDGE_APPLY=1`;
+  DNS A/CNAME for `fir.dev.api.altcontext.com` remains operator-manual.
+- Model disk: SFace 38.7MB + YuNet ~0.2MB into `/opt/acx-backend/data/dev-models/face_pipeline`, with `LICENSE.yunet` / `LICENSE.sface` beside them (the loader pins both).
+- `do_status` cosmetic addition (BR-08) optional but included.

@@ -1,0 +1,217 @@
+{
+  "lane": "dadj-05",
+  "base": "ec4f0bb0500cb6b0c154a83204fb1d0cf8121381",
+  "results": [
+    {
+      "db_id": 1292,
+      "finding_id": "CON-3",
+      "task": "MAINT-wpac-defect-review-20260614",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-wp-alt-context/src/sovereign/sync/class-outbox-query-repository.php:320 - claim_operation atomically updates pending to in_flight; class-outbox-drain.php:296 dispatches only rows whose claim succeeded; tests/Unit/OutboxDrainTest.php:682 asserts the guarded claim.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-wp-alt-context/src/sovereign/sync/class-outbox-query-repository.php",
+        "apps/prototype-wp-alt-context/src/sovereign/sync/class-outbox-drain.php"
+      ],
+      "test_file": "apps/prototype-wp-alt-context/tests/Unit/OutboxDrainTest.php",
+      "size": "M",
+      "related": [],
+      "fix_hint": "No further fix is needed; the conditional pending-to-in_flight claim prevents concurrent drains from dispatching the same row."
+    },
+    {
+      "db_id": 1285,
+      "finding_id": "COR-2",
+      "task": "MAINT-wpac-defect-review-20260614",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-wp-alt-context/src/sovereign/sync/class-split-topology-command-drain.php:252 - reconcile_attempts selects terminal failed at the configured cap; tests/Unit/SplitTopologyCommandDrainTest.php:651 verifies two failures stop reconciliation and a third drain writes nothing.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-wp-alt-context/src/sovereign/sync/class-split-topology-command-drain.php",
+        "apps/prototype-wp-alt-context/src/sovereign/sync/class-topology-command-repository.php"
+      ],
+      "test_file": "apps/prototype-wp-alt-context/tests/Unit/SplitTopologyCommandDrainTest.php",
+      "size": "M",
+      "related": [],
+      "fix_hint": "No further fix is needed; applied commands now increment a separate reconciliation counter and become terminal at the attempt cap."
+    },
+    {
+      "db_id": 9077,
+      "finding_id": "HARM-12-MAT",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "benchmarks/manifests/corpus-manifest-v3.json:4 - images_root still points into the vlm-6 feature worktree; benchmarks/reports/fir-occlusion-caption-mining-20260904.json:22 records manifest_images_root_exists=false.",
+      "severity": "medium",
+      "fix_files": [
+        "benchmarks/manifests/corpus-manifest-v3.json",
+        "benchmarks/tools/fir_corpus_population_draft_20260919.py"
+      ],
+      "test_file": "benchmarks/tests/test_fir_corpus_population_draft_image_root.py",
+      "size": "M",
+      "related": [
+        6430
+      ],
+      "fix_hint": "Make image-root resolution configurable or repository-relative and regenerate the corpus artifacts from an available source tree."
+    },
+    {
+      "db_id": 5227,
+      "finding_id": "FIRTRAIN-01",
+      "task": "MAINT-fir-training-feasibility-20260727",
+      "verdict": "OPERATOR",
+      "duplicate_of": null,
+      "evidence": "benchmarks/manifests/golden150-draft-20260723.sidecar.json:12 - boxes retain detector provenance except for six manual boxes; benchmarks/tools/fir_corpus_population_draft_20260919.py:54 marks entries diagnostic-only and not score-eligible pending adjudication.",
+      "severity": "medium",
+      "fix_files": [
+        "benchmarks/manifests/golden150-draft-20260723.json",
+        "benchmarks/manifests/golden150-draft-20260723.sidecar.json"
+      ],
+      "test_file": "",
+      "size": "L",
+      "related": [
+        5241,
+        5245
+      ],
+      "fix_hint": "An operator must independently review and relabel detector-minted boxes before using this corpus as detection ground truth."
+    },
+    {
+      "db_id": 5241,
+      "finding_id": "GT2-03",
+      "task": "MAINT-fir-training-feasibility-20260727",
+      "verdict": "OPERATOR",
+      "duplicate_of": null,
+      "evidence": "benchmarks/plans/fir-11-sizing-note.md:72 - the available 137 identity labels are explicitly described as buffalo's merge-only partition IDs; the 20260919 population draft keeps historical Golden-150 entries diagnostic-only at fir_corpus_population_draft_20260919.py:54.",
+      "severity": "medium",
+      "fix_files": [
+        "benchmarks/manifests/golden150-draft-20260723.json",
+        "benchmarks/tools/fir_corpus_population_draft_20260919.py"
+      ],
+      "test_file": "",
+      "size": "L",
+      "related": [
+        5227,
+        5245
+      ],
+      "fix_hint": "An operator must review and split identity clusters independently before the labels can support an unbiased comparison."
+    },
+    {
+      "db_id": 5243,
+      "finding_id": "GT2-05",
+      "task": "MAINT-fir-training-feasibility-20260727",
+      "verdict": "OBSOLETE",
+      "duplicate_of": null,
+      "evidence": "benchmarks/tools/fir_corpus_population_draft_20260919.py:56 - the replacement population review states that no evaluation split is frozen and legacy data is diagnostic-only; line 54 marks records ineligible for confirmatory scoring.",
+      "severity": "medium",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "The old open-set gallery/probe protocol is retired; recruit an independent, deeper roster if that protocol returns."
+    },
+    {
+      "db_id": 5245,
+      "finding_id": "GT2-07",
+      "task": "MAINT-fir-training-feasibility-20260727",
+      "verdict": "OPERATOR",
+      "duplicate_of": null,
+      "evidence": "benchmarks/tools/fir_corpus_population_draft_20260919.py:54 - source labels, face occlusion, and sessions are unverified and scored_observation_eligible_now is false pending operator adjudication.",
+      "severity": "medium",
+      "fix_files": [
+        "benchmarks/tools/fir_corpus_population_draft_20260919.py",
+        "benchmarks/manifests/corpus-manifest-v3r-20260814.json"
+      ],
+      "test_file": "",
+      "size": "L",
+      "related": [
+        5227,
+        5241
+      ],
+      "fix_hint": "An operator must annotate a probability sample and audit detector misses before treating the pool as model-independent ground truth."
+    },
+    {
+      "db_id": 5250,
+      "finding_id": "GT2-12",
+      "task": "MAINT-fir-training-feasibility-20260727",
+      "verdict": "OPERATOR",
+      "duplicate_of": null,
+      "evidence": "benchmarks/manifests/golden150-draft-20260723.sidecar.json:26 - fixture licenses remain unverified and publishability fails closed; fir_corpus_population_draft_20260919.py:56 says training is not authorized without scope confirmation.",
+      "severity": "medium",
+      "fix_files": [
+        "benchmarks/manifests/golden150-draft-20260723.json",
+        "benchmarks/manifests/golden150-draft-20260723.sidecar.json"
+      ],
+      "test_file": "",
+      "size": "L",
+      "related": [],
+      "fix_hint": "An operator must verify source licenses and authorized use before changing the corpus's fail-closed publishability state."
+    },
+    {
+      "db_id": 6429,
+      "finding_id": "HARM-03-R",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "OBSOLETE",
+      "duplicate_of": null,
+      "evidence": "benchmarks/manifests/altq-interleave-master-20260716.json:5 - the shipped master points to the single tracked repo-root curated-identities file; the current population review instead reads v3r and the caption-mining report at fir_corpus_population_draft_20260919.py:4.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "The old dual-copy builder flow is retired; the current population review consumes the versioned v3r manifest."
+    },
+    {
+      "db_id": 6430,
+      "finding_id": "HARM-12",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "DUPLICATE",
+      "duplicate_of": 9077,
+      "evidence": "benchmarks/manifests/corpus-manifest-v3.json:4 - the same dead feature-worktree images_root is retained in the tracked artifact (see canonical db 9077).",
+      "severity": "medium",
+      "fix_files": [
+        "benchmarks/manifests/corpus-manifest-v3.json",
+        "benchmarks/tools/fir_corpus_population_draft_20260919.py"
+      ],
+      "test_file": "",
+      "size": "M",
+      "related": [
+        9077
+      ],
+      "fix_hint": "Track this under canonical finding db 9077, which covers the same stale absolute corpus-root defect."
+    },
+    {
+      "db_id": 5609,
+      "finding_id": "MBM-C1",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "benchmarks/manifests/corpus-manifest-v3.json:14,25-32 - the manifest says derived tags came from detections-yunet-t030 with max 0.75, precision 0.67, recall 0.61; slice-tag-calibration-v1.json:8,11-12 records threshold 0.8473, precision 0.567, recall 0.776.",
+      "severity": "medium",
+      "fix_files": [
+        "benchmarks/manifests/corpus-manifest-v3.json",
+        "benchmarks/manifests/corpus-manifest-v3r-20260814.json",
+        "benchmarks/manifests/slice-tag-calibration-v1.json"
+      ],
+      "test_file": "",
+      "size": "M",
+      "related": [],
+      "fix_hint": "Recompute derived profile tags from the calibrated detector population and record the actual cutoff and metrics in both manifests."
+    },
+    {
+      "db_id": 5615,
+      "finding_id": "MBM-C7",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "benchmarks/plans/fir-11-sizing-note.md:95-104 - the plan distinguishes unchanged measurement-source v3 from remediated v3r and records the unlabeled count transition 108 to 116.",
+      "severity": "low",
+      "fix_files": [
+        "benchmarks/plans/fir-11-sizing-note.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "No further correction is needed; the current sizing note names the source version for each count."
+    }
+  ]
+}

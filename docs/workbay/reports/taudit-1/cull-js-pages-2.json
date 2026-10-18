@@ -1,0 +1,18 @@
+{
+  "lane": "cull-js-pages-2",
+  "base": "ccb3e015a2b426e7a5fa762d51ff59d336487143",
+  "files_in_partition": 37,
+  "tests_in_partition": 304,
+  "results": [
+    {
+      "test": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/BulkDescribeCta.test.tsx::gives each case its own default spies (pair 2 of 2)",
+      "class": "REDUNDANT",
+      "action": "DELETE",
+      "covered_by": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/BulkDescribeCta.test.tsx::gives each case its own default spies (pair 1 of 2)",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/BulkDescribeCta.test.tsx:318 - pair 2 clicks the primary and asserts its default onSubmit fires once; line 311 makes the same assertion in pair 1, while line 105 clears mock history after each case.",
+      "canon": "REF-26",
+      "confidence": "high",
+      "cost": "cheap"
+    }
+  ]
+}

@@ -1,0 +1,174 @@
+{
+  "lane": "dadj-28",
+  "base": "ec4f0bb0500cb6b0c154a83204fb1d0cf8121381",
+  "results": [
+    {
+      "db_id": 5623,
+      "finding_id": "MBD-04V",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "OBSOLETE",
+      "duplicate_of": null,
+      "evidence": "benchmarks/manifests/corpus-manifest-v3.json:11-14 - the current manifest says detected boxes come from detections-yunet-t030 and derived profile tags use calibrated rules; calibrate_slice_tags.py is absent from the tree, so its silent rerun/overwrite path does not ship.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Reassess this only if an in-tree calibration writer is restored."
+    },
+    {
+      "db_id": 5610,
+      "finding_id": "MBM-C2",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "benchmarks/manifests/corpus-manifest-v3.json:25-32 - the profile rule reports AUC, precision, and recall with calibrated_on set to \"150 hand-tagged images\"; benchmarks/manifests/golden150-selection-v1.json:38 still uses that derived profile for ordering.",
+      "severity": "medium",
+      "fix_files": [
+        "benchmarks/manifests/corpus-manifest-v3.json",
+        "benchmarks/manifests/slice-tag-calibration-v1.json"
+      ],
+      "test_file": "",
+      "size": "L",
+      "related": [],
+      "fix_hint": "Evaluate the selected signal and threshold on held-out labels or clearly limit the reported scores to the calibration sample, then regenerate the frozen artifacts."
+    },
+    {
+      "db_id": 5614,
+      "finding_id": "MBM-C6",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "benchmarks/manifests/slice-tag-calibration-v1.json:3 - the persisted profile calibration says \"labelled_images\": 148, while benchmarks/manifests/corpus-manifest-v3.json:32 says \"calibrated_on\": \"150 hand-tagged images\"; detector-missed labels have no reported accounting policy.",
+      "severity": "medium",
+      "fix_files": [
+        "benchmarks/manifests/slice-tag-calibration-v1.json",
+        "benchmarks/manifests/corpus-manifest-v3.json"
+      ],
+      "test_file": "",
+      "size": "M",
+      "related": [],
+      "fix_hint": "Include detector-missed labelled images as detection failures or report them as a separate stratum, with the exact calibration denominator."
+    },
+    {
+      "db_id": 5611,
+      "finding_id": "MBM-C3",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "NOT_DEFECT",
+      "duplicate_of": null,
+      "evidence": "benchmarks/reports/openimages-occlusion-MEASUREMENTS.md:102 - the composition bootstrap header says \"single-face images only\"; its intervals are not presented as multi-face or unannotated-flag population intervals.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "No change needed while the reported intervals remain explicitly scoped to the single-face annotated subset."
+    },
+    {
+      "db_id": 5612,
+      "finding_id": "MBM-C4",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "OBSOLETE",
+      "duplicate_of": null,
+      "evidence": "benchmarks/manifests/corpus-manifest-v3.json:11-14 - the current consumer reads \"detections-yunet-t030.json\" for boxes and calibrated tags; pose_features.py is absent from the tree, so no in-tree pose-feature writer can rewrite detections in place.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Reassess only if a pose-feature writer is restored to the shipped tree."
+    },
+    {
+      "db_id": 5613,
+      "finding_id": "MBM-C5",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "NOT_DEFECT",
+      "duplicate_of": null,
+      "evidence": "benchmarks/manifests/golden150-selection-v1.json:38-40 - \"Selection uses it for ordering only\" and undetected named faces are retained as detection discriminators rather than silently scored as pose/recognition examples.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Keep the documented detection discriminator and operator confirmation when this shortlist is consumed."
+    },
+    {
+      "db_id": 15395,
+      "finding_id": "FIRCAP-c09a25c08383c7f9-L-cc5a7b28af8fe65bf094e67f",
+      "task": "FIRCAP-90",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "scripts/train/occlusion/license_policy.py:7328-7334 - photo_clearance is checked with required=False for training rows, while scripts/train/occlusion/license_policy.py:6909-6913 requires positive photo clearance for occluder assets; docs/research/fir-capacity-worker-audit-2026-09-19.md:66-67 conflates the contracts.",
+      "severity": "low",
+      "fix_files": [
+        "docs/research/fir-capacity-worker-audit-2026-09-19.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "State training-data provenance requirements separately from the occluder-asset photo-clearance requirement."
+    },
+    {
+      "db_id": 15396,
+      "finding_id": "FIRCAP-c09a25c08383c7f9-M-2613d296d5262f0137956d20",
+      "task": "FIRCAP-90",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "scripts/train/occlusion/license_policy.py:6408-6411 - missing or blank derived_from_model returns PASS; docs/research/fir-capacity-worker-audit-2026-09-19.md:39-45 says there is no training harness, despite docs/research/fir-capacity-worker-audit-2026-09-19.md:71-72 claiming the policy blocks buffalo outputs from training data.",
+      "severity": "medium",
+      "fix_files": [
+        "docs/research/fir-capacity-worker-audit-2026-09-19.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Qualify the claim as a policy-level rejection for correctly tagged rows and record that pipeline enforcement is not integrated."
+    },
+    {
+      "db_id": 15397,
+      "finding_id": "FIRCAP-c09a25c08383c7f9-M-e9992fa4ed58ac84a174e037",
+      "task": "FIRCAP-90",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "docs/research/fir-capacity-worker-audit-2026-09-19.md:8-10 - the conclusion says plans \"can guarantee measurement and fail-closed release conditions\", while docs/research/fir-capacity-worker-audit-2026-09-19.md:39-45 says no training harness or runbook exists and FIR-7 is at 0/43 checklist items.",
+      "severity": "medium",
+      "fix_files": [
+        "docs/research/fir-capacity-worker-audit-2026-09-19.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Say the plans specify required gates and make the guarantee conditional on implemented tooling and executed evidence."
+    },
+    {
+      "db_id": 5740,
+      "finding_id": "HARM-11",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "docs/scopes/cpu-gpu-lane-control-plane.md:108,116-118 - the scope links \"benchmarks/runners/a10-launch-retry.sh\" and \"scripts/eval_harness/build_bakeoff_report.py\"; the actual files are infra/oci/incidents/a10-launch-retry.sh and apps/prototype-description-service/scripts/eval_harness/build_bakeoff_report.py.",
+      "severity": "medium",
+      "fix_files": [
+        "docs/scopes/cpu-gpu-lane-control-plane.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Correct both repository anchors and revalidate the altq-1 ordering clause against the current run-record implementation."
+    },
+    {
+      "db_id": 1612,
+      "finding_id": "tenant-admin-PA-06-no-artifact-open-qs",
+      "task": "MAINT-tenant-admin-scope-20260621",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/15.0/E15-31-tenant-admin-api-key-router-task-plan.md:22-24 - the plan names the intake decision, open-question resolution, and PA-01..06; docs/tasks/15.0/E15-31-tenant-admin-api-key-router-task-plan.md:31,38,40,52 specify tailnet/token authority, audit storage, UI approach, and admin authority.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Use the existing E15-31 task plan as the recorded artifact for the resolved tenant-admin questions."
+    }
+  ]
+}

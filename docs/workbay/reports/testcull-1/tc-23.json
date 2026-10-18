@@ -1,0 +1,159 @@
+{
+  "lane": "tc-23",
+  "base": "e56ab004eb3080fd1dac7c602d78835e11fac792",
+  "files": [
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/__tests__/banned-vocabulary.test.tsx",
+      "verdict": "REWRITE",
+      "tests_total": 15,
+      "tests_affected": [
+        "ReviewQueue source does not say unlabeled clusters (UXW2-3-R2-06 mutant)",
+        "js/admin production source has no cluster-jargon toasts or bulk merge/dismiss"
+      ],
+      "reason": "Keep the vocabulary guards, but assert ReviewQueue copy through rendered behavior and move the repository-wide source scan into a static lint rule.",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/__tests__/banned-vocabulary.test.tsx:1102 reads ReviewQueue.tsx source literals; :1264-1265 recursively lists production files before checking retired strings.",
+      "subject": "operator-visible vocabulary and retired-jargon guards",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-16",
+        "TEST-24",
+        "TEST-15"
+      ],
+      "replacement": "Render ReviewQueue and assert its visible error copy; preserve global banned-string coverage as a fast static lint rule instead of reading every production source file in Vitest.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/__tests__/DashboardPage.test.tsx",
+      "verdict": "REWRITE",
+      "tests_total": 34,
+      "tests_affected": [
+        "D-22: populated Overview styles competing CTAs as secondary (one primary per screen)"
+      ],
+      "reason": "The one-primary-action behavior is live, but this test pins CSS class names instead of an accessible rendered action contract.",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/__tests__/DashboardPage.test.tsx:587 asserts acx-button classes and :593-594 asserts acx-dashboard CSS classes on secondary links.",
+      "subject": "DashboardPage primary and secondary action hierarchy",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-16"
+      ],
+      "replacement": "Expose primary-versus-secondary intent through an accessible action contract and assert the rendered links through that public seam, not implementation CSS classes.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/dw2-deadletter-1.test.tsx",
+      "verdict": "MERGE",
+      "tests_total": 1,
+      "tests_affected": [
+        "fetches later pages when the first 50 failed rows have no eligible entries"
+      ],
+      "reason": "This live bulk-discard regression belongs with the existing DeadLetterPanel flow tests; the filename identifies a review wave, not a separate subject.",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx:784 loops over remaining pages; dw2-deadletter-1.test.tsx:146 verifies offset 50 and :143 verifies the selected row.",
+      "subject": "DeadLetterPanel bulk-discard pagination",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "Merge into apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/DeadLetterPanel.test.tsx.",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/api/generated/__tests__/dw2-rosterentr-1.test.ts",
+      "verdict": "MERGE",
+      "tests_total": 2,
+      "tests_affected": [
+        "chooses the highest projected representative quality before identity count",
+        "falls back to identity count when projected quality is unavailable"
+      ],
+      "reason": "Both tests cover live representative selection in RosterEntriesTable and belong beside that component's roster-row tests.",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/roster/RosterEntriesTable.tsx:46 filters for representative quality and :54-55 ranks by quality or identity count; dw2-rosterentr-1.test.ts:45,54 covers both rankings.",
+      "subject": "RosterEntriesTable representative-face selection",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-16"
+      ],
+      "replacement": "Merge into apps/prototype-wp-alt-context/js/admin/pages/roster/__tests__/RosterEntriesTable.clickthrough.test.tsx, asserting the selected representative through the rendered row.",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/api/recognition/__tests__/dw2-clusterres-1.test.ts",
+      "verdict": "MERGE",
+      "tests_total": 1,
+      "tests_affected": [
+        "preserves persisted export fields through the client cluster list API"
+      ],
+      "reason": "The live cluster-list response contract belongs in the test module for its production subject, clusterApiQueries.",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/api/recognition/clusterApiQueries.ts:108 forwards payload.clusters; dw2-clusterres-1.test.ts:49 checks persisted export fields.",
+      "subject": "listRecognitionClusters export metadata",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "Merge into apps/prototype-wp-alt-context/js/admin/api/recognition/__tests__/clusterApiQueries.repairPending.test.ts under a listRecognitionClusters describe block.",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/guidedPrototype/dw2-livedescri-1.test.ts",
+      "verdict": "MERGE",
+      "tests_total": 4,
+      "tests_affected": [
+        "recomputes the deadline when the first poll discloses a server budget",
+        "starts only one submit when request is called twice before a render",
+        "keeps the run while polling fails with %s",
+        "cancels the run id disclosed in an ambiguous submit error"
+      ],
+      "reason": "These live hook regressions belong in the existing useGuidedLiveDescription suite, which already covers deadlines, polling, and cancellation.",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/guidedPrototype/dw2-livedescri-1.test.ts:79,96,110,128 covers deadline recomputation, single submit, retryable polling failures, and cancellation; useGuidedLiveDescription.test.tsx contains the canonical hook suite.",
+      "subject": "useGuidedLiveDescription deadline, polling, and cancellation behavior",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-15"
+      ],
+      "replacement": "Merge into apps/prototype-wp-alt-context/js/admin/guidedPrototype/useGuidedLiveDescription.test.tsx.",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/utils/__tests__/jobStreamErrorCodeParity.test.ts",
+      "verdict": "SPEED",
+      "tests_total": 4,
+      "tests_affected": [
+        "derives producer codes from the PHP runtime vocabulary so wire drift fails",
+        "detects an added public const REVIEW_EXTRA_2",
+        "detects a comma-separated producer constant",
+        "ignores commented-out declarations and declaration-like strings"
+      ],
+      "reason": "All four checks start a PHP subprocess to compare or mutate the cross-language wire-code vocabulary, so the parity contract is useful but variable for commit-stage feedback.",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/utils/__tests__/jobStreamErrorCodeParity.test.ts:16 starts php with the timeout at :19; :33,45,53,70 invoke it in each test.",
+      "subject": "PHP and TypeScript job-stream error-code parity",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-24",
+        "TEST-15"
+      ],
+      "replacement": "Run the PHP parity and mutation checks in the PHP integration stage, outside commit feedback; retain the cross-language contract check there.",
+      "est_seconds_saved": 1,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.test.ts",
+      "verdict": "REWRITE",
+      "tests_total": 4,
+      "tests_affected": [
+        "keeps public keys and CASE_STUDY_URL out of the generated catalog file",
+        "uses the catalog interpolator and a single overlay copy helper"
+      ],
+      "reason": "Two tests mix live public-copy assertions with checks of generated-file headers, helper names, and import-path source text.",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.test.ts:108 checks the generated-file header; :177 pins the interpolator token and :178-179 pins import-path source text.",
+      "subject": "public guide copy catalog and interpolation",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-16"
+      ],
+      "replacement": "Keep key isolation and interpolation assertions through PUBLIC_GUIDED_COPY and guidedCopy; remove source-text checks or replace them with a catalog build contract.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    }
+  ],
+  "fixtures": []
+}

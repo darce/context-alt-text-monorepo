@@ -1,0 +1,29 @@
+{
+  "requested_ref": "b6887",
+  "source_commit": "d261223d24e97f2df50220e4a5b7f0adb69bba81",
+  "runtime_identity_qualified": false,
+  "purpose": "Selected upstream compatibility contract only; installed runtime must be separately bound and authenticated",
+  "files": [
+    {
+      "path": ".task-state/bakeoff-rounds-20261017/raw-auth-primary-source/tools/server/README.md",
+      "source_path": "tools/server/README.md",
+      "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/d261223d24e97f2df50220e4a5b7f0adb69bba81/tools/server/README.md",
+      "bytes": 68595,
+      "sha256": "6fd223e87eeaa355748863b68a31d89bc6ed049c57383d2685d767f11af76dc8"
+    },
+    {
+      "path": ".task-state/bakeoff-rounds-20261017/raw-auth-primary-source/tools/server/server.cpp",
+      "source_path": "tools/server/server.cpp",
+      "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/d261223d24e97f2df50220e4a5b7f0adb69bba81/tools/server/server.cpp",
+      "bytes": 233317,
+      "sha256": "df39e29f6bbfc4925acb591d69b8b79f91fb5c87e536f615e1b7e481a65dea0a"
+    },
+    {
+      "path": ".task-state/bakeoff-rounds-20261017/raw-auth-primary-source/tools/server/utils.hpp",
+      "source_path": "tools/server/utils.hpp",
+      "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/d261223d24e97f2df50220e4a5b7f0adb69bba81/tools/server/utils.hpp",
+      "bytes": 57546,
+      "sha256": "527a7929d1db5b1654130e1744a9be94332dea52fdc8021900921feea05931d5"
+    }
+  ]
+}

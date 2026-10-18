@@ -1,0 +1,635 @@
+import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, renderHook, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { SUGGEST_WARMING_HARD_CEILING_MS, suggestWarmingCeilingMs, useDescribeMedia } from '../useDescribeMedia';
+import * as describeApi from '../../api/describeApi';
+import * as describeIdempotencyKeyApi from '../../api/describeIdempotencyKey';
+import type { VisualFactsResponse } from '../../api/describeApi';
+import suggestStates from '../../pages/workbench/__tests__/fixtures/gpuflow-suggest-states.json';
+import { HTTPError } from '../../utils/http';
+
+vi.mock('../../api/describeApi', async (importOriginal) => {
+  const actual = await importOriginal<typeof describeApi>();
+  return {
+    ...actual,
+    describeMedia: vi.fn(),
+  };
+});
+
+const describeMediaMock = vi.mocked(describeApi.describeMedia);
+
+const idempotencyKeyForCall = (callIndex: number): string => {
+  const idempotencyKey = describeMediaMock.mock.calls[callIndex]?.[1]?.idempotencyKey;
+  if (typeof idempotencyKey !== 'string') {
+    throw new Error(`Expected describeMedia call ${callIndex + 1} to include an idempotency key.`);
+  }
+  return idempotencyKey;
+};
+
+const describeErrorFromFixture = (fixture: { status: number; detail: object }): Error =>
+  new Error(`Request to .../describe failed (${fixture.status}): ${JSON.stringify({ detail: fixture.detail })}`);
+
+const sample: VisualFactsResponse = {
+  tenant_id: '00000000-0000-4000-8000-000000000001',
+  media_id: 42,
+  image_hash: 'sha256:abc',
+  context_hash: 'ctx',
+  adapter: 'local_cpu',
+  model_id: 'microsoft/Florence-2-base-ft',
+  model_version: 'florence-2-base-ft',
+  prompt_or_task_version: 'v1',
+  visual_facts: { caption: 'A flower.', objects: ['flower'], ocr_text: null },
+  alt_text_draft: 'A flower.',
+  context_used: { sources: [], applied: false },
+  provider_disclosure: { provider: 'local', left_service_boundary: false },
+  cached: false,
+  duration_ms: 13800,
+  retention_class: 'retain_all',
+  tier: 'provisional_cpu',
+  result_generation: 1,
+};
+
+const wrapper = ({ children }: React.PropsWithChildren): React.JSX.Element => {
+  const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+};
+
+describe('useDescribeMedia', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('calls describeMedia with the media id and threads the result to data', async () => {
+    describeMediaMock.mockResolvedValue(sample);
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    result.current.mutate(42);
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(describeMediaMock).toHaveBeenCalledWith(42, { idempotencyKey: expect.any(String) });
+    expect(result.current.data).toEqual(sample);
+  });
+
+  it('uses the shared idempotency-key helper for describe actions', async () => {
+    const sharedIdempotencyKey = 'describe-shared-key_123456';
+    const createIdempotencyKeySpy = vi
+      .spyOn(describeIdempotencyKeyApi, 'createDescribeIdempotencyKey')
+      .mockReturnValue(sharedIdempotencyKey);
+    describeMediaMock.mockResolvedValue(sample);
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    try {
+      result.current.mutate(42);
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(createIdempotencyKeySpy).toHaveBeenCalledTimes(1);
+      expect(describeMediaMock).toHaveBeenCalledWith(42, {
+        idempotencyKey: sharedIdempotencyKey,
+      });
+      expect(idempotencyKeyForCall(0)).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
+    } finally {
+      createIdempotencyKeySpy.mockRestore();
+    }
+  });
+
+  it('fails with the invariant message when a mutation runs after its action key is cleared', async () => {
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    const mutationPromise = result.current.mutateAsync(42);
+    result.current.reset();
+
+    await expect(mutationPromise).rejects.toThrow('Describe action idempotency key was not initialized.');
+    expect(describeMediaMock).not.toHaveBeenCalled();
+  });
+
+  it('passes write intent options through to describeMedia', async () => {
+    describeMediaMock.mockResolvedValue({
+      ...sample,
+      alt_text_write: { status: 'written', existing_alt_present: false },
+    });
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    result.current.mutate({ mediaId: 42, writeAlt: true });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(describeMediaMock).toHaveBeenCalledWith(42, {
+      writeAlt: true,
+      force: false,
+      idempotencyKey: expect.any(String),
+    });
+    expect(result.current.data?.alt_text_write?.status).toBe('written');
+  });
+
+  it('threads a rejection to error state', async () => {
+    describeMediaMock.mockRejectedValue(new Error('boom'));
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    result.current.mutate(7);
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.error?.message).toBe('boom');
+    expect(result.current.warming).toBeNull();
+  });
+
+  it('stores a starting lease and retry sends operation_id', async () => {
+    describeMediaMock
+      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
+      .mockResolvedValueOnce(suggestStates.success_with_timing as VisualFactsResponse);
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    result.current.mutate(42);
+
+    await waitFor(() => expect(result.current.warming).not.toBeNull());
+    expect(result.current.warming).toEqual({
+      operationId: 'op-lease-1',
+      warmupEtaSeconds: 12,
+    });
+    expect(describeMediaMock).toHaveBeenCalledWith(42, { idempotencyKey: expect.any(String) });
+
+    result.current.retry();
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, {
+      operationId: 'op-lease-1',
+      idempotencyKey: expect.any(String),
+    });
+    expect(result.current.warming).toBeNull();
+    expect(result.current.timing).toEqual((suggestStates.success_with_timing as VisualFactsResponse).timing);
+  });
+
+  it('stores a null ETA from the wire and a null operationId when the starting envelope omits it', async () => {
+    describeMediaMock
+      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_no_eta))
+      .mockRejectedValueOnce(
+        describeErrorFromFixture({
+          status: 503,
+          detail: {
+            code: 'description_service_starting',
+            message: 'Description service is starting.',
+            warmup_eta_seconds: 12,
+          },
+        }),
+      );
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    result.current.mutate(42);
+    await waitFor(() => expect(result.current.warming).not.toBeNull());
+    expect(result.current.warming).toEqual({
+      operationId: 'op-lease-1',
+      warmupEtaSeconds: null,
+    });
+
+    act(() => {
+      result.current.reset();
+    });
+    act(() => {
+      result.current.mutate(42);
+    });
+    await waitFor(() => expect(result.current.warming?.warmupEtaSeconds).toBe(12));
+    expect(result.current.warming?.operationId).toBeNull();
+  });
+
+  it('retries mismatch once without operation_id, then surfaces a repeated mismatch', async () => {
+    describeMediaMock
+      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
+      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.mismatch))
+      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.mismatch));
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    result.current.mutate(42);
+    await waitFor(() => expect(result.current.warming?.operationId).toBe('op-lease-1'));
+
+    result.current.retry();
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, {
+      operationId: 'op-lease-1',
+      idempotencyKey: expect.any(String),
+    });
+    expect(describeMediaMock).toHaveBeenNthCalledWith(3, 42, { idempotencyKey: expect.any(String) });
+    expect(idempotencyKeyForCall(2)).toBe(idempotencyKeyForCall(1));
+    expect(describeMediaMock).toHaveBeenCalledTimes(3);
+    expect(result.current.warming).toBeNull();
+    expect(describeApi.resolveDescribeErrorCode(result.current.error)).toBe(
+      describeApi.DESCRIBE_OPERATION_ERROR_CODE.MISMATCH,
+    );
+  });
+
+  it('clears the lease on success after a mismatch retry without id', async () => {
+    describeMediaMock
+      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
+      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.mismatch))
+      .mockResolvedValueOnce(suggestStates.success_no_timing as VisualFactsResponse);
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    result.current.mutate(42);
+    await waitFor(() => expect(result.current.warming).not.toBeNull());
+
+    result.current.retry();
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(describeMediaMock).toHaveBeenNthCalledWith(3, 42, { idempotencyKey: expect.any(String) });
+    expect(result.current.warming).toBeNull();
+    expect(result.current.timing).toBeNull();
+  });
+
+  it('clears the lease on description_service_unavailable', async () => {
+    describeMediaMock
+      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
+      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.unavailable));
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    result.current.mutate(42);
+    await waitFor(() => expect(result.current.warming).not.toBeNull());
+
+    result.current.retry();
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.warming).toBeNull();
+    expect(result.current.timing).toBeNull();
+  });
+
+  it('exposes timing from the last success payload and null when the key is absent', async () => {
+    describeMediaMock
+      .mockResolvedValueOnce(suggestStates.success_with_timing as VisualFactsResponse)
+      .mockResolvedValueOnce(suggestStates.success_no_timing as VisualFactsResponse);
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    result.current.mutate(42);
+    await waitFor(() =>
+      expect(result.current.timing).toEqual((suggestStates.success_with_timing as VisualFactsResponse).timing),
+    );
+
+    result.current.mutate(42);
+    await waitFor(() => expect(result.current.data).toEqual(suggestStates.success_no_timing as VisualFactsResponse));
+    expect(result.current.timing).toBeNull();
+  });
+});
+
+const flushMicrotasks = async (): Promise<void> => {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+};
+
+const startingHttpError = (fixture: { status: number; detail: object }, retryAfterSeconds?: number): HTTPError =>
+  new HTTPError({
+    status: fixture.status,
+    retryAfterSeconds,
+    endpoint: '/wp-json/acx/v1/recognition/describe',
+    bodyPreview: JSON.stringify({ detail: fixture.detail }),
+    message: `Request to .../describe failed (${fixture.status}): ${JSON.stringify({
+      detail: fixture.detail,
+    })}`,
+  });
+
+const startingWithBudget = (
+  fixture: { status: number; detail: object },
+  startupBudgetSeconds: number,
+): { status: number; detail: object } => ({
+  status: fixture.status,
+  detail: Object.assign({}, fixture.detail, {
+    startup_budget_seconds: startupBudgetSeconds,
+  }),
+});
+
+const SERVICE_STARTUP_BUDGET_SECONDS = 510;
+
+describe('useDescribeMedia warming auto-retry', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-15T12:00:00.000Z'));
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('pins the hard warming ceiling at 900 s', () => {
+    expect(SUGGEST_WARMING_HARD_CEILING_MS).toBe(900_000);
+  });
+
+  it('computes the warming ceiling as startup budget plus one retry gap, clamped to 900 s', () => {
+    expect(suggestWarmingCeilingMs(30, 5_000)).toBe(35_000);
+    expect(suggestWarmingCeilingMs(510, 15_000)).toBe(525_000);
+    expect(suggestWarmingCeilingMs(null, 5_000)).toBe(5_000);
+    expect(suggestWarmingCeilingMs(0, 5_000)).toBe(5_000);
+    expect(suggestWarmingCeilingMs(10_000, 5_000)).toBe(900_000);
+    expect(suggestWarmingCeilingMs(899, 2_000)).toBe(900_000);
+  });
+
+  it('auto-retries after the warmup ETA with the stored operation_id', async () => {
+    describeMediaMock
+      .mockRejectedValueOnce(
+        describeErrorFromFixture(startingWithBudget(suggestStates.starting_with_eta, SERVICE_STARTUP_BUDGET_SECONDS)),
+      )
+      .mockResolvedValueOnce(suggestStates.success_with_timing as VisualFactsResponse);
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    await act(async () => {
+      result.current.mutate(42);
+    });
+    await flushMicrotasks();
+    expect(result.current.warming).toEqual({
+      operationId: 'op-lease-1',
+      warmupEtaSeconds: 12,
+    });
+    expect(describeMediaMock).toHaveBeenCalledTimes(1);
+    const actionIdempotencyKey = idempotencyKeyForCall(0);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(11_999);
+    });
+    expect(describeMediaMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    await flushMicrotasks();
+    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, {
+      operationId: 'op-lease-1',
+      idempotencyKey: actionIdempotencyKey,
+    });
+    expect(result.current.isSuccess).toBe(true);
+    expect(result.current.warming).toBeNull();
+    expect(result.current.warmingTimedOut).toBe(false);
+  });
+
+  it('schedules again when a second starting response arrives inside the ceiling', async () => {
+    describeMediaMock
+      .mockRejectedValueOnce(
+        describeErrorFromFixture(startingWithBudget(suggestStates.starting_with_eta, SERVICE_STARTUP_BUDGET_SECONDS)),
+      )
+      .mockRejectedValueOnce(
+        describeErrorFromFixture(startingWithBudget(suggestStates.starting_with_eta, SERVICE_STARTUP_BUDGET_SECONDS)),
+      )
+      .mockResolvedValueOnce(suggestStates.success_with_timing as VisualFactsResponse);
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    await act(async () => {
+      result.current.mutate(42);
+    });
+    await flushMicrotasks();
+    expect(describeMediaMock).toHaveBeenCalledTimes(1);
+    const actionIdempotencyKey = idempotencyKeyForCall(0);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(12_000);
+    });
+    await flushMicrotasks();
+    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, {
+      operationId: 'op-lease-1',
+      idempotencyKey: actionIdempotencyKey,
+    });
+    expect(result.current.warming).not.toBeNull();
+    expect(result.current.warmingTimedOut).toBe(false);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(12_000);
+    });
+    await flushMicrotasks();
+    expect(describeMediaMock).toHaveBeenNthCalledWith(3, 42, {
+      operationId: 'op-lease-1',
+      idempotencyKey: actionIdempotencyKey,
+    });
+    expect(result.current.isSuccess).toBe(true);
+  });
+
+  it('enters timeout at startup budget plus one retry gap, clears the lease, and stops scheduling', async () => {
+    describeMediaMock.mockRejectedValue(
+      describeErrorFromFixture(startingWithBudget(suggestStates.starting_eta_60, 60)),
+    );
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    await act(async () => {
+      result.current.mutate(42);
+    });
+    await flushMicrotasks();
+    expect(describeMediaMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    await flushMicrotasks();
+    expect(describeMediaMock).toHaveBeenCalledTimes(2);
+    expect(result.current.warmingTimedOut).toBe(false);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    await flushMicrotasks();
+    expect(result.current.warmingTimedOut).toBe(true);
+    expect(result.current.warming).toBeNull();
+    expect(describeMediaMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    await flushMicrotasks();
+    expect(describeMediaMock).toHaveBeenCalledTimes(2);
+
+    describeMediaMock.mockResolvedValueOnce(suggestStates.success_no_timing as VisualFactsResponse);
+    await act(async () => {
+      result.current.retry();
+    });
+    await flushMicrotasks();
+    expect(describeMediaMock).toHaveBeenLastCalledWith(42, { idempotencyKey: expect.any(String) });
+    expect(result.current.warmingTimedOut).toBe(false);
+  });
+
+  it('clears the auto-retry timer on unmount', async () => {
+    describeMediaMock.mockRejectedValue(
+      describeErrorFromFixture(startingWithBudget(suggestStates.starting_with_eta, SERVICE_STARTUP_BUDGET_SECONDS)),
+    );
+    const { result, unmount } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    await act(async () => {
+      result.current.mutate(42);
+    });
+    await flushMicrotasks();
+    expect(describeMediaMock).toHaveBeenCalledTimes(1);
+
+    unmount();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(12_000);
+    });
+    expect(describeMediaMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the 5 s fallback when ETA and Retry-After are absent', async () => {
+    describeMediaMock
+      .mockRejectedValueOnce(
+        describeErrorFromFixture(startingWithBudget(suggestStates.starting_no_eta, SERVICE_STARTUP_BUDGET_SECONDS)),
+      )
+      .mockResolvedValueOnce(sample);
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    await act(async () => {
+      result.current.mutate(42);
+    });
+    await flushMicrotasks();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4_999);
+    });
+    expect(describeMediaMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    await flushMicrotasks();
+    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, {
+      operationId: 'op-lease-1',
+      idempotencyKey: expect.any(String),
+    });
+  });
+
+  it('uses parsed Retry-After when the warmup ETA is absent', async () => {
+    describeMediaMock
+      .mockRejectedValueOnce(
+        startingHttpError(startingWithBudget(suggestStates.starting_no_eta, SERVICE_STARTUP_BUDGET_SECONDS), 8),
+      )
+      .mockResolvedValueOnce(sample);
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    await act(async () => {
+      result.current.mutate(42);
+    });
+    await flushMicrotasks();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(7_999);
+    });
+    expect(describeMediaMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    await flushMicrotasks();
+    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, {
+      operationId: 'op-lease-1',
+      idempotencyKey: expect.any(String),
+    });
+  });
+
+  it('starts a fresh operation from timeout retry (no operation_id)', async () => {
+    describeMediaMock.mockRejectedValue(
+      describeErrorFromFixture(startingWithBudget(suggestStates.starting_eta_60, 60)),
+    );
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    await act(async () => {
+      result.current.mutate(42);
+    });
+    await flushMicrotasks();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    await flushMicrotasks();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    await flushMicrotasks();
+    expect(result.current.warmingTimedOut).toBe(true);
+
+    describeMediaMock.mockResolvedValueOnce(sample);
+    await act(async () => {
+      result.current.mutate(42);
+    });
+    await flushMicrotasks();
+    expect(describeMediaMock).toHaveBeenLastCalledWith(42, { idempotencyKey: expect.any(String) });
+    expect(result.current.isSuccess).toBe(true);
+    expect(result.current.warmingTimedOut).toBe(false);
+  });
+
+  it('keeps auto-retrying past 120 s while the startup budget remains', async () => {
+    describeMediaMock.mockRejectedValue(
+      describeErrorFromFixture(startingWithBudget(suggestStates.starting_eta_60, 180)),
+    );
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    await act(async () => {
+      result.current.mutate(42);
+    });
+    await flushMicrotasks();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    await flushMicrotasks();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    await flushMicrotasks();
+    expect(describeMediaMock).toHaveBeenCalledTimes(3);
+    expect(result.current.warmingTimedOut).toBe(false);
+    expect(result.current.warming).not.toBeNull();
+  });
+
+  it('times out after one retry gap when startup_budget_seconds is absent', async () => {
+    describeMediaMock.mockRejectedValue(describeErrorFromFixture(suggestStates.starting_with_eta));
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    await act(async () => {
+      result.current.mutate(42);
+    });
+    await flushMicrotasks();
+    expect(describeMediaMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(12_000);
+    });
+    await flushMicrotasks();
+    expect(result.current.warmingTimedOut).toBe(true);
+    expect(result.current.warming).toBeNull();
+    expect(describeMediaMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('clamps a huge startup budget to the 900 s hard ceiling', async () => {
+    describeMediaMock.mockRejectedValue(
+      describeErrorFromFixture(
+        startingWithBudget(
+          {
+            status: 503,
+            detail: {
+              code: 'description_service_starting',
+              message: 'Description service is starting.',
+              operation_id: 'op-lease-1',
+              warmup_eta_seconds: 300,
+            },
+          },
+          10_000,
+        ),
+      ),
+    );
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    await act(async () => {
+      result.current.mutate(42);
+    });
+    await flushMicrotasks();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300_000);
+    });
+    await flushMicrotasks();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300_000);
+    });
+    await flushMicrotasks();
+    expect(describeMediaMock).toHaveBeenCalledTimes(3);
+    expect(result.current.warmingTimedOut).toBe(false);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300_000);
+    });
+    await flushMicrotasks();
+    expect(result.current.warmingTimedOut).toBe(true);
+    expect(result.current.warming).toBeNull();
+    expect(describeMediaMock).toHaveBeenCalledTimes(3);
+  });
+});

@@ -1,0 +1,94 @@
+{
+  "lane": "drfu-01",
+  "base": "df2b8d08d6b5b2d8b7c6067ef0bf9acd16db7059",
+  "results": [
+    {
+      "db_id": 5697,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:315-316 demotes a cell to DIRECTIONAL when its bootstrap CI half-width exceeds head_to_head_delta/2; scripts/bench/tests/test_precision_precondition.py:25-42 has a discordant RED fixture asserting that demotion.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py",
+      "size": "S",
+      "fix_hint": "No fix indicated; the current precision gate and discriminating test close this finding."
+    },
+    {
+      "db_id": 5698,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/export_map.py:459-469 computes IoU matches and passes matched_faces into ImageDetection; scripts/bench/score_report.py:801-806 converts unmatched localized boxes to FP/FN; scripts/bench/tests/test_detection_localization.py:63-87 proves a translated same-count box is a miss.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py",
+      "size": "S",
+      "fix_hint": "No fix indicated; the scoring path uses localization and the red fixture detects count-only scoring."
+    },
+    {
+      "db_id": 5927,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:859-860 assigns export_leg persistence to Slice 1, and :876-878 explicitly repairs the earlier opposite-slice ownership and cyclic dependency; scripts/bench/tests/test_cluster_gate.py exercises the S1 export gate.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_cluster_gate.py",
+      "size": "S",
+      "fix_hint": "No fix indicated; the normative slice ownership now puts export persistence in S1."
+    },
+    {
+      "db_id": 5928,
+      "outcome": "REFUTED",
+      "evidence": "The key names, example fields, two-stack requirement, and role allowlist are now aligned, but docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:1013-1018 and :1023 still omit types/ranges for timeout/retry/privacy/delta fields. apps/prototype-description-service/scripts/bench/stack_pair.py:242-247 coerces these values with int()/bool() (so a quoted 'false' enables private sources and negative timeouts pass); :191-204 checks delta finiteness but not a useful range or timeout bounds.",
+      "severity": "high",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md",
+        "apps/prototype-description-service/scripts/bench/stack_pair.py",
+        "apps/prototype-description-service/scripts/bench/tests/test_stack_pair_consumption.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_stack_pair_consumption.py",
+      "size": "M",
+      "fix_hint": "Pin strict types and valid ranges for the remaining fields, reject coercive values, and add loader tests for quoted booleans and invalid budgets."
+    },
+    {
+      "db_id": 5929,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:195 defines the PROV-01 leg identity as stack_id plus base_url and explicitly excludes compose project; apps/prototype-description-service/scripts/bench/stack_pair.py:64 includes compose_project in the rejected deploy-ownership keys.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No fix indicated; compose-project provenance was explicitly removed from the current contract."
+    },
+    {
+      "db_id": 5930,
+      "outcome": "REFUTED",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:305-306 still specifies manifest_version 2 through load_manifest. The bench wrapper at apps/prototype-description-service/scripts/bench/corpus.py:126 calls that loader, while apps/prototype-description-service/scripts/eval_harness/manifest.py:156 and :1445-1448 accept only version 3; apps/prototype-description-service/scripts/bench/tests/fixtures/v3_boxed_detection.json:2 is manifest_version 3 and is used by test_manifest_version_seam.py:15. This is the same plan/loader mismatch as the canonical duplicate and means the documented v2 standalone path cannot load through the current bench path.",
+      "severity": "high",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md",
+        "apps/prototype-description-service/scripts/bench/corpus.py",
+        "apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py",
+      "size": "M",
+      "fix_hint": "Align the planned manifest version, bench loader, and boxed detection fixture, either by using the v2 loader with a v2 fixture or revising the plan and dependencies to v3."
+    },
+    {
+      "db_id": 5932,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:591-592 admits an item only after both legs satisfy successful ingest/analyze and roster conditions; scripts/bench/export_map.py:459-469 still emits ImageDetection with matched_faces=0 for a roster-present item with no export rows; scripts/bench/tests/test_attrition_floor.py:31-43 asserts that zero-export accepted media remains in the denominator.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_attrition_floor.py",
+      "size": "S",
+      "fix_hint": "No fix indicated; acceptance is computed before metrics and zero-export detections remain scored misses."
+    },
+    {
+      "db_id": 5933,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/stack_pair.py:41 accepts baseline_manifest_path; scripts/bench/driver.py:379-388 loads it and checks baseline superset against the run manifest IDs before preflight, run-dir initialization, or media processing; scripts/bench/tests/test_corpus_superset.py:33-50 covers the configured blocker.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_corpus_superset.py",
+      "size": "S",
+      "fix_hint": "No fix indicated; the input contract is configured and the blocker runs before media processing."
+    }
+  ]
+}

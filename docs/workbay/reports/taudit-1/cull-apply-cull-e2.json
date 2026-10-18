@@ -1,0 +1,14 @@
+[
+  {
+    "test": "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d3_extract_head_shas.py::test_extract_head_shas_is_not_defined",
+    "verdict": "kept",
+    "reason": "It guards the runtime module namespace from restoring the explicitly retired extract_head_shas symbol.",
+    "covered_by": ""
+  },
+  {
+    "test": "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d3_extract_head_shas.py::test_extract_head_shas_is_absent_from_source",
+    "verdict": "kept",
+    "reason": "It guards the source from restoring a function or simple assignment for the explicitly retired extract_head_shas symbol, even if import-time code hides the binding.",
+    "covered_by": ""
+  }
+]

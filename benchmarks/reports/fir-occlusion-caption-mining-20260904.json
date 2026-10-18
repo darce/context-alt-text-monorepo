@@ -1,0 +1,3082 @@
+{
+  "schema": "fir.caption-occlusion-shortlist.v1",
+  "status": "candidate_mining_only_not_ground_truth",
+  "inputs": {
+    "manifest": "benchmarks/manifests/corpus-manifest-v3r-20260814.json",
+    "manifest_sha256": "0198531b45cffde474006a6c3ebee647b3b2b52e07c0696afc0f5de42a8b88b6",
+    "run": "docs/tasks/altq/bakeoff-results/run-altq-646-interleave-v3.json",
+    "run_sha256": "ea377f2e1505a11e69017184f35ec67e5254e9c17ec23e8c78a1f6e4c1d291ba",
+    "script_sha256": "268ab8ee428fe7599eaf68c39e01ade7467d6139644ebfd064451be83a69c679",
+    "run_provenance": {
+      "base_url": "http://localhost:8000",
+      "head_sha": "5a67b070fe8e383ffd243a77029d2225b6f8d700",
+      "manifest_sha256": "08751e69bf4d6bb4d4303f0bc7c38758f1f6fdaa60253828b7101ce5c2306d97",
+      "prompt_variant": "v3",
+      "started_at": "2026-07-16T23:33:28Z",
+      "two_pass": true
+    }
+  },
+  "join": {
+    "media_id_overlap": 646,
+    "pixel_identity_verified": false,
+    "manifest_images_root_exists": false
+  },
+  "counts": {
+    "images": 646,
+    "successful_descriptions": 640,
+    "failed_run_items": 6,
+    "personal_images": 591,
+    "hand_tagged_images": 150,
+    "image_tag_counts": {
+      "occlusion_other": 19,
+      "blur": 28,
+      "low_res": 26,
+      "sunglasses": 13,
+      "profile": 50,
+      "masked": 5
+    },
+    "candidate_images_union": 95
+  },
+  "patterns": {
+    "sunglasses": "\\b(sunglasses|shades|dark glasses|tinted glasses|aviators?)\\b",
+    "masked": "\\b(mask(?:s|ed)?|respirator|n95|ffp2|face covering|bandana|scarf|veil)\\b",
+    "occlusion_other": "\\b(occlud\\w*|obscur\\w*|cover\\w*|hidden|hiding|conceal\\w*|balaclava|helmet|sleep mask|eye mask|face paint)\\b",
+    "head_context": "\\b(back of (?:the |their |her |his )?head|from behind|looking away|turned away|back to (?:the )?camera|profile)\\b"
+  },
+  "per_class": {
+    "sunglasses": {
+      "all_candidates": 39,
+      "personal_candidates": 39,
+      "personal_previously_untriaged": 25,
+      "hits_in_hand_tagged_images": 14,
+      "existing_positive_image_tags": 13,
+      "existing_positive_tags_retrieved": 13,
+      "existing_positive_tags_missed_media_ids": [],
+      "personal_previously_untriaged_media_ids": [
+        66,
+        116,
+        119,
+        160,
+        236,
+        302,
+        304,
+        310,
+        314,
+        320,
+        326,
+        331,
+        340,
+        386,
+        401,
+        449,
+        468,
+        497,
+        502,
+        508,
+        577,
+        593,
+        622,
+        623,
+        637
+      ]
+    },
+    "masked": {
+      "all_candidates": 15,
+      "personal_candidates": 15,
+      "personal_previously_untriaged": 7,
+      "hits_in_hand_tagged_images": 8,
+      "existing_positive_image_tags": 5,
+      "existing_positive_tags_retrieved": 5,
+      "existing_positive_tags_missed_media_ids": [],
+      "personal_previously_untriaged_media_ids": [
+        464,
+        470,
+        485,
+        593,
+        623,
+        646,
+        650
+      ]
+    },
+    "occlusion_other": {
+      "all_candidates": 29,
+      "personal_candidates": 29,
+      "personal_previously_untriaged": 22,
+      "hits_in_hand_tagged_images": 7,
+      "existing_positive_image_tags": 19,
+      "existing_positive_tags_retrieved": 2,
+      "existing_positive_tags_missed_media_ids": [
+        21,
+        22,
+        140,
+        192,
+        201,
+        256,
+        258,
+        293,
+        306,
+        387,
+        422,
+        429,
+        454,
+        504,
+        535,
+        587,
+        616
+      ],
+      "personal_previously_untriaged_media_ids": [
+        78,
+        88,
+        107,
+        110,
+        155,
+        158,
+        177,
+        179,
+        265,
+        291,
+        292,
+        310,
+        389,
+        408,
+        441,
+        442,
+        445,
+        468,
+        544,
+        547,
+        556,
+        640
+      ]
+    },
+    "head_context": {
+      "all_candidates": 22,
+      "personal_candidates": 21,
+      "personal_previously_untriaged": 18,
+      "hits_in_hand_tagged_images": 3,
+      "existing_positive_image_tags": 0,
+      "existing_positive_tags_retrieved": 0,
+      "existing_positive_tags_missed_media_ids": [],
+      "personal_previously_untriaged_media_ids": [
+        265,
+        266,
+        268,
+        299,
+        351,
+        403,
+        452,
+        487,
+        526,
+        527,
+        542,
+        543,
+        571,
+        624,
+        634,
+        647,
+        649,
+        650
+      ]
+    }
+  },
+  "failed_run_media_ids": [
+    87,
+    172,
+    212,
+    330,
+    584,
+    610
+  ],
+  "uncaptioned_media_ids": [
+    87,
+    172,
+    212,
+    330,
+    584,
+    610
+  ],
+  "personal_keyword_negative_audit_frame": [
+    61,
+    62,
+    63,
+    64,
+    65,
+    67,
+    68,
+    69,
+    70,
+    71,
+    72,
+    73,
+    74,
+    75,
+    76,
+    77,
+    79,
+    80,
+    81,
+    82,
+    83,
+    85,
+    86,
+    89,
+    90,
+    91,
+    92,
+    95,
+    96,
+    97,
+    98,
+    99,
+    100,
+    101,
+    102,
+    103,
+    104,
+    105,
+    106,
+    108,
+    109,
+    111,
+    112,
+    113,
+    114,
+    115,
+    117,
+    120,
+    121,
+    122,
+    123,
+    124,
+    125,
+    126,
+    127,
+    129,
+    130,
+    131,
+    132,
+    133,
+    134,
+    135,
+    136,
+    137,
+    138,
+    139,
+    140,
+    141,
+    142,
+    143,
+    144,
+    145,
+    146,
+    147,
+    148,
+    149,
+    150,
+    151,
+    152,
+    153,
+    154,
+    156,
+    157,
+    159,
+    161,
+    163,
+    164,
+    165,
+    166,
+    167,
+    168,
+    169,
+    170,
+    171,
+    173,
+    174,
+    175,
+    176,
+    180,
+    181,
+    182,
+    183,
+    184,
+    185,
+    186,
+    187,
+    188,
+    189,
+    190,
+    191,
+    192,
+    193,
+    194,
+    195,
+    196,
+    197,
+    198,
+    199,
+    200,
+    201,
+    202,
+    203,
+    204,
+    205,
+    206,
+    207,
+    208,
+    209,
+    210,
+    211,
+    213,
+    215,
+    216,
+    217,
+    218,
+    219,
+    220,
+    221,
+    222,
+    223,
+    224,
+    225,
+    227,
+    228,
+    229,
+    230,
+    231,
+    232,
+    233,
+    234,
+    235,
+    237,
+    238,
+    239,
+    240,
+    241,
+    242,
+    243,
+    245,
+    246,
+    247,
+    248,
+    249,
+    250,
+    251,
+    252,
+    253,
+    254,
+    255,
+    257,
+    259,
+    260,
+    261,
+    262,
+    263,
+    264,
+    267,
+    269,
+    270,
+    272,
+    273,
+    274,
+    275,
+    277,
+    278,
+    279,
+    280,
+    281,
+    282,
+    283,
+    284,
+    285,
+    286,
+    287,
+    288,
+    289,
+    290,
+    293,
+    294,
+    295,
+    296,
+    297,
+    298,
+    300,
+    301,
+    303,
+    306,
+    307,
+    308,
+    309,
+    311,
+    312,
+    313,
+    315,
+    316,
+    317,
+    318,
+    319,
+    321,
+    322,
+    324,
+    325,
+    327,
+    328,
+    329,
+    332,
+    333,
+    335,
+    336,
+    337,
+    338,
+    339,
+    341,
+    342,
+    343,
+    344,
+    345,
+    346,
+    347,
+    348,
+    349,
+    350,
+    352,
+    353,
+    354,
+    355,
+    356,
+    357,
+    358,
+    359,
+    360,
+    361,
+    362,
+    363,
+    364,
+    365,
+    366,
+    367,
+    368,
+    369,
+    370,
+    371,
+    372,
+    373,
+    374,
+    375,
+    376,
+    377,
+    378,
+    379,
+    380,
+    381,
+    382,
+    383,
+    384,
+    385,
+    387,
+    390,
+    391,
+    392,
+    393,
+    394,
+    395,
+    396,
+    397,
+    399,
+    400,
+    402,
+    404,
+    405,
+    406,
+    407,
+    409,
+    410,
+    411,
+    412,
+    413,
+    415,
+    416,
+    417,
+    418,
+    419,
+    420,
+    421,
+    422,
+    423,
+    424,
+    425,
+    426,
+    427,
+    428,
+    429,
+    430,
+    431,
+    432,
+    433,
+    434,
+    435,
+    436,
+    437,
+    438,
+    439,
+    440,
+    443,
+    444,
+    446,
+    447,
+    448,
+    450,
+    451,
+    453,
+    454,
+    455,
+    456,
+    457,
+    458,
+    459,
+    460,
+    461,
+    462,
+    463,
+    465,
+    466,
+    467,
+    469,
+    471,
+    472,
+    473,
+    474,
+    475,
+    476,
+    477,
+    478,
+    479,
+    480,
+    481,
+    482,
+    483,
+    484,
+    486,
+    488,
+    489,
+    490,
+    491,
+    492,
+    493,
+    494,
+    495,
+    496,
+    498,
+    499,
+    500,
+    501,
+    503,
+    504,
+    505,
+    506,
+    507,
+    509,
+    510,
+    511,
+    513,
+    515,
+    516,
+    517,
+    518,
+    519,
+    520,
+    521,
+    522,
+    523,
+    524,
+    525,
+    528,
+    529,
+    530,
+    531,
+    533,
+    534,
+    535,
+    537,
+    538,
+    539,
+    540,
+    541,
+    545,
+    546,
+    548,
+    549,
+    550,
+    551,
+    552,
+    553,
+    554,
+    555,
+    557,
+    558,
+    560,
+    561,
+    562,
+    563,
+    564,
+    565,
+    566,
+    567,
+    568,
+    569,
+    570,
+    572,
+    573,
+    574,
+    575,
+    576,
+    578,
+    579,
+    580,
+    581,
+    582,
+    583,
+    585,
+    586,
+    587,
+    588,
+    590,
+    591,
+    592,
+    594,
+    596,
+    597,
+    598,
+    599,
+    600,
+    601,
+    602,
+    603,
+    604,
+    605,
+    606,
+    607,
+    608,
+    609,
+    611,
+    612,
+    613,
+    614,
+    615,
+    616,
+    617,
+    618,
+    619,
+    620,
+    621,
+    625,
+    626,
+    627,
+    628,
+    629,
+    630,
+    631,
+    632,
+    633,
+    635,
+    636,
+    638,
+    639,
+    641,
+    642,
+    643,
+    644,
+    645,
+    651
+  ],
+  "cautions": [
+    "Counts are image-level retrieval, not face-level precision or recall.",
+    "Sample keyword negatives and failed captions independently; never infer clean from silence.",
+    "Existing image tags can name the wrong wearer or hidden region.",
+    "The saved run's provenance manifest digest is not a verified match to this manifest.",
+    "Seal grouped train/calibration/test allocation before selecting or labeling a claim corpus."
+  ],
+  "candidates": [
+    {
+      "media_id": 56,
+      "manifest_path": "celebs/leonard_cohen_56.jpeg",
+      "run_path": "2026/07/leonard_cohen_25.jpeg",
+      "bucket": "celebs",
+      "source_image_sha256": "71031cb64a22ffaaf3cd6dbc25fccc9332bab3c178078d042c538974151398c0",
+      "downscaled_image_sha256": "629b62c5fc387ac81565d9a7cfb4b18acabb22b2ca81f6386e9e9f27e108143d",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "head_context": [
+          "profile"
+        ]
+      },
+      "caption": "Leonard Cohen stands in profile, his voice carried by a microphone as he holds a hat in his other hand. The dark backdrop focuses attention on his expressive face and the quiet intensity of the moment. His suit and collared shirt suggest a formal yet intimate performance setting.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 66,
+      "manifest_path": "personal/hollow_pennant_66.jpg",
+      "run_path": "2026/07/64241405_550617785466059_8163101153046903191_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "57b99d594f1b0e651ef97b137286a9c53da71e6716186d6424758527180da49e",
+      "downscaled_image_sha256": "57b99d594f1b0e651ef97b137286a9c53da71e6716186d6424758527180da49e",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Hollow Pennant stands on a sunlit beach, her blonde hair tied in a bun as she adjusts her sunglasses. She wears a white bikini top with a bow and black bottoms, the ocean stretching behind her. The scene captures a relaxed moment under a clear sky.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 78,
+      "manifest_path": "personal/gilded_cypress_78.jpeg",
+      "run_path": "2026/07/gildedcypress-20211203_164012-262932781_153154510373411_4304717268591911005_n.jpeg",
+      "bucket": "personal",
+      "source_image_sha256": "26b5ae81ffa1f1874146bbb0773c3137205a3b83b2c3101318c53eb340d9be44",
+      "downscaled_image_sha256": "833bf3f98f3d1b5d198ace8aec75161c6b5106c7c9229ca4ad0fe5db4fda0e9d",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 4,
+      "matched_terms": {
+        "occlusion_other": [
+          "covered"
+        ]
+      },
+      "caption": "Gilded Cypress poses in a cozy indoor setting, her arms raised behind her head as she looks directly at the camera. She wears a festive knitted sweater featuring a winter scene with a skater, evergreen trees, and snow-covered mountains. The warm lighting and framed pictures on the wall enhance the intimate, casual atmosphere.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 84,
+      "manifest_path": "personal/gilded_cypress_84.jpeg",
+      "run_path": "2026/07/gildedcypress-20231001_174522-384678903_1040950947261516_5303207747948831674_n.jpeg",
+      "bucket": "personal",
+      "source_image_sha256": "88a49fc14918161c77f7073721520691f323951e3a4dcbb5f580700f225e4fea",
+      "downscaled_image_sha256": "0f8187dcbae3891339aae7177d9fa0c755d24a8fd729b12573dd5683ed422f2b",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "masked": [
+          "scarf"
+        ]
+      },
+      "caption": "Gilded Cypress beams with joy, her green eyes bright and her smile wide, framed by a cozy herringbone scarf and a vibrant green strap. The warm indoor light casts a soft glow, highlighting her cheerful expression. A lamp and a sign on the wall suggest a comfortable, lived-in space.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 88,
+      "manifest_path": "personal/gilded_cypress_88.jpg",
+      "run_path": "2026/07/gildedcypress_121499997_400250114314190_7401768612471013093_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "de58d8de0a4fac5f04c91ba3a7ead1ce4881de34c0bf2a9cbeed72c3cdb00b49",
+      "downscaled_image_sha256": "de58d8de0a4fac5f04c91ba3a7ead1ce4881de34c0bf2a9cbeed72c3cdb00b49",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "occlusion_other": [
+          "covered"
+        ]
+      },
+      "caption": "Gilded Cypress turns her head to gaze over her shoulder, her blue eyes meeting the lens with quiet intensity. The warm glow of a lamp casts soft light across the room, highlighting the papers pinned to the wall behind her. Her dark hair falls loosely over her shoulders, framing a moment of stillness and contemplation.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 93,
+      "manifest_path": "personal/gilded_cypress_93.jpg",
+      "run_path": "2026/07/gildedcypress_193876120_308648490746437_6867040231297854149_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "fe212728d1f4322588d5869f958673f7cde55a006d2a2a70f170844e133d229f",
+      "downscaled_image_sha256": "3d54a9faa7a341b2807a50de361c83e491502625c1a076e3aa53cb7c37d9a1ab",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "sunglasses"
+      ],
+      "detected_face_count": 3,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ],
+        "occlusion_other": [
+          "covering",
+          "covers"
+        ]
+      },
+      "caption": "Gilded Cypress and a man pose together at a sunny outdoor event, both wearing sunglasses and pink wristbands. The woman smiles broadly, partially covering her face with her hand, while the man holds a plastic cup. Trees and a bright sky fill the background, capturing a moment of casual joy.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 94,
+      "manifest_path": "personal/gilded_cypress_94.jpg",
+      "run_path": "2026/07/gildedcypress_235965947_617949395935257_2886895293539870625_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "f7de2c24f02dab9de46541bba5ecc4c34c4b9cc57e024d4fb4257cd09b4637d9",
+      "downscaled_image_sha256": "94ca060f60d3e5d5fc011a164cf62e9d7f61f30841d1dbaf6c7fdffbd5be513f",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "occlusion_other"
+      ],
+      "detected_face_count": 2,
+      "matched_terms": {
+        "occlusion_other": [
+          "covering"
+        ]
+      },
+      "caption": "Gilded Cypress gazes directly at the camera, her brown waves framing one side of her face as she stands in a quiet room. The soft lighting highlights her blue eyes and pink lipstick, creating an intimate moment. A wooden door and mirror sit behind her, grounding the scene in a personal space.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 107,
+      "manifest_path": "personal/gilded_cypress_107.jpg",
+      "run_path": "2026/07/gildedcypress_3175309278805948667.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "8d938dd0c9fca5bdc5a0738c9007ebf1de419f2702361dab0fbb56520ef47725",
+      "downscaled_image_sha256": "8d938dd0c9fca5bdc5a0738c9007ebf1de419f2702361dab0fbb56520ef47725",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "occlusion_other": [
+          "covered"
+        ]
+      },
+      "caption": "Gilded Cypress captures a playful moment with wide eyes and a surprised expression, her face lit by warm sunlight. The text overlay reads 'Covered in bug bites' and 'KIPS TAVERN', adding a humorous touch to the scene. She wears a striped tank top and a delicate gold pendant, her long brown hair framing her face. The glass building behind her reflects the bright outdoor light.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 110,
+      "manifest_path": "personal/gilded_cypress_110.jpg",
+      "run_path": "2026/07/gildedcypress_3180366122188306860.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "0c34ed1822c5953de47084464fb5983ce6eb7d3b68a3aa7088d9de68a3914cc8",
+      "downscaled_image_sha256": "0c34ed1822c5953de47084464fb5983ce6eb7d3b68a3aa7088d9de68a3914cc8",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "occlusion_other": [
+          "covered"
+        ]
+      },
+      "caption": "Gilded Cypress strikes a dramatic pose in her kitchen, arms raised and face contorted in a playful grimace. The text overlay reads 'been holding this expression in all day,' adding a humorous touch. She wears a black crop top and dark jeans, standing beside a round wooden table. The kitchen is warmly lit, with white cabinets and a refrigerator covered in photos.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 116,
+      "manifest_path": "personal/gilded_cypress_116.jpg",
+      "run_path": "2026/07/gildedcypress_350091524_219150774238426_3788641572272150726_n-1.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "9818ad9978a89255c31c60ebdf4c3245e58adaebcd7ac92ca387497a30b8f99a",
+      "downscaled_image_sha256": "9d9413922777963e9acfefabb38856d7c05c16f94a15691235a6272704df58cf",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 4,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Gilded Cypress captures a sunny moment at the poolside, her curly hair catching the light as she wears stylish sunglasses. The relaxed atmosphere is underscored by the bright day and the presence of another guest lounging nearby. She exudes calm confidence in the warm outdoor setting.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 118,
+      "manifest_path": "personal/gilded_cypress_118.jpg",
+      "run_path": "2026/07/gildedcypress_350257756_942261983709481_120910464297873868_n-1.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "72e3c2d3bff44a18ed8b6b875901d3fc4ba715b6aa8ba3a62391d48427a24bbf",
+      "downscaled_image_sha256": "774c0723fa609595c579293838b2bcddaa5e8ad20279e2af7a127747ec4595c5",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "sunglasses",
+        "profile",
+        "low_res"
+      ],
+      "detected_face_count": 8,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Two women laugh in the sunlit pool, their smiles bright against the blue water. Gilded Cypress, in a yellow bikini, shares the moment with her friend in a black top. The background hums with quiet activity, lounge chairs and a brick building framing the scene.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 119,
+      "manifest_path": "personal/gilded_cypress_119.jpg",
+      "run_path": "2026/07/gildedcypress_350577824_792126098974460_6022658022734866223_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "943f337cfde83115b59496641467f14a3d4a80723670e06beb8f296b469e2eff",
+      "downscaled_image_sha256": "76901f6df0958aeb9571f6a45f2def65e0d5d40ca44092a2bcbed3e533db4bb8",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 4,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Gilded Cypress and a friend capture a playful moment by the pool, their smiles and relaxed poses reflecting a sunny day. The bright yellow bikini top contrasts with the black one, adding a splash of color to the scene. Behind them, a building and clear blue sky complete the summery backdrop.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 128,
+      "manifest_path": "personal/onyx_lantern_128.jpg",
+      "run_path": "2026/07/itsjennaharwood_79599838_456066181741735_1856722302724216416_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "2c7142131db0e979d6a0ff986a2ab8912981a2052f5ac6778fdc06d29a3887af",
+      "downscaled_image_sha256": "2c7142131db0e979d6a0ff986a2ab8912981a2052f5ac6778fdc06d29a3887af",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "sunglasses",
+        "profile"
+      ],
+      "detected_face_count": 7,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Onyx Lantern lounges on a sunlit poolside chair, her dark hair flowing as she relaxes in the clear blue water. The resort behind her buzzes with quiet activity, with guests swimming and sunbathing under a bright sky. Her sunglasses reflect the sun, capturing a moment of serene vacation bliss.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 155,
+      "manifest_path": "personal/saffron_orchard_155.jpg",
+      "run_path": "2026/07/12.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "cfb0c4876dce6bb997444b3996a34260a70eb94106a009ed13086e91131a81aa",
+      "downscaled_image_sha256": "afe85d4f9fd1137ea6df48814b8822c87a469cdcc4e2696e56167135d6d8c403",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "occlusion_other": [
+          "covered"
+        ]
+      },
+      "caption": "Saffron Orchard sips a drink through a straw while holding a plate with a bright green dessert, her light hair catching the sunlight. She sits in a gravel courtyard surrounded by ivy-covered walls and colorful benches, the scene relaxed and casual. Her blue eyes meet the camera with a quiet focus as she enjoys the moment.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 158,
+      "manifest_path": "personal/saffron_orchard_158.jpg",
+      "run_path": "2026/07/13.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "9db9dd56016e0d2d9412b97e801a32fee2038a1120327f6f113764e6c2328a97",
+      "downscaled_image_sha256": "513093291882439f26720a7eb413d957c2b2d9e3c9a4231557297701da443fb1",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "occlusion_other": [
+          "covered"
+        ]
+      },
+      "caption": "Saffron Orchard smiles brightly, holding a drink and a green pastry in a sunlit courtyard. Gravel paths wind past colorful structures and ivy-covered walls. The scene feels cheerful and relaxed, with natural light highlighting her joyful expression.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 160,
+      "manifest_path": "personal/saffron_orchard_160.jpg",
+      "run_path": "2026/07/15.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "4c19534648c41ac0174a9d86c1e3a0ee0329c551bde4e83f46be97e788bbf87e",
+      "downscaled_image_sha256": "bf5a82c7cf0d0165b2d0fd3c6fb74d53c7267a508168876e5fd785c0a8d1243c",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 2,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Saffron Orchard enjoys a sunny afternoon by the canal, her smile reflecting the relaxed mood as she prepares a simple meal. A bottle of wine, a baguette, and cheese rest beside her on the stone ledge. The warm light glints off the water behind her, with trees and buildings lining the far bank.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 162,
+      "manifest_path": "personal/saffron_orchard_162.jpg",
+      "run_path": "2026/07/16.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "c4ba5dc663b79529fd68fc2566229c12eb440abfa5606ec7a57f516f830f1a8f",
+      "downscaled_image_sha256": "37dba38a0722d82854eac4b48569a08504606e92f266e1be13bc51630d600f7b",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "masked"
+      ],
+      "detected_face_count": 2,
+      "matched_terms": {
+        "masked": [
+          "mask"
+        ],
+        "occlusion_other": [
+          "hidden"
+        ]
+      },
+      "caption": "Saffron Orchard gazes forward, her eyes hidden beneath a delicate black lace mask that frames her face. She wears a matching lace top and vibrant purple earrings, her brown hair styled in a tousled updo. A tattoo of a nurse’s face is visible on her upper arm, adding a touch of personal artistry. The gray tiled wall behind her enhances the image’s mysterious and elegant mood.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 177,
+      "manifest_path": "personal/saffron_orchard_177.jpg",
+      "run_path": "2026/07/20.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "98591d4db510c5c392060cd2f0c9eb4a3d2dbe3a916f68a4f47e930c2a08a521",
+      "downscaled_image_sha256": "580d850f9353e46cfe2f5dceafcc2eda3425aeebf3f9791e90bfe05f7eed8bbd",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 6,
+      "matched_terms": {
+        "occlusion_other": [
+          "covering"
+        ]
+      },
+      "caption": "Saffron Orchard strikes a playful pose, her hand covering her mouth as she stands before a fantastical display of artificial plants, flowers, and fairy figurines. The scene glows with a whimsical charm, enhanced by soft lighting and delicate decorations. Her black outfit and purple hair contrast with the colorful, dreamlike backdrop.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 178,
+      "manifest_path": "personal/saffron_orchard_178.jpg",
+      "run_path": "2026/07/21.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "bbc0430a3342067054958ab70c5b1796f19b2795b228599c0b35e76298d186e1",
+      "downscaled_image_sha256": "e4a4621ac270648e7a68acf5b1114fad82d512ef173e6da34e1f229bc2bd3438",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "occlusion_other"
+      ],
+      "detected_face_count": 2,
+      "matched_terms": {
+        "occlusion_other": [
+          "covering",
+          "covers"
+        ]
+      },
+      "caption": "Saffron Orchard stands before a whimsical fairy garden display, her hand covering her mouth as she glances sideways. The scene is lush with miniature birdcages, flowers, and hanging decorations, creating an enchanting atmosphere. Her black halter top and lace gloves contrast with the soft pastels of the fairy-themed setting.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 179,
+      "manifest_path": "personal/saffron_cypress_179.jpg",
+      "run_path": "2026/07/21462310_123325958392084_704341782683310574_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "df83bee082ecdc04f99c86ae58417ff5af7edf13e9ba60dd44ff2e92521dfaf8",
+      "downscaled_image_sha256": "df83bee082ecdc04f99c86ae58417ff5af7edf13e9ba60dd44ff2e92521dfaf8",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "occlusion_other": [
+          "covered"
+        ]
+      },
+      "caption": "Saffron Cypress stands in her bedroom, her long blonde hair tied in a high ponytail, gazing directly at the camera with a calm expression. She wears a dark blue tank top, and behind her, a wall is covered with posters and a map, giving the space a personal, lived-in feel. The soft lighting enhances the intimate, casual atmosphere of the moment.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 214,
+      "manifest_path": "personal/russet_fathom_214.jpg",
+      "run_path": "2026/07/IMG_8364.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "81945a9c02a2871637d55b5be133469e7f142c88c85015d2ce1cd41ec77e7af5",
+      "downscaled_image_sha256": "81945a9c02a2871637d55b5be133469e7f142c88c85015d2ce1cd41ec77e7af5",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "sunglasses"
+      ],
+      "detected_face_count": 2,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Russet Fathom rests on a patch of dirt and grass, her face relaxed under the sun. She wears sunglasses and a black and white patterned sweater, a red ribbon tied around her neck holding a 'Queen's Map Museum' pin. Her hand lies gently beside her, nails painted blue, as she takes a quiet moment outdoors.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 226,
+      "manifest_path": "personal/cobalt_beacon_226.jpg",
+      "run_path": "2026/07/glayum_459139925_548934810823098_2030776778715177182_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "51ded5c8670310edfb2ce61d0b2e4943987180f159b238d806f347d3f9ea4994",
+      "downscaled_image_sha256": "9c620725fda1ea6229bcbb3ae5e19667bbf3fb2cd2016330bcf4576f152945ae",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "blur"
+      ],
+      "detected_face_count": 2,
+      "matched_terms": {
+        "occlusion_other": [
+          "hidden"
+        ]
+      },
+      "caption": "Cobalt Beacon emerges from a dense cornfield at night, her face lit by a soft glow as she smiles through the tall green stalks. The darkness wraps around her like a cloak, giving the scene a mysterious and playful mood. She wears a red top beneath a blue jacket, her dark hair catching the light as she peeks through the leaves.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 236,
+      "manifest_path": "personal/unlabeled_0236.jpg",
+      "run_path": "2026/07/hotgirlsgotoheaven_483627238_18363166261130244_4070798886856838746_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "7f3664db3c4e6aed80390f54ef365a9db44297d83d788a880d1f34772ffa22c2",
+      "downscaled_image_sha256": "4b7af7db53c468b7621521686b23b44d1c9e1f3b611a3fc30bfdabab29c45fda",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 2,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "A woman's hair flows in the wind as she smiles, her sunglasses perched on her head. She wears a black choker with a pendant and a dark top, standing in front of a glowing neon sign that reads MACHINE. A Heineken bottle is visible in the lower left, adding to the lively night atmosphere.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 244,
+      "manifest_path": "personal/ochre_harbor_244.jpg",
+      "run_path": "2026/07/kellerzzzcurran_30079016_1991240104536846_6489907910259245056_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "042dfec326f991090b5efa1c6d7214983587cd299e71580f9be524290915f1ca",
+      "downscaled_image_sha256": "042dfec326f991090b5efa1c6d7214983587cd299e71580f9be524290915f1ca",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "sunglasses",
+        "profile",
+        "low_res"
+      ],
+      "detected_face_count": 16,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Three women smile for a photo at a lively outdoor festival under a white tent. The woman on the left, Ochre Harbor, wears black sunglasses and a white crop top. The woman in the center holds a drink and wears red-tinted sunglasses. The woman on the right, in a maroon crop top and denim skirt, leans in with a warm expression. A man in a Phi Delta Theta shirt with the number 11 stands behind them, adding to the social energy.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 256,
+      "manifest_path": "personal/sylvan_orchard_256.jpg",
+      "run_path": "2026/07/sylvan-513743456_18508641217038502_2297932751512875791_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "07dc9e4a1ef1206255211a156a0807b8582637bfb461ae9e65f6801d241df00a",
+      "downscaled_image_sha256": "757a70a73a78c6fa9ddf67d3c935119217d01f1abb254591733bb25a6136b33f",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "profile",
+        "blur",
+        "occlusion_other"
+      ],
+      "detected_face_count": 16,
+      "matched_terms": {
+        "masked": [
+          "bandana"
+        ]
+      },
+      "caption": "A celebratory collage captures moments from a birthday gathering. In the top image, Sylvan Orchard and a friend smile amidst a lively crowd at night, with a grand building lit in red behind them. The bottom photo shows two women posing together indoors, their smiles reflecting the joy of the occasion. Text overlays wish 'Happy Birthday Missy' and celebrate living life to the fullest.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 258,
+      "manifest_path": "personal/sylvan_orchard_258.jpg",
+      "run_path": "2026/07/oliviajaynelee_496712529_18499151551038502_4750806744759930606_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "1340b49a6053f3901fa373c84536dbb24919b27549ec32f41810cb791b0c7546",
+      "downscaled_image_sha256": "0f053f2149c5b7ccaebb2419b4a8c37475a7b97631f392dc46af394e7f9cae5c",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "occlusion_other"
+      ],
+      "detected_face_count": 5,
+      "matched_terms": {
+        "masked": [
+          "bandana"
+        ]
+      },
+      "caption": "Under a wash of red light, six women gather on a plush red couch, their laughter and gestures capturing a moment of pure joy. A glass table in front holds a scattered array of cans and bottles, including Stella Artois and Pellegrino, evidence of a lively night. The dark brick wall behind them adds an urban edge to the festive atmosphere, while their relaxed poses and bright smiles suggest a night of friendship and celebration.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 265,
+      "manifest_path": "personal/onyx_lantern_265.jpg",
+      "run_path": "2026/07/sagittariafilm_470901501_554167410713499_6783712097627384586_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "74d26b7cefa0bb2ead7135be84fddeef118e8dfb0116ed07a69990f9ab7f907a",
+      "downscaled_image_sha256": "92accf89a5fc6238088719dfa8d059ad4b930a2f94784f81f5b17186782229dd",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "occlusion_other": [
+          "hidden"
+        ],
+        "head_context": [
+          "from behind"
+        ]
+      },
+      "caption": "Onyx Lantern emerges from shadow, her blonde hair and jeweled tiara catching the light like a crown in the dark. She peers forward with a serious expression, half-hidden by shadow, creating a moment of quiet mystery. The spotlight isolates her face, emphasizing the contrast between her presence and the surrounding darkness.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 266,
+      "manifest_path": "personal/sable_current_266.jpeg",
+      "run_path": "2026/07/t_a_l_v_i-20240112_123418-419427122_18406901545001196_4121188444740484318_n.jpeg",
+      "bucket": "personal",
+      "source_image_sha256": "14c76965f85f996c78b5c68a06882b34fd52ed7b1c72e2d7404836d17efabf36",
+      "downscaled_image_sha256": "fc51b4a96b4e243869d678cfbbb91bacceea34d5a6becf69ce05e6ce14afa24f",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 2,
+      "matched_terms": {
+        "head_context": [
+          "from behind"
+        ]
+      },
+      "caption": "Sable Current stands in dramatic backlight, her arms raised as golden light traces the flow of her long blonde hair. The dark background isolates her figure, creating an ethereal and mysterious presence. Her corset-style top and skirt catch the glow, emphasizing the movement of her hair. The image captures a moment of quiet intensity, as if she is summoning light from the darkness.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 268,
+      "manifest_path": "personal/sable_current_268.jpg",
+      "run_path": "2026/07/sable-facesbynoah_482805443_18490589755013470_5105698662094083715_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "da8ee5a29f8f1a709d2fefe5538bd59f38e3c8ec8b11706e5e635898ab9c55c7",
+      "downscaled_image_sha256": "16540d20099ae269b914af9284668082f671f8cc0f04ef42b6ca7eaacbbf26b2",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "head_context": [
+          "profile"
+        ]
+      },
+      "caption": "Sable Current stands in a striking pose, her platinum blonde hair swept into an elegant updo, as she gazes off to the side. She wears a shimmering metallic corset and a long, flowing skirt, her hand resting confidently on her hip. The dramatic lighting highlights the sculptural quality of her outfit and the bold lines of her silhouette. The monochrome palette enhances the timeless, high-fashion atmosphere of the portrait.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 271,
+      "manifest_path": "personal/pewter_hollow_271.jpg",
+      "run_path": "2026/07/theunrealpewterhollow_3269393919257257484.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "a680fa294b92967faa23ac7fc38328a7b07e39786f8d5f9408bf946ef85568ea",
+      "downscaled_image_sha256": "a680fa294b92967faa23ac7fc38328a7b07e39786f8d5f9408bf946ef85568ea",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "masked",
+        "profile"
+      ],
+      "detected_face_count": 0,
+      "matched_terms": {
+        "masked": [
+          "mask"
+        ],
+        "occlusion_other": [
+          "sleep mask"
+        ]
+      },
+      "caption": "Pewter Hollow captures a quiet moment in the mirror, her hand lifting a sleep mask from her forehead as she holds her phone steady. The black-and-white frame softens the scene, highlighting the texture of her ribbed jacket and the gentle curve of her smile. A hallway stretches behind her, its quiet depth framing a private ritual of rest and reflection.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 276,
+      "manifest_path": "personal/slate_willow_276.jpg",
+      "run_path": "2026/07/youretooclose_3755101395763341059.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "13af6a16b656e1c3bc52d68b7c83e36f2c222eeda7a7bc827489847af9cd7416",
+      "downscaled_image_sha256": "13af6a16b656e1c3bc52d68b7c83e36f2c222eeda7a7bc827489847af9cd7416",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "masked",
+        "profile",
+        "blur"
+      ],
+      "detected_face_count": 4,
+      "matched_terms": {
+        "masked": [
+          "mask",
+          "masked"
+        ]
+      },
+      "caption": "Slate Willow and her bestie celebrate together at a vibrant masked party, their faces lit by neon hues as they clink glasses. The festive atmosphere pulses with energy, captured in a moment of shared joy. A text overlay reads, 'Long time since I've partied with my bestie ❤️'.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 291,
+      "manifest_path": "personal/unlabeled_0291.jpg",
+      "run_path": "2026/07/02f3c96b-798e-40ee-89a9-68d5d11cc74d_2x.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "9b92fc4788dc514db5a1ba76c384525e36ad18e26618fcd12137a06375ddb550",
+      "downscaled_image_sha256": "9b92fc4788dc514db5a1ba76c384525e36ad18e26618fcd12137a06375ddb550",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "occlusion_other": [
+          "covering"
+        ]
+      },
+      "caption": "A relaxed moment on a sunny day as a person lies on a weathered wooden dock, their hand shielding their face from the sun. The yellow kayak floats nearby, its surface marked with the word Watercraft. The scene captures a quiet pause by the water, with sunlight glinting across the surface.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 292,
+      "manifest_path": "personal/unlabeled_0292.jpg",
+      "run_path": "2026/07/0467391c27a10e836d4ff554f1b94e92.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "17ede1c2daf132a58f4362a0f4f294e80ed08a6499754f3276213c88170e8d8b",
+      "downscaled_image_sha256": "acb3efdf5ca751d231a7c7f93b223bb40aa0920da2bcddf7992bfdaee3b5e66f",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "occlusion_other": [
+          "covered"
+        ]
+      },
+      "caption": "A woman in a red dress stands on a balcony, her hand resting on the railing as she gazes over a tree-covered landscape. The soft light casts a calm and serene mood across the scene. Her long brown hair flows over her shoulders as she poses against the quiet backdrop.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 299,
+      "manifest_path": "personal/unlabeled_0299.jpg",
+      "run_path": "2026/07/100percentsilkshop_546220895_18289680199280900_2346086494581909614_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "9734fa2372658663b26c5e8ae1957cc494c16bed80efa71f888e8018c3f8b783",
+      "downscaled_image_sha256": "ca4845ebeb307c5ce8c03ac0d7e4b9368284ad856b80c76acb7e42b9f53c12b0",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 0,
+      "matched_terms": {
+        "head_context": [
+          "back to the camera"
+        ]
+      },
+      "caption": "A serene moment by the water, where a person in a white sailor-style dress and black cap stands still, gazing across the calm surface. The sunlight filters through the trees, casting a soft glow on the scene. The stillness of the water mirrors the quiet contemplation of the moment.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 302,
+      "manifest_path": "personal/unlabeled_0302.jpg",
+      "run_path": "2026/07/1015164_10100487515736663_1120613595_o.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "23807d6465117598028e1afd71f29c984e967241ec04adcfe212e5a21960f523",
+      "downscaled_image_sha256": "304d9d47ebac182ca4b1a1321bcb0eb04649e599f70affbab90eacd032488003",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "A woman with dark hair and sunglasses sits on a sunlit beach, her gaze lowered. She wears a black bikini top, her hair tousled by a gentle breeze. The sand stretches behind her, with water and trees visible in the distance. The scene captures a quiet, relaxed moment on a warm day.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 304,
+      "manifest_path": "personal/unlabeled_0304.jpg",
+      "run_path": "2026/07/1015663_10100487516345443_964135509_o.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "b11ba1f3bd691948b192f7db2954df4bc95286e83929615e94ab3556fb06bc7b",
+      "downscaled_image_sha256": "7ff31af111beffc285f8e5820fa8b34092175240affaf72eeddd4e811d53d506",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "A playful moment captured on the beach, where a person lies on the sand, reaching upward with a relaxed smile. Their dark hair fans out around their face, and sunlight glints off their sunglasses. A bracelet adorns their wrist as their hand stretches toward the camera, conveying a sense of carefree connection.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 305,
+      "manifest_path": "personal/onyx_beacon_305.jpg",
+      "run_path": "2026/07/1016214_10151709776902392_1726793011_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "508c4b78dd51a72162e84bf7be66cba66ed5bdf175db0d4929debf281cb83993",
+      "downscaled_image_sha256": "508c4b78dd51a72162e84bf7be66cba66ed5bdf175db0d4929debf281cb83993",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "sunglasses"
+      ],
+      "detected_face_count": 2,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Onyx Beacon poses confidently in a sunflower field, her hand resting on her hip as she smiles beneath the bright sun. The golden blooms stretch endlessly behind her, swaying gently under a clear blue sky. She wears a blue patterned top and a floral skirt, her long brown hair catching the sunlight.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 310,
+      "manifest_path": "personal/citrine_bramble_310.jpg",
+      "run_path": "2026/07/1025416_10100487520716683_75120944_o.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "d19e165efb410a5c5da0e5ff01e442465d6db5400bbe50927dc4ac8d5343108f",
+      "downscaled_image_sha256": "c794864581464a0176739ac6c8d00c6c2db0458c4645e5ffc6b3676f60d8cccb",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ],
+        "occlusion_other": [
+          "covered"
+        ]
+      },
+      "caption": "Citrine Bramble leans casually against a tree in a sun-dappled forest, her bare feet resting on a moss-covered rock. She holds a green bottle in one hand, the other resting on the trunk, surrounded by lush greenery and a bush of pink and white flowers. The warm light filters through the trees, creating a relaxed and natural atmosphere.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 314,
+      "manifest_path": "personal/citrine_bramble_314.jpg",
+      "run_path": "2026/07/1026228_10100487515936263_372922750_o.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "89d3bfb78cf56435eb3306c16985f992229f51b9cb90c090d2e8fa26906d404e",
+      "downscaled_image_sha256": "67a8630b1dab45381dd9e08a95177a8e42b224ea86b587f189c5ebbfedfd97f5",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Citrine Bramble stands on a sunlit beach, her dark braids framing her face as she leans forward with a relaxed smile. She wears dark sunglasses and a black bikini top, holding a piece of fabric in her hands. The sandy shore stretches behind her, dotted with people enjoying the water and sun.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 320,
+      "manifest_path": "personal/onyx_lantern_320.jpg",
+      "run_path": "2026/07/10342999_10203543521976187_5391101922129301995_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "c303298be7846d62e6fb0b0f16d8d794c534986d535dac20425acb35afaed0a3",
+      "downscaled_image_sha256": "c303298be7846d62e6fb0b0f16d8d794c534986d535dac20425acb35afaed0a3",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Onyx Lantern relaxes on a lounge chair by the pool, her teal bikini catching the sunlight as she reads. She smiles warmly, sunglasses shielding her eyes from the bright afternoon. The patio stretches behind her, lined with empty chairs and a palm tree swaying gently in the breeze.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 323,
+      "manifest_path": "personal/sable_verity_323.jpg",
+      "run_path": "2026/07/10390316_10152115474062452_368391534907883573_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "4308cf70957d1ec3bda5a8ec1e7b952a859f943184edc3d274de0f8861f401e6",
+      "downscaled_image_sha256": "4308cf70957d1ec3bda5a8ec1e7b952a859f943184edc3d274de0f8861f401e6",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "sunglasses",
+        "low_res"
+      ],
+      "detected_face_count": 8,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "A group of women relax together on a round wicker lounge chair by the water, their laughter and smiles catching the sun. They wear bikinis and sunglasses, each holding a can, their joy evident in the warm light. The stone patio stretches beneath them, leading to a calm expanse of water under a soft blue sky. The moment feels carefree and full of summer energy.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 326,
+      "manifest_path": "personal/slate_willow_326.jpg",
+      "run_path": "2026/07/10399880_121328859077_401855_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "37803e7798a55bbf4efed82b930f15186f00756c04c9b1fff05f8fba611a3cf7",
+      "downscaled_image_sha256": "37803e7798a55bbf4efed82b930f15186f00756c04c9b1fff05f8fba611a3cf7",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Slate Willow poses with a playful expression, wearing a curly brown wig and dark sunglasses that reflect the screen. The room behind her has wooden walls and a shelf lined with stuffed animals, giving the scene a cozy, personal feel. She gazes directly at the camera, creating a moment of quiet connection.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 331,
+      "manifest_path": "personal/sable_verity_331.jpg",
+      "run_path": "2026/07/10408931_10152430285932099_8432145169828849450_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "5d816f3c6697f0c4e96eb7d59240b83a220f8fc376e79c8c6c19b1892d556220",
+      "downscaled_image_sha256": "5d816f3c6697f0c4e96eb7d59240b83a220f8fc376e79c8c6c19b1892d556220",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Sable Verity glides along a sunlit park path, her dark hair tied in a bun, adjusting her sunglasses with a smile. She wears a patterned bikini top and denim shorts, her white roller skates catching the light. The paved trail winds through green grass and leafy trees, with other parkgoers in the distance.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 334,
+      "manifest_path": "personal/dappled_juniper_334.jpg",
+      "run_path": "2026/07/10413408_10205779244334231_3475159994759748872_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "39ec0c9e4658d1443bae1e41021824d3bca80c46d647588cf108969e23440969",
+      "downscaled_image_sha256": "39ec0c9e4658d1443bae1e41021824d3bca80c46d647588cf108969e23440969",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "sunglasses"
+      ],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ],
+        "occlusion_other": [
+          "cover"
+        ]
+      },
+      "caption": "Dappled Juniper strikes a playful pose against a vibrant orange wall, her tongue out in a carefree expression. She wears round sunglasses, a simple white t-shirt, and black shorts patterned with white daisies. A gold chain glints around her neck, and intricate tattoos cover her arms. The bright sunlight highlights her bold style and confident stance.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 340,
+      "manifest_path": "personal/onyx_lantern_340.jpg",
+      "run_path": "2026/07/10462663_10203527715981047_4492178454042202557_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "9097dd0b0033ec80a7f8933475c7aac65227b241a5e6e059b40a78f4d2559e01",
+      "downscaled_image_sha256": "9097dd0b0033ec80a7f8933475c7aac65227b241a5e6e059b40a78f4d2559e01",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Onyx Lantern stands by the pool, her dark hair catching the sun as she smiles in a black bikini adorned with a gold brooch. She wears a pearl necklace and matching earrings, her sunglasses reflecting the bright sky. The turquoise water ripples behind her, with lounge chairs lining the poolside in the distance.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 351,
+      "manifest_path": "personal/unlabeled_0351.jpg",
+      "run_path": "2026/07/134514_468582401460_3113098_o.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "5f965f44d9f2206e24e437911d366d3c69128a163f990f5592d3cc050a7a8fd8",
+      "downscaled_image_sha256": "0b309e55a785c0528f5e114973aa2adb58dca7132129065f808e67a1b4600550",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 0,
+      "matched_terms": {
+        "head_context": [
+          "profile"
+        ]
+      },
+      "caption": "A person stands in profile, their face cloaked in shadow, creating a dramatic silhouette against a bright light source. Their dark hair is styled in an updo, and the soft light highlights the curve of their neck and shoulder. The image evokes a quiet, contemplative mood, emphasizing form and contrast.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 386,
+      "manifest_path": "personal/unlabeled_0386.jpg",
+      "run_path": "2026/07/e449aa7a-1f64-4530-ab89-3ec89ce9fed5_2x.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "7cf11e7dc40135c043bc5390083d460b22dc7763c46d7a23aed104fc684d2f9c",
+      "downscaled_image_sha256": "7cf11e7dc40135c043bc5390083d460b22dc7763c46d7a23aed104fc684d2f9c",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "A woman stands in a vibrant garden, surrounded by green foliage and bursts of purple and white flowers. She turns slightly, her gaze meeting the camera with quiet confidence. Her light blue outfit contrasts softly with the natural backdrop, and a white handbag with a chain strap rests on her shoulder. The scene feels calm and sunlit, capturing a moment of serene style.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 388,
+      "manifest_path": "personal/verdant_verity_388.jpg",
+      "run_path": "2026/07/georgi_kk_455189432_8463509307001765_2749843304428790365_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "01bf3882459c898b901decd4476d5f4665969b1a2895dd9b3f244cdc612fbfbc",
+      "downscaled_image_sha256": "01bf3882459c898b901decd4476d5f4665969b1a2895dd9b3f244cdc612fbfbc",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "sunglasses",
+        "profile",
+        "low_res"
+      ],
+      "detected_face_count": 9,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "A group of women gather in a pool at a tropical resort, holding gold glasses and smiling for a photo. Verdant Verity is in the foreground, her face close to the camera, while others in swimsuits and sunglasses laugh and pose behind her. The scene is bathed in warm sunlight, with palm trees and lounge umbrellas framing the festive moment.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 389,
+      "manifest_path": "personal/unlabeled_0389.jpg",
+      "run_path": "2026/07/glayum_310511595_800129171225202_6268640667316821066_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "06bf84b1a83c0dd175d09fc134ea894a1bfe2094c73a7edc0e272ad38e4a4f01",
+      "downscaled_image_sha256": "06bf84b1a83c0dd175d09fc134ea894a1bfe2094c73a7edc0e272ad38e4a4f01",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 3,
+      "matched_terms": {
+        "occlusion_other": [
+          "covers"
+        ]
+      },
+      "caption": "Six Polaroid photos capture a woman in quiet moments, her expressions shifting from playful to pensive. She wears a white fluffy jacket in some shots and a red top in others, her long dark hair framing her face. A yellow and silver Cohiba ashtray rests in one frame, hinting at a relaxed evening. The black and white tiles beneath the photos lend a nostalgic, intimate feel to the collection.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 398,
+      "manifest_path": "personal/muted_fathom_398.jpg",
+      "run_path": "2026/07/highlights_18254869024115371-4.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "77d2da6301ed9e67edbb5b11d901d994440108e853fd9f0c3393dec3c69a43f5",
+      "downscaled_image_sha256": "77d2da6301ed9e67edbb5b11d901d994440108e853fd9f0c3393dec3c69a43f5",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "sunglasses"
+      ],
+      "detected_face_count": 2,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Muted Fathom relaxes in a wicker chair, holding a drink under the warm sun. Her blonde curls catch the light as shadows from the chair frame her face. She wears white-framed sunglasses and a beige fringed top, exuding a laid-back summer vibe. The scene feels calm and sun-drenched, with water visible in the background.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 401,
+      "manifest_path": "personal/saffron_beacon_401.jpg",
+      "run_path": "2026/07/saffronbeacon_3190953495175502062.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "325bfc702f97ac5f6c2c5b6ebf13e4498916ef2890fd4aa43246d93000338e4b",
+      "downscaled_image_sha256": "7eddd4a4b16ee8a042b546c262bb6552a0fc626bcb8445bc3bd8801157a192ec",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 3,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Saffron Beacon captures a vibrant mirror selfie in a sleek, modern hallway. She wears a bold red workout ensemble, white headphones, and red sunglasses, her confident pose reflecting in the mirrored walls. The space glows with a dynamic pattern of blue and white lights, creating a futuristic atmosphere. Her beige sneakers add a casual contrast to the polished setting.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 403,
+      "manifest_path": "personal/saffron_beacon_403.jpg",
+      "run_path": "2026/07/saffronbeacon_371741694_2600248780122876_6195357355733670710_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "14bbaac2c879c28b80c8d44178324b6a98a9130d882d9797a5e4eb9abe1078eb",
+      "downscaled_image_sha256": "2ff5e56220b56e52dfea1b82cdb029810b867c9430e793ac06a59ff3b1561785",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "head_context": [
+          "profile"
+        ]
+      },
+      "caption": "Saffron Beacon shares a contemplative message about the full moon in Pisces conjunct Saturn, describing it as a powerful moment for closure. Her profile picture shows her with long red hair, set against a dark, mysterious background. The tweet conveys a sense of finality and transformation, framing the celestial event as a serious turning point.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 408,
+      "manifest_path": "personal/unlabeled_0408.jpg",
+      "run_path": "2026/07/sylvanridgeway_3197421734125841345.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "46d0104facb3ed11097b7a1caee7fecf64bbaaf3d18778dfb92272708d08817d",
+      "downscaled_image_sha256": "46d0104facb3ed11097b7a1caee7fecf64bbaaf3d18778dfb92272708d08817d",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 0,
+      "matched_terms": {
+        "occlusion_other": [
+          "cover"
+        ]
+      },
+      "caption": "The Prodigy's 'Everybody In The Place - Fairground Remix Remastered' appears on a digital music platform, its album cover featuring bold typography and a minimalist design. The track is part of the 'The Prodigy Experience' expanded collection, showcasing remixes and B-sides. The interface reflects a clean, modern digital aesthetic.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 414,
+      "manifest_path": "personal/sylvan_orchard_414.jpg",
+      "run_path": "2026/07/tinigessler_3706889522686525034.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "0df69881efbf5d9a36463b101aaecb181303b17f2b1a6f00daf119325d7bbc00",
+      "downscaled_image_sha256": "f2675840b6fa0b3c64faabaeba2cb01ddeaf64d408ce010006177a46d5ee570d",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "sunglasses",
+        "profile",
+        "blur"
+      ],
+      "detected_face_count": 5,
+      "matched_terms": {
+        "sunglasses": [
+          "aviator",
+          "sunglasses"
+        ]
+      },
+      "caption": "Three women share a joyful moment at the Monegra Desert Fest, their smiles glowing under the night lights. The woman on the left, Sylvan Orchard, wears a festival shirt and aviator sunglasses, while her friends embrace her in the lively crowd. A water bottle and cup rest in their hands, a small detail of the evening's energy. The atmosphere pulses with connection and celebration.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 441,
+      "manifest_path": "personal/hollow_pennant_441.jpg",
+      "run_path": "2026/07/vsco5c7c6a7643913.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "889db4e553af1c492d8009a5578197fd225b0f850339fc2d610a4f812298c37e",
+      "downscaled_image_sha256": "8d2fe9f69db82e04a77355cfb31c5a6cfd678ea17c9d5e894cd87e2169ea93b3",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "occlusion_other": [
+          "covered"
+        ]
+      },
+      "caption": "Hollow Pennant stands in the snow beside a panther statue, her colorful jacket bright against the winter gray. Snow falls gently as she strikes a pose near the stone tower, bare trees framing the scene. The cold air hangs still, capturing a quiet moment on a snowy day.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 442,
+      "manifest_path": "personal/unlabeled_0442.jpg",
+      "run_path": "2026/07/vsco5d6c7e58c37b8.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "0a6998303fdb9f5771d3d10080a01a6a108eb92e560e2590532118e7a23fca5e",
+      "downscaled_image_sha256": "e555ef29e96f5a140027fbd0616d146261e5a74418c734640c8f456346303235",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 2,
+      "matched_terms": {
+        "occlusion_other": [
+          "obscured"
+        ]
+      },
+      "caption": "A person captures a mirror selfie in a bathroom, their face obscured by a blur of motion and light. They wear a blue crop top and ripped jeans, holding a phone in one hand. A white purse with a black strap hangs from their waist, and a mug and toilet paper sit on the counter below. The image carries a soft, intimate glow, suggesting a quiet moment of self-expression.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 445,
+      "manifest_path": "personal/russet_fathom_445.jpg",
+      "run_path": "2026/07/PHOTO-2014-06-29-21-51-52.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "bd19d164caa6340b44cec47615ad2a2a698f218ef65f425eda8eeffe7e4467e7",
+      "downscaled_image_sha256": "bd19d164caa6340b44cec47615ad2a2a698f218ef65f425eda8eeffe7e4467e7",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 5,
+      "matched_terms": {
+        "occlusion_other": [
+          "covered"
+        ]
+      },
+      "caption": "Russet Fathom beams with joy, her face and black tank top dusted with colorful confetti, as she holds a cup in a lively kitchen. Behind her, two men stand near a countertop, one in a black shirt and another in a green and blue unicef jersey. The white cabinets and scattered decorations suggest a festive celebration in full swing.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 449,
+      "manifest_path": "personal/opaline_bramble_449.jpg",
+      "run_path": "2026/07/dandelionandburdock_dandelionandburdock_127256443_803706303812644_5359905908123482727_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "896ce70413ce6ab9492ceba8fbeac073efed5fb64ecf7bc3ef122d757c095a17",
+      "downscaled_image_sha256": "4c8888bb4a160e94cc6fea4e00a6d035186f423d38a48e47f15c37dc4e6c3951",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 2,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Opaline Bramble and a friend share a sunny selfie, their smiles bright against the backdrop of a large white structure. The woman on the left beams in oversized sunglasses, while Opaline Bramble looks on with a soft expression. A text overlay expresses gratitude for shared movie and TV date nights, calling the other person her favorite USC success.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 452,
+      "manifest_path": "personal/marbled_kestrel_452.jpeg",
+      "run_path": "2026/07/makeupbydianam-20211030_094815-250596656_1708602699337976_3283902831394147697_n.jpeg",
+      "bucket": "personal",
+      "source_image_sha256": "5821d1e73ae31c440bf1dbbcf831156d72e7474c90e52ff9e846e3dbc6f6ffd8",
+      "downscaled_image_sha256": "443b4498adedcdcee2d1013bb10bb8a2cee82c77ce928f91e5b644f4a31b96b5",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "head_context": [
+          "profile"
+        ]
+      },
+      "caption": "Marbled Kestrel commands attention in a sleek, light pink jumpsuit with a deep V-neck and a bow at the waist, her dark hair pulled back and eyes accentuated with bold makeup. She stands confidently on a red carpet, the soft glow of modern lighting highlighting the elegant lines of her outfit. The blurred background suggests a high-profile event, with the focus entirely on her poised presence.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 464,
+      "manifest_path": "personal/unlabeled_0464.jpg",
+      "run_path": "2026/07/theunrealpewterhollow_2997759011676567491.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "e117193d155e5c731c2f6da81a84219b7e7923462b12c6b6a3cd1810e9a8d5fd",
+      "downscaled_image_sha256": "e117193d155e5c731c2f6da81a84219b7e7923462b12c6b6a3cd1810e9a8d5fd",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 0,
+      "matched_terms": {
+        "masked": [
+          "mask"
+        ]
+      },
+      "caption": "A handwritten Christmas contract titled \"Holy Jolly Sister Christmas Contract\" lies open in a spiral-bound notebook, detailing playful rules between Ochre Quarry and Tidal Quarry. The document humorously outlines consequences for failing to stay positive during the holidays, including fines and a three-minute window to surrender to the Christmas spirit. The signed agreement, dated December 20, 2021, includes whimsical clauses like using the code words \"Grinch\" or \"3-2-1\" as reminders. A person in a red costume with a blue mask appears in the top-left corner of the image.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 468,
+      "manifest_path": "personal/gilded_cypress_468.jpg",
+      "run_path": "2026/07/gildedcypress_193876120_308648490746437_6867040231297854149_n-1.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "fe212728d1f4322588d5869f958673f7cde55a006d2a2a70f170844e133d229f",
+      "downscaled_image_sha256": "3d54a9faa7a341b2807a50de361c83e491502625c1a076e3aa53cb7c37d9a1ab",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 3,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ],
+        "occlusion_other": [
+          "covers"
+        ]
+      },
+      "caption": "Gilded Cypress and a friend share a joyful moment at an outdoor festival, their smiles bright under the sun. The woman playfully covers her face with her hand while the man holds a drink, both wearing matching pink wristbands. Trees and a clear sky frame the casual, cheerful scene.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 470,
+      "manifest_path": "personal/gilded_cypress_470.jpg",
+      "run_path": "2026/07/gildedcypress_385272147_209973281946966_3848809468701316_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "e75ba01d1bfee9622dfefafb20c2ac79ef94668844245015a9d8811c6fc8c3e5",
+      "downscaled_image_sha256": "7e139ac3916a06170be7bcdf9cc95024624e87ff4b92fee967cb28f5f7a29b21",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 2,
+      "matched_terms": {
+        "masked": [
+          "scarf"
+        ]
+      },
+      "caption": "Gilded Cypress leans back with a gentle smile, her gaze lifted toward a vibrant autumn display of pumpkins and gourds arranged on a wire fence. Dried corn stalks hang above, and yellow flowers bloom at the base, adding warmth to the seasonal scene. She wears a black sweater and a beige scarf, her brown hair framing her face as she takes in the festive harvest setting.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 485,
+      "manifest_path": "personal/candid_485.jpg",
+      "run_path": "2026/07/slutcoree_269793672_1810634539134135_3592403266078142922_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "37119c674642926f60c6ac87a6d5ce2fa8a1d377e4bc2498ea3efa9fc56ab80b",
+      "downscaled_image_sha256": "20cf50c3a9b95d2210f907995ff2c9a928a0067bd2359d6971338fac740bfd0f",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "masked": [
+          "mask"
+        ]
+      },
+      "caption": "Candid captures a casual mirror selfie in a modern bathroom, her long dark hair spilling over her shoulders. She wears a black face mask and silver headphones, holding her phone with a steady hand. The round mirror glows with a soft light ring, reflecting pink and white tiles and a framed picture on the wall.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 487,
+      "manifest_path": "personal/unlabeled_0487.jpg",
+      "run_path": "2026/07/hazel-cypress-39976833_1826652167410659_8922590997465006080_n-scaled.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "17fab77392097d72a163fb8235c4fd5d8a52cd8a3f63c2d4046edc112488ffb4",
+      "downscaled_image_sha256": "16887b12549be36f6ac58fb6e1267c82d93d757cf07bbcda8e7f2236c3a491ef",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 0,
+      "matched_terms": {
+        "head_context": [
+          "from behind"
+        ]
+      },
+      "caption": "In the dim glow of a bathroom, a person stands bare before a mirror, their reflection capturing the quiet intimacy of a private moment. The room is shadowed, with only the faint outline of a sink and door visible in the glass. Their posture suggests stillness, a pause between motion, as they gaze at their own form.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 497,
+      "manifest_path": "personal/onyx_meadow_497.jpeg",
+      "run_path": "2026/07/v.nus444-20231125_214349-404265978_1047505633243296_4106888882269894805_n.jpeg",
+      "bucket": "personal",
+      "source_image_sha256": "a7234fba2f0ef793fc312861e3361151adb407af0471609e4a7fce9461429c9f",
+      "downscaled_image_sha256": "a3fc6426f30884bdf44d0760c4deb97b56da4e575d4d7fad1d5d8068bbaf9698",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 6,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Onyx Meadow poses backstage at a concert, her confident stance framed by the glow of stage lights and the hum of equipment. She wears a bold outfit—sunglasses, a black mesh top, and a green skirt with stars—while a sign behind her announces a tour playlist curated by Doja Cat. The metal grate floor and perforated barrier hint at the controlled chaos of a live event just beyond the curtain.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 502,
+      "manifest_path": "personal/sable_verity_502.jpg",
+      "run_path": "2026/07/cypress_3162908523189862148.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "7c9bffbf2117f1de61fb52d1b416d67cf1f27c46f28d2a27d706cc6befd4caf2",
+      "downscaled_image_sha256": "9c227ccfc1e06bb6172c528916195317632b2c26283a73cc67fe35f703fb7ee9",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 5,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Four women pose together on a sunny day by the water, their bright swimsuits catching the light. Each wears a unique style of swimwear, from patterned bikinis to crocheted tops, all unified by a cheerful yellow and white palette. They stand barefoot on a paved patio, greenery and the ocean stretching behind them. The atmosphere is relaxed and joyful, a perfect snapshot of a summer day.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 508,
+      "manifest_path": "personal/onyx_lantern_508.jpg",
+      "run_path": "2026/07/itsjennaharwood_71227671_124590885241606_2332509583563350214_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "7aaca0300ed40fef90d3e325f7dad9c6b187351f07edc04819c6e2f9ed01c64a",
+      "downscaled_image_sha256": "7aaca0300ed40fef90d3e325f7dad9c6b187351f07edc04819c6e2f9ed01c64a",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Onyx Lantern strikes a playful pose on a vibrant pink planter, her peace sign echoing the cheerful energy of the scene. She wears a pink striped shirt tied at the waist, denim shorts, and white sneakers, her dark hair braided and sunglasses shielding her eyes. Lush green plants and a bold pink wall frame her, creating a lively, sunlit moment.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 512,
+      "manifest_path": "personal/onyx_beacon_512.jpg",
+      "run_path": "2026/07/fennyjarman_fennyjarman_123139862_394922668524392_213896697714220137_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "f2558b56aafc7539fd692008899a665c4db3c9e30486a9494fde881aa55fa9c0",
+      "downscaled_image_sha256": "9f7ee769165e8c4ed78afeb42607bbbd32d55f202660d5168a18f755ebffd19c",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "masked"
+      ],
+      "detected_face_count": 3,
+      "matched_terms": {
+        "masked": [
+          "mask"
+        ]
+      },
+      "caption": "Onyx Beacon poses playfully in a red jacket and devil horns, her eyes visible above a white 3M mask. A Visitor badge from Ghost Ranch in Abiquiu, NM, hangs on her chest. The setting feels casual, with a marble-like wall behind her.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 514,
+      "manifest_path": "personal/auburn_ridgeway_514.jpg",
+      "run_path": "2026/07/jesssaroni_32372037_250083859062339_1789440691575717888_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "12a69524e744497250ede318c190808db03141f1b189c513b1e43ece9795c12c",
+      "downscaled_image_sha256": "334dc8a120afd9321d026c2f2951c2e99ef28db7a7e6e368c435225b24a62b0c",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "profile"
+      ],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "head_context": [
+          "back to the camera"
+        ]
+      },
+      "caption": "Auburn Ridgeway stands in the clear turquoise water, her back to the camera, gazing toward the shore. The sun glints off the waves around her as she enjoys the warm, calm day. A rocky island rises in the distance, dotted with boats and a clear blue sky above.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 526,
+      "manifest_path": "personal/wicker_marsh_526.jpg",
+      "run_path": "2026/07/PHOTO-2014-03-15-21-22-14.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "810b22fd64fbca4905f3d964e16f711751e4515a540ad9634d17999a0bd0fa84",
+      "downscaled_image_sha256": "810b22fd64fbca4905f3d964e16f711751e4515a540ad9634d17999a0bd0fa84",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 3,
+      "matched_terms": {
+        "head_context": [
+          "back to the camera"
+        ]
+      },
+      "caption": "Wicker Marsh stands in a dimly lit bathroom, her back to the camera as she adjusts her black lingerie. She wears a choker and has her brown hair pulled into a ponytail. The wooden countertop holds a scattered array of toiletries and a small mirror reflects the quiet intimacy of the moment.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 527,
+      "manifest_path": "personal/wicker_marsh_527.jpg",
+      "run_path": "2026/07/PHOTO-2014-03-16-01-42-33.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "8df2e4b9d8f6e09dcd828626507a3f5bf30de7f7514501c15e5e5ee9d11034c6",
+      "downscaled_image_sha256": "8df2e4b9d8f6e09dcd828626507a3f5bf30de7f7514501c15e5e5ee9d11034c6",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 2,
+      "matched_terms": {
+        "head_context": [
+          "from behind"
+        ]
+      },
+      "caption": "In a dimly lit bathroom, a shirtless man captures a mirror selfie with a woman in black lingerie standing behind him. The intimate moment is framed by the reflection, with the phone's screen glowing in the dark. The atmosphere feels private and personal, with soft shadows across the tiled walls.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 532,
+      "manifest_path": "personal/tidal_bramble_532.jpg",
+      "run_path": "2026/07/luffkris_116803430_349089062776064_6100495608179523769_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "3850cf1ce602bda71bd35c5b4730d138755dc565a96f2c6485bc444bcca13931",
+      "downscaled_image_sha256": "3850cf1ce602bda71bd35c5b4730d138755dc565a96f2c6485bc444bcca13931",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "sunglasses"
+      ],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Tidal Bramble stands confidently on a sunlit tennis court, holding a skateboard with a relaxed posture. The green and red court surface contrasts with the chain-link fence and trees in the background. A casual, laid-back energy fills the air as Kris wears a floral tank top with the word SKATE printed across it.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 536,
+      "manifest_path": "personal/indigo_ridgeway_536.jpg",
+      "run_path": "2026/07/k_t_l_k_t_l_123215165_647711705910052_7011916736669930203_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "60ff6a8dd4a993351fd6aa105c9c2de2b2c5c821de951efe7011bd24e6112378",
+      "downscaled_image_sha256": "6084fb1eae3496db731aef58d3d99e7efec6e131e293d733801398961a4c9437",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "masked"
+      ],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "masked": [
+          "mask"
+        ]
+      },
+      "caption": "Indigo Ridgeway stands in a kitchen, wearing a white mask and a tie-dye shirt, her dark hair framed by a pink headband. A hand in the foreground holds a smartphone displaying an image of a woman in a costume with the text SUNSHINE MURDER. The scene feels intimate, lit softly with plants and kitchen items in the background.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 542,
+      "manifest_path": "personal/linen_warren_542.jpg",
+      "run_path": "2026/07/sup_creep_341345282_979320063063701_8313451404266379793_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "1548501749140f211157a1cc0347b7d49e354935355025c5ded8ccde721fa573",
+      "downscaled_image_sha256": "2d8815b356b5ef32cc30ad4cdc419c66732ba89ce0e93a3849efeb541d667a8c",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "head_context": [
+          "back to the camera"
+        ]
+      },
+      "caption": "Linen Warren stands on a rooftop, her back to the camera, glancing over her shoulder with a quiet smile. She wears a dark green velvet dress and glasses, holding a glass in her hand. The city stretches behind her under a soft, cloudy sky at dusk.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 543,
+      "manifest_path": "personal/unlabeled_0543.jpeg",
+      "run_path": "2026/07/ECQdDJQXsAAFKRG.jpeg",
+      "bucket": "personal",
+      "source_image_sha256": "b346f795de353f61c90bf52b52d00fc5813544d0846ab1be3cc1b6c551f2c7a3",
+      "downscaled_image_sha256": "4877b57da5958cc9db39bea2ef724769bc8f658f2b0d16418f4295588adbfee1",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 2,
+      "matched_terms": {
+        "head_context": [
+          "from behind"
+        ]
+      },
+      "caption": "A person lies on a bed, viewed from behind, their dark hair tied in a ponytail. The white sheets and soft lighting create an intimate atmosphere. A play button overlay suggests this is a still from a video.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 544,
+      "manifest_path": "personal/unlabeled_0544.jpeg",
+      "run_path": "2026/07/EDIr-BjXoAEJOAk.jpeg",
+      "bucket": "personal",
+      "source_image_sha256": "514ed4d9505c8465074e1b58b2e4b76bb31cd513a6846b98c5b9618a6aefb203",
+      "downscaled_image_sha256": "e659d71da9d6ac18741b0dc49598457a5ab9a49629ed97dfcfdace5ab534e853",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 0,
+      "matched_terms": {
+        "occlusion_other": [
+          "covering",
+          "obscured"
+        ]
+      },
+      "caption": "Under the glow of streetlights, a person poses on a motorcycle on a quiet city sidewalk, their face obscured by a French flag. The urban night scene feels casual and playful, with trees and buildings lining the street. The contrast of high heels against the motorcycle adds a touch of whimsy to the moment.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 547,
+      "manifest_path": "personal/brisk_rookery_547.jpg",
+      "run_path": "2026/07/IMG_0036-scaled.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "939258dc01bc37d756c947b533e495b5cb29520ea320d877301fb4d386f7ccec",
+      "downscaled_image_sha256": "88cc82b9ae50e081e04dd6b8a32b2191511adb8297abebad5a45ca1361f72374",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 5,
+      "matched_terms": {
+        "occlusion_other": [
+          "cover"
+        ]
+      },
+      "caption": "Brisk Rookery captures a mirror selfie, her blonde hair and blue eyeshadow framing a focused gaze. She holds a pink phone adorned with dinosaur stickers, her hand resting on her chest as she wears a sheer blue top printed with cherubs and clouds. The room behind her holds framed art, including a comic book cover titled 'The Mighty Thor', adding a personal touch to the intimate moment.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 556,
+      "manifest_path": "personal/indigo_ridgeway_556.jpeg",
+      "run_path": "2026/07/indigo-7.jpeg",
+      "bucket": "personal",
+      "source_image_sha256": "04ad0dd389abceac9ac319a1961f90081f03385a25cc0cdce5c0c28ace64e117",
+      "downscaled_image_sha256": "04ad0dd389abceac9ac319a1961f90081f03385a25cc0cdce5c0c28ace64e117",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 0,
+      "matched_terms": {
+        "occlusion_other": [
+          "obscured"
+        ]
+      },
+      "caption": "Indigo Ridgeway emerges from a wash of light, her features softened by an ethereal glow. The overexposed background dissolves into white, leaving only her dark hair and turtleneck in focus. Her gaze holds steady, calm and direct, as if stepping through a dream.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 559,
+      "manifest_path": "personal/plumb_tanner_559.jpg",
+      "run_path": "2026/07/ellecortese_233518646_850247779251005_4150013763906933633_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "ef4834aa71f6be90fa80d36a6a0303ee294db90e635c7b8624c6f12d93b78c8c",
+      "downscaled_image_sha256": "a711c55e27510d173040a18a6748eae6be30595eca8bb80e643d16fe85c7b927",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [],
+      "detected_face_count": 21,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Plumb Tanner poses with a candid expression, her dark hair in a bun and green sunglasses perched atop her head. She wears a bold red shirt with black and blue geometric patterns, layered with a thick silver chain necklace. Text overlays on her face read 'i am painfully warm' and 'end me', adding a humorous, self-aware tone. The black mesh fence behind her suggests an outdoor setting, capturing a moment of casual, expressive style.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 571,
+      "manifest_path": "personal/unlabeled_0571.jpg",
+      "run_path": "2026/07/allisonbrain_allisonbrain_125327773_494025298180897_8079957941846466257_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "bb77e0dac75b915be7eceb91179a43e6f48eb4ba45a128cea6fecf10cd3c34e0",
+      "downscaled_image_sha256": "912a88636b6d3c28b8f09a4d33b1bcbf8baee8f8aecf88f07ba23641787b1e1b",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 0,
+      "matched_terms": {
+        "head_context": [
+          "profile"
+        ]
+      },
+      "caption": "In a room bathed in purple light, a woman stands in profile, her gaze lifted as a soft projection of a face glows across her white tank top. The image casts a mysterious, artistic aura, blending her form with the projected figure. Her white pants and relaxed posture contrast with the intensity of the light and shadow.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 577,
+      "manifest_path": "personal/cobalt_verity_577.jpg",
+      "run_path": "2026/07/k746__293857609_460884322476409_8622725398272406699_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "dd27ccc3b8e3f3933922b5657a54a7b9b9d33b8ab9fb0c54703db611f00efdce",
+      "downscaled_image_sha256": "25c939f1f5dad65a0c98cc1647bb36f4f44096c294bc07d0ccd3aed2d1958634",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 2,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Cobalt Verity captures a casual mirror selfie, her playful expression framed by sunglasses perched on her head. She wears a black long-sleeved top over a black and white checkered top, her left arm showing a tattoo. In the mirror’s reflection, she appears in a braid, dressed in a green and white checkered skirt, with a WiFi sign visible in the background.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 589,
+      "manifest_path": "personal/sylvan_ridgeway_589.jpg",
+      "run_path": "2026/07/sylvanridgeway_18949857_439505066410515_3264121968969908224_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "bb0f918ef362390e6b1a2a909a444b4fb949e7cf63382da6eae94ca09424b7d2",
+      "downscaled_image_sha256": "bb0f918ef362390e6b1a2a909a444b4fb949e7cf63382da6eae94ca09424b7d2",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "sunglasses",
+        "profile",
+        "low_res"
+      ],
+      "detected_face_count": 10,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Sylvan Ridgeway sits at a red outdoor table at a Five Guys restaurant, surrounded by the quiet hum of a city street at dusk. A paper bag and two branded drinks rest on the table, hinting at a casual meal. Palm trees sway gently in the background, and pedestrians move along the sidewalk under a soft evening sky.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 593,
+      "manifest_path": "personal/onyx_harbor_593.jpg",
+      "run_path": "2026/07/jovianbrowne_3091836734439013997.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "7ba7c7d873fa6df39223bab11de78a6aad2d53f45c6e2eb4da7bf81cf0e2260f",
+      "downscaled_image_sha256": "eb055333e9426741cab165426da8a6938c161d5da1595eea5cff872440a6966a",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ],
+        "masked": [
+          "bandana"
+        ]
+      },
+      "caption": "Onyx Harbor smiles at the camera, seated on a sunlit railway track that climbs a dry, hilly slope. The stone steps of the track rise into the distance, where two figures walk upward under a bright blue sky. Sparse vegetation and a clear atmosphere suggest a warm, arid climate. Her red-tinted sunglasses and bandana hint at a day of exploration.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 595,
+      "manifest_path": "personal/auburn_lantern_595.png",
+      "run_path": "2026/07/Screen-Shot-2018-10-09-at-4.46.38-PM.png",
+      "bucket": "personal",
+      "source_image_sha256": "728246780d48571ee9e7a8747a9be39f74274ed8560e367ef95ca54aa1080eac",
+      "downscaled_image_sha256": "79231a7be44a5c73d11de629a4f2857d50a34864b0557c253269345bfc2e15b8",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [
+        "low_res"
+      ],
+      "detected_face_count": 4,
+      "matched_terms": {
+        "head_context": [
+          "profile"
+        ]
+      },
+      "caption": "Sable Current's Twitter profile features a red-tinted bedroom background and a circular profile photo of her lying on a red surface. Her tweets reveal a bold, confrontational tone, with messages about social media, relationships, and personal grievances. The profile shows she joined in February 2011 and has 993 followers.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 622,
+      "manifest_path": "personal/unlabeled_0622.jpg",
+      "run_path": "2026/07/oliviajaynelee_480702767_18483865165038502_1433646270673129842_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "8319af5d054886b001b5a11be922e0c352fe8a385c415b5416e4b45a34a4fd36",
+      "downscaled_image_sha256": "3e7524a6f1e0e39dfc34fd8ef4dde5180f8d0221cfe46e142d5bdfc8a5dba0bc",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 3,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Three friends capture a moment at a lively party, their smiles and relaxed poses reflecting the festive atmosphere. The woman at the top holds a drink, her sunglasses adding a touch of cool to the scene. In the middle, another woman beams with joy, her round glasses and patterned headband catching the dim light. A third person, partially visible, completes the group, their studded hat hinting at a bold personal style.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 623,
+      "manifest_path": "personal/onyx_marsh_623.jpg",
+      "run_path": "2026/07/hotgirlsgotoheaven_466036283_441999328613351_1959272611593665446_n.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "1cb2cac8212eb1e52080d0fd863bc5b55eb25a4c1ff8ac922f542ba02ab58af1",
+      "downscaled_image_sha256": "1faba110ecc7ed25c131d555227774411817c8e5dc4938ca2ad5a0725e82cd67",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 2,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ],
+        "masked": [
+          "scarf"
+        ]
+      },
+      "caption": "Onyx Marsh and Muted Yarrow share a playful moment on a train, their smiles bright under the fluorescent lights. Onyx wears a black and purple top with fishnet stockings, while Muted sports a light top, a patterned scarf, and white bunny ears. They sit close, exuding a carefree, fun-loving energy as they pose for the camera.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 624,
+      "manifest_path": "personal/unlabeled_0624.jpg",
+      "run_path": "2026/07/43b99055-6245-4cd9-873c-164017a59b01.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "8cf755e99d331e73a0d1469c3e5bbf39914c5846775e93a248ee534bf9439781",
+      "downscaled_image_sha256": "8cf755e99d331e73a0d1469c3e5bbf39914c5846775e93a248ee534bf9439781",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 0,
+      "matched_terms": {
+        "head_context": [
+          "from behind"
+        ]
+      },
+      "caption": "A person with long brown hair stands in a bathroom, seen from behind, wearing white underwear. The image includes a caption that reads, 'Wow my hair is getting so long 🥰🥰🥰'.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 634,
+      "manifest_path": "personal/onyx_harbor_634.jpg",
+      "run_path": "2026/07/IMG_1751-scaled.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "2c4c281928aae608529882946638995327c90bfa86d80fe24120861cc2a802a5",
+      "downscaled_image_sha256": "3885fecf969aae0f113f1a58f2a49d5310b996391f23c41da78f882a697702b7",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 5,
+      "matched_terms": {
+        "head_context": [
+          "from behind"
+        ]
+      },
+      "caption": "On a dimly lit stage bathed in red and blue light, Onyx Harbor performs an aerial act, suspended by a rope in a feathered costume. Below, another performer in a costume stands with arms raised, while a third figure stands near a vehicle prop on the right. The scene pulses with theatrical energy, captured from the audience's perspective.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 637,
+      "manifest_path": "personal/unlabeled_0637.jpg",
+      "run_path": "2026/07/IMG_4121.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "264e525ea8dad21888d50db8b2cec249d1ac67034461b046b554cf31a3f71dc7",
+      "downscaled_image_sha256": "61e3631b1bbc72a8536120b3a4b7abff3381f5395fb4d1b58af2ad9ab798c08a",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 2,
+      "matched_terms": {
+        "sunglasses": [
+          "sunglasses"
+        ]
+      },
+      "caption": "Inside the back of a truck, a woman in a black jacket and red pants adjusts her green sunglasses while standing beside a boy in a black t-shirt with NCFE. The boy sits on a pile of clear and green plastic bottles, his feet dangling over the edge. The scene feels casual and active, with sunlight illuminating the cluttered space.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 640,
+      "manifest_path": "personal/onyx_harbor_640.jpg",
+      "run_path": "2026/07/IMG_7115-scaled.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "b366edbadf8e53bf9b8cb17f736d61baf7875d2e4842481b74fd19c3892f20c6",
+      "downscaled_image_sha256": "66fa00ae8d5531a9234ab928749db1c816f8efeaf4ef2e1875bc264c62dbad99",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 9,
+      "matched_terms": {
+        "occlusion_other": [
+          "covered"
+        ]
+      },
+      "caption": "Onyx Harbor stands in a dimly lit room, her light blue tank top catching the faint glow of the space. Behind her, a person in a dark shirt stands near a wall covered in colorful graffiti, including the letters B U M. To the right, an outstretched arm reaches into the frame, suggesting movement and interaction. The scene feels raw and spontaneous, like a moment captured at an underground gathering.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 646,
+      "manifest_path": "personal/unlabeled_0646.jpg",
+      "run_path": "2026/07/IMG_3856-scaled.jpg",
+      "bucket": "personal",
+      "source_image_sha256": "3230b3dc1295d05345de33dd6b8127135abf66880be5d0a6051278152b517fc5",
+      "downscaled_image_sha256": "afee030dfb9952b5ad0da465c311c67bafca9d9a69e10c35f1edf2b476e1d070",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 5,
+      "matched_terms": {
+        "masked": [
+          "mask"
+        ]
+      },
+      "caption": "In a warmly lit room with wooden floors and walls, two people crouch on the floor, their postures suggesting quiet focus. A third person stands in the background near a small wooden structure adorned with plants and candles. The space feels intimate, as if part of a ritual or performance. A fourth figure sits in the corner, wearing a white mask and holding a box, adding an element of mystery to the gathering.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 647,
+      "manifest_path": "personal/unlabeled_0647.png",
+      "run_path": "2026/07/IMG_0852.png",
+      "bucket": "personal",
+      "source_image_sha256": "8d3979789a6e05275fa0dd593e0044bf9a277aedddd1655100d4299026b0f59b",
+      "downscaled_image_sha256": "0e5e7c84fa8541c6e4bfdd3b238ba3f697bb53382fdc18b82b907a9aa381ea47",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "head_context": [
+          "profile"
+        ]
+      },
+      "caption": "Samantha, a 19-year-old crewchief at Camden EMS, poses playfully on a sunlit beach. Her profile lists interests including anime, gaming, and music, with emojis reflecting her passions. The ocean stretches behind her under a soft sky, capturing a moment of casual confidence.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 648,
+      "manifest_path": "personal/unlabeled_0648.png",
+      "run_path": "2026/07/IMG_1089.png",
+      "bucket": "personal",
+      "source_image_sha256": "7e1ed8f1b19d3dfc16c311e1e579f85f3b8098c09bb233bc00051fd5dde58dee",
+      "downscaled_image_sha256": "fbb556c3a6ebb23c1ea460aaaff84a06b23f3995241d5798e0b55109e5e05213",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": true,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "head_context": [
+          "profile"
+        ]
+      },
+      "caption": "Three purple leather straps labeled DOMINANT, SAINT, and TOP hang on a white pegboard, each adorned with silver grommets. A text overlay asks Which one r u, inviting a choice. The image is posted by rabbitrabbitwhite, visible in a profile picture in the top left corner.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 649,
+      "manifest_path": "personal/unlabeled_0649.png",
+      "run_path": "2026/07/IMG_2365.png",
+      "bucket": "personal",
+      "source_image_sha256": "7b0f9a70c45b978c1da255deca627670c6452bba5bdf2d1d9105c94cbfdaa385",
+      "downscaled_image_sha256": "cc50da6be7acac728ec9b9783bd4007dff021f12aa11c2a0abee068639332559",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 7,
+      "matched_terms": {
+        "head_context": [
+          "profile"
+        ]
+      },
+      "caption": "A social media profile displays a user's personal details and nine mutual connections. The profile includes a photo of a person holding a polaroid, a woman in a black jacket, and a person in a green outfit. Other photos show a man with a beard and glasses, a man working on a device, and a close-up of a face with colorful skin. The interface shows options to reject, save, or like the profile.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    },
+    {
+      "media_id": 650,
+      "manifest_path": "personal/unlabeled_0650.png",
+      "run_path": "2026/07/IMG_2391.png",
+      "bucket": "personal",
+      "source_image_sha256": "5f10ec9eae7efbf5b220d1c1a30112dc119257ba26afbf895c6a5fb362584b8c",
+      "downscaled_image_sha256": "eb6d782fbc7a914b77264090534e55e94af6fa468395c4ed819601d81568b5f8",
+      "review_status": "unreviewed_caption_candidate",
+      "join_status": "media_id_only_image_hash_unverified",
+      "slice_tags_known": false,
+      "existing_image_tags": [],
+      "detected_face_count": 1,
+      "matched_terms": {
+        "masked": [
+          "scarf"
+        ],
+        "head_context": [
+          "profile"
+        ]
+      },
+      "caption": "Meilina, 35, founder at Mei & Mo, smiles warmly in a casual portrait. She wears a bright yellow and red scarf over a striped shirt and gray cardigan. The image includes her profile text and a link to a social experiment.",
+      "model_id": "Qwen3-VL-30B-A3B-Instruct",
+      "model_version": "Q4_K_M",
+      "face_id": null,
+      "verified_occluder": null,
+      "verified_hidden_regions": null
+    }
+  ]
+}

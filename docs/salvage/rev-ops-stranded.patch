@@ -1,0 +1,1849 @@
+diff --git a/.lane-anchor/ocirv-1-rev-ops.txt b/.lane-anchor/ocirv-1-rev-ops.txt
+new file mode 100644
+index 000000000..298e58908
+--- /dev/null
++++ b/.lane-anchor/ocirv-1-rev-ops.txt
+@@ -0,0 +1,2 @@
++2026-09-04T08:19:00Z
++review anchor
+diff --git a/.task-state/review-ocirv1-rev-ops.md b/.task-state/review-ocirv1-rev-ops.md
+new file mode 100644
+index 000000000..2241f9df3
+--- /dev/null
++++ b/.task-state/review-ocirv1-rev-ops.md
+@@ -0,0 +1,35 @@
++# OCIRV-1 adversarial operability review
++
++**OCIRV1-RB-01 — high.** The rotation's first OCIR proof invokes `docker login` directly rather than through the watchdog (`scripts/deploy/ocir-token-rotate.sh:239-243`), even though `run_bounded` exists at lines 132-160. With a valid username/token and a registry connection that completes TCP setup but stops responding, `scripts/deploy/ocir-token-rotate.sh` can wait for Docker's transport timeout instead of `ACX_VAULT_FETCH_TIMEOUT`; the operator is stuck before the new token is stored and receives no bounded failure classification.
++
++**OCIRV1-RB-02 — high.** Both push modes are unbounded: `_push_ref` runs a bare remote `ssh ... docker push` or local `docker push` with no wall-clock deadline, SSH keepalive, or stall detector (`scripts/deploy/recognition-service.sh:794-804`). If OCIR stops acknowledging a layer after the connection is established, a manual deploy can hang indefinitely (the Actions job's 45-minute ceiling only bounds CI), monopolizing the serialized environment deploy lane and leaving the operator unable to tell whether the registry accepted the tag.
++
++**OCIRV1-RB-03 — medium.** The advertised `--readable-timeout` bounds only the post-write Secrets data-plane read; KMS/Vault discovery and the mutating `create_secret`/`update_secret` calls use SDK defaults and sit outside that deadline (`scripts/deploy/_vault_put_secret.py:243-247`, `scripts/deploy/_vault_put_secret.py:254-271`, versus the explicitly bounded client at lines 280-310). With `--readable-timeout 5`, slow `get_vault`, paginated list, and update calls can each consume their own SDK timeout before the five-second budget even starts; if `update_secret` is accepted and its response is lost, killing/re-running can submit another version without knowing which write won.
++
++**OCIRV1-RB-04 — medium.** Post-write VM verification gives SSH only `ConnectTimeout=5` and no `ServerAliveInterval`/`ServerAliveCountMax` or outer deadline (`scripts/deploy/ocir-token-rotate.sh:293-301`). A route drop after SSH establishes but before the remote program finishes can therefore hang after the new token is already durable and the laptop leg has run, leaving the operator without a terminal success/failure result for the production consumer.
++
++**OCIRV1-RB-05 — low.** Vault read-back retries use the same deterministic 1.0×1.5 sequence capped at five seconds for every caller and add no jitter (`scripts/deploy/_vault_put_secret.py:117-151`). During a Vault 503/propagation incident, simultaneous operator or automation retries align their requests and can amplify the unhealthy dependency instead of spreading load, contrary to the bounded-backoff-with-jitter recovery rule.
++
++**OCIRV1-RB-06 — medium.** A rerun with byte-identical input is not idempotent: after locating an existing secret the helper always calls `update_secret` and creates a new version, without comparing the active value or attaching an idempotency/conditional-update token (`scripts/deploy/_vault_put_secret.py:254-272`). Re-running after a crash or lost response therefore accumulates indistinguishable duplicate versions; repeated recovery attempts consume version history and make it harder to identify the version that actually became active.
++
++**OCIRV1-RB-07 — medium.** Bootstrap rotation writes the token and username as two independent commits, token first, with no compensating rollback (`scripts/deploy/ocir-token-rotate.sh:251-258`). If `--set-username new-user` stores the new token and the second helper call times out or fails, Vault serves `old-user` plus `new-token`, so every fresh laptop/VM login fails while currently running services continue; the runbook acknowledges the mismatch and says to retry (`infra/oci/vault-instance-principal-runbook.md:191-197`), but recovery still requires retaining the once-shown token or minting another and repeating a non-atomic operation.
++
++**OCIRV1-RB-08 — high.** In the default remote-build path, `docker build` overwrites the VM's environment tag with the candidate (`scripts/deploy/recognition-service.sh:781-790`) before `promote_gate` calls `preserve_rollback_tag` (`scripts/deploy/recognition-service.sh:833-840`), and `do_deploy` orders those operations exactly that way (`scripts/deploy/recognition-service.sh:1476-1486`). For prod currently serving image A, building B as `:latest` means the alleged `rollback-<id>` points to B; if B then fails boot smoke, prod keeps serving A but the recovery tag created for this attempt has already lost A.
++
++**OCIRV1-RB-09 — medium.** Rollback preservation is both host-local and explicitly best-effort: it runs `docker tag` on the VM, never pushes the rollback reference to OCIR, and continues on inspect/tag failure (`scripts/deploy/recognition-service.sh:1223-1240`). If the VM is replaced, its Docker cache is pruned, or the tag operation fails immediately before a bad prod restart, the advertised `rollback-<id>` is unavailable from the registry and the operator must reconstruct a prior SHA by hand during the outage.
++
++**OCIRV1-RB-10 — high.** After the mutable env tag is pushed, `do_restart` pulls it before running the blob repair (`scripts/deploy/recognition-service.sh:1425-1439`), while its caller handles any failure only by restoring `ACX_IMAGE_REPO`, not the registry or VM tag (`scripts/deploy/recognition-service.sh:1487-1495`). If the pull of B succeeds and the repair then fails, A remains serving but the VM's `:latest` now names B; a later systemd restart or host reboot activates B outside the smoke/verification transaction, turning a contained deploy failure into a latent production rollout.
++
++**OCIRV1-RB-11 — high.** Cutover is an in-place `systemctl restart` of the only environment unit (`scripts/deploy/recognition-service.sh:1440-1444`), and a failed post-restart health check merely exits without restoring or restarting the prior image (`scripts/deploy/recognition-service.sh:1498-1507`). An image that passes the isolated smoke but fails against live Vault, database, mounts, or environment configuration stops the currently serving process, fails to become healthy, and remains deployed until manual intervention; this is stop-then-start with no automatic rollback, not additive-then-flip containment.
++
++**OCIRV1-RB-13 — low.** Verification adds a fixed five-second delay before its first request and also sleeps after terminal failures on the final attempt (`scripts/deploy/recognition-service.sh:1498-1502`, `scripts/deploy/recognition-service.sh:1713-1719`, `scripts/deploy/recognition-service.sh:1725-1728`, `scripts/deploy/recognition-service.sh:1776-1779`). With `ACX_VERIFY_ATTEMPTS=1`, an immediately observable 401/connection refusal or SHA mismatch still costs ten avoidable seconds before failure is returned, and repeated attempts use fixed, non-jittered spacing.
++
++**OCIRV1-RB-14 — medium.** The emergency prod rollback examples do not run as written: both place `CONFIRM=PROMOTE` only in trailing comments rather than the command environment (`docs/runbooks/deploy-recognition-cicd.md:125-134`), while the implementation requires the variable for prod (`scripts/deploy/recognition-service.sh:1529-1535`). Copying either command during an outage therefore performs an SSH preflight and then refuses the rollback, wasting recovery time; the examples must prefix the command with `CONFIRM=PROMOTE`.
++
++**OCIRV1-RB-15 — medium.** The OCI README says `make deploy-dev` is a local build and that remote build requires `REMOTE_BUILD=1` (`infra/oci/README.md:502-518`), but the Make target resolves an unset selector to `REMOTE_BUILD=1` (`mk/deploy.mk:111-118`), as confirmed by `make -n deploy-dev`. An operator following the documented local iteration path instead rsyncs, prunes, and builds on the multi-environment production VM, creating unexpected latency and blast radius on the serving host.
++
++**OCIRV1-RB-16 — medium.** The same README still instructs operators to seed a persistent `~ubuntu/.docker/config.json` with interactive `docker login` as a remote-build prerequisite (`infra/oci/README.md:539-546`), but the deployed path ignores that cache and creates a private ephemeral Docker config populated from Vault (`scripts/deploy/recognition-service.sh:172-208`, `scripts/deploy/recognition-service.sh:514-527`). The documented command can succeed while the next deploy still fails because Vault/IAM is broken, sending a 3 a.m. operator down a remediation path that cannot affect the actual consumer.
++
++**OCIRV1-RB-17 — medium.** `--readable-timeout 0` commits the Vault mutation and explicitly skips the matching-value read-back (`scripts/deploy/_vault_put_secret.py:274-279`), but the wrapper immediately performs a Vault-backed laptop login (`scripts/deploy/ocir-token-rotate.sh:280-287`). On a first create or slow version propagation, that login sees 404 or the old token and reports failure after the write was accepted—the exact race the readiness gate was added to prevent—so the documented zero-wait option produces an ambiguous partial-success state rather than a reliable fast mode.
++
++**OCIRV1-RB-18 — medium.** All Make deploys default to building on the same VM that serves every environment (`mk/deploy.mk:111-141`); each run first prunes BuildKit state and then performs an unrestricted Docker build there (`scripts/deploy/recognition-service.sh:740-790`). A routine dev deploy with a large context can saturate CPU, disk I/O, or free space used by prod before any candidate gate runs—the README itself warns of the serving-traffic CPU spike (`infra/oci/README.md:548-555`)—so the blast radius of build failure/load is cross-environment rather than isolated to dev.
+diff --git a/Makefile b/Makefile
+index d6776459d..801ab8e8b 100644
+--- a/Makefile
++++ b/Makefile
+@@ -539,7 +539,7 @@ ocir-token-rotate:
+ 	@bash scripts/deploy/ocir-token-rotate.sh $(OCIR_ROTATE_ARGS)
+ 
+ test-deploy-contract:
+-	@python3 -m pytest scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py scripts/test_e15_33_boot_smoke.py scripts/test_deploy_workflow_gate.py scripts/test_ocirv1_vault_readiness.py -q --tb=short
++	@python3 -m pytest scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py scripts/test_e15_33_boot_smoke.py scripts/test_deploy_workflow_gate.py scripts/test_ocirv1_vault_readiness.py scripts/deploy/tests -q --tb=short
+ 	@bash scripts/deploy/tests/test-smoke-gate.sh
+ 	@bash scripts/deploy/tests/test-ocir-auth.sh
+ 	@bash scripts/deploy/tests/test-ocir-rotate.sh
+diff --git a/docs/runbooks/deploy-recognition-cicd.md b/docs/runbooks/deploy-recognition-cicd.md
+index a5d5d58ea..ed9d56eb8 100644
+--- a/docs/runbooks/deploy-recognition-cicd.md
++++ b/docs/runbooks/deploy-recognition-cicd.md
+@@ -128,10 +128,11 @@ Roll back by re-pointing the tag to a known-good image (no rebuild) or
+ redeploying a prior SHA:
+ ```bash
+ # fastest: retag the last-good image on OCIR + restart + verify
+-scripts/deploy/recognition-service.sh promote staging prod   # CONFIRM=PROMOTE for prod
++CONFIRM=PROMOTE scripts/deploy/recognition-service.sh promote staging prod
+ # or redeploy a specific commit
+-GIT_REF=<good-sha> REMOTE_BUILD=1 scripts/deploy/recognition-service.sh deploy prod   # CONFIRM=PROMOTE
++CONFIRM=PROMOTE GIT_REF="$GOOD_SHA" REMOTE_BUILD=1 scripts/deploy/recognition-service.sh deploy prod
+ ```
++Set `GOOD_SHA` to the full known-good commit before running the second command.
+ The same `promote`/`GIT_REF` levers are available by dispatching the workflow
+ from an older commit.
+ 
+diff --git a/infra/oci/README.md b/infra/oci/README.md
+index fee4145d1..a502d0e44 100644
+--- a/infra/oci/README.md
++++ b/infra/oci/README.md
+@@ -503,19 +503,18 @@ The wrapper supports two build modes:
+ 
+ | Mode | Trigger | When to use |
+ |---|---|---|
+-| **Local build** (default) | `make deploy-dev` | Fast iteration on a workstation with a healthy local docker daemon. Mac users need colima or Docker Desktop. |
+-| **Remote build** | `make deploy-dev REMOTE_BUILD=1` | Build runs on the OCI VM via SSH+rsync. Native arm64 (no cross-compile). No local docker required. Recommended path. |
++| **Remote build** (Make default) | `make deploy-dev` | Build runs in an isolated, resource-limited BuildKit container on the OCI VM via SSH+rsync. Native arm64; no local docker required. |
++| **Local build** | `make deploy-dev REMOTE_BUILD=0` | Fast iteration on a workstation with a healthy local docker daemon. Mac users need colima or Docker Desktop. |
+ 
+ ```bash
+ # See every available deploy target:
+ make deploy-help
+ 
+-# Standard dev iteration (build + push :dev + :SHA + restart acx-dev + verify):
++# Standard dev iteration (remote build + push :dev + :SHA + restart + verify):
+ make deploy-dev
+ 
+-# Same, but build on the VM — no colima/Docker Desktop needed locally.
+-# This is the friction-free path; pair with Tailscale for stable SSH.
+-make deploy-dev REMOTE_BUILD=1
++# Explicit local build (requires colima/Docker Desktop and Vault-backed OCI CLI auth):
++make deploy-dev REMOTE_BUILD=0
+ 
+ # Build only, no push (sanity before paying for an OCIR push):
+ make deploy-build                      # local
+@@ -527,9 +526,6 @@ make deploy-verify-dev                 # or: make deploy-verify ENV=dev
+ # Snapshot all three envs at once:
+ make deploy-status
+ 
+-# Make remote-build the default (add to ~/.zshrc):
+-export ACX_REMOTE_BUILD=1
+-
+ # Override defaults via env vars:
+ OCI_HOST=<other-tailnet-or-ip> make deploy-dev REMOTE_BUILD=1
+ ACX_ALLOW_DIRTY=1 make deploy-dev      # allow dirty tree (dev only)
+@@ -540,19 +536,23 @@ ACX_REMOTE_BUILD_DIR=/var/tmp/acx-build make deploy-dev REMOTE_BUILD=1
+ 
+ - VM has docker installed and the `ubuntu` user is in the `docker` group
+   (already true for the standard cloud-init).
+-- VM has cached OCIR auth: SSH in once and run
+-  `docker login iad.ocir.io -u 'idu2kqqe2jxy/<email>'`. The token is stored
+-  in `~ubuntu/.docker/config.json`.
++- VM instance principal can read `OCIR_USERNAME` and `OCIR_AUTH_TOKEN` from
++  `acx-vault`; verify the exact deploy credential path with
++  `scripts/deploy/ocir-token-rotate.sh` on an API-key-authenticated operator
++  laptop. It proves both the laptop and VM Vault-backed paths. Deploy creates
++  an ephemeral Docker config and removes it on exit.
+ - Workstation has `rsync` (default on macOS).
+ 
+ **Remote-build trade-offs:**
+ 
+-- Build consumes VM CPU (3-5 min on Always Free A1 4-core). If `acx-prod` is
+-  serving traffic on the same VM, expect a momentary CPU spike.
++- Build still consumes VM CPU and I/O, but the `acx-deploy-builder` container is
++  capped at 1.5 CPU / 4 GiB with reduced CPU shares; serving containers retain
++  scheduling headroom.
+ - First build on the VM is slow (no warm cache); subsequent builds reuse the
+   BuildKit on-disk cache.
+-- VM disk fills with build cache over time; run
+-  `ssh ubuntu@<vm> 'docker buildx prune -f'` periodically.
++- Build cache lives in the isolated `acx-deploy-builder` BuildKit volume. The
++  wrapper prunes only that builder's entries older than 72 hours, never the
++  serving daemon's shared cache.
+ 
+ #### acx_blobs ownership migration (non-root runtime)
+ 
+diff --git a/scripts/deploy/_vault_put_secret.py b/scripts/deploy/_vault_put_secret.py
+index 0a08015e6..32da0cd17 100644
+--- a/scripts/deploy/_vault_put_secret.py
++++ b/scripts/deploy/_vault_put_secret.py
+@@ -7,9 +7,10 @@ reaching argv (ps-visible to every user on the host), a shell history file, or
+ a temp file on disk. The value is read from stdin, base64-encoded in memory,
+ and handed to the Vaults API.
+ 
+-Creates the secret on first use; on subsequent runs it adds a new version to
+-the existing secret. The OCID is stable across versions, so nothing downstream
+-needs reconfiguring on rotation (vault-instance-principal-runbook.md section 5).
++Creates the secret on first use; on subsequent runs it adds a version only when
++the active value differs. An identical recovery rerun is a no-op. The OCID is
++stable across versions, so nothing downstream needs reconfiguring on rotation
++(vault-instance-principal-runbook.md section 5).
+ 
+ Run with the OCI CLI's bundled interpreter, which already has the SDK:
+     printf '%s' "$TOKEN" | "$(head -1 "$(command -v oci)" | sed 's|^#!||')" \\
+@@ -25,6 +26,7 @@ import argparse
+ import base64
+ import hashlib
+ import queue
++import random
+ import sys
+ import threading
+ import time
+@@ -37,6 +39,33 @@ class SecretNotReadableError(RuntimeError):
+     """The stored value never became readable through the consumer's API."""
+ 
+ 
++class OperationDeadline:
++    """One wall-clock budget shared by discovery, mutation, and read-back."""
++
++    def __init__(self, timeout, monotonic=None):
++        if timeout <= 0:
++            raise ValueError("timeout must be positive")
++        self.timeout = timeout
++        self.monotonic = monotonic or time.monotonic
++        self.deadline = self.monotonic() + timeout
++
++    def remaining(self, label):
++        remaining = self.deadline - self.monotonic()
++        if remaining <= 0:
++            raise TimeoutError(f"Vault operation exceeded the {self.timeout:.0f}s deadline during {label}")
++        return remaining
++
++    def call(self, label, operation):
++        remaining = self.remaining(label)
++        try:
++            return _call_with_deadline(operation, remaining, label)
++        except TimeoutError as exc:
++            raise TimeoutError(
++                f"Vault operation exceeded the {self.timeout:.0f}s deadline during {label}; "
++                "if this was a mutation, acceptance is indeterminate and the same command is safe to rerun"
++            ) from exc
++
++
+ def _is_retryable_read_error(exc):
+     """Return whether an OCI consumer read can usefully be attempted again."""
+     status = getattr(exc, "status", None)
+@@ -56,13 +85,13 @@ def _is_retryable_read_error(exc):
+     return exception_type.__module__.split(".", 1)[0] in {"requests", "urllib3"}
+ 
+ 
+-def _read_with_deadline(read_bundle, remaining):
+-    """Run one read without allowing it to outlive the outer deadline."""
++def _call_with_deadline(operation, remaining, label="request"):
++    """Run one SDK call without allowing it to outlive the outer deadline."""
+     outcome = queue.Queue(maxsize=1)
+ 
+     def run():
+         try:
+-            outcome.put((True, read_bundle()))
++            outcome.put((True, operation()))
+         except BaseException as exc:  # transferred to the calling thread below
+             outcome.put((False, exc))
+ 
+@@ -70,13 +99,20 @@ def _read_with_deadline(read_bundle, remaining):
+     worker.start()
+     worker.join(remaining)
+     if worker.is_alive():
+-        raise SecretNotReadableError("the Secrets API read exceeded the remaining readiness deadline")
++        raise TimeoutError(f"{label} exceeded the remaining deadline")
+     succeeded, value = outcome.get_nowait()
+     if succeeded:
+         return value
+     raise value
+ 
+ 
++def _read_with_deadline(read_bundle, remaining):
++    try:
++        return _call_with_deadline(read_bundle, remaining, "Secrets API read")
++    except TimeoutError as exc:
++        raise SecretNotReadableError(str(exc)) from exc
++
++
+ def wait_until_readable(
+     read_bundle,
+     secret_name,
+@@ -85,6 +121,7 @@ def wait_until_readable(
+     sleep=None,
+     monotonic=None,
+     prepare_attempt=None,
++    random_uniform=None,
+ ):
+     """Block until `secret_name` reads back as the value we just wrote.
+ 
+@@ -110,10 +147,9 @@ def wait_until_readable(
+     # no effect on it.
+     sleep = sleep or time.sleep
+     monotonic = monotonic or time.monotonic
+-    if timeout == 0:
+-        return True
+-    if timeout < 0:
+-        raise ValueError("timeout must be non-negative")
++    if timeout <= 0:
++        raise ValueError("timeout must be positive")
++    random_uniform = random_uniform or random.uniform
+     deadline = monotonic() + timeout
+     delay = 1.0
+     last = "no attempt made"
+@@ -147,11 +183,14 @@ def wait_until_readable(
+             raise SecretNotReadableError(
+                 f"{secret_name} was written but did not become readable within {timeout:.0f}s (last: {last})"
+             )
+-        sleep(min(delay, remaining))
++        # Equal callers should not synchronize their retries during Vault
++        # propagation or a regional 5xx incident. Keep jitter bounded so the
++        # authoritative outer deadline remains unchanged.
++        sleep(min(delay * random_uniform(0.8, 1.2), remaining))
+         delay = min(delay * 1.5, 5.0)
+ 
+ 
+-def _list_active_secrets(vaults_client, compartment_id, vault_id, name=None):
++def _list_active_secrets(vaults_client, compartment_id, vault_id, name=None, call=None):
+     """Return every ACTIVE secret, following the Vaults API page tokens."""
+     active = []
+     page = None
+@@ -166,7 +205,11 @@ def _list_active_secrets(vaults_client, compartment_id, vault_id, name=None):
+             kwargs["name"] = name
+         if page is not None:
+             kwargs["page"] = page
+-        response = vaults_client.list_secrets(**kwargs)
++
++        def operation(request_kwargs=kwargs):
++            return vaults_client.list_secrets(**request_kwargs)
++
++        response = call("list secrets", operation) if call else operation()
+         active.extend(secret for secret in response.data if getattr(secret, "lifecycle_state", None) == "ACTIVE")
+         headers = getattr(response, "headers", None) or {}
+         next_page = headers.get("opc-next-page") or getattr(response, "next_page", None)
+@@ -178,19 +221,23 @@ def _list_active_secrets(vaults_client, compartment_id, vault_id, name=None):
+         page = next_page
+ 
+ 
+-def resolve_vault_context(kms_client, vaults_client, vault_id, key_id=None):
++def resolve_vault_context(kms_client, vaults_client, vault_id, key_id=None, call=None):
+     """Return (compartment_id, key_id) for the vault.
+ 
+     An explicit key is authoritative. Otherwise the KMS key is inferred only
+     when every ACTIVE sibling agrees, avoiding both a second hardcoded OCID and
+     a nondeterministic choice from the Vaults API's result ordering.
+     """
+-    vault = kms_client.get_vault(vault_id).data
++
++    def operation():
++        return kms_client.get_vault(vault_id)
++
++    vault = (call("get vault", operation) if call else operation()).data
+     compartment_id = vault.compartment_id
+     if key_id is not None:
+         return compartment_id, key_id
+ 
+-    siblings = _list_active_secrets(vaults_client, compartment_id, vault_id)
++    siblings = _list_active_secrets(vaults_client, compartment_id, vault_id, call=call)
+     if not siblings:
+         raise SystemExit(
+             f"vault {vault_id} holds no existing secret to read the KMS key from; pass --key-id explicitly"
+@@ -204,8 +251,8 @@ def resolve_vault_context(kms_client, vaults_client, vault_id, key_id=None):
+     return compartment_id, sibling_keys.pop()
+ 
+ 
+-def find_secret(vaults_client, compartment_id, vault_id, name):
+-    for s in _list_active_secrets(vaults_client, compartment_id, vault_id, name=name):
++def find_secret(vaults_client, compartment_id, vault_id, name, call=None):
++    for s in _list_active_secrets(vaults_client, compartment_id, vault_id, name=name, call=call):
+         if s.secret_name == name:
+             return s
+     return None
+@@ -222,9 +269,11 @@ def main() -> int:
+         "--readable-timeout",
+         type=float,
+         default=120.0,
+-        help="seconds to wait for the written value to read back (0 to skip)",
++        help="positive end-to-end seconds for discovery, mutation, and read-back",
+     )
+     args = ap.parse_args()
++    if args.readable_timeout <= 0:
++        ap.error("--readable-timeout must be positive")
+ 
+     import oci  # noqa: PLC0415 -- lazy so the readiness gate stays unit-testable
+ 
+@@ -240,76 +289,131 @@ def main() -> int:
+     if not value:
+         raise SystemExit("refusing to store an empty value")
+ 
++    deadline = OperationDeadline(args.readable_timeout)
++    no_retry = oci.retry.NoneRetryStrategy()
+     config = oci.config.from_file(profile_name=args.profile)
+-    vaults = oci.vault.VaultsClient(config)
+-    kms = oci.key_management.KmsVaultClient(config)
+-
+-    compartment_id, key_id = resolve_vault_context(kms, vaults, args.vault_id, key_id=args.key_id)
++    initial_timeout = max(deadline.remaining("client setup"), 0.001)
++    client_options = {
++        "retry_strategy": no_retry,
++        "timeout": (min(5.0, initial_timeout), initial_timeout),
++    }
++    vaults = oci.vault.VaultsClient(config, **client_options)
++    kms = oci.key_management.KmsVaultClient(config, **client_options)
++    secrets_client = oci.secrets.SecretsClient(config, **client_options)
++
++    def call(label, operation, client=None):
++        remaining = deadline.remaining(label)
++        if client is not None:
++            bounded = max(remaining, 0.001)
++            client.base_client.timeout = (min(5.0, bounded), bounded)
++        return deadline.call(label, operation)
++
++    compartment_id, key_id = resolve_vault_context(
++        kms,
++        vaults,
++        args.vault_id,
++        key_id=args.key_id,
++        call=lambda label, operation: call(label, operation, kms if label == "get vault" else vaults),
++    )
+ 
+     content = oci.vault.models.Base64SecretContentDetails(
+         content_type="BASE64",
+         content=base64.b64encode(value).decode("ascii"),
+     )
+ 
+-    existing = find_secret(vaults, compartment_id, args.vault_id, args.secret_name)
++    existing = find_secret(
++        vaults,
++        compartment_id,
++        args.vault_id,
++        args.secret_name,
++        call=lambda label, operation: call(label, operation, vaults),
++    )
++    expected_digest = hashlib.sha256(value).hexdigest()
++    version_name = f"acx-{expected_digest[:32]}"
++    content.name = version_name
++
++    def read_bundle():
++        bundle = secrets_client.get_secret_bundle_by_name(
++            secret_name=args.secret_name,
++            vault_id=args.vault_id,
++            retry_strategy=no_retry,
++        ).data
++        return base64.b64decode(bundle.secret_bundle_content.content)
++
+     if existing is None:
+-        secret = vaults.create_secret(
+-            oci.vault.models.CreateSecretDetails(
+-                compartment_id=compartment_id,
+-                secret_name=args.secret_name,
+-                vault_id=args.vault_id,
+-                key_id=key_id,
+-                description=args.description or f"{args.secret_name} (OCIRV-1)",
+-                secret_content=content,
+-            )
++        details = oci.vault.models.CreateSecretDetails(
++            compartment_id=compartment_id,
++            secret_name=args.secret_name,
++            vault_id=args.vault_id,
++            key_id=key_id,
++            description=args.description or f"{args.secret_name} (OCIRV-1)",
++            secret_content=content,
++        )
++        retry_token = hashlib.sha256(
++            b"acx-vault-create\0" + args.vault_id.encode() + b"\0" + args.secret_name.encode() + b"\0" + value
++        ).hexdigest()
++        secret = call(
++            "create secret",
++            lambda: vaults.create_secret(details, opc_retry_token=retry_token, retry_strategy=no_retry),
++            vaults,
+         ).data
+         action = "created"
+     else:
+-        secret = vaults.update_secret(
+-            existing.id,
+-            oci.vault.models.UpdateSecretDetails(secret_content=content),
+-        ).data
+-        action = "new version"
++        # A rerun after a lost response first checks the consumer-visible active
++        # value. If it already matches, do not create a duplicate version.
++        active_value = call("read active value before update", read_bundle, secrets_client)
++        if hashlib.sha256(active_value).hexdigest() == expected_digest:
++            secret = existing
++            action = "unchanged"
++        else:
++            versions = call(
++                "list secret versions",
++                lambda: vaults.list_secret_versions(existing.id, retry_strategy=no_retry),
++                vaults,
++            ).data
++            if any(getattr(version, "name", None) == version_name for version in versions):
++                # A prior identical update was accepted but its response/read
++                # readiness was lost. Its deterministic version name is the
++                # idempotency key; wait for that version instead of adding one.
++                secret = existing
++                action = "existing version pending"
++            else:
++                current = call(
++                    "get secret metadata",
++                    lambda: vaults.get_secret(existing.id, retry_strategy=no_retry),
++                    vaults,
++                )
++                etag = (getattr(current, "headers", None) or {}).get("etag")
++                if not etag:
++                    raise RuntimeError("Vault get_secret response omitted etag; refusing an unconditional update")
++                secret = call(
++                    "update secret",
++                    lambda: vaults.update_secret(
++                        existing.id,
++                        oci.vault.models.UpdateSecretDetails(secret_content=content),
++                        if_match=etag,
++                        retry_strategy=no_retry,
++                    ),
++                    vaults,
++                ).data
++                action = "new version"
+ 
+     print(f"{action}: {args.secret_name} ({len(value)} bytes)")
+     print(f"  secret_id: {secret.id}")
+ 
+-    if args.readable_timeout == 0:
+-        print("  readable: check skipped (--readable-timeout 0)")
+-    else:
+-        # Own retries here. OCI operation defaults can otherwise retry for much
+-        # longer than this command's advertised outer readiness deadline.
+-        no_retry = oci.retry.NoneRetryStrategy()
+-        initial_timeout = max(args.readable_timeout, 0.001)
+-        secrets_client = oci.secrets.SecretsClient(
+-            config,
+-            retry_strategy=no_retry,
+-            timeout=(min(5.0, initial_timeout), initial_timeout),
+-        )
+-
+-        def prepare_attempt(remaining):
+-            # Requests has separate connect/read budgets. The daemon-thread
+-            # guard in wait_until_readable remains the authoritative total cap.
+-            bounded = max(remaining, 0.001)
+-            secrets_client.base_client.timeout = (min(5.0, bounded), bounded)
+-
+-        def read_bundle():
+-            bundle = secrets_client.get_secret_bundle_by_name(
+-                secret_name=args.secret_name,
+-                vault_id=args.vault_id,
+-                retry_strategy=no_retry,
+-            ).data
+-            return base64.b64decode(bundle.secret_bundle_content.content)
+-
+-        print(f"  waiting for {args.secret_name} to become readable ...", flush=True)
+-        wait_until_readable(
+-            read_bundle,
+-            args.secret_name,
+-            hashlib.sha256(value).hexdigest(),
+-            timeout=args.readable_timeout,
+-            prepare_attempt=prepare_attempt,
+-        )
+-        print("  readable: value matches what was written")
++    def prepare_attempt(remaining):
++        bounded = max(min(remaining, deadline.remaining("read-back")), 0.001)
++        secrets_client.base_client.timeout = (min(5.0, bounded), bounded)
++
++    print(f"  waiting for {args.secret_name} to become readable ...", flush=True)
++    wait_until_readable(
++        read_bundle,
++        args.secret_name,
++        expected_digest,
++        timeout=deadline.remaining("read-back"),
++        prepare_attempt=prepare_attempt,
++    )
++    print("  readable: value matches what was written")
+     return 0
+ 
+ 
+diff --git a/scripts/deploy/ocir-token-rotate.sh b/scripts/deploy/ocir-token-rotate.sh
+index d20e03d49..ac08c46a1 100755
+--- a/scripts/deploy/ocir-token-rotate.sh
++++ b/scripts/deploy/ocir-token-rotate.sh
+@@ -23,7 +23,7 @@
+ #     scripts/deploy/ocir-token-rotate.sh --set-username '<namespace>/<email>'
+ #
+ # Options:
+-#     --readable-timeout SECONDS  Consumer read-back deadline (0 skips the wait)
++#     --readable-timeout SECONDS  End-to-end Vault deadline (positive; default 120)
+ #     --skip-verify              Skip production-VM SSH verification only
+ #     -h, --help                 Show this help
+ # END USAGE
+@@ -50,6 +50,8 @@ FROM_STDIN=0
+ SET_USERNAME=""
+ SKIP_VERIFY=0
+ READABLE_TIMEOUT=120
++OCIR_LOGIN_TIMEOUT="${ACX_OCIR_LOGIN_TIMEOUT:-30}"
++OCIR_VERIFY_TIMEOUT="${ACX_OCIR_VERIFY_TIMEOUT:-60}"
+ while [ $# -gt 0 ]; do
+     case "$1" in
+         --stdin) FROM_STDIN=1 ;;
+@@ -63,20 +65,20 @@ while [ $# -gt 0 ]; do
+             ;;
+         --readable-timeout)
+             if [ $# -lt 2 ]; then
+-                echo "--readable-timeout needs a non-negative number" >&2
++                echo "--readable-timeout needs a positive number" >&2
+                 exit 2
+             fi
+             READABLE_TIMEOUT="$2"
+             case "$READABLE_TIMEOUT" in
+                 ''|*[!0-9.]*|*.*.*)
+-                    echo "invalid --readable-timeout: ${READABLE_TIMEOUT} (expected a non-negative number)" >&2
++                    echo "invalid --readable-timeout: ${READABLE_TIMEOUT} (expected a positive number)" >&2
+                     exit 2
+                     ;;
+             esac
+             case "$READABLE_TIMEOUT" in
+                 *[0-9]*) ;;
+                 *)
+-                    echo "invalid --readable-timeout: ${READABLE_TIMEOUT} (expected a non-negative number)" >&2
++                    echo "invalid --readable-timeout: ${READABLE_TIMEOUT} (expected a positive number)" >&2
+                     exit 2
+                     ;;
+             esac
+@@ -92,6 +94,14 @@ while [ $# -gt 0 ]; do
+     shift
+ done
+ 
++for timeout_name in READABLE_TIMEOUT OCIR_LOGIN_TIMEOUT OCIR_VERIFY_TIMEOUT; do
++    timeout_value="${!timeout_name}"
++    if ! awk -v value="$timeout_value" 'BEGIN { exit !(value ~ /^([0-9]+([.][0-9]*)?|[.][0-9]+)$/ && value > 0) }'; then
++        echo "${timeout_name} must be a positive number (got: ${timeout_value})" >&2
++        exit 2
++    fi
++done
++
+ # Rotation owns exactly these two Vault records. In particular, do not turn an
+ # inherited deploy override into authority to overwrite an unrelated secret.
+ if [ "$ACX_OCIR_TOKEN_SECRET" != "OCIR_AUTH_TOKEN" ]; then
+@@ -133,20 +143,23 @@ report_login_failure() {
+ # the generated consumer snippets. Keep the child PID visible to cleanup so an
+ # interrupt cannot leave an OCI process behind.
+ active_pid=""
+-run_bounded() {
+-    local label="$1" started rc
+-    shift
+-    "$@" &
++run_bounded_for() {
++    local timeout="$1" label="$2" started rc
++    shift 2
++    # Explicit stdin redirection prevents non-interactive Bash from replacing
++    # an asynchronous command's stdin with /dev/null (SSH verification and
++    # docker --password-stdin both rely on this byte stream).
++    "$@" <&0 &
+     active_pid=$!
+     started=$SECONDS
+     while kill -0 "$active_pid" 2>/dev/null; do
+-        if [ $((SECONDS - started)) -ge "$ACX_VAULT_FETCH_TIMEOUT" ]; then
++        if awk -v elapsed="$((SECONDS - started))" -v limit="$timeout" 'BEGIN { exit !(elapsed >= limit) }'; then
+             kill "$active_pid" 2>/dev/null || true
+             sleep 0.1
+             kill -9 "$active_pid" 2>/dev/null || true
+             wait "$active_pid" 2>/dev/null || true
+             active_pid=""
+-            printf 'acx-timeout:%s after %ss\n' "$label" "$ACX_VAULT_FETCH_TIMEOUT" >&2
++            printf 'acx-timeout:%s after %ss\n' "$label" "$timeout" >&2
+             return 124
+         fi
+         sleep 0.05
+@@ -159,6 +172,12 @@ run_bounded() {
+     return "$rc"
+ }
+ 
++run_bounded() {
++    local label="$1"
++    shift
++    run_bounded_for "$ACX_VAULT_FETCH_TIMEOUT" "$label" "$@"
++}
++
+ cleanup() {
+     if [ -n "${active_pid:-}" ]; then
+         kill "$active_pid" 2>/dev/null || true
+@@ -187,6 +206,21 @@ put_secret() {
+         --secret-name "$1" --readable-timeout "$READABLE_TIMEOUT"
+ }
+ 
++fetch_secret_value() {
++    # $1 = allowlisted secret name; decoded value is emitted without touching disk.
++    local secret_name="$1" error_file="$2" fetch_rc=0 encoded
++    encoded="$(run_bounded vault "$ACX_LOCAL_OCI_BIN" --auth api_key \
++        secrets secret-bundle get-secret-bundle-by-name \
++        --vault-id "$ACX_VAULT_OCID" \
++        --secret-name "$secret_name" \
++        --query 'data."secret-bundle-content".content' \
++        --raw-output 2>"$error_file")" || fetch_rc=$?
++    if [ "$fetch_rc" -ne 0 ]; then
++        return "$fetch_rc"
++    fi
++    printf '%s' "$encoded" | base64 -d 2>>"$error_file"
++}
++
+ echo "Mint the token at: OCI Console > profile icon > My Profile > Auth tokens > Generate token"
+ echo "Paste it below. It is not echoed, not logged, and not written to disk."
+ 
+@@ -209,26 +243,12 @@ if [ -n "$SET_USERNAME" ]; then
+     proof_username="$SET_USERNAME"
+ else
+     username_rc=0
+-    run_bounded vault "$ACX_LOCAL_OCI_BIN" --auth api_key \
+-        secrets secret-bundle get-secret-bundle-by-name \
+-        --vault-id "$ACX_VAULT_OCID" \
+-        --secret-name "$ACX_OCIR_USERNAME_SECRET" \
+-        --query 'data."secret-bundle-content".content' \
+-        --raw-output >"${runtime_dir}/username.stdout" \
+-        2>"${runtime_dir}/username.stderr" || username_rc=$?
++    proof_username="$(fetch_secret_value "$ACX_OCIR_USERNAME_SECRET" "${runtime_dir}/username.stderr")" || username_rc=$?
+     if [ "$username_rc" -ne 0 ]; then
+         report_login_failure "laptop username fetch" "$(command cat "${runtime_dir}/username.stderr")"
+         unset acx_token
+         exit 1
+     fi
+-    username_encoded="$(command cat "${runtime_dir}/username.stdout")"
+-    proof_username="$(printf '%s' "$username_encoded" | base64 -d \
+-        2>>"${runtime_dir}/username.stderr")" || username_rc=$?
+-    if [ "$username_rc" -ne 0 ]; then
+-        report_login_failure "laptop username decode" "$(command cat "${runtime_dir}/username.stderr")"
+-        unset acx_token
+-        exit 1
+-    fi
+     if [ -z "$(printf '%s' "$proof_username" | LC_ALL=C tr -d '[:space:]')" ]; then
+         report_login_failure "laptop username fetch" 'Vault username secret was empty'
+         unset acx_token
+@@ -239,7 +259,8 @@ fi
+ # Establish validity before durable state: the freshly-read bytes go straight
+ # to docker, never through Vault and never through argv.
+ proof_rc=0
+-proof_out="$(printf '%s' "$acx_token" | DOCKER_CONFIG="$proof_docker_config" docker login "$OCIR_REGISTRY" \
++proof_out="$(printf '%s' "$acx_token" | run_bounded_for "$OCIR_LOGIN_TIMEOUT" ocir-fresh-token-login \
++    env DOCKER_CONFIG="$proof_docker_config" docker login "$OCIR_REGISTRY" \
+     -u "$proof_username" --password-stdin 2>&1)" || proof_rc=$?
+ if [ "$proof_rc" -ne 0 ]; then
+     report_login_failure "fresh token against ${OCIR_REGISTRY}" "$proof_out"
+@@ -248,14 +269,49 @@ if [ "$proof_rc" -ne 0 ]; then
+ fi
+ echo "ok   fresh token authenticated directly against ${OCIR_REGISTRY}"
+ 
+-# Vault does not offer a transaction spanning two secrets. Store the proven
+-# token first, then the optional username, so a token-write failure can never
+-# replace the username while leaving the old token in place.
+-printf '%s' "$acx_token" | put_secret "$ACX_OCIR_TOKEN_SECRET"
++# Vault does not offer a transaction spanning two secrets. When changing the
++# username, retain the prior token in memory so a failed username write can
++# compensate instead of publishing an old-username/new-token pair.
++old_token_available=0
++old_token=""
++if [ -n "$SET_USERNAME" ] \
++    && old_token="$(fetch_secret_value "$ACX_OCIR_TOKEN_SECRET" "${runtime_dir}/old-token.stderr")"; then
++    old_token_available=1
++fi
++token_write_rc=0
++printf '%s' "$acx_token" | put_secret "$ACX_OCIR_TOKEN_SECRET" || token_write_rc=$?
+ unset acx_token
++if [ "$token_write_rc" -ne 0 ]; then
++    exit "$token_write_rc"
++fi
+ if [ -n "$SET_USERNAME" ]; then
+-    printf '%s' "$SET_USERNAME" | put_secret "$ACX_OCIR_USERNAME_SECRET"
++    username_write_rc=0
++    printf '%s' "$SET_USERNAME" | put_secret "$ACX_OCIR_USERNAME_SECRET" || username_write_rc=$?
++    if [ "$username_write_rc" -ne 0 ]; then
++        if [ "$old_token_available" -eq 1 ]; then
++            echo "username write failed; restoring the prior token before exiting" >&2
++            if ! printf '%s' "$old_token" | put_secret "$ACX_OCIR_TOKEN_SECRET"; then
++                echo "CRITICAL compensation failed: Vault may contain an old-username/new-token pair; mint a token and rerun with --set-username" >&2
++            else
++                compensation_username="$(fetch_secret_value "$ACX_OCIR_USERNAME_SECRET" "${runtime_dir}/compensation-username.stderr" || true)"
++                compensation_rc=0
++                compensation_out="$(printf '%s' "$old_token" | run_bounded_for "$OCIR_LOGIN_TIMEOUT" ocir-compensation-login \
++                    env DOCKER_CONFIG="$proof_docker_config" docker login "$OCIR_REGISTRY" \
++                    -u "$compensation_username" --password-stdin 2>&1)" || compensation_rc=$?
++                if [ "$compensation_rc" -eq 0 ]; then
++                    echo "compensation verified: the restored Vault credential authenticates against ${OCIR_REGISTRY}" >&2
++                else
++                    echo "CRITICAL compensation verification failed; fresh Vault consumers may be unable to authenticate" >&2
++                    report_login_failure "restored Vault credential" "$compensation_out"
++                fi
++            fi
++        else
++            echo "username write failed and no prior token was readable; bootstrap is incomplete and consumers remain unavailable" >&2
++        fi
++        exit "$username_write_rc"
++    fi
+ fi
++unset old_token
+ 
+ # Release It! 5.5: prove the stored credential through each consumer path while
+ # the operator is still present, and distinguish SSH transport from a command
+@@ -279,6 +335,7 @@ verify_login() {
+ 
+ rc=0
+ verify_login "laptop Vault credential" local \
++    run_bounded_for "$OCIR_VERIFY_TIMEOUT" laptop-vault-login \
+     bash -c "$(ocir_login_snippet "${ACX_LOCAL_OCI_BIN}" api_key "${OCIR_REGISTRY}")" || rc=1
+ 
+ if [ "$SKIP_VERIFY" -eq 1 ]; then
+@@ -296,7 +353,9 @@ $(ocir_login_snippet "${ACX_REMOTE_OCI_BIN}" instance_principal "${OCIR_REGISTRY
+ }
+ acx_remote_verify"
+ verify_login "${OCI_USER}@${OCI_HOST}" remote \
+-    ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
++    run_bounded_for "$OCIR_VERIFY_TIMEOUT" production-vm-vault-login \
++    ssh -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 \
++    -o ServerAliveInterval=5 -o ServerAliveCountMax=3 -l "${OCI_USER}" -- "${OCI_HOST}" \
+     'acx_remote_program=$(cat); bash -c "$acx_remote_program"' \
+     <<<"$remote_script" || rc=1
+ 
+diff --git a/scripts/deploy/recognition-service.sh b/scripts/deploy/recognition-service.sh
+index d176abd63..5856f1438 100755
+--- a/scripts/deploy/recognition-service.sh
++++ b/scripts/deploy/recognition-service.sh
+@@ -23,8 +23,8 @@
+ #                                       Retries up to ACX_VERIFY_ATTEMPTS times for warm-up. Fails closed.
+ #                                       Expected image repo prefers remote .env ACX_IMAGE_REPO (so
+ #                                       standalone verify of a VLM deploy works without re-exporting
+-#                                       ACX_BUILD_TARGET). After deploy/promote, ACX_VERIFY_OPTIONAL=1
+-#                                       downgrades a failed verify to a warning (does not exit).
++#                                       ACX_BUILD_TARGET). A failed post-cutover verify restores
++#                                       and verifies the durable rollback image.
+ #   status                            Snapshot /health for dev, dev-fir, staging, prod.
+ #   clear-image-repo <env>            Remove ACX_IMAGE_REPO from the remote env .env so compose falls
+ #                                       back to the recognition default (${OCIR}/.../acx-backend).
+@@ -53,7 +53,7 @@
+ #   ACX_ALLOW_DIRTY          set to 1 to skip dirty-tree check (dev and dev-fir only)
+ #   ACX_VERIFY_ATTEMPTS      default 5  (post-deploy verify retry count for warm-up)
+ #   ACX_VERIFY_SLEEP         default 5  (seconds between verify attempts)
+-#   ACX_VERIFY_OPTIONAL      set to 1 to downgrade verify failure from fail to warn after deploy/promote
++#   ACX_PUSH_TIMEOUT         default 900 (hard wall-clock limit for each registry push)
+ #   ACX_CONVERGE_RUNTIME     default 1: 'deploy' converges the deployed compose+unit with the repo
+ #                              before restart. Set 0 for an image-only hotfix restart. Use
+ #                              'deploy <env> --check' for a read-only drift report (no mutation).
+@@ -123,6 +123,8 @@ GIT_REF="${GIT_REF:-HEAD}"
+ PLATFORM="${ACX_DEPLOY_PLATFORM:-linux/arm64}"
+ REMOTE_BUILD="${REMOTE_BUILD:-${ACX_REMOTE_BUILD:-0}}"
+ REMOTE_BUILD_DIR="${ACX_REMOTE_BUILD_DIR:-/tmp/acx-build}"
++PUSH_TIMEOUT="${ACX_PUSH_TIMEOUT:-900}"
++REMOTE_BUILDER_NAME="${ACX_REMOTE_BUILDER_NAME:-acx-deploy-builder}"
+ # Optional docker build --target. Empty means BuildKit's default (last stage = runtime).
+ # This is the plumbing the script would pass as `docker build --target ...`; there was no
+ # prior target notion in this file — introduce it only as the explicit opt-in for VLM/etc.
+@@ -176,10 +178,19 @@ fail() { printf '%sxx%s %s\n'  "${RED}"    "${RESET}" "$*" >&2; exit 1; }
+ ACX_DEPLOY_OCIR_CONFIG_DIR=""
+ ACX_DEPLOY_OCIR_REMOTE_CONFIG=0
+ ACX_DEPLOY_OCIR_REMOTE_AUTHENTICATED=0
++ACX_ACTIVE_COMMAND_PID=""
++ACX_ROLLBACK_REF=""
++ACX_ROLLBACK_ENV=""
++ACX_ROLLBACK_EXPECTED_SHA=""
+ 
+ cleanup_deploy_ocir_docker_config() {
+   local rc=$? config_dir="${ACX_DEPLOY_OCIR_CONFIG_DIR:-}"
+   trap - EXIT HUP INT TERM
++  if [[ -n "${ACX_ACTIVE_COMMAND_PID:-}" ]]; then
++    kill "${ACX_ACTIVE_COMMAND_PID}" 2>/dev/null || true
++    wait "${ACX_ACTIVE_COMMAND_PID}" 2>/dev/null || true
++    ACX_ACTIVE_COMMAND_PID=""
++  fi
+   if [[ -n "${config_dir}" ]]; then
+     if [[ "${ACX_DEPLOY_OCIR_REMOTE_CONFIG:-0}" == "1" ]]; then
+       ssh -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 \
+@@ -196,6 +207,29 @@ cleanup_deploy_ocir_docker_config() {
+   return "${rc}"
+ }
+ 
++run_with_timeout() {
++  local label="$1" timeout="$2" started rc
++  shift 2
++  "$@" <&0 &
++  ACX_ACTIVE_COMMAND_PID=$!
++  started=$SECONDS
++  while kill -0 "${ACX_ACTIVE_COMMAND_PID}" 2>/dev/null; do
++    if (( SECONDS - started >= timeout )); then
++      kill "${ACX_ACTIVE_COMMAND_PID}" 2>/dev/null || true
++      sleep 1
++      kill -9 "${ACX_ACTIVE_COMMAND_PID}" 2>/dev/null || true
++      wait "${ACX_ACTIVE_COMMAND_PID}" 2>/dev/null || true
++      ACX_ACTIVE_COMMAND_PID=""
++      warn "TIMEOUT ${label} after ${timeout}s; registry acceptance could not be confirmed, so rerun the idempotent operation"
++      return 124
++    fi
++    sleep 1
++  done
++  if wait "${ACX_ACTIVE_COMMAND_PID}"; then rc=0; else rc=$?; fi
++  ACX_ACTIVE_COMMAND_PID=""
++  return "$rc"
++}
++
+ init_deploy_ocir_docker_config() {
+   if [[ -n "${ACX_DEPLOY_OCIR_CONFIG_DIR}" ]]; then
+     return 0
+@@ -288,6 +322,10 @@ assert_safe_shell_token "OCIR_NAMESPACE" "${OCIR_NAMESPACE}"
+ assert_safe_shell_token "OCIR_REGISTRY" "${OCIR_REGISTRY}"
+ assert_safe_shell_token "ACX_BUILD_TARGET" "${ACX_BUILD_TARGET}"
+ assert_safe_shell_token "ACX_IMAGE_VARIANT" "${ACX_IMAGE_VARIANT}"
++assert_safe_shell_token "ACX_REMOTE_BUILDER_NAME" "${REMOTE_BUILDER_NAME}"
++if [[ ! "${PUSH_TIMEOUT}" =~ ^[1-9][0-9]*$ ]]; then
++  fail "ACX_PUSH_TIMEOUT must be a positive integer (got: ${PUSH_TIMEOUT})"
++fi
+ # D1: REMOTE_BUILD_DIR is interpolated into ssh remote command strings — same sink class as
+ # ACX_BUILD_TARGET. Empty is refused (operator override of "" would otherwise skip the default).
+ if [[ -z "${REMOTE_BUILD_DIR}" ]]; then
+@@ -411,8 +449,22 @@ assert_remote_disk_headroom_for_pull() {
+ # entries older than 72h only — not a full wipe — so subsequent builds keep recent
+ # layers while reclaiming the long-term disk fill documented in OPS-1 / README.
+ remote_builder_prune() {
+-  log "Pruning remote BuildKit cache older than 72h on ${SSH_TARGET}"
+-  ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker builder prune --force --filter until=72h"
++  log "Pruning isolated ${REMOTE_BUILDER_NAME} cache older than 72h on ${SSH_TARGET}"
++  ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
++    "docker buildx prune --builder '${REMOTE_BUILDER_NAME}' --force --filter until=72h"
++}
++
++ensure_remote_builder() {
++  # The docker-container driver owns a dedicated BuildKit volume and accepts
++  # hard CPU/memory limits. This caps contention and keeps deploy pruning away
++  # from the serving daemon's shared builder cache.
++  if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
++    "docker buildx inspect '${REMOTE_BUILDER_NAME}' >/dev/null 2>&1 || docker buildx create \
++      --name '${REMOTE_BUILDER_NAME}' --driver docker-container \
++      --driver-opt memory=4g --driver-opt cpu-quota=150000 --driver-opt cpu-shares=256 \
++      --bootstrap >/dev/null"; then
++    fail "Could not create or inspect isolated resource-limited builder ${REMOTE_BUILDER_NAME} on ${SSH_TARGET}"
++  fi
+ }
+ 
+ #---------------------------------------------------------------- env mapping
+@@ -705,23 +757,26 @@ _build_target_args() {
+ 
+ do_build() {
+   preflight_docker
+-  local sha tag target_args
++  local sha tag target_args tag_args=()
+   sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}")"
+   tag="${1:-dev}"
+   assert_safe_shell_token "image tag" "${tag}"
+   assert_safe_image_repo "IMAGE_BASE" "${IMAGE_BASE}"
+   target_args="$(_build_target_args)"
+-  log "Building ${IMAGE_BASE}:${tag} + :${sha:0:8} (${PLATFORM}, GIT_COMMIT_SHA=${sha:0:8}${ACX_BUILD_TARGET:+, target=${ACX_BUILD_TARGET}})"
++  if [[ "${2:-}" != "--immutable-only" ]]; then
++    tag_args=(-t "${IMAGE_BASE}:${tag}")
++  fi
++  log "Building immutable ${IMAGE_BASE}:${sha:0:8} (${PLATFORM}, GIT_COMMIT_SHA=${sha:0:8}${ACX_BUILD_TARGET:+, target=${ACX_BUILD_TARGET}})"
+   cd "${SERVICE_DIR}"
+   # shellcheck disable=SC2086 # target_args is intentionally word-split (empty or "--target X")
+   docker build \
+     --platform "${PLATFORM}" \
+     --build-arg "GIT_COMMIT_SHA=${sha}" \
+     ${target_args} \
+-    -t "${IMAGE_BASE}:${tag}" \
++    "${tag_args[@]}" \
+     -t "${IMAGE_BASE}:${sha}" \
+     .
+-  log "Built ${IMAGE_BASE}:${tag} (also tagged :${sha:0:8})"
++  log "Built immutable ${IMAGE_BASE}:${sha:0:8}"
+ }
+ 
+ do_build_remote() {
+@@ -730,14 +785,18 @@ do_build_remote() {
+   preflight_rsync
+   # RA-03: never run the multi-GB torch VLM build on the production-serving VM.
+   refuse_remote_vlm_build
+-  local sha tag target_args
++  local sha tag target_args tag_arg=""
+   sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}")"
+   tag="${1:-dev}"
+   assert_safe_shell_token "image tag" "${tag}"
+   assert_safe_image_repo "IMAGE_BASE" "${IMAGE_BASE}"
+   target_args="$(_build_target_args)"
++  if [[ "${2:-}" != "--immutable-only" ]]; then
++    tag_arg="-t ${IMAGE_BASE}:${tag}"
++  fi
+ 
+-  # Reclaim stale BuildKit cache first so the free-space gate reflects post-prune headroom.
++  ensure_remote_builder
++  # Reclaim only the isolated deploy builder's stale cache.
+   remote_builder_prune
+   assert_remote_build_free_space
+ 
+@@ -778,17 +837,18 @@ do_build_remote() {
+     --exclude='models--*/' \
+     "${SERVICE_DIR}/" "${SSH_TARGET}:${REMOTE_BUILD_DIR}/"
+ 
+-  log "Building ${IMAGE_BASE}:${tag} + :${sha:0:8} on ${SSH_TARGET} (native arm64${ACX_BUILD_TARGET:+, target=${ACX_BUILD_TARGET}})"
++  log "Building immutable ${IMAGE_BASE}:${sha:0:8} on ${SSH_TARGET} (native arm64${ACX_BUILD_TARGET:+, target=${ACX_BUILD_TARGET}})"
+   # No --platform: VM is already linux/arm64 (Ampere A1).
+   # shellcheck disable=SC2086 # target_args is intentionally word-split (empty or "--target X")
+   # D1: quote REMOTE_BUILD_DIR (validated at ingestion) so it cannot re-open the ssh injection sink.
+-  ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cd -- '${REMOTE_BUILD_DIR}' && docker build \
++  ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cd -- '${REMOTE_BUILD_DIR}' && docker buildx build \
++      --builder '${REMOTE_BUILDER_NAME}' --load \
+       --build-arg GIT_COMMIT_SHA=${sha} \
+       ${target_args} \
+-      -t ${IMAGE_BASE}:${tag} \
++      ${tag_arg} \
+       -t ${IMAGE_BASE}:${sha} \
+       ."
+-  log "Built ${IMAGE_BASE}:${tag} on ${SSH_TARGET} (also tagged :${sha:0:8})"
++  log "Built immutable ${IMAGE_BASE}:${sha:0:8} on ${SSH_TARGET}"
+ }
+ 
+ #---------------------------------------------------------------- push / restart
+@@ -797,10 +857,12 @@ do_build_remote() {
+ _push_ref() {
+   local ref="$1"
+   if [[ "${REMOTE_BUILD}" == "1" ]]; then
+-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
++    run_with_timeout "remote docker push ${ref}" "${PUSH_TIMEOUT}" \
++    ssh -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
++      -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -l "${OCI_USER}" -- "${OCI_HOST}" \
+       "DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker push ${ref}"
+   else
+-    docker push "${ref}"
++    run_with_timeout "local docker push ${ref}" "${PUSH_TIMEOUT}" docker push "${ref}"
+   fi
+ }
+ 
+@@ -816,9 +878,15 @@ do_push_sha() {
+ # Promote the env tag (e.g. :latest for prod). Called ONLY after the boot smoke
+ # passes, so a bad image never poisons the env tag in OCIR.
+ do_push_tag() {
+-  local tag="$1"
++  local tag="$1" sha
++  sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}")"
+   assert_safe_shell_token "image tag" "${tag}"
+   assert_safe_image_repo "IMAGE_BASE" "${IMAGE_BASE}"
++  if [[ "${REMOTE_BUILD}" == "1" ]]; then
++    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker tag ${IMAGE_BASE}:${sha} ${IMAGE_BASE}:${tag}"
++  else
++    docker tag "${IMAGE_BASE}:${sha}" "${IMAGE_BASE}:${tag}"
++  fi
+   log "Promoting ${IMAGE_BASE}:${tag} in OCIR"
+   if ! _push_ref "${IMAGE_BASE}:${tag}"; then
+     warn "push of ${IMAGE_BASE}:${tag} failed"
+@@ -826,6 +894,17 @@ do_push_tag() {
+   fi
+ }
+ 
++promote_existing_tag() {
++  local from_tag="$1" to_tag="$2"
++  if [[ "${REMOTE_BUILD}" == "1" ]]; then
++    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
++      "docker tag ${IMAGE_BASE}:${from_tag} ${IMAGE_BASE}:${to_tag}"
++  else
++    docker tag "${IMAGE_BASE}:${from_tag}" "${IMAGE_BASE}:${to_tag}"
++  fi
++  _push_ref "${IMAGE_BASE}:${to_tag}"
++}
++
+ # Shared pre-restart safety gate for <env> on candidate <image>: preserve a
+ # rollback tag, boot-smoke the candidate (abort on failure), ship ACX_IMAGE_REPO
+ # into remote .env (before any env-tag promotion), converge compose+unit.
+@@ -833,9 +912,8 @@ do_push_tag() {
+ promote_gate() {
+   local env="$1" image="$2" remote_dir
+   remote_dir="$(env_to_remote_dir "$env")"
+-  # Rollback tag is non-blocking and must exist even when the smoke is
+-  # bypassed (ACX_BOOT_SMOKE=0) — it is the recovery path for exactly the
+-  # deploys risky enough to bypass the gate.
++  # Rollback preservation runs even when smoke is bypassed. It is mandatory
++  # for staging/prod and best-effort only for a possible first dev deploy.
+   preserve_rollback_tag "$env"
+   if [[ "${ACX_BOOT_SMOKE:-1}" == "1" ]]; then
+     if ! do_boot_smoke "$env" "$image"; then
+@@ -868,6 +946,12 @@ promote_gate() {
+     fi
+     warn "ACX_CONVERGE_RUNTIME=0: skipping compose+unit convergence (image-only restart; topology matches repo)"
+   fi
++  # Repair against the still-serving image before mutable-tag promotion. A
++  # repair failure must leave both the registry env tag and live service alone.
++  if ! repair_blob_volume_ownership "$env"; then
++    restore_prior_image_repo_env
++    fail "Blob-volume repair failed before promotion; candidate was not assigned to ${env}"
++  fi
+ }
+ 
+ # Restore sticky ACX_IMAGE_REPO after a post-ship failure (S2-A-06). Empty prior
+@@ -1220,24 +1304,60 @@ converge_check() {
+   log "no runtime drift for ${env} (compose + unit match repo)"
+ }
+ 
+-# Formalize the manual E15-29 rollback step: before a new promote, tag the
+-# currently-promoted image as :rollback-<id> so a bad deploy can be retagged
+-# back to the previous good image. Best-effort — never blocks the deploy.
++# Preserve the current registry image under a durable rollback tag before any
++# mutable env tag changes. Staging/prod refuse cutover without this recovery
++# point; dev permits a first deploy where no env tag exists yet.
+ preserve_rollback_tag() {
+-  local env="$1" env_tag prev_id
++  local env="$1" env_tag prev_id current_ref
+   env_tag="$(env_to_tag "$env")"
+-  # `|| true`: a missing image makes the pipeline exit non-zero; without this,
+-  # set -e would abort the whole deploy on a first deploy / pruned image.
+-  prev_id="$(ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker image inspect --format '{{.Id}}' ${IMAGE_BASE}:${env_tag} 2>/dev/null" | sed 's/^sha256://' | cut -c1-12)" || true
+-  if [[ -n "${prev_id}" ]]; then
+-    if ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker tag ${IMAGE_BASE}:${env_tag} ${IMAGE_BASE}:rollback-${prev_id}"; then
+-      log "Preserved rollback tag ${IMAGE_BASE}:rollback-${prev_id}"
++  current_ref="${IMAGE_BASE}:${env_tag}"
++  if [[ "${REMOTE_BUILD}" == "1" ]]; then
++    preflight_remote_ocir_auth
++    if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
++      "DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker pull ${current_ref} >/dev/null"; then
++      if [[ "${env}" == dev || "${env}" == dev-fir ]]; then
++        warn "no current ${current_ref} in OCIR to preserve (permitted for a first dev deploy)"
++        return 0
++      fi
++      fail "Cannot preserve ${env} rollback: pull of current registry tag ${current_ref} failed"
++    fi
++    prev_id="$(ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker image inspect --format '{{.Id}}' ${current_ref}" | sed 's/^sha256://' | cut -c1-12)"
++    ACX_ROLLBACK_REF="${IMAGE_BASE}:rollback-${prev_id}"
++    if [[ -n "${prev_id}" ]] && ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker tag ${current_ref} ${ACX_ROLLBACK_REF}"; then
++      ACX_ROLLBACK_EXPECTED_SHA="$(ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
++        "docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' ${current_ref}" \
++        | sed -n 's/^APP_GIT_COMMIT_SHA=//p' | head -1)"
+     else
+-      warn "could not create rollback tag for ${env} (continuing)"
++      prev_id=""
+     fi
+   else
+-    warn "no current ${IMAGE_BASE}:${env_tag} on ${SSH_TARGET} to preserve as rollback (first deploy?)"
++    preflight_ocir_auth
++    if ! docker pull "${current_ref}" >/dev/null; then
++      if [[ "${env}" == dev || "${env}" == dev-fir ]]; then
++        warn "no current ${current_ref} in OCIR to preserve (permitted for a first dev deploy)"
++        return 0
++      fi
++      fail "Cannot preserve ${env} rollback: pull of current registry tag ${current_ref} failed"
++    fi
++    prev_id="$(docker image inspect --format '{{.Id}}' "${current_ref}" | sed 's/^sha256://' | cut -c1-12)"
++    ACX_ROLLBACK_REF="${IMAGE_BASE}:rollback-${prev_id}"
++    if [[ -n "${prev_id}" ]] && docker tag "${current_ref}" "${ACX_ROLLBACK_REF}"; then
++      ACX_ROLLBACK_EXPECTED_SHA="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${current_ref}" \
++        | sed -n 's/^APP_GIT_COMMIT_SHA=//p' | head -1)"
++    else
++      prev_id=""
++    fi
++  fi
++  if [[ -z "${prev_id}" ]] || ! _push_ref "${ACX_ROLLBACK_REF}"; then
++    ACX_ROLLBACK_REF=""
++    if [[ "${env}" == staging || "${env}" == prod ]]; then
++      fail "Cannot durably preserve rollback in OCIR for ${env}; mutable-tag promotion refused"
++    fi
++    warn "could not durably preserve rollback for ${env}; continuing only because this is dev tier"
++    return 0
+   fi
++  ACX_ROLLBACK_ENV="${env}"
++  log "Preserved durable rollback ${ACX_ROLLBACK_REF}${ACX_ROLLBACK_EXPECTED_SHA:+ (running ${ACX_ROLLBACK_EXPECTED_SHA:0:8})}"
+ }
+ 
+ # Pre-promote boot smoke: boot the freshly-built :SHA in a throwaway container on
+@@ -1434,9 +1554,6 @@ do_restart() {
+     warn "compose pull api failed on ${env}"
+     return 1
+   fi
+-  if ! repair_blob_volume_ownership "$env"; then
+-    return 1
+-  fi
+   log "Restarting ${unit} on ${SSH_TARGET}"
+   if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "sudo systemctl restart ${unit}"; then
+     warn "systemctl restart ${unit} failed"
+@@ -1444,6 +1561,65 @@ do_restart() {
+   fi
+ }
+ 
++verify_rollback_health() {
++  local env="$1" url body actual attempt
++  url="$(env_to_health_url "$env")"
++  for attempt in 1 2 3 4 5; do
++    if body="$(curl --fail --silent --show-error --max-time 10 "$url" 2>/dev/null)"; then
++      actual="$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("commit_sha") or "")' 2>/dev/null || true)"
++      if [[ -z "${ACX_ROLLBACK_EXPECTED_SHA}" || "${actual:0:8}" == "${ACX_ROLLBACK_EXPECTED_SHA:0:8}" ]]; then
++        log "Automatic rollback verified for ${env}${actual:+ at ${actual:0:8}}"
++        return 0
++      fi
++    fi
++    (( attempt < 5 )) && sleep "$((4 + RANDOM % 3))"
++  done
++  warn "Automatic rollback health verification failed for ${env}; expected ${ACX_ROLLBACK_EXPECTED_SHA:-a healthy prior service}"
++  return 1
++}
++
++rollback_failed_cutover() {
++  local env="$1" reason="$2" env_tag prior_repo
++  env_tag="$(env_to_tag "$env")"
++  if [[ -z "${ACX_ROLLBACK_REF}" || "${ACX_ROLLBACK_ENV}" != "$env" ]]; then
++    warn "Cannot automatically roll back ${env} after ${reason}: no durable rollback reference was captured"
++    return 1
++  fi
++  warn "${reason}; restoring ${ACX_ROLLBACK_REF} and restarting ${env}"
++  if [[ "${REMOTE_BUILD}" == "1" ]]; then
++    if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
++      "DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker pull ${ACX_ROLLBACK_REF} >/dev/null && docker tag ${ACX_ROLLBACK_REF} ${IMAGE_BASE}:${env_tag}" \
++      || ! _push_ref "${IMAGE_BASE}:${env_tag}"; then
++      warn "Automatic rollback could not restore the mutable OCIR tag"
++      return 1
++    fi
++  else
++    if ! docker pull "${ACX_ROLLBACK_REF}" >/dev/null \
++      || ! docker tag "${ACX_ROLLBACK_REF}" "${IMAGE_BASE}:${env_tag}" \
++      || ! _push_ref "${IMAGE_BASE}:${env_tag}"; then
++      warn "Automatic rollback could not restore the mutable OCIR tag"
++      return 1
++    fi
++  fi
++  restore_prior_image_repo_env
++  prior_repo="${ACX_PRIOR_IMAGE_REPO:-${IMAGE_BASE}}"
++  ACX_IMAGE_REPO="${prior_repo}"
++  export ACX_IMAGE_REPO
++  if ! do_restart "$env"; then
++    warn "Automatic rollback restored the registry tag but failed to restart ${env}"
++    return 1
++  fi
++  verify_rollback_health "$env"
++}
++
++abort_after_failed_cutover() {
++  local env="$1" reason="$2"
++  if rollback_failed_cutover "$env" "$reason"; then
++    fail "${reason}; the previous deployment was automatically restored and verified."
++  fi
++  fail "${reason}; AUTOMATIC ROLLBACK FAILED. The durable reference is ${ACX_ROLLBACK_REF:-unavailable}; keep the incident open and restore service manually."
++}
++
+ #---------------------------------------------------------------- deploy
+ do_deploy() {
+   local env="$1"; shift || true
+@@ -1475,9 +1651,9 @@ do_deploy() {
+ 
+   if [[ "${REMOTE_BUILD}" == "1" ]]; then
+     log "Mode: remote-build (${SSH_TARGET}, no local docker required)"
+-    do_build_remote "$tag"
++    do_build_remote "$tag" --immutable-only
+   else
+-    do_build "$tag"
++    do_build "$tag" --immutable-only
+   fi
+ 
+   # Push :SHA first, gate on the boot smoke, and only then promote the env tag
+@@ -1486,25 +1662,18 @@ do_deploy() {
+   promote_gate "$env" "${IMAGE_BASE}:${sha}"
+   # S2-A-06: if tag promotion fails after ship, restore prior sticky repo.
+   if ! do_push_tag "$tag"; then
+-    restore_prior_image_repo_env
+-    fail "Push of env tag failed after shipping ACX_IMAGE_REPO; prior sticky repo restored where possible."
++    abort_after_failed_cutover "$env" "Push of env tag failed or timed out (candidate acceptance is unconfirmed)"
+   fi
+ 
+   if ! do_restart "$env"; then
+-    restore_prior_image_repo_env
+-    fail "Restart failed after shipping ACX_IMAGE_REPO; prior sticky repo restored where possible."
++    abort_after_failed_cutover "$env" "Candidate restart failed"
+   fi
+ 
+   log "Deploy submitted. Verifying..."
+-  sleep 5
+   # S2-A-04: deploy path uses local resolve as authority (not the remote .env
+   # we just wrote — that comparison would be tautological).
+   if ! ACX_VERIFY_EXPECT_LOCAL=1 do_verify "$env"; then
+-    if [[ "${ACX_VERIFY_OPTIONAL:-0}" == "1" ]]; then
+-      warn "Verify failed but ACX_VERIFY_OPTIONAL=1; not failing the deploy."
+-    else
+-      fail "Deploy verification failed. Re-run '$0 verify $env' to retry, or set ACX_VERIFY_OPTIONAL=1 to downgrade to a warning."
+-    fi
++    abort_after_failed_cutover "$env" "Candidate health verification failed"
+   fi
+ }
+ 
+@@ -1556,32 +1725,23 @@ do_promote() {
+ 
+   if [[ "${REMOTE_BUILD}" == "1" ]]; then
+     log "Tagging ${from_tag} -> ${to_tag} on ${SSH_TARGET}"
+-    if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker tag ${IMAGE_BASE}:${from_tag} ${IMAGE_BASE}:${to_tag} && DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker push ${IMAGE_BASE}:${to_tag}"; then
+-      restore_prior_image_repo_env
+-      fail "Remote tag/push failed after shipping ACX_IMAGE_REPO; prior sticky repo restored where possible."
++    if ! promote_existing_tag "$from_tag" "$to_tag"; then
++      abort_after_failed_cutover "$to_env" "Remote tag/push failed or timed out (candidate acceptance is unconfirmed)"
+     fi
+   else
+     log "Tagging ${from_tag} -> ${to_tag}"
+-    if ! docker tag "${IMAGE_BASE}:${from_tag}" "${IMAGE_BASE}:${to_tag}" \
+-      || ! docker push "${IMAGE_BASE}:${to_tag}"; then
+-      restore_prior_image_repo_env
+-      fail "Tag/push failed after shipping ACX_IMAGE_REPO; prior sticky repo restored where possible."
++    if ! promote_existing_tag "$from_tag" "$to_tag"; then
++      abort_after_failed_cutover "$to_env" "Tag/push failed or timed out (candidate acceptance is unconfirmed)"
+     fi
+   fi
+ 
+   if ! do_restart "$to_env"; then
+-    restore_prior_image_repo_env
+-    fail "Restart failed after shipping ACX_IMAGE_REPO; prior sticky repo restored where possible."
++    abort_after_failed_cutover "$to_env" "Candidate restart failed"
+   fi
+ 
+   log "Promotion submitted. Verifying..."
+-  sleep 5
+   if ! ACX_VERIFY_EXPECT_LOCAL=1 do_verify "$to_env"; then
+-    if [[ "${ACX_VERIFY_OPTIONAL:-0}" == "1" ]]; then
+-      warn "Verify failed but ACX_VERIFY_OPTIONAL=1; not failing the promotion."
+-    else
+-      fail "Promotion verification failed. Re-run '$0 verify $to_env' to retry, or set ACX_VERIFY_OPTIONAL=1 to downgrade to a warning."
+-    fi
++    abort_after_failed_cutover "$to_env" "Candidate health verification failed"
+   fi
+ }
+ 
+@@ -1643,7 +1803,7 @@ variant_from_image_repo() {
+ }
+ 
+ # Compare live container image repo to expected (return 1 on mismatch — never
+-# call fail/exit here so `if ! do_verify` and ACX_VERIFY_OPTIONAL=1 work — D10).
++# call fail/exit here so the caller can run automatic rollback — D10).
+ # S2-A-04: local resolve is authoritative when the operator set a variant selector
+ # OR when ACX_VERIFY_EXPECT_LOCAL=1 (deploy/promote path). Remote .env is only
+ # consulted for bare standalone `verify` so VLM recovery works without re-export.
+@@ -1685,7 +1845,7 @@ verify_running_image_matches_deployed() {
+       ;;
+   esac
+   # Loud mismatch — silent success with the wrong repo was the VLM deploy bug.
+-  # return (not fail/exit) so callers can honor ACX_VERIFY_OPTIONAL.
++  # return (not fail/exit) so callers can run automatic rollback.
+   warn "IMAGE MISMATCH: ${env} running container image is '${running_image}', expected repository '${expected_repo}' via ${source_note} (deployed as ${expected_ref}). Variant deploys must not silently run a different repo."
+   return 1
+ }
+@@ -1710,11 +1870,18 @@ do_verify() {
+     fail "ACX_VERIFY_SLEEP must be a non-negative integer (got: ${sleep_s})"
+   fi
+ 
++  verify_retry_sleep() {
++    local current="$1"
++    (( current < max_attempts )) || return 0
++    (( sleep_s > 0 )) || return 0
++    sleep "$((sleep_s + RANDOM % (sleep_s / 2 + 1)))"
++  }
++
+   for attempt in $(seq 1 "$max_attempts"); do
+     log "GET ${url} (attempt ${attempt}/${max_attempts})"
+     if ! body="$(curl --fail --silent --show-error --max-time 10 "$url" 2>&1)"; then
+       warn "Health check fetch failed: ${body}"
+-      sleep "$sleep_s"
++      verify_retry_sleep "$attempt"
+       continue
+     fi
+     echo "$body"
+@@ -1724,7 +1891,7 @@ do_verify() {
+ 
+     if [[ -z "$actual_sha" || "$actual_sha" == "unknown" ]]; then
+       warn "Service did not report a commit SHA (attempt ${attempt}/${max_attempts}). Image may have been built without --build-arg GIT_COMMIT_SHA."
+-      sleep "$sleep_s"
++      verify_retry_sleep "$attempt"
+       continue
+     fi
+ 
+@@ -1754,19 +1921,19 @@ do_verify() {
+       if [[ -n "${actual_variant}" && "${actual_variant}" != "${expected_variant}" ]]; then
+         warn "VARIANT MISMATCH: ${env} /health image_variant='${actual_variant}', expected '${expected_variant}' (recognition vs VLM share commit_sha — this is the build-immutable signal)"
+         if (( attempt < max_attempts )); then
+-          sleep "$sleep_s"
++          verify_retry_sleep "$attempt"
+           continue
+         fi
+         return 1
+       fi
+       # Also compare the running container image (read from runtime — rg-015)
+-      # against expected repo. Must return (not fail/exit) so ACX_VERIFY_OPTIONAL works.
++      # against expected repo. Must return (not fail/exit) so rollback can run.
+       if ! verify_running_image_matches_deployed "$env"; then
+         # Image mismatch is not a warm-up flake — still retry once more in case
+         # compose is mid-pull, but do not call fail() here.
+         if (( attempt < max_attempts )); then
+           warn "Image mismatch on attempt ${attempt}/${max_attempts}; retrying after ${sleep_s}s"
+-          sleep "$sleep_s"
++          verify_retry_sleep "$attempt"
+           continue
+         fi
+         return 1
+@@ -1775,7 +1942,7 @@ do_verify() {
+       return 0
+     else
+       warn "SKEW: ${env} runs ${actual_sha:0:8}, expected ${expected_sha:0:8} (attempt ${attempt}/${max_attempts}; warm-up retry)"
+-      sleep "$sleep_s"
++      verify_retry_sleep "$attempt"
+     fi
+   done
+ 
+diff --git a/scripts/deploy/tests/test-ocir-rotate.sh b/scripts/deploy/tests/test-ocir-rotate.sh
+index 92d09216e..5bd52106e 100755
+--- a/scripts/deploy/tests/test-ocir-rotate.sh
++++ b/scripts/deploy/tests/test-ocir-rotate.sh
+@@ -80,6 +80,9 @@ while [ $# -gt 0 ]; do
+     shift
+ done
+ value=$(cat)
++if [ "${OCIR_TEST_PUT_FAIL_SECRET:-}" = "$secret_name" ]; then
++    exit 73
++fi
+ printf '%s|%s|%s\n' "$secret_name" "$readable_timeout" "$value" >>"$OCIR_TEST_PUT_LOG"
+ EOF
+ 
+@@ -161,6 +164,7 @@ reset_case() {
+     unset ACX_VAULT_FETCH_TIMEOUT OCIR_TEST_DOCKER_FAIL_AT OCIR_TEST_SSH_MODE \
+         OCIR_TEST_STORED_USERNAME OCIR_TEST_USERNAME_SLEEP \
+         OCIR_TEST_USERNAME_STDERR
++    unset OCIR_TEST_PUT_FAIL_SECRET
+ }
+ 
+ run_rotate() {
+@@ -191,6 +195,7 @@ run_rotate() {
+         export OCIR_TEST_SSH_MODE="${OCIR_TEST_SSH_MODE:-success}"
+         export OCIR_TEST_USERNAME_SLEEP="${OCIR_TEST_USERNAME_SLEEP:-}"
+         export OCIR_TEST_USERNAME_STDERR="${OCIR_TEST_USERNAME_STDERR:-}"
++        export OCIR_TEST_PUT_FAIL_SECRET="${OCIR_TEST_PUT_FAIL_SECRET:-}"
+         printf '%s' "$token" | bash "$rotate_script" --stdin "$@"
+     ) >"$rotate_stdout" 2>"$rotate_stderr" || rotate_rc=$?
+ }
+@@ -198,22 +203,41 @@ run_rotate() {
+ # Happy path executes the whole wrapper: direct proof, ordered writes, local
+ # Vault round-trip and remote-over-SSH round-trip.
+ reset_case
+-run_rotate "$known_token" --set-username "$known_user" --readable-timeout 0
++run_rotate "$known_token" --set-username "$known_user" --readable-timeout 120
+ assert_eq "complete rotation exits zero" 0 "$rotate_rc"
+ assert_contains "success sentinel proves wrapper reached its end" \
+     'rotation complete: both hosts authenticate from acx-vault' "$rotate_stdout"
+ assert_eq "fresh proof plus two Vault-backed login legs ran" 3 "$(cat "$docker_count")"
+ assert_eq "remote verification ran once" 1 "$(wc -l <"$ssh_log" | tr -d ' ')"
+ assert_contains "token is committed first with forwarded timeout" \
+-    "OCIR_AUTH_TOKEN|0|${known_token}" "$put_log"
++    "OCIR_AUTH_TOKEN|120|${known_token}" "$put_log"
+ assert_eq "token and username are the only writes, in safe order" \
+-    "OCIR_AUTH_TOKEN|0|${known_token}
+-OCIR_USERNAME|0|${known_user}" "$(cat "$put_log")"
++    "OCIR_AUTH_TOKEN|120|${known_token}
++OCIR_USERNAME|120|${known_user}" "$(cat "$put_log")"
+ assert_contains "token destination is disclosed before the write" \
+     'writing vault ocid1.vault.oc1.test.contract secret OCIR_AUTH_TOKEN' "$rotate_stderr"
+ assert_contains "username destination is disclosed before the write" \
+     'writing vault ocid1.vault.oc1.test.contract secret OCIR_USERNAME' "$rotate_stderr"
+ 
++# A partial two-secret write restores the prior token instead of publishing an
++# old-username/new-token pair to fresh consumers.
++reset_case
++OCIR_TEST_PUT_FAIL_SECRET=OCIR_USERNAME
++run_rotate 'new-token-that-proves' --set-username "$known_user" --skip-verify
++if [ "$rotate_rc" -ne 0 ]; then
++    echo "ok   username write failure exits non-zero"
++else
++    echo "FAIL username write failure exits non-zero"
++    failures=$((failures + 1))
++fi
++assert_eq "username failure compensates with the prior token" \
++    "OCIR_AUTH_TOKEN|120|new-token-that-proves
++OCIR_AUTH_TOKEN|120|${known_token}" "$(cat "$put_log")"
++assert_contains "compensation is explicit to the operator" \
++    'restoring the prior token before exiting' "$rotate_stderr"
++assert_contains "restored credential is verified against OCIR" \
++    'compensation verified: the restored Vault credential authenticates' "$rotate_stderr"
++
+ # Routine rotations fetch the existing username from Vault. OCI diagnostics
+ # remain diagnostics, and the direct proof uses a disposable Docker store.
+ reset_case
+@@ -332,7 +356,7 @@ assert_no_file "safe skip mode does not contact SSH host" "$ssh_log"
+ assert_contains "safe skip result states exactly what was omitted" \
+     'production-VM SSH verification skipped' "$rotate_stdout"
+ 
+-# Timeout accepts integers/decimals including zero and is passed to each write.
++# Timeout accepts positive integers/decimals and is passed to each write.
+ reset_case
+ run_rotate "$known_token" --set-username "$known_user" --readable-timeout 2.5 --skip-verify
+ assert_eq "decimal readable timeout is accepted" 0 "$rotate_rc"
+@@ -345,7 +369,7 @@ for valid_timeout in .5 5.; do
+     assert_contains "numeric timeout '${valid_timeout}' reaches helper" \
+         "OCIR_AUTH_TOKEN|${valid_timeout}|" "$put_log"
+ done
+-for invalid_timeout in -1 nope 1.2.3 .; do
++for invalid_timeout in 0 -1 nope 1.2.3 .; do
+     reset_case
+     run_rotate "$known_token" --readable-timeout "$invalid_timeout"
+     if [ "$rotate_rc" -ne 0 ]; then
+@@ -354,8 +378,13 @@ for invalid_timeout in -1 nope 1.2.3 .; do
+         echo "FAIL invalid timeout '${invalid_timeout}' is rejected: exit 0"
+         failures=$((failures + 1))
+     fi
+-    assert_contains "invalid timeout '${invalid_timeout}' has a clear diagnostic" \
+-        'invalid --readable-timeout' "$rotate_stderr"
++    if [ "$invalid_timeout" = 0 ]; then
++        assert_contains "invalid timeout '${invalid_timeout}' has a clear diagnostic" \
++            'READABLE_TIMEOUT must be a positive number' "$rotate_stderr"
++    else
++        assert_contains "invalid timeout '${invalid_timeout}' has a clear diagnostic" \
++            'invalid --readable-timeout' "$rotate_stderr"
++    fi
+     assert_no_file "invalid timeout '${invalid_timeout}' causes no write" "$put_log"
+ done
+ reset_case
+@@ -367,7 +396,7 @@ else
+     failures=$((failures + 1))
+ fi
+ assert_contains "missing timeout has a clear diagnostic" \
+-    '--readable-timeout needs a non-negative number' "$rotate_stderr"
++    '--readable-timeout needs a positive number' "$rotate_stderr"
+ assert_no_file "missing timeout causes no write" "$put_log"
+ 
+ # A failure after a local command ran stays in the OCIR/Vault taxonomy. A
+diff --git a/scripts/deploy/tests/test_recognition_ocir_config.py b/scripts/deploy/tests/test_recognition_ocir_config.py
+index b795dccb2..c9b95e5f6 100644
+--- a/scripts/deploy/tests/test_recognition_ocir_config.py
++++ b/scripts/deploy/tests/test_recognition_ocir_config.py
+@@ -3,12 +3,11 @@
+ from __future__ import annotations
+ 
+ import os
+-from pathlib import Path
+ import subprocess
++from pathlib import Path
+ 
+ import pytest
+ 
+-
+ SCRIPT = Path(__file__).parents[1] / "recognition-service.sh"
+ 
+ 
+@@ -97,9 +96,7 @@ def _assert_shared_config_was_cleaned(tmp_path: Path, records: Path) -> None:
+     assert not login_path.exists()
+     assert not list(tmp_path.glob("acx-ocir-deploy.*/config.json"))
+     survivors = [
+-        path
+-        for path in tmp_path.rglob("*")
+-        if path.is_file() and b"deploy-token-byte-exact" in path.read_bytes()
++        path for path in tmp_path.rglob("*") if path.is_file() and b"deploy-token-byte-exact" in path.read_bytes()
+     ]
+     assert survivors == []
+ 
+@@ -161,7 +158,7 @@ printf '%s' "$last" >"$OCIR_TEST_RECORD_DIR/ssh.command"
+     command = (
+         f'source "{SCRIPT}"; REMOTE_BUILD=1; '
+         f'ACX_DEPLOY_OCIR_CONFIG_DIR="{config_dir}"; '
+-        '_push_ref iad.ocir.io/test/image:sha'
++        "_push_ref iad.ocir.io/test/image:sha"
+     )
+     result = subprocess.run(
+         ["/bin/bash", "-c", command],
+@@ -177,9 +174,7 @@ printf '%s' "$last" >"$OCIR_TEST_RECORD_DIR/ssh.command"
+ 
+ 
+ @pytest.mark.parametrize(("fail_push", "expected_rc"), [(False, 0), (True, 42)])
+-def test_remote_push_issues_bounded_remote_cleanup(
+-    tmp_path: Path, fail_push: bool, expected_rc: int
+-) -> None:
++def test_remote_push_issues_bounded_remote_cleanup(tmp_path: Path, fail_push: bool, expected_rc: int) -> None:
+     bin_dir = tmp_path / "bin"
+     records = tmp_path / "records"
+     bin_dir.mkdir()
+@@ -210,7 +205,7 @@ esac
+     command = (
+         f'source "{SCRIPT}"; preflight_remote_ocir_auth; '
+         'printf "%s" "$ACX_DEPLOY_OCIR_CONFIG_DIR" >"$OCIR_TEST_RECORD_DIR/config.path"; '
+-        '_push_ref iad.ocir.io/test/image:sha'
++        "_push_ref iad.ocir.io/test/image:sha"
+     )
+     result = subprocess.run(
+         ["/bin/bash", "-c", command],
+@@ -231,13 +226,50 @@ esac
+ def test_all_remote_registry_commands_carry_the_deploy_config() -> None:
+     source = SCRIPT.read_text()
+     remote_registry_commands = [
+-        line.strip()
+-        for line in source.splitlines()
+-        if 'ssh -l "${OCI_USER}"' in line or '"DOCKER_CONFIG=' in line
++        line.strip() for line in source.splitlines() if 'ssh -l "${OCI_USER}"' in line or '"DOCKER_CONFIG=' in line
+     ]
+     joined = "\n".join(remote_registry_commands)
+     assert "DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker push ${ref}" in joined
+     assert "DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker pull ${image}" in joined
+     assert "DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker pull ${IMAGE_BASE}:${from_tag}" in joined
+-    assert "DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker push ${IMAGE_BASE}:${to_tag}" in joined
++    assert '_push_ref "${IMAGE_BASE}:${to_tag}"' in source
+     assert "DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker compose ${compose_files} pull api" in joined
++
++
++def test_pushes_have_a_validated_deadline_and_remote_keepalives() -> None:
++    source = SCRIPT.read_text()
++    push = source.split("_push_ref()", 1)[1].split("do_push_sha()", 1)[0]
++    assert 'run_with_timeout "remote docker push ${ref}" "${PUSH_TIMEOUT}"' in push
++    assert 'run_with_timeout "local docker push ${ref}" "${PUSH_TIMEOUT}"' in push
++    assert "ServerAliveInterval=10" in push
++    assert "ServerAliveCountMax=3" in push
++    assert "ACX_PUSH_TIMEOUT must be a positive integer" in source
++
++
++def test_remote_build_is_immutable_and_resource_isolated() -> None:
++    source = SCRIPT.read_text()
++    build = source.split("do_build_remote()", 1)[1].split("_push_ref()", 1)[0]
++    assert "docker buildx build" in build
++    assert "--builder '${REMOTE_BUILDER_NAME}' --load" in build
++    assert "cpu-quota=150000" in source
++    assert "memory=4g" in source
++    assert 'if [[ "${2:-}" != "--immutable-only" ]]' in build
++    assert "-t ${IMAGE_BASE}:${sha}" in build
++    deploy = source.split("do_deploy()", 1)[1].split("do_promote()", 1)[0]
++    assert 'do_build_remote "$tag" --immutable-only' in deploy
++    assert 'do_build "$tag" --immutable-only' in deploy
++
++
++def test_failed_cutovers_restore_restart_and_verify_the_rollback() -> None:
++    source = SCRIPT.read_text()
++    rollback = source.split("rollback_failed_cutover()", 1)[1].split("abort_after_failed_cutover()", 1)[0]
++    assert "${ACX_ROLLBACK_REF}" in rollback
++    assert "restore_prior_image_repo_env" in rollback
++    assert 'do_restart "$env"' in rollback
++    assert 'verify_rollback_health "$env"' in rollback
++    for body in (
++        source.split("do_deploy()", 1)[1].split("do_promote()", 1)[0],
++        source.split("do_promote()", 1)[1].split("do_verify()", 1)[0],
++    ):
++        assert "abort_after_failed_cutover" in body
++        assert "ACX_VERIFY_OPTIONAL" not in body
+diff --git a/scripts/test_deploy_workflow_gate.py b/scripts/test_deploy_workflow_gate.py
+index b13dbbd25..225ed8e6e 100644
+--- a/scripts/test_deploy_workflow_gate.py
++++ b/scripts/test_deploy_workflow_gate.py
+@@ -8,6 +8,7 @@ import yaml
+ 
+ REPO_ROOT = Path(os.environ.get("DEPLOY_GATE_REPO_ROOT", Path(__file__).resolve().parents[1]))
+ WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "deploy-recognition.yml"
++RUNBOOK_PATH = REPO_ROOT / "docs" / "runbooks" / "deploy-recognition-cicd.md"
+ 
+ 
+ def _workflow() -> dict:
+@@ -77,3 +78,13 @@ def test_make_target_keeps_credential_suites() -> None:
+     assert result.returncode == 0, output
+     assert "test_ocirv1_vault_readiness.py" in output
+     assert "test-ocir-auth.sh" in output
++    assert "scripts/deploy/tests" in output
++
++
++def test_prod_rollback_commands_set_confirmation_in_the_environment() -> None:
++    runbook = RUNBOOK_PATH.read_text()
++    assert "CONFIRM=PROMOTE scripts/deploy/recognition-service.sh promote staging prod" in runbook
++    assert (
++        'CONFIRM=PROMOTE GIT_REF="$GOOD_SHA" REMOTE_BUILD=1 scripts/deploy/recognition-service.sh deploy prod'
++    ) in runbook
++    assert "GIT_REF=<good-sha>" not in runbook
+diff --git a/scripts/test_e15_33_boot_smoke.py b/scripts/test_e15_33_boot_smoke.py
+index a55d53941..e7e86322e 100644
+--- a/scripts/test_e15_33_boot_smoke.py
++++ b/scripts/test_e15_33_boot_smoke.py
+@@ -153,6 +153,7 @@ def test_rollback_tag_preserved_even_when_smoke_bypassed(tmp_path: Path) -> None
+         f'source "{SCRIPT}"; '
+         f'preserve_rollback_tag() {{ echo "rollback $1" >> "{marker}"; }}; '
+         f'do_boot_smoke() {{ echo "smoke $1" >> "{marker}"; }}; '
++        f'repair_blob_volume_ownership() {{ echo "repair $1" >> "{marker}"; }}; '
+         f'ship_remote_image_repo_env() {{ echo "ship $1" >> "{marker}"; }}; '
+         f'converge_runtime() {{ echo "converge $1" >> "{marker}"; }}; '
+         "ACX_BOOT_SMOKE=0 promote_gate prod img:cand"
+@@ -233,17 +234,13 @@ def test_smoke_harness_arity_covers_heredoc_positionals() -> None:
+     # 3 fixed (env/image/remote_dir) + len(_SMOKE_HARNESS_ARGS_TAIL)
+     harness_n = 3 + len(_SMOKE_HARNESS_ARGS_TAIL)
+     assert max_n >= 7, f"expected 7-arg SMOKE body, highest $N is {max_n}"
+-    assert harness_n >= max_n, (
+-        f"harness supplies {harness_n} args but body needs ${max_n}"
+-    )
++    assert harness_n >= max_n, f"harness supplies {harness_n} args but body needs ${max_n}"
+ 
+ 
+ def test_smoke_body_defaults_network_when_env_key_missing(tmp_path: Path) -> None:
+     # BR2-07: no ACX_NETWORK_NAME line must not abort under pipefail; the
+     # acx-<env>-net fallback must be reachable.
+-    rc, log = _run_smoke_heredoc(
+-        tmp_path, env_lines=f"OTHER=1\n{_MODELS_PATH_LINE}", curl_ok=True
+-    )
++    rc, log = _run_smoke_heredoc(tmp_path, env_lines=f"OTHER=1\n{_MODELS_PATH_LINE}", curl_ok=True)
+     assert rc == 0
+     assert "--network acx-prod-net" in log
+ 
+@@ -274,15 +271,11 @@ def test_smoke_body_fails_and_tears_down_when_health_never_answers(tmp_path: Pat
+         f"EXIT trap must docker rm the api smoke container; log:\n{log}"
+     )
+     assert re.search(r"docker rm -f acx-smoke-pg-", log), (
+-        "EXIT trap must docker rm the ephemeral Postgres (acx-smoke-pg-*); "
+-        f"docker log was:\n{log}"
++        f"EXIT trap must docker rm the ephemeral Postgres (acx-smoke-pg-*); docker log was:\n{log}"
+     )
+     assert re.search(r"docker volume rm(?: -f)? acx-smoke-blobs-", log) or (
+         "volume rm" in log and "acx-smoke-blobs-" in log
+-    ), (
+-        "EXIT trap must docker volume rm the smoke blob volume "
+-        f"(acx-smoke-blobs-*); docker log was:\n{log}"
+-    )
++    ), f"EXIT trap must docker volume rm the smoke blob volume (acx-smoke-blobs-*); docker log was:\n{log}"
+ 
+ 
+ def test_promote_gate_failure_blocks_converge_and_restart(tmp_path: Path) -> None:
+diff --git a/scripts/test_ocirv1_vault_readiness.py b/scripts/test_ocirv1_vault_readiness.py
+index ec81fb247..70f966b8a 100644
+--- a/scripts/test_ocirv1_vault_readiness.py
++++ b/scripts/test_ocirv1_vault_readiness.py
+@@ -43,15 +43,10 @@ def _digest(value: bytes) -> str:
+ 
+ 
+ def _assert_bounded_increasing_backoff(delays, timeout):
+-    """Assert the retry policy without freezing its safe tuning factor."""
++    """Assert bounded exponential backoff with per-attempt jitter."""
+     assert delays
+-    assert all(0 < delay <= 5.0 for delay in delays)
++    assert all(0 < delay <= 6.0 for delay in delays)
+     assert len(set(delays)) > 1, "retry delay must not remain constant"
+-    for previous, current in zip(delays[:-1], delays[1:], strict=True):
+-        if previous < 5.0:
+-            assert current > previous
+-        else:
+-            assert current == 5.0
+     assert sum(delays) <= timeout
+ 
+ 
+@@ -241,14 +236,15 @@ def test_secret_value_never_appears_in_the_failure_message():
+     assert _digest(secret) not in message
+ 
+ 
+-def test_zero_timeout_skips_readback_entirely():
++def test_zero_timeout_is_rejected():
+     calls = {"n": 0}
+ 
+     def failing_read():
+         calls["n"] += 1
+         raise AssertionError("timeout zero must not perform a read")
+ 
+-    assert vps.wait_until_readable(failing_read, "S", _digest(b"target"), timeout=0)
++    with pytest.raises(ValueError, match="positive"):
++        vps.wait_until_readable(failing_read, "S", _digest(b"target"), timeout=0)
+     assert calls["n"] == 0
+ 
+ 
+@@ -291,7 +287,8 @@ def test_503_is_retried():
+         sleep=clock,
+         monotonic=clock.monotonic,
+     )
+-    assert clock.slept == [1.0]
++    assert len(clock.slept) == 1
++    assert 0.8 <= clock.slept[0] <= 1.2
+ 
+ 
+ def test_blocking_read_cannot_overrun_the_outer_deadline():
+@@ -337,6 +334,9 @@ class _FakeVaultStore:
+         self.update_calls = []
+         self.read_history = []
+         self.list_calls = []
++        self.version_names = []
++        if existing_value is not None:
++            self.version_names.append(f"acx-{hashlib.sha256(existing_value).hexdigest()[:32]}")
+ 
+     @staticmethod
+     def _decode(details):
+@@ -355,11 +355,13 @@ class _FakeVaultStore:
+             lifecycle_state="ACTIVE",
+         )
+         self._stage(self._decode(details))
++        self.version_names.append(details.secret_content.name)
+         return self.existing
+ 
+     def update(self, secret_id, details):
+         self.update_calls.append((secret_id, details))
+         self._stage(self._decode(details))
++        self.version_names.append(details.secret_content.name)
+         return self.existing
+ 
+     def read(self):
+@@ -439,8 +441,9 @@ def _install_fake_oci(
+     secrets_clients = []
+ 
+     class _Vaults:
+-        def __init__(self, config):
+-            pass
++        def __init__(self, config, **kwargs):
++            self.init_kwargs = kwargs
++            self.base_client = types.SimpleNamespace(timeout=kwargs.get("timeout"))
+ 
+         def list_secrets(
+             self,
+@@ -464,15 +467,23 @@ def _install_fake_oci(
+                 matches.append(store.existing)
+             return types.SimpleNamespace(data=matches, headers={})
+ 
+-        def create_secret(self, details):
++        def create_secret(self, details, **kwargs):
+             return types.SimpleNamespace(data=store.create(details))
+ 
+-        def update_secret(self, secret_id, details):
++        def get_secret(self, secret_id, **kwargs):
++            return types.SimpleNamespace(data=store.existing, headers={"etag": "current-etag"})
++
++        def list_secret_versions(self, secret_id, **kwargs):
++            versions = [types.SimpleNamespace(name=name) for name in store.version_names]
++            return types.SimpleNamespace(data=versions, headers={})
++
++        def update_secret(self, secret_id, details, **kwargs):
+             return types.SimpleNamespace(data=store.update(secret_id, details))
+ 
+     class _Kms:
+-        def __init__(self, config):
+-            pass
++        def __init__(self, config, **kwargs):
++            self.init_kwargs = kwargs
++            self.base_client = types.SimpleNamespace(timeout=kwargs.get("timeout"))
+ 
+         def get_vault(self, vault_id):
+             return types.SimpleNamespace(data=types.SimpleNamespace(compartment_id="ocid1.compartment.oc1..c"))
+@@ -582,12 +593,52 @@ def test_main_rotation_waits_for_the_new_submitted_version(monkeypatch, capsys):
+     secret_id, details = store.update_calls[0]
+     assert secret_id == _FakeVaultStore.SECRET_ID
+     assert _FakeVaultStore._decode(details) == new
+-    assert secrets_client.reads == 4
+-    assert store.read_history == [old, old, old, new]
++    assert secrets_client.reads == 5  # one idempotency pre-read + propagation reads
++    assert store.read_history == [old, old, old, old, new]
+     _assert_bounded_increasing_backoff(clock.slept, timeout=120)
+     assert "new version" in capsys.readouterr().out
+ 
+ 
++def test_identical_rerun_does_not_create_a_duplicate_version(monkeypatch, capsys):
++    token = b"already-active-token"
++    rc, store, secrets_client, _, _ = _run_main(monkeypatch, token, not_ready_reads=0, existing_value=token)
++
++    assert rc == 0
++    assert store.create_calls == []
++    assert store.update_calls == []
++    assert secrets_client.reads == 2  # idempotency comparison plus final readiness proof
++    assert "unchanged" in capsys.readouterr().out
++
++
++def test_lost_update_response_reuses_the_pending_version(monkeypatch, capsys):
++    old = b"old-active-token"
++    new = b"accepted-pending-token"
++    store, secrets_clients, _ = _install_fake_oci(monkeypatch, not_ready_reads=2, existing_value=old)
++    store.pending_value = new
++    store.remaining = 2
++    store.version_names.append(f"acx-{hashlib.sha256(new).hexdigest()[:32]}")
++    _install_fake_clock(monkeypatch)
++    monkeypatch.setattr(sys, "argv", ["_vault_put_secret.py", "--secret-name", "OCIR_AUTH_TOKEN"])
++    monkeypatch.setattr(
++        sys,
++        "stdin",
++        types.SimpleNamespace(isatty=lambda: False, buffer=io.BytesIO(new)),
++    )
++
++    assert vps.main() == 0
++    assert store.update_calls == []
++    assert secrets_clients[0].reads == 3
++    assert "existing version pending" in capsys.readouterr().out
++
++
++def test_operation_deadline_bounds_a_stuck_control_plane_call():
++    deadline = vps.OperationDeadline(0.05)
++    started = time.monotonic()
++    with pytest.raises(TimeoutError, match="acceptance is indeterminate"):
++        deadline.call("update secret", lambda: time.sleep(1))
++    assert time.monotonic() - started < 0.25
++
++
+ @pytest.mark.parametrize(
+     "piped, label",
+     [(b"", "empty pipe"), (b"\n", "newline only"), (b"\r\n", "CRLF only")],
+@@ -645,14 +696,14 @@ def test_explicit_key_bootstraps_an_empty_vault(monkeypatch, capsys):
+         b"token",
+         0,
+         sibling_secrets=[],
+-        extra_args=("--key-id", key_id, "--readable-timeout", "0"),
++        extra_args=("--key-id", key_id, "--readable-timeout", "5"),
+     )
+ 
+     assert rc == 0
+     assert store.create_calls[0].key_id == key_id
+     assert all(call["name"] is not None for call in store.list_calls)
+-    assert secrets_client is None
+-    assert "check skipped" in capsys.readouterr().out
++    assert secrets_client.reads == 1
++    assert "value matches" in capsys.readouterr().out
+ 
+ 
+ def test_empty_vault_without_explicit_key_names_the_recovery_flag():

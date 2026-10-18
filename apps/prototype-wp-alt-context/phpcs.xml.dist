@@ -1,0 +1,50 @@
+<?xml version="1.0"?>
+<ruleset name="Alt Context WordPress PHPCS">
+	<description>
+		Project-level PHPCS standard for runtime and test PHP files.
+		Keep WordPress baseline checks, but exclude conventions that intentionally
+		conflict with this repository's established PHP style.
+	</description>
+
+	<arg name="warning-severity" value="0"/>
+
+	<file>src</file>
+	<file>tests</file>
+	<file>alt-context.php</file>
+
+	<exclude-pattern>*/vendor/*</exclude-pattern>
+	<!-- Large WordPress shim fixture with intentional global overrides. -->
+	<exclude-pattern>tests/stubs/wp.php</exclude-pattern>
+
+	<rule ref="WordPress">
+		<exclude name="Squiz.Commenting.FunctionComment"/>
+		<exclude name="Squiz.Commenting.VariableComment"/>
+		<exclude name="Squiz.Commenting.FileComment"/>
+		<exclude name="Squiz.Commenting.ClassComment"/>
+		<exclude name="Squiz.Commenting.InlineComment"/>
+		<exclude name="Generic.Commenting.DocComment"/>
+		<exclude name="WordPress.NamingConventions.ValidVariableName"/>
+		<exclude name="WordPress.NamingConventions.ValidFunctionName"/>
+		<exclude name="WordPress.PHP.YodaConditions"/>
+		<exclude name="WordPress.Files.FileName"/>
+		<exclude name="Generic.Files.OneObjectStructurePerFile"/>
+		<exclude name="Generic.WhiteSpace.DisallowSpaceIndent"/>
+		<exclude name="PEAR.Functions.FunctionCallSignature"/>
+		<exclude name="Squiz.Functions.FunctionDeclarationArgumentSpacing"/>
+		<exclude name="Generic.Functions.OpeningFunctionBraceKernighanRitchie"/>
+		<exclude name="Generic.Classes.OpeningBraceSameLine"/>
+		<exclude name="WordPress.WhiteSpace.ControlStructureSpacing"/>
+		<exclude name="WordPress.WhiteSpace.OperatorSpacing"/>
+		<exclude name="WordPress.WhiteSpace.CastStructureSpacing"/>
+		<exclude name="WordPress.Arrays.ArrayKeySpacingRestrictions"/>
+		<exclude name="WordPress.Arrays.ArrayIndentation"/>
+		<exclude name="WordPress.Arrays.ArrayDeclarationSpacing"/>
+		<exclude name="WordPress.Arrays.MultipleStatementAlignment"/>
+		<exclude name="Universal.Arrays.DisallowShortArraySyntax"/>
+		<exclude name="NormalizedArrays.Arrays.ArrayBraceSpacing"/>
+		<exclude name="Generic.WhiteSpace.ArbitraryParenthesesSpacing"/>
+		<exclude name="Generic.Formatting.MultipleStatementAlignment"/>
+		<exclude name="Universal.WhiteSpace.PrecisionAlignment"/>
+		<exclude name="Squiz.Strings.DoubleQuoteUsage"/>
+	</rule>
+</ruleset>

@@ -1,0 +1,164 @@
+"""Async SQLAlchemy session helpers."""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import AsyncIterator
+
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+
+from db.settings import get_database_settings
+
+logger = logging.getLogger(__name__)
+
+_settings = get_database_settings()
+
+logger.info(
+    "database_engine_settings stmt_cache_disabled=%s statement_timeout=%s idle_in_txn_timeout=%s observability_pool_size=%s observability_max_overflow=%s observability_pool_timeout=%s",
+    _settings.disable_stmt_cache,
+    _settings.statement_timeout,
+    _settings.idle_in_txn_timeout,
+    _settings.observability_pool_size,
+    _settings.observability_max_overflow,
+    _settings.observability_pool_timeout,
+)
+
+engine: AsyncEngine = create_async_engine(
+    _settings.postgres_dsn,
+    echo=False,
+    pool_pre_ping=True,
+    pool_size=_settings.pool_size,
+    max_overflow=_settings.max_overflow,
+    pool_timeout=_settings.pool_timeout,
+    pool_recycle=_settings.pool_recycle,
+)
+
+async_session_factory = async_sessionmaker(
+    bind=engine,
+    expire_on_commit=False,
+)
+
+observability_engine: AsyncEngine = create_async_engine(
+    _settings.postgres_dsn,
+    echo=False,
+    pool_pre_ping=True,
+    pool_size=_settings.observability_pool_size,
+    max_overflow=_settings.observability_max_overflow,
+    pool_timeout=_settings.observability_pool_timeout,
+    pool_recycle=_settings.pool_recycle,
+)
+
+observability_async_session_factory = async_sessionmaker(
+    bind=observability_engine,
+    expire_on_commit=False,
+)
+
+# E15-3a-BR-21 Slice 4: dedicated clustering pool. Bulkheads the
+# SELECT ... FOR UPDATE clustering-admission path from business traffic and
+# from the observability /health/detailed probe. Pool is deliberately narrow
+# so saturation triggers the fast-fail path (503 Retry-After) long before a
+# thundering herd can starve the business pool.
+clustering_engine: AsyncEngine = create_async_engine(
+    _settings.postgres_dsn,
+    echo=False,
+    pool_pre_ping=True,
+    pool_size=_settings.clustering_pool_size,
+    max_overflow=_settings.clustering_max_overflow,
+    pool_timeout=_settings.clustering_pool_timeout,
+    pool_recycle=_settings.pool_recycle,
+)
+
+clustering_async_session_factory = async_sessionmaker(
+    bind=clustering_engine,
+    expire_on_commit=False,
+)
+
+
+async def get_session() -> AsyncIterator[AsyncSession]:
+    """Provide a scoped async SQLAlchemy session.
+
+    The session auto-commits when the endpoint returns successfully.
+    On any exception the transaction is rolled back.
+    """
+    session = async_session_factory()
+    try:
+        yield session
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+
+
+def _pool_stats_from_engine(
+    current_engine: AsyncEngine,
+    *,
+    configured_max_overflow: int,
+) -> dict[str, int | float]:
+    """Return connection-pool metrics for one engine."""
+
+    def _call_pool_method(pool_obj: object, name: str, default: int = 0) -> int:
+        method = getattr(pool_obj, name, None)
+        if callable(method):
+            try:
+                return int(method())
+            except Exception:
+                return default
+        return default
+
+    pool = current_engine.pool
+    size = _call_pool_method(pool, "size")
+    max_overflow = int(getattr(pool, "_max_overflow", configured_max_overflow))
+    checked_out = _call_pool_method(pool, "checkedout")
+    checked_in = max(0, size - checked_out)
+    overflow_count = max(0, checked_out - size)
+    total_capacity = size + max_overflow
+    utilization = (checked_out / total_capacity * 100) if total_capacity > 0 else 0.0
+
+    return {
+        "size": size,
+        "overflow": max_overflow,
+        "checked_out": checked_out,
+        "checked_in": checked_in,
+        "overflow_count": overflow_count,
+        "total_capacity": total_capacity,
+        "utilization_percent": round(utilization, 2),
+    }
+
+
+def get_pool_stats() -> dict[str, dict[str, int | float]]:
+    """Return current connection pool statistics for both pools.
+
+    Returns:
+        Dictionary with pool metrics.
+    """
+
+    return {
+        "business": _pool_stats_from_engine(engine, configured_max_overflow=_settings.max_overflow),
+        "observability": _pool_stats_from_engine(
+            observability_engine,
+            configured_max_overflow=_settings.observability_max_overflow,
+        ),
+        "clustering": _pool_stats_from_engine(
+            clustering_engine,
+            configured_max_overflow=_settings.clustering_max_overflow,
+        ),
+    }
+
+
+__all__ = [
+    "engine",
+    "observability_engine",
+    "clustering_engine",
+    "get_session",
+    "async_session_factory",
+    "observability_async_session_factory",
+    "clustering_async_session_factory",
+    "get_pool_stats",
+]

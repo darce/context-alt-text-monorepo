@@ -1,0 +1,85 @@
+{
+  "status": "revise",
+  "summary": "REVISE: the external owner boundary distinguishes C5, but shared physical-allocation transfer and bounded OS-call completion remain unfrozen. C-BASE-GATE-01 stays open; proposal only, no adoption or implementation approval.",
+  "source_sha": "39fee237953ae6401044b40c241a5c2a8733ffcc",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/reviews/C-STORAGE-PLAN-GATE.json",
+    ".task-state/bakeoff-rounds-20261017/reviews/C-STORAGE-PLAN-GATE.md"
+  ],
+  "commits": [
+    "87dcaa3dc8711b3825248f16111004e70ccf436f"
+  ],
+  "findings": [
+    {
+      "id": "C-BASE-GATE-01",
+      "severity": "medium",
+      "file": "docs/tasks/vlm/BAKECACHE-1-storage-observation-proposal.md:126",
+      "description": "The missing role edge is addressed in principle, but no concrete transfer handoff connects C-held capacity handles with the existing E output producers sharing the admitted filesystem/categories.",
+      "evidence": "Proposal98-105 exposes allocate/release and accounting writes;120 leaves other E outputs on existing producers;124-126 requires their backing-to-data conversion. C receives the CapacityHandles, while E has no named transfer operation/call point for ready/report/diagnostic writes before cleanup. Accepted plan276/410 requires physical transfer under the lease. Real OS controls under both backends show a680B logical release frees0B while a680B append allocates4096B; a4096B physical transfer control fits. This unsafe arithmetic is already forbidden by the prose, but the required safe integration route is not frozen. The current163-case zero-baseline failure and eight equal C5 projections remain verified.",
+      "fix": "Freeze the smallest owner-bound admission/transfer coordinator and exact C component-writer/E producer call points. Independently partition shared physical/category/diagnostic budgets; charge backing, actual components and retained outputs simultaneously until observed transfer, with block rounding and no cross-inode credit. Bind original SlotRequest/ExecutionSpec/paths/lease before C writes, adapt the same-lease zero-baseline fixture to terminal-session rules, and prove tight-budget valid/unsafe controls before affected test/source approval. Keep the canonical ID open."
+    },
+    {
+      "id": "C-STORAGE-PLAN-GATE-01",
+      "severity": "medium",
+      "file": "docs/tasks/vlm/BAKECACHE-1-storage-observation-proposal.md:146",
+      "description": "The new adapter promises bounded write/fsync/fallocate/observation/close completion without naming an OS-call containment and in-flight-writer mechanism.",
+      "evidence": "Proposal124/128/130/142/146 requires finite deadlines, preserves uncertain effects and disallows dropping in-flight calls, but the API is synchronous and supplies no supervised completion mechanism. Local regular-file status and before/after clock checks do not bound a stalled fsync/fallocate/stat operation. The retained owner model has outer resource/watchdog limits and explicitly does not implement adapter failure supervision; those limits cannot establish future receipt delivery or safe writer stoppage.",
+      "fix": "Name a bounded owner-controlled I/O supervision arrangement, finite request/result/membership/diagnostic limits and timeout disposition. Keep every live operation/descriptor in the original authority until completion is proved; return canonical failure without late success, replay, premature seal/release or uncertain-file deletion. Freeze early/no-session, partial-allocation, non-null-reservation observation failure, unload failure and release-ack uncertainty variants, then require matched completion/stall/error controls. No privileged isolation or new service is required."
+    }
+  ],
+  "tests": [
+    {
+      "command": "python -B /tmp/c-storage-plan-gate/verify_context.py",
+      "exit_code": 0,
+      "summary": "Six Canon0.26.2 bodies,12 matched rows,3 cards and actual checkout source pins verified; original research excerpts retained."
+    },
+    {
+      "command": "timeout 45s .venv/bin/python -B /tmp/c-storage-contract/resource_guard.py /tmp/c-storage-plan-gate/verify_prior.py",
+      "exit_code": 0,
+      "summary": "2182 files across five old gate/proposal manifests rehashed; eight C5 projections unchanged; historical exact-assertion1/0/1/0 and M3 source dependency pins verified."
+    },
+    {
+      "command": "timeout 40s .venv/bin/python -B /tmp/c-storage-plan-gate/replay_boundary.py",
+      "exit_code": 0,
+      "summary": "Fresh owner-model replay:8 safe/unsafe OS pairs,8 known controls,8 negatives;32 identity-cleaned directories. Feasibility only."
+    },
+    {
+      "command": "timeout 25s .venv/bin/python -B /tmp/c-storage-contract/resource_guard.py /tmp/c-storage-plan-gate/block_transfer.py",
+      "exit_code": 0,
+      "summary": "Both allocation backends:680 logical bytes release0 physical bytes;680B output grows4096B. Matched4096B transfer controls fit; identity cleanup completed."
+    },
+    {
+      "command": "timeout 20s .venv/bin/python -B /tmp/c-storage-contract/resource_guard.py /tmp/c-storage-plan-gate/error_envelopes.py",
+      "exit_code": 0,
+      "summary": "Targeted current-P early/late blocked envelopes decode; three v2 outer literals reject under P1; unchanged v1 leaf shapes decode. No P suite or proposed P2 decoder executed."
+    },
+    {
+      "command": "timeout 20s .venv/bin/python -B /tmp/c-storage-contract/resource_guard.py /tmp/c-storage-plan-gate/unknown_fd.py",
+      "exit_code": 0,
+      "summary": "Coverage control: owner-only model misses a4096B unknown open/unlinked FD; public OS census sees it. Model limitation, not an implemented-adapter finding."
+    },
+    {
+      "command": "python -B /tmp/c-storage-plan-gate/verify_report.py",
+      "exit_code": 0,
+      "summary": "Strict common schema, exact unchanged source/plan/proposal pins and two-file ownership verified."
+    },
+    {
+      "command": "git diff --cached --check",
+      "exit_code": 0,
+      "summary": "Authorized staged review pair has no whitespace errors."
+    },
+    {
+      "command": "timeout 30s .venv/bin/python -B /tmp/c-storage-contract/resource_guard.py /tmp/c-storage-plan-gate/verify_protected.py",
+      "exit_code": 0,
+      "summary": "Separate protected-fixture355-file gate manifest rehashed; retained controls inspected. Its scoped PASS is not full C approval."
+    }
+  ],
+  "limitations": [
+    "FIRST independent proposal gate only. Root owns MCP disposition and later E/P/C agreement/adoption. No test/source approval, finding closure, dispatch, main merge, ready/winner claim or benchmark/model launch. A seventh semantic C author needs a new LOUD Canon proposal/XHIGH path.",
+    "Logical d2cc6c5f8e3a70cb8e35ee38951f219025d5ebbc object is absent; native base39fee237 has the exact supplied tree96301ae40f0402942f56ec938a7ff748e7b1dd6b. source_sha names that honest native base. Accepted plan SHA10383b7d differs from original575c only at the reviewed runtime sentence; proposal original-author provenance remains unchanged.",
+    "C/E/storage implementations and E executor tests are absent in this checkout. Later E233 tests were separately rehashed at19b5156d/a9d1bb71/42fe69ae; M3 source75028b78 was read from pinned retained custody, not substituted into this tree. Protected-fixture PASS0 is separate; M3 remains independently unapproved.",
+    "Supplied verified ONNX/handoff semantic snapshots and current maps were checked against exact source/AST fallback under codebase-memory. No live MCP/index/coverage/ONNX refresh or full original research-file verification. Canon bodies were hashed programmatically; only fired rules/cards/excerpts were read.",
+    "Preserve /tmp/c-storage-plan-gate and referenced prior audits before owned reap. Full sources/context/commands/raw outputs/exits/native custody and hash manifest are retained. Two private audit setup errors were corrected and preserved; neither is product evidence. Native session verifies gpt-6.1-sol/xhigh and cgroup1GiB/0.5CPU; STANDARD was requested but no explicit tier field is exposed. Audit manifest SHA256 cce093b7fb2cf49337ce6a34f32b773428adc32a745dc7e165e52dc987567718 binds 2454 files; later delivery receipts are supplemental.",
+    "Only the authorized review pair changes. No agents, fake C/E, proposed decoder, installs, broad suites, unchanged P-suite repeats, model/media/GT/vector/weight/GPU/OCI/server/download/cache-eviction/foreign-process/shared-runtime/network changes. All small owned OS fixtures closed descriptors and used identity-proven cleanup."
+  ]
+}

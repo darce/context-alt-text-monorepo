@@ -1,0 +1,43 @@
+flowchart TB
+    %% Worker pipeline for async scan + clustering jobs
+    subgraph Legend["Legend + Conventions"]
+        direction TB
+        LegendEntry["ENTRY: external entrypoint"]
+        LegendOptional["Dashed arrow = optional wiring"]
+    end
+
+    subgraph Worker["Async Scan Worker"]
+        direction TB
+        ScanWorker["scan_worker.py"]
+        ScanHandler["ScanItemHandler"]
+        ScanService["ScanService"]
+        ClusteringHandler["ClusteringJobHandler"]
+        CurationHandler["CurationJobHandler"]
+        SplitHandler["SplitJobHandler"]
+    end
+
+    subgraph Services["Application Services"]
+        direction TB
+        ClusterService["ClusterService"]
+        JobService["JobService"]
+    end
+
+    subgraph Infra["Infrastructure"]
+        direction TB
+        Repos["SqlAlchemy* repositories"]
+        Embeddings["InsightFaceAdapter"]
+    end
+
+    ScanWorker --> ScanHandler --> ScanService --> Repos
+    ScanService --> Embeddings
+
+    ScanWorker --> ClusteringHandler --> ClusterService --> Repos
+    ScanWorker --> CurationHandler --> ClusterService
+    ScanWorker --> SplitHandler --> ClusterService
+    SplitHandler -.-> JobService
+
+    WorkerCode["Code anchors:\nrecognition/worker/scan_worker.py\nrecognition/worker/handlers/scan.py\nrecognition/worker/handlers/clustering.py\nrecognition/application/scan/service.py\nrecognition/application/orchestration/cluster_service.py"]
+    Worker -.-> WorkerCode
+
+    LayerNote["Layer: worker (recognition/worker/*)\nUses application services + infrastructure adapters"]
+    Worker -.-> LayerNote

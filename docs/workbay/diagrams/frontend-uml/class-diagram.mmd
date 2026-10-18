@@ -1,0 +1,274 @@
+
+classDiagram
+    %% =======================================================================
+    %% WORDPRESS PLUGIN FRONTEND V4.2.4 - CLASS DIAGRAM
+    %% Updated: January 24, 2026
+    %% TypeScript/React component architecture
+    %% =======================================================================
+
+    %% ---------------------------------------------------------------------------
+    %% PAGES - Top-level route components
+    %% ---------------------------------------------------------------------------
+    
+    class DashboardPage {
+        +render() JSX.Element
+    }
+    
+    class WorkbenchPage {
+        +selectedMediaIds: string[]
+        +clusters: Cluster[]
+        +render() JSX.Element
+    }
+    
+    class RosterPage {
+        +identities: Identity[]
+        +render() JSX.Element
+    }
+
+    %% ---------------------------------------------------------------------------
+    %% WORKBENCH COMPONENTS
+    %% ---------------------------------------------------------------------------
+    
+    class MediaSelection {
+        +mediaItems: MediaItem[]
+        +selectedIds: Set~string~
+        +onSelect(id: string) void
+        +onSelectAll() void
+        +render() JSX.Element
+    }
+    
+    class IdentityClusterList {
+        +clusters: Cluster[]
+        +onClusterClick(id: string) void
+        +onMerge(source: string, target: string) void
+        +render() JSX.Element
+    }
+    
+    class TrainingStageBanner {
+        +stage: TrainingStage
+        +clusterCount: number
+        +identityCount: number
+        +render() JSX.Element
+    }
+    
+    class ClusterCard {
+        +cluster: Cluster
+        +isExpanded: boolean
+        +onExpand() void
+        +onLabelChange(label: string) void
+        +render() JSX.Element
+    }
+    
+    class FaceThumbnail {
+        +identity: MediaIdentity
+        +size: 'sm' | 'md' | 'lg'
+        +onClick() void
+        +render() JSX.Element
+    }
+
+    WorkbenchPage --> MediaSelection : contains
+    WorkbenchPage --> IdentityClusterList : contains
+    WorkbenchPage --> TrainingStageBanner : contains
+    IdentityClusterList --> ClusterCard : renders
+    ClusterCard --> FaceThumbnail : renders
+
+    %% ---------------------------------------------------------------------------
+    %% API LAYER - Backend communication
+    %% ---------------------------------------------------------------------------
+    
+    class scanApi {
+        +analyzeMedia(mediaIds: string[], tenantId: string) Promise~Job~
+        +getJobStatus(jobId: string) Promise~JobStatus~
+        +cancelJob(jobId: string) Promise~Job~
+    }
+    
+    class clusterApi {
+        +createClusteringJob(tenantId: string, mode?: string) Promise~Job~
+        +getClusters(tenantId: string, params?: ListParams) Promise~Cluster[]~
+        +updateCluster(clusterId: string, data: PatchCluster) Promise~Cluster~
+        +mergeClusters(sourceId: string, targetId: string) Promise~Cluster~
+        +assignOutlier(clusterId: string, identityId: string) Promise~Cluster~
+    }
+    
+    class identityApi {
+        +fetchMediaIdentities(mediaIds: number[]) Promise~MediaIdentitiesResponse~
+        +fetchIdentitySuggestions(identityId: string, topK?: number) Promise~IdentitySuggestionsResponse~
+        +fetchPendingSuggestions(limit?: number, offset?: number) Promise~PendingSuggestionsResponse~
+        +acceptSuggestion(suggestionId: string) Promise~SuggestionResponse~
+        +rejectSuggestion(suggestionId: string) Promise~SuggestionResponse~
+    }
+
+    %% ---------------------------------------------------------------------------
+    %% HOOKS - React state management
+    %% ---------------------------------------------------------------------------
+    
+    class useRecognitionHooks {
+        +scanMedia: UseMutationResult
+        +createClusteringJob: UseMutationResult
+        +isScanning: boolean
+        +isClustering: boolean
+    }
+    
+    class useRecognitionJobHistory {
+        +jobs: Job[]
+        +currentJob: Job | null
+        +pollJobStatus(jobId: string) void
+        +isPolling: boolean
+    }
+    
+    class useMediaIdentities {
+        +identities: MediaIdentity[]
+        +isLoading: boolean
+        +refetch() void
+    }
+    
+    class useWorkbenchMedia {
+        +mediaItems: MediaItem[]
+        +isLoading: boolean
+        +pagination: PaginationState
+        +setPage(page: number) void
+    }
+    
+    class useMediaSelectionState {
+        +selectedIds: Set~string~
+        +select(id: string) void
+        +deselect(id: string) void
+        +selectAll(ids: string[]) void
+        +clearSelection() void
+        +isSelected(id: string) boolean
+    }
+    
+    class useWorkbenchFilters {
+        +filters: FilterState
+        +setClusterFilter(value: string) void
+        +setDateRange(start: Date, end: Date) void
+        +clearFilters() void
+    }
+
+    useRecognitionHooks --> scanApi : uses
+    useRecognitionHooks --> clusterApi : uses
+    useRecognitionJobHistory --> scanApi : uses
+    useMediaIdentities --> identityApi : uses
+
+    WorkbenchPage --> useRecognitionHooks : uses
+    WorkbenchPage --> useWorkbenchMedia : uses
+    MediaSelection --> useMediaSelectionState : uses
+    IdentityClusterList --> useMediaIdentities : uses
+
+    %% ---------------------------------------------------------------------------
+    %% TYPE DEFINITIONS
+    %% ---------------------------------------------------------------------------
+    
+    class MediaItem {
+        +id: string
+        +url: string
+        +thumbnail: string
+        +title: string
+        +uploadDate: Date
+    }
+    
+    class MediaIdentity {
+        +id: string
+        +mediaId: string
+        +clusterId: string | null
+        +confidence: float
+        +bboxWidth: number
+        +bboxHeight: number
+        +thumbnailUrl: string
+    }
+    
+    class Cluster {
+        +id: string
+        +tenantId: string
+        +label: string | null
+        +isLabeled: boolean
+        +memberCount: number
+        +representatives: MediaIdentity[]
+    }
+    
+    class PendingSuggestion {
+        +id: string
+        +identity_id: string
+        +suggested_cluster_id: string
+        +representative_similarity: float
+        +avg_member_similarity: float?
+        +confidence_score: float?
+        +resolution: string?
+        +created_at: string?
+        +resolved_at: string | null
+        +cluster_label: string | null
+        +cluster_identity_count: number | null
+        +identity_media_url: string | null
+        +identity_thumbnail_url: string | null
+        +representative_media_url: string | null
+        +representative_thumbnail_url: string | null
+    }
+
+    class PendingSuggestionsResponse {
+        +suggestions: PendingSuggestion[]
+        +total: number
+        +limit: number
+        +offset: number
+    }
+
+    class SuggestionResponse {
+        +id: string
+        +identity_id: string
+        +cluster_id: string
+        +rep_similarity: float
+        +member_similarity: float | null
+        +status: 'pending' | 'accepted' | 'rejected'
+        +cluster_label: string | null
+        +cluster_identity_count: number | null
+        +identity_media_url: string | null
+        +identity_thumbnail_url: string | null
+        +representative_media_url: string | null
+        +representative_thumbnail_url: string | null
+    }
+    
+    class Job {
+        +id: string
+        +type: 'analyze' | 'clustering'
+        +status: 'pending' | 'running' | 'completed' | 'failed'
+        +progress: JobProgress
+        +startedAt: Date
+        +finishedAt: Date | null
+    }
+    
+    class TrainingStage {
+        +stage: 'early' | 'developing' | 'mature'
+        +clusterCount: number
+        +identityCount: number
+        +suggestedThreshold: float
+    }
+
+    Cluster --> MediaIdentity : contains representatives
+    PendingSuggestion --> MediaIdentity : references
+    PendingSuggestion --> Cluster : references
+
+    %% ---------------------------------------------------------------------------
+    %% PHP PROXY LAYER
+    %% ---------------------------------------------------------------------------
+    
+    class RecognitionController {
+        +register_routes() void
+        +handle_analyze(WP_REST_Request) WP_REST_Response
+        +handle_clusters(WP_REST_Request) WP_REST_Response
+        +handle_suggestions(WP_REST_Request) WP_REST_Response
+    }
+    
+    class RecognitionProxyController {
+        -api: Api
+        +forward_request(endpoint: string, method: string, body: array) array
+        +get_tenant_id() string
+    }
+    
+    class Api {
+        -base_url: string
+        -api_key: string
+        +request(endpoint: string, args: array) array
+        +get_headers() array
+    }
+
+    RecognitionController --> RecognitionProxyController : delegates
+    RecognitionProxyController --> Api : uses

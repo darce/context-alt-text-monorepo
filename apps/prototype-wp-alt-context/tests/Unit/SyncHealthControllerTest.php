@@ -1,0 +1,325 @@
+<?php
+
+declare(strict_types=1);
+
+namespace AltContext\Tests\Unit;
+
+use AltContext\Api\RecognitionCircuitKeys;
+use AltContext\Api\RecognitionEndpointResolver;
+use AltContext\Api\SyncHealthController;
+use AltContext\Sovereign\Sync\OutboxMaintenanceService;
+use AltContext\Sovereign\Sync\OutboxQueryRepository;
+use AltContext\Sovereign\Sync\SyncPullResult;
+use AltContext\Tests\Stubs\NullSyncStateRepository;
+use AltContext\Tests\TestCase;
+use WP_REST_Request;
+
+/**
+ * @covers \AltContext\Api\SyncHealthController
+ * @covers \AltContext\Api\RecognitionCircuitKeys
+ */
+class SyncHealthControllerTest extends TestCase
+{
+    public function testGetSyncHealthReturnsDebtAndBreakerEnvelope(): void
+    {
+        $fixturePath = dirname(__DIR__) . '/fixtures/sync-health/debt-and-breaker-envelope.json';
+        $fixture = json_decode((string) file_get_contents($fixturePath), true);
+        $this->assertIsArray($fixture);
+
+        $baseUrl = (string) ($fixture['breaker']['base_url'] ?? 'http://localhost:8000');
+        $syncRepo = new class($fixture) extends NullSyncStateRepository {
+            /** @var array<string,mixed> */
+            private array $fixture;
+
+            /**
+             * @param array<string,mixed> $fixture
+             */
+            public function __construct(array $fixture)
+            {
+                $this->fixture = $fixture;
+            }
+
+            public function get_last_updated(string $tenant_id): ?string
+            {
+                $at = $this->fixture['last_pull']['at'] ?? null;
+                return is_string($at) ? $at : null;
+            }
+
+            public function get_last_sync_result(string $tenant_id): string
+            {
+                return !empty($this->fixture['last_pull']['ok']) ? SyncPullResult::OK : SyncPullResult::FAILED;
+            }
+
+            public function get_conflict_count(string $tenant_id): int
+            {
+                return (int) ($this->fixture['conflicts']['open'] ?? 0);
+            }
+        };
+
+        $outboxRepo = new class($fixture) extends OutboxQueryRepository {
+            /** @var array<string,mixed> */
+            private array $fixture;
+
+            /**
+             * @param array<string,mixed> $fixture
+             */
+            public function __construct(array $fixture)
+            {
+                $this->fixture = $fixture;
+            }
+
+            public function count_operations_by_status(string $tenant_id, ?string $status): int
+            {
+                return match ($status) {
+                    'pending' => (int) ($this->fixture['outbox']['pending'] ?? 0),
+                    'failed' => (int) ($this->fixture['outbox']['failed'] ?? 0),
+                    default => 0,
+                };
+            }
+        };
+
+        $maintenance = new class($fixture) extends OutboxMaintenanceService {
+            /** @var array<string,mixed> */
+            private array $fixture;
+
+            /**
+             * @param array<string,mixed> $fixture
+             */
+            public function __construct(array $fixture)
+            {
+                $this->fixture = $fixture;
+            }
+
+            public function get_health_counters(string $tenant_id): array|false
+            {
+                $outbox = $this->fixture['outbox'] ?? [];
+                if (!is_array($outbox)) {
+                    return false;
+                }
+
+                return [
+                    'pending' => (int) ($outbox['pending'] ?? 0),
+                    'failed' => (int) ($outbox['failed'] ?? 0),
+                    'dead_lettered' => (int) ($outbox['dead_lettered'] ?? 0),
+                    'oldest_age_seconds' => (int) ($outbox['oldest_age_seconds'] ?? 0),
+                ];
+            }
+        };
+
+        $this->setOption('acx_recognition_source', 'service');
+        $this->setOption('acx_recognition_url', $baseUrl);
+        $controller = new SyncHealthController($syncRepo, $outboxRepo, new RecognitionEndpointResolver(), null, $maintenance);
+        $response = $controller->get_sync_health(new WP_REST_Request('GET', '/acx/v1/recognition/sync/health'));
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+
+        $this->assertSame($fixture['breaker'], $data['breaker']);
+        $this->assertSame($fixture['outbox'], $data['outbox']);
+        $this->assertArrayHasKey('pending', $data['outbox']);
+        $this->assertArrayHasKey('failed', $data['outbox']);
+        $this->assertArrayHasKey('dead_lettered', $data['outbox']);
+        $this->assertArrayHasKey('oldest_age_seconds', $data['outbox']);
+        $this->assertSame($fixture['conflicts'], $data['conflicts']);
+        $this->assertSame($fixture['replays'], $data['replays']);
+        $this->assertSame($fixture['last_pull'], $data['last_pull']);
+        $this->assertSame($fixture['warnings'], $data['warnings']);
+    }
+
+    public function testGetSyncHealthReturnsDegradedOutboxComponentWhenMaintenanceReadFails(): void
+    {
+        $maintenance = new class() extends OutboxMaintenanceService {
+            public function __construct()
+            {
+            }
+
+            public function get_health_counters(string $tenant_id): array|false
+            {
+                return false;
+            }
+        };
+
+        $controller = new SyncHealthController(new NullSyncStateRepository(), null, null, null, $maintenance);
+        $response = $controller->get_sync_health(new WP_REST_Request('GET', '/acx/v1/recognition/sync/health'));
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertSame(
+            [
+                'state' => 'degraded',
+                'pending' => null,
+                'failed' => null,
+                'dead_lettered' => null,
+                'oldest_age_seconds' => null,
+                'warnings' => [
+                    [
+                        'code' => 'outbox_counters_unavailable',
+                        'message' => 'Outbox health counters are temporarily unavailable.',
+                        'count' => null,
+                        'threshold' => null,
+                    ],
+                ],
+            ],
+            $data['outbox']
+        );
+    }
+
+    public function testGetSyncHealthDoesNotFabricateOutboxCountersFromPartialPayload(): void
+    {
+        $maintenance = new class() extends OutboxMaintenanceService {
+            public function __construct()
+            {
+            }
+
+            public function get_health_counters(string $tenant_id): array|false
+            {
+                return [
+                    'pending' => 9,
+                    'failed' => 2,
+                ];
+            }
+        };
+
+        $controller = new SyncHealthController(new NullSyncStateRepository(), null, null, null, $maintenance);
+        $response = $controller->get_sync_health(new WP_REST_Request('GET', '/acx/v1/recognition/sync/health'));
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertSame(
+            [
+                'state' => 'degraded',
+                'pending' => null,
+                'failed' => null,
+                'dead_lettered' => null,
+                'oldest_age_seconds' => null,
+                'warnings' => [
+                    [
+                        'code' => 'outbox_counters_unavailable',
+                        'message' => 'Outbox health counters are temporarily unavailable.',
+                        'count' => null,
+                        'threshold' => null,
+                    ],
+                ],
+            ],
+            $data['outbox']
+        );
+    }
+
+    public function testGetSyncHealthPreservesBreakerAndConflictsWhenOutboxCountersAreUnavailable(): void
+    {
+        $baseUrl = 'https://recognition.test';
+        $this->setOption('acx_recognition_source', 'service');
+        $this->setOption('acx_recognition_url', $baseUrl);
+        $circuitKey = RecognitionCircuitKeys::for_base_url($baseUrl);
+        set_transient($circuitKey, 1, 60);
+
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_conflict_count(string $tenant_id): int
+            {
+                return 7;
+            }
+        };
+        $maintenance = new class() extends OutboxMaintenanceService {
+            public function __construct()
+            {
+            }
+
+            public function get_health_counters(string $tenant_id): array|false
+            {
+                return false;
+            }
+        };
+
+        $controller = new SyncHealthController($syncRepo, null, null, null, $maintenance);
+        $response = $controller->get_sync_health(new WP_REST_Request('GET', '/acx/v1/recognition/sync/health'));
+        $data = $response->get_data();
+
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame('open', $data['breaker']['state']);
+        $this->assertSame(['open' => 7], $data['conflicts']);
+        $this->assertSame('degraded', $data['outbox']['state']);
+        $this->assertNull($data['outbox']['pending']);
+        $this->assertNull($data['outbox']['failed']);
+        $this->assertNull($data['outbox']['dead_lettered']);
+        $this->assertNull($data['outbox']['oldest_age_seconds']);
+        $this->assertSame('outbox_counters_unavailable', $data['outbox']['warnings'][0]['code']);
+
+        delete_transient($circuitKey);
+    }
+
+    public function testGetSyncHealthIncludesConflictThresholdWarning(): void
+    {
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_conflict_count(string $tenant_id): int
+            {
+                return 30;
+            }
+        };
+
+        $controller = new SyncHealthController($syncRepo);
+        $response = $controller->get_sync_health(new WP_REST_Request('GET', '/acx/v1/recognition/sync/health'));
+        $data = $response->get_data();
+
+        $this->assertCount(1, $data['warnings']);
+        $this->assertSame('open_conflicts_high', $data['warnings'][0]['code']);
+        $this->assertSame(30, $data['warnings'][0]['count']);
+        $this->assertSame(25, $data['warnings'][0]['threshold']);
+    }
+
+    public function testGetSyncHealthSurfacesBackendRosterRegressionWarning(): void
+    {
+        $conflictRepository = new class() extends \AltContext\Sovereign\Sync\ConflictRepository {
+            public function find_open_backend_roster_regression(string $tenant_id): ?array
+            {
+                return ['id' => 7, 'backend_version' => 41, 'resolution_status' => 'open'];
+            }
+        };
+
+        $controller = new SyncHealthController(new NullSyncStateRepository(), null, null, $conflictRepository);
+        $response = $controller->get_sync_health(new WP_REST_Request('GET', '/acx/v1/recognition/sync/health'));
+        $data = $response->get_data();
+
+        $codes = array_column($data['warnings'], 'code');
+        $this->assertContains('backend_roster_regressed', $codes, 'an open aggregate must surface as a degraded-mode warning');
+    }
+
+    public function testGetSyncHealthReportsOpenBreakerFromTransient(): void
+    {
+        // BR-131: remote recognition URLs must be https.
+        $baseUrl = 'https://recognition.test';
+        $this->setOption('acx_recognition_source', 'service');
+        $this->setOption('acx_recognition_url', $baseUrl);
+        $circuitKey = RecognitionCircuitKeys::for_base_url($baseUrl);
+        set_transient($circuitKey, 1, 60);
+
+        $controller = new SyncHealthController();
+        $response = $controller->get_sync_health(new WP_REST_Request('GET', '/acx/v1/recognition/sync/health'));
+        $data = $response->get_data();
+
+        $this->assertSame('open', $data['breaker']['state']);
+        delete_transient($circuitKey);
+    }
+
+    public function testGetSyncHealthDoesNotMutateTransients(): void
+    {
+        // BR-131: remote recognition URLs must be https.
+        $baseUrl = 'https://recognition.test';
+        $this->setOption('acx_recognition_source', 'service');
+        $this->setOption('acx_recognition_url', $baseUrl);
+        $circuitKey = RecognitionCircuitKeys::for_base_url($baseUrl);
+        $failureKey = RecognitionCircuitKeys::failure_key_for_base_url($baseUrl);
+        $GLOBALS['__ac_transients'] = [
+            $circuitKey => ['value' => 1, 'expires' => time() + 60],
+            $failureKey => ['value' => 2, 'expires' => time() + 60],
+        ];
+
+        $controller = new SyncHealthController();
+        $before = $GLOBALS['__ac_transients'];
+        $controller->get_sync_health(new WP_REST_Request('GET', '/acx/v1/recognition/sync/health'));
+
+        $this->assertSame($before, $GLOBALS['__ac_transients']);
+    }
+}

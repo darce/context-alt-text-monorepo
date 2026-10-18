@@ -1,0 +1,25 @@
+# Redacted live-pair example. Set the named credentials in the operator shell;
+# never put credential values in this file.
+head_to_head_delta: 0.10
+bootstrap_seed: 20260930
+primary_endpoint: detection_recall@frame_e2e/label_map_primary
+secondary_endpoints:
+  - identification_recall@frame_e2e/label_map_primary
+  - identification_precision@frame_e2e/label_map_primary
+stacks:
+  - stack_id: acx-dev-insightface
+    role: insightface_judge
+    base_url: https://dev.api.altcontext.com
+    expected_profile: insightface
+    expected_pgvector_dim: 512
+    opencv_major: 5
+    api_key_env: ACX_BENCH_DEV_API_KEY
+    tenant_id_env: ACX_BENCH_DEV_TENANT_ID
+  - stack_id: acx-dev-fir
+    role: face_pipeline_candidate
+    base_url: https://fir.dev.api.altcontext.com
+    expected_profile: face_pipeline
+    expected_pgvector_dim: 128
+    opencv_major: 5
+    api_key_env: ACX_BENCH_FIR_API_KEY
+    tenant_id_env: ACX_BENCH_FIR_TENANT_ID

@@ -1,0 +1,436 @@
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xmlns:svg="http://www.w3.org/2000/svg" epub:prefix="index: http://www.index.com/" lang="en" xml:lang="en">
+<head>
+<title>16 The Developer Toolbox</title>
+<link href="WileyTemplate_v5.5.css" rel="stylesheet" type="text/css"/>
+<meta content="urn:uuid:e0000000-0000-0000-0000-000006210893" name="Adept.expected.resource"/>
+</head>
+<body epub:type="bodymatter">
+<section epub:type="chapter" role="doc-chapter">
+<header>
+<h1><span epub:type="pagebreak" id="Page_415" role="doc-pagebreak" title="415"/><a id="c16"/><span class="chapterNumber">16</span><br/><span class="chapterTitle">The Developer Toolbox</span></h1>
+</header>
+<section><span id="c16-sec-0001"/>
+<aside>
+<div class="top hr"><hr/></div>
+<section>
+<h3>WHAT'S IN THIS CHAPTER?</h3>
+<ul class="check1" id="c16-list-0001">
+<li id="c16-li-0001">Using the WordPress core as a reference</li>
+<li id="c16-li-0002">Understanding inline documentation</li>
+<li id="c16-li-0003">Exploring popular core files and functions</li>
+<li id="c16-li-0004">Using community resources and websites</li>
+<li id="c16-li-0005">Learning about external tool websites</li>
+<li id="c16-li-0006">Creating a developer toolbox</li>
+</ul>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<p id="c16-para-0003">When developing plugins for WordPress, it's important to have a good list of resources to help guide you in the right direction. This list of resources is the developer's toolbox. In this chapter, you'll learn the most popular and helpful resources available for plugin development. You'll also review tools that every developer should use to help optimize the process of plugin development.</p>
+</section>
+<section><span id="c16-sec-0002"/>
+<h2 id="head-2-122">CORE AS REFERENCE</h2>
+<p id="c16-para-0004">The best reference when developing plugins for WordPress is the core WordPress code. What better way to learn about the inner workings of WordPress, and discover new features, than to explore the code that powers every plugin you develop? Understanding how to navigate through the core WordPress code is a valuable resource when developing professional plugins. Also, contrary to online resources and the Codex, the core is always up‐to‐date.</p> <span epub:type="pagebreak" id="Page_416" role="doc-pagebreak" title="416"/>
+<section><span id="c16-sec-0003"/>
+<h3 id="head-3-254">PHP Inline Documentation</h3>
+<p>Many of the core WordPress files feature inline documentation. This documentation, in the form of a code comment, gives specific details on how functions and code work. All PHP inline documentation is formatted using inspiration from the PHPDoc standard for PHP commenting, meaning there are some differences between the PHPDoc standard and the WordPress implementation of inline documentation. The following comment sample is the standard template for documenting a WordPress function:</p>
+<pre id="c16-code-0001"><code>/**</code>
+<code> * Short Description</code>
+<code> *</code>
+<code> * Long Description</code>
+<code> *</code>
+<code> * @package WordPress</code>
+<code> * @since version</code>
+<code> *</code>
+<code> * @param    type    $varname    Description</code>
+<code> * @return   type                Description</code>
+<code> */</code></pre>
+<p id="c16-para-0006">Inline documentation is an invaluable resource when exploring functions in WordPress. The comment includes a short and long description, detailing the purpose of a specific function. It also features the WordPress version in which it was added. This helps determine what new functions are added in each release of WordPress.</p>
+<p id="c16-para-0007">Parameters are also listed, along with the data type of the parameter and a description of what the parameter should be. The return type and description are also listed. This helps you understand what value a specific function will return. For example, when creating a new post in WordPress, the newly created post ID would be returned if successful.</p>
+<p>Now look at the following real inline documentation for the <code>delete_option</code>(
+<code>)</code> function:</p>
+<pre id="c16-code-0002"><code>/**</code>
+<code> * Removes option by name. Prevents removal of protected WordPress options.</code>
+<code> *</code>
+<code> * @since 1.2.0</code>
+<code> *</code>
+<code> * @global wpdb $wpdb WordPress database abstraction object.</code>
+<code> *</code>
+<code> * @param string $option Name of option to remove. Expected to not be SQL-escaped.</code>
+<code> * @return bool True, if option is successfully deleted. False on failure.</code>
+<code> */</code>
+<code>function delete_option( $option ) {</code></pre>
+<p id="c16-para-0009">The inline documentation features a clear description of the purpose of this function. You can see that the function is part of the WordPress package and was added in version 1.2.0. The comment also lists any PHP globals that are used within the function or method, which can include an optional description of the global.</p>
+<p id="c16-para-0010">The only parameter required for this function is <code>$option</code>, which is described as the option name. Finally, the return value is <code>boolean</code>; <code>True</code> if successful and <code>False</code> on failure.</p>
+<p><span epub:type="pagebreak" id="Page_417" role="doc-pagebreak" title="417"/>Another important tag that may exist within the inline documentation is the <code>@deprecated</code> tag. A deprecated function in WordPress is a function that should no longer be used. Typically, if a function is <code>@deprecated</code>, a new function will exist that replaces it. Let's look at an example of the <code>@deprecated</code> tag for the <code>get_the_author_description()</code> function.</p>
+<pre id="c16-code-0003"><code>/**</code>
+<code> * Retrieve the description of the author of the current post.</code>
+<code> *</code>
+<code> * @since 1.5.0</code>
+<code> * @deprecated 2.8.0 Use get_the_author_meta()</code>
+<code> * @see get_the_author_meta()</code>
+<code> *</code>
+<code> * @return string The author's description.</code>
+<code> */</code>
+<code>function get_the_author_description() {</code></pre>
+<p id="c16-para-0012">As you can see, the <code>@deprecated</code> tag exists within the inline documentation. In this example, the appropriate new function to use is the <code>get_the_author_meta()</code> function. The deprecated function was added to WordPress in 1.5.0 and deprecated in the 2.8.0 release. This is especially important information to verify that your plugin is using the most up‐to‐date functions within the WordPress core software.</p>
+<p id="c16-para-0013">For more information on the PHP Documentation Standards, visit the WordPress Handbook section at <code><a href="https://make.wordpress.org/core/handbook/best-practices/inline-documentation-standards/php">https://make.wordpress.org/core/handbook/best-practices/inline-documentation-standards/php</a></code>.</p>
+</section>
+<section><span id="c16-sec-0004"/>
+<h3 id="head-3-255">JavaScript Inline Documentation</h3>
+<p id="c16-para-0014">As with PHP, JavaScript files also include templated code documentation. WordPress follows the JSDoc 3 standard for inline JavaScript documentation. The format of the JSDoc 3 standard is similar to the WordPress PHP format, but there are some slight differences. To learn more about WordPress commenting in JavaScript, visit the handbook at <code><a href="https://make.wordpress.org/core/handbook/best-practices/inline-documentation-standards/javascript">https://make.wordpress.org/core/handbook/best-practices/inline-documentation-standards/javascript</a></code>.</p>
+<p id="c16-para-0015">Inline documentation is an ongoing process. All new functions added to WordPress are documented using this process. Helping to document existing functions is a great way to dive into core contributing to WordPress.</p>
+</section>
+<section><span id="c16-sec-0005"/>
+<h3 id="head-3-256">Finding Functions</h3>
+<p id="c16-para-0016">Now that you understand how to use inline documentation to learn functions in WordPress, you need to know how to find those functions. To start, make sure you have downloaded the latest version of WordPress to your local computer. You will be searching through these code files for functions.</p>
+<p id="c16-para-0017">Every core file, excluding images, can be viewed in a text editor program. When choosing a text editor to use, make sure it supports searching within files. You can find an extensive list of text editors on the Codex at <code><a href="https://wordpress.org/support/article/glossary/#text-editor">https://wordpress.org/support/article/glossary/#text-editor</a></code>.</p>
+<p>When searching through the core WordPress files for a specific function, you need to make sure calls to that function are filtered out or you may get hundreds of results. The easiest way to do this is <span epub:type="pagebreak" id="Page_418" role="doc-pagebreak" title="418"/>to include the word <i>function</i> at the start of your search. For example, to find <code>wp_insert_post()</code>, simply search for <i>function wp_insert_post</i>.</p>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c16-para-0019"><b>NOTE</b> <i>Remember, not everything in WordPress is a function. If you don't get any results, remove the word function from your search. Also remember to search all files (*.*) and not just</i> <code>.txt</code> <i>files, which many text editors default to.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+</section>
+<section><span id="c16-sec-0007"/>
+<h3 id="head-3-257">Common Core Files</h3>
+<p id="c16-para-0020">Many of the functions you use in your plugins are located in specific core files. Exploring these files is a great way to find new and exciting functions to use in your plugins.</p>
+<p id="c16-para-0021">The <code>wp‐includes</code> folder features many of the files used for public‐side functions: that is, functions used on the public side of your website.</p>
+<section><span id="c16-sec-0008"/>
+<h4 id="head-4-134">formatting.php</h4>
+<p>The <code>formatting.php</code> file contains all WordPress API formatting functions, such as the following:</p>
+<ul class="check" id="c16-list-0002">
+<li id="c16-li-0007"><code>esc_*()</code>: Includes all escaping functions in this file</li>
+<li id="c16-li-0008"><code>is_email()</code>: Verifies that an email address is valid</li>
+<li id="c16-li-0009"><code>wp_strip_all_tags()</code>: Strips all HTML tags, including script and style, from a string</li>
+<li id="c16-li-0010"><code>get_url_in_content()</code>: Extracts and returns the first URL found in a text string</li>
+</ul>
+</section>
+<section><span id="c16-sec-0009"/>
+<h4 id="head-4-135">functions.php</h4>
+<p>The <code>functions.php</code> file contains the main WordPress API functions. Plugins, themes, and the WordPress Core use these functions, for example:</p>
+<ul class="check" id="c16-list-0003">
+<li id="c16-li-0011">
+<code>*_option()</code>: Adds, updates, deletes, and retrieves options</li>
+<li id="c16-li-0012">
+<code>current_time()</code>: Retrieves the current time based on the time zone set in WordPress</li>
+<li id="c16-li-0013">
+<code>wp_nonce:*()</code>: Creates nonce values for forms and URLs</li>
+<li id="c16-li-0014">
+<code>wp_upload_dir()</code>: Retrieves array containing the current upload directory's path and URL</li>
+<li id="c16-li-0015">
+<code>is_wp_version_compatible()</code>: Checks compatibility with the current version of WordPress</li>
+<li id="c16-li-0016">
+<code>is_php_version_compatible()</code>: Checks compatibility with the current version of PHP</li>
+</ul>
+</section> <span epub:type="pagebreak" id="Page_419" role="doc-pagebreak" title="419"/>
+<section><span id="c16-sec-0010"/>
+<h4 id="head-4-136">pluggable.php</h4>
+<p>The <code>pluggable.php</code> file contains core functions that you can redefine in a plugin. This file is full of useful functions for your plugins, for example:</p>
+<ul class="check" id="c16-list-0004">
+<li id="c16-li-0017">
+<code>get_userdata()</code>: Retrieves all user data from the specified user ID</li>
+<li id="c16-li-0018">
+<code>wp_get_current_user()</code>: Retrieves user data for the currently logged‐in user</li>
+<li id="c16-li-0019">
+<code>get_avatar()</code>: Retrieves a user's avatar</li>
+<li id="c16-li-0020">
+<code>wp_mail</code>: Is the main function for sending email in WordPress</li>
+<li id="c16-li-0021">
+<code>wp_redirect()</code>: Redirects to another page</li>
+<li id="c16-li-0022">
+<code>wp_rand()</code>: Generates a random number</li>
+</ul>
+</section>
+<section><span id="c16-sec-0011"/>
+<h4 id="head-4-137">plugin.php</h4>
+<p>The <code>plugin.php</code> file contains the WordPress Plugin API functions, such as the following:</p>
+<ul class="check" id="c16-list-0005">
+<li id="c16-li-0023">
+<code>add_action()</code>: Executes this hook at a defined point in the execution of WordPress</li>
+<li id="c16-li-0024">
+<code>add_filter()</code>: Uses this hook to filter prior to saving in the database or displaying on the screen</li>
+<li id="c16-li-0025">
+<code>plugin_dir_*()</code>: Functions to determine a plugin's path and URL</li>
+<li id="c16-li-0026">
+<code>register_activation_hook()</code>: Is called when a plugin is activated</li>
+<li id="c16-li-0027">
+<code>register_deactivation_hook()</code>: Is called when a plugin is deactivated</li>
+<li id="c16-li-0028">
+<code>register_uninstall_hook()</code>: Is called when a plugin is uninstalled and <code>uninstall.php</code> does not exist in the plugin directory</li>
+</ul>
+</section>
+<section><span id="c16-sec-0012"/>
+<h4 id="head-4-138">post.php</h4>
+<p>The <code>post.php</code> file contains the functions used for posts in WordPress, as follows:</p>
+<ul class="check" id="c16-list-0006">
+<li id="c16-li-0029">
+<code>wp_*_post()</code>: Functions for creating, updating, and deleting posts</li>
+<li id="c16-li-0030">
+<code>get_posts()</code>: Returns a list of posts based on parameters specified</li>
+<li id="c16-li-0031">
+<code>get_pages()</code>: Returns a list of pages based on parameters specified</li>
+<li id="c16-li-0032">
+<code>*_post_meta()</code>: Functions to create, update, delete, and retrieve post metadata</li>
+<li id="c16-li-0033">
+<code>register_post_type()</code>: Registers custom post types in WordPress</li>
+<li id="c16-li-0034">
+<code>get_post_types()</code>: Retrieves a list of all registered post types</li>
+<li id="c16-li-0035">
+<code>set_post_thumbnail()</code>: Sets the post thumbnail (featured image) for a specific post</li>
+<li id="c16-li-0036">
+<code>wp_delete_attachment()</code>: Trashes or deletes an attachment based on the post ID</li>
+</ul>
+</section> <span epub:type="pagebreak" id="Page_420" role="doc-pagebreak" title="420"/>
+<section><span id="c16-sec-0013"/>
+<h4 id="head-4-139">user.php</h4>
+<p>The <code>user.php</code> file contains the functions used for users in WordPress, as follows:</p>
+<ul class="check" id="c16-list-0007">
+<li id="c16-li-0037">
+<code>get_current_user_id()</code>: Returns the ID of the currently logged‐in user</li>
+<li id="c16-li-0038">
+<code>*_user_meta()</code>: Functions for adding, updating, deleting, and retrieving user metadata</li>
+<li id="c16-li-0039">
+<code>wp_*_user()</code>: Functions for adding and updating a WordPress user</li>
+</ul>
+<p id="c16-para-0028">This is just a small list of the more popular functions and their locations. Many more functions are available to use when developing your plugins. When a new version of WordPress is released, it's always fun to explore these files to see what functions have been added and are available for use in your plugins.</p>
+</section>
+</section>
+</section>
+<section><span id="c16-sec-0014"/>
+<h2 id="head-2-123">PLUGIN DEVELOPER HANDBOOK</h2>
+<p id="c16-para-0029">One of the most important online resources for plugin development is the WordPress Plugin Developer Handbook. The handbook is the official online resource for plugin development documentation and is located at <code><a href="https://developer.wordpress.org/plugins">https://developer.wordpress.org/plugins</a></code>.</p>
+<p id="c16-para-0030">The handbook is a project created and supported by the WordPress Docs Team. This team is a volunteer group of contributors that help maintain the information contained within the handbook. It's a living resource in that it's continually updated to be as accurate as possible.</p>
+<p id="c16-para-0031">This resource is packed full of information about using, and developing with, WordPress. It includes an extensive feature and function reference with some helpful tutorials and examples demonstrating the more common functions in WordPress.</p>
+<section><span id="c16-sec-0015"/>
+<h3 id="head-3-258">Navigating the Handbook</h3>
+<p id="c16-para-0032">The Plugin Developer Handbook covers a wide range of plugin development topics. To quickly find a topic of interest, you can use the search field. There is also extensive navigation on the left with topics and subtopics covering a large variety of plugin development material.</p>
+<p id="c16-para-0033">The handbook is an exceptional resource when developing WordPress plugins. If you are interested in contributing to the handbook, reach out to the WordPress Docs Team at <code><a href="https://make.wordpress.org/docs">https://make.wordpress.org/docs</a></code>.</p>
+</section>
+<section><span id="c16-sec-0016"/>
+<h3 id="head-3-259">Code Reference</h3>
+<p id="c16-para-0034">Another invaluable tool on <code><a href="http://wordpress.org">WordPress.org</a></code> for plugin developers is the Code Reference. The Code Reference is a detailed handbook of WordPress functions, classes, methods, and hooks. You can easily search using the search field and filter the results by the type of item you are looking for.</p>
+<p id="c16-para-0035">The Code Reference is largely generated using the inline comments that we reviewed earlier in this chapter. Let's look at the <code>add_option()</code> function as an example: <code><a href="https://developer.wordpress.org/reference/functions/add_option">https://developer.wordpress.org/reference/functions/add_option</a></code>.</p>
+<p id="c16-para-0036"><span epub:type="pagebreak" id="Page_421" role="doc-pagebreak" title="421"/>As shown in <a href="#c16-fig-0001" id="R_c16-fig-0001">Figure 16‐1</a>, the top of the code reference page shows the function with all the available parameters. Next is a detailed description of exactly what the function does, in this case creating a new option value in the database. The parameters are then listed with each parameter type, whether it is required or not, a short description explaining the parameter, and the default value.</p>
+<figure> <img alt="Illustration of the top of the code reference page displaying the add_option () function with all the available parameters." class="center" src="images/c16f001.png"/>
+<figcaption>
+<p><span class="figureLabel"><a href="#R_c16-fig-0001" id="c16-fig-0001" role="doc-backlink"><b>FIGURE 16‐1</b></a>:</span> Function with parameters</p>
+</figcaption>
+</figure>
+<p id="c16-para-0037">Next the return value is shown, if one exists. The source file is identified, so you know where the function is defined, in this case <code>wp‐includes/option.php</code> as well as the code defining the function. Next we have the changelog, which identifies what version of WordPress introduced this function. The related section shows “Uses” and “Used by” functions. The final section is the “User Contributed Notes” section. This is the one area where a user can log in and submit example code and notes to expand the entry. As you can see, this visual resource may be an easier way to digest the information that exists within the WordPress Core software.</p>
+<p id="c16-para-0038">Visit the Code Reference at <code><a href="https://developer.wordpress.org/reference">https://developer.wordpress.org/reference</a></code>.</p>
+</section>
+</section>
+<section><span id="c16-sec-0017"/>
+<h2 id="head-2-124">CODEX</h2>
+<p id="c16-para-0039">Another important resource, yet slightly older, is the WordPress Codex. The Codex is an online wiki for WordPress documentation and is located at <code><a href="https://codex.wordpress.org">https://codex.wordpress.org</a></code>.</p>
+<p id="c16-para-0040">The Codex is packed full of information about using, and developing with, WordPress. It includes an extensive function reference with some helpful tutorials and examples demonstrating the more common functions in WordPress.</p>
+<section><span id="c16-sec-0018"/>
+<h3 id="head-3-260">Searching the Codex</h3>
+<p id="c16-para-0041">You can search the Codex in a few different ways. The most common way is to use the Codex search located at <code><a href="https://wordpress.org/search">https://wordpress.org/search</a></code> or to enter your search terms in the search box located in the header of <code><a href="http://wordpress.org">WordPress.org</a></code>. The default search for the Codex is everything, but you can also search the Support Forums, Developer Documentation, or Support Docs, as shown in <a href="#c16-fig-0002" id="R_c16-fig-0002">Figure 16‐2</a>.</p>
+<figure> <img alt="Screenshot of the default search page displaying the search options such as the Support Forums, Developer Documentation, or Support Docs." class="center" src="images/c16f002.png"/>
+<figcaption>
+<p><span class="figureLabel"><a href="#R_c16-fig-0002" id="c16-fig-0002" role="doc-backlink"><b>FIGURE 16‐2</b></a>:</span> Codex search options</p>
+</figcaption>
+</figure>
+<p id="c16-para-0042"><span epub:type="pagebreak" id="Page_422" role="doc-pagebreak" title="422"/>The Codex also features an extensive glossary. This can help you become familiar with terms used in the Codex, as well as in WordPress. You can access the glossary at <code><a href="https://wordpress.org/support/article/glossary">https://wordpress.org/support/article/glossary</a></code>.</p>
+<p id="c16-para-0043">The Codex home page also features an index of articles organized by topic. The articles are ordered by level of difficulty, with an article specific to the latest version of WordPress near the top. This article details new features, functions, changes, and so on, in the latest version of WordPress. It's always helpful to read this article to become familiarized with any changes to functions and methods for developing plugins in WordPress.</p>
+</section>
+<section><span id="c16-sec-0019"/>
+<h3 id="head-3-261">Function Reference</h3>
+<p id="c16-para-0044">One big benefit of the Codex is the function reference section located at <code><a href="https://codex.wordpress.org/Function_Reference">https://codex.wordpress.org/Function_Reference</a></code>. This section lists all functions in the Codex for the more popular WordPress API functions. This page is a must‐bookmark for any WordPress plugin developer.</p>
+<p>Each individual function reference page contains a description of the function, basic usage example, parameters required for the function, and return values. Think of these function reference pages as quick and easily readable inline documentation on a function. Most function pages also feature an example, or more, demonstrating practical uses of that particular function.</p>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c16-para-0046"><b>NOTE</b> <i>The Codex is a great resource, but by no means is guaranteed to be accurate or up‐to‐date. Remember, the WordPress Core is the only resource that is always 100 percent up‐to‐date.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+</section>
+</section>
+<section><span id="c16-sec-0021"/>
+<h2 id="head-2-125">TOOL WEBSITES</h2>
+<p id="c16-para-0047">Many different websites are available to help in researching and understanding specific functionality in WordPress. These sites can help as new versions of WordPress are released with new functionality that can be used in your plugins.</p>
+<section><span id="c16-sec-0022"/>
+<h3 id="head-3-262">PHPXref </h3>
+<p id="c16-para-0048">PHPXref is a cross‐referencing documentation generator. Quite simply, it is a developer tool that can scan a project directory and translate the files processed into readable cross‐referenced HTML files. It automatically processes PHPDoc commenting to produce documentation for the functions included.</p>
+<p id="c16-para-0049">An online hosted version of PHPXref is also available, which is more specifically for WordPress. The online version is located at <code><a href="https://phpxref.ftwr.co.uk/wordpress">https://phpxref.ftwr.co.uk/wordpress</a></code>.</p>
+<p id="c16-para-0050">Visiting the WordPress PHPXref site, you'll be confronted with what looks like a Windows Explorer layout, as shown in <a href="#c16-fig-0003" id="R_c16-fig-0003">Figure 16‐3</a>.</p>
+<figure> <img alt="Screenshot of a Windows Explorer layout of the WordPress PHPXref site displaying the documentation of cross-referenced HTML files." class="center" src="images/c16f003.png"/>
+<figcaption>
+<p><span class="figureLabel"><a href="#R_c16-fig-0003" id="c16-fig-0003" role="doc-backlink"><b>FIGURE 16‐3</b></a>:</span> WordPress PHPXref</p>
+</figcaption>
+</figure>
+<p id="c16-para-0051"><span epub:type="pagebreak" id="Page_423" role="doc-pagebreak" title="423"/>As you can see, the standard WordPress folder displays on the left with the core subdirectories and root files listed. As an example, click into the <code>wp‐includes</code> directory and click the <code>plugin.php</code> file. Clicking this link brings up a summary view of the current file selected, in this case <code>plugin.php</code>. This summary view has useful information including a list of every function in the file, as shown in <a href="#c16-fig-0004" id="R_c16-fig-0004">Figure 16‐4</a>.</p>
+<figure> <img alt="Screenshot summarizing the function list that defines 28 functions on clicking the wp-includes directory and the plugin.php file." class="center" src="images/c16f004.png"/>
+<figcaption>
+<p><span class="figureLabel"><a href="#R_c16-fig-0004" id="c16-fig-0004" role="doc-backlink"><b>FIGURE 16‐4</b></a>:</span> Function list</p>
+</figcaption>
+</figure>
+<p id="c16-para-0052">Getting a top‐level glance at all functions in a WordPress core file is a great way to find new functions and even locate existing functions for reference. Clicking any listed function takes you to the section of the page detailing the usage of the function. This information is extracted from the inline documentation saved in the WordPress Core file. If the function is not documented in WordPress, this section will be empty. You can also easily view the source of any file by clicking the Source View link near the header of the page.</p>
+<p id="c16-para-0053">It's easy to see how useful the WordPress PHPXref site is for a developer. This is another required tool to add to your resource arsenal.</p>
+</section>
+<section><span id="c16-sec-0023"/>
+<h3 id="head-3-263">Hooks Database</h3>
+<p id="c16-para-0054">The WordPress hooks database, which was created and is supported by Adam Brown, is the essential resource for discovering hooks in WordPress. Adam built a system that digs through all WordPress core files and extracts every action and filter hook that exists in WordPress. He has been indexing these values since WordPress 1.2.1 and updates the hooks database with each new major version of WordPress.</p>
+<p id="c16-para-0055"><span epub:type="pagebreak" id="Page_424" role="doc-pagebreak" title="424"/>One of the best features of the hooks database is you can view all new hooks added in each version of WordPress. Hooks are one of the most powerful features that you can use when creating plugins in WordPress. Clicking any hook name produces a hook detail screen showing where the hook is defined in the WordPress Core code.</p>
+<p id="c16-para-0056">To visit the hooks database, visit <code><a href="https://adambrown.info/p/wp_hooks">https://adambrown.info/p/wp_hooks</a></code>.</p>
+</section>
+</section>
+<section><span id="c16-sec-0024"/>
+<h2 id="head-2-126">COMMUNITY RESOURCES</h2>
+<p id="c16-para-0057">There are also many different community resources available to help with WordPress development. These resources can help you expand your knowledge of plugin development, troubleshoot plugin issues, and work with new features in WordPress.</p>
+<section><span id="c16-sec-0025"/>
+<h3 id="head-3-264">Make WordPress</h3>
+<p>The Make WordPress section of <code><a href="http://wordpress.org">WordPress.org</a></code> is a collection of websites and team groups dedicated to contributing to different parts of the WordPress project. You can view all teams on the official website at <code><a href="https://make.wordpress.org">https://make.wordpress.org</a></code>. These are important WordPress teams for plugin developers to follow:</p>
+<ul class="check" id="c16-list-0008">
+<li id="c16-li-0040"><b>Core:</b> This is the core team that creates the WordPress software. If you are interested in contributing to the core development of WordPress, or just want to stay in the loop on active discussions, this is the team for you.</li>
+<li id="c16-li-0041"><b>Design:</b> The team is dedicated to designing and developing the user interface of WordPress. This is the perfect team for designers and user experience (UX)–focused users.</li>
+<li id="c16-li-0042"><b>Accessibility:</b> Accessibility is an extremely important part of all website development. This team focuses on making WordPress accessible to everyone on the Internet.</li>
+<li id="c16-li-0043"><b>Polyglots:</b> WordPress is used by millions of websites around the globe. This team focuses on translating WordPress into as many languages as possible.</li>
+<li id="c16-li-0044"><b>Plugins:</b> The plugin review team is tasked as the gatekeepers for all plugins released in the official WordPress Plugin Directory. This team is especially important to keep up‐to‐date on development, security, and guidelines for building and releasing plugins.</li>
+<li id="c16-li-0045"><b>Documentation:</b> A critical component to all software projects is good documentation. This is the WordPress team dedicated to that effort.</li>
+</ul>
+<p id="c16-para-0059">As you can see, there are many different teams dedicated to the growth and success of the WordPress project. The teams consist largely of volunteers who help coordinate and run project initiatives. You can view an aggregated list of team meetings at <code><a href="https://make.wordpress.org/meetings">https://make.wordpress.org/meetings</a></code>.</p>
+</section>
+<section><span id="c16-sec-0026"/>
+<h3 id="head-3-265">Support Forums</h3>
+<p id="c16-para-0060">WordPress.org features a large support forum for topics ranging from using WordPress to plugin development. You can visit the support forums at <code><a href="https://wordpress.org/support">https://wordpress.org/support</a></code>.</p>
+<p><span epub:type="pagebreak" id="Page_425" role="doc-pagebreak" title="425"/>Multiple forum sections can help expand your knowledge on plugin development and can support any public plugins you have released. The following are the forum sections specific to plugins:</p>
+<ul class="check" id="c16-list-0009">
+<li id="c16-li-0046"><code><a href="https://wordpress.org/support/forum/wp-advanced">https://wordpress.org/support/forum/wp-advanced</a></code>: Discussions are more advanced and complex than usual.</li>
+<li id="c16-li-0047"><code><a href="https://wordpress.org/support/forum/multisite">https://wordpress.org/support/forum/multisite</a></code>: Anything and everything regarding the Multisite feature.</li>
+<li id="c16-li-0048"><code><a href="https://wordpress.org/support/forum/plugins-and-hacks">https://wordpress.org/support/forum/plugins-and-hacks</a></code>: Plugin support questions. If you release a plugin to the Plugin Directory, users can submit support issues specific to your plugin.</li>
+</ul>
+</section>
+<section><span id="c16-sec-0027"/>
+<h3 id="head-3-266">WordPress Slack</h3>
+<p>Often it's nice to have a live conversation when seeking help for plugins or about WordPress development. WordPress uses Slack for live chat and has a number of active chat rooms or channels. To join the WordPress Slack Workspace, you need to follow the instructions at <code><a href="https://make.wordpress.org/chat">https://make.wordpress.org/chat</a></code>.</p>
+<ul class="check" id="c16-list-0010">
+<li id="c16-li-0049"><b>#core:</b> This is the main channel for WordPress Core discussions. Room conversations focus primarily on the development of the WordPress software and the management of the <a href="http://WordPress.org">WordPress.org</a> systems. This room is not for general WordPress discussions, but rather specific to core development or bugs and issues found within the core. Most of the core WordPress developers and contributors are in this room and willing to help you.</li>
+<li id="c16-li-0050"><b>#pluginreview:</b> This channel is dedicated to the discussion of technical reviews on plugins submitted to the WordPress Plugin Directory on <a href="http://Wordpress.org">WordPress.org</a>. This is a great place to chat with the Plugin Review Team regarding publishing your plugin on <a href="http://Wordpress.org">WordPress.org</a>.</li>
+</ul>
+<p id="c16-para-0063">These Slack channels are an awesome resource for real‐time help when developing plugins in WordPress. Many WordPress experts hang out in these rooms and enjoy helping others learn WordPress.</p>
+</section>
+<section><span id="c16-sec-0028"/>
+<h3 id="head-3-267">WordPress Development Updates</h3>
+<p id="c16-para-0064">When developing plugins, and releasing to the public, you need to stay current on new features and functionality coming in the new version of WordPress. This can help you verify not only if your plugin is compatible with the latest version but also what new features your plugins can take advantage of. One of the best ways to track WordPress development is through the Make WordPress Core site at <code><a href="https://make.wordpress.org/core">https://make.wordpress.org/core</a></code>.</p>
+<p id="c16-para-0065">The Make WordPress Core site is a blog that focuses on the core development of WordPress. You can also find out about the weekly developer chats that take place in the Slack channel #core. These chats discuss the current status of the upcoming WordPress version, feature debates and discussions, and much more.</p>
+</section> <span epub:type="pagebreak" id="Page_426" role="doc-pagebreak" title="426"/>
+<section><span id="c16-sec-0029"/>
+<h3 id="head-3-268">WordPress Ideas</h3>
+<p id="c16-para-0066">WordPress.org features an ideas section for creating and rating ideas for future versions of WordPress. This is actually a great resource for gathering ideas for plugins. Many of the ideas submitted could be created using a plugin. The more popular an idea is, the more popular the plugin will most likely be.</p>
+<p id="c16-para-0067">The WordPress Ideas area is at <code><a href="https://wordpress.org/ideas">https://wordpress.org/ideas</a></code>.</p>
+</section>
+<section><span id="c16-sec-0030"/>
+<h3 id="head-3-269">Community News Sites</h3>
+<p id="c16-para-0068">There are some great websites that focus on WordPress developer–related news and articles. Many of these sites feature development‐focused tutorials and tips that can be used when creating your plugins. The following sections explore useful community news sites that are available.</p>
+<section><span id="c16-sec-0031"/>
+<h4 id="head-4-140">WordPress News</h4>
+<p id="c16-para-0069">The <a href="http://Wordpress.org">WordPress.org</a> Blog, called WordPress News, is the best place to stay current on WordPress news. The blog centers around WordPress core release information but also includes other important WordPress‐related news. You can view the official blog at <code><a href="https://wordpress.org/news/">https://wordpress.org/news/</a></code> and subscribe to the feed at <code><a href="https://wordpress.org/news/feed">https://wordpress.org/news/feed</a></code>.</p>
+</section>
+<section><span id="c16-sec-0032"/>
+<h4 id="head-4-141">WordPress Planet</h4>
+<p id="c16-para-0070">WordPress Planet is a blog post aggregator located on <a href="http://Wordpress.org">WordPress.org</a>. This includes posts from WordPress core contributors and active community members. This news feed, together with the <a href="http://Wordpress.org">WordPress.org</a> Blog feed, is also featured in the WordPress Events and News Dashboard widget of every WordPress‐powered website by default.</p>
+<p id="c16-para-0071">WordPress Planet is located at <code><a href="http://planet.wordpress.org">http://planet.wordpress.org</a></code>.</p>
+</section>
+<section><span id="c16-sec-0033"/>
+<h4 id="head-4-142">Post Status</h4>
+<p id="c16-para-0072">As a premium club, Post Status is a news website dedicated to the WordPress ecosystem for professionals and enthusiasts. Post Status members are invited to a member‐only Slack Workplace that is an amazing resource when developing professional plugins for WordPress. There are multiple Slack channels available for help including #development, #javascript, and #club. These channels feature many advanced WordPress plugin developers available to help answer questions or give general guidance.</p>
+<p id="c16-para-0073">You can learn more about the Post Status Club by visiting its website at <code><a href="https://poststatus.com/">https://poststatus.com</a></code>.</p>
+</section>
+<section><span id="c16-sec-0034"/>
+<h4 id="head-4-143">Know the Code</h4>
+<p id="c16-para-0074">Know the Code provides online training courses for anyone who wants to specialize in WordPress development. With hands‐on code building labs, the goal of Know the Code is to empower every WordPress developer to learn deeply about architecture, programming fundamentals, testing, validation, code quality, and more.</p>
+<p id="c16-para-0075">You can visit Know the Code at <code><a href="https://knowthecode.io">https://knowthecode.io</a></code>.</p>
+</section> <span epub:type="pagebreak" id="Page_427" role="doc-pagebreak" title="427"/>
+<section><span id="c16-sec-0035"/>
+<h4 id="head-4-144">LinkedIn Learning</h4>
+<p id="c16-para-0076">LinkedIn Learning features some amazing online courses taught by professionals in the industry. Topics range from basic plugin development to advanced courses including actions and filters, creating editor blocks, custom workflows, building apps with the REST API, and more. Visit <code><a href="https://www.linkedin.com/learning/topics/wordpress">https://www.linkedin.com/learning/topics/wordpress</a></code> to find out more.</p>
+</section>
+<section><span id="c16-sec-0036"/>
+<h4 id="head-4-145">Twitter</h4>
+<p id="c16-para-0077">Twitter is also a great resource for following WordPress developers, contributors, and the entire community. More specifically, the Twitter account @wordpress is the official WordPress account. This is a quick and easy way to stay current with news and information about WordPress. You can also follow your favorite book authors on Twitter at @williamsba, @justintadlock, and @jjj!</p>
+</section>
+</section>
+<section><span id="c16-sec-0037"/>
+<h3 id="head-3-270">Local Events</h3>
+<p id="c16-para-0078">Another great resource is local WordPress events. When learning to create plugins in WordPress, it can help to find other enthusiastic developers near you to learn from and work with.</p>
+<p id="c16-para-0079">WordCamps are locally organized conferences covering anything and everything WordPress. Many WordCamps feature plugin‐development‐specific presentations given by some of the top plugin developers in the community. These presentations are a great way to learn new and advanced techniques to use in your plugins. To find a WordCamp near you, visit <code><a href="https://central.wordcamp.org">https://central.wordcamp.org</a></code>.</p>
+<p id="c16-para-0080">WordPress Meetups are also a great way to meet local developers in your area. Meetups generally happen more often, typically on a monthly basis, and are a local gathering of WordPress enthusiasts. Meetups are also generally smaller, more focused groups allowing for more in‐depth and personal conversations to take place. To find a local WordPress Meetup, visit <code><a href="https://www.meetup.com/pro/wordpress">https://www.meetup.com/pro/wordpress</a></code>.</p>
+</section>
+</section>
+<section><span id="c16-sec-0038"/>
+<h2 id="head-2-127">TOOLS</h2>
+<p id="c16-para-0081">When developing plugins for WordPress, you want to use specific tools to make your life much easier.</p>
+<section><span id="c16-sec-0039"/>
+<h3 id="head-3-271">Browser</h3>
+<p id="c16-para-0082">WordPress is web software; therefore, you will spend much of your time debugging plugins in your web browser. Some browsers stand above the rest when it comes to developer features. The two more popular development browsers are Firefox and Google Chrome. Both of these browsers feature development tools and can be expanded with additional tools to make debugging and troubleshooting much easier.</p>
+<p id="c16-para-0083">Firefox features powerful web development tools called the Firefox Developer Tools. These tools enable you to easily edit, debug, and monitor HTML, CSS, and even JavaScript. Firefox also supports Extensions enabling you to enhance the features in Firefox. You can learn more about Firefox Developer Tools at <code><a href="https://developer.mozilla.org/en-US/docs/Tools">https://developer.mozilla.org/en-US/docs/Tools</a></code>.</p>
+<p id="c16-para-0084"><span epub:type="pagebreak" id="Page_428" role="doc-pagebreak" title="428"/>Google Chrome is also a great development browser. Chrome features a built‐in set of tools called Chrome DevTools. These tools can enable you to edit and debug HTML, CSS, and JavaScript in real time. You can also install extensions in Chrome that add additional functionality to the browser. You can learn more about Chrome DevTools at <code><a href="https://developers.google.com/web/tools/chrome-devtools">https://developers.google.com/web/tools/chrome-devtools</a></code>.</p>
+</section>
+<section><span id="c16-sec-0040"/>
+<h3 id="head-3-272">Editor</h3>
+<p id="c16-para-0085">Creating plugins for WordPress is as simple as creating a PHP file. PHP files are actually text files with a <code>.php</code> extension. Because of this, you can develop PHP files using any basic text editor. Although text editors can certainly get the job done, they won't offer the more advanced features such as syntax highlighting, function lookup, spell‐check, and so on.</p>
+<section><span id="c16-sec-0041"/>
+<h4 id="head-4-146">NetBeans IDE </h4>
+<p id="c16-para-0086">NetBeans IDE is a popular editor that is an open source development environment that runs on Java. Because of this, it can run on any platform that supports the Java Virtual Machine including Windows, macOS, Linux, and Solaris. NetBeans supports PHP with syntax highlighting, PHP debugging using Xdebug, remote and local project development, and many more features. For more information and to download NetBeans, visit <code><a href="https://netbeans.org">https://netbeans.org</a></code>.</p>
+</section>
+<section><span id="c16-sec-0042"/>
+<h4 id="head-4-147">PhpStorm </h4>
+<p id="c16-para-0087">PhpStorm is another popular IDE that supports Mac, Windows, and Linux. A major reason this IDE is great is the direct WordPress integration support. PhpStorm also has built‐in developer tools including version control systems, support for remote deployments, database/SQL, command‐line tools, Docker, and Composer support. To learn more and download PhpStorm, visit <code><a href="https://www.jetbrains.com/phpstorm">https://www.jetbrains.com/phpstorm</a></code>.</p>
+</section>
+<section><span id="c16-sec-0043"/>
+<h4 id="head-4-148">Notepad++</h4>
+<p id="c16-para-0088">Notepad++ is a popular open source text editor that runs on Windows, macOS, and Linux. The editor is a lightweight text editor, similar to standard Notepad, but offers many features including syntax highlighting, macros and plugins, autocompletion, regular expression find and replace, and more. To download Notepad++, visit <code><a href="http://notepad-plus-plus.org">http://notepad-plus-plus.org</a></code>.</p>
+</section>
+<section><span id="c16-sec-0044"/>
+<h4 id="head-4-149">TextMate </h4>
+<p id="c16-para-0089">TextMate is a GUI text editor for macOS. It's a popular editor among developers because it features some programming‐centric features. Some of these features include nested scopes, bundles (snippet, macro, and command groupings), project management, and more. You can download TextMate at <code><a href="https://macromates.com">https://macromates.com</a></code>.</p>
+</section>
+<section><span id="c16-sec-0045"/>
+<h4 id="head-4-150">Sublime Text</h4>
+<p id="c16-para-0090">Another popular text editor is Sublime Text. One popular feature is the Goto Definition, which allows you to quickly find where a class, method, or function is defined within the WordPress code in <span epub:type="pagebreak" id="Page_429" role="doc-pagebreak" title="429"/>a single click. This is extremely handy when building plugins as you can quickly consult the core code as needed. Sublime Text is available for Mac, Windows, and Linux at <code><a href="https://www.sublimetext.com/">https://www.sublimetext.com</a></code>.</p>
+</section>
+<section><span id="c16-sec-0046"/>
+<h4 id="head-4-151">Visual Studio Code</h4>
+<p id="c16-para-0091">Developed by Microsoft, Visual Studio Code is another great popular, free, and open source option. Visual Studio Code is lightweight like Sublime Text but offers many of the same features as bigger IDEs like PhpStorm. The editor supports Windows, Mac, and Linux at <code><a href="https://code.visualstudio.com">https://code.visualstudio.com</a></code>.</p>
+</section>
+</section>
+<section><span id="c16-sec-0047"/>
+<h3 id="head-3-273">Deploying Files with FTP, SFTP, and SSH</h3>
+<p id="c16-para-0092">When developing plugins, you need to decide whether you plan to run a local instance of WordPress on your computer or use an external web server. If using an external server, you need to use some method to push your files to your server. The most popular method is using SFTP.</p>
+<p id="c16-para-0093">File Transfer Protocol (FTP) is a standard network protocol used to copy files from your computer to another computer, or a web server in this case. For FTP, FileZilla is a free, open source FTP client that works on Windows, macOS, and Linux. You can learn more about FileZilla and can download the client at <code><a href="https://filezilla-project.org">https://filezilla-project.org</a></code>.</p>
+<p id="c16-para-0094">Secure File Transfer Protocol (SFTP) is also a popular method for deploying files to a server. The major difference between FTP and SFTP is that SFTP is encrypted. This means any account info, usernames, passwords, and files you transfer are sent over an encrypted transport. Many popular FTP clients, including FileZilla, also support SFTP.</p>
+<p>Secure Shell (SSH) is a third option for transferring files to a web server. SSH is more than just a way to transfer files. For example, you can interact with MySQL using SSH. A popular SSH client is PuTTY, which runs on Windows and UNIX platforms and can be found at <code><a href="https://www.putty.org">https://www.putty.org</a></code>. Mac users can use the built‐in shell called Terminal when working with SSH.</p>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c16-para-0096"><b>WARNING</b> <i>Standard FTP is no longer a recommended approach as your credentials are passed in plain text, meaning they are not encrypted and can easily be compromised.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+</section>
+<section><span id="c16-sec-0049"/>
+<h3 id="head-3-274">phpMyAdmin </h3>
+<p id="c16-para-0097">On occasion you may need to directly work with the WordPress database. The most common method to do this is by using phpMyAdmin, which is a free tool, written in PHP, which provides a simple web interface to view and manage a MySQL database. Most web hosts have this tool installed by default.</p>
+<p>Using phpMyAdmin, you can easily view what data your plugin adds to WordPress tables. This can significantly help speed up the debug process. You can also run phpMyAdmin on your computer by downloading the software package at <code><a href="https://www.phpmyadmin.net/downloads">https://www.phpmyadmin.net/downloads</a></code>.<span epub:type="pagebreak" id="Page_430" role="doc-pagebreak" title="430"/></p>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c16-para-0099"><b>NOTE</b> <i>MySQL can also be administered through SSH; however, SSH is a command‐line interface and a bit more advanced than using the web interface of phpMyAdmin.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+</section>
+</section>
+<section><span id="c16-sec-0051"/>
+<h2 id="head-2-128">SUMMARY</h2>
+<p id="c16-para-0100">As a plugin developer, you need a solid set of tools in your developer toolbox. Every developer's toolbox is unique and customized to your tastes and server setup. Becoming comfortable with your developer tools can help you be comfortable when creating professional plugins in WordPress. If you don't have a set of preferred tools, you should ask around and see what other developers use. It's always fun to talk with other programmers to see what tools they use and recommend.</p>
+<p id="c16-para-0101">When developing, news and community websites are just as important as your tools. These sites can help you expand your knowledge on plugin development, learn about new features and proper usage of those features, and become a part of the greatest community on the Web: the WordPress Community. Code on!</p>
+</section>
+</section>
+</body>
+</html>

@@ -1,0 +1,167 @@
+{
+  "status": "IMPLEMENTED_AUTHOR_VERIFIED",
+  "summary": "Repaired RAW-AUTH-SOURCE-G1-01:preserve protocol structure and measured usage;redact generated values and printable typed errors at their boundaries.12 genuine RED→GREEN regressions;approved50 and focused17 GREEN.Independent whole SOURCE G2 remains root-owned.",
+  "source_sha": "1ed971cb04b8b3f9301d62385185131c214061fb",
+  "changed_files": [
+    "apps/prototype-description-service/scripts/eval_harness/bakeoff.py",
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_protocol_fields.py",
+    ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-SOURCE-R2-PROTOCOL-REDACTION.json",
+    ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-SOURCE-R2-PROTOCOL-REDACTION.md"
+  ],
+  "commits": [],
+  "findings": [
+    {
+      "id": "RAW-AUTH-SOURCE-G1-01",
+      "severity": "high",
+      "file": "apps/prototype-description-service/scripts/eval_harness/bakeoff.py:676",
+      "description": "Author repair preserves envelope keys/discriminators and embedded JSON syntax before caption/usage interpretation;actual string reflections and printable parser diagnostics remain redacted.",
+      "evidence": "Exact unchanged source4ba187e8 reproduces G1 public/CLI RED and all12 new persistent failures. Final source9ea9f869 passes12+50+17;all six G1 public/CLI collisions preserve22/14/36 totals against identical response bytes. Full HTTP/import/closure receipts in /tmp/raw-auth-source-r2-protocol-redaction.",
+      "fix": "Moved generated-text redaction after envelope extraction;preserved mapping keys and unchanged valid/fenced JSON;sanitized typed parser error text outside original exception handlers. Author verification only,no central closure."
+    }
+  ],
+  "tests": [
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-source-r2-protocol-redaction/scripts/environment.py",
+      "exit_code": 0,
+      "summary": "Linux acx-backend; native1ed971cb/treebe85ba59; logical35b09280 absent (nested cat-file128). Equal trees establish bytes only."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-source-r2-protocol-redaction/scripts/context.py",
+      "exit_code": 0,
+      "summary": "598 complete evidence reads; eight full Canon v0.26.2 bodies/release, four full original distillations and upstream pins verified; actual cgroup1GiB/.25CPU."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-source-r2-protocol-redaction/scripts/public_probe.py",
+      "exit_code": 1,
+      "summary": "Unchanged-source genuine RED: usage loses22/14/36;message/content/title/{ fail. Identical-response distinct-key parent succeeds. All9 clients close."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-source-r2-protocol-redaction/scripts/cli_collision.py",
+      "exit_code": 1,
+      "summary": "Unchanged-source real CLI RED:usage null/incomplete totals;message aborted;distinct-key36-token successful record. All6 clients close."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-source-r2-protocol-redaction/scripts/pytest_run.py new-red",
+      "exit_code": 1,
+      "summary": "First persistent10 cases genuinely fail at public caption/usage assertions; no setup/teardown errors;30 clients close."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-source-r2-protocol-redaction/scripts/pytest_run.py new-green",
+      "exit_code": 0,
+      "summary": "Intermediate source:all10 initial regressions pass; retained before final content-parts boundary refinement."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-source-r2-protocol-redaction/scripts/pytest_run.py approved",
+      "exit_code": 0,
+      "summary": "Intermediate source:unchanged approved50 pass; retained with full receipts."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-source-r2-protocol-redaction/scripts/pytest_run.py adjacent-final",
+      "exit_code": 0,
+      "summary": "Intermediate source:exact17 legacy pass; audit closes11 legacy clients left open by tests."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-source-r2-protocol-redaction/scripts/pytest_run.py new-complete-red",
+      "exit_code": 2,
+      "summary": "Test-authoring collection error:CLI signature omitted newly parameterized parts argument; no product execution. Failed source reconstructed and import-hash verified."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-source-r2-protocol-redaction/scripts/pytest_run.py new-complete-red2",
+      "exit_code": 1,
+      "summary": "Exact original source:all12 final persistent cases genuinely fail, including text content-parts discriminator. No setup/teardown errors;36 clients close."
+    },
+    {
+      "command": "timeout 55s .venv/bin/ruff format --no-cache apps/prototype-description-service/scripts/eval_harness/bakeoff.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_protocol_fields.py",
+      "exit_code": 0,
+      "summary": "Focused Ruff format applied only to owned source/new test."
+    },
+    {
+      "command": "timeout 55s .venv/bin/ruff check --no-cache apps/prototype-description-service/scripts/eval_harness/bakeoff.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_protocol_fields.py",
+      "exit_code": 0,
+      "summary": "Intermediate focused lint passes."
+    },
+    {
+      "command": "timeout 55s .venv/bin/ruff format --check --no-cache apps/prototype-description-service/scripts/eval_harness/bakeoff.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_protocol_fields.py",
+      "exit_code": 0,
+      "summary": "Intermediate focused format check passes."
+    },
+    {
+      "command": "timeout 55s .venv/bin/ruff format --no-cache apps/prototype-description-service/scripts/eval_harness/bakeoff.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_protocol_fields.py",
+      "exit_code": 0,
+      "summary": "Final focused Ruff format:two files unchanged."
+    },
+    {
+      "command": "timeout 55s .venv/bin/ruff check --no-cache apps/prototype-description-service/scripts/eval_harness/bakeoff.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_protocol_fields.py",
+      "exit_code": 0,
+      "summary": "Final focused Ruff check passes."
+    },
+    {
+      "command": "timeout 55s .venv/bin/ruff format --check --no-cache apps/prototype-description-service/scripts/eval_harness/bakeoff.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_protocol_fields.py",
+      "exit_code": 0,
+      "summary": "Final focused Ruff format check passes."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-source-r2-protocol-redaction/scripts/pytest_run.py new-final-green",
+      "exit_code": 0,
+      "summary": "Final source:12 passed in12.31s;matched identical response/request bytes,22/14/36 tokens,successful CLI warmup,36 clients and credential FDs close."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-source-r2-protocol-redaction/scripts/pytest_run.py approved-final",
+      "exit_code": 0,
+      "summary": "Final source:unchanged approved50 pass in31.11s;normal service config,both conftests,required pytest-timeout;37 clients close."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-source-r2-protocol-redaction/scripts/pytest_run.py adjacent-sealed",
+      "exit_code": 0,
+      "summary": "Final source:exact17 legacy pass in15.81s;17 clients created,audit finally closes11 left open by legacy tests."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-source-r2-protocol-redaction/scripts/public_probe.py",
+      "exit_code": 0,
+      "summary": "All6 G1 public collision/control cases preserve captions and measured totals;raw/escaped actual reflections scrubbed.15 exchanges,all9 clients close."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-source-r2-protocol-redaction/scripts/cli_collision_green.py",
+      "exit_code": 0,
+      "summary": "All6 G1 CLI collision/control cases succeed with warmup and22/14/36 totals;24 exchanges,12 clients close;duration-cost arithmetic unchanged."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-source-r2-protocol-redaction/scripts/file_faults.py",
+      "exit_code": 0,
+      "summary": "Five CLI file controls pass:valid/short-read parents;fstat zero-read refusal;first/post-short-read failures privately refuse before HTTP/output. Held FDs and4 clients close."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-source-r2-protocol-redaction/scripts/transport_controls.py",
+      "exit_code": 0,
+      "summary": "Eight controls/32 exchanges:typed401/403/307,three strikes,429 five attempts,configured0.2s/injected timeout,bad JSON/caption privacy;8 clients close. Corrected original G1 producer used."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-source-r2-protocol-redaction/scripts/diagnostic_controls.py",
+      "exit_code": 0,
+      "summary": "Three reflected diagnostic failures retain RemoteClientError/PassOneJSONError/ThreeSurfaceParseError without private chains;fenced and actually reflected brace controls succeed.5 clients close."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-source-r2-protocol-redaction/scripts/seal.py",
+      "exit_code": 1,
+      "summary": "Audit assertion error:expected unselected approved module in legacy import receipt. Actual source/parent imports were present;product unchanged."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-source-r2-protocol-redaction/scripts/seal.py",
+      "exit_code": 1,
+      "summary": "Audit locator error:used retained RED CLI import receipt instead of separately named GREEN receipt. Both remain immutable;product unchanged."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-source-r2-protocol-redaction/scripts/seal.py",
+      "exit_code": 0,
+      "summary": "Corrected evidence seal passes:8887 prior files unchanged,exact RED/GREEN imports,matched HTTP bodies,closure,ownership,Canon path-specific pins,final source/AST receipts."
+    }
+  ],
+  "limitations": [
+    "Logical input35b092800730f54876302722daa6d60e93ae231d is absent locally. source_sha is honest native stripped base1ed971cb04b8b3f9301d62385185131c214061fb;both requested/native trees be85ba593e3a78d733d6dc8047bcab0749899280. Supplied actual first-author/G1 logical ancestry is not inferred from equal trees.",
+    "Only four owned files changed;approved50,parent,configuration,contracts and prior artifacts remain unchanged. Root owns adoption,central disposition,all effects and independent whole SOURCE G2. No self-approval,main merge or further author dispatch.",
+    "No live MCP/graph/ONNX retrieval used. Supplied BAKERAW no_embeddings and verified MAINT gte-base-en-v1.5 reinjection are retained;three-file177-node730-edge map is baseline navigation. Full source/AST/import hashes cover changed/unindexed regions without claiming whole-project graph completeness.",
+    "Synthetic keys,zero-byte fixtures and MockTransport only;no runtime auth,socket deadline,inference or quality qualification. No installs,broad suites,model/media/GT/cloud/GPU/guest/shared-service/DB/TLS/auth changes,nested agents or foreign signals.",
+    "Private audit /tmp/raw-auth-source-r2-protocol-redaction retains reproducible scripts,snapshots,full outputs/exits,HTTP/import hashes and manifests. Both prior roots remain unchanged across8887 files;all owned clients/FDs close and command children completed. Legacy11 clients closed by audit finally. A read-only initial AGENTS discovery also traversed sibling path names and completed;no signal was issued.",
+    "Actual limits1GiB/CPU25000/100000 verified. Requested HIGH/STANDARD/1500s is supplied dispatch context,not independently attested model identity. Recorded setup/receipt errors are audit failures,not product RED. commits names the substantive source/test/report commit;later JSON pointer commit avoids self-reference."
+  ]
+}

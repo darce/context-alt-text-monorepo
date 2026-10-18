@@ -43,7 +43,22 @@ def edge(tmp_path):
     _write_executable(binary / "sudo", '#!/bin/sh\nexec "$@"\n')
     _write_executable(
         binary / "ssh",
-        '#!/bin/bash\nremote="${@: -1}"\nremote=${remote//\\/opt\\/acx-backend/$REMOTE_ROOT}\nremote=${remote//\\/etc\\/systemd\\/system/$SYSTEMD_ROOT}\nif [[ "$remote" == "bash -s" ]]; then sed "s|/opt/acx-backend|$REMOTE_ROOT|g" | bash -s; else sed "s|/etc/systemd/system|$SYSTEMD_ROOT|g" | bash -c "$remote"; fi\n',
+        r'''#!/bin/bash
+relocate_paths() {
+  # Apply the same byte-preserving, single-pass mapping to argv and stdin.
+  python3 -c 'import os,re,sys
+paths = {b"/opt/acx-backend": os.fsencode(os.environ["REMOTE_ROOT"]),
+         b"/etc/systemd/system": os.fsencode(os.environ["SYSTEMD_ROOT"])}
+pattern = rb"(?<![\w./-])(?:/opt/acx-backend|/etc/systemd/system)(?![\w.-])"
+sys.stdout.buffer.write(re.sub(pattern, lambda m: paths[m[0]], sys.stdin.buffer.read()))'
+}
+remote="$(printf '%s' "${@: -1}" | relocate_paths)"
+if [[ "$remote" == "bash -s" ]]; then
+  relocate_paths | bash -s
+else
+  relocate_paths | bash -c "$remote"
+fi
+''',
     )
     _write_executable(
         binary / "docker",
@@ -307,3 +322,65 @@ recognition_edge_finish
     assert "WorkingDirectory=/opt/acx-backend/dev-auraface" in unit
     assert " stop api worker" in unit
     assert not (env_root / "docker-compose.admin.yml").exists()
+
+
+@pytest.mark.parametrize("bounded", [False, True], ids=["bare", "native-timeout"])
+def test_ssh_relocates_stdin_and_argv_once_and_preserves_streams(edge, bounded):
+    _, remote, env = edge
+    paths = [remote / "transport.bin", remote / "systemd/transport.bin"]
+    command = "bash -s"
+    if bounded:
+        command = "sudo timeout -k 5 5 bash -s -- /opt/acx-backend/transport.bin /etc/systemd/system/transport.bin"
+    program = f'''python3 - "$@" <<'PY'
+import sys
+from pathlib import Path
+paths = [Path("/opt/acx-backend/transport.bin"), Path("/etc/systemd/system/transport.bin")]
+assert [str(p) for p in paths] == {list(map(str, paths))!r}
+assert sys.argv[1:] == {list(map(str, paths)) if bounded else []!r}
+assert Path({str(paths[0])!r}) == paths[0]
+assert "/other/opt/acx-backend" == "/other/opt/" + "acx-backend"
+assert "/opt/acx-backend-other" == "/opt/" + "acx-backend-other"
+for path in paths:
+    path.write_bytes(b"transport\\x00payload\\r\\n")
+sys.stdout.write("transport stdout\\n")
+sys.stderr.write("transport stderr\\n")
+sys.exit(37)
+PY
+'''
+    result = subprocess.run(
+        ["ssh", "-l", "deploy-test", "--", "fake-host.invalid", command],
+        input=program, text=True, capture_output=True, env=env, timeout=10,
+    )
+    assert result.returncode == 37, result.stdout + result.stderr
+    assert result.stdout == "transport stdout\n"
+    assert result.stderr == "transport stderr\n"
+    assert all(path.read_bytes() == b"transport\x00payload\r\n" for path in paths)
+    assert not Path(env["DOCKER_RECORD"]).exists()
+
+
+@pytest.mark.parametrize("present", [False, True], ids=["prior-absence", "prior-files"])
+def test_native_topology_restore_restores_bootstrap_compose_and_unit(edge, present):
+    _, remote, _ = edge
+    env_root = remote / "dev-auraface"
+    sql = env_root / "db/docker-prod-init/001-extensions.sql"
+    sql.parent.mkdir(parents=True)
+    paths = [env_root / "docker-compose.env.yml", sql, remote / "systemd/acx-dev-auraface.service"]
+    prior = [b"prior compose\r\n", b"prior bootstrap\r\n", b"prior unit\r\n"]
+    if present:
+        for path, payload in zip(paths, prior):
+            path.write_bytes(payload)
+    snapshot = run(edge, "ACX_DEPLOY_TRANSACTION_ID=transport\nprepare_runtime_topology_backups dev-auraface 0\n")
+    assert snapshot.returncode == 0, snapshot.stdout + snapshot.stderr
+    for path in paths:
+        path.write_bytes(b"candidate\n")
+    restored = run(edge, """ACX_DEPLOY_TRANSACTION_ID=transport
+fields="$(cat "$APP_ROOT/activation.journal")"
+ACX_EDGE_HANDLE="$(printf '%s\\n' "$fields" | sed -n 's/^handle=//p')"
+ACX_EDGE_ENV=dev-auraface
+restore_topology_backups dev-auraface current-only || exit $?
+recognition_edge_finish
+""")
+    assert restored.returncode == 0, restored.stdout + restored.stderr
+    for path, payload in zip(paths, prior):
+        assert path.read_bytes() == payload if present else not path.exists()
+    assert not (remote / "app/activation.journal").exists()

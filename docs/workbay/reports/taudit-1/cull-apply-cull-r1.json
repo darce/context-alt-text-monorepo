@@ -1,0 +1,20 @@
+[
+  {
+    "test": "apps/prototype-description-service/recognition/tests/api/test_correlation.py::test_correlation_id_echoes_incoming_header",
+    "verdict": "deleted",
+    "reason": "The raw-ASGI covering test also verifies a valid incoming UUIDv4 is preserved in the response header and body.",
+    "covered_by": "apps/prototype-description-service/recognition/tests/api/test_request_id.py::test_valid_v4_is_preserved_and_echoed"
+  },
+  {
+    "test": "apps/prototype-description-service/recognition/tests/deploy/test_runtime_packaging.py::test_compose_env_blob_ownership_repair_profile",
+    "verdict": "deleted",
+    "reason": "The covering contract test applies the same ownership-repair predicate to docker-compose.env.yml and docker-compose.prod.yml.",
+    "covered_by": "apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py::test_compose_env_and_prod_blob_ownership_repair_profile"
+  },
+  {
+    "test": "apps/prototype-description-service/recognition/tests/unit/test_embedding_generator.py::TestStubEmbeddingGenerator::test_respects_custom_dimension",
+    "verdict": "deleted",
+    "reason": "The covering test constructs the stub with the same configured dimension and asserts the generated embedding width.",
+    "covered_by": "apps/prototype-description-service/recognition/tests/unit/test_embedding_generator.py::TestStubEmbeddingGenerator::test_outputs_expected_dimension"
+  }
+]

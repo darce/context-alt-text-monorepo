@@ -1,0 +1,49 @@
+{
+  "lane": "a1h-billops2",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_billing_namespace.py recognition/tests/unit/test_app1_billing_namespace_migrate.py recognition/tests/unit/test_app1_billing_reconcile_recovery.py recognition/tests/unit/test_app1_billing_reconcile_retry_fixwave.py",
+      "result": "not_run",
+      "detail": "uv failed before test collection while removing the lane alembic entry: Read-only file system (os error 30). Retried with --no-sync as instructed."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_billing_namespace.py recognition/tests/unit/test_app1_billing_namespace_migrate.py recognition/tests/unit/test_app1_billing_reconcile_recovery.py recognition/tests/unit/test_app1_billing_reconcile_retry_fixwave.py",
+      "result": "pass",
+      "detail": "52 passed in 1.91s."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q recognition/tests/integration/test_app1_billing_namespace_migrate_postgres.py",
+      "result": "not_run",
+      "detail": "The PostgreSQL-backed integration fixture requires a database unavailable in this sandbox. Read the test cases: they cover invalid/missing mappings without mutation, collision rollback, and valid dry-run/apply idempotence."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16051,
+      "finding_id": "APP1-NAMESPACE-RV04",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/billing_namespace_migrate.py:41-61 - `_require_string` rejects non-strings and empty values; `_namespace` passes the raw seller_account through that check before returning a namespace.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_namespace_migrate.py::test_namespace_rejects_json_null_and_non_strings asserts ValueError for JSON null and non-string seller_account values."
+    },
+    {
+      "db_id": 16075,
+      "finding_id": "APP1-RECONCILE-RV06",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/billing_reconcile_retry.py:57-80 - `_build_retry_runtime` opens a DB session and constructs `BillingReconciliationRepository(session)` without invoking the provider runtime; `run` closes it at :151-153.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_reconcile_retry_fixwave.py::test_missing_provider_env_does_not_block_retry_or_construct_provider asserts successful apply with provider configuration absent, no provider construction, and session close."
+    },
+    {
+      "db_id": 16052,
+      "finding_id": "APP1-NAMESPACE-RV05",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/billing_namespace_migrate.py:247-249 - both `_plan_inbox` and `_plan_projection` run before `if apply`; row, namespace, tenant, and collision checks therefore run during dry-run, while writes are gated below.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_namespace_migrate.py::test_dry_run_validates_missing_row_instead_of_counting and apps/prototype-description-service/recognition/tests/unit/test_app1_billing_namespace_migrate.py::test_dry_run_validates_tenant_mismatch_and_collision_without_write assert dry-run errors and no updates."
+    }
+  ],
+  "new_findings": [],
+  "summary": "All three listed fixes hold and have guard assertions; the lane unit suite passes 52 tests after using --no-sync for the read-only environment. The PostgreSQL migration integration cases were reviewed but not run because this sandbox has no database. No new findings were identified."
+}

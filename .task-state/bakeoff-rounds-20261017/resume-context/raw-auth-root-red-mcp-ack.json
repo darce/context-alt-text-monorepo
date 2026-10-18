@@ -1,0 +1,51 @@
+{
+  "test_result_id": 5024,
+  "ack": {
+    "content": [],
+    "structuredContent": {
+      "ok": true,
+      "schema_version": 2,
+      "tool": "record_decision",
+      "scope": {
+        "task_ref": "BAKERAW-AUTH-1"
+      },
+      "data": {
+        "idempotent": false,
+        "detail": "identity",
+        "decision": {
+          "id": 18018,
+          "decision": "ACK independent remote expected raw-auth public-capability RED5024; authorize initial remote LOW source from canonical8d2c24b9",
+          "task_ref": "BAKERAW-AUTH-1",
+          "session": "bakeoff-resume-20261018",
+          "branch": "main",
+          "commit_sha": "1024ff2c223770ea94a35de76fd5cc4649a57b0e",
+          "agent": "GPT-6.1 xhigh"
+        },
+        "truncation": {
+          "truncated": true,
+          "reason": "final_envelope_exceeds_budget",
+          "scoped_fetch": {
+            "tool": "get_handoff_state",
+            "arguments": {
+              "task_ref": "BAKERAW-AUTH-1",
+              "sections": "decisions_recent",
+              "detail": "full",
+              "decision_id_prefix": "ACK independent remote expected raw-auth public-capability RED5024; authorize initial remote LOW source from canonical8d2c24b9"
+            }
+          }
+        }
+      },
+      "mutation": {
+        "entity": "decision",
+        "operation": "insert",
+        "affected_ids": [
+          18018
+        ],
+        "task_revision": 0
+      },
+      "task_ref": "BAKERAW-AUTH-1"
+    },
+    "isError": false
+  },
+  "scope": "expected public capability RED; not future behavior GREEN; actual canonical baseline must be rerun"
+}

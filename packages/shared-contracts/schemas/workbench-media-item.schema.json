@@ -1,0 +1,87 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/workbench-media-item.schema.json",
+  "title": "Workbench Media Item",
+  "description": "A media item in the workbench UI.",
+  "type": "object",
+  "required": [
+    "id",
+    "title",
+    "status",
+    "thumbnailUrl",
+    "altText",
+    "isDecorative",
+    "mimeType",
+    "editUrl",
+    "updatedAt",
+    "dimensions",
+    "tags"
+  ],
+  "properties": {
+    "id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "WordPress attachment ID."
+    },
+    "title": {
+      "type": "string",
+      "description": "Media item title."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["missing", "complete"],
+      "description": "Alt text status."
+    },
+    "thumbnailUrl": {
+      "type": ["string", "null"],
+      "format": "uri",
+      "description": "URL to thumbnail image."
+    },
+    "altText": {
+      "type": ["string", "null"],
+      "description": "Current alt text (if any)."
+    },
+    "isDecorative": {
+      "type": "boolean",
+      "description": "True when the server holds the durable empty-alt decorative marker (acx_alt_decorative=1). Distinct from altText===null, which means never described. Emitted explicitly by the list producer; never inferred from altText alone."
+    },
+    "mimeType": {
+      "type": "string",
+      "description": "MIME type (e.g., 'image/jpeg')."
+    },
+    "editUrl": {
+      "type": ["string", "null"],
+      "format": "uri",
+      "description": "URL to edit in WordPress admin."
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Last update timestamp (ISO 8601)."
+    },
+    "dimensions": {
+      "type": ["object", "null"],
+      "description": "Image dimensions.",
+      "required": ["width", "height"],
+      "properties": {
+        "width": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Image width in pixels."
+        },
+        "height": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Image height in pixels."
+        }
+      }
+    },
+    "tags": {
+      "type": "array",
+      "description": "Tags assigned to the media item.",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

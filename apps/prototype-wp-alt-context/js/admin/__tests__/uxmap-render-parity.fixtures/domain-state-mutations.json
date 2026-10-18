@@ -1,0 +1,38 @@
+[
+  {
+    "name": "unquoted",
+    "row": "| unavailable | `default` |"
+  },
+  {
+    "name": "indented",
+    "row": "  | `unavailable` | `default` |"
+  },
+  {
+    "name": "unquoted canonical",
+    "row": "| `unavailable` | default |"
+  },
+  {
+    "name": "extra column",
+    "row": "| `unavailable` | `default` | extra |"
+  },
+  {
+    "name": "missing column",
+    "row": "| `unavailable` |"
+  },
+  {
+    "name": "empty domain",
+    "row": "| `` | `default` |"
+  },
+  {
+    "name": "conflicting",
+    "row": "| `unavailable` | `default` |"
+  },
+  {
+    "name": "identical",
+    "row": "| `unavailable` | `offline` |"
+  },
+  {
+    "name": "overlapping",
+    "row": "| `other`, `unavailable` | `default` |"
+  }
+]

@@ -1,0 +1,119 @@
+{
+  "status": "completed",
+  "summary": "DG1-04 and DG1-05 confirmed and fixed within B2 ownership. Committed behavioral RED (31 failed, 44 passed), then GREEN (75 passed), with 4/4 scoped source mutations detected. Cosine normalization is scale-safe and out-of-float64 JSON integers become SemanticSelectionError. Versioned v2 protected_scope explicitly distinguishes global policies from query/image-local records; all applicable records are required and cross-image records rejected. Synthetic arithmetic/contract evidence only; no empirical model-quality claim.",
+  "changed_files": [
+    "apps/prototype-description-service/scripts/eval_harness/semantic_selection_eval.py",
+    "apps/prototype-description-service/scene/tests/test_semantic_selection_eval.py",
+    "apps/prototype-description-service/scripts/eval_harness/semantic_selection_example.json",
+    ".task-state/descbake-1/reports/B2-A2.json"
+  ],
+  "commits": [
+    "27f30560f1ab903e0a5f230c0c8c337e68cb58bb",
+    "8eec80fb2aaf096f37fe3f758fcdfc0f802a5514"
+  ],
+  "tests": [
+    {
+      "command": "HISTORICAL, NOT RERUN: cd apps/prototype-description-service && PYTHONDONTWRITEBYTECODE=1 /tmp/descbake-b2-venv/bin/python -m pytest --noconftest -p no:cacheprovider -o required_plugins= scene/tests/test_semantic_selection_eval.py -q",
+      "exit_code": 2,
+      "summary": "Retained from B2.json tests[0]: collection ImportError importing absent semantic_selection_eval; 0 behavioral tests executed. Original prediction was ModuleNotFoundError. This is not causal behavioral RED proof and is not acceptance evidence for this dispatch."
+    },
+    {
+      "command": "cd apps/prototype-description-service && timeout 300s env PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../../.venv/bin/python -m pytest --noconftest -o required_plugins= -p no:cacheprovider --basetemp=/tmp/descbake-b2-a2-red scene/tests/test_semantic_selection_eval.py -q --tb=short",
+      "exit_code": 1,
+      "summary": "Before implementation: 31 failed, 44 passed, 3 configuration warnings, 5.29s. 7/9 scale pairs failed with AssertionError: cosine rank changed with scale; both oversized integer owners leaked OverflowError: int too large to convert to float; CLI exposed Traceback; missing protected_scope produced Failed: DID NOT RAISE SemanticSelectionError. Explicit new scope cases failed at extra_forbidden schema validation (separately classified, not claimed as runtime branch proof). Predicted messages were observed. RED tests committed in 27f3056; implementation/fixture still matched source at RED."
+    },
+    {
+      "command": "cd apps/prototype-description-service && timeout 300s env PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../../.venv/bin/python -m pytest --noconftest -o required_plugins= -p no:cacheprovider --basetemp=/tmp/descbake-b2-a2-green scene/tests/test_semantic_selection_eval.py -q --tb=short",
+      "exit_code": 0,
+      "summary": "First GREEN: 75 passed, 3 configuration warnings, 4.02s. Includes actual DescribeImageEnvelope/ContextPack validated and serialized shapes, two image-specific identity/policy/review groups, explicit global policy, both pack names, cross-image rejections, suppression rejections, invalid/duplicate/unknown scopes, scale invariance, finite score serialization, typed conversion failures and offline CLI."
+    },
+    {
+      "command": "cd apps/prototype-description-service && env PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../../.venv/bin/python -m pytest --noconftest -o required_plugins= -p no:cacheprovider --basetemp=/tmp/descbake-b2-a2-mutant-legacy_unit scene/tests/test_semantic_selection_eval.py -k test_cosine_scores_and_ranks_are_scale_invariant -q --tb=short",
+      "exit_code": 1,
+      "summary": "Restored original math.hypot-before-scaling _unit: 7 failed, 2 passed, 66 deselected, 3 warnings, 1.30s. Ordinary/ordinary and one benign mixed-scale control passed; no threshold or fixture was changed to manufacture failures. This child command ran under the mutation driver outer timeout300s and subprocess timeout60s; command is the equivalent shell form of the recorded subprocess argv/env."
+    },
+    {
+      "command": "cd apps/prototype-description-service && env PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../../.venv/bin/python -m pytest --noconftest -o required_plugins= -p no:cacheprovider --basetemp=/tmp/descbake-b2-a2-mutant-allow_cross_image scene/tests/test_semantic_selection_eval.py -k test_cross_image_protected_records_are_rejected -q --tb=short",
+      "exit_code": 1,
+      "summary": "Disabled only out-of-scope protected selection rejection under the implemented v2 schema: 6 failed, 69 deselected, 3 warnings, 1.20s. DID NOT RAISE in actual runtime branches, proving cross-image rejection tests are not merely schema failures. This child command ran under the mutation driver outer timeout300s and subprocess timeout60s; command is the equivalent shell form of the recorded subprocess argv/env."
+    },
+    {
+      "command": "cd apps/prototype-description-service && env PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../../.venv/bin/python -m pytest --noconftest -o required_plugins= -p no:cacheprovider --basetemp=/tmp/descbake-b2-a2-mutant-allow_suppression scene/tests/test_semantic_selection_eval.py -k test_applicable_protected_records_cannot_be_suppressed -q --tb=short",
+      "exit_code": 1,
+      "summary": "Disabled only suppression rejection: 8 failed, 67 deselected, 3 warnings, 1.31s. Tests detect omitted identity, local withhold policy, review record, and global policy in both packs. This child command ran under the mutation driver outer timeout300s and subprocess timeout60s; command is the equivalent shell form of the recorded subprocess argv/env."
+    },
+    {
+      "command": "cd apps/prototype-description-service && env PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../../.venv/bin/python -m pytest --noconftest -o required_plugins= -p no:cacheprovider --basetemp=/tmp/descbake-b2-a2-mutant-allow_unknown_scope scene/tests/test_semantic_selection_eval.py -k test_protected_records_require_explicit_applicability -q --tb=short",
+      "exit_code": 1,
+      "summary": "Disabled only missing-scope rejection: 1 failed, 74 deselected, 3 warnings, 1.03s. Missing scope cannot silently become a global record or an unvalidated record. This child command ran under the mutation driver outer timeout300s and subprocess timeout60s; command is the equivalent shell form of the recorded subprocess argv/env."
+    },
+    {
+      "command": "cd apps/prototype-description-service && timeout 300s env PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../../.venv/bin/python -m pytest --noconftest -o required_plugins= -p no:cacheprovider --basetemp=/tmp/descbake-b2-a2-final scene/tests/test_semantic_selection_eval.py -q --tb=short",
+      "exit_code": 0,
+      "summary": "Final restored source: 75 passed, 3 configuration warnings, 4.09s. Only owner module tests ran, bounded by outer timeout300s. Existing synthetic known-answer top1 1/3, MRR 4/9 and frozen denominators still pass."
+    },
+    {
+      "command": "cd apps/prototype-description-service && timeout 300s env PYTHONDONTWRITEBYTECODE=1 ../../.venv/bin/python -m ruff check --no-cache scripts/eval_harness/semantic_selection_eval.py scene/tests/test_semantic_selection_eval.py",
+      "exit_code": 0,
+      "summary": "All checks passed on both owned Python files."
+    },
+    {
+      "command": "cd apps/prototype-description-service && timeout 300s env PYTHONDONTWRITEBYTECODE=1 ../../.venv/bin/python -m ruff format --check --no-cache scripts/eval_harness/semantic_selection_eval.py scene/tests/test_semantic_selection_eval.py",
+      "exit_code": 0,
+      "summary": "2 files already formatted. Initial formatting applied to the new RED tests before their commit; GREEN adjusted only the preexisting v1 report expectation and historical collection-RED docstring in that test file."
+    },
+    {
+      "command": "cd apps/prototype-description-service && ls -ld .ruff_cache ../../.ruff_cache 2>/dev/null",
+      "exit_code": 2,
+      "summary": "Auxiliary tooling inspection, not a failed lint: app Ruff cache existed; root Ruff cache did not. Both preceding Ruff commands exited 0. The cache created by owned-file formatting was subsequently removed; later checks used --no-cache."
+    },
+    {
+      "command": "timeout 300s env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python /tmp/descbake-b2-a2-validate.py",
+      "exit_code": 0,
+      "summary": "Report validates against root .schema.json (Draft202012, zero errors); authoritative source tree matches provenance; prior B2.json byte-identical to base; fixture vectors/gold/selections/encoder contracts unchanged; only four allowed paths differ; scoped RED and GREEN commit file lists and absence of author trailers checked."
+    }
+  ],
+  "findings": [
+    {
+      "id": "DG1-04",
+      "description": "Original criticism retained: finite nonzero vectors accepted under normalization=none can silently produce wrong cosine rankings because math.hypot overflows for huge finite vectors and rounds coarsely for subnormals; float(item) leaks OverflowError for 10**400.",
+      "evidence": "Source 69e73d648bcad3144a23c82dbbb8847a4fad77f1, apps/prototype-description-service/scripts/eval_harness/semantic_selection_eval.py:98 performed float(item) without conversion handling; :270-272 divided by math.hypot(*vector). Original gate observed scales 1, 1.3e308 and 5e-324 changing top1 from 1 to 0. Current RED independently reproduced 7 wrong-ranking scale pairs, two raw OverflowErrors, and a CLI traceback. GREEN apps/prototype-description-service/scripts/eval_harness/semantic_selection_eval.py:111-116 converts overflow to a field-specific ValueError, wrapped by evaluate_document at :463-466 as SemanticSelectionError; :335-341 divides by max absolute component before norm. apps/prototype-description-service/scene/tests/test_semantic_selection_eval.py:388-435 checks 3x3 independent query/candidate scales, expected scores [1, 1/sqrt(2)], rank, top1/MRR, finite JSON and both numeric owners plus CLI. Legacy-unit mutant caused 7 failures. EMB-01 https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/ml-systems.md#emb-01.",
+      "status": "confirmed_fixed",
+      "owner": "B2"
+    },
+    {
+      "id": "DG1-05",
+      "description": "Original criticism retained: every protected record was forced into every query pack without applicability scope, rejecting safe image-local packs and accepting other images' protected identities. This is an evaluator contract defect; production leakage was not exercised.",
+      "evidence": "Source 69e73d648bcad3144a23c82dbbb8847a4fad77f1, apps/prototype-description-service/scripts/eval_harness/semantic_selection_eval.py:231 built one global protected_ids list; :262-267 required it for every query. Producer apps/prototype-description-service/scene/interface_adapters/http/schemas/requests.py:74-81 carries identities/policy/review_reasons, :97 nests identity in ContextPack, and :110-116 binds the pack to one media_id. apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py:972-981 verifies image part/media_id and serializes that request's pack. Current RED missing-scope test accepted ambiguous protection (DID NOT RAISE); explicit scopes were rejected as extra inputs. GREEN apps/prototype-description-service/scripts/eval_harness/semantic_selection_eval.py:152-173 declares a discriminated global/queries scope; :270-288 requires scope and validates membership; :323-331 rejects out-of-scope records and suppressed applicable records; :435-439 reports applicable IDs. apps/prototype-description-service/scene/tests/test_semantic_selection_eval.py:438-569 imports and validates the actual producer schema, adapts two per-media packs with distinct identity/withhold/review records plus explicit global policy, and exercises both packs. Cross-image mutant caused 6 failures and suppression mutant 8, after schema validation succeeded. CARD-18/ATTRIB-05 https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/attribute-claims-to-their-bearer.md.",
+      "status": "confirmed_fixed",
+      "owner": "B2"
+    },
+    {
+      "id": "B2-A2-PROVENANCE",
+      "description": "Requested source snapshot is intentionally history-stripped; exact tree, not synthetic Git base identity, governs.",
+      "evidence": ".workbay-source-provenance records source_commit=69e73d648bcad3144a23c82dbbb8847a4fad77f1, source_tree=8bd578b568b5eedcefc8418d177ec3c3eb5c7079 and sandbox_base_tree equal to it. git rev-parse 03cd48757fcaf44b5af46372eb7e7a8fd4861674^{tree} returned that exact tree. Source evaluator SHA-256 47da8ecfbcab9277d96952f8aa657495c4f224918e527c02d7e225ddb9d6c00c matches supplied gate-codemap. PROV-01 https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/ml-systems.md#prov-01.",
+      "status": "verified",
+      "owner": "B2"
+    },
+    {
+      "id": "B2-A2-HISTORY",
+      "description": "Original collection-only RED is not behavioral TDD proof. The first attempt and its findings remain historical evidence, unchanged.",
+      "evidence": ".task-state/descbake-1/reports/B2.json tests[0] records exit 2 ImportError with zero executed tests; original F2 says ModuleNotFoundError was predicted. Original GREEN records 41 passed; historical commits e4676dcd12c803a0202fcf67802ca9db1a971ace, f26102f10decf38d1d0fdf3eccc0469b13987211, report 19d817c are retained as supplied history, not current commit objects. Original F5 global-protection ambiguity is resolved by DG1-05; F4 empty-query dedicated-test gap is retained, not silently treated as fixed. F1 provenance, F3 formatting disclosure and F6 synthetic-placeholder disclosure remain unchanged. New RED has 75 executed tests and runtime failures. TEST-06 https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/engineering.md#test-06; CARD-11/TEST-15 https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/measurement-integrity.md.",
+      "status": "retained_and_corrected",
+      "owner": "B2"
+    }
+  ],
+  "limitations": [
+    "Versioned contract clarification required by DG1-05: input semantic-selection-eval/v2 and report semantic-selection-eval-report/v2 replace v1. Existing external consumers must migrate protected records to explicit protected_scope and update report parsing. No compatibility inference from source_id or prose is performed; ambiguous v1 inputs are rejected. Other ranking/metric behavior and CLI invocation/exit conventions are preserved.",
+    "Synthetic precomputed-vector and per-media test inputs only. No real encoder integration or model-quality, identity, consent, authority, latency, winner, routing, deployment or production leakage claim. The zero revision remains a clearly labeled synthetic placeholder, never a verified immutable model pin.",
+    "Only owner test_semantic_selection_eval.py ran. No conftest, plugin autoload, private DB, GPU, network/model calls, subagents, dependency install, production routing, deployment, or shared environment mutation. Existing .venv packages were used read-only with PYTHONDONTWRITEBYTECODE=1. Outer timeout300s bounded all test executions; subprocess mutation tests additionally used timeout60s.",
+    "Three expected isolated-collection warnings: collection_scope_receipt, timeout, timeout_method are unknown with conftest/plugins disabled and required_plugins cleared. The independent outer timeout300s remained enforced. No warning was suppressed to claim a pass.",
+    "Canon v0.26.2 rows/cards were read from the supplied packet, not fetched. Used TEST-06, EMB-01, PROV-01, CARD-18/ATTRIB-05, CARD-11/TEST-15, Principles 18 and 15. Shared preprocessing equality still refers to an explicitly compatible paired recipe; identical image/text preprocessing bytes are not required.",
+    "QueryRecord.gold_ids remains required (module:188); explicit [] stays an annotated no_relevant query in all frozen denominators. No zero-error acceptance gate or summed overlapping error categories was introduced. Missing GT is not converted to a PASS. CAL-02/CARD-03 https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/designed-unknown.md; CARD-11 https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/measurement-integrity.md. Frozen baseline/full_pack lists remain consistency inputs, not generated caption quality arms; EVAL-01 adoption controls remain prospective.",
+    "Global packet DG1-01/DG1-02/DG1-03/DG1-09 belong to B1, and DG1-06/DG1-07/DG1-08 to B3. They were supplied as context and were not re-adjudicated, edited or tested in this owner-only dispatch. B1 docs URL correction and B3 image lineage/missing annotation/output-write work remain with those owners. No outside-scope change was needed for DG1-04/DG1-05.",
+    "A first documentation-only apply_patch failed because one context line did not match; it made no change and the corrected patch applied. Auxiliary cache inspection returned exit 2 for a nonexistent root cache, not for Ruff. These outcomes are retained rather than reported as successful commands.",
+    "Four source mutations were explicit temporary edits of the owned module; each was restored in finally and the complete source hash verified. Raw mutant outputs are private /tmp/descbake-b2-a2-mutant-*.log artifacts, not committed deliverables. No simplified producer mock was used.",
+    "Report commit follows RED and GREEN and cannot list its own hash inside itself. Report is force-added because .task-state is ignored. No AI/Co-Authored/author trailers. Initial B1/B2/B3 reports remain byte-identical; no thresholds or sealed fixtures were changed. The reference semantic fixture changed only schema version, protected global-scope declaration and explanatory text."
+  ],
+  "source_sha": "69e73d648bcad3144a23c82dbbb8847a4fad77f1"
+}

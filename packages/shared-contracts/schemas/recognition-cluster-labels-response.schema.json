@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/recognition-cluster-labels-response.schema.json",
+  "title": "Recognition Cluster Labels Response",
+  "description": "WordPress recognition proxy envelope for cluster label autocomplete responses.",
+  "type": "object",
+  "required": ["labels", "limit", "total", "truncated"],
+  "properties": {
+    "labels": {
+      "type": "array",
+      "description": "Distinct cluster labels matching the current autocomplete query.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Maximum number of labels returned in this response."
+    },
+    "total": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of matching labels available for the query."
+    },
+    "truncated": {
+      "type": "boolean",
+      "description": "Whether additional matching labels exist beyond this response."
+    }
+  }
+}

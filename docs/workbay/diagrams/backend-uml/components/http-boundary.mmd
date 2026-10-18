@@ -1,0 +1,39 @@
+flowchart TB
+    %% HTTP Boundary (interface_adapters/http)
+    subgraph Legend["Legend + Conventions"]
+        direction TB
+        LegendEntry["ENTRY: external entrypoint"]
+        LegendOptional["Dashed arrow = optional wiring"]
+    end
+
+    subgraph Boundary["FastAPI HTTP Boundary"]
+        direction TB
+        Routers["ENTRY: /recognition/* routers"]
+        AuthDeps["Auth + tenant deps\nrequire_auth, require_write_access, get_tenant_id"]
+        SSEClusters["ENTRY: SSE /recognition/clusters/events"]
+        SSEJobs["ENTRY: SSE /recognition/jobs/{id}/stream"]
+    end
+
+    subgraph Services["Application Services"]
+        direction TB
+        ScanQueue["ScanQueueService"]
+        ClusterService["ClusterService"]
+        SuggestionService["SuggestionService"]
+        JobRepo["JobRepository"]
+        ScanRepo["ScanQueueRepository"]
+    end
+
+    Routers --> AuthDeps
+    AuthDeps --> ScanQueue
+    AuthDeps --> ClusterService
+    AuthDeps --> SuggestionService
+
+    SSEClusters --> Broadcaster["EventBroadcaster (in-memory)"]
+    SSEJobs --> JobRepo
+    SSEJobs --> ScanRepo
+
+    BoundaryCode["Code anchors:\nrecognition/interface_adapters/http/router.py\nrecognition/interface_adapters/http/routers/*\nrecognition/interface_adapters/http/deps/auth.py\nrecognition/interface_adapters/http/deps/tenant.py"]
+    Boundary -.-> BoundaryCode
+
+    LayerNote["Layer: interface_adapters/http\nDirectory: recognition/interface_adapters/http/"]
+    Boundary -.-> LayerNote

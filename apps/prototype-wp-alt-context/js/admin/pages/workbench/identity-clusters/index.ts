@@ -1,0 +1,44 @@
+/**
+ * Identity Clusters module.
+ *
+ * Components for displaying and editing identity clusters in the workbench.
+ *
+ * @example
+ * ```tsx
+ * import { IdentityClusterList } from './identity-clusters';
+ *
+ * <IdentityClusterList identities={identities} mediaId={mediaId} />
+ * ```
+ */
+
+// Main component
+export { IdentityClusterList } from './IdentityClusterList';
+
+// Sub-components (for testing/Storybook)
+export { IdentityClusterItem } from './IdentityClusterItem';
+export { ClusterPreview } from './ClusterPreview';
+export { ClusterActions } from './ClusterActions';
+export { ClusterEditForm } from './ClusterEditForm';
+export { MergeUndoBanner } from './MergeUndoBanner';
+export { ReviewQueue } from './ReviewQueue';
+export type { ReviewQueueHandle, ReviewQueueProps } from './ReviewQueue';
+export { ReviewCardLightbox } from './ReviewCardLightbox';
+export { ClusterLabelingPanel } from './ClusterLabelingPanel';
+export { ClusterReviewPanel } from './ClusterReviewPanel';
+export { InlineSuggestionPrompt } from './InlineSuggestionPrompt';
+export { AnchorSelectionModal } from './AnchorSelectionModal';
+export { TopClusterCard } from './TopClusterCard';
+export { WorkbenchFindingsPanel } from './WorkbenchFindingsPanel';
+
+// Hooks
+export { useClusterEditState } from './useClusterEditState';
+export { useClusterMutations } from './useClusterMutations';
+export { useClusterSuggestions } from './useClusterSuggestions';
+export { useInlineSuggestionBatch } from './useInlineSuggestionBatch';
+export type { InlineSuggestionBatchResult } from './useInlineSuggestionBatch';
+
+// Utils
+export { formatClusterLabel, groupIdentitiesByClusters, getEditableClusterId } from './utils';
+
+// Types
+export type { ClusterGroup, ClusterEditState, ClusterEditAction } from './types';

@@ -1,0 +1,18 @@
+{
+  "lane": "cull-scene-2",
+  "base": "ccb3e015a2b426e7a5fa762d51ff59d336487143",
+  "files_in_partition": 39,
+  "tests_in_partition": 1457,
+  "results": [
+    {
+      "test": "apps/prototype-description-service/scene/tests/test_eval_harness_eval_split.py::test_draw_empty_half_is_provisional_with_reason",
+      "class": "REDUNDANT",
+      "action": "DELETE",
+      "covered_by": "apps/prototype-description-service/scene/tests/test_eval_harness_eval_split.py::test_draw_verify_closed_fraction_round_trip",
+      "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_eval_split.py:762-772 asserts the empty spanning set, provisional/empty_half status, and successful verify for fractions 0.0 and 1.0; apps/prototype-description-service/scene/tests/test_eval_harness_eval_split.py:1051-1061 repeats the same assertions on the same draw/verify seam.",
+      "canon": "REF-26",
+      "confidence": "high",
+      "cost": "cheap"
+    }
+  ]
+}

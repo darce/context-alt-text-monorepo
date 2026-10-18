@@ -1,0 +1,89 @@
+{
+  "lane": "drfu-07",
+  "base": "df2b8d08d6b5b2d8b7c6067ef0bf9acd16db7059",
+  "results": [
+    {
+      "db_id": 5232,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/firdv/FIRDV-2-comparative-harness-and-bakeoff-task-plan.md:109 - SFace is fixed for the detector comparison, then alignment and embedder comparisons are separate experiments; :113 calls the no-native-landmark rescue a combined localization/alignment intervention and prohibits treating it as pure detector gain.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No further change is indicated; the plan separates the comparisons and constrains causal attribution for the combined rescue."
+    },
+    {
+      "db_id": 5681,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-11-gate-corpus-remediation-and-fir-rebaseline-task-plan.md:544 - Slice 4 derives a provisional occasion key from EXIF/source-directory evidence before Slice 3; the final capture_session_id remeasurement is explicitly deferred to Slice 5 after labeling.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No further change is indicated; the plan now orders provisional sizing before labeling and final measurement after lineage exists."
+    },
+    {
+      "db_id": 5682,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-11-gate-corpus-remediation-and-fir-rebaseline-task-plan.md:573 - gold references must be buffalo-independent and may come from operator-confirmed camera-roll reference_facts or fresh arbitration by a second labeler and an independent adjudicator.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No further change is indicated; the plan specifies eligible independent gold sources and excludes merge-only buffalo labels."
+    },
+    {
+      "db_id": 5734,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-11-gate-corpus-remediation-and-fir-rebaseline-task-plan.md:596 - the arm table includes A1″ to isolate the OpenCV toolchain and A1′ to isolate pool composition; :610 defines their distinct deltas, and :615 states the pre-CVUP-1 branch and its residual confound.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No further change is indicated; the report design isolates toolchain and pool changes and discloses the mixed-store branch."
+    },
+    {
+      "db_id": 10000,
+      "outcome": "REFUTED",
+      "evidence": "apps/prototype-description-service/scripts/eval_harness/cli.py:2671 - the adoption comparison size helper recognizes only exact n=37; :2771 applies that sole size guard, while report.py:323 permits score PASS from n=5. scene/tests/seed/README.md:103 and the current manifest show the held-out set is 20 entries, so the stated Golden-100 requirement is not enforced for this under-100 corpus.",
+      "severity": "high",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/eval_harness/cli.py",
+        "apps/prototype-description-service/scene/tests/test_eval_harness_cli.py"
+      ],
+      "test_file": "apps/prototype-description-service/scene/tests/test_eval_harness_cli.py",
+      "size": "S",
+      "fix_hint": "Enforce the Golden-100 minimum for every adoption comparison below 100 entries and add a regression case for the current 20-entry held-out corpus."
+    },
+    {
+      "db_id": 10003,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scene/tests/seed/README.md:100 - golden.json remains the full 37-image regression/split fixture, while :103 identifies held_out_golden.json as the separate 20-image reporting half; test_eval_harness_report.py:3151 pins 37 against the former fixture, so that assertion is not stale.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No further change is indicated; the 37-entry assertions still match the full regression fixture and reporting uses the separate held-out manifest."
+    },
+    {
+      "db_id": 10012,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_eval_split.py:115 - the split test requires train and held-out IDs to partition the source manifest without overlap; :142 verifies the committed seal against that source. The seed README at :100 confirms the source remains 37 entries, so the committed 20/17 split is recomputable rather than train-empty.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No further change is indicated; the full source manifest and its verified non-empty train/held-out partition remain present."
+    },
+    {
+      "db_id": 10021,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/eval_harness/zero_rule_baseline.py:31 - the baseline consumer defaults to held_out_golden.json; test_eval_harness_bakeoff.py:229 asserts selection/report SHA-256 disjointness and checks both manifests against their assigned split halves, while the report builder fails closed without selection manifests.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No further change is indicated; consumers use the held-out manifest and the report path requires auditable selection disjointness."
+    }
+  ]
+}

@@ -1,0 +1,508 @@
+"""Regression coverage for local database env configuration."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+
+import db.settings as settings_module
+
+
+def test_database_settings_explicit_postgres_dsn_resolves_and_writes_back(monkeypatch, tmp_path: Path) -> None:
+    """Characterization: explicit POSTGRES_DSN/SYNC_DSN resolve + env write-back.
+
+    Pins async/sync DSN values and asserts os.environ write-backs still occur
+    (Alembic env.py depends on them). SECRETS-P2 Slice 2 baseline.
+    """
+    env_file = tmp_path / ".env"
+    explicit_async = "postgresql+asyncpg://char_user:char_pass@db.example:5433/alt_context_service"
+    explicit_sync = "postgresql+psycopg://char_user:char_pass@db.example:5433/alt_context_service"
+
+    for key in (
+        "PGUSER",
+        "PGPASSWORD",
+        "PGHOST",
+        "PGPORT",
+        "DB_NAME",
+        "POSTGRES_DSN",
+        "POSTGRES_SYNC_DSN",
+        "ENV_MODE",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("ENV_MODE", "local")
+    monkeypatch.setenv("POSTGRES_DSN", explicit_async)
+    monkeypatch.setenv("POSTGRES_SYNC_DSN", explicit_sync)
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module.get_database_settings.cache_clear()
+    try:
+        settings = settings_module.get_database_settings()
+    finally:
+        settings_module.get_database_settings.cache_clear()
+
+    assert settings.postgres_dsn == explicit_async
+    assert settings.postgres_sync_dsn == explicit_sync
+    assert os.environ["POSTGRES_DSN"] == explicit_async
+    assert os.environ["POSTGRES_SYNC_DSN"] == explicit_sync
+
+
+def test_database_settings_default_render_with_pgpassword_set(monkeypatch, tmp_path: Path) -> None:
+    """Characterization: default DSN render when PGPASSWORD is set, no POSTGRES_DSN."""
+    env_file = tmp_path / ".env"
+
+    for key in (
+        "PGUSER",
+        "PGPASSWORD",
+        "PGHOST",
+        "PGPORT",
+        "DB_NAME",
+        "POSTGRES_DSN",
+        "POSTGRES_SYNC_DSN",
+        "ENV_MODE",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("ENV_MODE", "local")
+    monkeypatch.setenv("PGUSER", "render_user")
+    monkeypatch.setenv("PGPASSWORD", "render_secret")
+    monkeypatch.setenv("PGHOST", "render.host")
+    monkeypatch.setenv("PGPORT", "5434")
+    monkeypatch.setenv("DB_NAME", "alt_context_service")
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module.get_database_settings.cache_clear()
+    try:
+        settings = settings_module.get_database_settings()
+    finally:
+        settings_module.get_database_settings.cache_clear()
+
+    assert (
+        settings.postgres_dsn == "postgresql+asyncpg://render_user:render_secret@render.host:5434/alt_context_service"
+    )
+    assert (
+        settings.postgres_sync_dsn
+        == "postgresql+psycopg://render_user:render_secret@render.host:5434/alt_context_service"
+    )
+
+
+def test_database_settings_default_render_with_pgpassword_unset(monkeypatch, tmp_path: Path) -> None:
+    """Characterization: default DSN render when PGPASSWORD unset → DEFAULT_PGPASSWORD."""
+    env_file = tmp_path / ".env"
+
+    for key in (
+        "PGUSER",
+        "PGPASSWORD",
+        "PGHOST",
+        "PGPORT",
+        "DB_NAME",
+        "POSTGRES_DSN",
+        "POSTGRES_SYNC_DSN",
+        "ENV_MODE",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("ENV_MODE", "local")
+    monkeypatch.setenv("PGUSER", "unset_user")
+    monkeypatch.setenv("PGHOST", "unset.host")
+    monkeypatch.setenv("PGPORT", "5435")
+    monkeypatch.setenv("DB_NAME", "alt_context_service")
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module.get_database_settings.cache_clear()
+    try:
+        settings = settings_module.get_database_settings()
+    finally:
+        settings_module.get_database_settings.cache_clear()
+
+    default_pw = settings_module.DEFAULT_PGPASSWORD
+    assert settings.postgres_dsn == f"postgresql+asyncpg://unset_user:{default_pw}@unset.host:5435/alt_context_service"
+    assert (
+        settings.postgres_sync_dsn
+        == f"postgresql+psycopg://unset_user:{default_pw}@unset.host:5435/alt_context_service"
+    )
+
+
+def test_database_settings_expand_env_file_references(monkeypatch, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            (
+                "PGUSER=context",
+                "PGPASSWORD=context",
+                "PGHOST=localhost",
+                "PGPORT=5432",
+                "DB_NAME=alt_context_service",
+                "POSTGRES_DSN=postgresql+asyncpg://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${DB_NAME}",
+            )
+        )
+        + "\n"
+    )
+
+    for key in ("PGUSER", "PGPASSWORD", "PGHOST", "PGPORT", "DB_NAME", "POSTGRES_DSN", "POSTGRES_SYNC_DSN"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module.get_database_settings.cache_clear()
+    try:
+        settings = settings_module.get_database_settings()
+    finally:
+        settings_module.get_database_settings.cache_clear()
+
+    assert settings.postgres_dsn == "postgresql+asyncpg://context:context@localhost:5432/alt_context_service"
+    assert settings.postgres_sync_dsn == "postgresql+psycopg://context:context@localhost:5432/alt_context_service"
+
+
+def test_database_settings_canonicalize_legacy_db_name_from_env_file(monkeypatch, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            (
+                "PGUSER=context",
+                "PGPASSWORD=context",
+                "PGHOST=localhost",
+                "PGPORT=5432",
+                "DB_NAME=context_alt_text_service",
+                "POSTGRES_DSN=postgresql+asyncpg://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${DB_NAME}",
+            )
+        )
+        + "\n"
+    )
+
+    for key in ("PGUSER", "PGPASSWORD", "PGHOST", "PGPORT", "DB_NAME", "POSTGRES_DSN", "POSTGRES_SYNC_DSN", "ENV_MODE"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module.get_database_settings.cache_clear()
+    try:
+        settings = settings_module.get_database_settings()
+    finally:
+        settings_module.get_database_settings.cache_clear()
+
+    assert settings.postgres_dsn == "postgresql+asyncpg://context:context@localhost:5432/alt_context_service"
+    assert settings.postgres_sync_dsn == "postgresql+psycopg://context:context@localhost:5432/alt_context_service"
+
+
+def test_database_settings_canonicalize_explicit_legacy_dsn_env_vars(monkeypatch, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+
+    for key in ("PGUSER", "PGPASSWORD", "PGHOST", "PGPORT", "DB_NAME", "POSTGRES_DSN", "POSTGRES_SYNC_DSN", "ENV_MODE"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("ENV_MODE", "local")
+    monkeypatch.setenv("POSTGRES_DSN", "postgresql+asyncpg://context:context@localhost:5432/context_alt_text_service")
+    monkeypatch.setenv(
+        "POSTGRES_SYNC_DSN", "postgresql+psycopg://context:context@localhost:5432/context_alt_text_service"
+    )
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module.get_database_settings.cache_clear()
+    try:
+        settings = settings_module.get_database_settings()
+    finally:
+        settings_module.get_database_settings.cache_clear()
+        monkeypatch.delenv("ENV_MODE", raising=False)
+        monkeypatch.delenv("POSTGRES_DSN", raising=False)
+        monkeypatch.delenv("POSTGRES_SYNC_DSN", raising=False)
+
+    assert settings.postgres_dsn == "postgresql+asyncpg://context:context@localhost:5432/alt_context_service"
+    assert settings.postgres_sync_dsn == "postgresql+psycopg://context:context@localhost:5432/alt_context_service"
+
+
+def test_env_example_defines_reset_prerequisites() -> None:
+    env_example = Path(__file__).resolve().parents[3] / ".env.example"
+    content = env_example.read_text()
+
+    assert "PGUSER=" in content
+    assert "PGPASSWORD=" in content
+    assert "DB_NAME=" in content
+    values = {}
+    for line in content.splitlines():
+        key, separator, value = line.partition("=")
+        if separator:
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            values[key] = value
+    assert values["APP_PGUSER"] == "${PGUSER}"
+    assert values["APP_PGPASSWORD"] == "${PGPASSWORD}"
+
+
+def test_database_settings_default_to_canonical_local_database_name(monkeypatch, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+
+    for key in ("PGUSER", "PGPASSWORD", "PGHOST", "PGPORT", "DB_NAME", "POSTGRES_DSN", "POSTGRES_SYNC_DSN"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module.get_database_settings.cache_clear()
+    try:
+        settings = settings_module.get_database_settings()
+    finally:
+        settings_module.get_database_settings.cache_clear()
+
+    assert settings.postgres_dsn == "postgresql+asyncpg://context:context@localhost:5432/alt_context_service"
+    assert settings.postgres_sync_dsn == "postgresql+psycopg://context:context@localhost:5432/alt_context_service"
+
+
+def test_database_settings_expose_timeout_defaults(monkeypatch, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+
+    for key in (
+        "PGUSER",
+        "PGPASSWORD",
+        "PGHOST",
+        "PGPORT",
+        "DB_NAME",
+        "POSTGRES_DSN",
+        "POSTGRES_SYNC_DSN",
+        "DB_STATEMENT_TIMEOUT",
+        "DB_IDLE_IN_TXN_TIMEOUT",
+        "DB_DISABLE_STMT_CACHE",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module.get_database_settings.cache_clear()
+    try:
+        settings = settings_module.get_database_settings()
+    finally:
+        settings_module.get_database_settings.cache_clear()
+
+    assert settings.statement_timeout == "10s"
+    assert settings.idle_in_txn_timeout == "30s"
+    assert settings.embedding_timeout_s == 30
+    assert settings.observability_pool_size == 2
+    assert settings.observability_max_overflow == 0
+    assert settings.observability_pool_timeout == 5
+    assert settings.breaker_failure_threshold == 3
+    assert settings.breaker_window_seconds == 30
+    assert settings.breaker_half_open_after_seconds == 10
+    assert settings.disable_stmt_cache is False
+
+
+def test_database_settings_can_disable_asyncpg_statement_cache(monkeypatch, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+
+    for key in ("PGUSER", "PGPASSWORD", "PGHOST", "PGPORT", "DB_NAME", "POSTGRES_SYNC_DSN"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("POSTGRES_DSN", "postgresql+asyncpg://context:context@localhost:5432/alt_context_service")
+    monkeypatch.setenv("DB_DISABLE_STMT_CACHE", "1")
+    monkeypatch.setenv("DB_STATEMENT_TIMEOUT", "11s")
+    monkeypatch.setenv("DB_IDLE_IN_TXN_TIMEOUT", "31s")
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module.get_database_settings.cache_clear()
+    try:
+        settings = settings_module.get_database_settings()
+    finally:
+        settings_module.get_database_settings.cache_clear()
+        monkeypatch.delenv("POSTGRES_DSN", raising=False)
+        monkeypatch.delenv("DB_DISABLE_STMT_CACHE", raising=False)
+        monkeypatch.delenv("DB_STATEMENT_TIMEOUT", raising=False)
+        monkeypatch.delenv("DB_IDLE_IN_TXN_TIMEOUT", raising=False)
+
+    assert "prepared_statement_cache_size=0" in settings.postgres_dsn
+    assert settings.disable_stmt_cache is True
+    assert settings.statement_timeout == "11s"
+    assert settings.idle_in_txn_timeout == "31s"
+
+
+def test_database_settings_can_override_breaker_values(monkeypatch, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+
+    for key in (
+        "PGUSER",
+        "PGPASSWORD",
+        "PGHOST",
+        "PGPORT",
+        "DB_NAME",
+        "POSTGRES_DSN",
+        "POSTGRES_SYNC_DSN",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("DB_BREAKER_FAILURE_THRESHOLD", "5")
+    monkeypatch.setenv("DB_BREAKER_WINDOW_SECONDS", "45")
+    monkeypatch.setenv("DB_BREAKER_HALF_OPEN_AFTER_SECONDS", "12")
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module.get_database_settings.cache_clear()
+    try:
+        settings = settings_module.get_database_settings()
+    finally:
+        settings_module.get_database_settings.cache_clear()
+        monkeypatch.delenv("DB_BREAKER_FAILURE_THRESHOLD", raising=False)
+        monkeypatch.delenv("DB_BREAKER_WINDOW_SECONDS", raising=False)
+        monkeypatch.delenv("DB_BREAKER_HALF_OPEN_AFTER_SECONDS", raising=False)
+
+    assert settings.breaker_failure_threshold == 5
+    assert settings.breaker_window_seconds == 45
+    assert settings.breaker_half_open_after_seconds == 12
+
+
+def test_database_settings_can_override_embedding_timeout(monkeypatch, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+
+    for key in (
+        "PGUSER",
+        "PGPASSWORD",
+        "PGHOST",
+        "PGPORT",
+        "DB_NAME",
+        "POSTGRES_DSN",
+        "POSTGRES_SYNC_DSN",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("DB_EMBEDDING_TIMEOUT_SECONDS", "7.5")
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module.get_database_settings.cache_clear()
+    try:
+        settings = settings_module.get_database_settings()
+    finally:
+        settings_module.get_database_settings.cache_clear()
+        monkeypatch.delenv("DB_EMBEDDING_TIMEOUT_SECONDS", raising=False)
+
+    assert settings.embedding_timeout_s == 7.5
+
+
+def test_database_settings_can_override_observability_pool_values(monkeypatch, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+
+    for key in (
+        "PGUSER",
+        "PGPASSWORD",
+        "PGHOST",
+        "PGPORT",
+        "DB_NAME",
+        "POSTGRES_DSN",
+        "POSTGRES_SYNC_DSN",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("DB_OBSERVABILITY_POOL_SIZE", "4")
+    monkeypatch.setenv("DB_OBSERVABILITY_MAX_OVERFLOW", "1")
+    monkeypatch.setenv("DB_OBSERVABILITY_POOL_TIMEOUT", "7")
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module.get_database_settings.cache_clear()
+    try:
+        settings = settings_module.get_database_settings()
+    finally:
+        settings_module.get_database_settings.cache_clear()
+        monkeypatch.delenv("DB_OBSERVABILITY_POOL_SIZE", raising=False)
+        monkeypatch.delenv("DB_OBSERVABILITY_MAX_OVERFLOW", raising=False)
+        monkeypatch.delenv("DB_OBSERVABILITY_POOL_TIMEOUT", raising=False)
+
+    assert settings.observability_pool_size == 4
+    assert settings.observability_max_overflow == 1
+    assert settings.observability_pool_timeout == 7
+
+
+def test_canonicalize_local_db_name_rewrites_legacy_name() -> None:
+    db_name, warning = settings_module.canonicalize_local_db_name(
+        "context_alt_text_service",
+        env_mode="local",
+    )
+
+    assert db_name == "alt_context_service"
+    assert warning is not None
+    assert "context_alt_text_service" in warning
+    assert "alt_context_service" in warning
+
+
+def test_canonicalize_local_db_name_preserves_non_local_values() -> None:
+    db_name, warning = settings_module.canonicalize_local_db_name(
+        "context_alt_text_service",
+        env_mode="production",
+    )
+
+    assert db_name == "context_alt_text_service"
+    assert warning is None
+
+
+def test_database_settings_canonicalize_legacy_db_name_from_environment(monkeypatch, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+
+    for key in ("PGUSER", "PGPASSWORD", "PGHOST", "PGPORT", "POSTGRES_DSN", "POSTGRES_SYNC_DSN"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("ENV_MODE", "local")
+    monkeypatch.setenv("DB_NAME", "context_alt_text_service")
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module.get_database_settings.cache_clear()
+    try:
+        settings = settings_module.get_database_settings()
+    finally:
+        settings_module.get_database_settings.cache_clear()
+        monkeypatch.delenv("ENV_MODE", raising=False)
+        monkeypatch.delenv("DB_NAME", raising=False)
+
+    assert settings.postgres_dsn == "postgresql+asyncpg://context:context@localhost:5432/alt_context_service"
+    assert settings.postgres_sync_dsn == "postgresql+psycopg://context:context@localhost:5432/alt_context_service"
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "expected"),
+    [
+        ("ACX_T_Q_A", "'a b#c'", "a b#c"),
+        ("ACX_T_Q_B", "'cash$HOME'", "cash$HOME"),
+        ("ACX_T_Q_C", "'{\"k\":\"v\"}'", '{"k":"v"}'),
+        ("ACX_T_Q_D", '\"it\'s here\"', "it's here"),
+        ("ACX_T_Q_E", '\"${ACX_T_Q_BASE}/x\"', "/base/x"),
+        ("ACX_T_Q_F", "''", ""),
+    ],
+)
+def test_load_env_file_portable_quotes(monkeypatch, tmp_path: Path, key, value, expected) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"{key}={value}\n")
+    monkeypatch.setenv(key, "x")
+    monkeypatch.delenv(key)
+    monkeypatch.setenv("ACX_T_Q_BASE", "/base")
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module._load_env_file()
+
+    assert os.environ[key] == expected
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "expected"),
+    [
+        ("ACX_T_Q_G", "plain", "plain"),
+        ("ACX_T_Q_H", "${ACX_T_Q_BASE}/y", "/base/y"),
+        ("ACX_T_Q_I", "'unbalanced", "'unbalanced"),
+    ],
+)
+def test_load_env_file_quote_regression_guards(monkeypatch, tmp_path: Path, key, value, expected) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"{key}={value}\n")
+    monkeypatch.setenv(key, "x")
+    monkeypatch.delenv(key)
+    monkeypatch.setenv("ACX_T_Q_BASE", "/base")
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module._load_env_file()
+
+    assert os.environ[key] == expected
+
+
+def test_database_settings_strip_env_file_password_quotes(monkeypatch, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "PGUSER=context\n"
+        "PGPASSWORD='p#w d'\n"
+        "PGHOST=localhost\n"
+        "PGPORT=5432\n"
+        "DB_NAME=alt_context_service\n"
+        "POSTGRES_DSN=postgresql+asyncpg://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${DB_NAME}\n"
+    )
+    for key in ("PGUSER", "PGPASSWORD", "PGHOST", "PGPORT", "DB_NAME", "POSTGRES_DSN", "POSTGRES_SYNC_DSN"):
+        monkeypatch.setenv(key, "x")
+        monkeypatch.delenv(key)
+    monkeypatch.setenv("ENV_MODE", "local")
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module.get_database_settings.cache_clear()
+    try:
+        dsn = settings_module.get_database_settings().postgres_dsn
+        assert "'" not in dsn
+    finally:
+        settings_module.get_database_settings.cache_clear()

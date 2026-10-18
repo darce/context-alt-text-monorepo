@@ -1,0 +1,44 @@
+{
+  "lane": "a1h-svcscripts1",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_configure_clerk_production.py",
+      "result": "not_run",
+      "detail": "uv failed before pytest because it could not remove shared site package alembic on the read-only filesystem (os error 30); reran with --no-sync per lane guidance."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_configure_clerk_production.py",
+      "result": "pass",
+      "detail": "25 passed in 0.36s; recognition imported from this lane's apps/prototype-description-service/recognition/__init__.py."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 15951,
+      "finding_id": "APP1-CLERK-RV02",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/configure_clerk_production.py:241 validates both existing and merged frontend env text, rejecting CLERK_SECRET_KEY and sk_live_/sk_test_ values at :245-249 before plan_env_files returns; the test at apps/prototype-description-service/recognition/tests/unit/test_configure_clerk_production.py:441-466 asserts refusal, unchanged backend/frontend files and modes, and no secret in output.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_configure_clerk_production.py::test_apply_refuses_prepopulated_frontend_secret_and_writes_nothing"
+    },
+    {
+      "db_id": 15953,
+      "finding_id": "APP1-CLERK-RV04",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/configure_clerk_production.py:311-318 establishes one monotonic deadline and passes the remaining budget into urlopen; _read_jwks_body checks the remaining deadline and sets the socket timeout before each read at :637-648. The slow-trickle test at apps/prototype-description-service/recognition/tests/unit/test_configure_clerk_production.py:514-546 asserts timeout.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_configure_clerk_production.py::test_fetch_jwks_enforces_total_deadline_on_slow_trickle"
+    },
+    {
+      "db_id": 15952,
+      "finding_id": "APP1-CLERK-RV03",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "apps/prototype-description-service/scripts/configure_clerk_production.py:600-603 increments committed only after atomic_write_text returns and rolls back snapshots[:committed]. An inline reproduction injecting failure on the second destination's directory fsync after os.replace returned an error with backend restored to old content but frontend left new. The test at apps/prototype-description-service/recognition/tests/unit/test_configure_clerk_production.py:482-509 injects the second os.replace failure before replacement, so it guards that case but not post-replace fsync failure (RES-19 recovery).",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_configure_clerk_production.py::test_second_write_failure_does_not_leave_partial_config"
+    }
+  ],
+  "new_findings": [],
+  "summary": "Frontend secret rejection and the JWKS total deadline hold with focused guards; multi-file rollback remains partial because a post-replace directory fsync failure can leave backend and frontend configs divergent. The focused suite passes, but the uncovered rollback path is outside this report-only lane's writable files and needs orchestrator review."
+}

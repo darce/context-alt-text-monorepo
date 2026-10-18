@@ -1,0 +1,39 @@
+{
+  "lane": "a1h-docplan",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "python3 -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 8.03s"
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 15390,
+      "finding_id": "APP1-PR-04",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scene/interface_adapters/http/routers/describe_run.py:582-591 passes units=len(unique_media_ids) to durable admission; scene/tests/test_describe_run_routes.py:760-767 says “units = unique media_ids” and asserts [1, 1, 2] costs 2. scene/interface_adapters/http/routers/describe.py:431 short-circuits “free cache/decorative paths”; scene/tests/test_describe_route.py:1153-1177 asserts decorative 204 and cache-hit usage stay unchanged.",
+      "guard_test": "apps/prototype-description-service/scene/tests/test_describe_run_routes.py::test_demo_quota_run_duplicate_media_ids_charge_unique_only; apps/prototype-description-service/scene/tests/test_describe_route.py::test_demo_quota_decorative_204_does_not_charge; apps/prototype-description-service/scene/tests/test_describe_route.py::test_demo_quota_cache_hit_does_not_charge"
+    },
+    {
+      "db_id": 15389,
+      "finding_id": "APP1-PR-03",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py:135-139 describes AsyncAdmissionGate as “Process-local” and “never derived from DB”; docs/assessments/current/app1-usage-evidence-adjudication.md:193-208 says it may remain only a fast hint, while docs/plans/0002-app-altcontext-launch-continuation-task-plan.md:141-143 assigns durable UsageAdmissionService to scene-dispatch seams. Plan 0001:106-112 retains the separate key-rotation contract, and Plan 0002's U contract binds retries to tenant/operation/job/cost.",
+      "guard_test": "apps/prototype-description-service/scene/tests/test_describe_route.py::test_async_worker_crash_releases_admission_reservation; apps/prototype-description-service/scene/tests/test_describe_run_idempotency.py::test_replay_of_same_key_returns_202_same_run_and_enqueues_once; apps/prototype-description-service/scene/tests/test_describe_run_idempotency.py::test_same_key_with_different_media_ids_returns_409; apps/prototype-description-service/scene/tests/test_describe_load.py::test_batch_in_progress_true_while_a_bulk_run_is_pending; apps/prototype-description-service/recognition/tests/api/test_key_rotation.py::test_lookup_raises_401_for_expired_key"
+    },
+    {
+      "db_id": 15387,
+      "finding_id": "APP1-PR-01",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/application/services/tenant_entitlement_service.py:263-291 describes an “Audited, tenant-bound beta grant” and performs a local entitlement upsert/audit without a Polar call; recognition/tests/unit/test_app1_tenant_entitlement_service.py:178-225 invokes the grant and asserts BETA_ACTIVE plus persisted audited metadata.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_tenant_entitlement_service.py::test_grant_beta_is_tenant_bound_audited_and_upserts_metadata"
+    }
+  ],
+  "new_findings": [],
+  "summary": "All three recorded corrections hold in current source with guarding assertions; no new findings were found, and the lane overlap check passed."
+}

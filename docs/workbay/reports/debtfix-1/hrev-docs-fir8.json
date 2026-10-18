@@ -1,0 +1,163 @@
+{
+  "lane": "hrev-docs-fir8",
+  "base": "57eb151417a52df980219cc5faac0338f7ecdcb3",
+  "executed": [
+    {
+      "command": "/home/gate/workbay-sandbox/feature-debtfix-1-hrev-docs-fir8-025c4583/.venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 2.13s"
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 17057,
+      "finding_id": "FX3PLA-9fd23ae7423e3558-H-e8ac825847c99fdcb1a61051",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:223 - parses the service-reported nine-key fingerprint from model_cache.detail; test_preflight.py::test_preflight_parses_complete_runtime_fingerprint_with_comparison_token asserts all nine keys.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_preflight.py::test_preflight_parses_complete_runtime_fingerprint_with_comparison_token"
+    },
+    {
+      "db_id": 16831,
+      "finding_id": "DADJ-6425",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:1180 - requires resetting both stacks and verifying identity, cluster, and membership rows are empty before run; test_preflight.py rejects missing-stack and nonempty-row evidence before ingest.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_preflight.py::test_run_pair_refuses_without_reset_and_empty_state_evidence"
+    },
+    {
+      "db_id": 16833,
+      "finding_id": "DADJ-6393",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:1122,1142 narrows the estimand to end-to-end embeddable-face yield and says detection values need the public-export limitation; score_report.py:1535-1548 renders only cell, stack, tier, value, and reason, so the HTML report omits that limitation. No test asserts the report caveat.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 16829,
+      "finding_id": "DADJ-6423",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:21,27,37 narrows the promised result to end-to-end embeddable-face yield and disclaims a general profile winner; the report HTML still omits the public-export limitation (score_report.py:1535-1548). No test guards the wording shown to report readers.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 16922,
+      "finding_id": "DFIX23-b7111b89ba20f367-H-8666ac6a61fd6d6a7d380356",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:903 limits terminal ingest success to the latest phase=ingest record; test_dag_score.py asserts an analyze-only record carrying terminal_ingest_outcome=success returns false.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_dag_score.py::test_record_provenance_requires_latest_path_and_content_pin"
+    },
+    {
+      "db_id": 16920,
+      "finding_id": "DFIX22-a0b75338fcb4d413-H-68f7575195d04047fba651fc",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:972 requires decoded dimensions only on successful ingests and says failed-ingest records omit them and count as attrition; no test assertion specifically proves a failed-ingest record without dimensions remains readable.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 17022,
+      "finding_id": "FXDOCB-de931410810c442b-M-91082da9b8be21dda2020eef",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:1188,1211-1239 now orders preflight, an explicit fresh-state evidence gate, then run; the operator is told not to continue until the gate passes. No test asserts this documentation sequence or that a failed preflight stops the shell sequence.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 17031,
+      "finding_id": "FXDOCB-de931410810c442b-M-d1801d590038e9abd6dadfb2",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:1221-1230 resolves relative reset evidence from repo_root and exports the resolved absolute path for the later run block; no test guards this shell handoff.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 17021,
+      "finding_id": "FXDOCB-de931410810c442b-M-67ed5cd5301bf610eb3b3abb",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:229 requires score-time equality for all nine fingerprint keys; test_dag_score.py parametrizes every field and asserts the first changed key is detected.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_dag_score.py::test_runtime_fingerprint_comparison_names_every_differing_field"
+    },
+    {
+      "db_id": 16902,
+      "finding_id": "DFIX21-a42b8f3e55c3366e-M-44c28e21c5572d962952a032",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "apps/prototype-description-service/scripts/eval_harness/manifest.py:948-952 separates region `source` from `adjudication_source`, and lines 1190-1209 resolve the review id and reject a reviewer matching the original labeler; however the plan at line 318 instructs operators to put `human_adjudicated:<id>` in `source`, the wrong schema field. Existing tests exercise the correct adjudication_source field but do not guard the plan text.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py::test_adjudication_reference_refuses_original_labeler_as_reviewer"
+    },
+    {
+      "db_id": 16853,
+      "finding_id": "DADJ-6292",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "docs/runbooks/fir-8-cross-stack-bench.md:51,77-85 gives a committed pair-config path, a real UTC stamp, and named manifest/image paths while telling operators to stage the corpus there; no test checks these command examples or their referenced files.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 16825,
+      "finding_id": "DADJ-5737",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "docs/runbooks/fir-8-cross-stack-bench.md:136-142 states no FIR23-STACK reset runbook was delivered, identifies the tracked dev-fir reset target, gives the supported dry-run command, and reserves live reset ownership to FIR23-STACK; no test guards this operator handoff text.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 16872,
+      "finding_id": "DADJ-6386",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:1159-1160 builds detection_entries by intersecting accepted_entries with detection_scoring_set; test_score_head_to_head.py asserts a boxless accepted entry with a prediction adds no detection false positive.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_score_head_to_head.py::test_detection_excludes_boxless_from_precision"
+    },
+    {
+      "db_id": 16871,
+      "finding_id": "DADJ-6385",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:48 and 1337 assign all detection endpoints including primary recall to detection_scoring_set; score_report.py:1188-1224 uses that subset for every detection cell, and test_score_head_to_head.py asserts a roster_only primary detection cell is refused with an empty detection_scoring_set.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_score_head_to_head.py::test_roster_only_accepted_set_has_empty_detection_scoring_set"
+    },
+    {
+      "db_id": 16793,
+      "finding_id": "DADJ-6237",
+      "was": "fixed",
+      "verdict": "NOT_FIXED",
+      "evidence": "The literal fixture at docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:345,349-365 still omits required top-level annotation_mode and puts human_adjudicated markers in FaceBox.source; GoldenManifest requires annotation_mode, and the source reference belongs in adjudication_source with a resolving adjudication record. test_manifest_version_seam.py confirms an unstamped v3 manifest fails loading.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py::test_v3_loader_refuses_unstamped_annotation_mode"
+    },
+    {
+      "db_id": 16786,
+      "finding_id": "DADJ-5699",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:309,324 pins manifest_version 3; corpus.py:130-137 routes bench manifests only through load_v3_manifest, and the seam test asserts the loaded version is 3.",
+      "guard_test": "apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py::test_default_flag_loads_mismatch_as_non_exhaustive"
+    },
+    {
+      "db_id": 17020,
+      "finding_id": "FXDOCB-de931410810c442b-L-10a3333bd811039246d51334",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:1194-1208 captures BENCH_IMAGES_DIR before cd, requires it be absolute, and passes it explicitly as --images-dir; no test guards the documented cwd/path contract.",
+      "guard_test": ""
+    }
+  ],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "apps/prototype-description-service/scripts/bench/score_report.py",
+      "line": 1535,
+      "title": "HTML score report omits the embedding-backed recall limitation",
+      "defect": "The plan requires detection values to be labeled as embedding-backed public-export measurements, but the generated HTML includes no estimand caveat.",
+      "failure_scenario": "An operator opens report.html and reads detection_recall@frame_e2e/label_map_primary as detector-only recall even though faces without embeddings never appear in the public export rows being scored.",
+      "fix": "Add a visible report note that detection P/R measures end-to-end embeddable-face yield among public exports, and assert the note in the mocked report test.",
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_e2e_mocked.py",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "Seventeen findings rechecked: seven hold, nine are partial, and one remains unfixed; the literal v3 fixture is still unloadable."
+}

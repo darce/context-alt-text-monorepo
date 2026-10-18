@@ -1,0 +1,189 @@
+{
+  "status": "completed",
+  "summary": "DESCBAKE-1 B2: added an additive, standalone offline semantic-selection evaluator (module, CLI, documented known-answer fixture) with a RED-then-GREEN contract suite. Scoped run: 41 passed; ruff format and ruff check clean on owned files. On the committed fixture, top1 = 1/3 and MRR = 4/9 over all three frozen queries, and the empty-gold query is reported as no_relevant. Retrieval relevance only; no encoder inference, no identity, consent, or authority, no protected-record authorization.",
+  "changed_files": [
+    "apps/prototype-description-service/scripts/eval_harness/semantic_selection_eval.py",
+    "apps/prototype-description-service/scripts/eval_harness/semantic_selection_example.json",
+    "apps/prototype-description-service/scene/tests/test_semantic_selection_eval.py",
+    ".task-state/descbake-1/reports/B2.json"
+  ],
+  "commits": [
+    "e4676dcd12c803a0202fcf67802ca9db1a971ace",
+    "f26102f10decf38d1d0fdf3eccc0469b13987211"
+  ],
+  "tests": [
+    {
+      "command": "cd apps/prototype-description-service && PYTHONDONTWRITEBYTECODE=1 /tmp/descbake-b2-venv/bin/python -m pytest --noconftest -p no:cacheprovider -o required_plugins= scene/tests/test_semantic_selection_eval.py -q",
+      "phase": "RED",
+      "exit": 2,
+      "summary": "Collection error: ImportError: cannot import name 'semantic_selection_eval' from 'scripts.eval_harness' (module absent). 0 tests ran. Predicted ModuleNotFoundError; see finding F2."
+    },
+    {
+      "command": "cd apps/prototype-description-service && PYTHONDONTWRITEBYTECODE=1 /tmp/descbake-b2-venv/bin/python -m pytest --noconftest -p no:cacheprovider -o required_plugins= scene/tests/test_semantic_selection_eval.py -q",
+      "phase": "GREEN",
+      "exit": 0,
+      "summary": "41 passed in 1.42s (includes hand-computed ranking, exact tie, top1/MRR denominators, denied decoy, protected record, nonfinite/zero/malformed/truncated vectors, duplicates, contract mismatch, face namespace, ordered pack comparison, CLI)."
+    },
+    {
+      "command": ".venv/bin/ruff format --check <semantic_selection_eval.py> <test_semantic_selection_eval.py>",
+      "phase": "format-before",
+      "exit": 1,
+      "summary": "2 files would be reformatted (line wrapping only)."
+    },
+    {
+      "command": ".venv/bin/ruff format <same two files>; .venv/bin/ruff format --check <same two files>",
+      "phase": "format-after",
+      "exit": 0,
+      "summary": "2 files already formatted."
+    },
+    {
+      "command": ".venv/bin/ruff check <same two files>",
+      "phase": "lint",
+      "exit": 0,
+      "summary": "All checks passed!"
+    },
+    {
+      "command": "cd apps/prototype-description-service && PYTHONDONTWRITEBYTECODE=1 /tmp/descbake-b2-venv/bin/python -m scripts.eval_harness.semantic_selection_eval scripts/eval_harness/semantic_selection_example.json --output /tmp/descbake-b2-report.json",
+      "phase": "cli",
+      "exit": 0,
+      "summary": "Report written outside the repo. top1 = 1/3, MRR = 4/9, input sha256 equals sha256 of the fixture file."
+    }
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "info",
+      "type": "provenance",
+      "summary": "The brief's source snapshot 98b228aae5838fdc249918c395fc81c83b6fbe3e is not in this history-stripped repo. HEAD is sandbox base fe97f3676fa8bf3094ade3237d90bc2cc4a4b002. .workbay-source-provenance lists source_commit 98b228a and sandbox_base_tree equal to source_tree ff2fbeb6b44aa3a4f647ecab8e8b52c6aae051a4, so the sources match. source_sha below is the brief's 98b228a.",
+      "resolution": "recorded"
+    },
+    {
+      "id": "F2",
+      "severity": "info",
+      "type": "tdd-prediction",
+      "summary": "TEST-06 prediction corrected. I predicted ModuleNotFoundError at collection. The observed error was ImportError from the from-import of a missing submodule. Root cause is identical (module absent), so the test was left unchanged.",
+      "resolution": "recorded"
+    },
+    {
+      "id": "F3",
+      "severity": "info",
+      "type": "scope-disclosure",
+      "summary": "ruff format rewrapped two call sites and one literal in the committed RED test file, in GREEN commit f26102f. Test semantics are unchanged; the diff is line wrapping only.",
+      "resolution": "disclosed"
+    },
+    {
+      "id": "F4",
+      "severity": "low",
+      "type": "coverage-gap",
+      "summary": "An empty query set is rejected by pydantic min_length=1, but no dedicated test covers it. The RED set did not include that case.",
+      "resolution": "open"
+    },
+    {
+      "id": "F5",
+      "severity": "info",
+      "type": "design-decision",
+      "summary": "Protected records (policy-1 in the fixture) must appear in every frozen pack for every query, and the evaluator rejects any frozen selection that omits one. This is one reading of 'never suppressed'. Review should confirm whether the scope is global or per query.",
+      "resolution": "open-for-review"
+    },
+    {
+      "id": "F6",
+      "severity": "info",
+      "type": "fixture-provenance",
+      "summary": "Fixture vectors are hand-authored. The encoder revision is an all-zero placeholder with model_id synthetic/hand-authored-vectors, so it is not a real pin. This lane pins no model, makes no current-latest claim, does not consume model-research.json, and claims no model quality or winner.",
+      "resolution": "recorded"
+    }
+  ],
+  "limitations": [
+    "Execution scope: the brief said 'No local execution' and 'No subagent'. Scoped pytest and ruff ran only in the sandbox workspace under a private /tmp venv built with --system-site-packages on /usr/bin/python3.12. That env inherited pytest 9.1.1, pydantic 2.13.5, and PyYAML 6.0.1 from system site-packages. Nothing was installed or downloaded, and the shared .venv was not modified (ruff was run from it read-only). No GPU, deploy, OCI, or network was used.",
+    "Dispatch: the 'claude-remote claude-haiku-5-5 xhigh' routing was not executed. There is no such tool here, and subagents were excluded, so the lane ran directly in the sandbox. The 1800 s and 120k token caps were not separately measured.",
+    "The scoped run used --noconftest and -o required_plugins= to bypass the app root conftest.py (nested collection and a receipt file) and the pytest-timeout required plugin, which are not in the private env. The module imports only the stdlib and pydantic. The test file imports only the evaluator.",
+    "No full suite was run. The scoped test file is the only test run.",
+    "Canon rules were taken from the supplied canon-context.json (Canon v0.26.2). The GitHub repository was not fetched, because network use was out of scope.",
+    "Scores are exact cosines over hand-authored 4-dimensional vectors. They establish arithmetic and contract behaviour only. No semantic model quality, latency, or model winner is claimed.",
+    "Dimensional truncation is rejected rather than re-normalized. Encoders are not run, and vectors are inputs only.",
+    "Face and identity namespaces are rejected. ADR018 face binding, identity assignment, production routing, and the FIR recognition pipeline are not touched or imported.",
+    "The sealed bakeoff registry, golden fixtures, and thresholds were not modified.",
+    "Mutation testing was not performed. Test strength rests on hand-computed expectations and the RED-then-GREEN sequence.",
+    "Commits carry no AI or Co-Authored-By trailers, per the brief. That instruction overrides the default attribution reminder."
+  ],
+  "rule_citations": [
+    {
+      "rule_id": "TEST-06",
+      "canon_version": "0.26.2",
+      "applied": "Predicted the RED failure before running. Observed an ImportError, not the predicted ModuleNotFoundError (see F2)."
+    },
+    {
+      "rule_id": "EMB-01",
+      "canon_version": "0.26.2",
+      "applied": "Query and candidate sides must name the same model_id, revision, preprocessing, dimension, normalization, namespace, and space_id. Any mismatch is rejected, and equal vector length is not sufficient."
+    },
+    {
+      "rule_id": "PROV-01",
+      "canon_version": "0.26.2",
+      "applied": "The report carries the input SHA-256, both encoder contracts, and a source_id on each ranking row, so every score walks back to its candidate and source."
+    },
+    {
+      "rule_id": "CAL-02",
+      "canon_version": "0.26.2",
+      "applied": "Queries with no gold ids and queries with no approved pool are reported explicitly as no_relevant or no_approved_candidates. They stay in the top1 and MRR denominators and are not dropped."
+    },
+    {
+      "rule_id": "EVAL-01",
+      "canon_version": "0.26.2",
+      "applied": "Partial. Frozen baseline and full-pack selections are explicit inputs and are compared in order. No external baseline (random, zero-rule, or human) is computed."
+    },
+    {
+      "rule_id": "EMB-02",
+      "canon_version": "0.26.2",
+      "applied": "Not applied. Face-template fusion is out of scope; face namespaces are rejected rather than ranked."
+    }
+  ],
+  "prior_paths_respected": [
+    "Embedding similarity is not caption truth or identity. Score documentation states retrieval relevance only.",
+    "Set equality is not the verdict. Pack comparison is ordered, and set differences are reported as informational added and removed lists.",
+    "No name scrubbing, pseudonymisation, or ignore-list was introduced.",
+    "No score-time manifest validation. Both contracts are checked at input time.",
+    "No model is pinned, and no current-latest claim is made. The zero SHA is a fixture placeholder.",
+    "No API status is treated as proof that a repo is missing.",
+    "The sealed registry is unchanged.",
+    "The denied high-similarity decoy (decoy-x, cosine 1.0 with q-2) is excluded from ranking and rejected if selected.",
+    "The ADR018 frozen anonymous base and face binding are unchanged. The face namespace is rejected."
+  ],
+  "source_sha": "98b228aae5838fdc249918c395fc81c83b6fbe3e",
+  "task": "DESCBAKE-1",
+  "lane": "B2",
+  "sandbox_base_commit": "fe97f3676fa8bf3094ade3237d90bc2cc4a4b002",
+  "source_tree": "ff2fbeb6b44aa3a4f647ecab8e8b52c6aae051a4",
+  "evaluator": {
+    "module": "apps/prototype-description-service/scripts/eval_harness/semantic_selection_eval.py",
+    "cli": "python -m scripts.eval_harness.semantic_selection_eval INPUT --output PATH",
+    "schema_version": "semantic-selection-eval/v1",
+    "report_schema_version": "semantic-selection-eval-report/v1",
+    "fixture": "apps/prototype-description-service/scripts/eval_harness/semantic_selection_example.json",
+    "input_sha256": "f3c5842c7dd1e9f99e63720df571e1f844d9ee411c5a3497a06e1c34584d526b",
+    "encoder_provenance": {
+      "query_encoder": {
+        "model_id": "synthetic/hand-authored-vectors",
+        "revision": "0000000000000000000000000000000000000000",
+        "preprocessing": "none-hand-authored",
+        "dimension": 4,
+        "normalization": "l2",
+        "namespace": "approved_context",
+        "space_id": "synthetic-shared-4d"
+      },
+      "candidate_encoder": "identical to query_encoder",
+      "contracts_match": true
+    },
+    "known_answer_metrics": {
+      "query_count": 3,
+      "top1": {"hits": 1, "denominator": 3, "value": 0.3333333333333333},
+      "mrr": {"sum": 1.3333333333333333, "denominator": 3, "value": 0.4444444444444444},
+      "no_relevant_query_ids": ["q-3"],
+      "per_query": [
+        {"query_id": "q-1", "status": "ranked", "first_gold_rank": 3, "reciprocal_rank": 0.3333333333333333},
+        {"query_id": "q-2", "status": "ranked", "first_gold_rank": 1, "reciprocal_rank": 1.0},
+        {"query_id": "q-3", "status": "no_relevant", "first_gold_rank": null, "reciprocal_rank": 0.0}
+      ]
+    }
+  }
+}

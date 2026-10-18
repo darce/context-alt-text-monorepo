@@ -1,0 +1,86 @@
+{
+  "lane": "drfu-11",
+  "base": "df2b8d08d6b5b2d8b7c6067ef0bf9acd16db7059",
+  "results": [
+    {
+      "db_id": 5234,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-7-occlusion-adapters-task-plan.md:244 - generated model-card/report claims are lint-blocked while intersectional is PENDING-STRATUM; :301 requires the pending field and claim-lint fixture, so no public accuracy claim is supported before demographic stratification.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No further fix indicated by the current plan evidence."
+    },
+    {
+      "db_id": 5599,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/Caddyfile:31 - fir.dev.api.altcontext.com proxies to dev-fir-api; apps/prototype-description-service/docker-compose.caddy.yml:22 attaches Caddy to acx-dev-fir-net.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No further fix indicated by the current deployment configuration."
+    },
+    {
+      "db_id": 5735,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-11-gate-corpus-remediation-and-fir-rebaseline-task-plan.md:11 - FIR-9 is explicitly not a hard dependency; :419 makes its UI optional ergonomics and names the headless export/join path as path of record.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No further fix indicated by the current ownership statement."
+    },
+    {
+      "db_id": 6051,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:678 - optional baseline_manifest_path loads baseline IDs and checks them against the manifest before media writes; :1021 defines that config key and run behavior.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No further fix indicated by the executable input contract."
+    },
+    {
+      "db_id": 6052,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:957 - the ingest result is written at analyze return and missing evidence fails closed; :1196 pins that writer in the S1 flow.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No further fix indicated by the current S1 contract."
+    },
+    {
+      "db_id": 10006,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811-report.md:19 - the run is marked unvalidated_proxy; :27 says face identification precision is unobserved and :29 identifies the seeded stub, so no corpus-level invariance claim is presented.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No further fix indicated by the report's stated evidence limits."
+    },
+    {
+      "db_id": 10008,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_determinism_anchor.py:74 - the frozen report digest is b6307a591d71c71307276a7b449a574bac90e43cbbca4e9b82ad34ceb36e527d; the current report hashes to that value and begins with its title at docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811-report.md:1, with no superseded banner.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No further fix indicated; the frozen artifact matches its pinned digest."
+    },
+    {
+      "db_id": 10163,
+      "outcome": "CONFIRMED",
+      "evidence": "infra/oci/demo/bootstrap-wp.sh:443 - the describe pass is gated by the live adapter/provenance verdict and :487-489 runs bounded wp alt-context describe chunks; infra/oci/demo/tests/test-describe-gate.sh:68 blocks seeded while :83 admits a trusted adapter.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No further fix indicated by the gated, bounded bootstrap step."
+    }
+  ]
+}

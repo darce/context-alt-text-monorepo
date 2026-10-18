@@ -1,0 +1,25 @@
+sequenceDiagram
+    %% Inline cluster relabel with suggestions
+    participant Admin
+    participant Item as IdentityClusterItem
+    participant Prompt as InlineSuggestionPrompt
+    participant Hooks as useClusterSuggestions/useMutation
+    participant WPAPI as WP REST /recognition/clusters
+    participant RecSvc as Recognition Service
+
+    Admin->>Item: Click cluster label combobox
+    Item->>Prompt: open with identity context
+    Prompt->>Hooks: useClusterSuggestions(identityId)
+    Hooks->>WPAPI: GET /recognition/identities/{id}/suggestions
+    WPAPI->>RecSvc: /recognition/identities/{id}/suggestions
+    RecSvc-->>WPAPI: {matches:[{cluster_id,label,similarity}]}
+    WPAPI-->>Hooks: suggestions cached
+    Hooks-->>Prompt: suggested labels + existing labels
+    Admin->>Prompt: Choose label or type new
+    Prompt->>Hooks: updateClusterLabel(clusterId,label)
+    Hooks->>WPAPI: PATCH /recognition/clusters/{id} {label}
+    WPAPI->>RecSvc: update label + updated_at
+    RecSvc-->>WPAPI: ClusterSummary
+    WPAPI-->>Hooks: success
+    Hooks->>Hooks: invalidate ['recognition-clusters','identity-suggestions']
+    Hooks-->>Item: show success + latest label

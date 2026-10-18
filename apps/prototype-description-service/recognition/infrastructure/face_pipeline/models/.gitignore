@@ -1,0 +1,4 @@
+# Large ONNX weights are fetched, never committed (FIR-3 S1).
+*.onnx
+*.onnx.partial
+*.partial

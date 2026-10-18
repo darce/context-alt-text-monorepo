@@ -1,0 +1,973 @@
+"""ScanService orchestrates face detection and embedding generation."""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import logging
+import threading
+import time
+import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
+from datetime import UTC, datetime
+
+from sqlalchemy import event, select, text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from db.models import IdentityScanJob, MediaIdentity
+from db.settings import get_database_settings
+from recognition.application.embedding.detector import (
+    DetectionAdapterError,
+    DetectionTimeoutError,
+    FaceDetection,
+    FaceDetectorProtocol,
+    StubFaceDetector,
+)
+from recognition.application.embedding.generator import (
+    EmbeddingAdapterError,
+    EmbeddingGeneratorProtocol,
+    EmbeddingResult,
+    EmbeddingTimeoutError,
+    StubEmbeddingGenerator,
+)
+from recognition.application.integrations import AdapterBreakerOpenError
+from recognition.application.storage import ObjectStore
+from recognition.domain.job import JobStatus
+from recognition.shared.db.dialect import is_postgres
+
+ObjectStoreFactory = Callable[[str], ObjectStore]
+
+logger = logging.getLogger(__name__)
+
+# Propagated through the inline processor's phase/session boundaries. Other
+# callers retain the RUNNING-only precondition without an inline lease.
+inline_processing_owner: ContextVar[tuple[uuid.UUID, str] | None] = ContextVar(
+    "inline_processing_owner", default=None
+)
+
+_DB_SETTINGS = get_database_settings()
+
+_PG_INT32_MIN = -2_147_483_648
+_PG_INT32_MAX = 2_147_483_647
+
+
+@dataclass(slots=True)
+class _InProcessPersistLockEntry:
+    """Ref-counted in-process persist lock (RES-07: drop when waiters hit 0)."""
+
+    lock: asyncio.Lock
+    waiters: int = 0
+    owner_sync_session: object | None = None
+    owner_root_transaction: object | None = None
+    reentry_depth: int = 0
+
+
+_IN_PROCESS_PERSIST_LOCKS: dict[tuple[str, int], _InProcessPersistLockEntry] = {}
+_IN_PROCESS_PERSIST_LOCKS_GUARD = threading.RLock()
+
+
+def _advisory_lock_keys(tenant_uuid: uuid.UUID, media_id: int) -> tuple[int, int]:
+    """Map (tenant, media) to pg_advisory_xact_lock's two int4 keys."""
+    tenant_key = int.from_bytes(hashlib.sha256(tenant_uuid.bytes).digest()[:4], "big", signed=True)
+    media_key = int(media_id)
+    if media_key < _PG_INT32_MIN or media_key > _PG_INT32_MAX:
+        media_key = int.from_bytes(
+            hashlib.sha256(str(media_key).encode("utf-8")).digest()[:4],
+            "big",
+            signed=True,
+        )
+    return tenant_key, media_key
+
+
+def _session_is_postgres(session: AsyncSession) -> bool:
+    return is_postgres(session)
+
+
+def _persist_lock_key(tenant_uuid: uuid.UUID, media_id: int) -> tuple[str, int]:
+    return (str(tenant_uuid), int(media_id))
+
+
+def _persist_lock_owner_matches(
+    entry: _InProcessPersistLockEntry,
+    sync_session: object | None,
+    root_transaction: object | None,
+) -> bool:
+    return (
+        sync_session is not None
+        and root_transaction is not None
+        and entry.reentry_depth > 0
+        and entry.owner_sync_session is sync_session
+        and entry.owner_root_transaction is root_transaction
+    )
+
+
+def _sync_session_root_transaction(sync_session: object | None) -> object | None:
+    if sync_session is None:
+        return None
+    get_transaction = getattr(sync_session, "get_transaction", None)
+    if not callable(get_transaction):
+        return None
+    return get_transaction()
+
+
+async def _in_process_persist_lock(
+    tenant_uuid: uuid.UUID,
+    media_id: int,
+    *,
+    sync_session: object | None,
+    root_transaction: object | None,
+) -> tuple[_InProcessPersistLockEntry, bool]:
+    key = _persist_lock_key(tenant_uuid, media_id)
+    with _IN_PROCESS_PERSIST_LOCKS_GUARD:
+        entry = _IN_PROCESS_PERSIST_LOCKS.get(key)
+        if entry is None:
+            entry = _InProcessPersistLockEntry(lock=asyncio.Lock())
+            _IN_PROCESS_PERSIST_LOCKS[key] = entry
+        if _persist_lock_owner_matches(entry, sync_session, root_transaction):
+            entry.reentry_depth += 1
+            return entry, True
+        entry.waiters += 1
+        return entry, False
+
+
+def _release_in_process_persist_waiter(tenant_uuid: uuid.UUID, media_id: int) -> None:
+    """Decrement waiter count; drop the registry entry when idle."""
+    key = _persist_lock_key(tenant_uuid, media_id)
+    with _IN_PROCESS_PERSIST_LOCKS_GUARD:
+        entry = _IN_PROCESS_PERSIST_LOCKS.get(key)
+        if entry is None:
+            return
+        if entry.waiters > 0:
+            entry.waiters -= 1
+        if entry.waiters <= 0 and not entry.lock.locked():
+            current = _IN_PROCESS_PERSIST_LOCKS.get(key)
+            if current is entry:
+                del _IN_PROCESS_PERSIST_LOCKS[key]
+
+
+@asynccontextmanager
+async def _media_persist_lock(
+    session: AsyncSession,
+    tenant_uuid: uuid.UUID,
+    media_id: int,
+) -> AsyncIterator[None]:
+    """Serialize persist per (tenant, media): pg xact lock, else asyncio (RES-13).
+
+    Non-Postgres holds the asyncio lock until the session's root transaction
+    ends so a sibling worker cannot read pre-commit rows (flush-only persist).
+    """
+    if _session_is_postgres(session):
+        key1, key2 = _advisory_lock_keys(tenant_uuid, media_id)
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:k1, :k2)"),
+            {"k1": key1, "k2": key2},
+        )
+        yield
+        return
+    sync_session = getattr(session, "sync_session", None)
+    root_transaction = _sync_session_root_transaction(sync_session)
+    entry, reentrant = await _in_process_persist_lock(
+        tenant_uuid,
+        media_id,
+        sync_session=sync_session,
+        root_transaction=root_transaction,
+    )
+    if reentrant:
+        try:
+            yield
+        finally:
+            with _IN_PROCESS_PERSIST_LOCKS_GUARD:
+                if _persist_lock_owner_matches(entry, sync_session, root_transaction):
+                    entry.reentry_depth -= 1
+        return
+
+    lock = entry.lock
+    try:
+        await lock.acquire()
+    except BaseException:
+        _release_in_process_persist_waiter(tenant_uuid, media_id)
+        raise
+
+    with _IN_PROCESS_PERSIST_LOCKS_GUARD:
+        if sync_session is not None and root_transaction is not None:
+            entry.owner_sync_session = sync_session
+            entry.owner_root_transaction = root_transaction
+            entry.reentry_depth = 1
+
+    released = False
+    release_scheduled = False
+    hold_until_commit = False
+    loop = asyncio.get_running_loop()
+
+    def _capture_owner(_sess: object = None, transaction: object = None) -> None:
+        # _remove_listener is deferred to the next loop tick, so this listener
+        # outlives its own critical section. Re-arming after release would hand
+        # a stale owner a reentrant pass into a lock a waiter now holds.
+        with _IN_PROCESS_PERSIST_LOCKS_GUARD:
+            if (
+                released
+                or sync_session is None
+                or getattr(transaction, "parent", None) is not None
+                or entry.owner_sync_session is not None
+            ):
+                return
+            entry.owner_sync_session = sync_session
+            entry.owner_root_transaction = transaction
+            entry.reentry_depth = 1
+
+    def _remove_listener() -> None:
+        if sync_session is None:
+            return
+        for event_name, listener in (
+            ("after_transaction_end", _release),
+            ("after_transaction_create", _capture_owner),
+        ):
+            try:
+                event.remove(sync_session, event_name, listener)
+            except Exception:
+                logger.warning(
+                    "Failed to remove persist-lock listener %s for session %r",
+                    event_name,
+                    sync_session,
+                    exc_info=True,
+                )
+
+    def _finish_release() -> None:
+        nonlocal released
+        with _IN_PROCESS_PERSIST_LOCKS_GUARD:
+            if released:
+                return
+            released = True
+            entry.owner_sync_session = None
+            entry.owner_root_transaction = None
+            entry.reentry_depth = 0
+            if lock.locked():
+                lock.release()
+        _release_in_process_persist_waiter(tenant_uuid, media_id)
+        _remove_listener()
+
+    def _release(_sess: object = None, transaction: object = None) -> None:
+        nonlocal release_scheduled
+        if getattr(transaction, "parent", None) is not None:
+            return
+        with _IN_PROCESS_PERSIST_LOCKS_GUARD:
+            if released or release_scheduled:
+                return
+            release_scheduled = True
+        if transaction is None:
+            _finish_release()
+            return
+        try:
+            # SQLAlchemy's sync-session listeners can run away from the event
+            # loop, while asyncio.Lock must only be released on its loop.
+            loop.call_soon_threadsafe(_finish_release)
+        except RuntimeError:
+            logger.warning("Failed to schedule persist-lock release on its event loop", exc_info=True)
+
+    try:
+        if sync_session is not None:
+            if root_transaction is None:
+                event.listen(sync_session, "after_transaction_create", _capture_owner)
+            event.listen(sync_session, "after_transaction_end", _release)
+            hold_until_commit = True
+        yield
+    finally:
+        if hold_until_commit:
+            in_transaction = getattr(sync_session, "in_transaction", None)
+            still_open = bool(callable(in_transaction) and in_transaction())
+            if not still_open:
+                _release()
+        else:
+            _release()
+
+
+class PersistIntegrityError(ValueError):
+    """Durable terminal failure during identity persist (wrong dim / missing provenance).
+
+    Raised instead of bare ``ValueError`` so job orchestrators can catch it and
+    mark the scan job FAILED rather than leaving it stuck in RUNNING [RLSE-05][OBS-08].
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class ReconcileResult:
+    """Per-media identity reconcile counts (row recycling, not assignment/unknown).
+
+    ``matched`` counts durable **writes** of IoU-matched rows (pairs that survive
+    embedding / ``model_id`` guards), not raw IoU pair count. ``new`` is newly
+    inserted rows. Assignment/unknown metrics live in clustering (FIR-6).
+    ``detected`` is the inbound detection count; ``total`` is rows written/updated
+    (``matched + new``), preserving the pre-S4 ``process_media_item`` int semantics
+    on the normal path where every IoU match is written.
+
+    FIR23-02: ``skipped`` is inbound detections that produced no durable write
+    (typically missing embedding). ``mixed_model`` is true when existing rows and
+    new detections disagree on ``embedding_model`` (re-scan model flip visible).
+    """
+
+    detected: int
+    matched: int
+    new: int
+    skipped: int = 0
+    mixed_model: bool = False
+
+    @property
+    def total(self) -> int:
+        """Rows written/updated (historical identities_detected count)."""
+        return self.matched + self.new
+
+    def __int__(self) -> int:
+        return self.total
+
+
+@dataclass(slots=True)
+class _PendingReconcileEvent:
+    """Telemetry payload stashed until the caller's durable commit succeeds."""
+
+    media_id: int
+    tenant_id: str
+    job_id: str | None
+    result: ReconcileResult
+    detections: list[FaceDetection]
+    persist_ms: float
+    detect_ms: float
+    blob_read_ms: float | None = None
+
+
+async def run_scan_three_phase[PersistResult](
+    *,
+    mark_running: Callable[[], Awaitable[object]],
+    detect: Callable[[], Awaitable[list[FaceDetection]]],
+    persist: Callable[[list[FaceDetection]], Awaitable[PersistResult]],
+) -> PersistResult:
+    """Execute the canonical scan-job shape used by both sync and inline callers.
+
+    The helper intentionally stays narrow: it centralizes the ordered phase
+    contract that review and tests assert, while the caller retains ownership
+    of session scope, tenant context, and failure mapping for each phase.
+    """
+
+    await mark_running()
+    detections = await detect()
+    return await persist(detections)
+
+
+class ScanService:
+    """Perform face detection + embedding generation and persist results."""
+
+    def __init__(
+        self,
+        session: AsyncSession,
+        detector: FaceDetectorProtocol | None = None,
+        generator: EmbeddingGeneratorProtocol | None = None,
+        object_store_factory: ObjectStoreFactory | None = None,
+    ) -> None:
+        self._session = session
+        self._detector = detector or StubFaceDetector()
+        self._generator = generator or StubEmbeddingGenerator(embedding_dim=_DB_SETTINGS.pgvector_dimension)
+        # E15-11: when configured, file:// blob URIs in process_media_item
+        # are resolved through this factory's ObjectStore (bound to the
+        # active tenant) so the worker reads bytes from disk via the same
+        # tenant-binding seam the multipart route writes through. Legacy
+        # callers (tests, scan_worker before S1.5) leave this None and
+        # the URL string is passed straight to the detector unchanged.
+        self._object_store_factory = object_store_factory
+        # Cached once per service instance (S4CR-06); settings load is not free.
+        self._cached_face_pipeline_profile: str | None = None
+        # Stashed by process_media_item for emit after the caller's durable commit
+        # (handler session boundary). Not used by save_job_results.
+        self._pending_reconcile_event: _PendingReconcileEvent | None = None
+
+    async def analyze_media(
+        self,
+        tenant_id: str,
+        media_ids: Iterable[str],
+        media_sources: Iterable[str] | None = None,
+    ) -> IdentityScanJob:
+        """Detect faces for the provided media and persist embeddings.
+
+        Args:
+            tenant_id: Tenant identifier.
+            media_ids: List of media IDs for tracking/persistence.
+            media_sources: Optional list of URLs/sources for the detector.
+                           If not provided, media_ids are passed to detector.
+        """
+        media_ids_list = list(media_ids)
+        scan_job = IdentityScanJob(
+            tenant_id=uuid.UUID(str(tenant_id)),
+            status=JobStatus.PENDING,
+            media_ids=[_extract_media_id(mid) for mid in media_ids_list],
+            total_media=len(media_ids_list),
+            processed_media=0,
+            identities_detected=0,
+        )
+        self._session.add(scan_job)
+        await self._session.flush()
+        return await self.process_scan_job(
+            tenant_id=tenant_id,
+            job_id=scan_job.id,
+            media_ids=media_ids_list,
+            media_sources=media_sources,
+        )
+
+    async def mark_job_running(self, job_id: uuid.UUID) -> IdentityScanJob:
+        """Mark a scan job as running."""
+        scan_job = await self._session.get(IdentityScanJob, job_id)
+        if scan_job is None:
+            raise RuntimeError(f"scan job not found: {job_id}")
+
+        scan_job.status = JobStatus.RUNNING
+        scan_job.started_at = datetime.now(tz=UTC)
+        await self._session.commit()
+        return scan_job
+
+    async def mark_job_failed(self, job_id: uuid.UUID, error_message: str) -> IdentityScanJob:
+        """Mark a scan job as failed with a boundary-level error message."""
+        scan_job = await self._session.get(IdentityScanJob, job_id)
+        if scan_job is None:
+            raise RuntimeError(f"scan job not found: {job_id}")
+
+        scan_job.status = JobStatus.FAILED
+        scan_job.error_message = error_message
+        scan_job.completed_at = datetime.now(tz=UTC)
+        await self._session.commit()
+        return scan_job
+
+    async def save_job_results(
+        self,
+        *,
+        job_id: uuid.UUID,
+        tenant_id: str,
+        media_ids: Iterable[str],
+        media_sources: Iterable[str] | None,
+        detections: list[FaceDetection],
+    ) -> IdentityScanJob:
+        """Persist detection results and mark job as completed.
+
+        Emits ``scan_media_reconciled`` only after the batch commit succeeds
+        (S4CR-03). Detect is out of scope here — events carry ``persist_ms`` only.
+        """
+        media_ids_list = list(media_ids)
+        sources_list = list(media_sources) if media_sources else media_ids_list
+        source_to_media_id = dict(zip(sources_list, media_ids_list, strict=False))
+        tenant_uuid = uuid.UUID(str(tenant_id))
+
+        scan_job = await self._session.scalar(
+            select(IdentityScanJob)
+            .where(IdentityScanJob.id == job_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if scan_job is None:
+            raise RuntimeError(f"scan job not found: {job_id}")
+        if scan_job.status != JobStatus.RUNNING:
+            logger.warning(
+                "Skipping scan result persistence for job %s in status %s",
+                job_id,
+                scan_job.status,
+            )
+            return scan_job
+
+        inline_owner = inline_processing_owner.get()
+        if inline_owner is not None and (
+            inline_owner[0] != job_id or scan_job.error_message != inline_owner[1]
+        ):
+            logger.warning("Skipping scan result persistence for job %s with lost inline owner", job_id)
+            return scan_job
+
+        # Group detections by media_id to process them per image for ID recycling
+        detections_by_media: dict[int, list[FaceDetection]] = {}
+        source_to_media_id_int = {s: _extract_media_id(str(m)) for s, m in source_to_media_id.items()}
+
+        for det in detections:
+            mid_int = source_to_media_id_int.get(det.media_id, _extract_media_id(str(det.media_id)))
+            if mid_int not in detections_by_media:
+                detections_by_media[mid_int] = []
+            detections_by_media[mid_int].append(det)
+
+        # Union media_ids_list + detection keys so zero-detection media still
+        # run orphan cleanup and emit detected=0 events (S4CR-02).
+        ordered_media: list[int] = []
+        seen_media: set[int] = set()
+        for mid in media_ids_list:
+            mid_int = _extract_media_id(mid)
+            if mid_int not in seen_media:
+                ordered_media.append(mid_int)
+                seen_media.add(mid_int)
+        for mid_int in detections_by_media:
+            if mid_int not in seen_media:
+                ordered_media.append(mid_int)
+                seen_media.add(mid_int)
+        ordered_media.sort()
+
+        total_persisted = 0
+        pending_events: list[tuple[int, ReconcileResult, list[FaceDetection], float]] = []
+        for mid_int in ordered_media:
+            dets = detections_by_media.get(mid_int, [])
+            # Use specific URL if available from sources
+            url = None
+            for s, m_int in source_to_media_id_int.items():
+                if m_int == mid_int and s.startswith(("http://", "https://")):
+                    url = s
+                    break
+
+            started = time.perf_counter()
+            result = await self._persist_identities(
+                tenant_uuid=tenant_uuid,
+                media_id=mid_int,
+                detections=dets,
+                media_url=url,
+            )
+            persist_ms = (time.perf_counter() - started) * 1000.0
+            pending_events.append((mid_int, result, dets, persist_ms))
+            total_persisted += result.total
+
+        scan_job.processed_media = len(media_ids_list)
+        scan_job.identities_detected = total_persisted
+        scan_job.status = JobStatus.COMPLETED
+        scan_job.completed_at = datetime.now(tz=UTC)
+
+        async def commit_and_emit() -> None:
+            await self._session.commit()
+            for mid_int, result, dets, persist_ms in pending_events:
+                _emit_scan_media_reconciled(
+                    media_id=mid_int,
+                    tenant_id=str(tenant_uuid),
+                    job_id=str(job_id),
+                    result=result,
+                    detections=dets,
+                    persist_ms=persist_ms,
+                    get_profile=self._face_pipeline_profile_cached,
+                )
+
+        # COMPLETED can become visible to the heartbeat before commit() resumes.
+        # Once committing, finish the post-commit events even on cancellation,
+        # and join the task before the caller closes its session.
+        finalization = asyncio.create_task(commit_and_emit())
+        cancelled = False
+        while not finalization.done():
+            try:
+                await asyncio.shield(finalization)
+            except asyncio.CancelledError:
+                cancelled = True
+        finalization.result()
+        if cancelled:
+            raise asyncio.CancelledError
+        return scan_job
+
+    async def process_scan_job(
+        self,
+        *,
+        tenant_id: str,
+        job_id: uuid.UUID,
+        media_ids: Iterable[str],
+        media_sources: Iterable[str] | None = None,
+    ) -> IdentityScanJob:
+        """Process an existing scan job id and persist embeddings.
+
+        This method preserves the legacy single-session path while routing the
+        ordered phase contract through ``run_scan_three_phase``. Callers that
+        need the explicit no-DB gap around adapter inference should use
+        ``tasks.scan.process_scan_job_inline``.
+        """
+        media_ids_list = list(media_ids)
+        has_media_sources = bool(media_sources)
+        media_sources_list = list(media_sources) if media_sources is not None else None
+        sources_list = media_sources_list if has_media_sources else media_ids_list
+        try:
+            return await run_scan_three_phase(
+                mark_running=lambda: self.mark_job_running(job_id),
+                detect=lambda: self._detector.detect(sources_list),
+                persist=lambda detections: self.save_job_results(
+                    job_id=job_id,
+                    tenant_id=tenant_id,
+                    media_ids=media_ids_list,
+                    media_sources=media_sources_list if has_media_sources else None,
+                    detections=detections,
+                ),
+            )
+        except (
+            AdapterBreakerOpenError,
+            DetectionTimeoutError,
+            EmbeddingTimeoutError,
+            DetectionAdapterError,
+            EmbeddingAdapterError,
+            PersistIntegrityError,
+        ) as exc:
+            # Discard any staged identity/reconcile work before the FAILED
+            # status commit so partial rows never ride along (LOCAL47C-02).
+            # RUNNING is already committed and is intentionally preserved.
+            await self._session.rollback()
+            await self.mark_job_failed(job_id, str(exc))
+            raise
+
+    async def process_media_item(
+        self,
+        *,
+        tenant_id: str,
+        media_id: int,
+        media_url: str,
+        job_id: uuid.UUID | str | None = None,
+    ) -> ReconcileResult:
+        """Process a single media item and persist detected identities.
+
+        Uses 'Identity ID Recycling' to preserve existing UUIDs for the same faces,
+        which ensures that cluster labels and memberships are not lost during re-scans.
+
+        E15-11: when ``media_url`` is a ``file://`` blob URI minted by the
+        multipart upload route's ObjectStore.put, resolve it to raw bytes
+        through the per-tenant ``object_store_factory`` (refusing
+        cross-tenant URIs at open() time) and pass the bytes to the
+        detector. Legacy URL transport (http://, https://) keeps passing
+        the URL string unchanged.
+
+        Flush-only on this session: the worker handler owns the durable commit
+        together with queue-item status (pre-S4 / rg-002). Call
+        :meth:`emit_pending_scan_media_reconciled` only after that commit so
+        ``scan_media_reconciled`` never outruns durability (S4CR-03).
+
+        Returns:
+            ReconcileResult with detected/matched/new counts. Callers that need
+            the historical int (identities_detected = matched + new) use
+            ``.total`` or ``int(result)``.
+        """
+        self._pending_reconcile_event = None
+        tenant_uuid = uuid.UUID(str(tenant_id))
+        detector_source: bytes | str = media_url
+        blob_read_ms: float | None = None
+        if media_url.startswith("file://") and self._object_store_factory is not None:
+            store = self._object_store_factory(str(tenant_id))
+            blob_started = time.perf_counter()
+            with store.open(media_url) as fh:
+                detector_source = fh.read()
+            blob_read_ms = (time.perf_counter() - blob_started) * 1000.0
+        detect_started = time.perf_counter()
+        detections: list[FaceDetection] = await self._detector.detect([detector_source])
+        detect_ms = (time.perf_counter() - detect_started) * 1000.0
+        persist_started = time.perf_counter()
+        result = await self._persist_identities(
+            tenant_uuid=tenant_uuid,
+            media_id=media_id,
+            detections=detections,
+            media_url=media_url,
+        )
+        persist_ms = (time.perf_counter() - persist_started) * 1000.0
+        # Stash only — emit after the caller's durable commit (handler boundary).
+        self._pending_reconcile_event = _PendingReconcileEvent(
+            media_id=media_id,
+            tenant_id=str(tenant_uuid),
+            job_id=str(job_id) if job_id is not None else None,
+            result=result,
+            detections=detections,
+            persist_ms=persist_ms,
+            detect_ms=detect_ms,
+            blob_read_ms=blob_read_ms,
+        )
+        return result
+
+    def emit_pending_scan_media_reconciled(self) -> None:
+        """Emit the stashed ``process_media_item`` event after a durable commit.
+
+        No-op when nothing is pending (e.g. detect/persist raised before stash).
+        """
+        pending = self._pending_reconcile_event
+        if pending is None:
+            return
+        self._pending_reconcile_event = None
+        _emit_scan_media_reconciled(
+            media_id=pending.media_id,
+            tenant_id=pending.tenant_id,
+            job_id=pending.job_id,
+            result=pending.result,
+            detections=pending.detections,
+            persist_ms=pending.persist_ms,
+            detect_ms=pending.detect_ms,
+            blob_read_ms=pending.blob_read_ms,
+            get_profile=self._face_pipeline_profile_cached,
+        )
+
+    async def _persist_identities(
+        self,
+        *,
+        tenant_uuid: uuid.UUID,
+        media_id: int,
+        detections: list[FaceDetection],
+        media_url: str | None = None,
+    ) -> ReconcileResult:
+        """Persist detections with Identity ID Recycling; return reconcile counts.
+
+        ``matched`` / ``new`` are re-scan row recycling counts, not assignment or
+        unknown labels (those live in clustering / FIR-6).
+        """
+        detections_needing_embeddings = [detection for detection in detections if detection.embedding is None]
+        if detections_needing_embeddings:
+            face_bytes = [str(detection.media_id).encode() for detection in detections_needing_embeddings]
+            embeddings: list[EmbeddingResult] = await self._generator.generate(face_bytes)
+            for detection, embedding_result in zip(detections_needing_embeddings, embeddings, strict=False):
+                detection.embedding = embedding_result.embedding
+
+        async with _media_persist_lock(self._session, tenant_uuid, media_id):
+            return await self._persist_identities_unlocked(
+                tenant_uuid=tenant_uuid,
+                media_id=media_id,
+                detections=detections,
+                media_url=media_url,
+            )
+
+    async def _persist_identities_unlocked(
+        self,
+        *,
+        tenant_uuid: uuid.UUID,
+        media_id: int,
+        detections: list[FaceDetection],
+        media_url: str | None = None,
+    ) -> ReconcileResult:
+        # 1. Fetch existing identities for this media item
+        stmt = select(MediaIdentity).where(
+            MediaIdentity.tenant_id == tenant_uuid,
+            MediaIdentity.media_id == int(media_id),
+        )
+        result = await self._session.execute(stmt)
+        existing_identities = list(result.scalars().all())
+
+        # 2. Match new detections to existing identities using BBOX IOU
+        matched: list[tuple[MediaIdentity, FaceDetection]] = []
+        unmatched_new: list[FaceDetection] = list(detections)
+        orphaned_old: list[MediaIdentity] = list(existing_identities)
+
+        for old in existing_identities:
+            if not unmatched_new:
+                break
+
+            best_iou = 0.0
+            best_det_idx = -1
+            old_bbox = (old.bbox_x, old.bbox_y, old.bbox_x + old.bbox_width, old.bbox_y + old.bbox_height)
+
+            for idx, det in enumerate(unmatched_new):
+                iou = _compute_iou(old_bbox, det.bbox)
+                if iou > best_iou:
+                    best_iou = iou
+                    best_det_idx = idx
+
+            if best_iou > 0.5:
+                matched.append((old, unmatched_new.pop(best_det_idx)))
+                orphaned_old.remove(old)
+
+        expected_dim = int(_DB_SETTINGS.pgvector_dimension)
+
+        existing_models = {
+            str(row.embedding_model)
+            for row in existing_identities
+            if getattr(row, "embedding_model", None)
+        }
+        detection_models = {str(det.model_id) for det in detections if det.model_id}
+        mixed_model = bool(existing_models and detection_models and existing_models != detection_models)
+
+        # 4. Update matched identities (preserves PK/UUID); count durable writes only.
+        matched_written = 0
+        skipped = 0
+        for old_row, det in matched:
+            if det.embedding is None:
+                skipped += 1
+                continue
+            _assert_embedding_dimension(det, expected_dim=expected_dim)
+            if not det.model_id:
+                raise PersistIntegrityError("embedding_model provenance missing on FaceDetection")
+            old_row.bbox_x = int(det.bbox[0])
+            old_row.bbox_y = int(det.bbox[1])
+            old_row.bbox_width = int(det.bbox[2] - det.bbox[0])
+            old_row.bbox_height = int(det.bbox[3] - det.bbox[1])
+            old_row.confidence = float(det.confidence)
+            old_row.embedding = det.embedding.tolist()
+            old_row.embedding_model = det.model_id
+            old_row.pose_pitch = det.pose_pitch
+            old_row.pose_yaw = det.pose_yaw
+            old_row.pose_roll = det.pose_roll
+            old_row.sharpness = det.sharpness
+            old_row.embedding_norm = det.embedding_norm
+            old_row.occlusion_severity = det.occlusion_severity
+            if det.landmark_quality is not None:
+                old_row.quality_score = det.landmark_quality
+            old_row.image_phash = det.image_phash
+            old_row.updated_at = datetime.now(tz=UTC)
+            matched_written += 1
+
+        # 5. Insert new detections
+        new_rows = []
+        default_url = f"http://example.test/{media_id}.jpg"
+        final_url = media_url or default_url
+
+        for det in unmatched_new:
+            if det.embedding is None:
+                skipped += 1
+                continue
+            _assert_embedding_dimension(det, expected_dim=expected_dim)
+            if not det.model_id:
+                raise PersistIntegrityError("embedding_model provenance missing on FaceDetection")
+            new_rows.append(
+                MediaIdentity(
+                    tenant_id=tenant_uuid,
+                    media_id=int(media_id),
+                    media_url=str(final_url),
+                    bbox_x=int(det.bbox[0]),
+                    bbox_y=int(det.bbox[1]),
+                    bbox_width=int(det.bbox[2] - det.bbox[0]),
+                    bbox_height=int(det.bbox[3] - det.bbox[1]),
+                    confidence=float(det.confidence),
+                    embedding=det.embedding.tolist(),
+                    embedding_model=det.model_id,
+                    pose_pitch=det.pose_pitch,
+                    pose_yaw=det.pose_yaw,
+                    pose_roll=det.pose_roll,
+                    sharpness=det.sharpness,
+                    embedding_norm=det.embedding_norm,
+                    occlusion_severity=det.occlusion_severity,
+                    quality_score=det.landmark_quality,
+                    image_phash=det.image_phash,
+                )
+            )
+        self._session.add_all(new_rows)
+
+        # 6. Delete orphaned
+        if orphaned_old:
+            for orphan in orphaned_old:
+                await self._session.delete(orphan)
+
+        await self._session.flush()
+        # matched = durable IoU-match writes (not raw IoU pair count); total =
+        # matched + new is rows written/updated (pre-S4 identities_detected).
+        return ReconcileResult(
+            detected=len(detections),
+            matched=matched_written,
+            new=len(new_rows),
+            skipped=skipped,
+            mixed_model=mixed_model,
+        )
+
+    def _face_pipeline_profile_cached(self) -> str:
+        """Return face_pipeline profile, loaded once per service instance."""
+        if self._cached_face_pipeline_profile is None:
+            self._cached_face_pipeline_profile = _face_pipeline_profile()
+        return self._cached_face_pipeline_profile
+
+
+def _assert_embedding_dimension(det: FaceDetection, *, expected_dim: int) -> None:
+    """Fail closed when a detection embedding does not match pgvector width ([EMB-01])."""
+    if det.embedding is None:
+        return
+    actual = len(det.embedding)
+    if actual != expected_dim:
+        raise PersistIntegrityError(
+            f"embedding length {actual} != pgvector_dimension {expected_dim}"
+        )
+
+
+def _face_pipeline_profile() -> str:
+    from recognition.config import get_settings
+
+    return str(get_settings().face_pipeline.profile)
+
+
+def _embedding_model_from_detections(detections: list[FaceDetection]) -> str | None:
+    for det in detections:
+        if det.model_id:
+            return det.model_id
+    return None
+
+
+def _emit_scan_media_reconciled(
+    *,
+    media_id: int,
+    tenant_id: str,
+    job_id: str | None,
+    result: ReconcileResult,
+    detections: list[FaceDetection],
+    persist_ms: float,
+    detect_ms: float | None = None,
+    blob_read_ms: float | None = None,
+    get_profile: Callable[[], str] | None = None,
+) -> None:
+    """Emit one wide structured log event per successfully reconciled media ([OBS-01..03]).
+
+    **Absence-means-failure contract (S4CR-05):** this event is success-only and
+    is emitted only after a durable commit. Detect/persist exceptions, batch
+    rollback, or pre-commit failure produce **no** ``scan_media_reconciled``
+    event for that media (or for earlier media in a failed ``save_job_results``
+    batch). Callers must not emit on the exception path.
+
+    ``matched`` is durable match-writes; ``new`` is inserts — not assignment/unknown.
+    Timing fields are scope-honest: ``persist_ms`` always; ``detect_ms`` only when
+    detect ran in the same call stack (worker ``process_media_item``); ``blob_read_ms``
+    only when an ObjectStore ``file://`` blob was read (E2E-09). HTTP/inline
+    ``save_job_results`` omits ``detect_ms`` / ``blob_read_ms`` (out of scope).
+
+    Telemetry failures are swallowed so logging can never fail the scan (S4CR-06).
+    """
+    try:
+        # Late import: correlation middleware lives under interface_adapters.http and
+        # importing it at module load would cycle through deps.services → ScanService.
+        from recognition.interface_adapters.http.middleware.correlation import get_correlation_id
+
+        profile = get_profile() if get_profile is not None else _face_pipeline_profile()
+        detection_models = sorted({str(det.model_id) for det in detections if det.model_id})
+        extra: dict[str, object] = {
+            "event": "scan_media_reconciled",
+            "media_id": media_id,
+            "tenant_id": tenant_id,
+            "job_id": job_id,
+            "correlation_id": get_correlation_id(),
+            "detected": result.detected,
+            "matched": result.matched,
+            "new": result.new,
+            # FIR23-02: honest skip count + mixed-model surfacing (always present).
+            "skipped": result.skipped,
+            "mixed_model": result.mixed_model,
+            "embedding_model": _embedding_model_from_detections(detections),
+            "embedding_models": detection_models,
+            "profile": profile,
+            "persist_ms": round(persist_ms, 3),
+        }
+        if detect_ms is not None:
+            extra["detect_ms"] = round(detect_ms, 3)
+        if blob_read_ms is not None:
+            extra["blob_read_ms"] = round(blob_read_ms, 3)
+        logger.info("scan_media_reconciled", extra=extra)
+    except Exception:
+        logger.exception("scan_media_reconciled emission failed")
+
+
+def _extract_media_id(value: str) -> int:
+    digits = "".join(ch for ch in value if ch.isdigit())
+    if digits:
+        return int(digits[-6:])
+    return abs(hash(value)) % 1_000_000
+
+
+def _compute_iou(bbox1: tuple[float, float, float, float], bbox2: tuple[float, float, float, float]) -> float:
+    """Compute Intersection over Union (IoU) of two bounding boxes.
+
+    Boxes are (x1, y1, x2, y2).
+    """
+    x_left = max(bbox1[0], bbox2[0])
+    y_top = max(bbox1[1], bbox2[1])
+    x_right = min(bbox1[2], bbox2[2])
+    y_bottom = min(bbox1[3], bbox2[3])
+
+    if x_right < x_left or y_bottom < y_top:
+        return 0.0
+
+    intersection_area = (x_right - x_left) * (y_bottom - y_top)
+    bbox1_area = (bbox1[2] - bbox1[0]) * (bbox1[3] - bbox1[1])
+    bbox2_area = (bbox2[2] - bbox2[0]) * (bbox2[3] - bbox2[1])
+
+    union_area = float(bbox1_area + bbox2_area - intersection_area)
+    if union_area <= 0:
+        return 0.0
+
+    return intersection_area / union_area
+
+
+__all__ = ["PersistIntegrityError", "ReconcileResult", "ScanService", "run_scan_three_phase"]

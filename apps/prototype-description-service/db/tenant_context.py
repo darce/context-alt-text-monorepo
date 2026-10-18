@@ -1,0 +1,172 @@
+"""Tenant context helpers for row-level security enforcement."""
+
+from __future__ import annotations
+
+import contextlib
+import logging
+import os
+from collections.abc import AsyncIterator
+from uuid import UUID
+
+from asyncpg.exceptions import InFailedSQLTransactionError
+from fastapi import HTTPException, status
+from sqlalchemy import event, select, text
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from db.session import engine
+from recognition.shared.db.dialect import is_sqlite
+
+logger = logging.getLogger(__name__)
+
+TENANT_PROVISIONING_PATH = "manage_api_keys"
+
+
+def tenant_not_provisioned_detail(tenant_id: UUID) -> dict[str, str]:
+    """Structured 403 payload for unknown tenant on authenticated tenant-scoped routes."""
+    return {
+        "code": "tenant_not_provisioned",
+        "tenant_id": str(tenant_id),
+        "detail": (
+            "Tenant is not provisioned. Create the tenant via manage_api_keys before sending tenant-scoped requests."
+        ),
+        "provisioning_path": TENANT_PROVISIONING_PATH,
+    }
+
+
+async def get_tenant_record(session: AsyncSession, tenant_id: UUID):
+    """Return the tenant row when it exists."""
+    from db.models import Tenant  # Import here to avoid circular dependency
+
+    result = await session.execute(select(Tenant).where(Tenant.id == tenant_id))
+    return result.scalar_one_or_none()
+
+
+async def require_tenant_record(session: AsyncSession, tenant_id: UUID):
+    """Require a provisioned tenant row or fail fast with structured detail."""
+    tenant = await get_tenant_record(session, tenant_id)
+    if tenant is not None:
+        return tenant
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=tenant_not_provisioned_detail(tenant_id),
+    )
+
+
+async def set_tenant_context(session: AsyncSession, tenant_id: UUID) -> None:
+    """Set app.current_tenant for the current session/transaction."""
+    # SQLite doesn't support RLS or session variables - skip for test environments
+    if is_sqlite(session):
+        return
+
+    tenant_value = str(tenant_id).replace("'", "''")
+    try:
+        await session.execute(text("RESET app.bypass_rls"))
+        await session.execute(text(f"SET LOCAL app.current_tenant = '{tenant_value}'"))
+    except DBAPIError as e:
+        # Only rollback if transaction is actually aborted
+        if e.orig and isinstance(e.orig.__cause__, InFailedSQLTransactionError):
+            await session.rollback()
+            await session.execute(text("RESET app.bypass_rls"))
+            await session.execute(text(f"SET LOCAL app.current_tenant = '{tenant_value}'"))
+        else:
+            raise
+    if os.getenv("ALLOW_RLS_BYPASS_FOR_TESTS") == "1":
+        try:
+            await session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        except DBAPIError as e:
+            # Only rollback if transaction is actually aborted
+            if e.orig and isinstance(e.orig.__cause__, InFailedSQLTransactionError):
+                await session.rollback()
+                await session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+            else:
+                raise
+
+
+async def clear_tenant_context(session: AsyncSession) -> None:
+    """Reset the tenant context so pooled connections don't leak state.
+
+    Note: We do NOT rollback here - the caller is responsible for managing
+    the transaction (commit or rollback). We only reset the session-level
+    RLS variables.
+    """
+    # SQLite doesn't support RLS or session variables - skip for test environments
+    if is_sqlite(session):
+        return
+    try:
+        await session.execute(text("RESET app.current_tenant"))
+        await session.execute(text("RESET app.bypass_rls"))
+    except Exception:
+        logger.warning(
+            "clear_tenant_context failed in_transaction=%s conn_id=%s",
+            session.in_transaction(),
+            hex(id(getattr(session, "sync_session", session))),
+            exc_info=True,
+        )
+
+
+async def enable_rls_bypass(session: AsyncSession) -> None:
+    """Temporarily disable RLS policies for maintenance operations."""
+    # SQLite doesn't support RLS - skip for test environments
+    if is_sqlite(session):
+        return
+
+    try:
+        await session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+    except DBAPIError as e:
+        # Only rollback if transaction is actually aborted
+        if e.orig and isinstance(e.orig.__cause__, InFailedSQLTransactionError):
+            await session.rollback()
+            await session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        else:
+            raise
+
+
+async def disable_rls_bypass(session: AsyncSession) -> None:
+    """Reset RLS bypass flag."""
+    # SQLite doesn't support RLS - skip for test environments
+    if is_sqlite(session):
+        return
+
+    try:
+        await session.execute(text("RESET app.bypass_rls"))
+    except DBAPIError as e:
+        # Only rollback if transaction is actually aborted
+        if e.orig and isinstance(e.orig.__cause__, InFailedSQLTransactionError):
+            await session.rollback()
+            await session.execute(text("RESET app.bypass_rls"))
+        else:
+            raise
+
+
+async def get_tenant_aware_session(session: AsyncSession, tenant_id: UUID) -> AsyncIterator[AsyncSession]:
+    """Dependency that yields a session with tenant context set."""
+    await set_tenant_context(session, tenant_id)
+    try:
+        yield session
+    finally:
+        await clear_tenant_context(session)
+
+
+def _register_checkout_listener() -> None:  # pragma: no cover
+    """Register pool checkout listener - only for production, not tests."""
+
+    @event.listens_for(engine.sync_engine, "checkout")
+    def _reset_context_on_checkout(dbapi_conn, connection_record, connection_proxy) -> None:
+        cursor = None
+        try:
+            cursor = dbapi_conn.cursor()
+            cursor.execute("RESET app.current_tenant")
+            cursor.execute("RESET app.bypass_rls")
+        except Exception:
+            logger.warning("checkout listener: failed to reset tenant context", exc_info=True)
+        finally:
+            if cursor is not None:
+                with contextlib.suppress(Exception):
+                    cursor.close()
+
+
+# Only register the listener if not in test mode (avoids asyncpg engine init during tests)
+if os.getenv("PYTEST_CURRENT_TEST") is None:
+    _register_checkout_listener()

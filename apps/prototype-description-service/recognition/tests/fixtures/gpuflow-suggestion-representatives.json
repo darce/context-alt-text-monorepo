@@ -1,0 +1,9 @@
+[
+  {"name": "pending-candidate-is-member", "resolution": "pending", "primary_index": 0, "candidate_is_member": true, "member_qualities": [0.3, 0.9], "expected_index": 2},
+  {"name": "pending-candidate-only-member", "resolution": "pending", "primary_index": 0, "candidate_is_member": true, "member_qualities": [], "expected_index": null},
+  {"name": "pending-candidate-primary", "resolution": "pending", "primary_index": 0, "member_qualities": [0.3, 0.9], "expected_index": 2},
+  {"name": "replay-candidate-primary", "resolution": "accepted", "primary_index": 0, "member_qualities": [0.3, 0.9], "expected_index": 2},
+  {"name": "pending-no-alternative", "resolution": "pending", "primary_index": 0, "member_qualities": [], "expected_index": null},
+  {"name": "replay-no-alternative", "resolution": "accepted", "primary_index": 0, "member_qualities": [], "expected_index": null},
+  {"name": "preserve-valid-primary", "resolution": "pending", "primary_index": 1, "member_qualities": [0.3, 0.9], "expected_index": 1}
+]

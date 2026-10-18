@@ -1,0 +1,24 @@
+{
+  "at": 1792292090.603034,
+  "source_sha": "6633f7026b99fa79a110c266194098a50ca94e01",
+  "source_tree": "34db5ccace0a290843492d1584ecbcb7b2bc77dd",
+  "path": "/private/tmp/bakeoff-raw-source-g1-codemap-20261018",
+  "scope": "Three exact delivered/readonly files only, no import-closure/completeness claim",
+  "files": [
+    {
+      "source_path": "apps/prototype-description-service/scripts/eval_harness/bakeoff.py",
+      "snapshot_path": "/private/tmp/bakeoff-raw-source-g1-codemap-20261018/bakeoff.py",
+      "sha256": "4ba187e850ec54612d8ca41b067255b65e786b22f9cf11bb5063caa466fa065e"
+    },
+    {
+      "source_path": "apps/prototype-description-service/scripts/eval_harness/remote_client.py",
+      "snapshot_path": "/private/tmp/bakeoff-raw-source-g1-codemap-20261018/remote_client.py",
+      "sha256": "daefd2156276a5051e6b4d739babad1724a36f29e57061b236d9dbea86a72c53"
+    },
+    {
+      "source_path": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py",
+      "snapshot_path": "/private/tmp/bakeoff-raw-source-g1-codemap-20261018/test_eval_harness_bakeoff_raw_auth.py",
+      "sha256": "08ce40565572cd60219cc1942be4a5fbad03858f05945cd8881cfd5ccb01a66e"
+    }
+  ]
+}

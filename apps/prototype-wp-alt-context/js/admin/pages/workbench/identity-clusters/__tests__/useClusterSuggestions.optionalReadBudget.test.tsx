@@ -110,7 +110,10 @@ beforeEach(() => {
       unexpected.push(`${method} ${url.pathname}`);
       return Promise.reject(new Error(`Unexpected fixture route: ${method} ${url.pathname}`));
     }
-    requests.push({ route, method, url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    if (init?.body != null && typeof init.body !== 'string') {
+      throw new Error('Fixture request body must be a JSON string');
+    }
+    requests.push({ route, method, url, body: init?.body ? JSON.parse(init.body) : undefined });
     if (method !== 'GET' && !(allowCommit && route === 'commit' && method === 'POST')) {
       unexpected.push(`${method} ${url.pathname}`);
       return Promise.reject(new Error('Display and retry must be read-only'));
@@ -399,8 +402,10 @@ describe('U1-01 mandatory data and actual write guards', () => {
     mountEditor();
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Unable to load people. Retry before naming someone new.');
-    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Save name' })).not.toBeInTheDocument();
+    expect(input()).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Save name' })).toBeDisabled();
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(count('commit')).toBe(0);
     const retry = hold('roster');
     await userEvent.setup().click(within(alert).getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(count('roster')).toBe(2));

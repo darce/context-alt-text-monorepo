@@ -108,7 +108,10 @@ beforeEach(() => {
       unexpected.push(`${method} ${url.pathname}`);
       return Promise.reject(new Error(`Unexpected fixture route: ${method} ${url.pathname}`));
     }
-    requests.push({ route, method, url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    if (init?.body != null && typeof init.body !== 'string') {
+      throw new Error('Fixture request body must be a JSON string');
+    }
+    requests.push({ route, method, url, body: init?.body ? JSON.parse(init.body) : undefined });
     if (method !== 'GET' && !(allowCommit && route === 'commit' && method === 'POST')) {
       unexpected.push(`${method} ${url.pathname}`);
       return Promise.reject(new Error('Display and retry must be read-only'));
@@ -151,8 +154,10 @@ const reachCachedError = async () => {
   await waitFor(() => expect(rosterState()).toMatchObject({ status: 'error', fetchStatus: 'idle' }));
   expect(rosterState()?.data).toEqual(roster);
   expect(screen.getByRole('alert')).toHaveTextContent('Unable to load people.');
-  expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Save name' })).not.toBeInTheDocument();
+  expect(input()).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Save name' })).toBeDisabled();
+  expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  expect(count('commit')).toBe(0);
   expect(count('roster')).toBe(2);
 };
 const clickPendingRetry = async (expectedTotal: number) => {
@@ -164,7 +169,7 @@ const clickPendingRetry = async (expectedTotal: number) => {
   expect(count('roster'), 'pending mandatory Retry must coalesce uncancellable HTTP reads').toBe(expectedTotal);
   expect(rosterState()).toMatchObject({ status: 'error', fetchStatus: 'fetching' });
   expect(screen.getByRole('alert')).toHaveTextContent('Unable to load people.');
-  expect(screen.queryByRole('button', { name: 'Save name' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Save name' })).toBeDisabled();
 };
 
 describe('CURUX1-QN1-01 mandatory roster Retry through production queries and HTTP', () => {
@@ -172,7 +177,10 @@ describe('CURUX1-QN1-01 mandatory roster Retry through production queries and HT
     await reachCachedError();
     const retry = hold('roster');
     await clickPendingRetry(3);
-    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    expect(input()).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Save name' })).toBeDisabled();
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(count('commit')).toBe(0);
     act(() => { retry.resolve([]); });
     await waitFor(() => expect(input()).toBeEnabled());
     expect(rosterState()).toMatchObject({ status: 'success', fetchStatus: 'idle', data: [] });
@@ -201,7 +209,10 @@ describe('CURUX1-QN1-01 mandatory roster Retry through production queries and HT
     act(() => { failedRetry.resolve({ code: 'still-unavailable' }, 503); });
     await waitFor(() => expect(rosterState()).toMatchObject({ status: 'error', fetchStatus: 'idle' }));
     expect(screen.getByRole('alert')).toHaveTextContent('Unable to load people.');
-    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    expect(input()).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Save name' })).toBeDisabled();
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(count('commit')).toBe(0);
     const nextRetry = hold('roster');
     await clickPendingRetry(4);
     act(() => { nextRetry.resolve(roster); });

@@ -112,7 +112,10 @@ beforeEach(() => {
       unexpected.push(`${method} ${url.pathname}`);
       return Promise.reject(new Error(`Unexpected fixture route: ${method} ${url.pathname}`));
     }
-    requests.push({ route, method, url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    if (init?.body != null && typeof init.body !== 'string') {
+      throw new Error('Fixture request body must be a JSON string');
+    }
+    requests.push({ route, method, url, body: init?.body ? JSON.parse(init.body) : undefined });
     if (method !== 'GET' && !(allowCommit && ((route === 'commit' && method === 'POST') || (route === 'rename' && method === 'PATCH')))) {
       unexpected.push(`${method} ${url.pathname}`);
       return Promise.reject(new Error('Display and retry must be read-only'));

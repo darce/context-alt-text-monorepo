@@ -1,0 +1,126 @@
+{
+  "status": "AUTHOR_GREEN",
+  "summary": "Repaired both G2 response-privacy findings. Six genuine RED/GREEN regressions and all79 prior focused cases pass; independent G3 remains root-owned.",
+  "source_sha": "27e7f3abc5778779b2e0201d4b745f86630131c9",
+  "changed_files": [
+    "apps/prototype-description-service/scripts/eval_harness/bakeoff.py",
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_reflection.py",
+    ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-SOURCE-R3-REFLECTION-BOUNDARY.json",
+    ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-SOURCE-R3-REFLECTION-BOUNDARY.md"
+  ],
+  "commits": [
+    "ce5eed59f2c9b54b1e3f89f511b92698dd344ac4"
+  ],
+  "findings": [
+    {
+      "id": "RAW-AUTH-SOURCE-G2-01",
+      "severity": "high",
+      "file": "apps/prototype-description-service/scripts/eval_harness/bakeoff.py:689",
+      "description": "Required G2 finding: reflected credentials survived in generated property names.",
+      "evidence": "Original public/CLI producer exits1 before edits and0 after; identical external response bytes and real successful records retained.",
+      "fix": "Scrub free-form keys/values while preserving recognized schema paths and actual counters. Author verified; central closure pending."
+    },
+    {
+      "id": "RAW-AUTH-SOURCE-G2-02",
+      "severity": "high",
+      "file": "apps/prototype-description-service/scripts/eval_harness/bakeoff.py:726",
+      "description": "Required G2 finding: nested JSON/repr diagnostics disclosed a losslessly recoverable credential.",
+      "evidence": "Original public/CLI producer exits1 before edits; actual lossless recovery succeeds. Final producer exits0 with private typed errors and aborted records.",
+      "fix": "Translate authenticated parser failures without response excerpts, preserving type/status and dropping unsafe chains. Author verified; central closure pending."
+    }
+  ],
+  "tests": [
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r3-reflection-boundary/scripts/structured_reflection.py",
+      "exit_code": 1,
+      "summary": "Original G2 public/CLI property-name leaks reproduced on exact input."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r3-reflection-boundary/scripts/diagnostic_reflection.py",
+      "exit_code": 1,
+      "summary": "Original G2 public/CLI nested diagnostic leaks reproduced; separate lossless recovery passed."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r3-reflection-boundary/scripts/pytest_before.py reflection-final-red",
+      "exit_code": 1,
+      "summary": "Final six cases genuinely fail privacy assertions on exact saved input; setup/teardown pass."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r3-reflection-boundary/scripts/pytest_run.py reflection-sealed",
+      "exit_code": 0,
+      "summary": "Six new cases pass with matching RED/GREEN response bytes;54 clients closed."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r3-reflection-boundary/scripts/pytest_run.py approved-sealed",
+      "exit_code": 0,
+      "summary": "50 approved cases pass unchanged."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r3-reflection-boundary/scripts/pytest_run.py new-sealed",
+      "exit_code": 0,
+      "summary": "12 R2 cases pass unchanged, including identical normal request bodies."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r3-reflection-boundary/scripts/pytest_run.py adjacent-sealed",
+      "exit_code": 0,
+      "summary": "Exact17 legacy cases pass;11 proven client leftovers closed in audit finally."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r3-reflection-boundary/scripts/public_probe.py",
+      "exit_code": 0,
+      "summary": "All original G1 public collision/reflection witnesses pass."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r3-reflection-boundary/scripts/cli_collision_green.py",
+      "exit_code": 0,
+      "summary": "All original G1 CLI collision witnesses preserve captions,22/14/36 and warmup."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r3-reflection-boundary/scripts/final_structured_reflection.py",
+      "exit_code": 0,
+      "summary": "Original G2 producer passes with free-form key/value reflections private."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r3-reflection-boundary/scripts/final_diagnostic_reflection.py",
+      "exit_code": 0,
+      "summary": "Original G2 producer passes with typed excerpt-free errors and private aborted records."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r3-reflection-boundary/scripts/file_faults.py",
+      "exit_code": 0,
+      "summary": "Five file controls pass; metadata refusal reads0; all observed FDs close."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r3-reflection-boundary/scripts/transport_controls.py",
+      "exit_code": 0,
+      "summary": "Eight controls/32 exchanges preserve status, redirects,429, timeout and breaker semantics."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r3-reflection-boundary/scripts/diagnostic_controls.py",
+      "exit_code": 0,
+      "summary": "Typed parser failures and fenced/reflected-brace controls pass."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r3-reflection-boundary/scripts/schema_controls_final2.py",
+      "exit_code": 0,
+      "summary": "34 observations/136 exchanges across17 credential spellings pass;68 clients close."
+    },
+    {
+      "command": ".venv/bin/ruff check --no-cache apps/prototype-description-service/scripts/eval_harness/bakeoff.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_reflection.py",
+      "exit_code": 0,
+      "summary": "Focused owned source/new-test Ruff lint passes."
+    },
+    {
+      "command": ".venv/bin/ruff format --check --no-cache apps/prototype-description-service/scripts/eval_harness/bakeoff.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_reflection.py",
+      "exit_code": 0,
+      "summary": "Focused owned source/new-test Ruff format check passes."
+    }
+  ],
+  "limitations": [
+    "Author verification only. Root owns independent whole SOURCE G3, central finding disposition, adoption/composition, canonical validation, close-check, merge and effects. No agents or dispatches occurred.",
+    "source_sha is the honest native stripped base. Logical input e193558157c8212996be25562496d94003f36072 is unavailable locally; both declare tree c1772f34664acf8f3d5882ab2cee780e73e7aca2. Equal trees establish bytes, not ancestry; earlier logical author/reviewer histories remain preserved.",
+    "Full reproducible audit: /tmp/raw-auth-source-r3-reflection-boundary. All10,900 prior files remain unchanged. Initial RED, intermediate text/legible_text regression and auxiliary probe/seal mistakes are retained separately; final source/test hashes and actual imports are pinned.",
+    "Supplied verified semantic/Canon evidence and four-file input graph were checked; final source/AST/imports supplement changed regions. No live MCP/embedding retrieval, model session, inference, runtime authentication or physical socket-deadline claim.",
+    "All observed clients/credential FDs close; command children returned actual exits. No installs, broad suites, real credentials, media/weights/GT, GPU/cloud/guest, shared-service/DB/TLS/auth changes, OWNER edits or foreign signals."
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "at": 1792303062.986305,
+  "source_commit": "4a4d45908059e10d73cb146a330bcc5f7fe790fb",
+  "source_tree": "f188810e75a72fa01e013f095d74db3468e579df",
+  "repo_path": "/private/tmp/bakeoff-raw-source-g2-codemap-4a4d4590",
+  "project": "bakeoff-raw-source-g2-4a4d4590",
+  "files": [
+    {
+      "source_path": "apps/prototype-description-service/scripts/eval_harness/bakeoff.py",
+      "snapshot_path": "/private/tmp/bakeoff-raw-source-g2-codemap-4a4d4590/bakeoff.py",
+      "sha256": "9ea9f869de531a60862ecadb7fdabf17148edb46d09cfb6c5713f1bebc97c36c"
+    },
+    {
+      "source_path": "apps/prototype-description-service/scripts/eval_harness/remote_client.py",
+      "snapshot_path": "/private/tmp/bakeoff-raw-source-g2-codemap-4a4d4590/remote_client.py",
+      "sha256": "daefd2156276a5051e6b4d739babad1724a36f29e57061b236d9dbea86a72c53"
+    },
+    {
+      "source_path": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py",
+      "snapshot_path": "/private/tmp/bakeoff-raw-source-g2-codemap-4a4d4590/test_eval_harness_bakeoff_raw_auth.py",
+      "sha256": "08ce40565572cd60219cc1942be4a5fbad03858f05945cd8881cfd5ccb01a66e"
+    },
+    {
+      "source_path": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_protocol_fields.py",
+      "snapshot_path": "/private/tmp/bakeoff-raw-source-g2-codemap-4a4d4590/test_eval_harness_bakeoff_auth_protocol_fields.py",
+      "sha256": "7b3321088eb319016780c6b888aab487bfb6140f5cc8782a50425f64c5b9e537"
+    }
+  ],
+  "scope": "four exact files only; no import-closure or whole-project claim",
+  "index_command": [
+    "/Users/daniel/.local/bin/codebase-memory-mcp",
+    "cli",
+    "--json",
+    "index_repository",
+    "--repo-path",
+    "/private/tmp/bakeoff-raw-source-g2-codemap-4a4d4590",
+    "--name",
+    "bakeoff-raw-source-g2-4a4d4590",
+    "--mode",
+    "fast"
+  ],
+  "index_exit": 0,
+  "index_result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"project\":\"bakeoff-raw-source-g2-4a4d4590\",\"not_indexed_files_count\":0,\"skipped_count\":0,\"parse_partial_count\":0,\"parse_unusable_count\":0,\"nodes\":194,\"edges\":813,\"expected_nodes\":194,\"expected_edges\":813,\"adr_present\":false,\"adr_hint\":\"Project indexed. Consider creating an Architecture Decision Record: explore the codebase with get_architecture(aspects=['all']), then use manage_adr(mode='update') to persist architectural insights across sessions.\",\"artifact_present\":false,\"status\":\"indexed\"}"
+      }
+    ],
+    "structuredContent": {
+      "project": "bakeoff-raw-source-g2-4a4d4590",
+      "not_indexed_files_count": 0,
+      "skipped_count": 0,
+      "parse_partial_count": 0,
+      "parse_unusable_count": 0,
+      "nodes": 194,
+      "edges": 813,
+      "expected_nodes": 194,
+      "expected_edges": 813,
+      "adr_present": false,
+      "adr_hint": "Project indexed. Consider creating an Architecture Decision Record: explore the codebase with get_architecture(aspects=['all']), then use manage_adr(mode='update') to persist architectural insights across sessions.",
+      "artifact_present": false,
+      "status": "indexed"
+    },
+    "isError": false
+  },
+  "index_stderr": "",
+  "query_exit": 0,
+  "query_result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "results_refs: 6  (cols: id prefix)\n  0 bakeoff-raw-source-g2-4a4d4590.bakeoff.\n  1 bakeoff-raw-source-g2-4a4d4590.test_eval_harness_bakeoff_auth_protocol_fields.\n  2 bakeoff-raw-source-g2-4a4d4590.bakeoff.BakeoffClient.\n  3 test_eval_harness_bakeoff_auth_protocol_fields.py\n  4 bakeoff-raw-source-g2-4a4d4590.remote_client.RemoteSceneClient.\n  5 remote_client.py\nresults_ref_rule: @N+suffix=prefix+suffix\nresults: 15  (cols: qn label file lines in out)\n  @0+_USAGE_FIELDS Variable bakeoff.py 1325-1325 2 0\n  @0+_extract_usage Function bakeoff.py 1328-1348 1 2\n  @2+_redact_response Method bakeoff.py 676-704 2 1\n  @4+_request Method @5+ 102-152 5 6\n  @2+_request Method bakeoff.py 655-674 0 1\n  @4+_request_dict Method @5+ 154-158 6 2\n  @0+_sum_usage Function bakeoff.py 1351-1376 2 3\n  bakeoff-raw-source-g2-4a4d4590.test_eval_harness_bakeoff_raw_auth.describe Function test_eval_harness_bakeoff_raw_auth.py 80-81 5 0\n  @4+describe Method @5+ 180-207 0 1\n  @2+describe Method bakeoff.py 718-802 1 19\n  @1+test_cli_preserves_protocol_fields_usage_and_warmup Function @3+ 115-137 0 8\n  @1+test_describe_preserves_protocol_fields_and_usage Function @3+ 90-111 0 8\n  @1+py.__file__ File @3+ - 0 0\n  bakeoff-raw-source-g2-4a4d4590.test_eval_harness_bakeoff_auth_protocol_fields Module @3+ 1-138 0 4\n  @2+weave_bench_describe Method bakeoff.py 804-830 1 7\ntotal: 15\nreturned: 15\nhas_more: false\ntruncated: false\n"
+      }
+    ],
+    "isError": false
+  },
+  "query_stderr": "warning: passing raw JSON to 'cli search_graph' is deprecated and will be removed in a future release; use flags (run 'cli search_graph --help'), --args-file <path>, or piped stdin.\n"
+}

@@ -30,8 +30,10 @@ interface ClusterEditFormProps {
   onLabelChange: (value: string) => void;
   /** Combobox options (suggestions + existing labels) */
   options: ComboboxOption[];
-  /** Whether suggestions are loading */
+  /** Whether mandatory naming data is unavailable */
   isLoading: boolean;
+  rosterError?: boolean;
+  onRetryRoster?: () => void;
   /** Whether a mutation is in progress */
   isPending: boolean;
   /** Override label for the save button */
@@ -74,6 +76,8 @@ export const ClusterEditForm = ({
   onLabelChange,
   options,
   isLoading,
+  rosterError,
+  onRetryRoster,
   isPending,
   saveLabel,
   onSave,
@@ -94,6 +98,7 @@ export const ClusterEditForm = ({
   const saveButtonLabel = saveLabel ?? (isPending ? __('Saving name…', 'alt-context') : __('Save name', 'alt-context'));
   const showAtRestTruncationHint = atRestTruncated && isAtRestMode;
   const atRestHintId = `acx-identity-cluster-at-rest-hint-${React.useId()}`;
+  const rosterErrorId = `acx-identity-cluster-roster-error-${React.useId()}`;
 
   const displayedCount = React.useMemo(() => budgetRows(options).length, [options]);
 
@@ -213,8 +218,12 @@ export const ClusterEditForm = ({
         onOptionConfirm={handleOptionConfirm}
         onRejectSuggestion={onRejectSuggestion}
         onCancel={onCancel}
-        isPending={isPending}
-        isLoading={isLoading}
+        // Keep the editor mounted and editable on read failure, preserving its
+        // caret/selection. The commit gate still blocks every naming action;
+        // only a real write disables draft editing. Fresh mounts keep select-all.
+        isPending={isPending || Boolean(rosterError)}
+        inputDisabled={isPending}
+        isLoading={isLoading && !rosterError}
         suggestionsError={suggestionsError}
         onRetrySuggestions={onRetrySuggestions}
         searchPlaceholder={__('Enter a name…', 'alt-context')}
@@ -226,22 +235,44 @@ export const ClusterEditForm = ({
         inputId={inputId}
         className="acx-identity-cluster__edit"
         classPrefix="acx-identity-cluster"
-        hideStatusAnnouncement={Boolean(commitFeedback)}
-        hintId={showAtRestTruncationHint ? atRestHintId : undefined}
+        hideStatusAnnouncement={Boolean(commitFeedback) || Boolean(rosterError)}
+        hintId={[
+          showAtRestTruncationHint ? atRestHintId : null,
+          rosterError ? rosterErrorId : null,
+        ].filter(Boolean).join(' ') || undefined}
         hint={
-          showAtRestTruncationHint ? (
-            <p
-              id={atRestHintId}
-              className="acx-identity-cluster__at-rest-hint"
-            >
-              {sprintf(
-                /* translators: 1: number of labels currently shown, 2: total labelled clusters */
-                __('Showing %1$d of %2$d labels — type to search for more', 'alt-context'),
-                displayedCount,
-                atRestTotal,
-              )}
-            </p>
-          ) : null
+          rosterError || showAtRestTruncationHint ? <>
+            {rosterError ? (
+              <div id={rosterErrorId} role="alert">
+                <p>{__('Unable to load people. Retry before naming someone new.', 'alt-context')}</p>
+                <p>{__('You can keep editing your draft.', 'alt-context')}</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onRetryRoster?.();
+                    // Retry returns to the same input without selecting its text.
+                    document.getElementById(inputId)?.focus();
+                  }}
+                  disabled={isPending}
+                >
+                  {__('Retry', 'alt-context')}
+                </button>
+              </div>
+            ) : null}
+            {showAtRestTruncationHint ? (
+              <p
+                id={atRestHintId}
+                className="acx-identity-cluster__at-rest-hint"
+              >
+                {sprintf(
+                  /* translators: 1: number of labels currently shown, 2: total labelled clusters */
+                  __('Showing %1$d of %2$d labels — type to search for more', 'alt-context'),
+                  displayedCount,
+                  atRestTotal,
+                )}
+              </p>
+            ) : null}
+          </> : null
         }
       />
       {commitFeedback ? (

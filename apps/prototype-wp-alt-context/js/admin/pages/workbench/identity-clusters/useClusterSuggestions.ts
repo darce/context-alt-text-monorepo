@@ -28,6 +28,10 @@ interface UseClusterSuggestionsReturn {
   options: ComboboxOption[];
   /** Whether suggestions are loading */
   isLoading: boolean;
+  /** Successful mandatory roster read, separate from advisory loading. */
+  namingReady?: boolean;
+  rosterError?: boolean;
+  retryRoster?: () => void;
   /** Pre-dedupe collisions for the duplicate guard */
   collisionsByLabel: ReadonlyMap<string, readonly NamingOption[]>;
   /** Find cluster ID by label (case-insensitive); cluster-source options only (PR-16) */
@@ -192,6 +196,9 @@ export const useClusterSuggestions = ({
     rosterCandidateOptions,
     collisionsByLabel,
     isLoading,
+    namingReady,
+    rosterError,
+    retryRoster,
     isError,
     retry,
     findClusterByLabel: findClusterByLabelRemote,
@@ -237,6 +244,9 @@ export const useClusterSuggestions = ({
   return {
     options,
     isLoading,
+    namingReady,
+    rosterError,
+    retryRoster,
     collisionsByLabel,
     findClusterByLabel,
     atRestTotal,

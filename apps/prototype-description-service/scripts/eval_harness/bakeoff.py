@@ -262,6 +262,13 @@ _PASS1_SYSTEM_PROMPT = (
     "speculate about anything that is not visible. Use empty strings or empty "
     "arrays when something does not apply."
 )
+_PASS1_STRUCTURAL_KEYS: dict[str, Any] = {
+    "people": {"position": None, "appearance": None},
+    "setting": None,
+    "action": None,
+    "legible_text": None,
+    "atmosphere": None,
+}
 
 # Weave-pass addendum (appended to the selected variant's system prompt) with
 # the mismatch few-shot from findings §2.4 (ReCap exemplar analog): context
@@ -673,45 +680,60 @@ class BakeoffClient(RemoteSceneClient):
             raise failure
         return payload
 
-    def _redact_response(self, value: Any, *, diagnostic: bool = False) -> Any:
-        """Scrub reflected values without changing protocol labels or JSON syntax.
+    def _redact_text(self, value: str) -> str:
+        for private in self._response_private_values:
+            for spelling in sorted({private, json.dumps(private)[1:-1], repr(private)[1:-1]}, key=len, reverse=True):
+                value = value.replace(spelling, "[redacted]")
+        return value
 
-        Printable diagnostics are a separate boundary: their entire text can
-        be scrubbed because no downstream caption/usage parser consumes it.
+    def _redact_response(
+        self, value: Any, *, structural_keys: dict[str, Any] | None = None, structured_text: bool = True
+    ) -> Any:
+        """Scrub free-form generated data, including property names.
+
+        Only keys at recognized schema paths are structural. Extra keys are
+        generated data; transport labels never enter here.
         """
         if isinstance(value, str):
+            # A decoded scalar/key is data even when it spells JSON syntax.
+            if not structured_text:
+                value = self._redact_text(value)
             # Chat content can itself be JSON, with escaped credential bytes.
-            # A matching label or brace is structure, not a reflected value.
-            if not diagnostic:
-                fenced = _JSON_FENCE_RE.match(value.strip())
-                try:
-                    embedded = json.loads(fenced.group(1) if fenced else value)
-                except ValueError:
-                    embedded = None
-                if isinstance(embedded, (dict, list)):
-                    redacted = self._redact_response(embedded)
-                    return json.dumps(redacted) if redacted != embedded else value
-            for private in self._response_private_values:
-                for spelling in sorted(
-                    {private, json.dumps(private)[1:-1], repr(private)[1:-1]}, key=len, reverse=True
-                ):
-                    value = value.replace(spelling, "[redacted]")
-            return value
+            # Decode before replacement so JSON grammar remains intact.
+            fenced = _JSON_FENCE_RE.match(value.strip())
+            try:
+                embedded = json.loads(fenced.group(1) if fenced else value)
+            except ValueError:
+                embedded = None
+            if isinstance(embedded, (dict, list)):
+                redacted = self._redact_response(embedded, structural_keys=structural_keys)
+                return json.dumps(redacted) if redacted != embedded else value
+            return self._redact_text(value)
         if isinstance(value, list):
-            return [self._redact_response(item) for item in value]
+            return [
+                self._redact_response(item, structural_keys=structural_keys, structured_text=False) for item in value
+            ]
         if isinstance(value, dict):
-            return {key: self._redact_response(item) for key, item in value.items()}
+            schema = structural_keys or {}
+            return {
+                key if key in schema else self._redact_text(key): self._redact_response(
+                    item, structural_keys=schema.get(key), structured_text=False
+                )
+                for key, item in value.items()
+            }
         return value
 
     def _parse_response(self, parser: Callable[[Any], Any], value: Any) -> Any:
-        """Keep typed parse failures, scrubbing their printable payload excerpts."""
+        """Keep typed parse failures without exposing response-derived excerpts."""
         failure: RemoteClientError | None = None
         try:
             return parser(value)
         except RemoteClientError as exc:
             if self._server_api_key is None:
                 raise
-            failure = type(exc)(self._redact_response(str(exc), diagnostic=True), status_code=exc.status_code)
+            # Replacing rendered text cannot cover composed JSON/repr escaping.
+            # Authenticated diagnostics carry classification/status, not payloads.
+            failure = type(exc)("raw response could not be parsed", status_code=exc.status_code)
         # Discard the original exception chain, which can contain raw excerpts.
         raise failure
 
@@ -996,7 +1018,14 @@ class BakeoffClient(RemoteSceneClient):
             usage = _extract_usage(payload)
             # Interpret envelope labels/discriminators and measured usage before
             # scrubbing generated text; only text and diagnostics leave this boundary.
-            text = self._redact_response(self._parse_response(_extract_caption, payload))
+            structural_keys = None
+            if pass_name == "describe_facts":
+                structural_keys = _PASS1_STRUCTURAL_KEYS
+            elif pass_name in {"ground_weave", "weave_bench"} and PROMPT_VARIANTS[self.prompt_variant].three_surface:
+                structural_keys = dict.fromkeys(_THREE_SURFACE_KEYS)
+            text = self._redact_response(
+                self._parse_response(_extract_caption, payload), structural_keys=structural_keys
+            )
         except Exception:
             passes.append(
                 {

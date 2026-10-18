@@ -33,6 +33,19 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def read_file(path, limit=MAX_BYTES, follow_symlink=False):
+    """Bound reads even for operator inputs: never block on a device/FIFO."""
+    flags = os.O_RDONLY | os.O_NONBLOCK
+    if not follow_symlink:
+        flags |= os.O_NOFOLLOW
+    with os.fdopen(os.open(path, flags), 'rb') as stream:
+        info = os.fstat(stream.fileno())
+        require(stat.S_ISREG(info.st_mode) and info.st_size <= limit, 'nonregular/oversized file: '+str(path))
+        data = stream.read(limit+1)
+        require(len(data) <= limit, 'file exceeds bounds: '+str(path))
+        return data
+
+
 def safe(name):
     require(isinstance(name, str) and name and '\\' not in name and '%' not in name and '?' not in name and '#' not in name, 'unsafe path')
     p = PurePosixPath(name)
@@ -40,12 +53,12 @@ def safe(name):
     return name
 
 
-def graph(root):
+def graph(root, verified=None):
     manifest = root / (DIST+'.vite/manifest.json')
     if not manifest.is_file():
         manifest = root / (DIST+'manifest.json')
     require(manifest.resolve().is_relative_to(root.resolve()), 'escaping manifest')
-    raw = manifest.read_bytes()
+    raw = read_file(manifest)
     nodes = json.loads(raw)
     require(isinstance(nodes, dict) and nodes, 'empty manifest')
     entries = [k for k, v in nodes.items() if isinstance(v, dict) and v.get('isEntry')]
@@ -74,16 +87,21 @@ def graph(root):
     result = {}
     for path in sorted(paths):
         target = root/path
-        require(target.resolve().is_relative_to(root.resolve()) and target.is_file(), 'missing/escaping asset: '+path)
-        result[path] = digest(target.read_bytes())
+        if verified and path in verified:
+            sha, source = verified[path]
+            require(digest(read_file(target, source.stat().st_size, follow_symlink=True)) == sha, 'verified asset differs: '+path)
+            result[path] = sha
+        else:
+            require(target.resolve().is_relative_to(root.resolve()) and target.is_file(), 'missing/escaping asset: '+path)
+            result[path] = digest(read_file(target))
     return {'manifest_sha256': digest(raw), 'entries': entries, 'graph': result}
 
 
 def validate(root):
-    header = (root/'alt-context.php').read_text()
+    header = read_file(root/'alt-context.php').decode()
     match = re.search(r'^\s*\*\s*Version:\s*([^\r\n]+)', header, re.M)
     require(header.lstrip().startswith('<?php') and 'Plugin Name:' in header and match, 'invalid plugin PHP header')
-    require((root/'vendor/autoload.php').read_bytes().lstrip().startswith(b'<?php'), 'missing production autoload')
+    require(read_file(root/'vendor/autoload.php').lstrip().startswith(b'<?php'), 'missing production autoload')
     for path in ('.env', '.env.local', '.env.production', '.env.development', 'node_modules', 'tests', 'vendor/phpunit', 'vendor/squizlabs/php_codesniffer', 'vendor/wp-coding-standards/wpcs'):
         require(not (root/path).exists(), 'nonproduction input: '+path)
     for path in ('alt-context.php', 'vendor/autoload.php'):
@@ -92,10 +110,11 @@ def validate(root):
     return {'version': match.group(1).strip(), **graph(root)}
 
 
-def unpack(data, root):
+def unpack(data, root, budget=MAX_BYTES):
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         infos = archive.infolist()
-        require(len(infos) <= 30000 and sum(i.file_size for i in infos) <= MAX_BYTES, 'ZIP exceeds limits')
+        size = sum(i.file_size for i in infos)
+        require(len(infos) <= 30000 and size <= min(MAX_BYTES, budget), 'ZIP exceeds limits')
         seen = set()
         for item in infos:
             require('\x00' not in item.orig_filename, 'NUL in ZIP path')
@@ -116,23 +135,55 @@ def unpack(data, root):
             else:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(archive.read(item))  # CRC checked by zipfile
+        return size
 
 
-def inventory(root, max_bytes=MAX_BYTES * (MAX_VIEWS + 1)):
+def inventory(root, max_bytes=MAX_BYTES * (MAX_VIEWS + 1), verified=None):
     result = {}
-    total = 0
+    total = count = 0
     for p in root.rglob('*'):
-        require(not p.is_symlink(), 'symlink inside artifact/view')
-        if p.is_file() and p.name != RECEIPT:
-            total += p.stat().st_size
-            require(total <= max_bytes and len(result) < 30000 * (MAX_VIEWS + 1), 'installed tree exceeds bounds')
-            result[str(p.relative_to(root))] = digest(p.read_bytes())
+        count += 1
+        require(count <= 30000 * (MAX_VIEWS + 1), 'installed tree exceeds bounds')
+        name = str(p.relative_to(root))
+        mode = p.lstat().st_mode
+        if stat.S_ISLNK(mode):
+            require(verified and name in verified, 'symlink inside artifact/view')
+            sha, source = verified[name]
+            data = read_file(p, min(source.stat().st_size, max_bytes-total), follow_symlink=True)
+            require(digest(data) == sha, 'verified asset differs: '+name)
+        elif stat.S_ISDIR(mode):
+            continue
+        else:
+            require(stat.S_ISREG(mode), 'special file inside artifact/view')
+            if name == RECEIPT:
+                continue
+            data = read_file(p, min(MAX_BYTES, max_bytes-total))
+        total += len(data)
+        result[name] = digest(data)
     return result
 
 
 def receipt(root):
     p = root/RECEIPT
-    return json.loads(p.read_text()) if p.is_file() else None
+    return json.loads(read_file(p)) if p.exists() or p.is_symlink() else None
+
+
+def carry(candidate, compatibility, assets):
+    """Merge complete declared graphs; a candidate file always wins or refuses."""
+    files = inventory(candidate)
+    total = sum((candidate/path).stat().st_size for path in files)
+    for path, (sha, source) in assets.items():
+        existing = candidate/path
+        require(not existing.exists() or digest(read_file(existing)) == sha, 'asset name collision: '+path)
+        compatibility[path] = sha
+        if not existing.exists():
+            require(len(files) < 30000 * (MAX_VIEWS + 1), 'installed tree exceeds bounds')
+            data = read_file(source, min(MAX_BYTES, MAX_BYTES * (MAX_VIEWS + 1)-total))
+            require(digest(data) == sha, 'compatibility source changed: '+path)
+            existing.parent.mkdir(parents=True, exist_ok=True)
+            existing.write_bytes(data)
+            total += len(data)
+            files[path] = sha
 
 
 def check_view(root):
@@ -202,25 +253,51 @@ def execute(args):
     active = wp/'wp-content/plugins/alt-context'
     require(active.parent.is_dir(), 'missing plugins directory')
     require(not active.exists() or active.is_symlink(), 'existing directory requires operator migration to a stable symlink')
-    require(Path(args.zip).stat().st_size <= MAX_BYTES, 'ZIP exceeds limits')
-    data = Path(args.zip).read_bytes()
+    require(len(args.compat_zip) == len(args.compat_sha256), 'compat ZIP/SHA256 counts differ')
+    require(len(args.compat_zip) < MAX_VIEWS, 'compatibility artifact limit exceeded')
+    data = read_file(Path(args.zip))
     require(len(data) <= MAX_BYTES and re.fullmatch('[0-9a-fA-F]{64}', args.sha256) and digest(data) == args.sha256.lower(), 'ZIP SHA256 mismatch')
     # Candidate validation precedes all site/store mutation.
     with tempfile.TemporaryDirectory(prefix='acx-validate-') as scratch:
         candidate = Path(scratch)/'plugin'; candidate.mkdir()
-        unpack(data, candidate)
+        expanded = unpack(data, candidate)
         identity = {'artifact_sha256': digest(data), **validate(candidate)}
+        archives = {identity['artifact_sha256']: data}
+        verified, compatibility_artifacts = {}, []
+        compatibility = dict(identity['graph'])
+        for number, (path, expected) in enumerate(zip(args.compat_zip, args.compat_sha256)):
+            prior_data = read_file(Path(path))
+            sha = digest(prior_data)
+            require(re.fullmatch('[0-9a-fA-F]{64}', expected) and sha == expected.lower(), 'compat ZIP SHA256 mismatch')
+            root = Path(scratch)/('compat-'+str(number)); root.mkdir()
+            expanded += unpack(prior_data, root, MAX_BYTES * MAX_VIEWS-expanded)
+            prior = validate(root)
+            for name, asset_sha in prior['graph'].items():
+                require(name not in verified or verified[name][0] == asset_sha, 'asset name collision: '+name)
+                verified[name] = (asset_sha, root/name)
+            archives[sha] = prior_data
+            if sha != identity['artifact_sha256'] and sha not in compatibility_artifacts:
+                compatibility_artifacts.append(sha)
+        carry(candidate, compatibility, verified)
         if args.dry_run:
-            return {**identity, 'dry_run': True, 'scope': 'candidate validation only; site compatibility checked under install lock'}
+            return {**identity, 'compatibility_artifacts': compatibility_artifacts, 'dry_run': True, 'scope': 'candidate validation only; site compatibility checked under install lock'}
         # Site-local lock serializes even callers supplying different stores.
         with (active.parent/'.alt-context-release.lock').open('a') as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+            deadline = time.monotonic()+10
+            while True:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    require(time.monotonic() < deadline, 'site install lock exceeded 10s budget')
+                    time.sleep(0.05)
             previous = str(active.resolve()) if active.is_symlink() else None
             require(not previous or Path(previous).is_dir(), 'dangling active target')
             old = receipt(Path(previous)) if previous else None
             if args.reap:
                 require(old and old['artifact_sha256'] == identity['artifact_sha256'], 'reap requires active candidate')
-                require(json.loads((store/'site.json').read_text()) == str(wp), 'store belongs to another site')
+                require(Path(previous).parent == store/'views', 'reap requires active view in selected store/views')
+                require(json.loads(read_file(store/'site.json')) == str(wp), 'store belongs to another site')
                 return reap(store, active)
             if args.rollback:
                 require(old and old['previous'] and Path(old['previous']).is_dir(), 'no rollback target')
@@ -231,54 +308,72 @@ def execute(args):
                 else:
                     require(inventory(prior_root) == inventory(candidate), 'rollback ZIP differs from original installed bytes')
                 # Build a new view retaining BOTH graphs, also on rollback.
-            if args.verify or (old and old['artifact_sha256'] == identity['artifact_sha256']):
+            if args.verify or (old and old['artifact_sha256'] == identity['artifact_sha256'] and not args.compat_zip):
                 require(previous, 'nothing installed')
                 r = check_view(Path(previous))
                 require(r['artifact_sha256'] == identity['artifact_sha256'], 'active artifact differs')
-                require((store/'artifacts'/identity['artifact_sha256']/'artifact.zip').read_bytes() == data, 'custody ZIP differs')
+                require(read_file(store/'artifacts'/identity['artifact_sha256']/'artifact.zip') == data, 'custody ZIP differs')
+                require(all(r['compatibility'].get(path) == sha for path, sha in compatibility.items()), 'active compatibility differs')
                 return {**r, 'http_verified': readback(active, r, args.site_url)}
-            compatibility = dict(identity['graph'])
             prior_tree = None
             if previous:
                 if not old:
-                    prior_tree = inventory(Path(previous), MAX_BYTES)
-                prior_graph = graph(Path(previous))['graph']
+                    prior_tree = inventory(Path(previous), MAX_BYTES, verified)
+                prior_graph = graph(Path(previous), verified if not old else None)['graph']
                 if old:
                     check_view(Path(previous))
                     prior_graph.update(old['compatibility'])
-                for path, sha in prior_graph.items():
-                    existing = candidate/path
-                    require(not existing.exists() or digest(existing.read_bytes()) == sha, 'asset name collision: '+path)
-                    compatibility[path] = sha
-                    if not existing.exists():
-                        existing.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copyfile(Path(previous)/path, existing)
+                    # A managed view's receipt carries the graph automatically.
+                    # Keep its verified custody when changing site-bound stores.
+                    inherited = [old['artifact_sha256'], *old.get('compatibility_artifacts', [])]
+                    require(len(inherited) <= MAX_VIEWS, 'compatibility artifact limit exceeded')
+                    for sha in inherited:
+                        require(re.fullmatch('[0-9a-f]{64}', sha), 'invalid custody digest')
+                        if sha not in archives:
+                            prior_data = read_file(Path(previous).parent.parent/'artifacts'/sha/'artifact.zip')
+                            require(digest(prior_data) == sha, 'inherited custody ZIP differs')
+                            archives[sha] = prior_data
+                        if sha != identity['artifact_sha256'] and sha not in compatibility_artifacts:
+                            compatibility_artifacts.append(sha)
+                else:
+                    # A metadata-free tree cannot prove older URL provenance.
+                    # Every extra static file needs an explicit verified graph.
+                    declared = {**prior_graph, **{p: sha for p, (sha, _) in verified.items()}}
+                    manifests = {DIST+'.vite/manifest.json', DIST+'manifest.json'}
+                    for path, sha in prior_tree.items():
+                        if path.startswith(DIST) and path not in manifests:
+                            require(declared.get(path) == sha, 'unverified legacy asset; supply all retained --compat-zip graphs: '+path)
+                sources = {path: (sha, verified[path][1] if path in verified else Path(previous)/path) for path, sha in prior_graph.items()}
+                carry(candidate, compatibility, sources)
+            require(len(archives) <= MAX_VIEWS, 'artifact custody limit: operator retirement required')
             store.mkdir(parents=True, exist_ok=True)
             owner = store/'site.json'
             if owner.exists():
-                require(json.loads(owner.read_text()) == str(wp), 'store belongs to another site')
+                require(json.loads(read_file(owner)) == str(wp), 'store belongs to another site')
             else:
                 owner.write_text(json.dumps(str(wp)))
             views = store/'views'; views.mkdir(exist_ok=True)
             require(len(list(views.iterdir())) < MAX_VIEWS, 'retention limit: operator retirement required')
             artifacts = store/'artifacts'
-            require(not artifacts.exists() or len(list(artifacts.iterdir())) < MAX_VIEWS or (artifacts/identity['artifact_sha256']).exists(), 'artifact custody limit: operator retirement required')
-            custody = artifacts/identity['artifact_sha256']
-            custody.parent.mkdir(exist_ok=True)
-            if custody.exists():
-                require((custody/'artifact.zip').read_bytes() == data, 'custody identity mismatch')
-            else:
-                with tempfile.TemporaryDirectory(dir=custody.parent) as temp:
-                    staged = Path(temp)/'custody'; staged.mkdir()
-                    (staged/'artifact.zip').write_bytes(data)
-                    os.rename(staged, custody)
-                (custody/'artifact.zip').chmod(0o444)
-                custody.chmod(0o555)
+            retained = {p.name for p in artifacts.iterdir()} if artifacts.exists() else set()
+            require(len(retained | archives.keys()) <= MAX_VIEWS, 'artifact custody limit: operator retirement required')
+            artifacts.mkdir(exist_ok=True)
+            for sha, archive_data in archives.items():
+                custody = artifacts/sha
+                if custody.exists():
+                    require(read_file(custody/'artifact.zip') == archive_data, 'custody identity mismatch')
+                else:
+                    with tempfile.TemporaryDirectory(dir=artifacts) as temp:
+                        staged = Path(temp)/'custody'; staged.mkdir()
+                        (staged/'artifact.zip').write_bytes(archive_data)
+                        os.rename(staged, custody)
+                    (custody/'artifact.zip').chmod(0o444)
+                    custody.chmod(0o555)
             destination = views/(identity['artifact_sha256']+'-'+uuid.uuid4().hex)
             with tempfile.TemporaryDirectory(dir=views) as temp:
                 staged = Path(temp)/'view'
                 shutil.copytree(candidate, staged)
-                r = {**identity, 'view': str(destination), 'previous': previous, 'previous_identity': old['artifact_sha256'] if old else (digest(json.dumps(prior_tree, sort_keys=True).encode()) if previous else None), 'compatibility': compatibility, 'files': inventory(staged), 'runtime_refresh': 'operator: exact site PHP-FPM service; installer does not refresh runtime'}
+                r = {**identity, 'view': str(destination), 'previous': previous, 'previous_identity': old['artifact_sha256'] if old else (digest(json.dumps(prior_tree, sort_keys=True).encode()) if previous else None), 'compatibility': compatibility, 'compatibility_artifacts': compatibility_artifacts, 'files': inventory(staged), 'runtime_refresh': 'operator: exact site PHP-FPM service; installer does not refresh runtime'}
                 (staged/RECEIPT).write_text(json.dumps(r, sort_keys=True, indent=2)+'\n')
                 for p in staged.rglob('*'):
                     p.chmod(0o555 if p.is_dir() else 0o444)
@@ -301,6 +396,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('wp-path', 'store', 'zip', 'sha256'):
         parser.add_argument('--'+name, required=True)
+    parser.add_argument('--compat-zip', action='append', default=[], help='complete prior canonical ZIP; repeat in digest order for metadata-free handoff')
+    parser.add_argument('--compat-sha256', action='append', default=[], help='expected SHA256 paired in order with --compat-zip')
     mode = parser.add_mutually_exclusive_group()
     for name in ('dry-run', 'verify', 'rollback', 'reap'):
         mode.add_argument('--'+name, action='store_true')

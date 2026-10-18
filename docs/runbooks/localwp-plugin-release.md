@@ -43,9 +43,51 @@ Do not permit WordPress/plugin updater writes into these release views.
 
 An existing active symlink is supported; its **actual installed manifest** seeds
 compatibility, including both Vite manifest locations. Its target is preserved.
+Managed upgrades also retain the receipt's entire compatibility graph without
+requiring old ZIP arguments again.
 An ordinary directory is refused: migrate it to a stable external directory and
 symlink during an operator maintenance window first. Do not move a live directory
 as an unrecorded part of promotion. A dangling active symlink is refused.
+
+## First adoption with verified compatibility
+
+The deployed 0.0.38 tree can contain the three operational 0.0.36 asset links
+(`admin-BFoxEjkI.js`, `userFacingError-BlOiNgqA.js`,
+`attachment-edit-DpE2a-VZ.js`). Default adoption refuses these links. Supply the
+complete published 0.0.36 ZIP with its independently known SHA256; do not replace
+the links with files as a workaround. Regular legacy assets outside the current
+manifest require the same verified graph coverage.
+
+For an already downloaded published hotfix, use the operator's trusted release
+record for all expected digests (never derive the expected value from the same
+download being checked):
+
+```bash
+: "${ACX_036_SHA256:?Set the independently known published 0.0.36 SHA256}"
+: "${ACX_038_SHA256:?Set the independently known published 0.0.38 SHA256}"
+: "${ACX_HOTFIX_ZIP:?Set the absolute path to the published hotfix ZIP}"
+: "${ACX_HOTFIX_SHA256:?Set the independently known published hotfix SHA256}"
+python3 apps/prototype-wp-alt-context/scripts/localwp/install-release.py \
+  --zip "$ACX_HOTFIX_ZIP" --sha256 "$ACX_HOTFIX_SHA256" \
+  --compat-zip /stable/downloads/alt-context-0.0.36.zip \
+  --compat-sha256 "$ACX_036_SHA256" \
+  --compat-zip /stable/downloads/alt-context-0.0.38.zip \
+  --compat-sha256 "$ACX_038_SHA256" \
+  --wp-path /absolute/wordpress/app/public \
+  --store /stable/private/alt-context-releases \
+  --site-url https://your-site.example
+```
+
+To adopt published 0.0.38 itself, use its ZIP/digest as the primary pair and keep
+the 0.0.36 compatibility pair. There is no hardcoded 0.0.36 digest here.
+`--compat-zip PATH` and `--compat-sha256 EXPECTED_DIGEST` are repeatable and paired
+in order. Counts, digests, ZIP structure, complete graphs and path collisions
+are checked before publication. Each compatibility input passes the same
+canonical artifact validation as the primary ZIP. An unmanaged asset symlink
+is accepted only when its path and exact served bytes match a verified graph;
+the new view gets bytes from that ZIP. Unknown symlinks/static assets, missing
+coverage and different bytes at a shared path refuse with the active tree
+unchanged. No arbitrary symlink target becomes an artifact authority.
 
 ## What is published
 
@@ -62,9 +104,12 @@ known development markers; PHP lint is not a dependency/security audit.
 `views/<sha256>-<unique-id>/` contains the same extracted candidate files plus
 copies of retained assets and the receipt. It never rewrites the custody ZIP or
 published candidate assets. Copies make compatibility independent of old artifact
-storage. The previous actual manifest and previously recorded compatibility graph
-are accumulated automatically. A shared path with different bytes is rejected,
-even if the filename resembles a hash. No list of three filenames is maintained.
+storage. The previous actual manifest, explicitly verified prior ZIP graphs and
+previously recorded compatibility graph are accumulated through their full
+closure. Prior ZIP digest provenance is recorded in the receipt, and supplied
+compatibility ZIPs retain exact read-only custody in the same bounded store.
+A shared path with different bytes is rejected, even if the filename resembles
+a hash. No list of three filenames is maintained.
 The receipt derives the version from the PHP header and records ZIP/manifest
 SHA256, entry graph, complete file hashes, compatibility, previous target and its
 artifact identity (or tree digest for an unmanaged prior install).
@@ -95,23 +140,35 @@ unmanaged tree (also limited to 512 MiB on adoption). Limits stop
 promotion; they never expire an open page's assets. Failed publication also
 consumes capacity. The tool does not silently relax the limit.
 
-`--reap`, with the active ZIP/digest and normal site/store arguments, removes only
-validated orphan views not named by the active link or **any** stored receipt's
+`--reap` requires the active view to belong to the selected store's `views/`;
+a store mismatch refuses before deletion. With the active ZIP/digest and matching
+site/store arguments, it removes only validated orphan views not named by the
+active link or **any** stored receipt's
 previous pointer. A failed publication is normally such an orphan. Referenced
 rollback views and all custody ZIPs are retained. Reaping takes the same site
 lock and does not prune caches, external targets or source trees. All views carry
 self-contained compatibility copies; no compatibility asset points into a reaped
 view. Invalid/tampered receipts stop cleanup.
 
-Routine successful history remains referenced. At the limit, schedule explicit
-operator retirement: quiesce the site, decide the rollback/audit horizon, keep an
-offline archive if needed, and move a verified self-contained active tree to a
-new stable external directory **without installer metadata**. Point the site at
-that tree, verify it and close the old history only after checking no site link,
-rollback requirement or external consumer references the old store. A fresh store
-can then adopt that actual manifest. Preserve the complete compatibility files
-while open-page support is required. There is no automatic successful-history
-retirement or assertion that an arbitrary number of days makes deletion safe.
+Routine successful history remains referenced. At the limit, keep the old store,
+custody ZIPs, receipts (including dotfiles) and rollback targets intact. Inventory
+every retained graph and its published ZIP/independently expected digest before
+a maintenance handoff. Do not strip receipt metadata to evade validation. A
+normal promotion into another site-bound store can preserve the old target and
+support subsequent rollback using the new store; it does not authorize reaping
+the old store while the active view belongs to the new one. There is no global
+cross-store reference catalog or automatic successful-history retirement.
+
+If the handoff tree is already metadata-free, its current manifest cannot prove
+older graph coverage. A 0.0.38 tree still carrying 0.0.36 assets needs both
+published ZIP graphs: use the hotfix adoption command above with the new store.
+Every retained older graph needs coverage. Incomplete
+coverage must refuse unchanged: recover the missing published ZIP and trusted
+digest or restore the intact managed target/store, then retry. Copying assets
+alone cannot establish provenance. Keep the old store until all site links,
+rollback requirements and external consumers have been checked explicitly;
+elapsed time alone does not make deletion safe. Supplied compatibility ZIPs
+count toward the eight-artifact limit, so a new store is not an unbounded escape.
 
 ## Runtime gate remains an operator responsibility
 
@@ -127,31 +184,63 @@ that exact service, then load authenticated Overview freshly, inspect entry URL
 and response bytes/CSS, and test an already-open page's lazy route. Record service,
 scope, reload outcome and browser/network evidence. The installer has no shell
 hooks, guessed PID kills, global cache prune or PHP cache-clearing endpoint.
-Keep environment settings outside the artifact. The published 0.0.38 PHP service
-was identical to main: changing this release pipeline does not fix the independent
-scan/backend 400 issue and has no source-A implementation dependency.
+Keep environment settings outside the artifact. Runtime endpoint validation is
+a separate root join responsibility; static installer checks cannot prove it.
 
 ## Pinned decisions and evidence
 
 Canon `v0.26.2` resolved to `1883d309b43665ba73b97da1b4aa4d2d1ee43f48`.
 Stable IDs at their use:
 
-- Exact custody ZIP and sole existing packager: [RLSE-21](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/engineering.md#rlse-21), [RLSE-22](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/engineering.md#rlse-22).
-- Same candidate with external configuration: [RLSE-23](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/engineering.md#rlse-23).
-- Complete staged view and atomic publication: [FLOW-01](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/engineering.md#flow-01).
-- Deliberate manifest transitive closure: [GRPH-04](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/graph-theory.md#grph-04).
-- Old/new page coexistence applies the rolling compatibility principle: [DATA-03](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/engineering.md#data-03).
-- Missing-implementation RED before implementation: [TEST-06](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/engineering.md#test-06).
+- Custody ZIP: [RLSE-21 Promote the stored artifact](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/engineering.md#rlse-21), *Continuous Delivery*, ch. 5.
+- Sole packager/pipeline: [RLSE-22 One route to production](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/engineering.md#rlse-22), *Continuous Delivery Pipelines*, ch. 2.
+- External configuration: [RLSE-23 Promote the same candidate](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/engineering.md#rlse-23), *Continuous Delivery Pipelines*, ch. 9.
+- Atomic staged view: [FLOW-01 Immutable inputs, complete replacement outputs](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/engineering.md#flow-01), *Designing Data-Intensive Applications*, ch. 10.
+- Graphs and incoming rollback references: [GRPH-04 Compute the transitive closure deliberately](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/graph-theory.md#grph-04), *The Algorithm Design Manual*, ch. 18.
+- Old/new pages coexist: [DATA-03 Schema evolution compat](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/engineering.md#data-03), *Designing Data-Intensive Applications*, ch. 4.
+- Predicted RED: [TEST-06 Watch it fail once / predict the failure](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/engineering.md#test-06), *Modern Software Engineering*, ch. 8.
+- Escaped regressions: [TEST-15 Prove the green can go red](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/engineering.md#test-15), *The Pragmatic Programmer*, ch. 9.
+- Root joins both authors and retests every request: [TEST-33 Re-review every requested change](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/engineering.md#test-33), *Implementing Effective Code Reviews*, ch. 11.
 
 Operator-supplied semantic priors (not re-created DB evidence): 17007 WBTRUST-0
 requires served-build identity; 16293/16267 GTMSMOKE requires artifact release
 context; 2930 ESMFIX-1 concerns module-loader correctness; 18305 identifies the
-operator's latest-published request; 19177 separates the scan 400. No primary
-knowledge/decision MCP or configured remote DB is available in this session.
-These local source decisions are handed back for the root's primary MCP record;
-no remote database is claimed as primary or updated here.
+operator's latest-published request; 19177 separates the historical scan 400.
+Frozen full QB priors 19183 (P1) and 19184 (P2), asset-gap prior 19178 and exact
+old-asset/FPM repair prior 18307 govern this revision. These are operator-supplied
+ONNX gte-base-en-v1.5 verified priors; this lane neither queries nor updates a DB.
 
-The checkout is a history-stripped sandbox at
+### Dispatch2 validation and join
+
+TESTDOCS keeps the installer frozen at native `35dd7ae877ff8a51d51b49d8d182d31be1720a24`
+(tree `59d7ab5c6a9d6d168fdc00309d7b6e13f95d668a`, logical `97a08fda`).
+The original 17 cases passed on VM with localhost sockets and native PHP before
+adding the P1/P2 regressions (`17 passed in 30.88s`). The combined run returned
+the predicted **18 failed, 18 passed in 51.31s**: 19 new cases give 18 expected
+RED failures and one passing default-refusal guard, alongside the original 17
+passes. Compatibility acceptance fails at `unrecognized arguments`; JSON refusal
+checks reject that parser failure as integrity proof. Without compatibility
+flags, uncovered regular assets and metadata-free adoption incorrectly succeed;
+wrong-store reaping also succeeds and deletes A. Transcript:
+`/tmp/AURA-RELEASE-TESTDOCS2/expected-red.txt` (exit 1, no environmental failures).
+After strengthening refusal snapshots to include symlink-served bytes, the
+targeted rerun gave `18 failed, 1 passed, 17 deselected in 17.39s`. The frozen
+CLI independently accepted both synthetic complete ZIP fixtures in dry-run.
+The tests cover full ZIP graph bytes, custody/provenance, all requested refusal
+paths, metadata-free handoff coverage and cross-store reaping/rollback. CODE
+and TESTDOCS are independent siblings: root must join both, run this exact test
+file to GREEN, then run the independent Sol XHIGH gate. Planned RED here is not
+implementation approval and does not require another TESTDOCS dispatch.
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 timeout 180 \
+  /home/gate/workbay-sandbox/.venv-lane-feature-auraface-plugin-release-20261018-923d6291/bin/python \
+  -m pytest -q -p no:cacheprovider --tb=short scripts/test_plugin_release_install.py
+```
+
+### Historical baseline evidence
+
+The original checkout was a history-stripped sandbox at
 `65dfb605b04bbf449d6d2dc0d3753d739eeccd6e`; requested baseline
 `16870bfc3ee5223a28696600e21d1afdad93c49f` is absent (`git` reports bad object).
 No LocalWP site was deployed. No AnalyzeMediaService PHP/tests or SPA UI changed.

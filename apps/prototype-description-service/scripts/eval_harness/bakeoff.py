@@ -57,7 +57,7 @@ import re
 import stat
 import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -671,21 +671,26 @@ class BakeoffClient(RemoteSceneClient):
             failure = type(exc)(message, status_code=exc.status_code)
         if failure is not None:
             raise failure
-        return self._redact_response(payload)
+        return payload
 
-    def _redact_response(self, value: Any) -> Any:
-        """Scrub reflections before captions, parser errors or records see them."""
+    def _redact_response(self, value: Any, *, diagnostic: bool = False) -> Any:
+        """Scrub reflected values without changing protocol labels or JSON syntax.
+
+        Printable diagnostics are a separate boundary: their entire text can
+        be scrubbed because no downstream caption/usage parser consumes it.
+        """
         if isinstance(value, str):
             # Chat content can itself be JSON, with escaped credential bytes.
-            # Scrub its decoded values before a downstream parser exposes them.
-            try:
-                embedded = json.loads(value)
-            except ValueError:
-                embedded = None
-            if isinstance(embedded, (dict, list)):
-                redacted = self._redact_response(embedded)
-                if redacted != embedded:
-                    return json.dumps(redacted)
+            # A matching label or brace is structure, not a reflected value.
+            if not diagnostic:
+                fenced = _JSON_FENCE_RE.match(value.strip())
+                try:
+                    embedded = json.loads(fenced.group(1) if fenced else value)
+                except ValueError:
+                    embedded = None
+                if isinstance(embedded, (dict, list)):
+                    redacted = self._redact_response(embedded)
+                    return json.dumps(redacted) if redacted != embedded else value
             for private in self._response_private_values:
                 for spelling in sorted(
                     {private, json.dumps(private)[1:-1], repr(private)[1:-1]}, key=len, reverse=True
@@ -695,8 +700,20 @@ class BakeoffClient(RemoteSceneClient):
         if isinstance(value, list):
             return [self._redact_response(item) for item in value]
         if isinstance(value, dict):
-            return {self._redact_response(key): self._redact_response(item) for key, item in value.items()}
+            return {key: self._redact_response(item) for key, item in value.items()}
         return value
+
+    def _parse_response(self, parser: Callable[[Any], Any], value: Any) -> Any:
+        """Keep typed parse failures, scrubbing their printable payload excerpts."""
+        failure: RemoteClientError | None = None
+        try:
+            return parser(value)
+        except RemoteClientError as exc:
+            if self._server_api_key is None:
+                raise
+            failure = type(exc)(self._redact_response(str(exc), diagnostic=True), status_code=exc.status_code)
+        # Discard the original exception chain, which can contain raw excerpts.
+        raise failure
 
     def describe(
         self,
@@ -723,7 +740,7 @@ class BakeoffClient(RemoteSceneClient):
                 passes=passes,
                 max_tokens=_PASS1_MAX_TOKENS,
             )
-            _parse_pass1_json(facts_raw)  # malformed pass-1 JSON => typed per-item failure
+            self._parse_response(_parse_pass1_json, facts_raw)  # malformed JSON => typed per-item failure
             caption = self._timed_chat(
                 self._weave_messages(facts_raw, context_pack, image_part=image_part),
                 pass_name="ground_weave",
@@ -732,7 +749,7 @@ class BakeoffClient(RemoteSceneClient):
             )
             if PROMPT_VARIANTS[self.prompt_variant].three_surface:
                 # malformed/incomplete three-surface JSON => typed per-item failure
-                surfaces = _parse_three_surface_json(caption)
+                surfaces = self._parse_response(_parse_three_surface_json, caption)
         else:
             caption = self._timed_chat(
                 [
@@ -977,7 +994,9 @@ class BakeoffClient(RemoteSceneClient):
                 json=request_json,
             )
             usage = _extract_usage(payload)
-            text = _extract_caption(payload)
+            # Interpret envelope labels/discriminators and measured usage before
+            # scrubbing generated text; only text and diagnostics leave this boundary.
+            text = self._redact_response(self._parse_response(_extract_caption, payload))
         except Exception:
             passes.append(
                 {

@@ -1,0 +1,109 @@
+{
+  "ok": true,
+  "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+  "status": "selected",
+  "skip_reason": null,
+  "embeddings_mode": "verified",
+  "semantic_degrade_reason": null,
+  "relevant_lines": [
+    "relevant:",
+    "- Apply researched eventwise fairness at actual R…: R3 AUTHOR_GREEN actualnative8e966430/fce4dae9 exact4paths approved, sixnew genuineREDGREEN [decision:18188]",
+    "- Prepare independent whole RAW source gate with …: NewRAW-AUTH-WHOLE-SOURCE-G1 preparedONLY [decision:18074]",
+    "- Qualify narrow native cleanup wave48 and preser…: Wave48ONLYterminal0clean C9wholeG3/rawauthresearch/trustHIGHsourceclones:3base.commit+delta.bundle [decision:17920]",
+    "- Compose both remote raw-auth second repairs wit…: READ73338terminal0/custody2c2111d0c7c4d7420e7b445c6ad6da39ead1cf99 [decision:17987]",
+    "- ROOT LOUD before actual THIRD RAW SOURCE author…: Independent G2 review1522 native4980fd43 REVISE2: actualcredential propertykey reflections leak [decision:18173]",
+    "- Resume two independent bakeoff gates with full …: RAW G2 actual active nonce68117/inputbd05d0d3; OWNER R4 native813d/treee6a02c49 terminal/full custody [decision:18172]",
+    "- SUBJECT-GATE-02: Before resubmission, publish only aggregate compatibility counts and retain the per-item ledger [finding:19101]",
+    "- cdx_raw_source_landing_preflight_capacity_recon…: RAW terminal/custody settled (18073/author test5028), whole SOURCE XHIGH input8ae8c54e prepared [decision:18078]"
+  ],
+  "semantic_reinjection": {
+    "anchor_sources": [
+      "visible_text"
+    ],
+    "chars_budget": 7000,
+    "chars_used": 1215,
+    "effective_config": {
+      "candidate_pool": 32,
+      "max_concepts": 8,
+      "max_redundancy": 0.92,
+      "max_score_drop": 0.2,
+      "min_score": 0.35,
+      "mmr_relevance_weight": 0.7,
+      "notify_allowance_chars": 220,
+      "refresh_budget_chars": 1500,
+      "snippet_chars": 120
+    },
+    "fallback_scope": null,
+    "model_id": "gte-base-en-v1.5",
+    "score_hi": 0.6403893828392029,
+    "score_lo": 0.5688153505325317,
+    "selected": [
+      {
+        "emitted_chars": 169,
+        "id": "18188",
+        "kind": "decision",
+        "label": "Apply researched eventwise fairness at actual R…",
+        "score": 0.6403893828392029,
+        "snippet": "R3 AUTHOR_GREEN actualnative8e966430/fce4dae9 exact4paths approved, sixnew genuineREDGREEN [decision:18188]"
+      },
+      {
+        "emitted_chars": 110,
+        "id": "18074",
+        "kind": "decision",
+        "label": "Prepare independent whole RAW source gate with …",
+        "score": 0.6390906572341919,
+        "snippet": "NewRAW-AUTH-WHOLE-SOURCE-G1 preparedONLY [decision:18074]"
+      },
+      {
+        "emitted_chars": 168,
+        "id": "17920",
+        "kind": "decision",
+        "label": "Qualify narrow native cleanup wave48 and preser…",
+        "score": 0.6222208738327026,
+        "snippet": "Wave48ONLYterminal0clean C9wholeG3/rawauthresearch/trustHIGHsourceclones:3base.commit+delta.bundle [decision:17920]"
+      },
+      {
+        "emitted_chars": 136,
+        "id": "17987",
+        "kind": "decision",
+        "label": "Compose both remote raw-auth second repairs wit…",
+        "score": 0.6291084289550781,
+        "snippet": "READ73338terminal0/custody2c2111d0c7c4d7420e7b445c6ad6da39ead1cf99 [decision:17987]"
+      },
+      {
+        "emitted_chars": 165,
+        "id": "18173",
+        "kind": "decision",
+        "label": "ROOT LOUD before actual THIRD RAW SOURCE author…",
+        "score": 0.6008766889572144,
+        "snippet": "Independent G2 review1522 native4980fd43 REVISE2: actualcredential propertykey reflections leak [decision:18173]"
+      },
+      {
+        "emitted_chars": 171,
+        "id": "18172",
+        "kind": "decision",
+        "label": "Resume two independent bakeoff gates with full …",
+        "score": 0.6026812791824341,
+        "snippet": "RAW G2 actual active nonce68117/inputbd05d0d3; OWNER R4 native813d/treee6a02c49 terminal/full custody [decision:18172]"
+      },
+      {
+        "emitted_chars": 131,
+        "id": "19101",
+        "kind": "finding",
+        "label": "SUBJECT-GATE-02",
+        "score": 0.5688153505325317,
+        "snippet": "Before resubmission, publish only aggregate compatibility counts and retain the per-item ledger [finding:19101]"
+      },
+      {
+        "emitted_chars": 165,
+        "id": "18078",
+        "kind": "decision",
+        "label": "cdx_raw_source_landing_preflight_capacity_recon…",
+        "score": 0.617766261100769,
+        "snippet": "RAW terminal/custody settled (18073/author test5028), whole SOURCE XHIGH input8ae8c54e prepared [decision:18078]"
+      }
+    ],
+    "skip_reason": null,
+    "status": "selected"
+  }
+}

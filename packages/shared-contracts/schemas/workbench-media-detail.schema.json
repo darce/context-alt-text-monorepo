@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/workbench-media-detail.schema.json",
+  "title": "Workbench Media Detail",
+  "description": "Deferred workbench media detail payload for a single attachment.",
+  "type": "object",
+  "required": ["id", "mimeType", "updatedAt", "dimensions", "xmpPersistence"],
+  "properties": {
+    "id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "WordPress attachment ID."
+    },
+    "mimeType": {
+      "type": ["string", "null"],
+      "description": "Attachment MIME type."
+    },
+    "updatedAt": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Last-modified timestamp in ISO 8601 form when available."
+    },
+    "dimensions": {
+      "type": ["object", "null"],
+      "description": "Attachment dimensions in pixels.",
+      "required": ["width", "height"],
+      "properties": {
+        "width": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "height": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        }
+      }
+    },
+    "xmpPersistence": {
+      "type": ["object", "null"],
+      "description": "Latest XMP persistence result metadata when present.",
+      "additionalProperties": true
+    }
+  }
+}

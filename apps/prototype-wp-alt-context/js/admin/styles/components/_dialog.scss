@@ -1,0 +1,46 @@
+@use '../tokens/colors';
+
+.acx-dialog__overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--acx-color-overlay);
+  z-index: 9998;
+}
+
+.acx-dialog__content {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(560px, 92vw);
+  max-height: 85vh;
+  overflow: auto;
+  background: var(--acx-color-surface-alt);
+  border-radius: var(--acx-radius-xl);
+  padding: 20px;
+  box-shadow: var(--acx-shadow-3);
+  z-index: 9999;
+}
+
+.acx-dialog__content:focus {
+  outline: none;
+}
+
+.acx-dialog__title {
+  margin: 0 0 6px 0;
+  font-size: var(--acx-text-base);
+  font-weight: var(--acx-font-weight-semibold);
+  color: var(--acx-color-text);
+}
+
+.acx-dialog__description {
+  margin: 0 0 16px 0;
+  font-size: var(--acx-text-sm);
+  color: var(--acx-color-text-muted);
+}
+
+.acx-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}

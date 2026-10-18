@@ -1,0 +1,50 @@
+flowchart TB
+    %% ======================================================================
+    %% FACE -> IDENTITY BOUNDARY (current implementation)
+    %% Focus: where Face* data is persisted and reconstructed as domain models
+    %% ======================================================================
+
+    subgraph Legend["Legend + Conventions"]
+        direction TB
+        LegendEntry["ENTRY: external entrypoint"]
+        LegendOptional["Dashed arrow = optional wiring"]
+    end
+
+    subgraph FaceLayer["Face Layer (Detection + Embeddings)"]
+        direction TB
+        Adapter["InsightFaceAdapter"]
+        Detector["InsightFaceFaceDetector"]
+        Generator["InsightFaceEmbeddingGenerator"]
+        FaceDetection["FaceDetection<br/>bbox + confidence + pose + embedding?"]
+        EmbeddingResult["EmbeddingResult<br/>512D embedding"]
+
+        Adapter --> Detector
+        Adapter --> Generator
+        Detector -->|"detect()"| FaceDetection
+        Generator -->|"generate()"| EmbeddingResult
+    end
+
+    subgraph Seam["Persistence Seam"]
+        direction TB
+        ScanService["ScanService<br/>persist MediaIdentity rows"]
+        DbIdentity["db.MediaIdentity<br/>pgvector embedding"]
+        ScanService --> DbIdentity
+    end
+
+    subgraph Domain["Identity Domain"]
+        direction TB
+        MediaIdentity["MediaIdentity<br/>face_vector (512D)"]
+        IdentityCluster["IdentityCluster"]
+        Representative["ClusterRepresentative"]
+        Suggestion["AssignmentSuggestion"]
+    end
+
+    FaceDetection --> ScanService
+    EmbeddingResult --> ScanService
+    DbIdentity --> MediaIdentity
+    MediaIdentity --> IdentityCluster
+    MediaIdentity --> Representative
+    MediaIdentity --> Suggestion
+
+    ScanCode["Code anchors:\nrecognition/application/scan/service.py\nrecognition/application/embedding/detector.py\nrecognition/application/embedding/generator.py\nrecognition/domain/identity.py"]
+    ScanService -.-> ScanCode

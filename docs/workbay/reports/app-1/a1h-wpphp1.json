@@ -1,0 +1,81 @@
+{
+  "lane": "a1h-wpphp1",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "/home/gate/workbay-sandbox/feature-app-1-a1h-wpphp1-be70d2b2/.venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 3.27s."
+    },
+    {
+      "command": "php -l apps/prototype-wp-alt-context/src/api/class-analysis-jobs-controller.php",
+      "result": "pass",
+      "detail": "No syntax errors detected."
+    },
+    {
+      "command": "php -l apps/prototype-wp-alt-context/src/api/class-describe-controller.php",
+      "result": "pass",
+      "detail": "No syntax errors detected."
+    },
+    {
+      "command": "php -l apps/prototype-wp-alt-context/src/api/class-public-demo-describe-controller.php",
+      "result": "pass",
+      "detail": "No syntax errors detected."
+    },
+    {
+      "command": "php -l apps/prototype-wp-alt-context/src/api/services/class-analyze-media-service.php",
+      "result": "pass",
+      "detail": "No syntax errors detected."
+    },
+    {
+      "command": "PHPUnit suite for apps/prototype-wp-alt-context",
+      "result": "not_run",
+      "detail": "The task brief states PHPUnit runs outside this sandbox (no vendor here); no PHPUnit command was run."
+    },
+    {
+      "command": "npm run typecheck -- --pretty false (apps/prototype-wp-alt-context)",
+      "result": "not_run",
+      "detail": "The local node_modules/.bin/tsc is unavailable. The configured type-check includes js/**/*.ts, including the one-argument submit calls recorded as a new finding."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16989,
+      "finding_id": "FAOPPD-5b7dfdb81cb08389-H-7b9fe976dc2a15f6c3f736d7",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-wp-alt-context/src/api/class-public-demo-describe-controller.php:171-174 - `request_idempotency_key($request)` is called and `return $idempotency_key;` exits on error before reservation at :216.",
+      "guard_test": "apps/prototype-wp-alt-context/tests/Unit/PublicDemoDescribeControllerTest.php::testMissingIdempotencyKeyIsRejectedBeforeAnySharedBudgetIsSpent"
+    },
+    {
+      "db_id": 16993,
+      "finding_id": "FAOPPD-5b7dfdb81cb08389-H-3ba315d597f6e47df384ac24",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/api/describeApi.ts:1451-1454 - the POST body contains `idempotency_key: idempotencyKey` next to `media_ids`.",
+      "guard_test": "apps/prototype-wp-alt-context/js/admin/api/__tests__/describeApi.test.ts::POSTs the originator idempotency key with the run media ids"
+    },
+    {
+      "db_id": 16994,
+      "finding_id": "FAOPPD-5b7dfdb81cb08389-M-2fe90cb7417ec13e035e9816",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-wp-alt-context/src/api/class-public-demo-describe-controller.php:456-460 - the fallback reads `$request->get_header( 'Idempotency-Key' )`; the route declares `required => false` at :110-113.",
+      "guard_test": "apps/prototype-wp-alt-context/tests/Unit/PublicDemoDescribeControllerTest.php::testHeaderOnlyIdempotencyKeyIsForwardedUnchanged"
+    }
+  ],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "apps/prototype-wp-alt-context/js/admin/guidedPrototype/describeRunParse.test.ts",
+      "line": 102,
+      "title": "Guided wrapper tests still omit the required submit key",
+      "defect": "submitBulkDescribeRun now requires an idempotencyKey argument at js/admin/api/describeApi.ts:1445-1448, but this file retains one-argument calls at lines 102, 129, 142, 154, and 160. tsconfig.type-check.json:29 includes js/**/*.ts, so the configured typecheck reports TS2554 at these calls.",
+      "failure_scenario": "Running `npm run typecheck` produces `Expected 2 arguments, but got 1` errors in the guided-prototype wrapper tests.",
+      "fix": "Pass a representative valid key in each submit call and update wrapper expectations to include `idempotency_key` in the request body.",
+      "test_file": "apps/prototype-wp-alt-context/js/admin/guidedPrototype/describeRunParse.test.ts",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "The three recorded corrections hold and each has a regression assertion. The required lane check passed (26 tests) and PHP lint passed on all four changed PHP files; PHPUnit could not run because vendor is absent. A medium integration finding remains: guided-prototype wrapper tests call the newly required submit API without its idempotency key, which conflicts with the configured TypeScript typecheck."
+}

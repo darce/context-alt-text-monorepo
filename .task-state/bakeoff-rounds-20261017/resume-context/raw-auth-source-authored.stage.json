@@ -1,0 +1,11 @@
+{
+  "sha": "6633f7026b99fa79a110c266194098a50ca94e01",
+  "tree": "34db5ccace0a290843492d1584ecbcb7b2bc77dd",
+  "base": "467a2233a146828ef8a6a20a6a81a05742b1094e",
+  "branch": "feature/bakerounds-20261017-raw-auth-source-authored",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-INITIAL-SOURCE.json",
+    ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-INITIAL-SOURCE.md",
+    "apps/prototype-description-service/scripts/eval_harness/bakeoff.py"
+  ]
+}

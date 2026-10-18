@@ -1,0 +1,114 @@
+{
+  "schema": "name_binding_eval/v2",
+  "fixture_id": "synthetic-plumbing-example-v2",
+  "arm_ids": [
+    "arm-deterministic-cpu",
+    "arm-model-rewrite-challenger"
+  ],
+  "frozen_images": [
+    {
+      "image_id": "img-001",
+      "source": {
+        "anonymous_base_digest": "sha256:fbcecf1ce8ca46c9ee7b97c5104d5015f2dbe8b79f42ed85dcd74e4026bb64aa",
+        "generation_id": "synthetic-gen-img-001-v2",
+        "reweave_id": "synthetic-reweave-img-001-v2"
+      },
+      "phrases": ["ph-001-left", "ph-001-right"],
+      "identity_roles": {
+        "required": ["person-a", "person-b"],
+        "allowed": [],
+        "prohibited": ["person-x"]
+      },
+      "gold_bindings": [
+        {"phrase_id": "ph-001-left", "person_id": "person-a"},
+        {"phrase_id": "ph-001-right", "person_id": "person-b"}
+      ]
+    },
+    {
+      "image_id": "img-002",
+      "source": {
+        "anonymous_base_digest": "sha256:6aad1d02ac545fd43adf0e2c44fc3aab77f9e550827cf25f146d056976045e30",
+        "generation_id": "synthetic-gen-img-002-v2",
+        "reweave_id": "synthetic-reweave-img-002-v2"
+      },
+      "phrases": ["ph-002-only"],
+      "identity_roles": {
+        "required": ["person-a"],
+        "allowed": [],
+        "prohibited": ["person-x"]
+      },
+      "gold_bindings": [
+        {"phrase_id": "ph-002-only", "person_id": "person-a"}
+      ]
+    },
+    {
+      "image_id": "img-003",
+      "source": {
+        "anonymous_base_digest": "sha256:4ffaad4e74c4a1f2d7331f5ff6356381ec0769f6a4b2161fc746c1736b3ebf2c",
+        "generation_id": "synthetic-gen-img-003-v2",
+        "reweave_id": "synthetic-reweave-img-003-v2"
+      },
+      "phrases": ["ph-003-first", "ph-003-second"],
+      "identity_roles": {
+        "required": [],
+        "allowed": ["person-c"],
+        "prohibited": ["person-x"]
+      },
+      "gold_bindings": [
+        {"phrase_id": "ph-003-first", "person_id": "person-c"}
+      ]
+    }
+  ],
+  "predictions": [
+    {
+      "arm_id": "arm-deterministic-cpu",
+      "image_id": "img-001",
+      "source_anonymous_base_digest": "sha256:fbcecf1ce8ca46c9ee7b97c5104d5015f2dbe8b79f42ed85dcd74e4026bb64aa",
+      "source_generation_id": "synthetic-gen-img-001-v2",
+      "source_reweave_id": "synthetic-reweave-img-001-v2",
+      "bindings": [
+        {"phrase_id": "ph-001-left", "person_id": "person-a"},
+        {"phrase_id": "ph-001-right", "person_id": "person-b"}
+      ]
+    },
+    {
+      "arm_id": "arm-deterministic-cpu",
+      "image_id": "img-002",
+      "source_anonymous_base_digest": "sha256:6aad1d02ac545fd43adf0e2c44fc3aab77f9e550827cf25f146d056976045e30",
+      "source_generation_id": "synthetic-gen-img-002-v2",
+      "source_reweave_id": "synthetic-reweave-img-002-v2",
+      "bindings": [
+        {"phrase_id": "ph-002-only", "person_id": "person-a"}
+      ]
+    },
+    {
+      "arm_id": "arm-model-rewrite-challenger",
+      "image_id": "img-001",
+      "source_anonymous_base_digest": "sha256:fbcecf1ce8ca46c9ee7b97c5104d5015f2dbe8b79f42ed85dcd74e4026bb64aa",
+      "source_generation_id": "synthetic-gen-img-001-v2",
+      "source_reweave_id": "synthetic-reweave-img-001-v2",
+      "bindings": [
+        {"phrase_id": "ph-001-left", "person_id": "person-b"},
+        {"phrase_id": "ph-001-right", "person_id": "person-a"}
+      ]
+    },
+    {
+      "arm_id": "arm-model-rewrite-challenger",
+      "image_id": "img-002",
+      "source_anonymous_base_digest": "sha256:6aad1d02ac545fd43adf0e2c44fc3aab77f9e550827cf25f146d056976045e30",
+      "source_generation_id": "synthetic-gen-img-002-v2",
+      "source_reweave_id": "synthetic-reweave-img-002-v2",
+      "bindings": [
+        {"phrase_id": "ph-002-only", "person_id": "person-x"}
+      ]
+    },
+    {
+      "arm_id": "arm-model-rewrite-challenger",
+      "image_id": "img-003",
+      "source_anonymous_base_digest": "sha256:4ffaad4e74c4a1f2d7331f5ff6356381ec0769f6a4b2161fc746c1736b3ebf2c",
+      "source_generation_id": "synthetic-gen-img-003-v2",
+      "source_reweave_id": "synthetic-reweave-img-003-v2",
+      "bindings": []
+    }
+  ]
+}

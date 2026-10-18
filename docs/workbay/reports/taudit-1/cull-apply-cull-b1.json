@@ -1,0 +1,20 @@
+[
+  {
+    "test": "apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py::test_no_present_identities_subtraction_in_bench_package",
+    "verdict": "kept",
+    "reason": "It is the only guard against directly deriving stranger-face counts by subtracting present-identity counts instead of using explicit unnamed boxes.",
+    "covered_by": null
+  },
+  {
+    "test": "apps/prototype-description-service/scripts/bench/tests/test_dag_score.py::test_fixture_stack_constants_remain_the_declared_pair",
+    "verdict": "deleted",
+    "reason": "The assertion only compares copied fixture IDs with test-local literals and does not assert production stack-pair behavior.",
+    "covered_by": null
+  },
+  {
+    "test": "apps/prototype-description-service/scripts/bench/tests/test_media_pin_public_unicast.py::test_https_get_pinned_connects_to_pinned_ip",
+    "verdict": "deleted",
+    "reason": "The remote-fetch test asserts the same pinned TCP destination at the same seam and additionally checks SNI, Host, response bytes, and connection closure.",
+    "covered_by": "apps/prototype-description-service/scripts/bench/tests/test_remote_fetch_bounds.py::test_under_limit_body_preserves_pin_sni_and_host"
+  }
+]

@@ -1,0 +1,46 @@
+{
+  "lane": "a1h-uxmap",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "python3 -m json.tool docs/ux-maps/app-portal.uxmap.json > /dev/null",
+      "result": "pass",
+      "detail": "UX map parses as valid JSON."
+    },
+    {
+      "command": "python3 -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 2.11s."
+    },
+    {
+      "command": "python3 -c 'import json,sys; d=json.load(open(\"docs/ux-maps/app-portal.uxmap.json\")); supported={\"/\",\"/sign-in\",\"/sign-up\",\"/claim\",\"/keys\",\"/keys/wordpress\",\"/usage\",\"/billing\",\"/billing/return\"}; missing=[(s[\"id\"],s[\"route\"]) for s in d[\"screens\"] if s[\"route\"] not in supported and not (s[\"kind\"]==\"overlay\" and not s[\"deep_link\"])]; print(\"unsupported mapped screen routes:\", missing); sys.exit(bool(missing))'",
+      "result": "fail",
+      "detail": "portal-claim is mapped to /onboarding/claim, while App.tsx matches /claim for ClaimScreen."
+    },
+    {
+      "command": "python3 -c 'import pathlib,json,sys; actual={p.stem for p in pathlib.Path(\"apps/app-portal/src/screens\").glob(\"*Screen.tsx\")}; mapped={\"AccountScreen\",\"BillingReturnScreen\",\"BillingScreen\",\"ClaimScreen\",\"KeysScreen\",\"LogoutScreen\",\"NotAdmittedScreen\",\"OutageScreen\",\"SignInScreen\",\"SignUpScreen\",\"SignedOutScreen\",\"UnavailableScreen\",\"UsageScreen\"}; print(\"unmapped screen components:\", sorted(actual-mapped)); print(\"mapped components without source:\", sorted(mapped-actual)); sys.exit(actual!=mapped)'",
+      "result": "pass",
+      "detail": "All 13 screens/*Screen.tsx components are represented in the map; there are no extra mapped screen components."
+    },
+    {
+      "command": "python3 -m json.tool docs/workbay/reports/app-1/a1h-uxmap.json > /dev/null",
+      "result": "pass",
+      "detail": "Final lane report parses as valid JSON."
+    }
+  ],
+  "rechecked": [],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "docs/ux-maps/app-portal.uxmap.json",
+      "line": 267,
+      "title": "Claim screen deep link differs from the live app route",
+      "defect": "docs/ux-maps/app-portal.uxmap.json:267 records \"route\": \"/onboarding/claim\"; apps/app-portal/src/App.tsx:335 only matches /claim before rendering ClaimScreen.",
+      "failure_scenario": "A signed-in unadmitted user opens the mapped /onboarding/claim deep link; PortalShell does not enter its /claim branch and shows NotAdmittedScreen instead of the claim form.",
+      "fix": "Change the map route and action target to /claim, or add /onboarding/claim as a supported app alias; add a route-parity assertion.",
+      "test_file": "apps/app-portal/src/__tests__/claim-journey.test.tsx",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "The map parses, the lane check passes, and all portal screen components are represented; route parity finds the claim deep link points to a path the app does not handle."
+}

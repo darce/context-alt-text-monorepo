@@ -1,0 +1,108 @@
+{
+  "at": 1792309051.935358,
+  "key": "feature-bakerounds-20261017-raw-auth-ini-3255682b",
+  "nonce": "42151-10ca307e00088909",
+  "base": "3772084dd1acffb2bfe08bcbb9cfce81df5244f9",
+  "head": "05971d834690f93376c8d44071cc32c01582ef4d",
+  "tree": "c1b42a91b8582098adb2de9f46762e80f712ce49",
+  "base_tree": "24ccd1334342e7d5605f2f5991d1c07c3c2877cd",
+  "custody_dir": "/home/gate/bakeoff-rounds-20261017-inputs/results/custody/feature-bakerounds-20261017-raw-auth-ini-3255682b/42151-10ca307e00088909-terminal",
+  "changed_paths": [
+    ".task-state/bakeoff-rounds-20261017/reviews/RAW-AUTH-WHOLE-SOURCE-G3.json",
+    ".task-state/bakeoff-rounds-20261017/reviews/RAW-AUTH-WHOLE-SOURCE-G3.md"
+  ],
+  "anchors": {
+    "apps/prototype-description-service/scripts/eval_harness/bakeoff.py": {
+      "blob": "19c3d6012e8e31229f5141459a7e0fa07dae62f3",
+      "sha256": "91db688fc4ba32184df4108590fe2dd6d3037ac56ea0443de2d771af7893e928"
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py": {
+      "blob": "43058b1b1f8689a6202f318fe4a5cfd42f434e40",
+      "sha256": "08ce40565572cd60219cc1942be4a5fbad03858f05945cd8881cfd5ccb01a66e"
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_protocol_fields.py": {
+      "blob": "6c176f05157884ef049243c497628105d75e20dd",
+      "sha256": "7b3321088eb319016780c6b888aab487bfb6140f5cc8782a50425f64c5b9e537"
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_reflection.py": {
+      "blob": "4b3efa357e0cd6acd72fecbf88641132e5db0108",
+      "sha256": "0fbd93390befb4e69bc590b041bd07269fc299347c8aa954d518242f9002cfc4"
+    },
+    "apps/prototype-description-service/scripts/eval_harness/remote_client.py": {
+      "blob": "848e6d69d651f922f4afe53d18fb13a06a351423",
+      "sha256": "daefd2156276a5051e6b4d739babad1724a36f29e57061b236d9dbea86a72c53"
+    },
+    ".task-state/bakeoff-rounds-20261017/reviews/RAW-AUTH-WHOLE-SOURCE-G3.json": {
+      "blob": "c9a62fc7e853d26437cb46c8d74269eddc579e94",
+      "sha256": "668be373276edcfbd52c1f1d99a7fca62b168f593db9d55070b793a2589eff45"
+    },
+    ".task-state/bakeoff-rounds-20261017/reviews/RAW-AUTH-WHOLE-SOURCE-G3.md": {
+      "blob": "d0e98eb010e4813b0a25174eff7ea7d7dbe66f4f",
+      "sha256": "facbaf438e1bda220becb3671921c07814744adaea6c0bb4a9c6b580db47b1a9"
+    }
+  },
+  "ignored": [
+    {
+      "path": ".brief.md",
+      "bytes": 9363,
+      "mode": 33188,
+      "sha256": "87af4741b0181942edef362923be78cf59c5a2f01f5993ec5e8b48bfd5c33560"
+    },
+    {
+      "path": ".grok-run.log",
+      "bytes": 0,
+      "mode": 33188,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".schema.json",
+      "bytes": 1070,
+      "mode": 33188,
+      "sha256": "b389e86c02a719cdcd169395f4eac3f37dd38f0224b2999a1b4b6ca0edf692a4"
+    },
+    {
+      "path": ".venv",
+      "bytes": 87,
+      "mode": 41471,
+      "symlink": "/home/gate/workbay-sandbox/.venv-lane-feature-bakerounds-20261017-raw-auth-ini-3255682b"
+    },
+    {
+      "path": ".workbay-lane-sandbox",
+      "bytes": 59,
+      "mode": 33188,
+      "sha256": "be6b2041a048bfda5aa31566463a03716e1c705e67af09d969af2f52087c5259"
+    },
+    {
+      "path": ".workbay-source-provenance",
+      "bytes": 228,
+      "mode": 33188,
+      "sha256": "753531b20c8a4ecaf56620e618778e49e26478d7a3ca8055e442f146aa9bd57f"
+    }
+  ],
+  "files": {
+    "ignored-run-metadata.tar.gz": {
+      "bytes": 5600,
+      "sha256": "0df4f3c417672399eee8248d31682bbb0e35136d4d1ba0f9993d2bffb6b9cade"
+    },
+    "delta.bundle": {
+      "bytes": 14262,
+      "sha256": "28cdd795abbc7ab9cfb431c20d18fb0d66b6e33cc052eb4f39bc73f864048f33"
+    },
+    "base.commit": {
+      "bytes": 269,
+      "sha256": "7c136bedabe1d10c0845f3431d24136e126a142ca50e32ef9a3ed9778d857152"
+    }
+  },
+  "clean": true,
+  "untracked_count": 0,
+  "bundle_verified": true,
+  "remote_full_bundle_not_created": true,
+  "pg_healthy": true,
+  "external_dir": "/Volumes/Butter/WorkBay/custody/raw-auth-whole-source-g3-42151-10ca307e00088909",
+  "external_full_bundle_bytes": 165642503,
+  "external_full_bundle_sha256": "79cd806ea4d171bbe7ed8eb06081b382e8c0f491c6d384bdfb8a5dbbf0497e68",
+  "native_ref": "refs/remotes/bakeoff/raw-auth-whole-source-g3-native",
+  "native_ancestry_imported": true,
+  "external_full_hash_verified": true,
+  "product_execution_local": false
+}

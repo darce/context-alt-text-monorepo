@@ -1,0 +1,420 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/image-description-response.schema.json",
+  "title": "VisualFactsResponse",
+  "description": "Response of POST /scene/describe/multipart. All 17 core fields are required so model/provider provenance, tier state, and retention state are unavoidable on the wire. generic_draft/named_draft/naming_provenance are E19-4a additive optional preview fields (draft-only, never written to alt text); attachment_provenance is the E20-FUSION additive optional Stage-2 per-fact attachment provenance; alt_text_long is the ALTQ-1 additive optional long-form surface (null/absent when the adapter produces only the short draft). GPUFLOW-1 accepted operations also emit operation_id, startup_id and measured timing; older payloads may omit timing.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tenant_id",
+    "media_id",
+    "image_hash",
+    "context_hash",
+    "adapter",
+    "model_id",
+    "model_version",
+    "prompt_or_task_version",
+    "visual_facts",
+    "alt_text_draft",
+    "context_used",
+    "provider_disclosure",
+    "cached",
+    "duration_ms",
+    "retention_class",
+    "tier",
+    "result_generation"
+  ],
+  "properties": {
+    "tenant_id": {
+      "type": "string",
+      "description": "Canonical lowercase tenant UUID."
+    },
+    "media_id": {
+      "type": "integer"
+    },
+    "image_hash": {
+      "type": "string",
+      "description": "sha256 hex of the raw image bytes."
+    },
+    "context_hash": {
+      "type": "string",
+      "description": "sha256 hex of canonical-JSON context; cache-key dimension surfaced on the wire."
+    },
+    "adapter": {
+      "type": "string",
+      "enum": [
+        "seeded",
+        "local_cpu",
+        "gpu",
+        "hosted_provider"
+      ]
+    },
+    "model_id": {
+      "type": "string",
+      "description": "Adapter model identity. GPU profiles use <hub-repo>@<40-hex hub revision> (walkable Hugging Face pin of the served artifact). A pin bump is a new idempotence/cache-key identity. llama.cpp still receives the unadorned served id."
+    },
+    "model_version": {
+      "type": "string"
+    },
+    "prompt_or_task_version": {
+      "type": "string"
+    },
+    "visual_facts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "caption"
+      ],
+      "properties": {
+        "caption": {
+          "type": "string"
+        },
+        "objects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ocr_text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "alt_text_draft": {
+      "type": "string"
+    },
+    "context_used": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sources",
+        "applied"
+      ],
+      "properties": {
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "applied": {
+          "type": "boolean"
+        }
+      }
+    },
+    "provider_disclosure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "left_service_boundary"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "none",
+            "local",
+            "hosted"
+          ]
+        },
+        "left_service_boundary": {
+          "type": "boolean"
+        }
+      }
+    },
+    "cached": {
+      "type": "boolean"
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "retention_class": {
+      "type": "string",
+      "enum": [
+        "retain_all",
+        "dispose_after_ack",
+        "purge_on_demand"
+      ]
+    },
+    "tier": {
+      "type": "string",
+      "enum": [
+        "provisional_cpu",
+        "final_gpu"
+      ]
+    },
+    "result_generation": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "alt_text_long": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "ALTQ-1 additive optional: long-form description surface from dual-length prompting, suited to the attachment description field. Null when the adapter produces only the short alt_text_draft. Never required \u2014 old clients and short-only adapters are unaffected."
+    },
+    "generic_draft": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "E19-4a preview: the untouched generic draft (equals alt_text_draft)."
+    },
+    "named_draft": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "E19-4a preview: identity-named draft; identical to generic_draft when naming is not allowed. Never a guessed name."
+    },
+    "naming_provenance": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "E19-4a preview: which names were injected, from which cluster/roster, at what confidence \u2014 or the reason the draft stayed generic.",
+      "additionalProperties": false,
+      "required": [
+        "injected_names",
+        "naming_allowed",
+        "reason",
+        "mode"
+      ],
+      "properties": {
+        "injected_names": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "cluster_id",
+              "roster_id",
+              "detection_confidence"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "cluster_id": {
+                "type": "string"
+              },
+              "roster_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "detection_confidence": {
+                "type": "number",
+                "description": "Face-detector score for the matched region (MediaIdentity.confidence); not a face-to-phrase match strength."
+              }
+            }
+          }
+        },
+        "naming_allowed": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "agreement_disabled",
+            "db_unavailable",
+            "image_unreadable",
+            "no_confirmed_identities",
+            "no_eligible_identities",
+            "ambiguous_grounding",
+            "merge_error",
+            null
+          ]
+        },
+        "mode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "grounded",
+            "positional",
+            "substituted",
+            null
+          ],
+          "description": "How the named draft was realized: grounded span replacement, the positional appended sentence, or substituted (the single leading generic person phrase replaced without a phrase box); null when no naming occurred."
+        }
+      }
+    },
+    "attachment_provenance": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "E20-FUSION Stage-2: per-fact attachment decisions (object/caption/dropped) with altitude and review_reason.",
+      "additionalProperties": false,
+      "required": [
+        "facts"
+      ],
+      "properties": {
+        "facts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "fact_id",
+              "fact_source",
+              "fact_label",
+              "decision",
+              "altitude",
+              "target_evidence",
+              "review_reason",
+              "visible"
+            ],
+            "properties": {
+              "fact_id": {
+                "type": "string"
+              },
+              "fact_source": {
+                "type": "string"
+              },
+              "fact_label": {
+                "type": "string"
+              },
+              "decision": {
+                "type": "string",
+                "enum": [
+                  "object",
+                  "caption",
+                  "dropped"
+                ]
+              },
+              "altitude": {
+                "type": "string",
+                "enum": [
+                  "object",
+                  "caption",
+                  "none"
+                ]
+              },
+              "target_evidence": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "review_reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "visible": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    },
+    "operation_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Opaque service-minted id bound to tenant and request digest."
+    },
+    "startup_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Opaque shared startup id; null for warm/cache work."
+    },
+    "timing": {
+      "type": "object",
+      "properties": {
+        "queue_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "ramp_up_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "processing_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "startup_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "server_elapsed_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "queue_ms",
+        "ramp_up_ms",
+        "processing_ms",
+        "startup_ms",
+        "server_elapsed_ms"
+      ],
+      "additionalProperties": false,
+      "description": "Measured milliseconds; unknown values are null. Readiness and adapter attempts do not overlap; server elapsed excludes client rendering."
+    }
+  },
+  "if": {
+    "properties": {
+      "cached": {
+        "const": true
+      }
+    },
+    "required": [
+      "cached"
+    ]
+  },
+  "then": {
+    "properties": {
+      "startup_id": {
+        "type": "null"
+      },
+      "timing": {
+        "properties": {
+          "ramp_up_ms": {
+            "const": 0
+          },
+          "processing_ms": {
+            "const": 0
+          },
+          "startup_ms": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  }
+}

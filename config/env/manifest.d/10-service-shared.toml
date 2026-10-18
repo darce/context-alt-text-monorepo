@@ -1,0 +1,448 @@
+version = 1
+
+[[var]]
+name = "POSTGRES_DSN"
+class = "secret"
+targets = ["svc-local", "svc-vm", "svc-fir", "svc-auraface"]
+section = "Database DSNs"
+example = ""
+doc = 'domain: infra | source: OCI Vault (oci_vault) / env | consumer: db/settings.py:get_database_settings'
+required = false
+secret = { dev = "host:", staging = "host:", prod = "vault:ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqaxwiwmhdx52g6obkujhq7ob4wxtp7n2xp5l2eu243wqqa", fir = "host:", dev-auraface = "host:", staging-auraface = "host:", prod-auraface = "host:" }
+
+[[var]]
+name = "POSTGRES_SYNC_DSN"
+class = "secret"
+targets = ["svc-local", "svc-vm", "svc-fir", "svc-auraface"]
+section = "Database DSNs"
+example = ""
+doc = 'domain: infra | source: OCI Vault (oci_vault) / env | consumer: db/settings.py:get_database_settings'
+required = false
+secret = { dev = "host:", staging = "host:", prod = "vault:ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqabr4qgl3jnrpfij72o4tv5ajujhwyyb4kd4ke7zwn73jq", fir = "host:", dev-auraface = "host:", staging-auraface = "host:", prod-auraface = "host:" }
+
+[[var]]
+name = "LOG_LEVEL"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Runtime mode"
+example = "INFO"
+doc = 'domain: infra | source: OCI deploy | consumer: application logging config'
+values = { dev = "DEBUG", staging = "INFO", prod = "INFO", fir = "INFO", dev-auraface = "INFO", staging-auraface = "INFO", prod-auraface = "INFO" }
+
+[[var]]
+name = "TENANT_ID"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Runtime mode"
+example = "00000000-0000-7000-8000-000000000000"
+doc = 'domain: infra | source: OCI deploy | consumer: runtime default tenant context (deploy bootstrap)'
+values = { dev = "00000000-0000-7000-8000-000000000002", staging = "00000000-0000-7000-8000-000000000001", prod = "00000000-0000-7000-8000-000000000000", fir = "00000000-0000-7000-8000-000000000000", dev-auraface = "00000000-0000-7000-8000-000000000003", staging-auraface = "00000000-0000-7000-8000-000000000004", prod-auraface = "00000000-0000-7000-8000-000000000005" }
+
+[[var]]
+name = "RECOGNITION_SECRET_BACKEND"
+class = "config"
+targets = ["svc-local", "svc-vm", "svc-fir", "svc-auraface"]
+section = "Runtime mode"
+example = "oci_vault"
+doc = 'Default env in dev/staging/fir. Prod uses oci_vault with a required host-preserved map, whose boot keys are checked by the app at startup. | domain: infra (backend selector) | source: service operator | consumer: shared/secrets.py:get_secret_provider'
+required = false
+values = { local = "env", dev = "env", staging = "env", prod = "oci_vault", fir = "env", dev-auraface = "env", staging-auraface = "env", prod-auraface = "env" }
+
+[[var]]
+name = "RECOGNITION_VAULT_SECRET_MAP"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Secret backend"
+example = '{"PGPASSWORD":"ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqa5ka6inpwivjhrxm2ri4zdar46kdiijw32nzjly2uetzq","POSTGRES_DSN":"ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqaxwiwmhdx52g6obkujhq7ob4wxtp7n2xp5l2eu243wqqa","POSTGRES_SYNC_DSN":"ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqabr4qgl3jnrpfij72o4tv5ajujhwyyb4kd4ke7zwn73jq","RECOGNITION_ADMIN_TOKEN":"ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqaugzdmou5vnlaauvnyfct3qz36qenl72gxqhjkai7a2ea"}'
+doc = 'Derived JSON map of Vault OCIDs from secret refs for the current target and environment. Dev, staging and fir use backend env and derive an empty map. The enabled GPU adapter requires an approved mint before preflight can pass. | domain: infra (OCID map) | source: OCI deploy | consumer: shared/secrets.py:OciVaultSecretProvider.from_env'
+required = false
+derive_vault_map = true
+
+[[var]]
+name = "POSTGRES_USER"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Postgres"
+example = "acx_app"
+doc = 'domain: infra | source: OCI Vault (ExecStartPre) / OCI deploy | consumer: docker-compose Postgres bootstrap'
+values = { dev = "acx_dev", staging = "acx_staging", prod = "acx_app", fir = "acx_dev_fir", dev-auraface = "acx_dev_auraface", staging-auraface = "acx_staging_auraface", prod-auraface = "acx_prod_auraface" }
+
+[[var]]
+name = "POSTGRES_PASSWORD"
+class = "secret"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Postgres"
+example = ""
+doc = 'domain: infra | source: OCI Vault (ExecStartPre) under oci_vault | consumer: docker-compose Postgres bootstrap'
+secret = { dev = "host:", staging = "host:", prod = "host:", fir = "host:", dev-auraface = "host:", staging-auraface = "host:", prod-auraface = "host:" }
+
+[[var]]
+name = "POSTGRES_DB"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Postgres"
+example = "alt_context_service"
+doc = 'domain: infra | source: OCI deploy | consumer: docker-compose Postgres bootstrap (POSTGRES_DB)'
+values = { dev = "alt_context_dev", staging = "alt_context_staging", prod = "alt_context_service", fir = "alt_context_dev_fir", dev-auraface = "alt_context_dev_auraface", staging-auraface = "alt_context_staging_auraface", prod-auraface = "alt_context_prod_auraface" }
+
+[[var]]
+name = "CACHE_BASE"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Cache directories"
+example = "/data/cache"
+doc = 'domain: infra | source: OCI deploy | consumer: runtime cache path resolution'
+values = { dev = "/data/cache", staging = "/data/cache", prod = "/data/cache", fir = "/data/cache", dev-auraface = "/data/cache", staging-auraface = "/data/cache", prod-auraface = "/data/cache" }
+
+[[var]]
+name = "HF_HOME"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Cache directories"
+example = "/data/cache/huggingface_cache"
+doc = 'domain: infra | source: OCI deploy | consumer: HuggingFace hub cache'
+values = { dev = "/data/cache/huggingface_cache", staging = "/data/cache/huggingface_cache", prod = "/data/cache/huggingface_cache", fir = "/data/cache/huggingface_cache", dev-auraface = "/data/cache/huggingface_cache", staging-auraface = "/data/cache/huggingface_cache", prod-auraface = "/data/cache/huggingface_cache" }
+
+[[var]]
+name = "HF_HUB_CACHE"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Cache directories"
+example = "/data/cache/huggingface_cache"
+doc = 'domain: infra | source: OCI deploy | consumer: HuggingFace hub cache'
+values = { dev = "/data/cache/huggingface_cache", staging = "/data/cache/huggingface_cache", prod = "/data/cache/huggingface_cache", fir = "/data/cache/huggingface_cache", dev-auraface = "/data/cache/huggingface_cache", staging-auraface = "/data/cache/huggingface_cache", prod-auraface = "/data/cache/huggingface_cache" }
+
+[[var]]
+name = "INSIGHTFACE_CACHE_DIR"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Cache directories"
+example = "/data/cache/insightface"
+doc = 'domain: infra | source: OCI deploy | consumer: InsightFace model cache'
+values = { dev = "/data/cache/insightface", staging = "/data/cache/insightface", prod = "/data/cache/insightface", fir = "/data/cache/insightface", dev-auraface = "/data/cache/insightface", staging-auraface = "/data/cache/insightface", prod-auraface = "/data/cache/insightface" }
+
+[[var]]
+name = "INSIGHTFACE_HOME"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Cache directories"
+example = "/data/cache/insightface"
+doc = 'domain: infra | source: OCI deploy | consumer: InsightFace home path'
+values = { dev = "/data/cache/insightface", staging = "/data/cache/insightface", prod = "/data/cache/insightface", fir = "/data/cache/insightface", dev-auraface = "/data/cache/insightface", staging-auraface = "/data/cache/insightface", prod-auraface = "/data/cache/insightface" }
+
+[[var]]
+name = "PGVECTOR_DIM"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Database pool tuning"
+example = "512"
+doc = 'domain: infra | source: description-service / DB ops | consumer: db/settings.py pool/vector settings'
+required = false
+values = { fir = "128", dev-auraface = "512", staging-auraface = "512", prod-auraface = "512" }
+
+[[var]]
+name = "DB_POOL_SIZE"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Database pool tuning"
+example = "20"
+doc = 'domain: infra | source: description-service / DB ops | consumer: db/settings.py pool settings'
+required = false
+values = {}
+
+[[var]]
+name = "DB_MAX_OVERFLOW"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Database pool tuning"
+example = "10"
+doc = 'domain: infra | source: description-service / DB ops | consumer: db/settings.py pool settings'
+required = false
+values = {}
+
+[[var]]
+name = "DB_POOL_TIMEOUT"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Database pool tuning"
+example = "30"
+doc = 'domain: infra | source: description-service / DB ops | consumer: db/settings.py pool settings'
+required = false
+values = {}
+
+[[var]]
+name = "DB_POOL_RECYCLE"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Database pool tuning"
+example = "3600"
+doc = 'domain: infra | source: description-service / DB ops | consumer: db/settings.py pool settings'
+required = false
+values = {}
+
+[[var]]
+name = "RECOGNITION_ASYNC_ANALYZE_INLINE"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Worker behavior"
+example = "0"
+doc = 'domain: infra | source: service operator | consumer: recognition async analyze worker path'
+required = false
+values = {}
+
+[[var]]
+name = "RECOGNITION_ADMIN_TAILNET_BOUND"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Operator /admin surface"
+example = "1"
+doc = 'domain: service root-of-trust (ack) | source: service operator | consumer: validate_admin_config (must be 1 in production when admin on)'
+values = { dev = "0", staging = "0", prod = "1", fir = "0", dev-auraface = "0", staging-auraface = "0", prod-auraface = "0" }
+
+[[var]]
+name = "RECOGNITION_API_KEY_HASH_ALGORITHM"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "API security"
+example = "sha256"
+doc = 'domain: service root-of-trust (config) | source: service operator | consumer: API key hashing (SecuritySettings)'
+required = false
+values = {}
+
+[[var]]
+name = "RECOGNITION_RATE_LIMIT_RPM"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "API security"
+example = "60"
+doc = 'domain: service root-of-trust (config) | source: service operator | consumer: rate-limit middleware (SecuritySettings)'
+required = false
+values = {}
+
+[[var]]
+name = "RECOGNITION_RATE_LIMIT_BURST"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "API security"
+example = "10"
+doc = 'domain: service root-of-trust (config) | source: service operator | consumer: rate-limit middleware (SecuritySettings)'
+required = false
+values = {}
+
+[[var]]
+name = "RECOGNITION_MAX_PAGE_SIZE"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "API security"
+example = "500"
+doc = 'domain: service root-of-trust (config) | source: service operator | consumer: pagination bounds (SecuritySettings)'
+required = false
+values = {}
+
+[[var]]
+name = "RECOGNITION_ALLOWED_ORIGINS"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "API security"
+example = ""
+doc = 'domain: service root-of-trust (config) | source: service operator | consumer: CORS middleware (SecuritySettings)'
+required = false
+values = { prod = "https://demo.altcontext.com" }
+
+[[var]]
+name = "ACX_VLM_MAX_IMAGE_EDGE_PX"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Image description"
+example = "1024"
+doc = 'domain: infra | source: service operator | consumer: VLM host runtime caps'
+required = false
+values = {}
+
+[[var]]
+name = "ACX_VLM_TIMEOUT_SECONDS"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Image description"
+example = "20"
+doc = 'domain: infra | source: service operator | consumer: VLM host runtime caps'
+required = false
+values = {}
+
+[[var]]
+name = "ACX_VLM_MAX_RSS_MB"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Image description"
+example = "6144"
+doc = 'domain: infra | source: service operator | consumer: VLM host runtime caps'
+required = false
+values = {}
+
+[[var]]
+name = "ACX_VLM_WORKER_CONCURRENCY"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Image description"
+example = "1"
+doc = 'domain: infra | source: service operator | consumer: VLM host runtime caps'
+required = false
+values = {}
+
+[[var]]
+name = "ACX_DESCRIPTION_TIMEOUT_SECONDS"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Image description"
+example = "180"
+doc = 'domain: infra | source: service operator | consumer: description request timeout'
+required = false
+values = {}
+
+[[var]]
+name = "RECOGNITION_AUTH_ENABLED"
+class = "config"
+targets = ["svc-local", "svc-vm", "svc-fir", "svc-auraface"]
+section = "API security"
+example = "true"
+doc = 'domain: service root-of-trust (mode flag) | source: service operator | consumer: SecuritySettings.auth_enabled; HTTP auth deps'
+values = { local = "1", dev = "true", staging = "true", prod = "true", fir = "true", dev-auraface = "true", staging-auraface = "true", prod-auraface = "true" }
+
+[[var]]
+name = "RECOGNITION_API_KEY_HEADER"
+class = "config"
+targets = ["svc-local", "svc-vm", "svc-fir", "svc-auraface"]
+section = "API security"
+example = "X-API-Key"
+doc = 'domain: service root-of-trust (config) | source: service operator | consumer: HTTP auth dependency (API key header name)'
+values = { local = "X-API-Key", dev = "X-API-Key", staging = "X-API-Key", prod = "X-API-Key", fir = "X-API-Key", dev-auraface = "X-API-Key", staging-auraface = "X-API-Key", prod-auraface = "X-API-Key" }
+
+[[var]]
+name = "RECOGNITION_ADMIN_ENABLED"
+class = "config"
+targets = ["svc-local", "svc-vm", "svc-fir", "svc-auraface"]
+section = "Operator /admin surface"
+example = "false"
+doc = 'domain: service root-of-trust (flag) | source: service operator | consumer: SecuritySettings.admin_enabled; /admin router mount'
+required = false
+values = { dev = "false", staging = "false", prod = "true", fir = "false", dev-auraface = "false", staging-auraface = "false", prod-auraface = "false" }
+
+[[var]]
+name = "RECOGNITION_ADMIN_TOKEN"
+class = "secret"
+targets = ["svc-local", "svc-vm", "svc-fir", "svc-auraface"]
+section = "Operator /admin surface"
+example = ""
+doc = 'domain: service root-of-trust | source: OCI Vault (oci_vault) / service operator | consumer: SecuritySettings.admin_token; validate_admin_config; /admin deps (admin_auth)'
+required = false
+required_when = { RECOGNITION_SECRET_BACKEND = ["env"], RECOGNITION_ADMIN_ENABLED = ["true", "1", "yes", "on"] }
+secret = { dev = "host:", staging = "host:", prod = "vault:ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqaugzdmou5vnlaauvnyfct3qz36qenl72gxqhjkai7a2ea", fir = "host:", dev-auraface = "host:", staging-auraface = "host:", prod-auraface = "host:" }
+
+[[var]]
+name = "COMPOSE_PROJECT_NAME"
+class = "config"
+targets = ["svc-vm", "svc-fir", "demo", "svc-auraface"]
+section = "Compose"
+example = "acx-prod"
+doc = 'domain: infra | source: OCI deploy | consumer: docker-compose.env.yml project identity'
+values = { dev = "acx-dev", staging = "acx-staging", prod = "acx-prod", fir = "acx-dev-fir", demo = "acx-demo", dev-auraface = "acx-dev-auraface", staging-auraface = "acx-staging-auraface", prod-auraface = "acx-prod-auraface" }
+
+[[var]]
+name = "ACX_DESCRIPTION_ADAPTER"
+class = "config"
+targets = ["svc-vm", "svc-fir", "demo", "svc-auraface"]
+section = "Image description"
+example = "gpu_qwen30b"
+doc = 'domain: infra | source: service operator | consumer: scene description adapter selection'
+required = false
+values = { dev = "gpu_qwen30b", staging = "gpu_qwen30b", prod = "gpu_qwen30b", demo = "gpu_qwen30b" }
+
+[[var]]
+name = "ACX_GPU_ENDPOINT_URL"
+class = "config"
+targets = ["svc-vm", "demo"]
+section = "GPU lifecycle"
+example = "http://acx-gpu-burst.compute.oraclevcn.com:8000"
+doc = 'domain: infra | source: service operator | consumer: remote GPU description adapter'
+values = { dev = "http://10.0.1.9:8000", staging = "http://10.0.1.9:8000", prod = "http://10.0.1.9:8000", demo = "http://10.0.1.9:8000" }
+
+[[var]]
+name = "ACX_GPU_SNAPSHOT_DIR"
+class = "config"
+targets = ["svc-vm", "demo"]
+section = "GPU lifecycle"
+example = "/run/acx"
+doc = 'domain: infra | source: OCI deploy | consumer: docker-compose.prod.yml snapshot mount'
+values = { dev = "/run/acx", staging = "/run/acx", prod = "/run/acx", demo = "/run/acx" }
+
+[[var]]
+name = "ACX_GPU_STATE_PATH"
+class = "config"
+targets = ["svc-vm", "demo"]
+section = "GPU lifecycle"
+example = "/run/acx/gpu-state.json"
+doc = 'domain: infra | source: OCI deploy | consumer: lifecycle producer and scene GPU-state reader'
+values = { dev = "/run/acx/gpu-state.json", staging = "/run/acx/gpu-state.json", prod = "/run/acx/gpu-state.json", demo = "/run/acx/gpu-state.json" }
+
+[[var]]
+name = "ACX_GPU_STATE_STALE_SECONDS"
+class = "config"
+targets = ["svc-vm", "demo"]
+section = "GPU lifecycle"
+example = "180"
+doc = 'domain: infra | source: service operator | consumer: scene GPU-state reader / snapshot check'
+values = { dev = "180", staging = "180", prod = "180", demo = "180" }
+
+[[var]]
+name = "ACX_ENV"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Compose"
+example = "prod"
+doc = 'domain: infra | source: OCI deploy | consumer: compose / deploy scripts (environment label)'
+values = { dev = "dev", staging = "staging", prod = "prod", fir = "dev-fir", dev-auraface = "dev-auraface", staging-auraface = "staging-auraface", prod-auraface = "prod-auraface" }
+
+[[var]]
+name = "ACX_IMAGE_TAG"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Compose"
+example = "latest"
+doc = 'domain: infra | source: OCI deploy | consumer: compose image tag selection'
+values = { dev = "dev", staging = "staging", prod = "latest", fir = "dev-fir", dev-auraface = "dev-auraface", staging-auraface = "staging-auraface", prod-auraface = "prod-auraface" }
+
+[[var]]
+name = "ACX_PGDATA_PATH"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Compose"
+example = "/opt/acx-backend/data/prod-pgdata"
+doc = 'domain: infra | source: OCI deploy | consumer: compose volume mount for Postgres data'
+values = { dev = "/opt/acx-backend/data/dev-pgdata", staging = "/opt/acx-backend/data/staging-pgdata", prod = "/opt/acx-backend/data/prod-pgdata", fir = "/opt/acx-backend/data/dev-fir-pgdata", dev-auraface = "/opt/acx-backend/data/dev-auraface-pgdata", staging-auraface = "/opt/acx-backend/data/staging-auraface-pgdata", prod-auraface = "/opt/acx-backend/data/prod-auraface-pgdata" }
+
+[[var]]
+name = "ACX_MODELS_PATH"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Compose"
+example = "/opt/acx-backend/data/prod-models"
+doc = 'domain: infra | source: OCI deploy | consumer: compose volume mount for model cache'
+values = { dev = "/opt/acx-backend/data/dev-models", staging = "/opt/acx-backend/data/staging-models", prod = "/opt/acx-backend/data/prod-models", fir = "/opt/acx-backend/data/dev-models", dev-auraface = "/opt/acx-backend/data/dev-auraface-models", staging-auraface = "/opt/acx-backend/data/staging-auraface-models", prod-auraface = "/opt/acx-backend/data/prod-auraface-models" }
+
+[[var]]
+name = "ACX_NETWORK_NAME"
+class = "config"
+targets = ["svc-vm", "svc-fir", "svc-auraface"]
+section = "Compose"
+example = "acx-prod-net"
+doc = 'domain: infra | source: OCI deploy | consumer: compose network name'
+values = { dev = "acx-dev-net", staging = "acx-staging-net", prod = "acx-prod-net", fir = "acx-dev-fir-net", dev-auraface = "acx-dev-auraface-net", staging-auraface = "acx-staging-auraface-net", prod-auraface = "acx-prod-auraface-net" }
+
+[[var]]
+name = "RECOGNITION_RUNTIME_MODE"
+class = "config"
+targets = ["svc-local", "svc-vm", "svc-fir", "svc-auraface"]
+section = "Runtime mode"
+example = "production"
+doc = 'domain: service root-of-trust (mode flag) | source: service operator | consumer: SecuritySettings / runtime mode gates; validate_required_secrets'
+values = { local = "development", dev = "production", staging = "production", prod = "production", fir = "production", dev-auraface = "production", staging-auraface = "production", prod-auraface = "production" }

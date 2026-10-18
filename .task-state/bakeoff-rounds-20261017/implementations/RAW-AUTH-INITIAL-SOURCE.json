@@ -1,0 +1,84 @@
+{
+  "status": "IMPLEMENTED_PENDING_INDEPENDENT_SOURCE_REVIEW",
+  "summary": "Implemented raw-only optional Bearer auth and private-file CLI loading; approved50 pass from45RED/5GREEN baseline. Independent source gate remains root-owned.",
+  "source_sha": "7f27acf31569672349536a0a312cc33f6a29e304",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-INITIAL-SOURCE.json",
+    ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-INITIAL-SOURCE.md",
+    "apps/prototype-description-service/scripts/eval_harness/bakeoff.py"
+  ],
+  "commits": [
+    "6b6ce88ca0d899a1db0a058cfbdc6d198ffef91f"
+  ],
+  "findings": [],
+  "tests": [
+    {
+      "command": "context.py (initial attempt)",
+      "exit_code": 1,
+      "summary": "Audit setup: checkout upstream mirror absent; corrected full hash-addressed snapshot reads pass."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-initial-source/scripts/context.py",
+      "exit_code": 0,
+      "summary": "19785 complete reads;19627 prior files; eight Canon/four distillation/three upstream hashes verified."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-initial-source/scripts/pytest_run.py before",
+      "exit_code": 1,
+      "summary": "Pinned baseline:45 failed/5 passed in24.72s; no errors."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-initial-source/scripts/pytest_run.py after",
+      "exit_code": 0,
+      "summary": "50 passed in13.32s; real public boundaries, unchanged tests."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-initial-source/scripts/pytest_run.py final",
+      "exit_code": 0,
+      "summary": "Formatted source:50 passed in12.71s."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-initial-source/scripts/pytest_run.py adjacent",
+      "exit_code": 1,
+      "summary": "Audit streaming-observer setup error;15 passed/1 failed. Corrected wrapper, no product/test repair."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-initial-source/scripts/pytest_run.py adjacent-final",
+      "exit_code": 0,
+      "summary": "17 focused legacy checks passed in16.61s."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-initial-source/scripts/pytest_run.py sealed",
+      "exit_code": 0,
+      "summary": "Final source:50 passed in15.11s;37 clients closed by tests; full import/HTTP/collection receipts."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-initial-source/scripts/pytest_run.py adjacent-sealed",
+      "exit_code": 0,
+      "summary": "Final source:17 focused legacy client/clone/parser/parent-transport checks passed in14.58s. Audit closed11 legacy clients."
+    },
+    {
+      "command": ".venv/bin/ruff check --no-cache apps/prototype-description-service/scripts/eval_harness/bakeoff.py",
+      "exit_code": 0,
+      "summary": "Focused final lint passes; initial ordering/format failures and corrections retained."
+    },
+    {
+      "command": ".venv/bin/ruff format --check --no-cache apps/prototype-description-service/scripts/eval_harness/bakeoff.py",
+      "exit_code": 0,
+      "summary": "Focused final format passes."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-initial-source/scripts/verify.py --committed",
+      "exit_code": 0,
+      "summary": "Strict schema/committed equality, three-path ownership, prior custody and source/test/import hashes verified."
+    }
+  ],
+  "limitations": [
+    "Logical input467a2233a146828ef8a6a20a6a81a05742b1094e is absent locally; source_sha is honest native stripped base with exact requested tree0a06a7f58fb16d4c5852725b8423e1361da05723. Equal trees do not prove ancestry.",
+    "Author result only; no independent SOURCE approval, adoption, main readiness, merge, runtime acceptance or live effects. Root owns all later gates and disposition.",
+    "No live MCP/ONNX retrieval claimed. Supplied BAKERAW no_embeddings and verified MAINT gte-base-en-v1.5 cross-task evidence, full original reports and exact source/AST/import hashes were consumed.",
+    "MockTransport and synthetic keys/zero-byte fixtures qualify public encoding/configured and injected failures, not real socket deadlines, installed runtime auth, inference or quality.",
+    "Private /tmp/raw-auth-initial-source retains full receipts, setup failures, scripts, fixtures and snapshots; prior roots unchanged. Approved clients/FDs close; audit closes11 clients left open by legacy tests. No installs, broad suite, foreign signals, nested agents or shared-service changes.",
+    "Actual cgroup1GiB/.25CPU verified; requested model/LOW/STANDARD/1500s is dispatch context, not independently attested. commits points to substantive commit; later JSON-only pointer commit avoids self-reference."
+  ]
+}

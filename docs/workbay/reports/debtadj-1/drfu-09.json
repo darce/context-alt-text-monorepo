@@ -1,0 +1,91 @@
+{
+  "lane": "drfu-09",
+  "base": "df2b8d08d6b5b2d8b7c6067ef0bf9acd16db7059",
+  "results": [
+    {
+      "db_id": 1285,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-wp-alt-context/src/sovereign/sync/class-split-topology-command-drain.php:252-259 increments reconcile_attempts and switches status to failed at resolve_max_attempts; apps/prototype-wp-alt-context/src/sovereign/sync/class-topology-command-repository.php:101-102 only reloads pending/applied rows; apps/prototype-wp-alt-context/tests/Unit/SplitTopologyCommandDrainTest.php:651-708 covers two failures reaching terminal failed and a third drain writing nothing.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-wp-alt-context/tests/Unit/SplitTopologyCommandDrainTest.php",
+      "size": "S",
+      "fix_hint": "The applied-command reconcile path now has a separate attempt cap and terminal failed status."
+    },
+    {
+      "db_id": 5243,
+      "outcome": "CONFIRMED",
+      "evidence": "benchmarks/tools/fir_corpus_population_draft_20260919.py:54 marks each legacy record scored_observation_eligible_now=false and sealed_confirmatory_test_eligible=false; line 56 states that no evaluation splits are frozen and all legacy data is diagnostic.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "The replacement review does not use the shallow roster as an executable confirmatory evaluation split."
+    },
+    {
+      "db_id": 6402,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-16-open-set-head-to-head-task-plan.md:230 requires FIR-6 S4 calibration to finish before the live head-to-head so face_pipeline is scored with its calibrated knobs.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "The consuming live run is explicitly ordered after FIR-6 calibration."
+    },
+    {
+      "db_id": 6403,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-5-bakeoff-harness-extension-task-plan.md:16 reserves the operator gate decision for FIR-6; docs/tasks/fir/FIR-16-open-set-head-to-head-task-plan.md:20 identifies FNIR@FPIR as the separate headline gate leg extending FIR-8.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "The FIR-5 gate proposal and FIR-16 open-set headline measure serve distinct decision legs."
+    },
+    {
+      "db_id": 6406,
+      "outcome": "REFUTED",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:305-330 assigns CONFIRMATORY using endpoint, floor, interval, and bootstrap context but never reads corpus provenance; apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py:131-147 asserts a primary cell with that context is CONFIRMATORY. benchmarks/reports/fir-executive-summary-20260728.md:51 still ceilings golden150-draft results at DIRECTIONAL pending FIR-11.",
+      "severity": "high",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/bench/score_report.py",
+        "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py",
+      "size": "S",
+      "fix_hint": "Add a corpus-provenance tier ceiling that keeps golden150 cells DIRECTIONAL until the FIR-11 bias bound is published."
+    },
+    {
+      "db_id": 6408,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/scopes/commercial-face-identity-replacement.md:50 names FIR-16 as consuming FIR-8's cross-stack bench; docs/tasks/fir/FIR-16-open-set-head-to-head-task-plan.md:20 defines the open-set leg that uses it.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "FIR-16 is an explicit downstream consumer of FIR-8 output."
+    },
+    {
+      "db_id": 6429,
+      "outcome": "CONFIRMED",
+      "evidence": "benchmarks/manifests/altq-interleave-master-20260716.json:5 selects the tracked root curated-identities file; benchmarks/tools/fir_corpus_population_draft_20260919.py:4-5 reads the newer v3r manifest and caption-mining report for the current population review, so it does not combine the alternate path-space copy.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "The current population-review path uses the newer manifest inputs and the legacy master names one canonical tracked identity file."
+    },
+    {
+      "db_id": 6430,
+      "outcome": "UNSURE",
+      "evidence": "benchmarks/manifests/corpus-manifest-v3.json:4 still embeds the absolute vlm-6 worktree images_root, which is absent in this snapshot; the generator files named in the finding are also absent, and the supplied brief omits db 9077's canonical closure evidence needed to verify this duplicate.",
+      "severity": "high",
+      "fix_files": [
+        "benchmarks/manifests/corpus-manifest-v3.json"
+      ],
+      "test_file": "",
+      "size": "L",
+      "fix_hint": "Read db 9077's closure evidence and the intended regeneration source to determine whether the stale artifact path is the same closed defect."
+    }
+  ]
+}

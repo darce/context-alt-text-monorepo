@@ -1,0 +1,614 @@
+{
+  "q1_insightface": {
+    "channel": "Commercial model licensing is sold as a separate product from MIT code. Primary channels: (1) recognition-oss-pack@insightface.ai for open-source face recognition packs (explicitly including buffalo_l); (2) contact@insightface.ai for InspireFace SDK, inswapper, proprietary models, and general enterprise; (3) web form at insightface.ai/contact (use-case dropdown includes 'Face Recognition Model Licensing'; business email required). Maintainer nttstar (Jia Guo) directs pricing questions to contact@insightface.ai. No public price list, self-serve cart, or published quote bands found as of 2026-07-23.",
+    "entity": "InsightFace AI Technology Limited (legal/publisher entity on insightface.ai; \u00a9 2026). Project primarily maintained by Jia Guo (guojia@insightface.ai / nttstar) and Jiankang Deng. DeepGlint is a historical research collaborator (e.g., Partial FC / Glint360K training-set releases ~2020), NOT the commercial licensor for buffalo_* packs today. Consumer product brand Picsi.ai is operated by the same InsightFace ecosystem. Tracxn lists InsightFace as founded ~2019, unfunded.",
+    "covers_model_zoo": "YES for open-source model packages: official commercial page explicitly lists commercial usage rights for buffalo_l, antelopev2, buffalo_s, buffalo_m, etc. Separate SKUs exist for (a) OSS model pack commercial license, (b) closed-source higher-accuracy proprietary models, (c) InspireFace C/C++ SDK, (d) inswapper face-swap models. Commercial deliverable for recognition is ONNX model files for offline self-hosted inference (not a long-term hosted dependency). Code remains MIT free; pretrained weights remain non-commercial without a paid grant. No public evidence of OEM/reseller price sheets; site claims '40+ international enterprise partners' without naming resellers.",
+    "evidence": [
+      {
+        "claim": "Code is MIT for academic and commercial use; training data annotations and models trained with those data are non-commercial research only; both manual and auto-downloaded models follow that policy.",
+        "url": "https://github.com/deepinsight/insightface",
+        "date": "2025-11-24 update still present as of 2026-07-23 fetch",
+        "grade": "CONFIRMED"
+      },
+      {
+        "claim": "2025-11-24 README update: open-sourced FR models (e.g. buffalo_l) \u2192 recognition-oss-pack@insightface.ai; inswapper \u2192 contact@insightface.ai; InspireFace SDK \u2192 contact@insightface.ai.",
+        "url": "https://raw.githubusercontent.com/deepinsight/insightface/master/README.md",
+        "date": "2025-11-24",
+        "grade": "CONFIRMED"
+      },
+      {
+        "claim": "Enterprise product page: commercial license for open-source packages including buffalo_l, antelopev2, buffalo_s, buffalo_m; code MIT, models require separate commercial licensing; also closed-source high-accuracy models; flexible terms from single-product to enterprise-wide; no prices published.",
+        "url": "https://www.insightface.ai/solutions/face-recognition-licensing",
+        "date": "fetched 2026-07-23",
+        "grade": "CONFIRMED"
+      },
+      {
+        "claim": "Model Zoo banner: ALL models available for non-commercial research purposes only. buffalo_l = RetinaFace-10GF detector + ResNet50@WebFace600K recognition (~326MB).",
+        "url": "https://raw.githubusercontent.com/deepinsight/insightface/master/model_zoo/README.md",
+        "date": "fetched 2026-07-23",
+        "grade": "CONFIRMED"
+      },
+      {
+        "claim": "Python package README: pretrained models (auto- and manual-download) non-commercial research only.",
+        "url": "https://raw.githubusercontent.com/deepinsight/insightface/master/python-package/README.md",
+        "date": "fetched 2026-07-23",
+        "grade": "CONFIRMED"
+      },
+      {
+        "claim": "Maintainer nttstar (Jia Guo) on buffalo production use: 'No, all open source models from our repo are for non-commercial research purposes only.'",
+        "url": "https://github.com/deepinsight/insightface/issues/2486#issuecomment-1837813008",
+        "date": "2023-12-03",
+        "grade": "CONFIRMED"
+      },
+      {
+        "claim": "On buffalo pricing issue #2587, nttstar: 'Please use your business email address to send an email to contact@insightface.ai'. No dollar figures provided by maintainers on GitHub.",
+        "url": "https://github.com/deepinsight/insightface/issues/2587#issuecomment-2167779713",
+        "date": "2024-06-14",
+        "grade": "CONFIRMED"
+      },
+      {
+        "claim": "Contact page: contact@insightface.ai; replies typically 1\u20132 business days; enterprise inquiry form with volume bands (eval only / <100K / 100K\u20131M / 1M+ req/mo / device-based); claims flexible terms for startups and enterprises; no published prices.",
+        "url": "https://www.insightface.ai/contact",
+        "date": "fetched 2026-07-23",
+        "grade": "CONFIRMED"
+      },
+      {
+        "claim": "Site footer/publisher: 'Maintained by InsightFace AI Technology Limited'; author/publisher meta tags match that entity name.",
+        "url": "https://www.insightface.ai/",
+        "date": "fetched 2026-07-23",
+        "grade": "CONFIRMED"
+      },
+      {
+        "claim": "Private model evaluation guide: commercial license delivers ONNX files for offline self-hosted inference; hosted eval API is evaluation-only and not a long-term dependency.",
+        "url": "https://www.insightface.ai/guides/private-face-model-testing",
+        "date": "2026-05-13",
+        "grade": "CONFIRMED"
+      },
+      {
+        "claim": "No public dollar quotes found on GitHub issues, vendor site, or forums. Community only redirected to email. GitHub #2587 commenters also seeking pricing with no answer beyond email.",
+        "url": "https://github.com/deepinsight/insightface/issues/2587",
+        "date": "2024-06",
+        "grade": "CONFIRMED"
+      },
+      {
+        "claim": "DeepGlint historically contributed Partial FC training method and large ID set (Glint360K) to InsightFace (~2020 changelog); this is research collaboration history, not current commercial licensing entity for buffalo packs.",
+        "url": "https://archive.org/details/github.com-deepinsight-insightface_-_2020-10-16_10-05-11",
+        "date": "2020-10-13 changelog (archived)",
+        "grade": "CONFIRMED"
+      },
+      {
+        "claim": "GENUINELY NO public pricing, term sheets, OEM rate cards, or anecdotal closed-deal dollar amounts found after searching GitHub issues, vendor pages, Reddit/HN, and secondary blogs. Best contact is recognition-oss-pack@insightface.ai (buffalo_l specifically) and contact@insightface.ai (general/SDK), via company email.",
+        "url": "https://www.insightface.ai/solutions/face-recognition-licensing",
+        "date": "2026-07-23 research cut-off",
+        "grade": "CONFIRMED"
+      }
+    ],
+    "best_contact_path": "Email recognition-oss-pack@insightface.ai from a company domain stating: commercial rights for buffalo_l (or antelopev2) ONNX pack for offline CPU/ARM (OCI A1) inference in a WordPress photo alt-text SaaS; request quote, territory, deployment limits, and whether license covers detector+recognition+attribute models in the pack. CC contact@insightface.ai. Optionally open insightface.ai/contact with use case 'Face Recognition Model Licensing' and expected volume. Do not ship unlicensed buffalo_* weights."
+  },
+  "q2_vendors": [
+    {
+      "vendor": "Neurotechnology",
+      "product": "VeriLook SDK 2025.2 (Standard / Extended)",
+      "occlusion_claim": "Brochure claims partially occluded faces / protective facemasks can be recognized; also claims spoof-mask rejection. Vendor marketing, not NIST-corroborated mask ranking for current SKU.",
+      "nist_frte": "Participated in FRTE 1:1 and historical FRVT Face Mask Effects (e.g. neurotechnology-012/013 listed in 2022 mask report participant list). Mask benchmark discontinued for new submissions 2024-02-22. No single public 'rank #N on masks' for 2025.2 extracted from current live leaderboard in this research pass\u2014check pages.nist.gov/frvt/html/frvt11.html for latest 1:1.",
+      "cpu_arm": "Yes: Windows/Linux x86-64/macOS PC components; separate Mobile Face Extractor/Matcher/Client licenses for Android, iOS, and Linux ARM. Serial activation not suitable for most ARM-Linux (except RPi3/BeagleBone); internet activation or volume dongle alternatives.",
+      "pricing": "CONFIRMED public price list effective 2026-02-18: Standard SDK \u20ac339 one-time; Extended SDK \u20ac859 one-time (covers all company developers). Per-install PC components (1\u20139 qty): Face Client \u20ac70, Face Extractor \u20ac20, Face Matcher \u20ac25. ARM/mobile (1\u20139): Mobile Face Client \u20ac45, Mobile Extractor \u20ac13, Mobile Matcher \u20ac17. Volume discounts down to ~\u20ac4.70\u2013\u20ac15.90 at 1000\u20131999 units. Volume license manager \u20ac16. Enterprise unlimited-use license is custom. Licenses perpetual, no annual fee. Source date: brochure 2026-02-25 / prices page 2026-02-18.",
+      "small_saas_viable": "YES \u2014 best small-SaaS fit among named vendors: public prices, online order, single-server install model, ARM Linux supported. For one Linux server: Extended SDK + Face Extractor + Face Matcher is low hundreds of EUR one-time (plus more installs as you scale).",
+      "evidence": [
+        {
+          "claim": "Standard SDK EUR 339 / Extended EUR 859; perpetual component licenses per computer/device; enterprise license custom by territory/segment.",
+          "url": "https://www.neurotechnology.com/licensing_verilook.html",
+          "grade": "CONFIRMED"
+        },
+        {
+          "claim": "Full component price table effective February 18, 2026; PC and ARM Linux/Android/iOS tiers.",
+          "url": "https://download.neurotechnology.com/VeriLook_SDK_Brochure_2026-02-25.pdf",
+          "grade": "CONFIRMED"
+        },
+        {
+          "claim": "Occlusion/mask recognition claimed in product brochure.",
+          "url": "https://download.neurotechnology.com/VeriLook_SDK_Brochure_2026-02-25.pdf",
+          "grade": "CONFIRMED"
+        },
+        {
+          "claim": "Listed as FRVT mask-effects participant (neurotechnology-012/013).",
+          "url": "https://pages.nist.gov/frvt/reports/facemask/frvt_facemask_report.pdf",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "vendor": "Luxand",
+      "product": "FaceSDK",
+      "occlusion_claim": "Explicit 'Mask-On Face Detection' for stills/video; documentation and product page market mask-covered face detection. Recognition robustness claims general (lighting); mask-on is primarily detection feature.",
+      "nist_frte": "Historical participant luxand-000 (2019-11-07) in FRVT mask report list. Not a current top-tier NIST FRTE leader; do not treat as NIST-validated SOTA.",
+      "cpu_arm": "Yes: Windows/Linux/macOS desktop; Android/iOS; explicit 'Linux on ARM and Embedded Linux' including Raspberry Pi; armv7/arm64.",
+      "pricing": "No public dollar list on order page as of 2026-07-23\u2014quote form only (request free quote). Free trial available. Historical third-party listings sometimes show one-time SDK tiers but those are unverified secondary sources; treat current pricing as quote-only. Date: order page fetched 2026-07-23.",
+      "small_saas_viable": "LIKELY YES \u2014 trial + quote path oriented at independent developers; on-device/server library (not only cloud API). Expect one-time or royalty quote; confirm ARM Linux server licensing in quote.",
+      "evidence": [
+        {
+          "claim": "Mask-on face detection feature documented; multi-platform including ARM Linux.",
+          "url": "https://www.luxand.com/facesdk/",
+          "grade": "CONFIRMED"
+        },
+        {
+          "claim": "Ordering is free-quote form, not published price table.",
+          "url": "https://www.luxand.com/facesdk/order/",
+          "grade": "CONFIRMED"
+        },
+        {
+          "claim": "FRVT mask participant list includes Luxand Inc luxand-000.",
+          "url": "https://pages.nist.gov/frvt/reports/facemask/frvt_facemask_report.pdf",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "vendor": "CyberLink",
+      "product": "FaceMe SDK",
+      "occlusion_claim": "Masked face recognition marketed with vendor figure 'TAR up to 98.21%' and mask detection. Treat as marketing until matched to a NIST mask metric for the same algorithm revision.",
+      "nist_frte": "Vendor claims Top 10 in NIST FRTE 1:1 and 1:N; cites 1:1 VISA TAR 99.83% @ FMR 1E-6 (dated 2023-03-09 on product page) and 1:N VISA-Border 99.73% (2021-02-09). cyberlink-007/008 appear in FRVT mask participant list. Mask track discontinued 2024-02-22 for new 1:1 submissions.",
+      "cpu_arm": "Yes: Windows/Linux/Android/iOS; ARM and multiple SoCs (NXP, Qualcomm, MediaTek, Ambarella, NVIDIA Jetson, Intel). CPU-viable edge/server; GPU optional acceleration.",
+      "pricing": "No public prices. Sales-led demo/quote form only ('Provide pricing options'). OEM/IoT partner motion. Date: product page 2026-07-23.",
+      "small_saas_viable": "POSSIBLE but mid-touch sales; not self-serve. Small SaaS may face minimum commercial commitment\u2014ask for startup/OEM tier when booking demo.",
+      "evidence": [
+        {
+          "claim": "Masked FR claim TAR up to 98.21%; NIST FRTE top-listed claims with specific TAR numbers; ARM/SoC support; quote-driven pricing.",
+          "url": "https://www.cyberlink.com/faceme/sdk/overview",
+          "grade": "CONFIRMED"
+        },
+        {
+          "claim": "NIST FRTE 1:1 page is authoritative corroboration venue; FaceMe numbers on vendor page are vendor-reported extracts\u2014verify against current NIST PDF/HTML tables before procurement.",
+          "url": "https://pages.nist.gov/frvt/html/frvt11.html",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "vendor": "ROC (ex Rank One Computing)",
+      "product": "ROC SDK 3 (face + fingerprint + iris)",
+      "occlusion_claim": "Strong general FR; historical FRVT mask participation (rankone-011/012). No isolated public mask-TAR marketing string pulled in this pass; rely on NIST tables for mask-era algos.",
+      "nist_frte": "Long-time NIST FRTE participant; company markets NIST-ranked face/fingerprint/iris. Mask-era submissions rankone-011 (2021-08-27), rankone-012 (2021-12-27) listed in FRVT mask report. Check current FRTE 1:1 for latest ROC face algorithm.",
+      "cpu_arm": "Native C API SDK designed for edge and server; company emphasizes on-edge efficiency. Confirm ARM Linux OCI A1 build in 30-day eval.",
+      "pricing": "Public statement: flexible per device, per stream, or per transaction; free 30-day dev license. No dollar amounts published. Date: roc.ai/sdk fetched 2026-07-23.",
+      "small_saas_viable": "MAYBE \u2014 free eval and 'flexible pricing' language, but GTM is government/enterprise/fintech; expect sales engagement, not credit-card self-serve.",
+      "evidence": [
+        {
+          "claim": "Per device / per stream / per transaction licensing; free 30-day license.",
+          "url": "https://roc.ai/sdk/",
+          "grade": "CONFIRMED"
+        },
+        {
+          "claim": "rankone algorithms listed in NIST FRVT Face Mask Effects participant inventory.",
+          "url": "https://pages.nist.gov/frvt/reports/facemask/frvt_facemask_report.pdf",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "vendor": "Paravision (EverAI)",
+      "product": "Paravision Face Recognition / Liveness SDKs (OEM)",
+      "occlusion_claim": "Enterprise FR OEM; historical mask-era submissions paravision-004/008. No public numeric mask TAR pulled from primary pages in this pass.",
+      "nist_frte": "Regular FRTE participant under Paravision/EverAI naming. Rockchip edge SDK support announced 2024-05 (Biometric Update).",
+      "cpu_arm": "Modular SDKs for cloud/mobile/embedded; Rockchip edge AI support (2024). Confirm pure CPU ARM A1 without NPU.",
+      "pricing": "Custom / upon request (GetApp/Software Advice: pricing available upon request). No public numbers. Date: 2026 listings.",
+      "small_saas_viable": "NO for low-touch \u2014 core OEM/enterprise; not self-serve small SaaS.",
+      "evidence": [
+        {
+          "claim": "OEM SDK/API provider positioning; modular cloud/mobile/embedded.",
+          "url": "https://www.paravision.ai/best-face-recognition-technology-top-vendors-accuracy-and-use-cases/",
+          "grade": "CONFIRMED"
+        },
+        {
+          "claim": "paravision algorithms in NIST mask participant list.",
+          "url": "https://pages.nist.gov/frvt/reports/facemask/frvt_facemask_report.pdf",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "vendor": "Innovatrics",
+      "product": "SmartFace / ABIS / face SDKs",
+      "occlusion_claim": "Enterprise biometric platform with face modality; mask-era innovatrics-007/008 in NIST list. Public mask-specific claims not independently priced/ranked here.",
+      "nist_frte": "Regular FRTE participant (innovatrics-* algorithms). Check current FRTE 1:1 by-developer tab.",
+      "cpu_arm": "Edge-to-cloud SmartFace deployments exist (integrator docs); confirm ARM CPU SKU with sales.",
+      "pricing": "No public list price found; enterprise sales. Date: 2026-07-23 search.",
+      "small_saas_viable": "NO \u2014 enterprise/government biometric systems; high-touch.",
+      "evidence": [
+        {
+          "claim": "innovatrics algorithms listed in NIST FRVT Face Mask Effects participants.",
+          "url": "https://pages.nist.gov/frvt/reports/facemask/frvt_facemask_report.pdf",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "vendor": "Corsight AI",
+      "product": "Fortify / real-time face recognition",
+      "occlusion_claim": "Surveillance/real-time FR; corsight-001/002 in NIST mask participant list. Marketing emphasizes any-face/any-camera\u2014treat as marketing.",
+      "nist_frte": "corsight-001 (2021-03-11), corsight-002 (2021-09-01) in mask report inventory.",
+      "cpu_arm": "Primarily camera/edge surveillance stacks; not positioned as cheap ARM batch photo API.",
+      "pricing": "No public SaaS/self-serve pricing found.",
+      "small_saas_viable": "NO \u2014 city/surveillance enterprise deals.",
+      "evidence": [
+        {
+          "claim": "Corsight entries in NIST FRVT mask participant list.",
+          "url": "https://pages.nist.gov/frvt/reports/facemask/frvt_facemask_report.pdf",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "vendor": "Regula",
+      "product": "Regula Forensics face recognition (document/forensics stack)",
+      "occlusion_claim": "regula-000/001 in NIST mask list; product is document/ID forensics-oriented more than general photo alt-text.",
+      "nist_frte": "regula-000 (2021-04-13), regula-001 (2021-12-14) listed.",
+      "cpu_arm": "Unknown for pure ARM batch; confirm if needed.",
+      "pricing": "No public FR SDK price list found.",
+      "small_saas_viable": "UNLIKELY for this use case (document verification GTM).",
+      "evidence": [
+        {
+          "claim": "Regula Forensics listed in NIST FRVT mask participants.",
+          "url": "https://pages.nist.gov/frvt/reports/facemask/frvt_facemask_report.pdf",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "vendor": "NEC",
+      "product": "NeoFace / biometric engines",
+      "occlusion_claim": "Longstanding enterprise FR leader; historically strong on difficult conditions. Specific public mask-SDK SKU for small SaaS not found.",
+      "nist_frte": "Consistently among top FRTE 1:1/1:N developers historically\u2014verify current by-developer ranking on NIST site.",
+      "cpu_arm": "Enterprise deployments span servers/edge; not a self-serve ARM SDK shop.",
+      "pricing": "Enterprise custom only; no public numbers.",
+      "small_saas_viable": "NO \u2014 enterprise/government only; high minimums expected.",
+      "evidence": [
+        {
+          "claim": "NIST FRTE 1:1 ongoing evaluation is the corroboration source for NEC and peers.",
+          "url": "https://pages.nist.gov/frvt/html/frvt11.html",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "vendor": "Idemia",
+      "product": "Augmented Vision / biometric ABIS engines",
+      "occlusion_claim": "idemia-* algorithms frequently cited in NIST mask report executive summary as examples of multi-face/mask-handling behavior; enterprise biometrics.",
+      "nist_frte": "Major FRTE participant; idemia-006/007/008 etc. in mask-era inventory.",
+      "cpu_arm": "National-scale systems; not small ARM SaaS SDK.",
+      "pricing": "Enterprise custom only.",
+      "small_saas_viable": "NO",
+      "evidence": [
+        {
+          "claim": "Idemia referenced in NIST FRVT Face Mask Effects executive summary and participant list.",
+          "url": "https://pages.nist.gov/frvt/reports/facemask/frvt_facemask_report.pdf",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "vendor": "Oosto (ex-AnyVision)",
+      "product": "Oosto / AnyVision video FR platforms",
+      "occlusion_claim": "anyvision-005 in NIST mask list (2021-02-03). Video surveillance GTM.",
+      "nist_frte": "anyvision-005 listed in mask report.",
+      "cpu_arm": "Camera/video edge; not photo-batch SaaS primary.",
+      "pricing": "Enterprise; no public SDK price list found.",
+      "small_saas_viable": "NO",
+      "evidence": [
+        {
+          "claim": "AnyVision listed in NIST FRVT mask participants.",
+          "url": "https://pages.nist.gov/frvt/reports/facemask/frvt_facemask_report.pdf",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "vendor": "Pangiam / Trueface",
+      "product": "Trueface.ai (historical) / Pangiam vision stack",
+      "occlusion_claim": "trueface-002/003 in NIST mask list (2021). Corporate consolidation under Pangiam; product packaging for third-party small SaaS unclear.",
+      "nist_frte": "trueface-002 (2021-03-29), trueface-003 (2021-09-30) listed.",
+      "cpu_arm": "Historical edge SDK narrative; current commercial path unclear from public pages in this pass.",
+      "pricing": "No current public small-SaaS price found.",
+      "small_saas_viable": "UNLIKELY / unclear post-acquisition GTM",
+      "evidence": [
+        {
+          "claim": "Trueface.ai algorithms in NIST FRVT mask participant list.",
+          "url": "https://pages.nist.gov/frvt/reports/facemask/frvt_facemask_report.pdf",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "vendor": "InsightFace AI Technology Limited",
+      "product": "OSS model commercial license (buffalo_*) + InspireFace SDK + proprietary models",
+      "occlusion_claim": "buffalo_l detector (RetinaFace-10GF per model zoo) drives strong wild/occluded detection on private benchmarks (user-measured masked recovery 0.865). Not a NIST FRTE commercial submission under 'InsightFace' product name for mask track in the same way as OEM vendors.",
+      "nist_frte": "Authors cite historical NIST-FRVT VISA-track results via Partial FC research submissions; commercial closed models claim NIST top performance\u2014treat closed-model claims as vendor marketing until matched to a named FRTE algorithm ID.",
+      "cpu_arm": "ONNX Runtime CPU works on ARM (user stack: OCI A1.Flex). InspireFace is cross-platform C/C++.",
+      "pricing": "No public prices anywhere. Contact recognition-oss-pack@insightface.ai / contact@insightface.ai. Date: 2026-07-23.",
+      "small_saas_viable": "POTENTIALLY YES if they quote a single-product SaaS license (site says flexible for startups); completely unknown deal size\u2014email this week.",
+      "evidence": [
+        {
+          "claim": "Commercial OSS pack license explicitly includes buffalo_l; contact paths published.",
+          "url": "https://www.insightface.ai/solutions/face-recognition-licensing",
+          "grade": "CONFIRMED"
+        },
+        {
+          "claim": "No published prices; maintainer redirects to business email.",
+          "url": "https://github.com/deepinsight/insightface/issues/2587",
+          "grade": "CONFIRMED"
+        }
+      ]
+    }
+  ],
+  "q2_clean_weights_models": [
+    {
+      "model": "OpenCV Zoo SFace (face_recognition_sface)",
+      "license_code": "Apache-2.0 (OpenCV Zoo model directory)",
+      "license_weights": "Apache-2.0 as distributed in opencv_zoo (CONFIRMED). Caveat: original SFace paper trains on CASIA-WebFace / VGGFace2 / MS-Celeb-1M\u2014MS-Celeb provenance is industry-sensitive; Zoo redistributes converted MobileFaceNet-SFace ONNX under Apache-2.0, but counsel may still want a data-provenance memo.",
+      "training_data": "Paper: CASIA-WebFace, VGGFace2, MS-Celeb-1M (research datasets). Zoo ONNX converted from zhongyy/SFace by community contributors.",
+      "occlusion_notes": "Recognition backbone only\u2014not a detector. User already measured YuNet+SFace detection recall 0.504 overall / masked recovery 0.321; recognition is not the primary gap.",
+      "evidence": [
+        {
+          "claim": "OpenCV Zoo SFace directory licensed Apache 2.0; MobileFaceNet+SFace loss; accuracy table ~0.994 on Zoo eval.",
+          "url": "https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/face_recognition_sface/README.md",
+          "grade": "CONFIRMED"
+        },
+        {
+          "claim": "SFace paper abstract lists CASIA-WebFace, VGGFace2, MS-Celeb-1M training databases.",
+          "url": "https://raw.githubusercontent.com/zhongyy/SFace/master/README.md",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "model": "fal/AuraFace-v1 (ArcFace-style ResNet100 ONNX, InsightFace-compatible pack)",
+      "license_code": "Apache-2.0 (Hugging Face model card)",
+      "license_weights": "Apache-2.0 CONFIRMED on HF (license:apache-2.0). Card states trained on 'commercially and publicly available data sources' for commercial use\u2014stronger cleanliness claim than buffalo, but training set is not fully enumerated (trust/vendor assertion).",
+      "training_data": "Described as commercial + public sources; not WebFace260M/buffalo weights. Benchmarks (vendor card): LFW 0.9965, CFP-FP 0.9519, AgeDB 0.961, CALFW 0.947, CPLFW 0.909.",
+      "occlusion_notes": "Recognition embedder only. Typical InsightFace pipeline still needs a detector (SCRFD/RetinaFace from buffalo are non-commercial). Pair with clean detector (YuNet/BlazeFace/MediaPipe).",
+      "evidence": [
+        {
+          "claim": "AuraFace Apache-2.0; commercial-intent training data claim; InsightFace FaceAnalysis drop-in usage example.",
+          "url": "https://huggingface.co/fal/AuraFace-v1",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "model": "MediaPipe BlazeFace (short-range / full-range / sparse full-range)",
+      "license_code": "Apache-2.0 (MediaPipe repository)",
+      "license_weights": "Shipped as MediaPipe/Google edge models under MediaPipe Apache-2.0 project licensing; Google Developers site notes code samples Apache-2.0. Widely treated as commercially usable; verify latest model card PDF for any use restrictions.",
+      "training_data": "Google internal training (model cards on Google storage); not InsightFace WebFace packs.",
+      "occlusion_notes": "Detector only (6 landmarks). Optimized for mobile selfie/short-range or full-range webcam\u2014not WIDER FACE hard/occluded SOTA. Useful CPU/ARM baseline; likely weaker than SCRFD/RetinaFace-10GF on masked/occluded wild photos.",
+      "evidence": [
+        {
+          "claim": "MediaPipe LICENSE is Apache-2.0; BlazeFace short/full-range models documented with downloads.",
+          "url": "https://ai.google.dev/edge/mediapipe/solutions/vision/face_detector",
+          "grade": "CONFIRMED"
+        },
+        {
+          "claim": "MediaPipe GitHub root LICENSE Apache-2.0.",
+          "url": "https://raw.githubusercontent.com/google-ai-edge/mediapipe/master/LICENSE",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "model": "OpenCV Zoo YuNet (face_detection_yunet)",
+      "license_code": "MIT (OpenCV Zoo model directory); upstream libfacedetection BSD-3",
+      "license_weights": "MIT as distributed in opencv_zoo CONFIRMED. Upstream ShiqiYu/libfacedetection is 3-clause BSD.",
+      "training_data": "Trained via libfacedetection.train pipeline (WIDER FACE-style face detection training\u2014standard academic face detection data). Detection-only.",
+      "occlusion_notes": "User baseline detector: overall recall 0.504; masked recovery 0.321 vs buffalo_l 0.865\u2014known weak on occlusion for this product.",
+      "evidence": [
+        {
+          "claim": "YuNet Zoo README: MIT License for all files in directory; WIDER Face val APs 0.834/0.824/0.708 easy/med/hard.",
+          "url": "https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/face_detection_yunet/README.md",
+          "grade": "CONFIRMED"
+        },
+        {
+          "claim": "libfacedetection LICENSE is 3-clause BSD.",
+          "url": "https://raw.githubusercontent.com/ShiqiYu/libfacedetection/master/LICENSE",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "model": "IDiff-Face synthetic generator + released FR models trained on synthetic data",
+      "license_code": "CC BY-NC-SA 4.0 (project README)\u2014NON-COMMERCIAL",
+      "license_weights": "CC BY-NC-SA 4.0 \u2014 NOT commercially usable. Pretrained diffusion and FR weights released under same NC license.",
+      "training_data": "Synthetic identities from identity-conditioned diffusion (FFHQ-related AE components with their own licenses).",
+      "occlusion_notes": "Research path to train a clean commercial FR model yourself if you re-implement without their NC weights; released weights are not a commercial shortcut.",
+      "evidence": [
+        {
+          "claim": "Project licensed Attribution-NonCommercial-ShareAlike 4.0; weights download links provided.",
+          "url": "https://github.com/fdbtrs/IDiff-Face",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "model": "DCFace (CVPR 2023) synthetic face generator + synthetic datasets",
+      "license_code": "GitHub repo mk-minchul/dcface has no SPDX license metadata (license: null)\u2014rights unclear.",
+      "license_weights": "Pretrained weights and synthetic datasets released via Google Drive; no clear commercial grant found. Pipeline uses CASIA-WebFace from InsightFace for training the generator\u2014provenance entanglement.",
+      "training_data": "CASIA-WebFace (via InsightFace packs) for generator training; outputs synthetic IDs for FR training.",
+      "occlusion_notes": "Does not ship a ready commercial occlusion-robust detector. Synthetic data can train FR, not a drop-in detector fix.",
+      "evidence": [
+        {
+          "claim": "Official repo provides weight and dataset Google Drive links; training prep references InsightFace CASIA-WebFace.",
+          "url": "https://github.com/mk-minchul/dcface",
+          "grade": "CONFIRMED"
+        },
+        {
+          "claim": "GitHub API reports license null for mk-minchul/dcface.",
+          "url": "https://api.github.com/repos/mk-minchul/dcface",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "model": "Vec2Face generator + HSFace FR models (synthetic-trained)",
+      "license_code": "MIT (HaiyuWu/Vec2Face repo SPDX)",
+      "license_weights": "HF BooBooWu/Vec2Face card license mit. HOWEVER downloads include arcface-r100-glint360k.pth and magface-r100-glint360k.pth (Glint360K/InsightFace-lineage)\u2014those auxiliary weights are NOT clean commercial. HSFace* FR checkpoints trained on synthetic HSFace may be closer to clean if used alone, but counsel should review training recipe and any real-data distillation.",
+      "training_data": "Vec2Face training uses WebFace4M LMDB (real web faces); HSFace synthetic sets used to train released FR models.",
+      "occlusion_notes": "Generator/FR research stack; not a production occlusion detector. Synthetic FR accuracy historically lags real WebFace600K-scale models (paper tables vs DCFace/IDiff-Face).",
+      "evidence": [
+        {
+          "claim": "Vec2Face repo MIT; weight download list includes glint360k ArcFace/MagFace and HSFace FR weights.",
+          "url": "https://github.com/HaiyuWu/Vec2Face",
+          "grade": "CONFIRMED"
+        },
+        {
+          "claim": "HF model card license: mit.",
+          "url": "https://huggingface.co/BooBooWu/Vec2Face",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "model": "InsightFace buffalo_l / antelopev2 / etc. (reference only)",
+      "license_code": "MIT (code)",
+      "license_weights": "Non-commercial research only unless commercial pack license purchased. Trained on WebFace600K / Glint360K-class data.",
+      "training_data": "WebFace600K (buffalo_l recognition); detectors RetinaFace-10GF per official model zoo table.",
+      "occlusion_notes": "User gold standard: detection recall 0.995; masked recovery 0.865 on private 150-image set.",
+      "evidence": [
+        {
+          "claim": "Non-commercial model policy + buffalo_l composition.",
+          "url": "https://raw.githubusercontent.com/deepinsight/insightface/master/model_zoo/README.md",
+          "grade": "CONFIRMED"
+        }
+      ]
+    }
+  ],
+  "q2_detectors": [
+    {
+      "detector": "InsightFace RetinaFace / RetinaFace-10GF (buffalo_l detector per model zoo)",
+      "weights_license": "Non-commercial research only when using InsightFace-distributed pretrained weights (parent project policy). Training code exists under InsightFace tree; Apache/MIT on some submodules does NOT free the pretrained weights.",
+      "occlusion_performance": "SOTA-class wild detection: official RetinaFace-R50 WiderFace val Easy/Med/Hard 96.5/95.6/90.4 (paper README). User: masked recovery 0.865 with buffalo_l pack. Hard-set strength is why it beats YuNet on occlusions/masks.",
+      "cpu_arm": "ONNX Runtime CPU works on ARM; 10GF FLOPs class is heavier than YuNet but practical for batch photo SaaS on A1.Flex.",
+      "evidence": [
+        {
+          "claim": "RetinaFace pretrained models and WiderFace mAP documented; data is WIDER FACE.",
+          "url": "https://raw.githubusercontent.com/deepinsight/insightface/master/detection/retinaface/README.md",
+          "grade": "CONFIRMED"
+        },
+        {
+          "claim": "Parent repo: models non-commercial; commercial contact for packs.",
+          "url": "https://github.com/deepinsight/insightface",
+          "grade": "CONFIRMED"
+        },
+        {
+          "claim": "buffalo_l detection model listed as RetinaFace-10GF.",
+          "url": "https://raw.githubusercontent.com/deepinsight/insightface/master/model_zoo/README.md",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "detector": "SCRFD (Sample and Computation Redistribution for Face Detection)",
+      "weights_license": "CRITICAL SPLIT: detection/scrfd/LICENSE file is Apache-2.0 for code (Open-MMLab copyright). InsightFace-distributed SCRFD pretrained weights remain under InsightFace non-commercial model policy (same as buffalo packs). Retraining from scratch on clean data with Apache code is the commercial path; using InsightFace .onnx det_* weights is not.",
+      "occlusion_performance": "Strong efficiency/accuracy: SCRFD-10GF WiderFace Easy/Med/Hard 95.16/93.87/83.05; SCRFD-34GF 96.06/94.92/85.29 (VGA protocol in README). Hard track is competitive with heavier detectors; designed for CPU-friendly multi-scale faces including difficult cases.",
+      "cpu_arm": "Excellent: SCRFD-0.5GF ~11\u201328ms CPU single-thread depending on input size (Ryzen numbers in README); ONNX on ARM well-supported. Choose GF tier by A1.Flex latency budget.",
+      "evidence": [
+        {
+          "claim": "SCRFD LICENSE Apache-2.0.",
+          "url": "https://github.com/deepinsight/insightface/blob/master/detection/scrfd/LICENSE",
+          "grade": "CONFIRMED"
+        },
+        {
+          "claim": "SCRFD performance table and CPU timings.",
+          "url": "https://raw.githubusercontent.com/deepinsight/insightface/master/detection/scrfd/README.md",
+          "grade": "CONFIRMED"
+        },
+        {
+          "claim": "InsightFace global model non-commercial policy applies to provided pretrained models.",
+          "url": "https://github.com/deepinsight/insightface",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "detector": "YuNet (OpenCV Zoo / libfacedetection)",
+      "weights_license": "MIT (opencv_zoo) / BSD-3 (libfacedetection) \u2014 commercially clean weights distribution.",
+      "occlusion_performance": "Zoo reports WIDER Face val 0.834/0.824/0.708 AP easy/med/hard\u2014Hard is materially below SCRFD/RetinaFace. User private bench: recall 0.504; masked 0.321. Tiny/fast but not occlusion-robust enough for this product.",
+      "cpu_arm": "Excellent: designed for millisecond CPU; ideal for ARM cost efficiency.",
+      "evidence": [
+        {
+          "claim": "YuNet MIT in Zoo; AP numbers and size notes.",
+          "url": "https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/face_detection_yunet/README.md",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "detector": "MediaPipe BlazeFace short-range / full-range / sparse",
+      "weights_license": "Apache-2.0 MediaPipe project \u2014 commercially usable (standard interpretation).",
+      "occlusion_performance": "Mobile/real-time oriented; not marketed as WIDER FACE Hard SOTA. Full-range helps distant faces; mask/occlusion robustness expected weaker than SCRFD-10GF/RetinaFace-10GF. Good clean baseline to A/B against YuNet on the 150-image set.",
+      "cpu_arm": "Excellent (designed for mobile CPU/GPU).",
+      "evidence": [
+        {
+          "claim": "BlazeFace short/full-range models and Apache-2.0 code sample licensing on Google Edge docs.",
+          "url": "https://ai.google.dev/edge/mediapipe/solutions/vision/face_detector",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "detector": "YOLOv5-face (deepcam-cn/yolov5-face and derivatives)",
+      "weights_license": "GPL-3.0 (repo LICENSE) \u2014 copyleft; commercial proprietary SaaS distribution is legally hazardous without full GPL compliance or a commercial exception (none published). Strong AGPL/GPL trap class.",
+      "occlusion_performance": "High WiderFace numbers in README (e.g. YOLOv5m ~95.5/93.9/85.5 class on their tables; yolov7-face hard up to ~88). Competitive occlusion/hard-face detection\u2014but license blocks easy commercial use.",
+      "cpu_arm": "Good with ONNX/TensorRT/NCNN ports; still GPL-tainted if based on this tree.",
+      "evidence": [
+        {
+          "claim": "YOLOv5-face LICENSE is GNU GPL v3.",
+          "url": "https://raw.githubusercontent.com/deepcam-cn/yolov5-face/master/LICENSE",
+          "grade": "CONFIRMED"
+        },
+        {
+          "claim": "Performance tables for yolov5/yolov7 face variants on WIDER-style metrics.",
+          "url": "https://raw.githubusercontent.com/deepcam-cn/yolov5-face/master/README.md",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "detector": "Ultralytics YOLO (generic) fine-tuned as face detector",
+      "weights_license": "AGPL-3.0 by default (ultralytics LICENSE) \u2014 network-use copyleft; commercial closed-source requires Ultralytics Enterprise license. Pretrained COCO weights inherit AGPL terms when used via AGPL package. This is the classic AGPL trap.",
+      "occlusion_performance": "Can be fine-tuned for faces with strong results, but licensing\u2014not accuracy\u2014is the blocker for proprietary SaaS.",
+      "cpu_arm": "Good CPU/ARM export paths (ONNX, etc.) if licensed.",
+      "evidence": [
+        {
+          "claim": "Ultralytics repository LICENSE is GNU AGPL v3.",
+          "url": "https://raw.githubusercontent.com/ultralytics/ultralytics/main/LICENSE",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "detector": "PaddleDetection BlazeFace / BlazeFace-FPN-SSH",
+      "weights_license": "PaddleDetection is Apache-2.0; face detection model weights released under that project (verify specific model LICENSE file before ship). Apache-class alternative reimplementation of BlazeFace trained on WIDER FACE.",
+      "occlusion_performance": "WIDER multi-scale mAP Easy/Med/Hard 0.885/0.855/0.731 (BlazeFace) and 0.907/0.883/0.793 (FPN-SSH) per PaddleDetection face_detection README\u2014Hard better than Zoo YuNet card but below SCRFD-10GF/RetinaFace-R50.",
+      "cpu_arm": "Mobile-oriented; Paddle/ONNX on ARM feasible.",
+      "evidence": [
+        {
+          "claim": "PaddleDetection face_detection BlazeFace mAP table and downloads.",
+          "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleDetection/release/2.6/configs/face_detection/README.md",
+          "grade": "CONFIRMED"
+        }
+      ]
+    },
+    {
+      "detector": "UniFace-packaged detectors (third-party aggregation)",
+      "weights_license": "UniFace code MIT but documents that YOLOv5-Face/YOLOv8-Face weights are GPL-3.0 and SCRFD/ArcFace come from InsightFace (non-commercial). Aggregation does not clean licenses.",
+      "occlusion_performance": "Depends on backend chosen; not a new detector.",
+      "cpu_arm": "N/A (wrapper).",
+      "evidence": [
+        {
+          "claim": "UniFace license note: YOLOv5/8-Face GPL-3.0; SCRFD/ArcFace from InsightFace.",
+          "url": "https://github.com/yakhyo/uniface/blob/main/README.md",
+          "grade": "CONFIRMED"
+        }
+      ]
+    }
+  ],
+  "summary_for_decision": "DECISION THIS WEEK: (1) InsightFace commercial path is real and explicitly covers buffalo_l model packs via recognition-oss-pack@insightface.ai / contact@insightface.ai under InsightFace AI Technology Limited\u2014but there is genuinely zero public pricing; email with company domain immediately. Code=MIT, weights=NC without license; commercial SKU is the model zoo rights (ONNX offline), not only an SDK. DeepGlint is historical research collab, not the licensor. (2) Detector gap is the product risk: YuNet is clean (MIT/BSD) but weak on masks (user 0.321); buffalo/RetinaFace-SCRFD-class detectors are strong but InsightFace pretrained weights are NC. SCRFD code is Apache-2.0 yet InsightFace .onnx weights are still NC\u2014do not ship them without a license or a clean retrain. Avoid YOLOv5-face (GPL-3) and Ultralytics (AGPL-3) for proprietary SaaS. (3) Clean-weight recognition beyond SFace: AuraFace-v1 (Apache-2.0) is the main commercially marketed open embedder; pair with a clean detector. Synthetic stacks (IDiff-Face NC; DCFace unclear license; Vec2Face MIT but ships Glint360K auxiliaries) are not a one-week production fix. (4) Among commercial SDKs that small SaaS can actually buy: Neurotechnology VeriLook is uniquely self-serve with public \u20ac339/\u20ac859 SDK + per-server component euros and ARM Linux\u2014default buy shortlist for CPU/ARM. Luxand FaceSDK is trial+quote, ARM-friendly, mask-on detection marketed. CyberLink FaceMe and ROC are capable (NIST-participating, mask claims/history, ARM/edge) but sales-quoted. Paravision/Innovatrics/Corsight/NEC/Idemia/Oosto/Trueface are enterprise/surveillance\u2014poor low-touch fit. (5) Recommended parallel moves: email InsightFace for buffalo_l quote; order VeriLook Extended trial and bench DETECTION on the private 150-image mask subset; A/B YuNet vs MediaPipe full-range vs (if licensed) buffalo detector on ARM A1 latency; keep SFace/AuraFace as clean embedders. Prefer licensing buffalo detector (or whole pack) over hoping a permissive detector matches 0.865 masked recovery without retrain."
+}

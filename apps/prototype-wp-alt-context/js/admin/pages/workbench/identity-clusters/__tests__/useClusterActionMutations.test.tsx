@@ -1,0 +1,444 @@
+import type { ReactNode } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { renderHook, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { queryKeys } from '../../../../api/queryKeys';
+import type { JobStatusResponse } from '../../../../api/recognition';
+import * as recognitionApi from '../../../../api/recognition';
+import { RequestTimeoutError } from '../../../../utils/errorTaxonomy';
+import { HTTPError } from '../../../../utils/http';
+import { CLUSTER_LABELING_OPERATION } from '../clusterLabelingBudget';
+import { CLUSTER_MUTATION_ERROR_COPY, createClusterMutationTimeoutError } from '../clusterMutationUtils';
+import { useClusterActionMutations } from '../useClusterActionMutations';
+import type { SuggestionReviewPage } from '../useSuggestionReviewQueries';
+
+vi.mock('@wordpress/i18n', () => ({
+  __: (text: string) => text,
+}));
+
+// Spread the real module (WBUX6-W3-L6-01): an exhaustive factory silently blanks every
+// export this test does not name, so one new render-path dependency wipes the whole file
+// with a failure unrelated to the behaviour under test. Only the network surfaces
+// useClusterActionMutations itself calls are replaced.
+vi.mock('../../../../api/recognition', async () => {
+  const actual = await vi.importActual<typeof import('../../../../api/recognition')>(
+    '../../../../api/recognition',
+  );
+  return {
+    ...actual,
+    acceptSuggestion: vi.fn(),
+    createClusterForIdentity: vi.fn(),
+    fetchScanStatus: vi.fn(),
+    pinRepresentative: vi.fn(),
+    reassignClusterIdentity: vi.fn(),
+    rejectSuggestion: vi.fn(),
+    splitCluster: vi.fn(),
+  };
+});
+
+let offline = false;
+
+vi.mock('../../../../hooks/useSyncOffline', () => ({
+  useSyncOffline: () => offline,
+}));
+
+const jobStatus = (status: JobStatusResponse['status'], message?: string): JobStatusResponse => ({
+  id: 'split-job-1',
+  type: 'split',
+  status,
+  progress: null,
+  started_at: '2026-06-16T00:00:00.000Z',
+  finished_at: '2026-06-16T00:00:01.000Z',
+  message,
+});
+
+describe('useClusterActionMutations pollSplitJob (BND-1-AUDIT-1)', () => {
+  const renderSplit = () => {
+    const onError = vi.fn();
+    const invalidateQueries = vi.fn();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    // identityCount > 50 selects async mode so splitCluster returns a job_id and pollSplitJob runs.
+    const { result } = renderHook(
+      () => useClusterActionMutations({ clusterId: 'c1', identityCount: 100, onError, invalidateQueries }),
+      { wrapper },
+    );
+    return { result, onError, invalidateQueries };
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    offline = false;
+    vi.mocked(recognitionApi.splitCluster).mockResolvedValue({
+      job_id: 'split-job-1',
+      status: 'pending',
+      message: 'queued',
+    });
+  });
+
+  it('resolves an async split when the job finishes completed_with_errors (no spurious timeout)', async () => {
+    // Before the fix pollSplitJob only returned on 'completed', so a partial-success split spun
+    // until the 120s timeout and threw — onSuccess (invalidateQueries) was never reached.
+    vi.mocked(recognitionApi.fetchScanStatus).mockResolvedValue(jobStatus('completed_with_errors'));
+
+    const { result, onError, invalidateQueries } = renderSplit();
+    result.current.split('c1', 2);
+
+    await waitFor(() => expect(invalidateQueries).toHaveBeenCalled());
+    expect(onError).not.toHaveBeenCalled();
+    // RES-13 / TEST-15: the async poll remains owned by the original split,
+    // including terminal partial success (heuristics-canon-research/lexicons/engineering.md:124,396).
+    const splitSignal = vi.mocked(recognitionApi.splitCluster).mock.calls[0][2];
+    expect(splitSignal).toBeInstanceOf(AbortSignal);
+    expect(splitSignal?.aborted).toBe(false);
+    expect(recognitionApi.fetchScanStatus).toHaveBeenCalledExactlyOnceWith('split-job-1', splitSignal);
+  });
+
+  it('resolves an async split when the job finishes completed', async () => {
+    vi.mocked(recognitionApi.fetchScanStatus).mockResolvedValue(jobStatus('completed'));
+
+    const { result, onError, invalidateQueries } = renderSplit();
+    result.current.split('c1', 2);
+
+    await waitFor(() => expect(invalidateQueries).toHaveBeenCalled());
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('surfaces an error when the async split job finishes failed', async () => {
+    vi.mocked(recognitionApi.fetchScanStatus).mockResolvedValue(jobStatus('failed', 'boom'));
+
+    const { result, onError, invalidateQueries } = renderSplit();
+    result.current.split('c1', 2);
+
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('boom'));
+    expect(invalidateQueries).not.toHaveBeenCalled();
+  });
+
+  it('exposes splitGate offline and split fails fast with a visible error (RES-03)', async () => {
+    offline = true;
+    const { result, onError } = renderSplit();
+
+    expect(result.current.splitGate.disabled).toBe(true);
+    expect(result.current.splitGate.title).toBe('Unavailable while the recognition service is offline');
+    expect(result.current.splitGate['aria-disabled']).toBe(true);
+
+    result.current.split('c1', 2);
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('Unavailable while the recognition service is offline'));
+    expect(recognitionApi.splitCluster).not.toHaveBeenCalled();
+  });
+
+  it('exposes enabled splitGate online', () => {
+    const { result } = renderSplit();
+    expect(result.current.splitGate.disabled).toBe(false);
+    expect(result.current.splitGate.title).toBeUndefined();
+  });
+});
+
+describe('useClusterActionMutations assign accept-by-id (L1R-07 / BR-16)', () => {
+  const reviewPageKey = queryKeys.suggestions.projection.reviewPage(0);
+
+  const renderAssign = () => {
+    const onError = vi.fn();
+    const invalidateQueries = vi.fn();
+    const onRenameSuccess = vi.fn();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () =>
+        useClusterActionMutations({
+          clusterId: null,
+          onError,
+          onRenameSuccess,
+          invalidateQueries,
+        }),
+      { wrapper },
+    );
+    return { result, onError, invalidateQueries, onRenameSuccess, queryClient };
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    offline = false;
+    vi.mocked(recognitionApi.acceptSuggestion).mockResolvedValue({
+      suggestion_id: 'sug-assign-1',
+      resolution: 'accepted',
+      identity_id: 'id-1',
+      cluster_id: 'target-c',
+      message: 'ok',
+    });
+    vi.mocked(recognitionApi.reassignClusterIdentity).mockResolvedValue(undefined);
+  });
+
+  it('calls acceptSuggestion with the threaded id and skips reassign (L1R-07)', async () => {
+    // Predicted first failure if accept-by-id branch is removed: reassignClusterIdentity
+    // fires instead (or neither), and acceptSuggestion is never called with the id.
+    const { result, invalidateQueries } = renderAssign();
+
+    result.current.assignToCluster('id-1', 'target-c', undefined, 'sug-assign-1');
+
+    await waitFor(() => expect(invalidateQueries).toHaveBeenCalled());
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(1);
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledWith('sug-assign-1');
+    expect(recognitionApi.reassignClusterIdentity).not.toHaveBeenCalled();
+  });
+
+  it('uses reassignClusterIdentity when assign has no suggestionId', async () => {
+    const { result, invalidateQueries } = renderAssign();
+
+    result.current.assignToCluster('id-1', 'target-c');
+
+    await waitFor(() => expect(invalidateQueries).toHaveBeenCalled());
+    expect(recognitionApi.reassignClusterIdentity).toHaveBeenCalledWith(
+      { identityId: 'id-1', targetClusterId: 'target-c' },
+      undefined,
+    );
+    expect(recognitionApi.acceptSuggestion).not.toHaveBeenCalled();
+  });
+
+  it('removes accepted suggestion from pending review cache on assign success (L1V-03)', async () => {
+    // Predicted first failure: sug-assign-1 remains in review page until refetch.
+    const { result, invalidateQueries, queryClient } = renderAssign();
+    const page: SuggestionReviewPage = {
+      items: [
+        {
+          suggestionId: 'sug-assign-1',
+          identityId: 'id-1',
+          clusterId: 'target-c',
+          label: 'Target',
+          similarity: 0.9,
+        },
+        {
+          suggestionId: 'sug-keep',
+          identityId: 'id-2',
+          clusterId: 'other',
+          label: 'Other',
+          similarity: 0.8,
+        },
+      ],
+      dataSource: undefined,
+    };
+    queryClient.setQueryData(reviewPageKey, page);
+
+    result.current.assignToCluster('id-1', 'target-c', undefined, 'sug-assign-1');
+
+    await waitFor(() => expect(invalidateQueries).toHaveBeenCalled());
+    const next = queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey);
+    expect(next?.items.map((item) => item.suggestionId)).toEqual(['sug-keep']);
+  });
+});
+
+describe('useClusterActionMutations create-for-identity roster bind (UXW2-3-R7B-01)', () => {
+  const renderCreate = () => {
+    const onError = vi.fn();
+    const invalidateQueries = vi.fn();
+    const onRenameSuccess = vi.fn();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () =>
+        useClusterActionMutations({
+          clusterId: null,
+          onError,
+          onRenameSuccess,
+          invalidateQueries,
+        }),
+      { wrapper },
+    );
+    return { result, onError, invalidateQueries, onRenameSuccess };
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    offline = false;
+  });
+
+  it('passes rosterEntryId through to createClusterForIdentity', async () => {
+    vi.mocked(recognitionApi.createClusterForIdentity).mockResolvedValue({
+      cluster_id: 'c-new',
+      label: 'Alex',
+      identity_id: 'anchor-1',
+      message: 'ok',
+    });
+    const { result, invalidateQueries } = renderCreate();
+
+    result.current.createClusterForIdentity('anchor-1', 'Alex', undefined, 7);
+
+    await waitFor(() => expect(invalidateQueries).toHaveBeenCalled());
+    expect(recognitionApi.createClusterForIdentity).toHaveBeenCalledTimes(1);
+    expect(recognitionApi.createClusterForIdentity).toHaveBeenCalledWith(
+      { identityId: 'anchor-1', label: 'Alex', rosterEntryId: 7 },
+      undefined,
+    );
+  });
+
+  it('on acx_cluster_created_bind_failed surfaces bind error and still invalidates', async () => {
+    vi.mocked(recognitionApi.createClusterForIdentity).mockRejectedValue(
+      new HTTPError({
+        status: 409,
+        retryAfterSeconds: undefined,
+        endpoint: '/create-for-identity',
+        bodyPreview: '{"code":"acx_cluster_created_bind_failed","data":{"cluster_id":"c-new"}}',
+        message:
+          'Request to /create-for-identity failed (409): {"code":"acx_cluster_created_bind_failed","data":{"cluster_id":"c-new"}}',
+      }),
+    );
+    const { result, onError, invalidateQueries } = renderCreate();
+
+    result.current.createClusterForIdentity('anchor-1', 'Alex', undefined, 7);
+
+    await waitFor(() => expect(onError).toHaveBeenCalled());
+    expect(onError).toHaveBeenCalledWith('The group was created but the person was not bound.');
+    expect(invalidateQueries).toHaveBeenCalled();
+  });
+});
+
+describe('recognition mock surface drift guard (WBUX6-W3-L6-01)', () => {
+  // Fixes the mock at the drift-resistant idiom. An exhaustive factory (no
+  // importActual spread) silently blanks every export this file does not name,
+  // so the next render-path dependency fails the whole file with a module-load
+  // throw reported as N unrelated assertion failures. These two assertions turn
+  // that regression into one honest, self-describing failure here.
+  const CONTROLLED = new Set([
+    'acceptSuggestion',
+    'createClusterForIdentity',
+    'fetchScanStatus',
+    'pinRepresentative',
+    'reassignClusterIdentity',
+    'rejectSuggestion',
+    'splitCluster',
+  ]);
+
+  it('keeps every real export reachable and untouched except the network surfaces under test', async () => {
+    const actual = await vi.importActual<typeof import('../../../../api/recognition')>(
+      '../../../../api/recognition',
+    );
+    const actualKeys = Object.keys(actual);
+    expect(actualKeys.length).toBeGreaterThan(CONTROLLED.size);
+
+    const missing = actualKeys.filter((key) => !(key in recognitionApi));
+    expect(missing).toEqual([]);
+
+    const passthrough = actualKeys.filter((key) => !CONTROLLED.has(key));
+    const rebound = passthrough.filter(
+      (key) => (recognitionApi as Record<string, unknown>)[key] !== (actual as Record<string, unknown>)[key],
+    );
+    expect(rebound).toEqual([]);
+  });
+
+  it('still replaces exactly the network surfaces this file drives', () => {
+    for (const key of CONTROLLED) {
+      expect(vi.isMockFunction((recognitionApi as Record<string, unknown>)[key])).toBe(true);
+    }
+  });
+});
+
+describe('useClusterActionMutations deadline vs cancel (FEBT2-LD2-NEW-01 / RLSE-05)', () => {
+  const renderActions = () => {
+    const onError = vi.fn();
+    const onAbort = vi.fn();
+    const invalidateQueries = vi.fn();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () => useClusterActionMutations({ clusterId: 'c1', onError, onAbort, invalidateQueries }),
+      { wrapper },
+    );
+    return { result, onError, onAbort };
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    offline = false;
+  });
+
+  /**
+   * The exact value `utils/http.createTimeoutSignal` aborts with, after
+   * `toBoundaryError` normalises it: `_tag: 'timeout'`, `name: 'TimeoutError'`.
+   * Built here rather than imported so the test pins the wire shape, not the
+   * constructor the hook happens to be compiled against.
+   */
+  const transportDeadline = (): Error => new RequestTimeoutError(null, 'The operation timed out.');
+
+  it('shows copy when a transport deadline elapses on assign, instead of silently cancelling', async () => {
+    // Predicted first failure if the gate regresses to `isAbortError`: onAbort fires
+    // (IdentityClusterItem wires it to resetSaveStatus) and onError is never called, so
+    // the operator's write elapses with no notice at all.
+    vi.mocked(recognitionApi.reassignClusterIdentity).mockRejectedValue(transportDeadline());
+    const { result, onError, onAbort } = renderActions();
+
+    result.current.assignToCluster('id-1', 'target-c');
+
+    await waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+    expect(onError).toHaveBeenCalledWith(CLUSTER_MUTATION_ERROR_COPY.timeout);
+    expect(onAbort).not.toHaveBeenCalled();
+  });
+
+  it('shows copy when the branded interactive-budget sentinel reaches a mutation onError', async () => {
+    // The budget sentinel is deliberately not abort-like; if a future edit makes it
+    // abort-like, or the hook drops the explicit brand check, this goes silent.
+    vi.mocked(recognitionApi.createClusterForIdentity).mockRejectedValue(
+      createClusterMutationTimeoutError(CLUSTER_LABELING_OPERATION.SAVE),
+    );
+    const { result, onError, onAbort } = renderActions();
+
+    result.current.createClusterForIdentity('anchor-1', 'Alex');
+
+    await waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+    expect(onError).toHaveBeenCalledWith(CLUSTER_MUTATION_ERROR_COPY.timeout);
+    // The sentinel message is a machine token; it must never reach the operator.
+    expect(onError).not.toHaveBeenCalledWith(expect.stringContaining('cluster_mutation_budget_expired'));
+    expect(onAbort).not.toHaveBeenCalled();
+  });
+
+  it('shows copy when a transport deadline elapses on pin and split', async () => {
+    vi.mocked(recognitionApi.pinRepresentative).mockRejectedValue(transportDeadline());
+    const { result, onError, onAbort } = renderActions();
+
+    result.current.pinRepresentative('rep-1', true);
+
+    await waitFor(() => expect(onError).toHaveBeenCalledWith(CLUSTER_MUTATION_ERROR_COPY.timeout));
+    expect(onAbort).not.toHaveBeenCalled();
+
+    onError.mockClear();
+    vi.mocked(recognitionApi.splitCluster).mockRejectedValue(transportDeadline());
+    result.current.split('c1', 2);
+
+    await waitFor(() => expect(onError).toHaveBeenCalledWith(CLUSTER_MUTATION_ERROR_COPY.timeout));
+    expect(onAbort).not.toHaveBeenCalled();
+  });
+
+  it('still stays silent for a deliberate operator cancel', async () => {
+    // The other half of the split: a cancel is the operator's own action, so telling
+    // them the system is slow answers a question they did not ask (DOM-03).
+    vi.mocked(recognitionApi.reassignClusterIdentity).mockRejectedValue(
+      new DOMException('The user aborted a request.', 'AbortError'),
+    );
+    const { result, onError, onAbort } = renderActions();
+
+    result.current.assignToCluster('id-1', 'target-c');
+
+    await waitFor(() => expect(onAbort).toHaveBeenCalledTimes(1));
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('leaves non-abort failures on their existing raw-message path', async () => {
+    // Regression fence: the deadline fix must not re-route ordinary server failures
+    // through the timeout copy.
+    vi.mocked(recognitionApi.reassignClusterIdentity).mockRejectedValue(new Error('boom'));
+    const { result, onError, onAbort } = renderActions();
+
+    result.current.assignToCluster('id-1', 'target-c');
+
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('boom'));
+    expect(onAbort).not.toHaveBeenCalled();
+  });
+});

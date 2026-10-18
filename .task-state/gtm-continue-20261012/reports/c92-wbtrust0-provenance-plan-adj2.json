@@ -1,0 +1,46 @@
+{
+  "status": "COMMITTED_PARTIAL_PENDING_PARENT",
+  "lane_id": "c92-wbtrust0-provenance-plan-adj2",
+  "source_verdict": "OWNED_DOCUMENTATION_REVISED_PENDING_PARENT_JOIN_AND_SOL_XHIGH_R2",
+  "summary": "Owned WBTRUST-7 planning clauses revised for F1/F2/F3. Executed: 7/7 Markdown links, 21/21 explicit existing source references, 11/11 UX-map artifacts and Unicode-width fixture parity pass; owned scope 2/2 files and diff whitespace pass. Unit/product tests: 0 run; causal RED: 0; test fixture/setup errors: 0. Two planning-tool checks unavailable. No task, E2E, quality, fresh GPU or MERGE PASS claimed.",
+  "source_identity": "Supplied sourceSHA 55cb4113b0327074a7a293ee49de2f65227393c7 / tree af531f783e555cdf84a5891efabae0fe351394e3. EXECUTED initial transport HEAD 1e3a903fa3770d636e71254b702bce410e406348 / tree af531f783e555cdf84a5891efabae0fe351394e3: exact requested tree match; synthetic HEAD difference does not block custody.",
+  "evidence": [
+    "EXECUTED: early plan checkpoint 1f76356f2b823012178d4045fe1a6d6d2c973060; ignored owned report explicitly added in custody checkpoint 4e096112d35d78c3a9b0f8114f07361a84980a3c. No Co-Authored-By trailers requested or added.",
+    "EXECUTED: bounded in-sandbox .venv interpreter is Python 3.12.7. Documentation audits: 7/7 relative Markdown links resolve; 21/21 enumerated existing source paths resolve after correcting three inherited identity_merge references. New badge/tests, brace/glob patterns, module shorthand and external canon locators excluded from the existing-path count.",
+    "EXECUTED: existing render_ux_maps.py --check exits 0, all 11 artifacts current; existing sync_unicode_width.py --check exits 0, fixture property ranges match Python Unicode 15.0.0. Map artifacts unchanged; renderer unit suite not run because no map/renderer implementation changed.",
+    "EXECUTED: git diff --check exits 0; initial-tree-to-working-diff ownership audit contains exactly the 2 OWNEDPATHS, 0 unexpected paths. No source/config/map/test edits; no DB/network/OCI/GPU operations or MCP writes.",
+    "SUPPLIED, not independently verified or queried here: exact run 019c6776-d511-4531-8294-20dc99dabd7b completed 100/100 unique media, 0 failed, all seeded / seeded-fixtures version 1 / provisional_cpu; 97 generated, 3 cache hits; 54 applied naming, 46 no_confirmed_identities.",
+    "SUPPLIED, not independently verified or queried here: approved plugin main 372a6413a7ae0eb71baa3566716546684bac5a58 activated 2026-10-15 22:01Z with 7/7 authenticated HTTP/artifact checks. This is neither browser nor new GPU inference evidence. Metered idle STOPPED is normal and does not establish historical engine activation.",
+    "CANON: only supplied read-only v0.26.2 rows used with exact names/locators for observable lineage, disclosure and shared-map scheduling triggers: PROV-01, HAI-05, HAI-01, GRPH-31. Prior semantic packets remain advisory; no new semantic/graph/canon-service query claimed."
+  ],
+  "findings": [
+    "F1 owned-plan revision: active default/routing/slices/acceptance use existing gpu_qwen30b / Qwen3-VL-30B-A3B-Instruct; Small remains labelled historical/retired/benchmark-only. New unsupported CPU must fail HTTP 503 before quota, with no provisional fixture or retired fallback; no fresh CPU descriptions required. Actual served model/revision and fresh GPU lineage remain verification obligations.",
+    "F2 owned-plan revision: S1 consumes supplied full100 and activated-baseline facts rather than a five-item UNKNOWN premise or duplicate baseline deployment. Remaining effective configuration and unavailable historical event fields stay UNKNOWN; idle STOPPED does not explain prior batches.",
+    "F3 owned-plan revision: WBTRUST-7 supplies final copy/provenance states to ONE later integration owner with WBTRUST-5; shared JSON/Markdown map ownership removed from this parallel owner. Umbrella and sibling reconciliation remain parent work.",
+    "Accepted fixture and compatibility contracts preserved: Sample caption (no model), no seeded naming or alt-text writes; unknown legacy provenance remains compatible where already accepted, never inferred from tier. Frozen-parent paths are reference/naming/UI contracts, not authorization for model download or configuration actuation.",
+    "Causal RED: NONE, 0 production assertions executed. Fixture/setup errors: NONE, 0 tests attempted. Initial documentation path audit found 3 unresolved shorthand paths, corrected in the owned plan; final 21/21 resolve. Missing planning tooling is an availability limitation, not causal RED or fixture failure."
+  ],
+  "commands": [
+    "git rev-parse --show-toplevel; git rev-parse HEAD HEAD^{tree}; git status --short (initial tree/custody checks)",
+    "Explicit in-worktree plan/CLAUDE/Makefile/tool-source reads and rg --files path searches; no filesystem search outside the sandbox.",
+    "git add -- <owned-plan>; git commit -m \"docs: checkpoint WBTRUST-7 provenance adjudication\"; git add -f -- <ignored-owned-report>; git commit -m \"docs: preserve WBTRUST-7 adjudication custody report\" (each mutation sequential)",
+    "OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 180s .venv/bin/python apps/prototype-wp-alt-context/docs/ux-maps/render_ux_maps.py --check (exit 0)",
+    "OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 120s .venv/bin/python apps/prototype-wp-alt-context/docs/ux-maps/sync_unicode_width.py --check (exit 0)",
+    "OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 60s .venv/bin/python /tmp/c92-wbtrust0-doc-audit.py (exit 0; 7 links / 21 existing paths / 2 owned files)",
+    "git diff --check 1e3a903fa3770d636e71254b702bce410e406348 (exit 0)",
+    "OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 60s make -n plan-analyze DOC=docs/tasks/v0.5.0/WBTRUST-7-description-provenance-and-routing-task-plan.md (exit 2: no target)",
+    "OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 60s .venv/bin/python scripts/hooks/guard-task-plan-findings.py --scan-staged (exit 2: script absent)"
+  ],
+  "blockers": [
+    "UNAVAILABLE tooling, separately from RED/fixture errors: make plan-analyze has no target; scripts/hooks/guard-task-plan-findings.py absent. Neither is claimed to pass.",
+    "Parent landing pending: five disjoint documentation revisions must join and receive fresh Sol xhigh R2; no author MERGE authorization. This lane does not close shared findings or the active GTMSMOKE-1 task.",
+    "UNRUN by scope: unit/product suites, browser/geometry/focus/persistence, fresh model/quality/GPU evidence, API/DB/network, deployment/configuration/OCI operations. Supplied current receipts do not fill these gates."
+  ],
+  "next_actions": [
+    "{\"type\":\"SCOPE_PROPOSAL\",\"owner\":\"parent umbrella documentation owner\",\"paths\":[\"docs/scopes/workbench-curation-trust-scope.md\"],\"request\":\"Join the supplied 372a6413 activation/full100 premises and retired-Small/CPU-503 policy into the umbrella; remove duplicate activation prerequisites and reconcile the five disjoint documentation revisions. This lane did not edit the umbrella.\"}",
+    "{\"type\":\"SCOPE_PROPOSAL\",\"owner\":\"ONE later shared-map integration owner\",\"depends_on\":[\"WBTRUST-5 final control copy\",\"WBTRUST-7 final copy/provenance-state table\"],\"paths\":[\"apps/prototype-wp-alt-context/docs/ux-maps/describe-gpu-tier.uxmap.json\",\"apps/prototype-wp-alt-context/docs/ux-maps/describe-gpu-tier.md\"],\"request\":\"Integrate final copy once after both handoffs, render/check canonical JSON and Markdown; neither parallel WBTRUST-5 nor WBTRUST-7 owns the shared-map edit.\"}",
+    "{\"type\":\"SCOPE_PROPOSAL\",\"owner\":\"owning tooling lane\",\"paths\":[\"scripts/hooks/guard-task-plan-findings.py\"],\"request\":\"Restore the existing task-plan guard through its tooling owner, then rerun against joined documentation; no substitute guard or product test was added here.\"}",
+    "Parent: import the owned commits, join all five disjoint documentation lanes, obtain fresh Sol xhigh R2 before actual main landing; preserve Haiku xhigh implementation, Sol HIGH standard review and LOUD odd Opus/even Sol xhigh roles.",
+    "Later separately authorized evidence owner: verify exact served/configured baseline model/revision and fresh GPU output; keep missing historical events UNKNOWN and do not request fresh CPU descriptions, GPU keepalive or repeat activation absent an evidenced mismatch."
+  ]
+}

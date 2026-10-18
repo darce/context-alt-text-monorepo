@@ -1,0 +1,629 @@
+{
+  "lane": "ta-eh",
+  "base": "773138f240b3c38511cb26b8e51a0e0253d8f4b1",
+  "baseline": {
+    "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal scripts/eval_harness/tests/test_r6d2_legacy_import_session.py scripts/eval_harness/tests/test_r6d4_absent_face_boxes.py scripts/eval_harness/tests/test_r6e1_parent_mode_fill.py scripts/eval_harness/tests/test_r6e4_stale_report_scan.py --durations=15",
+    "result": "Initial command failed before collection: uv sync attempted write to read-only managed venv. Required immediate retry with uv run --no-sync passed: 44 passed, 0 failed, 5 warnings in 16.94s. Slowest 15 call durations: test_cmd_score_fill_only_preserves_per_entry_stamp=1.12s; test_no_report_files_is_a_failed_scan=0.62s; test_numeric_identification_score_is_flagged=0.56s; test_precision_null_recall_zero_populated_table_is_flagged=0.51s; test_report_without_identification_is_clean=0.49s; test_dated_report_filename_is_scanned=0.44s; test_same_sha_all_refused_is_not_a_contradiction=0.42s; test_same_sha_divergent_verdicts_is_a_contradiction=0.39s; test_absent_manifest_sha_is_not_a_contradiction=0.37s; test_refused_with_macro_precision_is_unrecognized=0.28s; test_greenwashed_refusal_is_unrecognized=0.26s; test_invalid_json_report_is_unrecognized=0.25s; test_unrecognized_shape_is_reported_not_passed=0.24s; test_missing_refused_key_empty_table_is_flagged=0.19s; test_explicit_refusal_is_clean=0.11s. Lane gate via lane-root .venv/bin/python: 26 passed in 5.74s. Harness manifest import origin verified inside lane. Report-only lane owns no importable package; harness origin check is additional assurance. Inspected worktree HEAD 9eeded48ff79cb02a5f3ce0ebfd4dba1f8ea7da8; base field records dispatched task base. No Git history inspected."
+  },
+  "items": [
+    {
+      "path": "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d2_legacy_import_session.py",
+      "claimed": "MERGE",
+      "ruling": "CONFIRM",
+      "action": "MERGE",
+      "tests": [
+        "test_helper_lineage_unmodified_does_not_load_exhaustive",
+        "test_refetch6_flipped_to_exhaustive_is_rejected"
+      ],
+      "target": "apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py",
+      "seam": "apps/prototype-description-service/scripts/eval_harness/manifest.py:load_manifest",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d2_legacy_import_session.py",
+            "apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py"
+          ],
+          "do": "Remove only these actual duplicates. Map helper-lineage case to test_legacy_import_helper_session_does_not_load_exhaustive and refetch6 case to test_in_tree_boxed_corpus_cannot_flip_to_exhaustive_on_sentinel (existing nodeids, not new copies). Coordinate with the remaining five moves before deleting the source file. Target nodeids: apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py::test_legacy_import_helper_session_does_not_load_exhaustive, apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py::test_in_tree_boxed_corpus_cannot_flip_to_exhaustive_on_sentinel. Expected suite time: two fewer calls, each below 0.11s in this run; no material wall-time saving promised.",
+          "red_proof": "Mutate exhaustive session validation to accept the legacy sentinel: BOTH existing destination tests must fail with the same capture_session_id_required contract. Revert mutation before verification.",
+          "after": []
+        },
+        {
+          "files": [
+            "config/lint-baseline/ruff.json",
+            "config/lint-baseline/ruff-format.json"
+          ],
+          "do": "After ALL groups for this source module land and the review-wave module is removed, remove its stale lint/format baseline entries; format destinations and recompute only affected entries without increasing debt. No collected-set guard names this source or its test names (bounded repository search); test_r6d2_testpaths.py guards directories, not these nodeids.",
+          "red_proof": "Baseline check rejects a deleted source entry or new unaccounted target lint/format debt; then passes after the scoped update.",
+          "after": [
+            0
+          ]
+        }
+      ],
+      "pins_to_update": [
+        "config/lint-baseline/ruff.json",
+        "config/lint-baseline/ruff-format.json"
+      ],
+      "evidence": [
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d2_legacy_import_session.py:85 - test_helper_lineage_unmodified_does_not_load_exhaustive: documented function load_manifest; actual manifest rejection and invariant.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d2_legacy_import_session.py:96 - test_refetch6_flipped_to_exhaustive_is_rejected: documented function load_manifest; actual manifest rejection and invariant.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py:462 - same refetch6 flip and load_manifest rejection.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py:483 - same helper-minted lineage and load_manifest rejection. The target nodeids are apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py::test_legacy_import_helper_session_does_not_load_exhaustive and apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py::test_in_tree_boxed_corpus_cannot_flip_to_exhaustive_on_sentinel; do not create duplicates under source names.",
+        "config/lint-baseline/ruff.json:192 - source module is explicitly keyed in this baseline; update after removal.",
+        "config/lint-baseline/ruff-format.json:366 - source module is explicitly keyed in this baseline; update after removal."
+      ],
+      "canon": [
+        "REF-10",
+        "TEST-15",
+        "TEST-24"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d2_legacy_import_session.py",
+      "claimed": "MERGE",
+      "ruling": "MODIFY",
+      "action": "MOVE",
+      "tests": [
+        "test_legacy_import_sentinel_does_not_satisfy_exhaustive_gate",
+        "test_real_capture_session_still_loads_exhaustive",
+        "test_real_session_on_legacy_import_source_still_loads_exhaustive",
+        "test_one_sentinel_box_among_real_sessions_is_rejected",
+        "test_sentinel_still_loads_under_roster_only"
+      ],
+      "target": "apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py",
+      "seam": "apps/prototype-description-service/scripts/eval_harness/manifest.py:load_manifest",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d2_legacy_import_session.py",
+            "apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py"
+          ],
+          "do": "Move these five distinct tests unchanged with minimal local fixture helpers. No same-seam existing target duplicates were found for real operator session, real legacy-source session, mixed real/sentinel boxes, roster-only sentinel acceptance, or sentinel entry diagnostics. Delete source only together with the two duplicate removals. Target nodeids: apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py::test_legacy_import_sentinel_does_not_satisfy_exhaustive_gate, apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py::test_real_capture_session_still_loads_exhaustive, apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py::test_real_session_on_legacy_import_source_still_loads_exhaustive, apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py::test_one_sentinel_box_among_real_sessions_is_rejected, apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py::test_sentinel_still_loads_under_roster_only. Expected suite time: Approximately unchanged; relocation alone saves no execution time.",
+          "red_proof": "Sentinel-accepting mutation fails refusal/diagnostic and mixed-session cases; reject every session fails both real-session positives; apply exhaustive restriction to roster_only fails roster-only positive. Preserve invariant, entry_index and entry_path assertions.",
+          "after": []
+        },
+        {
+          "files": [
+            "config/lint-baseline/ruff.json",
+            "config/lint-baseline/ruff-format.json"
+          ],
+          "do": "After ALL groups for this source module land and the review-wave module is removed, remove its stale lint/format baseline entries; format destinations and recompute only affected entries without increasing debt. No collected-set guard names this source or its test names (bounded repository search); test_r6d2_testpaths.py guards directories, not these nodeids.",
+          "red_proof": "Baseline check rejects a deleted source entry or new unaccounted target lint/format debt; then passes after the scoped update.",
+          "after": [
+            0
+          ]
+        }
+      ],
+      "pins_to_update": [
+        "config/lint-baseline/ruff.json",
+        "config/lint-baseline/ruff-format.json"
+      ],
+      "evidence": [
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d2_legacy_import_session.py:73 - test_legacy_import_sentinel_does_not_satisfy_exhaustive_gate: documented function load_manifest; loaded manifest artifact or ManifestError.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d2_legacy_import_session.py:110 - test_real_capture_session_still_loads_exhaustive: documented function load_manifest; loaded manifest artifact or ManifestError.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d2_legacy_import_session.py:119 - test_real_session_on_legacy_import_source_still_loads_exhaustive: documented function load_manifest; loaded manifest artifact or ManifestError.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d2_legacy_import_session.py:128 - test_one_sentinel_box_among_real_sessions_is_rejected: documented function load_manifest; loaded manifest artifact or ManifestError.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d2_legacy_import_session.py:150 - test_sentinel_still_loads_under_roster_only: documented function load_manifest; loaded manifest artifact or ManifestError.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py:436 - corpus roster-only positive has different input/coverage, not an exact replacement for synthetic roster-only sentinel case.",
+        "config/lint-baseline/ruff.json:192 - source module is explicitly keyed in this baseline; update after removal.",
+        "config/lint-baseline/ruff-format.json:366 - source module is explicitly keyed in this baseline; update after removal."
+      ],
+      "canon": [
+        "REF-10",
+        "TEST-15",
+        "TEST-24"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d4_absent_face_boxes.py",
+      "claimed": "MERGE",
+      "ruling": "MODIFY",
+      "action": "MOVE",
+      "tests": [
+        "test_absent_face_boxes_key_refuses_exhaustive_detection",
+        "test_require_exhaustive_box_coverage_raises_on_absent_key",
+        "test_absent_key_with_zero_face_count_is_covered",
+        "test_empty_face_boxes_list_with_nonzero_count_refuses"
+      ],
+      "target": "apps/prototype-description-service/scripts/eval_harness/tests/test_exhaustive_detection_arithmetic.py",
+      "seam": "apps/prototype-description-service/scripts/eval_harness/report.py:score_run_record; apps/prototype-description-service/scripts/eval_harness/face_metrics.py:require_exhaustive_box_coverage",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d4_absent_face_boxes.py",
+            "apps/prototype-description-service/scripts/eval_harness/tests/test_exhaustive_detection_arithmetic.py"
+          ],
+          "do": "Move all four distinct boundary cases and minimal helpers unchanged; remove review-wave source. Existing arithmetic tests use PRESENT mismatched lists, not ABSENT keys or zero faces. Public require_exhaustive_box_coverage is a named invariant function, not a private method; retain its exception detail assertion. Target nodeids: apps/prototype-description-service/scripts/eval_harness/tests/test_exhaustive_detection_arithmetic.py::test_absent_face_boxes_key_refuses_exhaustive_detection, apps/prototype-description-service/scripts/eval_harness/tests/test_exhaustive_detection_arithmetic.py::test_require_exhaustive_box_coverage_raises_on_absent_key, apps/prototype-description-service/scripts/eval_harness/tests/test_exhaustive_detection_arithmetic.py::test_absent_key_with_zero_face_count_is_covered, apps/prototype-description-service/scripts/eval_harness/tests/test_exhaustive_detection_arithmetic.py::test_empty_face_boxes_list_with_nonzero_count_refuses. Expected suite time: Approximately unchanged; relocation alone saves no execution time.",
+          "red_proof": "Restore skip-on-absent-key mutation: public scoring-refusal and helper absent-key tests fail; reject absent key unconditionally: zero-face positive fails; allow empty lists for nonzero face_count: empty-list refusal fails. Revert each mutation.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d4_absent_face_boxes.py:56 - test_absent_face_boxes_key_refuses_exhaustive_detection: documented function score_run_record; returned detection report, refusal and null metrics.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d4_absent_face_boxes.py:80 - test_require_exhaustive_box_coverage_raises_on_absent_key: documented function require_exhaustive_box_coverage; ManifestError invariant and count detail.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d4_absent_face_boxes.py:90 - test_absent_key_with_zero_face_count_is_covered: documented function require_exhaustive_box_coverage; successful zero-face boundary.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d4_absent_face_boxes.py:96 - test_empty_face_boxes_list_with_nonzero_count_refuses: documented function require_exhaustive_box_coverage; nonzero empty-list refusal.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_exhaustive_detection_arithmetic.py:122 - existing public scoring refusal uses one PRESENT box for five faces.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_exhaustive_detection_arithmetic.py:157 - existing face scorer refusal also uses a present mismatched list; different seam from helper tests."
+      ],
+      "canon": [
+        "REF-10",
+        "TEST-15",
+        "TEST-24"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e1_parent_mode_fill.py",
+      "claimed": "MERGE",
+      "ruling": "MODIFY",
+      "action": "REWRITE",
+      "tests": [
+        "test_r6e1_omitted_key_under_parent_exhaustive_refuses",
+        "test_r6e1_none_key_under_parent_exhaustive_refuses"
+      ],
+      "target": "apps/prototype-description-service/scripts/eval_harness/tests/test_score_roster_only_refusal.py",
+      "seam": "apps/prototype-description-service/scripts/eval_harness/report.py:score_face_run_record",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e1_parent_mode_fill.py",
+            "apps/prototype-description-service/scripts/eval_harness/tests/test_score_roster_only_refusal.py"
+          ],
+          "do": "Move both missing/None inputs to the refusal suite and remove only private flatten assertions. Keep both named test cases (or equivalent parameter ids), asserting the existing public score_face_run_record ManifestError/invariant. Do not discard the None boundary to satisfy an arbitrary one-case cap. Target nodeids: apps/prototype-description-service/scripts/eval_harness/tests/test_score_roster_only_refusal.py::test_r6e1_omitted_key_under_parent_exhaustive_refuses, apps/prototype-description-service/scripts/eval_harness/tests/test_score_roster_only_refusal.py::test_r6e1_none_key_under_parent_exhaustive_refuses. Expected suite time: Approximately unchanged; relocation alone saves no execution time.",
+          "red_proof": "Copy raw mapping parent exhaustive down to every omitted/None entry: each public score-face refusal must turn red by unexpectedly scoring. No domain scoring mocks.",
+          "after": []
+        },
+        {
+          "files": [
+            "config/lint-baseline/ruff.json",
+            "config/lint-baseline/ruff-format.json"
+          ],
+          "do": "After ALL groups for this source module land and the review-wave module is removed, remove its stale lint/format baseline entries; format destinations and recompute only affected entries without increasing debt. No collected-set guard names this source or its test names (bounded repository search); test_r6d2_testpaths.py guards directories, not these nodeids.",
+          "red_proof": "Baseline check rejects a deleted source entry or new unaccounted target lint/format debt; then passes after the scoped update.",
+          "after": [
+            0
+          ]
+        }
+      ],
+      "pins_to_update": [
+        "config/lint-baseline/ruff.json",
+        "config/lint-baseline/ruff-format.json"
+      ],
+      "evidence": [
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e1_parent_mode_fill.py:89 - test_r6e1_omitted_key_under_parent_exhaustive_refuses: private helper _entries_as_dicts output plus documented score_face_run_record refusal.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e1_parent_mode_fill.py:99 - test_r6e1_none_key_under_parent_exhaustive_refuses: private helper _entries_as_dicts output plus documented score_face_run_record refusal.",
+        "apps/prototype-description-service/scripts/eval_harness/report.py:3940 - raw mapping branch deliberately does not stamp parent mode.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_score_roster_only_refusal.py:554 - partial-stamp run-record test is a different input and scorer seam.",
+        "config/lint-baseline/ruff.json:210 - source module is explicitly keyed in this baseline; update after removal.",
+        "config/lint-baseline/ruff-format.json:381 - source module is explicitly keyed in this baseline; update after removal."
+      ],
+      "canon": [
+        "REF-10",
+        "TEST-12",
+        "TEST-16",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e1_parent_mode_fill.py",
+      "claimed": "MERGE",
+      "ruling": "MODIFY",
+      "action": "MOVE",
+      "tests": [
+        "test_r6e1_explicit_exhaustive_on_same_unstamped_entries_also_refuses"
+      ],
+      "target": "apps/prototype-description-service/scripts/eval_harness/tests/test_score_roster_only_refusal.py",
+      "seam": "apps/prototype-description-service/scripts/eval_harness/report.py:score_run_record",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e1_parent_mode_fill.py",
+            "apps/prototype-description-service/scripts/eval_harness/tests/test_score_roster_only_refusal.py"
+          ],
+          "do": "Move unchanged to the refusal suite as part of whole-module consolidation. Keep explicit exhaustive with zero-face unstamped entries; existing without-mode and partial-stamp tests are not exact duplicates. Target nodeids: apps/prototype-description-service/scripts/eval_harness/tests/test_score_roster_only_refusal.py::test_r6e1_explicit_exhaustive_on_same_unstamped_entries_also_refuses. Expected suite time: Approximately unchanged; relocation alone saves no execution time.",
+          "red_proof": "Permit explicit exhaustive to manufacture missing per-entry evidence: this test must publish a score instead of refusing and fail invariant/null metric assertions.",
+          "after": []
+        },
+        {
+          "files": [
+            "config/lint-baseline/ruff.json",
+            "config/lint-baseline/ruff-format.json"
+          ],
+          "do": "After ALL groups for this source module land and the review-wave module is removed, remove its stale lint/format baseline entries; format destinations and recompute only affected entries without increasing debt. No collected-set guard names this source or its test names (bounded repository search); test_r6d2_testpaths.py guards directories, not these nodeids.",
+          "red_proof": "Baseline check rejects a deleted source entry or new unaccounted target lint/format debt; then passes after the scoped update.",
+          "after": [
+            0
+          ]
+        }
+      ],
+      "pins_to_update": [
+        "config/lint-baseline/ruff.json",
+        "config/lint-baseline/ruff-format.json"
+      ],
+      "evidence": [
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e1_parent_mode_fill.py:108 - test_r6e1_explicit_exhaustive_on_same_unstamped_entries_also_refuses: documented function score_run_record; returned report refusal and null precision/tp.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_score_roster_only_refusal.py:360 - existing no-mode/no-stamp refusal omits explicit exhaustive; distinct override guard.",
+        "config/lint-baseline/ruff.json:210 - source module is explicitly keyed in this baseline; update after removal.",
+        "config/lint-baseline/ruff-format.json:381 - source module is explicitly keyed in this baseline; update after removal."
+      ],
+      "canon": [
+        "REF-10",
+        "TEST-15",
+        "TEST-24"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e1_parent_mode_fill.py",
+      "claimed": "MERGE",
+      "ruling": "MODIFY",
+      "action": "REWRITE",
+      "tests": [
+        "test_r6e1_typed_manifest_flatten_stamps_document_mode",
+        "test_r6e1_duck_typed_pre_stamped_roster_only_is_not_overwritten",
+        "test_r6e1_duck_typed_unstamped_entry_still_receives_document_mode"
+      ],
+      "target": "apps/prototype-description-service/scripts/eval_harness/tests/test_score_roster_only_refusal.py",
+      "seam": "apps/prototype-description-service/scripts/eval_harness/report.py:score_face_run_record",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e1_parent_mode_fill.py",
+            "apps/prototype-description-service/scripts/eval_harness/tests/test_score_roster_only_refusal.py"
+          ],
+          "do": "Replace private flatten-output checks with existing public face scorer. Typed GoldenManifest and unstamped duck manifest should score exhaustive successfully using valid minimal covered entries; pre-stamped duck roster_only must refuse DETECTION_REFUSES_ROSTER_ONLY. Keep duck objects as input fixtures, never fake scorer logic. Give successful cases a real face-run shape and assert resulting detection counts, not mere no-exception. Coordinate all parent-mode groups to remove source module. Target nodeids: apps/prototype-description-service/scripts/eval_harness/tests/test_score_roster_only_refusal.py::test_r6e1_typed_manifest_flatten_stamps_document_mode, apps/prototype-description-service/scripts/eval_harness/tests/test_score_roster_only_refusal.py::test_r6e1_duck_typed_pre_stamped_roster_only_is_not_overwritten, apps/prototype-description-service/scripts/eval_harness/tests/test_score_roster_only_refusal.py::test_r6e1_duck_typed_unstamped_entry_still_receives_document_mode. Expected suite time: Approximately unchanged; relocation alone saves no execution time.",
+          "red_proof": "Remove typed/duck fill: both positive score cases must fail missing annotation mode. Overwrite pre-stamped roster_only with parent exhaustive: negative must stop refusing and fail. Ensure fixtures satisfy coverage so failures identify mode mutation rather than unrelated guards.",
+          "after": []
+        },
+        {
+          "files": [
+            "config/lint-baseline/ruff.json",
+            "config/lint-baseline/ruff-format.json"
+          ],
+          "do": "After ALL groups for this source module land and the review-wave module is removed, remove its stale lint/format baseline entries; format destinations and recompute only affected entries without increasing debt. No collected-set guard names this source or its test names (bounded repository search); test_r6d2_testpaths.py guards directories, not these nodeids.",
+          "red_proof": "Baseline check rejects a deleted source entry or new unaccounted target lint/format debt; then passes after the scoped update.",
+          "after": [
+            0
+          ]
+        }
+      ],
+      "pins_to_update": [
+        "config/lint-baseline/ruff.json",
+        "config/lint-baseline/ruff-format.json"
+      ],
+      "evidence": [
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e1_parent_mode_fill.py:150 - test_r6e1_typed_manifest_flatten_stamps_document_mode: private helper _entries_as_dicts; flattened annotation_mode output.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e1_parent_mode_fill.py:202 - test_r6e1_duck_typed_pre_stamped_roster_only_is_not_overwritten: private helper _entries_as_dicts; flattened annotation_mode output.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e1_parent_mode_fill.py:209 - test_r6e1_duck_typed_unstamped_entry_still_receives_document_mode: private helper _entries_as_dicts; flattened annotation_mode output.",
+        "apps/prototype-description-service/scripts/eval_harness/report.py:3917 - fill is conditional on None; preservation and filling are separate live behaviours.",
+        "apps/prototype-description-service/scripts/eval_harness/report.py:4312 - public scorer already calls private flatten then validates resolved mode; no new measurement seam needed.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_score_roster_only_refusal.py:266 - fusion flatten has similar shape but a different production function, so not a duplicate (REF-10).",
+        "config/lint-baseline/ruff.json:210 - source module is explicitly keyed in this baseline; update after removal.",
+        "config/lint-baseline/ruff-format.json:381 - source module is explicitly keyed in this baseline; update after removal."
+      ],
+      "canon": [
+        "REF-10",
+        "TEST-12",
+        "TEST-16",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e1_parent_mode_fill.py",
+      "claimed": "MERGE",
+      "ruling": "MODIFY",
+      "action": "MOVE",
+      "tests": [
+        "test_cmd_score_fill_only_preserves_per_entry_stamp"
+      ],
+      "target": "apps/prototype-description-service/scripts/eval_harness/tests/test_score_roster_only_refusal.py",
+      "seam": "apps/prototype-description-service/scripts/eval_harness/cli.py:main",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e1_parent_mode_fill.py",
+            "apps/prototype-description-service/scripts/eval_harness/tests/test_score_roster_only_refusal.py"
+          ],
+          "do": "Move the existing CLI test unchanged with required wrapper fixtures; reject proposed replacement by report-only scoring because CLI owns separate stamp fill logic. Preserve wrapper around REAL score_run_record and both captured entry assertions. Loader wrapper supplies otherwise unrepresentable per-entry dump stamp; it is an input fixture, not a fake scoring algorithm. No new production seam solely for prettier testing. Target nodeids: apps/prototype-description-service/scripts/eval_harness/tests/test_score_roster_only_refusal.py::test_cmd_score_fill_only_preserves_per_entry_stamp. Expected suite time: Approximately unchanged; relocation alone saves no execution time.",
+          "red_proof": "Mutate CLI to overwrite all per-entry stamps: preserve assertion fails; mutate CLI to never fill: second-entry fill assertion fails. A direct scorer-only test would miss both CLI mutations, hence no such replacement.",
+          "after": []
+        },
+        {
+          "files": [
+            "config/lint-baseline/ruff.json",
+            "config/lint-baseline/ruff-format.json"
+          ],
+          "do": "After ALL groups for this source module land and the review-wave module is removed, remove its stale lint/format baseline entries; format destinations and recompute only affected entries without increasing debt. No collected-set guard names this source or its test names (bounded repository search); test_r6d2_testpaths.py guards directories, not these nodeids.",
+          "red_proof": "Baseline check rejects a deleted source entry or new unaccounted target lint/format debt; then passes after the scoped update.",
+          "after": [
+            0
+          ]
+        }
+      ],
+      "pins_to_update": [
+        "config/lint-baseline/ruff.json",
+        "config/lint-baseline/ruff-format.json"
+      ],
+      "evidence": [
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e1_parent_mode_fill.py:286 - test_cmd_score_fill_only_preserves_per_entry_stamp: public CLI main with synthetic loader input, wrapped real scorer; captured handoff rows and SystemExit invariant.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e1_parent_mode_fill.py:322 - wrapper calls real load_manifest then inserts collision fixture.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e1_parent_mode_fill.py:338 - scorer wrapper observes entries and delegates to real score_run_record; domain logic is not mocked.",
+        "config/lint-baseline/ruff.json:210 - source module is explicitly keyed in this baseline; update after removal.",
+        "config/lint-baseline/ruff-format.json:381 - source module is explicitly keyed in this baseline; update after removal."
+      ],
+      "canon": [
+        "REF-10",
+        "TEST-15",
+        "TEST-24"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py",
+      "claimed": "MERGE",
+      "ruling": "MODIFY",
+      "action": "RESTAGE",
+      "tests": [
+        "test_precision_null_recall_zero_populated_table_is_flagged",
+        "test_explicit_refusal_is_clean",
+        "test_numeric_identification_score_is_flagged",
+        "test_missing_refused_key_empty_table_is_flagged",
+        "test_unrecognized_shape_is_reported_not_passed",
+        "test_invalid_json_report_is_unrecognized",
+        "test_report_without_identification_is_clean",
+        "test_no_report_files_is_a_failed_scan",
+        "test_dated_report_filename_is_scanned",
+        "test_same_sha_divergent_verdicts_is_a_contradiction",
+        "test_same_sha_all_refused_is_not_a_contradiction",
+        "test_greenwashed_refusal_is_unrecognized",
+        "test_refused_with_macro_precision_is_unrecognized",
+        "test_absent_manifest_sha_is_not_a_contradiction"
+      ],
+      "target": "apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py",
+      "seam": "apps/prototype-description-service/scripts/eval_harness/scan_stale_reports.py:main",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py",
+            "apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py"
+          ],
+          "do": "Create normal scanner test module; move fourteen scratch-repo CLI tests and their real Git helpers unchanged, decorate ONLY these tests with existing pytest.mark.integration. The existing app Makefile excludes integration from make test and includes it in make test-integration/ci; no stage wiring edits or new marker needed. Prove default -m selection deselects exactly these fourteen scanner cases, and integration invocation executes all fourteen; keep running this stage in CI. Do not substitute domain classifier fakes. Delete source after all scanner groups migrate. Target nodeids: apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_precision_null_recall_zero_populated_table_is_flagged, apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_explicit_refusal_is_clean, apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_numeric_identification_score_is_flagged, apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_missing_refused_key_empty_table_is_flagged, apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_unrecognized_shape_is_reported_not_passed, apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_invalid_json_report_is_unrecognized, apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_report_without_identification_is_clean, apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_no_report_files_is_a_failed_scan, apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_dated_report_filename_is_scanned, apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_same_sha_divergent_verdicts_is_a_contradiction, apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_same_sha_all_refused_is_not_a_contradiction, apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_greenwashed_refusal_is_unrecognized, apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_refused_with_macro_precision_is_unrecognized, apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_absent_manifest_sha_is_not_a_contradiction. Expected suite time: Measured fourteen calls total 5.13s; commit stage removes roughly 5.1s of serial call time, later stage adds the same work plus invocation overhead. Total CI work approximately unchanged; parallel wall time saving depends on worker allocation.",
+          "red_proof": "Precision-value-only classifier fails leftover case; scanner ignores dated filenames fails dated case; no-report return-clean fails empty scan; disable provenance grouping fails divergent verdict case. Existing CLI exit/output assertions and real tracked-file discovery must remain red for their respective mutations. Verify all original fourteen nodeids after relocation (path mapping).",
+          "after": []
+        },
+        {
+          "files": [
+            "config/lint-baseline/ruff.json",
+            "config/lint-baseline/ruff-format.json"
+          ],
+          "do": "After ALL groups for this source module land and the review-wave module is removed, remove its stale lint/format baseline entries; format destinations and recompute only affected entries without increasing debt. No collected-set guard names this source or its test names (bounded repository search); test_r6d2_testpaths.py guards directories, not these nodeids.",
+          "red_proof": "Baseline check rejects a deleted source entry or new unaccounted target lint/format debt; then passes after the scoped update.",
+          "after": [
+            0
+          ]
+        }
+      ],
+      "pins_to_update": [
+        "config/lint-baseline/ruff.json",
+        "config/lint-baseline/ruff-format.json"
+      ],
+      "evidence": [
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:153 - test_precision_null_recall_zero_populated_table_is_flagged: public scanner subprocess CLI, real scratch Git repository; exit status and rendered stdout/stderr.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:186 - test_explicit_refusal_is_clean: public scanner subprocess CLI, real scratch Git repository; exit status and rendered stdout/stderr.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:207 - test_numeric_identification_score_is_flagged: public scanner subprocess CLI, real scratch Git repository; exit status and rendered stdout/stderr.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:227 - test_missing_refused_key_empty_table_is_flagged: public scanner subprocess CLI, real scratch Git repository; exit status and rendered stdout/stderr.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:249 - test_unrecognized_shape_is_reported_not_passed: public scanner subprocess CLI, real scratch Git repository; exit status and rendered stdout/stderr.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:277 - test_invalid_json_report_is_unrecognized: public scanner subprocess CLI, real scratch Git repository; exit status and rendered stdout/stderr.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:288 - test_report_without_identification_is_clean: public scanner subprocess CLI, real scratch Git repository; exit status and rendered stdout/stderr.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:298 - test_no_report_files_is_a_failed_scan: public scanner subprocess CLI, real scratch Git repository; exit status and rendered stdout/stderr.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:308 - test_dated_report_filename_is_scanned: public scanner subprocess CLI, real scratch Git repository; exit status and rendered stdout/stderr.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:324 - test_same_sha_divergent_verdicts_is_a_contradiction: public scanner subprocess CLI, real scratch Git repository; exit status and rendered stdout/stderr.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:371 - test_same_sha_all_refused_is_not_a_contradiction: public scanner subprocess CLI, real scratch Git repository; exit status and rendered stdout/stderr.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:391 - test_greenwashed_refusal_is_unrecognized: public scanner subprocess CLI, real scratch Git repository; exit status and rendered stdout/stderr.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:421 - test_refused_with_macro_precision_is_unrecognized: public scanner subprocess CLI, real scratch Git repository; exit status and rendered stdout/stderr.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:482 - test_absent_manifest_sha_is_not_a_contradiction: public scanner subprocess CLI, real scratch Git repository; exit status and rendered stdout/stderr.",
+        "apps/prototype-description-service/Makefile:316 - commit stage excludes integration, pg and timing.",
+        "apps/prototype-description-service/Makefile:332 - existing later stage includes integration; ci includes both.",
+        "apps/prototype-description-service/pyproject.toml:310 - integration marker exists (description mentions database, but these cases need only scratch Git).",
+        "config/lint-baseline/ruff.json:213 - source module is explicitly keyed in this baseline; update after removal.",
+        "config/lint-baseline/ruff-format.json:384 - source module is explicitly keyed in this baseline; update after removal."
+      ],
+      "canon": [
+        "REF-10",
+        "TEST-15",
+        "TEST-24"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py",
+      "claimed": "MERGE",
+      "ruling": "MODIFY",
+      "action": "MOVE",
+      "tests": [
+        "test_classifier_flags_leftover_as_scored",
+        "test_classifier_accepts_explicit_refusal",
+        "test_refused_false_null_precision_is_flagged",
+        "test_classifier_fails_closed_on_non_object",
+        "test_classifier_fails_closed_on_empty_object",
+        "test_provenance_helper_groups_mixed_verdicts",
+        "test_classifier_flags_greenwashed_refusal",
+        "test_classifier_flags_refused_macro_precision",
+        "test_provenance_helper_does_not_group_missing_sha"
+      ],
+      "target": "apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py",
+      "seam": "apps/prototype-description-service/scripts/eval_harness/scan_stale_reports.py:classify_identification; scan_payload; provenance_contradictions",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py",
+            "apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py"
+          ],
+          "do": "Move nine distinct classifier/payload/provenance unit tests unchanged into new scanner module; leave unmarked in commit feedback. The proposed target does not exist, so this is MOVE, not deduplication. The misleading tmp_path argument on refused_false case does not make it an integration test. Target nodeids: apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_classifier_flags_leftover_as_scored, apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_classifier_accepts_explicit_refusal, apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_refused_false_null_precision_is_flagged, apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_classifier_fails_closed_on_non_object, apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_classifier_fails_closed_on_empty_object, apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_provenance_helper_groups_mixed_verdicts, apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_classifier_flags_greenwashed_refusal, apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_classifier_flags_refused_macro_precision, apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_provenance_helper_does_not_group_missing_sha. Expected suite time: Approximately unchanged; relocation alone saves no execution time.",
+          "red_proof": "Classify null-valued scored keys as clean fails leftover/refused_false units; accept non-object/empty blocks fails fail-closed tests; greenwashed metrics accepted fails greenwash/macro units; group absent SHA fails missing-SHA unit; suppress mixed verdict grouping fails provenance unit.",
+          "after": []
+        },
+        {
+          "files": [
+            "config/lint-baseline/ruff.json",
+            "config/lint-baseline/ruff-format.json"
+          ],
+          "do": "After ALL groups for this source module land and the review-wave module is removed, remove its stale lint/format baseline entries; format destinations and recompute only affected entries without increasing debt. No collected-set guard names this source or its test names (bounded repository search); test_r6d2_testpaths.py guards directories, not these nodeids.",
+          "red_proof": "Baseline check rejects a deleted source entry or new unaccounted target lint/format debt; then passes after the scoped update.",
+          "after": [
+            0
+          ]
+        }
+      ],
+      "pins_to_update": [
+        "config/lint-baseline/ruff.json",
+        "config/lint-baseline/ruff-format.json"
+      ],
+      "evidence": [
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:171 - test_classifier_flags_leftover_as_scored: documented scanner functions classify_identification, scan_payload and/or provenance_contradictions.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:202 - test_classifier_accepts_explicit_refusal: documented scanner functions classify_identification, scan_payload and/or provenance_contradictions.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:243 - test_refused_false_null_precision_is_flagged: documented scanner functions classify_identification, scan_payload and/or provenance_contradictions.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:265 - test_classifier_fails_closed_on_non_object: documented scanner functions classify_identification, scan_payload and/or provenance_contradictions.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:271 - test_classifier_fails_closed_on_empty_object: documented scanner functions classify_identification, scan_payload and/or provenance_contradictions.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:349 - test_provenance_helper_groups_mixed_verdicts: documented scanner functions classify_identification, scan_payload and/or provenance_contradictions.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:412 - test_classifier_flags_greenwashed_refusal: documented scanner functions classify_identification, scan_payload and/or provenance_contradictions.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:437 - test_classifier_flags_refused_macro_precision: documented scanner functions classify_identification, scan_payload and/or provenance_contradictions.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:504 - test_provenance_helper_does_not_group_missing_sha: documented scanner functions classify_identification, scan_payload and/or provenance_contradictions.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:249 - refused_false_null_precision case calls classifier only; no scratch Git or subprocess.",
+        "config/lint-baseline/ruff.json:213 - source module is explicitly keyed in this baseline; update after removal.",
+        "config/lint-baseline/ruff-format.json:384 - source module is explicitly keyed in this baseline; update after removal."
+      ],
+      "canon": [
+        "REF-10",
+        "TEST-15",
+        "TEST-24"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py",
+      "claimed": "MERGE",
+      "ruling": "MODIFY",
+      "action": "REWRITE",
+      "tests": [
+        "test_has_metric_fields_is_key_presence_not_precision_value"
+      ],
+      "target": "apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py",
+      "seam": "apps/prototype-description-service/scripts/eval_harness/scan_stale_reports.py:classify_identification",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py",
+            "apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py"
+          ],
+          "do": "Replace private _has_metric_fields assertions with public classifier calls for the same leftover shape (SCORED), structural-only {refused: True, invariant: x} shape (REFUSED), and non-refused structural-only {invariant: x} shape (UNRECOGNIZED). The final input is necessary because explicit refusals bypass the private metric predicate. Existing public classifier is sufficient; no production change or added seam. Preserve original named test after moving. Target nodeids: apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_has_metric_fields_is_key_presence_not_precision_value. Expected suite time: Approximately unchanged; relocation alone saves no execution time.",
+          "red_proof": "Change metric predicate to numeric precision only: leftover classification becomes UNRECOGNIZED and fails. Change predicate to always True: non-refused structural-only input becomes SCORED and fails. Thus both boolean branches guarded by the original helper test still go red through public scoring classification.",
+          "after": []
+        },
+        {
+          "files": [
+            "config/lint-baseline/ruff.json",
+            "config/lint-baseline/ruff-format.json"
+          ],
+          "do": "After ALL groups for this source module land and the review-wave module is removed, remove its stale lint/format baseline entries; format destinations and recompute only affected entries without increasing debt. No collected-set guard names this source or its test names (bounded repository search); test_r6d2_testpaths.py guards directories, not these nodeids.",
+          "red_proof": "Baseline check rejects a deleted source entry or new unaccounted target lint/format debt; then passes after the scoped update.",
+          "after": [
+            0
+          ]
+        }
+      ],
+      "pins_to_update": [
+        "config/lint-baseline/ruff.json",
+        "config/lint-baseline/ruff-format.json"
+      ],
+      "evidence": [
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:383 - test_has_metric_fields_is_key_presence_not_precision_value: private helper _has_metric_fields; key-presence boolean.",
+        "apps/prototype-description-service/scripts/eval_harness/scan_stale_reports.py:237 - public classifier uses the private predicate for non-refusals; exact leftover mutation is observable there.",
+        "config/lint-baseline/ruff.json:213 - source module is explicitly keyed in this baseline; update after removal.",
+        "config/lint-baseline/ruff-format.json:384 - source module is explicitly keyed in this baseline; update after removal."
+      ],
+      "canon": [
+        "REF-10",
+        "TEST-12",
+        "TEST-16",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py",
+      "claimed": "MERGE",
+      "ruling": "MODIFY",
+      "action": "MOVE",
+      "tests": [
+        "test_refused_whitelist_tracks_scorer_emitted_keys",
+        "test_scorer_emitted_refusal_classifies_clean"
+      ],
+      "target": "apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py",
+      "seam": "apps/prototype-description-service/scripts/eval_harness/report.py:_refused_identification_metric; apps/prototype-description-service/scripts/eval_harness/scan_stale_reports.py:classify_identification",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py",
+            "apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py"
+          ],
+          "do": "Move both unchanged and retain helper/whitelist contract for now. Reject claimed public-output rewrite: current score_run_record adds positional and evaluated_images to the helper block; scanner rejects non-null positional. A public-output clean assertion would already fail, and stripping arbitrary fields would weaken drift detection. Resolve actual scorer/scanner compatibility in a separate production task before replacing these guards; do not bless scanner acceptance of additional metrics here. Target nodeids: apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_refused_whitelist_tracks_scorer_emitted_keys, apps/prototype-description-service/scripts/eval_harness/tests/test_scan_stale_reports.py::test_scorer_emitted_refusal_classifies_clean. Expected suite time: Approximately unchanged; relocation alone saves no execution time.",
+          "red_proof": "Add/remove a helper refusal key: exact key-set/whitelist test fails. Populate a forbidden refusal metric: classifier-clean test fails. Preserve both defects until compatibility work supplies an equivalent public artifact guard.",
+          "after": []
+        },
+        {
+          "files": [
+            "config/lint-baseline/ruff.json",
+            "config/lint-baseline/ruff-format.json"
+          ],
+          "do": "After ALL groups for this source module land and the review-wave module is removed, remove its stale lint/format baseline entries; format destinations and recompute only affected entries without increasing debt. No collected-set guard names this source or its test names (bounded repository search); test_r6d2_testpaths.py guards directories, not these nodeids.",
+          "red_proof": "Baseline check rejects a deleted source entry or new unaccounted target lint/format debt; then passes after the scoped update.",
+          "after": [
+            0
+          ]
+        }
+      ],
+      "pins_to_update": [
+        "config/lint-baseline/ruff.json",
+        "config/lint-baseline/ruff-format.json"
+      ],
+      "evidence": [
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:443 - test_refused_whitelist_tracks_scorer_emitted_keys: private report helper _refused_identification_metric; exact emitted keys compared with scanner constant.",
+        "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:471 - test_scorer_emitted_refusal_classifies_clean: private report helper _refused_identification_metric plus documented classify_identification; helper block accepted.",
+        "apps/prototype-description-service/scripts/eval_harness/report.py:2741 - live public output expands helper then adds evaluated_images and non-null positional object.",
+        "apps/prototype-description-service/scripts/eval_harness/scan_stale_reports.py:208 - non-null additional fields are rejected.",
+        "Runtime probe: real score_run_record with unboxed present_identities=[Alice Example] emits refused=True / identification_refuses_unboxed_identity_claims; classify_identification returns UNRECOGNIZED, reason refused block still publishes positional. This is outside owned production scope; no failing baseline test was observed.",
+        "config/lint-baseline/ruff.json:213 - source module is explicitly keyed in this baseline; update after removal.",
+        "config/lint-baseline/ruff-format.json:384 - source module is explicitly keyed in this baseline; update after removal."
+      ],
+      "canon": [
+        "REF-10",
+        "TEST-15",
+        "TEST-24"
+      ],
+      "risk": "high"
+    }
+  ]
+}

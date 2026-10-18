@@ -1,0 +1,53 @@
+{
+  "lane": "a1h-svcscripts3",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_usage_sweeper_cli.py recognition/tests/unit/test_app1_usage_sweeper_schedule.py",
+      "result": "not_run",
+      "detail": "uv exited before pytest while removing the shared alembic executable: Read-only file system (os error 30)."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_usage_sweeper_cli.py recognition/tests/unit/test_app1_usage_sweeper_schedule.py",
+      "result": "not_run",
+      "detail": "The retry reached pytest but timed out in an aiosqlite worker thread at aiosqlite/core.py:59; the process remained active after the timeout and was interrupted, so no test summary was produced."
+    },
+    {
+      "command": "pytest recognition/tests/schema/test_identity_schema_heal_pg.py::test_sync_schema_backfills_usage_reservation_under_forced_rls_without_role_bypass",
+      "result": "not_run",
+      "detail": "PostgreSQL integration fixture unavailable in this sandbox; read the test assertions for TEST-15 coverage."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16018,
+      "finding_id": "APP1-WORKER-RV03",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/usage_reservation_sweeper.py:185-210 - rejects age-only repository release and delegates to UsageSettlementService.sweep_stale_reservations; apps/prototype-description-service/recognition/application/services/usage_settlement_service.py:704-710 - sweeper recovers each row with job identity evidence; :497-533 locks/revalidates recovery and :551 completes fenced settlement. The CLI integration assertion keeps an aged RUNNING job RESERVED at recognition/tests/unit/test_app1_usage_sweeper_cli.py:167-171.",
+      "guard_test": "recognition/tests/unit/test_app1_usage_sweeper_cli.py::test_cli_does_not_release_live_aged_job"
+    },
+    {
+      "db_id": 15855,
+      "finding_id": "W4USAG-ac21ad4e1d22ef24-M-ae59bad2057e1dbacb66bd4d",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/worker/scan_worker.py:363 calls the due-check each cycle; :430-451 bounds attempts by usage_sweep_interval_seconds, calls the settlement service, and commits its transaction. recognition/tests/unit/test_app1_usage_sweeper_schedule.py:124-132 asserts sweeps at 0 and 12 seconds for a 10-second interval and verifies the session commits.",
+      "guard_test": "recognition/tests/unit/test_app1_usage_sweeper_schedule.py::test_worker_sweeps_first_cycle_then_waits_for_interval"
+    }
+  ],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "apps/prototype-description-service/recognition/worker/scan_worker.py",
+      "line": 445,
+      "title": "Worker discards unsuccessful sweep reports",
+      "defect": "apps/prototype-description-service/recognition/worker/scan_worker.py:445-451 - `await UsageSettlementService(session).sweep_stale_reservations(...)` is followed by `await session.commit()` with no result assignment. The service records `report.stalled = True` and `report.exit_code = 1` at recognition/application/services/usage_settlement_service.py:745-747, but the scheduled caller drops that failure status instead of logging it.",
+      "failure_scenario": "A stale RESERVED row with unknown job evidence or a stale fence produces a nonzero stalled report; the worker commits, emits no warning, and retries only at the next interval while the reservation continues consuming tenant allowance without an operator signal.",
+      "fix": "Capture the returned report and log or publish a metric when exit_code is nonzero or rejected, fail_closed, or missing counts are nonzero; add a schedule test returning a stalled report and asserting the alert signal.",
+      "test_file": "apps/prototype-description-service/recognition/tests/unit/test_app1_usage_sweeper_schedule.py",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "Both recorded sweeper corrections hold: the CLI now settles through evidence-based fenced recovery and the scan worker schedules bounded sweeps. A new medium finding is that the worker drops non-success SweepReport values. The lane unit suite could not complete because aiosqlite timed out in the sandbox, and the PostgreSQL identity-schema integration guard was not run because no database is available."
+}

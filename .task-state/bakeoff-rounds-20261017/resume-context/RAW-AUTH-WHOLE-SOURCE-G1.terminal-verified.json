@@ -1,0 +1,92 @@
+{
+  "at": 1792298856.1620908,
+  "key": "feature-bakerounds-20261017-raw-auth-ini-3255682b",
+  "nonce": "82166-8763f03e7a5543bf",
+  "base": "8b01c18a5a1e56b6d39854ca9c630ca94add54e7",
+  "head": "c52863a5c5460bd28c71f61a3f3e4fced04ccec5",
+  "tree": "3b0cf87fe8ea4bb369699d51b828a623fc9548a1",
+  "base_tree": "568e45dec23891860ca074a6477b68e2896117a9",
+  "custody_dir": "/home/gate/bakeoff-rounds-20261017-inputs/results/custody/feature-bakerounds-20261017-raw-auth-ini-3255682b/82166-8763f03e7a5543bf-G1",
+  "changed_paths": [
+    ".task-state/bakeoff-rounds-20261017/reviews/RAW-AUTH-WHOLE-SOURCE-G1.json",
+    ".task-state/bakeoff-rounds-20261017/reviews/RAW-AUTH-WHOLE-SOURCE-G1.md"
+  ],
+  "files": {
+    "ignored-run-metadata.tar.gz": {
+      "bytes": 5679,
+      "sha256": "74fde32eb5b43900a53a92966d6c75fd965c7af452a5941a3f07286fee4af3ec"
+    },
+    "delta.bundle": {
+      "bytes": 11920,
+      "sha256": "f536148d025040176c521af829e014f5ed34a0aac97ede2712912f91a62e18d5"
+    },
+    "base.commit": {
+      "bytes": 269,
+      "sha256": "77819e189c8c8369cd7c70d2f2cd2b072c89a9f7ebbfd36ab636b6248cbdfd07"
+    },
+    "complete-head.bundle": {
+      "bytes": 165518013,
+      "sha256": "a5eb2a8e34de01cc25d9f5a6f479e8d157d2f4cb9b598dbd40d9c132617e6a9d"
+    }
+  },
+  "ignored": [
+    {
+      "path": ".brief.md",
+      "mode": 33188,
+      "bytes": 9276,
+      "sha256": "e1015c2a75347e02cf4cc72083878d5181fcc911668ce7ea679d7bf757c19192"
+    },
+    {
+      "path": ".grok-run.log",
+      "mode": 33188,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".schema.json",
+      "mode": 33188,
+      "bytes": 1070,
+      "sha256": "b389e86c02a719cdcd169395f4eac3f37dd38f0224b2999a1b4b6ca0edf692a4"
+    },
+    {
+      "path": ".venv",
+      "mode": 41471,
+      "bytes": 87,
+      "symlink": "/home/gate/workbay-sandbox/.venv-lane-feature-bakerounds-20261017-raw-auth-ini-3255682b"
+    },
+    {
+      "path": ".workbay-lane-sandbox",
+      "mode": 33188,
+      "bytes": 59,
+      "sha256": "be6b2041a048bfda5aa31566463a03716e1c705e67af09d969af2f52087c5259"
+    },
+    {
+      "path": ".workbay-source-provenance",
+      "mode": 33188,
+      "bytes": 228,
+      "sha256": "5a66f5c4a10371553feecf60bfdeae823dcebdf853d553457f9ee8e99f427d45"
+    }
+  ],
+  "anchors": {
+    "apps/prototype-description-service/scripts/eval_harness/bakeoff.py": {
+      "blob": "1cc2b84ffc2a1eebbd16f1cec2592db73efdd2ab",
+      "sha256": "4ba187e850ec54612d8ca41b067255b65e786b22f9cf11bb5063caa466fa065e"
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py": {
+      "blob": "43058b1b1f8689a6202f318fe4a5cfd42f434e40",
+      "sha256": "08ce40565572cd60219cc1942be4a5fbad03858f05945cd8881cfd5ccb01a66e"
+    },
+    "apps/prototype-description-service/scripts/eval_harness/remote_client.py": {
+      "blob": "848e6d69d651f922f4afe53d18fb13a06a351423",
+      "sha256": "daefd2156276a5051e6b4d739babad1724a36f29e57061b236d9dbea86a72c53"
+    }
+  },
+  "clean": true,
+  "untracked_count": 0,
+  "bundle_verified": true,
+  "external_dir": "/Volumes/Butter/WorkBay/custody/bakeoff-raw-source-g1-82166-8763f03e7a5543bf",
+  "native_ref": "refs/remotes/bakeoff/raw-auth-whole-source-g1-native",
+  "external_full_hash_verified": true,
+  "native_ancestry_imported": true,
+  "no_product_changes": true
+}

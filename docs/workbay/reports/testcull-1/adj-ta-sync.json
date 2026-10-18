@@ -1,0 +1,290 @@
+{
+  "lane": "ta-sync",
+  "base": "773138f240b3c38511cb26b8e51a0e0253d8f4b1",
+  "inspected_head": "fbf138d9f1d6d150ba114509ead0e02ec58fbe45",
+  "baseline": {
+    "command": "<lane-root>/.venv/bin/python -m pytest -p no:cacheprovider -q scripts/deploy/tests/test_sync_demo_preflight.py scripts/deploy/tests/test_dw2_syncdemo_1.py scripts/deploy/tests/test_dw2_syncrestore_1.py --durations=15",
+    "result": "pass - 22 passed, 0 failed in 11.87s",
+    "slowest_tests": [
+      {
+        "test": "test_empty_plugin_zip_skips_artifact_even_when_dist_has_zips",
+        "call_seconds": 2.29
+      },
+      {
+        "test": "test_no_plugin_artifact_skips_first_burst_assertion",
+        "call_seconds": 2.12
+      },
+      {
+        "test": "test_gpu_preflight_runs_once_when_opted_in",
+        "call_seconds": 0.81
+      },
+      {
+        "test": "test_caddy_promote_preserves_the_mounted_inode",
+        "call_seconds": 0.64
+      },
+      {
+        "test": "test_unset_plugin_zip_without_dist_zip_skips_freshness_check",
+        "call_seconds": 0.63
+      },
+      {
+        "test": "test_describe_bounds_are_forwarded_to_remote_bootstrap",
+        "call_seconds": 0.59
+      },
+      {
+        "test": "test_unset_plugin_zip_auto_discovers_newest_dist_zip",
+        "call_seconds": 0.55
+      },
+      {
+        "test": "test_gpu_preflight_staging_is_writable_by_oci_user",
+        "call_seconds": 0.4
+      },
+      {
+        "test": "test_explicit_plugin_zip_ignores_dist_zips",
+        "call_seconds": 0.39
+      },
+      {
+        "test": "test_gpu_preflight_is_off_by_default",
+        "call_seconds": 0.38
+      },
+      {
+        "test": "test_failed_container_checksum_takes_the_force_recreate_path",
+        "call_seconds": 0.31
+      },
+      {
+        "test": "test_failed_caddy_copy_restores_the_previous_file",
+        "call_seconds": 0.2
+      },
+      {
+        "test": "test_promoted_caddyfile_is_validated_after_the_in_place_copy",
+        "call_seconds": 0.17
+      },
+      {
+        "test": "test_auto_discovered_zip_fails_closed[missing]",
+        "call_seconds": 0.11
+      },
+      {
+        "test": "test_failed_gpu_preflight_aborts_before_demo_compose_scp",
+        "call_seconds": 0.1
+      }
+    ]
+  },
+  "import_origin": "Skipped: report-only shell/test lane owns no importable Python package; root pyproject.toml sets tool.uv.package=false.",
+  "items": [
+    {
+      "path": "scripts/deploy/tests/test_sync_demo_preflight.py",
+      "claimed": "REWRITE",
+      "ruling": "MODIFY",
+      "action": "REWRITE",
+      "tests": [
+        "test_no_plugin_artifact_skips_first_burst_assertion"
+      ],
+      "target": null,
+      "seam": "scripts/deploy/sync-demo.sh:CLI (PATH ssh/curl)",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/test_sync_demo_preflight.py"
+          ],
+          "do": "Narrow rewrite: retain the existing normal bash sync-demo.sh invocation and execution of its emitted smoke body. Remove BOOTSTRAP_RAN and conditional shell-text assertions; retain successful exit and the observed SKIP message, add absence of first-burst PASS/FAIL and bootstrap invocation, and record curl responses proving the smoke ran. Do not expand this case into a full bootstrap simulator. Expected suite time: approximately unchanged from the measured 2.12s call; no claimed saving.",
+          "red_proof": "Set BOOTSTRAP_RAN=1 for the no-artifact path, or remove/invert the first-burst conditional: missing FIRST_BURST_COUNT must cause a failure rather than SKIP. Show the behavioral test red and restored code green; harmless shell spelling changes must stay green.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_sync_demo_preflight.py:237-244 - CLI already executes emitted smoke through fake ssh and observes success/SKIP; only two assertions pin text.",
+        "scripts/deploy/tests/test_sync_demo_preflight.py:85-88 - execute_remote_smoke executes actual received stdin, not a source-extracted body.",
+        "scripts/deploy/tests/test_sync_demo_preflight.py:177-184 - public bash command invocation has a 30s timeout.",
+        "scripts/deploy/sync-demo.sh:443-452 - missing bootstrap count fails only when bootstrap ran; no-artifact branch emits SKIP."
+      ],
+      "canon": [
+        "DBG-02",
+        "TEST-16",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "scripts/deploy/tests/test_sync_demo_preflight.py",
+      "claimed": "REWRITE",
+      "ruling": "MODIFY",
+      "action": "REWRITE",
+      "tests": [
+        "test_bootstrap_required_keys_are_all_declared_in_demo_template"
+      ],
+      "target": null,
+      "seam": "infra/oci/demo/bootstrap-wp.sh:CLI (DEMO_DIR; PATH docker)",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/test_sync_demo_preflight.py"
+          ],
+          "do": "Replace required-loop regex parsing with direct execution of the whole bootstrap-wp.sh CLI using its existing DEMO_DIR override. Write secrets/.env from the real .env.example, filling values only for keys actually declared in that artifact; never synthesize missing keys from a hardcoded required list. A PATH docker fake records first invocation then exits with a unique sentinel status, proving template inputs passed validation without running WordPress or waiting. Parameterize removal/blanking of each of the seven current required inputs and require exit 2, key-specific diagnostics, and no docker invocation. Retain rendered-artifact checks that each WP_CI key is declared exactly once; stop counting occurrences in bootstrap source. Expected suite time: a small increase for eight short shell starts, no remote/docker work or sleeps; measure actual delta.",
+          "red_proof": "Delete any required key from the template (including an admin key or WORDPRESS_CONFIG_EXTRA): the complete-template sentinel case must fail before docker. Remove validation for any current required key: its omitted/blank input case must fail. Duplicate a WP_CI template assignment: the artifact uniqueness assertion must fail. These cover template coverage and required-key validation separately.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_sync_demo_preflight.py:353-369 - reads source, regex-parses a private loop, compares template declarations and pins CI names occurring once in the loop.",
+        "infra/oci/demo/bootstrap-wp.sh:25-26 - existing DEMO_DIR and COMPOSE_FILE overrides support isolated CLI execution.",
+        "infra/oci/demo/bootstrap-wp.sh:53-78 - real script parses dotenv, diagnoses missing required input, and exits 2.",
+        "infra/oci/demo/bootstrap-wp.sh:200-201 - first docker boundary follows input validation and precedes readiness waits.",
+        "infra/oci/demo/.env.example:53-73 - template contains all seven inputs with nonempty example values.",
+        "scripts/deploy/tests/test_sync_demo_preflight.py:390-396 - a neighboring artifact test already checks CI declaration uniqueness; retain or reuse that guard, rather than a source-loop count."
+      ],
+      "canon": [
+        "DBG-02",
+        "TEST-12",
+        "TEST-16",
+        "TEST-04",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "scripts/deploy/tests/test_sync_demo_preflight.py",
+      "claimed": "REWRITE",
+      "ruling": "CONFIRM",
+      "action": "REWRITE",
+      "tests": [
+        "test_caddy_promote_preserves_the_mounted_inode"
+      ],
+      "target": null,
+      "seam": "scripts/deploy/sync-demo.sh:CLI (PATH ssh/scp/docker)",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/test_sync_demo_preflight.py"
+          ],
+          "do": "Extend _run_sync with an opt-in fake remote filesystem: fake ssh executes the actual received shell commands/stdin without extracting bodies or selecting script sections; fake scp copies actual source files. Map only transport absolute paths (/opt/acx-backend and remote /tmp destinations) into tmp_path; preserve stdin shell logic verbatim apart from these filesystem mappings. Keep all existing default harness modes unchanged. Preseed demo/secrets/.env and the old Caddyfile. Fake docker/network/systemctl/sudo/curl only at external-tool boundaries; use real filesystem copy/checksum operations, and an immediate fake sleep. Docker network ls must emit acx-demo-net; checksum responses model matching/stale/unreadable mounted configs; curl models baseline and smoke HTTP responses. Propagate remote exit status. Never fake restore, promotion, or smoke classifiers. Rewrite this case to assert old/new st_ino equality and replacement bytes after successful promotion. Parameterize matching checksum, differing checksum, and checksum-tool failure: observe reload only for a match and force-recreate for divergence/failure. Record docker validation mounts and contents at call time. Observe successful smoke with a transient post-promote API 5xx followed by 200 (immediate sleep), plus a persistent regression returning failure. No source/snippet assertions. Expected suite time: increases from 0.64s to several shell starts and local smoke probes; no wall-clock retries, measure rather than promise a speedup.",
+          "red_proof": "Mutate in-place promotion to mv: inode assertion must fail. Bypass checksum divergence recovery: stale/unreadable cases must fail. Remove matching-config reload: match case must fail. Remove confirming health resample or suppress persistent-regression failure: corresponding smoke cases must fail. Restore each mutation and show green.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_sync_demo_preflight.py:418-434 - normal CLI runs but fake ssh only logs Caddy bodies; assertions pin cat/mv/checksum/recreate/reload text.",
+        "scripts/deploy/tests/test_sync_demo_preflight.py:74-91 - existing PATH fake ssh is an external transport substitution point.",
+        "scripts/deploy/sync-demo.sh:248-280 - promotion and restore execute real filesystem writes, staged/live validations, then cleanup.",
+        "scripts/deploy/sync-demo.sh:301-308 - checksum divergence recreates; matching config reloads.",
+        "scripts/deploy/sync-demo.sh:389-408 - transient health failure gets one confirmation; persistent healthy-baseline regression fails."
+      ],
+      "canon": [
+        "DBG-02",
+        "TEST-12",
+        "TEST-16",
+        "TEST-04",
+        "TEST-15",
+        "TEST-19",
+        "TEST-08",
+        "TEST-24",
+        "REF-12"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "scripts/deploy/tests/test_dw2_syncdemo_1.py",
+      "claimed": "REWRITE",
+      "ruling": "MODIFY",
+      "action": "REWRITE",
+      "tests": [
+        "test_failed_caddy_copy_restores_the_previous_file",
+        "test_promoted_caddyfile_is_validated_after_the_in_place_copy",
+        "test_failed_container_checksum_takes_the_force_recreate_path"
+      ],
+      "target": "scripts/deploy/tests/test_sync_demo_preflight.py",
+      "seam": "scripts/deploy/sync-demo.sh:CLI (PATH ssh/scp/docker/cat)",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/test_dw2_syncdemo_1.py",
+            "scripts/deploy/tests/test_sync_demo_preflight.py"
+          ],
+          "do": "Extend _run_sync with an opt-in fake remote filesystem: fake ssh executes the actual received shell commands/stdin without extracting bodies or selecting script sections; fake scp copies actual source files. Map only transport absolute paths (/opt/acx-backend and remote /tmp destinations) into tmp_path; preserve stdin shell logic verbatim apart from these filesystem mappings. Keep all existing default harness modes unchanged. Preseed demo/secrets/.env and the old Caddyfile. Fake docker/network/systemctl/sudo/curl only at external-tool boundaries; use real filesystem copy/checksum operations, and an immediate fake sleep. Docker network ls must emit acx-demo-net; checksum responses model matching/stale/unreadable mounted configs; curl models baseline and smoke HTTP responses. Propagate remote exit status. Never fake restore, promotion, or smoke classifiers. Reuse the preflight command harness introduced by the inode rewrite. Move all three names to scripts/deploy/tests/test_sync_demo_preflight.py and delete the empty review-wave module. Targets: scripts/deploy/tests/test_sync_demo_preflight.py::test_failed_caddy_copy_restores_the_previous_file, scripts/deploy/tests/test_sync_demo_preflight.py::test_promoted_caddyfile_is_validated_after_the_in_place_copy, scripts/deploy/tests/test_sync_demo_preflight.py::test_failed_container_checksum_takes_the_force_recreate_path. This is rewrite plus MOVE, not MERGE: there is no existing same-seam duplicate. Inject a partial Caddyfile.new read failure via external cat; assert sync exits nonzero and exact prior bytes are restored. Observe two docker validations with the staged and live mounts and replacement bytes at live-validation invocation, including a rejected live validation that restores prior bytes. Inject failed container checksum and assert command success plus force-recreate before health recovery. Preserve these distinct failure cases even if they share fixtures. Expected suite time: likely increase from 0.68s combined direct-body calls to full command executions; immediate sleep keeps added work bounded, measure delta.",
+          "red_proof": "Disable restore after partial staged copy: old-byte assertion fails. Omit live validation or run it before promotion: recorded validations/content assertion fails; rejecting the live validation must yield nonzero with prior bytes restored. Let failed checksum abort or take reload instead: public success/recreate assertion fails.",
+          "after": [],
+          "depends_on": "scripts/deploy/tests/test_sync_demo_preflight.py::test_caddy_promote_preserves_the_mounted_inode harness rewrite; across-item dependency, not an intra-item step index"
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_dw2_syncdemo_1.py:14-19 - parses a private heredoc and rewrites remote directory.",
+        "scripts/deploy/tests/test_dw2_syncdemo_1.py:63-70 - runs sliced remote body, bypassing sync-demo sequencing and exit propagation.",
+        "scripts/deploy/tests/test_dw2_syncdemo_1.py:75-89 - partial staged-copy failure must restore prior bytes.",
+        "scripts/deploy/tests/test_dw2_syncdemo_1.py:92-108 - second validation mounts live file after copy; not redundant with rollback test.",
+        "scripts/deploy/tests/test_dw2_syncdemo_1.py:111-123 - failed checksum must still force recreate successfully.",
+        "scripts/deploy/tests/test_sync_demo_preflight.py:427-434 - target currently checks emitted text, not the same behavioral seam; merge criteria fail.",
+        "Repository rg scan of *.py, *.mk, Makefile, *.json, *.toml excluding docs/workbay/reports found no references to test_dw2_syncdemo_1 or test_dw2_syncrestore_1; no pins to update."
+      ],
+      "canon": [
+        "DBG-02",
+        "TEST-12",
+        "TEST-16",
+        "TEST-15",
+        "TEST-19",
+        "TEST-08",
+        "TEST-24",
+        "REF-10"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "scripts/deploy/tests/test_dw2_syncrestore_1.py",
+      "claimed": "REWRITE",
+      "ruling": "MODIFY",
+      "action": "REWRITE",
+      "tests": [
+        "test_failed_caddyfile_restore_retains_rollback_copy"
+      ],
+      "target": "scripts/deploy/tests/test_sync_demo_preflight.py",
+      "seam": "scripts/deploy/sync-demo.sh:CLI (PATH ssh/scp/docker/cat)",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/test_dw2_syncrestore_1.py",
+            "scripts/deploy/tests/test_sync_demo_preflight.py"
+          ],
+          "do": "Reuse the command harness from the inode rewrite. Move this case to scripts/deploy/tests/test_sync_demo_preflight.py::test_failed_caddyfile_restore_retains_rollback_copy and delete the empty review-wave module; no same-seam duplicate exists, so this is rewrite plus MOVE rather than MERGE. Through the full sync command, force live validation to reject the promoted file, then make external cat partially read/fail only on the rollback copy. Assert nonzero exit, retained-path diagnostic, and exact original bytes in the still-existing backup at that path; do not require the partially overwritten live file to equal prior bytes when restoration itself fails. Use TMPDIR inside the fake remote tree, retain the backup until assertions finish, and show normal restore success is covered by the staged-copy/live-validation recovery cases. Expected suite time: increases from one tiny extracted-function call to one command run; no waits; measure actual delta.",
+          "red_proof": "Mutate restore failure branch to delete the backup, remove the retained-path diagnostic, or never attempt restoration after validation failure: retained-file/diagnostic assertions must fail. Mutate backup creation to capture replacement bytes: prior-content assertion must fail. Successful restore may delete its backup; failed restore must retain it.",
+          "after": [],
+          "depends_on": "scripts/deploy/tests/test_sync_demo_preflight.py::test_caddy_promote_preserves_the_mounted_inode harness rewrite; across-item dependency, not an intra-item step index"
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_dw2_syncrestore_1.py:15-20 - parses the private remote heredoc.",
+        "scripts/deploy/tests/test_dw2_syncrestore_1.py:27-31 - regex-extracts restore_caddyfile from that already sliced body.",
+        "scripts/deploy/tests/test_dw2_syncrestore_1.py:54-61 - synthesizes function setup and directly invokes restore, bypassing callers.",
+        "scripts/deploy/tests/test_dw2_syncrestore_1.py:73-77 - protects diagnostic and original-byte backup availability, not successful restoration of the live file.",
+        "scripts/deploy/sync-demo.sh:253-259 - failed restore retains rollback file and returns failure.",
+        "scripts/deploy/sync-demo.sh:270-276 - rejecting live validation naturally invokes restore through sync-demo.",
+        "Repository pin scan found no matching source-module references outside excluded report artifacts."
+      ],
+      "canon": [
+        "DBG-02",
+        "TEST-12",
+        "TEST-16",
+        "TEST-15",
+        "TEST-19",
+        "REF-10",
+        "TEST-08"
+      ],
+      "risk": "high"
+    }
+  ],
+  "verification": {
+    "command": "<lane-root>/.venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+    "result": "pass - 26 passed, 0 failed in 5.40s"
+  },
+  "scope": "Adjudication only; production/tests unchanged. No mutation red proofs executed in this report-only lane; plans require implementation lane evidence."
+}

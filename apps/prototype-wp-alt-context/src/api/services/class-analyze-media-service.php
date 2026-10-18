@@ -170,6 +170,7 @@ class AnalyzeMediaService {
 			'idempotency_key' => $idempotency_key,
 			'request' => wp_json_encode(
 				array(
+					'idempotency_key' => $idempotency_key,
 					'tenant_id' => $this->host->get_tenant_id(),
 					'site_url'  => get_site_url(),
 					'user_id'   => get_current_user_id(),

@@ -7,7 +7,9 @@
     ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-INITIAL-SOURCE.md",
     "apps/prototype-description-service/scripts/eval_harness/bakeoff.py"
   ],
-  "commits": [],
+  "commits": [
+    "6b6ce88ca0d899a1db0a058cfbdc6d198ffef91f"
+  ],
   "findings": [],
   "tests": [
     {

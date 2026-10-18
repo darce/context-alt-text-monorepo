@@ -74,7 +74,7 @@ describe('ClusterPreview', () => {
   });
 });
 
-describe('ClusterPreview per-image crop', () => {
+describe('ClusterPreview representative portrait', () => {
   const reference = {
     identity_id: 'reference',
     media_id: 202,
@@ -86,15 +86,15 @@ describe('ClusterPreview per-image crop', () => {
   it.each([
     { media_url: 'https://example.test/this-image.jpg', attachment_url: undefined as string | undefined },
     { media_url: null, attachment_url: 'https://example.test/this-image.jpg' },
-  ])('crops this row when it has bbox and a media url even if representativeFace is complete', (urls) => {
+  ])('uses the same representative portrait even when this row has its own crop', (urls) => {
     const member = buildRepresentative({
       ...urls,
       bbox: rowBbox,
       representative_face: reference,
     });
     render(<ClusterPreview representative={member} representativeFace={reference} memberCount={1} />);
-    expect(screen.getByTestId('face-thumbnail')).toHaveAttribute('data-url', 'https://example.test/this-image.jpg');
-    expect(screen.getByTestId('face-thumbnail')).toHaveAttribute('data-bbox', JSON.stringify(rowBbox));
+    expect(screen.getByTestId('face-thumbnail')).toHaveAttribute('data-url', reference.media_url);
+    expect(screen.getByTestId('face-thumbnail')).toHaveAttribute('data-bbox', JSON.stringify(reference.bbox));
   });
 
   it.each([undefined, null, { ...reference, bbox: null }, { ...reference, media_url: null }])(
@@ -108,7 +108,7 @@ describe('ClusterPreview per-image crop', () => {
   );
 
   it.each([reference, { ...reference, media_url: null, attachment_url: 'https://example.test/reference.jpg' }])(
-    'falls back to representativeFace only when the row has no bbox',
+    'keeps the representative portrait when the row has no bbox',
     (representative_face) => {
       render(
         <ClusterPreview
@@ -126,7 +126,7 @@ describe('ClusterPreview per-image crop', () => {
     },
   );
 
-  it('does not substitute representativeFace when the row has a bbox but no media url', () => {
+  it('uses the representative portrait when the row has a bbox but no media url', () => {
     render(
       <ClusterPreview
         representative={buildRepresentative({ media_url: null, thumb_url: null })}
@@ -134,11 +134,8 @@ describe('ClusterPreview per-image crop', () => {
         memberCount={1}
       />,
     );
-    expect(screen.queryByTestId('face-thumbnail')).not.toBeInTheDocument();
-    expect(screen.getByRole('img', { name: MISSING_REPRESENTATIVE_LABEL })).toHaveAttribute(
-      'data-avatar-state',
-      'data-missing',
-    );
+    expect(screen.getByTestId('face-thumbnail')).toHaveAttribute('data-url', reference.media_url);
+    expect(screen.getByTestId('face-thumbnail')).toHaveAttribute('data-bbox', JSON.stringify(reference.bbox));
   });
 
   it('uses the member attachment URL when its media URL is absent', () => {

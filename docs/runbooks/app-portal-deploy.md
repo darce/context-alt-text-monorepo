@@ -677,8 +677,23 @@ manual back-out target with copies of the still-live successful frontend.
 Failed restore retains the journal and all snapshot/absence-marker inputs for
 retry; use [interrupted activation recovery](#recover-an-interrupted-frontend-activation)
 before attempting manual back-out. The manual block holds the same bounded
-`activation.journal.lock` as deploy and refuses any journal, including a dangling
-symlink, before selecting snapshots or mutating live/rollback state.
+`activation.journal.lock` as deploy and refuses any retained journal, including a
+dangling symlink, before selecting snapshots or mutating live/rollback state.
+Candidate Compose resolution and network selection finish before any journal,
+rollback-set, or live write. A pure preflight refusal needs no recovery.
+After admission, the block publishes a durable version-2 journal and a separate
+copy of the selected target set before the first live write. The original
+successful sets remain intact. If snapshot copying fails, the native
+`snapshotting` recovery cleans only the partial copy; rerun manual back-out.
+If any live write, recreation, readiness probe, or reload fails, leave the
+journal in place and use the exact interrupted activation recovery invocation
+above with `FRONTEND_DIST` unset. Its native recovery finishes restoring this
+back-out target and removes only the duplicate set; the expected missing-build
+refusal then proves no replacement apply started. Verify the restored state
+before retrying manual back-out. Do not delete or bypass the journal.
+Overlay replacement is staged, synced, and renamed in the same directory, so an
+interrupted copy cannot leave malformed live YAML blocking native recovery.
+Its temporary file uses the native journal cleanup prefix.
 On the VM, manual restore selects only
 `Caddyfile.<digits>` names and sorts by the numeric filename suffix, never mtime
 (`cp -a` preserves the live file's older mtime). It prints the chosen timestamp
@@ -702,6 +717,7 @@ first deployment with both artifacts absent, and either mixed prior state:
 ```bash
 (
   set -euo pipefail
+  umask 077
   # Reject symlinked parents for every source and destination before any mutation.
   parent=/opt/acx-backend/app/rollback
   while [ "$parent" != / ]; do
@@ -814,28 +830,91 @@ first deployment with both artifacts absent, and either mixed prior state:
   fi
   source "$helper"
   trap 'edge_compose_cleanup' EXIT
+  # Admit the rollback inputs, never the current live overlay. Keep this
+  # generation (or the unchanged legacy snapshot argv) through the last reload.
+  cd /opt/acx-backend
+  edge_compose_args docker-compose.caddy.yml "$overlay_snapshot"
+  compose=(docker compose "${EDGE_COMPOSE_ARGV[@]}")
+  candidate_bind="$(edge_bounded_run "${compose[@]}" config --format json 9>&- | \
+    jq -er '[.services.caddy.volumes[]? | select(.target == "/etc/caddy/Caddyfile")] |
+      if length == 1 and .[0].type == "bind" then .[0].source | select(type == "string")
+      else error("expected one Caddyfile bind mount") end')"
+  if [ "$candidate_bind" != /opt/acx-backend/Caddyfile ]; then
+    echo 'STOP: candidate Caddyfile bind source differs from live path; refusing restore' >&2
+    exit 1
+  fi
+
+  # The actual app-portal.sh v2 recovery reader consumes this separate target
+  # set. Never point it at the original successful set: recovery deletes its
+  # own set after reload. Intent precedes even partial snapshot copies.
+  rollback=/opt/acx-backend/app/rollback
+  journal=/opt/acx-backend/app/activation.journal
+  resume_ts="$(date +%s)"
+  while :; do
+    collision=0
+    for prefix in Caddyfile www docker-compose.app.yml absent-www absent-overlay; do
+      if [ -e "$rollback/$prefix.$resume_ts" ] || [ -L "$rollback/$prefix.$resume_ts" ]; then
+        collision=1
+      fi
+    done
+    [ "$collision" -eq 1 ] || break
+    resume_ts=$((resume_ts + 1))
+  done
+  resume_caddy="$rollback/Caddyfile.$resume_ts"
+  resume_www="$rollback/www.$resume_ts"
+  resume_overlay="$rollback/docker-compose.app.yml.$resume_ts"
+  journal_tmp="$(mktemp "$journal.new.XXXXXXXX")"
+  overlay_stage=""
+  trap 'edge_compose_cleanup; rm -f -- "$journal_tmp"; if [ -n "$overlay_stage" ]; then rm -f -- "$overlay_stage"; fi' EXIT
+  backout_journal() {
+    printf 'version=2\nphase=%s\ncaddyfile=%s\napp_www=%s\noverlay=%s\ncaddy_compose=%s\nrollback_caddy=%s\nrollback_www=%s\nrollback_overlay=%s\n' \
+      "$1" /opt/acx-backend/Caddyfile /opt/acx-backend/app/www \
+      /opt/acx-backend/app/docker-compose.app.yml /opt/acx-backend/docker-compose.caddy.yml \
+      "$resume_caddy" "$resume_www" "$resume_overlay" >"$journal_tmp"
+    edge_bounded_run sync "$journal_tmp"
+    edge_bounded_run mv -f -- "$journal_tmp" "$journal"
+    edge_bounded_run sync /opt/acx-backend/app
+  }
+  backout_journal snapshotting
+  cp -a -- "$snapshot" "$resume_caddy"
+  if [ "$restore_www" -eq 1 ]; then
+    cp -a -- "$www_snapshot" "$resume_www"
+  else
+    cp -- "$www_absent" "$rollback/absent-www.$resume_ts"
+    resume_www=-
+  fi
+  if [ "$restore_overlay" -eq 1 ]; then
+    cp -a -- "$overlay_snapshot" "$resume_overlay"
+  else
+    cp -- "$overlay_absent" "$rollback/absent-overlay.$resume_ts"
+    resume_overlay=-
+  fi
+  # Flush snapshot data and directory entries before publishing prepared.
+  edge_bounded_run sync -f "$rollback"
+  backout_journal prepared
   cp -- "$snapshot" /opt/acx-backend/Caddyfile
+  edge_bounded_run sync /opt/acx-backend/Caddyfile
+  backout_journal caddy_promoted
   rm -rf -- /opt/acx-backend/app/www
   if [ "$restore_www" -eq 1 ]; then
     cp -a -- "$www_snapshot" /opt/acx-backend/app/www
   fi
+  edge_bounded_run sync -f /opt/acx-backend/app
+  backout_journal www_promoted
   if [ "$restore_overlay" -eq 1 ]; then
-    cp -- "$overlay_snapshot" /opt/acx-backend/app/docker-compose.app.yml
+    # Native recovery validates the installed overlay before restoration. A
+    # partial copy must never put malformed YAML on that admission path.
+    overlay_stage="$(mktemp "$journal.new.overlay.XXXXXXXX")"
+    cp -- "$overlay_snapshot" "$overlay_stage"
+    edge_bounded_run sync "$overlay_stage"
+    edge_bounded_run mv -f -- "$overlay_stage" /opt/acx-backend/app/docker-compose.app.yml
+    overlay_stage=""
   else
     rm -f -- /opt/acx-backend/app/docker-compose.app.yml
   fi
-  cd /opt/acx-backend
-  edge_compose_args docker-compose.caddy.yml /opt/acx-backend/app/docker-compose.app.yml
-  compose=(docker compose "${EDGE_COMPOSE_ARGV[@]}")
-  if [ "${EDGE_COMPOSE_ARGV[1]}" != docker-compose.caddy.yml ]; then
-    edge_bounded_run "${compose[@]}" up -d --force-recreate --no-deps caddy 9>&-
-  elif [ "$restore_overlay" -eq 1 ]; then
-    # Unmarked legacy base: the helper selected these same raw files.
-    edge_bounded_run docker compose -f docker-compose.caddy.yml \
-      -f /opt/acx-backend/app/docker-compose.app.yml up -d --force-recreate --no-deps caddy 9>&-
-  else
-    edge_bounded_run docker compose -f docker-compose.caddy.yml up -d --force-recreate --no-deps caddy 9>&-
-  fi
+  edge_bounded_run sync -f /opt/acx-backend/app
+  backout_journal overlay_promoted
+  edge_bounded_run "${compose[@]}" up -d --force-recreate --no-deps caddy 9>&-
   ready=0
   for attempt in 1 2 3 4 5 6 7 8 9 10; do
     if edge_bounded_run "${compose[@]}" exec -T caddy wget -q -T 1 -O /dev/null \
@@ -851,31 +930,32 @@ first deployment with both artifacts absent, and either mixed prior state:
     echo 'STOP: Caddy admin endpoint not ready after 10 attempts; restored files retained; refusing reload; investigate Caddy startup before retry' >&2
     exit 1
   fi
-  if [ "${EDGE_COMPOSE_ARGV[1]}" != docker-compose.caddy.yml ]; then
-    edge_bounded_run "${compose[@]}" exec -T caddy \
-      caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 9>&-
-  elif [ "$restore_overlay" -eq 1 ]; then
-    edge_bounded_run docker compose -f docker-compose.caddy.yml \
-      -f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy \
-      caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 9>&-
-  else
-    edge_bounded_run docker compose -f docker-compose.caddy.yml exec -T caddy \
-      caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 9>&-
-  fi
+  edge_bounded_run "${compose[@]}" exec -T caddy \
+    caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 9>&-
+  # Durable completion precedes cleanup; the native restored phase can retry
+  # a partial cleanup without reading already removed target copies.
+  backout_journal restored
+  for prefix in Caddyfile www docker-compose.app.yml absent-www absent-overlay; do
+    rm -rf -- "$rollback/$prefix.$resume_ts"
+  done
+  edge_bounded_run sync "$rollback"
+  rm -f -- "$journal"
+  edge_bounded_run sync /opt/acx-backend/app
 )
 ```
 
 The block reapplies the prior compose overlay and reloads Caddy only after every
-guard, the full restore, and bounded admin readiness polling succeed. With a prior
-overlay, that overlay participates in the helper-selected generation used for
-recreation, probing, and reload. The explicit raw-file branches apply only when
-an unmarked legacy base is returned unchanged by the helper. The marked base
-uses its single private resolved generation throughout; missing staging/prod
-Aura networks never cause sibling stacks or networks to be created. As in
-fix-forward, it attempts the container-local admin probe up to ten times with a
-one-second request timeout and at most nine one-second pauses. Exhaustion prints
-STOP and leaves the restored files in place without reloading Caddy; investigate
-Caddy startup before retrying, and do not declare recovery verified.
+guard, the full restore, and bounded admin readiness polling succeed. The
+candidate snapshot overlay participates in one selected generation used for
+recreation, probing, and reload, including a legacy overlay's `name:` project.
+Snapshot input paths remain available after live overlay restoration. A marked
+base uses its private resolved generation; missing staging/prod Aura networks
+never cause sibling stacks or networks to be created. The block attempts the
+container-local admin probe up to ten times with a one-second request timeout
+and at most nine one-second pauses. Exhaustion prints STOP and retains the
+journal and target copies without reloading. A successful reload durably records
+`restored`, syncs duplicate-set cleanup, then clears the journal last. Any
+interruption during that cleanup resumes through the native `restored` phase.
 
 If there was no prior overlay (first deployment), automatic rollback uses its
 activation journal's recorded absence. Manual rollback uses the durable validated

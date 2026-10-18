@@ -1,0 +1,27 @@
+{
+  "at": 1792291980.564532,
+  "stage": {
+    "sha": "6633f7026b99fa79a110c266194098a50ca94e01",
+    "tree": "34db5ccace0a290843492d1584ecbcb7b2bc77dd",
+    "base": "467a2233a146828ef8a6a20a6a81a05742b1094e",
+    "branch": "feature/bakerounds-20261017-raw-auth-source-authored",
+    "changed_files": [
+      ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-INITIAL-SOURCE.json",
+      ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-INITIAL-SOURCE.md",
+      "apps/prototype-description-service/scripts/eval_harness/bakeoff.py"
+    ]
+  },
+  "result_status": "IMPLEMENTED_PENDING_INDEPENDENT_SOURCE_REVIEW",
+  "source_sha": "7f27acf31569672349536a0a312cc33f6a29e304",
+  "verified_scope": [
+    "apps/prototype-description-service/scripts/eval_harness/bakeoff.py",
+    ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-INITIAL-SOURCE.json",
+    ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-INITIAL-SOURCE.md"
+  ],
+  "readonly": [
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py",
+    "apps/prototype-description-service/scripts/eval_harness/remote_client.py"
+  ],
+  "independent_source_review_pending": true,
+  "coordinator_intake_path_correction": "firstreadonlyanchor scene/remote_client.py didnotexist; actualgraphverified scripts/eval_harness/remote_client.py; firstintake failedbeforestagewrite, retriedonlycorrectmetadataanchor/no source/test/modelrerun"
+}

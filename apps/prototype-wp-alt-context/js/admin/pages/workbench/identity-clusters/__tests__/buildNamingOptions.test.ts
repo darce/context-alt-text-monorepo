@@ -12,11 +12,11 @@ import {
 
 describe('buildNamingOptions', () => {
   const roster = [
-    { id: 1, name: 'Alice' },
+    { id: 1, name: 'Alice', person_uuid: 'backend-alice' },
     { id: 2, name: 'Bob' },
   ];
   const clusters = [
-    { id: 'c-alice', label: 'alice', identity_count: 4 },
+    { id: 'c-alice', label: 'alice', identity_count: 4, person_uuid: 'backend-alice' },
     { id: 'c-carol', label: 'Carol', identity_count: 2 },
     { id: 'c-auto', label: 'cluster-1234', identity_count: 1 },
   ];
@@ -50,10 +50,10 @@ describe('buildNamingOptions', () => {
     expect(options[1]?.source).toBe('cluster');
   });
 
-  it('dedupes case-insensitively preferring the person entry (canonical casing)', () => {
+  it('dedupes by the existing person binding and uses canonical casing', () => {
     const { options } = buildNamingOptions({
-      rosterEntries: [{ id: 1, name: 'Bob' }],
-      labelMatches: [{ id: 'c-bob', label: 'bob', identity_count: 7 }],
+      rosterEntries: [{ id: 1, name: 'Bob', person_uuid: 'backend-bob' }],
+      labelMatches: [{ id: 'c-bob', label: 'bob', identity_count: 7, person_uuid: 'backend-bob' }],
       limit: null,
     });
 
@@ -75,8 +75,8 @@ describe('buildNamingOptions', () => {
       labelMatches: [{ id: 'mirrored', label: 'alex rivera' }],
       filter: 'Alex',
     });
-    expect(options.map(option => option.value)).toEqual(['person:41', 'person:42']);
-    expect(options.map(option => option.label)).toEqual(['Alex Rivera', 'ALEX RIVERA']);
+    expect(options.map(option => option.value)).toEqual(['person:41', 'person:42', 'cluster:mirrored']);
+    expect(options.map(option => option.label)).toEqual(['Alex Rivera', 'ALEX RIVERA', 'alex rivera']);
     expect(new Set(collisionsByLabel.get('alex rivera')?.map(option => option.value))).toEqual(
       new Set(['person:41', 'person:42', 'cluster:mirrored']),
     );
@@ -114,7 +114,7 @@ describe('buildNamingOptions', () => {
       limit: null,
     });
 
-    expect(options).toHaveLength(1);
+    expect(options).toHaveLength(2);
     const collisions = findCollisionsForLabel(collisionsByLabel, 'BOB');
     expect(collisions).toHaveLength(2);
     expect(collisions.map((option) => option.source).sort()).toEqual(['cluster', 'person']);

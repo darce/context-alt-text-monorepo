@@ -15,6 +15,7 @@ import {
   type NamingOption,
   unwrapClusterOptionId,
   namingOptionValue,
+  canonicalPersonOption,
 } from './buildNamingOptions';
 import { useClusterSuggestionsLoader, type ClusterSuggestionsLoaderOptions } from './useClusterSuggestionsLoader';
 import type { ProjectedSuggestion } from './suggestionProjection';
@@ -62,13 +63,12 @@ export const selectClusterSuggestions = ({
   labelInput?: string;
 }): ComboboxOption[] => {
   const result: ComboboxOption[] = [];
-  /** Cluster labels only — persons never suppress a same-named cluster (FIX-5). */
-  const seenClusterLabels = new Set<string>();
+  const seenValues = new Set<string>();
   const searchLower = labelInput.toLowerCase().trim();
 
   // 1. Identity-based suggestions (filtered by current input) — server order, no re-sort.
   (identityProjection ?? []).forEach((projected) => {
-    const normalizedLabel = projected.label?.trim() ?? '';
+    const normalizedLabel = (projected.canonicalPerson?.name ?? projected.label)?.trim() ?? '';
     if (!normalizedLabel) {
       return;
     }
@@ -80,11 +80,19 @@ export const selectClusterSuggestions = ({
     if (searchLower && !key.includes(searchLower)) {
       return;
     }
-    if (seenClusterLabels.has(key)) {
+    const value = projected.canonicalPerson
+      ? namingOptionValue('person', projected.canonicalPerson.rosterEntryId)
+      : namingOptionValue('cluster', projected.clusterId);
+    if (seenValues.has(value)) {
       return;
     }
 
-    seenClusterLabels.add(key);
+    seenValues.add(value);
+    if (projected.canonicalPerson) {
+      // A manual roster choice carries no ML suggestion/rejection metadata.
+      result.push({ ...canonicalPersonOption(projected.canonicalPerson), group: NAMING_GROUP_SUGGESTED });
+      return;
+    }
     result.push({
       value: namingOptionValue('cluster', projected.clusterId),
       label: normalizedLabel,
@@ -97,28 +105,17 @@ export const selectClusterSuggestions = ({
     });
   });
 
-  // 2. Union naming options: person rows always render; cluster rows dedupe vs Suggested (FIX-5).
+  // 2. Union naming options: suppress only an already represented identity.
   (namingOptions ?? []).forEach((option) => {
     const key = option.label.toLowerCase();
     if (searchLower && !key.includes(searchLower)) {
       return;
     }
 
-    if (option.source === 'person') {
-      result.push({
-        value: option.value,
-        label: option.label,
-        group: NAMING_GROUP_ALL_LABELS,
-        source: option.source,
-        identityCount: option.identityCount,
-      });
+    if (seenValues.has(option.value)) {
       return;
     }
-
-    if (seenClusterLabels.has(key)) {
-      return;
-    }
-    seenClusterLabels.add(key);
+    seenValues.add(option.value);
     result.push({
       value: option.value,
       label: option.label,

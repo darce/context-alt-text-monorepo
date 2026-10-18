@@ -207,10 +207,9 @@ def test_manual_route_admission_preserves_protected_state(tmp_path: Path, route:
     result = subprocess.run(["bash", "-c", commands], env=env, capture_output=True, text=True, timeout=30)
     assert result.returncode != 0, result.stdout + result.stderr
     assert not record.exists()
-    # Inventory failure can occur after manual file restore; journal/helper
-    # admission must always precede every protected-state mutation.
-    if reason != "inventory-failure" or route == "fix-forward":
-        assert _rollback_tree_state(backend) == before
+    # Candidate admission, including inventory, precedes every live, rollback,
+    # or journal write. A refusal must not need a recovery record.
+    assert _rollback_tree_state(backend) == before
 
 
 def test_successful_apply_packages_the_reviewed_helper(tmp_path: Path) -> None:

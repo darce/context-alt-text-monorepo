@@ -65,6 +65,23 @@ describe('buildNamingOptions', () => {
     });
   });
 
+  it('CURATION-PERSON-P1 retains distinct same-name IDs and collapses repeated copies of an ID', () => {
+    const { options, collisionsByLabel } = buildNamingOptions({
+      rosterEntries: [
+        { id: 41, name: 'Alex Rivera' },
+        { id: 41, name: 'Alex Rivera' },
+        { id: 42, name: 'ALEX RIVERA' },
+      ],
+      labelMatches: [{ id: 'mirrored', label: 'alex rivera' }],
+      filter: 'Alex',
+    });
+    expect(options.map(option => option.value)).toEqual(['person:41', 'person:42']);
+    expect(options.map(option => option.label)).toEqual(['Alex Rivera', 'ALEX RIVERA']);
+    expect(new Set(collisionsByLabel.get('alex rivera')?.map(option => option.value))).toEqual(
+      new Set(['person:41', 'person:42', 'cluster:mirrored']),
+    );
+  });
+
   it('filter-before-slice keeps a prefix match beyond the default limit', () => {
     const manyPersons = Array.from({ length: NAMING_OPTIONS_LIMIT + 5 }, (_, index) => ({
       id: index + 1,

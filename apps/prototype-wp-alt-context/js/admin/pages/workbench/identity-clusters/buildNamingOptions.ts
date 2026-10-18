@@ -2,7 +2,7 @@
  * Shared naming-option builder for both labeling surfaces.
  *
  * Union of roster persons ∪ human-labeled clusters with namespaced values,
- * person-preferred case-insensitive dedupe, and a pre-dedupe collision set
+ * person-ID dedupe, person-preferred cluster-label dedupe, and a pre-dedupe collision set
  * for the pre-save duplicate guard.
  */
 
@@ -167,7 +167,7 @@ const rankFilteredOptions = (
  *
  * - Cluster candidates apply isHumanLabeledTarget so auto `cluster-*` labels never appear (BR-17).
  * - collisionsByLabel registers every truthy cluster label (BR-42 raw equality), including machine shapes.
- * - Persons listed before clusters; case-insensitive dedupe prefers the person entry.
+ * - Persons dedupe by ID; cluster labels dedupe case-insensitively, preferring persons.
  * - Filter-before-slice: case-insensitive substring filter, then rank exact /
  *   prefix / remaining substring (stable within each tier), then truncate.
  */
@@ -234,16 +234,17 @@ export const buildNamingOptions = ({
     }
   }
 
-  // Person-preferred case-insensitive dedupe; persons first.
+  // Preserve distinct same-name people so consumers can detect ambiguous names.
+  const seenPersonValues = new Set<string>();
   const seen = new Set<string>();
   const deduped: NamingOption[] = [];
 
   for (const option of personCandidates) {
-    const key = option.label.toLowerCase();
-    if (seen.has(key)) {
+    if (seenPersonValues.has(option.value)) {
       continue;
     }
-    seen.add(key);
+    seenPersonValues.add(option.value);
+    seen.add(option.label.toLowerCase());
     deduped.push(option);
   }
 

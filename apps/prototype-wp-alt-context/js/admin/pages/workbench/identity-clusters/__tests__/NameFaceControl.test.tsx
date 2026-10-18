@@ -12,7 +12,8 @@ import {
   resolveNameFaceInput,
   type NameFaceResolution,
 } from '../NameFaceControl';
-import { NAMING_GROUP_SUGGESTED, namingOptionValue } from '../buildNamingOptions';
+import { buildNamingOptions, NAMING_GROUP_SUGGESTED, namingOptionValue } from '../buildNamingOptions';
+import { selectClusterSuggestions } from '../useClusterSuggestions';
 import previewFixture from './fixtures/gpuflow-naming-preview.json';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -94,6 +95,59 @@ const TypedNameFace = ({
 };
 
 describe('curated person picker choices', () => {
+  it('CURATION-PERSON-P1 preserves the cluster callback through the real builder and selector', () => {
+    const built = buildNamingOptions({
+      rosterEntries: [{ id: 41, name: 'Alex Rivera' }, { id: 42, name: 'Alex Rivera' }],
+      labelMatches: [],
+      filter: 'Alex',
+    });
+    const options = selectClusterSuggestions({
+      namingOptions: built.options,
+      identityProjection: [{
+        clusterId: 'cluster-for-42', label: 'Alex Rivera', similarity: 0.8,
+        identityCount: 2, suggestionId: 'suggestion-for-42', identityId: 'source-face',
+      }],
+      editableClusterId: 'edited-cluster',
+      labelInput: 'Alex',
+    });
+    const onOptionConfirm = vi.fn();
+    const { onCommit } = renderControl({ options, value: 'Alex', onOptionConfirm });
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
+    fireEvent.click(screen.getAllByRole('option')[0]);
+
+    // Counterproof: the old producer leaves only person:41, which silently
+    // turns this choice of cluster-for-42 into an immediate binding to 41.
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(onOptionConfirm).toHaveBeenCalledExactlyOnceWith(options[0]);
+    expect(options.map(option => option.value)).toEqual([
+      'cluster:cluster-for-42', 'person:41', 'person:42',
+    ]);
+    expect(screen.getAllByRole('option')).toHaveLength(3);
+    expect(screen.queryByText('Person')).not.toBeInTheDocument();
+    expect(screen.queryByText('Group')).not.toBeInTheDocument();
+    for (const row of screen.getAllByRole('option')) {
+      expect(row).toHaveAccessibleName('Confirm match with Alex Rivera');
+    }
+  });
+
+  it('CURATION-PERSON-P1 collapses repeated copies of one ID through the real pipeline', () => {
+    const built = buildNamingOptions({
+      rosterEntries: [{ id: 41, name: 'Alex Rivera' }, { id: 41, name: 'Alex Rivera' }],
+      labelMatches: [],
+    });
+    const options = selectClusterSuggestions({
+      namingOptions: built.options,
+      identityProjection: [{ clusterId: 'mirrored', label: 'Alex Rivera', similarity: 0.8, identityCount: 2 }],
+    });
+    const onOptionConfirm = vi.fn();
+    const { onCommit } = renderControl({ options, value: 'Alex', onOptionConfirm });
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' });
+    expect(onCommit).toHaveBeenCalledExactlyOnceWith({ kind: 'roster', rosterEntryId: 41, name: 'Alex Rivera' });
+    expect(onOptionConfirm).not.toHaveBeenCalled();
+  });
+
   it('shows one canonical person for a mirrored suggestion and binds its stored ID', () => {
     const rosterPerson = person(41, 'Kirstie McCarrel');
     const onOptionConfirm = vi.fn();

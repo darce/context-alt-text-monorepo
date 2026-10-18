@@ -689,39 +689,57 @@ class BakeoffClient(RemoteSceneClient):
     def _redact_response(
         self, value: Any, *, structural_keys: dict[str, Any] | None = None, structured_text: bool = True
     ) -> Any:
-        """Scrub free-form generated data, including property names.
+        """Scrub generated data through bounded JSON composition, including scalars.
 
         Only keys at recognized schema paths are structural. Extra keys are
-        generated data; transport labels never enter here.
+        generated data; transport labels never enter here. A response exceeding
+        the shared depth/node/text budget is refused before forwarding or storage.
         """
-        if isinstance(value, str):
-            # A decoded scalar/key is data even when it spells JSON syntax.
-            if not structured_text:
-                value = self._redact_text(value)
-            # Chat content can itself be JSON, with escaped credential bytes.
-            # Decode before replacement so JSON grammar remains intact.
-            fenced = _JSON_FENCE_RE.match(value.strip())
-            try:
-                embedded = json.loads(fenced.group(1) if fenced else value)
-            except ValueError:
-                embedded = None
-            if isinstance(embedded, (dict, list)):
-                redacted = self._redact_response(embedded, structural_keys=structural_keys)
-                return json.dumps(redacted) if redacted != embedded else value
-            return self._redact_text(value)
-        if isinstance(value, list):
-            return [
-                self._redact_response(item, structural_keys=structural_keys, structured_text=False) for item in value
-            ]
-        if isinstance(value, dict):
-            schema = structural_keys or {}
-            return {
-                key if key in schema else self._redact_text(key): self._redact_response(
-                    item, structural_keys=schema.get(key), structured_text=False
-                )
-                for key, item in value.items()
-            }
-        return value
+        if not self._response_private_values:
+            return value
+        remaining_nodes, remaining_chars = 16384, 1024 * 1024
+
+        def scrub(data: Any, schema: dict[str, Any] | None, structured: bool, depth: int) -> Any:
+            nonlocal remaining_nodes, remaining_chars
+            remaining_nodes -= 1
+            if depth > 64 or remaining_nodes < 0:
+                raise RemoteClientError("raw response privacy budget exceeded")
+            if isinstance(data, str):
+                remaining_chars -= len(data)
+                if remaining_chars < 0:
+                    raise RemoteClientError("raw response privacy budget exceeded")
+                # Decoded scalars and free-form keys are data even when they
+                # spell JSON syntax. Preserve recognized container labels only.
+                if not structured:
+                    data = self._redact_text(data)
+                fenced = _JSON_FENCE_RE.match(data.strip())
+                too_deep = False
+                try:
+                    embedded = json.loads(fenced.group(1) if fenced else data)
+                except ValueError:
+                    embedded = None
+                except RecursionError:
+                    too_deep = True
+                # Raise outside the decoder's handler: its chain is private too.
+                if too_deep:
+                    raise RemoteClientError("raw response privacy budget exceeded")
+                if isinstance(embedded, (dict, list, str)):
+                    redacted = scrub(embedded, schema, not isinstance(embedded, str), depth + 1)
+                    return json.dumps(redacted) if redacted != embedded else data
+                return self._redact_text(data)
+            if isinstance(data, list):
+                return [scrub(item, schema, False, depth + 1) for item in data]
+            if isinstance(data, dict):
+                schema = schema or {}
+                return {
+                    key if key in schema else scrub(key, None, False, depth + 1): scrub(
+                        item, schema.get(key), False, depth + 1
+                    )
+                    for key, item in data.items()
+                }
+            return data
+
+        return scrub(value, structural_keys, structured_text, 0)
 
     def _parse_response(self, parser: Callable[[Any], Any], value: Any) -> Any:
         """Keep typed parse failures without exposing response-derived excerpts."""

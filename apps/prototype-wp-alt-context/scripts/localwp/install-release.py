@@ -97,7 +97,7 @@ def graph(root, verified=None):
     return {'manifest_sha256': digest(raw), 'entries': entries, 'graph': result}
 
 
-def validate(root):
+def validate(root, verified=None):
     header = read_file(root/'alt-context.php').decode()
     match = re.search(r'^\s*\*\s*Version:\s*([^\r\n]+)', header, re.M)
     require(header.lstrip().startswith('<?php') and 'Plugin Name:' in header and match, 'invalid plugin PHP header')
@@ -107,7 +107,7 @@ def validate(root):
     for path in ('alt-context.php', 'vendor/autoload.php'):
         lint = subprocess.run(['php', '-n', '-l', str(root/path)], capture_output=True, timeout=10)
         require(lint.returncode == 0, 'PHP syntax check failed: '+path)
-    return {'version': match.group(1).strip(), **graph(root)}
+    return {'version': match.group(1).strip(), **graph(root, verified)}
 
 
 def unpack(data, root, budget=MAX_BYTES):
@@ -161,6 +161,29 @@ def inventory(root, max_bytes=MAX_BYTES * (MAX_VIEWS + 1), verified=None):
         total += len(data)
         result[name] = digest(data)
     return result
+
+
+def unmanaged_inventory(root, verified, artifact_files, primary=None):
+    """Verify metadata by ZIP inventory, but authorize links by static graph."""
+    files = inventory(root, MAX_BYTES, verified)
+    identity = validate(root, verified)
+    known_versions = [known for version, known in artifact_files if version == identity['version']]
+    if primary is None and known_versions:
+        require(any(all(files.get(path) == sha for path, sha in known.items()) and
+                    all(path in known or path.startswith(DIST) for path in files) for known in known_versions),
+                'installed primary differs from verified artifact')
+    if primary is not None:
+        require(all(files.get(path) == sha for path, sha in primary.items()) and
+                all(path in primary or (path.startswith(DIST) and path in verified and
+                                        verified[path][0] == sha) for path, sha in files.items()),
+                'rollback ZIP differs from original installed bytes')
+    declared = {**identity['graph'], **{path: sha for path, (sha, _) in verified.items()}}
+    manifest = DIST+'.vite/manifest.json' if (root/(DIST+'.vite/manifest.json')).is_file() else DIST+'manifest.json'
+    for path, sha in files.items():
+        if path.startswith(DIST) and path != manifest:
+            require(declared.get(path) == sha or any(known.get(path) == sha for _, known in artifact_files),
+                    'unverified legacy asset; supply all retained --compat-zip graphs: '+path)
+    return files, identity['graph']
 
 
 def receipt(root):
@@ -262,6 +285,8 @@ def execute(args):
         candidate = Path(scratch)/'plugin'; candidate.mkdir()
         expanded = unpack(data, candidate)
         identity = {'artifact_sha256': digest(data), **validate(candidate)}
+        primary_files = inventory(candidate)
+        artifact_files = [(identity['version'], primary_files)]
         archives = {identity['artifact_sha256']: data}
         verified, compatibility_artifacts = {}, []
         compatibility = dict(identity['graph'])
@@ -272,6 +297,7 @@ def execute(args):
             root = Path(scratch)/('compat-'+str(number)); root.mkdir()
             expanded += unpack(prior_data, root, MAX_BYTES * MAX_VIEWS-expanded)
             prior = validate(root)
+            artifact_files.append((prior['version'], inventory(root)))
             for name, asset_sha in prior['graph'].items():
                 require(name not in verified or verified[name][0] == asset_sha, 'asset name collision: '+name)
                 verified[name] = (asset_sha, root/name)
@@ -306,7 +332,7 @@ def execute(args):
                     prior = check_view(prior_root)
                     require(prior['artifact_sha256'] == identity['artifact_sha256'], 'rollback ZIP differs from previous install')
                 else:
-                    require(inventory(prior_root) == inventory(candidate), 'rollback ZIP differs from original installed bytes')
+                    unmanaged_inventory(prior_root, verified, artifact_files, primary_files)
                 # Build a new view retaining BOTH graphs, also on rollback.
             if args.verify or (old and old['artifact_sha256'] == identity['artifact_sha256'] and not args.compat_zip):
                 require(previous, 'nothing installed')
@@ -318,10 +344,10 @@ def execute(args):
             prior_tree = None
             if previous:
                 if not old:
-                    prior_tree = inventory(Path(previous), MAX_BYTES, verified)
-                prior_graph = graph(Path(previous), verified if not old else None)['graph']
+                    prior_tree, prior_graph = unmanaged_inventory(Path(previous), verified, artifact_files)
                 if old:
                     check_view(Path(previous))
+                    prior_graph = graph(Path(previous))['graph']
                     prior_graph.update(old['compatibility'])
                     # A managed view's receipt carries the graph automatically.
                     # Keep its verified custody when changing site-bound stores.
@@ -335,14 +361,6 @@ def execute(args):
                             archives[sha] = prior_data
                         if sha != identity['artifact_sha256'] and sha not in compatibility_artifacts:
                             compatibility_artifacts.append(sha)
-                else:
-                    # A metadata-free tree cannot prove older URL provenance.
-                    # Every extra static file needs an explicit verified graph.
-                    declared = {**prior_graph, **{p: sha for p, (sha, _) in verified.items()}}
-                    manifests = {DIST+'.vite/manifest.json', DIST+'manifest.json'}
-                    for path, sha in prior_tree.items():
-                        if path.startswith(DIST) and path not in manifests:
-                            require(declared.get(path) == sha, 'unverified legacy asset; supply all retained --compat-zip graphs: '+path)
                 sources = {path: (sha, verified[path][1] if path in verified else Path(previous)/path) for path, sha in prior_graph.items()}
                 carry(candidate, compatibility, sources)
             require(len(archives) <= MAX_VIEWS, 'artifact custody limit: operator retirement required')

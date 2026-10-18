@@ -1,0 +1,145 @@
+{
+  "status": "REVISE",
+  "summary": "One material privacy defect remains: doubly JSON-encoded credential strings survive successful public/CLI output. All85 focused cases pass; both original G2 corrections independently verified.",
+  "source_sha": "3772084dd1acffb2bfe08bcbb9cfce81df5244f9",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/reviews/RAW-AUTH-WHOLE-SOURCE-G3.json",
+    ".task-state/bakeoff-rounds-20261017/reviews/RAW-AUTH-WHOLE-SOURCE-G3.md"
+  ],
+  "commits": [],
+  "findings": [
+    {
+      "id": "RAW-AUTH-SOURCE-G3-01",
+      "severity": "high",
+      "file": "apps/prototype-description-service/scripts/eval_harness/bakeoff.py:708",
+      "description": "The generated-text scrubber decodes only JSON containers, leaving composed JSON-string escapes losslessly recoverable in successful public output and persisted CLI records.",
+      "evidence": "A fixed external producer places json.dumps(json.dumps(the supplied unique quote/backslash credential)) in existing setting/caption strings. Public describe and real CLI succeed with title/alt, warmup and22/14/36, while two json.loads calls recover the exact credential from alt_text_long and decoded passes[].raw. Identical-response distinct-key, healthy, raw-reflection and single-encoded controls qualify. Both extra-field and existing-field variants reproduce:40 observations/120 exchanges,60 clients closed. Exact actual-record recovery: /tmp/raw-auth-whole-source-g3/manifests/successful-record-lossless-recovery.json; producers/HTTP/imports retained.",
+      "fix": "Scrub or privately refuse composed JSON-string reflections before returning, forwarding or persisting generated text, including decoded scalar strings. Preserve recognized schema, valid credential grammar, measured usage and typed failure behavior. Add public describe/real CLI regressions and retain all G1/G2 controls; no source repair performed."
+    }
+  ],
+  "tests": [
+    {
+      "command": "python3 -B /tmp/raw-auth-whole-source-g3/scripts/run.py approved .venv/bin/python -B /tmp/raw-auth-whole-source-g3/scripts/pytest_run.py approved",
+      "exit_code": 0,
+      "summary": "50 passed in15.89s; normal service config, both conftests, required pytest-timeout;37 clients closed."
+    },
+    {
+      "command": "python3 -B /tmp/raw-auth-whole-source-g3/scripts/run.py new-green .venv/bin/python -B /tmp/raw-auth-whole-source-g3/scripts/pytest_run.py new-green",
+      "exit_code": 0,
+      "summary": "Unchanged R2 module:12 passed in12.91s;36 clients closed; protocol labels, requests, warmup and22/14/36 retained."
+    },
+    {
+      "command": "python3 -B /tmp/raw-auth-whole-source-g3/scripts/run.py reflection-red .venv/bin/python -B /tmp/raw-auth-whole-source-g3/scripts/pytest_before.py reflection-red",
+      "exit_code": 1,
+      "summary": "Exact saved R2 source9ea9f869: all6 final R3 cases fail intended privacy assertions in13.40s; no setup/teardown errors;54 clients closed."
+    },
+    {
+      "command": "python3 -B /tmp/raw-auth-whole-source-g3/scripts/run.py reflection-green .venv/bin/python -B /tmp/raw-auth-whole-source-g3/scripts/pytest_run.py reflection-green",
+      "exit_code": 0,
+      "summary": "Current source91db688f:6 passed in12.61s;54 clients closed. All96 RED/GREEN response bytes match;6 reflected follow-up requests change through sanitation."
+    },
+    {
+      "command": "python3 -B /tmp/raw-auth-whole-source-g3/scripts/run.py adjacent-final .venv/bin/python -B /tmp/raw-auth-whole-source-g3/scripts/pytest_run.py adjacent-final",
+      "exit_code": 0,
+      "summary": "Exact17 legacy selectors pass in24.22s;17 clients closed, including11 legacy leftovers closed by audit finally."
+    },
+    {
+      "command": "python3 -B /tmp/raw-auth-whole-source-g3/scripts/run.py structured-before .venv/bin/python -B /tmp/raw-auth-whole-source-g3/scripts/before_structured_reflection.py",
+      "exit_code": 1,
+      "summary": "Original G2 public/CLI producer reproduces property-name leaks on saved R2;24 exchanges,12 closed clients; behavioral RED."
+    },
+    {
+      "command": "python3 -B /tmp/raw-auth-whole-source-g3/scripts/run.py structured-green .venv/bin/python -B /tmp/raw-auth-whole-source-g3/scripts/final_structured_reflection.py",
+      "exit_code": 0,
+      "summary": "Same24 response bytes on current source: original property-name and string-value cases private; real successful CLI records and counters retained."
+    },
+    {
+      "command": "python3 -B /tmp/raw-auth-whole-source-g3/scripts/run.py diagnostic-before .venv/bin/python -B /tmp/raw-auth-whole-source-g3/scripts/before_diagnostic_reflection.py",
+      "exit_code": 1,
+      "summary": "Original G2 public/CLI nested-reasoning producer reproduces escaped diagnostic leaks on saved R2;24 exchanges,18 closed clients; behavioral RED."
+    },
+    {
+      "command": "python3 -B /tmp/raw-auth-whole-source-g3/scripts/run.py diagnostic-recovery-before python3 -B /tmp/raw-auth-whole-source-g3/scripts/recover_diagnostic_before.py",
+      "exit_code": 0,
+      "summary": "Independent ast.literal_eval plus json.loads recovers the exact G2 credential from public errors and actual aborted CLI records."
+    },
+    {
+      "command": "python3 -B /tmp/raw-auth-whole-source-g3/scripts/run.py diagnostic-green .venv/bin/python -B /tmp/raw-auth-whole-source-g3/scripts/final_diagnostic_reflection.py",
+      "exit_code": 0,
+      "summary": "Same24 response bytes on current source: typed excerpt-free errors and aborted records private, no unsafe chains;18 clients closed."
+    },
+    {
+      "command": "python3 -B /tmp/raw-auth-whole-source-g3/scripts/run.py public-probe .venv/bin/python -B /tmp/raw-auth-whole-source-g3/scripts/public_probe.py",
+      "exit_code": 0,
+      "summary": "All original G1 usage/message/content/title/{ public witnesses and actual reflection controls pass;15 exchanges,9 closed clients."
+    },
+    {
+      "command": "python3 -B /tmp/raw-auth-whole-source-g3/scripts/run.py cli-final .venv/bin/python -B /tmp/raw-auth-whole-source-g3/scripts/cli_collision_green_retry.py",
+      "exit_code": 0,
+      "summary": "Isolated retry: all6 original G1 CLI controls succeed with warmup,22/14/36 and correct duration-cost arithmetic;24 exchanges,12 clients closed."
+    },
+    {
+      "command": "python3 -B /tmp/raw-auth-whole-source-g3/scripts/run.py files-final .venv/bin/python -B /tmp/raw-auth-whole-source-g3/scripts/file_faults_retry.py",
+      "exit_code": 0,
+      "summary": "Isolated retry:5 file controls pass; metadata refusal reads0; valid/short-read successes and private first/post-short-read failures; all observed FDs and4 clients close."
+    },
+    {
+      "command": "python3 -B /tmp/raw-auth-whole-source-g3/scripts/run.py transport-controls .venv/bin/python -B /tmp/raw-auth-whole-source-g3/scripts/transport_controls.py",
+      "exit_code": 0,
+      "summary": "8 controls/32 exchanges pass: typed401/403/307, no redirects, five429 attempts per failure, three strikes, configured0.2s/injected timeout and malformed JSON."
+    },
+    {
+      "command": "python3 -B /tmp/raw-auth-whole-source-g3/scripts/run.py diagnostic-controls .venv/bin/python -B /tmp/raw-auth-whole-source-g3/scripts/diagnostic_controls.py",
+      "exit_code": 0,
+      "summary": "5 typed parser/fenced/reflected-brace controls pass without unsafe chains;5 clients closed."
+    },
+    {
+      "command": "python3 -B /tmp/raw-auth-whole-source-g3/scripts/run.py schema-controls .venv/bin/python -B /tmp/raw-auth-whole-source-g3/scripts/schema_controls_final2.py",
+      "exit_code": 0,
+      "summary": "Independently reproduced34 observations/136 exchanges across17 credential spellings;68 clients closed; recognized schema and reflected free-form data controls pass."
+    },
+    {
+      "command": "python3 -B /tmp/raw-auth-whole-source-g3/scripts/run.py additional-encoding .venv/bin/python -B /tmp/raw-auth-whole-source-g3/scripts/additional_encoding_probe.py",
+      "exit_code": 1,
+      "summary": "New contract RED: double/triple JSON-string encoding survives successful describe/CLI raw output;20 observations/60 exchanges;30 clients close; healthy/raw/single-encoded controls qualify."
+    },
+    {
+      "command": "python3 -B /tmp/raw-auth-whole-source-g3/scripts/run.py existing-field-encoding .venv/bin/python -B /tmp/raw-auth-whole-source-g3/scripts/existing_field_encoding_probe.py",
+      "exit_code": 1,
+      "summary": "New contract RED using existing setting/caption fields only: credential recoverable from alt_text_long and real successful CLI records;20 observations/60 exchanges;30 clients close."
+    },
+    {
+      "command": "python3 -B /tmp/raw-auth-whole-source-g3/scripts/run.py ruff-check .venv/bin/ruff check --no-cache apps/prototype-description-service/scripts/eval_harness/bakeoff.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_protocol_fields.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_reflection.py",
+      "exit_code": 0,
+      "summary": "Focused read-only source/R2/R3 test lint passes; no cache or format mutation."
+    },
+    {
+      "command": "python3 -B /tmp/raw-auth-whole-source-g3/scripts/run.py ruff-format .venv/bin/ruff format --check --no-cache apps/prototype-description-service/scripts/eval_harness/bakeoff.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_protocol_fields.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_reflection.py",
+      "exit_code": 0,
+      "summary": "Focused read-only source/R2/R3 test formatting check passes;3 files already formatted."
+    },
+    {
+      "command": "python3 -B /tmp/raw-auth-whole-source-g3/scripts/run.py verify-evidence-final python3 -B /tmp/raw-auth-whole-source-g3/scripts/verify_evidence.py",
+      "exit_code": 0,
+      "summary": "Path-specific Canon pins,5 graph/blob pins,85 GREEN/6 genuine RED, matched HTTP, actual CLI lossless recovery and12,339 unchanged prior files verify;163 symlinks retained."
+    },
+    {
+      "command": "python3 -B /tmp/raw-auth-whole-source-g3/scripts/run.py cli-collision .venv/bin/python -B /tmp/raw-auth-whole-source-g3/scripts/cli_collision_green.py",
+      "exit_code": 1,
+      "summary": "Initial audit wrapper exceeded58s while commands overlapped; child terminal exit is UNKNOWN, not124 or proven death. Launch proofs/output fences/custody monitor retained; isolated retry above passes."
+    },
+    {
+      "command": "python3 -B /tmp/raw-auth-whole-source-g3/scripts/run.py file-faults .venv/bin/python -B /tmp/raw-auth-whole-source-g3/scripts/file_faults.py",
+      "exit_code": 1,
+      "summary": "Initial audit wrapper exceeded58s while commands overlapped; child terminal exit is UNKNOWN, not124 or proven death. Launch proofs/output fences/custody monitor retained; isolated retry above passes."
+    }
+  ],
+  "limitations": [
+    "Logical input7e37bbd3c61a682c0531d812bbf961adad8bbdfb is absent locally. source_sha is the honest native stripped base, whose tree24ccd1334342e7d5605f2f5991d1c07c3c2877cd matches the supplied input tree. Equal trees establish bytes, not ancestry. Actual third author8e966430 and earlier author/review parentage remain supplied custody for root to preserve.",
+    "No live MCP/graph/ONNX retrieval used. Supplied verified MAINT gte-base-en-v1.5 reinjection and scoped BAKERAW no_embeddings were consulted through full relevant records. Five-file map215nodes/913edges and exact blob/SHA pins verify; actual source/AST/import hashes supplement it without whole-project/import-closure claims. Eight full Canon0.26.2 bodies/release and four full supplied distillations hash-verify; no unavailable primary-book claim.",
+    "The two initial auxiliary command waits exceeded58s; their child terminal states remain UNKNOWN across sandbox PID namespaces. Launch proofs, original paths and read-only custody monitor are retained and fenced against reuse/deletion. No live cross-namespace guardian, remote death or released I/O is claimed. Isolated retries return0. Other recorded audit children return actual exits; verified clients/FDs close, including11 legacy leftovers.",
+    "Full reproducible evidence is /tmp/raw-auth-whole-source-g3. All12,339 files in five mandatory prior roots remain unchanged;163 symlinks retained. Initial broad filename discovery completed exit2 with truncated rendering, and a verifier self-receipt mistake is preserved separately. Source/tests/config/previous reports are unchanged; only this review pair is committed.",
+    "Synthetic credentials, zero-byte fixtures and external MockTransport only. Installed runtime/authentication, real socket deadlines, admission, inference, quality and GPU power remain unqualified. No installs, broad suites, weights/media/GT, model sessions, real secrets, GPU/cloud/guest/shared-service/DB/TLS/auth changes, nested agents, dispatch or foreign signals.",
+    "Root owns central finding closure, source adoption/composition with actual ancestry, fresh remote canonical HEAD validation, close-check, main merge and effects. Any FOURTH actual source author first requires a new root LOUD Canon proposal, then SolXHIGH STANDARD, not HIGH. This review repairs or dispatches nothing. commits points to the substantive review commit; a later JSON-only pointer commit avoids self-reference."
+  ]
+}

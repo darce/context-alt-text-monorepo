@@ -176,6 +176,223 @@ def key_file(root, payload=KEY.encode(), mode=0o600):
     return path
 
 
+class CredentialReads:
+    """Observe owned descriptor I/O without reading or validating for the caller.
+
+    Offset deltas include buffered read-ahead; requested sizes are not bytes read.
+    Violations are checked after the caller returns, never converted to refusal.
+    """
+
+    content_methods = {"read", "readall", "read1", "readinto", "readinto1", "readline", "readlines", "peek"}
+
+    def __init__(self, monkeypatch, path, *, foreign_owner=False, unreadable=False, replacement=None, forbid=False):
+        self.path = path
+        self.handles = []
+        self.validated = {}
+        self.attempts = []
+        self.forbid = forbid
+        self.depth = 0
+        self.replaced = False
+        self.unchecked_opens = []
+        self.real_open, self.real_fstat, self.real_stat = os.open, os.fstat, os.stat
+        self.real_close, self.real_lseek = os.close, os.lseek
+        observer = self
+
+        def same_path(name):
+            return not isinstance(name, int) and os.path.abspath(os.fsdecode(name)) == str(path.absolute())
+
+        def observed_open(name, flags, *args, **kwargs):
+            if same_path(name):
+                assert flags & os.O_NOFOLLOW
+                assert flags & os.O_NONBLOCK  # never block on the synthetic FIFO
+                if unreadable:
+                    raise PermissionError(13, "synthetic unreadable", str(path))
+            fd = self.real_open(name, flags, *args, **kwargs)
+            if same_path(name):
+                self.handles.append((fd, self.identity(fd)))
+                self.validated.pop(fd, None)
+            return fd
+
+        def metadata(fd, result):
+            if self.tracked(fd):
+                if foreign_owner:
+                    fields = list(result)
+                    fields[4] = os.getuid() + 1
+                    result = os.stat_result(fields)
+                eligible = (
+                    stat.S_ISREG(result.st_mode)
+                    and result.st_uid == os.getuid()
+                    and stat.S_IMODE(result.st_mode) in {0o400, 0o600}
+                )
+                self.validated[fd] = eligible
+                if replacement is not None and eligible and not self.replaced:
+                    self.replaced = True
+                    path.unlink()
+                    path.symlink_to(replacement)
+            return result
+
+        def observed_fstat(fd):
+            return metadata(fd, self.real_fstat(fd))
+
+        def observed_stat(name, *args, **kwargs):
+            result = self.real_stat(name, *args, **kwargs)
+            return metadata(name, result) if isinstance(name, int) else result
+
+        def descriptor_call(original):
+            def call(fd, *args, **kwargs):
+                return self.observe(fd, lambda: original(fd, *args, **kwargs), stream=False)
+
+            return call
+
+        def stream_open(original):
+            def open_stream(name, *args, **kwargs):
+                if replacement is not None and same_path(name) and self.handles:
+                    raise AssertionError("credential reopened by pathname")
+                stream = original(name, *args, **kwargs)
+                if same_path(name) and not self.tracked(stream.fileno()):
+                    self.handles.append((stream.fileno(), self.identity(stream.fileno())))
+                    self.unchecked_opens.append(stream.fileno())
+                return self.wrap(stream)
+
+            return open_stream
+
+        real_fileio = io.FileIO
+
+        class ObservedFileIO(real_fileio):
+            def __init__(self, name, *args, **kwargs):
+                if replacement is not None and same_path(name) and observer.handles:
+                    raise AssertionError("credential reopened by pathname")
+                super().__init__(name, *args, **kwargs)
+                if same_path(name) and not observer.tracked(self.fileno()):
+                    observer.handles.append((self.fileno(), observer.identity(self.fileno())))
+                    observer.unchecked_opens.append(self.fileno())
+
+            def __getattribute__(self, name):
+                value = super().__getattribute__(name)
+                if name in observer.content_methods:
+                    return lambda *args, **kwargs: observer.observe(
+                        self.fileno(), lambda: value(*args, **kwargs), stream=True
+                    )
+                return value
+
+        monkeypatch.setattr(os, "open", observed_open)
+        monkeypatch.setattr(os, "fstat", observed_fstat)
+        monkeypatch.setattr(os, "stat", observed_stat)
+        for name in ("read", "readv", "pread", "preadv"):
+            if hasattr(os, name):
+                monkeypatch.setattr(os, name, descriptor_call(getattr(os, name)))
+        monkeypatch.setattr(builtins, "open", stream_open(builtins.open))
+        monkeypatch.setattr(io, "open", stream_open(io.open))
+        monkeypatch.setattr(os, "fdopen", stream_open(os.fdopen))
+        monkeypatch.setattr(io, "FileIO", ObservedFileIO)
+
+    def identity(self, fd):
+        result = self.real_fstat(fd)
+        return result.st_dev, result.st_ino
+
+    def tracked(self, fd):
+        try:
+            return any(handle == fd and identity == self.identity(fd) for handle, identity in self.handles)
+        except OSError:
+            return False
+
+    def position(self, fd):
+        try:
+            return self.real_lseek(fd, 0, os.SEEK_CUR)
+        except OSError:
+            return None
+
+    def observe(self, fd, operation, *, stream):
+        if not self.tracked(fd) or self.depth:
+            return operation()
+        event = {"fd": fd, "eligible": self.validated.get(fd, False), "bytes": 0}
+        self.attempts.append(event)  # even a read that raises is an attempted read
+        before = self.position(fd)
+        self.depth += 1
+        result = None
+        try:
+            result = operation()
+            return result
+        finally:
+            self.depth -= 1
+            after = self.position(fd)
+            if stream and before is not None and after is not None:
+                event["bytes"] = max(0, after - before)
+            elif isinstance(result, int):
+                event["bytes"] = result
+            elif result is not None:
+                event["bytes"] = len(result)
+
+    def wrap(self, stream):
+        if not self.tracked(stream.fileno()):
+            return stream
+        observer = self
+
+        class DescriptorStream:
+            def __getattr__(self, name):
+                value = getattr(stream, name)
+                if name in observer.content_methods:
+                    return lambda *args, **kwargs: observer.observe(
+                        stream.fileno(), lambda: value(*args, **kwargs), stream=True
+                    )
+                if name in {"raw", "buffer"}:
+                    return observer.wrap(value)
+                if name == "detach":
+                    return lambda: observer.wrap(value())
+                return value
+
+            def __enter__(self):
+                stream.__enter__()
+                return self
+
+            def __exit__(self, *args):
+                return stream.__exit__(*args)
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                return observer.observe(stream.fileno(), lambda: next(stream), stream=True)
+
+        return DescriptorStream()
+
+    def assert_closed(self):
+        assert not any(self.tracked(fd) for fd, _ in self.handles), "credential descriptor left open"
+
+    def verify(self):
+        if self.forbid:
+            assert not self.attempts, "content read attempted on invalid credential metadata"
+        assert all(event["eligible"] for event in self.attempts), "credential read before eligible descriptor metadata"
+        assert sum(event["bytes"] for event in self.attempts) <= 4097, "credential content read exceeded 4097 bytes"
+        assert not self.unchecked_opens, "credential open lacked observed no-follow/nonblocking flags"
+        self.assert_closed()
+
+    def close_remaining(self):
+        for fd, _ in self.handles:
+            if self.tracked(fd):
+                self.real_close(fd)
+
+
+@pytest.fixture
+def credential_reads(monkeypatch):
+    """Independent OS observer; no knowledge of any future loader method."""
+    observers = []
+
+    def install(path, **kwargs):
+        assert not observers  # one credential boundary per test; no stacked patches
+        observer = CredentialReads(monkeypatch, path, **kwargs)
+        observers.append(observer)
+        return observer
+
+    yield install
+    try:
+        for observer in observers:
+            observer.verify()
+    finally:
+        for observer in observers:
+            observer.close_remaining()
+
+
 @pytest.mark.parametrize("auth", ["omitted", "none", "valid"])
 def test_public_v3_two_pass_preserves_anonymous_payload_and_treatment(auth):
     endpoint = Endpoint(protected=auth == "valid")
@@ -244,12 +461,14 @@ def test_explicit_invalid_key_is_typed_and_private_before_http(token):
     "mode,payload",
     [(0o400, KEY.encode()), (0o600, KEY.encode() + b"\n"), (0o600, b"visible!#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")],
 )
-def test_cli_private_file_reaches_both_passes_and_normal_warmup(cli_case, capsys, mode, payload):
+def test_cli_private_file_reaches_both_passes_and_normal_warmup(cli_case, capsys, credential_reads, mode, payload):
     run, root = cli_case
     token = payload.removesuffix(b"\n").decode("ascii")
     endpoint = Endpoint(protected=False)
     path = key_file(root, payload, mode)
+    reads = credential_reads(path)
     record = run(endpoint, path)
+    assert reads.attempts and sum(event["bytes"] for event in reads.attempts) > 0
     assert len(endpoint.requests) == 4
     assert all(r.headers.get("authorization") == "Bearer " + token for r in endpoint.requests)
     assert record["items"][0]["describe"]["alt_text_title"] == "Fixture title"
@@ -311,10 +530,11 @@ def test_cli_protected_discrimination_and_bounded_partial_record(cli_case, capsy
         "nonascii",
     ],
 )
-def test_cli_invalid_file_refuses_privately_before_network_or_output(cli_case, monkeypatch, capsys, case):
+def test_cli_invalid_file_refuses_privately_before_network_or_output(cli_case, credential_reads, capsys, case):
     run, root = cli_case
     endpoint = Endpoint()
     path = key_file(root)
+    private_content = [KEY]
     if case == "missing":
         path.unlink()
     elif case == "symlink":
@@ -327,41 +547,60 @@ def test_cli_invalid_file_refuses_privately_before_network_or_output(cli_case, m
     elif case == "insecure-mode":
         path.chmod(0o640)
     elif case in {"empty", "oversize", "multiline", "two-lfs", "crlf", "space", "control", "nonascii"}:
+        sentinel = f"raw-auth-{case}-credential-sentinel"
+        token = sentinel.encode("ascii")
         payloads = {
             "empty": b"",
-            "oversize": b"a" * 4097,
-            "multiline": b"one\ntwo",
+            "oversize": token + b"a" * (4097 - len(token)),
+            "multiline": token + b"\nsecond-line",
             "two-lfs": KEY.encode() + b"\n\n",
             "crlf": KEY.encode() + b"\r\n",
-            "space": b" key ",
-            "control": b"key\x00",
-            "nonascii": b"key\xff",
+            "space": b" " + token + b" ",
+            "control": token + b"\x00",
+            "nonascii": token + b"\xff",
         }
         path.write_bytes(payloads[case])
-    real_open, real_fstat = os.open, os.fstat
-    opened = set()
+        if case in {"oversize", "multiline", "space", "control", "nonascii"}:
+            private_content.append(sentinel)
+    credential_reads(
+        path,
+        foreign_owner=case == "foreign-owner",
+        unreadable=case == "unreadable",
+        forbid=case in {"foreign-owner", "insecure-mode", "fifo", "directory"},
+    )
+    with pytest.raises((ValueError, SystemExit)) as caught:
+        run(endpoint, path)
+    if isinstance(caught.value, SystemExit):
+        assert caught.value.code != 0
+    captured = capsys.readouterr()
+    no_leak(diagnostics(caught.value) + captured.out + captured.err, *private_content, str(path), path.name)
+    assert not endpoint.requests
+    assert not (root / "results").exists()
+    assert not (root / "module/out").exists()
 
-    def checked_open(name, flags, *args, **kwargs):
-        if os.fspath(name) == str(path):
-            assert flags & os.O_NOFOLLOW
-            assert flags & os.O_NONBLOCK  # fail before any accidental blocking FIFO open
-            if case == "unreadable":
-                raise PermissionError(13, "synthetic unreadable", str(path))
-            fd = real_open(name, flags, *args, **kwargs)
-            opened.add(fd)
-            return fd
-        return real_open(name, flags, *args, **kwargs)
 
-    def checked_fstat(fd):
-        result = real_fstat(fd)
-        if fd in opened and case == "foreign-owner":
-            fields = list(result)
-            fields[4] = os.getuid() + 1
-            return os.stat_result(fields)
-        return result
+def test_cli_descriptor_survives_path_replacement_without_reopen(cli_case, credential_reads):
+    run, root = cli_case
+    endpoint = Endpoint()
+    path = key_file(root)
+    replacement = root / "different-private-key"
+    replacement.write_text(WRONG)
+    replacement.chmod(0o600)
+    reads = credential_reads(path, replacement=replacement)
+    record = run(endpoint, path)
+    assert reads.replaced and reads.attempts and len(reads.handles) == 1
+    assert sum(event["bytes"] for event in reads.attempts) == len(KEY.encode())
+    assert len(endpoint.requests) == 4
+    assert record["items"][0]["describe"]["alt_text_title"] == "Fixture title"
+    assert all(r.headers.get("authorization") == "Bearer " + KEY for r in endpoint.requests)
+    reads.assert_closed()
 
-    monkeypatch.setattr(os, "open", checked_open)
-    monkeypatch.setattr(os, "fstat", checked_fstat)
+
+def test_cli_oversize_content_read_stays_bounded(cli_case, credential_reads, capsys):
+    run, root = cli_case
+    endpoint = Endpoint()
+    path = key_file(root, KEY.encode() * 130)  # larger than a 4097-byte overflow probe
+    credential_reads(path)
     with pytest.raises((ValueError, SystemExit)) as caught:
         run(endpoint, path)
     if isinstance(caught.value, SystemExit):
@@ -371,96 +610,6 @@ def test_cli_invalid_file_refuses_privately_before_network_or_output(cli_case, m
     assert not endpoint.requests
     assert not (root / "results").exists()
     assert not (root / "module/out").exists()
-
-
-def test_cli_descriptor_survives_path_replacement_without_reopen(cli_case, monkeypatch):
-    run, root = cli_case
-    endpoint = Endpoint()
-    path = key_file(root)
-    replacement = root / "different-private-key"
-    replacement.write_text(WRONG)
-    replacement.chmod(0o600)
-    real_open, real_fstat, real_read = os.open, os.fstat, os.read
-    handles, validated, reads = [], [], []
-    identity = path.stat()
-
-    def credential_descriptor(fd):
-        try:
-            observed = real_fstat(fd)
-        except OSError:
-            return False
-        return (observed.st_dev, observed.st_ino) == (identity.st_dev, identity.st_ino)
-
-    def observed_open(name, flags, *args, **kwargs):
-        fd = real_open(name, flags, *args, **kwargs)
-        if os.fspath(name) == str(path):
-            assert flags & os.O_NOFOLLOW and flags & os.O_NONBLOCK
-            handles.append(fd)
-        return fd
-
-    def observed_fstat(fd):
-        result = real_fstat(fd)
-        if fd in handles and credential_descriptor(fd) and not validated:
-            validated.append(fd)
-            path.unlink()
-            path.symlink_to(replacement)
-        return result
-
-    def bounded_read(fd, size):
-        if fd in handles and credential_descriptor(fd):
-            assert fd in validated, "credential bytes read before fstat validation"
-            assert 0 < size <= 4097
-            reads.append(size)
-            assert sum(reads) <= 4097
-        return real_read(fd, size)
-
-    class DescriptorReader:
-        def __init__(self, stream):
-            self.stream = stream
-
-        def read(self, size=-1):
-            assert self.stream.fileno() in validated
-            assert 0 < size <= 4097
-            reads.append(size)
-            assert sum(reads) <= 4097
-            return self.stream.read(size)
-
-        def __enter__(self):
-            self.stream.__enter__()
-            return self
-
-        def __exit__(self, *args):
-            return self.stream.__exit__(*args)
-
-        def __getattr__(self, name):
-            return getattr(self.stream, name)
-
-    def observe_stream_open(original):
-        def stream_open(name, *args, **kwargs):
-            if not isinstance(name, int):
-                assert os.fspath(name) != str(path), "credential reopened by pathname"
-            stream = original(name, *args, **kwargs)
-            return (
-                DescriptorReader(stream)
-                if isinstance(name, int) and name in handles and credential_descriptor(name)
-                else stream
-            )
-
-        return stream_open
-
-    monkeypatch.setattr(os, "read", bounded_read)
-    monkeypatch.setattr(builtins, "open", observe_stream_open(builtins.open))
-    monkeypatch.setattr(io, "open", observe_stream_open(io.open))
-    monkeypatch.setattr(os, "open", observed_open)
-    monkeypatch.setattr(os, "fstat", observed_fstat)
-    record = run(endpoint, path)
-    assert validated and reads and len(handles) == 1
-    assert len(endpoint.requests) == 4
-    assert record["items"][0]["describe"]["alt_text_title"] == "Fixture title"
-    assert all(r.headers.get("authorization") == "Bearer " + KEY for r in endpoint.requests)
-    for fd in handles:
-        with pytest.raises(OSError):
-            real_fstat(fd)  # no credential descriptor remains open after main
 
 
 @pytest.mark.parametrize("failure", ["http-reflection", "transport-reflection", "redirect", "rate-limit", "timeout"])
@@ -575,10 +724,11 @@ def test_cli_accepts_exact_4096_byte_file_without_truncation(cli_case):
 
 
 @pytest.mark.parametrize("mode", [0o644, 0o700, 0o4600])
-def test_cli_requires_exact_private_mode(cli_case, capsys, mode):
+def test_cli_requires_exact_private_mode(cli_case, capsys, credential_reads, mode):
     run, root = cli_case
     endpoint = Endpoint()
     path = key_file(root, mode=mode)
+    credential_reads(path, forbid=True)
     with pytest.raises((ValueError, SystemExit)) as caught:
         run(endpoint, path)
     if isinstance(caught.value, SystemExit):

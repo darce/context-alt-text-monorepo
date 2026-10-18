@@ -82,6 +82,19 @@ period start: it can hide earlier usage. `grant_beta` takes a total allowance,
 not an increment. Changing `RECOGNITION_PLAN_ALLOWANCES` alone does not rewrite
 an existing beta entitlement; it configures plan grants/transitions.
 
+## Description runtime is a separate prerequisite
+
+An accepted run does not prove generation succeeded. Inspect its item results.
+The r fixture's dev-auraface API and worker currently omit
+`ACX_DESCRIPTION_ADAPTER`, so they select `florence_small`; the deployed image
+lacks that profile's `torch` and `transformers` dependencies. Raising credits
+does not repair this model configuration. The maintained GPU-backed profile is
+`gpu_qwen30b`; enabling it requires the target's API and worker configuration,
+server-side endpoint credentials, snapshots and demand-driven lifecycle wiring.
+Follow [the separate description smoke procedure](tenant-onboarding-smoke-test.md)
+and [GPU environment deployment](gpu-demo-env-flip.md). A successful face scan
+or HTTP 202 is insufficient evidence of working descriptions.
+
 ## Automatic development seeding
 
 Recommended integration: an explicitly enabled provisioning step, scoped to an

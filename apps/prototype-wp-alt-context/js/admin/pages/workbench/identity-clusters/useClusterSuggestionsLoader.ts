@@ -67,7 +67,11 @@ export interface ClusterSuggestionsLoaderResult {
   labelMatches?: ClusterSummary[];
   /** Whether suggestion / roster queries are loading */
   isLoading: boolean;
-  /** Roster query failed — consumers degrade to cluster-only options */
+  /** Successful roster prerequisite, independent of advisory reads. Supplied by this loader; optional for legacy adapters. */
+  namingReady?: boolean;
+  /** Retry the mandatory roster read, independently of advisory reads. */
+  retryRoster?: () => void;
+  /** Roster query failed — naming must wait for a successful Retry. */
   rosterError: boolean;
   /**
    * Find cluster ID by label (case-insensitive); remote search only; BR-17 gated.
@@ -279,7 +283,7 @@ export const useClusterSuggestionsLoader = ({
     staleTime: 30000,
   });
 
-  const { data: rosterEntries = [], isLoading: rosterLoading, isError: rosterError } = useRosterEntries();
+  const { data: rosterEntries = [], isLoading: rosterLoading, isError: rosterError, status: rosterStatus, refetch: refetchRoster } = useRosterEntries();
 
   const rosterCandidateOptions = React.useMemo(
     () => canQueryRosterCandidates
@@ -330,6 +334,9 @@ export const useClusterSuggestionsLoader = ({
       labelMatchesLoading ||
       atRestLabeledLoading ||
       (enabled && rosterLoading),
+    namingReady: enabled && rosterStatus === 'success',
+    // Roster HTTP does not consume query cancellation; share the pending read.
+    retryRoster: () => { void refetchRoster({ cancelRefetch: false }); },
     rosterError,
     rosterCandidateOptions,
     isError: (canQuerySuggestions && suggestionsError) || (canQueryRosterCandidates && rosterCandidatesError),

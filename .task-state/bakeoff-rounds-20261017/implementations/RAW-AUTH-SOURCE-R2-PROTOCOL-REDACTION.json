@@ -8,7 +8,9 @@
     ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-SOURCE-R2-PROTOCOL-REDACTION.json",
     ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-SOURCE-R2-PROTOCOL-REDACTION.md"
   ],
-  "commits": [],
+  "commits": [
+    "af26de4608a7ac8b53a6098c9d75fe410df5671b"
+  ],
   "findings": [
     {
       "id": "RAW-AUTH-SOURCE-G1-01",

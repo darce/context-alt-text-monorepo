@@ -2,7 +2,7 @@ import React from 'react';
 import { act, render, screen, fireEvent } from '@testing-library/react';
 import { QueryClient } from '@tanstack/react-query';
 import { MemoryRouter, RouterProvider, createMemoryRouter } from 'react-router-dom';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { SettingsPage } from '../SettingsPage';
 import {
@@ -2097,5 +2097,516 @@ describe('SettingsPage', () => {
       const banner = bannerFor('network_error');
       expect(banner).toHaveTextContent('Could not reach the recognition service.');
     });
+  });
+});
+
+// Independent Q-C-r1 probes use the installed React Query hooks and client.
+describe('QCR real React Query credential boundaries', () => {
+  const clients: QueryClient[] = [];
+  afterEach(() => { act(() => { for (const client of clients.splice(0)) client.clear(); }); });
+
+  const deferred = <T,>() => {
+    let resolve!: (value: T) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+    return { promise, resolve, reject };
+  };
+  const flush = async () => { await act(async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); }); };
+  const harness = async (initial = defaultSettings, staleTime = Infinity) => {
+    const real = await vi.importActual<typeof import('@tanstack/react-query')>('@tanstack/react-query');
+    const api = await import('../../api/settingsApi');
+    const client = new QueryClient({ defaultOptions: {
+      queries: { gcTime: Infinity, retry: false, staleTime, refetchOnWindowFocus: false },
+      mutations: { gcTime: Infinity, retry: false },
+    } });
+    clients.push(client);
+    client.setQueryData(queryKeys.settings.all, initial);
+    mockQueryClientRef.current = client;
+    mockUseQuery.mockImplementation(real.useQuery as never);
+    mockUseMutation.mockImplementation(real.useMutation as never);
+    let persisted = initial;
+    vi.mocked(api.fetchSettings).mockImplementation(async () => persisted);
+    vi.mocked(api.testConnection).mockResolvedValue({ outcome: 'network_error' });
+    const requests: Array<{ payload: import('../../api/settingsApi').SaveSettingsPayload } & ReturnType<typeof deferred<import('../../api/settingsApi').SaveSettingsResponse>>> = [];
+    vi.mocked(api.saveSettings).mockImplementation((payload) => {
+      const request = { payload, ...deferred<import('../../api/settingsApi').SaveSettingsResponse>() };
+      requests.push(request);
+      return request.promise;
+    });
+    render(<real.QueryClientProvider client={client}><SettingsPageWithRouter /></real.QueryClientProvider>);
+    await flush();
+    vi.mocked(api.testConnection).mockClear();
+    return { api, client, requests, persist: (settings: SettingsResponse) => { persisted = settings; } };
+  };
+  const type = (element: HTMLElement, value: string) => fireEvent.change(element, { target: { value } });
+  const finish = async (request: ReturnType<typeof deferred<import('../../api/settingsApi').SaveSettingsResponse>>, result: import('../../api/settingsApi').SaveSettingsResponse) => {
+    await act(async () => { request.resolve(result); });
+    await flush();
+  };
+
+  it.each(['ok', 'transport', 'partial'] as const)('QCR retains and sends committed B after pending A: %s', async (outcome) => {
+    const h = await harness();
+    const key = screen.getByLabelText('API Key');
+    type(key, 'draft-A'); fireEvent.blur(key); await flush();
+    type(key, 'draft-B'); fireEvent.blur(key);
+    expect(h.requests).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Check health' })).toBeDisabled();
+    if (outcome === 'transport') { await act(async () => { h.requests[0].reject(new Error('transport failed')); }); await flush(); }
+    else { await finish(h.requests[0], outcome === 'ok' ? { saved: ['api_key'], result: 'ok' } : { saved: [], failed: ['api_key'], result: 'error' }); }
+    expect(key).toHaveValue('draft-B');
+    expect(h.requests.map((r) => r.payload)).toEqual([{ api_key: 'draft-A' }, { api_key: 'draft-B' }]);
+  });
+
+  it.each(['api_key', 'url'] as const)('QCR retains B across an actual partial response with failed %s', async (failedField) => {
+    const h = await harness();
+    const key = screen.getByLabelText('API Key');
+    const url = screen.getByLabelText('Service API URL');
+    const urlA = 'https://partial.example.com';
+    type(url, urlA); type(key, 'draft-A'); fireEvent.blur(key); await flush();
+    type(key, 'draft-B'); fireEvent.blur(key);
+    if (failedField === 'api_key') h.persist({ ...defaultSettings, url: urlA, effective_target_url: urlA });
+    await finish(h.requests[0], { saved: [failedField === 'api_key' ? 'url' : 'api_key'], failed: [failedField], result: 'partial' });
+    expect(key).toHaveValue('draft-B');
+    expect(h.requests[1].payload).toEqual(failedField === 'api_key' ? { api_key: 'draft-B' } : { url: urlA, api_key: 'draft-B' });
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+  });
+
+  it('QCR does not persist C typed without blur after a queued B blur', async () => {
+    const h = await harness();
+    const key = screen.getByLabelText('API Key');
+    type(key, 'draft-A'); fireEvent.blur(key); await flush();
+    type(key, 'draft-B'); fireEvent.blur(key);
+    type(key, 'uncommitted-C');
+    await finish(h.requests[0], { saved: ['api_key'], result: 'ok' });
+    expect(key).toHaveValue('uncommitted-C');
+    expect(h.requests.map((r) => r.payload)).toEqual([{ api_key: 'draft-A' }, { api_key: 'draft-B' }]);
+  });
+
+  it.each([false, true])('QCR preserves revert to the original URL through A readback, blur=%s', async (blur) => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const urlA = 'https://pending.example.com';
+    type(url, urlA); fireEvent.blur(url); await flush();
+    type(url, defaultSettings.url); if (blur) fireEvent.blur(url);
+    h.persist({ ...defaultSettings, url: urlA, effective_target_url: urlA });
+    await finish(h.requests[0], { saved: ['url'], result: 'ok' });
+    if (blur) {
+      expect(h.requests[1].payload).toEqual({ url: defaultSettings.url });
+      await act(async () => { h.requests[1].reject(new Error('second write failed')); }); await flush();
+    }
+    expect(url).toHaveValue(defaultSettings.url);
+  });
+
+  it('QCR acknowledges committed B without clearing uncommitted C', async () => {
+    const h = await harness();
+    const key = screen.getByLabelText('API Key');
+    type(key, 'draft-A'); fireEvent.blur(key); await flush();
+    type(key, 'draft-B'); fireEvent.blur(key);
+    type(key, 'uncommitted-C');
+    await finish(h.requests[0], { saved: ['api_key'], result: 'ok' });
+    await finish(h.requests[1], { saved: ['api_key'], result: 'ok' });
+    expect(key).toHaveValue('uncommitted-C');
+    expect(h.requests.map((r) => r.payload)).toEqual([{ api_key: 'draft-A' }, { api_key: 'draft-B' }]);
+  });
+
+  it('QCR keeps a newer same-value secret edit after the original acknowledgement', async () => {
+    const h = await harness();
+    const key = screen.getByLabelText('API Key');
+    type(key, 'draft-A'); fireEvent.blur(key); await flush();
+    type(key, 'draft-B');
+    type(key, 'draft-A');
+    await finish(h.requests[0], { saved: ['api_key'], result: 'ok' });
+    expect(key).toHaveValue('draft-A');
+    expect(h.requests).toHaveLength(1);
+  });
+
+  it('QCR sends committed URL B while retaining uncommitted C through both readbacks', async () => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const urlA = 'https://pending.example.com';
+    const urlB = 'https://committed.example.com';
+    const urlC = 'https://typing.example.com';
+    type(url, urlA); fireEvent.blur(url); await flush();
+    type(url, urlB); fireEvent.blur(url);
+    type(url, urlC);
+    h.persist({ ...defaultSettings, url: urlA, effective_target_url: urlA });
+    await finish(h.requests[0], { saved: ['url'], result: 'ok' });
+    expect(h.requests.map((r) => r.payload)).toEqual([{ url: urlA }, { url: urlB }]);
+    h.persist({ ...defaultSettings, url: urlB, effective_target_url: urlB });
+    await finish(h.requests[1], { saved: ['url'], result: 'ok' });
+    expect(url).toHaveValue(urlC);
+    expect(h.requests).toHaveLength(2);
+  });
+
+  it('QCR does not resend acknowledged A when persisted readback fails', async () => {
+    const h = await harness();
+    const key = screen.getByLabelText('API Key');
+    type(key, 'draft-A'); fireEvent.blur(key); await flush();
+    type(screen.getByLabelText('Maximum description attempts'), '4');
+    fireEvent.submit(screen.getByRole('button', { name: 'Saving…' }).closest('form')!);
+    vi.mocked(h.api.fetchSettings).mockRejectedValue(new Error('readback unavailable'));
+    await finish(h.requests[0], { saved: ['api_key'], result: 'ok' });
+    expect(key).toHaveValue('');
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+    expect(h.requests.map((r) => r.payload)).toEqual([{ api_key: 'draft-A' }, { description_budget: { max_attempts: 4 } }]);
+  });
+
+  it('QCR empty newer key cancels the replacement without clearing persisted credentials', async () => {
+    const h = await harness();
+    const key = screen.getByLabelText('API Key');
+    type(key, 'draft-A'); fireEvent.blur(key); await flush();
+    type(key, 'draft-B'); fireEvent.blur(key);
+    type(key, ''); fireEvent.blur(key);
+    await finish(h.requests[0], { saved: ['api_key'], result: 'ok' });
+    expect(key).toHaveValue('');
+    expect(h.requests).toHaveLength(1);
+  });
+
+  it('QCR repeated pending key values are written once and cleared after acknowledgement', async () => {
+    const h = await harness();
+    const key = screen.getByLabelText('API Key');
+    type(key, 'draft-A'); fireEvent.blur(key); await flush();
+    fireEvent.blur(key);
+    await finish(h.requests[0], { saved: ['api_key'], result: 'ok' });
+    expect(key).toHaveValue('');
+    expect(h.requests).toHaveLength(1);
+  });
+
+  it('QCR an unrelated setting save retains an unblurred newer secret without submitting it', async () => {
+    const h = await harness();
+    type(screen.getByLabelText('Maximum description attempts'), '4');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    const key = screen.getByLabelText('API Key'); type(key, 'uncommitted-B');
+    h.persist({ ...defaultSettings, description_budget: { ...defaultSettings.description_budget, max_attempts: 4 } });
+    await finish(h.requests[0], { saved: ['description_budget'], result: 'ok' });
+    expect(key).toHaveValue('uncommitted-B');
+    expect(h.requests.map((r) => r.payload)).toEqual([{ description_budget: { max_attempts: 4 } }]);
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+  });
+
+  it('QCR health intent waits while persisted readback is deferred', async () => {
+    const h = await harness();
+    const urlA = 'https://pending.example.com';
+    const url = screen.getByLabelText('Service API URL');
+    type(url, urlA); fireEvent.click(screen.getByRole('button', { name: 'Check health' })); await flush();
+    const readback = deferred<SettingsResponse>();
+    vi.mocked(h.api.fetchSettings).mockReturnValue(readback.promise);
+    await finish(h.requests[0], { saved: ['url'], result: 'ok' });
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Check health' })).toBeDisabled();
+    await act(async () => { readback.resolve({ ...defaultSettings, url: urlA, effective_target_url: urlA }); }); await flush();
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+  });
+  it('QR2 keeps queued full-form fields when later routing commits replace the credentials', async () => {
+    const h = await harness();
+    const key = screen.getByLabelText('API Key');
+    const budget = screen.getByLabelText('Maximum description attempts');
+    type(key, 'probe-A'); fireEvent.blur(key); await flush();
+    type(budget, '4');
+    fireEvent.submit(key.closest('form')!);
+    type(budget, '9');
+    type(key, 'probe-B'); fireEvent.keyDown(key, { key: 'Enter' });
+    type(key, 'probe-C');
+    await finish(h.requests[0], { saved: ['api_key'], result: 'ok' });
+    expect(h.requests.map(r => r.payload)).toEqual([
+      { api_key: 'probe-A' }, { api_key: 'probe-B', description_budget: { max_attempts: 4 } },
+    ]);
+    h.persist({ ...defaultSettings, description_budget: { ...defaultSettings.description_budget, max_attempts: 4 } });
+    await finish(h.requests[1], { saved: ['description_budget'], failed: ['api_key'], result: 'partial' });
+    expect(key).toHaveValue('probe-C');
+    expect(h.requests).toHaveLength(2);
+    fireEvent.blur(key); await flush();
+    expect(h.requests[2].payload).toEqual({ api_key: 'probe-C' });
+  });
+
+  it('QR2 drains the latest committed transition through readback error then retries the newer draft', async () => {
+    const h = await harness(); const key = screen.getByLabelText('API Key');
+    type(key, 'probe-A'); fireEvent.blur(key); await flush();
+    type(key, 'probe-B'); fireEvent.blur(key);
+    type(key, 'probe-D'); fireEvent.blur(key);
+    type(key, 'probe-C');
+    vi.mocked(h.api.fetchSettings).mockRejectedValue(new Error('probe readback failure'));
+    await finish(h.requests[0], { saved: ['api_key'], result: 'ok' });
+    expect(h.requests.map(r => r.payload)).toEqual([{ api_key: 'probe-A' }, { api_key: 'probe-D' }]);
+    expect(key).toHaveValue('probe-C');
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+    vi.mocked(h.api.fetchSettings).mockResolvedValue(defaultSettings);
+    await finish(h.requests[1], { saved: ['api_key'], result: 'ok' });
+    expect(key).toHaveValue('probe-C');
+    fireEvent.blur(key); await flush();
+    await act(async () => {
+      h.requests[2].reject(new Error('probe transport failure'));
+      await h.requests[2].promise.catch(() => undefined);
+    }); await flush();
+    expect(key).toHaveValue('probe-C');
+    fireEvent.keyDown(key, { key: 'Enter' }); await flush();
+    expect(h.requests.map(r => r.payload)).toEqual([
+      { api_key: 'probe-A' }, { api_key: 'probe-D' }, { api_key: 'probe-C' }, { api_key: 'probe-C' },
+    ]);
+  });
+
+  it('QR2 distinguishes a committed A-B-A key edit from repeated blur after acknowledgement and readback failure', async () => {
+    const h = await harness(); const key = screen.getByLabelText('API Key');
+    type(key, 'probe-A'); fireEvent.blur(key); await flush();
+    type(key, 'probe-B'); fireEvent.blur(key);
+    type(key, 'probe-A'); fireEvent.blur(key);
+    vi.mocked(h.api.fetchSettings).mockRejectedValue(new Error('probe readback failure'));
+    await finish(h.requests[0], { saved: ['api_key'], result: 'ok' });
+    expect(key).toHaveValue('probe-A');
+    expect(h.requests.map(r => r.payload)).toEqual([{ api_key: 'probe-A' }, { api_key: 'probe-A' }]);
+    vi.mocked(h.api.fetchSettings).mockResolvedValue(defaultSettings);
+    await finish(h.requests[1], { saved: ['api_key'], result: 'ok' });
+    expect(key).toHaveValue('');
+    expect(h.requests).toHaveLength(2);
+  });
+
+  it('QR2 preserves edits committed during a deferred partial readback and later uncommitted input', async () => {
+    const h = await harness(); const key = screen.getByLabelText('API Key'); const url = screen.getByLabelText('Service API URL');
+    const urlA = 'https://probe-a.example.com'; const urlC = 'https://probe-c.example.com';
+    type(url, urlA); type(key, 'probe-A'); fireEvent.blur(key); await flush();
+    const readback = deferred<SettingsResponse>();
+    vi.mocked(h.api.fetchSettings).mockReturnValue(readback.promise);
+    await finish(h.requests[0], { saved: ['api_key'], failed: ['url'], result: 'partial' });
+    expect(key).toHaveValue('');
+    type(key, 'probe-B'); fireEvent.keyDown(key, { key: 'Enter' });
+    type(key, 'probe-C'); type(url, urlC);
+    await act(async () => { readback.resolve(defaultSettings); await readback.promise; }); await flush();
+    expect(h.requests[1].payload).toEqual({ url: urlA, api_key: 'probe-B' });
+    expect(url).toHaveValue(urlC); expect(key).toHaveValue('probe-C');
+    vi.mocked(h.api.fetchSettings).mockResolvedValue({ ...defaultSettings, url: urlA, effective_target_url: urlA });
+    await finish(h.requests[1], { saved: ['url'], failed: ['api_key'], result: 'partial' });
+    expect(url).toHaveValue(urlC); expect(key).toHaveValue('probe-C');
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+  });
+
+  it('QR2 preserves a same-value URL transition during delayed query effects and later failed retry', async () => {
+    const h = await harness(); const url = screen.getByLabelText('Service API URL');
+    const urlA = 'https://probe-a.example.com'; const urlB = 'https://probe-b.example.com';
+    type(url, urlA); fireEvent.blur(url); await flush();
+    const readback = deferred<SettingsResponse>();
+    vi.mocked(h.api.fetchSettings).mockReturnValue(readback.promise);
+    await finish(h.requests[0], { saved: ['url'], result: 'ok' });
+    type(url, urlB); type(url, urlA); fireEvent.blur(url);
+    await act(async () => { readback.resolve({ ...defaultSettings, url: urlA, effective_target_url: urlA }); await readback.promise; }); await flush();
+    expect(url).toHaveValue(urlA); expect(h.requests).toHaveLength(1);
+    // A new edit after that no-op commit must also survive an external query publication.
+    type(url, defaultSettings.url);
+    vi.mocked(h.api.fetchSettings).mockResolvedValue({ ...defaultSettings, url: urlB, effective_target_url: urlB });
+    await act(async () => { await h.client.invalidateQueries({ queryKey: queryKeys.settings.all }); }); await flush();
+    expect(screen.getByTestId('acx-effective-routing')).toHaveTextContent(urlB);
+    expect(url).toHaveValue(defaultSettings.url);
+    fireEvent.blur(url); await flush();
+    expect(h.requests[1].payload).toEqual({ url: defaultSettings.url });
+    await act(async () => {
+      h.requests[1].reject(new Error('probe retry failure'));
+      await h.requests[1].promise.catch(() => undefined);
+    }); await flush();
+    expect(url).toHaveValue(defaultSettings.url);
+  });
+
+  it('QR2 URL and key acknowledgement followed by failed readback retains a newer draft and queued unrelated fields', async () => {
+    const h = await harness(); const key = screen.getByLabelText('API Key'); const url = screen.getByLabelText('Service API URL');
+    const urlA = 'https://probe-a.example.com'; const urlC = 'https://probe-c.example.com';
+    type(url, urlA); type(key, 'probe-A'); fireEvent.blur(key); await flush();
+    type(screen.getByLabelText('Maximum description attempts'), '4'); fireEvent.submit(key.closest('form')!);
+    type(url, urlC); type(key, 'probe-C');
+    vi.mocked(h.api.fetchSettings).mockRejectedValue(new Error('probe readback failure'));
+    await finish(h.requests[0], { saved: ['url', 'api_key'], result: 'ok' });
+    expect(url).toHaveValue(urlC); expect(key).toHaveValue('probe-C');
+    expect(h.requests[1].payload).toEqual({ url: urlA, description_budget: { max_attempts: 4 } });
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+  });
+
+  it('QR2 no-op committed URL revision follows a later persisted URL update', async () => {
+    const h = await harness(defaultSettings, 0); const url = screen.getByLabelText('Service API URL');
+    const transient = 'https://probe-transient.example.com'; const external = 'https://probe-external.example.com';
+    type(url, transient); type(url, defaultSettings.url); fireEvent.blur(url); await flush();
+    expect(h.requests).toHaveLength(0);
+    expect(url).toHaveValue(defaultSettings.url);
+    h.persist({ ...defaultSettings, url: external, effective_target_url: external });
+    await act(async () => { await h.client.invalidateQueries({ queryKey: queryKeys.settings.all }); }); await flush();
+    expect(screen.getByTestId('acx-effective-routing')).toHaveTextContent(external);
+    expect(url).toHaveValue(external);
+  });
+
+  it('QR2 no-op committed URL must not be resubmitted by a later key save after persisted routing changes', async () => {
+    const h = await harness(defaultSettings, 0); const url = screen.getByLabelText('Service API URL'); const key = screen.getByLabelText('API Key');
+    type(url, 'https://probe-transient.example.com'); type(url, defaultSettings.url); fireEvent.blur(url); await flush();
+    expect(h.requests).toHaveLength(0);
+    const external = 'https://probe-external.example.com';
+    type(screen.getByLabelText('Maximum description attempts'), '4');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    expect(h.requests[0].payload).toEqual({ description_budget: { max_attempts: 4 } });
+    h.persist({ ...defaultSettings, url: external, effective_target_url: external, description_budget: { ...defaultSettings.description_budget, max_attempts: 4 } });
+    await finish(h.requests[0], { saved: ['description_budget'], result: 'ok' });
+    expect(screen.getByTestId('acx-effective-routing')).toHaveTextContent(external);
+    type(key, 'probe-key'); fireEvent.blur(key); await flush();
+    expect(h.requests[1].payload).toEqual({ api_key: 'probe-key' });
+  });
+
+  it.each([false, true])('C3 full-form commit retires only its satisfied URL, budget change=%s', async (changeBudget) => {
+    const h = await harness(defaultSettings, 0);
+    const url = screen.getByLabelText('Service API URL');
+    const key = screen.getByLabelText('API Key');
+    const external = 'https://probe-external.example.com';
+    type(url, 'https://probe-transient.example.com');
+    type(url, defaultSettings.url);
+    if (changeBudget) type(screen.getByLabelText('Maximum description attempts'), '4');
+    fireEvent.submit(url.closest('form')!);
+    await flush();
+    const persisted = {
+      ...defaultSettings, url: external, effective_target_url: external,
+      description_budget: { ...defaultSettings.description_budget, max_attempts: changeBudget ? 4 : defaultSettings.description_budget.max_attempts },
+    };
+    h.persist(persisted);
+    if (changeBudget) {
+      expect(h.requests[0].payload).toEqual({ description_budget: { max_attempts: 4 } });
+      await finish(h.requests[0], { saved: ['description_budget'], result: 'ok' });
+    } else {
+      expect(h.requests).toHaveLength(0);
+      await act(async () => { await h.client.invalidateQueries({ queryKey: queryKeys.settings.all }); });
+      await flush();
+    }
+    expect(screen.getByTestId('acx-effective-routing')).toHaveTextContent(external);
+    expect(url).toHaveValue(external);
+    type(key, 'probe-key');
+    fireEvent.blur(key);
+    await flush();
+    expect(h.requests[changeBudget ? 1 : 0].payload).toEqual({ api_key: 'probe-key' });
+  });
+
+  it.each([
+    { fullForm: false, newerDraft: false },
+    { fullForm: true, newerDraft: false },
+    { fullForm: false, newerDraft: true },
+    { fullForm: true, newerDraft: true },
+  ])('C3 queued no-op retires its committed revision and preserves newer same-value edits: %j', async ({ fullForm, newerDraft }) => {
+    const h = await harness(defaultSettings, 0);
+    const url = screen.getByLabelText('Service API URL');
+    const saved = 'https://probe-saved.example.com';
+    const transient = 'https://probe-transient.example.com';
+    const external = 'https://probe-external.example.com';
+    type(url, saved);
+    fireEvent.blur(url);
+    await flush();
+    type(url, transient);
+    type(url, saved);
+    if (fullForm) fireEvent.submit(url.closest('form')!);
+    else fireEvent.blur(url);
+    if (newerDraft) {
+      type(url, transient);
+      type(url, saved);
+    }
+    h.persist({ ...defaultSettings, url: saved, effective_target_url: saved });
+    await finish(h.requests[0], { saved: ['url'], result: 'ok' });
+    expect(h.requests.map(r => r.payload)).toEqual([{ url: saved }]);
+    expect(url).toHaveValue(saved);
+    h.persist({ ...defaultSettings, url: external, effective_target_url: external });
+    await act(async () => { await h.client.invalidateQueries({ queryKey: queryKeys.settings.all }); });
+    await flush();
+    expect(screen.getByTestId('acx-effective-routing')).toHaveTextContent(external);
+    expect(url).toHaveValue(newerDraft ? saved : external);
+    expect(h.requests).toHaveLength(1);
+  });
+
+  it.each([
+    { matchesCommit: true, newerDraft: false },
+    { matchesCommit: true, newerDraft: true },
+    { matchesCommit: false, newerDraft: false },
+  ])('C3 no-op committed during refetch waits for settled data: %j', async ({ matchesCommit, newerDraft }) => {
+    const h = await harness(defaultSettings, 0);
+    const url = screen.getByLabelText('Service API URL');
+    const transient = 'https://probe-transient.example.com';
+    const external = 'https://probe-external.example.com';
+    const readback = deferred<SettingsResponse>();
+    vi.mocked(h.api.fetchSettings).mockReturnValue(readback.promise);
+    let refresh!: Promise<void>;
+    act(() => { refresh = h.client.invalidateQueries({ queryKey: queryKeys.settings.all }); });
+    await flush();
+    type(url, transient);
+    type(url, defaultSettings.url);
+    fireEvent.blur(url);
+    if (newerDraft) {
+      type(url, transient);
+      type(url, defaultSettings.url);
+    }
+    expect(h.requests).toHaveLength(0);
+    await act(async () => {
+      readback.resolve(matchesCommit ? defaultSettings : { ...defaultSettings, url: external, effective_target_url: external });
+      await refresh;
+    });
+    await flush();
+    vi.mocked(h.api.fetchSettings).mockResolvedValue({ ...defaultSettings, url: external, effective_target_url: external });
+    await act(async () => { await h.client.invalidateQueries({ queryKey: queryKeys.settings.all }); });
+    await flush();
+    expect(screen.getByTestId('acx-effective-routing')).toHaveTextContent(external);
+    expect(url).toHaveValue(matchesCommit && !newerDraft ? external : defaultSettings.url);
+    expect(h.requests).toHaveLength(0);
+  });
+
+  it.each([false, true])('C3 uncertain write needs fresh readback to complete a queued URL restore, satisfied=%s', async (satisfied) => {
+    const h = await harness(defaultSettings, 0);
+    const url = screen.getByLabelText('Service API URL');
+    const pending = 'https://probe-pending.example.com';
+    const external = 'https://probe-external.example.com';
+    type(url, pending);
+    fireEvent.blur(url);
+    await flush();
+    type(url, defaultSettings.url);
+    fireEvent.blur(url);
+    await act(async () => {
+      h.requests[0].reject(new Error('probe uncertain write outcome'));
+      await h.requests[0].promise.catch(() => undefined);
+    });
+    await flush();
+    expect(url).toHaveValue(defaultSettings.url);
+    expect(h.requests.map(r => r.payload)).toEqual([{ url: pending }]);
+    // The idle cache still contains P from before the rejected A write.
+    // Only a subsequent actual read can prove whether the queued P is satisfied.
+    fireEvent.blur(url);
+    await flush();
+    expect(h.requests).toHaveLength(1);
+    h.persist(satisfied ? defaultSettings : { ...defaultSettings, url: pending, effective_target_url: pending });
+    await act(async () => { await h.client.invalidateQueries({ queryKey: queryKeys.settings.all }); });
+    await flush();
+    expect(url).toHaveValue(defaultSettings.url);
+    h.persist({ ...defaultSettings, url: external, effective_target_url: external });
+    await act(async () => { await h.client.invalidateQueries({ queryKey: queryKeys.settings.all }); });
+    await flush();
+    expect(screen.getByTestId('acx-effective-routing')).toHaveTextContent(external);
+    expect(url).toHaveValue(satisfied ? external : defaultSettings.url);
+    expect(h.requests).toHaveLength(1);
+  });
+});
+
+
+describe('QCR further cross-save probes', () => {
+  it('QCR never persists a never-blurred secret after an unrelated save and unchanged URL blur', async () => {
+    const real = await vi.importActual<typeof import('@tanstack/react-query')>('@tanstack/react-query');
+    const api = await import('../../api/settingsApi');
+    const client = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity, retry: false, staleTime: Infinity }, mutations: { gcTime: Infinity, retry: false } } });
+    client.setQueryData(queryKeys.settings.all, defaultSettings);
+    mockQueryClientRef.current = client;
+    mockUseQuery.mockImplementation(real.useQuery as never);
+    mockUseMutation.mockImplementation(real.useMutation as never);
+    vi.mocked(api.fetchSettings).mockResolvedValue({ ...defaultSettings, description_budget: { ...defaultSettings.description_budget, max_attempts: 4 } });
+    vi.mocked(api.testConnection).mockResolvedValue({ outcome: 'network_error' });
+    let release!: (data: import('../../api/settingsApi').SaveSettingsResponse) => void;
+    const first = new Promise<import('../../api/settingsApi').SaveSettingsResponse>((yes) => { release = yes; });
+    vi.mocked(api.saveSettings).mockReturnValue(first);
+    const view = render(<real.QueryClientProvider client={client}><SettingsPageWithRouter /></real.QueryClientProvider>);
+    const flush = async () => { await act(async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); }); };
+    try {
+      await flush();
+      fireEvent.change(screen.getByLabelText('Maximum description attempts'), { target: { value: '4' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+      fireEvent.blur(screen.getByLabelText('Service API URL'));
+      const key = screen.getByLabelText('API Key');
+      fireEvent.change(key, { target: { value: 'still-typing' } });
+      vi.mocked(api.saveSettings).mockImplementation(() => new Promise(() => {}));
+      await act(async () => { release({ saved: ['description_budget'], result: 'ok' }); }); await flush();
+      expect(key).toHaveValue('still-typing');
+      expect(vi.mocked(api.saveSettings).mock.calls.map(([payload]) => payload)).toEqual([{ description_budget: { max_attempts: 4 } }]);
+    } finally { view.unmount(); client.clear(); }
   });
 });

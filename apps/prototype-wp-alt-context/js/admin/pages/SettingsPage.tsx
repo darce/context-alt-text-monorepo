@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { __ } from '@wordpress/i18n';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'react-router-dom';
@@ -40,7 +40,9 @@ const SETTINGS_SECTION_RETENTION_HEADING_ID = 'acx-retention-title';
 
 interface SettingsFormSnapshot {
   url: string;
+  urlRevision: number;
   apiKey: string;
+  apiKeyRevision: number;
   descriptionBudgetMaxAttempts: string;
   recognitionEnabled: boolean;
   allowPersonNames: boolean | null;
@@ -74,8 +76,13 @@ export const SettingsPage = (): React.JSX.Element => {
   const routingSavePending = useRef(false);
   const routingSaveFeedback = useRef(false);
   const routingSaveIncludesOtherSettings = useRef(false);
-  const inFlightRoutingApiKey = useRef<string | null>(null);
+  const inFlightRoutingSnapshot = useRef<SettingsFormSnapshot | null>(null);
+  const inFlightUrlWrite = useRef(false);
+  const urlReadbackAfter = useRef<number | null>(null);
+  // A blur queues routing fields only; an explicit submit queues the full form.
+  const queuedRoutingOnly = useRef(false);
   const queuedSaveSnapshot = useRef<SettingsFormSnapshot | null>(null);
+  const pendingNoopUrl = useRef<Pick<SettingsFormSnapshot, 'url' | 'urlRevision'> | null>(null);
 
   const settingsQuery = useQuery<SettingsResponse>({
     queryKey: queryKeys.settings.all,
@@ -199,7 +206,9 @@ export const SettingsPage = (): React.JSX.Element => {
 
   const captureFormSnapshot = (): SettingsFormSnapshot => ({
     url: state.url,
+    urlRevision: state.urlRevision,
     apiKey: state.apiKey,
+    apiKeyRevision: state.apiKeyRevision,
     descriptionBudgetMaxAttempts: state.descriptionBudgetMaxAttempts,
     recognitionEnabled: state.recognitionEnabled,
     allowPersonNames: state.allowPersonNames,
@@ -247,12 +256,52 @@ export const SettingsPage = (): React.JSX.Element => {
     return payload;
   };
 
+  const acknowledgeSatisfiedUrl = useCallback((data: SettingsResponse): void => {
+    const committed = pendingNoopUrl.current;
+    if (!committed || inFlightRoutingSnapshot.current || routingSavePending.current
+      || queuedSaveSnapshot.current || settingsQuery.isFetching || settingsQuery.isError) {
+      return;
+    }
+    // A retained cache value during refetch/error is not proof of completion.
+    // Inspect the cache too: its transition can precede the hook notification.
+    const cached = queryClient.getQueryState?.<SettingsResponse>(queryKeys.settings.all);
+    if (cached && (cached.fetchStatus !== 'idle' || cached.status !== 'success'
+      || cached.isInvalidated || cached.data !== data)) {
+      return;
+    }
+    if (urlReadbackAfter.current !== null
+      && (!cached || cached.dataUpdateCount <= urlReadbackAfter.current)) {
+      return;
+    }
+    urlReadbackAfter.current = null;
+    pendingNoopUrl.current = null;
+    if (committed.url === (data.url ?? '')) {
+      dispatch({ type: 'acknowledgeUrl', revision: committed.urlRevision });
+    }
+  }, [queryClient, settingsQuery.isFetching, settingsQuery.isError, dispatch]);
+
+  const commitUrlNoop = (values: SettingsFormSnapshot, data: SettingsResponse): void => {
+    // Only this committed revision can become clean, even if a newer draft
+    // happens to have the same value. Pending writes must drain their intent first.
+    pendingNoopUrl.current = values.url === (data.url ?? '')
+      ? { url: values.url, urlRevision: values.urlRevision }
+      : null;
+    acknowledgeSatisfiedUrl(data);
+  };
+
   const submitSnapshot = (
     values: SettingsFormSnapshot,
     data: SettingsResponse,
     queued = false,
+    routingOnly = false,
   ): void => {
-    const payload = buildSavePayload(values, data);
+    commitUrlNoop(values, data);
+    const payload = routingOnly
+      ? {
+        ...(values.url !== data.url ? { url: values.url } : {}),
+        ...(values.apiKey ? { api_key: values.apiKey } : {}),
+      }
+      : buildSavePayload(values, data);
     if (Object.keys(payload).length === 0) {
       dispatch({
         type: 'setSaveMessage',
@@ -271,18 +320,21 @@ export const SettingsPage = (): React.JSX.Element => {
       );
       routingSaveFeedback.current = hasRoutingChanges && !routingSaveIncludesOtherSettings.current;
     }
+    inFlightRoutingSnapshot.current = values;
+    inFlightUrlWrite.current = 'url' in payload;
     saveMutation.mutate(payload);
   };
 
   const drainQueuedSave = (
     refreshedSettings?: SettingsResponse,
-    alreadySavedApiKey: string | null = null,
   ): void => {
     const snapshot = queuedSaveSnapshot.current;
     if (!snapshot) {
       return;
     }
     queuedSaveSnapshot.current = null;
+    const routingOnly = queuedRoutingOnly.current;
+    queuedRoutingOnly.current = false;
     const data = refreshedSettings
       ?? queryClient.getQueryData<SettingsResponse>(queryKeys.settings.all)
       ?? settingsQuery.data;
@@ -294,20 +346,27 @@ export const SettingsPage = (): React.JSX.Element => {
     routingSaveIncludesOtherSettings.current = false;
     dispatch({ type: 'clearSaveMessage' });
     dispatch({ type: 'clearTestResult' });
-    const snapshotForSave = alreadySavedApiKey !== null && snapshot.apiKey === alreadySavedApiKey
-      ? { ...snapshot, apiKey: '' }
-      : snapshot;
-    submitSnapshot(snapshotForSave, data, true);
+    submitSnapshot(snapshot, data, true, routingOnly);
   };
 
   const saveMutation = useMutation({
     mutationFn: saveSettings,
     onSuccess: async (data: SaveSettingsResponse) => {
-      const settledApiKey = inFlightRoutingApiKey.current;
-      inFlightRoutingApiKey.current = null;
-      const alreadySavedApiKey = settledApiKey !== null && data.saved.includes('api_key')
-        ? settledApiKey
-        : null;
+      const settled = inFlightRoutingSnapshot.current;
+      inFlightRoutingSnapshot.current = null;
+      inFlightUrlWrite.current = false;
+      if (settled && data.saved.includes('url')) {
+        dispatch({ type: 'acknowledgeUrl', revision: settled.urlRevision });
+      }
+      if (settled?.apiKey && data.saved.includes('api_key')) {
+        dispatch({ type: 'acknowledgeApiKey', value: settled.apiKey, revision: settled.apiKeyRevision });
+        // Retire the acknowledged intent before readback can reject onSuccess
+        // and React Query enters onError. Never retire a newer edit's intent.
+        const queued = queuedSaveSnapshot.current;
+        if (queued?.apiKeyRevision === settled.apiKeyRevision && queued.apiKey === settled.apiKey) {
+          queuedSaveSnapshot.current = { ...queued, apiKey: '' };
+        }
+      }
       const isRoutingAutosave = routingSavePending.current;
       const includesOtherSettings = routingSaveIncludesOtherSettings.current;
       if (isRoutingAutosave) {
@@ -337,7 +396,7 @@ export const SettingsPage = (): React.JSX.Element => {
           queryFn: fetchSettings,
         });
         syncLocalizedRouting(refreshedOnFail);
-        drainQueuedSave(refreshedOnFail, alreadySavedApiKey);
+        drainQueuedSave(refreshedOnFail);
         return;
       }
 
@@ -348,7 +407,6 @@ export const SettingsPage = (): React.JSX.Element => {
           : __('Settings saved.', 'alt-context'),
         tone: isRoutingAutosave && !includesOtherSettings ? 'info' : 'success',
       });
-      dispatch({ type: 'setApiKey', value: '' });
       await queryClient.invalidateQueries({ queryKey: queryKeys.settings.all });
       // A saved URL/key may repair the recognition breaker; refetch sync health
       // so the degraded/offline banner clears without waiting for its 15s poll.
@@ -363,10 +421,17 @@ export const SettingsPage = (): React.JSX.Element => {
         scheduledHealthCheck.current = { afterRoutingSave: true, request: null };
         startScheduledHealthCheck();
       }
-      drainQueuedSave(refreshed, alreadySavedApiKey);
+      drainQueuedSave(refreshed);
     },
     onError: (error) => {
-      inFlightRoutingApiKey.current = null;
+      if (inFlightUrlWrite.current) {
+        // A rejected write can leave an idle cache from before that write.
+        // Require a subsequent successful publication before proving a no-op.
+        urlReadbackAfter.current = queryClient.getQueryState?.<SettingsResponse>(queryKeys.settings.all)?.dataUpdateCount
+          ?? Infinity;
+        inFlightUrlWrite.current = false;
+      }
+      inFlightRoutingSnapshot.current = null;
       const isRoutingAutosave = routingSavePending.current;
       if (isRoutingAutosave) {
         routingSavePending.current = false;
@@ -380,6 +445,19 @@ export const SettingsPage = (): React.JSX.Element => {
       drainQueuedSave();
     },
   });
+
+  useEffect(() => {
+    if (!saveMutation.isPending && settingsQuery.data) {
+      acknowledgeSatisfiedUrl(settingsQuery.data);
+    }
+  }, [
+    saveMutation.isPending,
+    settingsQuery.data,
+    settingsQuery.dataUpdatedAt,
+    settingsQuery.isFetching,
+    settingsQuery.isError,
+    acknowledgeSatisfiedUrl,
+  ]);
 
   const testMutation = useMutation({
     mutationFn: testConnection,
@@ -505,6 +583,7 @@ export const SettingsPage = (): React.JSX.Element => {
     e.preventDefault();
     invalidateHealthProbe();
     if (saveMutation.isPending) {
+      queuedRoutingOnly.current = false;
       queuedSaveSnapshot.current = captureFormSnapshot();
       dispatch({ type: 'setSaveMessage', message: __('Saving…', 'alt-context'), tone: 'info' });
       return;
@@ -525,10 +604,28 @@ export const SettingsPage = (): React.JSX.Element => {
 
   const commitRoutingFields = (checkIfUnchanged = false): void => {
     const data = settingsQuery.data;
-    if (!data || saveMutation.isPending || routingSavePending.current) {
+    if (!data) {
+      return;
+    }
+    if (saveMutation.isPending || routingSavePending.current) {
+      const committed = captureFormSnapshot();
+      if (!queuedSaveSnapshot.current) {
+        queuedRoutingOnly.current = true;
+      }
+      // A routing commit changes only routing intent in an already submitted form.
+      queuedSaveSnapshot.current = queuedSaveSnapshot.current
+        ? {
+          ...queuedSaveSnapshot.current,
+          url: committed.url,
+          urlRevision: committed.urlRevision,
+          apiKey: committed.apiKey,
+          apiKeyRevision: committed.apiKeyRevision,
+        }
+        : committed;
       return;
     }
 
+    commitUrlNoop(captureFormSnapshot(), data);
     const payload: SaveSettingsPayload = {};
     if (state.url !== (data.url ?? '')) {
       payload.url = state.url;
@@ -548,7 +645,8 @@ export const SettingsPage = (): React.JSX.Element => {
 
     routingSavePending.current = true;
     routingSaveFeedback.current = true;
-    inFlightRoutingApiKey.current = payload.api_key ?? null;
+    inFlightRoutingSnapshot.current = captureFormSnapshot();
+    inFlightUrlWrite.current = 'url' in payload;
     invalidateHealthProbe();
     dispatch({ type: 'setSaveMessage', message: __('Saving…', 'alt-context'), tone: 'info' });
     saveMutation.mutate(payload);

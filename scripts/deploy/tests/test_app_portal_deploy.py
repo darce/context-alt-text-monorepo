@@ -2274,28 +2274,35 @@ def test_runbook_rollback_has_no_unsafe_caddyfile_placeholder() -> None:
     assert "cat rollback > Caddyfile" not in rollback
 
 
-def test_runbook_rollback_documents_guarded_in_place_caddyfile_restore() -> None:
-    rollback = RUNBOOK.read_text(encoding="utf-8").split("## Rollback", 1)[1]
-    assert all(
-        fragment in rollback
-        for fragment in (
-            "**in place**",
-            "set -euo pipefail",
-            "find /opt/acx-backend/app/rollback -maxdepth 1 -type f",
-            "-name 'Caddyfile.*' -printf '%f\\n'",
-            "sed -n 's/^Caddyfile\\.\\([0-9][0-9]*\\)$/\\1/p'",
-            "| sort -nr | sed -n '1p'",
-            'echo "Selected rollback timestamp: $ts"',
-            'if [ ! -f "$snapshot" ] || [ ! -s "$snapshot" ] || [ -L "$snapshot" ]; then',
-            "refusing restore",
-            'cp -- "$snapshot" /opt/acx-backend/Caddyfile',
-            'www_snapshot="/opt/acx-backend/app/rollback/www.$ts"',
-            'overlay_snapshot="/opt/acx-backend/app/rollback/docker-compose.app.yml.$ts"',
-            "rm -rf -- /opt/acx-backend/app/www",
-            'cp -a -- "$www_snapshot" /opt/acx-backend/app/www',
-            'cp -- "$overlay_snapshot" /opt/acx-backend/app/docker-compose.app.yml',
-        )
-    )
+def test_runbook_rollback_restores_selected_state_in_place(tmp_path: Path) -> None:
+    from test_gtmr_portal_backout_admission import _backout, _fixture
+
+    backend, _, record, env = _fixture(tmp_path, marked=True, overlay=True)
+    caddy = backend / "Caddyfile"
+    inode = caddy.stat().st_ino
+    rollback = backend / "app/rollback"
+    snapshots = _rollback_tree_state(rollback)
+    lock = backend / "app/activation.journal.lock"
+    lock_before = _rollback_tree_state(lock)
+    result = _backout(backend, env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Selected rollback timestamp: 20" in result.stdout
+    assert caddy.read_bytes() == (rollback / "Caddyfile.20").read_bytes()
+    assert caddy.stat().st_ino == inode
+    assert _tree_files(backend / "app/www") == _tree_files(rollback / "www.20")
+    assert (backend / "app/docker-compose.app.yml").read_bytes() == (
+        rollback / "docker-compose.app.yml.20"
+    ).read_bytes()
+    models = [json.loads(line) for line in record.read_text().splitlines()]
+    assert {item["model"]["name"] for item in models} == {"rollback-project"}
+    assert len({tuple(item["files"]) for item in models}) == 1
+    assert "up" in models[0]["argv"]
+    assert "wget" in models[1]["argv"]
+    assert "reload" in models[2]["argv"]
+    assert len(models) == 3
+    assert _rollback_tree_state(rollback) == snapshots
+    assert _rollback_tree_state(lock) == lock_before
+    assert not (backend / "app/activation.journal").exists()
 
 
 def _run_runbook_commands(
@@ -2662,11 +2669,33 @@ def test_recovery_refuses_changed_base_compose_without_mutation(tmp_path: Path) 
     assert f"caddy_compose={live.parent / 'docker-compose.caddy.yml'}\n" in journal.read_text()
 
 
-def test_runbook_first_deploy_rollback_uses_base_only_compose() -> None:
-    rollback = RUNBOOK.read_text(encoding="utf-8").split("## Rollback", 1)[1]
-    assert "no prior overlay" in rollback
-    assert "docker compose -f docker-compose.caddy.yml up -d" in rollback
-    assert "docker compose -f docker-compose.caddy.yml exec -T caddy" in rollback
+@pytest.mark.parametrize("marked", [False, True], ids=["legacy", "normalized"])
+def test_runbook_first_deploy_rollback_uses_base_project(tmp_path: Path, marked: bool) -> None:
+    from test_gtmr_portal_backout_admission import _backout, _fixture
+
+    backend, _, record, env = _fixture(tmp_path, marked=marked, overlay=False)
+    caddy = backend / "Caddyfile"
+    inode = caddy.stat().st_ino
+    snapshots = _rollback_tree_state(backend / "app/rollback")
+    result = _backout(backend, env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert caddy.read_bytes() == b"caddy 20\n"
+    assert caddy.stat().st_ino == inode
+    assert not (backend / "app/www").exists()
+    assert not (backend / "app/docker-compose.app.yml").exists()
+    models = [json.loads(line) for line in record.read_text().splitlines()]
+    assert {item["model"]["name"] for item in models} == {"acx-backend"}
+    assert all(
+        not any(v["target"] == "/srv/app-portal" for v in item["model"]["services"]["caddy"]["volumes"])
+        for item in models
+    )
+    assert len({tuple(item["files"]) for item in models}) == 1
+    assert "up" in models[0]["argv"]
+    assert "wget" in models[1]["argv"]
+    assert "reload" in models[2]["argv"]
+    assert len(models) == 3
+    assert _rollback_tree_state(backend / "app/rollback") == snapshots
+    assert not (backend / "app/activation.journal").exists()
 
 
 def test_runbook_post_apply_mismatch_recreates_reloads_and_reverifies() -> None:

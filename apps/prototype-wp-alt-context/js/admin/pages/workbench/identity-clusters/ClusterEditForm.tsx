@@ -30,8 +30,10 @@ interface ClusterEditFormProps {
   onLabelChange: (value: string) => void;
   /** Combobox options (suggestions + existing labels) */
   options: ComboboxOption[];
-  /** Whether suggestions are loading */
+  /** Whether mandatory naming data is unavailable */
   isLoading: boolean;
+  rosterError?: boolean;
+  onRetryRoster?: () => void;
   /** Whether a mutation is in progress */
   isPending: boolean;
   /** Override label for the save button */
@@ -74,6 +76,8 @@ export const ClusterEditForm = ({
   onLabelChange,
   options,
   isLoading,
+  rosterError,
+  onRetryRoster,
   isPending,
   saveLabel,
   onSave,
@@ -202,6 +206,17 @@ export const ClusterEditForm = ({
     },
     [onLabelChange],
   );
+
+  if (rosterError) {
+    return (
+      <div role="alert">
+        <p>{__('Unable to load people. Retry before naming someone new.', 'alt-context')}</p>
+        <button type="button" onClick={onRetryRoster} disabled={isPending}>
+          {__('Retry', 'alt-context')}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <>

@@ -52,6 +52,10 @@ def _manual_state(tmp_path: Path, phase: str) -> Path:
     app = backend / "app"
     rollback = app / "rollback"
     rollback.mkdir(parents=True)
+    # Model the reviewed helper packaged by a successful apply. The native
+    # Compose probes replace this unmarked legacy base with the actual base.
+    (app / "shared-edge.sh").write_bytes((REPO_ROOT / "scripts/deploy/lib/shared-edge.sh").read_bytes())
+    deploy_helpers._write_caddy_compose(backend / "docker-compose.caddy.yml")
     (backend / "Caddyfile").write_text("live caddy\n")
     (app / "www").mkdir()
     (app / "www/index.html").write_text("live frontend\n")

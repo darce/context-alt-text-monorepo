@@ -1,0 +1,813 @@
+"""Model provenance manifest + fail-closed loader for face-pipeline ONNX.
+
+FIR-3 S1: pin model bytes by sha256 with source URL/ref and license hashes.
+Legacy adapters retain ``load_verified_model``'s Path ABI. Candidate acquisition
+uses ``acquire_verified_model_bytes`` to bind verification to consumed bytes.
+
+Heuristics: rg-008 (config validate-at-load), AGT-02 (no unresolved anchors),
+rg-015 (manifest is single source for EmbeddingModelManifest field values).
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+import os
+import stat
+import time
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+from .loaded_session import VerifiedModelBytes
+
+# Explicit unresolved-hash sentinel. Never invent sha256 values.
+PENDING_OPERATOR_FETCH = "PENDING_OPERATOR_FETCH"
+
+# opencv_zoo commit that ships YuNet 2026may + SFace 2021dec (not a branch tip).
+OPENCV_ZOO_COMMIT = "47534e27c9851bb1128ccc0102f1145e27f23f98"
+_OPENCV_ZOO_MEDIA = f"https://media.githubusercontent.com/media/opencv/opencv_zoo/{OPENCV_ZOO_COMMIT}"
+_OPENCV_ZOO_RAW = f"https://raw.githubusercontent.com/opencv/opencv_zoo/{OPENCV_ZOO_COMMIT}"
+AURAFACE_REVISION = "af6d057c9b0ec4071d4c49c80e3539258798b609"
+_AURAFACE_REPOSITORY = "https://huggingface.co/fal/AuraFace-v1"
+_AURAFACE_ARTIFACT = "glintr100.onnx"
+
+# Default on-disk directory next to this module.
+DEFAULT_MODELS_DIR = Path(__file__).resolve().parent / "models"
+
+# The required gate/preflight baseline is deliberately independent of the
+# declarable manifest, whose candidates may remain operator-pinned and opt-in.
+REQUIRED_MODELS: tuple[str, ...] = ("yunet", "sface")
+
+
+class ModelIntegrityError(Exception):
+    """Raised when on-disk bytes fail size/hash integrity (tamper / corrupt).
+
+    Sticky-cacheable in the process runtime singleton: a hash/size mismatch is
+    not expected to self-heal without operator intervention or process restart.
+    """
+
+
+class ModelMissingError(Exception):
+    """Raised when a known model is not provisioned (missing file or pending pin).
+
+    Not a subclass of ``ModelIntegrityError``. Non-sticky: correcting
+    ``models_dir`` (fetch + pin) must recover without process restart.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class InputPreprocessing:
+    """Declared input preprocessing metadata for a candidate model space.
+
+    ``input_mean`` default 0 preserves the SFace blob (scale=1, no offset).
+    AuraFace uses mean 127.5 with scale 1/127.5 → ``(pixel - 127.5) / 127.5``.
+    ``output_l2_normalized`` describes the raw graph output, not pipeline L2.
+    """
+
+    input_size: tuple[int, int]
+    channel_order: str
+    input_scale: float
+    alignment_template_id: str
+    output_l2_normalized: bool
+    input_mean: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class ModelProvenance:
+    """Pinned provenance for one ONNX model artifact.
+
+    Embedding-contract fields (``embedding_dim``, ``normalization``, ``metric``,
+    ``framework``) are the single source for ``EmbeddingModelManifest`` values
+    consumed by S2/S3 adapters (rg-015). Detector-only entries use ``None`` for
+    embedding fields.
+    """
+
+    file_name: str
+    sha256: str
+    source_url: str
+    source_ref: str
+    license_id: str
+    license_file: str
+    license_sha256: str
+    size_bytes: int
+    framework: str
+    embedding_dim: int | None = None
+    normalization: str | None = None
+    metric: str | None = None
+    preprocessing: InputPreprocessing | None = None
+
+
+# Hashes computed from bytes downloaded in-sandbox at FIR-3 S1 from the
+# pinned opencv_zoo commit above (media.githubusercontent.com LFS content).
+# Never hand-edit without re-downloading and re-hashing.
+MODEL_MANIFEST: dict[str, ModelProvenance] = {
+    "yunet": ModelProvenance(
+        file_name="face_detection_yunet_2026may.onnx",
+        sha256="ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0",
+        source_url=(f"{_OPENCV_ZOO_MEDIA}/models/face_detection_yunet/face_detection_yunet_2026may.onnx"),
+        source_ref=OPENCV_ZOO_COMMIT,
+        license_id="MIT",
+        license_file="LICENSE.yunet",
+        license_sha256="c83b8120c50ccbd4c4f96edf53141bdd566ebb8f8e9227e415326aa1b1aba958",
+        size_bytes=229_738,
+        framework="opencv",
+        embedding_dim=None,
+        normalization=None,
+        metric=None,
+    ),
+    "sface": ModelProvenance(
+        file_name="face_recognition_sface_2021dec.onnx",
+        sha256="0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+        source_url=(f"{_OPENCV_ZOO_MEDIA}/models/face_recognition_sface/face_recognition_sface_2021dec.onnx"),
+        source_ref=OPENCV_ZOO_COMMIT,
+        license_id="Apache-2.0",
+        license_file="LICENSE.sface",
+        license_sha256="cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        size_bytes=38_696_353,
+        framework="opencv",
+        embedding_dim=128,
+        normalization="l2",
+        metric="cosine",
+    ),
+    # Grounded in docs/research/fir-capacity-primary-source-register-2026-09-19.json
+    # and docs/assessments/current/fir-model-capacity-and-training-2026-09-19.md:23,30;
+    # license_id is the publisher-declared Apache-2.0 grant, not an independent rights finding.
+    "auraface": ModelProvenance(
+        file_name=_AURAFACE_ARTIFACT,
+        sha256="a7933ea5330113b01c9b60351d8f4c33003f145d8470ac5f0e52ee2effe25c60",
+        source_url=f"{_AURAFACE_REPOSITORY}/resolve/{AURAFACE_REVISION}/{_AURAFACE_ARTIFACT}",
+        source_ref=AURAFACE_REVISION,
+        license_id="Apache-2.0",
+        license_file="LICENSE.auraface.md",
+        license_sha256="609e2cb599f84aaa41d8ef29d8fdb04d164fab22e8d9292ca34a599d0f56a338",
+        size_bytes=260_694_151,
+        framework="insightface",
+        embedding_dim=512,
+        normalization="l2",
+        metric="cosine",
+        preprocessing=InputPreprocessing(
+            input_size=(112, 112),
+            channel_order="RGB",
+            # Graph has no Sub/Mul/Div on input (FIR512-2 measure). Independent
+            # composed reference reproduces InsightFace ArcFaceONNX blobFromImages
+            # (swapRB, mean=127.5, std=127.5) at commit 1480e705287bc5d59f923b46c260ec6e3e4150f6.
+            # Historical FIRDV-3 S1b marker was UNVERIFIED input_scale=1/127.5.
+            input_scale=1.0 / 127.5,
+            input_mean=127.5,
+            # Coordinates independently match insightface face_align.arcface_dst at
+            # 1480e705287bc5d59f923b46c260ec6e3e4150f6 and SFACE_CANONICAL_LANDMARKS_112.
+            # Historical id: "arcface-112-unverified".
+            alignment_template_id="arcface-112",
+            # Graph last op is BatchNormalization; no ReduceL2/LpNormalization.
+            # Fixture raw L2 >> 1. Pipeline embed_batch still L2-normalizes.
+            # Historical FIRDV-3 S1b marker was output_l2_normalized=True UNVERIFIED.
+            output_l2_normalized=False,
+        ),
+    ),
+}
+
+# License source URLs (not part of ModelProvenance; used by the fetch script).
+LICENSE_SOURCE_URLS: dict[str, str] = {
+    "yunet": f"{_OPENCV_ZOO_RAW}/models/face_detection_yunet/LICENSE",
+    "sface": f"{_OPENCV_ZOO_RAW}/models/face_recognition_sface/LICENSE",
+}
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        while True:
+            chunk = fh.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def load_verified_model(name: str, *, models_dir: Path | None = None) -> Path:
+    """Return the path to a model only after model + license integrity checks pass.
+
+    Fail-closed split:
+    - ``ModelMissingError``: not provisioned (missing model/license file, or
+      ``PENDING_OPERATOR_FETCH`` sentinel still on the pin).
+    - ``ModelIntegrityError``: size or sha256 mismatch (tamper / corrupt bytes).
+    Unknown logical names also raise ``ModelIntegrityError`` (config error).
+
+    Integrity is checked at call time against the on-disk files. This is a
+    verify-then-open TOCTOU window: a concurrent writer could replace the model
+    file after the hash check and before the caller opens the returned path.
+    Acceptable under the trusted-operator models-dir threat model (operators
+    control ``models/``; untrusted multi-writer environments should re-hash at
+    open or pass an already-opened fd).
+    """
+    entry = MODEL_MANIFEST.get(name)
+    if entry is None:
+        raise ModelIntegrityError(f"unknown model name: {name!r}")
+
+    if entry.sha256 == PENDING_OPERATOR_FETCH:
+        raise ModelMissingError(
+            f"model {name!r} hash is {PENDING_OPERATOR_FETCH}; "
+            f"operator must fetch from {entry.source_url} @ {entry.source_ref} "
+            "and pin the real sha256 before load"
+        )
+
+    root = Path(models_dir) if models_dir is not None else DEFAULT_MODELS_DIR
+    path = root / entry.file_name
+    if not path.is_file():
+        raise ModelMissingError(
+            f"model file missing for {name!r}: {path} (expected {entry.file_name} from {entry.source_url})"
+        )
+
+    actual_size = path.stat().st_size
+    if entry.size_bytes > 0 and actual_size != entry.size_bytes:
+        raise ModelIntegrityError(
+            f"size mismatch for {name!r}: expected {entry.size_bytes} bytes, got {actual_size} at {path}"
+        )
+
+    actual = _file_sha256(path)
+    if actual != entry.sha256:
+        raise ModelIntegrityError(f"sha256 mismatch for {name!r}: expected {entry.sha256}, got {actual} at {path}")
+
+    # License is part of the load-time integrity surface (fail-closed).
+    if entry.license_sha256 == PENDING_OPERATOR_FETCH:
+        raise ModelMissingError(
+            f"license hash for {name!r} is {PENDING_OPERATOR_FETCH}; "
+            "operator must pin the real license sha256 before load"
+        )
+    license_path = root / entry.license_file
+    if not license_path.is_file():
+        raise ModelMissingError(
+            f"license file missing for {name!r}: {license_path} (expected {entry.license_file} next to model)"
+        )
+    actual_license = _file_sha256(license_path)
+    if actual_license != entry.license_sha256:
+        raise ModelIntegrityError(
+            f"license sha256 mismatch for {name!r}: expected {entry.license_sha256}, "
+            f"got {actual_license} at {license_path}"
+        )
+
+    return path
+
+
+def _check_acquisition_deadline(deadline_monotonic: float) -> None:
+    if time.monotonic() >= deadline_monotonic:
+        raise TimeoutError("model acquisition deadline exceeded")
+
+
+def _protobuf_varint(data: memoryview, offset: int) -> tuple[int, int]:
+    value = 0
+    for shift in range(0, 70, 7):
+        if offset >= len(data):
+            raise ModelIntegrityError("truncated ONNX protobuf")
+        byte = data[offset]
+        offset += 1
+        if shift == 63 and byte > 1:
+            raise ModelIntegrityError("invalid ONNX protobuf varint")
+        value |= (byte & 127) << shift
+        if byte < 128:
+            return value, offset
+    raise ModelIntegrityError("invalid ONNX protobuf varint")
+
+
+# ONNX protobuf message edges that can contain TensorProto, including nested
+# graphs, sparse tensors, training graphs and function attribute defaults.
+_ONNX_TENSOR_EDGES = {
+    "model": {7: "graph", 20: "training", 25: "function"},
+    "graph": {1: "node", 5: "tensor", 15: "sparse"},
+    "node": {5: "attribute"},
+    "attribute": {5: "tensor", 6: "graph", 10: "tensor", 11: "graph", 22: "sparse", 23: "sparse"},
+    "sparse": {1: "tensor", 2: "tensor"},
+    "training": {1: "graph", 2: "graph"},
+    "function": {7: "node", 11: "attribute"},
+    "tensor": {},
+}
+
+
+def _validate_self_contained_onnx(model_bytes: bytes, *, deadline_monotonic: float) -> None:
+    """Reject malformed wire structure and external tensors in the same buffer.
+
+    This bounded structural check requires an IR version and one graph. It is
+    not an operator/type/shape checker or graph-normalization analysis. Views
+    skip tensor payloads without copying/reopening weights. Unknown protobuf
+    fields are skipped; unsupported groups, depth or field counts fail closed.
+    """
+    field_budget = [1_000_000]
+    graphs = [0]
+    ir_version = [0]
+
+    def visit(data: memoryview, kind: str, depth: int) -> None:
+        if depth > 64:
+            raise ModelIntegrityError("ONNX protobuf nesting limit exceeded")
+        offset = 0
+        while offset < len(data):
+            _check_acquisition_deadline(deadline_monotonic)
+            field_budget[0] -= 1
+            if field_budget[0] < 0:
+                raise ModelIntegrityError("ONNX protobuf field limit exceeded")
+            tag, offset = _protobuf_varint(data, offset)
+            number, wire = tag >> 3, tag & 7
+            if not 0 < number < (1 << 29):
+                raise ModelIntegrityError("invalid ONNX protobuf field")
+            value = None
+            payload = None
+            if wire == 0:
+                value, offset = _protobuf_varint(data, offset)
+            elif wire == 2:
+                length, offset = _protobuf_varint(data, offset)
+                end = offset + length
+                if end > len(data):
+                    raise ModelIntegrityError("truncated ONNX protobuf payload")
+                payload = data[offset:end]
+                offset = end
+            elif wire in {1, 5}:
+                offset += 8 if wire == 1 else 4
+                if offset > len(data):
+                    raise ModelIntegrityError("truncated ONNX protobuf scalar")
+            else:
+                raise ModelIntegrityError("unsupported ONNX protobuf wire type")
+            if kind == "tensor" and (number == 13 or (number == 14 and value != 0)):
+                raise ModelIntegrityError("external ONNX tensor data is unsupported")
+            if kind == "model" and number == 1:
+                if wire != 0 or value is None or value <= 0:
+                    raise ModelIntegrityError("invalid ONNX IR version")
+                ir_version[0] += 1
+            child = _ONNX_TENSOR_EDGES[kind].get(number)
+            if child is not None:
+                if payload is None:
+                    raise ModelIntegrityError("invalid ONNX message field")
+                if kind == "model" and number == 7:
+                    graphs[0] += 1
+                visit(payload, child, depth + 1)
+
+    visit(memoryview(model_bytes), "model", 0)
+    _check_acquisition_deadline(deadline_monotonic)
+    if graphs[0] != 1 or ir_version[0] != 1:
+        raise ModelIntegrityError("ONNX acquisition requires one graph and IR version")
+
+
+def _read_verified_artifact(
+    path: Path,
+    *,
+    max_bytes: int,
+    deadline_monotonic: float,
+) -> tuple[bytes, tuple[int, int, int, int]]:
+    _check_acquisition_deadline(deadline_monotonic)
+    try:
+        # NONBLOCK lets the regular-file check reject a FIFO without waiting
+        # for a writer. Regular-file reads still require deadline rechecks.
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        raise ModelMissingError("model acquisition artifact missing") from None
+    except OSError:
+        raise ModelIntegrityError("model acquisition artifact cannot be opened safely") from None
+    try:
+        _check_acquisition_deadline(deadline_monotonic)
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ModelIntegrityError("model acquisition requires a regular file")
+        if metadata.st_size > max_bytes:
+            raise ModelIntegrityError("model acquisition artifact exceeds byte cap")
+        identity = (metadata.st_size, metadata.st_mtime_ns, metadata.st_ino, metadata.st_ctime_ns)
+        chunks = []
+        total = 0
+        while True:
+            _check_acquisition_deadline(deadline_monotonic)
+            chunk = os.read(fd, min(64 * 1024, max_bytes - total + 1))
+            _check_acquisition_deadline(deadline_monotonic)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise ModelIntegrityError("model acquisition artifact exceeds byte cap")
+            chunks.append(chunk)
+        data = b"".join(chunks)
+        final = os.fstat(fd)
+        final_identity = (final.st_size, final.st_mtime_ns, final.st_ino, final.st_ctime_ns)
+        if len(data) != metadata.st_size or final_identity != identity:
+            raise ModelIntegrityError("model acquisition artifact changed during read")
+        _check_acquisition_deadline(deadline_monotonic)
+        return data, identity
+    except TimeoutError:
+        raise
+    except OSError:
+        raise ModelIntegrityError("model acquisition artifact read failed") from None
+    finally:
+        os.close(fd)
+
+
+def acquire_verified_model_bytes(
+    name: str,
+    *,
+    models_dir: Path | None,
+    expected: ModelProvenance,
+    max_model_bytes: int,
+    max_license_bytes: int,
+    deadline_monotonic: float,
+) -> VerifiedModelBytes:
+    """Acquire each artifact once, binding verification to the returned buffer.
+
+    ``expected`` is the caller's frozen manifest entry, never replaced by a
+    current global entry. Explicit positive caps bound each regular-file read;
+    the absolute monotonic deadline is checked around every read [RES-02].
+    The identical model buffer receives bounded protobuf structure/external-data
+    validation; this supplies no operator/shape or normalization attestation.
+    Missing files/pins raise ModelMissingError; unsafe files, caps or integrity
+    mismatches raise ModelIntegrityError; expiry raises TimeoutError.
+    Descriptor identities are invalidation hints, not immutable-file claims.
+    """
+    if not isinstance(name, str) or name not in MODEL_MANIFEST or not isinstance(expected, ModelProvenance):
+        raise ModelIntegrityError("invalid acquisition manifest entry")
+    for cap in (max_model_bytes, max_license_bytes):
+        if type(cap) is not int or cap <= 0:
+            raise ModelIntegrityError("acquisition byte caps must be positive integers")
+    if (
+        isinstance(deadline_monotonic, bool)
+        or not isinstance(deadline_monotonic, (int, float))
+        or not math.isfinite(deadline_monotonic)
+    ):
+        raise ModelIntegrityError("acquisition requires a finite monotonic deadline")
+    _check_acquisition_deadline(deadline_monotonic)
+    for pin in (expected.sha256, expected.license_sha256):
+        if pin == PENDING_OPERATOR_FETCH:
+            raise ModelMissingError("model acquisition pin missing")
+        if not isinstance(pin, str) or len(pin) != 64 or any(char not in "0123456789abcdef" for char in pin):
+            raise ModelIntegrityError("invalid acquisition digest pin")
+    if type(expected.size_bytes) is not int or expected.size_bytes <= 0:
+        raise ModelIntegrityError("acquisition requires an exact positive model size")
+    for filename in (expected.file_name, expected.license_file):
+        if (
+            not isinstance(filename, str)
+            or not filename
+            or "\0" in filename
+            or Path(filename).name != filename
+            or filename in {".", ".."}
+        ):
+            raise ModelIntegrityError("acquisition artifact names must be basenames")
+    root = Path(models_dir) if models_dir is not None else DEFAULT_MODELS_DIR
+    model_bytes, model_identity = _read_verified_artifact(
+        root / expected.file_name, max_bytes=max_model_bytes, deadline_monotonic=deadline_monotonic
+    )
+    model_sha256 = hashlib.sha256(model_bytes).hexdigest()
+    _check_acquisition_deadline(deadline_monotonic)
+    if len(model_bytes) != expected.size_bytes or model_sha256 != expected.sha256:
+        raise ModelIntegrityError("model acquisition size or digest mismatch")
+    license_bytes, license_identity = _read_verified_artifact(
+        root / expected.license_file, max_bytes=max_license_bytes, deadline_monotonic=deadline_monotonic
+    )
+    license_sha256 = hashlib.sha256(license_bytes).hexdigest()
+    _check_acquisition_deadline(deadline_monotonic)
+    if license_sha256 != expected.license_sha256:
+        raise ModelIntegrityError("license acquisition digest mismatch")
+    _validate_self_contained_onnx(model_bytes, deadline_monotonic=deadline_monotonic)
+    manifest_bytes = json.dumps(asdict(expected), sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    expectation_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+    _check_acquisition_deadline(deadline_monotonic)
+    return VerifiedModelBytes(
+        logical_name=name,
+        model_bytes=model_bytes,
+        model_sha256=model_sha256,
+        model_size_bytes=len(model_bytes),
+        license_sha256=license_sha256,
+        license_size_bytes=len(license_bytes),
+        manifest_snapshot=expected,
+        manifest_expectation_sha256=expectation_sha256,
+        observed_model_file_identity=model_identity,
+        observed_license_file_identity=license_identity,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ModelVerifyOutcome:
+    """One-shot verified-load outcome for eager readiness probes ([EMB-05]).
+
+    Cache identity covers model and license path stamps so license-only drift
+    invalidates readiness without requiring model byte changes ([DRIFT-02]).
+    """
+
+    name: str
+    ok: bool
+    reason: str | None
+    path: Path
+    mtime_ns: int
+    size: int
+    license_path: Path | None = None
+    license_mtime_ns: int = 0
+    license_size: int = 0
+
+
+def _stamp_path(path: Path) -> tuple[int, int]:
+    """Return (mtime_ns, size) or (0, 0) when the path is missing/unreadable."""
+    try:
+        if not path.is_file():
+            return (0, 0)
+        st = path.stat()
+        return (int(st.st_mtime_ns), int(st.st_size))
+    except OSError:
+        return (0, 0)
+
+
+def verify_face_pipeline_model(name: str, *, models_dir: Path | None = None) -> ModelVerifyOutcome:
+    """Run ``load_verified_model`` and return a cacheable outcome (model+license stamp).
+
+    Used by profile-aware readiness so probes never report OK for bytes that
+    have not passed sha256 at least once in this process ([EMB-05], [DRIFT-02]).
+    """
+    entry = MODEL_MANIFEST.get(name)
+    if entry is None:
+        root = Path(models_dir) if models_dir is not None else DEFAULT_MODELS_DIR
+        return ModelVerifyOutcome(
+            name=name,
+            ok=False,
+            reason=f"unknown model name: {name!r}",
+            path=root / name,
+            mtime_ns=0,
+            size=0,
+            license_path=None,
+            license_mtime_ns=0,
+            license_size=0,
+        )
+    root = Path(models_dir) if models_dir is not None else DEFAULT_MODELS_DIR
+    path = root / entry.file_name
+    license_path = root / entry.license_file
+    try:
+        verified = load_verified_model(name, models_dir=root)
+        mtime_ns, size = _stamp_path(verified)
+        lic_mtime_ns, lic_size = _stamp_path(license_path)
+        # Fail closed if we cannot stamp license after a successful verify (stat race).
+        if lic_mtime_ns == 0 and lic_size == 0 and not license_path.is_file():
+            return ModelVerifyOutcome(
+                name=name,
+                ok=False,
+                reason=f"license file missing for {name!r} after verify: {license_path}",
+                path=verified,
+                mtime_ns=mtime_ns,
+                size=size,
+                license_path=license_path,
+                license_mtime_ns=0,
+                license_size=0,
+            )
+        return ModelVerifyOutcome(
+            name=name,
+            ok=True,
+            reason=None,
+            path=verified,
+            mtime_ns=mtime_ns,
+            size=size,
+            license_path=license_path.resolve() if license_path.exists() else license_path,
+            license_mtime_ns=lic_mtime_ns,
+            license_size=lic_size,
+        )
+    except (ModelIntegrityError, ModelMissingError) as exc:
+        mtime_ns, size = _stamp_path(path)
+        lic_mtime_ns, lic_size = _stamp_path(license_path)
+        return ModelVerifyOutcome(
+            name=name,
+            ok=False,
+            reason=str(exc),
+            path=path,
+            mtime_ns=mtime_ns,
+            size=size,
+            license_path=license_path,
+            license_mtime_ns=lic_mtime_ns,
+            license_size=lic_size,
+        )
+
+
+def verify_face_pipeline_models(*, models_dir: Path | None = None) -> dict[str, ModelVerifyOutcome]:
+    """Eagerly verify both YuNet and SFace; returns per-artifact outcomes."""
+    return {name: verify_face_pipeline_model(name, models_dir=models_dir) for name in REQUIRED_MODELS}
+
+
+# ---------------------------------------------------------------------------
+# Numeric-relevant runtime fingerprint (CVUP-1 findings HARM-01, HARM-02)
+#
+# Canonical symbol for consumers (fir-7, fir-8, fir-9, fir23-stack):
+#   ``numeric_runtime_fingerprint``  →  NumericRuntimeFingerprint
+#
+# The stamp covers the resolved inference, numeric, image, and clustering
+# distributions so run comparisons cannot silently cross dependency upgrades.
+# The SFace space token below partitions on the runtimes that determine vectors.
+# ---------------------------------------------------------------------------
+
+
+def _opencv_version() -> str:
+    """Live OpenCV version string (lazy import; never hardcode)."""
+    import cv2
+
+    return str(cv2.__version__)
+
+
+def _opencv_distribution_versions() -> tuple[tuple[str, str], ...]:
+    """Return exact installed OpenCV wheel versions keyed by distribution name."""
+    from importlib.metadata import PackageNotFoundError
+
+    distributions = (
+        "opencv-python",
+        "opencv-python-headless",
+        "opencv-contrib-python",
+        "opencv-contrib-python-headless",
+    )
+    versions: list[tuple[str, str]] = []
+    for distribution in distributions:
+        try:
+            versions.append((distribution, _distribution_version(distribution)))
+        except PackageNotFoundError:
+            continue
+    if not versions:
+        raise RuntimeError("no installed OpenCV distribution found in package metadata")
+    installed_versions = {version for _, version in versions}
+    if len(installed_versions) > 1:
+        conflicts = ", ".join(f"{distribution}={version}" for distribution, version in sorted(versions))
+        raise RuntimeError(f"conflicting OpenCV distribution versions: {conflicts}")
+    return tuple(sorted(versions))
+
+
+def _onnxruntime_version() -> str:
+    """Live onnxruntime version string (lazy import; never hardcode)."""
+    import onnxruntime  # type: ignore[import-untyped]
+
+    return str(onnxruntime.__version__)
+
+
+def _numpy_version() -> str:
+    """Live numpy version string (lazy import; never hardcode)."""
+    import numpy
+
+    return str(numpy.__version__)
+
+
+def _distribution_version(distribution: str) -> str:
+    """Read an installed distribution version without importing its runtime."""
+    from importlib.metadata import version
+
+    return str(version(distribution))
+
+
+def _scipy_version() -> str:
+    return _distribution_version("scipy")
+
+
+def _pillow_version() -> str:
+    return _distribution_version("pillow")
+
+
+def _hdbscan_version() -> str:
+    return _distribution_version("hdbscan")
+
+
+def _pgvector_version() -> str:
+    return _distribution_version("pgvector")
+
+
+def _version_major_minor(version: str) -> str:
+    """Return ``major.minor`` from a dotted version, or the raw string if short."""
+    parts = str(version).split(".")
+    if len(parts) >= 2 and parts[0] and parts[1]:
+        return f"{parts[0]}.{parts[1]}"
+    return str(version)
+
+
+@dataclass(frozen=True, slots=True)
+class NumericRuntimeFingerprint:
+    """Installed-package fingerprint for comparable embedding/clustering runs.
+
+    Exact resolved versions cover OpenCV, ONNX Runtime, NumPy, SciPy, Pillow,
+    HDBSCAN, and pgvector. This captures both image/numeric processing and
+    clustering/storage behavior when two runs are compared.
+    """
+
+    opencv_version: str
+    opencv_major: int
+    onnxruntime_version: str
+    numpy_version: str
+    scipy_version: str
+    pillow_version: str
+    hdbscan_version: str
+    pgvector_version: str
+    opencv_distribution_versions: tuple[tuple[str, str], ...] | None = None
+
+    @property
+    def resolved_versions(self) -> dict[str, str]:
+        """Exact resolved dependency versions, keyed by distribution name."""
+        versions = {
+            "hdbscan": self.hdbscan_version,
+            "numpy": self.numpy_version,
+            "onnxruntime": self.onnxruntime_version,
+            "pgvector": self.pgvector_version,
+            "pillow": self.pillow_version,
+            "scipy": self.scipy_version,
+        }
+        # Keep construction backwards-compatible for callers that build a
+        # fingerprint directly; live snapshots always pass the metadata result.
+        opencv_distributions = self.opencv_distribution_versions
+        if opencv_distributions is None:
+            opencv_distributions = (("opencv-python", self.opencv_version),)
+        versions.update(opencv_distributions)
+        return versions
+
+    @property
+    def comparability_token(self) -> str:
+        """Stable digest for equality checks across comparable run snapshots."""
+        versions = self.resolved_versions
+        encoded = "\n".join(f"{name}={versions[name]}" for name in sorted(versions))
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def as_payload(self) -> dict[str, object]:
+        """JSON-ready versions plus a token that is directly comparable."""
+        return {
+            "versions": self.resolved_versions,
+            "comparison_token": self.comparability_token,
+        }
+
+    @property
+    def space_token(self) -> str:
+        """Compact embedding-space token folded into SFace ``model_id``.
+
+        Granularity (WHY — which dependency bumps are space-breaking):
+        - OpenCV: **full version**. ``warpAffine`` numerics are not guaranteed
+          stable across any OpenCV release (the 4.x→5.0 cut already forced
+          golden regeneration). Full version is the space key independent of
+          how tightly the current pin is set — coarsening it would silently
+          merge two embedding spaces on the next bump that does move aligner
+          output.
+        - onnxruntime: **major.minor only**. Pin is ``>=1.28.0,<2.0.0``;
+          branch parity (1-cos ≤ 5e-12 between ORT and OpenCV embed paths)
+          shows the ORT path is numerically interchangeable at this floor,
+          so a routine patch bump (1.28.0→1.28.1) must not mint a new
+          embedding space and orphan persisted rows. A minor bump
+          (1.28→1.29) still partitions.
+
+        - NumPy: **full version**. Array math is part of the inference path and
+          there is no patch-equivalence evidence that justifies reusing an
+          embedding space across NumPy upgrades.
+
+        Any space-defining component alone must change the token. Clustering
+        dependency versions remain in ``comparability_token`` even though they
+        do not define the embedding vector space.
+        """
+        ort_mm = _version_major_minor(self.onnxruntime_version)
+        return f"cv{self.opencv_version}/ort{ort_mm}/np{self.numpy_version}"
+
+    @property
+    def compact(self) -> str:
+        """Single-line form for logs / operator surfaces (all fields)."""
+        return (
+            f"opencv={self.opencv_version};"
+            f"opencv_major={self.opencv_major};"
+            f"onnxruntime={self.onnxruntime_version};"
+            f"numpy={self.numpy_version};"
+            f"scipy={self.scipy_version};"
+            f"pillow={self.pillow_version};"
+            f"hdbscan={self.hdbscan_version};"
+            f"pgvector={self.pgvector_version}"
+        )
+
+
+def numeric_runtime_fingerprint() -> NumericRuntimeFingerprint:
+    """Return the live numeric-relevant runtime fingerprint (never hardcoded).
+
+    Canonical accessor for CVUP-1 finding HARM-01 consumers. Read versions
+    from the installed packages at call time so monkeypatching the version
+    accessors in tests is sufficient.
+    """
+    opencv_version = _opencv_version()
+    major_token = opencv_version.split(".", 1)[0]
+    try:
+        opencv_major = int(major_token)
+    except ValueError as exc:
+        raise RuntimeError(f"unparseable OpenCV major from version {opencv_version!r}") from exc
+    return NumericRuntimeFingerprint(
+        opencv_version=opencv_version,
+        opencv_major=opencv_major,
+        onnxruntime_version=_onnxruntime_version(),
+        numpy_version=_numpy_version(),
+        scipy_version=_scipy_version(),
+        pillow_version=_pillow_version(),
+        hdbscan_version=_hdbscan_version(),
+        pgvector_version=_pgvector_version(),
+        opencv_distribution_versions=_opencv_distribution_versions(),
+    )
+
+
+__all__ = [
+    "DEFAULT_MODELS_DIR",
+    "AURAFACE_REVISION",
+    "InputPreprocessing",
+    "LICENSE_SOURCE_URLS",
+    "MODEL_MANIFEST",
+    "ModelIntegrityError",
+    "ModelMissingError",
+    "ModelProvenance",
+    "VerifiedModelBytes",
+    "acquire_verified_model_bytes",
+    "ModelVerifyOutcome",
+    "NumericRuntimeFingerprint",
+    "OPENCV_ZOO_COMMIT",
+    "PENDING_OPERATOR_FETCH",
+    "REQUIRED_MODELS",
+    "load_verified_model",
+    "numeric_runtime_fingerprint",
+    "verify_face_pipeline_model",
+    "verify_face_pipeline_models",
+]

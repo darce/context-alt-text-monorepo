@@ -1,0 +1,46 @@
+{
+  "lane": "a1h-papi1",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "/home/gate/workbay-sandbox/feature-app-1-a1h-papi1-9f64390d/.venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 2.08s"
+    },
+    {
+      "command": "node -e 'const value = \"2027-02-30T00:00:00Z\"; const parsed = Date.parse(value); console.log(Number.isFinite(parsed), Number.isFinite(parsed) ? new Date(parsed).toISOString() : \"invalid\")'",
+      "result": "pass",
+      "detail": "Date.parse returned a finite value and normalized the impossible date to 2027-03-02T00:00:00.000Z"
+    },
+    {
+      "command": "npm --prefix apps/app-portal run test",
+      "result": "not_run",
+      "detail": "Vitest runs outside this sandbox; the dependency brief states there is no node_modules here."
+    },
+    {
+      "command": "npm --prefix apps/app-portal run typecheck",
+      "result": "not_run",
+      "detail": "TypeScript check runs outside this sandbox; the dependency brief states there is no node_modules here."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16082,
+      "finding_id": "APP1-KEYS-RV05",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "apps/app-portal/src/api/portalKeys.ts:64-77 checks the ISO-shaped regex and Number.isFinite(Date.parse(value)), and parseMetadata rejects only values returned as undefined at lines 182-202. But Date.parse normalizes 2027-02-30T00:00:00Z to 2027-03-02T00:00:00.000Z; apps/app-portal/src/screens/KeysScreen.tsx:99-105 then classifies that future expiry as usable. The test at apps/app-portal/src/__tests__/keys-api-fixwave.test.ts:100-102 rejects 'soon' but does not cover impossible calendar dates.",
+      "guard_test": "apps/app-portal/src/__tests__/keys-api-fixwave.test.ts::rejects list rows whose expires_at is an arbitrary non-empty string"
+    },
+    {
+      "db_id": 16080,
+      "finding_id": "APP1-KEYS-RV03",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/app-portal/src/api/portalKeys.ts:250-260 requires revoked === true and id === requestedId; parse failure becomes invalid_portal_key_response at lines 334-336. apps/app-portal/src/__tests__/keys-api-fixwave.test.ts:62-78 asserts that revoked:false and a wrong id reject, and lines 80-88 accepts only true for the requested id. At the caller, apps/app-portal/src/App.tsx:181-191 builds the client from the owner-bound request; apps/app-portal/src/screens/KeysScreen.tsx:338-350 reports rejected responses as errors and refreshes uncertain results.",
+      "guard_test": "apps/app-portal/src/__tests__/keys-api-fixwave.test.ts::rejects a 200 revoke envelope with revoked:false; apps/app-portal/src/__tests__/keys-api-fixwave.test.ts::rejects a 200 revoke envelope whose id does not match the requested key"
+    }
+  ],
+  "new_findings": [],
+  "summary": "RV03 holds with direct tests for false and wrong-key acknowledgements; owner-bound App wiring and KeysScreen rejection handling preserve the error path. RV05 is partial: arbitrary strings are rejected, but impossible ISO-shaped calendar dates pass Date.parse and can be shown as usable; the existing test covers only arbitrary text. No additional caller defect was found. The lane manifest test passed (26 tests); Vitest and typecheck were not run in this sandbox."
+}

@@ -1,0 +1,133 @@
+{
+  "lane_id": "gpface-1-r-a11y",
+  "commit": "a820d3eb192cb0198cfb272d5f99097893cf9744",
+  "reviewed_files": [
+    "docs/assessments/current/guided-prototype-face-recognition-2026-09-05.md",
+    "apps/prototype-wp-alt-context/docs/ux-maps/guided-prototype.uxmap.json",
+    "apps/prototype-wp-alt-context/docs/ux-maps/guided-prototype.md",
+    "apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypeGuide.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFacesPanel.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFaceMatchCard.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedSamplePhoto.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedResetDialog.tsx",
+    "apps/prototype-wp-alt-context/js/admin/guidedPrototype/state.ts",
+    "apps/prototype-wp-alt-context/js/admin/styles/components/_guided-prototype.scss",
+    "apps/prototype-wp-alt-context/js/admin/styles/components/_guided-flow-strip.scss",
+    "apps/prototype-wp-alt-context/js/admin/styles/tokens/_colors.scss",
+    "apps/prototype-wp-alt-context/js/admin/assets/guided/CREDITS.md",
+    "apps/prototype-wp-alt-context/js/admin/navigation/appLinks.ts",
+    "apps/prototype-wp-alt-context/js/admin/pages/DashboardPage.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/__tests__/GuidedFaceMatchCard.test.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/__tests__/GuidedPrototypePage.test.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/__tests__/GuidedUxMap.contract.test.ts",
+    "apps/prototype-wp-alt-context/js/admin/guidedPrototype/state.test.ts",
+    "apps/prototype-wp-alt-context/js/components/ui/FaceThumbnail.tsx",
+    "apps/prototype-wp-alt-context/js/components/ui/dialog.tsx"
+  ],
+  "hypotheses": [
+    {
+      "claim": "Landmarks, heading levels, and aria-labelledby/aria-describedby references are broken.",
+      "verdict": "refuted",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx:8,16 names the entrance; GuidedFacesPanel.tsx:28,30, GuidedDescriptionReview.tsx:89,93,124,189, and GuidedPrototypePage.tsx:359,362 render the referenced names; the conditional descriptions are rendered at GuidedFacesPanel.tsx:71-73, GuidedDescriptionReview.tsx:152-155, and :201-204."
+    },
+    {
+      "claim": "Confirming or keeping a face unnamed leaves keyboard focus in a stable, announced destination.",
+      "verdict": "confirmed",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx:222-235 calls updateScenario with the review step for both identity actions but never calls focusGuidedSection; GuidedFacesPanel.tsx:77-101 then disables the selected action as its identity status changes."
+    },
+    {
+      "claim": "Every control has an action name and unsaved identity changes are programmatically explained.",
+      "verdict": "refuted",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFacesPanel.tsx:87-103 names both outcomes and assigns aria-describedby while editing; GuidedDescriptionReview.tsx:139-151 labels the textarea and :169-219 names Save, Discard, Reject, Apply, and Undo; GuidedResetDialog.tsx:63-87 names the trigger and dialog actions."
+    },
+    {
+      "claim": "Decision, edit, reject, apply, undo, guide, and reset feedback is inserted into a pre-existing polite live region without assertive duplication.",
+      "verdict": "refuted",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx:346-348 renders the always-present role=status/aria-live=polite node; :184-186 and :238-247 feed state-action messages into it, while GuidedDescriptionReview.tsx:152-155 reserves role=alert for validation errors."
+    },
+    {
+      "claim": "A failed face crop keeps its required position-specific alternative text.",
+      "verdict": "confirmed",
+      "evidence": "GuidedFaceMatchCard.tsx:44-46 passes alt=Face on the {position}, but apps/prototype-wp-alt-context/js/components/ui/FaceThumbnail.tsx:110-118 replaces that value in the error branch with the quoted aria-label Face image unavailable."
+    },
+    {
+      "claim": "Flow, match strength, review, and decision states rely on colour alone.",
+      "verdict": "refuted",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx:277-295 prints [done], [now], [waiting], and [skipped]; GuidedFaceMatchCard.tsx:54-60 pairs the check glyph with Match strength text; :78 prints a decision sentence."
+    },
+    {
+      "claim": "The entrance eyebrow and boundary text meet the 4.5:1 normal-text contrast requirement.",
+      "verdict": "confirmed",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/styles/components/_guided-prototype.scss:86-90 and :113-116 set both text blocks to var(--acx-color-primary-subtle) over the entrance background var(--acx-color-primary) at :46; _colors.scss:29-33 define those tokens as #2563eb and #ccdfff, which produce 3.83:1."
+    },
+    {
+      "claim": "The two-card face grid, gallery strip, and text containers reflow without horizontal scroll at 320 CSS px.",
+      "verdict": "refuted",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/styles/components/_guided-prototype.scss:327-330 uses repeat(auto-fit, minmax(18rem, 1fr)); :392-415 wraps the gallery; :762-821 collapse the page, cards, actions, and 20rem layout."
+    },
+    {
+      "claim": "Guided motion runs regardless of the user's reduced-motion preference.",
+      "verdict": "refuted",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypeGuide.tsx:40-45 checks matchMedia('(prefers-reduced-motion: reduce)') and switches scrollIntoView from smooth to auto; the two guided SCSS files contain no transition or animation declarations."
+    },
+    {
+      "claim": "The UX map omits the face screen, reset dialog, action destinations, and status/live-region inventory.",
+      "verdict": "refuted",
+      "evidence": "apps/prototype-wp-alt-context/docs/ux-maps/guided-prototype.uxmap.json:126-168 inventories the face screen and decision form, :296-325 inventories the reset overlay, :277-283 records the result status zone, and :435-550 records the identity, apply, undo, and reset actions."
+    },
+    {
+      "claim": "The face card exposes a person's name before the crop/evidence and saved-run disclosure.",
+      "verdict": "refuted",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFaceMatchCard.tsx:34-47 renders the crop first, :50-59 renders the title/match/strength evidence, and :62-78 renders the note, gallery, and decision status; GuidedFacesPanel.tsx:43-45 renders the saved-run disclosure."
+    }
+  ],
+  "findings": [
+    {
+      "id": "GPFACE-1-RA-01",
+      "severity": "medium",
+      "category": "focus",
+      "file": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx",
+      "line": 222,
+      "evidence": "The confirm handler calls updateScenario(..., 'review') and the unnamed handler does the same at lines 222-235, but neither calls focusGuidedSection; the selected button is then rendered disabled by GuidedFacesPanel.tsx:77-101.",
+      "impact": "After a keyboard user confirms or skips a face, the activated control becomes unavailable while the draft changes below; focus has no deterministic destination in the newly active review step.",
+      "recommendation": "After a successful identity update, move focus to the review section or the next actionable decision row, while retaining the existing status announcement.",
+      "rule": "WCAG 2.4.3 Focus Order; A11Y focus-management heuristic"
+    },
+    {
+      "id": "GPFACE-1-RA-02",
+      "severity": "medium",
+      "category": "focus",
+      "file": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx",
+      "line": 177,
+      "evidence": "The Reject this draft button is disabled when scenario.candidate.status === 'rejected' at lines 177-183, while GuidedPrototypePage.tsx:238-243 only updates state and feedback with no focus transfer.",
+      "impact": "Activating Reject can leave keyboard focus on the now-disabled button as the review state changes, so the user loses a reliable place to continue even though the rejection message is announced.",
+      "recommendation": "After rejection, focus the review heading/section or its rejection notice instead of leaving focus on the disabled Reject control.",
+      "rule": "WCAG 2.4.3 Focus Order; A11Y focus-after-state-change heuristic"
+    },
+    {
+      "id": "GPFACE-1-RA-03",
+      "severity": "medium",
+      "category": "images",
+      "file": "apps/prototype-wp-alt-context/js/components/ui/FaceThumbnail.tsx",
+      "line": 111,
+      "evidence": "The error branch sets const errorLabel to the quoted string Face image unavailable and exposes aria-label={errorLabel} at lines 111-118, discarding the position-specific alt passed by GuidedFaceMatchCard.tsx:44-46.",
+      "impact": "When either crop fails, screen-reader users hear the same generic image name for both faces and lose the left/right context required to identify which match is unavailable.",
+      "recommendation": "Use the supplied alt in the error label, for example `${alt}: Face image unavailable`, while keeping the visible error icon decorative.",
+      "rule": "WCAG 1.1.1 Non-text Content; A11Y image alternative-text heuristic"
+    },
+    {
+      "id": "GPFACE-1-RA-04",
+      "severity": "medium",
+      "category": "contrast",
+      "file": "apps/prototype-wp-alt-context/js/admin/styles/components/_guided-prototype.scss",
+      "line": 87,
+      "evidence": "The entrance eyebrow and boundary use color: var(--acx-color-primary-subtle) at lines 87 and 115 on the entrance background var(--acx-color-primary) at line 46; _colors.scss:29-33 resolve that pair to #ccdfff on #2563eb, 3.83:1.",
+      "impact": "The small uppercase build label and boundary copy are below the 4.5:1 AA threshold for normal text, reducing legibility for low-vision users despite the rest of the surface using contrast-aware tokens.",
+      "recommendation": "Replace the subtle token for text on the primary panel with a token that reaches 4.5:1, such as the existing accent-contrast token, or introduce a compliant light-on-primary token.",
+      "rule": "WCAG 1.4.3 Contrast (Minimum); A11Y-01 contrast-token heuristic"
+    }
+  ]
+}

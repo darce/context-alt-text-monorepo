@@ -1,0 +1,88 @@
+{
+  "lane": "a1h-papi2",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "/home/gate/workbay-sandbox/feature-app-1-a1h-papi2-e0ca76bc/.venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 2.39s"
+    },
+    {
+      "command": "npm test (apps/app-portal)",
+      "result": "not_run",
+      "detail": "No node_modules in this sandbox; the lane brief says Vitest runs outside this sandbox."
+    },
+    {
+      "command": "npm run typecheck (apps/app-portal)",
+      "result": "not_run",
+      "detail": "No node_modules in this sandbox; the lane brief says tsc runs outside this sandbox."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16083,
+      "finding_id": "APP1-KEYS-RV06",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "apps/app-portal/src/api/portalUsage.ts:42-47 - the parser accepts any regex-shaped timestamp for which Date.parse is finite; JavaScript normalizes 2026-02-30T00:00:00Z to a finite date. Negative counts are rejected at :62. The focused test rejects text such as 'not-a-period' but does not cover calendar rollover.",
+      "guard_test": "apps/app-portal/src/__tests__/keys-api-fixwave.test.ts::rejects negative count integers in a 200 usage envelope; ::rejects invalid period and as_of timestamps at top level and nested period"
+    },
+    {
+      "db_id": 16058,
+      "finding_id": "APP1-BROWSER-RV05",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/app-portal/src/api/portalMe.ts:57-61 - a valid UUID is the only success branch; a missing or malformed tenant returns Outage. The malformed-200 test asserts the result is not Empty.",
+      "guard_test": "apps/app-portal/src/__tests__/portal-me-fetch.test.ts::maps 403 to not_admitted and a malformed 200 to outage, never empty"
+    },
+    {
+      "db_id": 16055,
+      "finding_id": "APP1-BROWSER-RV02",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/app-portal/src/api/portalMe.ts:171-179 - the authenticated GET sets cache: 'no-store'; the focused test checks that request option.",
+      "guard_test": "apps/app-portal/src/__tests__/portal-me-fetch.test.ts::sends cache no-store on GET /portal/me"
+    },
+    {
+      "db_id": 16089,
+      "finding_id": "APP1-INTEGRATION-RV02",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/app-portal/src/api/portalRequest.ts:96 races reader.read() against abortGate, and :206 awaits body buffering while the deadline started at :142 remains active. The integration test asserts the stalled body rejects with AbortError.",
+      "guard_test": "apps/app-portal/src/__tests__/integration-transport-fixwave.test.ts::bounds a headers-resolved body-stalled stream with the total deadline"
+    },
+    {
+      "db_id": 16056,
+      "finding_id": "APP1-BROWSER-RV03",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/app-portal/src/api/portalMe.ts:126-131 starts the timer before token acquisition; :160-161 races getToken inside the try, and :190-195 maps rejection/timeout to Outage. Tests assert rejection and a never-resolving token both settle without fetching.",
+      "guard_test": "apps/app-portal/src/__tests__/portal-me-fetch.test.ts::returns outage when getToken rejects and never calls fetch; ::bounds a never-resolving getToken with the same deadline as fetch"
+    }
+  ],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "apps/app-portal/src/api/portalUsage.ts",
+      "line": 62,
+      "title": "Usage counts accept values beyond JavaScript safe integer precision",
+      "defect": "Number.isInteger accepts integers that JavaScript cannot represent exactly, so the parser can certify a rounded count as authoritative.",
+      "failure_scenario": "A JSON usage response contains used: 9007199254740993; JSON parsing rounds it to 9007199254740992, which passes Number.isInteger and is rendered as the reported count.",
+      "fix": "Require Number.isSafeInteger for count fields and reject values outside the safe range.",
+      "test_file": "apps/app-portal/src/__tests__/keys-api-fixwave.test.ts",
+      "urgency": "before_merge"
+    },
+    {
+      "severity": "medium",
+      "file": "apps/app-portal/src/api/portalRequest.ts",
+      "line": 104,
+      "title": "Streamed response buffering has no byte ceiling",
+      "defect": "The total deadline bounds elapsed time but chunks and total have no response-size limit; the completed body is also copied into a new ArrayBuffer.",
+      "failure_scenario": "An authenticated portal endpoint streams a very large JSON response quickly enough to exceed browser memory before the deadline; the chunk list grows without a cap and the subsequent full-body copy can exhaust the tab or browser.",
+      "fix": "Enforce a maximum accumulated byte count, cancel the reader and reject once exceeded, and cover an over-limit streamed body in a test.",
+      "test_file": "apps/app-portal/src/__tests__/integration-transport-fixwave.test.ts",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "Four corrections hold and APP1-KEYS-RV06 is partial because calendar-invalid timestamps can normalize to valid dates. Two medium findings remain: unsafe usage count precision and uncapped response buffering. The required Python check passed; Vitest and typecheck were not run per the lane brief."
+}

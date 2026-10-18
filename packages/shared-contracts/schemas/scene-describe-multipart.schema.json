@@ -1,0 +1,302 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/scene-describe-multipart.schema.json",
+  "title": "Scene describe multipart success and typed operation error",
+  "description": "POST /scene/describe/multipart response body. 200 success; 400 missing_operation_id for metered requests; 422 invalid_operation_id; 503 starting/unavailable; 502 service error after ready; 409 operation_mismatch; 410 operation_expired. Retry-After is an HTTP header, never a body field. Validation/auth/upload errors retain their existing envelopes and are outside this operation-response schema. Request operation_id is an optional multipart form field for unmetered requests and required for metered requests, never a header or query parameter. Unavailable responses name a typed reason; starting responses expose the service-owned warmup budget.",
+  "oneOf": [
+    {
+      "$ref": "#/definitions/success"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "detail": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "enum": [
+                "description_service_starting",
+                "description_service_unavailable",
+                "description_service_error",
+                "operation_mismatch",
+                "operation_expired",
+                "missing_operation_id",
+                "invalid_operation_id"
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "operation_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1,
+              "maxLength": 128,
+              "description": "Opaque service-minted id bound to tenant and request digest. Null only when the failure occurred before an operation was durably accepted (no session, accept persistence failure)."
+            },
+            "startup_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Opaque shared startup id; null for warm/cache work."
+            },
+            "warmup_eta_seconds": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "startup_budget_seconds": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "Service-owned end-to-end GPU warmup budget in seconds. Required only on description_service_starting; the client must not substitute its own fixed ceiling."
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "endpoint_unconfigured",
+                "endpoint_not_private",
+                "endpoint_resolution_pending",
+                "state_missing",
+                "state_stale",
+                "degraded",
+                "operator_stop",
+                "circuit_open",
+                "auth_rejected"
+              ],
+              "description": "Why the description service cannot accept this operation. Required only on description_service_unavailable."
+            },
+            "lifecycle_reason": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The lifecycle snapshot's reason, copied verbatim when present (for example readiness_timeout or readiness_stall). Only emitted for description_service_unavailable."
+            },
+            "timing": {
+              "$ref": "image-description-response.schema.json#/properties/timing"
+            }
+          },
+          "required": [
+            "code",
+            "message",
+            "operation_id",
+            "startup_id",
+            "timing"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "code": {
+                    "const": "description_service_starting"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "operation_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "startup_budget_seconds"
+                ]
+              },
+              "else": {
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "warmup_eta_seconds"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "startup_budget_seconds"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "code": {
+                    "const": "description_service_unavailable"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "reason"
+                ]
+              },
+              "else": {
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "reason"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "lifecycle_reason"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "detail"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "definitions": {
+    "success": {
+      "allOf": [
+        {
+          "$ref": "image-description-response.schema.json"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tenant_id",
+            "media_id",
+            "image_hash",
+            "context_hash",
+            "adapter",
+            "model_id",
+            "model_version",
+            "prompt_or_task_version",
+            "visual_facts",
+            "alt_text_draft",
+            "context_used",
+            "provider_disclosure",
+            "cached",
+            "duration_ms",
+            "retention_class",
+            "tier",
+            "result_generation",
+            "startup_id",
+            "timing"
+          ],
+          "properties": {
+            "tenant_id": {
+              "$ref": "image-description-response.schema.json#/properties/tenant_id"
+            },
+            "media_id": {
+              "$ref": "image-description-response.schema.json#/properties/media_id"
+            },
+            "image_hash": {
+              "$ref": "image-description-response.schema.json#/properties/image_hash"
+            },
+            "context_hash": {
+              "$ref": "image-description-response.schema.json#/properties/context_hash"
+            },
+            "adapter": {
+              "$ref": "image-description-response.schema.json#/properties/adapter"
+            },
+            "model_id": {
+              "$ref": "image-description-response.schema.json#/properties/model_id"
+            },
+            "model_version": {
+              "$ref": "image-description-response.schema.json#/properties/model_version"
+            },
+            "prompt_or_task_version": {
+              "$ref": "image-description-response.schema.json#/properties/prompt_or_task_version"
+            },
+            "visual_facts": {
+              "$ref": "image-description-response.schema.json#/properties/visual_facts"
+            },
+            "alt_text_draft": {
+              "$ref": "image-description-response.schema.json#/properties/alt_text_draft"
+            },
+            "context_used": {
+              "$ref": "image-description-response.schema.json#/properties/context_used"
+            },
+            "provider_disclosure": {
+              "$ref": "image-description-response.schema.json#/properties/provider_disclosure"
+            },
+            "cached": {
+              "$ref": "image-description-response.schema.json#/properties/cached"
+            },
+            "duration_ms": {
+              "$ref": "image-description-response.schema.json#/properties/duration_ms"
+            },
+            "retention_class": {
+              "$ref": "image-description-response.schema.json#/properties/retention_class"
+            },
+            "tier": {
+              "$ref": "image-description-response.schema.json#/properties/tier"
+            },
+            "result_generation": {
+              "$ref": "image-description-response.schema.json#/properties/result_generation"
+            },
+            "alt_text_long": {
+              "$ref": "image-description-response.schema.json#/properties/alt_text_long"
+            },
+            "generic_draft": {
+              "$ref": "image-description-response.schema.json#/properties/generic_draft"
+            },
+            "named_draft": {
+              "$ref": "image-description-response.schema.json#/properties/named_draft"
+            },
+            "naming_provenance": {
+              "$ref": "image-description-response.schema.json#/properties/naming_provenance"
+            },
+            "attachment_provenance": {
+              "$ref": "image-description-response.schema.json#/properties/attachment_provenance"
+            },
+            "operation_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "description": "Opaque service-minted id bound to tenant and request digest. Omitted when no durable DescribeOperation was accepted (CPU/hosted, no session); clients must not poll a lease."
+            },
+            "startup_id": {
+              "$ref": "image-description-response.schema.json#/properties/startup_id"
+            },
+            "timing": {
+              "$ref": "image-description-response.schema.json#/properties/timing"
+            }
+          }
+        }
+      ]
+    },
+    "retryFields": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Opaque service-minted id bound to tenant and request digest."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "leaseState": {
+      "type": "string",
+      "enum": [
+        "active",
+        "completed",
+        "expired",
+        "rejected"
+      ],
+      "description": "Internal durable demand control state, not a response field. Expiry, startup_id and first_ready_at are stored separately. See gpu-lifecycle.md for admitted transitions."
+    }
+  }
+}

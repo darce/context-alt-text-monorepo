@@ -1,0 +1,119 @@
+{
+  "status": "REVISE",
+  "summary": "Two material privacy regressions: reflected JSON property names leak into successful records; nested escaped reflections leak through typed errors and aborted records. G1 controls and independent50+12+17 tests pass.",
+  "source_sha": "d1122b4d4b6fbe651279014234b43566aee661b0",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/reviews/RAW-AUTH-WHOLE-SOURCE-G2.json",
+    ".task-state/bakeoff-rounds-20261017/reviews/RAW-AUTH-WHOLE-SOURCE-G2.md"
+  ],
+  "commits": [
+    "a17cc5ddf45e62a0f61179fd29346a70ed0ad4a0"
+  ],
+  "findings": [
+    {
+      "id": "RAW-AUTH-SOURCE-G2-01",
+      "severity": "high",
+      "file": "apps/prototype-description-service/scripts/eval_harness/bakeoff.py:703",
+      "description": "Preserving every generated JSON property name leaves actual credential reflections in returned pass text and successful CLI records.",
+      "evidence": "Public describe and actual CLI complete with22/14/36 tokens and successful warmup while passes[].raw retains a unique supplied quote/backslash credential in an extra property name. Identical response bytes under distinct-key-01 succeed;string-value reflections are scrubbed. Exact original source4ba187e8 protects the same producer. Receipts: /tmp/raw-auth-whole-source-g2/manifests/structured-reflection{,-baseline}.json and outputs/structured-http{,-baseline}.json.",
+      "fix": "Scrub or refuse actual private data in free-form generated property names before returning,forwarding or persisting it;preserve recognized protocol labels,JSON grammar,valid credential spellings and measured counters. Add public/CLI regressions and retain all G1 controls."
+    },
+    {
+      "id": "RAW-AUTH-SOURCE-G2-02",
+      "severity": "high",
+      "file": "apps/prototype-description-service/scripts/eval_harness/bakeoff.py:714",
+      "description": "Post-render diagnostic substitution misses nested JSON plus repr escaping, exposing the complete credential in printable parser errors and aborted CLI records.",
+      "evidence": "An empty-caption response with JSON-valued reasoning_content reflecting the supplied quote/backslash credential raises RemoteClientError without chains,but its public message and CLI items[0].error preserve a losslessly decodable credential. Identical-response distinct-key,healthy22/14/36 and plain-reflection controls qualify. Exact original source protects the same producer. Receipts: /tmp/raw-auth-whole-source-g2/manifests/diagnostic-reflection{,-baseline}.json and diagnostic-lossless-recovery.json.",
+      "fix": "Prevent private response values from entering printable excerpts before representation/escaping,or emit safe typed diagnostics without unsafe payload excerpts. Preserve status/type,retry/breaker semantics and successful protocol interpretation;add public/CLI escaped-error regressions without narrowing credential grammar."
+    }
+  ],
+  "tests": [
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-whole-source-g2/scripts/pytest_run.py approved",
+      "exit_code": 0,
+      "summary": "Independent normal service config, both conftests and required pytest-timeout: 50 approved cases pass in16.90s;37 clients close."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-whole-source-g2/scripts/pytest_baseline.py new-red",
+      "exit_code": 1,
+      "summary": "Exact original source4ba187e8: all12 persistent cases fail behaviorally in19.88s;no setup/teardown errors;36 clients close."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-whole-source-g2/scripts/pytest_run.py new-green",
+      "exit_code": 0,
+      "summary": "Current source9ea9f869: all12 persistent cases pass in12.41s, matching response/request producers and22/14/36 tokens;36 clients and observed credential FDs close."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-whole-source-g2/scripts/pytest_run.py adjacent-final",
+      "exit_code": 0,
+      "summary": "Exact17 focused legacy cases pass in14.00s; audit finally closes11 of17 clients left open by legacy tests."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-whole-source-g2/scripts/public_probe.py",
+      "exit_code": 0,
+      "summary": "Original G1 public usage/message/content/title/{ controls now preserve captions and actual counters;9 clients close. Old-source replay separately reproduces all five failures."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-whole-source-g2/scripts/cli_collision_green.py",
+      "exit_code": 0,
+      "summary": "Original G1 real CLI controls all succeed with warmup and22/14/36 tokens;24 exchanges,12 clients close;duration-cost arithmetic preserved."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-whole-source-g2/scripts/structured_reflection.py",
+      "exit_code": 1,
+      "summary": "Contract RED: actual unique credential in generated JSON property names survives public describe and successful CLI records. Identical-response distinct-key and string-value controls qualify;all12 clients close."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-whole-source-g2/scripts/structured_baseline.py",
+      "exit_code": 0,
+      "summary": "Exact original implementation protects the same reflected property-name cases under unchanged response bytes;all12 clients close."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-whole-source-g2/scripts/diagnostic_reflection.py",
+      "exit_code": 1,
+      "summary": "Contract RED: nested JSON/quote-backslash reflection remains losslessly recoverable in public typed error and real CLI aborted record. Healthy,plain-reflection and identical-response distinct-key controls qualify;18 clients close."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-whole-source-g2/scripts/diagnostic_baseline.py",
+      "exit_code": 0,
+      "summary": "Exact original implementation protects the same nested diagnostic reflections;healthy and matching distinct-key controls retained;18 clients close."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-whole-source-g2/scripts/file_faults.py",
+      "exit_code": 0,
+      "summary": "Five real CLI controls:valid/short-read successes;fstat zero-read,first-read and post-short-read private refusals before HTTP/output;all observed FDs and4 clients close."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-whole-source-g2/scripts/transport_controls.py",
+      "exit_code": 0,
+      "summary": "Eight controls/32 exchanges preserve typed401/403/307,redirect refusal,three strikes,429 five attempts,configured0.2s/injected timeout,invalid JSON and caption-error privacy;8 clients close."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/raw-auth-whole-source-g2/scripts/diagnostic_controls.py",
+      "exit_code": 0,
+      "summary": "Original five typed-error/fenced/reflected-brace controls pass;this finite set does not cover the new escaped diagnostic counterexample."
+    },
+    {
+      "command": "timeout 55s .venv/bin/ruff check apps/prototype-description-service/scripts/eval_harness/bakeoff.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_protocol_fields.py",
+      "exit_code": 0,
+      "summary": "Focused read-only lint passes."
+    },
+    {
+      "command": "timeout 55s .venv/bin/ruff format --check apps/prototype-description-service/scripts/eval_harness/bakeoff.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_protocol_fields.py",
+      "exit_code": 0,
+      "summary": "Both actual files already formatted;no formatting applied."
+    },
+    {
+      "command": "timeout 55s python3 -B /tmp/raw-auth-whole-source-g2/scripts/seal.py --committed",
+      "exit_code": 0,
+      "summary": "Strict schema/committed equality,two-path ownership,exact native base/tree/source/import/AST pins,matched HTTP parents,12 RED/12 GREEN,closure and29,481 unchanged prior files verified."
+    }
+  ],
+  "limitations": [
+    "Logical input bd05d0d3945c4d850692ddb6c8806b875192cf0b is unavailable locally. source_sha is the honest history-stripped native base;its tree d358db994d9e4bbd86b3b3835fc9ccbadfea5344 equals the supplied logical tree. Equal trees prove bytes,not ancestry;actual author4a4d4590 parentage remains supplied custody.",
+    "No live MCP,graph or ONNX retrieval used. Supplied verified MAINT gte-base-en-v1.5 reinjection and BAKERAW no_embeddings are preserved. Current supplied map covers four exact files only;source/AST/import hashes supplement it without whole-project/import-closure claims. Eight full Canon0.26.2 bodies/release and four full supplied distillations hash-verify;no unavailable primary-book claim.",
+    "Synthetic credentials,zero-byte fixtures and MockTransport only. Installed target/runtime authentication,real socket deadlines,inference,quality and admission remain unqualified. No installs,broad suites,model/media/GT,GPU/cloud/guest/real secrets/shared-service/DB/TLS/auth changes,nested agents or foreign signals.",
+    "Root retains central finding closure,adoption/composition,fresh canonical remote validation,feature-cwd close-check,main merge and effects. G1 central19162 remains OPEN despite verified named corrections. Any next author is actualTHIRD and requires root first LOUD Canon-sourced proposal;supplied Claude exhaustion routes it to SolXHIGH STANDARD. No dispatch or source repair performed.",
+    "Full audit /tmp/raw-auth-whole-source-g2 preserves scripts,snapshots,commands/exits,HTTP/import/AST/collection/recovery/custody evidence and failed apparatus. All29,481 prior files remain unchanged;owned clients/observed FDs close,including11 legacy leftovers. All command children completed;bounded waits imply no remote death. Actual cgroup1GiB/.25CPU;requested execution metadata is not independently attested. commits points to the substantive review commit,with a later JSON-only pointer commit."
+  ]
+}

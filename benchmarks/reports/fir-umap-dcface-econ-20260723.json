@@ -1,0 +1,467 @@
+{
+  "text": "{  \"q1_umap\": {\n    \"atlas\": {\n      \"use_case\": \"CLUSTER-CURATION ATLAS: 2-D UMAP sprite atlas of tenant/Golden-150 face embeddings for spotting bad merges/splits/outliers\",\n      \"best_practices\": {\n        \"n_neighbors_range\": \"Typically 5–50 for local structure; for ~1e3–1e5 face embeddings, 15–30 is common starting range (local neighborhoods preserved). Larger n_neighbors (~50–200) for global structure at cost of local detail.\",\n        \"min_dist_range\": \"0.0–0.1 for tight clusters (inspection of identity islands); 0.1–0.5 for more spread readable atlases. Fashion-MNIST-style grids often use min_dist ~0.1.\",\n        \"densMAP\": \"densMAP (UMAP density-preserving variant) helps preserve relative density and can reduce false neighbor artifacts when cluster sizes vary; useful for face embeddings where some identities dominate.\",\n        \"parametric_UMAP\": \"Parametric UMAP (neural encoder) allows out-of-sample projection of new faces without full refit—valuable for streaming tenant uploads; tradeoff: slightly weaker local fidelity vs classical UMAP.\",\n        \"supervised_UMAP\": \"Using cluster labels as target_metric/target_weight can tighten same-label groups for curation UI, but risks hiding true merges/splits the operator needs to find—use lightly supervised or post-hoc coloring, not heavy supervision for QA atlas.\",\n        \"stability\": \"Set random_state for reproducibility; still expect some jitter across umap-learn versions/BLAS. For epoch comparability use aligned/procrustes-aligned or parametric UMAP fixed encoder.\",\n        \"failure_modes\": \"False neighbors in dense regions; torn clusters (one identity split across distant islands); distance distortion means 2-D neighbors ≠ embedding neighbors; cluster shape/size not trustworthy (distill.pub How to Use t-SNE Effectively; Understanding UMAP; UMAP arXiv 1802.03426; Nature Reviews Methods Primer 2024).\"\n      },\n      \"runtime_cpu\": {\n        \"scale_10k_100k\": \"umap-learn on 10k×128-D: typically seconds–low minutes on modern multi-core CPU; 100k×128-D: minutes to tens of minutes depending on n_neighbors and n_epochs. Approximate nearest neighbors (pynndescent) dominate.\",\n        \"a1_flex_enough\": \"OCI A1.Flex 4 OCPU/24GB should handle ~10k–50k comfortably; 100k feasible with care (memory for kNN graph). For interactive re-projection of full tenant corpus, consider subsample+parametric UMAP or nightly batch jobs.\",\n        \"notes\": \"CPU path is standard for umap-learn; GPU UMAP (cuML) not available on A1 ARM CPU.\"\n      },\n      \"verdict\": \"HIGH VALUE for Workbench: directly addresses pain (a). Build as admin-only atlas (zoomable sprites, color by cluster_id, click→merge/split actions). Do NOT use 2-D coords as clustering or gate signals.\",\n      \"evidence\": []\n    },\n    \"training_diag\": {\n      \"use_case\": \"Per-epoch embedding drift/collapse viz for FIR-7 occlusion adapter\",\n      \"beyond_obvious\": [\n        \"Aligned UMAP: fit on epoch-0 (or concatenated) then project later epochs with same mapper / Procrustes align successive maps for comparable frames\",\n        \"Parametric UMAP trained once mid-run for fixed coordinate system across epochs\",\n        \"Complementary metrics (not projection-only): embedding norm stats, pairwise cosine hist, class/center collapse (intra vs inter identity cosine), linear CKA / SVCCA between epoch embeddings, silhouette on labeled Golden-150\",\n        \"PaCMAP or densMAP as secondary views when UMAP tears clusters\",\n        \"Trajectory plots of same identities across epochs in aligned 2-D\"\n      ],\n      \"verdict\": \"USEFUL as DIAGNOSTIC tier only; pair with quantitative collapse metrics. A1.Flex sufficient for post-epoch batch UMAP on validation embeddings.\",\n      \"evidence\": []\n    },\n    \"active_curation\": {\n      \"use_case\": \"Rank faces/clusters by uncertainty + 2-D outliers for human review queues\",\n      \"approach\": \"Use embedding-space signals (cluster silhouette, nearest-centroid margin, soft-assignment entropy, density outliers) as primary ranking; 2-D UMAP for display/context only. Uncertainty-ordered queues accelerate Golden-150 and tenant curation.\",\n      \"tools\": [],\n      \"verdict\": \"FiftyOne (Apache-2.0) is the best self-host fit on A1.Flex; Embedding Atlas / Nomic for richer UX if license OK; TensorBoard Projector for free local viz only.\",\n      \"evidence\": []\n    },\n    \"library\": {\n      \"name\": \"umap-learn\",\n      \"license\": \"BSD-3-Clause (confirm on PyPI/GitHub)\",\n      \"dependency_weight\": \"Moderate: numpy, scipy, scikit-learn, numba, pynndescent, llvmlite—numba/llvmlite are the heavy deps; fine on A1 if ARM wheels available\",\n      \"never_as_gate\": \"CONFIRMED standard guidance: UMAP/t-SNE projections distort global distances; never use 2-D distances for clustering, identity gates, or automatic merge/split decisions. Use original high-D embeddings (pgvector cosine) for any automated signal; projection is human visualization only.\",\n      \"evidence\": []\n    }\n  },\n  \"q2_dcface\": {\n    \"summary\": \"Pending live fetch of repo/paper\",\n    \"artifacts\": {},\n    \"compute\": {},\n    \"config_knobs\": {},\n    \"bovifocr_fork\": {},\n    \"downstream_results\": {},\n    \"evidence\": []\n  },\n  \"q3_econ\": {\n    \"adapter_scale\": {},\n    \"campaign_scale\": {},\n    \"hf_pricing\": [],\n    \"oci\": {},\n    \"reference_rates\": [],\n    \"recommendation\": \"\",\n    \"evidence\": []\n  },\n  \"summary_for_decision\": \"\"\n}{  \"q1_umap\": {\n    \"atlas\": {\n      \"use_case\": \"CLUSTER-CURATION ATLAS: 2-D UMAP sprite atlas of tenant/Golden-150 face embeddings for spotting bad merges/splits/outliers\",\n      \"best_practices\": {\n        \"n_neighbors_range\": \"Typically 5–50 for local structure; for ~1e3–1e5 face embeddings, 15–30 is common starting range (local neighborhoods preserved). Larger n_neighbors (~50–200) for global structure at cost of local detail.\",\n        \"min_dist_range\": \"0.0–0.1 for tight clusters (inspection of identity islands); 0.1–0.5 for more spread readable atlases. Fashion-MNIST-style grids often use min_dist ~0.1.\",\n        \"densMAP\": \"densMAP (UMAP density-preserving variant) helps preserve relative density and can reduce false neighbor artifacts when cluster sizes vary; useful for face embeddings where some identities dominate.\",\n        \"parametric_UMAP\": \"Parametric UMAP (neural encoder) allows out-of-sample projection of new faces without full refit—valuable for streaming tenant uploads; tradeoff: slightly weaker local fidelity vs classical UMAP.\",\n        \"supervised_UMAP\": \"Using cluster labels as target_metric/target_weight can tighten same-label groups for curation UI, but risks hiding true merges/splits the operator needs to find—use lightly supervised or post-hoc coloring, not heavy supervision for QA atlas.\",\n        \"stability\": \"Set random_state for reproducibility; still expect some jitter across umap-learn versions/BLAS. For epoch comparability use aligned/procrustes-aligned or parametric UMAP fixed encoder.\",\n        \"failure_modes\": \"False neighbors in dense regions; torn clusters (one identity split across distant islands); distance distortion means 2-D neighbors ≠ embedding neighbors; cluster shape/size not trustworthy (distill.pub How to Use t-SNE Effectively; Understanding UMAP; UMAP arXiv 1802.03426; Nature Reviews Methods Primer 2024).\"\n      },\n      \"runtime_cpu\": {\n        \"scale_10k_100k\": \"umap-learn on 10k×128-D: typically seconds–low minutes on modern multi-core CPU; 100k×128-D: minutes to tens of minutes depending on n_neighbors and n_epochs. Approximate nearest neighbors (pynndescent) dominate.\",\n        \"a1_flex_enough\": \"OCI A1.Flex 4 OCPU/24GB should handle ~10k–50k comfortably; 100k feasible with care (memory for kNN graph). For interactive re-projection of full tenant corpus, consider subsample+parametric UMAP or nightly batch jobs.\",\n        \"notes\": \"CPU path is standard for umap-learn; GPU UMAP (cuML) not available on A1 ARM CPU.\"\n      },\n      \"verdict\": \"HIGH VALUE for Workbench: directly addresses pain (a). Build as admin-only atlas (zoomable sprites, color by cluster_id, click→merge/split actions). Do NOT use 2-D coords as clustering or gate signals.\",\n      \"evidence\": []\n    },\n    \"training_diag\": {\n      \"use_case\": \"Per-epoch embedding drift/collapse viz for FIR-7 occlusion adapter\",\n      \"beyond_obvious\": [\n        \"Aligned UMAP: fit on epoch-0 (or concatenated) then project later epochs with same mapper / Procrustes align successive maps for comparable frames\",\n        \"Parametric UMAP trained once mid-run for fixed coordinate system across epochs\",\n        \"Complementary metrics (not projection-only): embedding norm stats, pairwise cosine hist, class/center collapse (intra vs inter identity cosine), linear CKA / SVCCA between epoch embeddings, silhouette on labeled Golden-150\",\n        \"PaCMAP or densMAP as secondary views when UMAP tears clusters\",\n        \"Trajectory plots of same identities across epochs in aligned 2-D\"\n      ],\n      \"verdict\": \"USEFUL as DIAGNOSTIC tier only; pair with quantitative collapse metrics. A1.Flex sufficient for post-epoch batch UMAP on validation embeddings.\",\n      \"evidence\": []\n    },\n    \"active_curation\": {\n      \"use_case\": \"Rank faces/clusters by uncertainty + 2-D outliers for human review queues\",\n      \"approach\": \"Use embedding-space signals (cluster silhouette, nearest-centroid margin, soft-assignment entropy, density outliers) as primary ranking; 2-D UMAP for display/context only. Uncertainty-ordered queues accelerate Golden-150 and tenant curation.\",\n      \"tools\": [],\n      \"verdict\": \"FiftyOne (Apache-2.0) is the best self-host fit on A1.Flex; Embedding Atlas / Nomic for richer UX if license OK; TensorBoard Projector for free local viz only.\",\n      \"evidence\": []\n    },\n    \"library\": {\n      \"name\": \"umap-learn\",\n      \"license\": \"BSD-3-Clause (confirm on PyPI/GitHub)\",\n      \"dependency_weight\": \"Moderate: numpy, scipy, scikit-learn, numba, pynndescent, llvmlite—numba/llvmlite are the heavy deps; fine on A1 if ARM wheels available\",\n      \"never_as_gate\": \"CONFIRMED standard guidance: UMAP/t-SNE projections distort global distances; never use 2-D distances for clustering, identity gates, or automatic merge/split decisions. Use original high-D embeddings (pgvector cosine) for any automated signal; projection is human visualization only.\",\n      \"evidence\": []\n    }\n  },\n  \"q2_dcface\": {\n    \"summary\": \"Pending live fetch of repo/paper\",\n    \"artifacts\": {},\n    \"compute\": {},\n    \"config_knobs\": {},\n    \"bovifocr_fork\": {},\n    \"downstream_results\": {},\n    \"evidence\": []\n  },\n  \"q3_econ\": {\n    \"adapter_scale\": {},\n    \"campaign_scale\": {},\n    \"hf_pricing\": [],\n    \"oci\": {},\n    \"reference_rates\": [],\n    \"recommendation\": \"\",\n    \"evidence\": []\n  },\n  \"summary_for_decision\": \"\"\n}{\n  \"q1_umap\": {\n    \"atlas\": {\n      \"use_case\": \"CLUSTER-CURATION ATLAS: project tenant or Golden-150 face embeddings (128-D) to 2-D UMAP, render zoomable sprite atlas of face thumbnails colored by cluster_id for human merge/split/outlier review\",\n      \"verdict\": \"HIGH VALUE — directly attacks Workbench pain (a). Ship as admin-only atlas; wire click-through to merge/split actions. Never use 2-D coords as clustering or gate signals.\",\n      \"best_practices\": {\n        \"n_neighbors_range\": \"Docs default 15; sensible general range 5–50. For ~1e3–1e5 face points: start 15–30 (local identity neighborhoods). Raise toward 50–100 only if global structure must dominate. Very low (2–5) tears graphs into chains; very high loses fine merges/splits.\",\n        \"min_dist_range\": \"Default 0.1; sensible 0.001–0.5. For identity islands/clumpy QA: 0.0–0.1. For readable Fashion-MNIST-style spread: ~0.1–0.3. Higher values (0.5–0.99) blur local topology.\",\n        \"metric\": \"Use metric='cosine' for SFace-style L2-normalized face embeddings (matches pgvector cosine gate).\",\n        \"densMAP\": \"Built into umap-learn via densmap=True; dens_lambda default 2.0 (raise to prioritize density, lower ~0.1 toward classical UMAP). Recommends n_neighbors≈30 for reliable local density. Helps when identity cluster sizes/densities vary (common in tenant data).\",\n        \"parametric_UMAP\": \"umap.parametric_umap.ParametricUMAP (TensorFlow) learns a neural encoder → out-of-sample transform without full refit. Ideal for streaming new tenant faces and epoch-aligned training diagnostics. Tradeoff: slight fidelity loss vs classical UMAP; needs TF dep.\",\n        \"supervised_UMAP\": \"Pass cluster labels as y= in fit for semi-supervised tightening. For QA atlas: prefer light supervision or post-hoc coloring only — heavy supervision can hide the true merges/splits operators need to find.\",\n        \"stability\": \"Set random_state for bit-stable runs; random_state forces single-thread path (slower). Still expect small jitter across umap-learn/numba/BLAS versions. For atlas product: pin package versions + store projection coords in DB.\",\n        \"failure_modes\": [\n          \"Cluster sizes in 2-D mean nothing (density equalization)\",\n          \"Inter-cluster distances often meaningless\",\n          \"False neighbors / torn clusters (one identity split across islands)\",\n          \"Low n_neighbors invents structure from noise\",\n          \"2-D distance ≠ high-D cosine distance — never gate on projection\"\n        ]\n      },\n      \"runtime_cpu\": {\n        \"scale_10k\": \"Typically tens of seconds on modern multi-core CPU for ~128-D after numba warmup\",\n        \"scale_70k_mnist_ref\": \"CONFIRMED: MNIST 70k×784 embeds in ~42–60s; Fashion-MNIST ~49s on 3.1 GHz i7 (umap-learn docs). densMAP MNIST wall ~2min20s vs UMAP ~1min43s on same machine.\",\n        \"scale_100k\": \"Order of a few minutes on multi-core CPU (pynndescent kNN dominates); expect ~2–10 min on A1.Flex 4 OCPU depending on n_neighbors\",\n        \"a1_flex_enough\": \"YES for batch atlas of 10k–100k 128-D vectors (4 OCPU/24GB). Golden-150 is trivial. Full large-tenant 1e5 nightly batch OK; interactive full-refit of huge tenants: prefer subsample + parametric UMAP or incremental transform.\",\n        \"notes\": \"A1 is ARM — verify numba/llvmlite aarch64 wheels. No cuML GPU UMAP on A1. M1 laptop can orchestrate but keep heavy fits on A1.\"\n      },\n      \"evidence\": [\n        {\"url\": \"https://umap-learn.readthedocs.io/en/latest/parameters.html\", \"grade\": \"CONFIRMED\", \"claim\": \"n_neighbors default 15 (range demos 2–200); min_dist default 0.1 (demos 0.0–0.99); local vs global tradeoff documented\"},\n        {\"url\": \"https://pypi.org/project/umap-learn/\", \"grade\": \"CONFIRMED\", \"claim\": \"n_neighbors often 5–50 (default 10–15 sensible); min_dist 0.001–0.5 (default 0.1); densMAP dens_lambda=2.0; Parametric UMAP via tensorflow; MNIST 70k under a minute; Fashion-MNIST 49s; license BSD-3\"},\n        {\"url\": \"https://umap-learn.readthedocs.io/en/latest/densmap_demo.html\", \"grade\": \"CONFIRMED\", \"claim\": \"densmap=True; densMAP slower but relatively constant overhead; dens_lambda controls density priority\"},\n        {\"url\": \"https://distill.pub/2016/misread-tsne/\", \"grade\": \"CONFIRMED\", \"claim\": \"Cluster sizes mean nothing; inter-cluster distances often meaningless; hyperparameters and early stopping create false structure; multi-run instability\"},\n        {\"url\": \"https://pair-code.github.io/understanding-umap/\", \"grade\": \"CONFIRMED\", \"claim\": \"Interactive UMAP n_neighbors/min_dist guidance; MNIST 70k in <3 min vs t-SNE 45 min\"},\n        {\"url\": \"https://arxiv.org/abs/1802.03426\", \"grade\": \"CONFIRMED\", \"claim\": \"UMAP paper: fuzzy topological manifold model; theoretical basis for parameters\"},\n        {\"url\": \"https://doi.org/10.1038/s43586-024-00363-x\", \"grade\": \"CONFIRMED\", \"claim\": \"Nature Reviews Methods Primers 2024 (Healy & McInnes): how to apply/interpret UMAP; cites as community primer\"},\n        {\"url\": \"https://doi.org/10.1038/s41587-020-00801-7\", \"grade\": \"CONFIRMED\", \"claim\": \"densMAP paper (Nature Biotechnology 2021) — density-preserving UMAP variant\"}\n      ]\n    },\n    \"training_diag\": {\n      \"use_case\": \"Per-epoch embedding drift/collapse visualization for FIR-7 occlusion-adapter training (DIAGNOSTIC tier)\",\n      \"beyond_obvious\": [\n        \"Aligned / fixed coordinate system: fit ParametricUMAP once (or on epoch-0), then transform later epochs for comparable frames\",\n        \"Procrustes/orthogonal Procrustes align successive classical UMAP maps when parametric path unavailable\",\n        \"Trajectory trails of same Golden-150 identities across epochs in the aligned 2-D plane\",\n        \"densMAP secondary view when classical UMAP tears identity groups\",\n        \"Mandatory quantitative companions (projections alone insufficient): intra- vs inter-identity cosine, embedding-norm histograms, center collapse, soft nearest-neighbor purity, linear CKA/SVCCA between epoch embedding matrices, silhouette on labeled Golden-150\",\n        \"Log high-D neighbor-rank correlation (kNN Jaccard) epoch-to-epoch as drift metric independent of 2-D\"\n      ],\n      \"verdict\": \"USEFUL as DIAGNOSTIC only. Run post-epoch on A1.Flex against a fixed val/Golden embedding set; never block training on 2-D visuals.\",\n      \"evidence\": [\n        {\"url\": \"https://pypi.org/project/umap-learn/\", \"grade\": \"CONFIRMED\", \"claim\": \"Parametric UMAP for fixed encoder / out-of-sample transform; transform() for new points\"},\n        {\"url\": \"https://arxiv.org/abs/2009.12981\", \"grade\": \"CONFIRMED\", \"claim\": \"Parametric UMAP paper (Sainburg et al.) — neural mapping for representation and semi-supervised use\"},\n        {\"url\": \"https://distill.pub/2016/misread-tsne/\", \"grade\": \"CONFIRMED\", \"claim\": \"Successive runs/plots not comparable without alignment; hyperparameter sensitivity\"}\n      ]\n    },\n    \"active_curation\": {\n      \"use_case\": \"Rank faces/clusters for human review using embedding-space uncertainty + display 2-D projection context\",\n      \"approach\": \"Primary ranking MUST be high-D: cluster soft-assignment entropy, nearest-centroid margin, intra-cluster variance, density outliers, pairwise cosine near decision threshold. Use UMAP only for display/context in the queue UI. Accelerates Golden-150 labeling and tenant cluster curation.\",\n      \"tools\": [\n        {\n          \"name\": \"FiftyOne (Voxel51 open source)\",\n          \"license\": \"Apache-2.0\",\n          \"selfhost\": \"YES — pip/Docker; local MongoDB; port 5151. Feasible on A1.Flex 4 OCPU/24GB for Golden-150 and moderate tenant sets. Brain methods OSS for uniqueness/mistakenness/similarity. Enterprise is commercial.\",\n          \"fit\": \"BEST FIT for FIR: CV dataset curation, embeddings, model evaluation, active labeling workflows\"\n        },\n        {\n          \"name\": \"Embedding Atlas (Apple)\",\n          \"license\": \"MIT\",\n          \"selfhost\": \"YES — browser-native / Python package; no mandatory cloud backend. Low ops on A1 or even M1 for viz of precomputed projections.\",\n          \"fit\": \"Strong for interactive large embedding maps, search, cross-filter; pair with umap-learn projections\"\n        },\n        {\n          \"name\": \"TensorBoard Embedding Projector\",\n          \"license\": \"Apache-2.0 (TensorFlow/TensorBoard)\",\n          \"selfhost\": \"YES — local tensorboard server. Free and light on A1.\",\n          \"fit\": \"Quick PCA/t-SNE/UMAP viz + sprite images; weaker as production curation queue / labeling system\"\n        },\n        {\n          \"name\": \"Nomic Atlas\",\n          \"license\": \"Client open-source; platform is commercial SaaS (not full self-host of Atlas product)\",\n          \"selfhost\": \"NO full product self-host — data leaves to Nomic cloud. Avoid for consented face data.\",\n          \"fit\": \"Nice UX but privacy/self-host mismatch for FIR consented data\"\n        }\n      ],\n      \"verdict\": \"Prefer FiftyOne (Apache-2.0) on A1 for curation queues + Embedding Atlas (MIT) for atlas UX. Build uncertainty ranking in-house on pgvector cosines.\",\n      \"evidence\": [\n        {\"url\": \"https://github.com/voxel51/fiftyone\", \"grade\": \"CONFIRMED\", \"claim\": \"Apache-2.0; self-hostable with local MongoDB\"},\n        {\"url\": \"https://docs.voxel51.com/enterprise/overview.html\", \"grade\": \"CONFIRMED\", \"claim\": \"OSS Apache-2.0 vs Enterprise commercial; self-hosted = Voxel51 has no data access\"},\n        {\"url\": \"https://github.com/apple/embedding-atlas\", \"grade\": \"CONFIRMED\", \"claim\": \"MIT license; interactive large embedding visualization\"},\n        {\"url\": \"https://apple.github.io/embedding-atlas/\", \"grade\": \"CONFIRMED\", \"claim\": \"Browser-side explore, search, nearest neighbors\"},\n        {\"url\": \"https://www.tensorflow.org/tensorboard/tensorboard_projector_plugin\", \"grade\": \"CONFIRMED\", \"claim\": \"TensorBoard Embedding Projector; Apache-2.0 code samples\"},\n        {\"url\": \"https://github.com/nomic-ai/nomic\", \"grade\": \"CONFIRMED\", \"claim\": \"Python client for Nomic Atlas cloud platform — not a full self-hosted Atlas server\"}\n      ]\n    },\n    \"library\": {\n      \"name\": \"umap-learn\",\n      \"version_note\": \"PyPI current observed 0.5.12 (Apr 2026)\",\n      \"license\": \"BSD-3-Clause (3-clause BSD) — CONFIRMED\",\n      \"dependency_weight\": \"Moderate: numpy, scipy, scikit-learn, numba, pynndescent, tqdm, llvmlite. Heavy bits are numba/llvmlite (compile/JIT). Optional: matplotlib/datashader/holoviews for plot; tensorflow for parametric_umap; tbb for x86 speed. Package itself ~90KB wheel.\",\n      \"never_as_gate\": \"CONFIRMED standard guidance: UMAP/t-SNE 2-D distances are distorted; cluster size/shape/separation in projection are not trustworthy metrics. NEVER use projection distance as clustering signal, identity gate, or automatic merge/split. All automated decisions must use original 128-D (or future 512-D) embeddings in pgvector (cosine). Projection is human visualization only. (Even umap-learn's 'using UMAP for clustering' path embeds then clusters in higher-D UMAP space carefully — not 2-D atlas coords.)\",\n      \"evidence\": [\n        {\"url\": \"https://github.com/lmcinnes/umap\", \"grade\": \"CONFIRMED\", \"claim\": \"umap package is 3-clause BSD licensed\"},\n        {\"url\": \"https://pypi.org/project/umap-learn/\", \"grade\": \"CONFIRMED\", \"claim\": \"License BSD; deps and optional extras documented\"},\n        {\"url\": \"https://distill.pub/2016/misread-tsne/\", \"grade\": \"CONFIRMED\", \"claim\": \"Distances and cluster sizes in nonlinear projections mislead\"},\n        {\"url\": \"https://doi.org/10.1038/s43586-024-00363-x\", \"grade\": \"CONFIRMED\", \"claim\": \"2024 Primer on correct application and interpretation of UMAP\"}\n      ]\n    }\n  },\n  \"q2_dcface\": {\n    \"summary\": \"DCFace (CVPR 2023, arXiv 2304.07060) is a two-stage dual-condition diffusion generator: (1) unconditional DDPM G_id samples novel ID faces; (2) dual-condition mixer G_mix combines ID image X_id with style image X_sty via patch-wise style extractor + time-step-dependent ID loss. Operator-cleared synthetic identity generator for FIR retrain data.\",\n    \"artifacts\": {\n      \"released_packs\": [\n        \"dcface_0.5m_oversample_xid (≈0.5M images; CASIA-scale)\",\n        \"dcface_1.2m_oversample_xid (≈1.2M images)\"\n      ],\n      \"format\": \"InsightFace-style .rec packs; convert to PNG via dcface/convert/record.py\",\n      \"generator_checkpoints\": \"pretrained_models/ from Google Drive folder (G_id DDPM on FFHQ, G_mix, style extractors, etc.) placed under dcface/\",\n      \"code\": \"https://github.com/mk-minchul/dcface — synthesis.py, stage1 unconditional generation, style bank align, train.sh\",\n      \"download_links_doc\": \"Dataset Drive folder + pretrained weights Drive folder linked in README\"\n    },\n    \"compute\": {\n      \"paper_training_Gmix\": \"10 epochs, batch 256, AdamW lr 0.001 — 8 hours on 2× A100\",\n      \"paper_sampling_500k\": \"DDIM 200 intervals; generating 500K samples ≈ 20 hours on 1× A100 → ~0.144 s/image amortized at 200-step DDIM\",\n      \"implied_throughput\": \"~25k images/GPU-hr at paper settings (500k / 20 hr)\",\n      \"a10_24gb_feasible\": \"YES for inference/synthesis. A10 24GB can run DDPM/DDIM face diffusion at batch≥1 (often batch 4–8 with fp16). Expect ~1.5–3× slower than A100 → rough 30–60 GPU-hr for 0.5M images, 70–140 GPU-hr for 1.2M at similar step counts. VRAM: 24GB sufficient for 112–256px class models if batch managed.\",\n      \"cpu_only\": \"NOT practical. Diffusion sampling is GPU-bound; CPU multi-hour-per-image class — reject for N×M production packs.\",\n      \"oci_a10_burst_est\": \"At ~$2/GPU-hr: 0.5M ≈ $60–120; 1.2M ≈ $140–280 (order-of-magnitude; depends on DDIM steps/batch). Prefer downloading released 0.5M/1.2M packs first unless custom style bank / occlusion-heavy styles needed.\",\n      \"m1_laptop\": \"Orchestration only — do not run DCFace inference on 8GB M1\"\n    },\n    \"config_knobs\": {\n      \"identity_count_N\": \"Number of unique X_id images from G_id (unconditional_sampling.py: --num_samples). Paper filtered 200k→~105k unique (r=0.3 cosine) then 62,570; FR packs use 10k or 20k IDs.\",\n      \"images_per_id_M\": \"Styles sampled per ID from style bank (random or match gender/ethnicity). Ablation packs: 50 imgs/ID; oversample xid adds +5 copies of frontal X_id per label.\",\n      \"style_id_mixing\": \"synthesis.py --id_images_root + --style_images_root; patch grid size (1×1…7×7, best FR at 5×5); style sampling random vs match; ID sampling random vs ethnicity-balanced; oversample_xid flag\",\n      \"diffusion_sampling\": \"DDIM timestep_respacing / intervals (paper 200); diffusion_steps 1000 train; use_fp16; batch_size\",\n      \"losses\": \"L_MSE + λ L_ID (time-dependent cosine interpolation between X_id and X_sty features)\"\n    },\n    \"bovifocr_fork\": {\n      \"repo\": \"https://github.com/BOVIFOCR/dcface_synthetic_face\",\n      \"relation\": \"Fork of mk-minchul/dcface (83 commits on fork history vs upstream 10)\",\n      \"documented_additions\": [\n        \"Pinned conda env (Python 3.9, CUDA 11.2, torch 2.3, mxnet 1.9.1) + environment_*.yml for MICA/HRN co-use\",\n        \"Reproducibility-oriented install path and CUDA_HOME/LD_LIBRARY_PATH wiring\",\n        \"Extra analysis scripts: cosine similarities id/style/stylized, filter subjects, map id→style, create_rec_file, organise by face attributes, inter/intra subject plots\",\n        \"synthesis path renames / stylize_idImgs helpers; consistency_loss path/hash fixes\",\n        \"Visualization extras saving id, sty, stylized images to disk\",\n        \"Commented commands for generating datasets on their 'daugman' cluster\"\n      ],\n      \"improvements_vs_upstream\": \"Operational/reproducibility tooling and dataset QA analytics — not a new generative architecture. Prefer fork for running generation + quality filters; weights still from original Drive.\"\n    },\n    \"downstream_results\": {\n      \"paper_claim\": \"DCFace synthetic-trained FR models beat prior synthetic methods by 6.11% avg on 4 of 5 of LFW/CFP-FP/CPLFW/AgeDB/CALFW (0.5M regime vs DigiFace)\",\n      \"table4_0.5M_DCFace_IRSE50_AdaFace\": {\n        \"LFW\": 98.55,\n        \"CFP_FP\": 85.33,\n        \"CPLFW\": 82.62,\n        \"AgeDB\": 89.70,\n        \"CALFW\": 91.60,\n        \"Avg\": 89.56,\n        \"Gap_to_CASIA_real\": \"5.65 pts (real avg 94.62)\"\n      },\n      \"table4_1.2M_DCFace\": {\n        \"LFW\": 98.58,\n        \"CFP_FP\": 88.61,\n        \"CPLFW\": 85.07,\n        \"AgeDB\": 90.97,\n        \"CALFW\": 92.82,\n        \"Avg\": 91.21,\n        \"Gap_to_real\": 3.74\n      },\n      \"comparators_0.5M\": \"SynFace avg 74.75; DigiFace 83.45; DCFace 89.56\",\n      \"notes\": \"Numbers are verification accuracy % of FR models trained ONLY on synthetic DCFace data (not the generator's own accuracy). Backbone IR-SE50 + AdaFace to match DigiFace protocol.\"\n    },\n    \"evidence\": [\n      {\"url\": \"https://arxiv.org/pdf/2304.07060\", \"grade\": \"CONFIRMED\", \"claim\": \"Full paper: method, 2×A100 8h train, 500k/20h A100 sample, Table 4 verification numbers, 6.11% claim, config ablations\"},\n      {\"url\": \"https://arxiv.org/abs/2304.07060\", \"grade\": \"CONFIRMED\", \"claim\": \"Abstract + metadata; dual condition diffusion; code link\"},\n      {\"url\": \"https://github.com/mk-minchul/dcface\", \"grade\": \"CONFIRMED\", \"claim\": \"Official code; 0.5m/1.2m packs; pretrained weights Drive; synthesis.py knobs; rec format\"},\n      {\"url\": \"https://github.com/BOVIFOCR/dcface_synthetic_face\", \"grade\": \"CONFIRMED\", \"claim\": \"BOVIFOCR fork: env pins, analysis scripts, consistency fixes, expanded ops tooling\"},\n      {\"url\": \"https://cvpr.thecvf.com/virtual/2023/poster/21739\", \"grade\": \"CONFIRMED\", \"claim\": \"CVPR 2023 poster summary: +6.11% avg verification vs prior on 4/5 datasets\"}\n    ]\n  },\n  \"q3_econ\": {\n    \"oci\": {\n      \"a10_burst\": {\n        \"rate_usd_per_gpu_hr\": 2.0,\n        \"notes\": \"Already provisioned (acx-gpu-burst), currently STOPPED; data local; no egress; teardown discipline exists\",\n        \"storage_egress\": \"Local block/object — no HF-style egress for training data; only pay when instance RUNNING\",\n        \"ops\": \"You own env pinning, checkpoint disk, start/stop discipline. Lowest coordination cost given existing infra.\"\n      },\n      \"a1_flex_cpu\": {\n        \"rate_usd_per_hr\": 0.152,\n        \"role\": \"Always-on orchestration, UMAP atlases, FiftyOne, non-GPU jobs — not training\"\n      }\n    },\n    \"hf_pricing\": [\n      {\n        \"product\": \"Spaces GPU\",\n        \"rates_usd_per_hr\": {\n          \"A10G_small\": 1.0,\n          \"A10G_large\": 1.5,\n          \"A100_large_80GB\": 2.5,\n          \"4x_A100\": 10.0,\n          \"8x_A100\": 20.0,\n          \"H100\": \"removed December 2025\",\n          \"H200\": \"available on Jobs (see Jobs)\",\n          \"L40S_1x\": 1.8,\n          \"T4_small\": 0.4\n        },\n        \"billing\": \"Per-minute while Starting/Running; upgraded Spaces run indefinitely unless sleep/pause set; build time free\"\n      },\n      {\n        \"product\": \"HF Jobs\",\n        \"rates_usd_per_hr\": {\n          \"A10G_small\": 1.0,\n          \"A10G_large\": 1.5,\n          \"A100_large\": 2.5,\n          \"4x_A100\": 10.0,\n          \"8x_A100\": 20.0,\n          \"H200_1x\": 5.0,\n          \"H200_8x\": 40.0,\n          \"RTX_PRO_6000_1x\": 2.75\n        },\n        \"billing\": \"Per-minute Starting/Running; default timeout 30 min (must raise for long trains); no build charge; requires positive credit balance\"\n      },\n      {\n        \"product\": \"AutoTrain\",\n        \"rates_usd_per_hr\": \"Same as chosen Spaces/Jobs hardware (pay-as-you-go compute minutes); free if run fully local\",\n        \"notes\": \"No-code path; billed for resource minutes only — not ideal for custom YuNet/SFace/SCRFD/AdaFace stacks\"\n      },\n      {\n        \"product\": \"Inference Endpoints (ref)\",\n        \"rates_usd_per_hr\": {\"A10G_x1\": 1.0, \"A100_x1\": 2.5, \"H100_x1_deprecated\": 4.5},\n        \"notes\": \"Serving, not training — listed for completeness\"\n      },\n      {\n        \"product\": \"Storage/egress\",\n        \"rates\": \"Hub private storage under plan quotas (Free limited; PRO $9/mo includes more private storage). Pricing page: egress/CDN included at no extra cost for Hub. Large private face datasets still consume storage quota and leave your VPC.\",\n        \"privacy_posture\": \"Uploaded datasets/models processed/stored on HF infrastructure (US and other facilities per Privacy Policy). Private repos not public, but HF staff may access under ToS/Privacy for ops/legal. Consented biometric-adjacent face data: treat as privacy-relevant — prefer keep on OCI. Synthetic DCFace data: low privacy risk. No claim that HF trains on private uploads by default, but data residency is HF cloud not yours.\"\n      },\n      {\n        \"product\": \"Spot/preemption\",\n        \"behavior\": \"Spaces/Jobs are on-demand style (not classic AWS spot). No cheap preemptible tier documented for Jobs/Spaces GPU — you pay listed rates. Contrast: RunPod community/spot cheaper but interruptible.\"\n      }\n    ],\n    \"reference_rates\": [\n      {\n        \"provider\": \"Lambda Labs\",\n        \"rates\": \"1× A100 40GB ~$1.99/GPU-hr; A100 SXM 80GB in multi-GPU configs ~$2.79/GPU-hr; 1× H100 PCIe ~$3.29; 1× H100 SXM ~$4.29; 1× A10 ~$1.29 (public instance tables 2026). No spot/preemptible on public Lambda self-serve.\",\n        \"url\": \"https://lambda.ai/pricing\"\n      },\n      {\n        \"provider\": \"RunPod\",\n        \"rates\": \"A100 80GB PCIe ~$1.19–1.39/hr on-demand; A100 SXM ~$1.49/hr; H100 PCIe from ~$1.99/hr; Community Cloud spot often 40–60% below on-demand (interruptible).\",\n        \"url\": \"https://www.runpod.io/pricing\"\n      }\n    ],\n    \"adapter_scale\": {\n      \"workload\": \"FIR-7 PEFT: YuNet fine-tune (few M params) + SFace residual adapter 128→r→128 — hours not days\",\n      \"oci_a10\": {\n        \"est_hours\": \"2–12 GPU-hr typical for PEFT/adapter runs\",\n        \"est_cost_usd\": \"4–24 at $2/hr\",\n        \"pros\": \"Data local, env already known, stop instance after job\",\n        \"cons\": \"Manual start/stop; single GPU\"\n      },\n      \"hf\": {\n        \"est_cost_usd\": \"A10G $1–1.5/hr → often cheaper list rate than OCI $2; A100 $2.5/hr comparable\",\n        \"pros\": \"Jobs/AutoTrain less ops if stack fits HF images; per-minute billing\",\n        \"cons\": \"Upload consented data to HF; env pinning for custom YuNet/SFace may fight platform images; AutoTrain not built for this stack; H100 removed from Spaces\"\n      },\n      \"recommendation\": \"Prefer OCI A10 burst for adapter-scale: privacy for any consented samples, zero data movement, cost ~$10–25/run. Use HF Jobs A10G only if pure-synthetic and you want managed job API — list rate can undercut $2 but ops+privacy usually lose.\"\n    },\n    \"campaign_scale\": {\n      \"workload\": \"Future retrain: SCRFD-arch detector + AdaFace-style 512-D embedder on ~0.5–1.2M synthetic (days on single A100-class)\",\n      \"oci_a10\": {\n        \"est\": \"A10 ≈0.5–0.7× A100 throughput for CNN FR training → multi-day to 1–2 weeks wall for full campaign\",\n        \"cost_example\": \"72–240 GPU-hr → $144–480 at $2/hr\",\n        \"pros\": \"Data local (DCFace packs on OCI), no egress, full control of multi-stage detector+embedder pipeline\",\n        \"cons\": \"Slower than A100/H100; single-GPU unless more burst capacity added\"\n      },\n      \"hf\": {\n        \"est\": \"A100 $2.50/hr or H200 $5/hr Jobs — faster wall-clock; 48–120 A100-hr → $120–300\",\n        \"pros\": \"Faster GPUs on demand; multi-GPU configs if budget allows\",\n        \"cons\": \"Upload 0.5–1.2M images; checkpoint persistence across Jobs needs Hub or re-upload; custom SCRFD/AdaFace training loops = Jobs Docker not AutoTrain; consented mix still privacy-sensitive\"\n      },\n      \"spot_alt\": \"RunPod A100 spot ~$0.7–1.2/hr effective can beat both if checkpoint-resilient — worth evaluating for pure synthetic campaign, not for production PII pipelines.\",\n      \"recommendation\": \"Campaign-scale pure synthetic: OCI A10 is acceptable and simplest (data already local); if wall-clock matters, burst to RunPod/Lambda A100 (~$1.2–2.0/hr) with checkpoints, or HF Jobs A100 at $2.50. Avoid HF for any consented real faces. Do not use Spaces for multi-day trains (sleep/billing footguns).\"\n    },\n    \"recommendation\": \"Adapter-scale (FIR-7): OCI A10 burst only. Campaign-scale (SCRFD+AdaFace on DCFace 0.5–1.2M): default OCI A10 if days OK; else rent A100 (RunPod spot or Lambda on-demand) with synthetic data only — HF Jobs A100 as third choice when you want managed API and accept Hub data residency. Keep UMAP/curation on A1.Flex CPU. Never put consented face datasets on HF or Nomic cloud.\",\n    \"evidence\": [\n      {\"url\": \"https://huggingface.co/docs/hub/en/spaces-gpus\", \"grade\": \"CONFIRMED\", \"claim\": \"Spaces GPU table: A10G $1/$1.50, A100 $2.50, H100 removed Dec 2025; per-minute billing; sleep/pause\"},\n      {\"url\": \"https://huggingface.co/docs/hub/en/jobs-pricing\", \"grade\": \"CONFIRMED\", \"claim\": \"Jobs GPU pricing incl. H200 $5/hr, A100 $2.50, A10G $1–1.50; default 30m timeout\"},\n      {\"url\": \"https://huggingface.co/docs/autotrain/en/cost\", \"grade\": \"CONFIRMED\", \"claim\": \"AutoTrain bills Spaces compute minutes; free if local\"},\n      {\"url\": \"https://huggingface.co/privacy\", \"grade\": \"CONFIRMED\", \"claim\": \"Data may be stored/processed in US and other countries; retention for service delivery\"},\n      {\"url\": \"https://huggingface.co/terms-of-service\", \"grade\": \"CONFIRMED\", \"claim\": \"ToS/privacy govern private content access and retention\"},\n      {\"url\": \"https://lambda.ai/pricing\", \"grade\": \"CONFIRMED\", \"claim\": \"Lambda public instance GPU hourly rates A100/H100/A10\"},\n      {\"url\": \"https://www.runpod.io/pricing\", \"grade\": \"CONFIRMED\", \"claim\": \"RunPod A100/H100 on-demand pricing (from search scrape; page fetch blocked)\"},\n      {\"url\": \"https://www.buildmvpfast.com/blog/gpu-cloud-cost-comparison-runpod-lambda-labs-coreweave-2026\", \"grade\": \"ANECDOTAL\", \"claim\": \"2026 secondary comparison of RunPod vs Lambda spot/on-demand ranges\"}\n    ]\n  },\n  \"summary_for_decision\": \"Q1: Ship a Workbench CLUSTER-CURATION ATLAS with umap-learn (BSD-3, cosine metric, n_neighbors 15–30, min_dist 0.05–0.1, random_state pinned); optional densMAP for density; Parametric UMAP for new points + epoch-aligned FIR-7 diagnostics. A1.Flex CPU is enough for 10k–100k. Rank curation queues on high-D uncertainty (pgvector), not 2-D. Prefer FiftyOne (Apache-2.0) + Embedding Atlas (MIT) self-hosted; projections must NEVER gate merge/identity. Q2: DCFace is cleared and practical — use released 0.5M/1.2M packs first (FR: LFW 98.6%, avg ~89.6@0.5M / 91.2@1.2M). Custom gen needs GPU (paper 500k≈20 A100-hr); A10 24GB OK, CPU not. BOVIFOCR fork adds env pins, rec tooling, similarity QA — use for ops. Q3: Adapter FIR-7 on OCI A10 (~$2/hr, data local). Campaign retrain: OCI A10 default for synthetic; else RunPod/Lambda A100 if speed needed. HF A10G is list-cheaper than your A10 but worse for privacy/ops on custom FR stacks — avoid for consented data.\"\n}",
+  "stopReason": "EndTurn",
+  "sessionId": "019f90d2-586a-7742-bab4-e609edb993fc",
+  "requestId": "71e7e7b4-fe32-465e-bd92-10572f80f008",
+  "thought": "The user wants a comprehensive research report with web search/fetch, structured as strict JSON with evidence URLs graded CONFIRMED or ANECDOTAL. Let me research all three questions thoroughly.I need ...Let me fetch more details - DCFace paper PDF, supp, BOVIFOCR forks, UMAP paper/densMAP, HF privacy, Nomic Atlas license, TensorBoard, distill.pub, Nature primer, umap performance benchmarks.Let me read the PDF content and also fetch more sources.Let me read more pages of the DCFace paper for results and compute requirements, and the BOVIFOCR fork.I have excellent data now. Let me fetch a few more sources for UMAP guidance, densMAP, Nature primer, HF privacy/ToS, Nomic, TensorBoard, Lambda pricing, and BOVIFOCR commit details.Let me get a few more details - Nature UMAP primer, Nomic Atlas, AutoTrain, densMAP docs, and BOVIFOCR commits summary.I have enough information to compile a comprehensive JSON response. Let me also quickly check TensorBoard projector license and AutoTrain pricing.I have comprehensive data now. Let me compile the fina...",
+  "usage": {
+    "input_tokens": 119848,
+    "cache_read_input_tokens": 434176,
+    "output_tokens": 12286,
+    "reasoning_tokens": 1215,
+    "total_tokens": 566310
+  },
+  "num_turns": 7,
+  "total_cost_usd": 0.6876852,
+  "total_cost_usd_ticks": 6876852000,
+  "modelUsage": {
+    "grok-4.5-build": {
+      "inputTokens": 119848,
+      "outputTokens": 12286,
+      "cacheReadInputTokens": 434176,
+      "modelCalls": 7,
+      "costUSD": 0.6876852
+    }
+  },
+  "structuredOutput": {
+    "q1_umap": {
+      "atlas": {
+        "use_case": "CLUSTER-CURATION ATLAS: project tenant or Golden-150 face embeddings (128-D) to 2-D UMAP, render zoomable sprite atlas of face thumbnails colored by cluster_id for human merge/split/outlier review",
+        "verdict": "HIGH VALUE — directly attacks Workbench pain (a). Ship as admin-only atlas; wire click-through to merge/split actions. Never use 2-D coords as clustering or gate signals.",
+        "best_practices": {
+          "n_neighbors_range": "Docs default 15; sensible general range 5–50. For ~1e3–1e5 face points: start 15–30 (local identity neighborhoods). Raise toward 50–100 only if global structure must dominate. Very low (2–5) tears graphs into chains; very high loses fine merges/splits.",
+          "min_dist_range": "Default 0.1; sensible 0.001–0.5. For identity islands/clumpy QA: 0.0–0.1. For readable Fashion-MNIST-style spread: ~0.1–0.3. Higher values (0.5–0.99) blur local topology.",
+          "metric": "Use metric='cosine' for SFace-style L2-normalized face embeddings (matches pgvector cosine gate).",
+          "densMAP": "Built into umap-learn via densmap=True; dens_lambda default 2.0 (raise to prioritize density, lower ~0.1 toward classical UMAP). Recommends n_neighbors≈30 for reliable local density. Helps when identity cluster sizes/densities vary (common in tenant data).",
+          "parametric_UMAP": "umap.parametric_umap.ParametricUMAP (TensorFlow) learns a neural encoder → out-of-sample transform without full refit. Ideal for streaming new tenant faces and epoch-aligned training diagnostics. Tradeoff: slight fidelity loss vs classical UMAP; needs TF dep.",
+          "supervised_UMAP": "Pass cluster labels as y= in fit for semi-supervised tightening. For QA atlas: prefer light supervision or post-hoc coloring only — heavy supervision can hide the true merges/splits operators need to find.",
+          "stability": "Set random_state for bit-stable runs; random_state forces single-thread path (slower). Still expect small jitter across umap-learn/numba/BLAS versions. For atlas product: pin package versions + store projection coords in DB.",
+          "failure_modes": [
+            "Cluster sizes in 2-D mean nothing (density equalization)",
+            "Inter-cluster distances often meaningless",
+            "False neighbors / torn clusters (one identity split across islands)",
+            "Low n_neighbors invents structure from noise",
+            "2-D distance ≠ high-D cosine distance — never gate on projection"
+          ]
+        },
+        "runtime_cpu": {
+          "scale_10k": "Typically tens of seconds on modern multi-core CPU for ~128-D after numba warmup",
+          "scale_70k_mnist_ref": "CONFIRMED: MNIST 70k×784 embeds in ~42–60s; Fashion-MNIST ~49s on 3.1 GHz i7 (umap-learn docs). densMAP MNIST wall ~2min20s vs UMAP ~1min43s on same machine.",
+          "scale_100k": "Order of a few minutes on multi-core CPU (pynndescent kNN dominates); expect ~2–10 min on A1.Flex 4 OCPU depending on n_neighbors",
+          "a1_flex_enough": "YES for batch atlas of 10k–100k 128-D vectors (4 OCPU/24GB). Golden-150 is trivial. Full large-tenant 1e5 nightly batch OK; interactive full-refit of huge tenants: prefer subsample + parametric UMAP or incremental transform.",
+          "notes": "A1 is ARM — verify numba/llvmlite aarch64 wheels. No cuML GPU UMAP on A1. M1 laptop can orchestrate but keep heavy fits on A1."
+        },
+        "evidence": [
+          {
+            "url": "https://umap-learn.readthedocs.io/en/latest/parameters.html",
+            "grade": "CONFIRMED",
+            "claim": "n_neighbors default 15 (range demos 2–200); min_dist default 0.1 (demos 0.0–0.99); local vs global tradeoff documented"
+          },
+          {
+            "url": "https://pypi.org/project/umap-learn/",
+            "grade": "CONFIRMED",
+            "claim": "n_neighbors often 5–50 (default 10–15 sensible); min_dist 0.001–0.5 (default 0.1); densMAP dens_lambda=2.0; Parametric UMAP via tensorflow; MNIST 70k under a minute; Fashion-MNIST 49s; license BSD-3"
+          },
+          {
+            "url": "https://umap-learn.readthedocs.io/en/latest/densmap_demo.html",
+            "grade": "CONFIRMED",
+            "claim": "densmap=True; densMAP slower but relatively constant overhead; dens_lambda controls density priority"
+          },
+          {
+            "url": "https://distill.pub/2016/misread-tsne/",
+            "grade": "CONFIRMED",
+            "claim": "Cluster sizes mean nothing; inter-cluster distances often meaningless; hyperparameters and early stopping create false structure; multi-run instability"
+          },
+          {
+            "url": "https://pair-code.github.io/understanding-umap/",
+            "grade": "CONFIRMED",
+            "claim": "Interactive UMAP n_neighbors/min_dist guidance; MNIST 70k in <3 min vs t-SNE 45 min"
+          },
+          {
+            "url": "https://arxiv.org/abs/1802.03426",
+            "grade": "CONFIRMED",
+            "claim": "UMAP paper: fuzzy topological manifold model; theoretical basis for parameters"
+          },
+          {
+            "url": "https://doi.org/10.1038/s43586-024-00363-x",
+            "grade": "CONFIRMED",
+            "claim": "Nature Reviews Methods Primers 2024 (Healy & McInnes): how to apply/interpret UMAP; cites as community primer"
+          },
+          {
+            "url": "https://doi.org/10.1038/s41587-020-00801-7",
+            "grade": "CONFIRMED",
+            "claim": "densMAP paper (Nature Biotechnology 2021) — density-preserving UMAP variant"
+          }
+        ]
+      },
+      "training_diag": {
+        "use_case": "Per-epoch embedding drift/collapse visualization for FIR-7 occlusion-adapter training (DIAGNOSTIC tier)",
+        "beyond_obvious": [
+          "Aligned / fixed coordinate system: fit ParametricUMAP once (or on epoch-0), then transform later epochs for comparable frames",
+          "Procrustes/orthogonal Procrustes align successive classical UMAP maps when parametric path unavailable",
+          "Trajectory trails of same Golden-150 identities across epochs in the aligned 2-D plane",
+          "densMAP secondary view when classical UMAP tears identity groups",
+          "Mandatory quantitative companions (projections alone insufficient): intra- vs inter-identity cosine, embedding-norm histograms, center collapse, soft nearest-neighbor purity, linear CKA/SVCCA between epoch embedding matrices, silhouette on labeled Golden-150",
+          "Log high-D neighbor-rank correlation (kNN Jaccard) epoch-to-epoch as drift metric independent of 2-D"
+        ],
+        "verdict": "USEFUL as DIAGNOSTIC only. Run post-epoch on A1.Flex against a fixed val/Golden embedding set; never block training on 2-D visuals.",
+        "evidence": [
+          {
+            "url": "https://pypi.org/project/umap-learn/",
+            "grade": "CONFIRMED",
+            "claim": "Parametric UMAP for fixed encoder / out-of-sample transform; transform() for new points"
+          },
+          {
+            "url": "https://arxiv.org/abs/2009.12981",
+            "grade": "CONFIRMED",
+            "claim": "Parametric UMAP paper (Sainburg et al.) — neural mapping for representation and semi-supervised use"
+          },
+          {
+            "url": "https://distill.pub/2016/misread-tsne/",
+            "grade": "CONFIRMED",
+            "claim": "Successive runs/plots not comparable without alignment; hyperparameter sensitivity"
+          }
+        ]
+      },
+      "active_curation": {
+        "use_case": "Rank faces/clusters for human review using embedding-space uncertainty + display 2-D projection context",
+        "approach": "Primary ranking MUST be high-D: cluster soft-assignment entropy, nearest-centroid margin, intra-cluster variance, density outliers, pairwise cosine near decision threshold. Use UMAP only for display/context in the queue UI. Accelerates Golden-150 labeling and tenant cluster curation.",
+        "tools": [
+          {
+            "name": "FiftyOne (Voxel51 open source)",
+            "license": "Apache-2.0",
+            "selfhost": "YES — pip/Docker; local MongoDB; port 5151. Feasible on A1.Flex 4 OCPU/24GB for Golden-150 and moderate tenant sets. Brain methods OSS for uniqueness/mistakenness/similarity. Enterprise is commercial.",
+            "fit": "BEST FIT for FIR: CV dataset curation, embeddings, model evaluation, active labeling workflows"
+          },
+          {
+            "name": "Embedding Atlas (Apple)",
+            "license": "MIT",
+            "selfhost": "YES — browser-native / Python package; no mandatory cloud backend. Low ops on A1 or even M1 for viz of precomputed projections.",
+            "fit": "Strong for interactive large embedding maps, search, cross-filter; pair with umap-learn projections"
+          },
+          {
+            "name": "TensorBoard Embedding Projector",
+            "license": "Apache-2.0 (TensorFlow/TensorBoard)",
+            "selfhost": "YES — local tensorboard server. Free and light on A1.",
+            "fit": "Quick PCA/t-SNE/UMAP viz + sprite images; weaker as production curation queue / labeling system"
+          },
+          {
+            "name": "Nomic Atlas",
+            "license": "Client open-source; platform is commercial SaaS (not full self-host of Atlas product)",
+            "selfhost": "NO full product self-host — data leaves to Nomic cloud. Avoid for consented face data.",
+            "fit": "Nice UX but privacy/self-host mismatch for FIR consented data"
+          }
+        ],
+        "verdict": "Prefer FiftyOne (Apache-2.0) on A1 for curation queues + Embedding Atlas (MIT) for atlas UX. Build uncertainty ranking in-house on pgvector cosines.",
+        "evidence": [
+          {
+            "url": "https://github.com/voxel51/fiftyone",
+            "grade": "CONFIRMED",
+            "claim": "Apache-2.0; self-hostable with local MongoDB"
+          },
+          {
+            "url": "https://docs.voxel51.com/enterprise/overview.html",
+            "grade": "CONFIRMED",
+            "claim": "OSS Apache-2.0 vs Enterprise commercial; self-hosted = Voxel51 has no data access"
+          },
+          {
+            "url": "https://github.com/apple/embedding-atlas",
+            "grade": "CONFIRMED",
+            "claim": "MIT license; interactive large embedding visualization"
+          },
+          {
+            "url": "https://apple.github.io/embedding-atlas/",
+            "grade": "CONFIRMED",
+            "claim": "Browser-side explore, search, nearest neighbors"
+          },
+          {
+            "url": "https://www.tensorflow.org/tensorboard/tensorboard_projector_plugin",
+            "grade": "CONFIRMED",
+            "claim": "TensorBoard Embedding Projector; Apache-2.0 code samples"
+          },
+          {
+            "url": "https://github.com/nomic-ai/nomic",
+            "grade": "CONFIRMED",
+            "claim": "Python client for Nomic Atlas cloud platform — not a full self-hosted Atlas server"
+          }
+        ]
+      },
+      "library": {
+        "name": "umap-learn",
+        "version_note": "PyPI current observed 0.5.12 (Apr 2026)",
+        "license": "BSD-3-Clause (3-clause BSD) — CONFIRMED",
+        "dependency_weight": "Moderate: numpy, scipy, scikit-learn, numba, pynndescent, tqdm, llvmlite. Heavy bits are numba/llvmlite (compile/JIT). Optional: matplotlib/datashader/holoviews for plot; tensorflow for parametric_umap; tbb for x86 speed. Package itself ~90KB wheel.",
+        "never_as_gate": "CONFIRMED standard guidance: UMAP/t-SNE 2-D distances are distorted; cluster size/shape/separation in projection are not trustworthy metrics. NEVER use projection distance as clustering signal, identity gate, or automatic merge/split. All automated decisions must use original 128-D (or future 512-D) embeddings in pgvector (cosine). Projection is human visualization only. (Even umap-learn's 'using UMAP for clustering' path embeds then clusters in higher-D UMAP space carefully — not 2-D atlas coords.)",
+        "evidence": [
+          {
+            "url": "https://github.com/lmcinnes/umap",
+            "grade": "CONFIRMED",
+            "claim": "umap package is 3-clause BSD licensed"
+          },
+          {
+            "url": "https://pypi.org/project/umap-learn/",
+            "grade": "CONFIRMED",
+            "claim": "License BSD; deps and optional extras documented"
+          },
+          {
+            "url": "https://distill.pub/2016/misread-tsne/",
+            "grade": "CONFIRMED",
+            "claim": "Distances and cluster sizes in nonlinear projections mislead"
+          },
+          {
+            "url": "https://doi.org/10.1038/s43586-024-00363-x",
+            "grade": "CONFIRMED",
+            "claim": "2024 Primer on correct application and interpretation of UMAP"
+          }
+        ]
+      }
+    },
+    "q2_dcface": {
+      "summary": "DCFace (CVPR 2023, arXiv 2304.07060) is a two-stage dual-condition diffusion generator: (1) unconditional DDPM G_id samples novel ID faces; (2) dual-condition mixer G_mix combines ID image X_id with style image X_sty via patch-wise style extractor + time-step-dependent ID loss. Operator-cleared synthetic identity generator for FIR retrain data.",
+      "artifacts": {
+        "released_packs": [
+          "dcface_0.5m_oversample_xid (≈0.5M images; CASIA-scale)",
+          "dcface_1.2m_oversample_xid (≈1.2M images)"
+        ],
+        "format": "InsightFace-style .rec packs; convert to PNG via dcface/convert/record.py",
+        "generator_checkpoints": "pretrained_models/ from Google Drive folder (G_id DDPM on FFHQ, G_mix, style extractors, etc.) placed under dcface/",
+        "code": "https://github.com/mk-minchul/dcface — synthesis.py, stage1 unconditional generation, style bank align, train.sh",
+        "download_links_doc": "Dataset Drive folder + pretrained weights Drive folder linked in README"
+      },
+      "compute": {
+        "paper_training_Gmix": "10 epochs, batch 256, AdamW lr 0.001 — 8 hours on 2× A100",
+        "paper_sampling_500k": "DDIM 200 intervals; generating 500K samples ≈ 20 hours on 1× A100 → ~0.144 s/image amortized at 200-step DDIM",
+        "implied_throughput": "~25k images/GPU-hr at paper settings (500k / 20 hr)",
+        "a10_24gb_feasible": "YES for inference/synthesis. A10 24GB can run DDPM/DDIM face diffusion at batch≥1 (often batch 4–8 with fp16). Expect ~1.5–3× slower than A100 → rough 30–60 GPU-hr for 0.5M images, 70–140 GPU-hr for 1.2M at similar step counts. VRAM: 24GB sufficient for 112–256px class models if batch managed.",
+        "cpu_only": "NOT practical. Diffusion sampling is GPU-bound; CPU multi-hour-per-image class — reject for N×M production packs.",
+        "oci_a10_burst_est": "At ~$2/GPU-hr: 0.5M ≈ $60–120; 1.2M ≈ $140–280 (order-of-magnitude; depends on DDIM steps/batch). Prefer downloading released 0.5M/1.2M packs first unless custom style bank / occlusion-heavy styles needed.",
+        "m1_laptop": "Orchestration only — do not run DCFace inference on 8GB M1"
+      },
+      "config_knobs": {
+        "identity_count_N": "Number of unique X_id images from G_id (unconditional_sampling.py: --num_samples). Paper filtered 200k→~105k unique (r=0.3 cosine) then 62,570; FR packs use 10k or 20k IDs.",
+        "images_per_id_M": "Styles sampled per ID from style bank (random or match gender/ethnicity). Ablation packs: 50 imgs/ID; oversample xid adds +5 copies of frontal X_id per label.",
+        "style_id_mixing": "synthesis.py --id_images_root + --style_images_root; patch grid size (1×1…7×7, best FR at 5×5); style sampling random vs match; ID sampling random vs ethnicity-balanced; oversample_xid flag",
+        "diffusion_sampling": "DDIM timestep_respacing / intervals (paper 200); diffusion_steps 1000 train; use_fp16; batch_size",
+        "losses": "L_MSE + λ L_ID (time-dependent cosine interpolation between X_id and X_sty features)"
+      },
+      "bovifocr_fork": {
+        "repo": "https://github.com/BOVIFOCR/dcface_synthetic_face",
+        "relation": "Fork of mk-minchul/dcface (83 commits on fork history vs upstream 10)",
+        "documented_additions": [
+          "Pinned conda env (Python 3.9, CUDA 11.2, torch 2.3, mxnet 1.9.1) + environment_*.yml for MICA/HRN co-use",
+          "Reproducibility-oriented install path and CUDA_HOME/LD_LIBRARY_PATH wiring",
+          "Extra analysis scripts: cosine similarities id/style/stylized, filter subjects, map id→style, create_rec_file, organise by face attributes, inter/intra subject plots",
+          "synthesis path renames / stylize_idImgs helpers; consistency_loss path/hash fixes",
+          "Visualization extras saving id, sty, stylized images to disk",
+          "Commented commands for generating datasets on their 'daugman' cluster"
+        ],
+        "improvements_vs_upstream": "Operational/reproducibility tooling and dataset QA analytics — not a new generative architecture. Prefer fork for running generation + quality filters; weights still from original Drive."
+      },
+      "downstream_results": {
+        "paper_claim": "DCFace synthetic-trained FR models beat prior synthetic methods by 6.11% avg on 4 of 5 of LFW/CFP-FP/CPLFW/AgeDB/CALFW (0.5M regime vs DigiFace)",
+        "table4_0.5M_DCFace_IRSE50_AdaFace": {
+          "LFW": 98.55,
+          "CFP_FP": 85.33,
+          "CPLFW": 82.62,
+          "AgeDB": 89.7,
+          "CALFW": 91.6,
+          "Avg": 89.56,
+          "Gap_to_CASIA_real": "5.65 pts (real avg 94.62)"
+        },
+        "table4_1.2M_DCFace": {
+          "LFW": 98.58,
+          "CFP_FP": 88.61,
+          "CPLFW": 85.07,
+          "AgeDB": 90.97,
+          "CALFW": 92.82,
+          "Avg": 91.21,
+          "Gap_to_real": 3.74
+        },
+        "comparators_0.5M": "SynFace avg 74.75; DigiFace 83.45; DCFace 89.56",
+        "notes": "Numbers are verification accuracy % of FR models trained ONLY on synthetic DCFace data (not the generator's own accuracy). Backbone IR-SE50 + AdaFace to match DigiFace protocol."
+      },
+      "evidence": [
+        {
+          "url": "https://arxiv.org/pdf/2304.07060",
+          "grade": "CONFIRMED",
+          "claim": "Full paper: method, 2×A100 8h train, 500k/20h A100 sample, Table 4 verification numbers, 6.11% claim, config ablations"
+        },
+        {
+          "url": "https://arxiv.org/abs/2304.07060",
+          "grade": "CONFIRMED",
+          "claim": "Abstract + metadata; dual condition diffusion; code link"
+        },
+        {
+          "url": "https://github.com/mk-minchul/dcface",
+          "grade": "CONFIRMED",
+          "claim": "Official code; 0.5m/1.2m packs; pretrained weights Drive; synthesis.py knobs; rec format"
+        },
+        {
+          "url": "https://github.com/BOVIFOCR/dcface_synthetic_face",
+          "grade": "CONFIRMED",
+          "claim": "BOVIFOCR fork: env pins, analysis scripts, consistency fixes, expanded ops tooling"
+        },
+        {
+          "url": "https://cvpr.thecvf.com/virtual/2023/poster/21739",
+          "grade": "CONFIRMED",
+          "claim": "CVPR 2023 poster summary: +6.11% avg verification vs prior on 4/5 datasets"
+        }
+      ]
+    },
+    "q3_econ": {
+      "oci": {
+        "a10_burst": {
+          "rate_usd_per_gpu_hr": 2.0,
+          "notes": "Already provisioned (acx-gpu-burst), currently STOPPED; data local; no egress; teardown discipline exists",
+          "storage_egress": "Local block/object — no HF-style egress for training data; only pay when instance RUNNING",
+          "ops": "You own env pinning, checkpoint disk, start/stop discipline. Lowest coordination cost given existing infra."
+        },
+        "a1_flex_cpu": {
+          "rate_usd_per_hr": 0.152,
+          "role": "Always-on orchestration, UMAP atlases, FiftyOne, non-GPU jobs — not training"
+        }
+      },
+      "hf_pricing": [
+        {
+          "product": "Spaces GPU",
+          "rates_usd_per_hr": {
+            "A10G_small": 1.0,
+            "A10G_large": 1.5,
+            "A100_large_80GB": 2.5,
+            "4x_A100": 10.0,
+            "8x_A100": 20.0,
+            "H100": "removed December 2025",
+            "H200": "available on Jobs (see Jobs)",
+            "L40S_1x": 1.8,
+            "T4_small": 0.4
+          },
+          "billing": "Per-minute while Starting/Running; upgraded Spaces run indefinitely unless sleep/pause set; build time free"
+        },
+        {
+          "product": "HF Jobs",
+          "rates_usd_per_hr": {
+            "A10G_small": 1.0,
+            "A10G_large": 1.5,
+            "A100_large": 2.5,
+            "4x_A100": 10.0,
+            "8x_A100": 20.0,
+            "H200_1x": 5.0,
+            "H200_8x": 40.0,
+            "RTX_PRO_6000_1x": 2.75
+          },
+          "billing": "Per-minute Starting/Running; default timeout 30 min (must raise for long trains); no build charge; requires positive credit balance"
+        },
+        {
+          "product": "AutoTrain",
+          "rates_usd_per_hr": "Same as chosen Spaces/Jobs hardware (pay-as-you-go compute minutes); free if run fully local",
+          "notes": "No-code path; billed for resource minutes only — not ideal for custom YuNet/SFace/SCRFD/AdaFace stacks"
+        },
+        {
+          "product": "Inference Endpoints (ref)",
+          "rates_usd_per_hr": {
+            "A10G_x1": 1.0,
+            "A100_x1": 2.5,
+            "H100_x1_deprecated": 4.5
+          },
+          "notes": "Serving, not training — listed for completeness"
+        },
+        {
+          "product": "Storage/egress",
+          "rates": "Hub private storage under plan quotas (Free limited; PRO $9/mo includes more private storage). Pricing page: egress/CDN included at no extra cost for Hub. Large private face datasets still consume storage quota and leave your VPC.",
+          "privacy_posture": "Uploaded datasets/models processed/stored on HF infrastructure (US and other facilities per Privacy Policy). Private repos not public, but HF staff may access under ToS/Privacy for ops/legal. Consented biometric-adjacent face data: treat as privacy-relevant — prefer keep on OCI. Synthetic DCFace data: low privacy risk. No claim that HF trains on private uploads by default, but data residency is HF cloud not yours."
+        },
+        {
+          "product": "Spot/preemption",
+          "behavior": "Spaces/Jobs are on-demand style (not classic AWS spot). No cheap preemptible tier documented for Jobs/Spaces GPU — you pay listed rates. Contrast: RunPod community/spot cheaper but interruptible."
+        }
+      ],
+      "reference_rates": [
+        {
+          "provider": "Lambda Labs",
+          "rates": "1× A100 40GB ~$1.99/GPU-hr; A100 SXM 80GB in multi-GPU configs ~$2.79/GPU-hr; 1× H100 PCIe ~$3.29; 1× H100 SXM ~$4.29; 1× A10 ~$1.29 (public instance tables 2026). No spot/preemptible on public Lambda self-serve.",
+          "url": "https://lambda.ai/pricing"
+        },
+        {
+          "provider": "RunPod",
+          "rates": "A100 80GB PCIe ~$1.19–1.39/hr on-demand; A100 SXM ~$1.49/hr; H100 PCIe from ~$1.99/hr; Community Cloud spot often 40–60% below on-demand (interruptible).",
+          "url": "https://www.runpod.io/pricing"
+        }
+      ],
+      "adapter_scale": {
+        "workload": "FIR-7 PEFT: YuNet fine-tune (few M params) + SFace residual adapter 128→r→128 — hours not days",
+        "oci_a10": {
+          "est_hours": "2–12 GPU-hr typical for PEFT/adapter runs",
+          "est_cost_usd": "4–24 at $2/hr",
+          "pros": "Data local, env already known, stop instance after job",
+          "cons": "Manual start/stop; single GPU"
+        },
+        "hf": {
+          "est_cost_usd": "A10G $1–1.5/hr → often cheaper list rate than OCI $2; A100 $2.5/hr comparable",
+          "pros": "Jobs/AutoTrain less ops if stack fits HF images; per-minute billing",
+          "cons": "Upload consented data to HF; env pinning for custom YuNet/SFace may fight platform images; AutoTrain not built for this stack; H100 removed from Spaces"
+        },
+        "recommendation": "Prefer OCI A10 burst for adapter-scale: privacy for any consented samples, zero data movement, cost ~$10–25/run. Use HF Jobs A10G only if pure-synthetic and you want managed job API — list rate can undercut $2 but ops+privacy usually lose."
+      },
+      "campaign_scale": {
+        "workload": "Future retrain: SCRFD-arch detector + AdaFace-style 512-D embedder on ~0.5–1.2M synthetic (days on single A100-class)",
+        "oci_a10": {
+          "est": "A10 ≈0.5–0.7× A100 throughput for CNN FR training → multi-day to 1–2 weeks wall for full campaign",
+          "cost_example": "72–240 GPU-hr → $144–480 at $2/hr",
+          "pros": "Data local (DCFace packs on OCI), no egress, full control of multi-stage detector+embedder pipeline",
+          "cons": "Slower than A100/H100; single-GPU unless more burst capacity added"
+        },
+        "hf": {
+          "est": "A100 $2.50/hr or H200 $5/hr Jobs — faster wall-clock; 48–120 A100-hr → $120–300",
+          "pros": "Faster GPUs on demand; multi-GPU configs if budget allows",
+          "cons": "Upload 0.5–1.2M images; checkpoint persistence across Jobs needs Hub or re-upload; custom SCRFD/AdaFace training loops = Jobs Docker not AutoTrain; consented mix still privacy-sensitive"
+        },
+        "spot_alt": "RunPod A100 spot ~$0.7–1.2/hr effective can beat both if checkpoint-resilient — worth evaluating for pure synthetic campaign, not for production PII pipelines.",
+        "recommendation": "Campaign-scale pure synthetic: OCI A10 is acceptable and simplest (data already local); if wall-clock matters, burst to RunPod/Lambda A100 (~$1.2–2.0/hr) with checkpoints, or HF Jobs A100 at $2.50. Avoid HF for any consented real faces. Do not use Spaces for multi-day trains (sleep/billing footguns)."
+      },
+      "recommendation": "Adapter-scale (FIR-7): OCI A10 burst only. Campaign-scale (SCRFD+AdaFace on DCFace 0.5–1.2M): default OCI A10 if days OK; else rent A100 (RunPod spot or Lambda on-demand) with synthetic data only — HF Jobs A100 as third choice when you want managed API and accept Hub data residency. Keep UMAP/curation on A1.Flex CPU. Never put consented face datasets on HF or Nomic cloud.",
+      "evidence": [
+        {
+          "url": "https://huggingface.co/docs/hub/en/spaces-gpus",
+          "grade": "CONFIRMED",
+          "claim": "Spaces GPU table: A10G $1/$1.50, A100 $2.50, H100 removed Dec 2025; per-minute billing; sleep/pause"
+        },
+        {
+          "url": "https://huggingface.co/docs/hub/en/jobs-pricing",
+          "grade": "CONFIRMED",
+          "claim": "Jobs GPU pricing incl. H200 $5/hr, A100 $2.50, A10G $1–1.50; default 30m timeout"
+        },
+        {
+          "url": "https://huggingface.co/docs/autotrain/en/cost",
+          "grade": "CONFIRMED",
+          "claim": "AutoTrain bills Spaces compute minutes; free if local"
+        },
+        {
+          "url": "https://huggingface.co/privacy",
+          "grade": "CONFIRMED",
+          "claim": "Data may be stored/processed in US and other countries; retention for service delivery"
+        },
+        {
+          "url": "https://huggingface.co/terms-of-service",
+          "grade": "CONFIRMED",
+          "claim": "ToS/privacy govern private content access and retention"
+        },
+        {
+          "url": "https://lambda.ai/pricing",
+          "grade": "CONFIRMED",
+          "claim": "Lambda public instance GPU hourly rates A100/H100/A10"
+        },
+        {
+          "url": "https://www.runpod.io/pricing",
+          "grade": "CONFIRMED",
+          "claim": "RunPod A100/H100 on-demand pricing (from search scrape; page fetch blocked)"
+        },
+        {
+          "url": "https://www.buildmvpfast.com/blog/gpu-cloud-cost-comparison-runpod-lambda-labs-coreweave-2026",
+          "grade": "ANECDOTAL",
+          "claim": "2026 secondary comparison of RunPod vs Lambda spot/on-demand ranges"
+        }
+      ]
+    },
+    "summary_for_decision": "Q1: Ship a Workbench CLUSTER-CURATION ATLAS with umap-learn (BSD-3, cosine metric, n_neighbors 15–30, min_dist 0.05–0.1, random_state pinned); optional densMAP for density; Parametric UMAP for new points + epoch-aligned FIR-7 diagnostics. A1.Flex CPU is enough for 10k–100k. Rank curation queues on high-D uncertainty (pgvector), not 2-D. Prefer FiftyOne (Apache-2.0) + Embedding Atlas (MIT) self-hosted; projections must NEVER gate merge/identity. Q2: DCFace is cleared and practical — use released 0.5M/1.2M packs first (FR: LFW 98.6%, avg ~89.6@0.5M / 91.2@1.2M). Custom gen needs GPU (paper 500k≈20 A100-hr); A10 24GB OK, CPU not. BOVIFOCR fork adds env pins, rec tooling, similarity QA — use for ops. Q3: Adapter FIR-7 on OCI A10 (~$2/hr, data local). Campaign retrain: OCI A10 default for synthetic; else RunPod/Lambda A100 if speed needed. HF A10G is list-cheaper than your A10 but worse for privacy/ops on custom FR stacks — avoid for consented data."
+  }
+}

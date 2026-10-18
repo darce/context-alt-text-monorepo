@@ -1,0 +1,747 @@
+#!/usr/bin/env python3
+"""Regenerate FIR-3 S2 golden fixtures deterministically (seeded).
+
+Run from apps/prototype-description-service:
+
+    uv run python recognition/tests/fixtures/face_pipeline/generate_goldens.py
+
+Writes small .npy/.json only — never .onnx. Requires verified SFace model on disk
+for embedding goldens (``scripts/fetch_face_pipeline_models.py``).
+
+Heuristics: TEST-06/TEST-08 (determinism), AGT-06 (name the skip).
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+import numpy as np
+
+_SERVICE_ROOT = Path(__file__).resolve().parents[3]
+if str(_SERVICE_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SERVICE_ROOT))
+
+import cv2  # noqa: E402
+
+from recognition.infrastructure.face_pipeline.aligner import (  # noqa: E402
+    YUNET_LANDMARK_NAMES,
+    FivePointAligner,
+)
+from recognition.infrastructure.face_pipeline.model_space import ModelSpace  # noqa: E402
+from recognition.infrastructure.face_pipeline.opencv_ref import (  # noqa: E402
+    DEFAULT_NMS_THRESHOLD,
+    DEFAULT_SCORE_THRESHOLD,
+    OpenCVSFaceEmbedder,
+    OpenCVYuNetDetector,
+)
+from recognition.infrastructure.face_pipeline.ort_adapters import (  # noqa: E402
+    OrtSFaceEmbedder,
+    _ort_session,
+)
+from recognition.infrastructure.face_pipeline.provenance import (  # noqa: E402
+    DEFAULT_MODELS_DIR,
+    MODEL_MANIFEST,
+    load_verified_model,
+    numeric_runtime_fingerprint,
+)
+
+FIXTURE_DIR = Path(__file__).resolve().parent
+AURAFACE_COMPOSED_DIR = FIXTURE_DIR / "auraface_composed"
+AURAFACE_LIVE_MODELS_DIR = Path("/opt/acx-backend/data/dev-models/face_pipeline")
+SEED = 20260715
+EMBED_SEED = 20260716
+GENERATOR_RELPATH = "recognition/tests/fixtures/face_pipeline/generate_goldens.py"
+# Independent skimage Umeyama vs OpenCV-port Umeyama is float32-tight, not bit-exact.
+# Cosine is float64 unit-dot after converting and re-normalizing both vectors.
+# Floor 0.99999999 matches the SFace golden band (do not loosen for float32 dots).
+_AURAFACE_COSINE_MIN = 0.99999999
+
+# Pinned InsightFace face_align.arcface_dst @ 1480e705287bc5d59f923b46c260ec6e3e4150f6.
+# Independent float32 literal — not an import/view of production dest coords.
+REFERENCE_ARCFACE_DST_112 = np.array(
+    [
+        [38.2946, 51.6963],
+        [73.5318, 51.5014],
+        [56.0252, 71.7366],
+        [41.5493, 92.3655],
+        [70.7299, 92.2041],
+    ],
+    dtype=np.float32,
+)
+
+
+def _sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def toolchain_provenance() -> dict[str, str]:
+    """Record which numeric-relevant runtimes produced the goldens (CVU-02V).
+
+    Delegates to ``numeric_runtime_fingerprint`` so stamps cover OpenCV,
+    onnxruntime, and numpy — the three packages that move embedding /
+    clustering comparability on this upgrade. ``generator`` is the script path.
+    """
+    fp = numeric_runtime_fingerprint()
+    return {
+        "opencv_version": fp.opencv_version,
+        "onnxruntime_version": fp.onnxruntime_version,
+        "numpy_version": fp.numpy_version,
+        "generator": GENERATOR_RELPATH,
+    }
+
+
+def synthetic_112_crop(seed: int = EMBED_SEED) -> np.ndarray:
+    """Deterministic 112×112 BGR gradient+noise crop (no face required)."""
+    rng = np.random.RandomState(seed)
+    yy, xx = np.mgrid[0:112, 0:112]
+    base = np.stack(
+        [
+            (xx * 2 + seed) % 256,
+            (yy * 3 + seed // 2) % 256,
+            ((xx + yy) + seed) % 256,
+        ],
+        axis=-1,
+    ).astype(np.float32)
+    noise = rng.randn(112, 112, 3).astype(np.float32) * 8.0
+    return np.clip(base + noise, 0, 255).astype(np.uint8)
+
+
+def aligner_source_image(seed: int = SEED) -> tuple[np.ndarray, np.ndarray]:
+    """Deterministic image + hand-specified 5 landmarks (YuNet order)."""
+    rng = np.random.RandomState(seed)
+    img = np.zeros((200, 200, 3), dtype=np.uint8)
+    for i in range(200):
+        img[i, :, 0] = (i + seed) % 256
+        img[:, i, 1] = (i * 2 + seed) % 256
+        img[i, i, 2] = 255
+    img = np.clip(img.astype(np.int16) + rng.randint(-3, 4, img.shape), 0, 255).astype(np.uint8)
+    # YuNet order: right eye, left eye, nose, right mouth, left mouth
+    landmarks = np.array(
+        [
+            [80.0, 80.0],
+            [120.0, 80.0],
+            [100.0, 100.0],
+            [85.0, 130.0],
+            [115.0, 130.0],
+        ],
+        dtype=np.float64,
+    )
+    return img, landmarks
+
+
+def write_embedding_goldens(*, output_dir: Path | None = None) -> dict:
+    out_dir = FIXTURE_DIR if output_dir is None else Path(output_dir)
+    crop = synthetic_112_crop()
+    crop_path = out_dir / "synthetic_112_crop.npy"
+    np.save(crop_path, crop)
+
+    embedder = OpenCVSFaceEmbedder()
+    batch = embedder.embed([crop])
+    emb = batch.vectors
+    emb_path = out_dir / "synthetic_112_embedding.npy"
+    np.save(emb_path, emb)
+
+    # cosine_min: N=50 OpenCVSFaceEmbedder runs on this deterministic synthetic
+    # 112×112 crop were bit-exact vs golden (vector maxabs=0; float64 unit-cosine
+    # ≈ 1-1e-12). Floor 0.99999999 is 10× above a 1e-9 slack band so same-host
+    # regen noise cannot greenwash a real embedder shift (CVUP1-LC-03).
+    # Not the corpus OpenCV 4→5 upgrade self-similarity (min 0.999524 / median
+    # 0.999933 over 83 faces — docs/tasks/fir/evidence/opencv-5-embedding-drift.md);
+    # that protocol measures cross-version match-band drift, not golden noise floor.
+    meta = {
+        "kind": "embedding_golden",
+        "seed": EMBED_SEED,
+        "crop_sha256": _sha256_bytes(crop.tobytes()),
+        "embedding_shape": list(emb.shape),
+        "embedding_dim": int(emb.shape[1]),
+        "l2_norm": float(np.linalg.norm(emb[0])),
+        "pre_norm_magnitude": float(batch.norms[0]),
+        "model": MODEL_MANIFEST["sface"].file_name,
+        "model_sha256": MODEL_MANIFEST["sface"].sha256,
+        "cosine_min": 0.99999999,
+        **toolchain_provenance(),
+    }
+    (out_dir / "embedding_meta.json").write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return meta
+
+
+def _auraface_models_dir(models_dir: Path | None = None) -> Path:
+    if models_dir is not None:
+        return Path(models_dir)
+    if (
+        AURAFACE_LIVE_MODELS_DIR.is_dir()
+        and (AURAFACE_LIVE_MODELS_DIR / MODEL_MANIFEST["auraface"].file_name).is_file()
+    ):
+        return AURAFACE_LIVE_MODELS_DIR
+    return DEFAULT_MODELS_DIR
+
+
+def _skimage_umeyama(src: np.ndarray, dst: np.ndarray, *, estimate_scale: bool = True) -> np.ndarray:
+    """Faithful port of scikit-image ``transform._geometric._umeyama``.
+
+    InsightFace ``face_align.estimate_norm`` at 1480e705 calls
+    ``skimage.transform.SimilarityTransform.estimate(lmk, arcface_dst)``.
+    Do not pre-cast src/dst; float32 ``arcface_dst`` must keep float32 means.
+    Scale uses ``S @ d`` so a reflection sign on the last singular value is
+    included (Umeyama 1991 eq. 41–42). Not the OpenCV SFace port.
+    """
+    src = np.asarray(src)
+    dst = np.asarray(dst)
+    if src.shape != dst.shape or src.ndim != 2:
+        raise ValueError(f"src/dst must be (M, N) with matching shape, got {src.shape} vs {dst.shape}")
+    num = src.shape[0]
+    dim = src.shape[1]
+    src_mean = src.mean(axis=0)
+    dst_mean = dst.mean(axis=0)
+    src_demean = src - src_mean
+    dst_demean = dst - dst_mean
+    covariance = dst_demean.T @ src_demean / num
+    d = np.ones((dim,), dtype=np.float64)
+    if np.linalg.det(covariance) < 0:
+        d[dim - 1] = -1
+    transform = np.eye(dim + 1, dtype=np.float64)
+    u, singular, vt = np.linalg.svd(covariance)
+    rank = np.linalg.matrix_rank(covariance)
+    if rank == 0:
+        return np.nan * transform
+    if rank == dim - 1:
+        if np.linalg.det(u) * np.linalg.det(vt) > 0:
+            transform[:dim, :dim] = u @ vt
+        else:
+            saved = d[dim - 1]
+            d[dim - 1] = -1
+            transform[:dim, :dim] = u @ np.diag(d) @ vt
+            d[dim - 1] = saved
+    else:
+        transform[:dim, :dim] = u @ np.diag(d) @ vt
+    if estimate_scale:
+        scale = 1.0 / src_demean.var(axis=0).sum() * (singular @ d)
+    else:
+        scale = 1.0
+    transform[:dim, dim] = dst_mean - scale * (transform[:dim, :dim] @ src_mean.T)
+    transform[:dim, :dim] *= scale
+    return transform
+
+
+def reference_arcface_similarity_matrix(src_landmarks: np.ndarray) -> np.ndarray:
+    """Independent Umeyama similarity for InsightFace estimate_norm (not the OpenCV port)."""
+    src = np.asarray(src_landmarks)
+    if src.shape == (10,):
+        src = src.reshape(5, 2)
+    if src.shape != (5, 2):
+        raise ValueError(f"expected 5 landmarks as (5, 2) or (10,), got {src.shape}")
+    homogeneous = _skimage_umeyama(src, REFERENCE_ARCFACE_DST_112, estimate_scale=True)
+    if not np.isfinite(homogeneous).all():
+        raise ValueError("degenerate landmarks; Umeyama is ill-conditioned")
+    return homogeneous[0:2, :]
+
+
+def reference_arcface_align(image_bgr: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
+    """BGR 112 crop via the independent ArcFace formula (InsightFace norm_crop)."""
+    affine = reference_arcface_similarity_matrix(landmarks)
+    return cv2.warpAffine(
+        image_bgr,
+        affine,
+        (112, 112),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0.0,
+    )
+
+
+def reference_arcface_blob(crop_bgr: np.ndarray) -> np.ndarray:
+    """RGB NCHW ``(pixel - 127.5) / 127.5`` blob (InsightFace ArcFaceONNX, no cv2.dnn)."""
+    rgb = crop_bgr[:, :, ::-1].astype(np.float32)
+    scaled = (rgb - np.float32(127.5)) / np.float32(127.5)
+    return np.ascontiguousarray(scaled.transpose(2, 0, 1)[None, ...])
+
+
+def _l2_normalize(vector: np.ndarray) -> tuple[np.ndarray, float]:
+    raw = np.asarray(vector, dtype=np.float32).reshape(-1)
+    norm = float(np.linalg.norm(raw))
+    if norm == 0.0 or not np.isfinite(norm):
+        raise RuntimeError(f"AuraFace raw embedding has zero/non-finite L2 norm ({norm})")
+    return raw / np.float32(norm), norm
+
+
+def _unit_cosine_f64(left: np.ndarray, right: np.ndarray) -> float:
+    """Cosine of two vectors after float64 conversion and L2 re-normalization."""
+    a = np.asarray(left, dtype=np.float64).reshape(-1)
+    b = np.asarray(right, dtype=np.float64).reshape(-1)
+    an = float(np.linalg.norm(a))
+    bn = float(np.linalg.norm(b))
+    if an == 0.0 or bn == 0.0 or not np.isfinite(an) or not np.isfinite(bn):
+        raise RuntimeError(f"cannot compute unit cosine (norms={an}, {bn})")
+    return float(np.dot(a / an, b / bn))
+
+
+def _auraface_ort_session(model_path: Path):
+    """Same session factory as production OrtSFaceEmbedder / OrtYuNetDetector."""
+    return _ort_session(model_path)
+
+
+def _ort_session_fingerprint() -> dict[str, object]:
+    """Record the production ``_ort_session`` pins plus library defaults left unset."""
+    import onnxruntime as ort
+
+    defaults = ort.SessionOptions()
+    return {
+        "intra_op_num_threads": 1,
+        "inter_op_num_threads": 1,
+        "graph_optimization_level": defaults.graph_optimization_level.name,
+        "execution_mode": defaults.execution_mode.name,
+        "providers": ["CPUExecutionProvider"],
+    }
+
+
+def write_auraface_composed_goldens(
+    *,
+    output_dir: Path | None = None,
+    models_dir: Path | None = None,
+) -> dict:
+    """Composed AuraFace golden: independent ArcFace reference vs in-house aligner+ORT.
+
+    Writes only under ``auraface_composed/``. Never overwrites SFace fixtures.
+    """
+    out_dir = AURAFACE_COMPOSED_DIR if output_dir is None else Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    models_root = _auraface_models_dir(models_dir)
+    model_path = load_verified_model("auraface", models_dir=models_root)
+    entry = MODEL_MANIFEST["auraface"]
+    preprocessing = entry.preprocessing
+    if preprocessing is None:
+        raise RuntimeError("auraface manifest is missing preprocessing")
+
+    img, landmarks = aligner_source_image()
+    src_path = FIXTURE_DIR / "aligner_source_image.npy"
+    lm_path = FIXTURE_DIR / "aligner_landmarks.npy"
+    if src_path.is_file() and lm_path.is_file():
+        img = np.load(src_path)
+        landmarks = np.load(lm_path)
+
+    reference_crop = reference_arcface_align(img, landmarks)
+    reference_blob = reference_arcface_blob(reference_crop)
+    session = _auraface_ort_session(model_path)
+    input_name = session.get_inputs()[0].name
+    reference_raw = np.asarray(session.run(None, {input_name: reference_blob})[0], dtype=np.float32).reshape(-1)
+    reference_vec, reference_norm = _l2_normalize(reference_raw)
+
+    inhouse_crop = FivePointAligner(space=ModelSpace.AURAFACE).align(img, landmarks).crop
+    inhouse = OrtSFaceEmbedder(model_name="auraface", models_dir=models_root).embed([inhouse_crop])
+    inhouse_vec = np.asarray(inhouse.vectors[0], dtype=np.float32).reshape(-1)
+    cosine = _unit_cosine_f64(reference_vec, inhouse_vec)
+    if cosine < _AURAFACE_COSINE_MIN:
+        raise RuntimeError(
+            "AuraFace composed independent reference diverges from in-house aligner+ORT "
+            f"(cosine={cosine} < {_AURAFACE_COSINE_MIN})"
+        )
+
+    np.save(out_dir / "source_image.npy", img)
+    np.save(out_dir / "landmarks.npy", landmarks)
+    np.save(out_dir / "reference_crop.npy", reference_crop)
+    np.save(out_dir / "inhouse_crop.npy", inhouse_crop)
+    np.save(out_dir / "reference_embedding.npy", reference_vec.reshape(1, -1))
+    np.save(out_dir / "inhouse_embedding.npy", inhouse_vec.reshape(1, -1))
+
+    meta = {
+        "kind": "auraface_composed_embedding_golden",
+        "description": (
+            "Independent ArcFace align+blob+ORT vs in-house FivePointAligner+OrtSFaceEmbedder "
+            "on the existing aligner source image/landmarks. Not a quality or deployment claim."
+        ),
+        "source_image": "aligner_source_image.npy",
+        "source_landmarks": "aligner_landmarks.npy",
+        "reference_crop_sha256": _sha256_bytes(reference_crop.tobytes()),
+        "inhouse_crop_sha256": _sha256_bytes(inhouse_crop.tobytes()),
+        "embedding_shape": [1, int(inhouse_vec.size)],
+        "embedding_dim": int(inhouse_vec.size),
+        "l2_norm": float(np.linalg.norm(inhouse_vec)),
+        "reference_pre_norm_magnitude": float(reference_norm),
+        "inhouse_pre_norm_magnitude": float(inhouse.norms[0]),
+        "composed_cosine": cosine,
+        "cosine_min": _AURAFACE_COSINE_MIN,
+        "model": entry.file_name,
+        "model_sha256": entry.sha256,
+        "models_dir": str(models_root),
+        "ort_session": _ort_session_fingerprint(),
+        "preprocessing": {
+            "input_size": list(preprocessing.input_size),
+            "channel_order": preprocessing.channel_order,
+            "input_scale": float(preprocessing.input_scale),
+            "input_mean": float(preprocessing.input_mean),
+            "alignment_template_id": preprocessing.alignment_template_id,
+            "output_l2_normalized": bool(preprocessing.output_l2_normalized),
+            "blob_formula": "(rgb_pixel - input_mean) * input_scale",
+        },
+        "reference": {
+            "align_formula": (
+                "independent skimage Umeyama (reflection singular-sign scale) onto "
+                "float32 InsightFace arcface_dst 112 literal"
+            ),
+            "source_commit": "1480e705287bc5d59f923b46c260ec6e3e4150f6",
+            "insightface_runtime_imported": False,
+            "dst_dtype": "float32",
+            "dst_imported_from_production": False,
+            "blob_formula": "RGB (pixel-127.5)/127.5",
+            "cosine_formula": "float64 convert, L2-normalize, then dot",
+        },
+        **toolchain_provenance(),
+    }
+    (out_dir / "aligner_composed_embedding_meta.json").write_text(
+        json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return meta
+
+
+def write_composed_aligner_embedder_goldens(*, output_dir: Path | None = None) -> dict:
+    """Composed aligner→embedder golden (CVUP1-LC-03).
+
+    The synthetic_112_embedding path feeds a pre-baked crop that never passes
+    through cv2.warpAffine. This fixture starts from aligner_source_image +
+    landmarks, runs FivePointAligner.align, then embeds — the only path that
+    can catch aligner-driven embedding-space drift.
+    """
+    out_dir = FIXTURE_DIR if output_dir is None else Path(output_dir)
+    img, landmarks = aligner_source_image()
+    # Prefer committed source fixtures when present so regen stays consistent
+    # with the aligner goldens already on disk.
+    src_path = FIXTURE_DIR / "aligner_source_image.npy"
+    lm_path = FIXTURE_DIR / "aligner_landmarks.npy"
+    if src_path.is_file() and lm_path.is_file():
+        img = np.load(src_path)
+        landmarks = np.load(lm_path)
+
+    crop = FivePointAligner().align(img, landmarks).crop
+    batch = OpenCVSFaceEmbedder().embed([crop])
+    emb = batch.vectors
+    emb_path = out_dir / "aligner_composed_embedding.npy"
+    np.save(emb_path, emb)
+
+    meta = {
+        "kind": "aligner_composed_embedding_golden",
+        "description": (
+            "Embedding of FivePointAligner.align(aligner_source_image, "
+            "aligner_landmarks).crop — composed aligner→embedder path so "
+            "warpAffine drift is visible at the embedding layer (CVUP1-LC-03)."
+        ),
+        "source_image": "aligner_source_image.npy",
+        "source_landmarks": "aligner_landmarks.npy",
+        "crop_sha256": _sha256_bytes(crop.tobytes()),
+        "embedding_shape": list(emb.shape),
+        "embedding_dim": int(emb.shape[1]),
+        "l2_norm": float(np.linalg.norm(emb[0])),
+        "pre_norm_magnitude": float(batch.norms[0]),
+        "model": MODEL_MANIFEST["sface"].file_name,
+        "model_sha256": MODEL_MANIFEST["sface"].sha256,
+        # N=50 composed runs: bit-exact. Same floor as synthetic golden.
+        "cosine_min": 0.99999999,
+        **toolchain_provenance(),
+    }
+    (out_dir / "aligner_composed_embedding_meta.json").write_text(
+        json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return meta
+
+
+def _face_box_from_landmarks(landmarks: np.ndarray, *, image_shape: tuple[int, ...]) -> np.ndarray:
+    """Build FaceDetectorYN-style 15-vector for FaceRecognizerSF.alignCrop."""
+    h, w = int(image_shape[0]), int(image_shape[1])
+    box = np.zeros(15, dtype=np.float32)
+    box[0:4] = (0.0, 0.0, float(w), float(h))
+    box[4:14] = np.asarray(landmarks, dtype=np.float32).reshape(-1)
+    box[14] = 1.0
+    return box
+
+
+def oracle_align_crop(img: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
+    """OpenCV FaceRecognizerSF.alignCrop oracle crop (semantic source of truth)."""
+    model_path = load_verified_model("sface")
+    recognizer = cv2.FaceRecognizerSF.create(str(model_path), "")
+    face_box = _face_box_from_landmarks(landmarks, image_shape=img.shape)
+    return recognizer.alignCrop(img, face_box)
+
+
+def write_aligner_goldens(*, output_dir: Path | None = None) -> dict:
+    """Write aligner goldens from FaceRecognizerSF.alignCrop (not FivePointAligner).
+
+    Breaks circularity (TEST-06 / BR-01): fixtures come from the OpenCV oracle;
+    unit tests check FivePointAligner against those fixtures and vs alignCrop.
+    """
+    out_dir = FIXTURE_DIR if output_dir is None else Path(output_dir)
+    img, landmarks = aligner_source_image()
+    np.save(out_dir / "aligner_source_image.npy", img)
+    np.save(out_dir / "aligner_landmarks.npy", landmarks)
+
+    oracle_crop = oracle_align_crop(img, landmarks)
+    portable = FivePointAligner().align(img, landmarks)
+    # Same-host parity is currently bit-exact; fail golden regen if the port drifts.
+    if not np.array_equal(portable.crop, oracle_crop):
+        max_diff = int(np.max(np.abs(portable.crop.astype(np.int16) - oracle_crop.astype(np.int16))))
+        raise RuntimeError(
+            "FivePointAligner crop diverges from FaceRecognizerSF.alignCrop oracle "
+            f"(max abs pixel diff={max_diff}); refuse to write circular goldens"
+        )
+    np.save(out_dir / "aligner_affine.npy", portable.affine)
+    np.save(out_dir / "aligner_crop.npy", oracle_crop)
+    crop_sha = _sha256_bytes(oracle_crop.tobytes())
+    meta = {
+        "kind": "aligner_golden",
+        "seed": SEED,
+        "landmark_order": list(YUNET_LANDMARK_NAMES),
+        "crop_shape": list(oracle_crop.shape),
+        "crop_sha256": crop_sha,
+        "affine_shape": list(portable.affine.shape),
+        "output_size": 112,
+        "oracle": "cv2.FaceRecognizerSF.alignCrop",
+        "oracle_model": MODEL_MANIFEST["sface"].file_name,
+        **toolchain_provenance(),
+    }
+    (out_dir / "aligner_meta.json").write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return meta
+
+
+def cartoon_drawn_feature_coords(
+    *,
+    size: int = 480,
+    eye_sep: float = 0.095,
+    mouth_y: float = 0.155,
+) -> dict[str, tuple[float, float]]:
+    """Pixel centers of procedural cartoon features (YuNet landmark name keys).
+
+    Matches the drawing procedure in ``cartoon_face_image`` (eye blobs at
+    ±eye_sep, nose at +0.02*size, mouth corners at ±0.08*size around mouth_y).
+    """
+    cx = size / 2.0
+    cy = size / 2.0
+    mouth_half = 0.08 * size
+    return {
+        "right_eye": (cx - eye_sep * size, cy - 0.08 * size),
+        "left_eye": (cx + eye_sep * size, cy - 0.08 * size),
+        "nose_tip": (cx, cy + 0.02 * size),
+        "right_mouth_corner": (cx - mouth_half, cy + mouth_y * size),
+        "left_mouth_corner": (cx + mouth_half, cy + mouth_y * size),
+    }
+
+
+def cartoon_face_image(
+    *,
+    size: int = 480,
+    seed: int = 19,
+    eye_sep: float = 0.095,
+    mouth_y: float = 0.155,
+    head_rx: float = 0.27,
+    head_ry: float = 0.36,
+    noise_scale: float = 3.0,
+) -> np.ndarray:
+    """Procedural high-contrast soft face (seeded; no real photo).
+
+    Tuned so YuNet 2026may scores ≥ default score_threshold=0.9 on OpenCV 4.13.
+    """
+    rng = np.random.RandomState(seed)
+    img = np.full((size, size, 3), 200, dtype=np.float32)
+    yy, xx = np.mgrid[0:size, 0:size]
+    head = np.exp(-(((xx - size / 2) / (head_rx * size)) ** 2 + ((yy - size / 2) / (head_ry * size)) ** 2))
+    skin = np.array([150.0, 180.0, 220.0], dtype=np.float32)
+    bg = np.array([200.0, 200.0, 200.0], dtype=np.float32)
+    img = bg + head[..., None] * (skin - bg)
+    for ex in (-eye_sep, eye_sep):
+        eye = np.exp(
+            -(
+                ((xx - (size / 2 + ex * size)) / (0.04 * size)) ** 2
+                + ((yy - (size / 2 - 0.08 * size)) / (0.025 * size)) ** 2
+            )
+        )
+        img = img * (1.0 - 0.9 * eye[..., None])
+    mouth = np.exp(
+        -(((xx - size / 2) / (0.08 * size)) ** 2 + ((yy - (size / 2 + mouth_y * size)) / (0.03 * size)) ** 2)
+    )
+    img = img * (1.0 - 0.5 * mouth[..., None])
+    nose = np.exp(-(((xx - size / 2) / (0.03 * size)) ** 2 + ((yy - (size / 2 + 0.02 * size)) / (0.06 * size)) ** 2))
+    img = img + nose[..., None] * np.array([-20.0, -15.0, -10.0], dtype=np.float32)
+    img = np.clip(img, 0, 255).astype(np.uint8)
+    noise = rng.randn(size, size, 3).astype(np.float32) * noise_scale
+    return np.clip(img.astype(np.float32) + noise, 0, 255).astype(np.uint8)
+
+
+def write_detector_goldens(*, output_dir: Path | None = None) -> dict:
+    """Record detector bbox/landmarks/score golden if YuNet detects the cartoon.
+
+    If detection fails under default thresholds, write a typed skip note instead
+    of a fake always-passing golden (TEST-06, AGT-06).
+    """
+    out_dir = FIXTURE_DIR if output_dir is None else Path(output_dir)
+    procedure = {
+        "size": 480,
+        "seed": 19,
+        "eye_sep": 0.095,
+        "mouth_y": 0.155,
+        "head_rx": 0.27,
+        "head_ry": 0.36,
+        "noise_scale": 3.0,
+        "description": ("seeded gaussian soft face (skin disc + dark eyes + nose + mouth)"),
+    }
+    img = cartoon_face_image(
+        **{
+            k: procedure[k]
+            for k in (
+                "size",
+                "seed",
+                "eye_sep",
+                "mouth_y",
+                "head_rx",
+                "head_ry",
+                "noise_scale",
+            )
+        }
+    )
+    # Do not commit the full 480² RGB raster — rebuild from `procedure` in tests
+    # (TEST-06 determinism; keep goldens small: .json only for detector).
+    image_npy = out_dir / "detector_cartoon_image.npy"
+    image_npy.unlink(missing_ok=True)
+
+    det = OpenCVYuNetDetector(
+        score_threshold=DEFAULT_SCORE_THRESHOLD,
+        nms_threshold=DEFAULT_NMS_THRESHOLD,
+    )
+    detections = det.detect([img])[0]
+    skip_path = out_dir / "detector_golden_skip.json"
+    faces_path = out_dir / "detector_faces.json"
+
+    if not detections or detections[0].score < DEFAULT_SCORE_THRESHOLD:
+        note = {
+            "kind": "detector_golden_skip",
+            "status": "skipped_no_consented_image",
+            "reason": (
+                "Procedural cartoon face did not reach score>="
+                f"{DEFAULT_SCORE_THRESHOLD} under default FaceDetectorYN "
+                "thresholds. Detector-output goldens need an operator-supplied "
+                "consented frontal face image. Plumbing tests remain covered."
+            ),
+            "default_score_threshold": DEFAULT_SCORE_THRESHOLD,
+            "default_nms_threshold": DEFAULT_NMS_THRESHOLD,
+            "model": MODEL_MANIFEST["yunet"].file_name,
+            "procedure": procedure,
+        }
+        faces_path.unlink(missing_ok=True)
+        skip_path.write_text(json.dumps(note, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return note
+
+    d0 = detections[0]
+    # Expected YuNet landmark → nearest drawn cartoon feature (order contract).
+    drawn = cartoon_drawn_feature_coords(
+        size=int(procedure["size"]),
+        eye_sep=float(procedure["eye_sep"]),
+        mouth_y=float(procedure["mouth_y"]),
+    )
+    expected_nearest = list(YUNET_LANDMARK_NAMES)
+    payload = {
+        "kind": "detector_golden",
+        "status": "recorded",
+        "score_threshold": DEFAULT_SCORE_THRESHOLD,
+        "nms_threshold": DEFAULT_NMS_THRESHOLD,
+        "image_shape": list(img.shape),
+        "image_sha256": _sha256_bytes(img.tobytes()),
+        "model": MODEL_MANIFEST["yunet"].file_name,
+        "model_sha256": MODEL_MANIFEST["yunet"].sha256,
+        # Version-drift budgets (CVUP1-LC-03). Regenerated only when procedure/runtime
+        # changes; do not loosen without a fresh N-run noise-floor measurement.
+        # Measurement 2026-07-29, OpenCV 5.0.0, N=50 identical cartoon inputs:
+        #   max run-to-run | vs-golden abs: bbox=0, landmarks=0, score=0 (bit-exact).
+        # Noise floor = 0. Tolerance = 10 × float32 ULP @ ~300 px
+        #   ≈ 10*(300*2^-23) ≈ 3.6e-4 → 5e-4 px; score 10×ulp@1 ≈ 1e-5.
+        "tolerances": {
+            "bbox_px": 5e-4,
+            "landmarks_px": 5e-4,
+            "score": 1e-5,
+            # Absolute distance to drawn feature center (YuNet offset on soft blob).
+            "landmark_nearest_px": 50.0,
+            "derivation": (
+                "N=50 identical-input OpenCVYuNetDetector runs (OpenCV 5.0.0, 2026-07-29): "
+                "max run-to-run and vs-golden abs were 0.0 for bbox_px, landmarks_px, and "
+                "score (bit-exact). Noise floor = 0. Tolerance = 10 × float32 ULP at "
+                "coordinate scale ~300 px ≈ 10*(300*2^-23) ≈ 3.6e-4, rounded to 5e-4 px "
+                "for bbox/landmarks; score = 10 × float32 ULP at ~1.0 ≈ 1.2e-6, rounded "
+                "to 1e-5. ~4000× tighter than the prior decorative 2.0 px / 0.02; a "
+                "1.9 px landmark shift fails."
+            ),
+        },
+        "procedure": procedure,
+        "drawn_feature_coords": {k: [float(v[0]), float(v[1])] for k, v in drawn.items()},
+        "expected_landmark_nearest_names": expected_nearest,
+        "detection": {
+            "bbox_xywh": d0.bbox.astype(float).tolist(),
+            "landmarks_xy": d0.landmarks.astype(float).tolist(),
+            "score": float(d0.score),
+        },
+        **toolchain_provenance(),
+    }
+    skip_path.unlink(missing_ok=True)
+    faces_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return payload
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Directory for golden outputs (default: fixture dir next to this script).",
+    )
+    parser.add_argument(
+        "--auraface-composed",
+        action="store_true",
+        help="Also write AuraFace composed goldens (never overwrites SFace fixtures).",
+    )
+    parser.add_argument(
+        "--only-auraface-composed",
+        action="store_true",
+        help="Write only AuraFace composed goldens into auraface_composed/.",
+    )
+    parser.add_argument(
+        "--auraface-models-dir",
+        type=Path,
+        default=None,
+        help="Directory containing glintr100.onnx + LICENSE.auraface.md.",
+    )
+    args = parser.parse_args(argv)
+    output_dir = FIXTURE_DIR if args.output_dir is None else Path(args.output_dir)
+
+    if args.only_auraface_composed:
+        aura_dir = AURAFACE_COMPOSED_DIR if args.output_dir is None else Path(args.output_dir)
+        aura_meta = write_auraface_composed_goldens(output_dir=aura_dir, models_dir=args.auraface_models_dir)
+        print("Wrote AuraFace composed goldens:", aura_meta["inhouse_crop_sha256"][:12], "...")
+        print("composed_cosine:", aura_meta["composed_cosine"])
+        print("output_dir:", aura_dir)
+        return 0
+
+    # Prove models load before writing goldens that depend on them.
+    load_verified_model("sface")
+    load_verified_model("yunet")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    emb_meta = write_embedding_goldens(output_dir=output_dir)
+    align_meta = write_aligner_goldens(output_dir=output_dir)
+    composed_meta = write_composed_aligner_embedder_goldens(output_dir=output_dir)
+    det_meta = write_detector_goldens(output_dir=output_dir)
+
+    print("Wrote embedding goldens:", emb_meta["crop_sha256"][:12], "...")
+    print("Wrote aligner goldens:", align_meta["crop_sha256"][:12], "...")
+    print("Wrote composed aligner→embedder goldens:", composed_meta["crop_sha256"][:12], "...")
+    print("Detector golden:", det_meta.get("status"), det_meta.get("kind"))
+    if args.auraface_composed:
+        aura_dir = AURAFACE_COMPOSED_DIR if args.output_dir is None else Path(args.output_dir) / "auraface_composed"
+        aura_meta = write_auraface_composed_goldens(output_dir=aura_dir, models_dir=args.auraface_models_dir)
+        print("Wrote AuraFace composed goldens:", aura_meta["inhouse_crop_sha256"][:12], "...")
+        print("composed_cosine:", aura_meta["composed_cosine"])
+    print("models_dir:", DEFAULT_MODELS_DIR)
+    print("output_dir:", output_dir)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

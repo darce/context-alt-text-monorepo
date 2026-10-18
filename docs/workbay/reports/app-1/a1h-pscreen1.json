@@ -1,0 +1,33 @@
+{
+  "lane": "a1h-pscreen1",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "/home/gate/workbay-sandbox/feature-app-1-a1h-pscreen1-a498145a/.venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 2.08s"
+    },
+    {
+      "command": "cd apps/app-portal && npm test -- src/__tests__/billing-fixwave.test.tsx src/__tests__/billing-journey.test.tsx",
+      "result": "not_run",
+      "detail": "The brief assigns Vitest to run outside this sandbox; node_modules are unavailable here."
+    },
+    {
+      "command": "cd apps/app-portal && npm run typecheck",
+      "result": "not_run",
+      "detail": "The brief assigns tsc to run outside this sandbox; node_modules are unavailable here."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16086,
+      "finding_id": "APP1-CLAIMUI-RV03",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "apps/app-portal/src/__tests__/billing-fixwave.test.tsx:127 expects the retry button to be absent after entering checkout preview; apps/app-portal/src/screens/BillingScreen.tsx:334 clears the visible retry flag and :335 also clears retryKind. The test still passes if only setRetryKind(null) is removed, so the stale intent reset has no guard assertion that goes red without it.",
+      "guard_test": ""
+    }
+  ],
+  "new_findings": [],
+  "summary": "The listed retry-intent reset is present, but its test only checks that the retry button disappears and does not guard the retry-kind reset; the entry is PARTIAL. Account, billing return, and billing route wiring showed no additional concrete defects. The lane overlap check passed (26 tests); Vitest and typecheck were not run in this sandbox."
+}

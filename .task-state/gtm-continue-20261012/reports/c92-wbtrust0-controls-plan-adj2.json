@@ -1,0 +1,40 @@
+{
+  "status": "COMMITTED_PARTIAL_PENDING_PARENT",
+  "lane_id": "c92-wbtrust0-controls-plan-adj2",
+  "source_verdict": "OWNED_F3_REVISED_CROSS_DOC_JOIN_PENDING",
+  "summary": "Minimal WBTRUST-4/5 ownership adjudication committed: WB5 alone owns Wave A strip layout/interactivity; WB4 supplies admission/cooldown state and actual observations. Later integration consumes both final outputs. Offline checks: 14/14 links, 13/13 selected source paths, 29/29 document assertions; 2-lane disputed-surface projection has 0 overlaps; 11 map artifacts current and Unicode parity check passed. Product tests: 0 executed; causal RED: 0; fixture/setup errors: 0. No task/E2E/quality PASS or MERGE claim.",
+  "source_identity": "Requested source 55cb4113b0327074a7a293ee49de2f65227393c7, requested tree af531f783e555cdf84a5891efabae0fe351394e3. EXECUTED: clean starting synthetic HEAD 5bc05c305dc0f2b4c1ac18b1942441da5fd4f19e has tree af531f783e555cdf84a5891efabae0fe351394e3, an exact match. Supplied external receipts/canon rows are planning inputs, not executions by this lane.",
+  "evidence": [
+    "EXECUTED: owned documentation checkpoint 0e89501ec604c4271a33cad04d37b22caa3ffce7; report checkpoint c5c2bd7206ad59ffabce2aad2afa0969cb829f8c. The report path was ignored, then explicitly staged with git add -f as authorized. No Co-Authored-By trailers.",
+    "EXECUTED: bounded temporary document audit using sandbox .venv Python 3.12.7: 14/14 local Markdown links resolve; 13/13 selected existing source paths resolve; 11/11 base requirement-preservation assertions and 18/18 ownership/accepted-contract assertions satisfied; 0 failed assertions. This is static document validation, not product acceptance or a new unit-test module.",
+    "EXECUTED: existing overlap checker on one temporary manifest, transcribed disputed-surface projection only: 2 lanes (WB4 cooldown files, WB5 strip/panel files), 0 overlaps, 0 unallowed overlaps. Not a complete WBTRUST DAG or WB7 ownership validation.",
+    "EXECUTED: existing renderer --check exits 0, all 11 UX-map artifacts current; Unicode-width --check exits 0, fixture ranges match Python Unicode 15.0.0. Maps and renderer files unchanged; renderer unit suite UNRUN as unnecessary for this documentation-only patch.",
+    "EXECUTED: git diff --check succeeds; change set contains exactly the 2 owned plans and owned report. No source/config/map/test edits.",
+    "SOURCE-READ: WB7 still declares describe-gpu-tier map ownership and directs its S6 update. Its correction is outside this lane OWNEDPATHS, so a typed scope proposal is retained rather than editing it."
+  ],
+  "findings": [
+    "F3 owned allocation revised: WB4 does not edit strip rendering/layout; WB5 is sole Wave A strip interactivity/layout owner. Named cooldownRemainingMs and suppression/retry observations plus final WB5 strip/copy feed later integration, with strip resource exclusivity explicit. Existing cooldown seam reused; no new UI prop/callback API prescribed.",
+    "Shared describe-gpu-tier JSON/Markdown ownership removed from WB5; WB4/5 final slices supply actual observations/copy/integration requests to one later owner after WB5/WB7 final copy. Global F3 closure remains pending the separate WB7 document alignment and parent join.",
+    "Preserved accepted 40/min, 10/5 s admission guard, scan-complete 10/10 s target, cancellation/CAS/backoff/20-job data guards, current renderer ownership, Settings-only GPU controls, single Run details trigger, adjacent nonmodal panel, preventScroll focus/return, semantic scroll-key behavior and nonsticky footer. No new unapproved interactivity.",
+    "Canon v0.26.2 retained. New ownership edge cites GRPH-32, An edge exists only where data moves, lexicons/graph-theory.md#grph-32; causal RED planning cites TEST-15, Prove the green can go red, lexicons/engineering.md#test-15. Removed EVAL-16/PERF-02 misuse in changed slice statements; top/bottom pagination attributed to accepted scope, not NAV-21."
+  ],
+  "commands": [
+    "git rev-parse --show-toplevel; git status --short; git rev-parse HEAD HEAD^{tree} (separate shell lines)",
+    "OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 60s .venv/bin/python /tmp/c92-wbtrust0-controls-plan-adj2/audit.py",
+    "OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 60s .venv/bin/python scripts/check_lane_manifest_overlaps.py --manifest-dir /tmp/c92-wbtrust0-controls-plan-adj2/manifests --json",
+    "OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 180s .venv/bin/python apps/prototype-wp-alt-context/docs/ux-maps/render_ux_maps.py --check",
+    "OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 120s .venv/bin/python apps/prototype-wp-alt-context/docs/ux-maps/sync_unicode_width.py --check",
+    "git diff --check 5bc05c305dc0f2b4c1ac18b1942441da5fd4f19e; git diff --name-only 5bc05c305dc0f2b4c1ac18b1942441da5fd4f19e (separate shell lines)",
+    "Explicit git add of the 2 owned plans; git add -f of the owned report; git commit checkpoints and final documentation/report update."
+  ],
+  "blockers": [
+    "OUTSIDE_SCOPE: WBTRUST-7 ownership/final slice must align before global F3 closure; this lane cannot edit that plan.",
+    "UNAVAILABLE: scripts/hooks/guard-task-plan-findings.py and scripts/review_pipeline.py are absent. Guard not executed and not claimed passing; no dedicated generic document link/path checker found in bounded in-repo tooling inventory, so temporary static audits were used. make plan-analyze UNRUN.",
+    "UNRUN: product unit suites, browser/E2E/runtime, API/DB/network, deployments, GPU/OCI and MCP writes. Documentation lane only; no causal product RED or GREEN evidence was generated. Fresh parent review remains required."
+  ],
+  "next_actions": [
+    "{\"change\": \"Remove describe-gpu-tier JSON/Markdown from parallel ownership and change S6 to supply final provenance copy/observations to the single later map integration owner; preserve other accepted requirements.\", \"owner\": \"WBTRUST-7 planning lane\", \"paths\": [\"docs/tasks/v0.5.0/WBTRUST-7-description-provenance-and-routing-task-plan.md\"], \"type\": \"SCOPE_PROPOSAL\"}",
+    "Parent joins all five disjoint documentation lanes, verifies WB7/umbrella alignment and assigns exactly one later integration owner for shared maps and cooldown rendering; that owner waits for WB4 actual observations and final WB5 strip, and WB5/WB7 final map copy.",
+    "Obtain fresh independent Sol xhigh R2 on the five-document join before actual main landing. Keep Haiku xhigh implementation, Sol HIGH standard and LOUD odd Opus/even Sol xhigh loop roles; author does not MERGE. GTMSMOKE-1 stays ACTIVE; no shared task state changed."
+  ]
+}

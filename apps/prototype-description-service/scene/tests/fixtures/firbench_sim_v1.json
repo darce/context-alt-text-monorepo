@@ -1,0 +1,171 @@
+{
+  "schema": "firbench-simulator/v1",
+  "purpose": "FIRBENCH-1 S9 synthetic generator and acceptance parameters, frozen before any simulated outcome. Declared project policy under the coordinator pre-outcome contract: not canon constants, not measured ICC, not ratification and not a simulated pass.",
+  "layout": {
+    "note": "Nested keys are owned by the simulator. Callers rely only on schema and the acceptance report. Every object is strict: unknown keys are refused by load_params.",
+    "sections": ["seeds", "policy_mirror", "generator", "laws", "designs", "suite_designs", "acceptance", "synthetic_decision"]
+  },
+  "seeds": {
+    "master_seed": 2208172209,
+    "master_seed_derivation": "int.from_bytes(hashlib.sha256(b'FIRBENCH-1/simulator/v1').digest()[:4], 'big')",
+    "suite_registry": {"null": 1, "selection": 2, "coverage": 3, "power": 4, "noninferiority": 5, "mde": 6, "floor": 7, "stage": 8},
+    "icc_registry_percent": {"0.05": 5, "0.10": 10, "0.20": 20, "0.30": 30},
+    "suite_seed_derivation": "numpy.random.SeedSequence(master_seed, spawn_key=(suite_registry[suite], icc_registry_percent[icc])).generate_state(1, dtype=uint64)[0]",
+    "replicate_seed_derivation": "numpy.random.SeedSequence(suite_seed, spawn_key=(replicate_index,)).generate_state(1, dtype=uint64)[0]"
+  },
+  "policy_mirror": {
+    "note": "Copies of manifest values. The loader refuses any difference from the decision manifest; the manifest stays the source of truth.",
+    "p_d": 0.15,
+    "planning_icc": 0.10,
+    "planning_icc_sensitivity": [0.05, 0.20],
+    "power": 0.80,
+    "alpha_family": 0.05,
+    "h1_margin": 0.0,
+    "h2_margin": 0.05,
+    "fpir_target": 0.01,
+    "min_n_independent": 50,
+    "cell_floor_n_independent": 30,
+    "n_boot": 10000,
+    "bootstrap_seed": 2429382368,
+    "alternative_delta_sizing_only": 0.10
+  },
+  "generator": {
+    "pattern_order": "Eight miss patterns in binary order 000..111 over bits (sface, auraface, insightface). Index = 4*sface + 2*auraface + insightface; bit 1 is a miss.",
+    "law_denominator": 400,
+    "miss_bit_names": ["sface", "auraface", "insightface"],
+    "psu_random_effect": "Dirichlet via logits: logits_c = log(Gamma(k * q_c)), softmax; k = 1/ICC - 1; categories with q_c = 0 are excluded before drawing; no epsilon.",
+    "faces_given_psu": "Conditional on a PSU's probabilities, each face draws its pattern independently.",
+    "miss_class_law": {"missed": 2, "rejected": 2, "wrong_identity": 1},
+    "miss_class_note": "Class of a miss on a separable leg: missed = upstream undetected mate, rejected = embedded below tau, wrong_identity = embedded with another identity above tau. On the fused leg the missed class writes stage detected, which finishes as missed.",
+    "operating_threshold_tau": 0.5,
+    "score_margin": 0.1,
+    "second_score_gap": 0.01,
+    "score_note": "Fixed declared operating threshold, not calibrated on fit folds. Correct embeddings score tau + margin*s and rejected ones tau - margin*s with s in (0, 1]. The runner-up identity scores second_score_gap lower.",
+    "selection_tie_rule": "auraface",
+    "selection_note": "The selection control keeps the in-house leg with the smaller natural estimate FNIR(leg) - FNIR(insightface) before the H1 forcing. Exact ties resolve to the leg named here.",
+    "background_units_total": 3000,
+    "background_distribution": "Round-robin over PSUs sorted by PSU id, using the PSU session_id as session metadata. No new independent units. Count does not change mated effective size.",
+    "nonmated_gt_faces": 0,
+    "fold_protocol": "k and seed come from the decision manifest. Test fold 0 is recorded by S1; the simulator decides on the whole synthetic population and runs no fold calibration.",
+    "gallery": "Every mated identity is enrolled. Background units are the only non-mated source units.",
+    "pair_cell_labels": {"clear_mask": ["clear", "mask"], "clear_clear": ["clear", "clear"], "background": ["background", "background"]},
+    "stage_planting": {
+      "fraction": 0.10,
+      "count_rule": "floor(fraction * n_mated) upstream detection drops",
+      "eligibility": "GT faces whose native sface AND native auraface outcomes are embedded correct or embedded wrong in the control packet",
+      "stratification": "wrong_drops = round_half_even(drops * eligible_wrong / eligible_total); correct_drops = drops - wrong_drops; each class sampled with the shared seeded draw",
+      "shared_between_arms": true,
+      "insightface_untouched": true
+    },
+    "attribution_arms": ["gt_crop_redetect", "cached_yunet_landmark_replay"],
+    "attribution_note": "Separable attribution rows restore the control (baseline) stage on the same GT ids; insightface attribution is unavailable_fused.",
+    "legs": {
+      "sface": {"space_fingerprint": "sim-sface-v1", "opencv_version": "0", "ort_version": "0", "alignment_mode": "separable"},
+      "auraface": {"space_fingerprint": "sim-auraface-v1", "opencv_version": "0", "ort_version": "0", "alignment_mode": "separable"},
+      "insightface": {"space_fingerprint": "sim-insightface-v1", "opencv_version": "0", "ort_version": "0", "alignment_mode": "fused_internal"}
+    },
+    "frame_id": "fir-sim-v1",
+    "frame_note": "Synthetic registry entry. Confirmatory admissibility so H2 can reach non_inferior; sealed to mirror confirm-v1. Its source hash is the sha256 of the frame-v1 payload with source_sha256 nulled."
+  },
+  "laws": {
+    "denominator": 400,
+    "null": [300, 10, 10, 20, 10, 20, 20, 10],
+    "h1_power": [285, 5, 5, 5, 25, 25, 25, 25],
+    "h2_boundary": [270, 0, 10, 0, 30, 20, 30, 40],
+    "selection_control": [280, 10, 20, 10, 20, 10, 20, 30],
+    "theoretical_fnir": {
+      "null": [0.15, 0.15, 0.15],
+      "h1_power": [0.25, 0.15, 0.15],
+      "h2_boundary": [0.30, 0.20, 0.15],
+      "selection_control": [0.20, 0.20, 0.15]
+    },
+    "theoretical_pair_discordance": 0.15,
+    "h1_power_joint_coupling": [
+      [0, 0, 285], [0, 4, 15],
+      [1, 1, 5], [1, 5, 5],
+      [2, 2, 5], [2, 6, 5],
+      [3, 3, 5], [3, 7, 15],
+      [4, 4, 10], [5, 5, 20], [6, 6, 20], [7, 7, 10]
+    ],
+    "joint_coupling_note": "Triples are [control_pattern, planted_pattern, weight] over 400. The control marginal equals laws.null and the planted marginal equals laws.h1_power. Only the sface bit changes: 000->100, 001->101, 010->110, 011->111. Cell-only treatment applies this coupling to clear_mask PSUs; clear_clear PSUs keep identical control and planted observations.",
+    "h2_spanning": {
+      "design": "h2/0.10",
+      "per_16_face_psu": {"positive_aura_miss_ins_correct": 2, "negative_aura_correct_ins_miss": 1, "both_miss": 2, "both_correct": 11},
+      "singleton_psu": "both_correct",
+      "expected_rates": {"auraface": 0.20, "insightface": 0.15, "discordance": 0.15, "delta": 0.05},
+      "h1_forced": "sface all miss"
+    }
+  },
+  "designs": {
+    "null": {
+      "0.05": {"size_counts": {"1": 96, "16": 24}, "raw_n": 480, "n_psu": 120, "sum_squared_sizes": 6240, "target_n_eff": 300, "cells": "none"},
+      "0.10": {"size_counts": {"11": 30, "15": 22}, "raw_n": 660, "n_psu": 52, "sum_squared_sizes": 8580, "target_n_eff": 300, "cells": "none"},
+      "0.20": {"size_counts": {"11": 37, "12": 2, "13": 12, "14": 2, "15": 27}, "raw_n": 1020, "n_psu": 80, "sum_squared_sizes": 13260, "target_n_eff": 300, "cells": "none"}
+    },
+    "power": {
+      "0.05": {"size_counts": {"1": 59, "7": 4, "8": 3, "9": 3}, "raw_n": 138, "n_psu": 69, "sum_squared_sizes": 690, "target_n_eff": 115, "cells": "alternate_sorted", "expected_cells": {"clear_mask": {"1": 30, "7": 2, "8": 1, "9": 2}, "clear_clear": {"1": 29, "7": 2, "8": 2, "9": 1}}},
+      "0.10": {"size_counts": {"1": 46, "4": 23}, "raw_n": 138, "n_psu": 69, "sum_squared_sizes": 414, "target_n_eff": 115, "cells": "alternate_sorted", "expected_cells": {"clear_mask": {"1": 23, "4": 12}, "clear_clear": {"1": 23, "4": 11}}},
+      "0.20": {"size_counts": {"1": 26, "2": 14, "3": 9, "4": 20}, "raw_n": 161, "n_psu": 69, "sum_squared_sizes": 483, "target_n_eff": 115, "cells": "alternate_sorted", "expected_cells": {"clear_mask": {"1": 13, "2": 7, "3": 5, "4": 10}, "clear_clear": {"1": 13, "2": 7, "3": 4, "4": 10}}}
+    },
+    "h2": {
+      "0.10": {"size_counts": {"1": 176, "16": 44}, "raw_n": 880, "n_psu": 220, "sum_squared_sizes": 11440, "target_n_eff": 400, "cells": "none"}
+    },
+    "floor": {
+      "0.10": {
+        "49": {"size_counts": {"11": 22, "15": 27}, "raw_n": 647, "n_psu": 49, "sum_squared_sizes": 8737, "target_n_eff": null, "cells": "alternate_sorted", "expected_cells": {"clear_mask": {"11": 11, "15": 14}, "clear_clear": {"11": 11, "15": 13}}},
+        "50": {"size_counts": {"11": 23, "15": 27}, "raw_n": 658, "n_psu": 50, "sum_squared_sizes": 8858, "target_n_eff": null, "cells": "alternate_sorted", "expected_cells": {"clear_mask": {"11": 12, "15": 13}, "clear_clear": {"11": 11, "15": 14}}}
+      }
+    },
+    "negative_control_coverage": {
+      "0.30": {"size_counts": {"11": 30, "15": 22}, "raw_n": 660, "n_psu": 52, "sum_squared_sizes": 8580, "target_n_eff": null, "cells": "none"}
+    },
+    "cell_allocation_rule": "Sort PSUs ascending by mated size (ties by PSU id). Give the even-indexed PSUs to clear_mask and the odd-indexed PSUs to clear_clear. Whole PSUs only."
+  },
+  "suite_designs": {
+    "null": {"0.05": "null/0.05", "0.10": "null/0.10", "0.20": "null/0.20", "branch_b_boundary": "h2/0.10", "branch_b_icc": [0.10]},
+    "selection": {"0.10": "h2/0.10"},
+    "coverage": {"0.05": "null/0.05", "0.10": "null/0.10", "0.20": "null/0.20", "0.30": "negative_control_coverage/0.30"},
+    "power": {"0.05": "power/0.05", "0.10": "power/0.10", "0.20": "power/0.20"},
+    "noninferiority": {"0.10": "h2/0.10"},
+    "mde": {"0.10": "null/0.10"},
+    "floor": {"0.10": ["floor/0.10/49", "floor/0.10/50"]},
+    "stage": {"0.10": "power/0.10"}
+  },
+  "acceptance": {
+    "full_replicates": 2000,
+    "gated_icc": 0.10,
+    "sensitivity_icc": [0.05, 0.20],
+    "negative_control_icc": 0.30,
+    "mc_se": {"null_superior_nominal": 0.025, "null_boundary_nominal": 0.05, "tolerance_se_ae2": 2, "tolerance_se_ae4": 3},
+    "null_superior_max_rate": 0.032,
+    "null_boundary_max_rate": 0.060,
+    "selection_min_exclusive_rate": 0.060,
+    "coverage_min_rate": 0.93,
+    "coverage_max_rate": 0.97,
+    "power_min_rate": 0.77,
+    "h2_a_min_rate": 0.77,
+    "h2_b_max_rate": 0.060,
+    "h2_c_max_non_inferior_count": 0,
+    "mde_refusal_required_fraction": 1.0,
+    "mde_non_inferior_max_count": 0,
+    "bound_200": {"replicates": 200, "max_superior": 9, "derivation": "95% upper quantile of Binomial(200, 0.025): P(X <= 8) = 0.934, P(X <= 9) = 0.970, carried here, not in code"},
+    "wrong_identity_max_abs_diff": 0.05,
+    "cell_clear_clear_max_rate": 0.032,
+    "cell_clear_mask_min_rate": 0.77,
+    "cell_clear_mask_rule_note": "Declared reading of the cell-only pass rule: the clear_mask rate uses the same 0.77 detection bar on its own n_eff (about 59), not the global 115. Reported with its own n_eff. Not a new limit."
+  },
+  "synthetic_decision": {
+    "decision_id_prefix": "fir-bench-simulation-v1",
+    "ratification_ref": "synthetic-simulation-only",
+    "ratified_at": "2026-10-01T00:00:00Z",
+    "sealed_at": "2026-10-02T00:00:00Z",
+    "guardrail": {
+      "id": "SIM-G0",
+      "metric": "simulation_scope",
+      "rule": "report-only synthetic scope marker; no measured veto reading is supplied",
+      "cohort_scope": "all",
+      "role": "report_only"
+    },
+    "note": "Copies of the real manifest's policy values with synthetic frame, template and ratification entries. The real benchmarks/manifests/fir-bench-decision-v1.json is never read for write or mutated."
+  }
+}

@@ -1,0 +1,109 @@
+{
+  "ok": true,
+  "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+  "status": "selected",
+  "skip_reason": null,
+  "embeddings_mode": "verified",
+  "semantic_degrade_reason": null,
+  "relevant_lines": [
+    "relevant:",
+    "- Raw authenticated route characterization comple…: QWEN-RAW-AUTH-ROUTE terminal0 custody689f349a actual publicBakeoffClient anonymousv3twopass works, [decision:17912]",
+    "- RAW-AUTH-TEST-G1-02: Place an independently observable unique credential sentinel in each nonempty malformed payload and [finding:19138]",
+    "- P2 third declaration map terminal0, exact singl…: NativeP2R3exec89309exit0/custodye7ccf11b79395c5ca02f5ff9a4c10afde57cfbe0; [decision:17973]",
+    "- CORPUS-G1-01: Intentional all37 regression containment is incorrectly called selection/report leakage. Evidence: [finding:19024]",
+    "- cdx_raw_source_landing_preflight_capacity_recon…: RAW terminal/custody settled (18073/author test5028), whole SOURCE XHIGH input8ae8c54e prepared [decision:18078]",
+    "- Intake subject whole-source PASS, authority map…: SwholeG2 terminal0 rawPASS0 [decision:17928]",
+    "- WorkBay next-wave DAG compiled10nodes/9realdata…: GRPH06 partitions disjoint artifact ownership; GRPH32 edges name packet fields. Integration consumes [decision:17650]",
+    "- cdx_decision_bakerounds_second_subject_test_int…: Remote HIGH secondauthorS-TEST-REPAIR-R2 exit0. Strict final/committedJSON/provenancetree/grants [decision:17839]"
+  ],
+  "semantic_reinjection": {
+    "anchor_sources": [
+      "visible_text"
+    ],
+    "chars_budget": 5000,
+    "chars_used": 1188,
+    "effective_config": {
+      "candidate_pool": 32,
+      "max_concepts": 8,
+      "max_redundancy": 0.92,
+      "max_score_drop": 0.2,
+      "min_score": 0.35,
+      "mmr_relevance_weight": 0.7,
+      "notify_allowance_chars": 220,
+      "refresh_budget_chars": 1500,
+      "snippet_chars": 120
+    },
+    "fallback_scope": null,
+    "model_id": "gte-base-en-v1.5",
+    "score_hi": 0.6226475834846497,
+    "score_lo": 0.533538281917572,
+    "selected": [
+      {
+        "emitted_chars": 177,
+        "id": "17912",
+        "kind": "decision",
+        "label": "Raw authenticated route characterization comple…",
+        "score": 0.6226475834846497,
+        "snippet": "QWEN-RAW-AUTH-ROUTE terminal0 custody689f349a actual publicBakeoffClient anonymousv3twopass works, [decision:17912]"
+      },
+      {
+        "emitted_chars": 139,
+        "id": "19138",
+        "kind": "finding",
+        "label": "RAW-AUTH-TEST-G1-02",
+        "score": 0.591948926448822,
+        "snippet": "Place an independently observable unique credential sentinel in each nonempty malformed payload and [finding:19138]"
+      },
+      {
+        "emitted_chars": 143,
+        "id": "17973",
+        "kind": "decision",
+        "label": "P2 third declaration map terminal0, exact singl…",
+        "score": 0.6201385259628296,
+        "snippet": "NativeP2R3exec89309exit0/custodye7ccf11b79395c5ca02f5ff9a4c10afde57cfbe0; [decision:17973]"
+      },
+      {
+        "emitted_chars": 131,
+        "id": "19024",
+        "kind": "finding",
+        "label": "CORPUS-G1-01",
+        "score": 0.533538281917572,
+        "snippet": "Intentional all37 regression containment is incorrectly called selection/report leakage. Evidence: [finding:19024]"
+      },
+      {
+        "emitted_chars": 165,
+        "id": "18078",
+        "kind": "decision",
+        "label": "cdx_raw_source_landing_preflight_capacity_recon…",
+        "score": 0.6024117469787598,
+        "snippet": "RAW terminal/custody settled (18073/author test5028), whole SOURCE XHIGH input8ae8c54e prepared [decision:18078]"
+      },
+      {
+        "emitted_chars": 97,
+        "id": "17928",
+        "kind": "decision",
+        "label": "Intake subject whole-source PASS, authority map…",
+        "score": 0.6079121828079224,
+        "snippet": "SwholeG2 terminal0 rawPASS0 [decision:17928]"
+      },
+      {
+        "emitted_chars": 170,
+        "id": "17650",
+        "kind": "decision",
+        "label": "WorkBay next-wave DAG compiled10nodes/9realdata…",
+        "score": 0.539095401763916,
+        "snippet": "GRPH06 partitions disjoint artifact ownership; GRPH32 edges name packet fields. Integration consumes [decision:17650]"
+      },
+      {
+        "emitted_chars": 166,
+        "id": "17839",
+        "kind": "decision",
+        "label": "cdx_decision_bakerounds_second_subject_test_int…",
+        "score": 0.5791211128234863,
+        "snippet": "Remote HIGH secondauthorS-TEST-REPAIR-R2 exit0. Strict final/committedJSON/provenancetree/grants [decision:17839]"
+      }
+    ],
+    "skip_reason": null,
+    "status": "selected"
+  }
+}

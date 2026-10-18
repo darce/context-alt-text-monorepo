@@ -1,0 +1,39 @@
+{
+  "content": [],
+  "structuredContent": {
+    "ok": true,
+    "task_ref": "BAKERAW-AUTH-1",
+    "status": "skipped",
+    "skip_reason": "no_embeddings",
+    "embeddings_mode": "verified",
+    "semantic_degrade_reason": "no_embeddings",
+    "relevant_lines": [],
+    "semantic_reinjection": {
+      "anchor_sources": [
+        "visible_text"
+      ],
+      "chars_budget": 10000,
+      "chars_used": 0,
+      "effective_config": {
+        "candidate_pool": 32,
+        "max_concepts": 8,
+        "max_redundancy": 0.92,
+        "max_score_drop": 0.2,
+        "min_score": 0.35,
+        "mmr_relevance_weight": 0.7,
+        "notify_allowance_chars": 220,
+        "refresh_budget_chars": 1500,
+        "snippet_chars": 120
+      },
+      "fallback_scope": null,
+      "model_id": "gte-base-en-v1.5",
+      "score_hi": null,
+      "score_lo": null,
+      "selected": [],
+      "skip_reason": "no_embeddings",
+      "status": "skipped",
+      "remedy": "rows written while the embedding provider was unavailable stay unembedded; backfill them via `python -m workbay_handoff_mcp.scripts.backfill_concept_embeddings` (doctor facet embedding_backfill_coverage reports the gap)."
+    }
+  },
+  "isError": false
+}

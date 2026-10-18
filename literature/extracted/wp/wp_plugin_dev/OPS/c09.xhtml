@@ -1,0 +1,1099 @@
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xmlns:svg="http://www.w3.org/2000/svg" epub:prefix="index: http://www.index.com/" lang="en" xml:lang="en">
+<head>
+<title>9 Users and User Data</title>
+<link href="WileyTemplate_v5.5.css" rel="stylesheet" type="text/css"/>
+<meta content="urn:uuid:e0000000-0000-0000-0000-000006210893" name="Adept.expected.resource"/>
+</head>
+<body epub:type="bodymatter">
+<section epub:type="chapter" role="doc-chapter">
+<header>
+<h1><span epub:type="pagebreak" id="Page_205" role="doc-pagebreak" title="205"/><a id="c09"/><span class="chapterNumber">9</span><br/><span class="chapterTitle">Users and User Data</span></h1>
+</header>
+<section><span id="c09-sec-0001"/>
+<aside>
+<div class="top hr"><hr/></div>
+<section>
+<h3>WHAT'S IN THIS CHAPTER?</h3>
+<ul class="check1" id="c09-list-0001">
+<li id="c09-li-0001">Working with users and user functions</li>
+<li id="c09-li-0002">Adding, updating, and retrieving user data</li>
+<li id="c09-li-0003">Understanding roles and capabilities</li>
+<li id="c09-li-0004">Limiting access with user permissions</li>
+<li id="c09-li-0005">Building custom roles and capabilities</li>
+</ul>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<aside>
+<div class="top hr"><hr/></div>
+<section><span id="c09-fea-0001"/>
+<h3 id="head-2-76">CODE DOWNLOADS FOR THIS CHAPTER</h3>
+<section><span id="c09-sec-0003"/>
+<p id="c09-para-0004">The code downloads for this chapter are found at <code><a href="http://www.wiley.com/go/prowordpressdev2e">www.wiley.com/go/prowordpressdev2e</a></code> on the Downloads tab.</p>
+</section>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<p id="c09-para-0005">When WordPress was first launched more than 15 years ago, it was primarily a blogging system used by individuals. Over the years, it has become more of a content management system (CMS) that powers nearly any type of site conceivable. A large part of what is possible now centers on its user system. Today, WordPress powers websites with thousands, hundreds of thousands, and even millions of users.</p>
+<p id="c09-para-0006">Knowing how WordPress handles users is now an important tool in any plugin developer's toolbox. You will deal with various user scenarios in many of your plugins. Perhaps, more important, understanding the roles and capabilities system is paramount to developing a solid and secure plugin. Roles and capabilities define what users can do within individual sites. They represent the permissions system for WordPress.</p>
+<p id="c09-para-0007">People use WordPress for private membership sites, social networks, online journalism, medical databases, education centers, and much more. Each of these types of websites might require plugins to handle users and permissions. When creating plugins for these sites, it is often <span epub:type="pagebreak" id="Page_206" role="doc-pagebreak" title="206"/>important to make sure you use the correct WordPress functions so that private information is not leaked to users without permission to see it.</p>
+<p id="c09-para-0008">This chapter gives you the tools necessary to work within the WordPress users, roles, and capabilities systems and shows you how they interact with one another within the WordPress environment.</p>
+</section>
+<section><span id="c09-sec-0004"/>
+<h2 id="head-2-77">WORKING WITH USERS</h2>
+<p id="c09-para-0009">In WordPress, <i>users</i> are people who have registered a unique username for the site. The user has an account within that specific installation of WordPress. The term <i>user</i> should not be confused with a <i>visitor</i>, who is someone visiting or reading the website without an account. This chapter focuses on registered users.</p>
+<p>Every WordPress installation has at minimum one user. This is the person who installed WordPress and initially set it up. Traditionally, this account was known as the <i>admin</i> user because older versions of WordPress automatically created an admin username. However, WordPress allows a different username upon registration today.</p>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c09-para-0011"><b>WARNING</b> <i>Some older plugins relied on the existence of a user account called <i>admin</i>, which was wrong in the past and is wrong now. Never assume that a specific username is in use, and never assume that permissions are tied to a specific username.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<section><span id="c09-sec-0006"/>
+<h3 id="head-3-157">User Functions</h3>
+<p>WordPress has many functions for working with users. In this section, you'll learn how to use some of the most common functions needed for plugins.</p>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c09-para-0013"><b>WARNING</b> <i>Many user functions are not loaded until after plugins are loaded, and the current user isn't authenticated until the</i> <code>init</code> <i>action hook (see <a href="c05.xhtml">Chapter 5</a>, “Hooks”). Using a user function before</i> <code>init</code> <i>in the WordPress flow will most likely cause a fatal error or incorrect data.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<section><span id="c09-sec-0008"/>
+<h4 id="head-4-69">is_user_logged_in()</h4>
+<p id="c09-para-0014">The <code>is_user_logged_in()</code> function is a conditional function that allows you to check whether the current visitor is a logged‐in user for the site. It returns a Boolean value of true or false based on whether the current user has an ID. The function is also pluggable, which means you can create a custom <code>is_user_logged_in()</code> function to overwrite WordPress’ function completely.</p>
+<p>In the following example, you'll display a basic message in the footer of the site based on whether the user is logged in. Logged‐in users will receive one message, and those not logged in will get a different message.<span epub:type="pagebreak" id="Page_207" role="doc-pagebreak" title="207"/></p>
+<pre id="c09-code-0001"><code>&lt;?php</code>
+<code>add_action( 'wp_footer', 'pdev_maybe_logged_in_message' );</code>
+<code> </code>
+<code>function pdev_maybe_logged_in_message() {</code>
+<code> </code>
+<code>       if ( is_user_logged_in() ) {</code>
+<code>              echo '&lt;p&gt;Welcome back! You are currently logged in.&lt;/p&gt;';</code>
+<code>       } else {</code>
+<code>             echo '&lt;p&gt;You are not logged into the site.&lt;/p&gt;';</code>
+<code>       }</code>
+<code>}</code></pre>
+<p id="c09-para-0016">This function is important because it enables you to run specific code based on a user's logged‐in status. While useful, you should not rely on it for permissions. You will likely need to check for specific capabilities for most use cases (see the “Roles and Capabilities” section of this chapter).</p>
+</section>
+<section><span id="c09-sec-0009"/>
+<h4 id="head-4-70">get_users()</h4>
+<p>The <code>get_users()</code> function enables you to query users from the database based on the arguments passed into the function through the <code>$args</code> parameter. The <code>$args</code> parameter is an array of arguments that you can define to limit the users returned by the function. The full list of arguments is available via the core documentation at <code><a href="http://developer.wordpress.org/reference/functions/get_users">developer.wordpress.org/reference/functions/get_users</a></code>.</p>
+<pre id="c09-code-0002"><code>&lt;?php</code>
+<code>get_users( array $args = [] );</code></pre>
+<p id="c09-para-0018">The function is technically a wrapper for the <code>WP_User_Query</code> class and returns an array of <code>WP_User</code> objects. If no users are found for the query, the return value will be an empty array.</p>
+<p>Suppose you wanted to query all users assigned the <code>subscriber</code> role on the site. The <code>subscriber</code> role is one of several default roles that WordPress provides by default (see the “Roles and Capabilities” section of this chapter for more information on roles). The <code>get_users()</code> function accepts an argument named <code>'role'</code>, which can be a string for a single role or an array for multiple roles to query. The following code will query all subscribers and assign them to the <code>$subscribers</code> variable:</p>
+<pre id="c09-code-0003"><code>&lt;?php</code>
+<code>$subscribers = get_users( [</code>
+<code>       'role' =&gt; 'subscriber' </code>
+<code>] );</code></pre>
+<p>You could do anything with the array of user objects returned. For example, you could output all users’ avatar images by looping through them, as shown in the next snippet:</p>
+<pre id="c09-code-0004"><code>foreach ( $subscribers as $user ) {</code>
+<code>       echo get_avatar( $user );</code>
+<code>}</code></pre>
+</section>
+<section><span id="c09-sec-0010"/>
+<h4 id="head-4-71">count_users</h4>
+<p>The <code>count_users()</code> function allows you to count the users of the site. It keeps track of the count of all users and the number of users for each role. Counting users is an intensive operation and should be used only when necessary. It should never be run on every page request.</p>
+<pre id="c09-code-0005"><code>&lt;?php</code>
+<code>count_users( string $strategy = 'time', int|null $site_id = null );</code></pre>
+<p id="c09-para-0022"><span epub:type="pagebreak" id="Page_208" role="doc-pagebreak" title="208"/>The first parameter, <code>$strategy</code>, can be set to either <code>time</code> or <code>memory</code>. The <code>time</code> option, the default, is CPU‐intensive and can handle around 10^7 users. The <code>memory</code> value is memory‐intensive and can handle around 10^5 users. The second parameter, <code>$site_id</code>, allows you to count the users of a specific site on a multisite setup. It will default to the currently viewed site.</p>
+<p>Imagine that you wanted to output a basic message with the total user count; you could do so by accessing the <code>total_users</code> value returned from <code>count_users()</code>.</p>
+<pre id="c09-code-0006"><code>&lt;?php</code>
+<code>// Get the user count.</code>
+<code>$count = count_users();</code>
+<code> </code>
+<code>// Output the total user count.</code>
+<code>printf(</code>
+<code>       '&lt;p&gt;This site has %s users.&lt;/p&gt;',</code>
+<code>       absint( $count['total_users'] )</code>
+<code>);</code></pre>
+<p>You could also create a list of counts by user role via the <code>avail_roles</code> value from the function's returned array.</p>
+<pre id="c09-code-0007"><code>&lt;?php</code>
+<code>// Get the user count.</code>
+<code>$count = count_users();</code>
+<code> </code>
+<code>echo '&lt;ul&gt;';</code>
+<code> </code>
+<code>// Output each role and its number of users.</code>
+<code>foreach ( $count['avail_roles'] as $role =&gt; $user_count ) {</code>
+<code> </code>
+<code>       printf(</code>
+<code>             '&lt;li&gt;%1$s: %2$s&lt;/li&gt;',</code>
+<code>             esc_html( $role ),</code>
+<code>             absint( $user_count )</code>
+<code>       );</code>
+<code>}</code>
+<code> </code>
+<code>echo '&lt;/ul&gt;';</code></pre>
+</section>
+</section>
+<section><span id="c09-sec-0011"/>
+<h3 id="head-3-158">Creating, Updating, and Deleting Users</h3>
+<p id="c09-para-0025">The WordPress admin has built‐in screens for creating, updating, and deleting users that most end users will use to administrate their site. However, as a plugin author, you may find yourself in scenarios where you need to create a plugin that handles these things outside the normal interface. Or, you may even want to try your hand at creating an even better interface.</p>
+<p>The following are some examples of reasons why you might need to code a plugin to handle this:</p>
+<ul class="check" id="c09-list-0002">
+<li id="c09-li-0006">A client needs to import thousands of users from a different system into WordPress, and creating these users individually would be out of the question.</li>
+<li id="c09-li-0007">You're building a social networking plugin that needs a frontend interface for registering user accounts.</li>
+<li id="c09-li-0008"><span epub:type="pagebreak" id="Page_209" role="doc-pagebreak" title="209"/>You're building a plugin that enables administrators to bulk edit/update various forms of user data in a quick and efficient manner.</li>
+<li id="c09-li-0009">You need to create a sidebar widget or other frontend element that allows user creation.</li>
+</ul>
+<p id="c09-para-0027">As you should be able to see, there are many reasons for stepping outside the standard WordPress interface for handling users. While you will not be using the standard interface, you will be using standard functions that WordPress has provided for doing these types of things. These are the same functions that WordPress itself uses behind its user‐related interfaces.</p>
+<section><span id="c09-sec-0012"/>
+<h4 id="head-4-72">Creating a New User</h4>
+<p id="c09-para-0028">When you need to create a new user in the database, WordPress provides the <code>wp_insert_user()</code> function. Technically, it can also handle updating a currently registered user if a user ID is passed in via the <code>ID</code> argument.</p>
+<p id="c09-para-0029">The function accepts a single parameter of <code>$userdata</code>. This is an array of arguments that match up to values in the <code>$wpdb‐&gt;users</code> and <code>$wpdb‐&gt;usermeta</code> tables in the database for the specific user.</p>
+<p>The most important arguments for the <code>$userdata</code> parameter are as follows:</p>
+<ul class="check" id="c09-list-0003">
+<li id="c09-li-0010">
+<code>ID</code>: A current user's ID. You should use this only if you're updating a user. WordPress automatically creates new user IDs.</li>
+<li id="c09-li-0011">
+<code>user_pass</code>: The password in plain text for the new user account.</li>
+<li id="c09-li-0012">
+<code>user_login</code>: This is the “username” for the user. This is a required argument and returns an error if not unique.</li>
+<li id="c09-li-0013">
+<code>user_nicename</code>: An alternative name to use in things such as permalinks to user archives. This defaults to the <code>user_login</code> argument.</li>
+<li id="c09-li-0014">
+<code>user_url</code>: A link to the user's personal website.</li>
+<li id="c09-li-0015">
+<code>user_email</code>: The email address of the user. This is a required argument and returns an error if not given or if the email address is already in use.</li>
+<li id="c09-li-0016">
+<code>display_name</code>: The name to display for the user. This defaults to the <code>user_login</code> argument.</li>
+<li id="c09-li-0017">
+<code>nickname</code>: A nickname for the user. This defaults to the <code>user_login</code> argument.</li>
+<li id="c09-li-0018">
+<code>first_name</code>: The first name of the user.</li>
+<li id="c09-li-0019">
+<code>last_name</code>: The last name (surname) of the user.</li>
+<li id="c09-li-0020">
+<code>description</code>: A biographical information argument that describes the user.</li>
+<li id="c09-li-0021">
+<code>user_registered</code>: The date and time of the user registration. WordPress automatically sets this to the current date and time if no argument is given.</li>
+</ul>
+<p id="c09-para-0031">You can view the full list of arguments via the <code>wp_insert_user()</code> function documentation at <code><a href="http://developer.wordpress.org/reference/functions/wp_insert_user">developer.wordpress.org/reference/functions/wp_insert_user</a></code>.</p>
+<p id="c09-para-0032"><span epub:type="pagebreak" id="Page_210" role="doc-pagebreak" title="210"/>Now, you can take these arguments and create a new user with the <code>wp_insert_user()</code> function. You can mix and match the preceding arguments, but make sure you use the required arguments (
+<code>user_login</code>, <code>user_pass</code>, and <code>user_email</code>). The user you create next has the “editor” role and username of <code>johndoe</code>. You also make sure the user was created by displaying a WordPress‐generated error message in the instance that something went wrong.</p>
+<p>Create a new plugin file named <code>plugin‐insert‐user.php</code> and use the following code to create a plugin that will insert a new user into the database using the <code>wp_insert_user()</code> function:</p>
+<pre id="c09-code-0008"><code>&lt;?php</code>
+<code>/**</code>
+<code> * Plugin Name: Insert User</code>
+<code> * Plugin URI:  http://example.com/</code>
+<code> * Description: A plugin that inserts a "John Doe" user.</code>
+<code> * Author:      WROX</code>
+<code> * Author URI:  http://wrox.com</code>
+<code> */</code>
+<code> </code>
+<code>add_action( 'init', 'pdev_insert_user' );</code>
+<code> </code>
+<code>function pdev_insert_user() {</code>
+<code> </code>
+<code>       // Bail if the user already exists.</code>
+<code>       if ( username_exists( 'johndoe' ) ) {</code>
+<code>             return;</code>
+<code>       }</code>
+<code> </code>
+<code>       // Create new user.</code>
+<code>       $user = wp_insert_user( [</code>
+<code>             'user_login'   =&gt; 'johndoe',</code>
+<code>             'user_email'   =&gt; 'john@example.com',</code>
+<code>             'user_pass'    =&gt; '123456789',</code>
+<code>             'user_url'     =&gt; 'https://wordpress.org',</code>
+<code>             'display_name' =&gt; 'John Doe',</code>
+<code>             'role'         =&gt; 'editor',</code>
+<code>             'description'  =&gt; 'Loves to publish books on WordPress!'</code>
+<code>       ] );</code>
+<code> </code>
+<code>       // If the user wasn't created, display error message.</code>
+<code>       if ( is_wp_error( $user ) ) {</code>
+<code>             echo $user-&gt;get_error_message();</code>
+<code>       }</code>
+<code>}</code></pre>
+<p id="c09-para-0034">You may have taken notice of the use of the <code>username_exists()</code> function in the preceding code. It is a quick conditional function for checking whether a specific username is already registered with WordPress. It accepts a single parameter <code>$username</code>, which should be the username you are checking against. The code checks whether the username exists before attempting to insert a new user with that name.</p>
+<p>The <code>wp_insert_user()</code> function is not the only method of creating a new user with WordPress. The <code>wp_create_user()</code> function is a quick wrapper function for <code>wp_insert_user()</code> that is available when you merely need to register a user with a new username, password, and email address.</p>
+<pre id="c09-code-0009"><code>&lt;?php</code>
+<code>wp_create_user( string $username, string $password, string $email = '' );</code></pre>
+<p><span epub:type="pagebreak" id="Page_211" role="doc-pagebreak" title="211"/>Create a new plugin file named <code>plugin‐create‐user.php</code>. Now create a new user as you did in the previous plugin with a <code>janedoe</code> username. It should look similar to the following:</p>
+<pre id="c09-code-0010"><code>&lt;?php</code>
+<code>/**</code>
+<code> * Plugin Name: Create User</code>
+<code> * Plugin URI:  http://example.com/</code>
+<code> * Description: A plugin that inserts a "Jane Doe" user.</code>
+<code> * Author:      WROX</code>
+<code> * Author URI:  http://wrox.com</code>
+<code> */</code>
+<code> </code>
+<code>add_action( 'init', 'pdev_create_user' );</code>
+<code> </code>
+<code>function pdev_create_user() {</code>
+<code> </code>
+<code>       // Bail if the user already exists.</code>
+<code>       if ( username_exists( 'janedoe' ) ) {</code>
+<code>             return;</code>
+<code>       }</code>
+<code> </code>
+<code>       // Create new user.</code>
+<code>       $user = wp_create_user(</code>
+<code>             'janedoe',</code>
+<code>             '123456789',</code>
+<code>             'jane@example.com'</code>
+<code>       );</code>
+<code> </code>
+<code>       // If the user wasn't created, display error message.</code>
+<code>       if ( is_wp_error( $user ) ) {</code>
+<code>             echo $user-&gt;get_error_message();</code>
+<code>       }</code>
+<code>}</code></pre>
+<p id="c09-para-0037">As you can see, <code>wp_insert_user()</code> and <code>wp_create_user()</code> are almost the same. Use the first when you need to insert more user data. Use the latter when you need to simply input the required username, password, and email parameters necessary for creating a unique user.</p>
+</section>
+<section><span id="c09-sec-0013"/>
+<h4 id="head-4-73">Updating an Existing User</h4>
+<p id="c09-para-0038">As discussed in the previous section on creating new users, the <code>wp_insert_user()</code> function can be used to update an existing user by passing in a user ID via the <code>ID</code> argument. However, <code>wp_update_user()</code> should almost always be used instead.</p>
+<p>When updating a user's password with <code>wp_update_user()</code>, the user's cookies will automatically be reset. The function will also send an email to the user to let them know their password has changed.</p>
+<pre id="c09-code-0011"><code>&lt;?php</code>
+<code>wp_update_user( array|object|WP_User $userdata );</code></pre>
+<p id="c09-para-0040">This function takes in a single parameter called <code>$userdata</code>, which accepts all the same arguments covered in the section on <code>wp_insert_user()</code>. However, the <code>ID</code> argument is required for updating the user. If the <code>ID</code> argument isn't present, a new user will be created.</p>
+<p><span epub:type="pagebreak" id="Page_212" role="doc-pagebreak" title="212"/>In the next example, you use the <code>wp_update_user()</code> function to force the currently logged‐in user to use the “fresh” color scheme in the admin. This can be useful for making sure all users have a consistent experience in the admin. Create a new file called <code>plugin‐force‐admin‐color.php</code> and use the following code to update the user:</p>
+<pre id="c09-code-0012"><code>&lt;?php</code>
+<code>/**</code>
+<code> * Plugin Name: Force Admin Color</code>
+<code> * Plugin URI:  http://example.com/</code>
+<code> * Description: Makes sure the current user has the "fresh" color scheme.</code>
+<code> * Author:      WROX</code>
+<code> * Author URI:  http://wrox.com</code>
+<code> */</code>
+<code> </code>
+<code>add_action( 'admin_init', 'pdev_force_admin_color' );</code>
+<code> </code>
+<code>function pdev_force_admin_color() {</code>
+<code> </code>
+<code>       // Get the current WP_User object.</code>
+<code>       $user = wp_get_current_user();</code>
+<code> </code>
+<code>       // Bail if no current user object.</code>
+<code>       if ( empty( $user ) ) {</code>
+<code>             return;</code>
+<code>       }</code>
+<code> </code>
+<code>       // Get user's admin color scheme.</code>
+<code>       $color = get_user_meta( $user-&gt;ID, 'admin_color', true );</code>
+<code> </code>
+<code>       // If not the fresh color scheme, update it.</code>
+<code>       if ( 'fresh' !== $color ) {</code>
+<code> </code>
+<code>             wp_update_user( [</code>
+<code>                    'ID'          =&gt; $user-&gt;ID,</code>
+<code>                    'admin_color' =&gt; 'fresh'</code>
+<code>             ] );</code>
+<code>       }</code>
+<code>}</code></pre>
+</section>
+<section><span id="c09-sec-0014"/>
+<h4 id="head-4-74">Deleting an Existing User</h4>
+<p>If you need to delete an existing user via code, WordPress provides the <code>wp_delete_user()</code> function. The function is used for deleting individual users and reassigning their posts to an alternative user. This is a destructive action that cannot be undone without restoring from a database backup.</p>
+<pre id="c09-code-0013"><code>&lt;?php</code>
+<code>wp_delete_user( int $id, int $reassign = null );</code></pre>
+<p>The function returns <code>true</code> when the operation has completed. It accepts two parameters.</p>
+<ul class="check" id="c09-list-0004">
+<li id="c09-li-0022">
+<code>$id</code>: The ID of the user to delete.</li>
+<li id="c09-li-0023">
+<code>$reassign</code>: The ID of the user to set as the author of posts in which the user you're deleting has published. If this parameter is not set, the posts and links will be deleted from the database.</li>
+</ul>
+<p><span epub:type="pagebreak" id="Page_213" role="doc-pagebreak" title="213"/>In this next example, you delete a user with the ID of <code>100</code> and reassign the user's posts and links to a user with the ID of <code>1</code>.</p>
+<pre id="c09-code-0014"><code>&lt;?php</code>
+<code>// Delete user 100 and assign posts to user 1.</code>
+<code>wp_delete_user( 100, 1 );</code></pre>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c09-para-0046"><b>WARNING</b> <i>The</i> <code>wp_delete_user()</code> <i>function is available only in the WordPress admin. It is not loaded on the front end of the site. If you attempt to use it on the front end, the system with throw a fatal error.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+</section>
+</section>
+<section><span id="c09-sec-0016"/>
+<h3 id="head-3-159">User Data</h3>
+<p id="c09-para-0047">User data in WordPress is saved in two different tables in the database: <code>$wpdb‐&gt;users</code> and <code>$wpdb‐&gt;usermeta</code>. The <code>users</code> table primarily saves necessary information about the user. The <code>usermeta</code> table is for storing additional metadata about users. You sometimes need to load, create, update, and delete this data within your plugins.</p>
+<p>When working with user data from the <code>users</code> table, you work with a few different values set for every user on the site.</p>
+<ul class="check" id="c09-list-0005">
+<li id="c09-li-0024">
+<code>ID</code>: The ID of the registered user.</li>
+<li id="c09-li-0025">
+<code>user_login</code>: The login name (username).</li>
+<li id="c09-li-0026">
+<code>user_pass</code>: The user's password. Note that you should never display this publicly.</li>
+<li id="c09-li-0027">
+<code>user_nicename</code>: A “pretty” version of the user login that works in URLs.</li>
+<li id="c09-li-0028">
+<code>user_url</code>: The website address of the user.</li>
+<li id="c09-li-0029">
+<code>user_email</code>: The email address of the user. You should never display this publicly without the user's permission.</li>
+<li id="c09-li-0030">
+<code>user_registered:</code> The date the user registered for the site.</li>
+<li id="c09-li-0031">
+<code>display_name:</code> The name the user would like displayed.</li>
+</ul>
+<section><span id="c09-sec-0017"/>
+<h4 id="head-4-75">Getting a User Object and Data</h4>
+<p>When accessing any user in a WordPress installation, nearly every function will utilize or return a <code>WP_User</code> object. This provides access to user data and other information about the user.</p>
+<pre id="c09-code-0015"><code>&lt;?php</code>
+<code>WP_User::__construct( </code>
+<code>       int|string|stdClass|WP_User $id, </code>
+<code>       string $name = '', </code>
+<code>       int $site_id = ''</code>
+<code>);</code></pre>
+<p><span epub:type="pagebreak" id="Page_214" role="doc-pagebreak" title="214"/>The constructor method of the class accepts three parameters.</p>
+<ul class="check" id="c09-list-0006">
+<li id="c09-li-0032">
+<code>$id</code>: The parameter can be a user ID, a <code>WP_User</code> object, or a user object directly from the database. Most often, you will pass in a user ID.</li>
+<li id="c09-li-0033">
+<code>$name</code>: An optional username value for the user.</li>
+<li id="c09-li-0034">
+<code>$site_id</code>: The site ID to pull the user from on multisite installations. It defaults to the current site.</li>
+</ul>
+<p>Suppose you wanted to get the user object for the user with the ID of <code>1</code>. You would use the following code:</p>
+<pre id="c09-code-0016"><code>&lt;?php</code>
+<code>$user = new WP_User( 1 );</code></pre>
+<p>The data available via the <code>$user</code> variable would look similar to the following:</p>
+<pre id="c09-code-0017"><code>object(WP_User) {</code>
+<code>       'data' =&gt; object(stdClass) {</code>
+<code>             'ID'                  =&gt; 1,</code>
+<code>             'user_login'          =&gt; 'example',</code>
+<code>             'user_pass'           =&gt; '123456789', // hashed</code>
+<code>             'user_nicename'       =&gt; 'admin',</code>
+<code>             'user_email'          =&gt; 'example@example.com',</code>
+<code>             'user_url'            =&gt; 'example.com',</code>
+<code>             'user_registered'     =&gt; '2020-01-01 00:00:00',</code>
+<code>             'user_activation_key' =&gt; '',</code>
+<code>             'user_status'         =&gt; '0',</code>
+<code>             'display_name'        =&gt; 'John Doe'</code>
+<code>       },</code>
+<code>       'ID'      =&gt; 1,</code>
+<code>       'caps'    =&gt; [],</code>
+<code>       'cap_key' =&gt; 'wp_capabilities',</code>
+<code>       'roles'   =&gt; [],</code>
+<code>       'allcaps' =&gt; [],</code>
+<code>       'filter'  =&gt; NULL</code>
+<code>}</code></pre>
+<p id="c09-para-0053">As you can see, you can easily access most of the information you need about a user account with a simple call to the <code>WP_User</code> class.</p>
+<p>If you prefer to work with a function instead of the <code>WP_User</code> class to quickly get user data, WordPress provides a <code>get_userdata()</code> function. However, it accepts only a single parameter of <code>$id</code>, which must be a user ID. Let's take a look at a quick example of displaying a user's email address when using that function:</p>
+<pre id="c09-code-0018"><code>&lt;?php</code>
+<code>$user = get_userdata( 100 );</code>
+<code> </code>
+<code>echo $user-&gt;user_email;</code>
+<code> </code>
+<code>// Prints:</code>
+<code>// example@example.com</code></pre>
+</section> <span epub:type="pagebreak" id="Page_215" role="doc-pagebreak" title="215"/>
+<section><span id="c09-sec-0018"/>
+<h4 id="head-4-76">Getting the Current User Object</h4>
+<p id="c09-para-0055">At times, you will need to get the current user object, which will provide some user data or give you an ID to fetch metadata later. The <code>wp_get_current_user()</code> function gets the user data from the <code>users</code> table for the currently logged‐in user and returns it in the form of a <code>WP_User</code> object. It can be useful for displaying information when a specific user is logged into the site. The function accepts no parameters.</p>
+<p>In the next example, you display a welcome message based on the user's display name in the WordPress admin footer.</p>
+<pre id="c09-code-0019"><code>&lt;?php</code>
+<code>add_action( 'in_admin_footer', 'pdev_user_welcome_message' );</code>
+<code> </code>
+<code>function pdev_user_welcome_message() {</code>
+<code> </code>
+<code>       // Get current user object.</code>
+<code>       $user = wp_get_current_user();</code>
+<code> </code>
+<code>       // Display welcome message to user.</code>
+<code>       printf(</code>
+<code>             'Hello, %s.&lt;br/&gt;',</code>
+<code>             esc_html( $user-&gt;display_name )</code>
+<code>       );</code>
+<code>}</code></pre>
+</section>
+<section><span id="c09-sec-0019"/>
+<h4 id="head-4-77">Getting User Post Counts</h4>
+<p>If you need to count the number of posts a single user has written, use the <code>count_user_posts()</code> function.</p>
+<pre id="c09-code-0020"><code>&lt;?php</code>
+<code>count_user_posts( </code>
+<code>       int $userid, </code>
+<code>       array|string $post_type = 'post',</code>
+<code>       bool $public_only = false</code>
+<code>);</code></pre>
+<p>The function accepts three parameters.</p>
+<ul class="check" id="c09-list-0007">
+<li id="c09-li-0035">
+<code>$userid</code>: The ID of the user to count posts for.</li>
+<li id="c09-li-0036">
+<code>$post_type</code>: A specific post type to count. You can pass in a string with a single post type name or an array of multiple post type names.</li>
+<li id="c09-li-0037">
+<code>$public_only</code>: Whether to count only the posts that are public.</li>
+</ul>
+<p>Suppose you have a rating system for users depending on the number of blog posts each user has written. You want to give a user a “silver” rating for writing 25 posts or a “gold” rating for writing 50 posts. To do this, you need to execute the code only when a post is saved. Create a new plugin file called <code>plugin‐user‐ratings.php</code> and use the following code to update the logged‐in user's rating. Remember, the user's rating is saved as user meta only when a post is saved. (See the “User Metadata” section for details on how to handle metadata.)<span epub:type="pagebreak" id="Page_216" role="doc-pagebreak" title="216"/></p>
+<pre id="c09-code-0021"><code>&lt;?php</code>
+<code>/**</code>
+<code> * Plugin Name: User Ratings</code>
+<code> * Plugin URI:  http://example.com/</code>
+<code> * Description: Updates user rating based on number of posts.</code>
+<code> * Author:      WROX</code>
+<code> * Author URI:  http://wrox.com</code>
+<code> */</code>
+<code> </code>
+<code>add_action( 'save_post', 'pdev_add_user_rating' );</code>
+<code> </code>
+<code>pdev_add_user_rating() {</code>
+<code> </code>
+<code>       // Get the current user object.</code>
+<code>       $user = wp_get_current_user();</code>
+<code> </code>
+<code>       // Get the user's current rating.</code>
+<code>       $rating = get_user_meta( $user-&gt;ID, 'user_rating', true );</code>
+<code> </code>
+<code>       // Bail if user already has gold rating.</code>
+<code>       if ( 'gold' === $rating ) {</code>
+<code>             return;</code>
+<code>       }</code>
+<code> </code>
+<code>       // Get the user's post count.</code>
+<code>       $posts = count_user_posts( $user-&gt;ID );</code>
+<code> </code>
+<code>       // Update the user's rating based on number of posts.</code>
+<code>       if ( 50 &lt;= $posts ) {</code>
+<code>             update_user_meta( $user-&gt;ID, 'user_rating', 'gold' );</code>
+<code>       } elseif ( 25 &lt;= $posts ) {</code>
+<code>             update_user_meta( $user-&gt;ID, 'user_rating', 'silver' );</code>
+<code>       }</code>
+<code>}</code></pre>
+<p>Any time you need post counts from multiple users, you should use the <code>count_many_users_posts()</code> function instead of using the <code>count_user_posts()</code> function multiple times so that you're not querying the database multiple times.</p>
+<pre id="c09-code-0022"><code>&lt;?php</code>
+<code>count_many_users_posts( </code>
+<code>       array $users, </code>
+<code>       string|array $post_type = 'post', </code>
+<code>       bool $public_only = false </code>
+<code>);</code></pre>
+<p id="c09-para-0061">The two functions’ parameters are nearly identical. The big difference is that <code>count_many_users_posts()</code> expects an array of user IDs for the <code>$users</code> parameter as opposed to a single ID.</p>
+<p>Suppose you had three specific user IDs (
+<code>100</code>, <code>200</code>, and <code>300</code>) that you wanted to list post counts for. Use the following code to create an HTML list of those post counts by user ID:</p>
+<pre id="c09-code-0023"><code>&lt;?php</code>
+<code>$users_counts = count_many_users_posts( [</code>
+<code>       100,</code>
+<code>       200,<span epub:type="pagebreak" id="Page_217" role="doc-pagebreak" title="217"/></code>
+<code>       300</code>
+<code>] );</code>
+<code> </code>
+<code>echo '&lt;ul&gt;';</code>
+<code> </code>
+<code>foreach ( $users_counts as $user =&gt; $count ) {</code>
+<code>       printf(</code>
+<code>             '&lt;li&gt;The user with an ID of %1$s has written %2$s posts.&lt;/li&gt;',</code>
+<code>             absint( $user ),</code>
+<code>             absint( $count )</code>
+<code>       );</code>
+<code>}</code>
+<code> </code>
+<code>echo '&lt;/ul&gt;';</code></pre>
+</section>
+</section>
+<section><span id="c09-sec-0020"/>
+<h3 id="head-3-160">User Metadata</h3>
+<p id="c09-para-0063">User metadata is data that is stored in the <code>$wpdb‐&gt;usermeta</code> table in the database. It differs from user data stored in the <code>$wpdb‐&gt;users</code> table because it is not required by WordPress. It is additional data that plugins can add to expand to their user experience.</p>
+<p id="c09-para-0064">This type of data can be anything you need to develop user‐based settings for your plugin. This data is saved in key/value pairs; however, a single key may have multiple values. Meta keys are a way to represent the information provided by the meta values. Think of them as a human‐readable ID that represents the information you're working with. Meta values are the pieces of data you retrieved based on the given meta key.</p>
+<p>Metadata can literally be any type of data you want to save for the user. Some examples include the following:</p>
+<ul class="check" id="c09-list-0008">
+<li id="c09-li-0038">Twitter or Facebook account</li>
+<li id="c09-li-0039">Location (country, city, state)</li>
+<li id="c09-li-0040">Phone number</li>
+<li id="c09-li-0041">Favorite book</li>
+<li id="c09-li-0042">Personal settings for the site</li>
+<li id="c09-li-0043">Private membership information</li>
+</ul>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c09-para-0066"><b>WARNING</b> <i>Keep in mind that when saving sensitive information about users, you should make sure this data is not publicly displayed by your plugin.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<p id="c09-para-0067">This section focuses on adding, displaying, updating, and deleting specific data for a user. This can enable you to see how the user meta functions work when manipulating data.</p>
+<p id="c09-para-0068">You work with a user ID of <code>100</code> and a meta key of <code>favorite_books</code>. This meta key saves the values of the user's three favorite books.</p> <span epub:type="pagebreak" id="Page_218" role="doc-pagebreak" title="218"/>
+<section><span id="c09-sec-0022"/>
+<h4 id="head-4-78">Adding User Metadata</h4>
+<p>To add new user metadata, use the <code>add_user_meta()</code> function. This function returns <code>true</code> when the data is successfully entered into the database and <code>false</code> when it fails.</p>
+<pre id="c09-code-0024"><code>&lt;?php</code>
+<code>add_user_meta( </code>
+<code>      int $user_id,</code>
+<code>      string $meta_key,</code>
+<code>      mixed $meta_value,</code>
+<code>      bool $unique = false</code>
+<code>);</code></pre>
+<p>The function accepts four parameters.</p>
+<ul class="check" id="c09-list-0009">
+<li id="c09-li-0044">
+<code>$user_id</code>: The ID of the user to add metadata to.</li>
+<li id="c09-li-0045">
+<code>$meta_key:</code> The metadata key in the database.</li>
+<li id="c09-li-0046">
+<code>$meta_value:</code> A single value to add to pair with <code>$meta_key</code>.</li>
+<li id="c09-li-0047">
+<code>$unique</code>: Whether the function should force a single row (
+<code>true</code>) in the <code>usermeta</code> table or create multiple rows for multiple meta values (
+<code>false</code>). This defaults to <code>false</code>.</li>
+</ul>
+<p>Now, try adding three favorite books to a user with the ID of 100. These book titles are <i>WordPress Dev Champ</i>, <i>WordPress Lazy Coder</i>, and <i>WordPress the Hard Way</i>.</p>
+<pre id="c09-code-0025"><code>&lt;?php</code>
+<code>add_user_meta( 100, 'favorite_books', 'WordPress Dev Champ',    false );</code>
+<code>add_user_meta( 100, 'favorite_books', 'WordPress Lazy Coder',   false );</code>
+<code>add_user_meta( 100, 'favorite_books', 'WordPress the Hard Way', false );</code></pre>
+<p id="c09-para-0072">The <code>$unique</code> parameter is set to <code>false</code>. This must be <code>false</code> to set multiple values for the same meta key, <code>favorite_books</code>. You would set this to <code>true</code> if the meta value should be a single value.</p>
+</section>
+<section><span id="c09-sec-0023"/>
+<h4 id="head-4-79">Retrieving User Metadata</h4>
+<p>Now that you've learned how to add custom user metadata, you might want to display it. The <code>get_user_meta()</code> function pulls the meta from the database based on the user ID and meta key.</p>
+<pre id="c09-code-0026"><code>&lt;?php</code>
+<code>get_user_meta( int $user_id, string $key = '', bool $single = false );</code></pre>
+<p>The function accepts three parameters.</p>
+<ul class="check" id="c09-list-0010">
+<li id="c09-li-0048">
+<code>$user_id</code>: The ID of the user to get the metadata for.</li>
+<li id="c09-li-0049">
+<code>$meta_key</code>: The metadata key to get the metadata value(s) for.</li>
+<li id="c09-li-0050">
+<code>$single</code>: Whether to return an array of meta values (
+<code>false</code>) or a single value (
+<code>true</code>). This defaults to <code>false</code>.</li>
+</ul>
+<p>To display an HTML list of the user's favorite books that you added with the <code>add_user_meta()</code> function, use the following code:</p>
+<pre id="c09-code-0027"><code>&lt;?php</code>
+<code>$books = get_user_meta( 100, 'favorite_books', false );</code>
+<code> <span epub:type="pagebreak" id="Page_219" role="doc-pagebreak" title="219"/></code>
+<code>if ( $books ) {</code>
+<code>       echo '&lt;ul&gt;';</code>
+<code> </code>
+<code>       foreach ( $books as $book ) {</code>
+<code>             printf(</code>
+<code>                    '&lt;li&gt;%s&lt;/li&gt;',</code>
+<code>                    esc_html( $book )</code>
+<code>             );</code>
+<code>       }</code>
+<code> </code>
+<code>       echo '&lt;/ul&gt;';</code>
+<code>}</code></pre>
+<p>If the <code>favorite_books</code> meta key had only a single meta value instead of multiple values, you wouldn't need to loop through an array. You could simply print the return value to the screen.</p>
+<pre id="c09-code-0028"><code>&lt;?php</code>
+<code>$book = get_user_meta( 100, 'favorite_books', true );</code>
+<code> </code>
+<code>echo esc_html( $book );</code></pre>
+<p id="c09-para-0077">Note that the preceding code set the third parameter, <code>$single</code>, to <code>true</code> for the <code>get_user_meta()</code> function. This means that it is looking for a single meta value.</p>
+</section>
+<section><span id="c09-sec-0024"/>
+<h4 id="head-4-80">Updating User Metadata</h4>
+<p>The <code>update_user_meta()</code> function enables you to update a single meta value whether there is a single or multiple values. Alternatively, you can completely overwrite all of the meta values if the meta key has multiple values. This function can also be used to insert new metadata if it doesn't already exist for the user, essentially performing the duty of the <code>add_user_meta()</code> function covered earlier.</p>
+<pre id="c09-code-0029"><code>&lt;?php</code>
+<code>update_user_meta(</code>
+<code>      int $user_id,</code>
+<code>      string $meta_key,</code>
+<code>      mixed $meta_value,</code>
+<code>      mixed $prev_value = ''</code>
+<code>);</code></pre>
+<p>The function accepts four parameters.</p>
+<ul class="check" id="c09-list-0011">
+<li id="c09-li-0051">
+<code>$user_id</code>: The ID of the user you want to get metadata for.</li>
+<li id="c09-li-0052">
+<code>$meta_key</code>: The metadata key to update meta values for.</li>
+<li id="c09-li-0053">
+<code>$meta_value</code>: The new value for the meta key.</li>
+<li id="c09-li-0054">
+<code>$prev_value</code>: The previous meta value to overwrite. If this is not set, all meta values will be overwritten with the single, new <code>$meta_value</code> parameter.</li>
+</ul>
+<p>Suppose you want to change one of the user's favorite books, <i>WordPress Dev Champ</i>, to a new book, <i>WordPress Design Champ</i>. You need to set the <code>$meta_value</code> parameter to the new book name and the <code>$prev_value</code> parameter to the old book name.</p>
+<pre id="c09-code-0030"><code>&lt;?php</code>
+<code>update_user_meta(<span epub:type="pagebreak" id="Page_220" role="doc-pagebreak" title="220"/></code>
+<code>       100,</code>
+<code>       'favorite_books',</code>
+<code>       'WordPress Design Champ',</code>
+<code>       'WordPress Dev Champ'</code>
+<code>);</code></pre>
+<p>If you want to overwrite all the favorite books with a single book, you can pass the <code>$meta_value</code> parameter and leave the <code>$prev_value</code> parameter empty.</p>
+<pre id="c09-code-0031"><code>&lt;?php</code>
+<code>update_user_meta( 100, 'favorite_books', 'WordPress Design Champ' );</code></pre>
+</section>
+<section><span id="c09-sec-0025"/>
+<h4 id="head-4-81">Deleting User Metadata</h4>
+<p>The <code>delete_user_meta()</code> function enables you to delete all the meta values and meta key or a single meta value for a given meta key.</p>
+<pre id="c09-code-0032"><code>&lt;?php</code>
+<code>delete_user_meta( int $user_id, string $meta_key, mixed $meta_value = '' );</code></pre>
+<p>The function accepts three parameters.</p>
+<ul class="check" id="c09-list-0012">
+<li id="c09-li-0055">
+<code>$user_id</code>: The ID of the user to delete metadata for.</li>
+<li id="c09-li-0056">
+<code>$meta_key</code>: The meta key to delete or the meta key to delete meta value(s) for.</li>
+<li id="c09-li-0057">
+<code>$meta_value</code>: The specific meta value to delete. If this is left empty, all meta values and the meta key will be deleted for the user.</li>
+</ul>
+<p>If you want to delete a single book from the user's list of favorite books, you need to set the <code>$meta_value</code> parameter to the name of the book. With the following code, you delete the <i>WordPress Lazy Coder</i> book from the user's favorite books.</p>
+<pre id="c09-code-0033"><code>&lt;?php</code>
+<code>delete_user_meta( 100, 'favorite_books', 'WordPress Lazy Coder' );</code></pre>
+<p>If you want to delete all the user's favorite books, leave the <code>$meta_value</code> parameter empty.</p>
+<pre id="c09-code-0034"><code>&lt;?php</code>
+<code>delete_user_meta( 100, 'favorite_books' );</code></pre>
+</section>
+<section><span id="c09-sec-0026"/>
+<h4 id="head-4-82">Creating a Plugin with User Metadata</h4>
+<p id="c09-para-0086">Now that you have learned how to manipulate user metadata, it's time to use that knowledge for a practical use case. In many cases, custom user metadata your plugin might use needs to be set by the user from the user's profile page.</p>
+<p id="c09-para-0087">What you will do is build a plugin that adds an extra section to the user edit screen in the WordPress admin. This form will have a select box of the site's blog posts. The users can select one of these posts as their favorite.</p>
+<p>The first step would be to create a new file in your plugin directory with a filename <code>plugin‐user‐favorite‐post.php</code>. You would then need to create the plugin header and add the form to the user edit page.<span epub:type="pagebreak" id="Page_221" role="doc-pagebreak" title="221"/></p>
+<pre id="c09-code-0035"><code>&lt;?php</code>
+<code>/**</code>
+<code> * Plugin Name: User Favorite Post</code>
+<code> * Plugin URI:  http://example.com/</code>
+<code> * Description: Allows users to select their favorite post.</code>
+<code> * Author:      WROX</code>
+<code> * Author URI:  http://wrox.com</code>
+<code> */</code>
+<code> </code>
+<code>// Add the form to the user/profile admin screen.</code>
+<code>add_action( 'show_user_profile', 'pdev_user_favorite_post_form' );</code>
+<code>add_action( 'edit_user_profile', 'pdev_user_favorite_post_form' );</code>
+<code> </code>
+<code>function pdev_user_favorite_post_form( $user ) {</code>
+<code> </code>
+<code>    $favorite = get_user_meta( $user-&gt;ID, 'favorite_post', true );</code>
+<code> </code>
+<code>    $posts = get_posts( [ 'numberposts' =&gt; -1 ] ); ?&gt;</code>
+<code> </code>
+<code>    &lt;h2&gt;Favorites&lt;/h2&gt;</code>
+<code> </code>
+<code>    &lt;table class="form-table"&gt;</code>
+<code>          &lt;tr&gt;</code>
+<code>              &lt;th&gt;&lt;label for="pdev-favorite-post"&gt;Favorite Post&lt;/label&gt;&lt;/th&gt;</code>
+<code> </code>
+<code>              &lt;td&gt;</code>
+<code>                  &lt;select name="pdev_favorite_post" id="pdev-favorite-post"&gt;</code>
+<code>                      &lt;option value="" &lt;?php selected( '', $favorite ); ?&gt;&gt;</code>
+<code>                  &lt;/option&gt;</code>
+<code> </code>
+<code>                      &lt;?php foreach ( $posts as $post ) {</code>
+<code>                          printf(</code>
+<code>                              '&lt;option value="%s" %s&gt;%s&lt;/option&gt;',</code>
+<code>                              esc_attr( $post-&gt;ID ),</code>
+<code>                              selected( $post-&gt;ID, $favorite, false ),</code>
+<code>                              esc_html( $post-&gt;post_title )</code>
+<code>                          );</code>
+<code>                      } ?&gt;</code>
+<code>                  &lt;/select&gt;</code>
+<code>                  &lt;br/&gt;</code>
+<code>                  &lt;span class="description"&gt;Select your favorite post.&lt;/span&gt;</code>
+<code>              &lt;/td&gt;</code>
+<code>          &lt;/tr&gt;</code>
+<code>    &lt;/table&gt;&lt;/line&gt;&lt;line xml:id="c09-line-0366"&gt;&lt;![CDATA[&lt;?php }</code></pre>
+<p id="c09-para-0089">This gives you an extra section on the user edit page, as shown in <a href="#c09-fig-0001" id="R_c09-fig-0001">Figure 9‐1</a>.</p>
+<figure> <img alt="Screenshot of a new form on the user edit page displaying an extra session to select a favorite post from the displayed list." class="center" src="images/c09f001.png"/>
+<figcaption>
+<p><span class="figureLabel"><a href="#R_c09-fig-0001" id="c09-fig-0001" role="doc-backlink"><b>FIGURE 9‐1</b></a>:</span> New form on the user edit page</p>
+</figcaption>
+</figure>
+<p><span epub:type="pagebreak" id="Page_222" role="doc-pagebreak" title="222"/>The form is only displayed at this point. The next step is to save the user's favorite post as metadata. Append the following code to your <code>plugin‐user‐favorite‐post.php</code> file:</p>
+<pre id="c09-code-0036"><code>// Add the update function to the user update hooks.</code>
+<code>add_action( 'personal_options_update',  'pdev_user_favorite_post_update' );</code>
+<code>add_action( 'edit_user_profile_update', 'pdev_user_favorite_post_update' );</code>
+<code> </code>
+<code>function pdev_user_favorite_post_update( $user_id ) {</code>
+<code> </code>
+<code>       // Bail if the current user cannot edit the user.</code>
+<code>       if ( ! current_user_can( 'edit_user', $user_id ) ) {</code>
+<code>              return;</code>
+<code>       }</code>
+<code> </code>
+<code>       // Get the existing favorite post if the value exists.</code>
+<code>       // If no existing favorite post, value is empty string.</code>
+<code>       $old_favorite = get_user_meta( $user_id, 'favorite_post', true );</code>
+<code> </code>
+<code>       // Sanitize to only accept numbers since it's a post ID.</code>
+<code>       $new_favorite = preg_replace(</code>
+<code>             "/[^0-9]/", </code>
+<code>             '', </code>
+<code>             $_POST['pdev_favorite_post']</code>
+<code>       );</code>
+<code> </code>
+<code>       // Update the user's favorite post.</code>
+<code>       update_user_meta( $user_id, 'favorite_post', $favorite_post );</code>
+<code> </code>
+<code>       // If there's an old value but not a new value, delete old value.</code>
+<code>       if ( ! $new_favorite &amp;&amp; $old_favorite ) {</code>
+<code>              delete_user_meta( $user_id, 'favorite_post' );</code>
+<code> <span epub:type="pagebreak" id="Page_223" role="doc-pagebreak" title="223"/></code>
+<code>       // If the new value doesn't match the new value, add/update.</code>
+<code>       } elseif ( $new_value !== $old_value ) {</code>
+<code>              update_user_meta( $user_id, 'favorite_post', $new_value );</code>
+<code>       }</code>
+<code>}</code></pre>
+</section>
+</section>
+</section>
+<section><span id="c09-sec-0027"/>
+<h2 id="head-2-78">ROLES AND CAPABILITIES</h2>
+<p id="c09-para-0091">WordPress provides a flexible user system, as you have seen in the previous half of this chapter. However, this system represents data about individual users. Alone, it does not define what a user can do within the site. For that, WordPress has a roles and capabilities system, which enables complete control over what permissions users have.</p>
+<p id="c09-para-0092"><i>Roles</i> are what define users in the WordPress system. More precisely, they grant users a set of permissions called <i>capabilities</i>.</p>
+<section><span id="c09-sec-0028"/>
+<h3 id="head-3-161">What Are Roles and Capabilities?</h3>
+<p id="c09-para-0093">Roles are what users are grouped by in WordPress. They're a way of giving a label to various sets of users. One of the most important things to note is that roles are not hierarchical. For example, an administrator is not necessarily “higher” than an editor. Roles are merely defined by what the role can and can't do. It's a permissions system.</p>
+<p id="c09-para-0094">Capabilities are that permissions system. Roles are assigned capabilities that define what that role can or can't do. These can be set up with the WordPress defaults or be completely custom, depending on the site. As a plugin developer, you can't make assumptions about what certain roles have permission to do.</p>
+<p id="c09-para-0095">Imagine having to define what individual users could do on a site with thousands of users, each user having a custom set of permissions. It would be nearly impossible to maintain. Roles enable you to group users into distinguishable sets, each group with its own permissions.</p>
+<p>Understanding how users, roles, and capabilities work and their relationship to one another is an important aspect of plugin development.</p>
+<ul class="check" id="c09-list-0013">
+<li id="c09-li-0058"><b>Users</b> are registered accounts on a site. Each user's role determines what the user can do on a site.</li>
+<li id="c09-li-0059"><b>Roles</b> are sets of capabilities assigned to users. Multiple roles may be given to users, although this feature is not exposed in the WordPress interface by default.</li>
+<li id="c09-li-0060"><b>Capabilities</b> are the permissions for roles, which are extended to the users of that role.</li>
+</ul>
+<p>In general, most plugins will not need to know what roles users have. Most plugins work directly with capabilities because they are what define whether a user has permission to perform a task within the site.</p>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c09-para-0098"><b>WARNING</b> <i>A common mistake many plugin authors make is to check a user's role before executing code. There is rarely a good reason to do this. Your plugin should check for a capability because capabilities determine a user's permission to do something on the site.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+</section> <span epub:type="pagebreak" id="Page_224" role="doc-pagebreak" title="224"/>
+<section><span id="c09-sec-0030"/>
+<h3 id="head-3-162">Default Roles</h3>
+<p>WordPress ships with five default roles, which work well for most installs. Although roles are not hierarchical, the default roles do set up what appears to be a hierarchical system.</p>
+<ul class="check" id="c09-list-0014">
+<li id="c09-li-0061"><b>Administrator:</b> Has control over everything on the site</li>
+<li id="c09-li-0062"><b>Editor:</b> Has publishing permission and editing access over everyone's posts</li>
+<li id="c09-li-0063"><b>Author:</b> Has publishing access and can edit its own posts but doesn't have control over others’ content</li>
+<li id="c09-li-0064"><b>Contributor:</b> Can submit posts but not publish them</li>
+<li id="c09-li-0065"><b>Subscriber:</b> Enables access to edit its user profile and the WordPress dashboard</li>
+</ul>
+<p>This list is a general overview of the default roles. Even though these are the defaults, plugin users can install role management plugins that enable them to change what each role can do.</p>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c09-para-0101"><b>NOTE</b> <i>On multisite installations, there is a Super Admin role that has global control over the network and all sites within the network. Super Admins bypass the capabilities system that other roles follow.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+</section>
+<section><span id="c09-sec-0032"/>
+<h3 id="head-3-163">Custom Roles</h3>
+<p id="c09-para-0102">WordPress allows custom roles, which can be created by plugins. There is no user interface in WordPress for creating custom roles; however, several role management plugins exist that enable users to create new roles for their site.</p>
+<p id="c09-para-0103">Therefore, as a plugin developer, you can never know exactly what roles exist or might exist for a site unless you have direct access to the install, such as when doing client work. Keep this in mind when developing your plugins.</p>
+<p>You may be faced with the task of creating custom roles in your plugins as well. Imagine that you were creating a plugin that implemented a forum within a WordPress install. Because WordPress would not know how to manage a forum, you would have to define these custom roles within your plugin. Some example roles for a forum might include the following:</p>
+<ul class="check" id="c09-list-0015">
+<li id="c09-li-0066">Forum Administrator</li>
+<li id="c09-li-0067">Forum Moderator</li>
+<li id="c09-li-0068">Forum Member</li>
+<li id="c09-li-0069">Forum Banned</li>
+</ul>
+<p id="c09-para-0105">See the “Customizing Roles” section later in this chapter for more details on creating custom roles.</p>
+</section>
+</section> <span epub:type="pagebreak" id="Page_225" role="doc-pagebreak" title="225"/>
+<section><span id="c09-sec-0033"/>
+<h2 id="head-2-79">LIMITING ACCESS</h2>
+<p id="c09-para-0106">“Limiting access” is a way to describe the process of working with WordPress capabilities to see whether a user has permission to access something or perform a specific task within a WordPress install.</p>
+<p id="c09-para-0107">By default, most access in WordPress is restricted within the admin. The admin can expose potentially vital information about a site, so making sure only users with the correct permissions have access to particular parts of it is important. WordPress can handle this when it needs to. Security issues arise when your plugin doesn't take into account a user's capabilities.</p>
+<p>WordPress has two types of capabilities.</p>
+<ul class="check" id="c09-list-0016">
+<li id="c09-li-0070"><b>Primitive capabilities:</b> These capabilities are given to specific roles. Any capabilities for the role are extended to that role's users.</li>
+<li id="c09-li-0071"><b>Meta capabilities:</b> These capabilities are not assigned to a role. They are checked against a specific object in WordPress, such as a post, user, or taxonomy term. Meta caps are then “mapped” to one or more primitive caps.</li>
+</ul>
+<p id="c09-para-0109">A good way to differentiate between the two is to consider this example. User A has the <code>edit_posts</code> capability (given to his role). This capability enables the user to edit posts. However, this user should not be able to edit User B's posts based on that capability. That's where meta capabilities come into play. If User A is trying to edit User B's post, the <code>edit_post</code> meta capability is called, but it's not the actual capability checked for. The <code>map_meta_cap()</code> function in WordPress decides whether the user can edit the post by returning an array of primitive capabilities to check against based on the user and post.</p>
+<p id="c09-para-0110">When adding settings pages for your plugin, you check for a capability. However, WordPress handles the capability checks for you, so you do not need to worry about limiting access to those pages with custom code. See <a href="c03.xhtml">Chapter 3</a>, “Dashboard and Settings,” for more information on adding settings pages.</p>
+<p id="c09-para-0111">This chapter reviews only a few of the possible capabilities. For an in‐depth list of the available capabilities, reference the Roles and Capabilities support page: <code><a href="http://wordpress.org/support/article/roles-and-capabilities">wordpress.org/support/article/roles-and-capabilities</a></code>.</p>
+<section><span id="c09-sec-0034"/>
+<h3 id="head-3-164">Checking User Permissions</h3>
+<p id="c09-para-0112">When you check a user's permissions, you are checking whether a user's role has been granted a specific capability or whether the user is given a meta capability for a specific object. You may also check against a meta capability at times, which will be mapped to one or more of the existing primitive capabilities.</p>
+<p>When checking whether a user has permission to do something, you almost exclusively use the <code>current_user_can()</code> function. It checks whether the currently logged‐in user has permission to perform a given capability and returns <code>true</code> or <code>false</code>.</p>
+<pre id="c09-code-0037"><code>&lt;?php</code>
+<code>current_user_can( string $capability, mixed $args );</code></pre>
+<p><span epub:type="pagebreak" id="Page_226" role="doc-pagebreak" title="226"/>The function accepts two parameters.</p>
+<ul class="check" id="c09-list-0017">
+<li id="c09-li-0072">
+<code>$capability</code>: A single capability to check against a user's role.</li>
+<li id="c09-li-0073">
+<code>$args</code>: Extra arguments to pass into the check. This is usually an object ID (like a post ID) when checking whether the user has a meta capability.</li>
+</ul>
+<p id="c09-para-0115">You will most likely use this function when checking for permissions within your plugin. You can use it to check for default WordPress capabilities or custom capabilities implemented by your plugin.</p>
+<p>Suppose you wanted to check whether a user has permission to edit posts before creating a link to the posts page in the admin on the frontend of the site. You would use the <code>current_user_can()</code> function and the <code>edit_posts</code> capability.</p>
+<pre id="c09-code-0038"><code>&lt;?php</code>
+<code>if ( current_user_can( 'edit_posts' ) ) {</code>
+<code>       printf(</code>
+<code>             '&lt;a href="%s"&gt;Edit Posts&lt;/a&gt;',</code>
+<code>             esc_url( admin_url( 'edit.php' ) )</code>
+<code>       );</code>
+<code>}</code></pre>
+<p>If you want to check for a meta capability, you would use the same technique. However, you need to insert the second parameter of the object ID into the <code>current_user_can()</code> function. For example, suppose you want to save some post metadata for a post with the ID of <code>100</code> but need to check whether the user can edit the post before updating the metadata (see <a href="c08.xhtml">Chapter 8</a>, “Content”).</p>
+<pre id="c09-code-0039"><code>&lt;?php</code>
+<code>$post_id = 100;</code>
+<code> </code>
+<code>if ( current_user_can( 'edit_post', $post_id ) ) {</code>
+<code>       update_post_meta( $post_id, 'pdev_example', 'Example' );</code>
+<code>}</code></pre>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c09-para-0119"><b>WARNING</b> <i>Your plugin should not check for permissions based on role. Remember, roles are not hierarchical, so you cannot assume a role has permission to perform a specific task. Always check for permission by capability.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<p>The <code>current_user_can()</code> function is actually a wrapper for <code>user_can()</code>. The difference is that <code>user_can()</code> accepts a first parameter of a user ID or user object.</p>
+<pre id="c09-code-0040"><code>&lt;?php</code>
+<code>user_can( int|WP_User $user, string $capability, mixed $args );</code></pre>
+<p>You can check whether a specific post author has permission via the <code>author_can()</code> function.</p>
+<pre id="c09-code-0041"><code>&lt;?php</code>
+<code>author_can( int|WP_Post $post, string $capability, mixed $args );</code></pre>
+<p>WordPress also provides the <code>current_user_can_for_blog()</code> function to check against a capability for a specific site in multisite setups.</p>
+<pre id="c09-code-0042"><code>&lt;?php</code>
+<code>current_user_can_for_blog( int $blog_id, string $capability, mixed $args );</code></pre>
+<p><span epub:type="pagebreak" id="Page_227" role="doc-pagebreak" title="227"/>All of the available “user can” functions essentially do the same thing and check a specific user's permission. Take a quick look over how each of these permission‐checking functions works.</p>
+<pre id="c09-code-0043"><code>&lt;?php</code>
+<code>$user_id = 1234;</code>
+<code>$post_id = 9999;</code>
+<code>$blog_id = 5555;</code>
+<code> </code>
+<code>if ( user_can( $user_id, 'manage_options' ) ) {</code>
+<code>       // Execute code if the user can manage options.</code>
+<code>}</code>
+<code> </code>
+<code>if ( current_user_can( 'edit_pages' ) ) {</code>
+<code>       // Execute code if the current user can edit pages.</code>
+<code>}</code>
+<code> </code>
+<code>if ( author_can( $post_id, 'publish_posts' ) ) {</code>
+<code>       // Execute code if the post author can publish posts.</code>
+<code>}</code>
+<code> </code>
+<code>if ( current_user_can_for_blog( $blog_id, 'edit_theme_options' ) ) {</code>
+<code>       // Execute code if current user can edit theme options for blog.</code>
+<code>}</code></pre>
+<p id="c09-para-0124">Each of these functions should be in your developer toolbox, but you will almost always use <code>current_user_can()</code>. The others will depend on the specific use case.</p>
+</section>
+<section><span id="c09-sec-0036"/>
+<h3 id="head-3-165">Is the User an Admin?</h3>
+<p id="c09-para-0125">Sometimes, your plugin might need to check whether a user is an admin on the site. This can be confusing as a plugin developer because roles are not hierarchical. Remember, users with the “administrator” role are not always in full control of the site. However, they will be in most cases.</p>
+<p id="c09-para-0126">Generally, you would not check whether a user is an admin. It's nearly always better to check for a capability based on the specific task the user might be performing.</p>
+<p id="c09-para-0127">Determining admin status can be dangerous territory without understanding how roles and capabilities work because there is no single capability that defines a user as an admin. WordPress does provide a function for checking whether a user is an admin, but it should be used only if a specific capability isn't evident.</p>
+<p id="c09-para-0128">The <code>is_super_admin()</code> function was added as part of the multisite package of features, but it works for single‐site installs of WordPress as well. It gives an accurate view of who is an admin on the site. The function accepts a single parameter of <code>$user_id</code>, which is the ID of the user you want to check admin status for. It returns <code>true</code> if the user is an admin or <code>false</code> if the user is not an admin.</p>
+<p id="c09-para-0129">
+<code>is_super_admin()</code> works a bit differently for multisite installs and single‐site installs. A super admin in a multisite setup has full control over the site. You can read more about how super admins work within a multisite environment in <a href="c13.xhtml">Chapter 13</a>, “Multisite.”</p>
+<p id="c09-para-0130">On single‐site installations, the <code>is_super_admin()</code> function checks whether the current user has the <code>delete_users</code> capability because it is a capability that would essentially give the user the most power on the site. This could just as easily be done with the <code>current_user_can()</code> function. It almost <span epub:type="pagebreak" id="Page_228" role="doc-pagebreak" title="228"/>seems silly to check whether someone is an admin by checking whether they have the <code>delete_users</code> capability, especially if the task to be performed has nothing to do with deleting users.</p>
+<p>Suppose your plugin needed to check whether a user with the ID of <code>100</code> was an admin before performing a specific task. You would use the following code to handle that check:</p>
+<pre id="c09-code-0044"><code>&lt;?php</code>
+<code>if ( is_super_admin( 100 ) ) {</code>
+<code>       echo 'The user with the ID of 100 is a super admin.';</code>
+<code>}</code></pre>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c09-para-0133"><b>WARNING</b> <i>Now that you know how to check for an admin, don't do it, unless you have to. Seriously, check against capabilities unless there is absolutely no other option.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+</section>
+</section>
+<section><span id="c09-sec-0038"/>
+<h2 id="head-2-80">CUSTOMIZING ROLES</h2>
+<p id="c09-para-0134">WordPress roles are flexible, and plugins can bend them in any way that suits their purposes. This section covers customizing roles, creating new roles, and adding capabilities to new or existing roles.</p>
+<p id="c09-para-0135">You need to know that any changes you make to roles are saved in the database. If your plugin makes a change, this change will not undo itself when your plugin is deactivated or uninstalled. Your plugin should remove custom capabilities that it has added and remove any roles it adds if no users are assigned to that role on deletion.</p>
+<section><span id="c09-sec-0039"/>
+<h3 id="head-3-166">Creating a Role</h3>
+<p id="c09-para-0136">WordPress enables the creation of custom roles by plugins. The best time to create a new role with your plugin is on the activation hook for your plugin (see <a href="c02.xhtml">Chapter 2</a>, “Plugin Framework”). Role creation needs to be done only once, so this is a good hook to use because it's fired only when your plugin is activated.</p>
+<p>The <code>add_role()</code> function enables plugin developers to easily add new roles. The function returns a role object if a new role was successfully added and <code>null</code> if the role already exists.</p>
+<pre id="c09-code-0045"><code>&lt;?php</code>
+<code>add_role( string $role, string $display_name, array $capabilities = [] );</code></pre>
+<p>The function accepts three parameters.</p>
+<ul class="check" id="c09-list-0018">
+<li id="c09-li-0074">
+<code>$role</code>: The name of the role to add. This should act as a key and contain only alphanumeric characters or underscores.</li>
+<li id="c09-li-0075">
+<code>$display_name</code>: The label for the role. This is the name used for the role in public‐facing areas.</li>
+<li id="c09-li-0076">
+<code>$capabilities</code>: An array of capabilities to assign to the role. Capabilities can also be added or removed later. Capabilities should be the array keys. The array values should be either <code>true</code> to grant a capability to the role or <code>false</code> to explicitly deny a capability to the role.</li>
+</ul>
+<p><span epub:type="pagebreak" id="Page_229" role="doc-pagebreak" title="229"/>Now go back to the previous forum example from the “Custom Roles” section. The section outlined four roles that a forum plugin might define.</p>
+<ul class="check" id="c09-list-0019">
+<li id="c09-li-0077">Forum Administrator</li>
+<li id="c09-li-0078">Forum Moderator</li>
+<li id="c09-li-0079">Forum Member</li>
+<li id="c09-li-0080">Forum Suspended</li>
+</ul>
+<p>You also need to decide which capabilities to provide to each role. You will work with the following capabilities. A real‐world forum plugin would likely have dozens of capabilities, but these should give you an idea of what could be done.</p>
+<ul class="check" id="c09-list-0020">
+<li id="c09-li-0081">
+<code>read</code>: A core WordPress capability that provides access to the Dashboard and Profile admin screens</li>
+<li id="c09-li-0082">
+<code>create_forums</code>: A fictional capability for creating forums</li>
+<li id="c09-li-0083">
+<code>create_threads</code>: A fictional capability for creating forum threads</li>
+<li id="c09-li-0084">
+<code>moderate_forums</code>: A fictional capability for moderating forums</li>
+</ul>
+<p>Now you must decide which roles get which capabilities. The following code is what the roles for a forum and their capabilities might look like:</p>
+<pre id="c09-code-0046"><code>&lt;?php</code>
+<code>// Add a forum administrator role.</code>
+<code>add_role( 'forum_administrator', 'Forum Administrator', [</code>
+<code>       'read'            =&gt; true,</code>
+<code>       'create_forums'   =&gt; true,</code>
+<code>       'create_threads'  =&gt; true,</code>
+<code>       'moderate_forums' =&gt; true</code>
+<code>] );</code>
+<code> </code>
+<code>// Add a forum moderator role.</code>
+<code>add_role( 'forum_moderator', 'Forum Moderator', [</code>
+<code>       'read'            =&gt; true,</code>
+<code>       'create_threads'  =&gt; true,</code>
+<code>       'moderate_forums' =&gt; true</code>
+<code>] );</code>
+<code> </code>
+<code>// Add a forum member role.</code>
+<code>add_role( 'forum_member', 'Forum Member', [</code>
+<code>       'read'            =&gt; true,</code>
+<code>       'create_threads'  =&gt; true</code>
+<code>] );</code>
+<code> </code>
+<code>// Add a banned forum role.</code>
+<code>add_role( 'forum_banned', 'Forum Banned', [</code>
+<code>       'read'            =&gt; true,</code>
+<code>       'create_forums'   =&gt; false,</code>
+<code>       'create_threads'  =&gt; false,</code>
+<code>       'moderate_forums' =&gt; false</code>
+<code>] );</code></pre>
+<p id="c09-para-0142"><span epub:type="pagebreak" id="Page_230" role="doc-pagebreak" title="230"/>Each of the added roles is fairly straightforward. You have created a <i>faux</i> hierarchical system for roles by granting “higher” roles more capabilities and “lower” roles fewer capabilities.</p>
+<p>You should notice that the <code>forum_banned</code> role's capabilities are handled differently. The code explicitly sets the forum‐related capabilities to <code>false</code>. This tells WordPress that you absolutely do not want the role to have these permissions, even if the user has another role that grants them.</p>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c09-para-0144"><b>WARNING</b> <i>Note that explicitly denying a capability is not the same as a role not having a capability. A user can have capabilities from multiple roles. One role may be granted the capability, and another might not have it at all. However, an explicitly denied capability is meant to overrule a granted capability from another role.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+</section>
+<section><span id="c09-sec-0041"/>
+<h3 id="head-3-167">Deleting a Role</h3>
+<p id="c09-para-0145">Deleting a role is as simple as adding a new role by using the correct WordPress function. However, if your plugin needs to delete a role, it should check that no users on the site have the given role before deleting it. Otherwise, you might potentially break the plugin user's custom setup.</p>
+<p id="c09-para-0146">The best time to delete a role is during the uninstall procedure for your plugin (see <a href="c02.xhtml">Chapter 2</a>). It is also good practice to provide plugin settings to enable the user to decide whether they want to delete your plugin's roles (see <a href="c03.xhtml">Chapter 3</a>).</p>
+<p>The <code>remove_role()</code> function can remove a role from the list of saved roles in the database. It accepts a single parameter of <code>$role</code>, which is the name of the role (not the label or display name).</p>
+<pre id="c09-code-0047"><code>&lt;?php</code>
+<code>remove_role( string $role );</code></pre>
+<p>The function accepts a single parameter of the role name. It does not return a value. If you wanted to remove the forum roles added in the previous section of this chapter, you use the following code:</p>
+<pre id="c09-code-0048"><code>&lt;?php</code>
+<code>remove_role( 'forum_administrator' );</code>
+<code>remove_role( 'forum_moderator'     );</code>
+<code>remove_role( 'forum_member'        );</code>
+<code>remove_role( 'forum_banned'        );</code></pre>
+</section>
+<section><span id="c09-sec-0042"/>
+<h3 id="head-3-168">Adding Capabilities to a Role</h3>
+<p id="c09-para-0149">Like creating custom roles, you can create custom capabilities. You can also add WordPress capabilities to new or existing roles. A capability doesn't technically exist if it's not given to a role. Your plugin should add capabilities to a role only once. Most likely, it will run this code on the plugin activation hook (see <a href="c02.xhtml">Chapter 2</a>).</p>
+<p>To add a capability to a role, you must first get the role object, which requires the <code>get_role()</code> function. This function accepts a single parameter of <code>$role</code>, which is the name of the role. It returns a <code>WP_Role</code> object if a role is found or <code>null</code> if not. After you get the role object, you would use the <code>add_cap()</code> method to grant a capability to the role.<span epub:type="pagebreak" id="Page_231" role="doc-pagebreak" title="231"/></p>
+<pre id="c09-code-0049"><code>&lt;?php</code>
+<code>get_role( string $role );</code></pre>
+<p>Suppose you want to grant the default WordPress Contributor role the ability to publish posts. Using this code, you can make the change.</p>
+<pre id="c09-code-0050"><code>&lt;?php</code>
+<code>$contributor = get_role( 'contributor' );</code>
+<code> </code>
+<code>if ( null !== $role ) {</code>
+<code>       $role-&gt;add_cap( 'publish_posts', true );</code>
+<code>}</code></pre>
+<p>If you wanted to instead explicitly deny the capability, you would change the second parameter of <code>add_cap()</code> to <code>false</code> instead of <code>true</code>.</p>
+<pre id="c09-code-0051"><code>&lt;?php</code>
+<code>$contributor = get_role( 'contributor' );</code>
+<code> </code>
+<code>if ( null !== $role ) {</code>
+<code>       $role-&gt;add_cap( 'publish_posts', false );</code>
+<code>}</code></pre>
+</section>
+<section><span id="c09-sec-0043"/>
+<h3 id="head-3-169">Removing Capabilities from a Role</h3>
+<p id="c09-para-0153">WordPress has you covered when it comes to deleting capabilities from a role. Any time you create a plugin that assigns custom capabilities for use with just your plugin, your plugin needs to clean up after itself and remove the capabilities it added. Your plugin should remove capabilities from a role only once instead of on every page load. Most likely, it will run this code on the plugin uninstall (see <a href="c02.xhtml">Chapter 2</a>).</p>
+<p id="c09-para-0154">Like with adding capabilities, you must first get the role you want to remove capabilities from using the <code>get_role()</code> function. The difference is that you would use the <code>remove_cap()</code> method for removing the capability from the role.</p>
+<p>In the previous section, you added the <code>publish_posts</code> capability to the contributor role. In your plugin's uninstall method, you would remove this capability.</p>
+<pre id="c09-code-0052"><code>&lt;?php</code>
+<code>$contributor = get_role( 'contributor' );</code>
+<code> </code>
+<code>if ( null !== $role ) {</code>
+<code>       $role-&gt;remove_cap( 'publish_posts' );</code>
+<code>}</code></pre>
+</section>
+<section><span id="c09-sec-0044"/>
+<h3 id="head-3-170">A Custom Role and Capability Plugin</h3>
+<p id="c09-para-0156">Now that you have learned how to create custom roles and capabilities, it's time to put this knowledge to the test. In this section, you create a plugin that puts it all together.</p>
+<p id="c09-para-0157">The forum plugin you've been keeping in mind throughout the roles section of this chapter will be your starting point. You will piece together the different parts from the “Creating a Role” and “Deleting a Role” sections to build a plugin that adds custom forum roles on plugin activation and deletes those roles on uninstall. You will also give the default WordPress Administrator role the same capabilities as the Forum Administrator role.</p>
+<p><span epub:type="pagebreak" id="Page_232" role="doc-pagebreak" title="232"/>First, create a new plugin folder named <code>plugin‐forum‐roles</code>. Then, add the following code into a <code>plugin.php</code> file within the plugin:</p>
+<pre id="c09-code-0053"><code>&lt;?php</code>
+<code>/**</code>
+<code> * Plugin Name: Forum Roles</code>
+<code> * Plugin URI:  http://example.com/</code>
+<code> * Description: Creates example roles for a forum.</code>
+<code> * Author:      WROX</code>
+<code> * Author URI:  http://wrox.com</code>
+<code> */</code>
+<code> </code>
+<code>register_activation_hook( __FILE__, 'pdev_create_forum_roles' );</code>
+<code> </code>
+<code>function pdev_create_forum_roles() {</code>
+<code> </code>
+<code>       // Get the administrator role.</code>
+<code>       $administrator = get_role( 'administrator' );</code>
+<code> </code>
+<code>       // Add forum capabilities to the administrator role.</code>
+<code>       $administrator-&gt;add_cap( 'create_forums'   );</code>
+<code>       $administrator-&gt;add_cap( 'create_threads'  );</code>
+<code>       $administrator-&gt;add_cap( 'moderate_forums' );</code>
+<code> </code>
+<code>       // Add a forum administrator role.</code>
+<code>       add_role( 'forum_administrator', 'Forum Administrator', [</code>
+<code>             'read'            =&gt; true,</code>
+<code>             'create_forums'   =&gt; true,</code>
+<code>             'create_threads'  =&gt; true,</code>
+<code>             'moderate_forums' =&gt; true</code>
+<code>       ] );</code>
+<code> </code>
+<code>       // Add a forum moderator role.</code>
+<code>       add_role( 'forum_moderator', 'Forum Moderator', [</code>
+<code>             'read'            =&gt; true,</code>
+<code>             'create_threads'  =&gt; true,</code>
+<code>             'moderate_forums' =&gt; true</code>
+<code>       ] );</code>
+<code> </code>
+<code>       // Add a forum member role.</code>
+<code>       add_role( 'forum_member', 'Forum Member', [</code>
+<code>             'read'            =&gt; true,</code>
+<code>             'create_threads'  =&gt; true</code>
+<code>       ] );</code>
+<code> </code>
+<code>       // Add a banned forum role.</code>
+<code>       add_role( 'forum_banned', 'Forum Banned', [</code>
+<code>             'read'            =&gt; true,</code>
+<code>             'create_forums'   =&gt; false,</code>
+<code>             'create_threads'  =&gt; false,</code>
+<code>             'moderate_forums' =&gt; false</code>
+<code>       ] );</code>
+<code>}</code></pre>
+<p><span epub:type="pagebreak" id="Page_233" role="doc-pagebreak" title="233"/>Now create an <code>uninstall.php</code> file with the following code and place it within the plugin folder:</p>
+<pre id="c09-code-0054"><code>&lt;?php</code>
+<code> </code>
+<code>if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {</code>
+<code>       wp_die( sprintf(</code>
+<code>             '%s should only be called when uninstalling the plugin.',</code>
+<code>             __FILE__</code>
+<code>       ) );</code>
+<code>       exit;</code>
+<code>}</code>
+<code> </code>
+<code>remove_role( 'forum_administrator' );</code>
+<code>remove_role( 'forum_moderator'     );</code>
+<code>remove_role( 'forum_member'        );</code>
+<code>remove_role( 'forum_banned'        );</code></pre>
+<p id="c09-para-0160">This plugin can make the four extra roles you created available on the Users screen in the admin, as shown in <a href="#c09-fig-0002" id="R_c09-fig-0002">Figure 9‐2</a>. Your plugin users could add the users they want to these forum‐type roles.</p>
+<figure> <img alt="Screenshot of the Users screen with the plugin displaying four new extra roles created in the admin, to add forum-type roles." class="center" src="images/c09f002.png"/>
+<figcaption>
+<p><span class="figureLabel"><a href="#R_c09-fig-0002" id="c09-fig-0002" role="doc-backlink"><b>FIGURE 9‐2</b></a>:</span> New roles</p>
+</figcaption>
+</figure>
+</section>
+</section>
+<section><span id="c09-sec-0045"/>
+<h2 id="head-2-81">SUMMARY</h2>
+<p id="c09-para-0161">The user, role, and capability systems in WordPress are powerful and flexible, enabling you to build any type of plugin to manipulate how these systems work. Each section in this chapter has briefly touched on possibilities. The best thing you can do as a plugin developer is set up a test install and create several fictional test users. Then, take what you have learned throughout this chapter and start coding.</p>
+<p id="c09-para-0162">If you take away anything from this chapter, you need to remember how the relationship of users, roles, and capabilities works. Capabilities control permissions. Roles are given capabilities. Users are assigned roles, and each role's capabilities are extended to its users. Keeping this in mind when developing your plugins can make the development process much smoother.</p>
+</section>
+</section>
+</body>
+</html>

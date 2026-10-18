@@ -1,0 +1,190 @@
+# =============================================================================
+# Lane Lifecycle (open, status, inbox, prompt, dispatch, plan-accept)
+# =============================================================================
+
+.PHONY: lane-open lane-status lane-inbox lane-prompt lane-dispatch
+
+# OFFLOAD_BACKEND routes untrusted backends (grok*) to the secure shallow clone
+# inside worktree-lane create. Default empty = plain worktree (current behavior).
+# Example: make lane-open TASK=... LANE=... OFFLOAD_BACKEND=grok-cli
+OFFLOAD_BACKEND ?=
+
+lane-open: lane-guard
+	@set -eu; \
+	DRY_FLAG=""; \
+	if [ "$(DRY_RUN)" = "1" ]; then DRY_FLAG="--dry-run"; fi; \
+	"$(ORCHESTRATOR_ROOT)/scripts/worktree-lane" create \
+		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+		--lane-id "$(LANE)" \
+		--branch "$(LANE_BRANCH)" \
+		--worktree-path "$(LANE_WORKTREE)" \
+		--title "$(LANE_TITLE)" \
+		--objective "$(LANE_OBJECTIVE)" \
+		--owner-agent codex \
+		--status active \
+		--notes "Makefile-managed worker lane for $(TASK)." \
+		--offload-backend "$(OFFLOAD_BACKEND)" \
+		$$DRY_FLAG; \
+	echo ""; \
+	"$(ORCHESTRATOR_ROOT)/scripts/worktree-lane" brief \
+		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+		--task-ref "$(TASK)" \
+		--lane-id "$(LANE)" \
+		--branch "$(LANE_BRANCH)" \
+		--worktree-path "$(LANE_WORKTREE)" \
+		--title "$(LANE_TITLE)" \
+		--objective "$(LANE_OBJECTIVE)" \
+		$(LANE_OWNED_ARGS) \
+		$(LANE_DOC_ARGS) \
+		$(LANE_TEST_ARGS) \
+		$(LANE_NON_GOAL_ARGS) \
+		--definition "$(LANE_DONE_DEFINITION)"; \
+	echo ""; \
+	echo "Prepared lane worktree state:"; \
+	git -C "$(LANE_WORKTREE)" status -sb; \
+	if [ "$(DRY_RUN)" != "1" ]; then \
+		echo ""; \
+		echo "Bootstrapping lane dependencies..."; \
+		PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m workbay_orchestrator_mcp.orchestration.bootstrap_lane \
+			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+			--task-ref "$(TASK)" \
+			--lane-id "$(LANE)" \
+			--worktree-path "$(LANE_WORKTREE)"; \
+		echo ""; \
+		echo "Provisioning lane worktree overlays..."; \
+		if [ -e "$(LANE_WORKTREE)/.acx-secure-offload" ]; then \
+			echo "Skipping overlay/dependency provision for secure-offload sandbox at $(LANE_WORKTREE)"; \
+		else \
+			SECURE_OFFLOAD_FLAG=""; \
+			case "$(OFFLOAD_BACKEND)" in grok*) SECURE_OFFLOAD_FLAG="--secure-offload" ;; esac; \
+			python3 "$(ORCHESTRATOR_ROOT)/scripts/workstate/provision_lane_worktree.py" \
+				--worktree "$(LANE_WORKTREE)" \
+				--primary "$(ORCHESTRATOR_ROOT)" \
+				$$SECURE_OFFLOAD_FLAG; \
+		fi; \
+		echo ""; \
+		echo "Initial lane inbox:"; \
+		$(MAKE) --no-print-directory lane-inbox TASK="$(TASK)" LANE="$(LANE)"; \
+	fi; \
+	if [ "$(ENTER_SHELL)" = "1" ] && [ "$(DRY_RUN)" != "1" ]; then \
+		echo ""; \
+		echo "Opening interactive shell in $(LANE_WORKTREE)"; \
+		cd "$(LANE_WORKTREE)" && exec "$${SHELL:-/bin/zsh}" -l; \
+	else \
+		echo ""; \
+		echo "Worktree ready at $(LANE_WORKTREE)"; \
+		echo "Your current shell is still at $(WORKTREE_ROOT_REAL)."; \
+		echo "Next step: cd \"$(LANE_WORKTREE)\" or rerun without ENTER_SHELL=0."; \
+	fi
+
+lane-status: lane-guard
+	@set -eu; \
+	"$(ORCHESTRATOR_ROOT)/scripts/worktree-lane" status \
+		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+		--task-ref "$(TASK)" \
+		--lane-id "$(LANE)" \
+		--worktree-path "$(LANE_WORKTREE)"; \
+	echo ""; \
+	git -C "$(LANE_WORKTREE)" status -sb
+
+lane-inbox: lane-guard
+	@set -eu; \
+	WORKTREE_PATH="$(LANE_WORKTREE_TARGET)"; \
+	echo "Open dispatch messages for lane $(LANE):"; \
+	$(MCP_CMD) $(MCP_STATE_ARGS) \
+		lane-message-list \
+		--task-ref "$(TASK)" \
+		--lane-id "$(LANE)" \
+		--status open | python3 -c 'import json,sys; data=json.load(sys.stdin); data["messages"]=[m for m in data.get("messages", []) if m.get("direction")=="orchestrator_to_worker"]; data["returned"]=len(data["messages"]); data["total_matching"]=len(data["messages"]); print(json.dumps(data, indent=2))'; \
+	echo ""; \
+	echo "Latest worker report for lane $(LANE):"; \
+	$(MCP_CMD) $(MCP_STATE_ARGS) \
+		lane-report-list \
+		--task-ref "$(TASK)" \
+		--lane-id "$(LANE)" \
+		--limit 1; \
+	echo ""; \
+	"$(ORCHESTRATOR_ROOT)/scripts/worktree-lane" status \
+		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+		--task-ref "$(TASK)" \
+		--lane-id "$(LANE)" \
+		--worktree-path "$$WORKTREE_PATH"; \
+	echo ""; \
+	echo "Worker action summary:"; \
+	PYTHONPATH="$(MCP_PYTHONPATH)" \
+		$(MCP_PYTHON) -m workbay_orchestrator_mcp.orchestration.lane_prompt \
+			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+			--task-ref "$(TASK)" \
+			--lane-id "$(LANE)" \
+			--worktree-path "$$WORKTREE_PATH" \
+			--summary
+
+lane-prompt: lane-guard
+	@PYTHONPATH="$(MCP_PYTHONPATH)" \
+		$(MCP_PYTHON) -m workbay_orchestrator_mcp.orchestration.lane_prompt \
+		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+		--task-ref "$(TASK)" \
+		--lane-id "$(LANE)" \
+		--worktree-path "$(LANE_WORKTREE_TARGET)" \
+		$(EXTRA_ARGS)
+
+lane-dispatch: lane-guard lane-orchestrator-guard
+	@if [ -z "$(MESSAGE)" ]; then \
+		echo "MESSAGE is required."; \
+		echo "Example: make lane-dispatch TASK=phase-5-retention-export-and-audit-controls LANE=backend-http MESSAGE=\"Wire the retention router to the real services and verify pytest + mypy.\""; \
+		exit 1; \
+	fi
+	@set -eu; \
+	DISPATCH_SESSION="$(TASK)-dispatch-$(LANE)-$$(date +%Y%m%d%H%M%S)"; \
+	if [ "$(DRY_RUN)" = "1" ]; then \
+		echo "[dry-run] mcp-workbay-handoff lane-upsert --lane-id \"$(LANE)\" --worktree-path \"$(LANE_WORKTREE)\" --branch \"$(LANE_BRANCH)\" --status active"; \
+		echo "[dry-run] mcp-workbay-handoff lane-message --lane-id \"$(LANE)\" --session \"$$DISPATCH_SESSION\" --direction orchestrator_to_worker --subject \"$(SUBJECT)\" --message \"$(MESSAGE)\" --status open"; \
+		echo "[dry-run] $(MAKE) task"; \
+		echo "Dispatch preview ready for $(LANE)."; \
+		exit 0; \
+	fi; \
+	$(MCP_CMD) $(MCP_STATE_ARGS) \
+		lane-upsert \
+		--task-ref "$(TASK)" \
+		--lane-id "$(LANE)" \
+		--worktree-path "$(LANE_WORKTREE)" \
+		--branch "$(LANE_BRANCH)" \
+		--title "$(LANE_TITLE)" \
+		--objective "$(LANE_OBJECTIVE)" \
+		--owner-agent codex \
+		--status active \
+		--notes "Makefile-managed worker lane for $(TASK)."; \
+	$(MCP_CMD) $(MCP_STATE_ARGS) \
+		lane-message \
+		--lane-id "$(LANE)" \
+		--session "$$DISPATCH_SESSION" \
+		--direction orchestrator_to_worker \
+		--subject "$(SUBJECT)" \
+		--message "$(MESSAGE)" \
+		--status open; \
+	$(MAKE) task; \
+	echo ""; \
+	echo "Dispatch recorded for $(LANE). Workers can poll it with: make lane-inbox TASK=$(TASK) LANE=$(LANE)"
+
+# =============================================================================
+# Plan Lifecycle (plan-accept)
+# =============================================================================
+
+.PHONY: plan-accept
+
+# Keep plan-accept on the tracked mk/ surface because tracking a file in
+# Makefile.d/ makes Git silently overwrite the operator's untracked overlay on
+# merge. The plugin overlay owns the recipe when installed; this recipe is the
+# fallback when it is absent.
+# ACX_LIFECYCLE_HANDLERS points at the in-repo handler package, not the
+# external plugin's workbay_lifecycle runner.
+ACX_LIFECYCLE_HANDLERS ?= scripts/workstate/lifecycle/handlers
+
+ifeq ($(and $(ROOT_MAKEFILE_DIR),$(wildcard Makefile.d/plans.mk)),)
+# The installed plugin overlay owns this recipe; keep this fallback when it is absent.
+plan-accept:
+	@ACX_LIFECYCLE_HANDLERS="$(ACX_LIFECYCLE_HANDLERS)" \
+		python3 "$(ACX_LIFECYCLE_HANDLERS)/plan_baseline.py" \
+			--task "$(TASK)" \
+			$(if $(PLAN),--plan "$(PLAN)",)
+endif

@@ -1,0 +1,361 @@
+"""Pure contract tests for the APP-1 portal foundation."""
+
+from __future__ import annotations
+
+import inspect
+from collections.abc import Mapping
+from dataclasses import FrozenInstanceError, is_dataclass
+from datetime import UTC, datetime
+from typing import get_type_hints
+from uuid import UUID, uuid4
+
+import pytest
+
+from recognition.domain.portal_contracts import (
+    DEFAULT_ALLOWANCE_JOBS,
+    DEFAULT_ENTITLEMENT_STATUS,
+    BillingProvider,
+    BillingReconciliationRepository,
+    BillingState,
+    BillingSubscriptionStatus,
+    CheckoutSession,
+    EntitlementSnapshot,
+    EntitlementStatus,
+    EnumerationPage,
+    PortalIdentityService,
+    PortalIdentityStatus,
+    PortalPrincipal,
+    TenantEntitlementService,
+    UsageAdmissionService,
+    UsageReservationStatus,
+    UsageTicket,
+    WebhookInboxStatus,
+)
+
+
+@pytest.mark.parametrize(
+    "enum_type",
+    [
+        PortalIdentityStatus,
+        EntitlementStatus,
+        UsageReservationStatus,
+        BillingSubscriptionStatus,
+        WebhookInboxStatus,
+    ],
+)
+def test_status_enum_values_round_trip_as_strings(enum_type) -> None:
+    for member in enum_type:
+        assert enum_type(str(member)) is member
+        assert str(member) == member.value
+
+
+def test_boundary_dataclasses_are_frozen() -> None:
+    tenant_id = uuid4()
+    now = datetime.now(UTC)
+    values = [
+        PortalPrincipal(tenant_id, "issuer", "subject", "person@example.test"),
+        EntitlementSnapshot(
+            tenant_id,
+            EntitlementStatus.BETA_ACTIVE,
+            allowance_jobs=10,
+            used_jobs=0,
+            period_start=now,
+            period_end=now,
+            grace_until=None,
+        ),
+        UsageTicket(uuid4(), tenant_id, "request-1", 1),
+        BillingState(tenant_id, BillingSubscriptionStatus.NONE, None, None, None),
+    ]
+
+    for value in values:
+        assert is_dataclass(value)
+        with pytest.raises(FrozenInstanceError):
+            value.tenant_id = UUID(int=0)
+
+
+class _PortalIdentityStub:
+    async def resolve_principal(self, issuer: str, subject: str) -> PortalPrincipal | None:
+        return None
+
+    async def claim_tenant(
+        self,
+        *,
+        issuer: str,
+        subject: str,
+        email: str | None,
+        invitation_token: str,
+    ) -> PortalPrincipal:
+        if not invitation_token:
+            raise ValueError("invitation_token is required")
+        return PortalPrincipal(uuid4(), issuer, subject, email)
+
+
+class _TenantEntitlementStub:
+    async def snapshot(self, tenant_id: UUID) -> EntitlementSnapshot:
+        now = datetime.now(UTC)
+        return EntitlementSnapshot(tenant_id, DEFAULT_ENTITLEMENT_STATUS, 0, 0, now, now, None)
+
+    async def grant_beta(
+        self,
+        tenant_id: UUID,
+        *,
+        allowance_jobs: int,
+        allowance_version: str,
+        period_start: datetime,
+        period_end: datetime,
+        source: str,
+    ) -> EntitlementSnapshot:
+        return EntitlementSnapshot(
+            tenant_id,
+            EntitlementStatus.BETA_ACTIVE,
+            allowance_jobs,
+            0,
+            period_start,
+            period_end,
+            None,
+        )
+
+    async def apply_billing_state(self, tenant_id: UUID, state: BillingState) -> EntitlementSnapshot:
+        now = datetime.now(UTC)
+        return EntitlementSnapshot(tenant_id, EntitlementStatus.EXPIRED, 0, 0, now, now, None)
+
+
+class _UsageAdmissionStub:
+    async def reserve(
+        self,
+        tenant_id: UUID,
+        *,
+        idempotency_key: str,
+        job_id: str | None,
+        cost_units: int,
+    ) -> UsageTicket:
+        return UsageTicket(uuid4(), tenant_id, idempotency_key, cost_units)
+
+    async def commit(self, ticket: UsageTicket) -> None:
+        return None
+
+    async def release(self, ticket: UsageTicket) -> None:
+        return None
+
+
+class _BillingProviderStub:
+    async def create_checkout_session(
+        self,
+        *,
+        tenant_id: UUID,
+        plan_code: str,
+        success_url: str,
+        cancel_url: str,
+        idempotency_key: str,
+        attempt_id: UUID,
+    ) -> CheckoutSession:
+        return CheckoutSession(url=success_url, provider_checkout_id=f"chk-{attempt_id}:{idempotency_key}")
+
+    async def create_portal_session(self, *, tenant_id: UUID, return_url: str) -> str:
+        return return_url
+
+    async def retrieve_state(
+        self,
+        *,
+        provider_customer_id: str,
+        provider_subscription_id: str | None,
+        request_timeout: float,
+    ) -> object:
+        return {
+            "provider_customer_id": provider_customer_id,
+            "provider_subscription_id": provider_subscription_id,
+            "request_timeout": request_timeout,
+        }
+
+    async def retrieve_checkout(self, *, provider_checkout_id: str, request_timeout: float) -> Mapping[str, object]:
+        return {"id": provider_checkout_id, "request_timeout": request_timeout}
+
+    async def enumerate_subscriptions(
+        self,
+        *,
+        cursor: str | None,
+        limit: int,
+        request_timeout: float,
+    ) -> EnumerationPage:
+        return EnumerationPage(items=(), next_cursor=cursor, exhausted=True)
+
+    async def verify_webhook(self, raw_body: bytes, headers: Mapping[str, str]) -> bool:
+        return bool(raw_body and headers)
+
+    async def parse_event(self, raw_body: bytes) -> dict[str, object]:
+        return {"raw_body": raw_body}
+
+
+@pytest.mark.parametrize(
+    ("protocol", "stub"),
+    [
+        (PortalIdentityService, _PortalIdentityStub()),
+        (TenantEntitlementService, _TenantEntitlementStub()),
+        (UsageAdmissionService, _UsageAdmissionStub()),
+        (BillingProvider, _BillingProviderStub()),
+    ],
+)
+def test_protocols_are_runtime_checkable(protocol, stub) -> None:
+    assert protocol._is_runtime_protocol is True
+    assert isinstance(stub, protocol)
+
+
+def test_protocol_signatures_are_awaitable_and_preserve_parameter_kinds() -> None:
+    positional = inspect.Parameter.POSITIONAL_OR_KEYWORD
+    keyword_only = inspect.Parameter.KEYWORD_ONLY
+    contracts = {
+        PortalIdentityService: {
+            "resolve_principal": (("self", "issuer", "subject"), ()),
+            "claim_tenant": (("self",), ("issuer", "subject", "email", "invitation_token")),
+        },
+        TenantEntitlementService: {
+            "snapshot": (("self", "tenant_id"), ()),
+            "grant_beta": (
+                ("self", "tenant_id"),
+                ("allowance_jobs", "allowance_version", "period_start", "period_end", "source"),
+            ),
+            "apply_billing_state": (("self", "tenant_id", "state"), ()),
+        },
+        UsageAdmissionService: {
+            "reserve": (("self", "tenant_id"), ("idempotency_key", "job_id", "cost_units")),
+            "commit": (("self", "ticket"), ()),
+            "release": (("self", "ticket"), ()),
+        },
+        BillingProvider: {
+            "create_checkout_session": (
+                ("self",),
+                ("tenant_id", "plan_code", "success_url", "cancel_url", "idempotency_key", "attempt_id"),
+            ),
+            "create_portal_session": (("self",), ("tenant_id", "return_url")),
+            "retrieve_state": (("self",), ("provider_customer_id", "provider_subscription_id", "request_timeout")),
+            "retrieve_checkout": (("self",), ("provider_checkout_id", "request_timeout")),
+            "enumerate_subscriptions": (("self",), ("cursor", "limit", "request_timeout")),
+            "verify_webhook": (("self", "raw_body", "headers"), ()),
+            "parse_event": (("self", "raw_body"), ()),
+        },
+        BillingReconciliationRepository: {
+            "acquire_lease": (("self", "key"), ("owner", "lease_ttl", "now")),
+            "heartbeat": (("self", "lease"), ("now", "lease_ttl")),
+            "complete_item": (("self", "lease"), ("remote_id", "now")),
+            "quarantine_item": (("self", "lease"), ("observation", "now")),
+            "advance_cursor": (
+                ("self", "lease"),
+                ("next_cursor", "exhausted", "page_remote_ids", "now"),
+            ),
+            "record_page_failure": (("self", "lease"), ("failure_class", "now")),
+            "audited_retry": (
+                ("self", "lease"),
+                ("remote_id", "operator_identity", "operator_reason", "now"),
+            ),
+            "get_quarantine": (("self", "key", "remote_id"), ()),
+        },
+    }
+
+    for protocol, methods in contracts.items():
+        declared_methods = {
+            name for name, member in vars(protocol).items() if not name.startswith("_") and inspect.isfunction(member)
+        }
+        assert declared_methods == set(methods)
+        for name, (positional_names, keyword_only_names) in methods.items():
+            method = getattr(protocol, name)
+            assert inspect.iscoroutinefunction(method), f"{protocol.__name__}.{name} must be awaitable"
+            actual_parameters = tuple(inspect.signature(method).parameters.values())
+            expected_parameters = tuple(
+                (parameter_name, keyword_only if parameter_name in keyword_only_names else positional)
+                for parameter_name in (*positional_names, *keyword_only_names)
+            )
+            assert tuple((parameter.name, parameter.kind) for parameter in actual_parameters) == expected_parameters
+
+
+def test_stub_omitting_a_required_method_fails_structural_check() -> None:
+    class MissingParseEvent:
+        async def create_checkout_session(self, **kwargs) -> CheckoutSession:
+            return CheckoutSession(url="", provider_checkout_id="chk-missing")
+
+        async def create_portal_session(self, **kwargs) -> str:
+            return ""
+
+        async def verify_webhook(self, raw_body: bytes, headers: Mapping[str, str]) -> bool:
+            return True
+
+    assert not isinstance(MissingParseEvent(), BillingProvider)
+
+
+def test_checkout_session_is_frozen_and_carries_provider_id_and_url() -> None:
+    session = CheckoutSession(url="https://pay.example.test/c", provider_checkout_id="chk-1")
+    assert is_dataclass(session)
+    assert session.url == "https://pay.example.test/c"
+    assert session.provider_checkout_id == "chk-1"
+    with pytest.raises(FrozenInstanceError):
+        session.url = "https://evil.example.test"
+
+
+def test_enumeration_page_is_frozen_with_opaque_cursor() -> None:
+    page = EnumerationPage(items=(), next_cursor="2", exhausted=False)
+    assert is_dataclass(page)
+    assert page.next_cursor == "2"
+    assert page.exhausted is False
+    assert page.observations == ()
+    with pytest.raises(FrozenInstanceError):
+        page.exhausted = True
+
+
+def test_billing_provider_requires_attempt_owned_checkout_and_header_verify() -> None:
+    checkout_params = inspect.signature(BillingProvider.create_checkout_session).parameters
+    verify_params = inspect.signature(BillingProvider.verify_webhook).parameters
+    assert "idempotency_key" in checkout_params
+    assert "attempt_id" in checkout_params
+    assert checkout_params["idempotency_key"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert checkout_params["attempt_id"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert "headers" in verify_params
+    assert "signature" not in verify_params
+    assert hasattr(BillingProvider, "retrieve_checkout")
+    assert hasattr(BillingProvider, "enumerate_subscriptions")
+
+    identity_params = inspect.signature(PortalIdentityService.claim_tenant).parameters
+    assert identity_params["invitation_token"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert identity_params["invitation_token"].default is inspect.Parameter.empty
+    assert get_type_hints(PortalIdentityService.claim_tenant)["invitation_token"] is str
+
+
+def test_missing_entitlement_is_fail_safe_zero_allowance() -> None:
+    assert DEFAULT_ALLOWANCE_JOBS == 0
+    assert DEFAULT_ENTITLEMENT_STATUS is EntitlementStatus.EXPIRED
+
+
+def test_billing_state_requires_customer_for_persistable_status() -> None:
+    """A non-``none`` status must carry the customer id the projection requires."""
+    tenant_id = uuid4()
+    for status in (
+        BillingSubscriptionStatus.ACTIVE,
+        BillingSubscriptionStatus.PAST_DUE,
+        BillingSubscriptionStatus.CANCELED,
+        BillingSubscriptionStatus.REFUND_HOLD,
+    ):
+        with pytest.raises(ValueError, match="provider_customer_id is required"):
+            BillingState(tenant_id, status, None, None, None)
+
+    # The derived "no projection row" state stays representable.
+    assert BillingState(tenant_id, BillingSubscriptionStatus.NONE, None, None, None).provider_customer_id is None
+
+
+def test_usage_and_billing_tables_reject_out_of_enum_and_non_positive_writes() -> None:
+    """Direct DB writes cannot bypass the service-layer guards ([sr-007], [COST-10])."""
+    from db.models.portal_billing import BillingSubscriptionProjection, UsageReservation
+
+    reservation_checks = {
+        c.name: str(c.sqltext) for c in UsageReservation.__table__.constraints if hasattr(c, "sqltext")
+    }
+    assert "ck_usage_reservation_cost_units_positive" in reservation_checks
+    assert "cost_units > 0" in reservation_checks["ck_usage_reservation_cost_units_positive"]
+
+    reservation_statuses = reservation_checks["ck_usage_reservation_status"]
+    for member in UsageReservationStatus:
+        assert f"'{member.value}'" in reservation_statuses
+
+    projection_checks = {
+        c.name: str(c.sqltext) for c in BillingSubscriptionProjection.__table__.constraints if hasattr(c, "sqltext")
+    }
+    projection_statuses = projection_checks["ck_billing_subscription_projection_status"]
+    for member in BillingSubscriptionStatus:
+        assert f"'{member.value}'" in projection_statuses
